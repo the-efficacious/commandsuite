@@ -23,11 +23,33 @@ import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ActivityEvent } from 'csuite-sdk/types';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   attachTranscriptReader,
   type TranscriptReader,
 } from '../../src/runtime/trace/transcript-reader.js';
+
+// Gate for the close()-races-an-in-flight-drain regression test: while
+// armed, any open() of the transcript parks until released, so the test
+// can interleave close() + an append inside a drain's await window. All
+// other tests pass straight through to the real fs.
+const openGate = vi.hoisted(() => ({
+  armed: false,
+  pending: [] as Array<() => void>,
+}));
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...actual,
+    open: async (...args: Parameters<typeof actual.open>) => {
+      if (openGate.armed) {
+        await new Promise<void>((resolve) => openGate.pending.push(resolve));
+      }
+      return actual.open(...args);
+    },
+  };
+});
 
 /** Poll until `pred()` is true or the deadline elapses. */
 async function waitFor(pred: () => boolean, timeoutMs = 2000): Promise<void> {
@@ -53,6 +75,10 @@ describe('TranscriptReader', () => {
   });
 
   afterEach(() => {
+    // Disarm + release the open() gate first so a parked drain can't
+    // outlive its test (e.g. after a mid-test assertion failure).
+    openGate.armed = false;
+    for (const release of openGate.pending.splice(0)) release();
     reader?.close();
     reader = null;
     rmSync(dir, { recursive: true, force: true });
@@ -338,5 +364,47 @@ describe('TranscriptReader', () => {
     );
     await new Promise((r) => setTimeout(r, 80));
     expect(events).toHaveLength(countAtClose); // nothing new after close
+  });
+
+  it('drops lines read by a drain that was in flight when close() landed', async () => {
+    // Regression: a drain passes its entry `closed` check, then awaits
+    // open/stat/read. If close() AND a new line land inside that window,
+    // the resumed drain must not emit the post-close line.
+    writeFileSync(
+      path,
+      `${JSON.stringify({
+        type: 'user',
+        uuid: 'race-1',
+        timestamp: '2026-07-05T00:00:01.000Z',
+        message: { role: 'user', content: [{ type: 'text', text: 'one' }] },
+      })}\n`,
+    );
+    start();
+    await waitFor(() => events.some((e) => e.kind === 'user_prompt'));
+    const countAtClose = events.length;
+
+    // Arm the gate, then wait for the next poll's drain to park inside
+    // open() — past the entry check, mid-flight.
+    openGate.armed = true;
+    await waitFor(() => openGate.pending.length > 0);
+
+    // close() and a fresh line both land while that drain is parked.
+    reader?.close();
+    reader = null;
+    appendFileSync(
+      path,
+      `${JSON.stringify({
+        type: 'user',
+        uuid: 'race-2',
+        timestamp: '2026-07-05T00:00:02.000Z',
+        message: { role: 'user', content: [{ type: 'text', text: 'two' }] },
+      })}\n`,
+    );
+
+    // Release the drain: it reads the new bytes but must drop them.
+    openGate.armed = false;
+    for (const release of openGate.pending.splice(0)) release();
+    await new Promise((r) => setTimeout(r, 80));
+    expect(events).toHaveLength(countAtClose); // nothing emitted past close
   });
 });

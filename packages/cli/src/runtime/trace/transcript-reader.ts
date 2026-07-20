@@ -273,6 +273,10 @@ export function attachTranscriptReader(options: TranscriptReaderOptions): Transc
         const buf = Buffer.alloc(len);
         const { bytesRead } = await handle.read(buf, 0, len, offset);
         if (bytesRead <= 0) return;
+        // close() may have landed while the open/stat/read awaits were in
+        // flight — this drain passed the entry check before it. Drop what
+        // we read: nothing may be emitted past close().
+        if (closed) return;
         // Only consume up to the LAST newline — everything after it is a
         // partial line still being written; leave it for the next drain.
         // Work in BYTES (newline is a single-byte 0x0A, never part of a
