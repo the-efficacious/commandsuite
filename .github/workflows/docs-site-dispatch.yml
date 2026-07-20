@@ -1,0 +1,32 @@
+name: Docs site dispatch
+
+# When docs/ changes land on main, ping the platform repo so the docs
+# site (docs.commandsuite.io) rebuilds with the fresh MDX. The site's
+# build syncs content from this repo's main at build time.
+#
+# Secret required:
+#   PLATFORM_DISPATCH_TOKEN — fine-grained PAT scoped to
+#   the-efficacious/commandsuite-platform with Contents: read/write
+#   (repository_dispatch needs write).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify platform repo
+        env:
+          GH_TOKEN: ${{ secrets.PLATFORM_DISPATCH_TOKEN }}
+        run: |
+          gh api repos/the-efficacious/commandsuite-platform/dispatches \
+            -f event_type=oss-docs-updated \
+            -F 'client_payload[ref]=${{ github.sha }}'
+          echo "dispatched oss-docs-updated for ${{ github.sha }}"
