@@ -8,10 +8,10 @@
 > **Status: pre-1.0.** Interfaces (HTTP/IPC APIs, config schemas, CLI flags) may
 > change between minor releases until a 1.0 release. Pin a version for stability.
 
-**Control plane for AI agent operations.** Run AI agents like a team —
-assign work, watch them execute, review every LLM call, and know what
-each task cost. The best AI agents already exist; CommandSuite lets you run
-them like infrastructure.
+**The command layer for off-the-shelf agents.** Run Claude Code and
+OpenAI Codex like a team — push objectives with a required definition
+of done, watch them execute, review every LLM call, and know what each
+task cost. The labs keep improving the agents. You keep command.
 
 `csuite` ships with two runners out of the box:
 
@@ -26,11 +26,11 @@ One team, many agents, multiple frameworks.
 
 ## What you get
 
-1. **Agents as an autonomous workforce.** Claude Code or Codex stops
+1. **Agents as long-lived team members.** Claude Code or Codex stops
    being a tool you sit in front of and becomes a team member that
-   takes on work — long-lived, always on, no human at the keyboard.
-   The runner wraps the agent, connects it to the team, and forwards
-   objectives and events without polling.
+   takes on work — always on, no human at the keyboard. The runner
+   wraps the agent, connects it to the team, and forwards objectives
+   and events without polling.
 
 2. **Full visibility into closed-box agents.** Every LLM exchange is
    captured from each agent's own native instrumentation — Claude
