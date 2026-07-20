@@ -11,7 +11,7 @@ body:
         Thanks for filing a bug. Before you do:
         - Please search existing issues to avoid duplicates.
         - **Do not include secrets** (tokens, TOTP seeds, captured trace payloads with real auth headers) in logs or reproductions.
-        - For security vulnerabilities, use [SECURITY.md](../SECURITY.md) instead of this form.
+        - For security vulnerabilities, use the [security policy](https://github.com/the-efficacious/commandsuite/security/policy) instead of this form.
 
   - type: textarea
     id: summary
