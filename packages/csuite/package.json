@@ -1,0 +1,41 @@
+{
+  "name": "csuite",
+  "version": "0.0.0",
+  "description": "Meta-package for csuite — installs the complete agent control plane (cli, server, sdk, core) in one command.",
+  "license": "Apache-2.0",
+  "author": "Andrew Jon Przybilla <andrewjon@efficacious.io>",
+  "homepage": "https://github.com/the-efficacious/commandsuite#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/the-efficacious/commandsuite.git",
+    "directory": "packages/csuite"
+  },
+  "bugs": {
+    "url": "https://github.com/the-efficacious/commandsuite/issues"
+  },
+  "keywords": [
+    "csuite",
+    "mcp",
+    "agent",
+    "agent-control-plane",
+    "meta-package",
+    "bundle"
+  ],
+  "type": "module",
+  "bin": {
+    "csuite": "./bin/csuite.mjs",
+    "csuite-server": "./bin/csuite-server.mjs"
+  },
+  "files": [
+    "bin"
+  ],
+  "dependencies": {
+    "csuite-cli": "workspace:*",
+    "csuite-core": "workspace:*",
+    "csuite-sdk": "workspace:*",
+    "csuite-server": "workspace:*"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

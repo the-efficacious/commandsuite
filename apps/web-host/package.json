@@ -1,0 +1,54 @@
+{
+  "name": "csuite-web-host",
+  "version": "0.0.0",
+  "description": "OSS web host for CommandSuite \u2014 TOTP auth gate + PWA that mounts the shared csuite-web-ui <TeamShell>, served by the self-hosted broker.",
+  "license": "Apache-2.0",
+  "author": "Andrew Jon Przybilla <andrewjon@efficacious.io>",
+  "homepage": "https://github.com/the-efficacious/commandsuite#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/the-efficacious/commandsuite.git",
+    "directory": "apps/web-host"
+  },
+  "bugs": {
+    "url": "https://github.com/the-efficacious/commandsuite/issues"
+  },
+  "keywords": [
+    "csuite",
+    "web-host",
+    "spa",
+    "pwa",
+    "preact"
+  ],
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --config vitest.config.ts",
+    "clean": "rm -rf dist .turbo ../server/public"
+  },
+  "dependencies": {
+    "csuite-sdk": "workspace:*",
+    "csuite-web-ui": "workspace:*",
+    "@preact/signals": "^2.9.0",
+    "preact": "^10.29.2",
+    "workbox-precaching": "^7.4.1",
+    "workbox-window": "^7.4.1"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "^2.10.0",
+    "@testing-library/preact": "^3.2.4",
+    "@types/node": "^25.9.0",
+    "@unocss/preset-wind4": "^66.6.8",
+    "@unocss/reset": "^66.6.8",
+    "happy-dom": "^20.9.0",
+    "typescript": "^6.0.3",
+    "unocss": "^66.6.8",
+    "vite": "^8.0.13",
+    "vite-plugin-pwa": "^1.3.0",
+    "vitest": "^4.1.6"
+  }
+}

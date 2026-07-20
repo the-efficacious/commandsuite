@@ -1,0 +1,408 @@
+---
+title: Trace capture
+description: How the csuite runner captures each agent's own durable artifacts — Claude Code's session transcript + OpenTelemetry, codex's rollout JSONL + OpenTelemetry + trace bundles — and normalizes them into one per-member activity, telemetry, and gen_ai model.
+section: Guides
+order: 30
+---
+
+# Trace capture
+
+csuite's trace capture is a first-class feature for replacing
+custom agent orchestrations whose main value prop is built-in
+logging. The idea: let directors see what the LLM actually said
+and what tools it actually called, scoped to each objective,
+without embedding observability hooks into the agent itself.
+
+The runner does this by **consuming each agent's own native
+instrumentation** and normalizing it into a single activity
+model. There is no network interception and no TLS
+interception — the runner never sits inside the agent's
+connection or decrypts its traffic. Every agent already emits a
+structured account
+of its own work (Claude Code over OpenTelemetry, codex over its
+app-server JSON-RPC stream); the runner subscribes to that,
+maps it into one normalized `ActivityEvent` timeline, and ships
+it to the broker.
+
+This is the honest privacy claim: **csuite reads the telemetry
+each agent already produces about itself — it does not sit in
+the middle of the agent's TLS connection.** Native telemetry
+reaches the broker bearer-authenticated over the same channel
+the runner already uses; secrets are redacted before anything
+leaves the runner.
+
+Capture works for **both runners** (`csuite claude-code` and
+`csuite codex`). Both are transcript-primary for content — Claude
+Code's session transcript, codex's rollout JSONL — and both add an
+OpenTelemetry operational layer and a full-context gen_ai + raw-body
+layer. The mechanisms differ per agent, but they feed the same sinks
+and produce the same normalized activity + telemetry + gen_ai kinds.
+
+## The one activity model
+
+There are no per-objective spans. The runner maintains one
+**activity stream** per member — an append-only timeline of
+everything the agent's instrumentation reports:
+
+- `llm_exchange` — one model request/response, parsed into a
+  typed `AnthropicMessagesEntry` (model, messages, tools, stop
+  reason, token usage).
+- `tool_action` — one tool invocation: the tool name plus its
+  (redacted) input and, where the source carries it, its result.
+- `objective_open` — the member just took ownership of an
+  objective.
+- `objective_close` — the member just released it (with the
+  terminal reason: `done` / `cancelled` / `reassigned` /
+  `runner_shutdown`).
+
+Per-objective "traces" are a **time-range view** over this
+stream: the web UI queries the member's activity between the
+`objective_open` and `objective_close` markers for a given
+objectiveId, rather than loading a separately-stored
+per-objective blob. The authoritative event kinds live in
+[`packages/sdk/src/types.ts`](https://github.com/the-efficacious/commandsuite).
+
+For the data model see
+[activity-and-traces](/docs/concepts/activity-and-traces).
+
+## The capture host
+
+The runner-owned handle that every adapter feeds is the
+**CaptureHost** (`packages/cli/src/runtime/trace/host.ts`). It
+owns the capture SINK — nothing about interception:
+
+- the batched **`ActivityUploader`**, which ships
+  `ActivityEvent`s to the broker in real time;
+- the **busy signal**, driven by native instrumentation (Claude
+  Code hooks, codex app-server items) — not by proxied traffic;
+- the loopback **hook server**, which Claude Code POSTs its
+  Pre/PostToolUse events to.
+
+Adapters push captured activity through `enqueue(event)`. The
+host also exposes `noteObjectiveOpen` / `noteObjectiveClose`
+(emitted whenever the objectives tracker's open set changes),
+`envVars()` (the OTEL config the Claude child needs — see
+below), `hookEndpointUrl`, `busy`, and `close()`. On `close()`
+the uploader drains best-effort and the hook server tears down.
+
+Everything the host owns is loopback-only and scoped to the
+runner's lifetime. There is no CA on disk and no cert to clean
+up on exit.
+
+## Claude Code capture: OpenTelemetry + hooks
+
+Claude Code emits its own work as OpenTelemetry when told to.
+The runner injects that config into the child (from
+`CaptureHost.envVars()`) and points the export at the broker:
+
+```
+CLAUDE_CODE_ENABLE_TELEMETRY=1
+OTEL_LOGS_EXPORTER=otlp
+OTEL_METRICS_EXPORTER=otlp
+OTEL_EXPORTER_OTLP_PROTOCOL=http/json
+OTEL_EXPORTER_OTLP_ENDPOINT=<brokerUrl>/otlp
+OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer <member token>   # URL-encoded
+OTEL_LOG_RAW_API_BODIES=1
+OTEL_LOG_USER_PROMPTS=1
+OTEL_LOG_TOOL_DETAILS=1
+OTEL_LOG_TOOL_CONTENT=1
+```
+
+With these set, Claude Code exports OTLP-JSON **log** records
+(`http/json`, `application/json`) to `POST /otlp/v1/logs`. The
+request is bearer-authenticated, so the broker resolves it to
+the member. (Metrics go to `POST /otlp/v1/metrics` and are
+discarded.)
+
+The capture path is entirely native to the agent, which flows
+through to a key property: because OpenTelemetry instruments
+Claude Code **before the wire**, capture is **backend-agnostic**.
+It works identically whether Claude Code talks to Anthropic
+directly, Amazon Bedrock, Google Vertex, a custom
+`ANTHROPIC_BASE_URL` gateway, or a local model. There is no
+provider-specific wire to intercept.
+
+```
+     Claude Code child                broker
+            │                            │
+            │  OTLP-JSON logs            │
+            │  (api_request_body,        │
+            │   api_request,             │
+            │   api_response_body,       │
+            │   tool_decision,           │
+            │   tool_result)             │
+            │  Bearer <member token>     │
+            │───────────────────────────▶│  POST /otlp/v1/logs
+            │                            │  → resolve member
+            │                            │  → otlp-ingest correlates
+            │                            │  → llm_exchange + tool_action
+            │                            │
+            │  PreToolUse / PostToolUse  │
+            │  (carries tool RESULT)     │   runner
+            │──────────────────────────────▶│  hook server
+            │                               │  → tool_action (+ busy)
+```
+
+### Broker ingest and correlation
+
+The broker-side ingest is `apps/server/src/otlp-ingest.ts`. It
+maps Claude Code's `claude_code.*` log records into activity:
+
+- **`api_request_body`** — the full Anthropic Messages request
+  JSON, inline. Carries `model` and `event.sequence`, but **no
+  `request_id`**.
+- **`api_request`** — token/cost/duration accounting:
+  `request_id`, `model`, `input_tokens`, `output_tokens`,
+  `cache_read_tokens`, `cache_creation_tokens`, `cost_usd`,
+  `duration_ms`.
+- **`api_response_body`** — the assembled Anthropic Messages
+  response JSON (not SSE), inline, keyed by `request_id`.
+- **`tool_decision`** / **`tool_result`** — tool permission
+  decisions and completed tool calls → `tool_action` events.
+
+An `api_request_body` / `api_request` / `api_response_body`
+triple is stitched into **one `llm_exchange`**. Because the
+request body carries no `request_id`, correlation is
+**per-model FIFO by `event.sequence`**: the request body is
+pushed onto a per-model queue, the accounting record claims the
+oldest unclaimed body of its model (from that point the exchange
+is keyed by `request_id`), and the response body pairs in by
+`request_id`. Model-awareness is load-bearing — a turn
+interleaves a background haiku "session title" call with the
+main model turn, and a global FIFO would cross the wires.
+
+Correlation is **stateful across batches**: Claude Code flushes
+telemetry on roughly a 500ms cadence, so a turn's request body
+and its response routinely arrive in different POSTs. The route
+holds one correlator per member; each POST emits the exchanges
+that completed in it and retains unclaimed request bodies for a
+later batch. A TTL sweep (~120s) flushes stale unclaimed bodies
+as best-effort request-only exchanges, and the per-member queue
+is length-capped.
+
+Each correlated exchange is run through the **same pure
+`extractEntries` parser** the codebase has always used (now in
+`packages/core/src/trace`) to produce a typed
+`AnthropicMessagesEntry`, then wrapped as an `llm_exchange`.
+
+### The hook path
+
+OTEL alone doesn't carry tool RESULT content — `tool_result`
+records report a size but not the output body. So the runner
+**also** writes `.claude/settings.json` hooks pointing at the
+CaptureHost's loopback hook server. On each Pre/PostToolUse
+event the hook server emits a `tool_action` carrying the tool's
+input **and its result content**, redacted. The hook path is
+also what drives the busy signal live (see below).
+
+### What Claude Code capture gives you
+
+**Captured:** full request and response bodies (inline,
+redacted, Anthropic Messages shape); model; token usage; cost;
+tool decisions and tool inputs; and tool result content (via
+hooks).
+
+**Not captured:** extended-thinking content (the OTEL producer
+redacts it — a hard limit); tool result content is absent from
+OTEL specifically (it comes from the hook path instead); and
+request bodies larger than ~60KB are inline-truncated by the
+producer (a file-mode `body_ref` follow-up is documented in the
+ingest but not yet emitted — a truncated body parses to
+`model`-only rather than vanishing).
+
+## Codex capture: native, layered
+
+The codex runner consumes the artifacts codex already produces
+about its own work — no network interception. Capture is
+**layered**, mirroring the Claude Code split, and feeds the same
+activity + telemetry + gen_ai stores:
+
+- **Content — rollout-primary.** A `RolloutReader` tails codex's
+  own durable rollout JSONL (`<CODEX_HOME>/sessions/**/rollout-*.jsonl`)
+  and emits `user_prompt` (the clean opener), `llm_exchange` (one
+  per turn — assistant text + reasoning summaries as `thinking`
+  blocks, real per-turn token usage, model, codex's own
+  timestamps, shaped as an `AnthropicMessagesEntry` container so
+  it renders through the same TracePanel path), and `tool_action`
+  (`function_call` + `function_call_output` paired by `call_id`,
+  full input **and** output). The app-server JSON-RPC stream now
+  drives only presence / busy / the stderr printer — the codex
+  analogue of Claude's hooks-presence-only split.
+- **Operational telemetry — native OTEL.** An `[otel]` block in
+  the ephemeral `config.toml` points codex's OpenTelemetry export
+  at the broker's `/otlp/v1/logs`; `codex.api_request`,
+  `codex.sse_event` (token counts), tool decisions, and rate
+  limits land losslessly in the telemetry table
+  (`user.email` / `user.account_id` stripped at ingest).
+- **Full-context inferences + raw bodies — trace bundles.** With
+  `CODEX_ROLLOUT_TRACE_ROOT` set, codex writes per-inference
+  rollout-trace bundles (complete Responses request + response). A
+  `BundleReader` uploads the verbatim payload bytes to
+  `POST /members/:name/genai`, where the broker content-addresses
+  them into `raw_blob` / `raw_exchange` and maps a parsed copy to
+  a `gen_ai_inference` via the pure `openaiResponsesToGenAi` core
+  mapper (the OpenAI-Responses sibling of `anthropicToGenAi`).
+
+Reasoning is **summaries only** — OpenAI encrypts the raw chain of
+thought, so it never reaches the runner (Claude's extended
+thinking is redacted at source too — parity).
+
+For the full codex capture story see
+[runners/codex](/docs/runners/codex).
+
+## Redaction
+
+Every text-bearing value is redacted with the core `redactJson`
+before it leaves the runner, matching across all capture paths:
+
+- **Claude OTEL bodies** flow through `extractEntries`, whose
+  redaction layer scrubs message/system content.
+- **`tool_action` input** (both the OTEL ingest path and the
+  Claude hook path) is run through `redactJson` explicitly.
+- **Codex** assistant text, reasoning, tool input, and tool
+  result all pass through `redactJson` in the adapter.
+
+The server never sees an unredacted secret from the capture
+pipeline.
+
+## Presence / activity signal
+
+The live presence indicator is a 3-state **`ActivityState`** —
+`idle | working | blocked` — driven by **native instrumentation**.
+Claude Code's `UserPromptSubmit` → `Stop` hooks (and codex's
+`turn/started` → `turn/completed` events) bracket the **whole
+turn**, so `working` covers model generation AND tool execution,
+not just tool windows; Pre/PostToolUse hooks and codex tool items
+overlap the same `working` window. A `Notification`
+(permission_prompt / agent_needs_input / elicitation_dialog) flips
+the member to `blocked` — waiting on a human — until the turn
+resumes. The runner reports each transition to the broker
+(`POST /presence/activity { state }`, heartbeating every 10s while
+non-idle), and a server-side 30s TTL resolves a member back to
+`idle` if a crashed runner stops heartbeating. See
+[presence](/docs/presence) for the full model.
+
+## Viewing traces
+
+Members with `activity.read` (and the assignee themselves)
+review captured traces in the web UI's **TracePanel** on each
+objective's detail page. The panel queries the assignee's
+activity for the objective's lifetime window and renders each
+`llm_exchange` with model name, token usage
+(`in=150 out=42 cache_read=100 cache_creation=...`), and the
+message list — expanding Anthropic messages into text blocks,
+tool_use, and tool_result entries inline — alongside the
+`tool_action` entries.
+
+The panel is gated server-side: `GET /members/:name/activity`
+requires `activity.read` (or self). The client-side gate (the
+TracePanel only mounts when the briefing carries `activity.read`)
+is a UX optimization; the server is the real boundary. Watchers,
+originators, and assignees of OTHER members' objectives all get
+403 on the GET endpoint.
+
+## Security posture
+
+Trace capture inherently reveals what the agent did, including
+values it passed to tools. csuite's trust story is "csuite
+consumes each agent's native instrumentation," not "csuite
+decrypts your TLS." Defense in depth:
+
+1. **No TLS interception.** There is no proxy and no CA on
+   disk. The agent's own TLS client talks directly to its
+   backend; the runner never sees the agent's wire plaintext.
+   Native telemetry is delivered by the agent itself,
+   bearer-authenticated to the broker over the same channel the
+   runner already uses.
+2. **Redaction before upload.** Secrets are replaced with
+   `[REDACTED]` (core `redactJson`) before entries leave the
+   runner. The server never sees the plaintext token.
+3. **Loopback-only sink.** The hook server binds loopback only
+   and lives for the runner's lifetime; there's nothing to clean
+   up on disk on exit.
+4. **Permission-gated view.** Only members with `activity.read`
+   (or the captured member themselves) can read the activity
+   stream.
+5. **Upload is best-effort.** If upload fails, the runner logs
+   and moves on; it does not persist traces to disk.
+
+## Opting out
+
+Both runners support `--no-trace`:
+
+```bash
+csuite claude-code --no-trace
+csuite codex --no-trace
+```
+
+This disables the capture subsystem: no OTEL env injection, no
+hook server, no activity uploader, no busy reporter. The runner
+still handles the briefing, SSE forwarder, objectives, and
+bridge IPC normally.
+
+Use `--no-trace` when you're debugging the runner / bridge
+plumbing and want fewer moving parts, or when an external
+observability stack already captures the agent's work.
+
+## Storage planning
+
+Activity rows are the heaviest-write path in the broker. Real
+shape on a single active agent:
+
+- **Event volume:** the uploader batches events and flushes
+  frequently (on a size / count / time threshold).
+- **Payload size:** an `llm_exchange` row is typically 10–100 KB
+  of JSON — model, messages, tool_use / tool_result blocks,
+  usage stats. `tool_action` rows are smaller.
+- **Aggregate:** 10 LLM calls/min × 50 KB × 24h × 10 concurrent
+  agents ≈ **~7 GB/day/team**.
+
+Two operational controls keep that bounded.
+
+### Dedicated activity database
+
+The activity store runs on its own SQLite file — separate from
+the main broker DB. Default location: `<dbPath>-activity.db`
+(e.g. `./csuite.db` → `./csuite-activity.db`). Override via
+`CSUITE_ACTIVITY_DB_PATH`.
+
+Why two DBs: trace writes are bursty and heavy. Keeping them off
+the main broker's single writer lock ensures a burst doesn't
+stall chat / objective / auth / session writes. Both DBs use
+WAL + `busy_timeout=5000` + `wal_autocheckpoint=1000`.
+
+### Retention with `csuite prune-traces`
+
+```bash
+csuite prune-traces --older-than 30d
+```
+
+Deletes every activity row with `event.ts` older than the
+cutoff. Prompts with the activity DB path + cutoff timestamp
+before running unless `--yes` is passed. Non-TTY runs without
+`--yes` refuse rather than silently destroying data.
+
+Accepted duration shapes: `30d`, `7d`, `24h`, `60m`, `3600s`,
+`500ms`. Case-insensitive.
+
+Typical cadence: daily cron, 30–90 day retention depending on
+audit requirements.
+
+## Limitations
+
+- **Extended thinking is not captured for Claude Code.** The
+  OpenTelemetry producer redacts extended-thinking content
+  before export — a hard limit of the native telemetry, not
+  something the runner can opt back in. (Codex reasoning IS
+  captured, but as summaries only; OpenAI encrypts the raw
+  chain of thought.)
+- **Large request bodies are inline-truncated (~60KB).** Claude
+  Code's OTEL producer truncates request bodies past roughly
+  60KB. A truncated body parses to `model`-only rather than
+  vanishing; a file-mode `body_ref` for oversized bodies is a
+  documented follow-up in the ingest, not yet emitted.
+- **Tool result content comes from hooks, not OTEL.** Claude
+  Code's OTEL `tool_result` records carry a result size but not
+  the output body, so tool result content depends on the hook
+  path. If hooks are disabled, tool inputs and decisions are
+  still captured but result bodies are absent.

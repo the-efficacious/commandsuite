@@ -1,0 +1,331 @@
+---
+title: Troubleshooting
+description: Common errors when running csuite — broker connection problems, missing binaries, doctor failures, port conflicts, .mcp.json restoration, empty traces, KEK trouble, and how to recover.
+section: Guides
+order: 60
+---
+
+# Troubleshooting
+
+## Broker reachability
+
+### `briefing failed against <url>: ECONNREFUSED`
+
+The runner couldn't reach the broker. The most common cause:
+
+```bash
+csuite serve  # in a separate terminal
+```
+
+If the broker is meant to live elsewhere, check `--url` and
+`$CSUITE_URL`. The runner falls back to `http://127.0.0.1:8717` when
+neither is set.
+
+### `failed to reach broker at <url>: fetch failed`
+
+Network / DNS / TLS issue. Verify with:
+
+```bash
+curl <url>/healthz
+```
+
+For self-signed certs (LAN deployments) you'll need to use the
+broker's HTTPS port and either trust the cert in your system
+store or run with `NODE_TLS_REJECT_UNAUTHORIZED=0` set in the CLI's
+own env. (This affects only the CLI's connection to the broker; the
+runner doesn't intercept the agent child's network traffic at all —
+trace capture consumes each agent's native instrumentation instead.)
+
+### `--token or CSUITE_TOKEN is required`
+
+No bearer token resolved. Three sources, in order:
+
+1. `--token <secret>` flag
+2. `$CSUITE_TOKEN` env var
+3. Saved entry in `~/.config/csuite/auth.json` for the resolved URL
+
+Run `csuite connect` to enroll the device, or pass the token
+explicitly. **If `auth.json` has an entry but the CLI doesn't
+find it**, the URL is probably mismatched — the lookup is
+exact-match (no trailing-slash normalization). Check what URL
+you connected with versus what URL you're using now.
+
+## --doctor failures
+
+### `[FAIL] claude binary — failed to locate claude binary`
+
+Either Claude Code isn't installed, or it's not on `$PATH`. Set
+`$CLAUDE_PATH` to the absolute path:
+
+```bash
+export CLAUDE_PATH=/path/to/claude
+```
+
+For codex, set `$CODEX_PATH` instead. Both runners check the env
+var first, then fall back to `which`.
+
+### `[FAIL] $TMPDIR writable`
+
+The runner writes scratch files (such as the `.mcp.json` backup) to
+`$TMPDIR` at `0o600`. Common causes:
+
+- `$TMPDIR` is set to a path that doesn't exist
+- Filesystem mounted read-only
+- Permission issue on the directory
+
+Check with:
+
+```bash
+echo "$TMPDIR"
+ls -ld "$TMPDIR"
+```
+
+Typically just unset `$TMPDIR` (so it falls back to `/tmp`) or
+point it at a writable location.
+
+### `[FAIL] loopback hook server bindable`
+
+The runner couldn't `listen()` on `127.0.0.1:0`. The capture host's
+hook server needs a loopback port; sandboxed environments without
+loopback networking trigger this — uncommon, some restrictive CI
+runners.
+
+If you can't get loopback bind to work, you can run with
+`--no-trace` to skip the hook server entirely. You lose trace capture
+but everything else works.
+
+## Port conflicts
+
+### `EADDRINUSE: address already in use 0.0.0.0:8717`
+
+Something else is already on port 8717. Either find and kill it,
+or change ports:
+
+```bash
+csuite serve --port 8718
+# or
+CSUITE_PORT=8718 csuite serve
+```
+
+Then point your runners and CLI invocations at the new port:
+
+```bash
+csuite claude-code --url http://127.0.0.1:8718
+# or
+export CSUITE_URL=http://127.0.0.1:8718
+```
+
+## `.mcp.json` problems
+
+### `.mcp.json` not restored after a crash
+
+The runner restores on every exit path including
+`uncaughtException` / `unhandledRejection`. If you find an
+unrestored copy after a hard crash (kill -9, OOM, system reboot
+mid-session), check the backup directory:
+
+```bash
+ls $TMPDIR/*-mcp-*.json
+```
+
+Each backup is named `<pid>-mcp-<nonce>.json`. Pick the right
+one (timestamp + cwd matching) and copy it back manually. If
+multiple exist from different runs, the most recent is usually
+the one you want.
+
+### `.mcp.json` has a stale `csuite` entry
+
+Same scenario — a previous runner died without cleaning up.
+Either replace it with the runner's restore (see above), or
+edit by hand to remove the `csuite` server entry. Other entries
+should be untouched.
+
+## Empty traces
+
+### `Captured traces` panel is empty for a completed claude-code objective
+
+Claude Code capture is native OpenTelemetry: the runner points Claude
+Code's telemetry at the broker's OTLP endpoint and the broker ingests
+and normalizes it. Common causes for an empty panel:
+
+1. **The session ran with `--no-trace`.** No OTEL env is injected and
+   no hook config is written, so nothing is captured. Re-run without
+   the flag.
+
+2. **The telemetry env didn't reach the agent.** Some wrapper scripts
+   strip environment variables. Verify by checking the runner's
+   session log — captured exchanges show up as
+   `trace: llm_exchange queued` lines. If they're absent, the
+   `CLAUDE_CODE_ENABLE_TELEMETRY` / `OTEL_*` vars probably didn't make
+   it into the child.
+
+3. **The broker's OTLP endpoint was unreachable.** Claude Code exports
+   to `<brokerUrl>/otlp/v1/logs` with the member's bearer token; if
+   the broker was down or the token was wrong the records are dropped.
+   Check the server log for OTLP ingest errors.
+
+Extended-thinking content is never captured — the telemetry producer
+redacts it before export — so a trace that's present but missing
+thinking blocks is expected, not a failure.
+
+### Codex traces are empty for a completed objective
+
+Codex content capture is rollout-primary — the runner tails codex's
+own rollout JSONL under its ephemeral `<CODEX_HOME>/sessions/`. If a
+codex objective has no captured exchanges, the usual cause is
+`--no-trace` (which disables the rollout reader, OTEL, and the trace
+bundles) or a session that produced no completed turns. Note the
+rollout lives under the runner's ephemeral `CODEX_HOME`, not the
+user's `~/.codex`, and is drained at teardown before that dir is
+removed.
+
+## Activity DB grows unbounded
+
+```bash
+csuite prune-traces --older-than 30d
+```
+
+Deletes activity rows older than the cutoff. Set up a daily
+cron:
+
+```cron
+0 3 * * *  csuite prune-traces --older-than 30d --yes
+```
+
+If the DB has already grown to many GB and you want to compact
+the file after deleting, run a manual `VACUUM` on the activity
+DB while the broker is offline:
+
+```bash
+sqlite3 ./csuite-activity.db 'VACUUM;'
+```
+
+WAL mode means online deletes don't shrink the file; vacuum
+does, but it takes an exclusive lock.
+
+## KEK and encrypted fields
+
+### `KekResolutionError: cannot decrypt totpSecret`
+
+The KEK file (`<config>.kek`) is missing or wrong, OR
+`$CSUITE_KEK` is set to the wrong key. Two recovery options:
+
+- **Restore the original KEK file** from backup if you have one.
+  Without it, encrypted fields can't be recovered.
+- **Reset the encrypted fields**: regenerate the VAPID keypair
+  (web push will need re-subscribing); re-enroll TOTP for every
+  member (`csuite enroll --member <name>` for each).
+
+To avoid this in production, inject `$CSUITE_KEK` from a real
+secrets manager rather than relying on the auto-generated file.
+
+### Lost the team config but still have the KEK
+
+You can reconstruct the team from scratch (`csuite setup`), but
+you'll need to re-issue every bearer token (the hashes are gone
+with the config) and re-enroll every TOTP. The KEK on its own
+isn't useful without the encrypted ciphertexts.
+
+## TOTP rate limits
+
+### `429 Too Many Requests` on /session/totp
+
+Per-member: 5 failures / 15 minutes. Global (codeless login,
+where the server iterates members to find a match): 10 failures
+/ 15 minutes.
+
+Wait the window out. If you're locked out and need to bypass:
+
+```bash
+csuite enroll --member <name>
+```
+
+re-enrolls the member with a fresh secret. The bearer token in
+the team config is the recovery capability — whoever can read the
+config can re-enroll.
+
+## Token rotation
+
+### Suspecting a token leak
+
+```bash
+csuite rotate --member <name>
+```
+
+Revokes **every** active token for the named member and mints a
+fresh one. Print is one-shot; save the new token immediately.
+
+Every existing process holding the old token starts failing on
+its next request. Re-enroll affected devices with `csuite connect`.
+
+### `--reveal-token` printed something then everything broke
+
+`csuite roster --reveal-token --member <name>` is an alias over
+`csuite rotate`. It rotates as a side effect. Any process using the
+previous token (CI runners, scripts) is now broken — they need
+the new value. The CLI print is your only chance; if you missed
+it, run rotate again.
+
+## `csuite setup` refuses to run
+
+### `setup: a config already exists at ./csuite.json`
+
+Setup refuses to overwrite — running it would invalidate every
+existing token. Two options:
+
+- **You really want to reset:** `rm csuite.json` and run setup
+  again. Every existing bearer token is invalidated; every TOTP
+  enrollment is gone; you'll re-onboard everyone.
+- **You meant to add a member:** use `csuite member create` instead.
+
+## Codex-specific
+
+### `csuite codex: no codex auth.json found in ~/.codex`
+
+Codex isn't logged in. Run:
+
+```bash
+codex login
+```
+
+The runner symlinks `~/.codex/auth.json` into the ephemeral
+CODEX_HOME — it needs the real file to exist.
+
+### `Refusing to create helper binaries under temporary dir`
+
+This warning would fire if the runner's CODEX_HOME parent dir
+were under `$TMPDIR`. We use `~/.cache/commandsuite/codex/` instead
+specifically to avoid this — if you're seeing it anyway, check
+`$XDG_CACHE_HOME` and make sure it doesn't point at a tmpfs.
+
+## Runner / IPC
+
+### `csuite mcp-bridge: CSUITE_RUNNER_SOCKET is required`
+
+You ran `csuite mcp-bridge` directly. It's not meant to be invoked
+manually — the runner pre-fills it into the agent's MCP config
+(`.mcp.json` or `CODEX_HOME/config.toml`) with the right env.
+
+### Multiple runners stepping on each other
+
+Each runner binds a unique socket at
+`/tmp/.csuite-runner-<pid>.sock`. They don't interfere by path.
+The single-bridge constraint is per-runner: if two MCP bridges
+connect to the same runner, the older one is dropped.
+
+To run multiple agents simultaneously, run multiple runner
+processes in different terminals.
+
+## Where to look for more detail
+
+- **Session log**: `~/.cache/commandsuite/session-<component>-<pid>.log`
+  — structured JSON per event. `tail -f` it during a run.
+- **Server log**: stderr of `csuite serve`. Structured JSON;
+  redirect to file in production.
+- **`--doctor`**: covers the most common environmental failures
+  before they bite you.
+
+If a problem isn't covered here, the logs almost always have
+enough to pin it down — the runner deliberately over-logs at
+state transitions because the alternative is unhelpful "agent
+just stopped working" reports.

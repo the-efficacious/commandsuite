@@ -1,0 +1,289 @@
+---
+title: csuite claude-code
+description: Full reference for the Claude Code runner — flags, environment, the auto-injected claude flags, the .mcp.json backup/restore dance, the HUD strip, --doctor preflight, and trace mode.
+section: Docs
+order: 30
+---
+
+# csuite claude-code
+
+`csuite claude-code` wraps a [Claude Code](https://claude.com/code)
+session in a csuite runner. The runner is the parent; claude is the
+child. You talk to claude in the same terminal you launched the
+runner from.
+
+```bash
+csuite claude-code
+```
+
+If `--token` / `$CSUITE_TOKEN` aren't set, the runner falls back to a
+saved `~/.config/csuite/auth.json` entry for the resolved broker URL.
+Run `csuite connect` first if you haven't.
+
+## Synopsis
+
+```
+csuite claude-code [--no-trace] [--doctor] [--skip-doctor]
+                [--url <url>] [--token <secret>] [-- <claude args>...]
+```
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--no-trace` | bool | off | Disable activity capture: no capture host (activity uploader, busy signal, hook server), no OpenTelemetry export env. The runner still does briefing + IPC + objectives normally. |
+| `--doctor` | bool | off | Run the preflight checks, print the full report, exit. Doesn't spawn claude. Exit code is 1 if any check FAILed. |
+| `--skip-doctor` | bool | off | Skip the silent preflight that runs by default before spawning claude. Useful in CI / scripted reruns where you've already validated the environment. |
+| `--url <url>` | string | `http://127.0.0.1:8717` | Broker base URL. Falls back to `$CSUITE_URL` then the default. |
+| `--token <secret>` | string | — | Bearer token. Falls back to `$CSUITE_TOKEN` then `auth.json`. |
+| `-- <claude args>...` | passthrough | — | Everything after `--` is forwarded verbatim to `claude`. Anything before `--` that the runner doesn't recognize also flows through. |
+
+## What it does on startup
+
+1. **Locate `claude`.** Reads `$CLAUDE_PATH` first, falls back to
+   `which claude`. Fails fast (no socket bind, no `.mcp.json`
+   touch) if the binary is missing.
+2. **Run preflight.** Unless `--skip-doctor` is set, runs the same
+   four checks `--doctor` does, silently. WARN states proceed; any
+   FAIL aborts and dumps the full report to stderr.
+3. **Start the runner.** `startRunner()` fetches the briefing,
+   binds the IPC socket, starts the SSE forwarder. Failures
+   surface as a `RunnerStartupError` with an actionable hint
+   (e.g. "is `csuite serve` running at `<url>`?" on connection
+   refused).
+4. **Start the capture host** (unless `--no-trace`). Binds the
+   loopback hook server on a random ephemeral port, starts the
+   batched activity uploader, and computes the OpenTelemetry export
+   env (below) that points Claude Code's native telemetry at the
+   broker. No CA, no proxy, no network interception.
+5. **Back up `.mcp.json` and write a fresh one.** The current
+   working directory's `.mcp.json` is copied to a pid-scoped tmp
+   path, then atomically rewritten with a `csuite` MCP-server entry
+   that spawns `csuite mcp-bridge` against this runner's socket. If
+   no prior `.mcp.json` existed, a new one is created.
+6. **Auto-inject claude flags** (see below).
+7. **Spawn `claude`.** If `node-pty` is loadable and stdin/stdout
+   are TTYs, the runner takes the pty path and reserves the bottom
+   `HUD_HEIGHT` rows for the csuite status strip. Otherwise it falls
+   back to `stdio: 'inherit'` and skips the HUD.
+8. **Wait for claude to exit.** On any exit path (normal,
+   SIGINT, SIGTERM, uncaughtException, unhandledRejection):
+   restore the original `.mcp.json`, shut down the runner, close
+   the capture host, unlink the socket.
+
+## The auto-injected claude flags
+
+Three flags are always-on for csuite sessions because they're
+structural requirements rather than convenience. The runner
+injects them before any user-supplied claude args, and prints a
+banner to stderr listing what was injected so the posture is
+visible on turn 1.
+
+| Flag | Why |
+|---|---|
+| `--dangerously-skip-permissions` | The intended trust posture, applied session-wide (not just to csuite tools): an autonomous teammate never stops for per-tool yes/no prompts. Controls live at the csuite layer (permissions, broker 403s, credential scoping) and at the workstation boundary — see [permissions → trust posture](/docs/concepts/permissions). |
+| `--dangerously-load-development-channels server:csuite` | Enables claude's `claude/channel` experimental capability against our bridge (keyed `csuite` in the written `.mcp.json`). Without this, the bridge declares the capability but claude ignores it and broker push events never reach the agent. |
+| `--append-system-prompt <briefing>` | Pins the team briefing (team name + directive + context, role, personal instructions, teammates) into claude's system prompt for every turn. Survives compaction; beats the "agent forgot who it is by turn 40" failure mode. Live objective state is deliberately NOT in the prose — it arrives as message traffic plus `context_refresh` re-briefs. |
+
+If the user passes any of these themselves, the runner suppresses
+the equivalent injection (and the banner). The briefing snapshot
+is taken at startup — edits to the team config require restarting
+the runner to take effect.
+
+```
+csuite: auto-injected into claude invocation (team authority is the access control):
+    --dangerously-skip-permissions
+    --dangerously-load-development-channels server:csuite
+    --append-system-prompt <csuite briefing, 1843 chars>
+      (pass either flag yourself to suppress this line)
+```
+
+## Environment passed to the agent
+
+There is no network interception. When capture is on, the capture
+host returns an OpenTelemetry export delta which the runner merges
+into `claude`'s environment — Claude Code exports its raw Anthropic
+API bodies + tool details to the broker's OTLP endpoint, which the
+broker ingests and normalizes into activity events:
+
+```
+CLAUDE_CODE_ENABLE_TELEMETRY=1
+OTEL_LOGS_EXPORTER=otlp
+OTEL_METRICS_EXPORTER=otlp
+OTEL_EXPORTER_OTLP_PROTOCOL=http/json
+OTEL_EXPORTER_OTLP_ENDPOINT=<brokerUrl>/otlp
+OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer%20<member-token>
+OTEL_LOG_RAW_API_BODIES=1
+OTEL_LOG_USER_PROMPTS=1
+OTEL_LOG_TOOL_DETAILS=1
+OTEL_LOG_TOOL_CONTENT=1
+CSUITE_RUNNER_SOCKET=/tmp/.csuite-runner-<pid>.sock
+```
+
+In addition, the runner writes a `.claude/settings.json` hook config
+pointing PreToolUse / PostToolUse / PostToolUseFailure (tool windows)
+plus UserPromptSubmit / Stop / SubagentStop / Notification (the turn
+and human-blocking lifecycle) at a loopback hook endpoint the capture
+host owns. Those hooks drive the live `idle | working | blocked`
+presence signal — UserPromptSubmit → Stop bracket the **whole turn**
+as `working` (not just tool windows), a Notification flips the member
+to `blocked` when it's waiting on a human, and the tool hooks also
+emit `tool_action` activity for the tool-execution windows the OTEL
+export doesn't cover.
+
+When `--no-trace` is set, none of the OTEL vars are injected and no
+hook config is written; the runner sets only `CSUITE_RUNNER_SOCKET`.
+
+## The MCP bridge wiring
+
+The runner detects the bridge command from its own process:
+
+- **`bridgeCommand`**: `process.execPath` (the running node binary)
+- **`bridgeArgs`**: `[process.argv[1], 'mcp-bridge']` (this CLI's
+  entry script + the subcommand)
+
+Baking these into the server entry means claude spawns the SAME cli
+that spawned it — no `$PATH` assumptions, works identically for global
+npm install, pnpm script, or development checkout. The bridge
+subprocess reads `$CSUITE_RUNNER_SOCKET` to find the runner's IPC
+socket.
+
+The `csuite` server entry the runner generates:
+
+```json
+{
+  "mcpServers": {
+    "csuite": {
+      "command": "/path/to/node",
+      "args": ["/path/to/cli/dist/index.js", "mcp-bridge"],
+      "env": {
+        "CSUITE_RUNNER_SOCKET": "/tmp/.csuite-runner-12345.sock"
+      }
+    }
+  }
+}
+```
+
+### How that entry reaches claude
+
+By default (`mcpMode: 'flag'`), the runner writes this JSON to a
+**csuite-owned ephemeral file** under
+`$XDG_CACHE_HOME/commandsuite/claude/csuite-mcp-<rand>/mcp.json`
+(`0o600`) and passes `--mcp-config <that file>` to claude. This
+mirrors how the codex runner uses an ephemeral `CODEX_HOME`:
+
+- The project `.mcp.json` is **never touched** — no backup, no restore,
+  no "MCP servers disappeared because I ran from the wrong directory."
+- `--mcp-config` is **additive** (we do not pass `--strict-mcp-config`),
+  so the member's own `.mcp.json` servers still load alongside `csuite`.
+- Each run gets its own ephemeral file (`mkdtemp`), so two
+  `csuite claude-code` sessions in the same directory can't race on a
+  shared file. The file is removed on teardown.
+
+The server is keyed `csuite` so the auto-injected
+`--dangerously-load-development-channels server:csuite` resolves it.
+
+**Fallback (`mcpMode: 'inject'`, or `CSUITE_CLAUDE_MCP_MODE=inject`):**
+the runner instead backs up and rewrites the project `.mcp.json`,
+merging the `csuite` entry into any pre-existing `mcpServers` and
+restoring the original byte-for-byte on exit. Retained for
+environments where `--mcp-config` can't be used.
+
+## --doctor checks
+
+`csuite claude-code --doctor` runs three checks and prints a
+PASS / WARN / FAIL line for each:
+
+| Check | What it validates | Failure means |
+|---|---|---|
+| `claude binary` | `claude` is on `$PATH` or `$CLAUDE_PATH` resolves | Install Claude Code or set `$CLAUDE_PATH` |
+| `$TMPDIR writable` | We can write runner scratch files (e.g. the `.mcp.json` backup) at `0o600` | Filesystem permission issue, or `$TMPDIR` set to a path that doesn't exist |
+| `loopback hook server bindable` | `listen()` succeeds on `127.0.0.1:0` (the capture host's hook server needs it) | Sandboxed environment with no loopback (rare; some CI runners) |
+
+Exit code is `0` if all checks PASS / WARN, `1` if any FAIL.
+
+The default behavior (without `--doctor` or `--skip-doctor`) is to
+run these checks silently before spawn and dump the full report
+to stderr only if any FAIL. WARNs proceed quietly.
+
+## The HUD strip
+
+When `node-pty` is available and stdin/stdout are TTYs, the runner
+relays claude's output through a pty and reserves the bottom
+`HUD_HEIGHT` (5) rows for a status strip:
+
+```
+                   ┌──────────────────────────────────────────────┐
+                   │                                              │
+                   │            claude TUI (rows - 5)             │
+                   │                                              │
+                   ├──────────────────────────────────────────────┤
+                   │ csuite  ⊙ online  ·  builder@csuite-team           │
+                   └──────────────────────────────────────────────┘
+```
+
+The HUD shows presence (`connecting` → `online` → `offline`) plus
+the agent's identity. It's repainted after every chunk claude
+writes (so `CSI 2J` repaints don't leave it stale) and on terminal
+resize. SIGWINCH is forwarded as `pty.resize(cols, rows -
+HUD_HEIGHT)` so claude's renderer never paints into the strip.
+
+When `node-pty` isn't loadable (the package is in
+`optionalDependencies` so it may be absent on some platforms), the
+runner falls back to `stdio: 'inherit'` and skips the HUD. Sessions
+remain functional; only the strip disappears.
+
+When stdin/stdout aren't TTYs (tests, piped input), the runner
+also falls back to `stdio: 'inherit'` so automation stays
+byte-for-byte compatible.
+
+> First-render quirk on the pty path: claude-code's ink fork blocks
+> its first render on a terminal-capability probe whose reply
+> doesn't materialize under a relay. Press Enter once after the
+> banner to unblock it; the keystroke is forwarded to claude as a
+> no-op submit on the welcome prompt.
+
+## Pass-through args to claude
+
+Anything the runner doesn't recognize flows through to claude:
+
+```bash
+# These are equivalent:
+csuite claude-code --model claude-3-opus-20250219
+csuite claude-code -- --model claude-3-opus-20250219
+```
+
+The literal `--` is optional but recommended for unambiguity when
+forwarded args might collide with future csuite flags.
+
+## Session log
+
+Every run writes structured JSON to a session log under
+`~/.cache/commandsuite/`:
+
+```
+~/.cache/commandsuite/session-claude-code-<pid>.log
+```
+
+The path is printed on startup so you can `tail -f` it for live
+diagnostics. Each line is one event: runner state changes, IPC
+frames, MCP requests, trace uploads, broker errors. Stdout stays
+clean for claude; stderr is human-facing notices only.
+
+## Common patterns
+
+```bash
+# First-time on a new device
+csuite connect
+csuite claude-code
+
+# Pinned model + extra claude args
+csuite claude-code --model claude-3-opus-20250219 -- --resume
+
+# Quick sanity check before spawning
+csuite claude-code --doctor
+
+# Skip preflight in a known-good environment
+csuite claude-code --skip-doctor
+
+# Disable capture (debugging the runner/bridge plumbing)
+csuite claude-code --no-trace
+```

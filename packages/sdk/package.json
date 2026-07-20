@@ -1,0 +1,75 @@
+{
+  "name": "csuite-sdk",
+  "version": "0.0.0",
+  "description": "Wire contract and TypeScript SDK for csuite — types, schemas, protocol constants, and HTTP client.",
+  "license": "Apache-2.0",
+  "author": "Andrew Jon Przybilla <andrewjon@efficacious.io>",
+  "homepage": "https://github.com/the-efficacious/commandsuite#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/the-efficacious/commandsuite.git",
+    "directory": "packages/sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/the-efficacious/commandsuite/issues"
+  },
+  "keywords": [
+    "csuite",
+    "mcp",
+    "model-context-protocol",
+    "agent",
+    "agent-coordination",
+    "agent-control-plane",
+    "claude-code",
+    "claude-channel",
+    "sdk"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./types": {
+      "types": "./dist/types.d.ts",
+      "import": "./dist/types.js"
+    },
+    "./schemas": {
+      "types": "./dist/schemas.d.ts",
+      "import": "./dist/schemas.js"
+    },
+    "./protocol": {
+      "types": "./dist/protocol.d.ts",
+      "import": "./dist/protocol.js"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "import": "./dist/client.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf dist .turbo"
+  },
+  "dependencies": {
+    "ws": "^8.20.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1",
+    "tsup": "^8.0.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.6"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

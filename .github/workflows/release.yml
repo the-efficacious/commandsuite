@@ -1,0 +1,64 @@
+name: Release
+
+# Changesets-driven release. On every push to main:
+#   - if there are pending changesets, the action opens/updates a
+#     "Version Packages" PR that bumps versions (lockstep — see
+#     .changeset/config.json `fixed`) and writes CHANGELOGs.
+#   - if there are NO pending changesets (i.e. that PR was just merged),
+#     the action runs `pnpm release` (changeset publish), publishing any
+#     package whose version is not yet on the registry.
+# Versions live in git (the Version PR commits them); there is no
+# tag-stamping step and no dirty-tree publish.
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Version or publish (Changesets)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # commit the Version Packages PR + push tags
+      pull-requests: write # open/update the Version Packages PR
+      # Required for `npm publish --provenance` (via NPM_CONFIG_PROVENANCE):
+      # the id-token is what the registry consumes to attach a signed
+      # attestation linking the tarball to this exact commit.
+      id-token: write
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - run: pnpm install --frozen-lockfile
+
+      # Build + pack-verify up front so a publish (which the action runs
+      # only when no changesets remain) ships correct, complete tarballs.
+      - run: pnpm build
+
+      - name: Verify pack contents
+        run: pnpm verify-pack
+
+      - name: Create Version PR or publish
+        uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1
+        with:
+          version: pnpm run version-packages
+          publish: pnpm run release
+          commit: 'chore: version packages'
+          title: 'chore: version packages'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: 'true'

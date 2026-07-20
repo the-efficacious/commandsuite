@@ -1,0 +1,128 @@
+# ─── CommandSuite — deployment state ─────────────────────────────
+# Live team config at the repo root (hashed slot tokens, encrypted
+# TOTP secrets, VAPID private key). Per-deployment state, not source.
+# The committed example lives at apps/server/config.example.json.
+/csuite.json
+
+# Encryption key for at-rest secrets (AES-256-GCM). MUST NEVER be
+# committed — leaking this + csuite.json defeats the at-rest encryption.
+/csuite-kek.bin
+
+# Self-signed HTTPS certs generated alongside the root-level config
+# when the server auto-flips to self-signed on a non-loopback bind.
+/certs/
+
+# Default filesystem blob-store root. Created on first server boot
+# alongside the DB; contains hashed attachment payloads. Override
+# via `files.root` in the team config to put it elsewhere. Also ignore
+# the `apps/server/data/` variant that appears when `pnpm dev` runs
+# with the server's own cwd.
+/data/
+apps/server/data/
+
+# Local dev config variants (plaintext tokens during bring-up).
+config.dev.json
+apps/server/config.dev.json
+
+# Local MCP config (absolute socket paths, tokens) — see .mcp.example.json
+.mcp.json
+
+# Stray SQLite databases + their WAL/SHM sidecars
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# ─── Build output ────────────────────────────────────────────────
+# tsup / tsc bundled output per package
+dist
+*.tsbuildinfo
+
+# Web build lands in the server's static root via vite.config.ts —
+# everything under here is generated (hashed assets, index.html,
+# PWA manifest + service worker). Source is in packages/web/.
+apps/server/public/
+
+# vite-plugin-pwa dev-mode output (disabled in config but the plugin
+# will drop a dev-dist if anyone flips devOptions.enabled)
+dev-dist/
+
+# Local vite cache outside node_modules (node_modules/.vite is
+# already covered)
+**/.vite/
+
+# tsup esbuild-bundled config cache (stranded on watch-mode crash)
+tsup.config.bundled_*.mjs
+
+# ─── Tooling caches ──────────────────────────────────────────────
+# Turborepo
+.turbo
+
+# TypeScript incremental build info
+*.tsbuildinfo
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+
+# ─── Generic Node / JS ecosystem ─────────────────────────────────
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Diagnostic reports (https://nodejs.org/api/report.html)
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directories
+coverage
+*.lcov
+.nyc_output
+
+# Dependency directories
+node_modules/
+jspm_packages/
+
+# Optional caches
+.npm
+.eslintcache
+.stylelintcache
+.cache
+.parcel-cache
+.temp
+
+# Optional REPL history
+.node_repl_history
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn (v3+)
+.yarn-integrity
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+
+# dotenv environment variable files
+.env
+.env.*
+!.env.example
+
+# Vite logs files
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+exports/

@@ -1,0 +1,92 @@
+name: Bug report
+description: Something is broken or behaves unexpectedly in CommandSuite.
+title: "[bug] <short description>"
+labels:
+  - bug
+  - triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. Before you do:
+        - Please search existing issues to avoid duplicates.
+        - **Do not include secrets** (tokens, TOTP seeds, captured trace payloads with real auth headers) in logs or reproductions.
+        - For security vulnerabilities, use [SECURITY.md](../SECURITY.md) instead of this form.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What went wrong, in one or two sentences?
+      placeholder: "When I run `csuite claude-code`, the agent's activity never reaches the broker ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: Exact steps. Include commands, configs, and the shortest repro you can find.
+      placeholder: |
+        1. `csuite serve` (fresh install, default config)
+        2. In another shell, `CSUITE_TOKEN=... csuite claude-code`
+        3. Observe ...
+      render: bash
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What actually happened. Include error messages and relevant log lines (redact secrets).
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: CommandSuite version
+      description: Output of `csuite --version` (or the git SHA if running from source).
+      placeholder: "0.0.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Which component?
+      description: Pick the closest surface. If unsure, pick "unsure."
+      options:
+        - broker (csuite-server)
+        - CLI (csuite-cli)
+        - web UI (csuite-web-host)
+        - SDK (csuite-sdk)
+        - core (csuite-core)
+        - docs
+        - unsure
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS and Node version
+      description: "e.g., `macOS 14.5 / Node 22.11.0` or `Ubuntu 24.04 / Node 22.10.0`"
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Screenshots, related issues, workarounds you've tried, hypothesis about the cause.

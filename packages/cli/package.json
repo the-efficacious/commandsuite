@@ -1,0 +1,66 @@
+{
+  "name": "csuite-cli",
+  "version": "0.0.0",
+  "description": "CLI for csuite — wrap agents with csuite claude-code, push objectives, manage the team.",
+  "license": "Apache-2.0",
+  "author": "Andrew Jon Przybilla <andrewjon@efficacious.io>",
+  "homepage": "https://github.com/the-efficacious/commandsuite#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/the-efficacious/commandsuite.git",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/the-efficacious/commandsuite/issues"
+  },
+  "keywords": [
+    "csuite",
+    "cli",
+    "mcp",
+    "agent",
+    "agent-control-plane"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": {
+    "csuite": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf dist .turbo"
+  },
+  "dependencies": {
+    "csuite-core": "workspace:*",
+    "csuite-sdk": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.29.0"
+  },
+  "optionalDependencies": {
+    "node-pty": "^1.1.0"
+  },
+  "peerDependencies": {
+    "csuite-server": "workspace:*"
+  },
+  "peerDependenciesMeta": {
+    "csuite-server": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "csuite-server": "workspace:*",
+    "@types/node": "^25.9.0",
+    "@types/ws": "^8.18.1",
+    "tsup": "^8.0.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.6",
+    "ws": "^8.20.1"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

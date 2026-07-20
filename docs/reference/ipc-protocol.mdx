@@ -1,0 +1,263 @@
+---
+title: IPC protocol
+description: Wire-level reference for the runner ↔ MCP bridge protocol — frame types, encoding, correlation, error handling.
+section: Reference
+order: 40
+---
+
+# IPC protocol
+
+The csuite runner and the MCP bridge talk over a Unix domain socket
+using newline-delimited JSON frames. This page is the wire-level
+reference for that protocol.
+
+```
+                ┌──────────────────┐
+                │  csuite runner      │
+                │ (parent process) │
+                └────────┬─────────┘
+                         │ binds  /tmp/.csuite-runner-<pid>.sock
+                         ▼
+                  Unix domain socket
+                         ▲
+                         │ connects on agent boot
+                ┌────────┴─────────┐
+                │  csuite mcp-bridge  │
+                │ (agent's child)  │
+                └──────────────────┘
+```
+
+The bridge process is spawned by the agent (not by the runner) via
+the agent's MCP server registration — `.mcp.json` for claude-code,
+`config.toml`'s `[mcp_servers.csuite]` block for codex. The bridge
+reads `$CSUITE_RUNNER_SOCKET` from its environment to locate the
+runner's socket and connects on startup. A bridge started without
+that env var exits immediately with a clear error.
+
+## Socket binding
+
+The runner binds at `$TMPDIR/.csuite-runner-<pid>.sock` by default.
+You can override the path via `RunnerOptions.socketPath` (tests
+mostly), but the env var the runner writes into the agent's
+environment is always `CSUITE_RUNNER_SOCKET`.
+
+The runner is **single-bridge**. If a second bridge connects while
+one is already attached:
+
+- Default policy (`displace-old`): the older connection is closed
+  with a `shutdown` frame and the newer connection takes over.
+- Test policy (`reject-new`): the newer connection is rejected with
+  an `error` frame and closed.
+
+There's no keepalive at this layer. If the runner dies, the bridge
+dies with it (the agent sees its MCP server disappear, which is
+the correct signal).
+
+## Wire format
+
+Every frame is one JSON object on a single line, terminated by
+`\n`. Encoding is UTF-8.
+
+```
+{"kind":"mcp_request","id":1,"method":"tools/list","params":{}}\n
+{"kind":"mcp_response","id":1,"result":{"tools":[...]}}\n
+```
+
+The receiver uses standard line-buffered reads (Node's `readline`
+on the runner side, equivalent on the bridge side). Partial frames
+aren't an issue — every line is a complete JSON object or a
+malformed line we drop.
+
+**Maximum frame size:** 1 MB (`MAX_FRAME_BYTES = 1 * 1024 * 1024`).
+The encoder rejects oversized frames as a programming error; the
+decoder logs and drops them.
+
+**Embedded newlines:** prohibited. Frames are JSON-stringified with
+no indentation, and MCP payloads are themselves JSON, so this is
+satisfied without explicit escaping.
+
+## Frame types
+
+Every frame has a `kind` discriminator. Five values are legal:
+
+### `mcp_request` — bridge → runner
+
+The agent issued an MCP request on its stdio transport; the bridge
+forwards it to the runner.
+
+```typescript
+{
+  kind: 'mcp_request',
+  id: number,                              // bridge-picked correlation id
+  method: string,                          // e.g. 'tools/list', 'tools/call'
+  params: Record<string, unknown> | undefined,
+}
+```
+
+The `id` is the **bridge's** correlation id, not the agent's MCP
+request id (which lives inside `params`). The bridge picks it
+monotonically per outbound request.
+
+The runner currently handles two MCP methods:
+
+- `tools/list` — returns the runner's tool definitions composed
+  from the briefing
+- `tools/call` — dispatches to the appropriate tool handler with
+  the supplied arguments
+
+Any other method comes back as an `error` response (JSON-RPC code
+`-32601`, "method not found").
+
+### `mcp_response` — runner → bridge
+
+Response to a correlated `mcp_request`. The bridge matches on
+`id`. Either `result` (success) or `error` (failure) is set,
+never both.
+
+```typescript
+{
+  kind: 'mcp_response',
+  id: number,                              // matches the request's id
+  result?: unknown,                        // arbitrary tool / list result
+  error?: {
+    code: number,                          // JSON-RPC error code
+    message: string,
+    data?: unknown,
+  },
+}
+```
+
+JSON-RPC error codes used:
+
+- `-32601` — method not found (unhandled MCP method)
+- `-32603` — internal error (handler threw or panic)
+
+Tool-level errors (validation failures, broker 4xx) come back as
+`result` with `isError: true`, NOT as `error` — they're successful
+calls with error payloads, by MCP convention.
+
+### `mcp_notification` — runner → bridge
+
+The runner needs the bridge to emit an MCP notification to the
+agent on stdio. Unsolicited; not correlated to any prior request.
+
+```typescript
+{
+  kind: 'mcp_notification',
+  method: string,                          // e.g. 'notifications/claude/channel'
+  params: Record<string, unknown> | undefined,
+}
+```
+
+One method is emitted today:
+
+- `notifications/claude/channel` — broker push events (chat,
+  channel posts, objective lifecycle). Carries `content` (the
+  message body) and `meta` (sender, thread, level, ts, msg_id,
+  arbitrary `data.*` keys). The runner's own `context_refresh`
+  re-briefs (open-plate re-assertion at session attach and after
+  context compaction) use the same method, tagged
+  `meta.kind = "context_refresh"` / `meta.from = "csuite"`.
+
+`notifications/tools/list_changed` fires only for genuine
+capability changes — the runner emits it after a tool-source
+registry event changes the member's resolved external-tools set.
+Descriptions of builtin tools are static per session; state
+freshness never rides tool metadata.
+
+The bridge converts these into real MCP notifications on its
+stdio transport. For the codex runner the channel sink converts
+them differently (turn/start vs turn/steer) — see
+[runners/codex](/docs/runners/codex).
+
+### `shutdown` — either direction
+
+Courtesy teardown signal. The counterpart should flush and close.
+A dropped socket without a shutdown frame is also acceptable;
+this frame is informational.
+
+```typescript
+{
+  kind: 'shutdown',
+  reason?: string,                         // free-form, for logs
+}
+```
+
+The runner sends `shutdown` when:
+- The agent process exits (claude/codex returned)
+- A SIGINT or SIGTERM reaches the runner
+- A new bridge connection displaces the existing one
+
+The bridge sends `shutdown` when:
+- The agent's stdio MCP transport closes (parent went away)
+
+### `error` — either direction
+
+Either side hit a malformed frame, an unexpected condition, or a
+correlation id that doesn't match any outstanding request.
+Informational; both sides still close the socket afterward.
+
+```typescript
+{
+  kind: 'error',
+  message: string,
+  id?: number,                             // optional correlation id
+}
+```
+
+Errors with a correlation id are responses to a specific request
+that couldn't be processed at the protocol layer (rare). Errors
+without one are connection-level (e.g. "frame too large").
+
+## Correlation
+
+The bridge picks correlation ids monotonically per outbound
+`mcp_request`. The runner echoes the same id back on the
+`mcp_response`. Unmatched responses are logged + dropped. Out-of-
+order responses are fine — the bridge holds a `Map<id, callback>`
+and matches as responses arrive.
+
+There's no retry: if a request never gets a response (the runner
+crashed mid-call), the bridge socket closes and the agent sees
+its MCP server disappear. The agent's MCP client surfaces that as
+a session-level error.
+
+## Error semantics
+
+The protocol is intentionally lenient on the receive side:
+
+- **Invalid JSON** — line dropped, log line emitted, connection
+  stays open. The alternative (tear down the connection on one
+  bad byte) gives a worse failure mode for streams that briefly
+  emit garbage during boot.
+- **Unknown `kind`** — line dropped, log emitted.
+- **Missing fields** — frames with the right `kind` but missing
+  required fields surface as handler-level errors. The protocol
+  layer doesn't deep-validate.
+- **Oversized frames** — receiver-side handling depends on the
+  reader. Today the readline-based reader will buffer up to its
+  internal limit and emit a long line; the parser logs `dropped
+  malformed IPC frame, lineLength: <N>`.
+
+## Why newline-delimited JSON
+
+Three reasons:
+
+1. **Low rate.** Protocol traffic is a few frames per MCP call —
+   not the place to optimize bytes-on-wire.
+2. **Trivially debuggable.** A live runner-bridge socket can be
+   poked at with `socat` / `nc` if we ever need to.
+3. **Built-in framing.** Node's `readline` handles partial-frame
+   buffering for free; we never have to reason about half-written
+   lines.
+
+A length-prefixed binary protocol would be marginally more
+efficient and meaningfully harder to debug. The cost wasn't worth
+it for v1.
+
+## Source of truth
+
+The TypeScript types and the encoder/decoder live at
+`packages/cli/src/runtime/ipc.ts`. The runner-side dispatcher is
+in `runtime/runner.ts`; the bridge-side is `runtime/bridge.ts`.
+The `CSUITE_RUNNER_SOCKET` constant is exported as `RUNNER_SOCKET_ENV`.

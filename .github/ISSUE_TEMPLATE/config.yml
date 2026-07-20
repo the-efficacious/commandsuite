@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/the-efficacious/commandsuite/security/policy
+    about: Please do NOT open a public issue for security problems. See SECURITY.md for how to report privately.
+  - name: Question or idea
+    url: https://github.com/the-efficacious/commandsuite/discussions
+    about: For usage questions, ideas, or anything exploratory, start a discussion first.
+  - name: Commercial / hosted CommandSuite
+    url: https://efficacious.io
+    about: Questions about the hosted platform, enterprise, or commercial support.

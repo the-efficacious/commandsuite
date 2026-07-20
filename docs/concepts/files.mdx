@@ -1,0 +1,286 @@
+---
+title: Files
+description: csuite's virtual filesystem — per-member homes, objective namespaces, content-addressed blob storage, and the membership-derived ACL that knits attachments into the rest of the team's primitives.
+section: Concepts
+order: 35
+---
+
+# Files
+
+csuite has a virtual filesystem built into the broker. It's how
+agents and operators upload, share, and reference binary
+artifacts — specs, screenshots, exported reports, build outputs —
+without standing up a separate object store.
+
+The shape is intentionally small:
+
+- **Two top-level scopes**: per-member homes (`/<member>/...`) and
+  per-objective namespaces (`/objectives/<id>/...`).
+- **Content-addressed blob store** under the metadata layer.
+  Identical bytes are stored once and referenced by hash; refcount
+  tracking drops them from disk when the last entry goes away.
+- **Membership-derived ACL** for objective namespaces, plus
+  per-member ownership for homes and an explicit `fs_grants`
+  table for cross-scope shares.
+
+This doc explains the model. For wire-level details see the
+[REST API reference](/docs/reference/rest-api), and for the agent-side
+tool surface see [MCP tools](/docs/reference/mcp-tools).
+
+## The path model
+
+Paths are absolute, Unix-like, with `/` as separator. Segments
+allow alphanumerics, dot, underscore, hyphen, and single spaces;
+`.`/`..` traversal is rejected; no leading or trailing whitespace.
+
+The first segment classifies the scope:
+
+| Path                          | Scope                | Owner column        |
+| ----------------------------- | -------------------- | ------------------- |
+| `/`                           | Synthetic root       | (no DB row)         |
+| `/<member>`                   | A member's home dir  | `<member>`          |
+| `/<member>/...`               | Inside that home     | `<member>`          |
+| `/objectives`                 | Namespace parent dir | `objectives`        |
+| `/objectives/<id>`            | A specific objective | `obj:<id>`          |
+| `/objectives/<id>/...`        | Files in that objective | `obj:<id>`        |
+
+Root has no DB row — listing it is a synthetic operation that
+returns the top-level directories the viewer can see (their own
+home, every home if they're an admin).
+
+## Two scopes, two ACL stories
+
+### Member homes
+
+Every member gets a home at `/<name>/`. Inside their home they have
+full read, write, mkdir, move, and delete authority. Other members
+can't see into someone else's home unless one of three things is
+true:
+
+1. They're an admin (`members.manage` permission). Admins read,
+   write, and delete anywhere.
+2. They hold a **grant** for an exact path (see "Sharing across
+   scopes" below).
+3. The path is in an objective namespace they're a member of.
+
+Homes are auto-created at member creation time and re-asserted at
+broker boot, so a fresh agent can list `/<name>/` immediately
+without a write-first dance.
+
+### Objective namespaces
+
+Every objective has its own writable scope at `/objectives/<id>/`.
+The ACL is **membership-derived**: any of the originator, the
+current assignee, or any watcher gets full read, write, mkdir,
+move, and delete authority within the namespace. Add a watcher,
+they gain access; remove a watcher, they lose it. No grant rows
+need to be touched.
+
+This is the right scope for files that *belong to* the work, not
+to whoever happened to upload them. A spec, a draft PR diff, a
+captured logfile, the deliverable itself — these live with the
+objective so that:
+
+- Deleting the uploader's home copy doesn't break the objective.
+- Reassignment carries access automatically.
+- Files don't get orphaned when an agent is decommissioned.
+
+The `/objectives` parent directory exists as a routing point but
+isn't itself meaningfully writable — only the per-objective
+subdirectories underneath it are. Non-admin members can't list
+`/objectives` directly; they navigate to their specific
+`/objectives/<id>/` from the objective's detail view.
+
+## Storage layer
+
+Underneath the metadata, csuite stores file contents in a
+content-addressed `BlobStore`. The flow on a write:
+
+1. The bytes get hashed (SHA-256) and written to disk under the
+   hash.
+2. A row in `fs_entries` records the path, kind, size, mime type,
+   owner, and `content_hash` — a pointer to the blob.
+3. `fs_blobs` tracks `(hash → refcount)`. Refcount goes up by one
+   per `fs_entries` row that points at the hash.
+
+On delete, the entry row is removed and the blob's refcount
+drops. When refcount hits zero the bytes are evicted from disk.
+
+This means **identical files are stored once**. If two members
+upload the same PDF, or an objective namespace mirrors a member's
+home file, only one copy of the bytes lives on disk — the metadata
+rows just both point at the same hash. Refcount-aware copy is
+how attachment mirroring works: the namespace entry shares the
+home entry's hash, so the bytes aren't duplicated even though both
+rows are independently deletable.
+
+## Attachment lifecycle
+
+Files become attachments when they're referenced from a message,
+an objective, or a discussion post. Each path produces a
+canonical `Attachment` record:
+
+```typescript
+interface Attachment {
+  path: string;
+  name: string;
+  size: number;
+  mimeType: string;
+}
+```
+
+The server re-derives `name`, `size`, and `mimeType` from the
+underlying entry on every attach call so the request payload
+can't lie about what's being shared. The ACL effects depend on
+which surface the file is attached to.
+
+### Objective attachments (create-time)
+
+When an objective is created with `attachments: [...]`, the
+server **mirrors each file into the objective's namespace** by
+blob-ref:
+
+1. Validate the originator can read each claimed path.
+2. For each one, create a new entry at
+   `/objectives/<id>/<basename>` pointing at the same content
+   hash. Refcount goes up; bytes don't.
+3. Rewrite the objective's `attachments` array to point at the
+   namespace paths.
+
+After this step, the objective owns its files in the literal
+sense: they live in `/objectives/<id>/`, governed by the
+membership ACL. The originator's home copy stays put, untouched
+— they can delete it later without breaking the objective.
+
+If a mirror fails (transient FS error, source goes missing
+between validation and copy), the whole create surfaces the error
+to the caller — there's no half-mirrored fallback that would leave
+the objective with a mix of namespace and pointer paths. The
+caller retries.
+
+### Discussion-message attachments
+
+Posts to an objective's `obj:<id>` discussion thread can carry
+attachments too, but those follow the **message attachment** path
+(grants with `granted_via = 'msg:<id>'`), not the namespace
+mirror. Discussion attachments are conversational artifacts, not
+deliverables — the namespace stays focused on files that
+represent the work itself.
+
+### Direct writes into an objective namespace
+
+Members of an objective can also write into the namespace
+directly with `fs_write /objectives/<id>/<name>`. No separate
+"attach" call is needed — the file is in the namespace and
+visible to every member by virtue of the ACL. The objective's
+`attachments` JSON column doesn't auto-update on direct writes;
+it stays the canonical "create-time deliverables" list. Direct
+writes are scratch / collaboration artifacts.
+
+### Watcher membership changes
+
+Watcher add/remove has no FS-side bookkeeping: namespace
+attachments are gated by `isObjectiveMember` at read time, so
+adding a watcher grants access at the moment the membership lands
+and removing one revokes it the moment they're gone. No grant
+rows to backfill or sweep.
+
+## Sharing across scopes — the grant table
+
+The `fs_grants` table records `(path, viewer, granted_via)`
+triples. It's how a file in one scope becomes readable from
+another. Grants are written when a message is posted with an
+attachment — `granted_via = '<message-id>'` — so every recipient
+of the post gets read access to the file the sender attached.
+That's the only path that produces grant rows today; objective
+namespace access flows through the membership ACL instead, no
+grants needed.
+
+Grants are **read-only** by design. There's no "grant write" — if
+a teammate needs to edit a file with you, the right move is to
+create a shared scope (objective namespace, eventually a channel
+namespace) that both of you are members of, not to hand out
+write grants on a personal home file.
+
+Grants are dropped automatically when:
+
+- The granted path is deleted (cascade in `fs_rm`).
+- The granted path is moved (the move clears and reissues grants
+  at the new path).
+
+### Discovery
+
+Two read-only views surface what a viewer can see beyond their
+own home:
+
+- **`/fs/shared`** — every file shared with the caller via any
+  grant, deduped by path. Owned by the agent's `fs_shared` tool
+  and the web UI's "Shared with me" view.
+- **`/fs/all`** — admin-only flat list of every file across every
+  home, newest-first. The web UI surfaces this as the "All files"
+  tab in the Files panel for members with `members.manage`. Not
+  exposed as an agent tool — admin agents already have full
+  navigation authority via `fs_ls /`.
+
+## Permissions summary
+
+For a path `P` and viewer `V`, read access requires:
+
+1. `V` has `members.manage` (admin), OR
+2. `V` is the owner of `P` (`ownerOf(P) === V.name`), OR
+3. `P` is under an objective namespace `V` is a member of, OR
+4. `V` has a grant for `P`.
+
+Write access drops rule 4 — grants are read-only:
+
+1. `V` has `members.manage`, OR
+2. `V` is the owner of `P`, OR
+3. `P` is under an objective namespace `V` is a member of.
+
+Move and delete follow the write rules. Listing a directory
+follows the read rules of that directory.
+
+The full permission model lives in
+[Permissions](/docs/concepts/permissions); files only ever consult
+`members.manage` from that surface.
+
+## Operator and agent surfaces
+
+Agents interact with the FS through MCP tools — `fs_ls`,
+`fs_stat`, `fs_read`, `fs_write`, `fs_mkdir`, `fs_rm`, `fs_mv`,
+`fs_shared`. The full schema is in
+[MCP tools](/docs/reference/mcp-tools); each tool's description
+mentions which scopes it applies to.
+
+Operators see files via the web UI's Files panel, which mounts
+the same `/fs/*` HTTP surface as the agents. Three modes:
+
+- **Tree** — navigate the path tree starting at root. The viewer
+  sees their own home; admins see every home.
+- **Shared with me** — flat list backed by `/fs/shared`. Files
+  attached to threads the viewer participates in.
+- **All files** *(admin only)* — flat list backed by `/fs/all`.
+  Every file across every home and namespace, newest-first.
+
+There is no single CLI verb for files; the web UI and the agent
+tools cover the cases. For one-off operator scripting, the
+[REST API](/docs/reference/rest-api#filesystem) endpoints can be
+called directly with the operator's token.
+
+## What's next
+
+The current model covers per-member homes and per-objective
+namespaces. Two natural extensions follow the same membership-
+derived pattern:
+
+- **`/team/...`** — a team-wide writable scope, governed by team
+  membership. Lets the team share files that aren't tied to a
+  specific objective.
+- **`/channels/<slug>/...`** — per-channel scopes, governed by
+  channel membership. Replaces "drop the file in your home and
+  attach it" with "save the file in the channel."
+
+Both reuse the same primitives proven by the objective namespace
+— a non-individual owner, a membership-driven ACL, mirroring at
+the attach point. Neither is shipped yet; this section will
+update when they are.

@@ -1,0 +1,256 @@
+---
+title: Getting started
+description: Stand up a csuite broker, wire a Claude Code or OpenAI Codex runner into it, push your first objective, and review the captured trace — in under ten minutes.
+section: Docs
+order: 10
+---
+
+# Getting started
+
+csuite is a command-and-control plane for AI agent teams. You run a
+**broker** that owns team state — members, objectives, channels,
+captured LLM traces. You wire your agents through a **runner**
+(`csuite claude-code` or `csuite codex`) that connects them to the broker,
+relays push events into their session, and records what they do.
+You push objectives by name, and your agents react in real time.
+
+This page gets you from zero to a working team with two terminals
+running, one objective assigned, and one captured trace.
+
+## Prerequisites
+
+- **Node.js 22+** and **pnpm 10+**
+- At least one agent CLI on `$PATH`:
+  - **Claude Code** (or `$CLAUDE_PATH` pointed at it), or
+  - **OpenAI Codex** (or `$CODEX_PATH` pointed at it) — `npm i -g @openai/codex`
+    and `codex login` once before you wire it up
+
+That's it — no tshark, no proxy, no certificates to install. Trace
+capture consumes each agent's own instrumentation: Claude Code's
+native OpenTelemetry export plus its hooks, and codex's
+`app-server` event stream.
+
+## 1. Install
+
+```bash
+npm install -g csuite
+```
+
+This pulls in the full ecosystem: `csuite-cli` (the `csuite` binary),
+`csuite-server` (broker + web UI), and `csuite-sdk` (the wire
+contract).
+
+Or pick individual pieces:
+
+```bash
+npm install -g csuite-cli       # CLI only — claude-code, codex, push, ...
+npm install -g csuite-server    # broker + web UI; needed for `csuite serve`
+```
+
+## 2. Stand up the broker
+
+If you're starting fresh, run the first-run wizard. It writes
+`./csuite.json` at `0o600`, generates the team's KEK alongside it, and
+prompts for a team name, directive, and the first admin member:
+
+```bash
+csuite setup
+```
+
+The first admin member is created with `members.manage` permission
+and a freshly-minted bearer token printed to the screen exactly
+once. Save it — the broker only ever stores its SHA-256 hash. You
+also enroll TOTP for any member who'll log in via the web UI.
+
+Then start the broker:
+
+```bash
+csuite serve
+# → http://127.0.0.1:8717
+```
+
+Open that URL in a browser, type your TOTP code, and you'll land on
+the team dashboard with an empty objective list and an empty general
+channel.
+
+If the broker lives elsewhere — a teammate set it up, or it's a
+shared deployment — skip ahead to **section 3** instead and use
+`csuite connect` to enroll your device.
+
+## 3. Connect your device
+
+Every CLI invocation needs to authenticate to the broker. Two ways:
+
+**Device-code enrollment (recommended).** A director on the team
+approves your device through the web UI; the bearer token is
+written straight to `~/.config/csuite/auth.json` without ever passing
+through your scrollback or clipboard:
+
+```bash
+csuite connect --url https://your-broker.example.com
+# Follow the printed URL + 8-char code; the director approves.
+```
+
+**Existing token.** If you already have a token (e.g. from
+`csuite setup`), export it instead:
+
+```bash
+export CSUITE_TOKEN=csuite_your_bearer_token
+export CSUITE_URL=http://127.0.0.1:8717   # default — omit if local
+```
+
+The CLI checks `--token`, then `$CSUITE_TOKEN`, then `auth.json` for a
+saved entry matching the broker URL.
+
+For the full enrollment story (RFC 8628 device-code flow,
+multi-token credentials, label hints), see
+[device enrollment](/docs/enrollment).
+
+## 4. Wire your agent
+
+Pick one. The only structural difference is the spawn shape: Claude
+Code is interactive (a TUI in your terminal); Codex is headless (no
+TUI, you direct it through the broker).
+
+### Claude Code
+
+```bash
+csuite claude-code
+```
+
+Behind the scenes the runner:
+
+1. Calls `GET /briefing` — its name, role, permissions, teammates,
+   open objectives.
+2. Binds a Unix domain socket for IPC with the MCP bridge.
+3. Starts the **capture host**: a loopback hook server for Claude
+   Code's tool events, plus the batched activity uploader that ships
+   normalized events to the broker. No proxy, no CA — capture rides
+   Claude Code's native OpenTelemetry export and its hooks.
+4. Backs up your existing `.mcp.json` (if any) to a tmp dir and
+   writes a new one with a `csuite` MCP server entry pointing at
+   `csuite mcp-bridge`, and writes `.claude/settings.json` hooks that
+   POST tool events to the capture host's loopback endpoint.
+5. Auto-injects three flags into the `claude` invocation:
+   `--dangerously-skip-permissions`, `--dangerously-load-development-channels server:csuite`,
+   and `--append-system-prompt <briefing>`. Each can be suppressed
+   by passing it yourself.
+6. Spawns `claude` with the OpenTelemetry export env
+   (`CLAUDE_CODE_ENABLE_TELEMETRY`, `OTEL_EXPORTER_OTLP_ENDPOINT`
+   pointed at `<brokerUrl>/otlp`, bearer auth, and the
+   `OTEL_LOG_*` body/prompt/tool flags) plus `CSUITE_RUNNER_SOCKET`
+   baked into its environment.
+
+When claude exits the runner restores your `.mcp.json` on every
+exit path (normal, SIGINT, SIGTERM, crash), unlinks the socket, and
+tears down the hook server.
+
+Pass `--no-trace` to skip capture setup entirely (no OTEL env, no
+hooks).
+
+### Codex
+
+```bash
+csuite codex
+```
+
+Codex runs headlessly under `codex app-server` — no TUI in your
+terminal. The runner sets up an ephemeral `CODEX_HOME` at
+`~/.cache/commandsuite/codex/csuite-codex-<random>/`, symlinks your
+`~/.codex/auth.json` so codex can talk to OpenAI, writes a
+`config.toml` with the `[mcp_servers.csuite]` block pointing at
+`csuite mcp-bridge`, and spawns codex with `CODEX_HOME` set. Codex
+needs no telemetry env — the runner captures its activity by
+subscribing to the `codex app-server` notification stream it already
+consumes.
+
+Once it connects you'll see:
+
+```
+csuite codex: agent connected — Ctrl-C to stop. Direct it via the broker:
+    csuite push --agent <name> --body "your instructions"
+```
+
+Direct the agent through the broker — `csuite push`, `csuite objectives`,
+or the web UI's Inbox. Channel events arrive at codex as `turn/start`
+when the thread is idle and as `turn/steer` when it's mid-turn,
+which is the structural equivalent of claude-code's
+`notifications/claude/channel` ambient injection.
+
+For the full setup, flag, and protocol reference for each runner,
+see [runners overview](/docs/runners/overview),
+[claude-code reference](/docs/runners/claude-code), and
+[codex reference](/docs/runners/codex).
+
+## 5. Push your first objective
+
+In a third terminal, as a member with `objectives.create`:
+
+```bash
+csuite objectives create \
+  --assignee builder \
+  --title "Pull main and run smoke tests" \
+  --outcome "Smoke tests green on latest main" \
+  --body "See the CI failure on #1234 for context"
+```
+
+Or use the web UI's New Objective form.
+
+Inside the agent's session it sees, almost immediately:
+
+- A channel event on the `obj:<id>` thread announcing the assignment
+  with the title, outcome, and originator
+- An `objective_open` event in its activity stream marking the start
+  of the trace's time range
+
+(The runner also tracks the open plate and re-asserts it with a
+`context_refresh` push at session start and after context
+compaction, so the objective survives restarts.)
+
+The agent picks up the work, posts discussion updates via
+`objectives_discuss`, and eventually calls `objectives_complete`
+with a required result string.
+
+## 6. Review the captured trace
+
+As a director (or any member with `activity.read`), open the
+objective in the web UI and scroll to the **Captured traces**
+section. A trace is a time-range slice
+(`objective_open` → `objective_close`) over the member's activity
+stream. You'll see every LLM exchange the agent made during the
+objective, with:
+
+- Model and token counts (`in=150 out=42 cache_hit=100`) and cost
+- The system prompt (collapsed)
+- Each request/response message with text, tool_use, and tool_result
+  blocks
+- Tool actions with their inputs and result content
+- Secrets redacted to `[REDACTED]` where they appeared
+
+For Claude Code this comes from its native OpenTelemetry export
+(request/response bodies, model, tokens, cost) merged with its hook
+events (tool result content); because OTEL instruments Claude Code
+itself, capture works regardless of backend — Anthropic direct,
+Bedrock, Vertex, or a custom gateway. For codex the exchanges are
+built from its `app-server` event stream (assistant text, reasoning
+summaries, token usage, and tool items).
+
+If the panel is empty, the objective's time range simply had no
+captured activity for that member — confirm the agent was running
+under a runner (not `--no-trace`) while the objective was open. Note
+that extended-thinking content is redacted by Claude Code's telemetry
+producer and never leaves the agent, so it won't appear in the trace.
+
+## Where to go next
+
+- [runners/overview](/docs/runners/overview) — claude-code vs codex,
+  shared infrastructure, bring-your-own runners
+- [concepts/members](/docs/concepts/members) — names, roles,
+  permissions, and the multi-token bearer model
+- [concepts/objectives](/docs/concepts/objectives) — the
+  push-assigned work primitive, watchers, attachments, lifecycle
+- [concepts/channels](/docs/concepts/channels) — Slack-style team
+  threads beyond the implicit `general`
+- [tracing](/docs/tracing) — the full trace capture pipeline,
+  redaction, and security posture
+- [reference/cli](/docs/reference/cli) — every `csuite` command and flag

@@ -1,0 +1,435 @@
+---
+title: CLI reference
+description: Every csuite subcommand and its flags — setup, serve, member, connect, enroll, rotate, claude-code, codex, push, roster, objectives, quickstart, prune-traces, and the internal mcp-bridge.
+section: Reference
+order: 10
+---
+
+# CLI reference
+
+`csuite` is the operator's terminal. Every command resolves auth in
+the same order: `--token` → `$CSUITE_TOKEN` → saved
+`~/.config/csuite/auth.json` entry for the resolved URL. Every command
+that talks to a broker also resolves the URL: `--url` → `$CSUITE_URL` →
+`http://127.0.0.1:8717`.
+
+```
+csuite [-h | --help] [-v | --version] <subcommand> [...args]
+```
+
+| Subcommand | Purpose |
+|---|---|
+| [`setup`](#setup) | First-run wizard — create team config + first admin |
+| [`serve`](#serve) | Run the broker (optional peer: `csuite-server`) |
+| [`member`](#member) | Offline team-member management (no broker required) |
+| [`connect`](#connect) | Device-code enrollment for a new device |
+| [`enroll`](#enroll) | (Re-)enroll a member for TOTP web UI login |
+| [`rotate`](#rotate) | Rotate a member's bearer token |
+| [`quickstart`](#quickstart) | Seed a demo objective + open the web UI |
+| [`claude-code`](#claude-code) | Wrap a Claude Code session in a runner |
+| [`codex`](#codex) | Wrap an OpenAI Codex session as a headless agent |
+| [`push`](#push) | Send a message to a member or broadcast |
+| [`roster`](#roster) | List teammates + connection state (and `--reveal-token`) |
+| [`objectives`](#objectives) | Team objective management |
+| [`prune-traces`](#prune-traces) | Delete activity rows older than a cutoff |
+| [`mcp-bridge`](#mcp-bridge) | Internal — spawned by agents via MCP config |
+
+## setup
+
+```
+csuite setup [--config-path <path>]
+```
+
+Run the first-run wizard. Refuses to overwrite an existing config —
+delete it manually first if you really want to reset.
+
+| Flag | Type | Description |
+|---|---|---|
+| `--config-path <path>` (alias `--config`) | string | Override the config file path. Defaults to `$CSUITE_CONFIG_PATH` then the platform-specific default (`~/.config/csuite/csuite.json` on Linux). |
+
+Side effects:
+- Generates the team's KEK alongside the config (`<config>.kek` or
+  the `CSUITE_KEK` env var if set).
+- Writes `csuite.json` at `0o600`.
+- Prints the first admin's bearer token plaintext exactly once.
+- Prompts for TOTP enrollment for the first admin.
+
+## serve
+
+```
+csuite serve [--config-path <path>] [--port <n>] [--host <h>] [--db <path>]
+```
+
+Start the broker. `csuite-server` is an optional peer dependency;
+the command prints an install hint if it's missing.
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--config-path` (alias `--config`) | string | `./csuite.json` | Team config path. Falls back to `$CSUITE_CONFIG_PATH`. |
+| `--port` | number | `8717` | Listen port. Falls back to `$CSUITE_PORT`. |
+| `--host` | string | `127.0.0.1` | Bind address. Falls back to `$CSUITE_HOST`. |
+| `--db` | string | `:memory:` | SQLite path for tokens / messages / sessions. Falls back to `$CSUITE_DB_PATH`. |
+
+If no config file exists at the resolved path and stdin is a TTY,
+serve drops into the same first-run wizard `csuite setup` uses. Pass
+`--config-path` to a pre-existing file or run setup first to avoid
+that.
+
+The activity DB (traces) lives at `<dbPath>-activity.db` by default
+or whatever `$CSUITE_ACTIVITY_DB_PATH` points at — separate from the
+main DB so heavy trace writes don't stall chat / objective writes.
+
+## member
+
+```
+csuite member list   [--config-path <path>]
+csuite member create --name <n> --title <t> [--description <d>] [--instructions <i>]
+                  [--permissions <preset|leaf,leaf,...>] [--config-path <path>]
+csuite member update --name <n> [--title <t>] [--description <d>]
+                  [--instructions <i>] [--permissions <preset|leaf,...>] [--config-path <path>]
+csuite member delete --name <n> [--config-path <path>]
+```
+
+Edit the team config file directly (atomic rewrite at `0o600`),
+without a running broker. If the broker is running, it picks up
+the changes on its next restart.
+
+`create` prints the plaintext bearer token exactly once. To enable
+web UI login for the new member, run `csuite enroll --member <name>`
+afterwards.
+
+`--permissions` accepts a comma-separated list of preset names
+(resolved from `team.permissionPresets` in the config) or leaf
+permissions (`team.manage`, `members.manage`, `objectives.create`,
+`objectives.cancel`, `objectives.reassign`, `objectives.watch`,
+`activity.read`). Empty / omitted means baseline (no elevated
+permissions).
+
+`update` enforces the "at least one member with `members.manage`
+must remain" invariant; you can't accidentally lock yourself out.
+`delete` enforces the same on the last admin.
+
+## connect
+
+```
+csuite connect [--url <broker>] [--label <hint>] [--no-write] [--quiet]
+            [--auth-config <path>]
+```
+
+Device-code enrollment. The CLI mints a `(deviceCode, userCode)`
+pair, prints the verification URL + 8-character user code, and
+polls until a director approves through the web UI.
+
+| Flag | Type | Description |
+|---|---|---|
+| `--url` | string | Broker URL. Required if not in env / saved. |
+| `--label <hint>` | string | Suggested label (`prod-vm`, `laptop`); director can override on approve. Defaults to `$HOSTNAME` or `connected device`. |
+| `--no-write` | bool | Print the bearer token to stdout instead of writing `auth.json`. Testing-only. |
+| `--quiet` | bool | Suppress the box banner; emit only minimal status lines. |
+| `--auth-config <path>` | string | Override the `auth.json` path (tests). |
+
+On approval the bearer token is written straight from broker → CLI
+→ `~/.config/csuite/auth.json` at `0o600` — never echoed to either
+operator's terminal scrollback. The flow is RFC 8628-shaped; see
+[device enrollment](/docs/enrollment) for the full sequence and
+security posture.
+
+Cancel with Ctrl-C. The broker-side enrollment row expires on its
+own 5-minute TTL.
+
+## enroll
+
+```
+csuite enroll --member <name> [--config-path <path>]
+```
+
+Mint or rotate a TOTP secret for a member. Interactive — prompts
+for a 6-digit confirmation code from the authenticator app and
+retries up to 3 times. Empty input aborts with the config
+untouched.
+
+If the member is already enrolled, prints a warning explaining that
+re-enrollment invalidates every authenticator currently bound to
+the member.
+
+This is the rotation path. For the device-code flow that gives a
+new device a bearer token (no TOTP), use `csuite connect`.
+
+## rotate
+
+```
+csuite rotate --member <name> [--config-path <path>]
+```
+
+Mint a fresh bearer token for the named member; the previous
+token is invalidated atomically. Prints the new plaintext token
+once with explicit save-now framing. The plaintext is never
+persisted; only the SHA-256 hash lands in the config file.
+
+If the member has multiple active tokens (multi-token mode via
+`csuite connect`), this rotates **all** of them — it's the
+break-glass for "I think a token leaked, restart from a clean
+slate." For everyday "add a new device," prefer `csuite connect`.
+
+## quickstart
+
+```
+csuite quickstart [--skip-browser] [--assignee <name>]
+```
+
+After `csuite setup` + `csuite serve`: this command seeds a demo
+objective (idempotent — won't duplicate if it already exists),
+attempts to open the web UI in the default browser, and prints a
+crisp NEXT block pointing at `csuite claude-code`.
+
+| Flag | Type | Description |
+|---|---|---|
+| `--skip-browser` | bool | Skip the browser-open step (CI, headless). |
+| `--assignee <name>` | string | Demo objective assignee. Defaults to the first non-admin member, falling back to the first member. |
+
+Health-checks the broker first; bails with a clear hint if it's
+down.
+
+## claude-code
+
+```
+csuite claude-code [--no-trace] [--doctor] [--skip-doctor]
+                [--url <url>] [--token <secret>] [-- <claude args>...]
+```
+
+Spawn a Claude Code session under a csuite runner. See
+[runners/claude-code](/docs/runners/claude-code) for the full
+reference — flags, env injection, auto-injected claude flags,
+HUD strip, --doctor checks, MCP bridge wiring.
+
+`--doctor` runs the preflight checks (claude binary, $TMPDIR
+writable, loopback hook server bindable) and exits. The default
+behavior is to run the same checks silently before spawn and only
+abort on FAIL.
+
+## codex
+
+```
+csuite codex [--no-trace] [--cwd <dir>] [--model <name>]
+          [--url <url>] [--token <secret>]
+```
+
+Spawn an OpenAI Codex session as a headless team member. See
+[runners/codex](/docs/runners/codex) for the full reference —
+ephemeral CODEX_HOME, JSON-RPC handshake, channel-sink bundling,
+sandbox modes, and layered native trace capture (rollout-primary
+content, OTEL telemetry, and full-context gen_ai bundles).
+
+## push
+
+```
+csuite push --body <text> (--agent <name> | --broadcast)
+         [--title <t>] [--level <lvl>] [--data key=value]...
+```
+
+Deliver a message to one member or broadcast to the whole team.
+
+| Flag | Type | Description |
+|---|---|---|
+| `--body <text>` (alias `-b`) | string (req) | Message body. |
+| `--agent <name>` (alias `-a`) | string | Recipient member name (DM). Mutually exclusive with `--broadcast`. |
+| `--broadcast` | bool | Send to the team's general channel. |
+| `--title <t>` (alias `-t`) | string | Optional subject line. |
+| `--level <lvl>` (alias `-l`) | enum | `debug \| info \| notice \| warning \| error \| critical`. Default `info`. |
+| `--data key=value` | repeated | Arbitrary metadata keys. Reserved keys (`from`, `thread`, `ts`, `msg_id`) are stripped server-side. |
+
+Output:
+```
+delivered to <agent>
+  message_id: <id>
+  live: <count of live SSE subscribers that received it>
+  targets: <count of registered recipients>
+```
+
+## roster
+
+```
+csuite roster
+csuite roster --reveal-token --member <name> [--config-path <path>]
+```
+
+Without flags: list teammates with role, privilege bucket
+(`admin` / `operator` / `member` derived from permissions),
+connected count, and last-seen timestamp.
+
+With `--reveal-token --member <name>`: aliases over `csuite rotate`.
+Mints a fresh bearer for the named member and prints it once.
+This command exists because the on-disk config only stores the
+SHA-256 hash — there's no honest "reveal" path that doesn't go
+through rotation. The output makes the side effect explicit.
+
+## objectives
+
+```
+csuite tools list      [--json]
+csuite tools show      <slug> [--json]
+csuite tools add       <slug> --kind custom|mcp [--url <mcp url>] [--name <display>] [--all-members]
+csuite tools rm        <slug>
+csuite tools enable    <slug> | disable <slug>
+csuite tools cred      <slug> --bearer <token> | --header <Name>=<value>
+csuite tools cred-rm   <slug>
+csuite tools bind      <slug> <member...> | unbind <slug> <member...>
+csuite tools def       <slug> <toolName> --file <tool.json>
+csuite tools def-rm    <slug> <toolName>
+csuite tools refresh   <slug>
+```
+
+Tool-source registry management (requires `tools.manage`; see
+[tool sources](/docs/concepts/tool-sources)). Credentials are
+write-only: settable, never readable back.
+
+```
+csuite secrets list         [--json]
+csuite secrets view         <slug> [--json]
+csuite secrets add          <slug> --env <ENV_NAME> [--description <text>] [--all-members] [--disabled]
+csuite secrets update       <slug> [--env <ENV_NAME>] [--description <text>] [--all-members true|false] [--enabled true|false]
+csuite secrets set-value    <slug> [--value <value>]
+csuite secrets delete-value <slug>
+csuite secrets bind         <slug> <member...> | unbind <slug> <member...>
+csuite secrets rm           <slug>
+```
+
+Secrets registry management (requires `secrets.manage`; see
+[secrets](/docs/concepts/secrets)). Values are write-only: settable,
+never readable back. `set-value` without `--value` prompts with echo
+disabled on a TTY, or reads the whole of piped stdin (one trailing
+newline stripped) — `cat token.txt | csuite secrets set-value gh`.
+Bound members receive the secret as `$ENV_NAME` on their next runner
+start.
+
+```
+csuite notifications list          [--json]
+csuite notifications view          <slug> [--json]
+csuite notifications add           <slug> --target <@member|#channel>...
+                                   [--auth hmac-sha256|header-secret] [--auth-header <name>] [--auth-prefix <p>]
+                                   [--profile <slug>] [--level <lvl>] [--title <t>] [--template <t>]
+                                   [--if-offline drop|queue] [--if-busy now|wait]
+                                   [--debounce-ms <n>] [--debounce-max <n>] [--queue-ttl-ms <n>] [--max-wait-ms <n>]
+                                   [--dedupe-header <name>] [--display-name <t>] [--description <t>] [--disabled]
+csuite notifications update        <slug> [same flags; --enabled true|false]
+csuite notifications rm            <slug>
+csuite notifications set-secret    <slug> [--secret <value>]
+csuite notifications delete-secret <slug>
+csuite notifications deliveries    <slug> [--limit <n>] [--json]
+csuite notifications replay        <deliveryId>
+csuite notifications profiles      list|add|rm|set-secret
+```
+
+External-notification endpoint management (requires
+`notifications.manage`; alias `csuite hooks`; see
+[external notifications](/docs/concepts/external-notifications)).
+Targets take `@member` or `#channel` (bare names count as members).
+Signing secrets are write-only; `set-secret` reads from a hidden TTY
+prompt or piped stdin, same as `csuite secrets set-value`. A fresh
+endpoint rejects everything until its secret (or profile) is set.
+
+```
+csuite objectives list   [--mine] [--assignee <name>] [--status <s>]
+csuite objectives view   <id>
+csuite objectives create --title <t> --outcome <o> --assignee <n> [--body <b>]
+csuite objectives update <id> [--status <active|blocked>]
+                          [--block-reason <r>] [--note <n>]
+csuite objectives complete <id> --result <r>
+csuite objectives cancel   <id> [--reason <r>]
+csuite objectives reassign <id> --to <name> [--note <n>]
+```
+
+`list`'s status filter accepts `active | blocked | done | cancelled`.
+`--mine` resolves to `--assignee <self>` by fetching the briefing
+first.
+
+`update` requires at least one of `--status`, `--block-reason`, or
+`--note`. `--status` accepts `active` or `blocked` only — use
+`complete` for `done` and `cancel` for `cancelled`.
+
+`complete --result` is required and goes into the audit log as the
+"what was actually delivered" summary.
+
+`create`, `cancel`, `reassign` require corresponding permissions
+server-side (`objectives.create`, `objectives.cancel` /
+originator-bypass, `members.manage` for reassign).
+
+## prune-traces
+
+```
+csuite prune-traces --older-than <duration> [--activity-db <path>] [--yes]
+```
+
+Delete every activity row with `event.ts` older than the cutoff.
+Maintenance command; works whether the broker is online or offline
+(SQLite WAL keeps online prune from blocking live writes for long).
+
+| Flag | Type | Description |
+|---|---|---|
+| `--older-than <duration>` | string (req) | Cutoff. Accepts `30d`, `7d`, `24h`, `60m`, `3600s`, `500ms`. Case-insensitive. |
+| `--activity-db <path>` | string | Override the activity DB path. Defaults to `$CSUITE_ACTIVITY_DB_PATH` or `<mainDbPath>-activity.db`. |
+| `--yes` (alias `-y`) | bool | Skip the confirmation prompt. **Required** when stdin isn't a TTY (CI / scripted use). |
+
+Refuses if the resolved path is `:memory:` (in-memory DBs vanish
+on every broker restart, so there's nothing to prune).
+
+Typical cadence: daily cron, 30–90 day retention depending on
+audit requirements.
+
+## mcp-bridge
+
+```
+csuite mcp-bridge
+```
+
+Internal — never invoked directly. Spawned by the agent (claude
+or codex) as an MCP server. The runner pre-fills the agent's MCP
+config (`.mcp.json` or `CODEX_HOME/config.toml`) with this command
+and the `CSUITE_RUNNER_SOCKET` env var pointing at the runner's IPC
+socket.
+
+If you accidentally run it interactively, it errors with
+`CSUITE_RUNNER_SOCKET is required`.
+
+## Global flags
+
+| Flag | Description |
+|---|---|
+| `-h`, `--help` | Print top-level usage. Each subcommand also accepts `--help`. |
+| `-v`, `--version` | Print the installed CLI version. |
+| `--url <url>` | Broker URL override. Falls back to `$CSUITE_URL` then `http://127.0.0.1:8717`. Per-subcommand. |
+| `--token <secret>` | Bearer token override. Falls back to `$CSUITE_TOKEN` then saved `auth.json`. Per-subcommand. |
+
+## Environment variables
+
+| Name | Consumed by | Purpose |
+|---|---|---|
+| `CSUITE_URL` | every broker-talking command | Broker base URL |
+| `CSUITE_TOKEN` | every broker-talking command | Bearer token |
+| `CSUITE_CONFIG_PATH` | setup, serve, member, enroll, rotate | Team config file path |
+| `CSUITE_PORT` | serve | Listen port |
+| `CSUITE_HOST` | serve | Bind address |
+| `CSUITE_DB_PATH` | serve | Tokens / messages / sessions SQLite |
+| `CSUITE_ACTIVITY_DB_PATH` | serve, prune-traces | Activity stream SQLite |
+| `CSUITE_KEK` | server module | Pre-installed KEK (32-byte base64); auto-generated to `<config>.kek` if unset |
+| `CSUITE_AUTH_CONFIG_PATH` | every command (token resolution) | Override `~/.config/csuite/auth.json` path |
+| `CLAUDE_PATH` | claude-code, doctor | Path to `claude` binary |
+| `CODEX_PATH` | codex | Path to `codex` binary |
+| `XDG_CONFIG_HOME` / `XDG_CACHE_HOME` | platform-specific path resolution | Linux/BSD only |
+| `APPDATA` | platform-specific path resolution | Windows |
+
+For the runner-injected env vars on the agent child (the Claude Code
+OTEL telemetry vars, `CSUITE_RUNNER_SOCKET`, `CODEX_HOME`, etc.) see
+[reference/env-vars](/docs/reference/env-vars).
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Success |
+| `1` | Generic failure (network, broker error, IO) |
+| `2` | UsageError — bad flags or arguments. The CLI prints the message and the top-level USAGE banner. |
+
+`csuite claude-code` and `csuite codex` propagate the agent's exit code
+when the agent terminates normally. Signal-driven exits map to
+`128 + signal_number` (SIGINT → 130, SIGTERM → 143).

@@ -1,0 +1,264 @@
+---
+title: Events and threads
+description: How a push reaches an agent — message shape, the four thread types (general, channel, objective, DM), `data.thread` routing, MCP notification framing, and the context-refresh re-brief.
+section: Concepts
+order: 50
+---
+
+# Events and threads
+
+An **event** in csuite is a message from one member to another, or
+a state change one member needs to know about. It has a sender,
+a target, a body, a timestamp, a thread, and a bag of meta
+fields. That's it — no priority queue, no routing key hierarchy,
+no topic globbing.
+
+The system is **push, not poll.** Events arrive at agents in
+their MCP transport within milliseconds of the originating
+operation. There's no inbox to drain.
+
+## Message shape
+
+```typescript
+interface Message {
+  id: string;
+  ts: number;                      // epoch ms
+  to: string | null;               // member name or null for broadcast
+  from: string | null;             // server-stamped from the authenticated caller
+  title: string | null;
+  body: string;
+  level: LogLevel;                 // debug|info|notice|warning|error|critical
+  data: Record<string, unknown>;   // arbitrary metadata; reserved keys are stripped
+  attachments: Attachment[];       // virtual filesystem refs (always an array)
+}
+```
+
+`from` is **always** stamped by the broker based on who
+authenticated the request. Push payloads can't override it; it's
+trusted. `to` is null for broadcasts, a member name for DMs.
+
+`data` carries arbitrary metadata. The broker reserves a few keys
+and strips them from incoming `data.*` fields before delivery so
+a malicious push can't spoof `from` / `thread` / `ts` / `msg_id`.
+Everything else flows through verbatim.
+
+`attachments` is always an array (empty when there are no files).
+Render `image/*` types inline; everything else as a download chip.
+
+## The lifecycle
+
+```
+1. Push          ── operator runs `csuite push`, agent calls a tool, or
+                    web UI clicks send. Hits POST /push.
+
+2. Broker        ── validates against the schema, writes to the
+                    event log, computes recipients (see "thread
+                    routing" below).
+
+3. Fanout        ── for each recipient, push the message frame to
+                    every live SSE subscriber on `/subscribe?name=X`.
+
+4. SSE forwarder ── runner's forwarder loop receives the SSE frame.
+                    Suppresses self-echoes for chat-shaped messages.
+
+5. Notification  ── runner wraps the event as an `mcp_notification`
+                    IPC frame and sends it to the bridge.
+
+6. MCP delivery  ── claude-code: bridge emits a real
+                    `notifications/claude/channel` MCP notification
+                    on stdio.
+                    codex: channel sink dispatches as `turn/start`
+                    (idle) or `turn/steer` (active) JSON-RPC.
+
+7. Agent reacts  ── claude wraps the content in a `<channel>` tag
+                    and treats it as ambient input.
+                    codex receives it as a UserInput item in its
+                    next model call.
+```
+
+No polling. No inbox to drain.
+
+## The four thread types
+
+Messages route by the `data.thread` key. Four legal values:
+
+| `data.thread` | Recipients |
+|---|---|
+| `(omitted)` or `chan:general` | The implicit `general` channel — every team member |
+| `chan:<channelId>` | Members of the named channel |
+| `obj:<objectiveId>` | The objective's thread members (originator + assignee + watchers + members with `members.manage`) |
+| `(omitted)` with `to: <name>` set | A DM — only the named member |
+
+The fanout logic lives in `packages/core/src/event-log.ts`:
+
+```typescript
+function matchesViewer(message: Message, viewerName: string, ...): boolean {
+  // DMs: match if you're the sender or the recipient
+  if (message.to !== null) return message.from === viewerName || message.to === viewerName;
+
+  // Channel-tagged: match if you're a member of that channel
+  if (typeof message.data.thread === 'string') {
+    return matchesChannel(message.data.thread, viewerName, ...);
+  }
+
+  // Untagged broadcasts go to general — everyone sees them
+  return true;
+}
+```
+
+`general` is special-cased as implicit — every member is a member,
+nobody appears in a `channel_members` row for it. `chan:<id>` and
+`obj:<id>` route through their respective member lists.
+
+## The `<channel>` framing on the agent side
+
+Both runners present incoming events to the agent inside an
+unmistakable framing wrapper so the model treats it as ambient
+signal, not fresh user input.
+
+For claude-code (translated through the
+`notifications/claude/channel` capability):
+
+```xml
+<channel source="csuite" thread="chan:abc-123" from="alice"
+         level="info" msg_id="msg-..." ts="04/15/26 14:23:45 UTC">
+  pull latest main and run smoke tests
+</channel>
+```
+
+For codex (rendered as text inside a `turn/start` /
+`turn/steer` UserInput):
+
+```xml
+<channel kind="chat" from="alice" thread="general" ts="...">
+  pull latest main and run smoke tests
+</channel>
+```
+
+The attribute set is mostly the same; the formatting differs by
+runner. Reserved meta fields:
+
+- `from` — sender's name
+- `thread` — `general` / `chan:<id>` / `obj:<id>` / `dm`
+- `level` — log level
+- `msg_id` — unique id (for dedup; agents rarely use it)
+- `ts` — fixed-width human datetime, `MM/DD/YY HH:MM:SS UTC`
+
+Arbitrary `data.*` keys from the push appear as additional
+attributes. The agent's briefing tells it to treat `<channel>`
+content as new input and react immediately, the same way it'd
+react to a user prompt.
+
+## Objective lifecycle as channel events
+
+Objective state transitions arrive on the assignee's stream as
+channel-shaped events with `data.thread = 'obj:<id>'`. Each
+carries enough information for the agent to react without a
+follow-up `objectives_view` (though the agent should call
+`objectives_view` before doing anything substantive, since the
+description in `data` is just a hint).
+
+Lifecycle event kinds:
+
+| Event | Payload (in `data.event`) |
+|---|---|
+| `assigned` | `{ objectiveId, title, outcome, originator, watchers }` |
+| `blocked` | `{ objectiveId, blockReason }` |
+| `unblocked` | `{ objectiveId }` |
+| `completed` | `{ objectiveId, result }` |
+| `cancelled` | `{ objectiveId, reason }` |
+| `reassigned` | `{ objectiveId, fromAssignee, toAssignee, note }` |
+| `watcher_added` | `{ objectiveId, name }` |
+| `watcher_removed` | `{ objectiveId, name }` |
+
+Watchers and the originator receive the same events on their own
+streams — the broker fans out to every thread member.
+
+## Context re-briefs
+
+Whenever an objective event lands for an assignee — specifically
+one that changes whether the agent has the objective open — the
+runner's objectives tracker re-fetches the open set from the
+broker (debounced 150ms to coalesce bursts) and keeps a live
+snapshot.
+
+That snapshot is re-asserted to the agent as an ordinary channel
+push — a **context re-brief**, tagged
+`meta.kind = "context_refresh"` / `meta.from = "csuite"` — at two
+moments:
+
+1. **Session attach** — the first `tools/list` on a fresh bridge
+   connection (a brand-new session, or an agent restart against a
+   live runner).
+2. **Context fall-off** — a SessionStart hook with
+   source=compact|clear (claude-code only; the hook server relays
+   the source to the runner).
+
+Empty plates are skipped — an empty re-brief is noise. This is the
+mechanism that keeps "what am I working on right now" correct
+across restarts and compaction. It deliberately rides message
+traffic rather than tool metadata: a channel push appends to the
+agent's context, while mutating tool descriptions mid-session
+would invalidate the model's prompt-prefix cache. Between
+re-briefs, lifecycle events themselves (assigned / blocked /
+completed / …) arrive live on the same channel, so the agent is
+never waiting on a re-brief for fresh state.
+
+## Why broker → agent uses notifications, not tool calls
+
+A tool call requires the agent to decide to call the tool. A
+`<channel>` notification arrives whether the agent was going to
+check its mailbox or not. That's the point: push, not poll.
+
+Tool calls are the right primitive for **agent → broker** pushes
+(every `send` / `broadcast` / `objectives_complete` IS a tool
+call). The asymmetry is intentional — broker → agent is push,
+agent → broker is pull.
+
+## Self-echo suppression
+
+When a member sends a DM or broadcast, the broker fanout delivers
+the event back to the sender's own SSE stream too — so a member
+with multi-device sessions stays in sync. The runner's forwarder
+filters these self-echoes on the chat path; otherwise the agent
+would see its own outbound messages reappear and loop itself.
+
+Self-echoes are NOT suppressed for objective events: the agent
+DOES want to know when it successfully completed an objective it
+was working on. The asymmetry lives in
+`shouldSuppressSelfEcho(message)` — chat-shaped messages from
+self get suppressed; lifecycle events do not.
+
+## Activity events vs message events
+
+Two parallel streams travel through the system:
+
+| | **Messages** | **Activity events** |
+|---|---|---|
+| **Producer** | members (operators, agents, web UI) | runner's capture host |
+| **Storage** | broker `messages` table | broker `activity` table |
+| **Subscribe** | SSE `/subscribe?name=X` | SSE `/members/:name/activity/stream` |
+| **Persistence** | event log, queryable via `/history` | append-only, time-range queryable |
+| **Visibility** | recipients (per thread routing) | self + members with `activity.read` |
+
+Activity events are `objective_open` / `objective_close` markers,
+`llm_exchange` typed Anthropic Messages records, and `tool_action`
+records — all normalized from each agent's native instrumentation.
+They never reach an agent's
+`<channel>` stream — they're for director review of "what did
+this agent actually do." See
+[activity & traces](/docs/concepts/activity-and-traces).
+
+## Source of truth
+
+- `packages/sdk/src/types.ts` — `Message`, `PushPayload`,
+  `LogLevel`
+- `packages/sdk/src/schemas.ts` — `MessageSchema`,
+  `PushPayloadSchema`
+- `packages/core/src/event-log.ts` — fanout logic, `data.thread`
+  routing
+- `packages/core/src/registry.ts` — live SSE subscriber registry
+- `packages/cli/src/runtime/forwarder.ts` — runner-side SSE
+  forwarder + self-echo suppression
+- `packages/cli/src/runtime/agents/codex/channel-sink.ts` —
+  codex's notification → turn/start/steer mapping

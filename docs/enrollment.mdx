@@ -1,0 +1,316 @@
+---
+title: Device enrollment
+description: How `csuite connect` lets a CLI on any device join the broker via the RFC 8628 device-code flow — without copy-pasting a bearer token through clipboards or Slack.
+section: Guides
+order: 10
+---
+
+# Device enrollment
+
+`csuite connect` is the recommended onboarding flow for any CLI
+talking to the broker — your own laptop, a CI runner, a VM, a
+teammate's workstation. It's modeled on RFC 8628 (OAuth 2.0
+Device Authorization Grant), the same handshake `gh auth login`
+uses, with one tweak: the broker is its own identity provider, so
+there's no third party involved.
+
+## Why not just paste a token?
+
+The "create a member, copy the token, paste it into your VM's
+config" flow has been the default until now. It works, but it has
+a sharp edge: at some point the bearer plaintext exists in
+someone's clipboard, terminal scrollback, screenshot, IM thread,
+or Slack DM. Any of those surfaces can leak; some get cached and
+indexed by tools the operator has no control over.
+
+Device-code enrollment closes the gap by routing the plaintext
+**directly from the broker to the CLI on the connecting device** —
+the director who approves never sees it, no human types it, and
+no chat-style channel ever carries it.
+
+## The flow
+
+```
+┌────────────────────┐         ┌────────────────────┐         ┌────────────────────┐
+│ Operator's CLI     │         │ csuite broker         │         │ Director's browser │
+│ (the new device)   │         │                    │         │ (TOTP-signed-in)   │
+└─────────┬──────────┘         └─────────┬──────────┘         └─────────┬──────────┘
+          │                              │                              │
+          │  1. POST /enroll             │                              │
+          ├─────────────────────────────►│                              │
+          │  ← deviceCode + userCode     │                              │
+          │◄─────────────────────────────┤                              │
+          │                              │                              │
+          │  2. show URL + userCode to   │                              │
+          │     the operator             │                              │
+          │                              │                              │
+          │  3. poll /enroll/poll every  │                              │
+          │     interval seconds         │                              │
+          │  ──────────► ──────────►     │                              │
+          │  ← authorization_pending     │                              │
+          │                              │                              │
+          │                              │  4. director visits /enroll, │
+          │                              │     types userCode, picks    │
+          │                              │     bind/create, approves    │
+          │                              │  ◄─────────────────────────  │
+          │                              │                              │
+          │  5. next poll                │                              │
+          │  ────────────►               │                              │
+          │  ← bearer plaintext (one-shot)                              │
+          │◄─────────────────────────────┤                              │
+          │                              │                              │
+          │  6. CLI saves to             │                              │
+          │     ~/.config/csuite/auth.json  │                              │
+          │     at mode 0o600            │                              │
+          │                              │                              │
+└──────────────────────────────┴──────────────────────────────┘
+```
+
+### From the operator's side
+
+```bash
+$ csuite connect --url https://broker.example.com
+
+  ┌─────────────────────────────────────────────────────┐
+  │  visit:  https://broker.example.com/enroll?code=…   │
+  │  code:   KQ4M-7P2H                                  │
+  │  expires in 300s                                    │
+  └─────────────────────────────────────────────────────┘
+  waiting for approval... (press Ctrl-C to cancel)
+```
+
+The operator can ignore the code and just send the URL — the
+broker prefills the code via the query string. Both forms are
+equivalent; the code is the human-typeable fallback.
+
+The CLI polls `/enroll/poll` every 5 seconds (RFC 8628 default),
+respecting any `slow_down` response from the broker. When the
+director approves, the CLI's next poll resolves with the bearer
+token plaintext — written immediately to
+`~/.config/csuite/auth.json` at mode `0o600`. The plaintext is never
+echoed to stdout in the default flow (use `--no-write` to print
+it instead, an escape hatch for testing).
+
+### From the director's side
+
+The director — already signed in to the broker via TOTP — visits
+`/enroll` (or follows a deep link with `?code=…` prefilled),
+types the user code, and is shown:
+
+- **Source IP / User-Agent** — captured at mint time. Helps spot
+  a request from somewhere unexpected.
+- **Label hint** — what the operator suggested. Defaults to the
+  VM's hostname. The director can override.
+- **Bind to existing member** — pick from the team roster. Adds
+  a new bearer token to that member's existing tokens; their
+  other devices keep working.
+- **Create new member** — pick a name, role title/description,
+  permissions, and (optional) personal instructions. The member
+  is created on approval.
+
+After approval the director sees a confirmation banner. The CLI
+on the operator's side resolves on its next poll.
+
+## Token storage
+
+Each enrollment mints a new row in the broker's `tokens` SQLite
+table with `origin = 'enroll'` plus a label. The CLI saves it to
+`~/.config/csuite/auth.json`:
+
+```json
+{
+  "schema": 1,
+  "entries": [
+    {
+      "url": "https://broker.example.com",
+      "token": "csuite_…",
+      "savedAt": 1714255200000
+    }
+  ]
+}
+```
+
+File mode is `0o600` in a `0o700` directory; the path varies by
+OS:
+
+| OS         | Path                                                      |
+|------------|-----------------------------------------------------------|
+| Linux/BSD  | `$XDG_CONFIG_HOME/csuite/auth.json` (default `~/.config/csuite/`)|
+| macOS      | `~/Library/Application Support/csuite/auth.json`             |
+| Windows    | `%APPDATA%\csuite\auth.json`                                 |
+
+The CLI's auth resolver looks in this order:
+
+1. `--token <secret>` flag
+2. `CSUITE_TOKEN` environment variable
+3. The saved entry in `auth.json` for the resolved broker URL
+
+Existing CI / scripted setups using env vars or `--token` keep
+working unchanged.
+
+For the full file shape see [reference/config](/docs/reference/config).
+
+## Multi-token
+
+A member can hold many bearer tokens at once. Each enrollment
+adds one — operators don't need to share devices, and director
+rotation no longer means "kick everyone offline."
+
+Visible in the web UI under each member's Manage tab and in
+`GET /members/:name/tokens`:
+
+- **Label** — `prod-vm-east`, `laptop`, etc. Settable on approve.
+- **Origin** — `bootstrap` (carried from the on-disk config),
+  `rotate` (from `csuite rotate`), or `enroll` (from device-code).
+- **Created / last used / expires** — for forensic review.
+- **Revoke** — single-row delete via
+  `DELETE /members/:name/tokens/:id`, takes effect immediately.
+
+The legacy `csuite rotate` command still exists, with one semantic
+shift: it now revokes **every** active token for the named member
+and mints a fresh one. Use it as the break-glass for "I think a
+token leaked, restart from a clean slate." For everyday "add a
+new device," use `csuite connect`.
+
+For the member identity model + multi-token storage, see
+[concepts/members](/docs/concepts/members).
+
+## TOTP and session cookies
+
+Bearer tokens authenticate machine-plane requests (CLI commands,
+runner subscriptions). For human-plane access through the web
+UI, members log in with a TOTP code and the broker mints a
+short-lived session cookie:
+
+- `POST /session/totp` — body `{ code: "<6 digits>", member?: "<name>" }`
+- Sets `csuite_session` cookie (httpOnly, Secure on HTTPS, SameSite=Strict)
+- 7-day sliding TTL — every authenticated request bumps `last_seen`
+  and re-stamps the expiry, so an active session stays alive
+  indefinitely while an idle one expires after a week
+- Rate-limited: 5 failures / 15min per member, 10 failures /
+  15min global (when `member` is omitted and the server iterates
+  enrolled members to find a match)
+
+To enroll a member for TOTP, run `csuite enroll --member <name>`
+(interactive — prompts for a 6-digit confirmation code from the
+authenticator app). To rotate, re-run the same command — it
+warns first, then invalidates every authenticator currently
+bound.
+
+Bearer tokens stay as the recovery path for TOTP rotation:
+whoever can read the team config can re-enroll a member.
+
+## RFC 8628 alignment
+
+The endpoints follow RFC 8628 wire shape so OAuth-aware tooling
+recognizes the responses:
+
+- `POST /enroll` — device authorization request. Returns
+  `deviceCode`, `userCode`, `verificationUri`,
+  `verificationUriComplete`, `expiresIn`, `interval`.
+- `POST /enroll/poll` — the device-side token endpoint. Body
+  `{deviceCode}`. Success returns 200 with the bearer token;
+  failures return 400 + JSON body `{error: <code>}` where
+  `<code>` is one of:
+  - `authorization_pending` — keep polling
+  - `slow_down` — increment poll interval by 5s
+  - `expired_token` — TTL elapsed, restart
+  - `access_denied` — director rejected
+- `GET /enroll/pending` — director-only listing
+  (requires `members.manage`)
+- `POST /enroll/approve` / `POST /enroll/reject` —
+  director-only actions (require `members.manage`)
+
+Adaptations from vanilla RFC 8628:
+
+- No `client_id` — the broker is its own IdP, every enrollment
+  is treated equally.
+- `POST` everywhere (some implementations use form-encoded GETs).
+- The `device_code` plaintext is treated as a shared secret in
+  transit; the broker stores only its sha256 hash.
+
+## Security posture
+
+- **Plaintext in transit, hash at rest.** The device code is a
+  256-bit random plaintext shown to the CLI; the server stores
+  `sha256(device_code)` only. The user code is shown to humans
+  but is too short to be a secret on its own — the rate limit
+  on `/enroll` (10 mints / IP / hour) and the 5-min single-use
+  TTL bound brute-force.
+- **KEK at rest for the bearer plaintext.** Between approval and
+  the device's next poll, the issued bearer token plaintext sits
+  briefly in the `pending_enrollments` row, AES-256-GCM-encrypted
+  under the same KEK that wraps TOTP secrets. Auto-deleted after
+  one read or 5 min, whichever comes first.
+- **Single-use semantics.** A successful poll deletes the row in
+  the same transaction. Replays return `expired_token`.
+- **Per-IP rate limiting on mint.** 10 enrollments / IP / hour;
+  rejected with 429 + `Retry-After`.
+- **Constant-time-ish lookup.** Both `device_code_hash` and
+  `user_code` are SQL primary-key / UNIQUE indexed lookups, so
+  wall-clock cost doesn't reveal whether a row exists.
+- **Director-side gating.** Approve / reject require
+  `members.manage`. An operator running `csuite connect` cannot
+  approve themselves; the flow forces a separate identity (the
+  director, signed in via TOTP) into the loop.
+- **Source IP / UA visible to the director.** Display only —
+  never enforced. Helps spot a request from an unexpected origin
+  before approving.
+
+## Troubleshooting
+
+**`enrollment expired (5 min TTL)`** — the operator didn't get
+the director to approve in time. Run `csuite connect` again to
+start fresh.
+
+**`rejected by director`** — the director hit Reject. Check with
+them why; if it was a misclick, run `csuite connect` again.
+
+**`broker rate-limited this device (HTTP 429)`** — too many mint
+requests from this IP in the last hour. Wait or use a different
+IP; this is the spam-prevention guardrail.
+
+**`failed to reach broker at <url>`** — network / DNS / TLS
+issue. Verify the URL with `curl <url>/healthz`; for self-signed
+certs in LAN deployments you'll need to use the broker's HTTPS
+port and trust the cert.
+
+**`--token` / `CSUITE_TOKEN` still required after `csuite connect`** —
+your shell is preferring the env var over the saved entry.
+Either unset `CSUITE_TOKEN` or invoke the CLI with the URL that
+matches the saved entry exactly (the lookup is exact-match on
+URL, no trailing-slash normalization).
+
+## Break-glass: when device-code isn't an option
+
+The legacy print-and-paste path still works:
+
+```bash
+# Director, on any machine with the team config:
+csuite rotate --member alice
+# Prints the new plaintext token once. Save it. Old tokens for
+# `alice` are revoked in the same step.
+
+# Operator, on the device:
+export CSUITE_TOKEN='csuite_…'
+csuite claude-code
+```
+
+Reach for this when the director can't be reached for live
+approval — e.g. an air-gapped CI runner that needs an
+environment-variable secret. For everything else, prefer
+`csuite connect`.
+
+## Source of truth
+
+- `packages/sdk/src/types.ts` —
+  `DeviceAuthorizationRequest`, `DeviceAuthorizationResponse`,
+  `DeviceTokenRequest`, `DeviceTokenResponse`,
+  `DeviceTokenErrorCode`, `PendingEnrollment`,
+  `ApproveEnrollmentRequest`, `RejectEnrollmentRequest`,
+  `TokenInfo`, `TokenOrigin`
+- `packages/sdk/src/schemas.ts` — corresponding zod schemas
+- `apps/server/src/enrollments.ts` — server-side flow
+- `apps/server/src/tokens.ts` — multi-token SQLite store
+- `apps/server/src/totp.ts` — TOTP verification + rate limiting
+- `packages/cli/src/commands/connect.ts` — CLI client

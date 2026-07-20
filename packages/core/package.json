@@ -1,0 +1,54 @@
+{
+  "name": "csuite-core",
+  "version": "0.0.0",
+  "description": "Runtime-agnostic broker logic for csuite \u2014 agent registry, push fanout, SSE, event log.",
+  "license": "Apache-2.0",
+  "author": "Andrew Jon Przybilla <andrewjon@efficacious.io>",
+  "homepage": "https://github.com/the-efficacious/commandsuite#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/the-efficacious/commandsuite.git",
+    "directory": "packages/core"
+  },
+  "bugs": {
+    "url": "https://github.com/the-efficacious/commandsuite/issues"
+  },
+  "keywords": [
+    "csuite",
+    "mcp",
+    "agent",
+    "agent-control-plane",
+    "broker",
+    "event-bus"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf dist .turbo"
+  },
+  "dependencies": {
+    "csuite-sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.6"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

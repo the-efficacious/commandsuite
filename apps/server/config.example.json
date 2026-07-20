@@ -1,0 +1,25 @@
+{
+  "_comment": "csuite server config — the slim boot file at csuite.json. Holds ONLY infrastructure knobs that must exist before SQLite can open: storage paths, HTTPS, Web Push (VAPID), federated JWT, and file-upload caps. Team identity, members, permission presets, bearer tokens, and TOTP secrets ALL live in the database — manage them via `csuite team`, `csuite member`, `csuite presets`, the REST API, or MCP tools, NOT by editing this file. Hand-editing is supported only as a rescue path for deployment plumbing. The `webPush` VAPID keypair is auto-generated on first boot and written back here; add an optional `jwt` block { issuer, jwksUrl, audience } only when federating to a hosted control plane.",
+  "dbPath": "./data/csuite.db",
+  "activityDbPath": "./data/csuite-activity.db",
+  "filesRoot": "./data/files",
+  "https": {
+    "mode": "off",
+    "bindHttp": 8717,
+    "bindHttps": 7443,
+    "redirectHttpToHttps": true,
+    "hsts": "auto",
+    "selfSigned": {
+      "lanIp": null,
+      "validityDays": 365,
+      "regenerateIfExpiringWithin": 30
+    },
+    "custom": {
+      "certPath": null,
+      "keyPath": null
+    }
+  },
+  "files": {
+    "maxFileSize": 26214400
+  }
+}

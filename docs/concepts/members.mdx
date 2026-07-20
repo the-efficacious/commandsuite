@@ -1,0 +1,264 @@
+---
+title: Members
+description: How csuite thinks about identity — names, roles, instructions, tokens, and the multi-token model that lets a single member span many devices.
+section: Concepts
+order: 10
+---
+
+# Members
+
+A **member** is a named seat on a team. It has a name, a role, a
+private instructions block, a permission set, and one or more
+bearer tokens. Anything that holds a current token and speaks the
+protocol IS that member — for as long as it holds the token.
+
+This matters because agents come and go. A claude session crashes
+and restarts; a CI runner spins up; a teammate moves between
+machines. The member survives all of it. The identity is the
+member, not the process.
+
+## The four fields
+
+```typescript
+interface Member {
+  name: string;
+  role: { title: string; description: string };
+  instructions: string;          // private; visible only to self + members.manage
+  permissions: Permission[];     // resolved leaf permissions
+}
+```
+
+### Name
+
+The member's identity in the network — what `message.from` is
+stamped with, what `/roster` lists, what teammates address each
+other by, and what an agent sees as its own identity in its
+briefing. Names are 1–128 alphanumeric characters plus `.`, `_`,
+`-`, case-sensitive on the wire (the schema allows uppercase).
+
+Names are chosen at member creation time and can be anything —
+functional (`scout`, `builder`, `qa-lead`), numbered
+(`engineer-1`, `engineer-2`), or whatever matches how your team
+thinks. The broker doesn't care.
+
+```bash
+csuite push --agent scout --body "review the PR"
+csuite push --agent qa-lead --body "rerun the smoke tests"
+```
+
+### Role
+
+A short label + prose description. **Cosmetic.** The role appears
+in roster output and in the briefing prose pinned into the agent's
+system prompt ("In this team you go by builder / Your role here:
+engineer"). It does not gate anything; that's what permissions
+are for.
+
+```json
+{
+  "title": "engineer",
+  "description": "Writes and ships code. Owns assigned objectives end-to-end."
+}
+```
+
+The role is shared public context. Every teammate sees it in the
+roster.
+
+### Instructions
+
+A private prose block that's composed into the member's own
+briefing — into the agent's system prompt for runners, into the
+human's dashboard for browsers. **Not visible to teammates.**
+Up to 8192 characters.
+
+Use this for personal working directives: "always run tests before
+proposing a fix", "this director's preferred tone is terse",
+"escalate to alice on any DB schema change". Things you'd tell a
+new hire on day one.
+
+### Permissions
+
+A resolved flat list of [leaf permissions](/docs/concepts/permissions).
+Configured per member as a mix of preset names (resolved by the
+server) and leaves (`team.manage`, `members.manage`, etc.).
+Empty means baseline — the member can take work assigned to them,
+post in their own threads, manage their own files. Anything that
+touches other members' data or shapes the team itself requires
+specific permission leaves.
+
+There's no ranking and no inheritance — every leaf is
+independent.
+
+## Bearer tokens
+
+Authentication is bearer-token. A token is a long opaque secret
+that prefixes with `csuite_`:
+
+```
+csuite_<base64url, 32 bytes of randomness, 43 chars>
+```
+
+The plaintext is shown to whoever minted it **exactly once** —
+during `csuite setup`, after `csuite connect`, or returned by `csuite rotate`.
+Only the SHA-256 hash is persisted on the broker side. There's
+no honest way to "reveal" a token after the fact; the only thing
+you can do is rotate.
+
+```bash
+# At setup:
+csuite setup
+# > ┌─ BEARER TOKEN — save this now; it is not persisted anywhere else ─┐
+# > │ csuite_GRkbb...                                                       │
+# > └────────────────────────────────────────────────────────────────────┘
+
+# Later, on a new device:
+csuite connect --url https://broker.example.com
+# Plaintext goes straight from broker → CLI's ~/.config/csuite/auth.json,
+# never through scrollback.
+
+# Break-glass — invalidate every token for a member:
+csuite rotate --member alice
+```
+
+Treat tokens like SSH keys. If one leaks, rotate it.
+
+## Multi-token
+
+A member can hold many bearer tokens at once. Every `csuite connect`
+adds one — operators don't need to share devices, and director
+rotation no longer means "kick everyone offline." Tokens carry
+metadata for forensic review:
+
+```typescript
+interface TokenInfo {
+  id: string;                       // uuid; used for revocation
+  memberName: string;
+  label: string;                    // "laptop", "ci-runner", "prod-vm"
+  origin: 'bootstrap' | 'rotate' | 'enroll';
+  createdAt: number;
+  lastUsedAt: number | null;
+  expiresAt: number | null;
+  createdBy: string | null;         // who minted it
+}
+```
+
+`origin` encodes provenance:
+
+| Value | Source |
+|---|---|
+| `bootstrap` | Carried across the first-boot config-file → SQLite migration |
+| `rotate` | Issued by `csuite rotate` (also revokes peer tokens) |
+| `enroll` | Issued through the device-code flow (`csuite connect`) |
+
+Visible in the web UI under each member's Manage tab; revocable
+per-row via `DELETE /members/:name/tokens/:id`. Revoking the
+token currently authenticating the request is allowed (you're
+signing off this device yourself).
+
+`csuite rotate` is the break-glass for "I think a token leaked,
+restart from a clean slate" — it revokes every active token for
+the member and mints a fresh one. For everyday "add a new
+device," prefer `csuite connect`.
+
+## TOTP for web UI access
+
+Members who'll log in via the web UI need a TOTP secret enrolled.
+The `csuite setup` wizard prompts for the first admin's TOTP at team
+creation; subsequent members enroll via `csuite enroll --member <name>`
+or through the web UI's account settings.
+
+TOTP is independent of bearer tokens — the web UI mints a
+short-lived session cookie after a successful TOTP exchange,
+backed by the broker's `sessions` table. Bearer tokens stay as
+the recovery path: the team config is the source of truth, and
+anyone who can read it can re-enroll TOTP.
+
+Re-enrolling a member who already has a secret rotates it and
+invalidates every authenticator currently bound. The CLI prints
+a warning before proceeding.
+
+## How members map to runner sessions
+
+Every `csuite claude-code` or `csuite codex` invocation authenticates as
+exactly one member, and the runner cached briefing carries the
+member's identity for the entire session:
+
+```
+        member ─┬─── csuite claude-code on laptop (token A)
+                ├─── csuite codex on workstation  (token B)
+                └─── csuite push from terminal    (token C)
+```
+
+The broker stamps `from = <member name>` on every push the
+member's tokens originate. Multiple processes holding tokens for
+the same member act as that member from the broker's perspective —
+you can have one human pushing and one agent working under the
+same identity at the same time, and the broker fans messages out
+to both.
+
+The `/subscribe` endpoint enforces `agentName === self.name`:
+your runner can only subscribe to messages addressed to its own
+member. There's no impersonation surface.
+
+## Member lifecycle
+
+### Create
+
+Two paths:
+
+- **Wizard** (`csuite setup`) creates the first admin. Self-prompts
+  for name, role title, role description, and TOTP enrollment.
+- **Subsequent members**: `csuite member create` (offline, edits the
+  config directly) or `POST /members` (online, requires
+  `members.manage`).
+
+```bash
+csuite member create --name builder --title engineer \
+  --description "Implements features end-to-end" \
+  --permissions objectives.cancel \
+  --instructions "Always write a test that fails first."
+```
+
+### Update
+
+`csuite member update --member <name>` patches role / instructions /
+permissions. The server enforces the "at least one admin must
+remain" invariant — you can't accidentally lock the team out.
+
+### Delete
+
+`csuite member delete --member <name>` removes the member from the
+config. Same invariant. The member's tokens are invalidated;
+their objectives don't auto-cascade — directors should reassign
+or cancel any open objectives owned by the member first.
+
+### TOTP rotation
+
+`csuite enroll --member <name>` mints a fresh secret. Re-running on
+an already-enrolled member rotates and invalidates the old
+authenticator.
+
+## Roles vs presets vs permissions
+
+Three concepts, easy to confuse:
+
+| Concept | Stored where | Effect |
+|---|---|---|
+| **Role** | `Member.role` | Cosmetic label + prose. Surfaces in roster + briefings. Doesn't gate anything. |
+| **Permission preset** | `Team.permissionPresets` | Named bundle of leaf permissions. Members reference by name. |
+| **Permission** | `Member.permissions` (resolved leaf list) | The actual access control. Checked on every mutating endpoint. |
+
+A member's role can say "director" while their permissions are
+just `objectives.create` — the title is what teammates call them,
+the permissions decide what they can actually do. Production
+deployments often pair a small number of presets (`admin`,
+`operator`, `viewer`) with arbitrary role titles per individual.
+
+## Source of truth
+
+- `packages/sdk/src/types.ts` — `Member`, `Teammate`, `Role`,
+  `Permission`, `TokenInfo`
+- `packages/sdk/src/schemas.ts` — `MemberSchema`, `TeammateSchema`,
+  `NameSchema`, `TokenInfoSchema`
+- `apps/server/src/members.ts` — server-side member store
+- `apps/server/src/tokens.ts` — multi-token storage in SQLite

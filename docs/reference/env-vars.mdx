@@ -1,0 +1,193 @@
+---
+title: Environment variables
+description: Every environment variable csuite reads — client side, server side, and the OpenTelemetry export variables the runner injects on the Claude Code child.
+section: Reference
+order: 60
+---
+
+# Environment variables
+
+This page is the authoritative list. Variables are grouped by who
+reads them.
+
+## Client side (CLI commands)
+
+Read by every `csuite` subcommand that talks to a broker.
+
+| Name | Default | Purpose |
+|---|---|---|
+| `CSUITE_URL` | `http://127.0.0.1:8717` | Broker base URL. Overridden by `--url`. |
+| `CSUITE_TOKEN` | (none — required) | Bearer token. Overridden by `--token`. Falls back to `~/.config/csuite/auth.json` if neither is set. |
+| `CSUITE_AUTH_CONFIG_PATH` | platform-specific (see below) | Override the auth-config file path. |
+| `CLAUDE_PATH` | `which claude` | Path to the Claude Code binary. Used by `csuite claude-code` and `--doctor`. |
+| `CODEX_PATH` | `which codex` | Path to the OpenAI Codex binary. Used by `csuite codex`. |
+| `CSUITE_CLAUDE_MCP_MODE` | `flag` | How `csuite claude-code` wires the csuite MCP server into Claude Code. `flag` passes it via `--mcp-config` (ephemeral); `inject` writes it into the Claude MCP config instead. |
+
+Auth-config path resolution (in absence of `CSUITE_AUTH_CONFIG_PATH`):
+
+| OS | Path |
+|---|---|
+| Linux/BSD | `$XDG_CONFIG_HOME/csuite/auth.json` (default `~/.config/csuite/auth.json`) |
+| macOS | `~/Library/Application Support/csuite/auth.json` |
+| Windows | `%APPDATA%\csuite\auth.json` |
+
+## Server side (broker)
+
+Read by `csuite serve` and the embedded `csuite-server` package.
+
+| Name | Default | Purpose |
+|---|---|---|
+| `CSUITE_CONFIG_PATH` | platform-specific | Team config file (`csuite.json`) path. |
+| `CSUITE_PORT` | `8717` | Listen port. |
+| `CSUITE_HOST` | `127.0.0.1` | Bind address. |
+| `CSUITE_DB_PATH` | `:memory:` | SQLite path for tokens / messages / sessions. |
+| `CSUITE_ACTIVITY_DB_PATH` | `<dbPath>-activity.db` | SQLite path for the activity stream (per-member traces). |
+| `CSUITE_KEK` | auto-generated to `<config>.kek` | Key encryption key — 32-byte base64. Wraps TOTP secrets and the VAPID private key on disk. |
+
+When `CSUITE_KEK` is unset, the server generates a random KEK on first
+boot and writes it to `<config>.kek` at `0o600` next to the team
+config. Subsequent boots read from that file. Set the env var
+yourself if you'd rather inject the key from a secrets manager.
+
+`CSUITE_DB_PATH=:memory:` is the default for ergonomics — the
+broker comes up immediately and lets you push messages without
+persisting state across restarts. For real deployments set it to
+a file path; that's what enables enrollment, multi-token, sessions,
+and message history.
+
+The `CSUITE_ACTIVITY_DB_PATH` derivation: when the main DB is
+`./csuite.db`, the activity DB defaults to `./csuite-activity.db`. Same
+basename, `-activity` suffix before the extension. Override
+explicitly when you want to put traces on a separate disk for IO
+isolation.
+
+## Runner-injected on the agent child
+
+`csuite claude-code` and `csuite codex` set these on the spawned
+agent's environment. The agent process — claude or codex — sees
+them; you never set them yourself. They are **runner-managed /
+internal** knobs, listed here for reference and debugging only.
+
+### Broker-held secrets (admin-defined)
+
+Beyond the fixed vars below, the runner injects every
+[secret](/docs/concepts/secrets) bound to its member: it calls
+`GET /secrets/resolve` on its own bearer right before spawn and
+merges the returned env map into the child environment. The variable
+names are admin-chosen (e.g. `GITHUB_TOKEN`); reserved names —
+`CSUITE_*`, `OTEL_*`, `CLAUDE_CODE_*`, `CODEX_*`, `PATH`,
+`LD_*`/`DYLD_*`, `NODE_OPTIONS`, and other loader/interpreter
+control variables — are rejected broker-side and re-filtered by the
+runner, and runner-managed vars are merged after secrets so they
+always win. `--no-secrets` skips the whole mechanism. Resolved
+values are registered with the trace redactor before capture starts,
+so an echoed secret lands in the activity stream as `[REDACTED]`.
+
+There is no proxy, no CA, and no TLS interception in this path.
+The runner captures each agent's own **durable artifacts** and
+normalizes them into one activity stream. For Claude Code the
+content source is its session transcript (plus OpenTelemetry for
+operational telemetry); for codex it's the rollout JSONL (plus
+OpenTelemetry and per-inference trace bundles). The runner injects
+each agent's export config below.
+
+### claude-code — OpenTelemetry export (runner-managed)
+
+These come from the capture host (`CaptureHost.envVars()` in
+`packages/cli/src/runtime/trace/host.ts`). They opt Claude Code into
+exporting its raw Anthropic API bodies, user prompts, and tool
+details as OTLP-JSON log records to the broker, which ingests them
+into `llm_exchange` and `tool_action` activity events.
+
+| Name | Value | Purpose |
+|---|---|---|
+| `CLAUDE_CODE_ENABLE_TELEMETRY` | `1` | Turn on Claude Code's built-in OpenTelemetry. |
+| `OTEL_LOGS_EXPORTER` | `otlp` | Export log records (the API bodies + tool events) over OTLP. |
+| `OTEL_METRICS_EXPORTER` | `otlp` | Export metrics over OTLP. The broker accepts and discards these. |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/json` | OTLP-over-HTTP with JSON encoding. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `<brokerUrl>/otlp` | The broker's OTLP ingest base (`/otlp/v1/logs`, `/otlp/v1/metrics`). |
+| `OTEL_EXPORTER_OTLP_HEADERS` | `Authorization=Bearer%20<member token>` | Bearer auth so the broker attributes the telemetry to this member. URL-encoded. |
+| `OTEL_LOG_RAW_API_BODIES` | `1` | Include full request/response bodies in the exported logs. |
+| `OTEL_LOG_USER_PROMPTS` | `1` | Include user-prompt content. |
+| `OTEL_LOG_TOOL_DETAILS` | `1` | Include tool decisions + tool inputs. |
+| `OTEL_LOG_TOOL_CONTENT` | `1` | Include tool content where the producer emits it. |
+
+The runner also sets `CSUITE_RUNNER_SOCKET` on the claude child:
+
+| Name | Value | Purpose |
+|---|---|---|
+| `CSUITE_RUNNER_SOCKET` | `/tmp/.csuite-runner-<pid>.sock` | The MCP bridge subprocess reads this to find the runner's IPC socket. |
+
+Tool **result** content and the live "agent is working" signal don't
+come from OTEL — they come from Claude Code hooks. The runner writes
+`.claude/settings.json` hooks that POST PreToolUse / PostToolUse
+payloads to a loopback hook server the capture host owns; that server
+emits the `tool_action` result content and drives the busy signal.
+The hook endpoint is an in-process loopback URL, not an env var.
+
+### codex — config dir + trace bundles (runner-managed)
+
+Codex captures content **rollout-primary** (the runner tails codex's
+own rollout JSONL under `<CODEX_HOME>/sessions/`, no env needed). For
+operational telemetry the runner writes an `[otel]` block into the
+ephemeral `config.toml` pointing codex's native OpenTelemetry export
+at `<brokerUrl>/otlp/v1/logs` (bearer-authed). The env vars it sets:
+
+| Name | Value | Purpose |
+|---|---|---|
+| `CODEX_HOME` | `~/.cache/commandsuite/codex/csuite-codex-<random>/` | Ephemeral codex config / auth / sessions dir. Always set. |
+| `CODEX_ROLLOUT_TRACE_ROOT` | `<CODEX_HOME>/trace-root` | Where codex writes per-inference rollout-trace bundles (the gen_ai + raw-body layer). Set only when tracing is on. |
+
+The MCP bridge env (`CSUITE_RUNNER_SOCKET`) is delivered via
+`config.toml`'s `[mcp_servers.csuite.env]` block rather than as a
+direct env var on codex itself; codex propagates it when it spawns
+the bridge subprocess.
+
+## When `--no-trace` is set
+
+The runner skips the capture host entirely, so none of the OTEL
+export vars are injected and no hooks are written. The agent gets
+only:
+
+- `CSUITE_RUNNER_SOCKET` (claude-code)
+- `CODEX_HOME` (codex)
+- any broker-held secrets bound to the member (`--no-trace` and
+  `--no-secrets` are independent switches)
+
+## XDG paths and per-OS overrides
+
+Several path-resolution helpers respect XDG conventions on Linux
+and platform-specific defaults elsewhere. Useful overrides:
+
+| Var | Effect |
+|---|---|
+| `XDG_CONFIG_HOME` | Linux/BSD only. Used by `auth.json` resolution when no specific override is set. Defaults to `~/.config`. |
+| `XDG_CACHE_HOME` | Linux/BSD only. Used by ephemeral `CODEX_HOME` parent directory + session log paths. Defaults to `~/.cache`. |
+| `HOME` | Used as the fallback root for all path resolution. |
+| `APPDATA` | Windows-equivalent of `XDG_CONFIG_HOME` for `auth.json`. |
+| `TMPDIR` | Used by `--doctor`'s writable check. The IPC socket also lives here (`$TMPDIR/.csuite-runner-<pid>.sock`). |
+| `HOSTNAME` | Read by `csuite connect` as the default `--label` hint. |
+| `TERM` | Forwarded to the pty when claude-code uses node-pty (default `xterm-256color`). |
+
+## Variables csuite does NOT consume
+
+A few variables you might expect us to read but we don't:
+
+- `OPENAI_API_KEY` — codex's auth comes from `~/.codex/auth.json`,
+  which the runner symlinks into the ephemeral `CODEX_HOME`. We
+  don't set `OPENAI_API_KEY` ourselves.
+- `ANTHROPIC_API_KEY` — claude-code reads this directly. The
+  runner doesn't touch it.
+- Any GitHub / Slack / etc. integration tokens — there are no
+  third-party integrations baked in. The broker is the only HTTP
+  surface csuite owns.
+
+## Source of truth
+
+The constant strings live at:
+
+- `packages/sdk/src/protocol.ts` (`ENV.url`, `ENV.token`, etc.)
+- `packages/cli/src/runtime/trace/host.ts` (`CaptureHost.envVars()` — the OTEL export vars)
+- `packages/cli/src/runtime/ipc.ts` (`RUNNER_SOCKET_ENV`)
+- `packages/cli/src/runtime/agents/codex/codex-home.ts`
+- `packages/cli/src/commands/auth-config.ts`

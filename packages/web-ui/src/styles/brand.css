@@ -1,0 +1,241 @@
+/*
+ * CommandSuite web — brand stylesheet entry.
+ * --------------------------------------------------------------------
+ * The heavy lifting lives in `theme.css` — that file is the canonical
+ * brand system, shared with the marketing HTML and the component
+ * reference at the repo root. Importing it here gives the SPA the full
+ * vocabulary (.btn, .card, .panel, .badge, .tabs, .callout, etc.) with
+ * the same token values (ink, steel, glacier, frost, ice, paper,
+ * graphite, ember).
+ *
+ * This file layers SPA-only additions on top:
+ *   - Font loading (theme.css sets the family vars, we fetch the files)
+ *   - Scrollbar theming (theme.css doesn't style scrollbars)
+ *   - The channel-tag syntax highlighting (SPA-specific — transcript
+ *     rendering of <channel> XML tags with colored brackets + body)
+ *   - A couple of utility classes kept for SPA layouts
+ */
+
+/* ─── Fonts — Manrope display + Atkinson Hyperlegible body + JetBrains Mono ─ */
+@import url("https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400;1,700&family=JetBrains+Mono:wght@300;400;500;600&family=Manrope:wght@400;500;600;700;800&display=swap");
+
+/* ─── Canonical brand system (theme.css from the repo root) ───────── */
+@import "./theme.css";
+
+/* ─── Scrollbars — match the surface palette so overflow blends in ── */
+:root {
+  scrollbar-color: var(--rule-strong) transparent;
+  scrollbar-width: thin;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--rule-strong);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--steel);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ─── Channel-tag syntax highlighting ──────────────────────────────
+ * Rendered inside transcript messages when the body includes
+ * `<channel …>` XML tags — the message renderer escapes the HTML
+ * and wraps the parts in these spans so a broadcast message from an
+ * agent reads like structured markup instead of raw text. */
+.channel-tag {
+  display: inline;
+  font-size: 0.92em;
+  font-family: var(--f-mono);
+}
+.ch-bracket {
+  color: var(--muted);
+  font-weight: 600;
+}
+.ch-name {
+  color: var(--steel);
+  font-weight: 600;
+}
+.ch-attr {
+  color: var(--ember);
+  font-weight: 500;
+}
+.ch-val {
+  color: #9f5f37;
+  font-weight: 500;
+}
+.ch-body {
+  color: var(--ink);
+  font-family: var(--f-sans);
+  display: block;
+  padding-left: 1.5em;
+}
+
+/* ─── JSON syntax highlighting — tool payloads & exchange bodies ─────
+ * Same escape-then-wrap approach as the channel tags above: the activity
+ * and trace viewers wrap JSON.stringify output in these spans so tool
+ * inputs/results read as structured data instead of a monospace wall.
+ * Colors resolve to brand tokens, so both themes track automatically. */
+.jk {
+  color: var(--steel);
+  font-weight: 600;
+} /* object keys */
+.js {
+  color: var(--ember);
+} /* string values */
+.jn {
+  color: var(--glacier);
+} /* numbers */
+.jb {
+  color: var(--brick);
+  font-weight: 600;
+} /* true · false · null */
+.jp {
+  color: var(--muted);
+} /* braces · commas · colons */
+
+/* ─── SPA-specific utility classes ─────────────────────────────────
+ * Names chosen to not collide with theme.css components. */
+
+/*
+ * Pulsing dot — used inside status labels and eyebrows for "live /
+ * active" states. theme.css ships a `.dot.pulse` with box-shadow
+ * animation; this is the inline text-color variant the SPA uses
+ * inside Boot and connection indicators.
+ */
+.pulse-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: pulse-dot 2s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+/*
+ * Hover treatments that need to also fire on focus (keyboard a11y).
+ * Inline onMouseOver/onMouseOut handlers fail biome's a11y rule;
+ * these CSS classes apply the same effect via :hover and :focus
+ * pseudos so screen-reader / keyboard users get the same affordance.
+ */
+
+/* Interactive row in a list — bg lightens on pointer or keyboard focus. */
+.hover-row {
+  transition: background 0.15s var(--ease);
+}
+.hover-row:hover,
+.hover-row:focus-visible {
+  background: rgba(99, 137, 166, 0.06);
+}
+
+/* Card-style button — border + shadow lift on hover or focus. */
+.hover-card {
+  transition:
+    border-color 0.15s var(--ease),
+    box-shadow 0.15s var(--ease);
+}
+.hover-card:hover,
+.hover-card:focus-visible {
+  border-color: var(--ink);
+  box-shadow: 0 4px 14px -8px rgba(14, 28, 43, 0.12);
+}
+
+/* Inline text link — muted by default, shifts to ink on hover/focus. */
+.text-link {
+  background: transparent;
+  color: var(--muted);
+  transition: color 0.12s var(--ease);
+}
+.text-link:hover,
+.text-link:focus-visible {
+  color: var(--ink);
+}
+
+/* Steel link — for "open agent" / "open DM" inline actions. */
+.text-link-steel {
+  background: transparent;
+  color: var(--steel);
+  transition: text-decoration 0.12s var(--ease);
+}
+.text-link-steel:hover,
+.text-link-steel:focus-visible {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* Director-only "→ AGENT" sub-action on roster rows. */
+.row-action {
+  background: transparent;
+  color: var(--muted);
+  transition:
+    color 0.12s var(--ease),
+    background 0.12s var(--ease);
+}
+.row-action:hover,
+.row-action:focus-visible {
+  color: var(--ink);
+  background: var(--ice);
+}
+
+/*
+ * Prose block — markdown-rendered message bodies. theme.css doesn't
+ * define prose typography; this keeps the SPA's rendered markdown
+ * looking like body copy on paper.
+ */
+.prose {
+  color: var(--ink);
+  font-family: var(--f-sans);
+  font-size: 14.5px;
+  line-height: 1.65;
+}
+.prose a {
+  color: var(--steel);
+  border-bottom: 1px solid rgba(62, 92, 118, 0.35);
+  text-decoration: none;
+  transition: border-color 150ms var(--ease);
+}
+.prose a:hover {
+  border-bottom-color: var(--steel);
+}
+.prose strong {
+  color: var(--ink);
+  font-weight: 700;
+}
+.prose blockquote {
+  border-left: 2px solid var(--steel);
+  padding-left: 1rem;
+  color: var(--graphite);
+  margin-block: 1rem;
+}
+.prose code {
+  font-family: var(--f-mono);
+  font-size: 0.92em;
+  font-weight: 500;
+  background: var(--ice);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 0.1em 0.35em;
+  color: var(--steel);
+}

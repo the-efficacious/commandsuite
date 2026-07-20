@@ -1,0 +1,226 @@
+---
+title: Tool sources
+description: Platform-defined external tools — custom HTTP bindings and proxied remote MCP servers — with broker-held credentials, per-member bindings, live distribution, and audited invocation.
+section: Concepts
+order: 45
+---
+
+# Tool sources
+
+A **tool source** is a platform-registered provider of external
+tools. It extends the agent toolbox beyond the built-in csuite
+toolset while keeping the broker as the **identity boundary**: the
+third-party credential (a Jira PAT, an API key, a remote MCP
+server's token) lives only on the broker, KEK-encrypted at rest and
+write-only over the wire. The only credential on a member machine
+remains the member's own bearer token — an agent proves who it is
+to the broker, and the broker does the rest.
+
+Two kinds:
+
+- **`custom`** — tools defined declaratively on the platform (name,
+  description, JSON input schema, HTTP binding). The broker
+  executes each invocation against the third-party API itself,
+  injecting the stored credential. Use this to wrap a REST API —
+  "Jira via a service-account PAT" — as a handful of purpose-built
+  tools.
+- **`mcp`** — a remote MCP server (Streamable HTTP) the broker
+  connects to as an MCP client with a stored static credential.
+  Upstream tools are discovered, cached, re-exposed to members, and
+  `tools/call` is relayed. Use this when the provider ships a
+  proper MCP server and you want the broker to hold its identity.
+
+## How tools reach an agent
+
+```
+admin ──REST/CLI──▶ registry (sources + tools + bindings + creds)
+                        │ resolved per member
+                        ▼
+agent ◀─ tools/list ── runner ◀── briefing.toolSources ── broker
+agent ── tools/call(jira__create_issue) ─▶ runner
+             ─▶ POST /tool-sources/jira/tools/create_issue/invoke
+                    │ 403 unless bound · audit tool_action
+             ┌──────┴──────┐
+        kind=custom     kind=mcp
+        fetch + cred    MCP client relay + cred
+```
+
+1. The briefing carries the member's **resolved tools** — every
+   enabled source the member is bound to (or that is open to
+   `allMembers`), with each tool's name, description, and input
+   schema.
+2. The runner merges them into the agent's MCP toolbox, namespaced
+   **`<source>__<name>`** (source slugs contain no underscores, so
+   the first `__` is unambiguous). To the agent they are ordinary
+   tools.
+3. A call dispatches back to the broker's invoke endpoint on the
+   member's own bearer token. The broker independently enforces the
+   binding (403), executes or relays, appends a `tool_action` to
+   the member's activity stream, and returns an MCP-shaped
+   `CallToolResult` the runner passes through verbatim.
+
+Tool-level failures (upstream 4xx/5xx, timeouts, template errors)
+come back as `isError: true` **results** the model can read and
+self-correct on — MCP convention. Authorization and registry
+problems are HTTP errors (403 unbound, 404 unknown, 409 disabled).
+
+## Live distribution — the capability channel
+
+Registry changes fan out as `data.kind = 'tool_source'` channel
+events to the source's visible members plus every `tools.manage`
+holder. A member's runner reacts by refetching the briefing and —
+only when its resolved set actually changed — emitting
+`notifications/tools/list_changed` so the agent re-lists tools
+**mid-session, no restart**.
+
+This is the one event class that earns a prompt-prefix cache
+break. The doctrine holds: the tool list is a *capability* surface
+(changes rarely, on deliberate admin action), message traffic is
+the *state* surface, and descriptions never mutate for freshness.
+
+## Visibility and bindings
+
+`visible = enabled && (allMembers || bound)`. Bindings are explicit
+per-member grants (`csuite tools bind jira scout`); `--all-members`
+opts the whole team in, including future members. There is **no
+`tools.manage` bypass on invoke** — admins bind themselves like
+anyone else, so there is exactly one access rule.
+
+## Credentials
+
+One static credential per source in v1 (OAuth 2.1 consent flows are
+a planned follow-up):
+
+- `bearer` — sent as `Authorization: Bearer <secret>`
+- `header` — sent as `<Name>: <secret>` (e.g. `X-Api-Key`)
+
+Set via `PUT /tool-sources/:slug/credential` or `csuite tools cred`.
+Write-only: no endpoint ever returns the secret; list/detail
+responses expose only `hasCredential: true`. At rest it is
+KEK-encrypted (`enc-v1:` envelope, same scheme as TOTP secrets) and
+credential writes **fail closed** when no KEK is active.
+Least-privilege the credential at its source — the scoping of the
+PAT is the control, per the
+[trust posture](/docs/concepts/permissions).
+
+## Custom tool bindings
+
+A custom tool is data, not code:
+
+```json
+{
+  "description": "Fetch a Jira issue by key.",
+  "inputSchema": {
+    "type": "object",
+    "properties": { "key": { "type": "string" } },
+    "required": ["key"]
+  },
+  "binding": {
+    "method": "GET",
+    "urlTemplate": "https://your-org.atlassian.net/rest/api/3/issue/{{args.key}}",
+    "resultPath": "fields.summary",
+    "timeoutMs": 15000
+  }
+}
+```
+
+Binding fields: `method`, `urlTemplate`, optional `headers`
+(values templatable), optional `bodyTemplate` (a string for raw
+text, or a JSON value used as a structural template), optional
+`contentType`, optional `resultPath` (dot-path extracted from JSON
+responses), optional `timeoutMs` (clamped 1–120s, default 30s).
+
+Template rules (`{{args.<name>}}`, top-level args only):
+
+- **URL** — substitutions are URL-encoded. **The origin is static**:
+  placeholders may appear only in path/query, enforced at save time
+  and re-checked on every execution. Agent-supplied args can never
+  steer a credentialed request to another host.
+- **Headers** — expanded values are rejected if they contain
+  control characters (header-injection guard). `Authorization` and
+  the credential's header can never be templated.
+- **JSON bodies** — a string value that is *exactly one*
+  placeholder passes the arg's raw JSON value through (numbers,
+  arrays, objects). A missing arg in that position **omits the
+  containing key**, which is how optional API parameters are
+  expressed. Embedded placeholders interpolate scalars and error
+  when missing.
+
+Responses are stream-read with a 64 KiB cap (a marker is appended
+when truncated), JSON is parsed for `resultPath` extraction, and
+binary bodies are summarized rather than relayed.
+
+Note: `args` are **not** validated against `inputSchema` broker-side
+in v1 — the schema guides the model; missing-placeholder checks are
+the execution guard. Cross-origin redirects follow but drop the
+`Authorization` header (undici default) — by design.
+
+## MCP sources
+
+Register with the upstream URL, set the credential, then discover:
+
+```
+csuite tools add up --kind mcp --url https://mcp.example.com/v1
+csuite tools cred up --bearer <token>
+csuite tools refresh up
+csuite tools bind up scout
+```
+
+Discovery is **explicit** — `refresh` (or an enable transition)
+lists the upstream's tools into a cache; there is no polling. A
+tool added upstream 404s on invoke until an operator refreshes (the
+error says so). The broker keeps one lazy connection per source,
+shared across members, with a 5-minute idle TTL; config or
+credential changes drop it so the next call reconnects fresh.
+Upstream tool errors relay as `isError` results; an unreachable
+upstream (after one reconnect retry) is a 502 — an admin problem,
+not something the agent can fix. Relayed text blocks are capped at
+64 KiB each, 256 KiB total.
+
+## Audit
+
+Every invocation appends a `tool_action` event to the calling
+member's activity stream **broker-side** — tool name
+(`<source>__<name>`), capped input, error flag, duration. This is
+authoritative in a way agent-side capture isn't: it cannot be
+evaded by the agent process. View it wherever activity streams
+surface (see [activity & traces](/docs/concepts/activity-and-traces)).
+
+## Administration
+
+Gated on the `tools.manage` leaf (see
+[permissions](/docs/concepts/permissions)). Four surfaces: the REST
+API (`/tool-sources*`), `csuite tools` (see
+[CLI reference](/docs/reference/cli)), the web UI (Tools in the
+nav), and — for members holding the leaf — the `tool_sources_*` MCP
+tools in the agent toolbox itself (see
+[MCP tools](/docs/reference/mcp-tools)). Slugs are immutable in
+v1 — the event thread key `tool:<slug>` rides on them;
+`displayName` is the mutable label.
+
+### Agent-authored connectors
+
+The MCP admin surface makes connector authorship an agent task: an
+admin agent reads an API's documentation, registers the source,
+writes the tool definitions (validation errors name the exact
+problem), binds itself, test-calls the tools, and iterates on the
+`isError` results until they work. The common split is **AI builds
+the connector, human drops the key** via the web UI so the secret
+never enters agent context. Agents *can* set credentials too
+(`tool_sources_set_credential`) — the write-only invariant holds
+regardless of author — which matters for autonomous rigs that
+generate their own keys (a self-provisioned service account, a
+minted API token). The tradeoff is that an agent-set secret passes
+through the session transcript; treat that as accepted for
+self-generated keys and avoidable for human-held ones.
+
+For credentials the agent's own CLI tooling needs locally (gh,
+terraform, npm) rather than tools the broker executes, see
+[secrets](/docs/concepts/secrets) — broker-held values injected into
+the agent's environment at spawn, with the same write-only + KEK
+posture.
+
+Note for existing teams: stored permission presets don't
+automatically gain new leaves — add `tools.manage` to your `admin`
+preset (`csuite presets set admin --permissions ...`). Fresh
+installs include it via the wizard.

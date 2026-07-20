@@ -1,0 +1,188 @@
+---
+title: Connect a self-hosted csuite to a platform
+description: Optional bridge between a self-hosted csuite server and a hosted control plane. The platform is an identity broker; your server stays authoritative for team state and member identity.
+section: Guides
+order: 40
+---
+
+# Connect a self-hosted csuite to a platform
+
+This guide is **optional** — csuite is fully usable standalone. If you
+also want a hosted control plane in front of your self-hosted server
+(referred to here as "the platform"), the steps below pair the two.
+Teammates can then join through the hosted invite flow while your
+team state — roster, messages, files — stays on your box.
+
+## The trust model
+
+Two separable concerns, handled by two different actors:
+
+1. **Server registration** — one-time, done by the server admin.
+   The csuite CLI (`csuite-connect-platform`) talks to the platform,
+   receives a JWT config block, and writes it into a sidecar overlay
+   file. No manual JSON paste; no config edits by other users.
+
+2. **Member binding** — per-user, per-team. Whenever a platform
+   account wants to access a member on this server, the user signs
+   into the csuite (via TOTP or whatever the server's auth is configured
+   for) and confirms the binding. The csuite server tells the platform
+   which member just authenticated; the platform never asserts a
+   member identity on its own.
+
+The net effect: a platform account holder can't impersonate any
+member they don't have real credentials for on your server.
+
+## Prerequisites
+
+- A csuite server with the `/platform-connect/*` endpoints and the
+  `csuite-connect-platform` binary (shipped in the standard build).
+- The server is publicly reachable over HTTPS. Most platforms won't
+  proxy to private-range or loopback origins in production.
+- A member entry already in your `config.json` for the admin
+  running the registration.
+
+## Step 1 — Register your csuite with the platform
+
+On the server, run:
+
+```sh
+csuite-connect-platform \
+  --url https://csuite.acme.com \
+  --member-name alice \
+  --platform https://app.example.com
+```
+
+The CLI prints a verification URL and an 8-character code:
+
+```
+→ Open this URL while signed in to the platform:
+    https://app.example.com/authorize-server?code=ABCD-EFGH
+
+  Then verify the code:
+    ABCD-EFGH
+
+  (Code expires in 10 minutes. Waiting for your confirmation…)
+```
+
+In a browser, open the URL (signing into the platform if needed).
+The platform's `/authorize-server` page shows:
+
+- The URL of the server that's trying to register (cross-check
+  against what you typed into the CLI).
+- The pairing code (cross-check against the terminal).
+- A team name (defaults to your server's hostname).
+- Your member name (read from `--member-name`; you can override).
+
+Click **Authorize**. The platform creates a team owned by your
+account, then the CLI's poll loop picks up the new config and writes
+it to `<config-path>.platform.json` (e.g. `./csuite.platform.json`).
+
+```
+✓ Registered. Wrote ./csuite.platform.json.
+  Team id:  2eebcdaf-8aaa-4417-b0b2-010c56324ea5
+  Audience: team:2eebcdaf-8aaa-4417-b0b2-010c56324ea5
+  Issuer:   https://app.example.com
+
+  Restart csuite-server to pick up the new config.
+  Open the team in the platform:
+    https://app.example.com/t/2eebcdaf-8aaa-4417-b0b2-010c56324ea5
+```
+
+Restart the server. Your `config.json` stays untouched — the JWT
+config lives in the sidecar file that the loader merges at startup.
+
+## Step 2 — Teammates join via invite
+
+Owners mint invites in the platform and share the invite link.
+
+When an invitee clicks the link, the platform detects their team is
+self-hosted and renders an embedded iframe pointing at your server's
+`/setup/connect-platform` page. The invitee signs in on the csuite
+(through the iframe — your csuite's auth, your csuite's session cookie)
+and clicks Authorize. The csuite attests the member identity back to
+the platform via a cross-origin `postMessage`; the platform creates
+the membership row with the attested name.
+
+The invitee never sees a "type your member name" form, and there's
+no way for them to claim a member they can't actually authenticate
+as on your server.
+
+## What happens on the next request
+
+Browser → platform:
+
+1. Platform verifies the user's session.
+2. Looks up the team: it's a self-hosted team pointing at your URL.
+3. Mints a fresh RS256 JWT with `aud: team:<id>`, `member: <your name>`,
+   `role`, and (optionally) `tier: self-hosted`. Default lifetime: 60 seconds.
+4. `fetch(<your URL>/<path>)` with the JWT on `Authorization: Bearer …`.
+
+Your csuite then:
+
+1. Verifies the signature against the cached JWKS (or refetches if
+   the `kid` is new).
+2. Confirms `iss` + `aud` match its `<config>.platform.json` overlay.
+3. Resolves the `member` claim against its local roster and handles
+   the request.
+
+WebSocket upgrades ride through the same path transparently.
+
+## Disabling the connection
+
+Two options:
+
+- **Platform side:** on the team's settings page, **Disconnect team**
+  removes the platform-side rows (memberships, invites, the team
+  registry entry). Your csuite keeps running untouched.
+- **Server side:** delete the sidecar overlay:
+  ```sh
+  rm ./csuite.platform.json
+  systemctl restart csuite-server   # or however you run it
+  ```
+  Your csuite falls back to bearer-token + TOTP auth — the JWT path is
+  config-gated and deactivates when no `jwt` block is loaded.
+
+The two are independent. Disconnecting on the platform side doesn't
+remove the overlay; remove the overlay to fully disable the
+connection on your server side.
+
+## Key rotation
+
+The platform may rotate its signing keypair periodically. Your csuite
+handles this transparently: the JWT's `kid` header identifies which
+key signed it; if your cached JWKS doesn't contain that `kid`,
+`jose` refetches the JWKS. During a rotation, well-behaved platforms
+publish both old and new public keys for the overlap window so no
+request mid-flight fails verification. Nothing to configure.
+
+## Residual risk — DNS TOCTOU
+
+URL validation at registration is typically string-based on the
+platform side: it rejects literals in private ranges, metadata
+hostnames, and forbidden ports. It usually does **not** resolve DNS
+at validation time — a hostname that resolves to a public IP at
+registration but flips to `10.0.0.1` later can't be caught by this
+layer. True DNS-rebinding defence requires a locked egress proxy on
+the platform side.
+
+## Troubleshooting
+
+- **CLI says `server already registered`.** Another platform account
+  has already registered this server. One server = one platform
+  team. Ask the current owner for an invite.
+- **CLI polls until it expires.** You never opened the
+  verification URL, or the code was rejected. Re-run
+  `csuite-connect-platform`; codes are cheap.
+- **Platform tab says `unknown or expired code`.** The pairing code
+  expired (10-min lifetime) or was already consumed from a
+  different tab. Re-run the CLI.
+- **After Authorize, the server still sees `jwt verify failed`
+  with `unexpected aud claim value`.** You didn't restart csuite after
+  the overlay was written. The overlay loads at startup; send
+  SIGHUP to the server or restart it.
+- **Invitees' iframe shows `Sign in first` but your csuite is
+  accessible in other tabs.** The iframe is on your csuite's origin,
+  cookies are scoped there — but some browsers apply tighter rules
+  to third-party iframes. Ask the invitee to open the confirm URL
+  directly in a new tab instead (shown in the platform fallback
+  message).

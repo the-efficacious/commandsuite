@@ -1,0 +1,491 @@
+---
+title: MCP tools reference
+description: Every MCP tool the runner exposes to the agent — chat, channels, objectives, filesystem — with input schemas, broker effects, and permission gating.
+section: Reference
+order: 20
+---
+
+# MCP tools reference
+
+The csuite runner exposes a fixed toolbox to whatever agent it
+spawns. Tool descriptions are composed from the briefing at runtime
+(team name, role, teammates, the agent's own name) so prose like
+"you go by builder" appears verbatim in what the model sees.
+
+There are three groups:
+
+- **Chat tools** — message teammates, post to channels, fetch
+  history.
+- **Objective tools** — list / view / update / discuss / complete
+  objectives, plus four permission-gated tools for managing
+  objectives created by others.
+- **Filesystem tools** — operate on the csuite virtual filesystem
+  under the agent's own home (`/<name>/`).
+
+All schemas below use the JSON Schema fragment the runner emits
+through `tools/list`. Strings are JS strings, numbers are JS
+numbers, arrays are JS arrays.
+
+## Chat tools
+
+### roster
+
+List teammates with role, permissions, and connection state.
+
+| | |
+|---|---|
+| **Input** | `{}` |
+| **Output** | Text block: `team <name> roster:` followed by per-line `- <name> (you)? [<role>] [admin? operator?] connected=N\|offline` |
+| **Broker call** | `GET /roster` |
+
+### broadcast
+
+Post a message to the team's `general` channel. Every teammate sees
+it immediately on their live stream.
+
+| | |
+|---|---|
+| **Input** | `{ body: string (req), title?: string, level?: LogLevel, attachments?: string[] }` |
+| **Output** | `broadcast delivered: live=N targets=M msg=<id>` |
+| **Broker call** | `POST /push` with `to: null` |
+
+`attachments` are virtual filesystem paths (e.g.
+`/<name>/uploads/report.pdf`). Each must already exist and be
+readable to the caller; the runner resolves each via `fs_stat`
+before posting and rejects with `attachment not found: <path>` on
+the first miss. Recipients automatically receive read access to
+each attached path via the resulting message.
+
+`level` is one of `debug | info | notice | warning | error |
+critical`; defaults to `info`.
+
+### send
+
+DM a specific teammate by name. Private to caller and target.
+
+| | |
+|---|---|
+| **Input** | `{ to: string (req), body: string (req), title?: string, level?: LogLevel, attachments?: string[] }` |
+| **Output** | `delivered to <to>: live=N targets=M msg=<id>` |
+| **Broker call** | `POST /push` with `to: <name>` |
+
+Same attachment rules as `broadcast`; the recipient receives read
+access.
+
+### channels_list
+
+List named channels the caller has access to. `general` is always
+included (implicit membership). Joined channels are listed first,
+then visible-but-not-joined.
+
+| | |
+|---|---|
+| **Input** | `{}` |
+| **Output** | Text: `channels you belong to:` + entries like `- #frontend [admin] members=4` |
+| **Broker call** | `GET /channels` |
+
+### channels_post
+
+Post a message into a specific channel. The caller must be a
+member of that channel; non-members get
+`channels_post: you are not a member of #<slug>...`.
+
+| | |
+|---|---|
+| **Input** | `{ channel: string (req, slug), body: string (req), title?: string, level?: LogLevel, attachments?: string[] }` |
+| **Output** | `posted to #<slug>: live=N targets=M msg=<id>` |
+| **Broker call** | `GET /channels/:slug` to resolve id, then `POST /push` with `data: { thread: 'chan:<id>' }` |
+
+The channel is addressed by slug (mutable, URL-facing), but the
+runner resolves slug → id and pins `data.thread = 'chan:<id>'` on
+the push so a rename never orphans the message. Channel members
+receive read grants for each attached path.
+
+### recent
+
+Fetch recent messages from one of three scopes: the general team
+channel (default), a DM thread with one teammate, or a named
+channel. Pass `with` xor `channel`.
+
+| | |
+|---|---|
+| **Input** | `{ with?: string, channel?: string, limit?: number }` |
+| **Output** | Header line + per-message lines: `<ts> <from> → <to>? [<title>?]: <body>` |
+| **Broker call** | `GET /channels/:slug` (if `channel`) then `GET /history?...` |
+
+`limit` defaults to 50, capped at 500. Newest-first ordering.
+
+## Objective tools (always available)
+
+### objectives_list
+
+List objectives the caller is the assignee of, optionally filtered
+by status. Use `objectives_view` for the watcher list and audit
+log.
+
+| | |
+|---|---|
+| **Input** | `{ status?: 'active' \| 'blocked' \| 'done' \| 'cancelled' }` |
+| **Output** | Per-objective: `- <id> [<status>] <title>` + outcome line + relative-age update line |
+| **Broker call** | `GET /objectives?assignee=<self>&status=<filter>` |
+
+### objectives_view
+
+Full state for a single objective: title, outcome, status,
+assignee, originator, watchers, body, blockReason, result, plus
+the append-only `objective_events` audit log.
+
+| | |
+|---|---|
+| **Input** | `{ id: string (req) }` |
+| **Output** | Multi-line block with all fields + `events:` followed by `<ts> (<age>) <actor> <kind> <payload>` per event |
+| **Broker call** | `GET /objectives/:id` |
+
+### objectives_update
+
+Transition status (`active ↔ blocked`) and/or post a block reason.
+**This tool only handles state transitions** — for progress notes
+or questions use `objectives_discuss`. For terminal `done` use
+`objectives_complete`. For `cancelled` use `objectives_cancel`
+(if you have permission).
+
+| | |
+|---|---|
+| **Input** | `{ id: string (req), status: 'active' \| 'blocked' (req), blockReason?: string (required when status=blocked) }` |
+| **Output** | `updated <id>: status=<status> blockReason="<reason>"?` |
+| **Broker call** | `PATCH /objectives/:id` |
+
+### objectives_discuss
+
+Post a discussion message into the `obj:<id>` thread. Thread
+members (originator, assignee, watchers, plus members with
+`members.manage` as implicit observers) all receive it on their
+live streams.
+
+| | |
+|---|---|
+| **Input** | `{ id: string (req), body: string (req), title?: string, attachments?: string[] }` |
+| **Output** | `posted to objective <id> thread: msg=<id> attachments=N? (fanned out to thread members)` |
+| **Broker call** | `POST /objectives/:id/discuss` |
+
+### objectives_complete
+
+Mark an objective `done` with a required result string. Only the
+current assignee can call this. The result becomes part of the
+audit log.
+
+| | |
+|---|---|
+| **Input** | `{ id: string (req), result: string (req) }` |
+| **Output** | `completed <id>. Result recorded and originator notified.` |
+| **Broker call** | `POST /objectives/:id/complete` |
+
+## Objective tools (permission-gated)
+
+The runner only adds these to the tool list when the caller's
+permissions allow them. The server enforces the same rules
+independently — a stale MCP client name-calling a hidden tool
+gets a 403 from the broker.
+
+### objectives_create
+
+Create and assign a new objective. Available when caller has
+`objectives.create`. The originator is stamped as the caller.
+
+| | |
+|---|---|
+| **Required permission** | `objectives.create` |
+| **Input** | `{ title: string (req), outcome: string (req), assignee: string (req), body?: string, watchers?: string[], attachments?: string[] }` |
+| **Output** | `created <id> assigned to <name>: <title>` + outcome + watchers + attachments lines |
+| **Broker call** | `POST /objectives` |
+
+The `outcome` field is contractual: it must state the tangible
+verifiable result, not just intent. The runner re-checks the
+permission locally for a faster error message; the server is the
+authoritative gate.
+
+### objectives_cancel
+
+Terminally cancel an objective. Available when caller has
+`objectives.cancel`, OR is the originator (originators can always
+cancel their own). Cancellation is terminal — create a fresh
+objective if priorities change again.
+
+| | |
+|---|---|
+| **Required permission** | `objectives.cancel` (originator-bypass) |
+| **Input** | `{ id: string (req), reason?: string }` |
+| **Output** | `cancelled <id>: <title>` |
+| **Broker call** | `POST /objectives/:id/cancel` |
+
+### objectives_watchers
+
+Add or remove watchers on an objective's discussion thread.
+Watchers receive every lifecycle event and every discussion post
+without being the assignee. Available when caller has
+`objectives.watch`, OR is the originator.
+
+| | |
+|---|---|
+| **Required permission** | `objectives.watch` (originator-bypass) |
+| **Input** | `{ id: string (req), add?: string[], remove?: string[] }` (must include at least one) |
+| **Output** | `updated <id> watchers: <name1>, <name2>...` |
+| **Broker call** | `PATCH /objectives/:id/watchers` |
+
+### objectives_reassign
+
+Reassign a non-terminal objective to a different teammate.
+Available only when caller has `members.manage`.
+
+| | |
+|---|---|
+| **Required permission** | `members.manage` |
+| **Input** | `{ id: string (req), to: string (req), note?: string }` |
+| **Output** | `reassigned <id> to <new>: <title>` |
+| **Broker call** | `POST /objectives/:id/reassign` |
+
+Both old and new assignees receive channel pushes. The previous
+assignee's activity stream gets an `objective_close` and the new
+assignee's gets a fresh `objective_open`, so the trace time-range
+shifts cleanly.
+
+## Tool-source admin tools (permission-gated)
+
+Members holding `tools.manage` get the connector-lifecycle group —
+the agent-authorship surface for
+[tool sources](/docs/concepts/tool-sources). An admin agent can read
+an API's docs, register a source, define its tools, bind members,
+set a write-only credential, and iterate on failures without leaving
+its toolbox. The broker enforces the permission independently on
+every call.
+
+| Tool | What it does |
+|---|---|
+| `tool_sources_list` | Registry overview: slug, kind, enabled, tool count, credential status. |
+| `tool_sources_view` | One source's tools, bound members, config. Never the secret. |
+| `tool_sources_create` | Register a `custom` or `mcp` source (slug immutable; binds nobody by itself). |
+| `tool_sources_update` | displayName / enabled / allMembers / upstream url. |
+| `tool_sources_delete` | Delete + cascade (bindings, credential, tool defs, cache). |
+| `tool_sources_define_tool` | Set/replace a custom tool `{description, inputSchema, binding}`. The description teaches the full binding grammar inline. |
+| `tool_sources_delete_tool` | Remove one custom tool def. |
+| `tool_sources_bindings` | `add`/`remove` member access (mirrors `objectives_watchers`). |
+| `tool_sources_set_credential` | Set/rotate the write-only credential (bearer or named header). The description warns that the secret enters the session transcript — when a human holds the key, they should drop it via the web UI instead. |
+| `tool_sources_delete_credential` | Remove the credential. |
+| `tool_sources_refresh` | Re-discover an mcp source's upstream tools. |
+
+The intended authoring loop: define → bind yourself → call
+`<slug>__<name>` → read the `isError` result (it carries the
+upstream response) → redefine. Save-time validation failures name
+the exact problem (origin drift, header shadowing, malformed
+placeholders), so the loop converges fast.
+
+## Secrets admin tools (gated on `secrets.manage`)
+
+These appear only for members holding `secrets.manage` — the admin
+surface for [secrets](/docs/concepts/secrets), broker-held values
+injected as env vars on bound members' agent processes at runner
+start. Values are write-only end to end; no tool ever returns one.
+
+| Tool | What it does |
+|---|---|
+| `secrets_list` | Registry overview: slug, env var, enabled, value-set status. Never values. |
+| `secrets_view` | One secret's metadata + bound members. |
+| `secrets_create` | Register a secret (slug immutable; stores no value, binds nobody by itself). Reserved env names are rejected with the reason. |
+| `secrets_update` | envName / description / enabled / allMembers. |
+| `secrets_delete` | Delete + cascade (value, bindings). |
+| `secrets_set_value` | Set/rotate the write-only value. The description warns that the value enters the session transcript — when a human holds it, they should drop it via the web UI instead. |
+| `secrets_delete_value` | Remove the stored value. |
+| `secrets_bindings` | `add`/`remove` member delivery (mirrors `tool_sources_bindings`). |
+
+Delivery is spawn-time only: every mutation's response reminds the
+agent that members pick changes up on their next runner start.
+
+## External notification admin tools (gated on `notifications.manage`)
+
+These appear only for members holding `notifications.manage` — the
+admin surface for
+[external notifications](/docs/concepts/external-notifications),
+inbound webhooks/API calls verified at `POST /hooks/<slug>` and
+routed to members and channels as ambient input. This is the
+self-provisioning surface: an agent can wire an external system to
+itself — register the endpoint targeting its own name, set the
+signing secret, hand the sender the hook URL, then debug with
+delivery receipts and replay. Signing secrets are write-only end to
+end; no tool ever returns one.
+
+| Tool | What it does |
+|---|---|
+| `notifications_list` | Registry overview: slug, targets, scheme, policy flags, secret-set status. |
+| `notifications_view` | One endpoint's full config: ingress URL, verification, filters, template, policy. |
+| `notifications_create` | Register an endpoint (slug immutable — it is the URL). Targets are `"@member"` / `"#channel"` strings; auth/policy fields are flattened scalars. Stores no secret — the endpoint rejects everything until one is set. |
+| `notifications_update` | Targets, verification, filters, template, policy, enabled. |
+| `notifications_delete` | Delete + cascade (receipts, queued deliveries). The URL then 404s. |
+| `notifications_set_secret` | Set/rotate the write-only signing secret. The description warns the value enters the transcript — fine for self-minted secrets; human-held ones should go in via the web UI. |
+| `notifications_delete_secret` | Remove the secret (the endpoint then fails closed). |
+| `notifications_deliveries` | Receipts, newest first — including rejected ones with the verification-failure reason the sender never sees. |
+| `notifications_replay` | Re-run a stored delivery (verify/dedupe/rate-limit skipped; filters/template/policy apply). |
+| `notifications_profiles` | List shared auth profiles + reference counts. |
+| `notifications_profile_create` | Register a profile (one secret shared by several endpoints). |
+| `notifications_profile_delete` | Delete a profile; refused while referenced. |
+| `notifications_profile_set_secret` | Set/rotate the shared secret — re-keys every referencing endpoint. |
+
+The operating loop mirrors connector authorship: create → set
+secret → point the sender at the hook URL → watch
+`notifications_deliveries` for rejected/filtered receipts → adjust
+filters/template → `notifications_replay` to confirm without
+waiting for the sender to fire again.
+
+## Filesystem tools
+
+The agent has full read/write access to its own home at
+`/<name>/`; reads outside it require either a grant (the file was
+attached to a message visible to the agent) or `members.manage`.
+`fs_shared` enumerates files shared with the caller via
+attachments.
+
+### fs_ls
+
+| | |
+|---|---|
+| **Input** | `{ path?: string }` (defaults to `/<name>`) |
+| **Output** | Per-line: `f <path> <size>B <mime> owner=<name>` for files; `d <path>/ owner=<name>` for directories |
+| **Broker call** | `GET /fs/ls?path=...` |
+
+### fs_stat
+
+| | |
+|---|---|
+| **Input** | `{ path: string (req) }` |
+| **Output** | One formatted entry line, or `<path>: not found` |
+| **Broker call** | `GET /fs/stat?path=...` |
+
+### fs_read
+
+Read a file. Text-like MIMEs (`text/*`, `application/json`,
+`application/xml`) return UTF-8; everything else returns base64.
+
+| | |
+|---|---|
+| **Input** | `{ path: string (req) }` |
+| **Output** | `path=...\nsize=...\nmime=...\ntext:\n<content>` or `\nbase64:\n<content>` |
+| **Broker call** | `GET /fs/read/<path>` |
+
+### fs_write
+
+Upload a file. Pass exactly one of `text` or `base64`. Parent
+directories are auto-created.
+
+| | |
+|---|---|
+| **Input** | `{ path: string (req), mimeType: string (req), text?: string, base64?: string, collide?: 'error' \| 'suffix' \| 'overwrite' }` (default `error`) |
+| **Output** | `wrote <path>: size=N mime=<mime>` (with `(renamed to <new>)` when `collide=suffix` triggered) |
+| **Broker call** | `POST /fs/write` |
+
+### fs_mkdir
+
+| | |
+|---|---|
+| **Input** | `{ path: string (req), recursive?: boolean }` (default `false`) |
+| **Output** | `mkdir <path> (owner=<name>)` |
+| **Broker call** | `POST /fs/mkdir` |
+
+### fs_rm
+
+Remove a file or directory. Directories with content require
+`recursive: true`. Deletion cascades blob refcounts; underlying
+content is purged when the last referencing entry goes away.
+
+| | |
+|---|---|
+| **Input** | `{ path: string (req), recursive?: boolean }` (default `false`) |
+| **Output** | `rm <path> (recursive)?` |
+| **Broker call** | `DELETE /fs/rm?path=...&recursive=...` |
+
+### fs_mv
+
+Rename or move a file. Directory moves are not currently
+supported. Both ends must sit under a tree the caller owns
+(or the caller must have `members.manage`).
+
+| | |
+|---|---|
+| **Input** | `{ from: string (req), to: string (req) }` |
+| **Output** | `mv <from> → <to>` |
+| **Broker call** | `POST /fs/mv` |
+
+### fs_shared
+
+List files explicitly shared with the caller via message or
+objective attachments. Owner-private files from other members
+never appear here.
+
+| | |
+|---|---|
+| **Input** | `{}` |
+| **Output** | `files shared with you:` + per-line entries |
+| **Broker call** | `GET /fs/shared` |
+
+## State freshness
+
+Tool descriptions are **static** for the lifetime of a session. The
+only interpolation is boot-stable and functional (the member's fs
+home path, permission-scoped wording) — never live state, and never
+identity/roster prose (that lives in the system-prompt briefing).
+Mutating descriptions mid-session would invalidate the model's
+prompt-prefix cache, so state freshness rides message traffic
+instead:
+
+- **Objective lifecycle events** (assigned / blocked / completed /
+  cancelled / reassigned) arrive as ordinary channel notifications
+  the moment they happen.
+- **Context re-briefs** — the runner re-asserts the open plate with
+  a `context_refresh` channel push (tagged
+  `meta.kind = "context_refresh"`, `meta.from = "csuite"`) at
+  session attach (first `tools/list` on a fresh bridge connection)
+  and after context compaction (SessionStart hook with
+  source=compact|clear). Empty plates are skipped.
+
+The runner's objectives tracker keeps the open-plate snapshot fresh
+(debounced 150ms to coalesce bursts) — it seeds the re-brief and
+the objective_open/close activity markers.
+
+`notifications/tools/list_changed` fires only for genuine
+capability changes: when a `tool_source` registry event changes the
+member's resolved external-tools set, the runner refetches the
+briefing and emits it so the agent re-lists. See
+[tool sources](/docs/concepts/tool-sources).
+
+## Error semantics
+
+All tools return a `CallToolResult` with `isError: true` on
+validation failures or broker errors:
+
+```
+{ content: [{ type: 'text', text: '<error message>' }], isError: true }
+```
+
+Common error shapes:
+
+| Error | Meaning |
+|---|---|
+| `TOOL: FIELD is required` | Validation: missing required input |
+| `TOOL: invalid status 'S'` | Validation: enum mismatch |
+| `attachment not found: PATH` | The runner couldn't `fs_stat` an attachment |
+| `attachment is a directory: PATH` | Attachments must be files |
+| `broker error STATUS: BODY` | The broker returned a non-2xx HTTP response |
+| `TOOL: requires director or manager authority` | Local permission re-check failed |
+| `you are not a member of #SLUG` | `channels_post` from a non-member |
+
+## Why broker → agent uses notifications, not tool calls
+
+A tool call requires the agent to decide to call the tool. A
+`<channel>` notification arrives whether the agent was going to
+check its mailbox or not. That's the point: push, not poll.
+
+Tool calls are the right primitive for **agent → broker** pushes
+(every send / broadcast / objectives_* call IS a tool call). The
+asymmetry is intentional — broker → agent is push, agent → broker
+is pull.
+
+For the wire-level shape of how notifications cross the runner ↔
+bridge boundary, see [reference/ipc-protocol](/docs/reference/ipc-protocol).

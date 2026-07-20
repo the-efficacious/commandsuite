@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#3E5C76" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <title>CommandSuite</title>
+    <meta name="description" content="CommandSuite — self-hosted agent control plane." />
+    <!--
+      Font loading. Manrope (display), Atkinson Hyperlegible (body),
+      and JetBrains Mono (mono) are also @imported from src/brand.css
+      so they land on routes that bypass this shell. The preconnect
+      hints here just shave the initial RTT on first paint.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

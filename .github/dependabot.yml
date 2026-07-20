@@ -1,0 +1,57 @@
+# Dependabot config — https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+#
+# Two ecosystems:
+#   - npm (pnpm workspace-aware; root pnpm-lock.yaml covers every package.json)
+#   - github-actions (workflow action bumps under .github/workflows/)
+#
+# Grouping: minor + patch bumps batch into one PR per ecosystem per week so
+# the PR queue doesn't explode. Major bumps open their own PRs (breaking
+# changes warrant review one at a time).
+
+version: 2
+updates:
+  # ────────────────────────── npm (pnpm workspace) ─────────────────────────
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/Los_Angeles"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    labels:
+      - "dependencies"
+    groups:
+      # Single rolled-up PR for all non-breaking weekly drift.
+      minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # ────────────────────────── GitHub Actions ───────────────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/Los_Angeles"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "ci"
+    groups:
+      actions-minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"

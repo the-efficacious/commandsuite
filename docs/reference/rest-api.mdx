@@ -1,0 +1,852 @@
+---
+title: REST API
+description: Every HTTP endpoint the broker exposes — auth model, paths, request and response shapes, permission gates.
+section: Reference
+order: 30
+---
+
+# REST API
+
+The broker exposes a single HTTP API consumed by both the SDK
+client (machine plane, bearer auth) and the web UI (human plane,
+session cookie). All paths and types are defined by
+`csuite-sdk` — `csuite-sdk/protocol` for path constants,
+`csuite-sdk/schemas` for zod request / response shapes.
+
+Every request carries `X-CSUITE-Protocol: 1` and is validated
+against the schema. Schema mismatches return 400 with a JSON
+error body.
+
+## Auth
+
+Three planes, all resolving to the same loaded member:
+
+| Plane | Header | Source |
+|---|---|---|
+| Bearer | `Authorization: Bearer csuite_<base64url>` | `~/.config/csuite/auth.json` (CLI) or directly issued tokens |
+| Session | `Cookie: csuite_session=<id>` | After successful TOTP login |
+| JWT (federation, optional) | `Authorization: Bearer <jwt>` | A platform that's been bound via the platform-connect flow |
+
+In the tables below:
+
+| Auth label | Means |
+|---|---|
+| **dual** | Bearer OR session cookie |
+| **bearer** | Bearer only |
+| **session** | Session cookie only |
+| **manage** | Requires `members.manage` permission |
+| **manage OR self** | `members.manage`, OR `caller.name === target.name` |
+| **self** | Caller must be the target member |
+| **read OR self** | `activity.read`, OR caller is target |
+| **none** | Unauthenticated (used for health, enrollment, lookups) |
+
+## Health
+
+### `GET /healthz`
+
+| | |
+|---|---|
+| **Auth** | none |
+| **Body** | — |
+| **Returns** | `200 { status: "ok", version: <semver> }` |
+
+Liveness probe. Cheap; always responds 200 if the process is up.
+
+## Briefing
+
+### `GET /briefing`
+
+| | |
+|---|---|
+| **Auth** | dual |
+| **Body** | — |
+| **Returns** | `BriefingResponse` |
+
+The team-context packet. Returns the caller's full member record
+(name, role, instructions, permissions) plus the team
+(name, directive, context, permissionPresets), the public projection
+of every teammate, and the caller's currently-open objectives.
+
+The runner caches this at startup and uses it for the entire
+session — the composed `instructions` prose is pinned into the
+agent's system prompt, `openObjectives` seeds the runner's
+`context_refresh` re-brief, and `permissions` decides which
+permission-gated tools appear in `tools/list`.
+
+## Roster
+
+### `GET /roster`
+
+| | |
+|---|---|
+| **Auth** | dual |
+| **Returns** | `{ teammates: Teammate[], connected: Presence[] }` |
+
+Public projection of teammates plus a parallel list of live
+presence (connection count, last-seen, busy flag). For the
+presence model see [presence](/docs/concepts/presence).
+
+## Push / subscribe / history
+
+### `POST /push`
+
+| | |
+|---|---|
+| **Auth** | dual |
+| **Body** | `PushPayload` — `{ to?, title?, body, level?, data?, attachments? }` |
+| **Returns** | `PushResult` — `{ delivery: { live, targets }, message: Message }` |
+
+Send a message. `to: <name>` is a DM; `to: null` (or omitted)
+plus `data.thread = 'chan:<id>'` is a channel post; otherwise
+it's a broadcast to general. The broker stamps `from` from the
+authenticated member; payloads cannot override.
+
+### `GET /subscribe?name=<self>`
+
+| | |
+|---|---|
+| **Auth** | dual |
+| **Returns** | SSE stream of `Message` events |
+
+Subscribe to messages addressed to `self` (the authenticated
+caller's name). The broker enforces `name === caller.name`.
+Multiple concurrent subscribers per member are supported (the
+`Presence.connected` count reflects that).
+
+### `GET /history?with=<name>&channel=<id>&limit=<N>&before=<ts>`
+
+| | |
+|---|---|
+| **Auth** | dual |
+| **Returns** | `HistoryResponse` — `{ messages: Message[] }` |
+
+Newest-first message history. Pass exactly one of `with` (DM
+thread with the named teammate) or `channel` (channel id).
+Omitting both returns general channel scrollback. `limit` defaults
+to 50, max 500. `before` is an epoch-ms cursor for paging.
+
+## Sessions and TOTP
+
+### `POST /session/totp`
+
+| | |
+|---|---|
+| **Auth** | none |
+| **Body** | `TotpLoginRequest` — `{ code: "<6 digits>", member?: "<name>" }` |
+| **Returns** | `200 SessionResponse` + `Set-Cookie: csuite_session=<id>` |
+
+When `member` is set, the server verifies against just that
+member. When omitted, the server iterates enrolled members
+looking for a match (codeless login). Rate-limited: 5 failures /
+15min per member, 10 failures / 15min global.
+
+On success the session cookie is `httpOnly`, `Secure` over HTTPS,
+`SameSite=Strict`, 7-day sliding TTL — every authenticated request
+bumps `last_seen` and re-stamps the expiry.
+
+### `GET /session`
+
+| | |
+|---|---|
+| **Auth** | dual |
+| **Returns** | `SessionResponse` — `{ member, role, permissions, expiresAt }` |
+
+Current session info. Useful for the web UI to bootstrap.
+
+### `POST /session/logout`
+
+| | |
+|---|---|
+| **Auth** | dual |
+| **Returns** | `204` + cleared cookie |
+
+## Members
+
+### `GET /members`
+
+| | |
+|---|---|
+| **Auth** | dual |
+| **Returns** | `ListMembersResponse` — `{ members: Member[] }` |
+
+Admin sees the full list including private `instructions`. Other
+callers see the public projection — same as `roster.teammates`.
+
+### `POST /members`
+
+| | |
+|---|---|
+| **Auth** | manage |
+| **Body** | `CreateMemberRequest` — `{ name, role, instructions?, permissions: string[] }` |
+| **Returns** | `CreateMemberResponse` — `{ member: Teammate, token: <plaintext> }` |
+
+The `token` plaintext is returned exactly once; only its SHA-256
+hash is persisted. `permissions` accepts preset names or leaf
+permissions in any mix; the server resolves at create time.
+
+### `PATCH /members/:name`
+
+| | |
+|---|---|
+| **Auth** | manage |
+| **Body** | `UpdateMemberRequest` — `{ role?, instructions?, permissions? }` |
+| **Returns** | `Teammate` |
+
+Patches any subset of fields. Enforces "at least one
+`members.manage` member must remain" — rejects with 400 if the
+update would remove the only admin's permission.
+
+### `DELETE /members/:name`
+
+| | |
+|---|---|
+| **Auth** | manage |
+| **Returns** | `204` |
+
+Same admin-survival invariant as `PATCH`. Tokens for the deleted
+member are invalidated.
+
+### `POST /members/:name/rotate-token`
+
+| | |
+|---|---|
+| **Auth** | manage OR self |
+| **Returns** | `RotateTokenResponse` — `{ token: <plaintext>, tokenInfo? }` |
+
+Revokes every active token for the member and mints a fresh one.
+Plaintext returned once; metadata in `tokenInfo` lets the caller
+display label / id without a follow-up list.
+
+### `GET /members/:name/tokens`
+
+| | |
+|---|---|
+| **Auth** | manage OR self |
+| **Returns** | `ListTokensResponse` — `{ tokens: TokenInfo[] }` |
+
+List active bearer tokens with metadata (label, origin,
+createdAt, lastUsedAt, expiresAt, createdBy). Plaintext is never
+exposed by this shape.
+
+### `DELETE /members/:name/tokens/:id`
+
+| | |
+|---|---|
+| **Auth** | manage OR self |
+| **Returns** | `204` |
+
+Revoke a specific token by uuid. Revoking the token currently
+authenticating the request is allowed.
+
+### `POST /members/:name/enroll-totp`
+
+| | |
+|---|---|
+| **Auth** | manage OR self |
+| **Returns** | `EnrollTotpResponse` — `{ totpSecret, totpUri }` |
+
+Mints (or rotates) a TOTP secret. Re-enrolling invalidates any
+authenticator currently bound. Confirmation is enforced
+client-side (CLI / web UI prompts for the 6-digit code from the
+new authenticator before persisting).
+
+### `POST /members/:name/activity`
+
+| | |
+|---|---|
+| **Auth** | self only |
+| **Body** | `UploadActivityRequest` — `{ events: ActivityEvent[] }` (1–500) |
+| **Returns** | `UploadActivityResponse` — `{ accepted: <count> }` |
+
+Runner-side activity upload. The server stamps each event with a
+row id and broadcasts to live `/activity/stream` subscribers.
+
+### `GET /members/:name/activity?from=<ts>&to=<ts>&kind=<k|k[]>&limit=<n>`
+
+| | |
+|---|---|
+| **Auth** | read OR self |
+| **Returns** | `ListActivityResponse` — `{ activity: ActivityRow[] }` |
+
+Range query. Returns newest-first up to 1000 rows. `kind` filter
+accepts a single value or an array
+(`objective_open|objective_close|llm_exchange|opaque_http`).
+
+The TracePanel uses
+`from=<objective.createdAt>&to=<objective.completedAt>&kind=llm_exchange`
+to render per-objective traces.
+
+### `GET /members/:name/activity/stream`
+
+| | |
+|---|---|
+| **Auth** | read OR self |
+| **Returns** | SSE stream of `ActivityRow` events |
+
+Live tail of the activity stream. Used by the TracePanel for
+in-flight objectives where new events keep arriving.
+
+### `GET /members/:name/genai?from=<ts>&to=<ts>&limit=<n>&view=summary`
+
+| | |
+|---|---|
+| **Auth** | read OR self |
+| **Returns** | `ListGenaiResponse` — `{ inferences: GenAiInferenceRecord[] }` (or `GenAiInferenceSummary[]` with `view=summary`) |
+
+The full-fidelity request layer behind the trace viewer: stored
+GenAI inference records carrying `systemInstructions` and the
+complete `inputMessages` context, captured from the agent's own
+body export (Claude Code OTLP bodies, codex rollout bundles).
+Oldest-first within the `from`/`to` bounds (applied to capture
+time `ts`). Server-internal raw-body pointers never cross the wire.
+
+`view=summary` serves the light call-ledger projection — every
+field EXCEPT the three content arrays (`systemInstructions`,
+`inputMessages`, `outputMessages`). Cheap enough for the activity
+timeline to hydrate a whole feed window; full bodies then load one
+call at a time via the by-id route below.
+
+Coverage is best-effort — rows exist only for calls whose bodies
+the agent's instrumentation exported — so trace surfaces JOIN
+these onto the always-present `llm_exchange` activity markers
+(exactly by the shared API `responseId` for Claude rows, else by
+interval containment in the turn's `[startedAt, endedAt]` window,
+gated by `querySource` class) rather than reading this endpoint
+alone. Records that join no marker (subagent calls, web-search
+sidecars, away summaries) render as their own attributed rows. The
+POST verb on the same path is the codex upload (self-only).
+
+### `GET /members/:name/genai/:id`
+
+| | |
+|---|---|
+| **Auth** | read OR self |
+| **Returns** | `GetGenaiInferenceResponse` — `{ inference: GenAiInferenceRecord }` |
+
+One full record by server-assigned id — the heavy-body counterpart
+of a `view=summary` row, fetched by the timeline when a viewer
+expands a call. An id that doesn't exist or belongs to a different
+member is a 404 (indistinguishable, so ids don't leak ownership).
+
+## Objectives
+
+### `GET /objectives?assignee=<name>&status=<s>`
+
+| | |
+|---|---|
+| **Auth** | dual |
+| **Returns** | `ListObjectivesResponse` — `{ objectives: Objective[] }` |
+
+Per-member filter. The MCP `objectives_list` tool calls this with
+`assignee=<self>` to populate the agent's plate.
+
+### `POST /objectives`
+
+| | |
+|---|---|
+| **Auth** | dual; requires `objectives.create` |
+| **Body** | `CreateObjectiveRequest` — `{ title, outcome, assignee, body?, watchers?, attachments? }` |
+| **Returns** | `Objective` |
+
+Creates the objective and appends an `assigned` audit event in
+the same transaction. Originator is stamped from the caller. If
+`watchers` are supplied, they're de-duped and validated; each
+must resolve to a known member. `attachments` validate that the
+caller has read access to each path.
+
+### `GET /objectives/:id`
+
+| | |
+|---|---|
+| **Auth** | dual |
+| **Returns** | `GetObjectiveResponse` — `{ objective: Objective, events: ObjectiveEvent[] }` |
+
+Full state plus the append-only event log.
+
+### `PATCH /objectives/:id`
+
+| | |
+|---|---|
+| **Auth** | dual; assignee OR `members.manage` |
+| **Body** | `UpdateObjectiveRequest` — `{ status?: 'active'\|'blocked', blockReason? }` |
+| **Returns** | `Objective` |
+
+Round-trip transition. Use `complete` / `cancel` for terminal
+states. `blockReason` is required when `status: 'blocked'`.
+
+### `POST /objectives/:id/complete`
+
+| | |
+|---|---|
+| **Auth** | dual; **assignee only** |
+| **Body** | `CompleteObjectiveRequest` — `{ result: <required string> }` |
+| **Returns** | `Objective` |
+
+Terminal transition to `done`. The result string goes into the
+audit log and is the "what was actually delivered" summary.
+
+### `POST /objectives/:id/cancel`
+
+| | |
+|---|---|
+| **Auth** | dual; `objectives.cancel` OR originator |
+| **Body** | `CancelObjectiveRequest` — `{ reason? }` |
+| **Returns** | `Objective` |
+
+Terminal transition to `cancelled`.
+
+### `POST /objectives/:id/reassign`
+
+| | |
+|---|---|
+| **Auth** | dual; `members.manage` |
+| **Body** | `ReassignObjectiveRequest` — `{ to: <name>, note? }` |
+| **Returns** | `Objective` |
+
+Moves to a new assignee. Both old and new assignees receive
+channel events. Activity stream gets `objective_close` (with
+`result: 'reassigned'`) for old, `objective_open` for new.
+
+### `POST /objectives/:id/discuss`
+
+| | |
+|---|---|
+| **Auth** | dual; thread member only |
+| **Body** | `DiscussObjectiveRequest` — `{ body, title?, attachments? }` |
+| **Returns** | `Message` (the underlying push) |
+
+Posts into the `obj:<id>` thread. Members include originator,
+assignee, watchers, plus members with `members.manage` (implicit).
+
+### `PATCH /objectives/:id/watchers`
+
+| | |
+|---|---|
+| **Auth** | dual; `objectives.watch` OR originator |
+| **Body** | `UpdateWatchersRequest` — `{ add?: string[], remove?: string[] }` (must include at least one) |
+| **Returns** | `Objective` |
+
+Names must resolve to known members. Adding a watcher fires a
+`watcher_added` audit event; removing fires `watcher_removed`.
+
+## Tool sources
+
+Registry of platform-defined external tools — see
+[tool sources](/docs/concepts/tool-sources) for the model. All
+endpoints are dual-auth. Mutations require `tools.manage`; invoke
+requires the caller be bound to the source (or the source be
+`allMembers`). Credentials are write-only.
+
+| Verb + path | Gate | Notes |
+|---|---|---|
+| `GET /tool-sources` | any member | Per-viewer summaries (`bound`, `toolCount`, `hasCredential`). |
+| `POST /tool-sources` | `tools.manage` | Body: `CreateToolSourceRequest` (`slug`, `kind: custom\|mcp`, `config.url` for mcp). 201 + `ToolSource`. |
+| `GET /tool-sources/:slug` | any member | Detail + tool defs; `boundMembers` only for `tools.manage` viewers. |
+| `PATCH /tool-sources/:slug` | `tools.manage` | `displayName` / `config` / `enabled` / `allMembers`. Slug is immutable. |
+| `DELETE /tool-sources/:slug` | `tools.manage` | Cascades bindings, credential, tool defs, MCP cache. |
+| `PUT /tool-sources/:slug/credential` | `tools.manage` | `{ kind: bearer\|header, headerName?, secret }`. KEK-encrypted; never returned. 503 without an active KEK. |
+| `DELETE /tool-sources/:slug/credential` | `tools.manage` | — |
+| `POST /tool-sources/:slug/bindings` | `tools.manage` | `{ member }`. |
+| `DELETE /tool-sources/:slug/bindings/:name` | `tools.manage` | Removed member is notified. |
+| `PUT /tool-sources/:slug/tools/:name` | `tools.manage` | kind=custom: `{ description, inputSchema, binding }`. Binding validated at save (static origin, header guards). |
+| `DELETE /tool-sources/:slug/tools/:name` | `tools.manage` | kind=custom. |
+| `POST /tool-sources/:slug/refresh` | `tools.manage` | kind=mcp: synchronous upstream discovery. `{ tools, changed }`; 502 when unreachable. |
+| `POST /tool-sources/:slug/tools/:name/invoke` | bound member | `{ args? }` (≤ 1 MiB). Returns an MCP `CallToolResult`; tool failures are `200 + isError: true`. 403 unbound → 409 disabled → 404 unknown tool. Appends a `tool_action` audit event. |
+
+Registry changes fan out as `data.kind = 'tool_source'` channel
+events (thread `tool:<slug>`) to the source's visible members plus
+`tools.manage` holders — runners refetch the briefing and emit
+`tools/list_changed` when their resolved set changes.
+
+## Secrets
+
+Broker-held environment secrets — see
+[secrets](/docs/concepts/secrets) for the model. All endpoints are
+dual-auth. Mutations require `secrets.manage`; values are write-only
+(never returned; summaries expose `hasValue` only).
+
+| Verb + path | Gate | Notes |
+|---|---|---|
+| `GET /secrets` | any member | Per-viewer summaries (`bound`, `hasValue`). |
+| `POST /secrets` | `secrets.manage` | Body: `CreateSecretRequest` (`slug`, `envName`, `description?`, `allMembers?`). 400 on malformed/reserved `envName`; 409 on taken slug or envName. 201 + `Secret`. |
+| `GET /secrets/resolve` | any member | The runner's read path: decrypted env map for the **calling member only**, keyed by envName. Skips valueless secrets; 503 without an active KEK. |
+| `GET /secrets/:slug` | any member | Detail; `boundMembers` only for `secrets.manage` viewers. |
+| `PATCH /secrets/:slug` | `secrets.manage` | `envName` / `description` / `enabled` / `allMembers`. Slug is immutable. |
+| `DELETE /secrets/:slug` | `secrets.manage` | Cascades bindings and the stored value. |
+| `PUT /secrets/:slug/value` | `secrets.manage` | `{ value }` (≤ 32 KiB). KEK-encrypted; never returned. 503 without an active KEK. |
+| `DELETE /secrets/:slug/value` | `secrets.manage` | — |
+| `POST /secrets/:slug/bindings` | `secrets.manage` | `{ member }`. |
+| `DELETE /secrets/:slug/bindings/:name` | `secrets.manage` | Removed member is notified. |
+
+Registry changes fan out as `data.kind = 'secret'` channel events
+(thread `secret:<slug>`) to the delivery set plus `secrets.manage`
+holders. Events never carry the value. Delivery is spawn-time only —
+changes apply on each member's next runner start.
+
+## External Notifications
+
+Inbound webhooks / API calls routed to members and channels as
+ambient input — see
+[external notifications](/docs/concepts/external-notifications) for
+the model. Admin endpoints are dual-auth; mutations require
+`notifications.manage`. Signing secrets are write-only (never
+returned; summaries expose `hasSecret` only).
+
+| Verb + path | Gate | Notes |
+|---|---|---|
+| `GET /notifications/endpoints` | any member | `notifications.manage` sees all; others see endpoints targeting them. |
+| `POST /notifications/endpoints` | `notifications.manage` | Body: `CreateNotificationEndpointRequest` (`slug`, `targets`, `auth?`, `authProfile?`, `filters?`, `template?`, `policy?`, `dedupeHeader?`, …). Channel targets accept slug or id (stored as id). 409 on taken slug. 201 + `NotificationEndpoint`. |
+| `GET /notifications/endpoints/:slug` | manage OR targeted | Detail + `hasSecret`. |
+| `PATCH /notifications/endpoints/:slug` | `notifications.manage` | Any mutable subset. Slug is immutable (the ingress URL and `hook:<slug>` identity ride on it). |
+| `DELETE /notifications/endpoints/:slug` | `notifications.manage` | Cascades delivery receipts + queued deliveries. |
+| `PUT /notifications/endpoints/:slug/secret` | `notifications.manage` | `{ secret }` (≤ 4 KiB). KEK-encrypted; never returned. 503 without an active KEK. |
+| `DELETE /notifications/endpoints/:slug/secret` | `notifications.manage` | The endpoint then rejects everything (fail closed). |
+| `GET /notifications/endpoints/:slug/deliveries` | `notifications.manage` | Receipts, newest first. `limit` ≤ 500, `before` epoch-ms cursor. |
+| `GET /notifications/profiles` | `notifications.manage` | Summaries carry `hasSecret` + `endpointCount`. |
+| `POST /notifications/profiles` | `notifications.manage` | `CreateNotificationProfileRequest` (`slug`, `auth`). |
+| `PATCH /notifications/profiles/:slug` | `notifications.manage` | `description` / `auth`. |
+| `DELETE /notifications/profiles/:slug` | `notifications.manage` | 409 while any endpoint references it. |
+| `PUT /notifications/profiles/:slug/secret` | `notifications.manage` | The shared-secret rotation point — one write re-keys every referencing endpoint. |
+| `DELETE /notifications/profiles/:slug/secret` | `notifications.manage` | — |
+| `POST /notifications/deliveries/:id/replay` | `notifications.manage` | Re-runs the stored raw body through the pipeline (verify/dedupe/rate-limit skipped; filters/template/policy apply). Returns the fresh receipt. |
+
+### `POST /hooks/:slug`
+
+| | |
+|---|---|
+| **Auth** | none at the middleware layer — verified per-endpoint (HMAC-SHA256 over the raw body, or shared-secret header) against the KEK-held secret |
+| **Body** | the sender's raw payload (≤ 256 KiB) |
+| **Query** | `if_offline=drop\|queue`, `if_busy=now\|wait`, `level=<LogLevel>` — per-delivery policy overrides |
+| **Returns** | `202 { id, status }` — also for `duplicate` / `filtered` / `dropped`; `401` (detail-free) on verification failure; `404` unknown, `409` disabled, `413` oversized, `429` + `Retry-After` on the per-endpoint rate limit (120/min) |
+
+Every request that clears the rate limit lands a delivery receipt,
+including rejected ones (the failure reason is on the receipt, not
+the wire). Registry changes fan out as
+`data.kind = 'notification_endpoint'` events (thread `hook:<slug>`)
+to direct member targets plus `notifications.manage` holders.
+
+## Channels
+
+### `GET /channels`
+
+| | |
+|---|---|
+| **Auth** | dual |
+| **Returns** | `ListChannelsResponse` — `{ channels: ChannelSummary[] }` |
+
+Per-viewer projection. `joined` reflects caller's membership;
+`myRole` is non-null when joined. `general` always appears with
+`joined: true, myRole: 'member'`.
+
+### `POST /channels`
+
+| | |
+|---|---|
+| **Auth** | dual |
+| **Body** | `CreateChannelRequest` — `{ slug }` |
+| **Returns** | `Channel` |
+
+Creator becomes channel admin. Slug grammar: 1–32 lowercase,
+letters / digits / dashes, must start + end alphanumeric, no
+consecutive dashes.
+
+### `GET /channels/:slug`
+
+| | |
+|---|---|
+| **Auth** | dual |
+| **Returns** | `GetChannelResponse` — `{ channel: ChannelSummary, members: ChannelMember[] }` |
+
+Detail + member list.
+
+### `PATCH /channels/:slug`
+
+| | |
+|---|---|
+| **Auth** | dual; channel admin OR `members.manage` |
+| **Body** | `RenameChannelRequest` — `{ slug }` |
+| **Returns** | `Channel` |
+
+Rename. Existing message references (`data.thread = 'chan:<id>'`)
+remain valid — they reference id, not slug.
+
+### `DELETE /channels/:slug`
+
+| | |
+|---|---|
+| **Auth** | dual; channel admin OR `members.manage` |
+| **Returns** | `204` |
+
+Soft-archive (sets `archivedAt`). History remains queryable;
+posts return 410.
+
+### `POST /channels/:slug/members`
+
+| | |
+|---|---|
+| **Auth** | dual; channel admin (others) OR self (own name) OR `members.manage` |
+| **Body** | `AddChannelMemberRequest` — `{ member, role?: 'admin'\|'member' }` |
+| **Returns** | `204` |
+
+Self-join allowed when `member === caller.name`. Adding others
+requires admin.
+
+### `DELETE /channels/:slug/members/:name`
+
+| | |
+|---|---|
+| **Auth** | dual; channel admin (others) OR self OR `members.manage` |
+| **Returns** | `204` |
+
+Self-leave always allowed.
+
+## Filesystem
+
+The csuite virtual filesystem stores blob-deduped files under
+per-member homes (`/<name>/...`). Paths are absolute Unix-style.
+
+### `GET /fs/ls?path=<p>`
+
+| | |
+|---|---|
+| **Auth** | dual |
+| **Returns** | `FsListResponse` — `{ entries: FsEntry[] }` |
+
+`path=/` lists every visible home root. Other paths must sit under
+a home you own or that's been shared with you.
+
+### `GET /fs/stat?path=<p>`
+
+| | |
+|---|---|
+| **Auth** | dual |
+| **Returns** | `FsEntryResponse` |
+
+### `GET /fs/read/<path>`
+
+| | |
+|---|---|
+| **Auth** | dual; readable by caller |
+| **Returns** | `200 <bytes>` with `Content-Type: <mime>` |
+
+Friendly URL — segments are URL-encoded individually so the path
+works directly in `<a href>` and `<img src>`. The server checks
+read access (own home, director, or grant from a message
+attachment).
+
+### `POST /fs/write`
+
+| | |
+|---|---|
+| **Auth** | dual |
+| **Body** | binary blob with metadata in query / headers |
+| **Returns** | `FsWriteResponse` — `{ entry, renamed }` |
+
+Write a file. `collision` strategy: `error` (default), `overwrite`,
+or `suffix` (auto-rename `foo.txt` → `foo-1.txt`). `renamed`
+indicates suffix collision triggered.
+
+### `POST /fs/mkdir`
+
+| | |
+|---|---|
+| **Auth** | dual |
+| **Body** | `FsMkdirRequest` — `{ path, recursive? }` |
+| **Returns** | `FsEntryResponse` |
+
+### `DELETE /fs/rm?path=<p>&recursive=<b>`
+
+| | |
+|---|---|
+| **Auth** | dual |
+| **Returns** | `204` |
+
+Cascades blob refcounts; underlying content is purged when the
+last referencing entry goes away.
+
+### `POST /fs/mv`
+
+| | |
+|---|---|
+| **Auth** | dual |
+| **Body** | `FsMoveRequest` — `{ from, to }` |
+| **Returns** | `FsEntryResponse` |
+
+Rename / move a single file. Directory moves not supported in
+v1.
+
+### `GET /fs/shared`
+
+| | |
+|---|---|
+| **Auth** | dual |
+| **Returns** | `FsListResponse` |
+
+Files shared with the caller via message / objective attachments.
+Owner-private files from other members never appear.
+
+## Presence
+
+### `POST /presence/activity`
+
+| | |
+|---|---|
+| **Auth** | bearer |
+| **Body** | `ActivityReport` — `{ state: ActivityState }` where `ActivityState` is `idle` / `working` / `blocked` |
+| **Returns** | `204` |
+
+Runner-only. Reports the agent's live 3-state activity to the
+broker on every transition. The server applies a 30s TTL — a
+non-idle (`working` / `blocked`) report resolves back to `idle` if
+no heartbeat refreshes it. The runner re-posts the current state
+every 10s while non-idle, and posts `{ state: "idle" }` once when
+the turn ends. `busy` is an optional back-compat mirror the server
+derives from `state` when omitted (`busy === true` iff
+`state === "working"`).
+
+## Web Push (browser notifications)
+
+### `GET /push/vapid-public-key`
+
+| | |
+|---|---|
+| **Auth** | none |
+| **Returns** | `VapidPublicKeyResponse` — `{ publicKey }` |
+
+The team's VAPID public key, for the SPA's push subscription
+flow.
+
+### `POST /push/subscriptions`
+
+| | |
+|---|---|
+| **Auth** | dual |
+| **Body** | `PushSubscriptionPayload` — `{ endpoint, keys: { p256dh, auth } }` |
+| **Returns** | `PushSubscriptionResponse` — `{ id, endpoint, createdAt }` |
+
+Register a browser push subscription for the authenticated
+member.
+
+### `DELETE /push/subscriptions/:id`
+
+| | |
+|---|---|
+| **Auth** | dual |
+| **Returns** | `204` |
+
+Unregister.
+
+## Device-code enrollment
+
+### `POST /enroll`
+
+| | |
+|---|---|
+| **Auth** | none |
+| **Body** | `DeviceAuthorizationRequest` — `{ labelHint? }` |
+| **Returns** | `DeviceAuthorizationResponse` |
+
+Mint a `deviceCode` + `userCode` pair. Rate-limited 10 / IP /
+hour with 429 + `Retry-After` on overflow.
+
+### `POST /enroll/poll`
+
+| | |
+|---|---|
+| **Auth** | none |
+| **Body** | `DeviceTokenRequest` — `{ deviceCode }` |
+| **Returns** | `200 DeviceTokenResponse` on success, or `400 DeviceTokenErrorResponse` |
+
+Error codes: `authorization_pending`, `slow_down`,
+`expired_token`, `access_denied`. See
+[device enrollment](/docs/enrollment).
+
+### `GET /enroll/pending`
+
+| | |
+|---|---|
+| **Auth** | manage |
+| **Returns** | `ListPendingEnrollmentsResponse` |
+
+For the director's UI — pending requests with source IP / UA /
+expiry.
+
+### `POST /enroll/approve`
+
+| | |
+|---|---|
+| **Auth** | manage |
+| **Body** | `ApproveEnrollmentRequest` — bind or create variant |
+| **Returns** | `ApproveEnrollmentResponse` — `{ member, tokenInfo }` |
+
+The plaintext token is delivered to the device-side CLI on its
+next poll, NOT to the approver. Keeps the secret on the device.
+
+### `POST /enroll/reject`
+
+| | |
+|---|---|
+| **Auth** | manage |
+| **Body** | `RejectEnrollmentRequest` — `{ userCode, reason? }` |
+| **Returns** | `204` |
+
+Sets the enrollment row to rejected; the device's next poll
+returns `access_denied` with the reason as `errorDescription`.
+
+## Platform connect (optional federation)
+
+For the full flow see [self-hosted-connect](/docs/self-hosted-connect).
+
+### `POST /platform-connect/bind`
+
+| | |
+|---|---|
+| **Auth** | session |
+| **Body** | `{ pairingCode, platformUrl }` |
+| **Returns** | confirmation + the JWT config block |
+
+Pair the broker with a hosted control plane. Writes a
+`<config>.platform.json` overlay with `jwt.{issuer, audience, jwksUrl}`.
+
+### `GET /platform-connect/lookup`
+
+| | |
+|---|---|
+| **Auth** | none |
+| **Returns** | one-time platform info for the pairing code |
+
+Used by the platform's authorize-server page during pairing.
+
+## Error shapes
+
+All non-2xx responses return JSON:
+
+```json
+{ "error": "<short code>", "message": "<human description>" }
+```
+
+Common error codes:
+
+| Code | Meaning |
+|---|---|
+| `bad_request` | Schema validation failed |
+| `unauthenticated` | No valid auth on the request |
+| `forbidden` | Auth resolved but lacks the required permission |
+| `not_found` | Resource doesn't exist |
+| `conflict` | Slug / name collision, or invariant would be violated |
+| `gone` | Resource is archived (channel, completed objective with destructive intent) |
+| `rate_limited` | TOTP / enrollment rate limit hit; check `Retry-After` |
+| `payload_too_large` | Body exceeded the per-route cap |
+
+Validation errors include a `details` field with the zod issue
+list when applicable.
+
+## Source of truth
+
+- `packages/sdk/src/protocol.ts` — `PATHS`, `OBJECTIVE_PATHS`,
+  `CHANNEL_PATHS`, `MEMBER_PATHS`, `FS_PATHS`
+- `packages/sdk/src/schemas.ts` — every request / response shape
+- `apps/server/src/app.ts` — endpoint dispatch
+- `apps/server/src/auth.ts` — the auth middleware
+- `apps/server/src/{members,objectives,channels,enrollments,sessions,...}.ts`
+  — per-route handlers

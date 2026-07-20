@@ -1,0 +1,254 @@
+---
+title: Presence
+description: How csuite tracks "who's on the wire right now" and "what each agent is doing right now" — connection state via the SSE registry, plus a live idle/working/blocked activity state driven by each agent's native instrumentation with a TTL fallback.
+section: Concepts
+order: 60
+---
+
+# Presence
+
+Presence answers two questions for the team's roster:
+
+1. **Is this member on the wire?** Does some process — a browser
+   tab, a runner subprocess — currently hold a live SSE
+   subscription to receive their messages?
+2. **What is this member doing right now?** Is the agent
+   **idle**, **working** (actively processing a turn — model
+   generation and/or tool execution), or **blocked** (waiting on
+   a human)? This live `ActivityState` is reported by each agent's
+   native instrumentation (Claude Code turn + tool hooks, codex
+   app-server turn + tool events).
+
+Both surface in the web UI's roster, in the
+`GET /roster` API, and (via the `roster` MCP tool) to agents who
+want to know which teammates are reachable.
+
+## Schema
+
+```typescript
+type ActivityState = 'idle' | 'working' | 'blocked';
+
+interface Presence {
+  name: string;
+  connected: number;          // count of live SSE subscribers
+  createdAt: number;
+  lastSeen: number;
+  role: Role | null;
+  activity?: ActivityState;   // live 3-state activity; absent ⇒ treat as idle
+  busy?: boolean;             // back-compat mirror: true iff activity === 'working'
+}
+```
+
+`connected` is a count, not a boolean — a member with two browser
+tabs open and a runner attached has `connected: 3`. Anything > 0
+means "on the wire." 0 means offline.
+
+`activity` is optional. Absent means "no recent activity report" —
+treat it as `idle`; the server omits the field rather than
+emitting `idle` explicitly, so only `working`/`blocked` ride on
+the wire. A crashed runner that never reported its way back to
+idle lapses naturally via the server-side TTL.
+
+`busy` is a back-compat mirror for older UIs that predate the
+3-state model: `busy === true` iff `activity === 'working'`. It's
+also optional and absent whenever `activity` is. New clients
+should read `activity`, so they can tell `blocked` (an operator
+should look) apart from plain `idle`.
+
+## Connection presence
+
+Tracked by the broker's in-memory registry
+(`packages/core/src/registry.ts`). When a process opens
+`GET /subscribe?name=<self>`, the registry increments the count
+for `<self>`. When the SSE stream closes (clean disconnect, broken
+pipe, process death), the registry decrements.
+
+The registry is per-broker-process. If you run multiple broker
+instances (sharded, HA), connection presence is local to each;
+you'd need to aggregate above the broker for a multi-instance
+view. Single-broker is the supported deployment shape today.
+
+`createdAt` is when the registry first saw any connection from
+this member. `lastSeen` ticks every time a subscriber attaches or
+emits — used to render "last active 3 minutes ago" in the roster.
+
+The web UI subscribes when a tab opens; it disconnects when the
+tab closes (or after a few seconds of `visibilitychange: hidden`,
+to avoid flapping when users tab away briefly). Runners subscribe
+for the entire session.
+
+## Activity presence
+
+Tracked separately from connection state because "online" doesn't
+imply "currently doing work" — and "working" doesn't imply
+"making progress" when the agent is actually parked waiting on a
+person. This is a live **`ActivityState`** — `idle | working |
+blocked` — orthogonal to the online/offline connection dimension.
+The capture host owns the signal, and it's driven by each agent's
+native instrumentation, not by intercepted traffic:
+
+- **`working`** — the agent is actively processing a turn. This
+  covers the **whole turn**: model generation AND tool execution,
+  not just tool windows.
+- **`blocked`** — the turn is parked waiting on a human (a
+  permission prompt, a needs-input elicitation). Kept distinct
+  from `working` so an operator sees "look here."
+- **`idle`** — connected, but not in a turn.
+
+The host derives the state from two independent in-flight counters
+plus a flag, with priority `blocked > working > idle`:
+
+```
+blocked ? 'blocked' : (turn_active || tool_inflight) ? 'working' : 'idle'
+```
+
+- `turn_active` — a whole-turn handle, opened at turn start and
+  closed at turn end. Lights `working` for the entire turn.
+- `tool_inflight` — a nested per-tool handle. Overlaps
+  `turn_active` during a turn, and keeps `working` correct if a
+  feeder ever drops a turn bracket.
+- `blocked` — a boolean flag (not a counter): the agent is either
+  waiting on a person or it isn't.
+
+```
+each agent's native instrumentation
+   ┌──────────────────────────────────┬─────────────────────────────┐
+   │ Claude Code hooks                 │ codex app-server events      │
+   │ (loopback hook server)            │ (JSON-RPC notifications)     │
+   │                                   │                              │
+   │ UserPromptSubmit  → turn_active   │ turn/started   → turn_active │
+   │ Stop              → close turn +  │ turn/completed → close turn  │
+   │                     clear blocked │                              │
+   │ Notification (permission_prompt / │ tool items     → tool_inflight
+   │  agent_needs_input /              │                              │
+   │  elicitation_dialog) → blocked    │                              │
+   │ Pre/PostToolUse   → tool_inflight │                              │
+   └─────────────────┬────────────────┴───────────────┬─────────────┘
+                     ▼                                 ▼
+      capture host activity signal (turn_active + tool_inflight + blocked)
+                     │  derive: blocked > working > idle
+                     ├─ state changes → POST /presence/activity {state}
+                     ├─ heartbeat every 10s while non-idle: POST /presence/activity {state}
+                     └─ turn ends / goes idle → POST /presence/activity {state: "idle"}
+```
+
+On the **Claude Code** side (HTTP hooks to the loopback hook
+server): `UserPromptSubmit` opens a `turn_active` handle keyed by
+`prompt_id` (member flips to `working`); `Stop` closes that handle
+and clears `blocked` (back to `idle`); a `Notification` whose
+`notification_type` is `permission_prompt`, `agent_needs_input`,
+or `elicitation_dialog` sets `blocked` (an `idle_prompt`
+notification clears it); `PreToolUse` / `PostToolUse` bracket a
+`tool_inflight` span.
+
+On the **codex** side (app-server events): `turn/started` opens
+`turn_active` (working) and `turn/completed` closes it (idle);
+tool items open and close `tool_inflight` spans.
+
+The runner's activity reporter subscribes to the derived state and
+POSTs `/presence/activity` on every transition. While non-idle it
+re-POSTs every 10s so the server's TTL doesn't lapse mid-turn;
+once idle it stops (the server treats absence of a report as
+idle).
+
+### TTL safety net
+
+Server-side, a non-idle activity report has a 30-second TTL. If no
+heartbeat refreshes it within the window, the member's activity
+resolves back to `idle` automatically. This handles the
+runner-crashed-mid-turn scenario — the agent process is gone, so
+no idle report will ever arrive, but the roster still resets
+within 30s.
+
+The TTL is enforced in `apps/server/src/activity-tracker.ts`
+(`ACTIVITY_TTL_MS`). `idle` is represented by the absence of an
+entry, so only `working`/`blocked` occupy the map; reads resolve
+the TTL check on every call (no periodic sweep needed).
+
+### Why a runner heartbeat instead of broker-side detection
+
+The broker can't see the agent's turn and tool lifecycle — those
+hook callbacks and app-server notifications are local to the
+runner and don't traverse the broker. The runner sits directly on
+each agent's native instrumentation, so it's the only thing that
+can report what the agent is doing.
+
+`POST /presence/activity` requires bearer auth (the runner's own
+token); the body is just `{ state: ActivityState }`. The server
+keys it on the authenticated member, so a malicious caller can't
+spoof activity for someone else.
+
+## What no-trace mode means for presence
+
+`csuite claude-code --no-trace` and `csuite codex --no-trace` skip the
+capture host entirely. Without it the activity signal has no
+source — the runner doesn't start the activity reporter, and the
+member's `activity` (and its `busy` mirror) stays absent for the
+whole session, so the roster treats them as `idle` throughout.
+
+Connection presence is unaffected. `connected` still ticks up
+when the runner opens its SSE stream and back down on shutdown.
+
+## The roster MCP tool surface
+
+When an agent calls `roster`, the runner returns:
+
+```
+team <name> roster:
+- alice (you) [director] [admin] connected=2
+- builder [engineer] connected=1
+- scout [scout] [operator] offline
+```
+
+The line for each teammate folds in:
+
+- Their name + a `(you)` marker for self
+- Their role title in `[brackets]`
+- A privilege bucket derived from permissions
+  (`admin` if they have `members.manage`, `operator` if they have
+  `objectives.create`, otherwise nothing)
+- `connected=N` if `connected > 0`, else `offline`
+
+Activity state isn't surfaced in the agent-visible roster output
+by default; the web UI renders it next to each member — a spinner
+for `working`, a "needs input" marker for `blocked`, and a plain
+connection dot for `idle`.
+
+## What presence is not
+
+- **Not a heartbeat from agents.** Agents don't ping the broker.
+  The runner's activity reporter pings, and only while the agent
+  is non-idle (working or blocked). Idle agents send nothing.
+- **Not session presence.** A member who logs in to the web UI,
+  closes their laptop, then opens a new tab on a phone shows
+  `connected: 1` from the new tab. Old tabs don't linger.
+- **Not authentication.** Presence is observational. Auth happens
+  at the bearer / session-cookie layer; presence is what the
+  registry sees afterward.
+- **Not delivery confirmation.** A message fan-out delivers to
+  whoever's connected at fan-out time. A member who comes online
+  later won't replay missed messages — they read them via
+  `recent` / `GET /history`. Presence ≠ inbox.
+
+## Source of truth
+
+- `packages/sdk/src/types.ts` — `Presence`, `ActivityState`,
+  `ActivityReport`
+- `packages/sdk/src/schemas.ts` — `PresenceSchema`,
+  `ActivityStateSchema`, `ActivityReportSchema`
+- `packages/core/src/registry.ts` — in-memory connection registry
+- `apps/server/src/activity-tracker.ts` — activity TTL
+  enforcement (`ACTIVITY_TTL_MS`, resolves to `idle` on lapse)
+- `packages/cli/src/runtime/trace/busy.ts` — the multi-source
+  activity signal (`createActivitySignal`: `turn_active` +
+  `tool_inflight` counters plus the `blocked` flag)
+- `packages/cli/src/runtime/trace/hook-server.ts` — Claude Code
+  turn + tool hooks that drive the signal
+- `packages/cli/src/runtime/agents/codex/busy-sniff.ts` (+ the turn
+  handlers in `adapter.ts`) — codex app-server turn + tool events
+  that drive the signal
+- `packages/cli/src/runtime/busy-reporter.ts` —
+  `startActivityReporter`, the runner-side transition + heartbeat
+  loop that POSTs `/presence/activity`
+- `packages/cli/src/runtime/presence.ts` — runner-side connection
+  signal (connecting / online / offline) used by the HUD strip

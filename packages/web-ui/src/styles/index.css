@@ -1,0 +1,10 @@
+/*
+ * Shell styles — import this once from the host (OSS entry, SaaS
+ * entry). Brings in the brand design tokens and component utilities
+ * the shell's JSX relies on. The host is expected to separately
+ * install UnoCSS or equivalent for atomic utility classes (flex,
+ * gap-3, px-4, sm:flex-row) referenced throughout component markup.
+ */
+
+@import "./brand.css";
+@import "./theme.css";

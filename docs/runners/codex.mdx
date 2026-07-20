@@ -1,0 +1,447 @@
+---
+title: csuite codex
+description: Full reference for the OpenAI Codex runner — ephemeral CODEX_HOME, the JSON-RPC v2 handshake, sandbox modes, the channel-sink bundling that maps broker events onto turn/start vs turn/steer, and layered native trace capture (rollout-primary content, OTEL telemetry, and full-context gen_ai bundles).
+section: Docs
+order: 40
+---
+
+# csuite codex
+
+`csuite codex` runs OpenAI Codex headlessly under `codex app-server`.
+There's no TUI in your terminal — you direct the agent through the
+broker (chat / DMs / objectives / `csuite push`), and the agent's
+outputs flow back through the same channels. Useful for
+long-running agents on a workstation, CI workers, or remote VMs
+where there's nobody at the keyboard.
+
+```bash
+csuite codex
+```
+
+## Prerequisites
+
+- `codex` on `$PATH` or pointed to via `$CODEX_PATH`
+- `codex login` already run once (the runner symlinks
+  `~/.codex/auth.json` into its ephemeral home — no auth.json,
+  no OpenAI access)
+
+```bash
+npm install -g @openai/codex
+codex login
+```
+
+## Synopsis
+
+```
+csuite codex [--no-trace] [--cwd <dir>] [--model <name>]
+          [--resume [<threadId>]]
+          [--url <url>] [--token <secret>]
+          [-- <codex args>...]
+```
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--no-trace` | bool | off | Disable all trace capture: no rollout reader (content — `llm_exchange` / `tool_action` / `user_prompt`), no `[otel]` telemetry export, and no trace-bundle reader (gen_ai + raw bodies). Briefing + IPC + channel routing still work normally. |
+| `--cwd <dir>` | path | `process.cwd()` | Working directory for codex. Codex's `apply-patch` and shell tools resolve paths relative to this. |
+| `--model <name>` | string | codex picks | Forwarded into `thread/start` as `model`. Codex's default model selection takes over when omitted. |
+| `--resume [<threadId>]` | string (optional) | fresh thread | Pick a previous thread back up via `thread/resume` instead of starting fresh. With an id, resumes that thread (the id is printed in the startup banner of the run that created it). Bare `--resume` resumes this member's most recent thread on this machine. |
+| `--url <url>` | string | `http://127.0.0.1:8717` | Broker base URL. Falls back to `$CSUITE_URL`. |
+| `--token <secret>` | string | — | Bearer token. Falls back to `$CSUITE_TOKEN` then `~/.config/csuite/auth.json`. |
+| `-- <args>` | passthrough | — | Everything after `--` is forwarded verbatim to `codex app-server`. Unrecognized args before `--` fall through too. Use codex's own `-c key=value` syntax to override `config.toml` entries (see below). |
+
+## What it does on startup
+
+1. **Locate `codex`.** Reads `$CODEX_PATH` first, falls back to
+   `which codex`. Fails fast if missing, with an install hint
+   (`npm i -g @openai/codex`).
+2. **Start the runner.** Same `startRunner()` claude-code uses, but
+   passes a custom `notificationSink`: a buffering wrapper that
+   queues broker events until codex is ready, then drains them
+   into the live channel sink. This closes the cold-start gap —
+   any DMs that arrive while codex is initializing are still
+   delivered.
+3. **Set up the ephemeral CODEX_HOME.** A fresh directory under
+   `~/.cache/commandsuite/codex/csuite-codex-<random>/` (override via
+   `$XDG_CACHE_HOME`). Inside:
+   - `auth.json` — symlinked to `~/.codex/auth.json` (so OAuth
+     refreshes from the real codex login persist)
+   - `config.toml` — our `[mcp_servers.csuite]` block with
+     `default_tools_approval_mode = "approve"`, plus (when tracing is on)
+     an `[otel]` block for native telemetry export
+   - `sessions/` — symlinked to the durable per-member store at
+     `~/.local/share/commandsuite/codex/sessions/<member>/` (override via
+     `$XDG_DATA_HOME`), so codex's thread rollouts survive the run and
+     `--resume` can find them later
+   - `trace-root/` — where codex writes per-inference trace bundles
+     (`CODEX_ROLLOUT_TRACE_ROOT`), when tracing is on
+4. **Spawn `codex app-server`** with `CODEX_HOME=<ephemeral-dir>`
+   in its env, no extra flags. The runner owns its stdin/stdout
+   for JSON-RPC; stderr is `'inherit'` so codex's diagnostics
+   reach your terminal.
+5. **Wire the JSON-RPC client** on top of stdio. Codex's wire
+   format is newline-delimited JSON, one message per line, and
+   the `jsonrpc` field is omitted — the client routes by message
+   shape (`id` + `method` = request, `id` + `result|error` =
+   response, `method` only = notification).
+6. **Register handlers** for codex's notifications (`thread/started`,
+   `thread/status/changed`, `turn/started`, `turn/completed`,
+   `item/started`, `item/completed`, `error`, `warning`) and a
+   defensive auto-deny for any approval / elicitation server-request
+   (these shouldn't fire because we set `approvalPolicy: never`,
+   but if they do, denying is safer than blocking).
+7. **`initialize` handshake.** Codex requires this before any
+   other method.
+8. **`thread/start`** — or **`thread/resume`** when `--resume` names a
+   persisted thread (bare `--resume` resolves to the newest rollout in
+   the member's durable sessions store) — carrying our briefing as
+   `developerInstructions` and these explicit settings (re-asserted on
+   resume too, so a resumed agent comes back with the same headless
+   posture as a fresh one):
+
+   | Param | Value | Why |
+   |---|---|---|
+   | `cwd` | `--cwd` value or `process.cwd()` | Where codex's apply-patch/shell tools operate |
+   | `developerInstructions` | the runner briefing | Pinned into every model context — analog of `--append-system-prompt` |
+   | `model` | `--model` value or omit | Codex's default takes over if omitted |
+   | `approvalPolicy` | `never` | Headless: no UI to elicit against |
+   | `sandbox` | `danger-full-access` | Mirrors claude-code's posture (`--dangerously-skip-permissions` has no codex equivalent that's tighter; tighter modes (`workspace-write`, `read-only`) will land as a flag later) |
+
+9. **Drain the pre-attach buffer** — any broker events queued by
+   the sink wrapper while we were spinning up are flushed now, in
+   order.
+10. **Hold until codex exits** (or SIGINT/SIGTERM/runner shutdown),
+    then tear down: flush the channel sink, `turn/interrupt` if a
+    turn is active, close the JSON-RPC client, kill codex if still
+    alive, drain the rollout + trace-bundle readers (a final read of
+    codex's on-disk artifacts) **before** `rm -rf`ing the ephemeral
+    CODEX_HOME — so the last turn's content and inferences aren't lost to
+    the cleanup.
+
+## Why ephemeral CODEX_HOME
+
+`~/.codex/config.toml` is the user's HOME-level config; it likely
+has MCP servers, profile defaults, and other state we shouldn't
+merge into. Multi-runner runs would race on the same file.
+Backup-and-restore for HOME-level state is also scarier than for
+per-project state — a botched restore loses real config.
+
+So every `csuite codex` invocation gets its own short-lived `CODEX_HOME`
+which the runner owns end-to-end. Codex reads everything (auth,
+config, sessions) from that root via the `CODEX_HOME` env var, so
+the user's real `~/.codex` is never touched. Two pieces escape the
+ephemeral lifetime, both via symlink: `auth.json` (shared with the
+real codex login) and `sessions/` (pointed at the durable per-member
+store so thread rollouts survive for `--resume`). On cleanup the
+symlinks are removed but the targets aren't.
+
+> The cache lives under `~/.cache/commandsuite/codex/`, **not** `$TMPDIR`.
+> Codex refuses to install helper binaries (apply-patch, etc.)
+> under tmpfs and emits a warning that disables them. Cache
+> directories don't trigger that.
+
+## The MCP bridge wiring
+
+Same model as claude-code: the runner detects the bridge command
+from its own process and writes the bridge invocation into
+`config.toml`:
+
+```toml
+# Auto-generated by csuite codex runner — do not edit.
+# Lifetime: this entire CODEX_HOME directory is ephemeral.
+
+[mcp_servers.csuite]
+command = "/path/to/node"
+args = ["/path/to/cli/dist/index.js", "mcp-bridge"]
+enabled = true
+default_tools_approval_mode = "approve"
+
+[mcp_servers.csuite.env]
+CSUITE_RUNNER_SOCKET = "/tmp/.csuite-runner-12345.sock"
+
+# Only when tracing is on — codex's native OTEL export (see Trace coverage).
+[otel]
+environment = "csuite"
+log_user_prompt = false
+exporter = { otlp-http = { endpoint = "http://127.0.0.1:8717/otlp/v1/logs", protocol = "json", headers = { Authorization = "Bearer <member-token>" } } }
+```
+
+`default_tools_approval_mode = "approve"` is the snake-case enum
+codex uses for "always auto-approve every call from this server."
+The team's permission model is the access control — per-tool
+approval prompts would block headless runs forever.
+
+## Channel sink: turn/start vs turn/steer
+
+Broker push events reach codex through a **channel sink** that the
+runner forwarder dispatches into. Routing depends on codex's
+current `ThreadStatus`:
+
+| Status | Buffer | Dispatch |
+|---|---|---|
+| `notLoaded` | yes (indefinitely) | flush when status flips off |
+| `idle` | yes (200ms window) | `turn/start` with the bundled prose |
+| `active` | yes (200ms window) | `turn/steer` with `expectedTurnId` of the live turn |
+| `systemError` | drop | log line |
+
+Bundling matters because each `turn/steer` adds a user-input item
+the model sees on its next API call. A flurry of broker events
+landing simultaneously (e.g. ten objective updates) collapse into
+one steer with all the prose concatenated, instead of ten separate
+steers each costing a model-side awareness slot.
+
+The 200ms window is short enough that a director typing in chat
+sees their message reach the agent within one round-trip; long
+enough that bursty objective lifecycle changes coalesce.
+
+### The race (turn/steer mismatch)
+
+Codex returns an error if the `expectedTurnId` we steer with no
+longer matches the active turn — the turn ended between our flush
+decision and the dispatch arriving server-side. The sink retries
+once: re-read status and either dispatch as `turn/start` (now idle)
+or `turn/steer` with the new turn id. If the second attempt also
+fails the events drop with a log line; that's almost always
+thread-shutdown anyway.
+
+### Channel framing
+
+Each broker event is rendered as a single `<channel>`-tagged block
+the agent can recognize as ambient signal rather than fresh user
+input:
+
+```xml
+<channel kind="chat" from="director" thread="general" level="info" ts="04/15/26 14:23:45 UTC" msg_id="msg-...">
+  pull latest main and run smoke tests
+</channel>
+```
+
+The framing mirrors what claude-code's
+`notifications/claude/channel` MCP notification produces, just
+rendered as text inside a `turn/start` / `turn/steer` UserInput
+item. Reserved meta keys are quoted as attributes; arbitrary
+`data.*` keys from the push payload land as additional
+attributes.
+
+## JSON-RPC subset codex uses
+
+Methods (client → server):
+
+| Method | Purpose |
+|---|---|
+| `initialize` | Handshake; required before any other method |
+| `thread/start` | Open a fresh thread with developerInstructions + settings |
+| `thread/resume` | Reload a persisted thread and continue it (`--resume`) |
+| `turn/start` | Start a fresh turn with input (used by channel sink when idle) |
+| `turn/steer` | Inject input into the live turn (used when active) |
+| `turn/interrupt` | Cancel the active turn (used during shutdown) |
+
+Notifications (server → client):
+
+`thread/started`, `thread/status/changed`, `thread/closed`,
+`turn/started`, `turn/completed`, `item/started`, `item/completed`,
+`item/agentMessage/delta`, `account/rateLimits/updated`, `error`,
+`warning`.
+
+Server requests (auto-denied if they fire):
+`item/commandExecution/requestApproval`,
+`item/fileChange/requestApproval`,
+`item/permissions/requestApproval`,
+`item/tool/requestUserInput`,
+`mcpServer/elicitation/request`.
+
+For the canonical wire types see
+`packages/cli/src/runtime/agents/codex/protocol.ts`.
+
+## Environment passed to codex
+
+When tracing is on, the runner injects two variables plus an `[otel]`
+block into the ephemeral `config.toml`:
+
+```
+CODEX_HOME=<ephemeral-dir>
+CODEX_ROLLOUT_TRACE_ROOT=<ephemeral-dir>/trace-root
+```
+
+`CODEX_HOME` scopes codex's auth / config / sessions to the runner-owned
+dir; `CODEX_ROLLOUT_TRACE_ROOT` tells codex where to write its
+per-inference trace bundles (the gen_ai + raw-body layer). Everything
+else is codex's inherited environment, untouched — there is no proxy, no
+CA, and no interception of the codex child's network traffic. Capture is
+built entirely from artifacts codex produces about its own work.
+
+`--no-trace` disables all of it: no rollout reader, no `[otel]` block, no
+`CODEX_ROLLOUT_TRACE_ROOT`, no bundle reader. Only `CODEX_HOME` remains.
+
+## Trace coverage today
+
+Codex capture is **native and layered** — the runner consumes the
+artifacts codex already produces about its own work and normalizes them
+into the same activity + telemetry + gen_ai model as Claude Code. There
+is no network interception; codex is its own source of truth. Four
+layers run in parallel when tracing is on.
+
+### 1. Content — rollout-primary
+
+The runner tails codex's own durable **rollout JSONL**
+(`<CODEX_HOME>/sessions/YYYY/MM/DD/rollout-*.jsonl`) via a `RolloutReader`
+(`packages/cli/src/runtime/agents/codex/rollout-reader.ts` +
+`rollout-parser.ts`) and maps each turn to the shared activity events —
+exactly mirroring how the Claude runner went transcript-primary. The
+`sessions/` tree is the durable per-member store (see the CODEX_HOME
+layout above), so the reader ignores rollout files that already exist at
+attach — prior runs' history, captured when it was written — and tails
+only files created during this run, each named with its thread id. On
+`--resume` the resumed thread's existing file is tailed too, from its
+current end, so exactly the turns this run appends get captured once.
+
+Three event kinds come out — the same ones Claude Code produces, so codex
+traces render through the exact same web TracePanel path:
+
+- **`user_prompt`** — from the rollout's `user_message` events: the clean
+  turn opener, without the injected `<environment_context>` / developer
+  preamble that pollutes the raw model input.
+- **`llm_exchange`** — one per turn: assistant text plus reasoning
+  summaries (as `thinking` blocks), the real per-turn token breakdown,
+  the model, and codex's own turn timestamps. Built as a normalized
+  Anthropic-messages record — the shape is a container, not a claim about
+  the provider (codex talks to OpenAI models).
+- **`tool_action`** — from `function_call` + `function_call_output`,
+  paired by `call_id` (so codex tool actions carry a `toolUseId`), with
+  the full command / args input **and** output.
+
+The app-server JSON-RPC stream still drives **presence**, the **busy**
+signal, and the stderr **activity printer** — but no longer the content.
+This is the codex analogue of Claude's hooks-presence-only split.
+
+### 2. Operational telemetry — native OTEL
+
+The ephemeral `config.toml`'s `[otel]` block points codex's native
+OpenTelemetry export at the broker's OTLP logs endpoint
+(`<broker>/otlp/v1/logs`, bearer-authed). Codex ships its operational log
+records — `codex.api_request`, `codex.sse_event` (token counts),
+`codex.conversation_starts`, `codex.tool_decision`, rate limits — which
+the broker stores losslessly and name-agnostically in the telemetry
+table. `log_user_prompt` stays off (prompt text comes from the rollout).
+Operator identity attributes (`user.email`, `user.account_id`) are
+stripped at ingest.
+
+### 3 + 4. Full-context inferences + raw bodies — trace bundles
+
+With `CODEX_ROLLOUT_TRACE_ROOT` set, codex writes a per-session
+**rollout-trace bundle** carrying the complete Responses API request
+(instructions, full input, all tool definitions, sampling params) and
+response per inference. A `BundleReader`
+(`packages/cli/src/runtime/agents/codex/bundle-reader.ts`) tails it,
+reads each inference's **verbatim** request / response payload bytes, and
+uploads them to the broker's gen_ai ingest (`POST /members/:name/genai`).
+The broker content-addresses the raw bytes (`raw_blob` / `raw_exchange`,
+deduped by sha256) BEFORE any parse, then maps a parsed copy into a
+full-context `gen_ai_inference` record via the pure
+`openaiResponsesToGenAi` core mapper — the OpenAI-Responses sibling of
+`anthropicToGenAi`. This is the codex full-fidelity layer, equivalent to
+Claude's raw-body → gen_ai path, and it recovers the request-side context
+the app-server stream never carried.
+
+Everything text-bearing is redacted with the core `redactJson` before it
+leaves the runner, matching the Claude Code capture path.
+
+**Reasoning is summaries only.** Codex streams a summarized form of the
+model's reasoning; the raw chain-of-thought is encrypted by OpenAI and
+never reaches the runner. (Claude Code's extended thinking is likewise
+redacted at source — neither agent captures raw reasoning.)
+
+## Using a local or self-hosted OpenAI-compatible provider
+
+Codex supports custom model providers via its native `-c key=value` config
+override. Pass provider settings after `--` and they're forwarded verbatim
+to `codex app-server`:
+
+```bash
+# llama.cpp / llama-server on :8000 (e.g. Qwen-MoE, Gemma-MoE)
+csuite codex -- \
+  -c 'model_provider="local"' \
+  -c 'model_providers.local.name="local"' \
+  -c 'model_providers.local.base_url="http://localhost:8000/v1"' \
+  -c 'model_providers.local.wire_api="responses"'
+
+# Ollama. Note `--model` is a csuite flag (forwarded over JSON-RPC
+# `thread/start`, not the codex CLI), so it goes BEFORE `--`. The codex
+# CLI's app-server subcommand has no `--model` flag of its own; if you
+# prefer the codex-native form, use `-c 'model="llama3.2"'` after `--`.
+csuite codex --model llama3.2 -- \
+  -c 'model_provider="ollama"' \
+  -c 'model_providers.ollama.name="ollama"' \
+  -c 'model_providers.ollama.base_url="http://localhost:11434/v1"' \
+  -c 'model_providers.ollama.wire_api="responses"'
+```
+
+Unrecognized flags before `--` also fall through, so the single-dash short
+form works too:
+
+```bash
+csuite codex -c 'model_provider="local"' \
+          -c 'model_providers.local.name="local"' \
+          -c 'model_providers.local.base_url="http://localhost:8000/v1"' \
+          -c 'model_providers.local.wire_api="responses"'
+```
+
+For providers that don't require an API key, set `OPENAI_API_KEY` to any
+non-empty string in your shell environment — codex checks for the variable's
+presence but the value is unused by local servers.
+
+### Codex 0.120+ requirements
+
+Codex 0.120+ uses the OpenAI Responses API (`/v1/responses`) exclusively —
+the chat-completions path is no longer supported. Every local provider must
+expose `/v1/responses`. llama-server build 8826+ includes this endpoint.
+
+Two `model_providers.*` fields are required in 0.120+:
+
+| Field | Notes |
+|---|---|
+| `wire_api` | Must be `"responses"` — `"chat"` is no longer accepted |
+| `name` | Must be set explicitly to the provider key (e.g. `"local"`) |
+
+## Common patterns
+
+```bash
+# Cold start a new device
+csuite connect
+codex login            # if not already done
+csuite codex
+
+# Pin a specific model
+csuite codex --model gpt-5
+
+# Run codex on a specific working tree
+csuite codex --cwd ~/projects/widget-service
+
+# Disable trace (debugging IPC plumbing)
+csuite codex --no-trace
+
+# Point at a local llama-server
+csuite codex -- \
+  -c 'model_provider="local"' \
+  -c 'model_providers.local.name="local"' \
+  -c 'model_providers.local.base_url="http://localhost:8000/v1"' \
+  -c 'model_providers.local.wire_api="responses"'
+```
+
+## What you give up vs claude-code
+
+- **No TUI.** Direction is broker-only.
+- **No HUD strip.** A one-line "agent connected" notice replaces
+  it. Use the web UI for live status.
+- **No interactive approval.** Headless means anything that would
+  prompt blocks instead — that's why `approvalPolicy: never` and
+  `sandbox: danger-full-access` are pinned.
+- **Reasoning is summaries only.** Codex encrypts the raw
+  chain-of-thought, so captured reasoning is the summarized form. Claude
+  Code's extended thinking is redacted at source too, so this is close to
+  parity — neither captures raw reasoning. (Request bodies, token/cost
+  telemetry, and full per-inference context ARE now captured for codex,
+  via the rollout + trace-bundle layers above.)
+
+What you gain: one broker, one identity, the same MCP toolbox, and
+no terminal pinned to a single agent. Spin up codex on a remote
+VM, push objectives at it, walk away.

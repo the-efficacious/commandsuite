@@ -1,0 +1,204 @@
+---
+title: Runners overview
+description: A runner is the parent process that owns a csuite session — broker connection, briefing, IPC server, MCP tool dispatch, trace capture. claude-code and codex are two runners that share the same plumbing and differ only in how they talk to the agent.
+section: Docs
+order: 20
+---
+
+# Runners overview
+
+A **runner** is the parent process that owns a single csuite session.
+It connects to the broker, fetches the briefing, binds an IPC socket,
+runs the SSE forwarder, dispatches MCP tools, and captures the
+agent's activity from its native instrumentation. The agent itself
+runs as a child of the runner.
+
+csuite ships with two runners today:
+
+- **`csuite claude-code`** — wraps Claude Code in a TUI you talk to in
+  the same terminal
+- **`csuite codex`** — runs OpenAI Codex headlessly under
+  `codex app-server`; you direct it through the broker
+
+The runner abstraction is designed so adding a third (Cursor,
+Gemini CLI, your own) is mostly a matter of writing a spawn adapter
+and a notification sink. Everything the runner does on the broker
+side — auth, briefing, tools, trace, presence — is shared.
+
+## What every runner does
+
+```
+                                ┌─────────────────────────┐
+   broker  ──────── HTTP+SSE ───┤  csuite runner             │
+                                │                         │
+                                │  • broker Client        │
+                                │  • briefing (cached)    │
+                                │  • SSE forwarder        │
+                                │  • objectives tracker   │
+                                │  • IPC server (UDS)     │
+                                │  • capture host         │
+                                │  • busy reporter        │
+                                └────────────┬────────────┘
+                                             │ spawns
+                                             ▼
+                                ┌─────────────────────────┐
+                                │  the agent              │
+                                │  (claude / codex / ...) │
+                                └────────────┬────────────┘
+                                             │ stdio MCP / stdio JSON-RPC
+                                             ▼
+                                ┌─────────────────────────┐
+                                │  csuite mcp-bridge         │
+                                │  (claude-code only)     │
+                                └────────────┬────────────┘
+                                             │ IPC frames
+                                             ▼
+                                  back to the runner
+```
+
+Concretely, on every runner startup:
+
+1. **Authenticate** with `--token` / `$CSUITE_TOKEN` /
+   `~/.config/csuite/auth.json`.
+2. **Fetch the briefing** — the member's name, role, permissions,
+   teammates, team directive + context, and currently-open objectives.
+3. **Bind the IPC socket** at
+   `$TMPDIR/.csuite-runner-<pid>.sock` (overridable). The agent's MCP
+   bridge subprocess connects back to this.
+4. **Start the capture host** (unless `--no-trace`): bind a loopback
+   hook server for Claude Code tool events and start the batched
+   activity uploader that ships normalized events to the broker. No
+   proxy, no CA, no TLS interception — capture rides each agent's
+   native instrumentation.
+5. **Run the SSE forwarder** — subscribe to `/subscribe?name=<self>`,
+   route inbound chat / objective / channel events to the runner's
+   notification sink.
+6. **Spawn the agent** with environment variables wired up
+   (`CSUITE_RUNNER_SOCKET`; for claude-code also the capture host's
+   OpenTelemetry export env — `CLAUDE_CODE_ENABLE_TELEMETRY`,
+   `OTEL_EXPORTER_OTLP_ENDPOINT`, bearer auth, and the `OTEL_LOG_*`
+   flags — so it exports its API bodies + tool details to the broker;
+   for codex, `CODEX_ROLLOUT_TRACE_ROOT` plus an `[otel]` block in its
+   ephemeral `config.toml` for the gen_ai + telemetry layers).
+7. **Hold until the agent exits** (or SIGINT/SIGTERM/runner shutdown),
+   then tear down: drain the activity uploader, close the hook
+   server, close sockets, restore configs.
+
+The IPC server is single-bridge: if a second bridge connects while
+one is already attached, the older one is dropped (default) or the
+newer one is rejected. Multi-agent setups run multiple runner
+processes.
+
+## What MCP tools the agent sees
+
+The runner exposes a fixed set of MCP tools for every agent. Some
+are unconditional, some depend on the member's permissions:
+
+**Always available**
+
+| Tool | Purpose |
+|---|---|
+| `roster` | List teammates with role + connection state |
+| `broadcast` | Post to the team's general channel |
+| `send` | DM a teammate |
+| `channels_list` | List named channels you have access to |
+| `channels_post` | Post to a specific channel |
+| `recent` | Fetch recent messages (general / DM / channel) |
+| `objectives_list` | Your own objectives by status |
+| `objectives_view` | Full state + audit log for one objective |
+| `objectives_update` | Transition `active ↔ blocked` (+ blockReason) |
+| `objectives_discuss` | Post into an objective's thread |
+| `objectives_complete` | Mark done with required result |
+| `fs_ls` / `fs_stat` / `fs_read` / `fs_write` | Virtual filesystem |
+| `fs_mkdir` / `fs_rm` / `fs_mv` / `fs_shared` | Virtual filesystem |
+
+**Permission-gated**
+
+| Tool | Permission required |
+|---|---|
+| `objectives_create` | `objectives.create` |
+| `objectives_cancel` | `objectives.cancel` (originator bypass) |
+| `objectives_watchers` | `objectives.watch` (originator bypass) |
+| `objectives_reassign` | `members.manage` |
+
+Tool descriptions are **static** for the lifetime of a session —
+identity and the roster live in the system-prompt briefing, and
+live objective state arrives as message traffic: channel events
+plus a `context_refresh` re-brief the runner pushes at session
+attach (first `tools/list` on a fresh bridge connection) and after
+context compaction (SessionStart hook with source=compact|clear).
+`notifications/tools/list_changed` fires only for genuine
+capability changes — tool-source registry updates that change the
+member's resolved external toolset — never state freshness;
+mutating descriptions mid-session would invalidate the model's
+prompt-prefix cache. See
+[reference/mcp-tools](/docs/reference/mcp-tools) for the full
+input/output schemas.
+
+## claude-code vs codex
+
+Both runners share everything above. They differ in how channel
+events reach the agent:
+
+|  | `csuite claude-code` | `csuite codex` |
+|---|---|---|
+| **Agent shape** | Interactive TUI | Headless `codex app-server` |
+| **Stdio owner** | The agent (TUI in your terminal) | The runner |
+| **MCP bridge** | `csuite mcp-bridge` spawned by claude via `--mcp-config <ephemeral file>` | `csuite mcp-bridge` spawned by codex via ephemeral `CODEX_HOME/config.toml` |
+| **Push event delivery** | `notifications/claude/channel` MCP notification (depends on `claude/channel` capability) | `turn/start` if thread is idle, `turn/steer` if active (JSON-RPC v2) |
+| **Auto-injected agent flags** | `--dangerously-skip-permissions`, `--dangerously-load-development-channels server:csuite`, `--append-system-prompt <briefing>` | `developerInstructions: <briefing>`, `approvalPolicy: never`, `sandbox: danger-full-access` |
+| **`.mcp.json` rewrite** | No by default (ephemeral `--mcp-config` file); opt-in backup+restore rewrite via `mcpMode: 'inject'` | No (ephemeral CODEX_HOME) |
+| **Capture source** | Native OpenTelemetry export (API bodies, model, tokens, cost) + hooks (tool result content, busy signal) | `codex app-server` notification stream (assistant text, reasoning summaries, token usage, tool items) |
+| **Runner-injected env** | OTEL OTLP export vars (`CLAUDE_CODE_ENABLE_TELEMETRY`, `OTEL_*`) + `CSUITE_RUNNER_SOCKET` | `CODEX_HOME` (no telemetry env) |
+| **Trace parsing** | `llm_exchange` (Anthropic Messages shape) + `tool_action`, parsed at broker ingest | `llm_exchange` + `tool_action`, built from typed app-server items |
+| **Status bar** | Bottom-row HUD (when `node-pty` is available) | One-line connection notice |
+
+The structural takeaway: claude-code and codex receive ambient
+director input through different mechanisms because their underlying
+agent frameworks treat "new input mid-session" differently. csuite
+hides that asymmetry behind the runner's notification sink — the
+sink for claude-code wraps events as MCP notifications; the sink
+for codex bundles them and dispatches as `turn/start` or `turn/steer`.
+
+For the full per-runner reference, see
+[runners/claude-code](/docs/runners/claude-code) and
+[runners/codex](/docs/runners/codex).
+
+## Bring your own runner
+
+The runner core (`startRunner` in `packages/cli/src/runtime/runner.ts`)
+is transport-agnostic about MCP. It exposes a `notificationSink`
+option that lets a runner override how broker events reach the
+agent. Adding a third runner is roughly:
+
+1. **Spawn adapter** — locate the agent binary, set up its
+   working environment (config dir, env vars, MCP bridge wiring),
+   spawn it.
+2. **Notification sink** — implement
+   `ForwarderNotificationSink.notification(args)` so each broker
+   event becomes whatever the agent's framework calls "ambient
+   input."
+3. **Status mapping** — flip the `Presence` signal between
+   `connecting` / `online` / `offline` based on whatever the agent
+   reports as ready.
+4. **Shutdown** — flush the sink, kill the agent, clean up any
+   files the spawn adapter created.
+
+The MCP bridge (`csuite mcp-bridge`) is reusable as-is for any agent
+framework that speaks stdio MCP. Frameworks that don't (codex
+speaks JSON-RPC) wire their own protocol on top of the same
+runner core — see how the codex adapter routes broker events
+through its channel sink in `packages/cli/src/runtime/agents/codex/`.
+
+## What the runner does NOT do
+
+- **Schedule the agent.** A runner is one agent for the duration
+  of one process. Multi-agent fleets are multi-process.
+- **Persist agent state.** The runner is stateless across restarts.
+  Briefing, objectives, history, and traces all live on the broker.
+- **Validate authorization.** Permissions are enforced server-side
+  on every mutating endpoint. The runner's tool-list filtering is
+  a UX optimization that hides tools the member couldn't use anyway.
+- **Catch the agent's stdout.** The runner reserves stderr for its
+  own structured logs (`session-<component>-<pid>.log` under
+  `~/.cache/commandsuite/`); stdout belongs to the agent.
