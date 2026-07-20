@@ -25,9 +25,11 @@ jobs:
     permissions:
       contents: write # commit the Version Packages PR + push tags
       pull-requests: write # open/update the Version Packages PR
-      # Required for `npm publish --provenance` (via NPM_CONFIG_PROVENANCE):
-      # the id-token is what the registry consumes to attach a signed
-      # attestation linking the tarball to this exact commit.
+      # OIDC trusted publishing: the id-token authenticates the publish
+      # itself (no npm token anywhere) AND is what the registry consumes
+      # to attach a signed provenance attestation linking the tarball to
+      # this exact commit. Each package's Trusted Publisher on npmjs.com
+      # is pinned to this repo + this workflow file.
       id-token: write
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -41,6 +43,10 @@ jobs:
           node-version: 22
           cache: pnpm
           registry-url: https://registry.npmjs.org
+
+      # Trusted publishing (OIDC) needs npm >= 11.5.1; the npm bundled
+      # with setup-node's Node 22 is older. Upgrade before any publish.
+      - run: npm install -g npm@latest
 
       - run: pnpm install --frozen-lockfile
 
@@ -60,5 +66,7 @@ jobs:
           title: 'chore: version packages'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # No npm token: publishing authenticates via OIDC trusted
+          # publishing (id-token above). Provenance is automatic under
+          # OIDC; the explicit flag is kept as belt-and-braces.
           NPM_CONFIG_PROVENANCE: 'true'
