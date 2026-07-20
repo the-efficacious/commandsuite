@@ -3,7 +3,7 @@
 Thanks for using CommandSuite. Here's where to go for what:
 
 - **Docs** — start at [docs.commandsuite.io](https://docs.commandsuite.io) or the
-  in-repo [`docs/`](./docs/) tree (getting-started, architecture, and the
+  in-repo [`docs/`](../docs/) tree (getting-started, architecture, and the
   CLI / MCP / REST / config / env-var reference).
 - **Questions & ideas** — open a
   [GitHub Discussion](https://github.com/the-efficacious/commandsuite/discussions).

@@ -186,7 +186,7 @@ in the body (explain **why**, not what — the diff shows what).
 ## License
 
 By contributing, you agree that your contribution is licensed under
-Apache License 2.0 (see [LICENSE](LICENSE)). You retain copyright in
+Apache License 2.0 (see [LICENSE](../LICENSE)). You retain copyright in
 your contribution; the DCO sign-off is your grant of the Apache 2.0
 license to the project and its downstream users.
 
