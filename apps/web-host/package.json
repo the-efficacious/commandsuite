@@ -1,7 +1,7 @@
 {
   "name": "csuite-web-host",
-  "version": "0.0.0",
-  "description": "OSS web host for CommandSuite \u2014 TOTP auth gate + PWA that mounts the shared csuite-web-ui <TeamShell>, served by the self-hosted broker.",
+  "version": "0.0.1",
+  "description": "OSS web host for CommandSuite — TOTP auth gate + PWA that mounts the shared csuite-web-ui <TeamShell>, served by the self-hosted broker.",
   "license": "Apache-2.0",
   "author": "Andrew Jon Przybilla <andrewjon@efficacious.io>",
   "homepage": "https://github.com/the-efficacious/commandsuite#readme",

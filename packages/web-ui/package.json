@@ -1,6 +1,6 @@
 {
   "name": "csuite-web-ui",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "private": true,
   "description": "Preact team-view UI + runtime for CommandSuite — chat, objectives, files, members, tools, secrets. Host-agnostic; a host mounts it via <TeamShell>.",
   "license": "Apache-2.0",
