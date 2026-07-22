@@ -42,7 +42,13 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          registry-url: https://registry.npmjs.org
+          # NO registry-url here. It writes an .npmrc with
+          # `_authToken=${NODE_AUTH_TOKEN}`, and with no token in the
+          # OIDC world that env var is UNSET — npm's config parser then
+          # errors on every registry read, changesets concludes nothing
+          # is published, and every no-changeset push tries to republish
+          # the current version (EPUBLISHCONFLICT). Trusted publishing
+          # needs no .npmrc: npm >= 11.5.1 + id-token, default registry.
 
       # Trusted publishing (OIDC) needs npm >= 11.5.1; the npm bundled
       # with setup-node's Node 22 is older. Upgrade before any publish.
