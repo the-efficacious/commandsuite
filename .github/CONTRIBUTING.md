@@ -81,11 +81,19 @@ Pick the bump (patch / minor / major), write a one-line summary, and commit
 the generated `.changeset/*.md` alongside your PR. Docs-only, test-only, or
 internal refactors that don't change published behavior don't need one.
 
+**Write the summary as a user-facing changelog line** — it is published
+verbatim (with a PR link and your handle) in the root `CHANGELOG.md` and the
+GitHub release notes. "Fix transcript-reader race that emitted events after
+close" ages better than "fix bug".
+
 All packages version in **lockstep** — one shared version across the whole
 suite (see the `fixed` group in `.changeset/config.json`). Releases are
 automated: merging changesets to `main` opens a **"Version Packages"** PR that
-applies the bumps and updates changelogs; merging *that* PR publishes to npm
-with provenance. Maintainers cut releases — contributors just add the changeset.
+applies the bumps, updates per-package changelogs, and aggregates them into
+the root `CHANGELOG.md` (dependency-only noise stripped); merging *that* PR
+publishes to npm with provenance and cuts a single `v<version>` GitHub
+release for the suite. Maintainers cut releases — contributors just add the
+changeset.
 
 ## DCO — Developer Certificate of Origin
 

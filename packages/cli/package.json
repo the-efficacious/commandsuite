@@ -1,6 +1,6 @@
 {
   "name": "csuite-cli",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "CLI for csuite — wrap agents with csuite claude-code, push objectives, manage the team.",
   "license": "Apache-2.0",
   "author": "Andrew Jon Przybilla <andrewjon@efficacious.io>",

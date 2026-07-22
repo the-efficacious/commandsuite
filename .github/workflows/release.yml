@@ -58,6 +58,7 @@ jobs:
         run: pnpm verify-pack
 
       - name: Create Version PR or publish
+        id: changesets
         uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1
         with:
           version: pnpm run version-packages
@@ -69,9 +70,29 @@ jobs:
 
             Signed-off-by: Andrew Jon Przybilla <andrewjon@efficacious.io>
           title: 'chore: version packages'
+          # The suite versions in lockstep, so a release is ONE event —
+          # we cut a single v<version> GitHub release below instead of
+          # five per-package ones (four of which would be empty).
+          createGithubReleases: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # No npm token: publishing authenticates via OIDC trusted
           # publishing (id-token above). Provenance is automatic under
           # OIDC; the explicit flag is kept as belt-and-braces.
           NPM_CONFIG_PROVENANCE: 'true'
+
+      - name: Create suite release
+        if: steps.changesets.outputs.published == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          V=$(node -p "require('./packages/csuite/package.json').version")
+          if gh release view "v$V" >/dev/null 2>&1; then
+            echo "release v$V already exists — skipping"
+            exit 0
+          fi
+          node scripts/aggregate-changelog.mjs --extract "$V" > /tmp/suite-release-notes.md
+          gh release create "v$V" \
+            --title "CommandSuite v$V" \
+            --notes-file /tmp/suite-release-notes.md
+          echo "created release v$V"
