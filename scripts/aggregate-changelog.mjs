@@ -78,7 +78,10 @@ function sectionFor(markdown, version) {
       break;
     }
   }
-  return lines.slice(start + 1, end).join('\n').trim();
+  return lines
+    .slice(start + 1, end)
+    .join('\n')
+    .trim();
 }
 
 /**
@@ -111,14 +114,18 @@ function stripDependencyNoise(section) {
       const next = rest.findIndex((l) => /^### /.test(l));
       const body = (next === -1 ? rest : rest.slice(0, next)).join('\n').trim();
       if (body === '') {
-        if (next !== -1) i += next; // jump to just before next heading
+        if (next !== -1)
+          i += next; // jump to just before next heading
         else i = kept.length;
         continue;
       }
     }
     out.push(line);
   }
-  return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  return out
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 function buildAggregate(version) {
@@ -155,7 +162,9 @@ function updateRootChangelog(version) {
   let existing = existsSync(ROOT_CHANGELOG) ? readFileSync(ROOT_CHANGELOG, 'utf8') : HEADER;
   // replace an existing section for this version (idempotent re-runs)
   const lines = existing.split('\n');
-  const start = lines.findIndex((l) => l.trim().startsWith(`## ${version} `) || l.trim() === `## ${version}`);
+  const start = lines.findIndex(
+    (l) => l.trim().startsWith(`## ${version} `) || l.trim() === `## ${version}`,
+  );
   if (start !== -1) {
     let end = lines.length;
     for (let i = start + 1; i < lines.length; i++) {
@@ -182,9 +191,13 @@ function updateRootChangelog(version) {
 const args = process.argv.slice(2);
 if (args[0] === '--extract') {
   const version = args[1] ?? suiteVersion();
-  const section = sectionFor(readFileSync(ROOT_CHANGELOG, 'utf8'), `${version}`) ??
+  const section =
+    sectionFor(readFileSync(ROOT_CHANGELOG, 'utf8'), `${version}`) ??
     sectionFor(
-      readFileSync(ROOT_CHANGELOG, 'utf8').replace(new RegExp(`^## ${version.replace(/\./g, '\\.')} \\(.*\\)$`, 'm'), `## ${version}`),
+      readFileSync(ROOT_CHANGELOG, 'utf8').replace(
+        new RegExp(`^## ${version.replace(/\./g, '\\.')} \\(.*\\)$`, 'm'),
+        `## ${version}`,
+      ),
       version,
     );
   if (!section) {
