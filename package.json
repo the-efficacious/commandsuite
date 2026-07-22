@@ -19,7 +19,7 @@
     "typecheck": "turbo run typecheck",
     "clean": "turbo run clean && rm -rf node_modules .turbo",
     "changeset": "changeset",
-    "version-packages": "changeset version",
+    "version-packages": "changeset version && node scripts/aggregate-changelog.mjs",
     "verify-pack": "node scripts/verify-pack-contents.mjs",
     "release": "changeset publish",
     "wizard": "node packages/cli/dist/index.js setup",
@@ -27,6 +27,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.15",
+    "@changesets/changelog-github": "^0.7.0",
     "@changesets/cli": "^2.31.0",
     "turbo": "^2.9.14",
     "typescript": "^6.0.3",
