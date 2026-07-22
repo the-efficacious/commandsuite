@@ -63,7 +63,12 @@ jobs:
         with:
           version: pnpm run version-packages
           publish: pnpm run release
-          commit: 'chore: version packages'
+          # Sign off the auto-generated version commit so it clears the DCO
+          # check like every other commit (Dependabot already signs its own).
+          commit: |
+            chore: version packages
+
+            Signed-off-by: Andrew Jon Przybilla <andrewjon@efficacious.io>
           title: 'chore: version packages'
           # The suite versions in lockstep, so a release is ONE event —
           # we cut a single v<version> GitHub release below instead of
