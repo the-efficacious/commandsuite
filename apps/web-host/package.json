@@ -41,7 +41,7 @@
   "devDependencies": {
     "@preact/preset-vite": "^2.10.0",
     "@testing-library/preact": "^3.2.4",
-    "@types/node": "^25.9.0",
+    "@types/node": "^26.1.1",
     "@unocss/preset-wind4": "^66.6.8",
     "@unocss/reset": "^66.6.8",
     "happy-dom": "^20.9.0",
