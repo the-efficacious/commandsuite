@@ -66,10 +66,19 @@ function suiteVersion() {
   return JSON.parse(readFileSync(join(ROOT, 'packages/csuite/package.json'), 'utf8')).version;
 }
 
-/** Extract the `## <version>` section body from a changelog. */
+/**
+ * Extract the `## <version>` section body from a changelog. Matches
+ * both bare headings (`## 0.0.2`, per-package changesets output) and
+ * dated ones (`## 0.0.2 (2026-07-22)`, the root aggregate) with plain
+ * string comparison — no RegExp built from input.
+ */
 function sectionFor(markdown, version) {
   const lines = markdown.split('\n');
-  const start = lines.findIndex((l) => l.trim() === `## ${version}`);
+  const head = `## ${version}`;
+  const start = lines.findIndex((l) => {
+    const t = l.trim();
+    return t === head || t.startsWith(`${head} `);
+  });
   if (start === -1) return null;
   let end = lines.length;
   for (let i = start + 1; i < lines.length; i++) {
@@ -191,15 +200,8 @@ function updateRootChangelog(version) {
 const args = process.argv.slice(2);
 if (args[0] === '--extract') {
   const version = args[1] ?? suiteVersion();
-  const section =
-    sectionFor(readFileSync(ROOT_CHANGELOG, 'utf8'), `${version}`) ??
-    sectionFor(
-      readFileSync(ROOT_CHANGELOG, 'utf8').replace(
-        new RegExp(`^## ${version.replace(/\./g, '\\.')} \\(.*\\)$`, 'm'),
-        `## ${version}`,
-      ),
-      version,
-    );
+  // sectionFor matches dated headings directly — no fallback needed.
+  const section = sectionFor(readFileSync(ROOT_CHANGELOG, 'utf8'), version);
   if (!section) {
     console.error(`[aggregate-changelog] no CHANGELOG.md section for ${version}`);
     process.exit(1);
