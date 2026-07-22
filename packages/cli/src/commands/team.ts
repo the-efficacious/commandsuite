@@ -3,13 +3,13 @@
  *
  * Subcommands:
  *   csuite team get
- *   csuite team set [--name <n>] [--directive <d>] [--context <c>]
+ *   csuite team set [--name <n>] [--context <c>] [--context-file <path>]
  *
  * Talks to the running broker via the HTTP API. Mutations require
  * the calling member to have `team.manage`. Changes apply
  * immediately on the server side; agents already in an MCP session
  * still need a runner restart to pick up changes that flow into the
- * MCP `instructions` string (directive, context), since that string is
+ * MCP `instructions` string (team context), since that string is
  * frozen for the lifetime of a session by the MCP protocol.
  */
 
@@ -55,7 +55,6 @@ async function runGet(
     return;
   }
   stdout(`name      ${team.name}`);
-  stdout(`directive ${team.directive}`);
   stdout('context');
   if (team.context.trim().length === 0) {
     stdout('  (none)');
@@ -75,24 +74,20 @@ async function runSet(
     args,
     options: {
       name: { type: 'string' },
-      directive: { type: 'string' },
       context: { type: 'string' },
       'context-file': { type: 'string' },
     },
     allowPositionals: false,
   });
-  const patch: { name?: string; directive?: string; context?: string } = {};
+  const patch: { name?: string; context?: string } = {};
   if (typeof values.name === 'string') patch.name = values.name;
-  if (typeof values.directive === 'string') patch.directive = values.directive;
   if (typeof values.context === 'string') patch.context = values.context;
   if (typeof values['context-file'] === 'string') {
     const { readFileSync } = await import('node:fs');
     patch.context = readFileSync(values['context-file'], 'utf8');
   }
   if (Object.keys(patch).length === 0) {
-    throw new UsageError(
-      'team set requires at least one of --name, --directive, --context, --context-file',
-    );
+    throw new UsageError('team set requires at least one of --name, --context, --context-file');
   }
   const team = await client.updateTeam(patch);
   stdout(`updated team '${team.name}'`);

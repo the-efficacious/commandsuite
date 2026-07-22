@@ -1,7 +1,7 @@
 /**
  * Team config loading for the csuite server.
  *
- * A team config defines the directive, the permission presets, and
+ * A team config defines the team context, the permission presets, and
  * the members that make up the team. Each member carries a name, a
  * role (title + description), per-member permissions (preset name or
  * leaf), personal instructions, and a hashed bearer token. Humans vs
@@ -20,8 +20,7 @@
  *     "_comment": "...",
  *     "team": {
  *       "name": "demo-team",
- *       "directive": "Ship the payment service.",
- *       "context": "We own the full lifecycle...",
+ *       "context": "Ship the payment service. We own the full lifecycle...",
  *       "permissionPresets": {
  *         "admin":    ["team.manage", "members.manage", "objectives.create", "objectives.cancel", "objectives.reassign", "objectives.watch", "activity.read"],
  *         "operator": ["objectives.create", "objectives.cancel", "objectives.reassign"]
@@ -111,8 +110,7 @@ const PermissionLeafSchema = z.enum(PERMISSIONS);
 // one place.
 
 const TeamNameSchema = z.string().min(1).max(128);
-const TeamDirectiveSchema = z.string().min(1).max(512);
-const TeamContextSchema = z.string().max(4096).default('');
+const TeamContextSchema = z.string().max(8192).default('');
 const MemberNameSchema = z
   .string()
   .min(1)
@@ -211,13 +209,6 @@ export function validateTeamName(name: string): void {
     TeamNameSchema.parse(name);
   } catch (err) {
     failFromZod('team.name', err);
-  }
-}
-export function validateTeamDirective(directive: string): void {
-  try {
-    TeamDirectiveSchema.parse(directive);
-  } catch (err) {
-    failFromZod('team.directive', err);
   }
 }
 export function validateTeamContext(context: string): void {

@@ -173,7 +173,6 @@ async function runWizardOrFail(
       const stores = server.openTeamAndMembers(db);
       stores.team.setTeam({
         name: wizard.team.name,
-        directive: wizard.team.directive,
         context: wizard.team.context,
       });
       for (const [name, leaves] of Object.entries(wizard.team.permissionPresets)) {

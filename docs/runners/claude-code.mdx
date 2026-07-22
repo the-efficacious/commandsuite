@@ -81,7 +81,7 @@ visible on turn 1.
 |---|---|
 | `--dangerously-skip-permissions` | The intended trust posture, applied session-wide (not just to csuite tools): an autonomous teammate never stops for per-tool yes/no prompts. Controls live at the csuite layer (permissions, broker 403s, credential scoping) and at the workstation boundary — see [permissions → trust posture](/docs/concepts/permissions). |
 | `--dangerously-load-development-channels server:csuite` | Enables claude's `claude/channel` experimental capability against our bridge (keyed `csuite` in the written `.mcp.json`). Without this, the bridge declares the capability but claude ignores it and broker push events never reach the agent. |
-| `--append-system-prompt <briefing>` | Pins the team briefing (team name + directive + context, role, personal instructions, teammates) into claude's system prompt for every turn. Survives compaction; beats the "agent forgot who it is by turn 40" failure mode. Live objective state is deliberately NOT in the prose — it arrives as message traffic plus `context_refresh` re-briefs. |
+| `--append-system-prompt <briefing>` | Pins the team briefing (team name + context, role, personal instructions, teammates) into claude's system prompt for every turn. Survives compaction; beats the "agent forgot who it is by turn 40" failure mode. Live objective state is deliberately NOT in the prose — it arrives as message traffic plus `context_refresh` re-briefs. |
 
 If the user passes any of these themselves, the runner suppresses
 the equivalent injection (and the banner). The briefing snapshot

@@ -36,7 +36,6 @@ const NON_ADMIN_TOKEN = 'csuite_enroll_engineer_token';
 
 const TEAM: Team = {
   name: 'enroll-team',
-  directive: 'Exercise the device-code flow.',
   context: '',
   permissionPresets: {
     admin: [

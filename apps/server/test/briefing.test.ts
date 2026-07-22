@@ -4,7 +4,6 @@ import { composeBriefing } from '../src/briefing.js';
 
 const TEAM: Team = {
   name: 'demo-team',
-  directive: 'Ship the payment service.',
   context: 'We own the full lifecycle of the payment service.',
   permissionPresets: {},
 };
@@ -72,7 +71,6 @@ describe('composeBriefing', () => {
     expect(briefing.instructions).toContain('you go by engineer-1');
     expect(briefing.instructions).toContain('Your role here: engineer');
     expect(briefing.instructions).toContain(TEAM.name);
-    expect(briefing.instructions).toContain(TEAM.directive);
     expect(briefing.instructions).toContain(TEAM.context);
     expect(briefing.instructions).toContain(ALPHA_1.instructions);
   });
@@ -103,7 +101,7 @@ describe('composeBriefing', () => {
       openObjectives: [],
     });
     expect(briefing.instructions).not.toContain('Context:');
-    expect(briefing.instructions).toContain(`Directive: ${teamNoContext.directive}`);
+    expect(briefing.instructions).toContain(`Team: ${teamNoContext.name}`);
   });
 
   it('omits the personal-instructions block when the member has none', () => {

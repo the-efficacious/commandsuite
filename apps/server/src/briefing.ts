@@ -113,7 +113,6 @@ function composePrompt(
     roleLine,
     ``,
     `Team: ${team.name}`,
-    `Directive: ${team.directive}`,
     team.context.trim().length > 0 && `Context: ${team.context}`,
     ``,
     selfInstructions.length > 0 && `Personal instructions:`,

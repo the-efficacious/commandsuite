@@ -35,7 +35,7 @@ function mkBriefing(permissions: BriefingResponse['permissions']): BriefingRespo
     role: { title: 'director', description: '' },
     permissions,
     instructions: '',
-    team: { name: 'demo', directive: 'ship', context: '', permissionPresets: {} },
+    team: { name: 'demo', context: '', permissionPresets: {} },
     teammates: [
       { name: 'director-1', role: { title: 'director', description: '' }, permissions: [] },
       { name: 'builder', role: { title: 'engineer', description: '' }, permissions: [] },

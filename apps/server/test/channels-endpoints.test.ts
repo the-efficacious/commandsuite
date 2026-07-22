@@ -15,7 +15,6 @@ const CAROL = 'csuite_test_carol_secret';
 
 const TEAM: Team = {
   name: 'demo-team',
-  directive: 'Ship the thing.',
   context: '',
   permissionPresets: {},
 };

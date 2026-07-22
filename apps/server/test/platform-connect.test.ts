@@ -28,7 +28,6 @@ const OP_TOKEN = 'csuite_platform_connect_op_token';
 
 const TEAM: Team = {
   name: 'demo-team',
-  directive: 'Exercise the platform-connect handshake.',
   context: '',
   permissionPresets: {},
 };

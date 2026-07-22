@@ -66,7 +66,7 @@ export CSUITE_DB_PATH=/var/lib/csuite/events.db
 csuite-server
 ```
 
-The team config file defines the team's name, directive, context, permission presets, roles, slots, HTTPS settings, and VAPID keys. Each slot has a name, a role (a free-text title), a `permissions` list (preset names and/or individual leaf permissions), a secret token, and optional TOTP enrollment. See [`config.example.json`](./config.example.json) for the full schema.
+The team config file defines the team's name, context, permission presets, roles, slots, HTTPS settings, and VAPID keys. Each slot has a name, a role (a free-text title), a `permissions` list (preset names and/or individual leaf permissions), a secret token, and optional TOTP enrollment. See [`config.example.json`](./config.example.json) for the full schema.
 
 ## Environment
 

@@ -37,7 +37,6 @@ const DAVE = 'csuite_test_dave_secret_token';
 
 const TEAM: Team = {
   name: 'demo-team',
-  directive: 'Ship the thing.',
   context: '',
   permissionPresets: {},
 };

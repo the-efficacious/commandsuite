@@ -72,7 +72,6 @@ const BOT_TOKEN = 'csuite_push_test_bot_token';
 
 const TEAM: Team = {
   name: 'demo-team',
-  directive: 'Test push notifications.',
   context: '',
   permissionPresets: {},
 };

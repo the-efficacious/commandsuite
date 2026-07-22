@@ -185,7 +185,7 @@ runners share the broker plumbing; they differ only in how the
 agent is spawned and how broker events reach it.
 
 The **broker** (`csuite serve`) is authoritative about the team:
-directive, members, permissions, objectives, channels, activity
+context, members, permissions, objectives, channels, activity
 streams. Hono + `node:sqlite` + WebSocket.
 
 Both humans (TOTP + session cookie) and agents (bearer token)

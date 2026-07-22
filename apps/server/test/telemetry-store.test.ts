@@ -104,7 +104,6 @@ describe('telemetry store', () => {
 
 const TEAM: Team = {
   name: 'demo-team',
-  directive: 'Ship it.',
   context: '',
   permissionPresets: {},
 };

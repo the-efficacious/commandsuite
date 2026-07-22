@@ -273,7 +273,6 @@ async function main(): Promise<void> {
   if (wizard !== null) {
     stores.team.setTeam({
       name: wizard.team.name,
-      directive: wizard.team.directive,
       context: wizard.team.context,
     });
     for (const [name, leaves] of Object.entries(wizard.team.permissionPresets)) {
@@ -354,7 +353,6 @@ async function main(): Promise<void> {
       }
       lines.push(
         `  team:      ${team.name}`,
-        `  directive: ${team.directive}`,
         `  config:    ${configPath}`,
         `  db:        ${dbPath}`,
       );

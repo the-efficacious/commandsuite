@@ -1,9 +1,11 @@
 /**
  * First-run wizard tests.
  *
- * The wizard collects a team + first admin member, auto-enrolls the
- * admin in TOTP, and returns the captured `WizardResult` for the
- * caller to seed into the database. Tests stub stdin with a scripted
+ * The wizard collects identity + auth only (team name, admin name,
+ * token, TOTP), auto-enrolls the admin in TOTP, and returns the
+ * captured `WizardResult` for the caller to seed into the database.
+ * Standing context (team context, roles, instructions) is configured
+ * after boot, so the wizard neither prompts for nor captures it. Tests stub stdin with a scripted
  * queue so each test drives the exact sequence of prompts the wizard
  * asks, and pin the TOTP secret + clock so verification is
  * deterministic.
@@ -67,20 +69,10 @@ describe('runFirstRunWizard', () => {
     };
   }
 
-  // Happy-path script: team name (default), directive, context (skip),
-  // admin name (default), role title (default), role description (skip),
+  // Happy-path script: team name (default), admin name (default),
   // press enter after token banner, TOTP code.
   function happyScript(code: string, overrides: Partial<Record<string, string>> = {}): string[] {
-    return [
-      overrides.teamName ?? '',
-      overrides.directive ?? 'Ship the payment service',
-      overrides.context ?? '',
-      overrides.adminName ?? '',
-      overrides.roleTitle ?? '',
-      overrides.roleDescription ?? '',
-      '',
-      code,
-    ];
+    return [overrides.teamName ?? '', overrides.adminName ?? '', '', code];
   }
 
   it('captures team + first admin and returns a seedable WizardResult', async () => {
@@ -90,7 +82,6 @@ describe('runFirstRunWizard', () => {
     const result = await runFirstRunWizard(wizardOpts(io));
 
     expect(result.team.name).toBe('my-team');
-    expect(result.team.directive).toBe('Ship the payment service');
     expect(result.team.context).toBe('');
     expect(result.team.permissionPresets).toBeDefined();
 
@@ -114,26 +105,23 @@ describe('runFirstRunWizard', () => {
     expect(result.team.permissionPresets.operator).toContain('objectives.create');
   });
 
-  it('accepts a custom admin role title and description', async () => {
+  it('stamps the default admin role without prompting for it', async () => {
     const code = currentCode(FIXED_TOTP_SECRET, FIXED_NOW_MS);
-    const io = mockIO(happyScript(code, { roleTitle: 'chief', roleDescription: 'Runs the ship' }));
+    const io = mockIO(happyScript(code));
     const result = await runFirstRunWizard(wizardOpts(io));
 
-    expect(result.admin.role.title).toBe('chief');
-    expect(result.admin.role.description).toBe('Runs the ship');
+    expect(result.admin.role.title).toBe('director');
+    expect(result.admin.role.description).toBe('');
+    expect(io.output.some((l) => l.startsWith('? ') && l.includes('role'))).toBe(false);
   });
 
   it('re-prompts on an invalid admin name and keeps going', async () => {
     const code = currentCode(FIXED_TOTP_SECRET, FIXED_NOW_MS);
     const io = mockIO([
       '', // team name
-      'Ship', // directive
-      '', // context
       'has spaces', // bad name, rejected
       'chief', // good name
-      '', // role title (default)
-      '', // role description (skip)
-      '',
+      '', // press enter after token banner
       code,
     ]);
     const result = await runFirstRunWizard(wizardOpts(io));

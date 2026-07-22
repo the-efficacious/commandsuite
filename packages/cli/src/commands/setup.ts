@@ -111,7 +111,6 @@ export async function runSetupCommand(
       const stores = server.openTeamAndMembers(db);
       stores.team.setTeam({
         name: wizard.team.name,
-        directive: wizard.team.directive,
         context: wizard.team.context,
       });
       for (const [name, leaves] of Object.entries(wizard.team.permissionPresets)) {
@@ -163,6 +162,10 @@ export async function runSetupCommand(
     stdout('');
     stdout('Next steps:');
     stdout('  csuite serve         # start the broker against this config');
+    stdout('');
+    stdout('Then flesh out the team from the web UI or CLI whenever you like:');
+    stdout('  csuite team set --context "..."     # team-level standing context');
+    stdout('  csuite member update --name <n> ... # roles + personal instructions');
     stdout('');
   } catch (err) {
     if (err instanceof server.MemberLoadError) {

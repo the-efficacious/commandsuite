@@ -489,7 +489,7 @@ function buildAdminTools(briefing: BriefingResponse): Tool[] {
     tools.push({
       name: 'team_get',
       description:
-        'Read the current team config: returns name, directive, context, and the named ' +
+        'Read the current team config: returns name, context, and the named ' +
         'permission presets. Use this to confirm team state before proposing edits, or ' +
         'to check whether a previous `team_update` landed.',
       inputSchema: { type: 'object', properties: {} },
@@ -497,25 +497,21 @@ function buildAdminTools(briefing: BriefingResponse): Tool[] {
     tools.push({
       name: 'team_update',
       description:
-        'Update one or more team-level fields. `directive` and `context` change the ' +
+        'Update one or more team-level fields. `context` changes the ' +
         'briefing every member is shown on subsequent MCP sessions; live sessions ' +
         'still reflect the OLD strings until the runner restarts (the MCP ' +
         '`instructions` field is frozen for the lifetime of a session by protocol). ' +
-        'Pass at least one of `name`, `directive`, `context`. Returns the updated team ' +
+        'Pass at least one of `name`, `context`. Returns the updated team ' +
         'config (same shape as `team_get`).',
       inputSchema: {
         type: 'object',
         properties: {
           name: { type: 'string', description: 'New team name (1–128 chars).' },
-          directive: {
-            type: 'string',
-            description:
-              "New short directive (1–512 chars). The team's standing imperative — what the team is here to do.",
-          },
           context: {
             type: 'string',
             description:
-              'New longer team context (≤ 4096 chars). Background paragraph that complements the directive.',
+              'New team context (≤ 8192 chars). The standing context every member ' +
+              'inherits: what the team is here to do plus any shared background.',
           },
         },
       },
@@ -2293,7 +2289,6 @@ async function handleTeamGet(brokerClient: BrokerClient): Promise<CallToolResult
   const presetNames = Object.keys(team.permissionPresets);
   const lines = [
     `team: ${team.name}`,
-    `directive: ${team.directive}`,
     `context: ${team.context.length === 0 ? '(empty)' : team.context}`,
     `presets: ${presetNames.length === 0 ? '(none)' : presetNames.join(', ')}`,
   ];
@@ -2304,12 +2299,11 @@ async function handleTeamUpdate(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
 ): Promise<CallToolResult> {
-  const patch: { name?: string; directive?: string; context?: string } = {};
+  const patch: { name?: string; context?: string } = {};
   if (typeof args.name === 'string') patch.name = args.name;
-  if (typeof args.directive === 'string') patch.directive = args.directive;
   if (typeof args.context === 'string') patch.context = args.context;
   if (Object.keys(patch).length === 0) {
-    return errorResult('team_update: pass at least one of name, directive, context');
+    return errorResult('team_update: pass at least one of name, context');
   }
   const team = await brokerClient.updateTeam(patch);
   return textResult(
