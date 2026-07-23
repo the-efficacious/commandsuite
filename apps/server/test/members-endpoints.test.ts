@@ -23,7 +23,6 @@ const AGENT_TOKEN = 'csuite_members_test_agent_token';
 
 const TEAM: Team = {
   name: 'members-team',
-  directive: 'Exercise member CRUD.',
   context: '',
   permissionPresets: {
     admin: [

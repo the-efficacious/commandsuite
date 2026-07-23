@@ -15,7 +15,7 @@ task cost. The labs keep improving the agents. You keep command.
 
 `csuite` ships with two runners out of the box:
 
-- **`csuite claude-code`** — wraps Claude Code in a TUI you talk to in
+- **`csuite claude`** — wraps Claude Code in a TUI you talk to in
   your terminal
 - **`csuite codex`** — runs OpenAI Codex headlessly under
   `codex app-server`
@@ -99,7 +99,7 @@ Pick the runner that matches the agent CLI you have installed:
 
 ```bash
 # Interactive — Claude Code TUI in your terminal
-csuite claude-code
+csuite claude
 
 # Headless — OpenAI Codex under codex app-server
 csuite codex
@@ -117,7 +117,7 @@ activity from the agent's native instrumentation. Direct it through
 Preflight-check the environment before your first run:
 
 ```bash
-csuite claude-code --doctor
+csuite claude --doctor
 ```
 
 ### Push your first objective
@@ -154,7 +154,7 @@ Web Push notifications.
                   ▼
        ┌─────────────────────────┐
        │   csuite <runner>       │  ◀── the RUNNER: broker client, SSE
-       │   claude-code OR codex  │      forwarder, objectives tracker,
+       │   claude OR codex       │      forwarder, objectives tracker,
        │                         │      capture host (native
        │                         │      instrumentation, no proxy)
        └────────────┬────────────┘
@@ -185,7 +185,7 @@ runners share the broker plumbing; they differ only in how the
 agent is spawned and how broker events reach it.
 
 The **broker** (`csuite serve`) is authoritative about the team:
-directive, members, permissions, objectives, channels, activity
+context, members, permissions, objectives, channels, activity
 streams. Hono + `node:sqlite` + WebSocket.
 
 Both humans (TOTP + session cookie) and agents (bearer token)
@@ -237,7 +237,7 @@ on a laptop that talks to a remote broker), you can install the
 use the meta-package.
 
 ```bash
-npm install -g csuite-cli       # CLI only (csuite claude-code, csuite codex, ...)
+npm install -g csuite-cli       # CLI only (csuite claude, csuite codex, ...)
 npm install -g csuite-server    # broker + built-in web UI only
 ```
 
@@ -251,13 +251,13 @@ npm install -g csuite-server    # broker + built-in web UI only
 | `csuite-server` | Node broker (Hono + SQLite) with wizard, objectives, traces, and built-in web UI |
 | `csuite-web-ui` | Preact **team-view UI + runtime** — chat, objectives, files, members, tools, secrets. Host-agnostic; mounted via `<TeamShell>`. Most of the front-end lives here. |
 | `csuite-web-host` | OSS **web host** — TOTP auth gate + PWA that mounts `csuite-web-ui` and is served by the broker |
-| `csuite-cli` | Terminal CLI — `csuite claude-code`, `csuite codex`, `csuite objectives`, `csuite push`, `csuite roster`, `csuite serve` |
+| `csuite-cli` | Terminal CLI — `csuite claude`, `csuite codex`, `csuite objectives`, `csuite push`, `csuite roster`, `csuite serve` |
 
 ## Requirements
 
 - **Node.js 22+**
 - **One of**:
-  - `claude` on `$PATH` (or `$CLAUDE_PATH`) for `csuite claude-code`
+  - `claude` on `$PATH` (or `$CLAUDE_PATH`) for `csuite claude`
   - `codex` on `$PATH` (or `$CODEX_PATH`) for `csuite codex`, with
     `codex login` already run once
 
@@ -277,12 +277,15 @@ and in this repo under [docs/](./docs/):
   permission model, IPC, trace pipeline
 
 **Runners**
-- [runners/overview.mdx](./docs/runners/overview.mdx) — claude-code
+- [runners/overview.mdx](./docs/runners/overview.mdx) — claude
   vs codex, shared infrastructure, bring-your-own
-- [runners/claude-code.mdx](./docs/runners/claude-code.mdx) — flags,
+- [runners/claude.mdx](./docs/runners/claude.mdx) — flags,
   env, auto-injected claude flags, HUD strip, doctor
 - [runners/codex.mdx](./docs/runners/codex.mdx) — ephemeral
   CODEX_HOME, JSON-RPC handshake, channel sink, sandbox modes
+- [runners/conformance.mdx](./docs/runners/conformance.mdx) — the
+  runner standard: AgentAdapter contract, capture tiers, run
+  summary, doctor, and the conformance suite for new runners
 
 **Concepts**
 - [concepts/members.mdx](./docs/concepts/members.mdx) — names,
@@ -376,18 +379,18 @@ mkdir -p ~/scratch/test && cd ~/scratch/test
 export CSUITE_TOKEN=csuite_your_member_token
 
 # Claude Code path
-csuite-dev claude-code --doctor
-csuite-dev claude-code
+csuite-dev claude --doctor
+csuite-dev claude
 
 # Codex path
 csuite-dev codex
 csuite-dev codex --model gpt-5
 ```
 
-`csuite claude-code` auto-injects `--dangerously-skip-permissions`
+`csuite claude` auto-injects `--dangerously-skip-permissions`
 and `--dangerously-load-development-channels server:csuite` into the
 claude invocation. Forward additional flags after `--`:
 
 ```bash
-csuite-dev claude-code -- --model opus --continue
+csuite-dev claude -- --model opus --continue
 ```

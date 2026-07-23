@@ -1,8 +1,8 @@
 /**
- * `csuite claude-code` end-to-end smoke test.
+ * `csuite claude` end-to-end smoke test.
  *
  * Spins up a fake broker, drops a fake `claude` binary on PATH (via
- * `CLAUDE_PATH`), invokes `runClaudeCodeCommand` directly, and asserts:
+ * `CLAUDE_PATH`), invokes `runClaudeCommand` directly, and asserts:
  *
  *   - The runner starts and, in the default `flag` mode, writes a
  *     csuite-owned ephemeral config with a `csuite` entry pointing at
@@ -18,7 +18,7 @@
  * config from the `--mcp-config` arg the runner injects (falling back
  * to `./.mcp.json` for the legacy inject mode), launches the bridge,
  * runs a tiny MCP conversation, and exits. This is the full loop minus
- * the actual claude-code binary — proving the runner/bridge handshake
+ * the actual claude binary — proving the runner/bridge handshake
  * works end-to-end from a real operator-facing entry point.
  *
  * The test skips if `packages/cli/dist/index.js` hasn't been built,
@@ -30,13 +30,13 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { runClaudeCodeCommand } from '../../src/commands/claude-code.js';
+import { runClaudeCommand } from '../../src/commands/claude.js';
 import { FAKE_BROKER_TOKEN, type FakeBroker, startFakeBroker } from './fake-broker.js';
 
 const CLI_BINARY = resolve(fileURLToPath(new URL('../../dist/index.js', import.meta.url)));
 const describeIfBuilt = existsSync(CLI_BINARY) ? describe : describe.skip;
 
-describeIfBuilt('csuite claude-code end-to-end', () => {
+describeIfBuilt('csuite claude end-to-end', () => {
   let broker: FakeBroker;
   let sandbox: string;
   let fakeClaudePath: string;
@@ -144,7 +144,7 @@ async function waitFor(predicate, timeoutMs = 5000) {
     const prevTranscript = process.env.FAKE_CLAUDE_TRANSCRIPT;
     process.env.FAKE_CLAUDE_TRANSCRIPT = transcriptPath;
     try {
-      const exitCode = await runClaudeCodeCommand({
+      const exitCode = await runClaudeCommand({
         url: broker.url,
         token: FAKE_BROKER_TOKEN,
         claudeArgs: [],
@@ -152,7 +152,7 @@ async function waitFor(predicate, timeoutMs = 5000) {
         log: () => {},
         // Explicit bridge command because vitest's `process.argv[1]`
         // points at the vitest binary, not our cli — so the auto-
-        // detection path in runClaudeCodeCommand doesn't work in
+        // detection path in runClaudeCommand doesn't work in
         // this context. In real-world use, argv[1] is always the
         // cli's entry script (dev alias or global install) and the
         // defaults Just Work.

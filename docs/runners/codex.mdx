@@ -54,7 +54,7 @@ csuite codex [--no-trace] [--cwd <dir>] [--model <name>]
 1. **Locate `codex`.** Reads `$CODEX_PATH` first, falls back to
    `which codex`. Fails fast if missing, with an install hint
    (`npm i -g @openai/codex`).
-2. **Start the runner.** Same `startRunner()` claude-code uses, but
+2. **Start the runner.** Same `startRunner()` claude uses, but
    passes a custom `notificationSink`: a buffering wrapper that
    queues broker events until codex is ready, then drains them
    into the live channel sink. This closes the cold-start gap —
@@ -104,7 +104,7 @@ csuite codex [--no-trace] [--cwd <dir>] [--model <name>]
    | `developerInstructions` | the runner briefing | Pinned into every model context — analog of `--append-system-prompt` |
    | `model` | `--model` value or omit | Codex's default takes over if omitted |
    | `approvalPolicy` | `never` | Headless: no UI to elicit against |
-   | `sandbox` | `danger-full-access` | Mirrors claude-code's posture (`--dangerously-skip-permissions` has no codex equivalent that's tighter; tighter modes (`workspace-write`, `read-only`) will land as a flag later) |
+   | `sandbox` | `danger-full-access` | Mirrors claude's posture (`--dangerously-skip-permissions` has no codex equivalent that's tighter; tighter modes (`workspace-write`, `read-only`) will land as a flag later) |
 
 9. **Drain the pre-attach buffer** — any broker events queued by
    the sink wrapper while we were spinning up are flushed now, in
@@ -141,7 +141,7 @@ symlinks are removed but the targets aren't.
 
 ## The MCP bridge wiring
 
-Same model as claude-code: the runner detects the bridge command
+Same model as claude: the runner detects the bridge command
 from its own process and writes the bridge invocation into
 `config.toml`:
 
@@ -215,7 +215,7 @@ input:
 </channel>
 ```
 
-The framing mirrors what claude-code's
+The framing mirrors what claude's
 `notifications/claude/channel` MCP notification produces, just
 rendered as text inside a `turn/start` / `turn/steer` UserInput
 item. Reserved meta keys are quoted as attributes; arbitrary
@@ -427,7 +427,7 @@ csuite codex -- \
   -c 'model_providers.local.wire_api="responses"'
 ```
 
-## What you give up vs claude-code
+## What you give up vs claude
 
 - **No TUI.** Direction is broker-only.
 - **No HUD strip.** A one-line "agent connected" notice replaces

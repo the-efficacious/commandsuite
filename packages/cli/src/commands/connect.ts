@@ -261,7 +261,7 @@ export async function runConnectCommand(
             stdout(`  token: ${data.token}`);
           } else {
             stdout(`  saved to: ${authConfigDisplayPath(input.authConfigPath)}`);
-            stdout(`  next: csuite claude-code  (or: csuite codex)`);
+            stdout(`  next: csuite claude  (or: csuite codex)`);
           }
           return {
             url,

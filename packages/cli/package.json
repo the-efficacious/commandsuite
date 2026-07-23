@@ -44,7 +44,7 @@
     "node-pty": "^1.1.0"
   },
   "peerDependencies": {
-    "csuite-server": "workspace:*"
+    "csuite-server": ">=0.0.1"
   },
   "peerDependenciesMeta": {
     "csuite-server": {

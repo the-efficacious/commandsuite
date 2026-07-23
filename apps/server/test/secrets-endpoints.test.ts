@@ -69,7 +69,6 @@ function makeApp() {
     sessions,
     teamStore: mockTeamStore({
       name: 'demo-team',
-      directive: 'Ship the thing.',
       context: '',
       permissionPresets: {},
     }),

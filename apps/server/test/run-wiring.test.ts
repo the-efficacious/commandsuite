@@ -26,7 +26,6 @@ const ADMIN_TOKEN = 'csuite_run_wiring_test_admin_token';
 
 const TEAM = {
   name: 'demo-team',
-  directive: 'Verify run.ts wiring.',
   context: '',
 };
 

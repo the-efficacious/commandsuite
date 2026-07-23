@@ -1,5 +1,5 @@
 /**
- * File-backed structured logger for interactive `csuite claude-code`
+ * File-backed structured logger for interactive `csuite claude`
  * sessions. When stderr is a TTY — i.e. we're wrapping claude's TUI
  * in the user's terminal — writes go to `~/.cache/commandsuite/session-<pid>.log`
  * so runner/proxy/uploader JSON lines don't corrupt the ink-rendered
@@ -9,7 +9,7 @@
  *
  * The log file is append-mode, one JSON object per line, same shape
  * as the previous stderr format. Each session uses its own pid-scoped
- * path so concurrent `csuite claude-code` invocations don't stomp each
+ * path so concurrent `csuite claude` invocations don't stomp each
  * other. The directory is created with 0o700 and files 0o600 since
  * trace diagnostics can contain URLs / hostnames the user may not
  * want world-readable.
@@ -29,7 +29,7 @@ export interface SessionLog {
 }
 
 export interface CreateSessionLogOptions {
-  /** Component name stamped on every record. Defaults to `'claude-code'`. */
+  /** Component name stamped on every record. Defaults to `'claude'`. */
   component?: string;
   /**
    * Force file or stderr routing. Defaults to auto-detect based on
@@ -45,7 +45,7 @@ export interface CreateSessionLogOptions {
 }
 
 export function createSessionLog(opts: CreateSessionLogOptions = {}): SessionLog {
-  const component = opts.component ?? 'claude-code';
+  const component = opts.component ?? 'claude';
   const mode = opts.mode ?? 'auto';
   const routeToFile = mode === 'file' || (mode === 'auto' && process.stderr.isTTY === true);
 

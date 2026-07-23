@@ -24,7 +24,7 @@
  *
  * The adapter is deliberately the only file that knows about codex
  * subprocess concerns. Everything beyond it (broker, tools dispatch,
- * MCP bridge, trace host) is shared with claude-code via the runner.
+ * MCP bridge, trace host) is shared with claude via the runner.
  */
 
 import { execFileSync, spawn } from 'node:child_process';
@@ -36,6 +36,7 @@ import { CLI_VERSION } from '../../../version.js';
 import type { Presence } from '../../presence.js';
 import type { BusySignal } from '../../trace/busy.js';
 import type { CaptureHost } from '../../trace/host.js';
+import { AgentAdapterError } from '../adapter.js';
 import { type ActivityPrinter, attachCodexActivityPrinter } from './activity-printer.js';
 import { attachBundleReader, type BundleReader } from './bundle-reader.js';
 import { attachCodexBusySniff, type CodexBusySniff } from './busy-sniff.js';
@@ -58,7 +59,7 @@ import {
 } from './protocol.js';
 import { attachRolloutReader, type RolloutReader } from './rollout-reader.js';
 
-export class CodexAdapterError extends Error {
+export class CodexAdapterError extends AgentAdapterError {
   constructor(message: string) {
     super(message);
     this.name = 'CodexAdapterError';
@@ -102,7 +103,7 @@ export interface CodexSpawnOptions {
   runnerSocketPath: string;
   /**
    * The `command` + `args` to write into `[mcp_servers.csuite]`. Must match
-   * the same auto-detection the claude-code adapter does — point at this
+   * the same auto-detection the claude adapter does — point at this
    * cli's own dist so the bridge subprocess is reachable.
    */
   bridgeCommand: string;
@@ -632,7 +633,7 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
   //    less) restricted than a fresh one.
   const developerInstructions =
     opts.briefing.instructions.length > 0 ? opts.briefing.instructions : undefined;
-  // Match claude-code's posture: `--dangerously-skip-permissions` on the
+  // Match claude's posture: `--dangerously-skip-permissions` on the
   // claude side disables prompting but doesn't sandbox the filesystem or
   // network (claude has no built-in sandbox). `danger-full-access` is the
   // codex equivalent — same trust boundary, just expressed through codex's

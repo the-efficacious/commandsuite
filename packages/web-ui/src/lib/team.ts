@@ -17,9 +17,7 @@ export interface TeamIdentity {
   slug: string;
   /** Display name. */
   name: string;
-  /** Short directive — the team's standing imperative. */
-  directive: string;
-  /** Longer team context — background paragraph that complements the directive. */
+  /** Team-level standing context every member inherits. */
   context: string;
 }
 
@@ -29,7 +27,6 @@ export const currentTeam = computed<TeamIdentity | null>(() => {
   return {
     slug: slugify(b.team.name),
     name: b.team.name,
-    directive: b.team.directive,
     context: b.team.context,
   };
 });

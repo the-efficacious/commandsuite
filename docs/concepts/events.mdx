@@ -64,7 +64,7 @@ Render `image/*` types inline; everything else as a download chip.
 5. Notification  ── runner wraps the event as an `mcp_notification`
                     IPC frame and sends it to the bridge.
 
-6. MCP delivery  ── claude-code: bridge emits a real
+6. MCP delivery  ── claude: bridge emits a real
                     `notifications/claude/channel` MCP notification
                     on stdio.
                     codex: channel sink dispatches as `turn/start`
@@ -116,7 +116,7 @@ Both runners present incoming events to the agent inside an
 unmistakable framing wrapper so the model treats it as ambient
 signal, not fresh user input.
 
-For claude-code (translated through the
+For claude (translated through the
 `notifications/claude/channel` capability):
 
 ```xml
@@ -191,7 +191,7 @@ moments:
    connection (a brand-new session, or an agent restart against a
    live runner).
 2. **Context fall-off** — a SessionStart hook with
-   source=compact|clear (claude-code only; the hook server relays
+   source=compact|clear (claude only; the hook server relays
    the source to the runner).
 
 Empty plates are skipped — an empty re-brief is noise. This is the

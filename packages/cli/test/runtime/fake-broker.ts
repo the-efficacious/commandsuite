@@ -75,6 +75,14 @@ export const fakeBrokerToolInvocations: Array<{
  */
 export const fakeBrokerSecrets: { env: Record<string, string> | null } = { env: {} };
 
+/**
+ * Activity events received on POST /members/:name/activity, in arrival
+ * order. The conformance suite reads this to assert the run bracket
+ * (`session_start` / `session_end`) and capture uploads reach the
+ * broker. Tests should clear it between runs.
+ */
+export const fakeBrokerActivity: Array<{ member: string; event: Record<string, unknown> }> = [];
+
 export async function startFakeBroker(): Promise<FakeBroker> {
   const pushes: FakeBrokerPush[] = [];
   const subscribers: LiveSubscriber[] = [];
@@ -161,8 +169,7 @@ export async function startFakeBroker(): Promise<FakeBroker> {
           instructions: '',
           team: {
             name: FAKE_BROKER_TEAM_NAME,
-            directive: FAKE_BROKER_MISSION,
-            context: '',
+            context: FAKE_BROKER_MISSION,
             permissionPresets: {},
           },
           teammates: [
@@ -204,6 +211,22 @@ export async function startFakeBroker(): Promise<FakeBroker> {
           ],
         }),
       );
+      return;
+    }
+
+    // POST /members/:name/activity — the runner's streaming uploader.
+    // Records every event and acks the batch, mirroring the real broker.
+    const activityMatch = /^\/members\/([^/]+)\/activity$/.exec(url.pathname);
+    if (activityMatch && req.method === 'POST') {
+      const body = await readBody(req);
+      const parsed = JSON.parse(body || '{}') as { events?: Array<Record<string, unknown>> };
+      const member = decodeURIComponent(activityMatch[1] as string);
+      const events = Array.isArray(parsed.events) ? parsed.events : [];
+      for (const event of events) {
+        fakeBrokerActivity.push({ member, event });
+      }
+      res.writeHead(200, jsonHeaders);
+      res.end(JSON.stringify({ accepted: events.length }));
       return;
     }
 

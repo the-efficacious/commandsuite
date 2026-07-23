@@ -36,7 +36,7 @@ export const PATHS = {
   // gate on the permission. The helpers below compose the `:name`
   // subpaths.
   members: '/members',
-  // Team — name, directive, context, permission presets. `GET /team` is
+  // Team — name, context, permission presets. `GET /team` is
   // dual-auth (every authenticated member sees the team they're on).
   // `PATCH /team` requires `team.manage`. Permission-preset CRUD lives
   // under `/team/presets` (same gate). Mutations apply immediately to

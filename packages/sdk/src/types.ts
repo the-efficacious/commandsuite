@@ -75,17 +75,17 @@ export function hasPermission(permissions: readonly Permission[], required: Perm
 
 /**
  * A team is the top-level unit the server controls. One deployment
- * = one team. The team defines the directive and the context every
- * member inherits, plus any reusable permission presets.
+ * = one team. The team defines the standing context every member
+ * inherits, plus any reusable permission presets.
  *
- * `context` here is the team-level standing context (the longer
- * background paragraph that complements `directive`). Distinct
- * from agent conversation context — the latter is per-session and
- * lives in the runner; the former is durable team configuration.
+ * `context` here is the team-level standing context: what the team
+ * is here to do plus any background every member should carry.
+ * Distinct from agent conversation context — the latter is
+ * per-session and lives in the runner; the former is durable team
+ * configuration, editable any time via the web UI, CLI, or MCP.
  */
 export interface Team {
   name: string;
-  directive: string;
   context: string;
   /**
    * Named permission bundles members can reference instead of listing
@@ -1623,6 +1623,8 @@ export interface ListGenaiQuery {
  * objectiveId.
  */
 export type ActivityEvent =
+  | ActivitySessionStart
+  | ActivitySessionEnd
   | ActivityObjectiveOpen
   | ActivityObjectiveClose
   | ActivityLlmExchange
@@ -1630,6 +1632,57 @@ export type ActivityEvent =
   | ActivityUserPrompt;
 
 export type ActivityKind = ActivityEvent['kind'];
+
+/**
+ * A runner session opened — the member's agent process came up under a
+ * csuite runner. Emitted once per `csuite <runner>` invocation, before
+ * any other activity of the run. Together with `session_end` it
+ * brackets a run the same way `objective_open`/`objective_close`
+ * bracket an objective, so consumers can slice the stream per run
+ * regardless of which agent produced it.
+ */
+export interface ActivitySessionStart {
+  readonly kind: 'session_start';
+  readonly ts: number;
+  /** Runner id (`'claude-code'`, `'codex'`, ...). */
+  readonly runner: string;
+  /** csuite CLI version hosting the run. */
+  readonly runnerVersion?: string;
+  /** The runner's declared capture tier (0 operable … 3 full fidelity). */
+  readonly captureTier?: number;
+}
+
+/**
+ * The runner session ended — the terminal event of a run and the
+ * machine-readable run summary. Every runner emits the same shape on
+ * every exit path (agent exit, SIGINT/SIGTERM, crash teardown), so
+ * cross-agent analysis never depends on per-runner log formats.
+ */
+export interface ActivitySessionEnd {
+  readonly kind: 'session_end';
+  readonly ts: number;
+  /** Runner id (`'claude-code'`, `'codex'`, ...). */
+  readonly runner: string;
+  /** Why the session ended (`'agent-exited-0'`, `'SIGINT'`, ...). */
+  readonly reason: string;
+  /** Agent process exit code, when one was observed. */
+  readonly exitCode?: number;
+  /** Wall-clock duration of the session. */
+  readonly durationMs: number;
+  /** Agent-native session identity (codex thread id, ...), when known. */
+  readonly agentSessionId?: string;
+  /**
+   * Capture accounting as of teardown: how many activity events the
+   * runner's uploader saw, shipped, and dropped. Absent under
+   * `--no-trace`. `dropped > 0` means the trace on the broker is
+   * incomplete for this run.
+   */
+  readonly capture?: {
+    readonly enqueued: number;
+    readonly uploaded: number;
+    readonly dropped: number;
+  };
+}
 
 export interface ActivityObjectiveOpen {
   readonly kind: 'objective_open';

@@ -40,7 +40,9 @@
  *   - The KEK is never persisted alongside the config file — the
  *     default key location is `<configDir>/csuite-kek.bin`, and we
  *     recommend operators chmod the containing directory (`0o700`)
- *     rather than relying on the individual file's `0o600`.
+ *     rather than relying on the individual file's `0o600`. Fresh
+ *     bootstraps get this for free — the wizard paths create the
+ *     `./csuite/` server directory with mode `0o700`.
  *   - Single format version (`enc-v1`). A future format will bump
  *     the prefix (`enc-v2:`...) and both loaders will coexist for
  *     one release window.

@@ -70,7 +70,6 @@ function makeApp(opts: { withActivity?: boolean } = {}) {
     sessions,
     teamStore: mockTeamStore({
       name: 'demo-team',
-      directive: 'Ship the thing.',
       context: '',
       permissionPresets: {},
     }),

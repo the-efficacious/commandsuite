@@ -64,7 +64,6 @@ describe('runSetupCommand', () => {
       const stores = server.openTeamAndMembers(db);
       stores.team.setTeam({
         name: 'demo-team',
-        directive: 'ship the payment service',
         context: '',
       });
       stores.members.addMember({
