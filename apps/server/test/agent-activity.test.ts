@@ -39,7 +39,6 @@ const OTHER_TOKEN = 'csuite_test_other';
 
 const TEAM: Team = {
   name: 'demo-team',
-  directive: 'Ship the payments service.',
   context: 'End-to-end ownership.',
   permissionPresets: {},
 };

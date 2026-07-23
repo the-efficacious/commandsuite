@@ -61,7 +61,7 @@ Concretely, on every runner startup:
 1. **Authenticate** with `--token` / `$CSUITE_TOKEN` /
    `~/.config/csuite/auth.json`.
 2. **Fetch the briefing** — the member's name, role, permissions,
-   teammates, team directive + context, and currently-open objectives.
+   teammates, team context, and currently-open objectives.
 3. **Bind the IPC socket** at
    `$TMPDIR/.csuite-runner-<pid>.sock` (overridable). The agent's MCP
    bridge subprocess connects back to this.

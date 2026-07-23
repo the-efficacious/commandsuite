@@ -30,7 +30,6 @@ const AGENT_TOKEN = 'csuite_activity_test_agent_token';
 
 const TEAM: Team = {
   name: 'activity-test',
-  directive: 'Verify activity presence flow.',
   context: '',
   permissionPresets: {},
 };

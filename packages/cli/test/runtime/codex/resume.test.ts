@@ -81,7 +81,7 @@ function makeFakeChild() {
 const MINIMAL_BRIEFING: BriefingResponse = {
   name: 'test-agent',
   role: { title: 'tester', description: '' },
-  team: { name: 'test-team', directive: 'test', context: '', permissionPresets: {} },
+  team: { name: 'test-team', context: '', permissionPresets: {} },
   instructions: 'briefing prose',
   permissions: [],
   teammates: [],

@@ -20,9 +20,8 @@ import { type RunningServer, runServer } from '../src/run.js';
 import { seedStores } from './helpers/test-stores.js';
 
 const OP_TOKEN = 'csuite_shutdown_test_op';
-const TEAM: Pick<Team, 'name' | 'directive' | 'context'> = {
+const TEAM: Pick<Team, 'name' | 'context'> = {
   name: 'shutdown-test-team',
-  directive: 'Verify shutdown does not hang on live SSE subscribers.',
   context: '',
 };
 

@@ -4,7 +4,7 @@
  * Replaces the legacy csuite.json team/member surface. Three tables live
  * here:
  *
- *   - `team`               singleton row (id=1) carrying name, directive, context
+ *   - `team`               singleton row (id=1) carrying name + context
  *   - `permission_presets` named bundles of leaf permissions
  *   - `members`            roster: name, role, instructions, raw_permissions,
  *                          totp enrollment, insertion order
@@ -44,7 +44,6 @@ import {
   validateRawPermissions,
   validateRole,
   validateTeamContext,
-  validateTeamDirective,
   validateTeamName,
   validateTotpSecret,
 } from './members.js';
@@ -53,7 +52,6 @@ const CREATE_SCHEMA = `
   CREATE TABLE IF NOT EXISTS team (
     id          INTEGER PRIMARY KEY CHECK (id = 1),
     name        TEXT NOT NULL,
-    directive   TEXT NOT NULL,
     context     TEXT NOT NULL DEFAULT '',
     updated_at  INTEGER NOT NULL,
     updated_by  TEXT
@@ -85,7 +83,6 @@ const CREATE_SCHEMA = `
 interface RawTeamRow {
   id: number;
   name: string;
-  directive: string;
   context: string;
   updated_at: number;
   updated_by: string | null;
@@ -126,6 +123,29 @@ function parseJsonArray(s: string, where: string): string[] {
   return parsed as string[];
 }
 
+/**
+ * One-shot upgrade for databases created before the directive field
+ * was retired: fold any non-empty `directive` into the head of
+ * `context` (blank-line separated) and drop the column. Runs inside
+ * a transaction; a no-op when the column is already gone.
+ */
+function migrateDirectiveIntoContext(db: DatabaseSyncInstance): void {
+  const columns = db.prepare('PRAGMA table_info(team)').all() as unknown as Array<{
+    name: string;
+  }>;
+  if (!columns.some((c) => c.name === 'directive')) return;
+  db.exec(`
+    BEGIN;
+    UPDATE team SET context = directive || CASE
+      WHEN length(context) > 0 THEN char(10) || char(10) || context
+      ELSE ''
+    END
+    WHERE id = 1 AND length(directive) > 0;
+    ALTER TABLE team DROP COLUMN directive;
+    COMMIT;
+  `);
+}
+
 function decryptTotpSecret(stored: string | null): string | null {
   if (stored === null) return null;
   const kek = getKek();
@@ -160,15 +180,15 @@ export class TeamStore {
     this.db = db;
     this.now = options.now ?? Date.now;
     this.db.exec(CREATE_SCHEMA);
+    migrateDirectiveIntoContext(this.db);
     this.getTeamStmt = this.db.prepare(
-      'SELECT id, name, directive, context, updated_at, updated_by FROM team WHERE id = 1',
+      'SELECT id, name, context, updated_at, updated_by FROM team WHERE id = 1',
     );
     this.upsertTeamStmt = this.db.prepare(`
-      INSERT INTO team (id, name, directive, context, updated_at, updated_by)
-      VALUES (1, ?, ?, ?, ?, ?)
+      INSERT INTO team (id, name, context, updated_at, updated_by)
+      VALUES (1, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
-        directive = excluded.directive,
         context = excluded.context,
         updated_at = excluded.updated_at,
         updated_by = excluded.updated_by
@@ -199,7 +219,6 @@ export class TeamStore {
     }
     return {
       name: row.name,
-      directive: row.directive,
       context: row.context,
       permissionPresets: this.getPresets(),
     };
@@ -221,30 +240,22 @@ export class TeamStore {
   }
 
   /**
-   * Create or replace the team singleton. Validates name/directive/context
+   * Create or replace the team singleton. Validates name/context
    * lengths via the shared zod-derived helpers.
    */
-  setTeam(
-    input: { name: string; directive: string; context: string },
-    by: string | null = null,
-  ): Team {
+  setTeam(input: { name: string; context: string }, by: string | null = null): Team {
     validateTeamName(input.name);
-    validateTeamDirective(input.directive);
     validateTeamContext(input.context);
-    this.upsertTeamStmt.run(input.name, input.directive, input.context, this.now(), by);
+    this.upsertTeamStmt.run(input.name, input.context, this.now(), by);
     return this.getTeam();
   }
 
   /** Patch the team singleton; only the supplied fields change. */
-  updateTeam(
-    patch: { name?: string; directive?: string; context?: string },
-    by: string | null = null,
-  ): Team {
+  updateTeam(patch: { name?: string; context?: string }, by: string | null = null): Team {
     const current = this.getTeam();
     return this.setTeam(
       {
         name: patch.name ?? current.name,
-        directive: patch.directive ?? current.directive,
         context: patch.context ?? current.context,
       },
       by,

@@ -12,7 +12,7 @@
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { Client } from 'csuite-sdk/client';
-import type { Message } from 'csuite-sdk/types';
+import type { Message, Permission } from 'csuite-sdk/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { __resetComposerForTests, Composer } from '../src/components/Composer.js';
 import { NavColumn as Sidebar } from '../src/components/shell/NavColumn.js';
@@ -427,7 +427,7 @@ describe('<Sidebar />', () => {
       name: 'director-1',
       role: { title: 'director', description: '' },
       permissions: ['members.manage'],
-      team: { name: 'alpha', directive: 'ship', context: '', permissionPresets: {} },
+      team: { name: 'alpha', context: '', permissionPresets: {} },
       teammates: [
         {
           name: 'director-1',
@@ -531,7 +531,7 @@ describe('<TeamHome />', () => {
       name: 'director-1',
       role: { title: 'director', description: '' },
       permissions: ['members.manage'],
-      team: { name: 'demo-team', directive: '', context: '', permissionPresets: {} },
+      team: { name: 'demo-team', context: '', permissionPresets: {} },
       teammates: [],
       openObjectives: [],
       toolSources: [],
@@ -568,7 +568,7 @@ describe('<TeamHome />', () => {
       name: 'director-1',
       role: { title: 'director', description: '' },
       permissions: ['members.manage'],
-      team: { name: 'demo-team', directive: '', context: '', permissionPresets: {} },
+      team: { name: 'demo-team', context: '', permissionPresets: {} },
       teammates: [],
       openObjectives: [],
       toolSources: [],
@@ -627,7 +627,7 @@ describe('<TeamHome />', () => {
       name: 'director-1',
       role: { title: 'director', description: '' },
       permissions: ['members.manage'],
-      team: { name: 'demo-team', directive: '', context: '', permissionPresets: {} },
+      team: { name: 'demo-team', context: '', permissionPresets: {} },
       teammates: [],
       openObjectives: [],
       toolSources: [],
@@ -657,7 +657,7 @@ describe('<TeamHome />', () => {
       name: 'director-1',
       role: { title: 'director', description: '' },
       permissions: ['members.manage'],
-      team: { name: 'demo-team', directive: '', context: '', permissionPresets: {} },
+      team: { name: 'demo-team', context: '', permissionPresets: {} },
       teammates: [],
       openObjectives: [],
       toolSources: [],
@@ -702,7 +702,7 @@ describe('briefing bootstrap', () => {
       name: 'director-1',
       role: { title: 'director', description: '' },
       permissions: ['members.manage'],
-      team: { name: 'demo-team', directive: 'ship', context: '', permissionPresets: {} },
+      team: { name: 'demo-team', context: '', permissionPresets: {} },
       teammates: [
         {
           name: 'director-1',
@@ -756,7 +756,6 @@ describe('<Sidebar /> overview button', () => {
       permissions: ['members.manage'],
       team: {
         name: 'demo-team',
-        directive: 'Ship the payment service.',
         context: '',
         permissionPresets: {},
       },
@@ -773,7 +772,7 @@ describe('<Sidebar /> overview button', () => {
     };
     render(<Sidebar viewer="director-1" />);
     // Top of the NavColumn shows the team name and the viewer's own
-    // name underneath. The team directive is intentionally NOT here —
+    // name underneath. The team context is intentionally NOT here —
     // it's static, never personalized, and would just be repeated
     // chrome on every page; viewer name is the higher-signal anchor
     // for "you are signed in as _" recognition.
@@ -782,23 +781,22 @@ describe('<Sidebar /> overview button', () => {
   });
 });
 
-describe('<TeamHome /> directive header', () => {
-  it('renders team name and directive at the top when briefing is set', () => {
+describe('<TeamHome /> context header', () => {
+  function seedTeamHome(permissions: Permission[], context: string): void {
     briefing.value = {
       name: 'director-1',
       role: { title: 'director', description: '' },
-      permissions: ['members.manage'],
+      permissions,
       team: {
         name: 'demo-team',
-        directive: 'Ship the payment service.',
-        context: 'Longer context about the operating window.',
+        context,
         permissionPresets: {},
       },
       teammates: [
         {
           name: 'director-1',
           role: { title: 'director', description: '' },
-          permissions: ['members.manage'],
+          permissions,
         },
       ],
       openObjectives: [],
@@ -810,15 +808,32 @@ describe('<TeamHome /> directive header', () => {
         {
           name: 'director-1',
           role: { title: 'director', description: '' },
-          permissions: ['members.manage'],
+          permissions,
         },
       ],
       connected: [],
     };
+  }
+
+  it('renders team name and context at the top when briefing is set', () => {
+    seedTeamHome(['members.manage'], 'Longer context about the operating window.');
     render(<TeamHome viewer="director-1" />);
     expect(screen.getByText('demo-team')).toBeTruthy();
-    expect(screen.getByText('Ship the payment service.')).toBeTruthy();
     expect(screen.getByText(/operating window/)).toBeTruthy();
+    // No team.manage → no edit affordance.
+    expect(screen.queryByRole('button', { name: /edit context/i })).toBeNull();
+  });
+
+  it('offers context editing to team.manage holders', () => {
+    seedTeamHome(['team.manage'], 'Longer context about the operating window.');
+    render(<TeamHome viewer="director-1" />);
+    expect(screen.getByRole('button', { name: /edit context/i })).toBeTruthy();
+  });
+
+  it('offers an add-context affordance when context is empty and viewer can manage', () => {
+    seedTeamHome(['team.manage'], '');
+    render(<TeamHome viewer="director-1" />);
+    expect(screen.getByRole('button', { name: /add team context/i })).toBeTruthy();
   });
 
   it('shows loading UI when briefing is null', () => {

@@ -8,7 +8,7 @@ order: 50
 # Architecture
 
 csuite is a command-and-control plane for AI agent teams. A
-**broker** is authoritative about a team's state — directive,
+**broker** is authoritative about a team's state — context,
 members, objectives, channels, captured activity. A **runner**
 (`csuite claude-code` or `csuite codex`) wraps an agent's CLI in a
 parent process that talks to the broker and relays push events
@@ -125,7 +125,7 @@ action gates on a specific leaf:
 
 | Permission | What it permits |
 |---|---|
-| `team.manage` | Edit team directive / context / presets |
+| `team.manage` | Edit team name / context / presets |
 | `members.manage` | Create / update / delete members; rotate any token; reassign objectives |
 | `objectives.create` | Create + assign objectives |
 | `objectives.cancel` | Cancel any non-terminal (originator-bypass) |

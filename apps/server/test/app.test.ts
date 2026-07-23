@@ -14,7 +14,6 @@ const BOT_TOKEN = 'csuite_test_bot_secret';
 
 const TEAM: Team = {
   name: 'demo-team',
-  directive: 'Ship and operate the payment service.',
   context: 'We own the full lifecycle.',
   permissionPresets: {},
 };
@@ -97,7 +96,7 @@ describe('app GET /briefing', () => {
     expect(body.openObjectives).toEqual([]);
     expect(body.instructions).toContain('director-1');
     expect(body.instructions).toContain('director');
-    expect(body.instructions).toContain(TEAM.directive);
+    expect(body.instructions).toContain(TEAM.context);
   });
 
   it('returns empty permissions for plain members', async () => {

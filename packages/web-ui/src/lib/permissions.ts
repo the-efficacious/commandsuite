@@ -28,7 +28,7 @@ export const PERMISSION_META: readonly PermissionMeta[] = [
   {
     key: 'team.manage',
     label: 'Team settings',
-    description: 'Edit team name, directive, context, and permission presets.',
+    description: 'Edit team name, context, and permission presets.',
   },
   {
     key: 'members.manage',

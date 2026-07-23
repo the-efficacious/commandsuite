@@ -3990,7 +3990,7 @@ export function createApp(options: AppOptions): CreatedApp {
   // Read is dual-auth (every authenticated member sees their team).
   // Mutations require `team.manage`. The response always reflects the
   // freshly-read DB state — there is no in-memory snapshot to go
-  // stale. Note: changing `directive` / `context` / member `instructions`
+  // stale. Note: changing team `context` / member `instructions`
   // takes effect on the *next* MCP session for any agent — those
   // strings are baked into the MCP `instructions` field, which is
   // frozen for the lifetime of a session by the protocol. Restart the
@@ -4007,12 +4007,11 @@ export function createApp(options: AppOptions): CreatedApp {
     }
     const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
     if (body === null) return c.json({ error: 'expected a JSON body' }, 400);
-    const patch: { name?: string; directive?: string; context?: string } = {};
+    const patch: { name?: string; context?: string } = {};
     if (typeof body.name === 'string') patch.name = body.name;
-    if (typeof body.directive === 'string') patch.directive = body.directive;
     if (typeof body.context === 'string') patch.context = body.context;
     if (Object.keys(patch).length === 0) {
-      return c.json({ error: 'no fields to update (name, directive, context)' }, 400);
+      return c.json({ error: 'no fields to update (name, context)' }, 400);
     }
     try {
       const updated = teamStore.updateTeam(patch, member.name);

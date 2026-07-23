@@ -18,6 +18,7 @@
  * csuite.db` is the way to start over.
  */
 
+import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { ENV } from 'csuite-sdk/protocol';
 import { UsageError } from './errors.js';
@@ -35,16 +36,11 @@ export async function runSetupCommand(
   const server = await loadServerModule();
   const configPath = input.configPath ?? process.env[ENV.configPath] ?? server.defaultConfigPath();
 
-  // KEK first — encrypted-at-rest TOTP / VAPID values round-trip
-  // cleanly through the wizard's write path.
-  try {
-    server.setKek(server.resolveKek(configPath));
-  } catch (err) {
-    if (err instanceof server.KekResolutionError) {
-      throw new UsageError(`setup: ${err.message}`);
-    }
-    throw err;
-  }
+  // Note: the KEK is installed later, right before the wizard runs.
+  // `resolveKek` mints `csuite-kek.bin` on first use, so resolving it
+  // up front would leave a stray key file behind whenever setup bails
+  // early (non-TTY stdin, already-populated team). None of the probe
+  // reads below decrypt anything, so nothing here needs it.
 
   // Refuse to overwrite an existing setup. We check both: file
   // presence AND a populated team singleton in the DB. If only the
@@ -103,6 +99,14 @@ export async function runSetupCommand(
   }
 
   try {
+    // The wizard is definitely running now. Make sure the server
+    // directory exists (fresh bootstraps default to `./csuite/`;
+    // no-op with unchanged permissions when it already does), then
+    // mint/read the KEK so encrypted-at-rest TOTP / VAPID values
+    // round-trip through the seed writes below.
+    mkdirSync(dirname(configPath), { recursive: true, mode: 0o700 });
+    server.setKek(server.resolveKek(configPath));
+
     const wizard = await server.runFirstRunWizard({ configPath, io });
 
     // Seed DB with the wizard's captured team + admin.
@@ -111,7 +115,6 @@ export async function runSetupCommand(
       const stores = server.openTeamAndMembers(db);
       stores.team.setTeam({
         name: wizard.team.name,
-        directive: wizard.team.directive,
         context: wizard.team.context,
       });
       for (const [name, leaves] of Object.entries(wizard.team.permissionPresets)) {
@@ -164,8 +167,12 @@ export async function runSetupCommand(
     stdout('Next steps:');
     stdout('  csuite serve         # start the broker against this config');
     stdout('');
+    stdout('Then flesh out the team from the web UI or CLI whenever you like:');
+    stdout('  csuite team set --context "..."     # team-level standing context');
+    stdout('  csuite member update --name <n> ... # roles + personal instructions');
+    stdout('');
   } catch (err) {
-    if (err instanceof server.MemberLoadError) {
+    if (err instanceof server.MemberLoadError || err instanceof server.KekResolutionError) {
       throw new UsageError(`setup: ${err.message}`);
     }
     throw err;

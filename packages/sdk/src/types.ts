@@ -75,17 +75,17 @@ export function hasPermission(permissions: readonly Permission[], required: Perm
 
 /**
  * A team is the top-level unit the server controls. One deployment
- * = one team. The team defines the directive and the context every
- * member inherits, plus any reusable permission presets.
+ * = one team. The team defines the standing context every member
+ * inherits, plus any reusable permission presets.
  *
- * `context` here is the team-level standing context (the longer
- * background paragraph that complements `directive`). Distinct
- * from agent conversation context — the latter is per-session and
- * lives in the runner; the former is durable team configuration.
+ * `context` here is the team-level standing context: what the team
+ * is here to do plus any background every member should carry.
+ * Distinct from agent conversation context — the latter is
+ * per-session and lives in the runner; the former is durable team
+ * configuration, editable any time via the web UI, CLI, or MCP.
  */
 export interface Team {
   name: string;
-  directive: string;
   context: string;
   /**
    * Named permission bundles members can reference instead of listing

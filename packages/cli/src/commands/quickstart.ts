@@ -1,5 +1,5 @@
 /**
- * `csuite quickstart` — zero-to-first-directive helper.
+ * `csuite quickstart` — zero-to-first-objective helper.
  *
  * Assumes the caller has already run `csuite setup` (or ingested a
  * team config some other way). Picks up from "you have a token and

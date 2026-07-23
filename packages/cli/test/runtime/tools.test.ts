@@ -31,7 +31,6 @@ const BRIEFING: BriefingResponse = {
   instructions: '',
   team: {
     name: 'demo',
-    directive: 'ship',
     context: '',
     permissionPresets: {},
   },

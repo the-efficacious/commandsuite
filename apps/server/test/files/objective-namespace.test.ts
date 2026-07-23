@@ -41,7 +41,6 @@ const DAVE = 'csuite_test_dave_secret';
 
 const TEAM: Team = {
   name: 'obj-fs-team',
-  directive: 'Files live with their objective.',
   context: '',
   permissionPresets: {},
 };

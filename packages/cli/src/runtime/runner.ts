@@ -5,7 +5,7 @@
  *
  *   - the broker `Client` (authenticated to the csuite server)
  *   - the cached `BriefingResponse` (name, role, permissions, team
- *     directive/context, initial open objectives)
+ *     context, initial open objectives)
  *   - the live SSE forwarder (chat + objective events from the broker)
  *   - the objectives tracker (keeps the "open objectives" snapshot
  *     fresh — it seeds the context re-brief pushed at session attach

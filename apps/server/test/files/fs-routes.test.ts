@@ -27,7 +27,6 @@ const DIRECTOR_TOKEN = 'csuite_test_director_secret';
 
 const TEAM: Team = {
   name: 'files-team',
-  directive: 'Exercise filesystem endpoints.',
   context: '',
   permissionPresets: {},
 };

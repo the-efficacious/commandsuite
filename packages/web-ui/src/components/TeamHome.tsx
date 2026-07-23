@@ -2,7 +2,8 @@
  * TeamHome — the landing page at `/`.
  *
  * Replaces RosterPanel as the default view. Shows:
- *   - Team name + directive + context (the team's "about")
+ *   - Team name + context (the team's "about"), editable in place
+ *     by members holding `team.manage`
  *   - At-a-glance stats (active objectives, blocked, total members)
  *   - Roster — click a row to open the member's profile
  *     (hover card reveals the DM action)
@@ -12,13 +13,16 @@
  * single, scannable view.
  */
 
+import { signal } from '@preact/signals';
 import type { Presence } from 'csuite-sdk/types';
-import { briefing } from '../lib/briefing.js';
+import { hasPermission } from 'csuite-sdk/types';
+import { briefing, loadBriefing } from '../lib/briefing.js';
+import { getClient } from '../lib/client.js';
 import { objectives } from '../lib/objectives.js';
 import { type PermissionSummary, summarizePermissions } from '../lib/permissions.js';
 import { presenceActivity, roster } from '../lib/roster.js';
 import { selectMemberProfile } from '../lib/view.js';
-import { Loading, PageHeader } from './ui/index.js';
+import { ErrorCallout, Loading, PageHeader } from './ui/index.js';
 
 export interface TeamHomeProps {
   viewer: string;
@@ -43,21 +47,12 @@ export function TeamHome({ viewer }: TeamHomeProps) {
       class="flex-1 overflow-y-auto"
       style="padding:24px max(1rem,env(safe-area-inset-right)) 32px max(1rem,env(safe-area-inset-left))"
     >
-      <PageHeader
-        eyebrow="Team"
-        title={b.team.name}
-        subtitle={
-          b.team.directive.length > 0 ? (
-            <span style="font-style:italic">{b.team.directive}</span>
-          ) : undefined
-        }
-      />
+      <PageHeader eyebrow="Team" title={b.team.name} />
 
-      {b.team.context && (
-        <div style="font-family:var(--f-sans);font-size:13.5px;color:var(--muted);line-height:1.55;white-space:pre-wrap;margin-bottom:24px">
-          {b.team.context}
-        </div>
-      )}
+      <TeamContextSection
+        context={b.team.context}
+        canManage={hasPermission(b.permissions, 'team.manage')}
+      />
 
       <div
         class="grid"
@@ -171,6 +166,121 @@ export function TeamHome({ viewer }: TeamHomeProps) {
       </div>
     </div>
   );
+}
+
+const ctxEditing = signal(false);
+const ctxDraft = signal('');
+const ctxBusy = signal(false);
+const ctxError = signal<string | null>(null);
+
+/**
+ * The team's standing context ("about"), with in-place editing for
+ * `team.manage` holders. Saving PATCHes /team then reloads the
+ * briefing so the page reflects the new prose immediately. Agents
+ * pick the change up on their next session (the briefing string is
+ * frozen per session by the MCP protocol).
+ */
+function TeamContextSection({ context, canManage }: { context: string; canManage: boolean }) {
+  const busy = ctxBusy.value;
+
+  async function onSave(e: Event): Promise<void> {
+    e.preventDefault();
+    ctxBusy.value = true;
+    ctxError.value = null;
+    try {
+      await getClient().updateTeam({ context: ctxDraft.value.trim() });
+      await loadBriefing();
+      ctxEditing.value = false;
+    } catch (err) {
+      ctxError.value = err instanceof Error ? err.message : String(err);
+    } finally {
+      ctxBusy.value = false;
+    }
+  }
+
+  if (ctxEditing.value) {
+    return (
+      <form class="panel" onSubmit={(e) => void onSave(e)} style="padding:16px;margin-bottom:24px">
+        <div class="eyebrow" style="margin-bottom:8px">
+          Team context
+        </div>
+        {ctxError.value !== null && (
+          <ErrorCallout message={ctxError.value} style="margin-bottom:10px" />
+        )}
+        <textarea
+          class="input w-full"
+          rows={6}
+          value={ctxDraft.value}
+          onInput={(e) => {
+            ctxDraft.value = (e.currentTarget as HTMLTextAreaElement).value;
+          }}
+          placeholder="What is this team here to do, and what should every member know?"
+          disabled={busy}
+        />
+        <div style="font-family:var(--f-sans);font-size:11.5px;color:var(--muted);font-style:italic;margin-top:6px">
+          Standing context every member inherits. Agents see edits on their next session.
+        </div>
+        <div class="flex items-center gap-2" style="margin-top:12px">
+          <button type="submit" class="btn btn-primary btn-sm" disabled={busy}>
+            {busy ? 'Saving…' : 'Save'}
+          </button>
+          <button
+            type="button"
+            class="btn btn-ghost btn-sm"
+            onClick={() => {
+              ctxEditing.value = false;
+              ctxError.value = null;
+            }}
+            disabled={busy}
+          >
+            Cancel
+          </button>
+        </div>
+      </form>
+    );
+  }
+
+  const startEdit = () => {
+    ctxDraft.value = context;
+    ctxError.value = null;
+    ctxEditing.value = true;
+  };
+
+  if (context.length === 0) {
+    if (!canManage) return null;
+    return (
+      <div style="margin-bottom:24px">
+        <button type="button" class="btn btn-ghost btn-sm" onClick={startEdit}>
+          + Add team context
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div style="margin-bottom:24px">
+      <div style="font-family:var(--f-sans);font-size:13.5px;color:var(--muted);line-height:1.55;white-space:pre-wrap">
+        {context}
+      </div>
+      {canManage && (
+        <button
+          type="button"
+          class="btn btn-ghost btn-sm"
+          style="margin-top:8px"
+          onClick={startEdit}
+        >
+          Edit context
+        </button>
+      )}
+    </div>
+  );
+}
+
+export function __resetTeamHomeForTests(): void {
+  ctxEditing.value = false;
+  ctxDraft.value = '';
+  ctxBusy.value = false;
+  ctxError.value = null;
 }
 
 function StatCard({ label, value, accent }: { label: string; value: number; accent?: 'ember' }) {

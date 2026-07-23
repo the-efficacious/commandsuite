@@ -75,7 +75,6 @@ describe('composeSessionOnlineMessage', () => {
 const ADMIN_TOKEN = 'csuite_session_online_test_admin_token';
 const TEAM: Team = {
   name: 'session-online-team',
-  directive: 'Verify the session-online notice is gated by auth plane.',
   context: '',
   permissionPresets: {},
 };

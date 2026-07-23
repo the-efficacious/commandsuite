@@ -440,7 +440,7 @@ export async function runClaudeCodeCommand(input: ClaudeCodeCommandInput): Promi
   //
   //   --append-system-prompt <briefing>
   //     Pins the composed team briefing (csuite framing + team name /
-  //     directive / context, role, personal instructions, teammates,
+  //     context, role, personal instructions, teammates,
   //     objectives primer) into claude's system prompt for the whole
   //     session. The same prose is also delivered through the MCP
   //     `instructions` channel, but `--append-system-prompt` keeps it

@@ -21,7 +21,7 @@ import { generateVapidKeys } from '../src/push/vapid.js';
 import { type RunningServer, runServer } from '../src/run.js';
 import { seedStores } from './helpers/test-stores.js';
 
-const TEAM = { name: 'vapid-team', directive: 'Verify VAPID at-rest encryption.', context: '' };
+const TEAM = { name: 'vapid-team', context: '' };
 const ADMIN_TOKEN = 'csuite_vapid_test_admin_token';
 
 const dirsToClean: string[] = [];

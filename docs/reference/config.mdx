@@ -21,7 +21,7 @@ broker's SQLite.
 | **Created by** | `csuite setup` (interactive wizard) or `csuite serve` (drops into the wizard if missing on a TTY) |
 | **Read by** | `csuite serve`, `csuite setup`, `csuite member`, `csuite enroll`, `csuite rotate`, `csuite quickstart` |
 | **Written by** | `csuite setup`, `csuite member`, `csuite enroll`, `csuite rotate`, broker on every member mutation through `/members/*` |
-| **Default path** | `./csuite.json` |
+| **Default path** | `./csuite.json` if present, else `./csuite/csuite.json` (fresh bootstraps create the `./csuite/` dir at `0o700`) |
 | **Override** | `--config-path` flag, `$CSUITE_CONFIG_PATH` |
 | **Mode** | `0o600` |
 
@@ -31,7 +31,6 @@ broker's SQLite.
 {
   "team": {
     "name": "platform-eng",
-    "directive": "Ship the v2 ingest pipeline by Q3",
     "context": "Multi-paragraph team context...",
     "permissionPresets": {
       "admin": ["team.manage", "members.manage", "objectives.create",
@@ -45,7 +44,7 @@ broker's SQLite.
       {
         "name": "alice",
         "role": { "title": "director", "description": "..." },
-        "instructions": "Personal directive prose...",
+        "instructions": "Personal instructions prose...",
         "rawPermissions": ["admin"],
         "permissions": ["team.manage", "members.manage", "..."],
         "tokenHash": "sha256:<hex>",

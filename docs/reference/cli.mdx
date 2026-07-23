@@ -65,7 +65,7 @@ the command prints an install hint if it's missing.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--config-path` (alias `--config`) | string | `./csuite.json` | Team config path. Falls back to `$CSUITE_CONFIG_PATH`. |
+| `--config-path` (alias `--config`) | string | `./csuite.json`, else `./csuite/csuite.json` | Team config path. Falls back to `$CSUITE_CONFIG_PATH`. Fresh bootstraps seed into a new `./csuite/` dir. |
 | `--port` | number | `8717` | Listen port. Falls back to `$CSUITE_PORT`. |
 | `--host` | string | `127.0.0.1` | Bind address. Falls back to `$CSUITE_HOST`. |
 | `--db` | string | `:memory:` | SQLite path for tokens / messages / sessions. Falls back to `$CSUITE_DB_PATH`. |

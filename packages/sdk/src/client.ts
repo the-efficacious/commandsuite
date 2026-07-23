@@ -406,7 +406,7 @@ export class Client {
    * Fetch the team-context briefing for the authenticated member.
    *
    * Returns the caller's name, role, permissions, team
-   * (name/directive/context/presets), list of teammates, open objectives
+   * (name/context/presets), list of teammates, open objectives
    * currently on the caller's plate, and the member's personal
    * `instructions` string ready for `new Server({instructions})` in
    * the MCP link.
@@ -690,7 +690,7 @@ export class Client {
   }
 
   /**
-   * Read the current team config (name, directive, context, presets).
+   * Read the current team config (name, context, presets).
    * Authenticated; available to every member.
    */
   async getTeam(): Promise<Team> {
@@ -700,11 +700,11 @@ export class Client {
   }
 
   /**
-   * Update one or more team-level fields (name, directive, context).
+   * Update one or more team-level fields (name, context).
    * Requires `team.manage`. Permission presets are managed separately
    * via `setPreset` / `deletePreset` so the API surface stays narrow.
    */
-  async updateTeam(patch: Partial<Pick<Team, 'name' | 'directive' | 'context'>>): Promise<Team> {
+  async updateTeam(patch: Partial<Pick<Team, 'name' | 'context'>>): Promise<Team> {
     const resp = await this.request(PATHS.team, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
