@@ -1,6 +1,6 @@
 {
   "name": "csuite",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Meta-package for CommandSuite — the command layer for off-the-shelf agents. Installs cli, server, sdk, and core in one command.",
   "license": "Apache-2.0",
   "author": "Andrew Jon Przybilla <andrewjon@efficacious.io>",

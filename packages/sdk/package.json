@@ -1,6 +1,6 @@
 {
   "name": "csuite-sdk",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Wire contract and TypeScript SDK for csuite — types, schemas, protocol constants, and HTTP client.",
   "license": "Apache-2.0",
   "author": "Andrew Jon Przybilla <andrewjon@efficacious.io>",
