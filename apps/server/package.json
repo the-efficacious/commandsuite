@@ -44,12 +44,12 @@
     "public"
   ],
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && node ./scripts/sync-public.mjs",
     "dev": "tsup --watch",
     "start": "node ./dist/index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "clean": "rm -rf dist .turbo"
+    "clean": "rm -rf dist public .turbo"
   },
   "dependencies": {
     "@hono/node-server": "^2.0.11",

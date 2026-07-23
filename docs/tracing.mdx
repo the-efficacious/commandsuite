@@ -31,7 +31,7 @@ reaches the broker bearer-authenticated over the same channel
 the runner already uses; secrets are redacted before anything
 leaves the runner.
 
-Capture works for **both runners** (`csuite claude-code` and
+Capture works for **both runners** (`csuite claude` and
 `csuite codex`). Both are transcript-primary for content — Claude
 Code's session transcript, codex's rollout JSONL — and both add an
 OpenTelemetry operational layer and a full-context gen_ai + raw-body
@@ -44,11 +44,18 @@ There are no per-objective spans. The runner maintains one
 **activity stream** per member — an append-only timeline of
 everything the agent's instrumentation reports:
 
+- `session_start` / `session_end` — one runner session's brackets,
+  emitted by every runner on every exit path. `session_end` is the
+  machine-readable run summary: exit code, reason, duration,
+  agent-native session id, and capture accounting
+  (`enqueued` / `uploaded` / `dropped`) so an incomplete trace is
+  visible instead of silently short.
 - `llm_exchange` — one model request/response, parsed into a
   typed `AnthropicMessagesEntry` (model, messages, tools, stop
   reason, token usage).
 - `tool_action` — one tool invocation: the tool name plus its
   (redacted) input and, where the source carries it, its result.
+- `user_prompt` — the redacted prompt text that woke a turn.
 - `objective_open` — the member just took ownership of an
   objective.
 - `objective_close` — the member just released it (with the
@@ -331,7 +338,7 @@ decrypts your TLS." Defense in depth:
 Both runners support `--no-trace`:
 
 ```bash
-csuite claude-code --no-trace
+csuite claude --no-trace
 csuite codex --no-trace
 ```
 

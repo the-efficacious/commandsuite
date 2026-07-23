@@ -78,6 +78,12 @@ import { GenAiMessageBlock, GenAiRequestDetails } from './GenAiBlocks.js';
 type KindFilter = Record<ActivityEvent['kind'], boolean>;
 
 const DEFAULT_FILTERS: KindFilter = {
+  // Run brackets (session_start/session_end) pass the filter but have
+  // no thread renderer yet — buildThread skips kinds it doesn't know.
+  // Rendering them as timeline boundary markers (mirroring the
+  // objective markers) is a follow-up; no chip until then.
+  session_start: true,
+  session_end: true,
   objective_open: true,
   objective_close: true,
   llm_exchange: true,

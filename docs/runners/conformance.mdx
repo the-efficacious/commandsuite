@@ -1,0 +1,231 @@
+---
+title: Runner conformance
+description: The standard every agent runner implements — the AgentAdapter contract, capture capability tiers, the session_start/session_end run bracket and machine-readable run summary, the doctor preflight, and the shared conformance test suite a new runner must pass before shipping.
+section: Docs
+order: 50
+---
+
+# Runner conformance
+
+csuite is built to run many agent frameworks through one command
+layer. That only works if every runner behaves identically where it
+matters — lifecycle correctness, operator-file safety, log and trace
+output — while staying honest about where agents genuinely differ
+(what their native instrumentation can capture). This page is the
+standard: what an adapter implements, what it declares, and what it
+must prove before it ships.
+
+The short version:
+
+1. **Implement the `AgentAdapter` interface** — everything else
+   (auth, briefing, IPC, forwarder, capture, secrets, signals,
+   teardown, run summary) is inherited from the shared driver.
+2. **Declare a capture tier** (0–3) instead of pretending parity.
+3. **Emit nothing yourself** — the driver produces the
+   `session_start`/`session_end` bracket and the run summary for you.
+4. **Pass the conformance suite** against a fake broker + fake agent
+   binary.
+5. **Ship fixtures** for any capture parser you add (tier 2+).
+
+## The AgentAdapter contract
+
+The interface lives at
+`packages/cli/src/runtime/agents/adapter.ts`; the driver that
+consumes it is `packages/cli/src/runtime/agent-session.ts`
+(`runAgentSession`). A runner verb is then a thin wrapper:
+
+```typescript
+export async function runMyAgentCommand(input: MyAgentCommandInput): Promise<number> {
+  const adapter = createMyAgentAdapter({ /* framework-specific knobs */ });
+  return runAgentSession(adapter, {
+    url: input.url, token: input.token, cwd: input.cwd, log: input.log,
+    noTrace: input.noTrace, noSecrets: input.noSecrets,
+    bridgeCommand: input.bridgeCommand, bridgeArgs: input.bridgeArgs,
+  });
+}
+```
+
+An adapter implements five things:
+
+| Member | Responsibility |
+|---|---|
+| `meta` | Identity + declarations: runner id, display name, capture tier, signal mode, tested version range, version-probe args |
+| `locate()` | Find the agent binary. Called FIRST, must be side-effect free — a missing binary must not leave sockets bound or files written |
+| `runnerOptions()` | (optional) The runner knobs this framework needs: a `notificationSink` override (how broker events become the framework's "ambient input") and/or the `onSecondBridge` policy |
+| `prepare(ctx)` | Write agent config, compute env + args. Returns an **idempotent, non-throwing `cleanup()`** that restores every file it touched, plus optional operator banner lines |
+| `spawn(ctx)` | Start the agent. Returns an `AgentProcess`: `exitCode` promise, `sessionId()`, optional `signal()`, and an idempotent `shutdown()` that flushes agent-side capture readers **before** resolving |
+
+Two declarations in `meta` deserve emphasis:
+
+- **`signals: 'forward' | 'teardown'`.** Interactive agents that own
+  the terminal (Claude Code's TUI) get signals *forwarded* — the
+  session ends when the agent exits. Headless agents (codex under
+  `app-server`) get *teardown* — Ctrl-C gracefully ends the session.
+  Declare which one your framework is; never install your own
+  process signal handlers.
+- **`captureTier`** — see below.
+
+### What the driver guarantees (so adapters never re-implement it)
+
+- `cleanup()` runs on **every** exit path: normal exit, signals,
+  spawn failure, uncaught exception.
+- Teardown ordering is fixed: agent `shutdown()` (capture readers
+  flush their tail into the uploader) → `cleanup()` (operator files
+  restored) → `session_end` enqueued → runner shutdown (uploader
+  drains, IPC socket unlinked) → summary emitted.
+- The standard banner (`csuite <id>: runner cwd / agent / session
+  log`) prints before the agent spawns; adapter `bannerLines` follow
+  it.
+- Adapter errors extending `AgentAdapterError` surface as clean
+  one-line usage errors, not stack traces.
+
+## Capture capability tiers
+
+Agents differ wildly in what their native instrumentation exposes.
+The standard is a **declaration, not a bar**: an adapter states what
+its agent actually provides, the docs matrix tells consumers what
+data to expect, and a tier-0 runner is still a legitimate runner.
+
+| Tier | Name | Means |
+|---|---|---|
+| 0 | Operable | Spawns, serves the MCP toolbox, receives ambient events, presence transitions, clean teardown |
+| 1 | Observable | + live activity signal (`idle` / `working` / `blocked`) from native instrumentation |
+| 2 | Traceable | + normalized content capture: `llm_exchange` / `tool_action` / `user_prompt`, redacted, in the activity stream |
+| 3 | Full fidelity | + verbatim request/response bodies into the gen_ai / raw-body layer |
+
+Current matrix:
+
+| Runner | Tier | Content source | Known gaps |
+|---|---|---|---|
+| `claude` | 3 | Session transcript (reader) + OTEL operational + FILE-mode raw bodies | Extended thinking redacted at source by OTEL producer |
+| `codex` | 3 | Rollout JSONL (reader) + OTEL operational + rollout-trace bundles | Reasoning captured as summaries only (OpenAI encrypts raw CoT) |
+
+A new runner's doc page must state its tier and its gaps the same
+way — what is *not* captured is part of the contract.
+
+## The run bracket and run summary
+
+Every session emits the same terminal artifacts regardless of agent
+framework, on every exit path. The driver produces all of them; an
+adapter contributes only `sessionId()`.
+
+**Activity events** (skipped under `--no-trace`):
+
+- `session_start` — `{ runner, runnerVersion, captureTier }`, before
+  any agent activity.
+- `session_end` — `{ runner, reason, exitCode, durationMs,
+  agentSessionId?, capture? }`. The `capture` accounting
+  (`enqueued` / `uploaded` / `dropped`) makes an incomplete trace
+  visible at the end of the run: `dropped > 0` means the broker's
+  copy is short.
+
+Together with `objective_open`/`objective_close`, this lets any
+consumer slice the activity stream per run and per objective without
+parsing runner-specific logs — the basis for cross-agent analysis
+("did this agent touch the shell outside the move loop?" is a
+`tool_action` query between session markers, for any runner).
+
+**Log line**: the final structured record is
+`msg: "<runner-id>: run summary"` with
+`{ runner, member, reason, exitCode, durationMs, agentSessionId,
+capture }` — same facts, local copy.
+
+**Human line** (stderr):
+
+```
+csuite codex: session ended — exit 0 (agent-exited-0) after 3m12s · captured 42 events (42 uploaded, 0 dropped) · session 0198c1e2-…
+```
+
+## Doctor preflight
+
+Every runner exposes `--doctor` (full report, exit 0/1) and runs a
+silent preflight before each session (`--skip-doctor` opts out; only
+FAILs abort). The shared checks come from
+`runAgentDoctor(adapter)` in `packages/cli/src/commands/doctor.ts`:
+
+1. Agent binary present (`locate()`)
+2. Agent version detected and compared against
+   `meta.testedVersions` — **WARN outside the range, never FAIL**
+   (agents ship fast; untested ≠ broken). The probe is skipped in
+   the silent preflight to keep session start snappy.
+3. `$TMPDIR` writable
+4. Loopback listener bindable (capture hook server)
+5. Anything the adapter adds via `doctor()`
+
+Adapters should declare `testedVersions: { min, max }` once a range
+is actually exercised in CI, and leave it `null` rather than invent
+one.
+
+## The conformance suite
+
+`packages/cli/test/runtime/conformance/` holds the shared kit. A
+subject wires its real command entry point to a fake agent binary
+and the fake broker; the kit runs the same five scenarios for every
+runner:
+
+| # | Scenario |
+|---|---|
+| S1 | A session completes end-to-end, exits 0, and the runner's IPC socket is unlinked |
+| S2 | The agent's exit code propagates through the driver |
+| S3 | Operator files in the cwd are byte-identical after a trace-on run |
+| S4 | `session_start`/`session_end` reach the broker, ordered, with runner id, exit code, reason, and capture accounting |
+| S5 | The `run summary` log line is emitted, with `capture: null` under `--no-trace` |
+
+Wiring a new runner is ~30 lines (see
+`claude.conformance.test.ts` / `codex.conformance.test.ts`):
+
+```typescript
+describeRunnerConformance({
+  id: 'my-runner',
+  async runSession({ broker, sandbox, trace, agentExitCode, log }) {
+    const fakeAgent = writeFakeMyAgent(sandbox);          // impersonates the framework
+    const restore = withEnv({ MY_AGENT_PATH: fakeAgent, FAKE_AGENT_EXIT_CODE: String(agentExitCode), ... });
+    try {
+      return await runMyAgentCommand({ url: broker.url, token: FAKE_BROKER_TOKEN,
+        cwd: sandbox, log, noTrace: !trace, ... });
+    } finally { restore(); }
+  },
+});
+```
+
+The fake agent is the one per-runner investment: a small script that
+speaks just enough of the framework's wire protocol (stdio MCP
+client for claude-likes, newline-JSON-RPC app-server for
+codex-likes) to exercise the real adapter end-to-end.
+
+Deliberately out of kit scope (covered elsewhere): in-process
+SIGINT/SIGTERM delivery (the test harness owns process signals), and
+ambient broker-event delivery, which is framework-specific — cover
+it in per-runner tests the way `bridge.test.ts` (claude) and
+`codex/channel-sink.test.ts` (codex) do.
+
+### Fixture rule (tier 2+)
+
+Vendors change their formats without notice. Any adapter that
+parses native instrumentation into activity events must ship
+**recorded fixtures** of that instrumentation (transcript JSONL,
+rollout JSONL, OTEL batches — whatever the agent emits) with golden
+normalized output, so a vendor format change becomes a visible
+fixture diff instead of silent capture rot.
+`codex/rollout-parser.test.ts` and `trace-transcript-reader.test.ts`
+are the models.
+
+## Adding a runner: the checklist
+
+1. **Survey the agent** on three axes: how it's spawned and directed
+   (interactive TUI vs headless server), whether it speaks stdio MCP
+   (if yes, `csuite mcp-bridge` is reusable as-is), and what native
+   instrumentation it exposes (decides the tier).
+2. **Write the adapter** (`runtime/agents/<id>-agent.ts` or
+   `runtime/agents/<id>/`): `meta`, `locate`, `runnerOptions` (sink +
+   bridge policy), `prepare`, `spawn`. Model on
+   `claude-agent.ts` (interactive/MCP) or `codex/codex-agent.ts`
+   (headless/custom protocol).
+3. **Add the verb**: a thin `commands/<id>.ts` wrapper plus arg
+   parsing and `--doctor`/`--skip-doctor` wiring in `index.ts`.
+4. **Write the fake agent** and wire the conformance subject; make
+   the five scenarios pass.
+5. **Add fixtures** for any capture parser (tier 2+).
+6. **Write the doc page** (`docs/runners/<id>.mdx`) declaring the
+   tier, the capture sources, and the gaps; add the runner to the
+   matrix on this page.
