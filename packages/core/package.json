@@ -1,6 +1,6 @@
 {
   "name": "csuite-core",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Runtime-agnostic broker logic for csuite — agent registry, push fanout, SSE, event log.",
   "license": "Apache-2.0",
   "author": "Andrew Jon Przybilla <andrewjon@efficacious.io>",
