@@ -1,5 +1,5 @@
 /**
- * `csuite quickstart` — zero-to-first-directive helper.
+ * `csuite quickstart` — zero-to-first-objective helper.
  *
  * Assumes the caller has already run `csuite setup` (or ingested a
  * team config some other way). Picks up from "you have a token and
@@ -19,7 +19,7 @@
  *      Cross-platform (macOS `open`, Linux `xdg-open`, Windows `start`).
  *      Never fails the command if the open fails — the URL is always
  *      printed alongside so the user can click/paste themselves.
- *   5. Print a crisp "next step" block pointing at `csuite claude-code`.
+ *   5. Print a crisp "next step" block pointing at `csuite claude`.
  *
  * This intentionally does NOT spawn a broker in-process (that would
  * leave a long-lived process hanging off an interactive quickstart
@@ -179,7 +179,7 @@ export async function runQuickstartCommand(
       break;
   }
   log('');
-  log('  NEXT:     in a separate terminal, run `csuite claude-code` to execute the demo');
+  log('  NEXT:     in a separate terminal, run `csuite claude` to execute the demo');
   log('            (or watch the web UI as you re-run this command to re-seed)');
   log('');
 

@@ -8,9 +8,9 @@ order: 50
 # Architecture
 
 csuite is a command-and-control plane for AI agent teams. A
-**broker** is authoritative about a team's state — directive,
+**broker** is authoritative about a team's state — context,
 members, objectives, channels, captured activity. A **runner**
-(`csuite claude-code` or `csuite codex`) wraps an agent's CLI in a
+(`csuite claude` or `csuite codex`) wraps an agent's CLI in a
 parent process that talks to the broker and relays push events
 into the agent's session. The agent itself runs as a child of the
 runner.
@@ -44,7 +44,7 @@ runner.
        │ native       │ stdio JSON-RPC (codex)
        │ instrument-  ▼
        │ ation    ┌─────────────────────────┐
-       │          │   csuite mcp-bridge        │  (claude-code only)
+       │          │   csuite mcp-bridge        │  (claude only)
        │          └────────┬────────────────┘
        │                   │ IPC frames over UDS
        │                   ▼
@@ -67,7 +67,7 @@ The broker serves two kinds of clients:
 
 ```
             ┌─ humans ─┐                    ┌─ runners ─────────┐
-            │ browser  │                    │ csuite claude-code   │
+            │ browser  │                    │ csuite claude   │
             └────┬─────┘                    │ csuite codex         │
                  │ HTTPS + session cookie   └─────────┬─────────┘
                  │ (after TOTP login)                 │ HTTPS + bearer
@@ -114,7 +114,7 @@ broker events are dispatched. Everything else is shared.
 
 For the per-runner reference see
 [runners overview](/docs/runners/overview),
-[runners/claude-code](/docs/runners/claude-code), and
+[runners/claude](/docs/runners/claude), and
 [runners/codex](/docs/runners/codex).
 
 ## Permission model
@@ -125,7 +125,7 @@ action gates on a specific leaf:
 
 | Permission | What it permits |
 |---|---|
-| `team.manage` | Edit team directive / context / presets |
+| `team.manage` | Edit team name / context / presets |
 | `members.manage` | Create / update / delete members; rotate any token; reassign objectives |
 | `objectives.create` | Create + assign objectives |
 | `objectives.cancel` | Cancel any non-terminal (originator-bypass) |
@@ -142,11 +142,11 @@ wire is always the flat list.
 
 For the full breakdown see [permissions](/docs/concepts/permissions).
 
-## The runner / bridge process tree (claude-code)
+## The runner / bridge process tree (claude)
 
 ```
    ┌──────────────────────────────────┐
-   │   csuite claude-code                │
+   │   csuite claude                │
    │                                  │
    │   ── runner (parent) ──          │
    │   • briefing + objectives        │
@@ -222,7 +222,7 @@ For the wire format of those IPC frames, see
 3. Scout's runner is subscribed on `/subscribe?name=scout`. The
    forwarder receives the SSE frame, suppresses self-echoes, and
    dispatches into the notification sink.
-4. **claude-code path:** sink wraps as `mcp_notification` IPC
+4. **claude path:** sink wraps as `mcp_notification` IPC
    frame to the bridge. Bridge emits a real
    `notifications/claude/channel` MCP notification on stdio.
    Claude wraps the content in a `<channel>` tag.
@@ -281,7 +281,7 @@ HTTP → broker → web-push library → push service → service worker
   ┌──────────────┐   ┌───────────┐   ┌───────────┐   ┌─────────────┐
   │   csuite        │   │  TS SDK   │   │  csuite CLI  │   │  web UI     │
   │   runner     │   │ (programs)│   │ one-shot  │   │ (browser,   │
-  │ (claude-code │   │           │   │ push/etc. │   │  PWA+push)  │
+  │ (claude │   │           │   │ push/etc. │   │  PWA+push)  │
   │  + codex)    │   │           │   │           │   │             │
   └──────┬───────┘   └─────┬─────┘   └─────┬─────┘   └──────┬──────┘
          │                 │               │                 │
@@ -336,7 +336,7 @@ HTTP → broker → web-push library → push service → service worker
                               │ SSE (/subscribe)
                               ▼
               ┌───────────────────────────────────┐
-              │     csuite claude-code / codex       │
+              │     csuite claude / codex       │
               │             (runner)              │
               │                                   │
               │  • briefing + member identity     │
@@ -349,7 +349,7 @@ HTTP → broker → web-push library → push service → service worker
               │     - streaming ActivityUploader   │
               │  • spawns the agent with env      │
               │  • backs up + restores .mcp.json  │
-              │    (claude-code only)             │
+              │    (claude only)             │
               └───────────────────────────────────┘
 ```
 
@@ -363,7 +363,7 @@ HTTP → broker → web-push library → push service → service worker
 | **`csuite-server`** | Node broker. Wraps `core` in Hono + `node:sqlite`. Team config loader, first-run wizard, objectives + activity persistence, virtual filesystem, web push, optional JWT federation, built-in web UI. | To host a self-hosted broker |
 | **`csuite-web-ui`** | Host-agnostic Preact team-view UI + runtime — chat, objectives (with TracePanel), files, members, tools, secrets, roster, live subscription. Exposes `<TeamShell>`. Most of the front-end lives here. | Not published — the shared UI that web hosts mount |
 | **`csuite-web-host`** | OSS web host: TOTP auth gate + PWA that mounts `csuite-web-ui`'s `<TeamShell>`, served by the broker. | Nothing — it ships inside `csuite-server` |
-| **`csuite-cli`** | Member terminal. `csuite claude-code`, `csuite codex`, `csuite push`, `csuite roster`, `csuite objectives`, `csuite serve`, etc. Also hosts the internal `csuite mcp-bridge` verb. | To push / inspect from a terminal or run a runner |
+| **`csuite-cli`** | Member terminal. `csuite claude`, `csuite codex`, `csuite push`, `csuite roster`, `csuite objectives`, `csuite serve`, etc. Also hosts the internal `csuite mcp-bridge` verb. | To push / inspect from a terminal or run a runner |
 
 **Light install:** `csuite-cli` has `csuite-sdk` as its only
 hard dependency. `csuite-server` is an optional peer —

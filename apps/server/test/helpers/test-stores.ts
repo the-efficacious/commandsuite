@@ -34,7 +34,6 @@ export function mockTeamStore(team: Team): TeamStore {
       current = {
         ...current,
         name: input.name,
-        directive: input.directive,
         context: input.context,
       };
       return snapshot();
@@ -43,7 +42,6 @@ export function mockTeamStore(team: Team): TeamStore {
       current = {
         ...current,
         name: patch.name ?? current.name,
-        directive: patch.directive ?? current.directive,
         context: patch.context ?? current.context,
       };
       return snapshot();
@@ -90,7 +88,6 @@ export interface SeededStores {
 
 export interface SeedTeamInput {
   name: string;
-  directive: string;
   context?: string;
   permissionPresets?: Record<string, Permission[]>;
 }
@@ -100,7 +97,6 @@ export function seedStores(input: { team: SeedTeamInput; members: SeedMember[] }
   const stores = openTeamAndMembers(db);
   stores.team.setTeam({
     name: input.team.name,
-    directive: input.team.directive,
     context: input.team.context ?? '',
   });
   for (const [name, leaves] of Object.entries(input.team.permissionPresets ?? {})) {

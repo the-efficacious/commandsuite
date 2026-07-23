@@ -17,6 +17,7 @@
  *   6. Hand off to `runServer()`.
  */
 
+import { existsSync, mkdirSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { dirname, join } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -153,6 +154,18 @@ async function loadOrCreateServerConfig(
   }
 }
 
+function installKekOrExit(configPath: string): void {
+  try {
+    setKek(resolveKek(configPath));
+  } catch (err) {
+    if (err instanceof KekResolutionError) {
+      process.stderr.write(`csuite-server: ${err.message}\n`);
+      process.exit(1);
+    }
+    throw err;
+  }
+}
+
 async function runWizardOrFail(configPath: string): Promise<WizardResult> {
   const { io, close } = createTtyWizardIO();
   if (!io.isInteractive) {
@@ -166,6 +179,13 @@ async function runWizardOrFail(configPath: string): Promise<WizardResult> {
     process.exit(1);
   }
   try {
+    // The wizard is definitely running now. Make sure the server
+    // directory exists (fresh bootstraps default to `./csuite/`;
+    // no-op with unchanged permissions when it already does), then
+    // mint/read the KEK for the encrypted-at-rest fields the caller
+    // seeds from the result.
+    mkdirSync(dirname(configPath), { recursive: true, mode: 0o700 });
+    installKekOrExit(configPath);
     return await runFirstRunWizard({ configPath, io });
   } catch (err) {
     if (err instanceof MemberLoadError) {
@@ -238,15 +258,13 @@ async function main(): Promise<void> {
   const configPath = args.configPath ?? defaultConfigPath();
 
   // KEK is process-wide; install before any read/write so encrypted
-  // VAPID + TOTP roundtrip cleanly.
-  try {
-    setKek(resolveKek(configPath));
-  } catch (err) {
-    if (err instanceof KekResolutionError) {
-      process.stderr.write(`csuite-server: ${err.message}\n`);
-      process.exit(1);
-    }
-    throw err;
+  // VAPID + TOTP roundtrip cleanly. Deferred when no config file
+  // exists yet: `resolveKek` mints `csuite-kek.bin` on first use, and
+  // a boot that bails at the wizard gate (non-TTY stdin) must not
+  // leave a stray key file in an otherwise-untouched directory. The
+  // wizard path installs the KEK right after that gate instead.
+  if (existsSync(configPath)) {
+    installKekOrExit(configPath);
   }
 
   const { config: serverConfig, wizard } = await loadOrCreateServerConfig(configPath);
@@ -273,7 +291,6 @@ async function main(): Promise<void> {
   if (wizard !== null) {
     stores.team.setTeam({
       name: wizard.team.name,
-      directive: wizard.team.directive,
       context: wizard.team.context,
     });
     for (const [name, leaves] of Object.entries(wizard.team.permissionPresets)) {
@@ -354,7 +371,6 @@ async function main(): Promise<void> {
       }
       lines.push(
         `  team:      ${team.name}`,
-        `  directive: ${team.directive}`,
         `  config:    ${configPath}`,
         `  db:        ${dbPath}`,
       );

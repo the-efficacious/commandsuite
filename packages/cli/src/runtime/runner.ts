@@ -5,7 +5,7 @@
  *
  *   - the broker `Client` (authenticated to the csuite server)
  *   - the cached `BriefingResponse` (name, role, permissions, team
- *     directive/context, initial open objectives)
+ *     context, initial open objectives)
  *   - the live SSE forwarder (chat + objective events from the broker)
  *   - the objectives tracker (keeps the "open objectives" snapshot
  *     fresh — it seeds the context re-brief pushed at session attach
@@ -115,7 +115,7 @@ export interface RunnerOptions {
    * Disable the capture host entirely — no activity uploader, no busy
    * signal, no hook server. The returned `RunnerHandle.captureHost`
    * will be `null`, and the agent child's environment is left untouched
-   * (no OTEL export). Default: capture enabled. `csuite claude-code
+   * (no OTEL export). Default: capture enabled. `csuite claude
    * --no-trace` sets this to `true`.
    */
   noTrace?: boolean;
@@ -123,13 +123,13 @@ export interface RunnerOptions {
    * Skip resolving broker-held secrets. The returned
    * `RunnerHandle.secretsEnv` will be empty and the agent child's
    * environment gets no injected secrets. Default: secrets enabled.
-   * `csuite claude-code --no-secrets` sets this to `true`.
+   * `csuite claude --no-secrets` sets this to `true`.
    */
   noSecrets?: boolean;
   /**
    * Optional presence signal the forwarder will flip between
    * `connecting` / `online` / `offline`. Callers that want to render
-   * a status indicator (e.g. the claude-code HUD strip) pass one
+   * a status indicator (e.g. the claude HUD strip) pass one
    * in; the runner also exposes it back on its handle for anyone
    * else who wants to subscribe.
    */
@@ -138,7 +138,7 @@ export interface RunnerOptions {
    * Override the notification sink the forwarder writes broker SSE
    * events into. Default: a bridge-IPC shim that wraps each event as
    * an `mcp_notification` frame and pushes it to the connected MCP
-   * bridge — this is what claude-code uses (the bridge re-emits the
+   * bridge — this is what claude uses (the bridge re-emits the
    * notification to claude over its stdio MCP transport).
    *
    * The codex runner overrides this with a sink that converts each
@@ -158,7 +158,7 @@ export interface RunnerHandle {
   /**
    * The live capture host owning the activity uploader, the busy
    * signal, and the Claude Code hook server. `null` when the runner
-   * was started with `noTrace: true`. `csuite claude-code` reads this
+   * was started with `noTrace: true`. `csuite claude` reads this
    * to know whether to bake the OTEL export env into the agent child's
    * environment; the codex adapter reads its `enqueue` / `busy`.
    */

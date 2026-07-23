@@ -1,7 +1,7 @@
 /**
  * Team config loading for the csuite server.
  *
- * A team config defines the directive, the permission presets, and
+ * A team config defines the team context, the permission presets, and
  * the members that make up the team. Each member carries a name, a
  * role (title + description), per-member permissions (preset name or
  * leaf), personal instructions, and a hashed bearer token. Humans vs
@@ -20,8 +20,7 @@
  *     "_comment": "...",
  *     "team": {
  *       "name": "demo-team",
- *       "directive": "Ship the payment service.",
- *       "context": "We own the full lifecycle...",
+ *       "context": "Ship the payment service. We own the full lifecycle...",
  *       "permissionPresets": {
  *         "admin":    ["team.manage", "members.manage", "objectives.create", "objectives.cancel", "objectives.reassign", "objectives.watch", "activity.read"],
  *         "operator": ["objectives.create", "objectives.cancel", "objectives.reassign"]
@@ -44,6 +43,7 @@
  */
 
 import { createHash, randomBytes } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Member, Permission, Role, Teammate } from 'csuite-sdk/types';
 import { PERMISSIONS } from 'csuite-sdk/types';
@@ -51,6 +51,8 @@ import { z } from 'zod';
 
 export const TOKEN_HASH_PREFIX = 'sha256:';
 const DEFAULT_CONFIG_FILENAME = 'csuite.json';
+/** Subdirectory fresh bootstraps seed into. See `defaultConfigPath`. */
+export const DEFAULT_SERVER_DIR_NAME = 'csuite';
 
 /**
  * Process-wide KEK for TOTP secret + VAPID private key encryption
@@ -111,8 +113,7 @@ const PermissionLeafSchema = z.enum(PERMISSIONS);
 // one place.
 
 const TeamNameSchema = z.string().min(1).max(128);
-const TeamDirectiveSchema = z.string().min(1).max(512);
-const TeamContextSchema = z.string().max(4096).default('');
+const TeamContextSchema = z.string().max(8192).default('');
 const MemberNameSchema = z
   .string()
   .min(1)
@@ -211,13 +212,6 @@ export function validateTeamName(name: string): void {
     TeamNameSchema.parse(name);
   } catch (err) {
     failFromZod('team.name', err);
-  }
-}
-export function validateTeamDirective(directive: string): void {
-  try {
-    TeamDirectiveSchema.parse(directive);
-  } catch (err) {
-    failFromZod('team.directive', err);
   }
 }
 export function validateTeamContext(context: string): void {
@@ -533,13 +527,29 @@ export function createMemberStore(
   return store;
 }
 
+/**
+ * Resolve where the config file lives (or should be created).
+ *
+ * Order:
+ *   1. `$CSUITE_CONFIG_PATH` — operator-explicit, used verbatim.
+ *   2. `./csuite.json` — the cwd IS the server directory. Covers
+ *      flat legacy deployments and running from inside the server
+ *      dir; because this wins over rule 3, bootstrapping from inside
+ *      an existing server dir can never nest another one.
+ *   3. `./csuite/csuite.json` — otherwise. When it doesn't exist yet
+ *      this is the bootstrap target: the wizard paths create the
+ *      `csuite/` subdirectory (0o700) and seed config + DB + KEK
+ *      inside it, keeping the caller's cwd pristine.
+ */
 export function defaultConfigPath(
   env: NodeJS.ProcessEnv = process.env,
   cwd: string = process.cwd(),
 ): string {
   const explicit = env.CSUITE_CONFIG_PATH;
   if (explicit && explicit.length > 0) return explicit;
-  return join(cwd, DEFAULT_CONFIG_FILENAME);
+  const flat = join(cwd, DEFAULT_CONFIG_FILENAME);
+  if (existsSync(flat)) return flat;
+  return join(cwd, DEFAULT_SERVER_DIR_NAME, DEFAULT_CONFIG_FILENAME);
 }
 
 export function defaultHttpsConfig(): HttpsConfig {

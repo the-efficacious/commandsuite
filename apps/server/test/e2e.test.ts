@@ -49,7 +49,6 @@ const PEER_TOKEN = 'csuite_test_peer';
 
 const TEAM: Team = {
   name: 'e2e-team',
-  directive: 'Exercise the full csuite stack end-to-end.',
   context: '',
   permissionPresets: {},
 };

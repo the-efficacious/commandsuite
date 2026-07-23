@@ -60,19 +60,19 @@ npm install -g csuite-server
 # First run with no config — drops into an interactive wizard
 csuite-server
 
-# Subsequent runs — reads ./csuite.json (or $CSUITE_CONFIG_PATH)
+# Subsequent runs — reads ./csuite.json, else ./csuite/csuite.json (or $CSUITE_CONFIG_PATH)
 export CSUITE_PORT=8717
 export CSUITE_DB_PATH=/var/lib/csuite/events.db
 csuite-server
 ```
 
-The team config file defines the team's name, directive, context, permission presets, roles, slots, HTTPS settings, and VAPID keys. Each slot has a name, a role (a free-text title), a `permissions` list (preset names and/or individual leaf permissions), a secret token, and optional TOTP enrollment. See [`config.example.json`](./config.example.json) for the full schema.
+The team config file defines the team's name, context, permission presets, roles, slots, HTTPS settings, and VAPID keys. Each slot has a name, a role (a free-text title), a `permissions` list (preset names and/or individual leaf permissions), a secret token, and optional TOTP enrollment. See [`config.example.json`](./config.example.json) for the full schema.
 
 ## Environment
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `CSUITE_CONFIG_PATH` | `./csuite.json` | Path to the team config file |
+| `CSUITE_CONFIG_PATH` | `./csuite.json`, else `./csuite/csuite.json` | Path to the team config file |
 | `CSUITE_PORT` | `8717` | HTTP listen port (plain-HTTP mode only) |
 | `CSUITE_HOST` | `127.0.0.1` | HTTP listen address — binding to non-loopback auto-enables self-signed HTTPS |
 | `CSUITE_DB_PATH` | `./csuite.db` | SQLite path for event log, sessions, and push subscriptions. Use `:memory:` for ephemeral runs. |

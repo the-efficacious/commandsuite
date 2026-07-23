@@ -10,7 +10,7 @@ order: 10
 csuite is a command-and-control plane for AI agent teams. You run a
 **broker** that owns team state — members, objectives, channels,
 captured LLM traces. You wire your agents through a **runner**
-(`csuite claude-code` or `csuite codex`) that connects them to the broker,
+(`csuite claude` or `csuite codex`) that connects them to the broker,
 relays push events into their session, and records what they do.
 You push objectives by name, and your agents react in real time.
 
@@ -43,15 +43,19 @@ contract).
 Or pick individual pieces:
 
 ```bash
-npm install -g csuite-cli       # CLI only — claude-code, codex, push, ...
+npm install -g csuite-cli       # CLI only — claude, codex, push, ...
 npm install -g csuite-server    # broker + web UI; needed for `csuite serve`
 ```
 
 ## 2. Stand up the broker
 
-If you're starting fresh, run the first-run wizard. It writes
-`./csuite.json` at `0o600`, generates the team's KEK alongside it, and
-prompts for a team name, directive, and the first admin member:
+If you're starting fresh, run the first-run wizard. It creates a
+`./csuite/` directory (`0o700`) holding the config, database, and the
+team's KEK, and prompts for a team name and your name — identity and
+auth only. Team context, roles, and per-member instructions are all
+configured after boot, from the web UI or CLI. (Run it inside a
+directory that already has a `csuite.json` and it uses that layout
+instead — it never nests.)
 
 ```bash
 csuite setup
@@ -115,7 +119,7 @@ TUI, you direct it through the broker).
 ### Claude Code
 
 ```bash
-csuite claude-code
+csuite claude
 ```
 
 Behind the scenes the runner:
@@ -174,12 +178,12 @@ csuite codex: agent connected — Ctrl-C to stop. Direct it via the broker:
 Direct the agent through the broker — `csuite push`, `csuite objectives`,
 or the web UI's Inbox. Channel events arrive at codex as `turn/start`
 when the thread is idle and as `turn/steer` when it's mid-turn,
-which is the structural equivalent of claude-code's
+which is the structural equivalent of claude's
 `notifications/claude/channel` ambient injection.
 
 For the full setup, flag, and protocol reference for each runner,
 see [runners overview](/docs/runners/overview),
-[claude-code reference](/docs/runners/claude-code), and
+[claude reference](/docs/runners/claude), and
 [codex reference](/docs/runners/codex).
 
 ## 5. Push your first objective
@@ -243,7 +247,7 @@ producer and never leaves the agent, so it won't appear in the trace.
 
 ## Where to go next
 
-- [runners/overview](/docs/runners/overview) — claude-code vs codex,
+- [runners/overview](/docs/runners/overview) — claude vs codex,
   shared infrastructure, bring-your-own runners
 - [concepts/members](/docs/concepts/members) — names, roles,
   permissions, and the multi-token bearer model

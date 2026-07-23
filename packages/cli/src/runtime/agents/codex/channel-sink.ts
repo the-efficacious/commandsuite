@@ -8,7 +8,7 @@
  * `turn/steer` (when codex is Active mid-turn). Bundle bursts so a
  * flurry of micro-events compose into a single dispatch.
  *
- * Why bundling matters: claude-code's MCP channel flows arrive
+ * Why bundling matters: claude's MCP channel flows arrive
  * mid-turn as ambient context with zero protocol overhead. Codex
  * accepts the same content via `turn/steer`, but each dispatch is a
  * full JSON-RPC round-trip with a model-side awareness cost — every

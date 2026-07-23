@@ -26,7 +26,7 @@ import {
   prepareClaudeSettings,
   prepareMcpConfig,
   writeMcpConfigFile,
-} from '../../src/runtime/agents/claude-code.js';
+} from '../../src/runtime/agents/claude.js';
 
 describe('prepareMcpConfig', () => {
   let cwd: string;

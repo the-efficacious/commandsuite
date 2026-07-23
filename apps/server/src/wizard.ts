@@ -2,10 +2,12 @@
  * First-run interactive wizard for the csuite broker.
  *
  * Triggered when the server boots without a config file at the
- * expected path AND stdin is a TTY. Walks the operator through
- * creating a team (name, directive, context) and the first admin
- * member, generates a random bearer token, and auto-enrolls the
- * admin in TOTP (admins need web UI login by default).
+ * expected path AND stdin is a TTY. Identity + auth only: the
+ * operator picks a team name and their own name, saves a generated
+ * bearer token, and enrolls in TOTP (admins need web UI login by
+ * default). Standing context — team context, roles, per-member
+ * instructions — is deliberately NOT collected here; it is
+ * configured after boot via the web UI, CLI, or MCP tools.
  *
  * The wizard is I/O only: it returns the captured data and lets the
  * caller decide where to persist it. Today that caller is the boot
@@ -39,6 +41,13 @@ const TOKEN_BYTES = 32;
 const TOKEN_PREFIX = 'csuite_';
 const TOTP_ISSUER = 'csuite';
 const TOTP_MAX_CONFIRM_ATTEMPTS = 3;
+
+/**
+ * Role stamped on the first admin. The wizard no longer asks — the
+ * title is a plain default the admin can edit later (Members page /
+ * `csuite member update`) like any other member's role.
+ */
+export const DEFAULT_ADMIN_ROLE_TITLE = 'director';
 
 /**
  * Default permission presets seeded with every new team. The operator
@@ -110,24 +119,25 @@ export async function runFirstRunWizard(options: RunWizardOptions): Promise<Wiza
   io.println('csuite: no config file found at');
   io.println(`  ${configPath}`);
   io.println('');
-  io.println("Let's set up a team. We'll ask for team details + the first admin member's");
-  io.println('name and role, generate a bearer token (shown once) and a TOTP secret for');
-  io.println('web UI login. Save the token as it appears — it is hashed on disk and');
-  io.println('cannot be recovered afterward.');
+  io.println("Let's set up a team: a team name, your name, a bearer token (shown once)");
+  io.println('and a TOTP secret for web UI login. Save the token as it appears — it is');
+  io.println('hashed on disk and cannot be recovered afterward.');
   io.println('');
-  io.println('Once the server is running, the admin can add more members via the web');
-  io.println('UI (Members page) or `csuite member create` from the CLI.');
+  io.println('Everything else — team context, roles, member instructions, more members —');
+  io.println('is configured once the server is running, via the web UI or the CLI.');
   io.println('');
 
   // ── Team ────────────────────────────────────────────────────
   io.println('-- team --');
-  const teamCore = await promptTeam(io);
+  const teamName = await promptRequired(io, 'team name [my-team]: ', 'my-team', (v) =>
+    v.length > 0 && v.length <= 128 ? null : 'must be 1-128 characters',
+  );
 
   // ── First admin member ─────────────────────────────────────
   io.println('');
   io.println('-- first admin member --');
   const name = await promptName(io);
-  const role = await promptRole(io);
+  const role: Role = { title: DEFAULT_ADMIN_ROLE_TITLE, description: '' };
   const token = mintToken();
   const bannerLines = printTokenBanner(io, name, role, token);
   await io.prompt('press enter once you have saved the token above ');
@@ -147,9 +157,8 @@ export async function runFirstRunWizard(options: RunWizardOptions): Promise<Wiza
   });
 
   const team: Team = {
-    name: teamCore.name,
-    directive: teamCore.directive,
-    context: teamCore.context,
+    name: teamName,
+    context: '',
     permissionPresets: DEFAULT_PERMISSION_PRESETS,
   };
 
@@ -165,24 +174,6 @@ export async function runFirstRunWizard(options: RunWizardOptions): Promise<Wiza
       totpSecret,
     },
   };
-}
-
-async function promptTeam(
-  io: WizardIO,
-): Promise<{ name: string; directive: string; context: string }> {
-  const name = await promptRequired(io, 'team name [my-team]: ', 'my-team', (v) =>
-    v.length > 0 && v.length <= 128 ? null : 'must be 1-128 characters',
-  );
-  const directive = await promptRequired(
-    io,
-    'directive (short, e.g. "Ship the payment service"): ',
-    '',
-    (v) => (v.length > 0 && v.length <= 512 ? null : 'directive is required, max 512 chars'),
-  );
-  const context = (
-    await io.prompt('team context (longer background, press enter to skip): ')
-  ).trim();
-  return { name, directive, context };
 }
 
 async function promptRequired(
@@ -206,7 +197,7 @@ async function promptRequired(
 async function promptName(io: WizardIO): Promise<string> {
   const suggested = 'director-1';
   while (true) {
-    const raw = (await io.prompt(`admin name [${suggested}]: `)).trim();
+    const raw = (await io.prompt(`your name [${suggested}]: `)).trim();
     const candidate = raw.length === 0 ? suggested : raw;
     if (!candidate) {
       io.println('  name cannot be empty');
@@ -222,21 +213,6 @@ async function promptName(io: WizardIO): Promise<string> {
     }
     return candidate;
   }
-}
-
-/**
- * Prompt for the first admin's role. Asks for a title and an
- * optional description; both are freeform team-defined labels. The
- * wizard picks sensible defaults.
- */
-async function promptRole(io: WizardIO): Promise<Role> {
-  const suggestedTitle = 'director';
-  const title = await promptRequired(io, `role title [${suggestedTitle}]: `, suggestedTitle, (v) =>
-    v.length > 0 && v.length <= 64 ? null : 'title must be 1-64 characters',
-  );
-  const rawDesc = (await io.prompt('role description (press enter to skip): ')).trim();
-  const description = rawDesc.length > 0 ? rawDesc : '';
-  return { title, description };
 }
 
 /**

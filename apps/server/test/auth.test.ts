@@ -27,7 +27,6 @@ const BOT_TOKEN = 'csuite_auth_test_bot_token';
 
 const TEAM: Team = {
   name: 'demo-team',
-  directive: 'Verify the auth surface.',
   context: '',
   permissionPresets: {},
 };

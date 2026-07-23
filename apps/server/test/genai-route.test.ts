@@ -18,7 +18,7 @@ import { SessionStore } from '../src/sessions.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
-const TEAM: Team = { name: 'demo-team', directive: 'Ship it.', context: '', permissionPresets: {} };
+const TEAM: Team = { name: 'demo-team', context: '', permissionPresets: {} };
 const TOKEN = 'csuite_test_genai';
 
 function makeApp() {

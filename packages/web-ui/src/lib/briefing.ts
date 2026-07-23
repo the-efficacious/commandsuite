@@ -1,10 +1,9 @@
 /**
  * Briefing signal — the /briefing packet for the signed-in slot.
  *
- * Fetched once on shell mount and cached forever (per page load). The
- * team name, directive, name, role, and teammate list don't change
- * during a single session — any runtime edits land via future admin
- * endpoints that reload the SPA anyway.
+ * Fetched once on shell mount, refreshed via `loadBriefing()` after
+ * mutations that change it (e.g. editing the team context from
+ * TeamHome).
  */
 
 import { signal } from '@preact/signals';

@@ -51,8 +51,13 @@ jobs:
           # needs no .npmrc: npm >= 11.5.1 + id-token, default registry.
 
       # Trusted publishing (OIDC) needs npm >= 11.5.1; the npm bundled
-      # with setup-node's Node 22 is older. Upgrade before any publish.
-      - run: npm install -g npm@latest
+      # with setup-node's Node 22 is older. Pin to the npm 11 line: npm 12
+      # changed `npm info --json` to return an ARRAY with no top-level
+      # `versions` field, which breaks @changesets/cli's already-published
+      # check — it then tries to republish existing versions and every
+      # no-changeset push fails with EPUBLISHCONFLICT. Revisit when
+      # changesets supports npm 12.
+      - run: npm install -g npm@11
 
       - run: pnpm install --frozen-lockfile
 

@@ -27,7 +27,6 @@ const OP_TOKEN = 'csuite_https_test_operator_token';
 
 const TEAM: Team = {
   name: 'demo-team',
-  directive: 'Verify the HTTPS surface.',
   context: '',
   permissionPresets: {},
 };

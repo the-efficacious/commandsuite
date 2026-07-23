@@ -7,7 +7,7 @@
  * operator running `csuite codex` sees a startup banner and then nothing
  * — even while the agent is working. The session log captures the
  * structured events, but you have to know to tail it. That's a much
- * worse experience than `csuite claude-code`, where claude paints its own
+ * worse experience than `csuite claude`, where claude paints its own
  * ink TUI inside our pty relay.
  *
  * What this prints (per turn the agent runs):

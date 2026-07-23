@@ -53,8 +53,7 @@ export const RoleSchema = z.object({
 
 export const TeamSchema = z.object({
   name: z.string().min(1).max(128),
-  directive: z.string().min(1).max(512),
-  context: z.string().max(4096).default(''),
+  context: z.string().max(8192).default(''),
   permissionPresets: PermissionPresetsSchema.default({}),
 });
 
@@ -1030,6 +1029,8 @@ export const GetGenaiInferenceResponseSchema = z.object({
 // ───────────────────────── Activity stream ──────────────────────
 
 export const ActivityKindSchema = z.enum([
+  'session_start',
+  'session_end',
   'objective_open',
   'objective_close',
   'llm_exchange',
@@ -1038,6 +1039,34 @@ export const ActivityKindSchema = z.enum([
 ]);
 
 export const ActivityEventSchema = z.discriminatedUnion('kind', [
+  // session_start / session_end — run brackets emitted by every runner
+  // (one pair per `csuite <runner>` invocation). `session_end` doubles
+  // as the machine-readable run summary; its shape is identical across
+  // agent frameworks so cross-agent analysis never parses per-runner
+  // log formats.
+  z.object({
+    kind: z.literal('session_start'),
+    ts: z.number().int().nonnegative(),
+    runner: z.string().min(1),
+    runnerVersion: z.string().optional(),
+    captureTier: z.number().int().min(0).max(3).optional(),
+  }),
+  z.object({
+    kind: z.literal('session_end'),
+    ts: z.number().int().nonnegative(),
+    runner: z.string().min(1),
+    reason: z.string().min(1),
+    exitCode: z.number().int().optional(),
+    durationMs: z.number().int().nonnegative(),
+    agentSessionId: z.string().optional(),
+    capture: z
+      .object({
+        enqueued: z.number().int().nonnegative(),
+        uploaded: z.number().int().nonnegative(),
+        dropped: z.number().int().nonnegative(),
+      })
+      .optional(),
+  }),
   z.object({
     kind: z.literal('objective_open'),
     ts: z.number().int().nonnegative(),
