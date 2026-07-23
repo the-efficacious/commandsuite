@@ -18,6 +18,7 @@
  *      singleton is missing.
  */
 
+import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { DEFAULT_PORT, ENV } from 'csuite-sdk/protocol';
 
@@ -82,13 +83,13 @@ export async function runServeCommand(
   const configPath = input.configPath ?? process.env[ENV.configPath] ?? server.defaultConfigPath();
 
   // KEK before any read/write so encrypted-at-rest fields round-trip.
-  try {
-    server.setKek(server.resolveKek(configPath));
-  } catch (err) {
-    if (err instanceof server.KekResolutionError) {
-      throw new UsageError(`serve: ${err.message}`);
-    }
-    throw err;
+  // Deferred when no config file exists yet: `resolveKek` mints
+  // `csuite-kek.bin` on first use, and a boot that bails at the wizard
+  // gate (non-TTY stdin) must not leave a stray key file in an
+  // otherwise-untouched directory. The wizard path installs the KEK
+  // right after that gate instead.
+  if (existsSync(configPath)) {
+    installKek(server, configPath);
   }
 
   const { config, freshlySeeded } = await loadOrCreateServerConfig(server, configPath, stdout);
@@ -164,6 +165,10 @@ async function runWizardOrFail(
     );
   }
   try {
+    // The wizard is definitely running now — safe to mint/read the KEK
+    // for the encrypted-at-rest fields the seed writes below.
+    installKek(server, configPath);
+
     const wizard = await server.runFirstRunWizard({ configPath, io });
     // Seed the DB next to the config file so the path round-trips
     // through `resolveConfigPath` regardless of caller cwd.
@@ -217,6 +222,17 @@ async function runWizardOrFail(
     throw err;
   } finally {
     close();
+  }
+}
+
+function installKek(server: typeof import('csuite-server'), configPath: string): void {
+  try {
+    server.setKek(server.resolveKek(configPath));
+  } catch (err) {
+    if (err instanceof server.KekResolutionError) {
+      throw new UsageError(`serve: ${err.message}`);
+    }
+    throw err;
   }
 }
 

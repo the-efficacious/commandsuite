@@ -35,16 +35,11 @@ export async function runSetupCommand(
   const server = await loadServerModule();
   const configPath = input.configPath ?? process.env[ENV.configPath] ?? server.defaultConfigPath();
 
-  // KEK first — encrypted-at-rest TOTP / VAPID values round-trip
-  // cleanly through the wizard's write path.
-  try {
-    server.setKek(server.resolveKek(configPath));
-  } catch (err) {
-    if (err instanceof server.KekResolutionError) {
-      throw new UsageError(`setup: ${err.message}`);
-    }
-    throw err;
-  }
+  // Note: the KEK is installed later, right before the wizard runs.
+  // `resolveKek` mints `csuite-kek.bin` on first use, so resolving it
+  // up front would leave a stray key file behind whenever setup bails
+  // early (non-TTY stdin, already-populated team). None of the probe
+  // reads below decrypt anything, so nothing here needs it.
 
   // Refuse to overwrite an existing setup. We check both: file
   // presence AND a populated team singleton in the DB. If only the
@@ -103,6 +98,11 @@ export async function runSetupCommand(
   }
 
   try {
+    // The wizard is definitely running now — safe to mint/read the KEK
+    // so encrypted-at-rest TOTP / VAPID values round-trip through the
+    // seed writes below.
+    server.setKek(server.resolveKek(configPath));
+
     const wizard = await server.runFirstRunWizard({ configPath, io });
 
     // Seed DB with the wizard's captured team + admin.
@@ -168,7 +168,7 @@ export async function runSetupCommand(
     stdout('  csuite member update --name <n> ... # roles + personal instructions');
     stdout('');
   } catch (err) {
-    if (err instanceof server.MemberLoadError) {
+    if (err instanceof server.MemberLoadError || err instanceof server.KekResolutionError) {
       throw new UsageError(`setup: ${err.message}`);
     }
     throw err;
