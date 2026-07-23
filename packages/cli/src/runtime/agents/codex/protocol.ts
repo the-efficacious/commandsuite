@@ -89,7 +89,7 @@ export interface ThreadStartParams {
   cwd?: string;
   /**
    * Pre-message system prose. Codex stamps this into the model context
-   * for every turn — analogous to claude-code's `--append-system-prompt`.
+   * for every turn — analogous to claude's `--append-system-prompt`.
    */
   developerInstructions?: string;
   /** Optional override of the model name selected for the thread. */

@@ -60,8 +60,9 @@ import {
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { RUNNER_SOCKET_ENV } from '../ipc.js';
+import { AgentAdapterError } from './adapter.js';
 
-export class ClaudeCodeAdapterError extends Error {
+export class ClaudeCodeAdapterError extends AgentAdapterError {
   constructor(message: string) {
     super(message);
     this.name = 'ClaudeCodeAdapterError';
@@ -93,7 +94,7 @@ export function findClaudeBinary(): string {
   } catch (err) {
     throw new ClaudeCodeAdapterError(
       `failed to locate claude binary: ${err instanceof Error ? err.message : String(err)}\n` +
-        '  Install claude-code and make sure it is on PATH, or set CLAUDE_PATH explicitly.',
+        '  Install claude and make sure it is on PATH, or set CLAUDE_PATH explicitly.',
     );
   }
 }
@@ -359,7 +360,7 @@ export interface McpConfigFileHandle {
  *   - The member's working tree is never touched. No backup, no restore,
  *     no corruption guards, no "your MCP servers disappeared" surprise
  *     from running in the wrong directory.
- *   - Two `csuite claude-code` runs in the same directory get DIFFERENT
+ *   - Two `csuite claude` runs in the same directory get DIFFERENT
  *     ephemeral files (mkdtemp), so they can't race on a shared file the
  *     way the `.mcp.json` rewrite does. Each is fully isolated.
  *   - The member's own `.mcp.json` servers still load — `--mcp-config`

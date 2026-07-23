@@ -1,7 +1,7 @@
 /**
  * Tiny presence signal: is the SSE forwarder connected to the broker?
  *
- * Used by the HUD strip at the bottom of `csuite claude-code` to flip a
+ * Used by the HUD strip at the bottom of `csuite claude` to flip a
  * dot between online / offline. Intentionally narrower than an event
  * emitter — we only need one state (connecting | online | offline)
  * and one listener (the HUD), so the surface stays small.
