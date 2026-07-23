@@ -154,7 +154,7 @@ function PreviewBody({ file, selection }: { file: PreviewableFile; selection: Re
           message={`This file is too large to preview (over ${formatSize(SIZE_CAPS.text)} for text-style files, larger caps apply per type). Use the Download button above to save it locally.`}
         />
       );
-    case 'unsupported':
+    // 'unsupported' falls through to the default fallback card.
     default:
       return (
         <FallbackCard

@@ -381,18 +381,17 @@ describe('hook server — Notification (blocked flag)', () => {
     }
   });
 
-  it.each([
-    'permission_prompt',
-    'agent_needs_input',
-    'elicitation_dialog',
-  ])('blocking notification_type %s sets blocked', async (notification_type) => {
-    const busy = createActivitySignal();
-    server = await startHookServer({ busy, log: () => {} });
+  it.each(['permission_prompt', 'agent_needs_input', 'elicitation_dialog'])(
+    'blocking notification_type %s sets blocked',
+    async (notification_type) => {
+      const busy = createActivitySignal();
+      server = await startHookServer({ busy, log: () => {} });
 
-    await postJson(server.url, { hook_event_name: 'Notification', notification_type });
-    expect(busy.state()).toBe('blocked');
-    expect(busy.blocked).toBe(true);
-  });
+      await postJson(server.url, { hook_event_name: 'Notification', notification_type });
+      expect(busy.state()).toBe('blocked');
+      expect(busy.blocked).toBe(true);
+    },
+  );
 
   it('idle_prompt clears blocked', async () => {
     const busy = createActivitySignal();
