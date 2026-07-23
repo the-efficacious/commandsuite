@@ -28,7 +28,7 @@ reference for that protocol.
 ```
 
 The bridge process is spawned by the agent (not by the runner) via
-the agent's MCP server registration — `.mcp.json` for claude-code,
+the agent's MCP server registration — `.mcp.json` for claude,
 `config.toml`'s `[mcp_servers.csuite]` block for codex. The bridge
 reads `$CSUITE_RUNNER_SOCKET` from its environment to locate the
 runner's socket and connects on startup. A bridge started without

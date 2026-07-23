@@ -26,7 +26,7 @@
  *     windows. (Formerly `llm_inflight`, which only the old MITM proxy
  *     lit while a model request was on the wire.)
  *   - `tool_inflight` — bumped by per-runner integrations watching tool
- *     lifecycle events (claude-code Pre/PostToolUse hooks, codex
+ *     lifecycle events (claude Pre/PostToolUse hooks, codex
  *     `item/started`/`item/completed`). Lights up during bash, file-edit,
  *     MCP-tool, and other tool execution windows. Overlaps `turn_active`
  *     during a turn; it stands alone only if a feeder drops a turn

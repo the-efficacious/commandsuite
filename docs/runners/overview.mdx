@@ -1,6 +1,6 @@
 ---
 title: Runners overview
-description: A runner is the parent process that owns a csuite session — broker connection, briefing, IPC server, MCP tool dispatch, trace capture. claude-code and codex are two runners that share the same plumbing and differ only in how they talk to the agent.
+description: A runner is the parent process that owns a csuite session — broker connection, briefing, IPC server, MCP tool dispatch, trace capture. claude and codex are two runners that share the same plumbing and differ only in how they talk to the agent.
 section: Docs
 order: 20
 ---
@@ -15,7 +15,7 @@ runs as a child of the runner.
 
 csuite ships with two runners today:
 
-- **`csuite claude-code`** — wraps Claude Code in a TUI you talk to in
+- **`csuite claude`** — wraps Claude Code in a TUI you talk to in
   the same terminal
 - **`csuite codex`** — runs OpenAI Codex headlessly under
   `codex app-server`; you direct it through the broker
@@ -49,7 +49,7 @@ side — auth, briefing, tools, trace, presence — is shared.
                                              ▼
                                 ┌─────────────────────────┐
                                 │  csuite mcp-bridge         │
-                                │  (claude-code only)     │
+                                │  (claude only)          │
                                 └────────────┬────────────┘
                                              │ IPC frames
                                              ▼
@@ -74,15 +74,20 @@ Concretely, on every runner startup:
    route inbound chat / objective / channel events to the runner's
    notification sink.
 6. **Spawn the agent** with environment variables wired up
-   (`CSUITE_RUNNER_SOCKET`; for claude-code also the capture host's
+   (`CSUITE_RUNNER_SOCKET`; for claude also the capture host's
    OpenTelemetry export env — `CLAUDE_CODE_ENABLE_TELEMETRY`,
    `OTEL_EXPORTER_OTLP_ENDPOINT`, bearer auth, and the `OTEL_LOG_*`
    flags — so it exports its API bodies + tool details to the broker;
    for codex, `CODEX_ROLLOUT_TRACE_ROOT` plus an `[otel]` block in its
    ephemeral `config.toml` for the gen_ai + telemetry layers).
 7. **Hold until the agent exits** (or SIGINT/SIGTERM/runner shutdown),
-   then tear down: drain the activity uploader, close the hook
-   server, close sockets, restore configs.
+   then tear down: flush the agent's capture readers, restore
+   configs, emit the `session_end` run summary, drain the activity
+   uploader, close the hook server, close sockets. Every session is
+   bracketed by `session_start`/`session_end` activity events and
+   ends with a machine-readable `run summary` log line — identical
+   shape across runners (see
+   [runners/conformance](/docs/runners/conformance)).
 
 The IPC server is single-bridge: if a second bridge connects while
 one is already attached, the older one is dropped (default) or the
@@ -135,12 +140,12 @@ prompt-prefix cache. See
 [reference/mcp-tools](/docs/reference/mcp-tools) for the full
 input/output schemas.
 
-## claude-code vs codex
+## claude vs codex
 
 Both runners share everything above. They differ in how channel
 events reach the agent:
 
-|  | `csuite claude-code` | `csuite codex` |
+|  | `csuite claude` | `csuite codex` |
 |---|---|---|
 | **Agent shape** | Interactive TUI | Headless `codex app-server` |
 | **Stdio owner** | The agent (TUI in your terminal) | The runner |
@@ -153,42 +158,51 @@ events reach the agent:
 | **Trace parsing** | `llm_exchange` (Anthropic Messages shape) + `tool_action`, parsed at broker ingest | `llm_exchange` + `tool_action`, built from typed app-server items |
 | **Status bar** | Bottom-row HUD (when `node-pty` is available) | One-line connection notice |
 
-The structural takeaway: claude-code and codex receive ambient
+The structural takeaway: claude and codex receive ambient
 director input through different mechanisms because their underlying
 agent frameworks treat "new input mid-session" differently. csuite
 hides that asymmetry behind the runner's notification sink — the
-sink for claude-code wraps events as MCP notifications; the sink
+sink for claude wraps events as MCP notifications; the sink
 for codex bundles them and dispatches as `turn/start` or `turn/steer`.
 
 For the full per-runner reference, see
-[runners/claude-code](/docs/runners/claude-code) and
+[runners/claude](/docs/runners/claude) and
 [runners/codex](/docs/runners/codex).
 
 ## Bring your own runner
 
-The runner core (`startRunner` in `packages/cli/src/runtime/runner.ts`)
-is transport-agnostic about MCP. It exposes a `notificationSink`
-option that lets a runner override how broker events reach the
-agent. Adding a third runner is roughly:
+Adding a runner is a formal contract, not a copy-paste exercise:
+implement the **`AgentAdapter` interface**
+(`packages/cli/src/runtime/agents/adapter.ts`) and hand it to the
+shared session driver (`runAgentSession` in
+`packages/cli/src/runtime/agent-session.ts`). The driver owns the
+lifecycle — auth, briefing, IPC, forwarder, capture, secrets, signal
+handling, idempotent teardown on every exit path, and the
+`session_start`/`session_end` run bracket + run summary — so a new
+adapter implements only what is genuinely framework-specific:
 
-1. **Spawn adapter** — locate the agent binary, set up its
-   working environment (config dir, env vars, MCP bridge wiring),
-   spawn it.
-2. **Notification sink** — implement
-   `ForwarderNotificationSink.notification(args)` so each broker
-   event becomes whatever the agent's framework calls "ambient
-   input."
-3. **Status mapping** — flip the `Presence` signal between
-   `connecting` / `online` / `offline` based on whatever the agent
-   reports as ready.
-4. **Shutdown** — flush the sink, kill the agent, clean up any
-   files the spawn adapter created.
+1. **`locate()`** — find the agent binary, fail fast, no side
+   effects.
+2. **`runnerOptions()`** — the notification sink (how broker events
+   become the framework's "ambient input") and the second-bridge
+   policy.
+3. **`prepare(ctx)`** — write agent config / env / args; return an
+   idempotent cleanup that restores everything.
+4. **`spawn(ctx)`** — start the agent; return its exit promise,
+   session id, and a shutdown that flushes capture before resolving.
 
 The MCP bridge (`csuite mcp-bridge`) is reusable as-is for any agent
 framework that speaks stdio MCP. Frameworks that don't (codex
 speaks JSON-RPC) wire their own protocol on top of the same
 runner core — see how the codex adapter routes broker events
 through its channel sink in `packages/cli/src/runtime/agents/codex/`.
+
+Before shipping, a new runner passes the shared **conformance
+suite** (`packages/cli/test/runtime/conformance/`) against a fake
+broker + fake agent binary, and declares its **capture tier** (what
+its agent's native instrumentation can actually provide). The full
+standard — contract, tiers, run summary, doctor, fixtures — lives at
+[runners/conformance](/docs/runners/conformance).
 
 ## What the runner does NOT do
 
@@ -200,5 +214,5 @@ through its channel sink in `packages/cli/src/runtime/agents/codex/`.
   on every mutating endpoint. The runner's tool-list filtering is
   a UX optimization that hides tools the member couldn't use anyway.
 - **Catch the agent's stdout.** The runner reserves stderr for its
-  own structured logs (`session-<component>-<pid>.log` under
+  own structured logs (`session-<pid>.log` under
   `~/.cache/commandsuite/`); stdout belongs to the agent.

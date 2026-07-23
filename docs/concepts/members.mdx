@@ -179,12 +179,12 @@ a warning before proceeding.
 
 ## How members map to runner sessions
 
-Every `csuite claude-code` or `csuite codex` invocation authenticates as
+Every `csuite claude` or `csuite codex` invocation authenticates as
 exactly one member, and the runner cached briefing carries the
 member's identity for the entire session:
 
 ```
-        member ─┬─── csuite claude-code on laptop (token A)
+        member ─┬─── csuite claude on laptop (token A)
                 ├─── csuite codex on workstation  (token B)
                 └─── csuite push from terminal    (token C)
 ```

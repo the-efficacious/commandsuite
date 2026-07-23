@@ -110,7 +110,7 @@ CSUITE_PORT=8718 csuite serve
 Then point your runners and CLI invocations at the new port:
 
 ```bash
-csuite claude-code --url http://127.0.0.1:8718
+csuite claude --url http://127.0.0.1:8718
 # or
 export CSUITE_URL=http://127.0.0.1:8718
 ```
@@ -142,7 +142,7 @@ should be untouched.
 
 ## Empty traces
 
-### `Captured traces` panel is empty for a completed claude-code objective
+### `Captured traces` panel is empty for a completed claude objective
 
 Claude Code capture is native OpenTelemetry: the runner points Claude
 Code's telemetry at the broker's OTLP endpoint and the broker ingests
@@ -320,7 +320,7 @@ processes in different terminals.
 
 ## Where to look for more detail
 
-- **Session log**: `~/.cache/commandsuite/session-<component>-<pid>.log`
+- **Session log**: `~/.cache/commandsuite/session-<pid>.log`
   — structured JSON per event. `tail -f` it during a run.
 - **Server log**: stderr of `csuite serve`. Structured JSON;
   redirect to file in production.

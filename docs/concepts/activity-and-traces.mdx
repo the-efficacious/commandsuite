@@ -27,14 +27,25 @@ storage, same wire shape; the UI just slices.
 
 ## What lives in the stream
 
-Four event kinds:
+The event kinds:
 
 | Kind | Producer | Carries |
 |---|---|---|
+| `session_start` | agent-session driver (all runners) | `{ runner, runnerVersion?, captureTier? }` — a runner session opened |
+| `session_end` | agent-session driver (all runners) | `{ runner, reason, exitCode?, durationMs, agentSessionId?, capture? }` — the machine-readable run summary; `capture` reports uploader accounting (`enqueued` / `uploaded` / `dropped`) so an incomplete trace says so |
 | `objective_open` | runner objectives tracker | `{ objectiveId }` |
 | `objective_close` | runner objectives tracker | `{ objectiveId, result: 'done' \| 'cancelled' \| 'reassigned' \| 'runner_shutdown' }` |
 | `llm_exchange` | runner transcript reader (Claude) / rollout reader (codex) | typed Anthropic Messages entry: model, response messages, usage, stopReason, `responseId`. The request side (`system`, `messages`) is deliberately empty — the turn SEQUENCE is the history; full request context lives in the GenAI layer (below) |
 | `tool_action` | runner transcript reader (Claude) / rollout reader (codex) | tool name, redacted input, redacted result, `isError`, optional duration |
+| `user_prompt` | runner transcript reader (Claude) / rollout reader (codex) | the redacted prompt text that woke the turn |
+
+`session_start` / `session_end` bracket a RUN the same way
+`objective_open` / `objective_close` bracket an objective: every
+runner emits the identical pair on every exit path, so cross-agent
+analysis ("what did each entrant do during its session?") slices the
+stream between the markers instead of parsing per-runner log formats.
+See [runners/conformance](/docs/runners/conformance) for the run
+summary contract.
 
 The `entry` on an `llm_exchange` is always an
 `AnthropicMessagesEntry` — a normalized container shape. Codex
@@ -47,11 +58,17 @@ The schema:
 
 ```typescript
 type ActivityEvent =
+  | { kind: 'session_start'; ts: number; runner: string; runnerVersion?: string;
+      captureTier?: number }
+  | { kind: 'session_end'; ts: number; runner: string; reason: string;
+      exitCode?: number; durationMs: number; agentSessionId?: string;
+      capture?: { enqueued: number; uploaded: number; dropped: number } }
   | { kind: 'objective_open'; ts: number; objectiveId: string }
   | { kind: 'objective_close'; ts: number; objectiveId: string; result: ... }
   | { kind: 'llm_exchange'; ts: number; duration: number; entry: AnthropicMessagesEntry }
   | { kind: 'tool_action'; ts: number; toolName: string; input?: unknown;
-      result?: unknown; isError?: boolean; durationMs?: number; agent?: string };
+      result?: unknown; isError?: boolean; durationMs?: number; agent?: string }
+  | { kind: 'user_prompt'; ts: number; text: string; promptId?: string; agent?: string };
 ```
 
 Each row stored on the broker side adds `id` (server-assigned) and

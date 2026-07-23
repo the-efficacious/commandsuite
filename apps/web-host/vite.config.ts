@@ -1,8 +1,12 @@
 /**
  * Vite config for csuite-web-host.
  *
- * Build output lands directly in `apps/server/public/` so Hono's
- * static-file middleware can serve it without a copy step. Dev mode
+ * Build output lands in this package's own `dist/` — the artifact the
+ * published `csuite-web-host` tarball ships. The server's build copies
+ * it into `apps/server/public/` (see `apps/server/scripts/sync-public.mjs`)
+ * for Hono's static-file middleware; csuite-server already declares
+ * csuite-web-host as a devDependency, so turbo orders the two builds.
+ * Dev mode
  * proxies every csuite HTTP API path to the server running on
  * `:8717`, so `pnpm dev` at the root gives you:
  *
@@ -132,11 +136,11 @@ const plugins: PluginOption[] = [
 
 export default defineConfig({
   plugins,
-  // Output into the server's static dir. `emptyOutDir: true` makes
+  // Own dist/ — the publishable artifact. `emptyOutDir: true` makes
   // `vite build` idempotent across rebuilds — stale hashed assets
   // from prior builds get cleaned up instead of piling up.
   build: {
-    outDir: resolve(__dirname, '../server/public'),
+    outDir: resolve(__dirname, 'dist'),
     emptyOutDir: true,
     sourcemap: true,
     target: 'es2022',

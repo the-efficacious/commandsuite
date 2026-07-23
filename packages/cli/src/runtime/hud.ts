@@ -1,9 +1,9 @@
 /**
- * Bottom-of-terminal status strip for `csuite claude-code` sessions.
+ * Bottom-of-terminal status strip for `csuite claude` sessions.
  *
  * Claude's ink-rendered TUI paints into the top `rows - PANEL_HEIGHT`
  * rows of the terminal because that's what the pty reports via
- * TIOCGWINSZ (see `commands/claude-code.ts`). The HUD owns the
+ * TIOCGWINSZ (see `runtime/agents/claude-agent.ts`). The HUD owns the
  * remaining rows at the bottom: a thin separator line and a one-line
  * status strip. For v1 that strip shows just a presence dot
  * (online/offline/connecting) and the session name.
@@ -107,7 +107,7 @@ export interface StartHudOptions {
    * region, so `\n` doesn't scroll), and the next repaint clobbers
    * them.
    *
-   * Not needed for `csuite claude-code`: claude's first output enters the
+   * Not needed for `csuite claude`: claude's first output enters the
    * alternate screen buffer (ESC[?1049h), giving us a fresh canvas
    * with the cursor already at row 1 — comfortably inside the region.
    * Default false to keep that path byte-for-byte unchanged.
@@ -129,7 +129,7 @@ export interface HudHandle {
 export function startHud(options: StartHudOptions): HudHandle {
   const stdout = options.stdout ?? process.stdout;
   const presence = options.presence;
-  const label = options.label ?? 'csuite claude-code';
+  const label = options.label ?? 'csuite claude';
   const getSize =
     options.getSize ??
     ((): { rows: number; cols: number } => ({
