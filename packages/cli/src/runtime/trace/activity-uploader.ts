@@ -71,6 +71,21 @@ interface QueuedEvent {
   bytes: number;
 }
 
+/**
+ * Lifetime accounting for one uploader. Feeds the run summary
+ * (`session_end.capture`) so a run whose trace is incomplete says so:
+ * `dropped > 0` means events were lost (queue overflow while the broker
+ * was unreachable, or a failed final flush at close).
+ */
+export interface ActivityUploaderStats {
+  /** Events accepted into the queue over the uploader's lifetime. */
+  enqueued: number;
+  /** Events the broker acknowledged. */
+  uploaded: number;
+  /** Events lost: overflow-evicted, rejected after close, or dropped at final flush. */
+  dropped: number;
+}
+
 export class ActivityUploader {
   private readonly brokerClient: BrokerClient;
   private readonly name: string;
@@ -89,6 +104,9 @@ export class ActivityUploader {
   private closed = false;
   private backoffMs = 0;
   private backoffTimer: NodeJS.Timeout | null = null;
+  private statEnqueued = 0;
+  private statUploaded = 0;
+  private statDropped = 0;
 
   constructor(options: ActivityUploaderOptions) {
     this.brokerClient = options.brokerClient;
@@ -108,9 +126,11 @@ export class ActivityUploader {
    */
   enqueue(event: ActivityEvent): void {
     if (this.closed) {
+      this.statDropped++;
       this.log('activity-uploader: dropping event on closed uploader', { kind: event.kind });
       return;
     }
+    this.statEnqueued++;
     const bytes = JSON.stringify(event).length;
 
     // Cap check: drop oldest until we have room.
@@ -121,6 +141,7 @@ export class ActivityUploader {
       const dropped = this.queue.shift();
       if (dropped) {
         this.queueBytes -= dropped.bytes;
+        this.statDropped++;
         this.log('activity-uploader: queue full, dropping oldest', {
           queued: this.queue.length,
           bytes: this.queueBytes,
@@ -183,6 +204,7 @@ export class ActivityUploader {
     // Drop any re-queued events + cancel any backoff retry.
     const dropped = this.queue.length;
     if (dropped > 0) {
+      this.statDropped += dropped;
       this.log('activity-uploader: close dropping events after final flush', {
         dropped,
       });
@@ -249,6 +271,7 @@ export class ActivityUploader {
     const events = batch.map((q) => q.event);
     try {
       const result = await this.brokerClient.uploadActivity(this.name, { events });
+      this.statUploaded += result.accepted;
       this.log('activity-uploader: flushed', {
         accepted: result.accepted,
         remaining: this.queue.length,
@@ -278,6 +301,15 @@ export class ActivityUploader {
     if (this.queue.length > 0 && this.backoffMs === 0) {
       this.scheduleFlush(0);
     }
+  }
+
+  /** Lifetime accounting — see {@link ActivityUploaderStats}. */
+  stats(): ActivityUploaderStats {
+    return {
+      enqueued: this.statEnqueued,
+      uploaded: this.statUploaded,
+      dropped: this.statDropped,
+    };
   }
 
   /** Test-only: inspect queue state. */

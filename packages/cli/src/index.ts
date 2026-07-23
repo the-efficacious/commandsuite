@@ -6,7 +6,7 @@
  *   csuite member        — list / create / update / delete team members
  *   csuite enroll      — (re-)enroll a member for web UI login (TOTP)
  *   csuite rotate      — rotate a member's bearer token
- *   csuite claude-code — spawn claude-code wrapped in a csuite runner
+ *   csuite claude      — spawn Claude Code wrapped in a csuite runner
  *   csuite push        — push an event to a teammate or broadcast
  *   csuite roster      — list members and connection state
  *   csuite objectives  — list / view / mutate team objectives
@@ -18,17 +18,17 @@
  *
  * Global env vars (defaults):
  *   CSUITE_URL       = http://127.0.0.1:8717
- *   CSUITE_TOKEN     (required for claude-code / push / roster / objectives)
+ *   CSUITE_TOKEN     (required for claude / push / roster / objectives)
  */
 
 import { Client } from 'csuite-sdk/client';
 import { DEFAULT_PORT, ENV } from 'csuite-sdk/protocol';
 import { parseDataFlag, parseSubcommandArgs } from './args.js';
 import { findAuthEntry } from './commands/auth-config.js';
-import { runClaudeCodeCommand } from './commands/claude-code.js';
+import { runClaudeCommand } from './commands/claude.js';
 import { runCodexCommand } from './commands/codex.js';
 import { runConnectCommand } from './commands/connect.js';
-import { formatReport, runDoctor } from './commands/doctor.js';
+import { formatReport, runAgentDoctor, runDoctor } from './commands/doctor.js';
 import { runEnrollCommand } from './commands/enroll.js';
 import { UsageError } from './commands/errors.js';
 import { runMemberCommand } from './commands/member.js';
@@ -45,6 +45,8 @@ import { runServeCommand } from './commands/serve.js';
 import { runSetupCommand } from './commands/setup.js';
 import { runTeamCommand } from './commands/team.js';
 import { runToolsCommand } from './commands/tools.js';
+import { createClaudeAdapter } from './runtime/agents/claude-agent.js';
+import { createCodexAdapter } from './runtime/agents/codex/codex-agent.js';
 import { CLI_VERSION } from './version.js';
 
 const USAGE = `csuite cli v${CLI_VERSION}
@@ -57,8 +59,8 @@ usage:
   csuite enroll      --member <name> [--config-path <path>]   (re-)enroll a member for web UI login (TOTP — separate from 'csuite connect')
   csuite rotate      --member <name> [--config-path <path>]   rotate a member's bearer token (atomic; prints new token once)
   csuite quickstart  [--skip-browser] [--assignee <name>]   seed a demo objective + open the web UI
-  csuite claude-code [--no-trace] [--no-secrets] [--doctor] [--skip-doctor] [-- <claude args>...]   spawn claude-code wrapped in a csuite runner
-  csuite codex       [--no-trace] [--no-secrets] [--cwd <dir>] [--model <name>] [--resume [<threadId>]] [-- <codex args>...]   spawn OpenAI Codex CLI as a headless agent member of a csuite team (--resume alone picks up the most recent thread)
+  csuite claude      [--no-trace] [--no-secrets] [--doctor] [--skip-doctor] [-- <claude args>...]   spawn Claude Code wrapped in a csuite runner (alias: claude-code)
+  csuite codex       [--no-trace] [--no-secrets] [--doctor] [--skip-doctor] [--cwd <dir>] [--model <name>] [--resume [<threadId>]] [-- <codex args>...]   spawn OpenAI Codex CLI as a headless agent member of a csuite team (--resume alone picks up the most recent thread)
   csuite push        --body <text> (--agent <id> | --broadcast) [--title <t>] [--level <lvl>] [--data key=value]...
   csuite roster      [--reveal-token --member <name> [--config-path <path>]]
                                     list teammates (no flags) or rotate+print a member's token (alias over 'csuite rotate')
@@ -106,7 +108,7 @@ function makeClient(values: Record<string, unknown>): Client {
  * Three-step token resolution: explicit flag → env var → saved
  * auth.json entry for this URL. Used by every verb that needs to
  * authenticate to the broker — including the runner verbs (`csuite
- * claude-code`, `csuite codex`), so `csuite connect` actually closes the
+ * claude`, `csuite codex`), so `csuite connect` actually closes the
  * loop and the runner picks up the saved token without touching env
  * vars. Returns `null` for `token` only if the caller explicitly
  * opted out of failing (none currently); the normal path fails the
@@ -132,7 +134,7 @@ function resolveAuth(input: { url?: string; token?: string }): {
  * Same as `resolveAuth` but runs the device-code `csuite connect` flow
  * inline when no token can be resolved, returning the freshly-minted
  * token instead of failing. Used by the long-running runner verbs
- * (`csuite claude-code`, `csuite codex`) where the natural UX on first run
+ * (`csuite claude`, `csuite codex`) where the natural UX on first run
  * is "set me up, then start the session" rather than bouncing the
  * operator out to a separate command.
  *
@@ -237,8 +239,11 @@ async function main(): Promise<void> {
     case 'mcp-bridge':
       await handleMcpBridge(rest);
       return;
+    case 'claude':
+    // Deprecated alias — the verb was `claude` pre-release; kept
+    // so existing scripts and muscle memory don't break.
     case 'claude-code':
-      await handleClaudeCode(rest);
+      await handleClaude(rest);
       return;
     case 'codex':
       await handleCodex(rest);
@@ -695,15 +700,15 @@ async function handleNotifications(args: string[]): Promise<void> {
 }
 
 /**
- * `csuite claude-code` — spawn claude-code as a child of a csuite runner.
+ * `csuite claude` — spawn Claude Code as a child of a csuite runner.
  *
  * Arg handling is a little custom: we accept `--url` and `--token` as
  * csuite knobs (with env fallback), then everything after a literal `--`
  * is forwarded verbatim to claude. Without a `--`, any unrecognized
- * args also flow through to claude, so `csuite claude-code --model opus`
- * works the same as `csuite claude-code -- --model opus`.
+ * args also flow through to claude, so `csuite claude --model opus`
+ * works the same as `csuite claude -- --model opus`.
  */
-async function handleClaudeCode(args: string[]): Promise<void> {
+async function handleClaude(args: string[]): Promise<void> {
   let url: string | undefined;
   let token: string | undefined;
   let noTrace = false;
@@ -755,7 +760,7 @@ async function handleClaudeCode(args: string[]): Promise<void> {
       continue;
     }
     // Anything else we don't recognize flows to claude. This lets
-    // `csuite claude-code --model opus` work the same as with a `--`.
+    // `csuite claude --model opus` work the same as with a `--`.
     claudeArgs.push(arg);
   }
 
@@ -773,13 +778,17 @@ async function handleClaudeCode(args: string[]): Promise<void> {
   // opts out for members who know the environment is fine (CI,
   // scripted reruns, etc.). WARNs are advisory — we proceed. Only FAILs
   // abort, and when they do we dump the full report so the member can
-  // see which check tripped.
+  // see which check tripped. The version probe is skipped here — it
+  // spawns the agent binary and would tax every session start; the
+  // explicit `--doctor` mode includes it.
   if (!skipDoctor) {
-    const report = await runDoctor();
+    const report = await runAgentDoctor(createClaudeAdapter({ claudeArgs: [] }), {
+      includeVersion: false,
+    });
     if (report.anyFail) {
       process.stderr.write(formatReport(report));
       process.stderr.write(
-        `\ncsuite claude-code: preflight FAILED — fix the above or pass --skip-doctor to bypass\n`,
+        `\ncsuite claude: preflight FAILED — fix the above or pass --skip-doctor to bypass\n`,
       );
       process.exit(1);
     }
@@ -787,7 +796,7 @@ async function handleClaudeCode(args: string[]): Promise<void> {
 
   try {
     const resolved = await resolveAuthOrConnect({ url, token });
-    const code = await runClaudeCodeCommand({
+    const code = await runClaudeCommand({
       url: resolved.url,
       token: resolved.token,
       claudeArgs,
@@ -808,14 +817,14 @@ async function handleClaudeCode(args: string[]): Promise<void> {
  * daemon) under our control. The director communicates with the
  * agent through the broker (chat / DMs / objectives / `csuite push`).
  * Channel events arrive at codex as `turn/start` (when idle) or
- * `turn/steer` (mid-turn) — the structural equivalent of claude-code's
+ * `turn/steer` (mid-turn) — the structural equivalent of claude's
  * `notifications/claude/channel` ambient injection.
  *
  * Arg handling: `--url` and `--token` are csuite knobs; `--no-trace`,
  * `--cwd`, `--model`, and `--resume` are runner knobs. Everything after
  * a literal `--` is forwarded verbatim to `codex app-server`.
  * Unrecognized args before `--` also fall through to codex (same
- * pattern as claude-code).
+ * pattern as claude).
  *
  * Use codex's own -c key=value syntax to override config.toml entries:
  *   csuite codex -- -c 'model_provider="qwen"' \
@@ -829,6 +838,8 @@ async function handleCodex(args: string[]): Promise<void> {
   let resume: string | true | undefined;
   let noTrace = false;
   let noSecrets = false;
+  let doctor = false;
+  let skipDoctor = false;
   const codexArgs: string[] = [];
   let seenDashDash = false;
 
@@ -853,6 +864,14 @@ async function handleCodex(args: string[]): Promise<void> {
     }
     if (arg === '--no-secrets') {
       noSecrets = true;
+      continue;
+    }
+    if (arg === '--doctor') {
+      doctor = true;
+      continue;
+    }
+    if (arg === '--skip-doctor') {
+      skipDoctor = true;
       continue;
     }
     if (arg === '--resume') {
@@ -891,9 +910,31 @@ async function handleCodex(args: string[]): Promise<void> {
       continue;
     }
     // Anything unrecognized falls through to codex — same pattern as
-    // handleClaudeCode. This lets `csuite codex -c 'key=value'` work the
+    // handleClaude. This lets `csuite codex -c 'key=value'` work the
     // same as `csuite codex -- -c 'key=value'`.
     codexArgs.push(arg);
+  }
+
+  // Explicit `--doctor`: run the full preflight report (version probe
+  // included) and exit — mirrors `csuite claude --doctor`.
+  if (doctor) {
+    const report = await runAgentDoctor(createCodexAdapter({}));
+    log(formatReport(report));
+    process.exit(report.anyFail ? 1 : 0);
+  }
+
+  // Default silent preflight, same contract as claude: only FAILs
+  // abort (with the full report); WARNs proceed; `--skip-doctor` opts
+  // out; the version probe is skipped for startup latency.
+  if (!skipDoctor) {
+    const report = await runAgentDoctor(createCodexAdapter({}), { includeVersion: false });
+    if (report.anyFail) {
+      process.stderr.write(formatReport(report));
+      process.stderr.write(
+        `\ncsuite codex: preflight FAILED — fix the above or pass --skip-doctor to bypass\n`,
+      );
+      process.exit(1);
+    }
   }
 
   try {
@@ -919,7 +960,7 @@ async function handleCodex(args: string[]): Promise<void> {
  * `csuite mcp-bridge` — internal verb spawned by agents via `.mcp.json`.
  *
  * Hidden from the top-level `--help` usage because members never
- * invoke it directly; the `csuite claude-code` runner generates the
+ * invoke it directly; the `csuite claude` runner generates the
  * `.mcp.json` entry that points here. If a member does run it by
  * hand, the bridge will immediately error out with "CSUITE_RUNNER_SOCKET
  * is required" which is the closest thing we can give them to a

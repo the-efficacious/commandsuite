@@ -4,7 +4,7 @@
  * This is a **thin relay** that owns nothing except its two endpoints:
  *
  *   stdio <──── MCP JSON-RPC ────>  agent (Claude Code, etc.)
- *   IPC   <──── csuite IPC frames ──>  runner (the member's `csuite claude-code` process)
+ *   IPC   <──── csuite IPC frames ──>  runner (the member's `csuite claude` process)
  *
  * It doesn't talk to the csuite broker, doesn't hold a briefing, doesn't
  * own a tools set, doesn't maintain state beyond "I have one socket
@@ -74,7 +74,7 @@ export async function runBridge(): Promise<void> {
   if (!socketPath || socketPath.length === 0) {
     throw new BridgeStartupError(
       `${RUNNER_SOCKET_ENV} is required — the bridge must be spawned by a csuite runner ` +
-        `(try: csuite claude-code -- <agent-command>)`,
+        `(try: csuite claude -- <agent-command>)`,
     );
   }
 

@@ -176,15 +176,15 @@ The CLI does NOT persist `tokenId`, `label`, or `member name` here
 exfiltrated. The corresponding metadata lives server-side and can
 be queried via `GET /members/:name/tokens`.
 
-## .mcp.json — claude-code's MCP server registry
+## .mcp.json — claude's MCP server registry
 
-The file claude-code reads to discover its MCP servers. The runner
-backs it up and rewrites it on every `csuite claude-code` invocation.
+The file claude reads to discover its MCP servers. The runner
+backs it up and rewrites it on every `csuite claude` invocation.
 
 | | |
 |---|---|
-| **Path** | `<cwd>/.mcp.json` (where you invoke `csuite claude-code`) |
-| **Read by** | claude-code itself |
+| **Path** | `<cwd>/.mcp.json` (where you invoke `csuite claude`) |
+| **Read by** | claude itself |
 | **Backed up by** | the runner — saves a copy to `$TMPDIR/<pid>-mcp-<nonce>.json` before rewriting |
 | **Restored by** | the runner — on every exit path (normal, SIGINT, SIGTERM, uncaughtException) |
 
@@ -275,11 +275,11 @@ that.
 
 Not config exactly, but it's where to look for runner diagnostics.
 
-`csuite claude-code` and `csuite codex` each write a structured-JSON log
+`csuite claude` and `csuite codex` each write a structured-JSON log
 under:
 
 ```
-~/.cache/commandsuite/session-claude-code-<pid>.log
+~/.cache/commandsuite/session-<pid>.log
 ~/.cache/commandsuite/session-codex-<pid>.log
 ```
 

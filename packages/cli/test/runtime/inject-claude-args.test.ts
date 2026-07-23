@@ -17,7 +17,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { computeInjectedClaudeArgs } from '../../src/commands/claude-code.js';
+import { computeInjectedClaudeArgs } from '../../src/commands/claude.js';
 
 const BRIEFING = 'You are scout, the team scout. Pin this guidance.';
 

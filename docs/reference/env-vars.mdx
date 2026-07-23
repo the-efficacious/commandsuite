@@ -19,9 +19,9 @@ Read by every `csuite` subcommand that talks to a broker.
 | `CSUITE_URL` | `http://127.0.0.1:8717` | Broker base URL. Overridden by `--url`. |
 | `CSUITE_TOKEN` | (none — required) | Bearer token. Overridden by `--token`. Falls back to `~/.config/csuite/auth.json` if neither is set. |
 | `CSUITE_AUTH_CONFIG_PATH` | platform-specific (see below) | Override the auth-config file path. |
-| `CLAUDE_PATH` | `which claude` | Path to the Claude Code binary. Used by `csuite claude-code` and `--doctor`. |
+| `CLAUDE_PATH` | `which claude` | Path to the Claude Code binary. Used by `csuite claude` and `--doctor`. |
 | `CODEX_PATH` | `which codex` | Path to the OpenAI Codex binary. Used by `csuite codex`. |
-| `CSUITE_CLAUDE_MCP_MODE` | `flag` | How `csuite claude-code` wires the csuite MCP server into Claude Code. `flag` passes it via `--mcp-config` (ephemeral); `inject` writes it into the Claude MCP config instead. |
+| `CSUITE_CLAUDE_MCP_MODE` | `flag` | How `csuite claude` wires the csuite MCP server into Claude Code. `flag` passes it via `--mcp-config` (ephemeral); `inject` writes it into the Claude MCP config instead. |
 
 Auth-config path resolution (in absence of `CSUITE_AUTH_CONFIG_PATH`):
 
@@ -63,7 +63,7 @@ isolation.
 
 ## Runner-injected on the agent child
 
-`csuite claude-code` and `csuite codex` set these on the spawned
+`csuite claude` and `csuite codex` set these on the spawned
 agent's environment. The agent process — claude or codex — sees
 them; you never set them yourself. They are **runner-managed /
 internal** knobs, listed here for reference and debugging only.
@@ -91,7 +91,7 @@ operational telemetry); for codex it's the rollout JSONL (plus
 OpenTelemetry and per-inference trace bundles). The runner injects
 each agent's export config below.
 
-### claude-code — OpenTelemetry export (runner-managed)
+### claude — OpenTelemetry export (runner-managed)
 
 These come from the capture host (`CaptureHost.envVars()` in
 `packages/cli/src/runtime/trace/host.ts`). They opt Claude Code into
@@ -149,7 +149,7 @@ The runner skips the capture host entirely, so none of the OTEL
 export vars are injected and no hooks are written. The agent gets
 only:
 
-- `CSUITE_RUNNER_SOCKET` (claude-code)
+- `CSUITE_RUNNER_SOCKET` (claude)
 - `CODEX_HOME` (codex)
 - any broker-held secrets bound to the member (`--no-trace` and
   `--no-secrets` are independent switches)
@@ -167,7 +167,7 @@ and platform-specific defaults elsewhere. Useful overrides:
 | `APPDATA` | Windows-equivalent of `XDG_CONFIG_HOME` for `auth.json`. |
 | `TMPDIR` | Used by `--doctor`'s writable check. The IPC socket also lives here (`$TMPDIR/.csuite-runner-<pid>.sock`). |
 | `HOSTNAME` | Read by `csuite connect` as the default `--label` hint. |
-| `TERM` | Forwarded to the pty when claude-code uses node-pty (default `xterm-256color`). |
+| `TERM` | Forwarded to the pty when claude uses node-pty (default `xterm-256color`). |
 
 ## Variables csuite does NOT consume
 
@@ -176,7 +176,7 @@ A few variables you might expect us to read but we don't:
 - `OPENAI_API_KEY` — codex's auth comes from `~/.codex/auth.json`,
   which the runner symlinks into the ephemeral `CODEX_HOME`. We
   don't set `OPENAI_API_KEY` ourselves.
-- `ANTHROPIC_API_KEY` — claude-code reads this directly. The
+- `ANTHROPIC_API_KEY` — claude reads this directly. The
   runner doesn't touch it.
 - Any GitHub / Slack / etc. integration tokens — there are no
   third-party integrations baked in. The broker is the only HTTP

@@ -55,7 +55,7 @@ import { join } from 'node:path';
 import process from 'node:process';
 import type { Client as BrokerClient, CodexGenaiInferenceUpload } from 'csuite-sdk/client';
 import type { ActivityEvent } from 'csuite-sdk/types';
-import { ActivityUploader } from './activity-uploader.js';
+import { ActivityUploader, type ActivityUploaderStats } from './activity-uploader.js';
 import { type BusySignal, createBusySignal } from './busy.js';
 import { type HookServer, startHookServer } from './hook-server.js';
 import { attachTranscriptReader, type TranscriptReader } from './transcript-reader.js';
@@ -79,7 +79,7 @@ export interface CaptureHostOptions {
    * Relayed from the hook server's SessionStart route with the hook's
    * `source` (`startup` / `resume` / `clear` / `compact`). The runner
    * uses compact/clear as the "context fell off" signal to push a
-   * `context_refresh` re-brief. Optional; claude-code only (codex has
+   * `context_refresh` re-brief. Optional; claude only (codex has
    * no hook server).
    */
   onSessionStart?: (source: string) => void;
@@ -97,7 +97,7 @@ export interface CaptureHost {
   readonly busy: BusySignal;
   /**
    * Loopback HTTP endpoint URL that Claude Code hooks POST to. The
-   * `claude-code` adapter writes it into `.claude/settings.json` as a
+   * `claude` adapter writes it into `.claude/settings.json` as a
    * `type: "http"` hook target so lifecycle events drive `busy` and
    * surface the `transcript_path` that arms the transcript reader.
    * Presence-only — the hooks emit no content.
@@ -140,6 +140,13 @@ export interface CaptureHost {
     objectiveId: string,
     result: 'done' | 'cancelled' | 'reassigned' | 'runner_shutdown',
   ): void;
+  /**
+   * Lifetime accounting of the activity uploader (enqueued / uploaded /
+   * dropped). The agent-session driver stamps this into the run
+   * summary + `session_end` event so an incomplete trace is visible
+   * at the end of the run instead of silently short on the broker.
+   */
+  stats(): ActivityUploaderStats;
   /** Flush the activity uploader + tear down the hook server. */
   close(): Promise<void>;
 }
@@ -333,6 +340,9 @@ export async function startCaptureHost(options: CaptureHostOptions): Promise<Cap
         objectiveId,
         result,
       });
+    },
+    stats() {
+      return uploader.stats();
     },
     async close() {
       if (closed) return;

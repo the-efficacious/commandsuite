@@ -1,19 +1,19 @@
 ---
-title: csuite claude-code
+title: csuite claude
 description: Full reference for the Claude Code runner — flags, environment, the auto-injected claude flags, the .mcp.json backup/restore dance, the HUD strip, --doctor preflight, and trace mode.
 section: Docs
 order: 30
 ---
 
-# csuite claude-code
+# csuite claude
 
-`csuite claude-code` wraps a [Claude Code](https://claude.com/code)
+`csuite claude` wraps a [Claude Code](https://claude.com/code)
 session in a csuite runner. The runner is the parent; claude is the
 child. You talk to claude in the same terminal you launched the
 runner from.
 
 ```bash
-csuite claude-code
+csuite claude
 ```
 
 If `--token` / `$CSUITE_TOKEN` aren't set, the runner falls back to a
@@ -23,7 +23,7 @@ Run `csuite connect` first if you haven't.
 ## Synopsis
 
 ```
-csuite claude-code [--no-trace] [--doctor] [--skip-doctor]
+csuite claude [--no-trace] [--doctor] [--skip-doctor]
                 [--url <url>] [--token <secret>] [-- <claude args>...]
 ```
 
@@ -175,7 +175,7 @@ mirrors how the codex runner uses an ephemeral `CODEX_HOME`:
 - `--mcp-config` is **additive** (we do not pass `--strict-mcp-config`),
   so the member's own `.mcp.json` servers still load alongside `csuite`.
 - Each run gets its own ephemeral file (`mkdtemp`), so two
-  `csuite claude-code` sessions in the same directory can't race on a
+  `csuite claude` sessions in the same directory can't race on a
   shared file. The file is removed on teardown.
 
 The server is keyed `csuite` so the auto-injected
@@ -189,7 +189,7 @@ environments where `--mcp-config` can't be used.
 
 ## --doctor checks
 
-`csuite claude-code --doctor` runs three checks and prints a
+`csuite claude --doctor` runs three checks and prints a
 PASS / WARN / FAIL line for each:
 
 | Check | What it validates | Failure means |
@@ -235,7 +235,7 @@ When stdin/stdout aren't TTYs (tests, piped input), the runner
 also falls back to `stdio: 'inherit'` so automation stays
 byte-for-byte compatible.
 
-> First-render quirk on the pty path: claude-code's ink fork blocks
+> First-render quirk on the pty path: claude's ink fork blocks
 > its first render on a terminal-capability probe whose reply
 > doesn't materialize under a relay. Press Enter once after the
 > banner to unblock it; the keystroke is forwarded to claude as a
@@ -247,8 +247,8 @@ Anything the runner doesn't recognize flows through to claude:
 
 ```bash
 # These are equivalent:
-csuite claude-code --model claude-3-opus-20250219
-csuite claude-code -- --model claude-3-opus-20250219
+csuite claude --model claude-3-opus-20250219
+csuite claude -- --model claude-3-opus-20250219
 ```
 
 The literal `--` is optional but recommended for unambiguity when
@@ -260,7 +260,7 @@ Every run writes structured JSON to a session log under
 `~/.cache/commandsuite/`:
 
 ```
-~/.cache/commandsuite/session-claude-code-<pid>.log
+~/.cache/commandsuite/session-<pid>.log
 ```
 
 The path is printed on startup so you can `tail -f` it for live
@@ -273,17 +273,17 @@ clean for claude; stderr is human-facing notices only.
 ```bash
 # First-time on a new device
 csuite connect
-csuite claude-code
+csuite claude
 
 # Pinned model + extra claude args
-csuite claude-code --model claude-3-opus-20250219 -- --resume
+csuite claude --model claude-3-opus-20250219 -- --resume
 
 # Quick sanity check before spawning
-csuite claude-code --doctor
+csuite claude --doctor
 
 # Skip preflight in a known-good environment
-csuite claude-code --skip-doctor
+csuite claude --skip-doctor
 
 # Disable capture (debugging the runner/bridge plumbing)
-csuite claude-code --no-trace
+csuite claude --no-trace
 ```
