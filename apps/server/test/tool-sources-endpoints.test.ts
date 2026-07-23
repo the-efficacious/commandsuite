@@ -406,9 +406,11 @@ describe('change events', () => {
       (call) => (call[0]?.data as { kind?: string } | undefined)?.kind === 'tool_source',
     );
     expect(calls.length).toBeGreaterThanOrEqual(2);
-    const bindCall = calls.find((call) => (call[0]?.data as { event?: string }).event === 'bound');
+    const bindCall = calls.find(
+      (call) => (call[0]?.data as { event?: string } | undefined)?.event === 'bound',
+    );
     expect(bindCall).toBeDefined();
-    const recipients = (bindCall?.[1] as { recipients: string[] }).recipients;
+    const recipients = (bindCall?.[1] as { recipients: string[] } | undefined)?.recipients;
     expect(recipients).toContain('admin');
     expect(recipients).toContain('bound');
     expect(recipients).not.toContain('outsider');
@@ -428,7 +430,9 @@ describe('change events', () => {
     const unbindCall = pushSpy.mock.calls.find(
       (call) => (call[0]?.data as { event?: string } | undefined)?.event === 'unbound',
     );
-    expect((unbindCall?.[1] as { recipients: string[] }).recipients).toContain('bound');
+    expect((unbindCall?.[1] as { recipients: string[] } | undefined)?.recipients).toContain(
+      'bound',
+    );
   });
 });
 

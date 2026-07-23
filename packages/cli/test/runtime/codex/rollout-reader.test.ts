@@ -30,7 +30,7 @@ function tempSessions(): { sessionsDir: string; dayDir: string } {
 }
 
 const fullTurn = (): string =>
-  [
+  `${[
     {
       timestamp: '2026-07-09T12:40:09.000Z',
       type: 'event_msg',
@@ -77,7 +77,7 @@ const fullTurn = (): string =>
     },
   ]
     .map((r) => JSON.stringify(r))
-    .join('\n') + '\n';
+    .join('\n')}\n`;
 
 /**
  * Thread attribution of an event. `querySource` only exists on the

@@ -66,7 +66,7 @@ function makeChannel(overrides: Partial<ChannelSummary> = {}): ChannelSummary {
 
 function getCallText(result: { content: Array<{ type: string; text?: string }> }): string {
   const first = result.content[0];
-  if (!first || first.type !== 'text' || typeof first.text !== 'string') {
+  if (first?.type !== 'text' || typeof first.text !== 'string') {
     throw new Error('expected text content');
   }
   return first.text;
@@ -125,7 +125,7 @@ describe('defineTools — external tools', () => {
     const jira = tools.find((t) => t.name === 'jira__get_issue');
     expect(jira).toBeDefined();
     expect(jira?.description).toBe('Fetch a Jira issue.');
-    expect((jira?.inputSchema.properties as Record<string, unknown>).key).toBeDefined();
+    expect(((jira?.inputSchema.properties ?? {}) as Record<string, unknown>).key).toBeDefined();
   });
 
   it('defaults a non-object inputSchema to an empty object schema', () => {

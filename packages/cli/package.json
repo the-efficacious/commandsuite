@@ -57,8 +57,8 @@
     "@types/ws": "^8.18.1",
     "tsup": "^8.0.0",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.6",
-    "ws": "^8.20.1"
+    "vitest": "^4.1.10",
+    "ws": "^8.21.1"
   },
   "publishConfig": {
     "access": "public"

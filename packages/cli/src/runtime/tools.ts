@@ -467,7 +467,7 @@ async function handleExternalToolCall(
   const parsed = parseExternalToolName(name);
   if (!parsed) return null;
   const source = externalTools.find((s) => s.source === parsed.source);
-  if (!source || !source.tools.some((t) => t.name === parsed.tool)) return null;
+  if (!source?.tools.some((t) => t.name === parsed.tool)) return null;
   const result = await brokerClient.invokeTool(parsed.source, parsed.tool, rawArgs ?? {});
   return result as CallToolResult;
 }

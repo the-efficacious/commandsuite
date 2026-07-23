@@ -147,11 +147,12 @@ export function CodePreview({ file, language }: CodePreviewProps) {
           class="hljs"
           style="flex:1;margin:0;padding:14px;color:var(--ink);background:var(--paper);overflow-x:auto;white-space:pre"
         >
-          {/* biome-ignore lint/security/noDangerouslySetInnerHtml: highlight.js
-              produces escaped HTML — every token is wrapped in <span class="hljs-…">
-              with text nodes inside, no script execution path. The raw input is
-              text-only (fetched via fsRead), and ignoreIllegals stops malformed
-              input from desynchronizing the parser. */}
+          {/* Safe innerHTML: highlight.js produces escaped HTML — every token
+              is wrapped in <span class="hljs-…"> with text nodes inside, no
+              script execution path. The raw input is text-only (fetched via
+              fsRead), and ignoreIllegals stops malformed input from
+              desynchronizing the parser. (biome 2.5 no longer flags this
+              usage, so the former biome-ignore suppression became unused.) */}
           <code dangerouslySetInnerHTML={{ __html: state.html ?? '' }} />
         </pre>
       </div>

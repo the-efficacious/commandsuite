@@ -136,17 +136,13 @@ describe('ChannelStore', () => {
       expect(() => store.create({ slug, creator: 'alice' })).toThrow(ChannelsError);
     });
 
-    it.each([
-      ['ops'],
-      ['customer-research'],
-      ['q4-launch-prep'],
-      ['a'],
-      ['1on1'],
-      ['team-x42'],
-    ])('accepts valid slug "%s"', (slug) => {
-      const store = makeStore();
-      expect(() => store.create({ slug, creator: 'alice' })).not.toThrow();
-    });
+    it.each([['ops'], ['customer-research'], ['q4-launch-prep'], ['a'], ['1on1'], ['team-x42']])(
+      'accepts valid slug "%s"',
+      (slug) => {
+        const store = makeStore();
+        expect(() => store.create({ slug, creator: 'alice' })).not.toThrow();
+      },
+    );
   });
 
   describe('rename', () => {

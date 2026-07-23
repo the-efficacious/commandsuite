@@ -236,7 +236,7 @@ class McpClientManager implements McpToolManager {
     let tools: McpCachedTool[];
     try {
       tools = await listAll();
-    } catch (err) {
+    } catch {
       // One reconnect retry for connection-class failures, mirroring
       // invoke. McpError here means the upstream is alive but unhappy
       // — surface it as unavailable too; refresh has no isError lane.

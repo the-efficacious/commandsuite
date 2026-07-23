@@ -117,7 +117,8 @@ describe('createCodexChannelSink', () => {
     });
     await tick();
     expect(requests).toHaveLength(1);
-    const text = (requests[0]?.params as { input: Array<{ text: string }> }).input[0]?.text;
+    const text = (requests[0]?.params as { input: Array<{ text: string }> } | undefined)?.input?.[0]
+      ?.text;
     expect(text).toContain('first');
     expect(text).toContain('second');
     expect(text).toContain('third');
@@ -151,9 +152,9 @@ describe('createCodexChannelSink', () => {
     await sink.flushNow();
     expect(requests).toHaveLength(1);
     expect(requests[0]?.method).toBe(METHODS.turnStart);
-    expect((requests[0]?.params as { input: Array<{ text: string }> }).input[0]?.text).toContain(
-      'early event',
-    );
+    expect(
+      (requests[0]?.params as { input: Array<{ text: string }> } | undefined)?.input?.[0]?.text,
+    ).toContain('early event');
   });
 
   it('drops events when status is systemError', async () => {

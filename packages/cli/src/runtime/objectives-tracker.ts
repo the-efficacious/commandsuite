@@ -73,7 +73,7 @@ export function createObjectivesTracker(opts: ObjectivesTrackerOptions): Objecti
       // when they cross back through SSE, because that's how the UI
       // refresh path for a locally-initiated update-via-tool fires.
       const data = message.data as Record<string, unknown> | undefined;
-      if (!data || data.kind !== 'objective') return;
+      if (data?.kind !== 'objective') return;
 
       // Cheap client-side filter: if the event names an assignee and
       // it's not us, skip. The server scopes fanout already, but this
