@@ -49,11 +49,13 @@ npm install -g csuite-server    # broker + web UI; needed for `csuite serve`
 
 ## 2. Stand up the broker
 
-If you're starting fresh, run the first-run wizard. It writes
-`./csuite.json` at `0o600`, generates the team's KEK alongside it, and
-prompts for a team name and your name — identity and auth only.
-Team context, roles, and per-member instructions are all configured
-after boot, from the web UI or CLI:
+If you're starting fresh, run the first-run wizard. It creates a
+`./csuite/` directory (`0o700`) holding the config, database, and the
+team's KEK, and prompts for a team name and your name — identity and
+auth only. Team context, roles, and per-member instructions are all
+configured after boot, from the web UI or CLI. (Run it inside a
+directory that already has a `csuite.json` and it uses that layout
+instead — it never nests.)
 
 ```bash
 csuite setup

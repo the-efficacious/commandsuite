@@ -43,6 +43,7 @@
  */
 
 import { createHash, randomBytes } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Member, Permission, Role, Teammate } from 'csuite-sdk/types';
 import { PERMISSIONS } from 'csuite-sdk/types';
@@ -50,6 +51,8 @@ import { z } from 'zod';
 
 export const TOKEN_HASH_PREFIX = 'sha256:';
 const DEFAULT_CONFIG_FILENAME = 'csuite.json';
+/** Subdirectory fresh bootstraps seed into. See `defaultConfigPath`. */
+export const DEFAULT_SERVER_DIR_NAME = 'csuite';
 
 /**
  * Process-wide KEK for TOTP secret + VAPID private key encryption
@@ -524,13 +527,29 @@ export function createMemberStore(
   return store;
 }
 
+/**
+ * Resolve where the config file lives (or should be created).
+ *
+ * Order:
+ *   1. `$CSUITE_CONFIG_PATH` — operator-explicit, used verbatim.
+ *   2. `./csuite.json` — the cwd IS the server directory. Covers
+ *      flat legacy deployments and running from inside the server
+ *      dir; because this wins over rule 3, bootstrapping from inside
+ *      an existing server dir can never nest another one.
+ *   3. `./csuite/csuite.json` — otherwise. When it doesn't exist yet
+ *      this is the bootstrap target: the wizard paths create the
+ *      `csuite/` subdirectory (0o700) and seed config + DB + KEK
+ *      inside it, keeping the caller's cwd pristine.
+ */
 export function defaultConfigPath(
   env: NodeJS.ProcessEnv = process.env,
   cwd: string = process.cwd(),
 ): string {
   const explicit = env.CSUITE_CONFIG_PATH;
   if (explicit && explicit.length > 0) return explicit;
-  return join(cwd, DEFAULT_CONFIG_FILENAME);
+  const flat = join(cwd, DEFAULT_CONFIG_FILENAME);
+  if (existsSync(flat)) return flat;
+  return join(cwd, DEFAULT_SERVER_DIR_NAME, DEFAULT_CONFIG_FILENAME);
 }
 
 export function defaultHttpsConfig(): HttpsConfig {

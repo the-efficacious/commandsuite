@@ -18,7 +18,7 @@
  *      singleton is missing.
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { DEFAULT_PORT, ENV } from 'csuite-sdk/protocol';
 
@@ -165,8 +165,11 @@ async function runWizardOrFail(
     );
   }
   try {
-    // The wizard is definitely running now — safe to mint/read the KEK
-    // for the encrypted-at-rest fields the seed writes below.
+    // The wizard is definitely running now. Make sure the server
+    // directory exists (fresh bootstraps default to `./csuite/`;
+    // no-op with unchanged permissions when it already does), then
+    // mint/read the KEK for the encrypted-at-rest seed writes below.
+    mkdirSync(dirname(configPath), { recursive: true, mode: 0o700 });
     installKek(server, configPath);
 
     const wizard = await server.runFirstRunWizard({ configPath, io });

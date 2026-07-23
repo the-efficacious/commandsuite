@@ -17,7 +17,7 @@
  *   6. Hand off to `runServer()`.
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { dirname, join } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -179,8 +179,12 @@ async function runWizardOrFail(configPath: string): Promise<WizardResult> {
     process.exit(1);
   }
   try {
-    // The wizard is definitely running now — safe to mint/read the KEK
-    // for the encrypted-at-rest fields the caller seeds from the result.
+    // The wizard is definitely running now. Make sure the server
+    // directory exists (fresh bootstraps default to `./csuite/`;
+    // no-op with unchanged permissions when it already does), then
+    // mint/read the KEK for the encrypted-at-rest fields the caller
+    // seeds from the result.
+    mkdirSync(dirname(configPath), { recursive: true, mode: 0o700 });
     installKekOrExit(configPath);
     return await runFirstRunWizard({ configPath, io });
   } catch (err) {

@@ -18,6 +18,7 @@
  * csuite.db` is the way to start over.
  */
 
+import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { ENV } from 'csuite-sdk/protocol';
 import { UsageError } from './errors.js';
@@ -98,9 +99,12 @@ export async function runSetupCommand(
   }
 
   try {
-    // The wizard is definitely running now — safe to mint/read the KEK
-    // so encrypted-at-rest TOTP / VAPID values round-trip through the
-    // seed writes below.
+    // The wizard is definitely running now. Make sure the server
+    // directory exists (fresh bootstraps default to `./csuite/`;
+    // no-op with unchanged permissions when it already does), then
+    // mint/read the KEK so encrypted-at-rest TOTP / VAPID values
+    // round-trip through the seed writes below.
+    mkdirSync(dirname(configPath), { recursive: true, mode: 0o700 });
     server.setKek(server.resolveKek(configPath));
 
     const wizard = await server.runFirstRunWizard({ configPath, io });
