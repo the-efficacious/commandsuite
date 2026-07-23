@@ -268,14 +268,16 @@ it, run rotate again.
 
 ## `csuite setup` refuses to run
 
-### `setup: a config already exists at ./csuite.json`
+### `setup: <path> already points to a populated team`
 
-Setup refuses to overwrite — running it would invalidate every
-existing token. Two options:
+Setup refuses to overwrite — running it would mint a fresh admin
+and invalidate every existing token. Two options:
 
-- **You really want to reset:** `rm csuite.json` and run setup
-  again. Every existing bearer token is invalidated; every TOTP
-  enrollment is gone; you'll re-onboard everyone.
+- **You really want to reset:** remove both the config file and the
+  database the message names (`rm csuite.json csuite.db`, or
+  `rm -rf csuite/` if you're on the default directory layout) and
+  run setup again. Every existing bearer token is invalidated;
+  every TOTP enrollment is gone; you'll re-onboard everyone.
 - **You meant to add a member:** use `csuite member create` instead.
 
 ## Codex-specific
