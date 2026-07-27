@@ -7,7 +7,7 @@
  * in an isolated `auth.json` rather than the operator's real one.
  */
 
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -104,15 +104,17 @@ describe('csuite connect', () => {
     expect(result.tokenId).toBe('11111111-2222-3333-4444-555555555555');
     expect(result.member.name).toBe('engineer-1');
 
-    // auth.json was written at 0o600 with the token.
+    // auth.json was written at 0o600 with the token, scoped to the cwd the
+    // enrollment ran in (schema 2 — the global store with per-entry scope).
     const saved = JSON.parse(readFileSync(authPath, 'utf8')) as {
       schema: number;
-      entries: Array<{ url: string; token: string }>;
+      entries: Array<{ url: string; workspace: string | null; token: string }>;
     };
-    expect(saved.schema).toBe(1);
+    expect(saved.schema).toBe(2);
     expect(saved.entries).toHaveLength(1);
     expect(saved.entries[0]?.url).toBe('http://test-broker:8717');
     expect(saved.entries[0]?.token).toBe('csuite_freshly_minted_token');
+    expect(saved.entries[0]?.workspace).toBe(realpathSync(process.cwd()));
 
     // The banner (or its quiet form) reaches stdout.
     const allOut = stdoutLines.join('\n');

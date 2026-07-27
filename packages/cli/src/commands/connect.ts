@@ -12,8 +12,9 @@
  *      then polls /enroll/poll every `interval` seconds
  *   3. Director, signed in via TOTP at the broker URL, types the
  *      code into the SPA and approves
- *   4. CLI's next poll resolves with the token; CLI persists it to
- *      `./.csuite/auth.json` (project-scoped) and exits
+ *   4. CLI's next poll resolves with the token; CLI persists it to the
+ *      user-global auth store, scoped to the directory it ran in (or to
+ *      `--workspace`, or unscoped under `--global`), and exits
  *
  * The bearer token plaintext is never echoed to either operator's
  * terminal scrollback — it goes straight from the broker to the CLI's
@@ -27,10 +28,15 @@
  * director exists yet to approve).
  */
 
-import { relative } from 'node:path';
+import { relative, resolve } from 'node:path';
 import { Client, ClientError } from 'csuite-sdk/client';
 import { DEFAULT_PORT, ENV } from 'csuite-sdk/protocol';
-import { authConfigPath, findAuthConfigPath, saveAuthEntry } from './auth-config.js';
+import {
+  authStorePath,
+  inspectLegacyStore,
+  migrateLegacyStore,
+  saveAuthEntry,
+} from './auth-config.js';
 import { UsageError } from './errors.js';
 
 export { UsageError };
@@ -52,6 +58,19 @@ export interface ConnectCommandInput {
    * real config untouched. Set via `--auth-config`.
    */
   authConfigPath?: string;
+  /**
+   * Directory this enrollment is scoped to. Defaults to cwd. The saved
+   * token then serves that directory and everything under it, so one
+   * machine can hold a distinct member identity per workspace. Set via
+   * `--workspace`.
+   */
+  workspace?: string;
+  /**
+   * Record the enrollment as unscoped (machine-wide) rather than bound to
+   * a directory — useful for a CI runner or a laptop that talks to one
+   * broker from anywhere. Set via `--global`.
+   */
+  global?: boolean;
   /** Custom fetch implementation for tests. */
   fetch?: typeof fetch;
   /** Test-only clock injection. */
@@ -244,10 +263,13 @@ export async function runConnectCommand(
         }
         case 'approved': {
           const { data } = outcome;
+          const workspace =
+            input.global === true ? null : resolve(input.workspace ?? process.cwd());
           if (!input.noWrite) {
             saveAuthEntry(
               {
                 url,
+                workspace,
                 token: data.token,
                 savedAt: input.now?.() ?? Date.now(),
               },
@@ -260,8 +282,12 @@ export async function runConnectCommand(
           if (input.noWrite) {
             stdout(`  token: ${data.token}`);
           } else {
-            stdout(`  saved to: ${authConfigDisplayPath(input.authConfigPath)}`);
+            stdout(`  saved to: ${authStoreDisplayPath(input.authConfigPath)}`);
+            stdout(
+              `  scope:    ${workspace === null ? 'all directories (--global)' : displayDir(workspace)}`,
+            );
             stdout(`  next: csuite claude  (or: csuite codex)`);
+            reportLegacyStore(input, stdout, stderr);
           }
           return {
             url,
@@ -307,14 +333,60 @@ function defaultLabelHint(): string {
 }
 
 /**
- * Render the auth-config path for display, preferring a `./`-prefixed
- * relative path when the file lives under cwd (the common case for
- * project-scoped configs). Falls back to absolute when the file lives
- * above cwd (re-`connect` from a subdir updating the project root).
+ * Render the auth store's path for display. The store is user-global, so
+ * this is normally absolute; a `--auth-config` override pointing under cwd
+ * renders `./`-relative because that is how tests and air-gapped layouts
+ * use it.
  */
-function authConfigDisplayPath(override: string | undefined): string {
-  const path = override ?? findAuthConfigPath() ?? authConfigPath();
+function authStoreDisplayPath(override: string | undefined): string {
+  return displayDir(override ?? authStorePath());
+}
+
+/** `./`-relative when under cwd, absolute otherwise. */
+function displayDir(path: string): string {
   const rel = relative(process.cwd(), path);
+  if (rel === '') return '.';
   if (!rel.startsWith('..') && !rel.startsWith('/')) return `./${rel}`;
   return path;
+}
+
+/**
+ * Fold any legacy project-scoped `.csuite/auth.json` into the global store
+ * and tell the operator what happened.
+ *
+ * Migration is lossless — the legacy file's location is exactly the
+ * workspace the new format records — so this is safe to do in passing
+ * rather than making it a separate chore. The file is left on disk: a
+ * credential is not ours to delete, and if it is inside a git working tree
+ * the real remedy is rotation, not removal, because the token may already
+ * be in commit history. That case gets an explicit warning on stderr, since
+ * a csuite bearer resolves every secret bound to its member.
+ */
+function reportLegacyStore(
+  input: ConnectCommandInput,
+  stdout: (line: string) => void,
+  stderr: (line: string) => void,
+): void {
+  let report: ReturnType<typeof inspectLegacyStore>;
+  try {
+    report = inspectLegacyStore();
+    if (report === null) return;
+    migrateLegacyStore({ path: input.authConfigPath });
+  } catch {
+    // A legacy store we can't read or migrate is not worth failing an
+    // otherwise-successful enrollment over — the new entry is already saved.
+    return;
+  }
+  stdout('');
+  stdout(`  migrated ${report.entries} entry/entries from ${displayDir(report.path)}`);
+  stdout(`  (scoped to ${displayDir(report.workspace)} — the directory that held it)`);
+  if (report.inGitRepo) {
+    stderr('');
+    stderr(`csuite: warning: ${report.path} is inside a git working tree.`);
+    stderr('  That file holds a bearer token. If it was ever committed, the token is');
+    stderr('  in your history — rotate it (`csuite rotate --member <name>`) rather than');
+    stderr('  just deleting the file. Tokens resolve every secret bound to the member.');
+  } else {
+    stdout(`  the old file is no longer read once migrated — safe to delete`);
+  }
 }

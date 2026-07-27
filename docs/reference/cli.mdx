@@ -8,10 +8,12 @@ order: 10
 # CLI reference
 
 `csuite` is the operator's terminal. Every command resolves auth in
-the same order: `--token` → `$CSUITE_TOKEN` → saved
-`~/.config/csuite/auth.json` entry for the resolved URL. Every command
-that talks to a broker also resolves the URL: `--url` → `$CSUITE_URL` →
-`http://127.0.0.1:8717`.
+the same order: `--token` → `$CSUITE_TOKEN` → the saved
+`~/.config/csuite/auth.json` entry for the resolved URL whose
+workspace covers the current directory (see
+[workspace scoping](/docs/reference/config#workspace-scoping)). Every
+command that talks to a broker also resolves the URL: `--url` →
+`$CSUITE_URL` → `http://127.0.0.1:8717`.
 
 ```
 csuite [-h | --help] [-v | --version] <subcommand> [...args]
@@ -23,6 +25,7 @@ csuite [-h | --help] [-v | --version] <subcommand> [...args]
 | [`serve`](#serve) | Run the broker (optional peer: `csuite-server`) |
 | [`member`](#member) | Offline team-member management (no broker required) |
 | [`connect`](#connect) | Device-code enrollment for a new device |
+| [`auth`](#auth) | Inspect the local auth store; migrate a legacy one |
 | [`enroll`](#enroll) | (Re-)enroll a member for TOTP web UI login |
 | [`rotate`](#rotate) | Rotate a member's bearer token |
 | [`quickstart`](#quickstart) | Seed a demo objective + open the web UI |
@@ -124,6 +127,8 @@ polls until a director approves through the web UI.
 |---|---|---|
 | `--url` | string | Broker URL. Required if not in env / saved. |
 | `--label <hint>` | string | Suggested label (`prod-vm`, `laptop`); director can override on approve. Defaults to `$HOSTNAME` or `connected device`. |
+| `--workspace <dir>` | string | Scope this enrollment to `<dir>` instead of the current directory. The token then resolves for that directory and everything under it. |
+| `--global` | bool | Record the enrollment as unscoped — it resolves from anywhere. Mutually exclusive with `--workspace`. |
 | `--no-write` | bool | Print the bearer token to stdout instead of writing `auth.json`. Testing-only. |
 | `--quiet` | bool | Suppress the box banner; emit only minimal status lines. |
 | `--auth-config <path>` | string | Override the `auth.json` path (tests). |
@@ -134,8 +139,52 @@ operator's terminal scrollback. The flow is RFC 8628-shaped; see
 [device enrollment](/docs/enrollment) for the full sequence and
 security posture.
 
+The store is user-global and the entry records which directory it
+serves, so enrolling in two project directories gives you two
+independent member identities on one machine. Run `csuite auth list`
+to see which one applies where.
+
 Cancel with Ctrl-C. The broker-side enrollment row expires on its
 own 5-minute TTL.
+
+## auth
+
+```
+csuite auth list [--auth-config <path>]
+csuite auth migrate [--auth-config <path>]
+```
+
+Local-only — `auth` never contacts a broker, because its job is to
+explain the file that auth resolution reads. It works when that file
+is missing, stale, or holds a token for a broker that is down.
+
+`list` prints every enrollment with the broker it belongs to, the
+directory it serves (or `(all directories)` for an unscoped entry),
+and a coarse age. The entry that resolves from your current directory
+is marked `*`, resolved through the same code path the rest of the CLI
+uses so the marker cannot drift from real behavior. **Tokens are never
+printed** — the command exists so you can answer "which member am I
+here?" without putting a bearer on a terminal that may be recorded or
+scrolled back.
+
+```
+store: /home/you/.config/csuite/auth.json
+
+  BROKER                       SCOPE                          SAVED
+* https://broker.example.com   /home/you/projects/agent-a      2h ago
+  https://broker.example.com   /home/you/projects/agent-b      3d ago
+  http://127.0.0.1:8717        (all directories)               6d ago
+
+  * = what resolves from /home/you/projects/agent-a
+```
+
+`migrate` folds a legacy project-scoped `<dir>/.csuite/auth.json` into
+the global store, scoping its entries to the directory that held it.
+Idempotent, and it leaves the legacy file on disk. If that file was
+inside a git working tree, `migrate` says so on stderr and tells you
+to rotate rather than just delete — the token may already be in your
+commit history. See
+[legacy project-scoped stores](/docs/reference/config#legacy-project-scoped-stores).
 
 ## enroll
 

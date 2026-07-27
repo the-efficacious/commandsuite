@@ -24,6 +24,7 @@
 import { Client } from 'csuite-sdk/client';
 import { DEFAULT_PORT, ENV } from 'csuite-sdk/protocol';
 import { parseDataFlag, parseSubcommandArgs } from './args.js';
+import { runAuthCommand } from './commands/auth.js';
 import { findAuthEntry } from './commands/auth-config.js';
 import { runClaudeCommand } from './commands/claude.js';
 import { runCodexCommand } from './commands/codex.js';
@@ -54,8 +55,9 @@ const USAGE = `csuite cli v${CLI_VERSION}
 usage:
   csuite setup       [--config-path <path>]                 first-run wizard (team + first admin + TOTP)
   csuite member        list|create|update|delete [--config-path <path>]   offline member management (runs without the broker)
-  csuite connect     [--url <broker>] [--label <hint>] [--no-write] [--quiet]
-                                    enroll this device with the broker (device-code flow); writes ~/.config/csuite/auth.json on approval
+  csuite connect     [--url <broker>] [--label <hint>] [--workspace <dir>] [--global] [--no-write] [--quiet]
+                                    enroll this device with the broker (device-code flow); saves to the user-global auth store, scoped to cwd (or --workspace / --global)
+  csuite auth          list|migrate                         inspect the local auth store; fold a legacy project-scoped .csuite/auth.json into it
   csuite enroll      --member <name> [--config-path <path>]   (re-)enroll a member for web UI login (TOTP — separate from 'csuite connect')
   csuite rotate      --member <name> [--config-path <path>]   rotate a member's bearer token (atomic; prints new token once)
   csuite quickstart  [--skip-browser] [--assignee <name>]   seed a demo objective + open the web UI
@@ -199,6 +201,9 @@ async function main(): Promise<void> {
     case 'connect':
       await handleConnect(rest);
       return;
+    case 'auth':
+      handleAuth(rest);
+      return;
     case 'rotate':
       await handleRotate(rest);
       return;
@@ -306,6 +311,8 @@ async function handleConnect(args: string[]): Promise<void> {
     'no-write': { type: 'boolean' },
     quiet: { type: 'boolean', short: 'q' },
     'auth-config': { type: 'string' },
+    workspace: { type: 'string' },
+    global: { type: 'boolean' },
     help: { type: 'boolean', short: 'h' },
   });
   if (values.help === true) {
@@ -313,6 +320,9 @@ async function handleConnect(args: string[]): Promise<void> {
     return;
   }
   try {
+    if (getBoolean(values, 'global') === true && getString(values, 'workspace') !== undefined) {
+      throw new UsageError('connect: --global and --workspace are mutually exclusive.');
+    }
     await runConnectCommand(
       {
         url: getString(values, 'url'),
@@ -320,6 +330,8 @@ async function handleConnect(args: string[]): Promise<void> {
         noWrite: getBoolean(values, 'no-write'),
         quiet: getBoolean(values, 'quiet'),
         authConfigPath: getString(values, 'auth-config'),
+        workspace: getString(values, 'workspace'),
+        global: getBoolean(values, 'global'),
       },
       (line) => process.stdout.write(`${line}\n`),
       (line) => process.stderr.write(`${line}\n`),
@@ -693,6 +705,36 @@ async function handleNotifications(args: string[]): Promise<void> {
   try {
     const client = makeClient(clientOpts);
     await runNotificationsCommand(passthrough, client, (line) => log(line));
+  } catch (err) {
+    if (err instanceof UsageError) fail(err.message, 2);
+    fail(err instanceof Error ? err.message : String(err));
+  }
+}
+
+/**
+ * `csuite auth` — local auth-store inspection and maintenance. No broker
+ * client and no auth resolution: this verb's whole job is to explain the
+ * file that auth resolution reads, so it has to work when that file is
+ * missing, stale, or holds a token for a broker that is down.
+ */
+function handleAuth(args: string[]): void {
+  const [subcommand, ...rest] = args;
+  const { values } = parseSubcommandArgs(rest, {
+    'auth-config': { type: 'string' },
+    help: { type: 'boolean', short: 'h' },
+  });
+  if (values.help === true) {
+    process.stdout.write(USAGE);
+    return;
+  }
+  try {
+    const code = runAuthCommand(
+      subcommand,
+      { authConfigPath: getString(values, 'auth-config') },
+      (line) => process.stdout.write(`${line}\n`),
+      (line) => process.stderr.write(`${line}\n`),
+    );
+    if (code !== 0) process.exit(code);
   } catch (err) {
     if (err instanceof UsageError) fail(err.message, 2);
     fail(err instanceof Error ? err.message : String(err));
