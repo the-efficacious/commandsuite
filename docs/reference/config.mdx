@@ -148,28 +148,82 @@ device-code enrollment.
 
 ```json
 {
-  "schema": 1,
+  "schema": 2,
   "entries": [
     {
       "url": "https://broker.example.com",
+      "workspace": "/home/you/projects/agent-a",
       "token": "csuite_...",
       "savedAt": 1714255200000
     },
     {
-      "url": "http://127.0.0.1:8717",
+      "url": "https://broker.example.com",
+      "workspace": "/home/you/projects/agent-b",
       "token": "csuite_...",
       "savedAt": 1714250000000
+    },
+    {
+      "url": "http://127.0.0.1:8717",
+      "workspace": null,
+      "token": "csuite_...",
+      "savedAt": 1714240000000
     }
   ]
 }
 ```
 
-One entry per broker URL; the most recent write for a given URL
-wins. Lookup is exact-match on URL — no trailing-slash
+One entry per `(url, workspace)` pair; the most recent write for a
+given pair wins. Lookup is exact-match on URL — no trailing-slash
 normalization, no scheme upgrade. If you ran `csuite connect` against
 `https://broker.example.com` and then ran `csuite push --url https://broker.example.com/`,
 the trailing slash means we won't find the saved entry. Use the
 URL form you connected with.
+
+### Workspace scoping
+
+The store is **user-global**, but each entry records the directory it
+belongs to, so one machine holds a distinct member identity per
+workspace. `csuite connect` scopes the new entry to the current
+directory by default; `--workspace <dir>` sets it explicitly and
+`--global` records an unscoped entry (`workspace: null`).
+
+Resolution, for a given broker URL:
+
+1. Among entries whose `workspace` contains the current directory,
+   the one with the **longest** workspace path wins — so enrolling in
+   a project root serves every subdirectory of it, and a nested
+   enrollment overrides its parent.
+2. Otherwise the unscoped (`workspace: null`) entry, if any.
+3. Otherwise a legacy project-scoped store (see below).
+
+Directory containment is compared by path segments, not string
+prefix, so `/home/you/proj` does not match `/home/you/project-other`.
+Symlinks are resolved on both sides.
+
+`csuite auth list` shows every entry with its scope and marks the one
+that resolves from your current directory. It never prints tokens.
+
+### Legacy project-scoped stores
+
+Before the store went global, `csuite connect` wrote
+`<cwd>/.csuite/auth.json` and commands found it by walking up from
+the current directory. Those files are **still read** as a fallback,
+so an upgrade never locks you out — but the location put a bearer
+token inside project trees, which usually means inside a git
+repository.
+
+`csuite auth migrate` folds a legacy store into the global one,
+scoping its entries to the directory that held it (which is exactly
+what the file's location meant). `csuite connect` does the same in
+passing, after saving the token it just minted — a legacy entry never
+displaces a newer one for the same `(url, workspace)` pair, so the
+fresh credential survives the migration. Neither deletes the old file.
+
+If a legacy store was inside a git working tree, treat the token as
+potentially published and **rotate it** —
+`csuite rotate --member <name>` — rather than only deleting the file.
+A csuite bearer resolves every [secret](/docs/concepts/secrets) bound
+to its member, so the blast radius is larger than one credential.
 
 The CLI does NOT persist `tokenId`, `label`, or `member name` here
 — less metadata on disk = less to leak if the file is

@@ -119,16 +119,26 @@ table with `origin = 'enroll'` plus a label. The CLI saves it to
 
 ```json
 {
-  "schema": 1,
+  "schema": 2,
   "entries": [
     {
       "url": "https://broker.example.com",
+      "workspace": "/home/you/projects/agent-a",
       "token": "csuite_…",
       "savedAt": 1714255200000
     }
   ]
 }
 ```
+
+`workspace` is the directory the enrollment is scoped to — the cwd
+`csuite connect` ran in, unless you passed `--workspace <dir>` or
+`--global` (which records `workspace: null`, meaning it applies
+everywhere). The token resolves for that directory and everything
+under it, so one machine can hold a distinct member identity per
+project. See [config.mdx](/docs/reference/config#workspace-scoping)
+for the full resolution rule and `csuite auth list` for what is
+currently enrolled.
 
 File mode is `0o600` in a `0o700` directory; the path varies by
 OS:
@@ -143,7 +153,9 @@ The CLI's auth resolver looks in this order:
 
 1. `--token <secret>` flag
 2. `CSUITE_TOKEN` environment variable
-3. The saved entry in `auth.json` for the resolved broker URL
+3. The saved entry in `auth.json` for the resolved broker URL whose
+   `workspace` most specifically covers the current directory, then an
+   unscoped entry, then a legacy `<dir>/.csuite/auth.json`
 
 Existing CI / scripted setups using env vars or `--token` keep
 working unchanged.
