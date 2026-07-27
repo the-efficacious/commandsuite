@@ -42,7 +42,6 @@ import {
   ListToolsRequestSchema,
   type Tool,
 } from '@modelcontextprotocol/sdk/types.js';
-import { MCP_CHANNEL_CAPABILITY } from 'csuite-sdk/protocol';
 import { CLI_VERSION } from '../version.js';
 import {
   encodeFrame,
@@ -99,7 +98,6 @@ export async function runBridge(): Promise<void> {
     { name: 'csuite', version: CLI_VERSION },
     {
       capabilities: {
-        experimental: { [MCP_CHANNEL_CAPABILITY]: {} },
         tools: { listChanged: true },
       },
     },
@@ -109,8 +107,9 @@ export async function runBridge(): Promise<void> {
   //
   // The runner sends us two kinds of traffic: responses to our
   // requests (matched by id) and unsolicited notifications to emit
-  // on the MCP stdio transport (channel events, context re-briefs,
-  // and tools/list_changed on tool-source registry changes).
+  // on the MCP stdio transport (`tools/list_changed` on tool-source
+  // registry changes — channel events reach the agent through the
+  // runner's channel sink, not the bridge).
   const rl = createInterface({ input: ipcSocket, crlfDelay: Infinity });
   rl.on('line', (line) => {
     const frame = parseFrame(line);
@@ -130,7 +129,7 @@ export async function runBridge(): Promise<void> {
     }
     if (frame.kind === 'mcp_notification') {
       // Push out as a real MCP notification on stdio. This is how
-      // channel events and context re-briefs reach the agent.
+      // `tools/list_changed` reaches the agent.
       mcpServer
         .notification({
           method: frame.method,

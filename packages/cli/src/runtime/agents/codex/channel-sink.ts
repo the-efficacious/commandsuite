@@ -1,22 +1,20 @@
 /**
- * Codex channel sink — implements `ForwarderNotificationSink` so the
- * existing runner forwarder can dispatch broker SSE events at us
- * without knowing it's talking to codex instead of claude.
+ * Codex channel sink — implements `ChannelEventSink` so the runner
+ * forwarder can deliver broker SSE events to us without knowing it's
+ * talking to codex instead of claude.
  *
- * Responsibility: turn each inbound `notifications/claude/channel`
- * call into either a `turn/start` (when codex is Idle) or a
- * `turn/steer` (when codex is Active mid-turn). Bundle bursts so a
- * flurry of micro-events compose into a single dispatch.
+ * Responsibility: turn each inbound channel event into either a
+ * `turn/start` (when codex is Idle) or a `turn/steer` (when codex is
+ * Active mid-turn). Bundle bursts so a flurry of micro-events compose
+ * into a single dispatch.
  *
- * Why bundling matters: claude's MCP channel flows arrive
- * mid-turn as ambient context with zero protocol overhead. Codex
- * accepts the same content via `turn/steer`, but each dispatch is a
- * full JSON-RPC round-trip with a model-side awareness cost — every
- * steer adds a user-input item the model sees on its next API call.
- * Sending each broker event as its own steer would inflate the model's
- * input transcript with one steer per event. Bundling within a 200ms
- * window collapses bursts (e.g. ten objective updates landing
- * simultaneously) into one steer carrying the same prose.
+ * Why bundling matters: each dispatch is a full JSON-RPC round-trip
+ * with a model-side awareness cost — every steer adds a user-input
+ * item the model sees on its next API call. Sending each broker event
+ * as its own steer would inflate the model's input transcript with
+ * one steer per event. Bundling within a 200ms window collapses
+ * bursts (e.g. ten objective updates landing simultaneously) into one
+ * steer carrying the same prose.
  *
  * Routing rule:
  *   ThreadStatus.idle       → buffer + 200ms timer → turn/start
@@ -43,12 +41,11 @@
  *     <body>...</body>
  *   </channel>
  *
- * The shape mirrors the meta-keyed format the claude side emits
- * through `notifications/claude/channel`, just rendered as text.
+ * The rendering is shared with the claude sink (`channel-format.ts`).
  */
 
-import { MCP_CHANNEL_NOTIFICATION } from 'csuite-sdk/protocol';
-import type { ForwarderNotificationSink } from '../../forwarder.js';
+import type { ChannelEventSink } from '../../forwarder.js';
+import { formatChannelEvent } from '../channel-format.js';
 import type { JsonRpcClient } from './json-rpc.js';
 import { METHODS, type ThreadStatus, type TurnStartResponse, type UserInput } from './protocol.js';
 
@@ -68,13 +65,11 @@ export interface CodexChannelSinkOptions {
 }
 
 interface BufferedEvent {
-  /** The MCP method the forwarder was trying to call. */
-  method: string;
   /** The flattened text body to pass to codex. */
   text: string;
 }
 
-export interface CodexChannelSink extends ForwarderNotificationSink {
+export interface CodexChannelSink extends ChannelEventSink {
   /**
    * Force an immediate flush of the buffer. Called by the adapter
    * during graceful shutdown so anything queued reaches codex before
@@ -258,81 +253,23 @@ export function createCodexChannelSink(opts: CodexChannelSinkOptions): CodexChan
   };
 
   return {
-    async notification(args) {
-      // We only handle the channel notification (which includes the
-      // runner's `context_refresh` re-briefs — they use the same
-      // method). Any future `tools/list_changed` capability updates
+    async deliver(event) {
+      // Channel events include the runner's `context_refresh`
+      // re-briefs — same path. `tools/list_changed` capability updates
       // reach codex through the bridge's stdio MCP transport, not this
-      // sink. Anything other than the channel notification we ignore
-      // here.
-      if (args.method !== MCP_CHANNEL_NOTIFICATION) {
-        opts.log('codex-channel-sink: ignored non-channel notification', {
-          method: args.method,
-        });
-        return;
-      }
-      const text = formatChannelEvent(args.params);
-      if (text === null) return;
+      // sink.
+      const text = formatChannelEvent(event);
       opts.log('codex-channel-sink: received channel event', {
         bytes: text.length,
         bufferDepth: buffer.length + 1,
         status: opts.getStatus().type,
         threadId: opts.getThreadId(),
       });
-      buffer.push({ method: args.method, text });
+      buffer.push({ text });
       scheduleFlush();
     },
     async flushNow() {
       await flush();
     },
   };
-}
-
-/**
- * Render the channel-notification params (content + meta) into a single
- * `<channel>` tagged block that the agent can recognise as ambient
- * signal rather than fresh user input. Format mirrors the meta keys
- * the forwarder produces (`from`, `thread`, `ts`, etc.).
- */
-function formatChannelEvent(params: Record<string, unknown> | undefined): string | null {
-  if (!params || typeof params !== 'object') return null;
-  const content = typeof params.content === 'string' ? params.content : '';
-  const metaRaw = params.meta;
-  const meta: Record<string, string> =
-    metaRaw && typeof metaRaw === 'object' && !Array.isArray(metaRaw)
-      ? (metaRaw as Record<string, string>)
-      : {};
-
-  // Highest-signal meta fields first; the rest land as `key="value"`
-  // attributes so the agent can scan them.
-  const ordered: Array<[string, string | undefined]> = [
-    ['kind', meta.kind],
-    ['from', meta.from],
-    ['thread', meta.thread],
-    ['title', meta.title],
-    ['target', meta.target],
-    ['level', meta.level],
-    ['ts', meta.ts],
-    ['msg_id', meta.msg_id],
-  ];
-  const seen = new Set<string>();
-  const attrs: string[] = [];
-  for (const [k, v] of ordered) {
-    seen.add(k);
-    if (typeof v === 'string' && v.length > 0) {
-      attrs.push(`${k}=${attrEscape(v)}`);
-    }
-  }
-  for (const [k, v] of Object.entries(meta)) {
-    if (seen.has(k)) continue;
-    if (typeof v === 'string' && v.length > 0) {
-      attrs.push(`${k}=${attrEscape(v)}`);
-    }
-  }
-  const open = attrs.length > 0 ? `<channel ${attrs.join(' ')}>` : '<channel>';
-  return `${open}\n${content}\n</channel>`;
-}
-
-function attrEscape(s: string): string {
-  return `"${s.replace(/"/g, '\\"')}"`;
 }

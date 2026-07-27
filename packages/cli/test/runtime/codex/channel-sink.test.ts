@@ -8,7 +8,6 @@
  * covered by `json-rpc.test.ts`.
  */
 
-import { MCP_CHANNEL_NOTIFICATION } from 'csuite-sdk/protocol';
 import { describe, expect, it, vi } from 'vitest';
 import {
   type CodexChannelSinkOptions,
@@ -55,8 +54,6 @@ function makeSink(initial: Partial<MockState> = {}, requestImpl?: JsonRpcClient[
   return { sink, state, requests, rpc };
 }
 
-const channelMethod = MCP_CHANNEL_NOTIFICATION;
-
 async function tick(ms = 20): Promise<void> {
   await new Promise((r) => setTimeout(r, ms));
 }
@@ -64,10 +61,7 @@ async function tick(ms = 20): Promise<void> {
 describe('createCodexChannelSink', () => {
   it('dispatches a single turn/start when idle', async () => {
     const { sink, requests } = makeSink({ status: { type: 'idle' } });
-    await sink.notification({
-      method: channelMethod,
-      params: { content: 'hello there', meta: { from: 'director', kind: 'chat' } },
-    });
+    await sink.deliver({ content: 'hello there', meta: { from: 'director', kind: 'chat' } });
     await tick();
     expect(requests).toHaveLength(1);
     expect(requests[0]?.method).toBe(METHODS.turnStart);
@@ -88,10 +82,7 @@ describe('createCodexChannelSink', () => {
       status: { type: 'active' },
       activeTurnId: 'turn_42',
     });
-    await sink.notification({
-      method: channelMethod,
-      params: { content: 'mid-turn signal', meta: {} },
-    });
+    await sink.deliver({ content: 'mid-turn signal', meta: {} });
     await tick();
     expect(requests).toHaveLength(1);
     expect(requests[0]?.method).toBe(METHODS.turnSteer);
@@ -103,18 +94,9 @@ describe('createCodexChannelSink', () => {
 
   it('bundles multiple events arriving inside the window into one dispatch', async () => {
     const { sink, requests } = makeSink({ status: { type: 'idle' } });
-    await sink.notification({
-      method: channelMethod,
-      params: { content: 'first', meta: { from: 'a' } },
-    });
-    await sink.notification({
-      method: channelMethod,
-      params: { content: 'second', meta: { from: 'b' } },
-    });
-    await sink.notification({
-      method: channelMethod,
-      params: { content: 'third', meta: { from: 'c' } },
-    });
+    await sink.deliver({ content: 'first', meta: { from: 'a' } });
+    await sink.deliver({ content: 'second', meta: { from: 'b' } });
+    await sink.deliver({ content: 'third', meta: { from: 'c' } });
     await tick();
     expect(requests).toHaveLength(1);
     const text = (requests[0]?.params as { input: Array<{ text: string }> } | undefined)?.input?.[0]
@@ -124,25 +106,12 @@ describe('createCodexChannelSink', () => {
     expect(text).toContain('third');
   });
 
-  it('drops non-channel notifications silently', async () => {
-    const { sink, requests } = makeSink();
-    await sink.notification({
-      method: 'notifications/tools/list_changed',
-      params: {},
-    });
-    await tick();
-    expect(requests).toHaveLength(0);
-  });
-
   it('re-buffers when threadId is null and flushes after threadId arrives', async () => {
     const { sink, state, requests } = makeSink({
       threadId: null,
       status: { type: 'notLoaded' },
     });
-    await sink.notification({
-      method: channelMethod,
-      params: { content: 'early event', meta: {} },
-    });
+    await sink.deliver({ content: 'early event', meta: {} });
     await tick();
     expect(requests).toHaveLength(0);
 
@@ -161,10 +130,7 @@ describe('createCodexChannelSink', () => {
     const { sink, requests } = makeSink({
       status: { type: 'systemError' },
     });
-    await sink.notification({
-      method: channelMethod,
-      params: { content: 'wasted', meta: {} },
-    });
+    await sink.deliver({ content: 'wasted', meta: {} });
     await tick();
     expect(requests).toHaveLength(0);
   });
@@ -202,10 +168,7 @@ describe('createCodexChannelSink', () => {
     );
     state = made.state;
 
-    await made.sink.notification({
-      method: channelMethod,
-      params: { content: 'racy', meta: {} },
-    });
+    await made.sink.deliver({ content: 'racy', meta: {} });
     await tick(30);
     expect(calls.map((c) => c.method)).toEqual([METHODS.turnSteer, METHODS.turnStart]);
     expect(made.requests).toHaveLength(0);

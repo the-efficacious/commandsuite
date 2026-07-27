@@ -118,7 +118,7 @@ export async function runAgentDoctor(
  * --doctor` and existing callers keep working unchanged.
  */
 export async function runDoctor(): Promise<DoctorReport> {
-  return runAgentDoctor(createClaudeAdapter({ claudeArgs: [] }));
+  return runAgentDoctor(createClaudeAdapter({}));
 }
 
 async function checkAgentVersion(

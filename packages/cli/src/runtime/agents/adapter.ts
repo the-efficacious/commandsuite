@@ -207,13 +207,16 @@ export interface AgentAdapter {
    */
   binaryPath?(): string | null;
   /**
-   * Runner options this agent framework needs — a notification-sink
-   * override (how broker events become the framework's "ambient
-   * input") and/or the second-bridge policy. Called once, before
-   * `startRunner`. Omit entirely for frameworks happy with the
-   * defaults (MCP-notification sink, `displace-old`).
+   * Runner options this agent framework needs — the channel sink (how
+   * broker events become the framework's "ambient input") and/or the
+   * second-bridge policy. Called once, before `startRunner`.
+   *
+   * Every real adapter must supply a channel sink: without one the
+   * runner drops live team traffic (with a log line) and the member
+   * only sees history via `recent`. The second-bridge policy defaults
+   * to `displace-old`.
    */
-  runnerOptions?(): Pick<RunnerOptions, 'notificationSink' | 'onSecondBridge'>;
+  runnerOptions?(): Pick<RunnerOptions, 'channelSink' | 'onSecondBridge'>;
   /**
    * Write agent config / compute env + args for the spawn. Throwing
    * here aborts the session cleanly (runner shuts down; nothing was

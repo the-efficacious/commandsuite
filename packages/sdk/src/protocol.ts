@@ -285,6 +285,3 @@ export const ENV = {
   host: 'CSUITE_HOST',
   dbPath: 'CSUITE_DB_PATH',
 } as const;
-
-export const MCP_CHANNEL_CAPABILITY = 'claude/channel' as const;
-export const MCP_CHANNEL_NOTIFICATION = 'notifications/claude/channel' as const;

@@ -6,15 +6,16 @@
  *   csuite member        — list / create / update / delete team members
  *   csuite enroll      — (re-)enroll a member for web UI login (TOTP)
  *   csuite rotate      — rotate a member's bearer token
- *   csuite claude      — spawn Claude Code wrapped in a csuite runner
+ *   csuite claude      — run Claude Code headlessly as an agent member
  *   csuite push        — push an event to a teammate or broadcast
  *   csuite roster      — list members and connection state
  *   csuite objectives  — list / view / mutate team objectives
  *   csuite serve       — run a local broker (optional peer: csuite-server)
  *
  * The internal `csuite mcp-bridge` verb is hidden from the top-level
- * help; agents spawn it via `.mcp.json` and it connects back to the
- * runner over UDS.
+ * help; agents spawn it from the MCP server entry each runner injects
+ * (SDK options for claude, config.toml for codex) and it connects back
+ * to the runner over UDS.
  *
  * Global env vars (defaults):
  *   CSUITE_URL       = http://127.0.0.1:8717
@@ -61,7 +62,7 @@ usage:
   csuite enroll      --member <name> [--config-path <path>]   (re-)enroll a member for web UI login (TOTP — separate from 'csuite connect')
   csuite rotate      --member <name> [--config-path <path>]   rotate a member's bearer token (atomic; prints new token once)
   csuite quickstart  [--skip-browser] [--assignee <name>]   seed a demo objective + open the web UI
-  csuite claude      [--no-trace] [--no-secrets] [--doctor] [--skip-doctor] [-- <claude args>...]   spawn Claude Code wrapped in a csuite runner (alias: claude-code)
+  csuite claude      [--no-trace] [--no-secrets] [--doctor] [--skip-doctor] [--cwd <dir>] [--model <name>] [--resume [<sessionId>]]   run Claude Code headlessly (Agent SDK) as an agent member of a csuite team (--resume alone continues the most recent session; alias: claude-code)
   csuite codex       [--no-trace] [--no-secrets] [--doctor] [--skip-doctor] [--cwd <dir>] [--model <name>] [--resume [<threadId>]] [-- <codex args>...]   spawn OpenAI Codex CLI as a headless agent member of a csuite team (--resume alone picks up the most recent thread)
   csuite push        --body <text> (--agent <id> | --broadcast) [--title <t>] [--level <lvl>] [--data key=value]...
   csuite roster      [--reveal-token --member <name> [--config-path <path>]]
@@ -742,35 +743,33 @@ function handleAuth(args: string[]): void {
 }
 
 /**
- * `csuite claude` — spawn Claude Code as a child of a csuite runner.
+ * `csuite claude` — run Claude Code headlessly (via the Claude Agent
+ * SDK) as a csuite team member.
  *
- * Arg handling is a little custom: we accept `--url` and `--token` as
- * csuite knobs (with env fallback), then everything after a literal `--`
- * is forwarded verbatim to claude. Without a `--`, any unrecognized
- * args also flow through to claude, so `csuite claude --model opus`
- * works the same as `csuite claude -- --model opus`.
+ * No interactive TUI: the agent runs as an SDK-driven stream-json
+ * subprocess under our control. The director communicates with the
+ * agent through the broker (chat / DMs / objectives / `csuite push`);
+ * channel events arrive as streaming-input user messages.
+ *
+ * Arg handling: `--url` and `--token` are csuite knobs; `--no-trace`,
+ * `--cwd`, `--model`, and `--resume` are runner knobs. There is no
+ * pass-through tail — the agent invocation is composed by the SDK, so
+ * unrecognized args are an error rather than silently forwarded.
  */
 async function handleClaude(args: string[]): Promise<void> {
   let url: string | undefined;
   let token: string | undefined;
+  let cwd: string | undefined;
+  let model: string | undefined;
+  let resume: string | true | undefined;
   let noTrace = false;
   let noSecrets = false;
   let doctor = false;
   let skipDoctor = false;
-  const claudeArgs: string[] = [];
-  let seenDashDash = false;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === undefined) continue;
-    if (seenDashDash) {
-      claudeArgs.push(arg);
-      continue;
-    }
-    if (arg === '--') {
-      seenDashDash = true;
-      continue;
-    }
     if (arg === '-h' || arg === '--help') {
       process.stdout.write(USAGE);
       return;
@@ -791,19 +790,48 @@ async function handleClaude(args: string[]): Promise<void> {
       skipDoctor = true;
       continue;
     }
-    if (arg === '--url' || arg === '--token') {
+    if (arg === '--resume') {
+      // Optional value: `--resume <sessionId>` resumes that session,
+      // bare `--resume` continues the member's most recent session in
+      // the cwd. A following flag is NOT the value.
+      const next = args[i + 1];
+      if (next !== undefined && !next.startsWith('-')) {
+        resume = next;
+        i++;
+      } else {
+        resume = true;
+      }
+      continue;
+    }
+    if (arg === '--url' || arg === '--token' || arg === '--cwd' || arg === '--model') {
       const next = args[i + 1];
       if (next === undefined) {
         fail(`${arg} requires a value`, 2);
       }
-      if (arg === '--url') url = next as string;
-      else token = next as string;
+      switch (arg) {
+        case '--url':
+          url = next as string;
+          break;
+        case '--token':
+          token = next as string;
+          break;
+        case '--cwd':
+          cwd = next as string;
+          break;
+        case '--model':
+          model = next as string;
+          break;
+      }
       i++;
       continue;
     }
-    // Anything else we don't recognize flows to claude. This lets
-    // `csuite claude --model opus` work the same as with a `--`.
-    claudeArgs.push(arg);
+    // The old CLI wrapper forwarded unknown args to the claude TUI;
+    // the SDK runner composes the agent invocation itself, so an
+    // unknown arg is a mistake worth stopping on.
+    fail(
+      `csuite claude: unknown argument ${arg} (the TUI pass-through was removed; supported: --model, --resume, --cwd, --no-trace, --no-secrets, --doctor, --skip-doctor)`,
+      2,
+    );
   }
 
   // Explicit `--doctor` is the "run doctor, print the full report, exit"
@@ -824,7 +852,7 @@ async function handleClaude(args: string[]): Promise<void> {
   // spawns the agent binary and would tax every session start; the
   // explicit `--doctor` mode includes it.
   if (!skipDoctor) {
-    const report = await runAgentDoctor(createClaudeAdapter({ claudeArgs: [] }), {
+    const report = await runAgentDoctor(createClaudeAdapter({}), {
       includeVersion: false,
     });
     if (report.anyFail) {
@@ -841,7 +869,9 @@ async function handleClaude(args: string[]): Promise<void> {
     const code = await runClaudeCommand({
       url: resolved.url,
       token: resolved.token,
-      claudeArgs,
+      cwd,
+      model,
+      resume,
       noTrace,
       noSecrets,
     });
@@ -860,7 +890,7 @@ async function handleClaude(args: string[]): Promise<void> {
  * agent through the broker (chat / DMs / objectives / `csuite push`).
  * Channel events arrive at codex as `turn/start` (when idle) or
  * `turn/steer` (mid-turn) — the structural equivalent of claude's
- * `notifications/claude/channel` ambient injection.
+ * streaming-input injection.
  *
  * Arg handling: `--url` and `--token` are csuite knobs; `--no-trace`,
  * `--cwd`, `--model`, and `--resume` are runner knobs. Everything after
@@ -999,14 +1029,15 @@ async function handleCodex(args: string[]): Promise<void> {
 }
 
 /**
- * `csuite mcp-bridge` — internal verb spawned by agents via `.mcp.json`.
+ * `csuite mcp-bridge` — internal verb spawned by agents as their
+ * `csuite` MCP server.
  *
  * Hidden from the top-level `--help` usage because members never
- * invoke it directly; the `csuite claude` runner generates the
- * `.mcp.json` entry that points here. If a member does run it by
- * hand, the bridge will immediately error out with "CSUITE_RUNNER_SOCKET
- * is required" which is the closest thing we can give them to a
- * useful message.
+ * invoke it directly; each runner injects the MCP server entry that
+ * points here (SDK options for claude, config.toml for codex). If a
+ * member does run it by hand, the bridge will immediately error out
+ * with "CSUITE_RUNNER_SOCKET is required" which is the closest thing
+ * we can give them to a useful message.
  */
 async function handleMcpBridge(_args: string[]): Promise<void> {
   // The bridge ignores args entirely — it reads config only from

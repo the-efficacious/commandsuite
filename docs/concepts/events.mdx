@@ -61,19 +61,17 @@ Render `image/*` types inline; everything else as a download chip.
 4. SSE forwarder ── runner's forwarder loop receives the SSE frame.
                     Suppresses self-echoes for chat-shaped messages.
 
-5. Notification  ── runner wraps the event as an `mcp_notification`
-                    IPC frame and sends it to the bridge.
+5. Channel sink  ── runner delivers the event to the adapter's
+                    channel sink, which renders it as a
+                    `<channel>`-tagged text block.
 
-6. MCP delivery  ── claude: bridge emits a real
-                    `notifications/claude/channel` MCP notification
-                    on stdio.
-                    codex: channel sink dispatches as `turn/start`
-                    (idle) or `turn/steer` (active) JSON-RPC.
+6. Delivery      ── claude: injected as an Agent SDK streaming-input
+                    user message (queued natively if mid-turn).
+                    codex: dispatched as `turn/start` (idle) or
+                    `turn/steer` (active) JSON-RPC.
 
-7. Agent reacts  ── claude wraps the content in a `<channel>` tag
-                    and treats it as ambient input.
-                    codex receives it as a UserInput item in its
-                    next model call.
+7. Agent reacts  ── the model reads the `<channel>` framing as
+                    ambient team signal, not fresh operator input.
 ```
 
 No polling. No inbox to drain.
@@ -114,10 +112,10 @@ nobody appears in a `channel_members` row for it. `chan:<id>` and
 
 Both runners present incoming events to the agent inside an
 unmistakable framing wrapper so the model treats it as ambient
-signal, not fresh user input.
+signal, not fresh user input — the rendering is shared
+(`channel-format.ts`).
 
-For claude (translated through the
-`notifications/claude/channel` capability):
+For claude (injected as a streaming-input user message):
 
 ```xml
 <channel source="csuite" thread="chan:abc-123" from="alice"
