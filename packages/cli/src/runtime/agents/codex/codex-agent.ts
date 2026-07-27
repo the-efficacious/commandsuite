@@ -5,7 +5,7 @@
  * Framework-specific knowledge lives here and ONLY here:
  *
  *   - locating the `codex` binary
- *   - the buffering notification sink (broker events queue until the
+ *   - the buffering channel sink (broker events queue until the
  *     app-server handshake completes, then drain as `turn/start` /
  *     `turn/steer` dispatches through the channel sink)
  *   - the `reject-new` second-bridge policy (codex spawns one bridge
@@ -21,7 +21,7 @@
  * ends the session gracefully rather than being forwarded.
  */
 
-import type { ForwarderNotificationSink } from '../../forwarder.js';
+import type { ChannelEvent, ChannelEventSink } from '../../forwarder.js';
 import { type HudHandle, startHud } from '../../hud.js';
 import type {
   AgentAdapter,
@@ -59,15 +59,13 @@ export interface CodexAdapterOptions {
   codexArgs?: string[];
 }
 
-type SinkArgs = Parameters<ForwarderNotificationSink['notification']>[0];
-
 export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
   let codexBinary = '';
 
-  // Buffering notification sink. The runner needs a sink up front, but
-  // the codex channel sink can't exist until after spawnCodex creates
-  // the JSON-RPC client. Notifications queue until the real sink is
-  // attached, then drain in order.
+  // Buffering channel sink. The runner needs a sink up front, but the
+  // codex channel sink can't exist until after spawnCodex creates the
+  // JSON-RPC client. Events queue until the real sink is attached,
+  // then drain in order.
   //
   // Why a queue (not a drop): the broker's SSE subscription replays
   // any unread messages immediately on connect. Codex cold-start
@@ -76,15 +74,15 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
   // meant the agent missed the very first messages in its inbox —
   // including any DM addressed at it that arrived while it was
   // offline. The queue closes that gap.
-  let liveSink: ForwarderNotificationSink | null = null;
-  const pendingArgs: SinkArgs[] = [];
-  const sinkWrapper: ForwarderNotificationSink = {
-    async notification(args) {
+  let liveSink: ChannelEventSink | null = null;
+  const pendingEvents: ChannelEvent[] = [];
+  const sinkWrapper: ChannelEventSink = {
+    async deliver(event) {
       if (liveSink === null) {
-        pendingArgs.push(args);
+        pendingEvents.push(event);
         return;
       }
-      await liveSink.notification(args);
+      await liveSink.deliver(event);
     },
   };
 
@@ -101,7 +99,7 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
 
     runnerOptions() {
       return {
-        notificationSink: sinkWrapper,
+        channelSink: sinkWrapper,
         // Codex spawns a fresh `csuite mcp-bridge` per thread — including
         // every subagent it dispatches. Those extra bridges would displace
         // the root thread's bridge under the default `displace-old`,
@@ -146,14 +144,14 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
       // Attach the live sink and drain anything the forwarder queued
       // while codex was cold-starting.
       liveSink = spawned.channelSink;
-      if (pendingArgs.length > 0) {
-        log('codex: draining pre-attach broker queue', { queued: pendingArgs.length });
-        const drain = pendingArgs.splice(0, pendingArgs.length);
-        for (const args of drain) {
+      if (pendingEvents.length > 0) {
+        log('codex: draining pre-attach broker queue', { queued: pendingEvents.length });
+        const drain = pendingEvents.splice(0, pendingEvents.length);
+        for (const event of drain) {
           try {
-            await spawned.channelSink.notification(args);
+            await spawned.channelSink.deliver(event);
           } catch (err) {
-            log('codex: drain notification failed', {
+            log('codex: drain delivery failed', {
               error: err instanceof Error ? err.message : String(err),
             });
           }

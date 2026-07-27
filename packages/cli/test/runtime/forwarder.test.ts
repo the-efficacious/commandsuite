@@ -1,15 +1,15 @@
 /**
  * Forwarder routing tests.
  *
- * The forwarder reads broker SSE messages and emits each one as a
- * `notifications/claude/channel` MCP notification with structured
- * meta. The classification of `meta.thread` is the agent's only clue
- * about whether a message is a DM, a team broadcast, or a post into
- * a named channel — get that wrong and channel posts arrive at the
- * agent indistinguishable from DMs.
+ * The forwarder reads broker SSE messages and delivers each one as a
+ * typed `ChannelEvent` (content + structured meta) to the runner's
+ * channel sink. The classification of `meta.thread` is the agent's
+ * only clue about whether a message is a DM, a team broadcast, or a
+ * post into a named channel — get that wrong and channel posts arrive
+ * at the agent indistinguishable from DMs.
  *
  * We exercise `forwardMessage` indirectly by driving `runForwarder`
- * with a fake broker stream + a capturing notification sink.
+ * with a fake broker stream + a capturing channel sink.
  */
 
 import type { Client as BrokerClient } from 'csuite-sdk/client';
@@ -17,9 +17,9 @@ import type { Message } from 'csuite-sdk/types';
 import { describe, expect, it, vi } from 'vitest';
 import { runForwarder } from '../../src/runtime/forwarder.js';
 
-interface CapturedNotification {
-  method: string;
-  params: { content: string; meta: Record<string, string> };
+interface CapturedEvent {
+  content: string;
+  meta: Record<string, string>;
 }
 
 function makeBrokerClient(
@@ -69,13 +69,13 @@ async function captureNotifications(
   messages: Message[],
   selfName = 'me',
   channels: Array<{ id: string; slug: string }> = [],
-): Promise<CapturedNotification[]> {
-  const captured: CapturedNotification[] = [];
+): Promise<CapturedEvent[]> {
+  const captured: CapturedEvent[] = [];
   const { client } = makeBrokerClient(messages, channels);
   const ctrl = new AbortController();
   const sink = {
-    notification: async (args: { method: string; params: Record<string, unknown> }) => {
-      captured.push(args as CapturedNotification);
+    deliver: async (event: CapturedEvent) => {
+      captured.push(event);
       // Stop after the last fixture has been forwarded so the test
       // doesn't hang.
       if (captured.length === messages.filter((m) => m.from !== selfName).length) {
@@ -86,7 +86,7 @@ async function captureNotifications(
     },
   };
   await runForwarder({
-    server: sink,
+    sink,
     brokerClient: client,
     name: selfName,
     signal: ctrl.signal,
@@ -101,9 +101,9 @@ describe('forwarder thread classification', () => {
       makeMessage({ id: 'm-broadcast', to: null, from: 'director' }),
     ]);
     expect(captured).toHaveLength(1);
-    expect(captured[0]?.params.meta.thread).toBe('primary');
-    expect(captured[0]?.params.meta.channel).toBeUndefined();
-    expect(captured[0]?.params.meta.target).toBeUndefined();
+    expect(captured[0]?.meta.thread).toBe('primary');
+    expect(captured[0]?.meta.channel).toBeUndefined();
+    expect(captured[0]?.meta.target).toBeUndefined();
   });
 
   it('marks targeted DMs as thread=dm with target=<recipient>', async () => {
@@ -111,9 +111,9 @@ describe('forwarder thread classification', () => {
       makeMessage({ id: 'm-dm', to: 'me', from: 'director' }),
     ]);
     expect(captured).toHaveLength(1);
-    expect(captured[0]?.params.meta.thread).toBe('dm');
-    expect(captured[0]?.params.meta.target).toBe('me');
-    expect(captured[0]?.params.meta.channel).toBeUndefined();
+    expect(captured[0]?.meta.thread).toBe('dm');
+    expect(captured[0]?.meta.target).toBe('me');
+    expect(captured[0]?.meta.channel).toBeUndefined();
   });
 
   it('marks channel posts as thread=channel with channel=<id> (regression)', async () => {
@@ -130,7 +130,7 @@ describe('forwarder thread classification', () => {
       }),
     ]);
     expect(captured).toHaveLength(1);
-    const meta = captured[0]?.params.meta;
+    const meta = captured[0]?.meta;
     expect(meta?.thread).toBe('channel');
     expect(meta?.channel).toBe('eng-id-123');
     // No `target` for channel posts — the per-recipient `to` stamp
@@ -151,7 +151,7 @@ describe('forwarder thread classification', () => {
       'me',
       [{ id: 'eng-id-123', slug: 'engineering' }],
     );
-    const meta = captured[0]?.params.meta;
+    const meta = captured[0]?.meta;
     expect(meta?.thread).toBe('channel');
     expect(meta?.channel).toBe('eng-id-123');
     expect(meta?.channel_slug).toBe('engineering');
@@ -170,7 +170,7 @@ describe('forwarder thread classification', () => {
       'me',
       [{ id: 'other-id', slug: 'other' }],
     );
-    const meta = captured[0]?.params.meta;
+    const meta = captured[0]?.meta;
     expect(meta?.channel).toBe('ghost-id');
     expect(meta?.channel_slug).toBeUndefined();
   });
@@ -187,7 +187,7 @@ describe('forwarder thread classification', () => {
         data: { channel: 'FAKE-ID', channel_slug: 'fake-slug' },
       }),
     ]);
-    const meta = captured[0]?.params.meta;
+    const meta = captured[0]?.meta;
     expect(meta?.thread).toBe('dm');
     expect(meta?.channel).toBeUndefined();
     expect(meta?.channel_slug).toBeUndefined();
@@ -205,8 +205,8 @@ describe('forwarder thread classification', () => {
         data: { thread: 'chan:general' },
       }),
     ]);
-    expect(captured[0]?.params.meta.thread).toBe('primary');
-    expect(captured[0]?.params.meta.channel).toBeUndefined();
+    expect(captured[0]?.meta.thread).toBe('primary');
+    expect(captured[0]?.meta.channel).toBeUndefined();
   });
 
   it('does not let a sender override `thread` via data spoofing', async () => {
@@ -221,7 +221,7 @@ describe('forwarder thread classification', () => {
         data: { thread: 'primary' }, // not chan:* — straight spoof attempt
       }),
     ]);
-    expect(captured[0]?.params.meta.thread).toBe('dm');
+    expect(captured[0]?.meta.thread).toBe('dm');
   });
 
   it('drops self-echoes', async () => {
@@ -229,7 +229,7 @@ describe('forwarder thread classification', () => {
       makeMessage({ id: 'm-self', from: 'me', to: null }),
       makeMessage({ id: 'm-other', from: 'director', to: null }),
     ]);
-    expect(captured.map((c) => c.params.meta.msg_id)).toEqual(['m-other']);
+    expect(captured.map((c) => c.meta.msg_id)).toEqual(['m-other']);
   });
 });
 
@@ -245,7 +245,7 @@ describe('forwarder data passthrough', () => {
         },
       }),
     ]);
-    const meta = captured[0]?.params.meta;
+    const meta = captured[0]?.meta;
     expect(meta?.kind).toBe('announcement');
     expect(meta?.urgency).toBe('7');
     expect(meta?.actionable).toBe('true');
@@ -258,7 +258,7 @@ describe('forwarder data passthrough', () => {
         data: { nested: { foo: 'bar' }, list: [1, 2, 3] },
       }),
     ]);
-    const meta = captured[0]?.params.meta;
+    const meta = captured[0]?.meta;
     expect(meta?.nested).toBeUndefined();
     expect(meta?.list).toBeUndefined();
   });
@@ -267,6 +267,6 @@ describe('forwarder data passthrough', () => {
     const captured = await captureNotifications([
       makeMessage({ from: 'director', data: { 'kind-of': 'announcement' } }),
     ]);
-    expect(captured[0]?.params.meta.kind_of).toBe('announcement');
+    expect(captured[0]?.meta.kind_of).toBe('announcement');
   });
 });

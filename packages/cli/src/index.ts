@@ -890,7 +890,7 @@ async function handleClaude(args: string[]): Promise<void> {
  * agent through the broker (chat / DMs / objectives / `csuite push`).
  * Channel events arrive at codex as `turn/start` (when idle) or
  * `turn/steer` (mid-turn) — the structural equivalent of claude's
- * `notifications/claude/channel` ambient injection.
+ * streaming-input injection.
  *
  * Arg handling: `--url` and `--token` are csuite knobs; `--no-trace`,
  * `--cwd`, `--model`, and `--resume` are runner knobs. Everything after

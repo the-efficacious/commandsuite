@@ -1,13 +1,12 @@
 /**
  * Claude channel sink + message queue unit tests.
  *
- * The sink is the claude runner's `ForwarderNotificationSink`: broker
- * channel events render as `<channel>` blocks, bundle within a window,
- * and land on the streaming-input queue as single user messages. The
+ * The sink is the claude runner's `ChannelEventSink`: broker channel
+ * events render as `<channel>` blocks, bundle within a window, and
+ * land on the streaming-input queue as single user messages. The
  * queue is the async generator the Agent SDK consumes.
  */
 
-import { MCP_CHANNEL_NOTIFICATION } from 'csuite-sdk/protocol';
 import { describe, expect, it } from 'vitest';
 import {
   ClaudeMessageQueue,
@@ -16,11 +15,8 @@ import {
 
 const noopLog = (): void => {};
 
-function channelArgs(body: string, meta: Record<string, string> = {}) {
-  return {
-    method: MCP_CHANNEL_NOTIFICATION,
-    params: { content: body, meta: { kind: 'chat', from: 'director', ...meta } },
-  };
+function channelEvent(body: string, meta: Record<string, string> = {}) {
+  return { content: body, meta: { kind: 'chat', from: 'director', ...meta } };
 }
 
 describe('ClaudeMessageQueue', () => {
@@ -66,8 +62,8 @@ describe('createClaudeChannelSink', () => {
   it('bundles a burst into one user message', async () => {
     const queue = new ClaudeMessageQueue();
     const sink = createClaudeChannelSink({ queue, log: noopLog, bundleWindowMs: 20 });
-    await sink.notification(channelArgs('first event'));
-    await sink.notification(channelArgs('second event'));
+    await sink.deliver(channelEvent('first event'));
+    await sink.deliver(channelEvent('second event'));
     expect(queue.depth).toBe(0); // still inside the bundle window
     await new Promise((r) => setTimeout(r, 60));
     expect(queue.depth).toBe(1);
@@ -86,17 +82,9 @@ describe('createClaudeChannelSink', () => {
   it('flushNow drains the buffer without waiting for the window', async () => {
     const queue = new ClaudeMessageQueue();
     const sink = createClaudeChannelSink({ queue, log: noopLog, bundleWindowMs: 5_000 });
-    await sink.notification(channelArgs('urgent'));
+    await sink.deliver(channelEvent('urgent'));
     expect(queue.depth).toBe(0);
     sink.flushNow();
     expect(queue.depth).toBe(1);
-  });
-
-  it('ignores non-channel notifications', async () => {
-    const queue = new ClaudeMessageQueue();
-    const sink = createClaudeChannelSink({ queue, log: noopLog, bundleWindowMs: 5 });
-    await sink.notification({ method: 'notifications/tools/list_changed', params: {} });
-    sink.flushNow();
-    expect(queue.depth).toBe(0);
   });
 });

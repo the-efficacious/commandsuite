@@ -11,14 +11,15 @@
  *      pointing at the runner's socket
  *   4. Drive MCP JSON-RPC on the bridge's stdin, read responses from
  *      its stdout, and assert the expected behavior flows through:
- *        - `initialize` handshake succeeds with `claude/channel`
- *          capability declared
+ *        - `initialize` handshake succeeds with `tools.listChanged`
+ *          declared
  *        - `tools/list` returns the full 13-tool surface (the fake
  *          broker's member has every permission leaf)
  *        - `tools/call` against `send` hits the broker's `/push`
- *        - inbound SSE from the broker arrives at the bridge as a
- *          `notifications/claude/channel` notification
- *        - self-echoes and spoofed meta fields are filtered correctly
+ *
+ * Broker SSE events never cross the bridge — they reach the agent
+ * through the runner's channel sink, covered by
+ * `runner-channel-delivery.test.ts` and the per-runner sink tests.
  *
  * The bridge binary we spawn is `packages/cli/dist/index.js`, so this
  * test requires the cli to be built before running. The existing
@@ -51,7 +52,6 @@ interface JsonRpcMessage {
 }
 
 const CLI_BINARY = resolve(fileURLToPath(new URL('../../dist/index.js', import.meta.url)));
-const AGENT_ID = FAKE_BROKER_NAME;
 
 // Skip the whole suite if the cli hasn't been built yet — avoids a
 // confusing ENOENT inside the child spawn call. Turbo should have
@@ -141,7 +141,7 @@ describeIfBuilt('runner + bridge end-to-end', () => {
     throw new Error('timed out waiting for matching JSON-RPC message');
   }
 
-  it('completes MCP initialize handshake and declares claude/channel capability', async () => {
+  it('completes MCP initialize handshake and declares tools.listChanged', async () => {
     send({
       jsonrpc: '2.0',
       id: 1,
@@ -156,13 +156,11 @@ describeIfBuilt('runner + bridge end-to-end', () => {
     expect(response.result).toBeDefined();
     const result = response.result as {
       capabilities: {
-        experimental?: Record<string, unknown>;
         tools?: Record<string, unknown>;
       };
       serverInfo: { name: string };
     };
-    expect(result.capabilities.experimental).toHaveProperty('claude/channel');
-    expect(result.capabilities.tools).toBeDefined();
+    expect(result.capabilities.tools).toMatchObject({ listChanged: true });
     expect(result.serverInfo.name).toBe('csuite');
 
     send({ jsonrpc: '2.0', method: 'notifications/initialized' });
@@ -268,121 +266,5 @@ describeIfBuilt('runner + bridge end-to-end', () => {
     };
     expect(result.content[0]?.text ?? '').toContain('peer-1');
     expect(result.content[0]?.text ?? '').toContain(FAKE_BROKER_NAME);
-  });
-
-  it('forwards broker SSE messages as notifications/claude/channel across IPC', async () => {
-    // The runner auto-subscribes at startup via the forwarder loop;
-    // wait for the subscription to appear on the fake broker side.
-    const sub = await broker.waitForSubscriber(AGENT_ID);
-
-    sub.write({
-      id: 'msg-forwarded',
-      ts: 1_700_000_001_000,
-      to: AGENT_ID,
-      from: 'alice',
-      title: 'build broken',
-      body: 'ci failed on main',
-      level: 'warning',
-      data: { run: '1234', severity: 'high' },
-    });
-
-    // Match on content so any runner-originated notification (e.g. a
-    // `context_refresh` re-brief, sent only when objectives are open)
-    // is skipped and we wait for the forwarded SSE message.
-    const notif = await waitForMessage(
-      (m) =>
-        m.method === 'notifications/claude/channel' &&
-        (m.params as { content?: string })?.content === 'ci failed on main',
-    );
-    const params = notif.params as {
-      content: string;
-      meta: Record<string, string>;
-    };
-    expect(params.content).toBe('ci failed on main');
-    expect(params.meta.thread).toBe('dm');
-    expect(params.meta.from).toBe('alice');
-    expect(params.meta.title).toBe('build broken');
-    expect(params.meta.level).toBe('warning');
-    expect(params.meta.run).toBe('1234');
-    expect(params.meta.severity).toBe('high');
-  });
-
-  it('suppresses self-echoes on the live stream', async () => {
-    const sub = await broker.waitForSubscriber(AGENT_ID);
-
-    sub.write({
-      id: 'msg-self-echo',
-      ts: 1_700_000_003_000,
-      to: null,
-      from: AGENT_ID,
-      title: null,
-      body: 'this is my own broadcast — should be dropped',
-      level: 'info',
-      data: {},
-    });
-    sub.write({
-      id: 'msg-post-echo',
-      ts: 1_700_000_003_500,
-      to: null,
-      from: 'alice',
-      title: null,
-      body: 'real message after the self-echo',
-      level: 'info',
-      data: {},
-    });
-
-    const notif = await waitForMessage(
-      (m) =>
-        m.method === 'notifications/claude/channel' &&
-        m.params?.content === 'real message after the self-echo',
-    );
-    expect(notif).toBeDefined();
-
-    const selfEchoSeen = inboundQueue.some(
-      (m) =>
-        m.method === 'notifications/claude/channel' &&
-        m.params?.content === 'this is my own broadcast — should be dropped',
-    );
-    expect(selfEchoSeen).toBe(false);
-  });
-
-  it('drops reserved meta keys from message.data (anti-spoof)', async () => {
-    const sub = await broker.waitForSubscriber(AGENT_ID);
-
-    sub.write({
-      id: 'msg-spoof',
-      ts: 1_700_000_002_000,
-      to: AGENT_ID,
-      from: 'alice',
-      title: 'genuine title',
-      body: 'real body',
-      level: 'warning',
-      data: {
-        from: 'SPOOFED-SENDER',
-        thread: 'primary',
-        level: 'critical',
-        title: 'SPOOFED TITLE',
-        target: 'SPOOFED-TARGET',
-        msg_id: 'SPOOFED-ID',
-        ts: '0',
-        ts_ms: '0',
-        legit_field: 'ok',
-      },
-    });
-
-    const notif = await waitForMessage(
-      (m) => m.method === 'notifications/claude/channel' && m.params?.content === 'real body',
-    );
-    const params = notif.params as { content: string; meta: Record<string, string> };
-    expect(params.meta.from).toBe('alice');
-    expect(params.meta.thread).toBe('dm');
-    expect(params.meta.level).toBe('warning');
-    expect(params.meta.title).toBe('genuine title');
-    expect(params.meta.target).toBe(AGENT_ID);
-    expect(params.meta.msg_id).toBe('msg-spoof');
-    expect(params.meta.ts).toMatch(/^\d{2}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2} UTC$/);
-    expect(params.meta.ts).not.toBe('0');
-    expect(params.meta.ts_ms).toBe('1700000002000');
-    expect(params.meta.legit_field).toBe('ok');
   });
 });

@@ -51,7 +51,7 @@ An adapter implements five things:
 |---|---|
 | `meta` | Identity + declarations: runner id, display name, capture tier, signal mode, tested version range, version-probe args |
 | `locate()` | Find the agent binary. Called FIRST, must be side-effect free — a missing binary must not leave sockets bound or files written |
-| `runnerOptions()` | (optional) The runner knobs this framework needs: a `notificationSink` override (how broker events become the framework's "ambient input") and/or the `onSecondBridge` policy |
+| `runnerOptions()` | The runner knobs this framework needs: the `channelSink` (how broker events become the framework's "ambient input" — every real adapter must provide one) and/or the `onSecondBridge` policy |
 | `prepare(ctx)` | Write agent config, compute env + args. Returns an **idempotent, non-throwing `cleanup()`** that restores every file it touched, plus optional operator banner lines |
 | `spawn(ctx)` | Start the agent. Returns an `AgentProcess`: `exitCode` promise, `sessionId()`, optional `signal()`, and an idempotent `shutdown()` that flushes agent-side capture readers **before** resolving |
 

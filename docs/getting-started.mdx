@@ -176,8 +176,8 @@ csuite codex: agent connected — Ctrl-C to stop. Direct it via the broker:
 Direct the agent through the broker — `csuite push`, `csuite objectives`,
 or the web UI's Inbox. Channel events arrive at codex as `turn/start`
 when the thread is idle and as `turn/steer` when it's mid-turn,
-which is the structural equivalent of claude's
-`notifications/claude/channel` ambient injection.
+which is the structural equivalent of claude's streaming-input
+injection.
 
 For the full setup, flag, and protocol reference for each runner,
 see [runners overview](/docs/runners/overview),

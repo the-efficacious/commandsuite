@@ -1,6 +1,6 @@
 /**
- * Claude channel sink — implements `ForwarderNotificationSink` so the
- * runner forwarder can dispatch broker SSE events at the claude runner
+ * Claude channel sink — implements `ChannelEventSink` so the runner
+ * forwarder can deliver broker SSE events to the claude runner
  * without knowing the agent runs on the Agent SDK.
  *
  * Broker events render as `<channel>` tagged text (shared format with
@@ -23,8 +23,7 @@
  */
 
 import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
-import { MCP_CHANNEL_NOTIFICATION } from 'csuite-sdk/protocol';
-import type { ForwarderNotificationSink } from '../forwarder.js';
+import type { ChannelEventSink } from '../forwarder.js';
 import { formatChannelEvent } from './channel-format.js';
 
 const DEFAULT_BUNDLE_WINDOW_MS = 200;
@@ -81,7 +80,7 @@ export interface ClaudeChannelSinkOptions {
   bundleWindowMs?: number;
 }
 
-export interface ClaudeChannelSink extends ForwarderNotificationSink {
+export interface ClaudeChannelSink extends ChannelEventSink {
   /**
    * Flush the bundle buffer immediately. The adapter calls this before
    * ending the input stream so a just-arrived event isn't stranded in
@@ -123,17 +122,12 @@ export function createClaudeChannelSink(opts: ClaudeChannelSinkOptions): ClaudeC
   };
 
   return {
-    async notification(args) {
-      // Only the channel notification (which includes the runner's
-      // `context_refresh` re-briefs — same method). Capability updates
+    async deliver(event) {
+      // Channel events include the runner's `context_refresh`
+      // re-briefs — same path. Capability updates
       // (`tools/list_changed`) reach claude through the bridge's stdio
       // MCP transport, not this sink.
-      if (args.method !== MCP_CHANNEL_NOTIFICATION) {
-        opts.log('claude-sink: ignored non-channel notification', { method: args.method });
-        return;
-      }
-      const text = formatChannelEvent(args.params);
-      if (text === null) return;
+      const text = formatChannelEvent(event);
       opts.log('claude-sink: received channel event', {
         bytes: text.length,
         bufferDepth: buffer.length + 1,

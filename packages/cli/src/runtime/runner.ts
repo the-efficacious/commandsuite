@@ -17,10 +17,11 @@
  * bridge connects, the runner waits for `mcp_request` frames and
  * dispatches them to the existing tool handlers (`handleToolCall` +
  * `defineTools`), then replies with `mcp_response` frames. Inbound
- * SSE events from the broker are pushed out to the connected bridge
- * as `mcp_notification` frames; the runner's own `context_refresh`
- * re-briefs ride the same path (or the per-runner notification sink
- * for codex).
+ * SSE events from the broker are delivered to the adapter-supplied
+ * channel sink (streaming input for claude, turn dispatches for
+ * codex); the runner's own `context_refresh` re-briefs ride the same
+ * sink. The only notification that crosses the bridge is a genuine
+ * `tools/list_changed`.
  *
  * Runners are single-bridge. If a second bridge connects while one
  * is already attached, the newer connection wins and the older one
@@ -49,12 +50,11 @@ import { createServer as createNetServer, type Server as NetServer } from 'node:
 import { createInterface } from 'node:readline';
 import { registerSecretValues } from 'csuite-core';
 import { Client as BrokerClient, ClientError } from 'csuite-sdk/client';
-import { MCP_CHANNEL_NOTIFICATION } from 'csuite-sdk/protocol';
 import { isReservedEnvName } from 'csuite-sdk/schemas';
 import type { BriefingResponse, Objective, ResolvedToolSource } from 'csuite-sdk/types';
 import { CLI_VERSION } from '../version.js';
 import { startActivityReporter } from './busy-reporter.js';
-import type { ForwarderNotificationSink } from './forwarder.js';
+import type { ChannelEventSink } from './forwarder.js';
 import { runForwarder } from './forwarder.js';
 import {
   defaultSocketPath,
@@ -135,19 +135,21 @@ export interface RunnerOptions {
    */
   presence?: Presence;
   /**
-   * Override the notification sink the forwarder writes broker SSE
-   * events into. Default: a bridge-IPC shim that wraps each event as
-   * an `mcp_notification` frame and pushes it to the connected MCP
-   * bridge — this is what claude uses (the bridge re-emits the
-   * notification to claude over its stdio MCP transport).
+   * The channel sink the forwarder delivers broker SSE events into —
+   * the per-framework piece that turns team traffic into the agent's
+   * ambient input. The claude adapter renders events into the Agent
+   * SDK's streaming input; the codex adapter converts each into a
+   * `turn/start` or `turn/steer` JSON-RPC dispatch. The forwarder +
+   * tools dispatch stay identical across runners; only this delivery
+   * seam differs per agent framework.
    *
-   * The codex runner overrides this with a sink that converts each
-   * event into a `turn/start` or `turn/steer` JSON-RPC dispatch
-   * against the `codex app-server`. Keeps the forwarder + tools
-   * dispatch identical across runners — only the outbound notification
-   * transport differs per agent framework.
+   * Every real adapter must provide one. When absent (bare
+   * `startRunner` in tests, a misconfigured adapter), events are
+   * dropped with a log line — they still land in server history, and
+   * the agent catches up via `recent` — but the member is effectively
+   * deaf to live traffic.
    */
-  notificationSink?: ForwarderNotificationSink;
+  channelSink?: ChannelEventSink;
 }
 
 export interface RunnerHandle {
@@ -487,28 +489,25 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
     });
   }
 
-  // SSE forwarder: subscribe to the broker for this slot's name,
-  // wrap inbound messages as `notifications/claude/channel`
-  // notifications, and send them to the bridge over IPC. This is the
-  // substitute for the MCP `Server.notification()` call that used to
-  // live inside the link — the bridge side converts incoming
-  // notification frames into real MCP notifications on the agent's
-  // stdio transport.
-  const sink: ForwarderNotificationSink =
-    options.notificationSink ??
-    forwarderShim((method, params) => {
-      if (activeBridge === null) {
-        // No bridge attached — drop. Messages still land in server
-        // history; agent reads them via `recent` when it reconnects.
-        return;
-      }
-      activeBridge.sendNotification({ kind: 'mcp_notification', method, params });
-    });
+  // Channel sink: where the forwarder delivers broker SSE events.
+  // Adapter-supplied (streaming input for claude, turn dispatches for
+  // codex); without one, events are dropped with a log line — they
+  // still land in server history and the agent catches up via
+  // `recent`.
+  const sink: ChannelEventSink = options.channelSink ?? {
+    deliver: async (event) => {
+      log('runner: channel event dropped (no channel sink attached)', {
+        bytes: event.content.length,
+        kind: event.meta.kind ?? null,
+        from: event.meta.from ?? null,
+      });
+    },
+  };
 
   // Real re-brief implementation, now that the sink exists. Rides the
-  // same notification path as broker events, so it renders identically
-  // for both agents (a `<channel>` block for claude, a turn dispatch
-  // for codex).
+  // same delivery path as broker events, so it renders identically
+  // for both agents (a `<channel>` block into claude's streaming
+  // input, a turn dispatch for codex).
   sendRebrief = (reason) => {
     if (openObjectives.length === 0) return;
     const now = Date.now();
@@ -519,18 +518,15 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
       openObjectives: openObjectives.length,
     });
     void sink
-      .notification({
-        method: MCP_CHANNEL_NOTIFICATION,
-        params: {
-          content: composeRebrief(openObjectives),
-          meta: {
-            kind: 'context_refresh',
-            from: 'csuite',
-            reason,
-            level: 'info',
-            ts: formatAgentTimestamp(now),
-            ts_ms: String(now),
-          },
+      .deliver({
+        content: composeRebrief(openObjectives),
+        meta: {
+          kind: 'context_refresh',
+          from: 'csuite',
+          reason,
+          level: 'info',
+          ts: formatAgentTimestamp(now),
+          ts_ms: String(now),
         },
       })
       .catch((err: unknown) => {
@@ -583,7 +579,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
   };
 
   const forwarderPromise = runForwarder({
-    server: sink,
+    sink,
     brokerClient,
     name: briefing.name,
     signal: abortController.signal,
@@ -837,30 +833,6 @@ function createBridgeConnection(socket: Socket, deps: BridgeConnectionDeps): Bri
       if (closed) return;
       send({ kind: 'shutdown', reason });
       cleanup();
-    },
-  };
-}
-
-// ─── Forwarder shim ─────────────────────────────────────────────────
-
-/**
- * The existing `runForwarder` (in `forwarder.ts`) expects an MCP
- * `Server` with a `notification(args)` method. When the runner
- * doesn't own a real MCP server (it delegates that to the bridge),
- * we stub one out: a plain object whose `notification` implementation
- * translates the MCP-style call into an IPC `mcp_notification` frame
- * via a callback.
- *
- * We keep the forwarder's interface unchanged so Phase 5 (trace
- * capture) can reuse it verbatim — the trace layer wraps the forwarder
- * and doesn't care whether its server is real MCP or a runner shim.
- */
-function forwarderShim(
-  send: (method: string, params: Record<string, unknown>) => void,
-): ForwarderNotificationSink {
-  return {
-    notification: async (args) => {
-      send(args.method, args.params);
     },
   };
 }

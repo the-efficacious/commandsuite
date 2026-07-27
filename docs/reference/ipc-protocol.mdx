@@ -144,20 +144,19 @@ agent on stdio. Unsolicited; not correlated to any prior request.
 ```typescript
 {
   kind: 'mcp_notification',
-  method: string,                          // e.g. 'notifications/claude/channel'
+  method: string,                          // e.g. 'notifications/tools/list_changed'
   params: Record<string, unknown> | undefined,
 }
 ```
 
 One method is emitted today:
 
-- `notifications/claude/channel` — broker push events (chat,
-  channel posts, objective lifecycle). Carries `content` (the
-  message body) and `meta` (sender, thread, level, ts, msg_id,
-  arbitrary `data.*` keys). The runner's own `context_refresh`
-  re-briefs (open-plate re-assertion at session attach and after
-  context compaction) use the same method, tagged
-  `meta.kind = "context_refresh"` / `meta.from = "csuite"`.
+- `notifications/tools/list_changed` — the tool-source registry
+  changed for this member (a genuine capability change; never state
+  freshness). Broker push events and the runner's `context_refresh`
+  re-briefs do NOT cross the bridge — they reach the agent through
+  the runner's channel sink (streaming input for claude, turn
+  dispatches for codex).
 
 `notifications/tools/list_changed` fires only for genuine
 capability changes — the runner emits it after a tool-source

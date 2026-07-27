@@ -22,7 +22,7 @@ csuite ships with two runners today:
 
 The runner abstraction is designed so adding a third (Cursor,
 Gemini CLI, your own) is mostly a matter of writing a spawn adapter
-and a notification sink. Everything the runner does on the broker
+and a channel sink. Everything the runner does on the broker
 side — auth, briefing, tools, trace, presence — is shared.
 
 ## What every runner does
@@ -71,8 +71,8 @@ Concretely, on every runner startup:
    proxy, no CA, no TLS interception — capture rides each agent's
    native instrumentation.
 5. **Run the SSE forwarder** — subscribe to `/subscribe?name=<self>`,
-   route inbound chat / objective / channel events to the runner's
-   notification sink.
+   deliver inbound chat / objective / channel events to the
+   adapter's channel sink.
 6. **Spawn the agent** with environment variables wired up
    (`CSUITE_RUNNER_SOCKET`; for claude also the capture host's
    OpenTelemetry export env — `CLAUDE_CODE_ENABLE_TELEMETRY`,
@@ -162,8 +162,8 @@ events reach the agent:
 The structural takeaway: claude and codex receive ambient
 director input through different mechanisms because their underlying
 agent frameworks treat "new input mid-session" differently. csuite
-hides that asymmetry behind the runner's notification sink — the
-sink for claude renders events into the SDK's streaming input; the sink
+hides that asymmetry behind the runner's channel sink — the sink
+for claude renders events into the SDK's streaming input; the sink
 for codex bundles them and dispatches as `turn/start` or `turn/steer`.
 
 For the full per-runner reference, see
@@ -184,7 +184,7 @@ adapter implements only what is genuinely framework-specific:
 
 1. **`locate()`** — find the agent binary, fail fast, no side
    effects.
-2. **`runnerOptions()`** — the notification sink (how broker events
+2. **`runnerOptions()`** — the channel sink (how broker events
    become the framework's "ambient input") and the second-bridge
    policy.
 3. **`prepare(ctx)`** — write agent config / env / args; return an

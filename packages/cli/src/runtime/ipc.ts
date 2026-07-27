@@ -54,10 +54,10 @@ export interface IpcMcpResponse {
 
 /**
  * Runner → bridge: "please emit this MCP notification to the client
- * on stdio." Used for channel events (inbound from SSE), the
- * runner's own `context_refresh` re-briefs, and `tools/list_changed`
- * — which fires only for genuine capability changes (tool-source
- * registry updates), never state freshness.
+ * on stdio." Used only for `tools/list_changed` — which fires for
+ * genuine capability changes (tool-source registry updates), never
+ * state freshness. Channel events and `context_refresh` re-briefs
+ * reach the agent through the runner's channel sink, not the bridge.
  */
 export interface IpcMcpNotification {
   kind: 'mcp_notification';

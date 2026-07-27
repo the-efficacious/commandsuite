@@ -94,12 +94,12 @@ all the broker-facing plumbing — auth, briefing, IPC server, SSE
 forwarder, MCP tool dispatch, capture host, busy reporter — and
 differ only in:
 
-1. **How the agent is spawned.** Claude Code is interactive (TUI);
-   codex is headless under `codex app-server`.
-2. **How broker events reach the agent.** Claude-code: a
-   `notifications/claude/channel` MCP notification. Codex: a
-   `turn/start` (idle) or `turn/steer` (active) JSON-RPC dispatch
-   bundled within a 200ms window.
+1. **How the agent is spawned.** Claude Code runs headlessly under
+   the Claude Agent SDK; codex is headless under `codex app-server`.
+2. **How broker events reach the agent.** Claude: an Agent SDK
+   streaming-input user message. Codex: a `turn/start` (idle) or
+   `turn/steer` (active) JSON-RPC dispatch. Both bundle bursts
+   within a 200ms window and share the `<channel>` rendering.
 3. **How native instrumentation is captured.** Claude Code exports
    OpenTelemetry logs to the broker's OTLP endpoint (the runner
    injects the OTEL export env) plus tool events over a loopback
@@ -109,8 +109,8 @@ differ only in:
 
 The runner core (`startRunner` in
 `packages/cli/src/runtime/runner.ts`) accepts a
-`notificationSink` option that lets each runner override how
-broker events are dispatched. Everything else is shared.
+`channelSink` option through which each adapter defines how
+broker events are delivered. Everything else is shared.
 
 For the per-runner reference see
 [runners overview](/docs/runners/overview),
@@ -191,10 +191,10 @@ For the full breakdown see [permissions](/docs/concepts/permissions).
           back to the runner
 ```
 
-The codex shape is similar but slimmer — codex doesn't read a
-shared `.mcp.json` (we hand it an ephemeral CODEX_HOME instead),
-and the channel sink replaces the `notifications/claude/channel`
-path with `turn/start`/`turn/steer` JSON-RPC dispatches.
+The codex shape is similar — codex gets its config via an ephemeral
+CODEX_HOME instead of the SDK's inline MCP config, and its channel
+sink dispatches `turn/start`/`turn/steer` JSON-RPC instead of
+streaming-input messages.
 
 For the wire format of those IPC frames, see
 [reference/ipc-protocol](/docs/reference/ipc-protocol).
@@ -221,11 +221,10 @@ For the wire format of those IPC frames, see
    subscribers.
 3. Scout's runner is subscribed on `/subscribe?name=scout`. The
    forwarder receives the SSE frame, suppresses self-echoes, and
-   dispatches into the notification sink.
-4. **claude path:** sink wraps as `mcp_notification` IPC
-   frame to the bridge. Bridge emits a real
-   `notifications/claude/channel` MCP notification on stdio.
-   Claude wraps the content in a `<channel>` tag.
+   delivers a typed channel event to the adapter's channel sink.
+4. **claude path:** sink renders the `<channel>`-tagged prose and
+   injects it as an Agent SDK streaming-input user message (queued
+   natively if the agent is mid-turn).
 5. **codex path:** sink buffers (200ms window), then dispatches
    `turn/start` (if idle) or `turn/steer` (if active mid-turn) on
    the JSON-RPC channel. Codex receives a UserInput item carrying

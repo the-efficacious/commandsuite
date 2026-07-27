@@ -1,26 +1,39 @@
 /**
- * Broker → stdio forwarder.
+ * Broker → channel-sink forwarder.
  *
  * Opens a long-lived SSE subscription to the broker for this slot's
- * name and relays every inbound message as a
- * `notifications/claude/channel` JSON-RPC notification on the link's
- * MCP stdio server. Reconnects with exponential backoff on any error.
+ * name and delivers every inbound message as a typed `ChannelEvent`
+ * (content + flat string meta) to the runner's channel sink — the
+ * per-framework adapter piece that turns team traffic into the
+ * agent's ambient input (SDK streaming input for claude, turn
+ * dispatches for codex). Reconnects with exponential backoff on any
+ * error.
  */
 
 import type { Client as BrokerClient } from 'csuite-sdk/client';
-import { MCP_CHANNEL_NOTIFICATION } from 'csuite-sdk/protocol';
 import type { Message } from 'csuite-sdk/types';
 import type { Presence } from './presence.js';
 import { formatAgentTimestamp } from './tools.js';
 
 /**
- * Minimal surface the forwarder needs from its notification sink. In
- * the link this was an `@modelcontextprotocol/sdk` `Server`; in the
- * runner it's a shim that converts the call into an IPC frame. Both
- * satisfy this shape with no `as any` casts.
+ * One broker message, rendered for agent consumption: the body text
+ * plus flat string metadata (`from`, `thread`, `ts`, `kind`, ...).
+ * The meta keys the broker owns are stamped authoritatively here —
+ * see `RESERVED_META_KEYS`.
  */
-export interface ForwarderNotificationSink {
-  notification(args: { method: string; params: Record<string, unknown> }): Promise<void>;
+export interface ChannelEvent {
+  content: string;
+  meta: Record<string, string>;
+}
+
+/**
+ * Where the forwarder delivers channel events. Implemented per agent
+ * framework by the runner adapters (`claude-sink.ts`,
+ * `codex/channel-sink.ts`); the runner's own `context_refresh`
+ * re-briefs ride the same sink.
+ */
+export interface ChannelEventSink {
+  deliver(event: ChannelEvent): Promise<void>;
 }
 
 const BACKOFF_START_MS = 1_000;
@@ -45,7 +58,7 @@ export type ThreadType = 'primary' | 'dm' | 'channel';
 const CHANNEL_THREAD_PREFIX = 'chan:';
 
 export interface ForwarderOptions {
-  server: ForwarderNotificationSink;
+  sink: ChannelEventSink;
   brokerClient: BrokerClient;
   name: string;
   signal: AbortSignal;
@@ -80,7 +93,7 @@ export interface ForwarderOptions {
 }
 
 export async function runForwarder(opts: ForwarderOptions): Promise<void> {
-  const { server, brokerClient, name, signal, log, onObjectiveEvent, onToolSourceEvent, presence } =
+  const { sink, brokerClient, name, signal, log, onObjectiveEvent, onToolSourceEvent, presence } =
     opts;
   let backoff = BACKOFF_START_MS;
 
@@ -172,7 +185,7 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
         // cost the agent a turn to recognise and discard its own
         // output. `recent` still returns self-sends for scrollback.
         if (message.from === name) continue;
-        await forwardMessage(server, message, log, resolveChannelSlug);
+        await forwardMessage(sink, message, log, resolveChannelSlug);
       }
 
       // If we get here, the stream ended cleanly — treat as a reconnect.
@@ -214,7 +227,7 @@ const RESERVED_META_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 async function forwardMessage(
-  server: ForwarderNotificationSink,
+  sink: ChannelEventSink,
   message: Message,
   log: (msg: string, ctx?: Record<string, unknown>) => void,
   resolveChannelSlug?: (id: string) => Promise<string | null>,
@@ -275,15 +288,9 @@ async function forwardMessage(
   }
 
   try {
-    await server.notification({
-      method: MCP_CHANNEL_NOTIFICATION,
-      params: {
-        content: message.body,
-        meta,
-      },
-    });
+    await sink.deliver({ content: message.body, meta });
   } catch (err) {
-    log('failed to emit channel notification', {
+    log('failed to deliver channel event', {
       messageId: message.id,
       error: err instanceof Error ? err.message : String(err),
     });
@@ -309,9 +316,9 @@ function extractChannelId(message: Message): string | null {
 }
 
 /**
- * Channel meta keys must be identifiers (letters, digits, underscore).
- * Anything else is silently dropped on the Claude Code side, so we
- * sanitise here to keep the key stable.
+ * Channel meta keys must be identifiers (letters, digits, underscore)
+ * so they render cleanly as `<channel key="value">` attributes across
+ * every sink; anything else is sanitised here to keep the key stable.
  */
 function sanitizeMetaKey(key: string): string {
   const clean = key.replace(/[^a-zA-Z0-9_]/g, '_');
