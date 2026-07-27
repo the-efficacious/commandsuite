@@ -180,7 +180,10 @@ store: /home/you/.config/csuite/auth.json
 
 `migrate` folds a legacy project-scoped `<dir>/.csuite/auth.json` into
 the global store, scoping its entries to the directory that held it.
-Idempotent, and it leaves the legacy file on disk. If that file was
+A legacy entry never replaces a newer one already saved for the same
+broker and directory, so re-running `csuite connect` before migrating
+keeps the token you just minted. Idempotent, and it leaves the legacy
+file on disk. If that file was
 inside a git working tree, `migrate` says so on stderr and tells you
 to rotate rather than just delete — the token may already be in your
 commit history. See

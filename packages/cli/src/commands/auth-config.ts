@@ -294,9 +294,8 @@ export function saveAuthEntry(entry: AuthConfigEntry, path?: string): void {
   const target = path ?? authStorePath();
   const file = loadAuthStore(target);
   const workspace = entry.workspace === null ? null : canonical(entry.workspace);
-  const next = file.entries.filter(
-    (e) => !(e.url === entry.url && normalizeWorkspace(e.workspace) === workspace),
-  );
+  const key = entryPairKey(entry.url, workspace);
+  const next = file.entries.filter((e) => entryPairKey(e.url, e.workspace) !== key);
   next.push({ ...entry, workspace });
   const out: AuthStoreFile = { schema: AUTH_STORE_SCHEMA, entries: next };
   mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
@@ -305,6 +304,11 @@ export function saveAuthEntry(entry: AuthConfigEntry, path?: string): void {
 
 function normalizeWorkspace(workspace: string | null): string | null {
   return workspace === null ? null : canonical(workspace);
+}
+
+/** Store key for an entry — URL plus canonical workspace, the pair we key on. */
+function entryPairKey(url: string, workspace: string | null): string {
+  return `${url}\0${normalizeWorkspace(workspace) ?? ''}`;
 }
 
 export interface LegacyStoreReport {
@@ -352,24 +356,62 @@ function findGitRoot(start: string): string | null {
   }
 }
 
+export interface MigrationResult extends LegacyStoreReport {
+  /** Entries folded into the global store. */
+  migrated: number;
+  /**
+   * Entries left where they were because the global store already holds a
+   * same-or-newer credential for that `(url, workspace)` pair.
+   */
+  skipped: number;
+}
+
 /**
  * Fold a legacy project-scoped store into the global one, scoping every
  * entry to the directory that held it. Lossless: the legacy file's location
  * IS the workspace the new format records.
  *
+ * A legacy entry never displaces a same-or-newer one already in the store.
+ * That guard is load-bearing rather than defensive: `csuite connect` saves
+ * the token it has just minted and THEN migrates in passing, so on the
+ * common upgrade path — re-enrolling in a project that still has a
+ * `.csuite/auth.json` for the same broker — the two writes collide on the
+ * same `(url, workspace)` key and the stale token would win. The operator
+ * would be told the enrollment succeeded while the CLI kept the credential
+ * the enrollment was meant to replace. Ties keep the incumbent: the store
+ * entry was written later in wall-clock terms even when `savedAt` matches.
+ *
  * The legacy file is left on disk — deleting a credential file on the
  * operator's behalf is not ours to do, and if it is in git history the
- * remedy is rotation, not removal. Returns what was migrated, or null when
- * there was nothing to migrate.
+ * remedy is rotation, not removal. Returns what happened, or null when
+ * there was no legacy store to consider.
  */
 export function migrateLegacyStore(
   options: { cwd?: string; path?: string } = {},
-): LegacyStoreReport | null {
+): MigrationResult | null {
   const cwd = options.cwd ?? process.cwd();
   const report = inspectLegacyStore(cwd);
   if (report === null || report.entries === 0) return null;
-  for (const entry of loadAuthStore(report.path).entries) {
-    saveAuthEntry({ ...entry, workspace: report.workspace }, options.path);
+
+  const existing = new Map<string, number>();
+  for (const e of loadAuthStore(options.path).entries) {
+    existing.set(entryPairKey(e.url, e.workspace), e.savedAt);
   }
-  return report;
+
+  let migrated = 0;
+  let skipped = 0;
+  for (const entry of loadAuthStore(report.path).entries) {
+    const key = entryPairKey(entry.url, report.workspace);
+    const incumbent = existing.get(key);
+    if (incumbent !== undefined && incumbent >= entry.savedAt) {
+      skipped += 1;
+      continue;
+    }
+    saveAuthEntry({ ...entry, workspace: report.workspace }, options.path);
+    // Track what we just wrote so a legacy file holding two entries for the
+    // same broker resolves to the newer of them rather than the last one.
+    existing.set(key, entry.savedAt);
+    migrated += 1;
+  }
+  return { ...report, migrated, skipped };
 }

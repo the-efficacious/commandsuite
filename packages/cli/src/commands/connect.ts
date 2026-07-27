@@ -31,12 +31,7 @@
 import { relative, resolve } from 'node:path';
 import { Client, ClientError } from 'csuite-sdk/client';
 import { DEFAULT_PORT, ENV } from 'csuite-sdk/protocol';
-import {
-  authStorePath,
-  inspectLegacyStore,
-  migrateLegacyStore,
-  saveAuthEntry,
-} from './auth-config.js';
+import { authStorePath, migrateLegacyStore, saveAuthEntry } from './auth-config.js';
 import { UsageError } from './errors.js';
 
 export { UsageError };
@@ -356,30 +351,43 @@ function displayDir(path: string): string {
  *
  * Migration is lossless — the legacy file's location is exactly the
  * workspace the new format records — so this is safe to do in passing
- * rather than making it a separate chore. The file is left on disk: a
- * credential is not ours to delete, and if it is inside a git working tree
- * the real remedy is rotation, not removal, because the token may already
- * be in commit history. That case gets an explicit warning on stderr, since
- * a csuite bearer resolves every secret bound to its member.
+ * rather than making it a separate chore. It runs AFTER the new entry is
+ * saved, which for the common case (a legacy store in the directory we
+ * just enrolled) means the two collide on one `(url, workspace)` key;
+ * `migrateLegacyStore` resolves that by recency, so the token minted
+ * seconds ago wins and this reports it as superseded rather than migrated.
+ *
+ * The file is left on disk: a credential is not ours to delete, and if it
+ * is inside a git working tree the real remedy is rotation, not removal,
+ * because the token may already be in commit history. That case gets an
+ * explicit warning on stderr, since a csuite bearer resolves every secret
+ * bound to its member.
  */
 function reportLegacyStore(
   input: ConnectCommandInput,
   stdout: (line: string) => void,
   stderr: (line: string) => void,
 ): void {
-  let report: ReturnType<typeof inspectLegacyStore>;
+  let report: ReturnType<typeof migrateLegacyStore>;
   try {
-    report = inspectLegacyStore();
+    report = migrateLegacyStore({ path: input.authConfigPath });
     if (report === null) return;
-    migrateLegacyStore({ path: input.authConfigPath });
   } catch {
     // A legacy store we can't read or migrate is not worth failing an
     // otherwise-successful enrollment over — the new entry is already saved.
     return;
   }
   stdout('');
-  stdout(`  migrated ${report.entries} entry/entries from ${displayDir(report.path)}`);
-  stdout(`  (scoped to ${displayDir(report.workspace)} — the directory that held it)`);
+  if (report.migrated === 0) {
+    // The usual case when the legacy store covers the directory we just
+    // enrolled in: the token minted seconds ago supersedes it, and
+    // `migrateLegacyStore` correctly declined to write the older one back
+    // over it. Say what happened rather than claiming a migration.
+    stdout(`  superseded ${report.entries} older entry/entries in ${displayDir(report.path)}`);
+  } else {
+    stdout(`  migrated ${report.migrated} entry/entries from ${displayDir(report.path)}`);
+    stdout(`  (scoped to ${displayDir(report.workspace)} — the directory that held it)`);
+  }
   if (report.inGitRepo) {
     stderr('');
     stderr(`csuite: warning: ${report.path} is inside a git working tree.`);
@@ -387,6 +395,6 @@ function reportLegacyStore(
     stderr('  in your history — rotate it (`csuite rotate --member <name>`) rather than');
     stderr('  just deleting the file. Tokens resolve every secret bound to the member.');
   } else {
-    stdout(`  the old file is no longer read once migrated — safe to delete`);
+    stdout(`  the old file is no longer consulted — safe to delete`);
   }
 }

@@ -298,6 +298,45 @@ describe('legacy stores', () => {
     expect(findAuthEntry(URL_B, { cwd: ws, path: storePath })?.token).toBe('old-b');
   });
 
+  it('never lets a legacy entry displace a newer one', () => {
+    // The `csuite connect` upgrade path in miniature: the CLI saves the
+    // token it just minted, then migrates the legacy store it found in the
+    // same directory. Both writes key on the same (url, workspace) pair, so
+    // without a recency guard the stale token wins and the operator is left
+    // holding the credential the enrollment was meant to replace.
+    const ws = dir('legacy-proj');
+    writeLegacy(ws, [{ url: URL_A, token: 'stale' }]); // savedAt 1000
+    save(URL_A, ws, 'freshly-minted', 9_999_999);
+    const report = migrateLegacyStore({ cwd: ws, path: storePath });
+    expect(findAuthEntry(URL_A, { cwd: ws, path: storePath })?.token).toBe('freshly-minted');
+    expect(report?.migrated).toBe(0);
+    expect(report?.skipped).toBe(1);
+  });
+
+  it('keeps the incumbent when savedAt ties', () => {
+    // A tie means the store entry was still written later in wall-clock
+    // terms — migration runs after the save it would be overwriting.
+    const ws = dir('legacy-proj');
+    writeLegacy(ws, [{ url: URL_A, token: 'stale' }]); // savedAt 1000
+    save(URL_A, ws, 'incumbent', 1000);
+    migrateLegacyStore({ cwd: ws, path: storePath });
+    expect(findAuthEntry(URL_A, { cwd: ws, path: storePath })?.token).toBe('incumbent');
+  });
+
+  it('migrates the untouched brokers while skipping the superseded one', () => {
+    const ws = dir('legacy-proj');
+    writeLegacy(ws, [
+      { url: URL_A, token: 'stale-a' },
+      { url: URL_B, token: 'old-b' },
+    ]);
+    save(URL_A, ws, 'freshly-minted', 9_999_999);
+    const report = migrateLegacyStore({ cwd: ws, path: storePath });
+    expect(report?.migrated).toBe(1);
+    expect(report?.skipped).toBe(1);
+    expect(findAuthEntry(URL_A, { cwd: ws, path: storePath })?.token).toBe('freshly-minted');
+    expect(findAuthEntry(URL_B, { cwd: ws, path: storePath })?.token).toBe('old-b');
+  });
+
   it('migration is idempotent', () => {
     const ws = dir('legacy-proj');
     writeLegacy(ws, [{ url: URL_A, token: 'old' }]);

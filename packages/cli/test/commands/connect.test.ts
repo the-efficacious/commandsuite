@@ -7,10 +7,11 @@
  * in an isolated `auth.json` rather than the operator's real one.
  */
 
-import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { findAuthEntry } from '../../src/commands/auth-config.js';
 import { runConnectCommand, UsageError } from '../../src/commands/connect.js';
 
 interface ScriptedResponse {
@@ -38,13 +39,53 @@ function buildFetch(scripts: Map<string, ScriptedResponse[]>): typeof fetch {
   }) as typeof fetch;
 }
 
+/**
+ * The scripted broker for a successful enrollment: mint, one pending poll,
+ * then approval handing back `token`.
+ */
+function approvingBroker(token: string, userCode: string): Map<string, ScriptedResponse[]> {
+  const scripts = new Map<string, ScriptedResponse[]>();
+  scripts.set('/enroll', [
+    {
+      status: 200,
+      body: {
+        deviceCode: `csuite-dc_${'D'.repeat(43)}`,
+        userCode,
+        verificationUri: '/enroll',
+        verificationUriComplete: `/enroll?code=${userCode}`,
+        expiresIn: 300,
+        interval: 1,
+      },
+    },
+  ]);
+  scripts.set('/enroll/poll', [
+    { status: 400, body: { error: 'authorization_pending' } },
+    {
+      status: 200,
+      body: {
+        token,
+        tokenId: '99999999-8888-7777-6666-555555555555',
+        member: {
+          name: 'engineer-2',
+          role: { title: 'engineer', description: '' },
+          permissions: [],
+        },
+      },
+    },
+  ]);
+  return scripts;
+}
+
 let sandbox: string;
+let originalCwd: string;
 
 beforeEach(() => {
-  sandbox = mkdtempSync(join(tmpdir(), 'csuite-connect-'));
+  sandbox = realpathSync(mkdtempSync(join(tmpdir(), 'csuite-connect-')));
+  originalCwd = process.cwd();
 });
 
 afterEach(() => {
+  process.chdir(originalCwd);
   rmSync(sandbox, { recursive: true, force: true });
 });
 
@@ -121,6 +162,47 @@ describe('csuite connect', () => {
     expect(allOut).toContain('KQ4M-7P2H');
     expect(allOut).toContain('approved');
     expect(allOut).toContain('engineer-1');
+  }, 10_000);
+
+  it('keeps the freshly minted token when a legacy store covers the same cwd', async () => {
+    // The upgrade path: a project still holds `.csuite/auth.json` from
+    // before the store went global. `connect` saves the new token scoped to
+    // cwd and then folds the legacy store in — and the legacy store's
+    // implicit workspace IS that same cwd, so both writes land on one
+    // (url, workspace) key. The migration must not win.
+    const workspace = join(sandbox, 'project');
+    mkdirSync(join(workspace, '.csuite'), { recursive: true });
+    writeFileSync(
+      join(workspace, '.csuite', 'auth.json'),
+      JSON.stringify({
+        schema: 1,
+        entries: [{ url: 'http://test-broker:8717', token: 'csuite_stale_token', savedAt: 1000 }],
+      }),
+    );
+    const authPath = join(sandbox, 'global', 'auth.json');
+    const stdoutLines: string[] = [];
+
+    process.chdir(workspace);
+    const result = await runConnectCommand(
+      {
+        url: 'http://test-broker:8717',
+        authConfigPath: authPath,
+        fetch: buildFetch(approvingBroker('csuite_freshly_minted_token', 'ZZ9X-1Q4T')),
+      },
+      (line) => stdoutLines.push(line),
+      () => {},
+    );
+
+    expect(result.token).toBe('csuite_freshly_minted_token');
+    // What a later command actually resolves from this directory — the
+    // assertion the bug would have failed.
+    expect(
+      findAuthEntry('http://test-broker:8717', { cwd: workspace, path: authPath })?.token,
+    ).toBe('csuite_freshly_minted_token');
+    // And the operator is told the legacy file is superseded, not migrated.
+    const allOut = stdoutLines.join('\n');
+    expect(allOut).toContain('superseded');
+    expect(allOut).not.toContain('csuite_stale_token');
   }, 10_000);
 
   it('surfaces RFC 8628 access_denied as a UsageError', async () => {

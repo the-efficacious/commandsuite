@@ -93,7 +93,7 @@ function runList(input: AuthCommandInput, stdout: (line: string) => void): numbe
   const cwd = input.cwd ?? process.cwd();
   const entries = listAuthEntries(input.authConfigPath);
 
-  stdout(`store: ${authStorePath()}`);
+  stdout(`store: ${input.authConfigPath ?? authStorePath()}`);
   stdout('');
   if (entries.length === 0) {
     stdout('  no enrollments — run `csuite connect` to enroll this device.');
@@ -139,10 +139,23 @@ function runMigrate(
     stdout('no legacy `.csuite/auth.json` found — nothing to migrate.');
     return 0;
   }
-  stdout(`migrated ${report.entries} entry/entries`);
-  stdout(`  from:  ${report.path}`);
-  stdout(`  scope: ${report.workspace}`);
-  stdout(`  into:  ${input.authConfigPath ?? authStorePath()}`);
+  if (report.migrated === 0) {
+    // Everything in the legacy file is older than what the store already
+    // holds — almost always because `csuite connect` has since re-enrolled
+    // this workspace. Nothing to do, and saying "migrated 0" would imply
+    // otherwise.
+    stdout(`nothing to migrate — the ${report.entries} entry/entries in`);
+    stdout(`  ${report.path}`);
+    stdout('  are older than what the store already holds.');
+  } else {
+    stdout(`migrated ${report.migrated} entry/entries`);
+    stdout(`  from:  ${report.path}`);
+    stdout(`  scope: ${report.workspace}`);
+    stdout(`  into:  ${input.authConfigPath ?? authStorePath()}`);
+    if (report.skipped > 0) {
+      stdout(`  kept:  ${report.skipped} newer entry/entries already in the store`);
+    }
+  }
   stdout('');
   if (report.inGitRepo) {
     stderr(`csuite: warning: ${report.path} is inside a git working tree.`);

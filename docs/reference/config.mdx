@@ -215,7 +215,9 @@ repository.
 `csuite auth migrate` folds a legacy store into the global one,
 scoping its entries to the directory that held it (which is exactly
 what the file's location meant). `csuite connect` does the same in
-passing. Neither deletes the old file.
+passing, after saving the token it just minted — a legacy entry never
+displaces a newer one for the same `(url, workspace)` pair, so the
+fresh credential survives the migration. Neither deletes the old file.
 
 If a legacy store was inside a git working tree, treat the token as
 potentially published and **rotate it** —
