@@ -5,6 +5,14 @@ CommandSuite versions in lockstep — one version per release train —
 so each section below is one release. Per-package `CHANGELOG.md`
 files still ship inside every npm tarball.
 
+## 0.1.2 (2026-07-27)
+
+### csuite-cli
+
+#### Patch Changes
+
+- [#25](https://github.com/the-efficacious/commandsuite/pull/25) [`5954ce2`](https://github.com/the-efficacious/commandsuite/commit/5954ce240f6e94bf3b6f76e463487acd072b6fa7) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - Fix the activity uploader abandoning its last upload at shutdown. `close()` (and `flush()`) returned as soon as the queue looked empty, even with a POST still on the wire — so a run's final `session_end` could reach the broker after the run that produced it had already exited, and any event queued behind that in-flight POST was dropped instead of drained. Both now wait for the upload in flight and then drain what is left, so a closed uploader means every event it will ever send has landed and the `uploaded`/`dropped` counts in the run summary are accurate.
+
 ## 0.1.1 (2026-07-27)
 
 ### csuite-cli
