@@ -22,9 +22,11 @@
  *     stalling the uploader indefinitely when the broker is
  *     unreachable.
  *
- * Concurrency: one in-flight upload at a time per uploader. The
- * runner spawns exactly one uploader, so we don't need cross-
- * instance coordination.
+ * Concurrency: one in-flight upload at a time per uploader, and a
+ * caller that asks for a flush while one is in flight awaits THAT
+ * upload rather than returning early — so `flush()`/`close()` never
+ * resolve with a POST still on the wire. The runner spawns exactly one
+ * uploader, so we don't need cross-instance coordination.
  */
 
 import type { Client as BrokerClient } from 'csuite-sdk/client';
@@ -101,6 +103,8 @@ export class ActivityUploader {
   private queueBytes = 0;
   private flushTimer: NodeJS.Timeout | null = null;
   private inFlight = false;
+  /** Resolves when the current upload settles; null when idle. */
+  private inFlightPromise: Promise<void> | null = null;
   private closed = false;
   private backoffMs = 0;
   private backoffTimer: NodeJS.Timeout | null = null;
@@ -162,13 +166,15 @@ export class ActivityUploader {
 
   /**
    * Force a flush attempt now. Returns a promise that resolves when
-   * the uploader is idle (queue empty or backoff waiting).
+   * the uploader is idle (queue empty or backoff waiting). If an
+   * upload is already in flight, that upload is awaited first.
    */
   async flush(): Promise<void> {
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;
     }
+    await this.settleInFlight();
     await this.doFlush();
   }
 
@@ -177,6 +183,13 @@ export class ActivityUploader {
    * exactly one final flush attempt per remaining batch; any
    * events that fail that attempt are dropped rather than
    * retried. Idempotent.
+   *
+   * An upload already on the wire is AWAITED, not abandoned: callers
+   * (the capture host, and through it the runner's shutdown) treat
+   * close() as "every event this uploader will ever send has landed",
+   * and a POST still in flight afterwards would both under-count
+   * `uploaded` and let the broker record events after the run that
+   * enqueued them is over.
    */
   async close(): Promise<void> {
     if (this.closed) return;
@@ -189,17 +202,21 @@ export class ActivityUploader {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;
     }
-    // One shot at draining. `doFlush` catches upload errors and
-    // re-queues + backs off internally; we strip the re-queue by
-    // clearing the queue after the call. Anything still in-flight
-    // is lost on process exit, which matches best-effort semantics.
-    const hadEvents = this.queue.length > 0;
-    if (hadEvents) {
+    await this.settleInFlight();
+    // One final attempt per remaining batch. `doFlush` catches upload
+    // errors and re-queues + backs off internally, so a batch that
+    // makes no progress ends the drain; we strip any re-queue by
+    // clearing the queue after the loop.
+    while (this.queue.length > 0) {
+      const before = this.queue.length;
       try {
         await this.doFlush();
       } catch {
         /* doFlush catches internally; this is defensive */
       }
+      // No progress → the attempt failed (batch re-queued at the head).
+      // Stop rather than spin: the remainder is dropped below.
+      if (this.queue.length >= before) break;
     }
     // Drop any re-queued events + cancel any backoff retry.
     const dropped = this.queue.length;
@@ -260,9 +277,35 @@ export class ActivityUploader {
     if (typeof this.flushTimer.unref === 'function') this.flushTimer.unref();
   }
 
-  private async doFlush(): Promise<void> {
-    if (this.inFlight) return;
-    if (this.queue.length === 0) return;
+  /**
+   * Await the upload currently on the wire, if any. Loops because the
+   * tail of a flush can chain straight into the next one when the
+   * queue still holds events.
+   */
+  private async settleInFlight(): Promise<void> {
+    while (this.inFlightPromise) {
+      await this.inFlightPromise;
+    }
+  }
+
+  private doFlush(): Promise<void> {
+    // A flush is already on the wire — join it instead of returning
+    // early, so `await doFlush()` always means "no POST outstanding".
+    if (this.inFlightPromise) return this.inFlightPromise;
+    if (this.inFlight) return Promise.resolve();
+    if (this.queue.length === 0) return Promise.resolve();
+    // The clear is attached as a `finally` handler rather than living
+    // inside `runFlush` so it can never run before the assignment
+    // below (an upload that rejects before its first await would
+    // otherwise strand a settled promise here forever).
+    const promise = this.runFlush().finally(() => {
+      this.inFlightPromise = null;
+    });
+    this.inFlightPromise = promise;
+    return promise;
+  }
+
+  private async runFlush(): Promise<void> {
     this.inFlight = true;
     const batch = this.takeBatch();
     const batchBytes = batch.reduce((n, q) => n + q.bytes, 0);

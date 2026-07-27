@@ -197,6 +197,127 @@ describe('ActivityUploader', () => {
     expect(sizes).toEqual([2, 1]);
   });
 
+  it('close() awaits an in-flight upload instead of abandoning it', async () => {
+    const client = makeFakeClient();
+    let releaseUpload: () => void = () => {};
+    const onTheWire = new Promise<void>((resolve) => {
+      releaseUpload = resolve;
+    });
+    client.uploadActivity.mockImplementationOnce(
+      async (_name: string, req: { events: unknown[] }) => {
+        await onTheWire;
+        return { accepted: req.events.length };
+      },
+    );
+    const u = new ActivityUploader({
+      brokerClient: client as unknown as BrokerClient,
+      name: 'engineer-1',
+      log: () => {},
+      maxBatchEvents: 1, // first event flushes immediately
+      maxBatchAgeMs: 10_000,
+    });
+    u.enqueue(makeEvent(1));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.uploadActivity).toHaveBeenCalledTimes(1);
+
+    // A second event lands while the first POST is still on the wire —
+    // the shape of a `session_end` enqueued during teardown.
+    u.enqueue(makeEvent(2));
+    const closed = u.close();
+    let settled = false;
+    void closed.then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled, 'close() resolved with an upload still in flight').toBe(false);
+
+    releaseUpload();
+    await closed;
+    // Both events landed: the in-flight one was awaited (and counted),
+    // and the one queued behind it was drained rather than dropped.
+    expect(client.uploadActivity).toHaveBeenCalledTimes(2);
+    expect(u.stats()).toEqual({ enqueued: 2, uploaded: 2, dropped: 0 });
+    expect(u.__debugQueueLength()).toBe(0);
+  });
+
+  it('close() waits out the last POST even with nothing left queued', async () => {
+    // The shape that broke the runner conformance suite: the batch-age
+    // timer fires during shutdown, so by the time close() runs the queue
+    // is empty but a POST is still on the wire. Returning there let the
+    // broker record the run's `session_end` after the run was over.
+    const client = makeFakeClient();
+    let releaseUpload: () => void = () => {};
+    const onTheWire = new Promise<void>((resolve) => {
+      releaseUpload = resolve;
+    });
+    let landed = false;
+    client.uploadActivity.mockImplementationOnce(
+      async (_name: string, req: { events: unknown[] }) => {
+        await onTheWire;
+        landed = true;
+        return { accepted: req.events.length };
+      },
+    );
+    const u = new ActivityUploader({
+      brokerClient: client as unknown as BrokerClient,
+      name: 'engineer-1',
+      log: () => {},
+      maxBatchEvents: 1,
+      maxBatchAgeMs: 10_000,
+    });
+    u.enqueue(makeEvent(1));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(u.__debugQueueLength()).toBe(0);
+
+    const closed = u.close();
+    let settled = false;
+    void closed.then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled, 'close() resolved with an upload still in flight').toBe(false);
+
+    releaseUpload();
+    await closed;
+    expect(landed, 'close() returned before the POST reached the broker').toBe(true);
+    expect(u.stats().uploaded).toBe(1);
+  });
+
+  it('flush() awaits an in-flight upload before returning', async () => {
+    const client = makeFakeClient();
+    let releaseUpload: () => void = () => {};
+    const onTheWire = new Promise<void>((resolve) => {
+      releaseUpload = resolve;
+    });
+    client.uploadActivity.mockImplementationOnce(
+      async (_name: string, req: { events: unknown[] }) => {
+        await onTheWire;
+        return { accepted: req.events.length };
+      },
+    );
+    const u = new ActivityUploader({
+      brokerClient: client as unknown as BrokerClient,
+      name: 'engineer-1',
+      log: () => {},
+      maxBatchEvents: 1,
+      maxBatchAgeMs: 10_000,
+    });
+    u.enqueue(makeEvent(1));
+    await vi.advanceTimersByTimeAsync(0);
+
+    const flushed = u.flush();
+    let settled = false;
+    void flushed.then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled, 'flush() resolved with an upload still in flight').toBe(false);
+
+    releaseUpload();
+    await flushed;
+    expect(u.stats().uploaded).toBe(1);
+  });
+
   it('close() drops events permanently on repeated upload failure', async () => {
     const client = makeFakeClient();
     client.uploadActivity.mockRejectedValue(new Error('unreachable'));
