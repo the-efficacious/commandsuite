@@ -196,8 +196,8 @@ Each correlated exchange is run through the **same pure
 
 OTEL alone doesn't carry tool RESULT content — `tool_result`
 records report a size but not the output body. So the runner
-**also** writes `.claude/settings.json` hooks pointing at the
-CaptureHost's loopback hook server. On each Pre/PostToolUse
+**also** registers in-process Agent SDK hook callbacks that forward
+to the CaptureHost's loopback hook server. On each Pre/PostToolUse
 event the hook server emits a `tool_action` carrying the tool's
 input **and its result content**, redacted. The hook path is
 also what drives the busy signal live (see below).

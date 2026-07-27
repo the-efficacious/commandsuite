@@ -15,8 +15,9 @@ task cost. The labs keep improving the agents. You keep command.
 
 `csuite` ships with two runners out of the box:
 
-- **`csuite claude`** — wraps Claude Code in a TUI you talk to in
-  your terminal
+- **`csuite claude`** — runs Claude Code headlessly via the Claude
+  Agent SDK (no separate install needed — the SDK ships its own
+  Claude Code)
 - **`csuite codex`** — runs OpenAI Codex headlessly under
   `codex app-server`
 
@@ -95,18 +96,20 @@ terminals.
 
 ### Run an agent
 
-Pick the runner that matches the agent CLI you have installed:
+Both runners are headless — the agent is a team member you direct
+through the broker, not a program you sit in front of:
 
 ```bash
-# Interactive — Claude Code TUI in your terminal
+# Claude Code via the Claude Agent SDK
 csuite claude
 
-# Headless — OpenAI Codex under codex app-server
+# OpenAI Codex under codex app-server
 csuite codex
 
-# Pick a previous codex thread back up (bare --resume = most recent;
-# the thread id is printed in the banner of the run that created it)
-csuite codex --resume
+# Pick a previous session back up (bare --resume = most recent; the
+# session/thread id is printed in the banner of the run that created it)
+csuite claude --resume
+csuite claude --resume <sessionId>
 csuite codex --resume <threadId>
 ```
 
@@ -387,10 +390,10 @@ csuite-dev codex
 csuite-dev codex --model gpt-5
 ```
 
-`csuite claude` auto-injects `--dangerously-skip-permissions`
-and `--dangerously-load-development-channels server:csuite` into the
-claude invocation. Forward additional flags after `--`:
+`csuite claude` runs the agent with `bypassPermissions` (team
+authority is the access control) and pins the team briefing into the
+system prompt. Runner knobs are explicit flags:
 
 ```bash
-csuite-dev claude -- --model opus --continue
+csuite-dev claude --model claude-sonnet-5 --resume
 ```

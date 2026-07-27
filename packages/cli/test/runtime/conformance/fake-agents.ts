@@ -14,26 +14,68 @@ import { chmodSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 /**
- * Fake `claude`: resolves the MCP config from the `--mcp-config` arg
- * the runner injects (falling back to `./.mcp.json` for the legacy
- * inject mode), spawns the real `csuite mcp-bridge` from it, runs a
- * minimal MCP conversation (initialize + tools/list), then exits.
- * When `FAKE_CLAUDE_TRANSCRIPT` is set, writes what it saw there.
+ * Fake `claude`: impersonates the stream-json subprocess the Claude
+ * Agent SDK drives. Speaks just enough of the SDK control protocol —
+ * answer every `control_request` with success (the `initialize`
+ * handshake is the one that matters), emit a `system`/`init` message —
+ * then resolves the csuite MCP entry from the inline-JSON
+ * `--mcp-config` arg the SDK composes, spawns the real
+ * `csuite mcp-bridge` from it, runs a minimal MCP conversation
+ * (initialize + tools/list), and exits. When `FAKE_CLAUDE_TRANSCRIPT`
+ * is set, writes what it saw there.
  */
 export function writeFakeClaude(sandbox: string): string {
   const driverScript = `
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
-const path = require('node:path');
+const readline = require('node:readline');
 const argv = process.argv.slice(2);
-let cfgPath = null;
+let cfgRaw = null;
 for (let i = 0; i < argv.length - 1; i++) {
-  if (argv[i] === '--mcp-config') { cfgPath = argv[i + 1]; break; }
+  if (argv[i] === '--mcp-config') { cfgRaw = argv[i + 1]; break; }
 }
-if (!cfgPath) cfgPath = path.join(process.cwd(), '.mcp.json');
-const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+if (!cfgRaw) { console.error('fake-claude: no --mcp-config arg'); process.exit(2); }
+const cfg = cfgRaw.trim().startsWith('{') ? JSON.parse(cfgRaw) : JSON.parse(fs.readFileSync(cfgRaw, 'utf8'));
 const entry = cfg.mcpServers && cfg.mcpServers.csuite;
 if (!entry) { console.error('fake-claude: missing csuite entry'); process.exit(2); }
+
+const exitCode = Number(process.env.FAKE_AGENT_EXIT_CODE || '0');
+const out = (msg) => process.stdout.write(JSON.stringify(msg) + '\\n');
+
+// Honor the runner-minted --session-id the SDK passes for fresh
+// sessions, like the real CLI does.
+let sessionId = 'f4c0de00-0000-4000-8000-000000000001';
+for (let i = 0; i < argv.length - 1; i++) {
+  if (argv[i] === '--session-id') { sessionId = argv[i + 1]; break; }
+}
+
+// SDK control protocol: every control_request gets a success response;
+// user messages (streaming input) are ignored.
+const rl = readline.createInterface({ input: process.stdin });
+rl.on('line', (line) => {
+  let msg;
+  try { msg = JSON.parse(line); } catch { return; }
+  if (msg.type === 'control_request' && msg.request_id !== undefined) {
+    const subtype = msg.request && msg.request.subtype;
+    const response = subtype === 'initialize'
+      ? { commands: [], agents: [], output_style: 'default', available_output_styles: ['default'], models: [], account: null }
+      : {};
+    out({ type: 'control_response', response: { subtype: 'success', request_id: msg.request_id, response } });
+  }
+});
+process.on('SIGTERM', () => process.exit(exitCode));
+
+out({
+  type: 'system', subtype: 'init',
+  uuid: 'f4c0de00-0000-4000-8000-00000000000e',
+  session_id: sessionId,
+  cwd: process.cwd(),
+  tools: [], mcp_servers: [{ name: 'csuite', status: 'connected' }],
+  model: 'fake-model', permissionMode: 'bypassPermissions',
+  slash_commands: [], output_style: 'default', skills: [], plugins: [],
+  apiKeySource: 'none', claude_code_version: '0.0.0-fake',
+});
+
 const child = spawn(entry.command, entry.args || [], {
   env: { ...process.env, ...(entry.env || {}) },
   stdio: ['pipe', 'pipe', 'inherit'],
@@ -75,7 +117,9 @@ async function waitFor(predicate, timeoutMs = 5000) {
   }
   child.stdin.end();
   child.kill('SIGTERM');
-  process.exit(Number(process.env.FAKE_AGENT_EXIT_CODE || '0'));
+  // Linger briefly so the runner finishes its post-spawn wiring, then
+  // end the session like a real headless run would.
+  setTimeout(() => process.exit(exitCode), 400);
 })().catch((err) => { console.error('fake-claude:', err); process.exit(1); });
 `;
   const driverPath = join(sandbox, 'fake-claude-driver.cjs');

@@ -1,328 +1,166 @@
 /**
- * Claude Code AgentAdapter — the `csuite claude` runner expressed
- * through the shared adapter contract (`adapter.ts`).
+ * Claude AgentAdapter — the `csuite claude` runner expressed through
+ * the shared adapter contract (`adapter.ts`), running Claude Code
+ * headlessly via the Claude Agent SDK.
  *
  * Framework-specific knowledge lives here and ONLY here:
  *
- *   - locating the `claude` binary (`findClaudeBinary`)
- *   - handing claude our MCP bridge entry (`--mcp-config` ephemeral
- *     file by default, `.mcp.json` backup+rewrite fallback)
- *   - `.claude/settings.json` hook wiring for the busy signal
- *   - the auto-injected posture flags (`--dangerously-skip-permissions`,
- *     `--dangerously-load-development-channels`, `--append-system-prompt`)
- *   - the node-pty relay + HUD strip for interactive terminals, with a
- *     `stdio: 'inherit'` fallback for non-TTY contexts
+ *   - resolving the Claude Code executable the SDK drives
+ *     (`resolveClaudeExecutable`: `CLAUDE_PATH` override or the SDK's
+ *     bundled per-platform CLI)
+ *   - composing the SDK `Options`: the csuite MCP bridge entry, the
+ *     briefing pinned into the Claude Code system-prompt preset, the
+ *     `bypassPermissions` posture, model/resume knobs, and the child
+ *     env (broker secrets + the capture host's OTEL delta)
+ *   - the channel sink (broker events → SDK streaming input) and the
+ *     in-process hook forwarders that keep the capture host's busy
+ *     signal, transcript discovery, and re-brief triggers fed
+ *   - the headless operator chrome: activity printer + HUD strip +
+ *     session-id banner
+ *
+ * Nothing is written to the member's working tree: the MCP config
+ * travels inline on the CLI invocation the SDK composes, hooks are
+ * in-process callbacks, and the briefing rides an SDK option — so
+ * `prepare()` has no cleanup to speak of. The member's own Claude
+ * config (`~/.claude`, project `.claude/`, CLAUDE.md) still loads
+ * exactly as it would under a plain `claude` invocation; csuite adds
+ * its surface on top rather than displacing it.
  *
  * Lifecycle (signals, teardown ordering, run summary) is inherited
- * from `runAgentSession` — this file never installs process signal
- * handlers or emits session events itself.
- *
- * Claude Code owns the terminal (interactive TUI), so the adapter
- * declares `signals: 'forward'`: SIGINT/SIGTERM go to claude, and the
- * session ends when claude exits.
+ * from `runAgentSession`. The agent is headless — the runner owns the
+ * terminal — so the adapter declares `signals: 'teardown'`: Ctrl-C
+ * ends the session gracefully rather than being forwarded.
  */
 
 import { type ChildProcess, spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { HUD_HEIGHT, startHud } from '../hud.js';
-import type { Presence } from '../presence.js';
+import { randomUUID } from 'node:crypto';
+import {
+  type HookCallback,
+  type HookCallbackMatcher,
+  type HookEvent,
+  type Query,
+  query,
+  type Options as SdkOptions,
+  type SpawnedProcess,
+} from '@anthropic-ai/claude-agent-sdk';
+import { type HudHandle, startHud } from '../hud.js';
 import type {
   AgentAdapter,
   AgentAdapterMeta,
+  AgentDoctorCheck,
   AgentLog,
   AgentPrepared,
   AgentProcess,
   AgentSessionContext,
 } from './adapter.js';
+import { type ClaudeExecutable, resolveClaudeExecutable } from './claude.js';
+import { createClaudeActivityPrinter } from './claude-activity-printer.js';
 import {
-  type ClaudeSettingsHandle,
-  findClaudeBinary,
-  prepareClaudeSettings,
-  prepareMcpConfig,
-  writeMcpConfigFile,
-} from './claude.js';
+  type ClaudeChannelSink,
+  ClaudeMessageQueue,
+  createClaudeChannelSink,
+} from './claude-sink.js';
 
 export const CLAUDE_META: AgentAdapterMeta = {
   id: 'claude',
   displayName: 'Claude Code',
   // Tier 3: transcript-primary content capture + operational OTEL +
-  // FILE-mode raw API bodies into the gen_ai layer. See
-  // docs/runners/conformance.mdx for the tier definitions.
+  // FILE-mode raw API bodies into the gen_ai layer — all unchanged from
+  // the CLI-wrapper era, since the SDK runs the same Claude Code
+  // underneath. See docs/runners/conformance.mdx for the tier
+  // definitions.
   captureTier: 3,
-  signals: 'forward',
+  signals: 'teardown',
   // No declared range yet — the doctor reports the detected version
   // without judging it. Declare {min, max} here once a range is pinned
-  // by CI against real claude releases.
+  // by CI against real SDK releases.
   testedVersions: null,
   versionArgs: ['--version'],
 };
 
 export interface ClaudeAdapterOptions {
-  /** Args forwarded verbatim to claude (after our injected flags). */
-  claudeArgs: string[];
+  /** Model override forwarded as the SDK `model` option. */
+  model?: string;
   /**
-   * How to hand claude our MCP server entry:
-   *   - `'flag'` (default) — csuite-owned ephemeral config file via
-   *     `--mcp-config`; the project `.mcp.json` is never touched.
-   *   - `'inject'` — back up and rewrite the project `.mcp.json`
-   *     (legacy fallback).
-   * Overridable via `CSUITE_CLAUDE_MCP_MODE=flag|inject`; the explicit
-   * option wins over the env var.
+   * Resume a previous Claude Code session instead of starting fresh.
+   * A string is a session id; `true` continues this member's most
+   * recent session in the cwd (the SDK `continue` option).
    */
-  mcpMode?: 'flag' | 'inject';
+  resume?: string | true;
 }
 
 /**
- * Decide which flags to auto-inject into the claude invocation, given
- * the user's forwarded args and the briefing prose to pin into the
- * system prompt. Three flags are candidates:
- *
- *   --dangerously-skip-permissions
- *   --dangerously-load-development-channels server:csuite
- *   --append-system-prompt <briefing>
- *
- * Each is injected unless the user already passed it (or, for the
- * append-system-prompt case, the briefing is empty — which the runner
- * treats as "nothing to pin"). The user's args are kept verbatim and
- * placed AFTER our injected flags so the user-supplied tail wins on
- * any surface that resolves last-flag-wins.
- *
- * `summary` is the human-readable banner we print to stderr; it
- * shortens the briefing prose to a char-count so a 1–8K paragraph
- * doesn't drown the welcome banner.
+ * The eight hook events the capture host's hook server routes on —
+ * the same set the CLI wrapper used to register in the member's
+ * `.claude/settings.json`. Now they're in-process SDK callbacks that
+ * forward each payload to the hook server's loopback endpoint, keeping
+ * the tested busy/transcript/re-brief routing byte-identical.
  */
-export function computeInjectedClaudeArgs(
-  userArgs: readonly string[],
-  briefingInstructions: string,
-): { injected: string[]; summary: string[]; final: string[] } {
-  const injected: string[] = [];
-  const summary: string[] = [];
-  const userPassedSkipPerms = userArgs.includes('--dangerously-skip-permissions');
-  const userPassedDevChannels = userArgs.includes('--dangerously-load-development-channels');
-  const userPassedAppendSysPrompt = userArgs.includes('--append-system-prompt');
-  if (!userPassedSkipPerms) {
-    injected.push('--dangerously-skip-permissions');
-    summary.push('--dangerously-skip-permissions');
-  }
-  if (!userPassedDevChannels) {
-    injected.push('--dangerously-load-development-channels', 'server:csuite');
-    summary.push('--dangerously-load-development-channels server:csuite');
-  }
-  if (!userPassedAppendSysPrompt && briefingInstructions.length > 0) {
-    injected.push('--append-system-prompt', briefingInstructions);
-    summary.push(`--append-system-prompt <csuite briefing, ${briefingInstructions.length} chars>`);
-  }
-  return { injected, summary, final: [...injected, ...userArgs] };
-}
+const FORWARDED_HOOK_EVENTS: readonly HookEvent[] = [
+  'PreToolUse',
+  'PostToolUse',
+  'PostToolUseFailure',
+  'UserPromptSubmit',
+  'Stop',
+  'SubagentStop',
+  'Notification',
+  'SessionStart',
+];
 
 /**
- * Decide whether this invocation should run inside a node-pty relay
- * with the HUD strip at the bottom, or fall back to the older
- * `stdio: 'inherit'` spawn. We need a TTY on both ends (stdin and
- * stdout) to own the user's terminal; otherwise (tests, CI, piped
- * input) we keep the old behavior so automation stays deterministic.
- *
- * Also returns `false` when `node-pty` isn't loadable — the package
- * is listed in `optionalDependencies` so it may be absent on hosts
- * that couldn't build the native binding (CI runners without
- * build-essential, uncommon platforms, etc.). In those environments
- * we transparently fall back to `stdio: 'inherit'` and skip the HUD.
+ * Build the SDK hook config: every forwarded event POSTs its payload
+ * to the capture host's hook endpoint. POSTs are serialized through
+ * one promise chain so Pre/Post pairs can't reorder on the wire, and
+ * the callback returns immediately — the agent loop never waits on
+ * loopback I/O.
  */
-async function shouldUsePty(): Promise<boolean> {
-  if (process.stdout.isTTY !== true || process.stdin.isTTY !== true) return false;
-  try {
-    await import('node-pty');
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter {
-  let claudeBinary = '';
-  // Populated by prepare(), consumed by spawn().
-  let childEnv: NodeJS.ProcessEnv = {};
-  let finalClaudeArgs: string[] = [];
-  let injectedArgs: string[] = [];
-
-  return {
-    meta: CLAUDE_META,
-
-    locate(): void {
-      claudeBinary = findClaudeBinary();
-    },
-
-    binaryPath(): string | null {
-      return claudeBinary.length > 0 ? claudeBinary : null;
-    },
-
-    prepare(ctx: AgentSessionContext): AgentPrepared {
-      const { runner, cwd, log } = ctx;
-      const bannerLines: string[] = [];
-
-      // 1. Install our `csuite` MCP server entry. Two strategies,
-      //    selected by `mcpMode`; both collapse to a common shape:
-      //    flag args to prepend and an idempotent teardown.
-      const mcpMode: 'flag' | 'inject' =
-        options.mcpMode ?? (process.env.CSUITE_CLAUDE_MCP_MODE === 'inject' ? 'inject' : 'flag');
-      let mcpFlagArgs: string[] = [];
-      let mcpTeardown: () => void = () => {};
-      if (mcpMode === 'flag') {
-        const mcpFileHandle = writeMcpConfigFile({
-          runnerSocketPath: runner.socketPath,
-          bridgeCommand: ctx.bridgeCommand,
-          bridgeArgs: [...ctx.bridgeArgs],
+export function buildHookForwarders(
+  hookUrl: string,
+  log: AgentLog,
+): Partial<Record<HookEvent, HookCallbackMatcher[]>> {
+  let chain: Promise<void> = Promise.resolve();
+  let failuresLogged = 0;
+  const post = (body: Record<string, unknown>): void => {
+    chain = chain.then(async () => {
+      try {
+        const res = await fetch(hookUrl, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
         });
-        mcpFlagArgs = [...mcpFileHandle.flagArgs];
-        mcpTeardown = mcpFileHandle.cleanup;
-        bannerLines.push(
-          `csuite claude: MCP config = ${mcpFileHandle.path} (via --mcp-config; project .mcp.json untouched)`,
-        );
-        log('claude: mcp config file written', { path: mcpFileHandle.path });
-      } else {
-        const mcpTargetPath = resolve(cwd, '.mcp.json');
-        const mcpExistedPriorToRun = existsSync(mcpTargetPath);
-        const mcpHandle = prepareMcpConfig({
-          cwd,
-          runnerSocketPath: runner.socketPath,
-          bridgeCommand: ctx.bridgeCommand,
-          bridgeArgs: [...ctx.bridgeArgs],
-        });
-        mcpTeardown = mcpHandle.restore;
-        bannerLines.push(
-          `csuite claude: .mcp.json = ${mcpTargetPath}${
-            mcpExistedPriorToRun ? ' (found — backed up and merged csuite entry)' : ' (created)'
-          }`,
-        );
-        log('claude: .mcp.json prepared', { path: mcpHandle.path });
-      }
-
-      // 2. If capture is enabled, write the `.claude/settings.json`
-      //    hook config so lifecycle events drive the busy signal and
-      //    surface the transcript path. Failures are non-fatal — they
-      //    only degrade busy-signal accuracy, not the agent itself.
-      let settingsHandle: ClaudeSettingsHandle | null = null;
-      if (runner.captureHost) {
-        try {
-          settingsHandle = prepareClaudeSettings({
-            cwd,
-            hookUrl: runner.captureHost.hookEndpointUrl,
-          });
-          log('claude: .claude/settings.json prepared', { path: settingsHandle.path });
-        } catch (err) {
-          log('claude: .claude/settings.json prepare failed (busy hooks disabled)', {
+        await res.arrayBuffer();
+      } catch (err) {
+        // Presence-only signal — degrade quietly rather than spam the
+        // session log once per tool call.
+        if (failuresLogged < 5) {
+          failuresLogged++;
+          log('claude: hook forward failed (busy signal degraded)', {
             error: err instanceof Error ? err.message : String(err),
           });
         }
       }
-
-      // 3. Child environment: broker-held secrets first, capture
-      //    host's OTEL delta after — runner-managed vars always win on
-      //    a (theoretical) name collision.
-      childEnv = { ...process.env };
-      const secretNames = Object.keys(runner.secretsEnv);
-      if (secretNames.length > 0) {
-        for (const [k, v] of Object.entries(runner.secretsEnv)) {
-          childEnv[k] = v;
-        }
-        log('claude: broker secrets injected into agent env', { envNames: secretNames });
-      }
-      if (runner.captureHost !== null) {
-        for (const [k, v] of Object.entries(runner.captureHost.envVars())) {
-          childEnv[k] = v;
-        }
-        log('claude: capture host armed (transcript capture)', {
-          hookUrl: runner.captureHost.hookEndpointUrl,
-        });
-      }
-
-      // 4. Compose the final claude invocation: `--mcp-config` first,
-      //    then the auto-injected posture flags, then the user's args
-      //    (verbatim, last, so they win on last-flag-wins surfaces).
-      const computed = computeInjectedClaudeArgs(options.claudeArgs, runner.briefing.instructions);
-      injectedArgs = computed.injected;
-      finalClaudeArgs = [...mcpFlagArgs, ...computed.final];
-      if (computed.summary.length > 0) {
-        bannerLines.push(
-          '',
-          'csuite: auto-injected into claude invocation (team authority is the access control):',
-          ...computed.summary.map((f) => `    ${f}`),
-          '      (pass either flag yourself to suppress this line)',
-          '',
-        );
-      }
-
-      let cleaned = false;
-      return {
-        bannerLines,
-        cleanup: (): void => {
-          if (cleaned) return;
-          cleaned = true;
-          try {
-            mcpTeardown();
-          } catch (err) {
-            log('claude: mcp teardown threw', {
-              error: err instanceof Error ? err.message : String(err),
-            });
-          }
-          try {
-            settingsHandle?.restore();
-          } catch (err) {
-            log('claude: settings.json restore threw', {
-              error: err instanceof Error ? err.message : String(err),
-            });
-          }
-        },
-      };
-    },
-
-    async spawn(ctx: AgentSessionContext): Promise<AgentProcess> {
-      const usePty = await shouldUsePty();
-      // Heads-up to the user: claude's ink fork blocks its first
-      // render on a terminal-capability probe (kitty-keyboard + DA1)
-      // whose reply never materializes under a pty relay, so nothing
-      // paints until it reads a byte from stdin. Any keypress works —
-      // Enter is just the least surprising. Only shown on the pty
-      // path — the stdio:'inherit' fallback doesn't have this quirk.
-      if (usePty) {
-        process.stderr.write('csuite: press Enter to render the Claude Code TUI.\n\n');
-      }
-      ctx.log('claude: spawning claude', {
-        binary: claudeBinary,
-        args: finalClaudeArgs,
-        injected: injectedArgs,
-        cwd: ctx.cwd,
-        transport: usePty ? 'pty' : 'inherit',
-      });
-      if (usePty) {
-        return startPtyProcess({
-          claudeBinary,
-          args: finalClaudeArgs,
-          cwd: ctx.cwd,
-          env: childEnv,
-          presence: ctx.presence,
-          label: ctx.runner.briefing.name,
-          log: ctx.log,
-        });
-      }
-      return startInheritProcess({
-        claudeBinary,
-        args: finalClaudeArgs,
-        cwd: ctx.cwd,
-        env: childEnv,
-        log: ctx.log,
-      });
-    },
+    });
   };
+  const forward: HookCallback = async (input, toolUseID) => {
+    const body = input as unknown as Record<string, unknown>;
+    // The tool_use_id arrives as a separate callback argument; the hook
+    // server matches Pre/Post pairs on it, so merge it into the body.
+    post(
+      toolUseID !== undefined && body.tool_use_id === undefined
+        ? { ...body, tool_use_id: toolUseID }
+        : body,
+    );
+    return { continue: true };
+  };
+  const matchers: HookCallbackMatcher[] = [{ hooks: [forward] }];
+  const hooks: Partial<Record<HookEvent, HookCallbackMatcher[]>> = {};
+  for (const event of FORWARDED_HOOK_EVENTS) hooks[event] = matchers;
+  return hooks;
 }
 
 /**
- * Map a signal name to its conventional exit-code offset. Claude
- * dying by SIGTERM should surface as `143` (128 + 15), not `0`.
- * Keeps the offsets small and correct for the signals we actually
- * forward; unknown signals fall back to `null` and we treat the
- * exit as a plain `0` rather than guessing.
+ * Map a signal name to its conventional exit-code offset, so an agent
+ * dying by SIGTERM surfaces as `143` (128 + 15), not `0`.
  */
 function signalNumber(signal: NodeJS.Signals): number | null {
   switch (signal) {
@@ -339,214 +177,343 @@ function signalNumber(signal: NodeJS.Signals): number | null {
   }
 }
 
-interface InheritSpawnOptions {
-  claudeBinary: string;
-  args: string[];
-  cwd: string;
-  env: NodeJS.ProcessEnv;
-  log: AgentLog;
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms);
+    timer.unref?.();
+    p.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
 }
 
-/** Fallback transport: `stdio: 'inherit'`. Used for tests and non-TTY
- * contexts so automation stays byte-for-byte compatible. */
-function startInheritProcess(opts: InheritSpawnOptions): AgentProcess {
-  const child: ChildProcess = spawn(opts.claudeBinary, opts.args, {
-    cwd: opts.cwd,
-    stdio: 'inherit',
-    env: opts.env,
-  });
+export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter {
+  let executable: ClaudeExecutable | null = null;
+  // Populated by prepare(), consumed by spawn().
+  let sdkOptions: SdkOptions = {};
 
-  const exitCode = new Promise<number>((resolvePromise) => {
-    child.on('exit', (code, signal) => {
-      resolvePromise(code ?? (signal ? 128 + (signalNumber(signal) ?? 0) : 0));
-    });
-    child.on('error', (err) => {
-      opts.log('claude: failed to spawn claude', {
-        error: err instanceof Error ? err.message : String(err),
+  // Streaming-input queue + channel sink, live from construction: the
+  // runner needs a sink before the agent spawns, and events arriving
+  // during the SDK subprocess's cold start simply wait in the stream.
+  const queue = new ClaudeMessageQueue();
+  let sink: ClaudeChannelSink | null = null;
+
+  return {
+    meta: CLAUDE_META,
+
+    locate(): void {
+      executable = resolveClaudeExecutable();
+    },
+
+    binaryPath(): string | null {
+      return executable?.path ?? null;
+    },
+
+    runnerOptions() {
+      sink = createClaudeChannelSink({
+        queue,
+        log: (msg, ctx) => {
+          // The session log isn't created yet when runnerOptions() is
+          // called; route through stderr-JSON like other pre-session
+          // components. Once spawn() runs, the sink is quiet anyway
+          // except for per-event debug lines.
+          const record = { ts: new Date().toISOString(), component: 'claude-sink', msg, ...ctx };
+          process.stderr.write(`${JSON.stringify(record)}\n`);
+        },
       });
-      resolvePromise(1);
-    });
-  });
-
-  const alive = (): boolean => child.exitCode === null && child.signalCode === null;
-
-  return {
-    exitCode,
-    sessionId: () => null,
-    signal(sig) {
-      if (alive()) {
-        try {
-          child.kill(sig);
-        } catch {
-          /* ignore */
-        }
-      }
+      return { notificationSink: sink };
     },
-    async shutdown() {
-      // Forward-mode teardown runs after claude exits, so this is a
-      // defensive kill for abnormal paths only.
-      if (alive()) {
-        try {
-          child.kill('SIGTERM');
-        } catch {
-          /* ignore */
-        }
+
+    prepare(ctx: AgentSessionContext): AgentPrepared {
+      const { runner, cwd, log } = ctx;
+      const bannerLines: string[] = [];
+      const resolved = executable;
+      if (resolved === null) {
+        // locate() runs first on every driver path; belt and braces.
+        throw new Error('claude adapter: prepare() called before locate()');
       }
+
+      // Child environment: broker-held secrets first, capture host's
+      // OTEL delta after — runner-managed vars always win on a
+      // (theoretical) name collision. The SDK `env` option REPLACES the
+      // subprocess environment, so start from process.env.
+      const env: Record<string, string | undefined> = { ...process.env };
+      const secretNames = Object.keys(runner.secretsEnv);
+      if (secretNames.length > 0) {
+        for (const [k, v] of Object.entries(runner.secretsEnv)) env[k] = v;
+        log('claude: broker secrets injected into agent env', { envNames: secretNames });
+      }
+      if (runner.captureHost !== null) {
+        for (const [k, v] of Object.entries(runner.captureHost.envVars())) env[k] = v;
+        log('claude: capture host armed (transcript capture)', {
+          hookUrl: runner.captureHost.hookEndpointUrl,
+        });
+      }
+
+      const briefing = runner.briefing.instructions;
+      sdkOptions = {
+        cwd,
+        env,
+        pathToClaudeCodeExecutable: resolved.path,
+        // The csuite MCP bridge — delivered inline on the invocation
+        // the SDK composes (`--mcp-config <json>`); the member's own
+        // `.mcp.json` and settings-file servers still load normally.
+        mcpServers: {
+          csuite: {
+            type: 'stdio',
+            command: ctx.bridgeCommand,
+            args: [...ctx.bridgeArgs],
+            env: { CSUITE_RUNNER_SOCKET: runner.socketPath },
+          },
+        },
+        // Claude Code's own system prompt with the composed team
+        // briefing pinned on top — the SDK-native form of the old
+        // `--append-system-prompt` injection.
+        systemPrompt:
+          briefing.length > 0
+            ? { type: 'preset', preset: 'claude_code', append: briefing }
+            : { type: 'preset', preset: 'claude_code' },
+        // Team authority is the access control; the agent runs
+        // unleashed, same posture as the CLI wrapper injected via
+        // `--dangerously-skip-permissions`.
+        permissionMode: 'bypassPermissions',
+        allowDangerouslySkipPermissions: true,
+        ...(options.model !== undefined ? { model: options.model } : {}),
+        ...(typeof options.resume === 'string'
+          ? { resume: options.resume }
+          : options.resume === true
+            ? { continue: true }
+            : {}),
+        ...(runner.captureHost !== null
+          ? { hooks: buildHookForwarders(runner.captureHost.hookEndpointUrl, log) }
+          : {}),
+      };
+
+      bannerLines.push(
+        `csuite claude: Agent SDK ${resolved.sdkVersion ?? '?'}${
+          resolved.source === 'env'
+            ? ` · claude = ${resolved.path} (CLAUDE_PATH)`
+            : ` · bundled Claude Code ${resolved.bundledCliVersion ?? '?'}`
+        }`,
+        'csuite claude: posture = bypassPermissions (team authority is the access control)',
+      );
+      if (briefing.length > 0) {
+        bannerLines.push(
+          `csuite claude: briefing pinned to system prompt (${briefing.length} chars)`,
+        );
+      }
+      if (typeof options.resume === 'string') {
+        bannerLines.push(`csuite claude: resuming session ${options.resume}`);
+      } else if (options.resume === true) {
+        bannerLines.push('csuite claude: continuing most recent session in this directory');
+      }
+
+      // Nothing was written anywhere — there is nothing to restore.
+      return { bannerLines, cleanup: (): void => {} };
     },
-  };
-}
 
-interface PtySpawnOptions {
-  claudeBinary: string;
-  args: string[];
-  cwd: string;
-  env: NodeJS.ProcessEnv;
-  presence: Presence;
-  label: string;
-  log: AgentLog;
-}
+    async spawn(ctx: AgentSessionContext): Promise<AgentProcess> {
+      const { runner, log } = ctx;
 
-/**
- * Spawn claude via node-pty, relaying stdin/stdout and reserving the
- * bottom `HUD_HEIGHT` rows for the csuite status strip.
- *
- * Key mechanics:
- *
- *   - The pty we give claude reports `rows - HUD_HEIGHT` via
- *     TIOCGWINSZ, so claude's ink renderer never paints into our
- *     panel rows. We still redraw the HUD after every chunk because
- *     claude's initial alt-screen entry issues `CSI 2J` which wipes
- *     the entire screen buffer, including our strip.
- *
- *   - SIGWINCH on the parent recalculates size and issues
- *     `pty.resize(cols, rows - HUD_HEIGHT)`. Claude picks up the new
- *     dims on its next render tick.
- *
- *   - We import `node-pty` lazily so the rest of the CLI (push,
- *     roster, setup, etc.) can run on systems where the native
- *     prebuild didn't install cleanly. Only this verb needs it.
- *
- * The returned handle's `exitCode` resolves only after terminal state
- * is restored (raw mode off, resize listener removed, HUD closed) so
- * the driver's teardown never races the restore.
- */
-async function startPtyProcess(opts: PtySpawnOptions): Promise<AgentProcess> {
-  const pty = await import('node-pty');
+      let child: ChildProcess | null = null;
+      let resolveExit!: (code: number) => void;
+      let exitSettled = false;
+      const exitCode = new Promise<number>((resolvePromise) => {
+        resolveExit = resolvePromise;
+      });
+      const settleExit = (code: number): void => {
+        if (exitSettled) return;
+        exitSettled = true;
+        resolveExit(code);
+      };
 
-  const getSize = (): { rows: number; cols: number } => ({
-    rows: process.stdout.rows ?? 24,
-    cols: process.stdout.columns ?? 80,
-  });
+      // The adapter owns the subprocess spawn so the driver's run
+      // summary carries the agent's REAL exit code (and signal deaths
+      // map to 128+n), not the SDK's interpretation of them.
+      sdkOptions.spawnClaudeCodeProcess = (spawnOpts) => {
+        const proc = spawn(spawnOpts.command, spawnOpts.args, {
+          cwd: spawnOpts.cwd ?? ctx.cwd,
+          env: spawnOpts.env as NodeJS.ProcessEnv,
+          stdio: ['pipe', 'pipe', 'pipe'],
+          // The SDK's forwarded signal aborts only after its graceful
+          // stdin-EOF + grace window, so hanging Node's kill on it is
+          // the documented force-kill backstop.
+          signal: spawnOpts.signal,
+        });
+        child = proc;
+        proc.stderr?.on('data', (chunk: Buffer) => {
+          const text = chunk.toString('utf8').trim();
+          if (text.length > 0) log('claude: cli stderr', { data: text.slice(0, 2000) });
+        });
+        proc.on('exit', (code, signal) => {
+          settleExit(code ?? (signal ? 128 + (signalNumber(signal) ?? 0) : 0));
+        });
+        proc.on('error', (err) => {
+          log('claude: failed to spawn claude', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+          settleExit(1);
+        });
+        return proc as unknown as SpawnedProcess;
+      };
 
-  const { rows: realRows, cols: realCols } = getSize();
-  const ptyRows = Math.max(4, realRows - HUD_HEIGHT);
-  const ptyCols = realCols;
-
-  const term = pty.spawn(opts.claudeBinary, opts.args, {
-    name: opts.env.TERM ?? 'xterm-256color',
-    cwd: opts.cwd,
-    env: opts.env as { [key: string]: string },
-    cols: ptyCols,
-    rows: ptyRows,
-  });
-
-  const hud = startHud({
-    presence: opts.presence,
-    label: opts.label,
-  });
-
-  // Forward pty output → stdout, re-painting the HUD after every
-  // chunk so `CSI 2J` / repaints from claude don't leave the panel
-  // stale.
-  term.onData((data) => {
-    process.stdout.write(data);
-    hud.redraw();
-  });
-
-  // Raw mode on stdin so individual keystrokes (arrow keys, Ctrl-C,
-  // etc.) reach claude without the parent's line discipline eating
-  // them. Restore cooked mode on exit. We attach the 'data' listener
-  // BEFORE calling resume(): if the terminal sends a response to a
-  // capability query claude fired during mount (DSR, DA, etc.),
-  // attaching late risks the response being emitted into a void
-  // and claude hanging on its own handshake.
-  const stdin = process.stdin;
-  const wasRaw = stdin.isRaw;
-  const forwardInput = (data: Buffer | string): void => {
-    try {
-      term.write(typeof data === 'string' ? data : data.toString('utf8'));
-    } catch {
-      /* term may have exited */
-    }
-  };
-  stdin.on('data', forwardInput);
-  if (stdin.isTTY) {
-    try {
-      stdin.setRawMode(true);
-    } catch {
-      /* some TTYs (e.g. some CI runners) don't support raw mode */
-    }
-  }
-  stdin.resume();
-
-  const onResize = (): void => {
-    const { rows, cols } = getSize();
-    try {
-      term.resize(cols, Math.max(4, rows - HUD_HEIGHT));
-    } catch {
-      /* ignore race with pty exit */
-    }
-    hud.redraw();
-  };
-  process.stdout.on('resize', onResize);
-
-  let exited = false;
-  let restored = false;
-  const restoreTerminal = (): void => {
-    if (restored) return;
-    restored = true;
-    // Stop forwarding stdin and restore cooked mode so the user's
-    // shell doesn't inherit raw-mode terminal state after we exit.
-    stdin.off('data', forwardInput);
-    if (stdin.isTTY) {
-      try {
-        stdin.setRawMode(wasRaw ?? false);
-      } catch {
-        /* ignore */
+      // Fresh sessions get a csuite-minted session id so the identity
+      // is known from t0 — an idle session that never runs a turn never
+      // emits its `init` message, and the run summary should still name
+      // the session. Resume/continue sessions take their id from `init`
+      // instead (the SDK forbids combining `sessionId` with them).
+      let sessionId: string | null = null;
+      if (options.resume === undefined) {
+        sessionId = randomUUID();
+        sdkOptions.sessionId = sessionId;
       }
-    }
-    stdin.pause();
-    process.stdout.off('resize', onResize);
-    hud.close();
-  };
 
-  const exitCode = new Promise<number>((resolvePromise) => {
-    term.onExit(({ exitCode: code, signal }) => {
-      exited = true;
-      restoreTerminal();
-      resolvePromise(code ?? (signal ? 128 + signal : 0));
-    });
-  });
+      log('claude: starting agent sdk session', {
+        executable: executable?.path,
+        model: options.model ?? null,
+        resume: options.resume ?? null,
+        sessionId,
+        cwd: ctx.cwd,
+      });
 
-  return {
-    exitCode,
-    sessionId: () => null,
-    signal(sig) {
-      try {
-        term.kill(sig);
-      } catch {
-        /* ignore */
-      }
-    },
-    async shutdown() {
-      restoreTerminal();
-      if (!exited) {
+      const q: Query = query({ prompt: queue.stream(), options: sdkOptions });
+
+      let announcedSessionId = sessionId;
+      const printer = createClaudeActivityPrinter();
+      const consumed = (async (): Promise<void> => {
         try {
-          term.kill('SIGTERM');
-        } catch {
-          /* ignore */
+          for await (const message of q) {
+            if (message.type === 'system' && message.subtype === 'init') {
+              // `init` re-fires on /clear- or compact-style restarts
+              // and may rotate the id — the latest one wins.
+              sessionId = message.session_id;
+              log('claude: session initialized', {
+                sessionId,
+                model: message.model,
+                apiKeySource: message.apiKeySource,
+                claudeCodeVersion: message.claude_code_version,
+              });
+              if (announcedSessionId !== sessionId) {
+                announcedSessionId = sessionId;
+                process.stderr.write(
+                  `csuite claude: session ${sessionId} — pick it up later with: csuite claude --resume ${sessionId}\n`,
+                );
+              }
+            }
+            printer.handle(message);
+          }
+          log('claude: message stream ended');
+        } catch (err) {
+          // The stream ends with an error when the subprocess dies or
+          // is torn down mid-iteration; the child's exit handler owns
+          // the exit code, this is diagnostics only.
+          log('claude: message stream error', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        } finally {
+          printer.close();
         }
+      })();
+
+      // If the SDK fails before ever spawning the subprocess (bad
+      // executable, option validation), no child exit will settle the
+      // promise — resolve it from the stream's end instead.
+      void consumed.finally(() => {
+        if (child === null) settleExit(1);
+      });
+
+      process.stderr.write(
+        (sessionId !== null
+          ? `csuite claude: session ${sessionId} — pick it up later with: csuite claude --resume ${sessionId}\n`
+          : '') +
+          `csuite claude: agent running headless — Ctrl-C to stop. Direct it via the broker:\n` +
+          `    csuite push --agent ${runner.briefing.name} --body "your instructions"\n\n`,
+      );
+
+      // HUD strip — same chrome as `csuite codex`: a 2-row footer
+      // showing `csuite · ● <state>` + agent name. `reserveBottomSpace`
+      // because our banners scrolled the cursor to the bottom row (see
+      // the codex adapter for the full story), and one explicit
+      // `redraw()` because there is no PTY relay driving repaints.
+      const hud: HudHandle = startHud({
+        presence: ctx.presence,
+        label: `csuite claude · ${runner.briefing.name}`,
+        reserveBottomSpace: true,
+        log,
+      });
+      hud.redraw();
+
+      let shutdownDone = false;
+      return {
+        exitCode,
+        sessionId: () => sessionId,
+        async shutdown(reason: string): Promise<void> {
+          if (shutdownDone) return;
+          shutdownDone = true;
+          // Close the HUD first so its scroll-region is released before
+          // teardown chatter scrolls.
+          hud.close();
+          if (queue.depth > 0) {
+            // Deliberately NOT flushed: delivering queued broker events
+            // now would start a fresh turn in a session that is being
+            // torn down. The broker still holds the messages; they
+            // replay on the next session's SSE subscribe.
+            log('claude: dropping queued channel events at shutdown', { queued: queue.depth });
+          }
+          queue.close();
+          try {
+            await withTimeout(q.interrupt(), 2_000);
+          } catch {
+            // No active turn / already gone — either way we proceed.
+          }
+          q.close();
+          const settled = await withTimeout(exitCode, 5_000).catch(() => null);
+          if (settled === null) {
+            const proc = child;
+            if (proc !== null && proc.exitCode === null && proc.signalCode === null) {
+              log('claude: force-killing agent subprocess', { reason });
+              try {
+                proc.kill('SIGKILL');
+              } catch {
+                /* already gone */
+              }
+            }
+          }
+          await consumed.catch(() => {});
+        },
+      };
+    },
+
+    async doctor(): Promise<AgentDoctorCheck[]> {
+      const resolved = executable ?? resolveClaudeExecutable();
+      const checks: AgentDoctorCheck[] = [
+        {
+          name: 'claude agent sdk',
+          status: 'PASS',
+          detail: `@anthropic-ai/claude-agent-sdk ${resolved.sdkVersion ?? 'unknown version'}`,
+        },
+      ];
+      if (resolved.source === 'env') {
+        checks.push({
+          name: 'claude executable',
+          status: 'WARN',
+          detail: `CLAUDE_PATH override in effect: ${resolved.path} (the SDK's bundled Claude Code is bypassed)`,
+        });
+      } else {
+        checks.push({
+          name: 'claude executable',
+          status: 'PASS',
+          detail: `bundled Claude Code ${resolved.bundledCliVersion ?? 'unknown version'} at ${resolved.path}`,
+        });
       }
+      return checks;
     },
   };
 }

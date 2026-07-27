@@ -49,6 +49,7 @@
 
 import { MCP_CHANNEL_NOTIFICATION } from 'csuite-sdk/protocol';
 import type { ForwarderNotificationSink } from '../../forwarder.js';
+import { formatChannelEvent } from '../channel-format.js';
 import type { JsonRpcClient } from './json-rpc.js';
 import { METHODS, type ThreadStatus, type TurnStartResponse, type UserInput } from './protocol.js';
 
@@ -286,53 +287,4 @@ export function createCodexChannelSink(opts: CodexChannelSinkOptions): CodexChan
       await flush();
     },
   };
-}
-
-/**
- * Render the channel-notification params (content + meta) into a single
- * `<channel>` tagged block that the agent can recognise as ambient
- * signal rather than fresh user input. Format mirrors the meta keys
- * the forwarder produces (`from`, `thread`, `ts`, etc.).
- */
-function formatChannelEvent(params: Record<string, unknown> | undefined): string | null {
-  if (!params || typeof params !== 'object') return null;
-  const content = typeof params.content === 'string' ? params.content : '';
-  const metaRaw = params.meta;
-  const meta: Record<string, string> =
-    metaRaw && typeof metaRaw === 'object' && !Array.isArray(metaRaw)
-      ? (metaRaw as Record<string, string>)
-      : {};
-
-  // Highest-signal meta fields first; the rest land as `key="value"`
-  // attributes so the agent can scan them.
-  const ordered: Array<[string, string | undefined]> = [
-    ['kind', meta.kind],
-    ['from', meta.from],
-    ['thread', meta.thread],
-    ['title', meta.title],
-    ['target', meta.target],
-    ['level', meta.level],
-    ['ts', meta.ts],
-    ['msg_id', meta.msg_id],
-  ];
-  const seen = new Set<string>();
-  const attrs: string[] = [];
-  for (const [k, v] of ordered) {
-    seen.add(k);
-    if (typeof v === 'string' && v.length > 0) {
-      attrs.push(`${k}=${attrEscape(v)}`);
-    }
-  }
-  for (const [k, v] of Object.entries(meta)) {
-    if (seen.has(k)) continue;
-    if (typeof v === 'string' && v.length > 0) {
-      attrs.push(`${k}=${attrEscape(v)}`);
-    }
-  }
-  const open = attrs.length > 0 ? `<channel ${attrs.join(' ')}>` : '<channel>';
-  return `${open}\n${content}\n</channel>`;
-}
-
-function attrEscape(s: string): string {
-  return `"${s.replace(/"/g, '\\"')}"`;
 }

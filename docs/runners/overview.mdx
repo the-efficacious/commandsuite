@@ -147,22 +147,23 @@ events reach the agent:
 
 |  | `csuite claude` | `csuite codex` |
 |---|---|---|
-| **Agent shape** | Interactive TUI | Headless `codex app-server` |
-| **Stdio owner** | The agent (TUI in your terminal) | The runner |
-| **MCP bridge** | `csuite mcp-bridge` spawned by claude via `--mcp-config <ephemeral file>` | `csuite mcp-bridge` spawned by codex via ephemeral `CODEX_HOME/config.toml` |
-| **Push event delivery** | `notifications/claude/channel` MCP notification (depends on `claude/channel` capability) | `turn/start` if thread is idle, `turn/steer` if active (JSON-RPC v2) |
-| **Auto-injected agent flags** | `--dangerously-skip-permissions`, `--dangerously-load-development-channels server:csuite`, `--append-system-prompt <briefing>` | `developerInstructions: <briefing>`, `approvalPolicy: never`, `sandbox: danger-full-access` |
-| **`.mcp.json` rewrite** | No by default (ephemeral `--mcp-config` file); opt-in backup+restore rewrite via `mcpMode: 'inject'` | No (ephemeral CODEX_HOME) |
-| **Capture source** | Native OpenTelemetry export (API bodies, model, tokens, cost) + hooks (tool result content, busy signal) | `codex app-server` notification stream (assistant text, reasoning summaries, token usage, tool items) |
-| **Runner-injected env** | OTEL OTLP export vars (`CLAUDE_CODE_ENABLE_TELEMETRY`, `OTEL_*`) + `CSUITE_RUNNER_SOCKET` | `CODEX_HOME` (no telemetry env) |
-| **Trace parsing** | `llm_exchange` (Anthropic Messages shape) + `tool_action`, parsed at broker ingest | `llm_exchange` + `tool_action`, built from typed app-server items |
-| **Status bar** | Bottom-row HUD (when `node-pty` is available) | One-line connection notice |
+| **Agent shape** | Headless Claude Code via the Claude Agent SDK | Headless `codex app-server` |
+| **Stdio owner** | The runner | The runner |
+| **MCP bridge** | `csuite mcp-bridge` spawned by claude via the SDK's inline `--mcp-config` | `csuite mcp-bridge` spawned by codex via ephemeral `CODEX_HOME/config.toml` |
+| **Push event delivery** | SDK streaming-input user messages (Claude Code queues mid-turn input natively) | `turn/start` if thread is idle, `turn/steer` if active (JSON-RPC v2) |
+| **Session posture** | `permissionMode: bypassPermissions`, briefing appended to the `claude_code` system-prompt preset | `developerInstructions: <briefing>`, `approvalPolicy: never`, `sandbox: danger-full-access` |
+| **`.mcp.json` rewrite** | No (inline SDK config; the working tree is never touched) | No (ephemeral CODEX_HOME) |
+| **Capture source** | Session transcript (reader) + in-process hooks (busy signal) + native OpenTelemetry export (operational + raw bodies) | `codex app-server` notification stream (assistant text, reasoning summaries, token usage, tool items) |
+| **Runner-injected env** | OTEL OTLP export vars (`CLAUDE_CODE_ENABLE_TELEMETRY`, `OTEL_*`) | `CODEX_HOME` (no telemetry env) |
+| **Trace parsing** | `llm_exchange` (Anthropic Messages shape) + `tool_action`, parsed from the transcript | `llm_exchange` + `tool_action`, built from typed app-server items |
+| **Session resume** | `--resume [<sessionId>]` (bare = most recent in cwd) | `--resume [<threadId>]` (bare = most recent) |
+| **Status bar** | Bottom-row HUD + activity feed | Bottom-row HUD + activity feed |
 
 The structural takeaway: claude and codex receive ambient
 director input through different mechanisms because their underlying
 agent frameworks treat "new input mid-session" differently. csuite
 hides that asymmetry behind the runner's notification sink — the
-sink for claude wraps events as MCP notifications; the sink
+sink for claude renders events into the SDK's streaming input; the sink
 for codex bundles them and dispatches as `turn/start` or `turn/steer`.
 
 For the full per-runner reference, see

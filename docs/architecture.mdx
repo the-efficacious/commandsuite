@@ -389,9 +389,10 @@ response bodies, model, token usage, cost, and tool decisions — to
 the broker's `POST /otlp/v1/logs`, bearer-authenticated so they
 resolve to the member. The broker's ingest correlates them into
 `llm_exchange` and `tool_action` events. Separately, the runner
-writes `.claude/settings.json` hooks that POST Pre/PostToolUse
-payloads to the CaptureHost's loopback hook server; those carry the
-tool **result** content OTEL omits, and also drive the busy signal:
+registers in-process Agent SDK hook callbacks that forward
+Pre/PostToolUse payloads to the CaptureHost's loopback hook server;
+those carry the tool **result** content OTEL omits, and also drive
+the busy signal:
 
 ```
 claude child

@@ -103,7 +103,7 @@ as OTLP-JSON log records:
 ```
 Claude Code child
    │
-   │  OTLP-JSON log records            .claude/settings.json hook
+   │  OTLP-JSON log records            in-process SDK hook forward
    │  (raw Anthropic bodies,           (Pre/PostToolUse → loopback)
    │   token/cost accounting,                    │
    │   tool decisions)                           │
@@ -135,8 +135,8 @@ Code's ~500ms telemetry flush batches, and kept per member. The
 events.
 
 OTEL is post-hoc and, critically, **carries no tool result
-content**. The runner also writes `.claude/settings.json` hooks;
-Claude Code POSTs Pre/PostToolUse events to the loopback hook
+content**. The runner also registers in-process Agent SDK hook
+callbacks that forward Pre/PostToolUse events to the loopback hook
 server, which emits `tool_action` events carrying the tool RESULT
 content that OTEL leaves out.
 
@@ -379,7 +379,7 @@ WAL, online prune doesn't block live writes for long.
 - **Tool result content arrives via hooks, not OTEL (Claude).**
   OTEL's `tool_result` record carries only a size, not the output
   body. The runner's hook server fills that gap. If the hooks
-  aren't wired (e.g. `.claude/settings.json` was overridden), tool
+  aren't wired (e.g. capture disabled with `--no-trace`), tool
   actions still appear from OTEL but without their result content.
 - **Large request bodies are inline-truncated (Claude).** The OTEL
   producer inlines request bodies up to a ~60KB cap; a body over

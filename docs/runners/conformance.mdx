@@ -58,11 +58,11 @@ An adapter implements five things:
 Two declarations in `meta` deserve emphasis:
 
 - **`signals: 'forward' | 'teardown'`.** Interactive agents that own
-  the terminal (Claude Code's TUI) get signals *forwarded* — the
-  session ends when the agent exits. Headless agents (codex under
-  `app-server`) get *teardown* — Ctrl-C gracefully ends the session.
-  Declare which one your framework is; never install your own
-  process signal handlers.
+  the terminal get signals *forwarded* — the session ends when the
+  agent exits. Headless agents (claude under the Agent SDK, codex
+  under `app-server`) get *teardown* — Ctrl-C gracefully ends the
+  session. Declare which one your framework is; never install your
+  own process signal handlers.
 - **`captureTier`** — see below.
 
 ### What the driver guarantees (so adapters never re-implement it)
@@ -189,14 +189,14 @@ describeRunnerConformance({
 ```
 
 The fake agent is the one per-runner investment: a small script that
-speaks just enough of the framework's wire protocol (stdio MCP
-client for claude-likes, newline-JSON-RPC app-server for
-codex-likes) to exercise the real adapter end-to-end.
+speaks just enough of the framework's wire protocol (the Agent SDK's
+stream-json control protocol for claude, newline-JSON-RPC app-server
+for codex-likes) to exercise the real adapter end-to-end.
 
 Deliberately out of kit scope (covered elsewhere): in-process
 SIGINT/SIGTERM delivery (the test harness owns process signals), and
 ambient broker-event delivery, which is framework-specific — cover
-it in per-runner tests the way `bridge.test.ts` (claude) and
+it in per-runner tests the way `claude-sink.test.ts` (claude) and
 `codex/channel-sink.test.ts` (codex) do.
 
 ### Fixture rule (tier 2+)
@@ -219,7 +219,7 @@ are the models.
 2. **Write the adapter** (`runtime/agents/<id>-agent.ts` or
    `runtime/agents/<id>/`): `meta`, `locate`, `runnerOptions` (sink +
    bridge policy), `prepare`, `spawn`. Model on
-   `claude-agent.ts` (interactive/MCP) or `codex/codex-agent.ts`
+   `claude-agent.ts` (vendor-SDK embedding) or `codex/codex-agent.ts`
    (headless/custom protocol).
 3. **Add the verb**: a thin `commands/<id>.ts` wrapper plus arg
    parsing and `--doctor`/`--skip-doctor` wiring in `index.ts`.

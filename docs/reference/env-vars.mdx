@@ -19,9 +19,8 @@ Read by every `csuite` subcommand that talks to a broker.
 | `CSUITE_URL` | `http://127.0.0.1:8717` | Broker base URL. Overridden by `--url`. |
 | `CSUITE_TOKEN` | (none — required) | Bearer token. Overridden by `--token`. Falls back to `~/.config/csuite/auth.json` if neither is set. |
 | `CSUITE_AUTH_CONFIG_PATH` | platform-specific (see below) | Override the auth-config file path. |
-| `CLAUDE_PATH` | `which claude` | Path to the Claude Code binary. Used by `csuite claude` and `--doctor`. |
+| `CLAUDE_PATH` | Agent SDK's bundled CLI | Override the Claude Code executable the Agent SDK drives. Used by `csuite claude` and `--doctor`; unset means the CLI shipped in `@anthropic-ai/claude-agent-sdk-<platform>-<arch>`. |
 | `CODEX_PATH` | `which codex` | Path to the OpenAI Codex binary. Used by `csuite codex`. |
-| `CSUITE_CLAUDE_MCP_MODE` | `flag` | How `csuite claude` wires the csuite MCP server into Claude Code. `flag` passes it via `--mcp-config` (ephemeral); `inject` writes it into the Claude MCP config instead. |
 
 Auth-config path resolution (in absence of `CSUITE_AUTH_CONFIG_PATH`):
 
@@ -119,11 +118,12 @@ The runner also sets `CSUITE_RUNNER_SOCKET` on the claude child:
 | `CSUITE_RUNNER_SOCKET` | `/tmp/.csuite-runner-<pid>.sock` | The MCP bridge subprocess reads this to find the runner's IPC socket. |
 
 Tool **result** content and the live "agent is working" signal don't
-come from OTEL — they come from Claude Code hooks. The runner writes
-`.claude/settings.json` hooks that POST PreToolUse / PostToolUse
-payloads to a loopback hook server the capture host owns; that server
-emits the `tool_action` result content and drives the busy signal.
-The hook endpoint is an in-process loopback URL, not an env var.
+come from OTEL — they come from Claude Code hooks. The runner
+registers in-process Agent SDK hook callbacks that forward PreToolUse
+/ PostToolUse payloads to a loopback hook server the capture host
+owns; that server emits the `tool_action` result content and drives
+the busy signal. The hook endpoint is an in-process loopback URL, not
+an env var.
 
 ### codex — config dir + trace bundles (runner-managed)
 
@@ -167,7 +167,6 @@ and platform-specific defaults elsewhere. Useful overrides:
 | `APPDATA` | Windows-equivalent of `XDG_CONFIG_HOME` for `auth.json`. |
 | `TMPDIR` | Used by `--doctor`'s writable check. The IPC socket also lives here (`$TMPDIR/.csuite-runner-<pid>.sock`). |
 | `HOSTNAME` | Read by `csuite connect` as the default `--label` hint. |
-| `TERM` | Forwarded to the pty when claude uses node-pty (default `xterm-256color`). |
 
 ## Variables csuite does NOT consume
 

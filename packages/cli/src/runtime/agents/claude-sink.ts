@@ -1,0 +1,149 @@
+/**
+ * Claude channel sink — implements `ForwarderNotificationSink` so the
+ * runner forwarder can dispatch broker SSE events at the claude runner
+ * without knowing the agent runs on the Agent SDK.
+ *
+ * Broker events render as `<channel>` tagged text (shared format with
+ * the codex sink) and are pushed into the SDK's streaming-input
+ * generator as user messages. Claude Code's own input queue handles
+ * the turn mechanics natively: a message arriving while the agent is
+ * idle starts a turn, one arriving mid-turn is queued and folded into
+ * the conversation — the codex sink's `turn/start`-vs-`turn/steer`
+ * routing (and its mismatch-retry dance) has no equivalent here.
+ *
+ * Bundling is kept: each dispatched user message has model-side
+ * awareness cost, so a burst of micro-events (ten objective updates
+ * landing at once) collapses within a 200ms window into a single
+ * message carrying the same prose.
+ *
+ * The queue also solves cold start. The runner needs a sink before the
+ * agent spawns; events that arrive while the SDK subprocess is still
+ * booting simply sit in the stream until the CLI reads them — nothing
+ * is dropped, nothing needs a second buffering layer.
+ */
+
+import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import { MCP_CHANNEL_NOTIFICATION } from 'csuite-sdk/protocol';
+import type { ForwarderNotificationSink } from '../forwarder.js';
+import { formatChannelEvent } from './channel-format.js';
+
+const DEFAULT_BUNDLE_WINDOW_MS = 200;
+
+/**
+ * Unbounded FIFO of streaming-input messages, consumed by the async
+ * generator handed to the SDK's `query()`. `close()` ends the stream:
+ * the generator returns after draining what's already queued, which is
+ * the SDK's graceful-shutdown signal (stdin EOF → grace window).
+ */
+export class ClaudeMessageQueue {
+  private items: SDKUserMessage[] = [];
+  private wake: (() => void) | null = null;
+  private closed = false;
+
+  push(message: SDKUserMessage): boolean {
+    if (this.closed) return false;
+    this.items.push(message);
+    this.wake?.();
+    return true;
+  }
+
+  close(): void {
+    this.closed = true;
+    this.wake?.();
+  }
+
+  /** Number of queued-but-unconsumed messages (diagnostics only). */
+  get depth(): number {
+    return this.items.length;
+  }
+
+  async *stream(): AsyncGenerator<SDKUserMessage> {
+    while (true) {
+      while (this.items.length > 0) {
+        const next = this.items.shift();
+        if (next !== undefined) yield next;
+      }
+      if (this.closed) return;
+      await new Promise<void>((resolve) => {
+        this.wake = () => {
+          this.wake = null;
+          resolve();
+        };
+      });
+    }
+  }
+}
+
+export interface ClaudeChannelSinkOptions {
+  queue: ClaudeMessageQueue;
+  log: (msg: string, ctx?: Record<string, unknown>) => void;
+  /** Bundle window in milliseconds. Defaults to 200ms. */
+  bundleWindowMs?: number;
+}
+
+export interface ClaudeChannelSink extends ForwarderNotificationSink {
+  /**
+   * Flush the bundle buffer immediately. The adapter calls this before
+   * ending the input stream so a just-arrived event isn't stranded in
+   * the 200ms window at teardown.
+   */
+  flushNow(): void;
+}
+
+export function createClaudeChannelSink(opts: ClaudeChannelSinkOptions): ClaudeChannelSink {
+  const bundleWindow = opts.bundleWindowMs ?? DEFAULT_BUNDLE_WINDOW_MS;
+  const buffer: string[] = [];
+  let timer: NodeJS.Timeout | null = null;
+
+  const flush = (): void => {
+    if (timer !== null) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    if (buffer.length === 0) return;
+    const body = buffer.splice(0, buffer.length).join('\n');
+    const accepted = opts.queue.push({
+      type: 'user',
+      message: { role: 'user', content: body },
+      parent_tool_use_id: null,
+    });
+    if (!accepted) {
+      opts.log('claude-sink: dropped events — input stream closed', { bytes: body.length });
+    }
+  };
+
+  const scheduleFlush = (): void => {
+    if (timer !== null) return;
+    timer = setTimeout(() => {
+      timer = null;
+      flush();
+    }, bundleWindow);
+    // Don't pin the event loop alive on the bundle timer.
+    timer.unref?.();
+  };
+
+  return {
+    async notification(args) {
+      // Only the channel notification (which includes the runner's
+      // `context_refresh` re-briefs — same method). Capability updates
+      // (`tools/list_changed`) reach claude through the bridge's stdio
+      // MCP transport, not this sink.
+      if (args.method !== MCP_CHANNEL_NOTIFICATION) {
+        opts.log('claude-sink: ignored non-channel notification', { method: args.method });
+        return;
+      }
+      const text = formatChannelEvent(args.params);
+      if (text === null) return;
+      opts.log('claude-sink: received channel event', {
+        bytes: text.length,
+        bufferDepth: buffer.length + 1,
+        queueDepth: opts.queue.depth,
+      });
+      buffer.push(text);
+      scheduleFlush();
+    },
+    flushNow() {
+      flush();
+    },
+  };
+}

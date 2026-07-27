@@ -66,7 +66,7 @@ export class CodexAdapterError extends AgentAdapterError {
   }
 }
 
-/** Locate the `codex` binary. Mirrors `findClaudeBinary`. */
+/** Locate the `codex` binary: `$CODEX_PATH`, then `which codex`. */
 export function findCodexBinary(): string {
   const fromEnv = process.env.CODEX_PATH;
   if (fromEnv && fromEnv.length > 0) {

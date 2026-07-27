@@ -131,19 +131,17 @@ Behind the scenes the runner:
    Code's tool events, plus the batched activity uploader that ships
    normalized events to the broker. No proxy, no CA — capture rides
    Claude Code's native OpenTelemetry export and its hooks.
-4. Backs up your existing `.mcp.json` (if any) to a tmp dir and
-   writes a new one with a `csuite` MCP server entry pointing at
-   `csuite mcp-bridge`, and writes `.claude/settings.json` hooks that
-   POST tool events to the capture host's loopback endpoint.
-5. Auto-injects three flags into the `claude` invocation:
-   `--dangerously-skip-permissions`, `--dangerously-load-development-channels server:csuite`,
-   and `--append-system-prompt <briefing>`. Each can be suppressed
-   by passing it yourself.
-6. Spawns `claude` with the OpenTelemetry export env
-   (`CLAUDE_CODE_ENABLE_TELEMETRY`, `OTEL_EXPORTER_OTLP_ENDPOINT`
-   pointed at `<brokerUrl>/otlp`, bearer auth, and the
-   `OTEL_LOG_*` body/prompt/tool flags) plus `CSUITE_RUNNER_SOCKET`
-   baked into its environment.
+4. Composes the Claude Agent SDK options: a `csuite` MCP server
+   entry pointing at `csuite mcp-bridge` (delivered inline on the
+   agent invocation — your `.mcp.json` is never touched), in-process
+   hook callbacks that forward tool events to the capture host's
+   loopback endpoint (no `.claude/settings.json` writes), the
+   `bypassPermissions` posture, and the team briefing appended to
+   Claude Code's system prompt.
+5. Spawns Claude Code headlessly through the SDK with the
+   OpenTelemetry export env (`CLAUDE_CODE_ENABLE_TELEMETRY`,
+   `OTEL_EXPORTER_OTLP_ENDPOINT` pointed at `<brokerUrl>/otlp`,
+   bearer auth, FILE-mode raw bodies) merged into its environment.
 
 When claude exits the runner restores your `.mcp.json` on every
 exit path (normal, SIGINT, SIGTERM, crash), unlinks the socket, and
