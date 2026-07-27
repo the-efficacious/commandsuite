@@ -39,7 +39,7 @@
   "dependencies": {
     "csuite-sdk": "workspace:*",
     "csuite-web-ui": "workspace:*",
-    "@preact/signals": "^2.9.4",
+    "@preact/signals": "^2.10.0",
     "preact": "^10.29.7",
     "workbox-precaching": "^7.4.1",
     "workbox-window": "^7.4.1"
