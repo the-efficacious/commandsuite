@@ -1,5 +1,12 @@
 # csuite-core
 
+## 0.1.1
+
+### Patch Changes
+
+- Updated dependencies []:
+  - csuite-sdk@0.1.1
+
 ## 0.1.0
 
 ### Patch Changes
