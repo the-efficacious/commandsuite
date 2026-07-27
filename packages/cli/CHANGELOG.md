@@ -1,5 +1,15 @@
 # csuite-cli
 
+## 0.1.1
+
+### Patch Changes
+
+- [#23](https://github.com/the-efficacious/commandsuite/pull/23) [`bbed9d8`](https://github.com/the-efficacious/commandsuite/commit/bbed9d880aabd3e49b1657bca198f560f16768b5) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - Move the CLI auth store out of your project tree: `csuite connect` now saves to the user-global `~/.config/csuite/auth.json` (per-OS: `~/Library/Application Support` on macOS, `%APPDATA%` on Windows) and records which directory each enrollment serves, so one machine still holds a distinct member identity per workspace. Previously the bearer token was written to `<cwd>/.csuite/auth.json` — inside your project, and one `git add -A` from being committed. Scope with `--workspace <dir>` or `--global`; inspect with the new `csuite auth list`. Legacy project-scoped stores are still read, and `csuite auth migrate` (or the next `csuite connect`) folds them in — if one was inside a git working tree the CLI now tells you to rotate the token, since it may already be in your history.
+
+- Updated dependencies []:
+  - csuite-core@0.1.1
+  - csuite-sdk@0.1.1
+
 ## 0.1.0
 
 ### Minor Changes
