@@ -285,7 +285,9 @@ export function defineTools(
           },
           blockReason: {
             type: 'string',
-            description: 'Required when status=blocked. Concisely describe what is blocking you.',
+            description:
+              'Required when status=blocked. Concisely describe what is blocking you. ' +
+              'Max 2048 characters.',
           },
         },
         required: ['id', 'status'],
@@ -309,7 +311,8 @@ export function defineTools(
           id: { type: 'string', description: 'The objective id.' },
           body: {
             type: 'string',
-            description: 'The message body to post into the objective thread.',
+            description:
+              'The message body to post into the objective thread. Max 16384 characters.',
           },
           attachments: {
             type: 'array',
@@ -336,7 +339,9 @@ export function defineTools(
           result: {
             type: 'string',
             description:
-              'Required summary of what was delivered and how it meets the stated outcome.',
+              'Required summary of what was delivered and how it meets the stated outcome. ' +
+              'Max 4096 characters — the call is rejected if you exceed it, so check the ' +
+              'length before writing a long completion rather than after.',
           },
         },
         required: ['id', 'result'],
@@ -1498,17 +1503,17 @@ function buildAuthorityTools(briefing: BriefingResponse): Tool[] {
       properties: {
         title: {
           type: 'string',
-          description: 'Short, specific title for the objective.',
+          description: 'Short, specific title for the objective. Max 200 characters.',
         },
         outcome: {
           type: 'string',
           description:
-            'Required. The tangible result that defines "done" — what specifically must be true for this objective to be marked complete.',
+            'Required. The tangible result that defines "done" — what specifically must be true for this objective to be marked complete. Max 2048 characters.',
         },
         body: {
           type: 'string',
           description:
-            'Optional longer context — constraints, scoping notes, links, reproductions.',
+            'Optional longer context — constraints, scoping notes, links, reproductions. Max 4096 characters.',
         },
         assignee: {
           type: 'string',
@@ -1518,7 +1523,7 @@ function buildAuthorityTools(briefing: BriefingResponse): Tool[] {
           type: 'array',
           items: { type: 'string' },
           description:
-            'Optional list of teammate names to add as watchers on the objective thread from the start.',
+            'Optional list of teammate names to add as watchers on the objective thread from the start. Max 64.',
         },
         attachments: {
           type: 'array',

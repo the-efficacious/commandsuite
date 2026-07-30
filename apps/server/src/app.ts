@@ -6,11 +6,11 @@
  *   POST /session/totp    — unauthed, exchange TOTP code for a session cookie
  *   POST /session/logout  — session-auth, clear the session
  *   GET  /session         — session-auth, return current session info
- *   GET  /briefing        — dual-auth, team-context packet for the user
- *   GET  /roster          — dual-auth, full teammate list + live connection state
- *   POST /push            — dual-auth, deliver a message to one teammate or broadcast
- *   GET  /subscribe       — dual-auth, WebSocket of live messages for a name
- *   GET  /history         — dual-auth, prior messages filtered by viewer scope
+ *   GET  /briefing        — tri-auth, team-context packet for the user
+ *   GET  /roster          — tri-auth, full teammate list + live connection state
+ *   POST /push            — tri-auth, deliver a message to one teammate or broadcast
+ *   GET  /subscribe       — tri-auth, WebSocket of live messages for a name
+ *   GET  /history         — tri-auth, prior messages filtered by viewer scope
  *
  * Dual-auth = either `Authorization: Bearer <token>` (machine plane,
  * MCP link) or `Cookie: csuite_session=<id>` (human plane, web SPA).
@@ -841,7 +841,7 @@ export function createApp(options: AppOptions): CreatedApp {
     });
   });
 
-  // ─── Team endpoints (dual-auth) ────────────────────────────────
+  // ─── Team endpoints (tri-auth) ────────────────────────────────
 
   app.get(PATHS.briefing, auth, (c) => {
     const member = c.get('member');
@@ -4003,7 +4003,7 @@ export function createApp(options: AppOptions): CreatedApp {
 
   // ─── User management endpoints ───────────────────────────────
   //
-  // `GET /users` is dual-auth — every teammate can see who's on the
+  // `GET /users` is tri-auth — every teammate can see who's on the
   // team. Mutating verbs are admin-only and require `persistMembers`
   // to be wired; without it, mutations would drift in-memory and lose
   // on restart so we 501 instead.
@@ -4028,7 +4028,7 @@ export function createApp(options: AppOptions): CreatedApp {
 
   // ─── Team config endpoints ───────────────────────────────────
   //
-  // Read is dual-auth (every authenticated member sees their team).
+  // Read is tri-auth (every authenticated member sees their team).
   // Mutations require `team.manage`. The response always reflects the
   // freshly-read DB state — there is no in-memory snapshot to go
   // stale. Note: changing team `context` / member `instructions`

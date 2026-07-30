@@ -1,10 +1,15 @@
 /**
- * Phase 1 auth surface: TOTP verification, session cookies, dual-auth.
+ * The auth surface: TOTP verification, session cookies, bearer-or-cookie
+ * resolution, and federated RS256 JWT — all three planes the tri-auth
+ * middleware resolves to one `LoadedMember`.
  *
- * These tests exercise the new /session/* routes end-to-end through
- * the Hono app, plus the TOTP + SessionStore primitives directly.
- * Existing /roster identity/auth coverage lives in app.test.ts; this
- * file is focused on what's new.
+ * These tests exercise the /session/* routes end-to-end through the Hono
+ * app, plus the TOTP + SessionStore primitives directly. Existing
+ * /roster identity/auth coverage lives in app.test.ts.
+ *
+ * Note the `dual auth (bearer OR cookie)` describe below is named
+ * accurately rather than renamed to "tri" — it covers exactly those two
+ * planes. JWT has its own block further down.
  */
 
 import { createServer, type Server } from 'node:http';

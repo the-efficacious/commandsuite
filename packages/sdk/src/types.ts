@@ -1767,9 +1767,17 @@ export interface ActivityToolAction {
  * `UserPromptSubmit` hook (the same signal the runner already consumes
  * for presence). In csuite this is often an injected ambient broker
  * event rather than a human keystroke. Capturing it here gives a Claude
- * turn a real opener WITHOUT depending on the OTEL request body, which
- * truncates large (~60KB+) prompts. The text is redacted runner-side
- * before it leaves the process, so the schema only validates shape.
+ * turn a real opener WITHOUT depending on request-body capture at all.
+ *
+ * (The original rationale was that OTEL's INLINE body mode truncates
+ * large prompts at ~60 KB. The runner no longer uses inline mode — it
+ * sets `OTEL_LOG_RAW_API_BODIES=file:<dir>`, which writes complete
+ * untruncated bodies — so that truncation no longer applies. The hook
+ * remains the right source because it yields the opener directly rather
+ * than requiring a body to be parsed for it.)
+ *
+ * The text is redacted runner-side before it leaves the process, so the
+ * schema only validates shape.
  */
 export interface ActivityUserPrompt {
   readonly kind: 'user_prompt';
