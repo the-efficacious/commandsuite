@@ -33,7 +33,7 @@ import {
 import { useStickyBottom } from '../lib/use-sticky-bottom.js';
 import { useWindowedList } from '../lib/use-windowed-list.js';
 import { selectAgentDetail, view } from '../lib/view.js';
-import { ChevronsDown, PanelRight } from './icons/index.js';
+import { ArrowRight, ArrowUp, ChevronsDown, PanelRight } from './icons/index.js';
 import { MessageLine } from './MessageLine.js';
 
 export interface TranscriptProps {
@@ -129,9 +129,10 @@ export function Transcript({ viewer }: TranscriptProps) {
               type="button"
               onClick={() => selectAgentDetail(dmCounterpart)}
               class="eyebrow text-link"
-              style="padding:4px 8px"
+              style="display:inline-flex;align-items:center;gap:4px;padding:4px 8px"
             >
-              → VIEW AGENT
+              <ArrowRight size={12} aria-hidden="true" />
+              VIEW AGENT
             </button>
           )}
           {/* Inspector toggle — visible only at narrow widths where the
@@ -172,7 +173,8 @@ export function Transcript({ viewer }: TranscriptProps) {
                     disabled={hist?.loading ?? false}
                     class="btn btn-ghost btn-sm"
                   >
-                    {hist?.loading ? 'Loading…' : '↑ Load older messages'}
+                    {!(hist?.loading ?? false) && <ArrowUp size={12} aria-hidden="true" />}
+                    {hist?.loading ? 'Loading…' : 'Load older messages'}
                   </button>
                 </div>
               )}

@@ -17,6 +17,7 @@ import { useEffect } from 'preact/hooks';
 import { briefing } from '../lib/briefing.js';
 import { createSecret, loadSecrets, secrets, secretsError } from '../lib/secrets.js';
 import { selectSecretDetail } from '../lib/view.js';
+import { ArrowRight } from './icons/index.js';
 import { EmptyState, ErrorCallout, Loading, PageHeader } from './ui/index.js';
 
 const formOpen = signal(false);
@@ -143,8 +144,9 @@ function SecretListRow({ secret, isLast }: { secret: SecretSummary; isLast: bool
             class={`dot ${secret.hasValue ? 'ok' : 'muted'}`}
             title={secret.hasValue ? 'Value set' : 'No value'}
           />
-          <span style="font-family:var(--f-mono);font-size:11px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase">
-            → Manage
+          <span style="display:inline-flex;align-items:center;gap:4px;font-family:var(--f-mono);font-size:11px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase">
+            <ArrowRight size={12} aria-hidden="true" />
+            Manage
           </span>
         </div>
       </button>

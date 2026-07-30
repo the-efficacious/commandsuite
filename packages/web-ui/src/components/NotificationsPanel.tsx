@@ -34,6 +34,7 @@ import {
   setNotificationProfileSecret,
 } from '../lib/notifications.js';
 import { selectNotificationDetail } from '../lib/view.js';
+import { ArrowRight } from './icons/index.js';
 import { EmptyState, ErrorCallout, Loading, PageHeader } from './ui/index.js';
 
 const formOpen = signal(false);
@@ -195,8 +196,9 @@ function EndpointListRow({
             class={`dot ${verifiable ? 'ok' : 'muted'}`}
             title={verifiable ? 'Verifiable' : 'No secret — rejects everything'}
           />
-          <span style="font-family:var(--f-mono);font-size:11px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase">
-            → Manage
+          <span style="display:inline-flex;align-items:center;gap:4px;font-family:var(--f-mono);font-size:11px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase">
+            <ArrowRight size={12} aria-hidden="true" />
+            Manage
           </span>
         </div>
       </button>

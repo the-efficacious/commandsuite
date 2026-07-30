@@ -35,7 +35,17 @@ import {
 } from '../lib/objectives.js';
 import { roster } from '../lib/roster.js';
 import { selectObjectivesList } from '../lib/view.js';
-import { AlertCircle, AlertTriangle, X } from './icons/index.js';
+import {
+  AlertCircle,
+  AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
+  ChevronDown,
+  ChevronRight,
+  ChevronUp,
+  Send,
+  X,
+} from './icons/index.js';
 import { MessageAttachments } from './MessageAttachments.js';
 import { MessageLine } from './MessageLine.js';
 import { TracePanel } from './TracePanel.js';
@@ -286,10 +296,11 @@ function Breadcrumb({ id }: { id: string }) {
   return (
     <nav aria-label="Breadcrumb" class="crumbs">
       <button type="button" onClick={selectObjectivesList} class="text-link">
-        ← Objectives
+        <ArrowLeft size={13} aria-hidden="true" />
+        Objectives
       </button>
       <span class="sep" aria-hidden="true">
-        ›
+        <ChevronRight size={13} />
       </span>
       <span class="current">{id}</span>
     </nav>
@@ -553,7 +564,8 @@ function ActionsTab({
               onClick={() => void run(() => reassignObjective(id, { to: actionReassignTo.value }))}
               class="btn btn-secondary flex-shrink-0"
             >
-              → Reassign
+              <ArrowRight size={14} aria-hidden="true" />
+              Reassign
             </button>
           </div>
         </div>
@@ -734,7 +746,8 @@ function DiscussionTab({
               disabled={discussSending.value || discussDraft.value.trim().length === 0}
               class="btn btn-primary flex-shrink-0"
             >
-              {discussSending.value ? '…' : 'Send →'}
+              {discussSending.value ? '…' : 'Send'}
+              {!discussSending.value && <Send size={13} aria-hidden="true" />}
             </button>
           </div>
         </div>
@@ -801,7 +814,12 @@ function AuditTab({ events }: { events: ObjectiveEvent[] }) {
                 }}
                 class="btn btn-ghost btn-sm"
               >
-                {expanded ? '▲ Collapse' : '▼ Expand full log'}
+                {expanded ? (
+                  <ChevronUp size={13} aria-hidden="true" />
+                ) : (
+                  <ChevronDown size={13} aria-hidden="true" />
+                )}
+                {expanded ? 'Collapse' : 'Expand full log'}
               </button>
             </div>
           )}

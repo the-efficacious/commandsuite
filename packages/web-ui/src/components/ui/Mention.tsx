@@ -18,6 +18,7 @@ import { useId } from 'preact/hooks';
 import { briefing } from '../../lib/briefing.js';
 import { roster } from '../../lib/roster.js';
 import { selectAgentDetail, selectDmWith } from '../../lib/view.js';
+import { ArrowRight } from '../icons/index.js';
 
 export interface MentionProps {
   /** Member name — `@` is added automatically in the render. */
@@ -152,7 +153,8 @@ function MemberHoverCard({ id, name }: { id: string; name: string }) {
               openCardId.value = null;
             }}
           >
-            → DM
+            <ArrowRight size={12} aria-hidden="true" />
+            DM
           </button>
         )}
         <button
@@ -164,7 +166,8 @@ function MemberHoverCard({ id, name }: { id: string; name: string }) {
             openCardId.value = null;
           }}
         >
-          → Profile
+          <ArrowRight size={12} aria-hidden="true" />
+          Profile
         </button>
       </div>
     </div>

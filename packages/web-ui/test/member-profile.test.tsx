@@ -299,9 +299,9 @@ describe('AgentTimeline', () => {
     expect(text).not.toContain('ping');
     // Tool action with no matching tool_use renders standalone.
     expect(text).toContain('Bash');
-    // Objective open marker (▼) and close marker (▲)
-    expect(text).toContain('▼');
-    expect(text).toContain('▲');
+    // Objective open marker (chevron-down) and close marker (chevron-up).
+    expect(container.querySelector('.lucide-chevron-down')).toBeTruthy();
+    expect(container.querySelector('.lucide-chevron-up')).toBeTruthy();
     expect(text).toContain('closed (done)');
   });
 

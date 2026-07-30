@@ -15,7 +15,7 @@ import { identity } from '../lib/identity.js';
 import { createObjective } from '../lib/objectives.js';
 import { roster } from '../lib/roster.js';
 import { selectObjectiveDetail, selectObjectivesList } from '../lib/view.js';
-import { AlertCircle, X } from './icons/index.js';
+import { AlertCircle, ArrowLeft, ArrowRight, ChevronRight, X } from './icons/index.js';
 
 interface PendingUpload {
   localId: string;
@@ -142,10 +142,11 @@ export function ObjectiveCreate() {
     >
       <nav aria-label="Breadcrumb" class="crumbs" style="margin-bottom:14px">
         <button type="button" onClick={selectObjectivesList} class="text-link">
-          ← Objectives
+          <ArrowLeft size={13} aria-hidden="true" />
+          Objectives
         </button>
         <span class="sep" aria-hidden="true">
-          ›
+          <ChevronRight size={13} />
         </span>
         <span class="current">New</span>
       </nav>
@@ -357,7 +358,8 @@ export function ObjectiveCreate() {
 
         <div>
           <button type="submit" disabled={!canSubmit} class="btn btn-primary btn-lg">
-            {busy.value ? 'Creating…' : anyUploading ? 'Uploading…' : 'Create + assign →'}
+            {busy.value ? 'Creating…' : anyUploading ? 'Uploading…' : 'Create + assign'}
+            {!busy.value && !anyUploading && <ArrowRight size={15} aria-hidden="true" />}
           </button>
         </div>
       </form>

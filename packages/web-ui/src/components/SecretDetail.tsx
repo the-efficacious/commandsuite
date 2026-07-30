@@ -34,7 +34,7 @@ import {
   updateSecret,
 } from '../lib/secrets.js';
 import { selectSecrets } from '../lib/view.js';
-import { KeyRound } from './icons/index.js';
+import { ArrowLeft, KeyRound } from './icons/index.js';
 import { ErrorCallout, Loading } from './ui/index.js';
 
 const sectionError = signal<string | null>(null);
@@ -115,7 +115,8 @@ export function SecretDetail({ slug }: { slug: string }) {
     >
       <nav class="crumbs" style="margin-bottom:14px">
         <button type="button" class="text-link" onClick={selectSecrets}>
-          ← Secrets
+          <ArrowLeft size={13} aria-hidden="true" />
+          Secrets
         </button>
         <span class="sep">/</span>
         <span class="current">{slug}</span>
