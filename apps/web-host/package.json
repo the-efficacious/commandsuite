@@ -22,14 +22,15 @@
   ],
   "type": "module",
   "files": [
-    "dist"
+    "dist",
+    "!dist/.build-stamp.json"
   ],
   "exports": {
     "./dist/index.html": "./dist/index.html",
     "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "vite build",
+    "build": "vite build && node ../../scripts/dist-stamp.mjs",
     "dev": "vite",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",

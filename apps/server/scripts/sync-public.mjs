@@ -12,7 +12,7 @@
  */
 
 import { cpSync, existsSync, rmSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { basename, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = resolve(fileURLToPath(import.meta.url), '..', '..');
@@ -25,5 +25,15 @@ if (!existsSync(src)) {
 }
 
 rmSync(dest, { recursive: true, force: true });
-cpSync(src, dest, { recursive: true });
+// Skip build metadata. `.build-stamp.json` is the freshness stamp
+// scripts/dist-stamp.mjs writes into every built dist/; copying it here
+// would publish web-host's stamp inside the server's `public/`, where
+// the server's own `files` negation does not reach it. Filtering at the
+// copy is better than adding a second negation: anything internal that
+// lands in a dist/ later is excluded here by default rather than by
+// someone remembering to negate it twice.
+cpSync(src, dest, {
+  recursive: true,
+  filter: (source) => !basename(source).startsWith('.build-stamp'),
+});
 console.log(`sync-public: copied web-host dist -> ${dest}`);
