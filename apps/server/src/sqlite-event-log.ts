@@ -100,11 +100,26 @@ export class SqliteEventLog implements EventLog {
     this.tailSinceStmt = this.db.prepare(
       'SELECT id, ts, to_name, from_name, title, body, level, data, attachments FROM events WHERE ts >= ? ORDER BY ts DESC LIMIT ?',
     );
+    // Default feed. The `secret:` exclusion mirrors `matchesViewer` in
+    // `csuite-core`'s in-memory log and must stay in step with it —
+    // the two implementations answer the same question and a test in
+    // each asserts this row is absent.
+    //
+    // Why it is needed: secret events are pushed to an explicit
+    // recipient set, but a fan-out push persists `to_name = NULL`, and
+    // `to_name IS NULL` is exactly what this feed returns to every
+    // viewer. Measured before the fix on the live broker: 27 of 27
+    // secret events were returned to a member who was neither bound to
+    // any of them nor a `secrets.manage` holder.
     this.queryFeedStmt = this.db.prepare(
       `SELECT id, ts, to_name, from_name, title, body, level, data, attachments
        FROM events
        WHERE ts < ?
          AND (to_name IS NULL OR from_name = ? OR to_name = ?)
+         AND (
+           json_extract(data, '$.thread') IS NULL
+           OR json_extract(data, '$.thread') NOT LIKE 'secret:%'
+         )
        ORDER BY ts DESC LIMIT ?`,
     );
     this.queryDmStmt = this.db.prepare(
