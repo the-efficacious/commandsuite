@@ -243,6 +243,53 @@ describe('/objectives/<id>/ namespace', () => {
     expect(writeDenied.status).toBe(403);
   });
 
+  it('reports canWrite from the server rule, where owner-equality would say no', async () => {
+    // The gate this replaces: `entry.owner === viewer`. For a namespace
+    // entry the owner is `obj:<id>`, so that inference is false for
+    // EVERY member including the assignee — which is why the web UI hid
+    // Delete on files its viewer was entitled to remove.
+    const { app } = makeApp();
+    await uploadToHome(app, BOB, '/bob/spec.md', 'spec');
+    const createRes = await app.request(
+      '/objectives',
+      authed(BOB, {
+        title: 'Capability on entries',
+        outcome: 'delivered',
+        body: '',
+        assignee: 'carol',
+        watchers: ['dave'],
+        attachments: [
+          { path: '/bob/spec.md', name: 'spec.md', size: 1, mimeType: 'text/markdown' },
+        ],
+      }),
+    );
+    const obj = (await createRes.json()) as Objective;
+    const nsPath = `/objectives/${obj.id}/spec.md`;
+
+    // carol is the assignee and NOT an admin.
+    const res = await app.request(`/fs/stat?path=${encodeURIComponent(nsPath)}`, authed(CAROL));
+    expect(res.status).toBe(200);
+    const { entry } = (await res.json()) as { entry: { owner: string; canWrite?: boolean } };
+
+    expect(entry.owner, 'namespace entries are owned by the objective').toBe(`obj:${obj.id}`);
+    expect(entry.owner === 'carol', 'the old inference would deny her').toBe(false);
+    expect(entry.canWrite, 'the server rule permits her — canWrite must say so').toBe(true);
+
+    // dave is a watcher: also a member, also not the owner.
+    const daveRes = await app.request(`/fs/stat?path=${encodeURIComponent(nsPath)}`, authed(DAVE));
+    const daveEntry = (await daveRes.json()) as { entry: { canWrite?: boolean } };
+    expect(daveEntry.entry.canWrite, 'watchers are objective members').toBe(true);
+
+    // And the other direction: a home file the viewer does not own and
+    // holds only a read grant for must NOT report canWrite.
+    const bobHome = await app.request(
+      `/fs/stat?path=${encodeURIComponent('/bob/spec.md')}`,
+      authed(BOB),
+    );
+    const bobEntry = (await bobHome.json()) as { entry: { canWrite?: boolean } };
+    expect(bobEntry.entry.canWrite, 'bob owns his own home file').toBe(true);
+  });
+
   it('drops namespace read access for a watcher the moment they are removed', async () => {
     const { app } = makeApp();
     // Set up an objective with dave as a watcher, plus an attachment

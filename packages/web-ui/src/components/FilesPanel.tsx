@@ -378,7 +378,14 @@ export function FilesPanel({ viewer, path }: FilesPanelProps) {
                 Download
               </a>
             )}
-            {current.mode !== 'shared' && entry.owner === viewer && (
+            {/* Ask, don't infer. `entry.owner === viewer` was wrong for
+                objective namespace entries — owner is `obj:<id>` and the
+                server's rule includes objective membership, which this
+                component cannot determine. `canWrite` IS the server's
+                `canWrite()` for this viewer. Falls back to the old
+                inference only when talking to a server too old to send
+                it, where being over-restrictive is the safe direction. */}
+            {current.mode !== 'shared' && (entry.canWrite ?? entry.owner === viewer) && (
               <button
                 type="button"
                 class="btn"

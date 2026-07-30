@@ -19,8 +19,20 @@
  *   admin             — full read/write/delete anywhere
  *   owner             — full read/write/delete under their home (first
  *                       path segment equals their user name)
+ *   objective member  — full read/write/delete under
+ *                       `/objectives/<id>/`, for the originator,
+ *                       assignee and watchers of that objective. The
+ *                       entry's `owner` is `obj:<id>`, which is NOT a
+ *                       member name — do not infer access from it.
  *   everyone else     — read-only, and only when they hold a grant for
  *                       the specific path (exact match, not prefix)
+ *
+ * Note the asymmetry: `canRead` honours grants, `canWrite` does not, so
+ * an attachment grant confers read and never write.
+ *
+ * Every entry returned to a caller carries `canWrite` — this store's own
+ * answer for that viewer. Clients must use it rather than rebuilding the
+ * rule, which is not derivable from the fields they hold.
  *
  * Ancestor auto-creation on write keeps the UX simple: writing
  * `/alice/uploads/report.pdf` creates `/alice` and `/alice/uploads`
@@ -329,6 +341,24 @@ class SqliteFilesystemStore implements FilesystemStore {
 
   // ─── read API ──────────────────────────────────────────────────
 
+  /**
+   * Attach the viewer's write capability to an entry.
+   *
+   * The server owns `canWrite()` and evaluates it on every mutating
+   * request. Sending the answer along with the entry means a client does
+   * not have to rebuild the predicate from the fields it happens to
+   * have — and for objective namespace entries it *cannot*: the owner is
+   * `obj:<id>` and the rule includes objective membership, which the
+   * client has no way to determine for an arbitrary path.
+   *
+   * The alternative — every consumer reimplementing the rule — is
+   * already wrong in two places, in opposite directions. See
+   * `packages/web-ui/src/components/FilesPanel.tsx`.
+   */
+  private withCapability(entry: FsEntry, viewer: ViewerContext): FsEntry {
+    return { ...entry, canWrite: this.canWrite(entry.path, viewer) };
+  }
+
   stat(path: string, viewer: ViewerContext): FsEntry | null {
     const normalized = normalizePath(path);
     if (normalized === ROOT_PATH) {
@@ -338,7 +368,7 @@ class SqliteFilesystemStore implements FilesystemStore {
       throw new FsError('forbidden', `cannot stat ${normalized}`);
     }
     const row = this.getEntryStmt.get(normalized) as FsEntryRow | undefined;
-    return row ? rowToEntry(row) : null;
+    return row ? this.withCapability(rowToEntry(row), viewer) : null;
   }
 
   list(path: string, viewer: ViewerContext): FsEntry[] {
@@ -349,8 +379,11 @@ class SqliteFilesystemStore implements FilesystemStore {
       // their own. We query all top-level directories and filter rather
       // than eagerly materializing homes for every user on the team.
       const rows = this.listHomesStmt.all() as unknown as FsEntryRow[];
-      if (viewer.permissions.includes('members.manage')) return rows.map(rowToEntry);
-      return rows.filter((r) => r.owner === viewer.name).map(rowToEntry);
+      if (viewer.permissions.includes('members.manage'))
+        return rows.map((r) => this.withCapability(rowToEntry(r), viewer));
+      return rows
+        .filter((r) => r.owner === viewer.name)
+        .map((r) => this.withCapability(rowToEntry(r), viewer));
     }
 
     if (!viewer.permissions.includes('members.manage') && !this.ownsPath(normalized, viewer)) {
@@ -368,12 +401,12 @@ class SqliteFilesystemStore implements FilesystemStore {
       throw new FsError('not_a_directory', `not a directory: ${normalized}`);
     }
     const rows = this.listChildrenStmt.all(normalized) as unknown as FsEntryRow[];
-    return rows.map(rowToEntry);
+    return rows.map((r) => this.withCapability(rowToEntry(r), viewer));
   }
 
   listShared(viewer: ViewerContext): FsEntry[] {
     const rows = this.listSharedStmt.all(viewer.name) as unknown as FsEntryRow[];
-    return rows.map(rowToEntry);
+    return rows.map((r) => this.withCapability(rowToEntry(r), viewer));
   }
 
   /**
@@ -387,7 +420,7 @@ class SqliteFilesystemStore implements FilesystemStore {
       throw new FsError('forbidden', 'admin permission required to list all files');
     }
     const rows = this.listAllFilesStmt.all() as unknown as FsEntryRow[];
-    return rows.map(rowToEntry);
+    return rows.map((r) => this.withCapability(rowToEntry(r), viewer));
   }
 
   openReadStream(path: string, viewer: ViewerContext): { entry: FsEntry; stream: Readable } {

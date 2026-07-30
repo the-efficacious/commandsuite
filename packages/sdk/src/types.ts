@@ -1867,6 +1867,14 @@ export interface FsEntry {
   createdAt: number;
   createdBy: string;
   updatedAt: number;
+  /**
+   * Whether the requesting viewer may mutate this entry — the server's
+   * `canWrite()` predicate, evaluated per request. Optional: an older
+   * server omits it. Treat `undefined` as unknown rather than false, and
+   * do not reconstruct the rule from `owner` — that inference is wrong
+   * for objective namespace entries.
+   */
+  canWrite?: boolean;
 }
 
 /**
