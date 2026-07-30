@@ -1792,7 +1792,7 @@ async function handleRoster(
       : t.permissions.includes('objectives.create')
         ? ' [operator]'
         : '';
-    return `- ${t.name}${self} [${t.role}]${auth} ${state}`;
+    return `- ${t.name}${self} [${t.role.title}]${auth} ${state}`;
   });
   return textResult(`team ${briefing.team.name} roster:\n${lines.join('\n')}`);
 }
