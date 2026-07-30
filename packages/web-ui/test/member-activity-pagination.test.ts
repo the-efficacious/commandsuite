@@ -62,4 +62,21 @@ describe('member activity pagination', () => {
 
     expect(memberActivityRows.value.map((item) => item.id)).toEqual([1, 2, 3, 4]);
   });
+
+  it('does not silently evict history when the merged timeline exceeds 500 rows', async () => {
+    const older = Array.from({ length: 501 }, (_, index) => row(501 - index));
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ activity: older }), {
+        headers: { 'Content-Type': 'application/json' },
+      })) as typeof fetch;
+    setClient(new Client({ url: 'http://localhost', useCookies: true }));
+    memberActivityName.value = 'engineer-1';
+    memberActivityRows.value = [row(502), row(503)];
+
+    await loadOlderMemberActivity(501);
+
+    expect(memberActivityRows.value.map((item) => item.id)).toEqual(
+      Array.from({ length: 503 }, (_, index) => index + 1),
+    );
+  });
 });
