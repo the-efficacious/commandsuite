@@ -605,6 +605,30 @@ class SqliteObjectivesStore implements ObjectivesStore {
       );
     }
 
+    // Thread membership is COMPUTED, not stored — it's derived from the
+    // current assignee + originator + watchers + admins. So reassignment
+    // doesn't revoke anything; the assignee term simply stops matching,
+    // and the previous assignee falls out of their own objective's thread
+    // the moment it leaves their plate. That is exactly when they need to
+    // hand over what they were doing.
+    //
+    // The only fix the model can express is a DURABLE grant, and
+    // `watchers` already is one. Promote the previous assignee to watcher
+    // in the same transaction, with its own `watcher_added` event so the
+    // audit log shows why they're on the list. Skip when they're the
+    // originator (membership already derives from that) or somehow
+    // already a watcher.
+    //
+    // The visible cost, accepted deliberately: repeated reassignment
+    // grows the watcher list. A visible grant that says who has a stake
+    // beats an invisible one, and it is true — they worked on it.
+    const previousAssignee = current.assignee;
+    const promoteToWatcher =
+      previousAssignee !== current.originator && !current.watchers.includes(previousAssignee);
+    const nextWatchers = promoteToWatcher
+      ? [...current.watchers, previousAssignee]
+      : current.watchers;
+
     const events: ObjectiveEvent[] = [];
     const tx = this.db.prepare('BEGIN');
     const commit = this.db.prepare('COMMIT');
@@ -622,11 +646,20 @@ class SqliteObjectivesStore implements ObjectivesStore {
       );
       events.push(
         this.appendEvent(id, now, actor, 'reassigned', {
-          from: current.assignee,
+          from: previousAssignee,
           to: input.to,
           ...(input.note ? { note: input.note.trim() } : {}),
         }),
       );
+      if (promoteToWatcher) {
+        this.updateWatchersStmt.run(JSON.stringify(nextWatchers), now, id);
+        events.push(
+          this.appendEvent(id, now, actor, 'watcher_added', {
+            name: previousAssignee,
+            reason: 'reassigned-from',
+          }),
+        );
+      }
       commit.run();
     } catch (err) {
       rollback.run();

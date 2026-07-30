@@ -694,6 +694,102 @@ describe('POST /objectives/:id/discuss', () => {
     expect(res.status).toBe(400);
   });
 
+  // Thread membership is COMPUTED from assignee + originator + watchers
+  // + admins, so a reassignment used to drop the previous assignee out
+  // of the thread the moment the objective left their plate — exactly
+  // when they need to hand over. `reassign` now promotes them to
+  // watcher, which is the only durable grant the model can express.
+  it('lets the previous assignee post after a reassignment', async () => {
+    const { app } = makeApp();
+    // bob originates, carol is assigned. carol is NOT the originator and
+    // NOT an admin, so her only claim on the thread is being assignee.
+    const obj = await createOne(app, BOB, { assignee: 'carol' });
+    const before = await app.request(
+      `/objectives/${obj.id}/discuss`,
+      authed(CAROL, { body: 'mid-work' }),
+    );
+    expect(before.status).toBe(200);
+
+    const re = await app.request(`/objectives/${obj.id}/reassign`, authed(ALICE, { to: 'dave' }));
+    expect(re.status).toBe(200);
+
+    // The handover post — the whole point of the objective.
+    const after = await app.request(
+      `/objectives/${obj.id}/discuss`,
+      authed(CAROL, { body: 'handover: here is where I got to' }),
+    );
+    expect(after.status).toBe(200);
+  });
+
+  it('records the promoted watcher in the objective and its audit log', async () => {
+    const { app } = makeApp();
+    const obj = await createOne(app, BOB, { assignee: 'carol' });
+    await app.request(`/objectives/${obj.id}/reassign`, authed(ALICE, { to: 'dave' }));
+
+    const view = await app.request(`/objectives/${obj.id}`, authed(ALICE));
+    const body = (await view.json()) as {
+      objective: { assignee: string; watchers: string[] };
+      events: Array<{ kind: string; payload: Record<string, unknown> }>;
+    };
+    expect(body.objective.assignee).toBe('dave');
+    expect(body.objective.watchers).toContain('carol');
+    // The grant is visible AND explained — a watcher nobody can account
+    // for is worse than no watcher.
+    const added = body.events.find((e) => e.kind === 'watcher_added' && e.payload.name === 'carol');
+    expect(added?.payload.reason).toBe('reassigned-from');
+  });
+
+  // Turner's mirror case: a fix that grants the ex-assignee access while
+  // quietly revoking someone else's would pass the test above.
+  it('reassignment strips nobody else from the thread', async () => {
+    const { app } = makeApp();
+    // alice originates (and is admin), bob is assigned, carol watches.
+    const obj = await createOne(app, ALICE, { assignee: 'bob', watchers: ['carol'] });
+    await app.request(`/objectives/${obj.id}/reassign`, authed(ALICE, { to: 'dave' }));
+
+    for (const [token, who] of [
+      [DAVE, 'new assignee'],
+      [ALICE, 'originator/admin'],
+      [CAROL, 'pre-existing watcher'],
+    ] as const) {
+      const res = await app.request(
+        `/objectives/${obj.id}/discuss`,
+        authed(token, { body: `still here: ${who}` }),
+      );
+      expect(res.status, `${who} lost thread access`).toBe(200);
+    }
+
+    const view = await app.request(`/objectives/${obj.id}`, authed(ALICE));
+    const body = (await view.json()) as { objective: { watchers: string[] } };
+    // The pre-existing watcher survives alongside the promoted one.
+    expect(body.objective.watchers).toContain('carol');
+    expect(body.objective.watchers).toContain('bob');
+  });
+
+  // The discriminating test: is membership a union of grants, or does
+  // something actively revoke? A former assignee who was INDEPENDENTLY a
+  // watcher keeps access either way — which proves nothing is revoked,
+  // and that the old 403 was a derivation that stopped deriving.
+  it('a former assignee who was already a watcher is unaffected and not double-added', async () => {
+    const { app } = makeApp();
+    const obj = await createOne(app, BOB, { assignee: 'carol', watchers: ['dave'] });
+    // Hand it to dave, who is both the incoming assignee and a watcher.
+    await app.request(`/objectives/${obj.id}/reassign`, authed(ALICE, { to: 'dave' }));
+    // Then hand it back off dave — he is now the FORMER assignee and was
+    // a watcher before he ever held it.
+    await app.request(`/objectives/${obj.id}/reassign`, authed(ALICE, { to: 'carol' }));
+
+    const res = await app.request(
+      `/objectives/${obj.id}/discuss`,
+      authed(DAVE, { body: 'still a watcher' }),
+    );
+    expect(res.status).toBe(200);
+
+    const view = await app.request(`/objectives/${obj.id}`, authed(ALICE));
+    const body = (await view.json()) as { objective: { watchers: string[] } };
+    expect(body.objective.watchers.filter((w) => w === 'dave')).toHaveLength(1);
+  });
+
   it('returns 404 for unknown ids', async () => {
     const { app } = makeApp();
     const res = await app.request('/objectives/obj-nope/discuss', authed(ALICE, { body: 'hi' }));
@@ -738,12 +834,16 @@ describe('end-to-end audit log via GET /objectives/:id', () => {
     const detail = await app.request(`/objectives/${obj.id}`, authed(ALICE));
     const body = (await detail.json()) as GetObjectiveResponse;
     expect(body.objective.status).toBe('done');
+    // The second `watcher_added` is the reassignment promoting the
+    // outgoing assignee (carol) to watcher, so she keeps thread access
+    // to hand over. It follows `reassigned` in the same transaction.
     expect(body.events.map((e) => e.kind)).toEqual([
       'assigned',
       'blocked',
       'unblocked',
       'watcher_added',
       'reassigned',
+      'watcher_added',
       'completed',
     ]);
   });

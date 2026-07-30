@@ -334,12 +334,18 @@ describe('ObjectivesStore.reassign', () => {
       LATER,
     );
     expect(moved.assignee).toBe('bob');
-    expect(events.map((e) => e.kind)).toEqual(['reassigned']);
+    // The outgoing assignee is promoted to watcher in the same
+    // transaction — thread membership is derived from the current
+    // assignee, so without a durable grant they lose access to their
+    // own objective's thread at handover time.
+    expect(events.map((e) => e.kind)).toEqual(['reassigned', 'watcher_added']);
+    expect(moved.watchers).toContain('alice');
     expect(events[0]?.payload).toMatchObject({
       from: 'alice',
       to: 'bob',
       note: 'needs more context',
     });
+    expect(events[1]?.payload).toMatchObject({ name: 'alice', reason: 'reassigned-from' });
   });
 
   it('preserves status across reassign', () => {
@@ -463,12 +469,15 @@ describe('ObjectivesStore.events (audit log)', () => {
     store.complete(objective.id, { result: 'shipped' }, 'bob', NOW + 5_000);
 
     const events = store.events(objective.id);
+    // The second `watcher_added` is the reassignment promoting the
+    // outgoing assignee so they keep thread access to hand over.
     expect(events.map((e) => e.kind)).toEqual([
       'assigned',
       'blocked',
       'unblocked',
       'watcher_added',
       'reassigned',
+      'watcher_added',
       'completed',
     ]);
     // Timestamps strictly non-decreasing.
