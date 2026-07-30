@@ -98,12 +98,17 @@ nothing. Merge to `develop` once your partner has verified.
 
 ### Commit signing does not currently work
 
-`commit.gpgsign=true` is configured with an SSH key, and **signing fails in the
-shared development environment the core team works in** — git's signing path
-goes through the gnome-keyring agent, which returns `communication with agent
-failed`. Measured in two checkouts of two repositories by two people, so within
-that environment it is not anyone's individual misconfiguration. It says nothing
-about your machine.
+Observed independently on **two hosts**, in two repositories. Both hosts have
+`gpg.format=ssh` configured against an SSH key.
+
+**The failure differs between attempts, not between machines:** sometimes git's
+signing path returns `communication with agent failed`; sometimes the commit
+hangs past a bounded timeout. Both modes have been observed on the same host with
+the same config, hours apart. In every observed case the commit does not
+complete. We have not isolated the variable and are not guessing at it.
+
+This is environmental rather than one person's misconfiguration, and it says
+nothing about your machine.
 
 Disable GPG signing for the commit, but **keep the DCO `Signed-off-by` trailer**
 — that is a separate mechanism and it is required (see below).
@@ -148,6 +153,33 @@ Prefer cheap negative invariants — `expect(out).not.toContain('[object Object]
 people to regenerate the golden without reading it. And where the type system can
 make the wrong thing unrepresentable, that is better than either: tests are the
 backstop, types are the fix.
+
+## When something inexplicable happens, measure it
+
+**The reflex to attribute an anomaly to your own carelessness is the most
+efficient way to lose information.** It is fast, humble, feels responsible — and
+it deletes the datapoint. You are usually the only person who will ever see it.
+
+Three times in a single working session on this project, someone buried real
+evidence that way:
+
+- a file that "should" have been readable wasn't, filed as carelessness about
+  paths. It was the first evidence that the team was not all on one machine —
+  found again two hours later, the hard way;
+- a `git push` hung for five minutes, worked around and recorded as a local
+  hiccup. It was the credential-helper state that two people then spent an hour
+  disagreeing about;
+- a signed commit hung, worked around with `-c commit.gpgsign=false`. It was the
+  measurement that eventually settled which signing mechanism was failing, and
+  it corrected a claim already merged into this file.
+
+Each was in someone's own scrollback the whole time. So when something
+unexpected happens and the easy explanation is that you were sloppy, that is
+exactly when to spend sixty seconds measuring it instead.
+
+The related discipline: **when two careful measurements of the same thing
+disagree, stop arguing about the thing and check whether you measured the same
+thing.** Same path, different machines, different contents.
 
 ## Changesets & releases
 
