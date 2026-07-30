@@ -137,7 +137,7 @@ export class ActivityUploader {
       return;
     }
     this.statEnqueued++;
-    const bytes = JSON.stringify(event).length;
+    const bytes = Buffer.byteLength(JSON.stringify(event), 'utf8');
 
     // Cap check: drop oldest until we have room.
     while (
