@@ -377,4 +377,6 @@ audit requirements.
   at 1,000 events / 64 MiB and evicts oldest-first under sustained
   broker unreachability. Drops are counted, logged, and included
   in `session_end.capture`; they are reported loss, not silent
-  truncation.
+  truncation. The same summary records peak queued events and
+  serialized UTF-8 bytes, allowing later runs to show how close
+  their instantaneous occupancy came to either cap.

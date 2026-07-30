@@ -140,6 +140,40 @@ describe('ActivityUploader', () => {
     vi.useFakeTimers();
   });
 
+  it('records peak instantaneous queue occupancy before the queue drains', async () => {
+    const client = makeFakeClient();
+    const first = makeEvent(1);
+    const second = makeEvent(2);
+    const expectedBytes =
+      Buffer.byteLength(JSON.stringify(first), 'utf8') +
+      Buffer.byteLength(JSON.stringify(second), 'utf8');
+    const u = new ActivityUploader({
+      brokerClient: client as unknown as BrokerClient,
+      name: 'engineer-1',
+      log: () => {},
+      maxBatchEvents: 100,
+      maxBatchAgeMs: 60_000,
+    });
+
+    u.enqueue(first);
+    u.enqueue(second);
+    expect(u.stats()).toEqual({
+      enqueued: 2,
+      uploaded: 0,
+      dropped: 0,
+      peakQueuedEvents: 2,
+      peakQueuedBytes: expectedBytes,
+    });
+
+    await u.flush();
+    expect(u.__debugQueueLength()).toBe(0);
+    expect(u.stats()).toMatchObject({
+      uploaded: 2,
+      peakQueuedEvents: 2,
+      peakQueuedBytes: expectedBytes,
+    });
+  });
+
   it('enforces maxQueueBytes using UTF-8 bytes rather than UTF-16 code units', () => {
     vi.useRealTimers();
     const client = makeFakeClient();
@@ -334,7 +368,7 @@ describe('ActivityUploader', () => {
     // Both events landed: the in-flight one was awaited (and counted),
     // and the one queued behind it was drained rather than dropped.
     expect(client.uploadActivity).toHaveBeenCalledTimes(2);
-    expect(u.stats()).toEqual({ enqueued: 2, uploaded: 2, dropped: 0 });
+    expect(u.stats()).toMatchObject({ enqueued: 2, uploaded: 2, dropped: 0 });
     expect(u.__debugQueueLength()).toBe(0);
   });
 

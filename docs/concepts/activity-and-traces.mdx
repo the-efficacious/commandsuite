@@ -62,7 +62,8 @@ type ActivityEvent =
       captureTier?: number }
   | { kind: 'session_end'; ts: number; runner: string; reason: string;
       exitCode?: number; durationMs: number; agentSessionId?: string;
-      capture?: { enqueued: number; uploaded: number; dropped: number } }
+      capture?: { enqueued: number; uploaded: number; dropped: number;
+                  peakQueuedEvents?: number; peakQueuedBytes?: number } }
   | { kind: 'objective_open'; ts: number; objectiveId: string }
   | { kind: 'objective_close'; ts: number; objectiveId: string; result: ... }
   | { kind: 'llm_exchange'; ts: number; duration: number; entry: AnthropicMessagesEntry }
@@ -369,7 +370,10 @@ WAL, online prune doesn't block live writes for long.
 - **Uploader queue cap.** The uploader caps its in-flight buffer
   and evicts oldest-first under sustained broker unreachability.
   Events dropped here won't appear later, but the count is logged
-  and included in `session_end.capture`.
+  and included in `session_end.capture`. The capture summary also
+  reports peak queued events and serialized UTF-8 bytes, so completed
+  runs can be compared with both queue ceilings without mistaking
+  lifetime event totals for instantaneous occupancy.
 
 Presence activity (the live `idle | working | blocked` state) is a
 separate signal from this trace stream — it brackets the whole
