@@ -1056,10 +1056,13 @@ export interface DeviceAuthorizationRequest {
 }
 
 /**
- * `POST /enroll` response. Shape mirrors RFC 8628 §3.2 with two
- * additions — `verificationUri` is camelCase to match the rest of
- * the wire and `pollUrl` is a fully-qualified hint so CLI consumers
- * don't have to reconstruct it.
+ * `POST /enroll` response. Shape mirrors RFC 8628 §3.2, with the
+ * field names camelCased to match the rest of the wire.
+ *
+ * `verificationUri` and `verificationUriComplete` are RELATIVE paths;
+ * the CLI joins them with its configured broker URL. There is no
+ * fully-qualified poll hint on this response — the caller polls the
+ * enrollment endpoint it already knows, with `deviceCode`.
  *
  * The `userCode` is what the human types into the web UI; the
  * `deviceCode` is what the CLI polls with and MUST be kept secret —

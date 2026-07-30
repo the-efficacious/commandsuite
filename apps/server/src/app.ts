@@ -12,9 +12,12 @@
  *   GET  /subscribe       — tri-auth, WebSocket of live messages for a name
  *   GET  /history         — tri-auth, prior messages filtered by viewer scope
  *
- * Dual-auth = either `Authorization: Bearer <token>` (machine plane,
- * MCP link) or `Cookie: csuite_session=<id>` (human plane, web SPA).
- * Both resolve to the same `LoadedMember`, which downstream handlers
+ * Tri-auth = `Authorization: Bearer <opaque token>` (machine plane,
+ * MCP link), `Cookie: csuite_session=<id>` (human plane, web SPA), or
+ * `Authorization: Bearer <RS256 JWT>` (federated plane, only when a
+ * JWT verifier is configured — the two bearer forms are disambiguated
+ * by shape, see `auth.ts` for the exact rule).
+ * All three resolve to the same `LoadedMember`, which downstream handlers
  * use to stamp authoritative `from` on pushes and to gate identity
  * checks on subscribe. All routes must carry `X-CSUITE-Protocol: 1` if
  * the header is present.
@@ -1718,7 +1721,7 @@ export function createApp(options: AppOptions): CreatedApp {
       return null;
     };
 
-    // GET /tool-sources — list, per-viewer summaries. Dual-auth.
+    // GET /tool-sources — list, per-viewer summaries. Tri-auth.
     app.get(PATHS.toolSources, auth, (c) => {
       const member = c.get('member');
       const sources = toolSources.list().map((s) => summarizeSource(s, member.name));
@@ -2274,7 +2277,7 @@ export function createApp(options: AppOptions): CreatedApp {
       }
     });
 
-    // GET /secrets — list, per-viewer summaries. Dual-auth.
+    // GET /secrets — list, per-viewer summaries. Tri-auth.
     app.get(PATHS.secrets, auth, (c) => {
       const member = c.get('member');
       const list = secrets.list().map((s) => summarizeSecret(s, member.name));

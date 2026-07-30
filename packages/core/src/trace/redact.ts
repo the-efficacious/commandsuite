@@ -35,9 +35,18 @@
  *   - Body-level: pattern-match common key shapes (Anthropic `sk-ant-…`,
  *     OpenAI `sk-…`, AWS `AKIA…`, GitHub `ghp_…`, slack `xox…`) and
  *     replace the matched substring with `[REDACTED]`.
- *   - We never scrub message contents, tool arguments, or model
- *     completions — those are the whole point of the trace. If a user
- *     pastes a secret into a chat that's a different problem.
+ *   - Content IS scrubbed, and this is the sentence to get right.
+ *     `redactJson` walks every string leaf, and the production mappers
+ *     call it directly on message text, tool arguments, tool results,
+ *     reasoning and model completions (`genai.ts`,
+ *     `openai-responses.ts`, `transcript.ts`, and codex's
+ *     `rollout-parser.ts`). A matching pattern or a registered literal
+ *     inside a tool result is replaced there, same as anywhere else.
+ *     What is preserved is content STRUCTURE and everything that does
+ *     not match: we never drop a message, a block, or a field, and we
+ *     never redact on suspicion of sensitivity — only on an exact
+ *     pattern or an exactly-registered value. So "the trace keeps the
+ *     content" is true; "the trace never rewrites content" is false.
  *   - Value-level: literal secret values registered at runtime (the
  *     broker-held secrets a runner injects into the agent's
  *     environment) are scrubbed from every string that passes
@@ -146,9 +155,16 @@ export function redactHeaders(headers: Record<string, string>): Record<string, s
 /**
  * Walk any JSON-ish value and apply `redactSecrets` to every string
  * leaf. Objects and arrays are reconstructed so the caller's input
- * isn't mutated. Non-serializable values (functions, symbols) are
- * coerced to `null` — this shouldn't happen for real trace data but
- * keeps the function total.
+ * isn't mutated; every key and every array slot is preserved, so this
+ * rewrites values and never drops structure.
+ *
+ * Non-object non-strings — numbers, booleans, `undefined`, functions,
+ * symbols — are returned AS-IS. That keeps the function total, but do
+ * not read it as sanitisation: a function or symbol survives this call
+ * unchanged. (It is `JSON.stringify` at the serialisation boundary that
+ * drops them, not this.) Verified by probe rather than by reading:
+ * `typeof fn !== 'object'`, so functions take the passthrough branch.
+ * Real trace data is parsed JSON and contains none of these.
  */
 export function redactJson<T>(value: T): T {
   if (typeof value === 'string') {

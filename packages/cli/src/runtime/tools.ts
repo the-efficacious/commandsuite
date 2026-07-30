@@ -109,7 +109,10 @@ export function defineTools(
       inputSchema: {
         type: 'object',
         properties: {
-          body: { type: 'string', description: 'The message body the team will receive.' },
+          body: {
+            type: 'string',
+            description: 'The message body the team will receive. Max 65536 characters.',
+          },
           level: {
             type: 'string',
             enum: [...LEVELS],
@@ -119,7 +122,7 @@ export function defineTools(
             type: 'array',
             items: { type: 'string' },
             description:
-              "Optional list of file paths (e.g. ['/<name>/uploads/report.pdf']). Each must already exist and be readable to you. Use `fs_write` to upload a new file first.",
+              "Optional list of file paths (e.g. ['/<name>/uploads/report.pdf']). Max 64. Each must already exist and be readable to you. Use `fs_write` to upload a new file first.",
           },
         },
         required: ['body'],
@@ -137,7 +140,7 @@ export function defineTools(
         type: 'object',
         properties: {
           to: { type: 'string', description: 'The name of the teammate to message.' },
-          body: { type: 'string', description: 'The message body.' },
+          body: { type: 'string', description: 'The message body. Max 65536 characters.' },
           level: {
             type: 'string',
             enum: [...LEVELS],
@@ -147,7 +150,7 @@ export function defineTools(
             type: 'array',
             items: { type: 'string' },
             description:
-              'Optional list of file paths to attach. Each must already exist and be readable to you.',
+              'Optional list of file paths to attach. Max 64. Each must already exist and be readable to you.',
           },
         },
         required: ['to', 'body'],
@@ -182,7 +185,7 @@ export function defineTools(
             type: 'string',
             description: 'Channel slug (e.g. "frontend", "ops"). Must be a channel you belong to.',
           },
-          body: { type: 'string', description: 'The message body.' },
+          body: { type: 'string', description: 'The message body. Max 65536 characters.' },
           level: {
             type: 'string',
             enum: [...LEVELS],
@@ -192,7 +195,7 @@ export function defineTools(
             type: 'array',
             items: { type: 'string' },
             description:
-              'Optional list of file paths to attach. Each must already exist and be readable to you.',
+              'Optional list of file paths to attach. Max 64. Each must already exist and be readable to you.',
           },
         },
         required: ['channel', 'body'],
@@ -318,7 +321,7 @@ export function defineTools(
             type: 'array',
             items: { type: 'string' },
             description:
-              'Optional list of file paths to attach. Each must already exist and be readable to you.',
+              'Optional list of file paths to attach. Max 64. Each must already exist and be readable to you.',
           },
         },
         required: ['id', 'body'],
@@ -1529,7 +1532,7 @@ function buildAuthorityTools(briefing: BriefingResponse): Tool[] {
           type: 'array',
           items: { type: 'string' },
           description:
-            "Optional list of file paths to attach to the objective. Each is mirrored into the objective's namespace at `/objectives/<id>/<basename>` so the file lives with the objective rather than in your home; every thread member (originator, assignee, watchers, directors) gets read/write access via the namespace ACL. Use `fs_write` to upload a file first.",
+            "Optional list of file paths to attach to the objective. Max 64. Each is mirrored into the objective's namespace at `/objectives/<id>/<basename>` so the file lives with the objective rather than in your home; every thread member (originator, assignee, watchers, directors) gets read/write access via the namespace ACL. Use `fs_write` to upload a file first.",
         },
       },
       required: ['title', 'outcome', 'assignee'],
@@ -1582,12 +1585,12 @@ function buildAuthorityTools(briefing: BriefingResponse): Tool[] {
         add: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Optional list of teammate names to add as watchers.',
+          description: 'Optional list of teammate names to add as watchers. Max 64.',
         },
         remove: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Optional list of teammate names to remove from watchers.',
+          description: 'Optional list of teammate names to remove from watchers. Max 64.',
         },
       },
       required: ['id'],

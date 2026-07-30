@@ -96,7 +96,7 @@ export interface TranscriptEntry {
  * `tool_use` keeps `{id,name,input}`, and a `tool_result` maps
  * `{tool_use_id,content,is_error}` -> `{toolUseId,content,isError}`.
  * The parsed blocks are redacted via `redactJson` (matching
- * `parseMessages` in the HTTP path — `parseContent` itself does not
+ * `anthropicToGenAi` in `genai.ts` — `parseContent` itself does not
  * redact) so text / tool inputs / tool results are scrubbed before
  * leaving the runner. `usage` maps input/output/cache token counts;
  * `model` and `stopReason` come from the assistant response envelope.

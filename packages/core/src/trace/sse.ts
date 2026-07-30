@@ -9,11 +9,20 @@
  * The caller hands us the complete SSE body as text — now sourced from
  * Claude Code's OTEL `api_response_body` export (which carries the raw
  * streamed body) rather than a network capture.
- * `buildAnthropicEntry` in `anthropic.ts` expects `response.body` to
- * be the same JSON object shape the non-streaming endpoint returns.
- * This module bridges those two realities: walk the SSE events and
- * produce a synthetic message object that `buildAnthropicEntry` can
- * read without caring how the bytes arrived.
+ * Downstream mapping (`anthropicToGenAi` in `genai.ts`, via
+ * `parseContent`/`parseUsage` in `anthropic.ts`) expects the same JSON
+ * object shape the non-streaming endpoint returns. This module bridges
+ * those two realities: `reassembleAnthropicSse` walks the SSE events
+ * and produces a synthetic message object that mapping can read
+ * without caring how the bytes arrived.
+ *
+ * NO IN-TREE CALLER. `reassembleAnthropicSse`, `parseSseEvents` and
+ * `looksLikeSseStream` are published exports of `csuite-core` and
+ * nothing in this repository calls them — capture is transcript- and
+ * OTEL-sourced, so no csuite code path holds a raw SSE body any more.
+ * Same status as `redactHeaders` in `redact.ts`: retained because it
+ * is public API, not because csuite parses SSE. Do not read this
+ * module's presence as evidence of a live streaming-capture path.
  *
  * Event handling (from the Anthropic streaming spec):
  *   - `message_start`     → seeds the result with id/model/role/usage

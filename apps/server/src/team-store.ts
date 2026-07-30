@@ -210,7 +210,7 @@ export class TeamStore {
   /**
    * Materialize the current team config. Throws if the singleton row
    * has never been seeded — callers must run the wizard or
-   * `seedTeam` first.
+   * `setTeam` first.
    */
   getTeam(): Team {
     const row = this.getTeamStmt.get() as RawTeamRow | undefined;

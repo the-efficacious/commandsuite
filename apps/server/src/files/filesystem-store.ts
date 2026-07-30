@@ -159,7 +159,7 @@ export interface FilesystemStore {
   listAllFiles(viewer: ViewerContext): FsEntry[];
 
   /**
-   * Create a new file entry that points at the same blob as `srcPath`.
+   * Create a new file entry that points at the same blob as `src`.
    * Refcount-aware — the blob bytes are not duplicated; only the
    * metadata row is. Used to materialize objective attachments into
    * `/objectives/<id>/...` while keeping the originator's home copy
