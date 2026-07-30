@@ -29,8 +29,8 @@
  *   - pattern      — a string failing a regex. The known instance, live below.
  *   - type         — mutated `HealthResponseSchema.version` string -> number;
  *                    the health case failed.
- *   - extra fields — NOT caught. Mutated `/healthz` to emit an undeclared
- *                    field; the test stayed GREEN. See below.
+ *   - extra fields — mutated `/healthz` to emit an undeclared field; the
+ *                    health case failed and named the field.
  *
  * MECHANISM-DERIVED, not separately mutated:
  *   - optionality  — a required field the server stopped sending.
@@ -41,16 +41,28 @@
  *   These follow from the same `safeParse` call that the measured rows
  *   exercise, but nobody has mutated a schema to demonstrate them here.
  *
- * The extra-field gap is the important one: no schema in `csuite-sdk` uses
- * `.strict()`, and zod strips unknown keys by default. A server that starts
- * emitting a field the schema has never heard of passes silently. Closing it
- * means `.strict()` on published schemas — a contract change, NOT in scope.
- * Note it is a different RELATION from the others: the five above are ways a
- * response can CONTRADICT the schema; this is a way it can EXCEED it.
+ * Extra fields are a different RELATION from the others: the five above are
+ * ways a response can CONTRADICT the schema; an undeclared field means the
+ * response EXCEEDS it. Runtime parsing must remain permissive here. No schema
+ * in `csuite-sdk` uses `.strict()`, so an older client can continue parsing a
+ * newer server's additive fields — the compatibility property used by
+ * `FsEntry.canWrite` and `RosterResponse.activityWindowMs`.
+ *
+ * This test detects drift without changing that wire behavior. Zod's normal
+ * parse strips unknown keys; comparing the raw JSON with the parsed shape
+ * reveals exactly which keys the published schema did not retain. Strictness
+ * therefore exists only where drift is a defect: in this server contract test,
+ * not in a version-skewed production client.
  *
  * Coverage is per-endpoint and deliberately partial — see the table below.
  * An endpoint absent from it is UNCHECKED, not proven correct. Adding a case
  * is three lines; that is the point of the table.
+ *
+ * Measured at `cf346ee`: the ten cases below exercise nine distinct response
+ * schemas out of 42 `*ResponseSchema` exports, across nine distinct operations
+ * out of 107 GET/POST/PUT/PATCH/DELETE registrations in `createApp` (the route
+ * total also includes HTML, streams, and binary responses with no SDK response
+ * schema). This is a spot-check, not route-complete contract coverage.
  *
  * AND IT ONLY SEES HTTP RESPONSES
  * -------------------------------
@@ -186,6 +198,31 @@ function authed(token: string, body?: unknown, method?: string): RequestInit {
 
 type App = ReturnType<typeof makeApp>['app'];
 
+function findUndeclaredResponseFields(raw: unknown, parsed: unknown, path = '$'): string[] {
+  if (Array.isArray(raw) && Array.isArray(parsed)) {
+    return raw.flatMap((value, index) =>
+      findUndeclaredResponseFields(value, parsed[index], `${path}[${index}]`),
+    );
+  }
+  if (
+    raw === null ||
+    parsed === null ||
+    typeof raw !== 'object' ||
+    typeof parsed !== 'object' ||
+    Array.isArray(raw) ||
+    Array.isArray(parsed)
+  ) {
+    return [];
+  }
+
+  const parsedRecord = parsed as Record<string, unknown>;
+  return Object.entries(raw as Record<string, unknown>).flatMap(([key, value]) => {
+    const fieldPath = `${path}.${key}`;
+    if (!Object.hasOwn(parsedRecord, key)) return [fieldPath];
+    return findUndeclaredResponseFields(value, parsedRecord[key], fieldPath);
+  });
+}
+
 /**
  * Fetch a response and parse it through its published schema. Failure here
  * means the server and the SDK disagree about the wire — which is the only
@@ -206,6 +243,11 @@ async function expectMatchesContract(
     () => schema.parse(body),
     `${path} response does not match its published schema`,
   ).not.toThrow();
+  const parsed = schema.parse(body);
+  expect(
+    findUndeclaredResponseFields(body, parsed),
+    `${path} response contains fields its published schema does not declare`,
+  ).toEqual([]);
 }
 
 /** Seed one objective with a mirrored attachment, returning its id. */
