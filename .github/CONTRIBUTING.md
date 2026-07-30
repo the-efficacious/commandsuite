@@ -68,6 +68,87 @@ client), `csuite-cli` (terminal).
 6. Once approved, a maintainer squashes and merges. The `Signed-off-by`
    trailers are preserved.
 
+## Internal development — team members
+
+The workflow above is for **outside contributors**. Members of the core team
+work on long-lived shared branches instead:
+
+| branch | what it is |
+|---|---|
+| `main` | Protected. Pull requests only, approved by the repository owner. |
+| `develop` | The integration trunk. **Branch your work from here, and merge it back here.** |
+| `review/<yyyy-mm-dd>` | Cut from `develop` when a batch is ready. The PR to `main` comes from this branch and is **frozen** during review, so the diff cannot shift under the reviewer while they are reading it. `develop` keeps moving the whole time. |
+
+turndb uses the same model, written down in its own `CONTRIBUTING.md`. It is
+stated once per repository and pointed at from everywhere else — three copies of
+a branch model is worse than one, because they drift and then nobody knows which
+is true.
+
+**Author proposes, partner verifies.** Every change is verified by someone who
+did not write it, and whoever did not write it decides whether it is done. A
+verifier is expected to disagree; agreement arrived at by deference is worth
+nothing. Merge to `develop` once your partner has verified.
+
+> **Open question, not yet decided:** whether outside contributions should
+> target `main` (as the workflow above says) or `develop`. As written, a PR
+> merged to `main` is not on `develop`, so the next `review/<date>` branch cut
+> from `develop` will not contain it. Until this is settled, a maintainer
+> merging an outside PR to `main` should make sure the commit reaches `develop`
+> too.
+
+### Commit signing does not currently work
+
+`commit.gpgsign=true` is configured with an SSH key, and **signing fails in the
+shared development environment the core team works in** — git's signing path
+goes through the gnome-keyring agent, which returns `communication with agent
+failed`. Measured in two checkouts of two repositories by two people, so within
+that environment it is not anyone's individual misconfiguration. It says nothing
+about your machine.
+
+Disable GPG signing for the commit, but **keep the DCO `Signed-off-by` trailer**
+— that is a separate mechanism and it is required (see below).
+
+This matters if branch protection ever requires signed commits: it has to be
+solved before that requirement lands, not discovered at a rejected push.
+
+## Writing tests
+
+Assert **completeness and shape**, not presence or absence.
+
+Presence assertions — *the field appeared*, *the row is gone*, *the call
+returned* — are cheap and survive refactors, which is exactly why they are
+everywhere and exactly why they are blind to a contract silently degrading.
+
+This is not theoretical. Every defect found in a recent sweep across this
+repository and turndb survived a green test that asserted the wrong thing:
+
+- the roster tool rendered every role as `[object Object]` for the life of the
+  repo; the test asserted that teammate *names* appeared;
+- a paged read returned a short page while live rows existed; the test asserted
+  that a deleted id was *absent*, never that the page was full;
+- a trace view silently truncated its window; the test asserted that the call
+  *returned*, never that the result was complete.
+
+Before committing a test, ask **both** of these. They are not the same question,
+and the second is the one people forget:
+
+- **Would this pass against a version that returns *some* of the right answer?**
+  This catches a fix that does too little — the short page, the half-rendered
+  field, the truncated window.
+- **Would this pass against a version that refuses *more* than it should?** This
+  catches a fix that does too much. A suite full of "rejects bad input"
+  assertions passes happily against an implementation that also rejects good
+  input. If you add a validity check, test the *nearest valid thing* it must
+  still accept.
+
+If either answer is yes, it is not yet testing the contract.
+
+Prefer cheap negative invariants — `expect(out).not.toContain('[object Object]')`
+— over whole-string golden files, which fail on every cosmetic change and train
+people to regenerate the golden without reading it. And where the type system can
+make the wrong thing unrepresentable, that is better than either: tests are the
+backstop, types are the fix.
+
 ## Changesets & releases
 
 Any change that affects a published package's behavior needs a
