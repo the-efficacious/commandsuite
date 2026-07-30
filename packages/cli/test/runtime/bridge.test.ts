@@ -266,5 +266,11 @@ describeIfBuilt('runner + bridge end-to-end', () => {
     };
     expect(result.content[0]?.text ?? '').toContain('peer-1');
     expect(result.content[0]?.text ?? '').toContain(FAKE_BROKER_NAME);
+    // A role is an object ({ title, description }) — render the title,
+    // never the object. Asserting only on names let `[object Object]`
+    // ship to every agent that called `roster`.
+    expect(result.content[0]?.text ?? '').toContain('[reviewer]');
+    expect(result.content[0]?.text ?? '').toContain('[engineer]');
+    expect(result.content[0]?.text ?? '').not.toContain('[object Object]');
   });
 });
