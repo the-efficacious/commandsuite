@@ -2461,7 +2461,14 @@ export function createApp(options: AppOptions): CreatedApp {
       if (members.findByName(parsed.data.member) === null) {
         return c.json({ error: `no such member: ${parsed.data.member}` }, 400);
       }
-      secrets.bind(secret.id, parsed.data.member);
+      // `bind` enforces the per-member env-name invariant and throws
+      // `env_taken` when the member already resolves that variable from
+      // another secret. Without this the store's 409 surfaced as a 500.
+      try {
+        secrets.bind(secret.id, parsed.data.member);
+      } catch (err) {
+        return mapSecretsError(c, err);
+      }
       queueMicrotask(() => {
         void publishSecretEvent(secret, 'bound', member.name, {
           body: `${parsed.data.member} was given the secret '${secret.slug}' (${secret.envName}) by ${member.name}. It applies on their next runner start.`,

@@ -123,19 +123,59 @@ describe('registry CRUD + gating', () => {
     expect(body.enabled).toBe(true);
   });
 
-  it('rejects duplicate slugs and duplicate env names with 409', async () => {
+  it('rejects duplicate slugs with 409, but ALLOWS a second secret on the same env name', async () => {
+    // The per-agent pattern the product runs on: every member holds
+    // their own GITHUB_TOKEN under a different slug. This used to 409
+    // on the second one because env_name carried a global unique index.
     const { app } = makeApp();
-    await app.request('/secrets', authed(ADMIN, { slug: 'gh', envName: 'GITHUB_TOKEN' }));
+    await app.request('/secrets', authed(ADMIN, { slug: 'cora-gh', envName: 'GITHUB_TOKEN' }));
+
     const dupeSlug = await app.request(
       '/secrets',
-      authed(ADMIN, { slug: 'gh', envName: 'OTHER_TOKEN' }),
+      authed(ADMIN, { slug: 'cora-gh', envName: 'OTHER_TOKEN' }),
     );
     expect(dupeSlug.status).toBe(409);
-    const dupeEnv = await app.request(
+
+    const sameEnv = await app.request(
       '/secrets',
-      authed(ADMIN, { slug: 'gh2', envName: 'GITHUB_TOKEN' }),
+      authed(ADMIN, { slug: 'rune-gh', envName: 'GITHUB_TOKEN' }),
     );
-    expect(dupeEnv.status).toBe(409);
+    expect(sameEnv.status).toBe(201);
+  });
+
+  it('refuses to give ONE member two secrets for the same variable', async () => {
+    // The invariant that actually matters, enforced where it can first
+    // be violated: binding.
+    const { app } = makeApp();
+    await app.request('/secrets', authed(ADMIN, { slug: 'gh-a', envName: 'GITHUB_TOKEN' }));
+    await app.request('/secrets', authed(ADMIN, { slug: 'gh-b', envName: 'GITHUB_TOKEN' }));
+
+    const first = await app.request('/secrets/gh-a/bindings', authed(ADMIN, { member: 'bound' }));
+    expect(first.status).toBe(200);
+
+    const clash = await app.request('/secrets/gh-b/bindings', authed(ADMIN, { member: 'bound' }));
+    expect(clash.status).toBe(409);
+
+    // ...while a DIFFERENT member on the same variable is fine.
+    const other = await app.request(
+      '/secrets/gh-b/bindings',
+      authed(ADMIN, { member: 'outsider' }),
+    );
+    expect(other.status).toBe(200);
+  });
+
+  it('refuses an all-members secret that collides with a bound one', async () => {
+    // all-members reaches everyone without a binding, so it is the one
+    // case that can still collide at create time.
+    const { app } = makeApp();
+    await app.request('/secrets', authed(ADMIN, { slug: 'gh-a', envName: 'GITHUB_TOKEN' }));
+    await app.request('/secrets/gh-a/bindings', authed(ADMIN, { member: 'bound' }));
+
+    const broad = await app.request(
+      '/secrets',
+      authed(ADMIN, { slug: 'gh-all', envName: 'GITHUB_TOKEN', allMembers: true }),
+    );
+    expect(broad.status).toBe(409);
   });
 
   it('rejects malformed and reserved env names with 400', async () => {
@@ -196,6 +236,17 @@ describe('registry CRUD + gating', () => {
     await app.request('/secrets', authed(ADMIN, { slug: 'gh', envName: 'GITHUB_TOKEN' }));
     await app.request('/secrets', authed(ADMIN, { slug: 'np', envName: 'NPM_TOKEN' }));
 
+    // Repointing at a variable another secret targets is fine while no
+    // member would resolve both. It only conflicts once they share one.
+    const free = await app.request(
+      '/secrets/np',
+      authed(ADMIN, { envName: 'GITHUB_TOKEN' }, 'PATCH'),
+    );
+    expect(free.status).toBe(200);
+    await app.request('/secrets/np', authed(ADMIN, { envName: 'NPM_TOKEN' }, 'PATCH'));
+
+    await app.request('/secrets/gh/bindings', authed(ADMIN, { member: 'bound' }));
+    await app.request('/secrets/np/bindings', authed(ADMIN, { member: 'bound' }));
     const conflict = await app.request(
       '/secrets/np',
       authed(ADMIN, { envName: 'GITHUB_TOKEN' }, 'PATCH'),
