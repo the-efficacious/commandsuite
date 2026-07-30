@@ -29,7 +29,7 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "vite build",
+    "build": "vite build && node ../../scripts/dist-stamp.mjs",
     "dev": "vite",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",

@@ -41,10 +41,11 @@
   },
   "files": [
     "dist",
-    "public"
+    "public",
+    "!dist/.build-stamp.json"
   ],
   "scripts": {
-    "build": "tsup && node ./scripts/sync-public.mjs",
+    "build": "tsup && node ./scripts/sync-public.mjs && node ../../scripts/dist-stamp.mjs",
     "dev": "tsup --watch",
     "start": "node ./dist/index.js",
     "typecheck": "tsc --noEmit",

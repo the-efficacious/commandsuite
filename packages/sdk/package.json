@@ -50,10 +50,11 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "!dist/.build-stamp.json"
   ],
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && node ../../scripts/dist-stamp.mjs",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
