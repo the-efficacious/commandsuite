@@ -50,6 +50,7 @@
     "start": "node ./dist/index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "prepublishOnly": "node ../../scripts/publish-gate.mjs check",
     "clean": "rm -rf dist public .turbo"
   },
   "dependencies": {

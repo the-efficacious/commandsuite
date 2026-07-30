@@ -36,6 +36,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run --config vitest.config.ts",
+    "prepublishOnly": "node ../../scripts/publish-gate.mjs check",
     "clean": "rm -rf .turbo"
   },
   "dependencies": {

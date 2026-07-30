@@ -21,7 +21,8 @@
     "changeset": "changeset",
     "version-packages": "changeset version && node scripts/aggregate-changelog.mjs",
     "verify-pack": "node scripts/verify-pack-contents.mjs",
-    "release": "changeset publish",
+    "release:prepare": "node scripts/publish-gate.mjs prepare",
+    "release": "pnpm release:prepare && changeset publish",
     "wizard": "node packages/cli/dist/index.js setup",
     "csuite": "node packages/cli/dist/index.js"
   },
