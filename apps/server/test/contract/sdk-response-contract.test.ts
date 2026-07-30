@@ -58,6 +58,12 @@
  * An endpoint absent from it is UNCHECKED, not proven correct. Adding a case
  * is three lines; that is the point of the table.
  *
+ * Measured at `cf346ee`: the ten cases below exercise nine distinct response
+ * schemas out of 42 `*ResponseSchema` exports, across nine distinct operations
+ * out of 107 GET/POST/PUT/PATCH/DELETE registrations in `createApp` (the route
+ * total also includes HTML, streams, and binary responses with no SDK response
+ * schema). This is a spot-check, not route-complete contract coverage.
+ *
  * AND IT ONLY SEES HTTP RESPONSES
  * -------------------------------
  * This checks what the SERVER emits over HTTP. It cannot see a published
