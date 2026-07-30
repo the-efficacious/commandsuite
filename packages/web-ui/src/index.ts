@@ -17,6 +17,9 @@ export { BrandMark, type BrandMarkProps } from './components/icons/BrandMark.js'
 export {
   AlertCircle,
   AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
   AtSign,
   CheckCircle2,
   ChevronDown,

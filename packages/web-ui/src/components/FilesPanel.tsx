@@ -26,7 +26,7 @@ import { briefing } from '../lib/briefing.js';
 import { getClient } from '../lib/client.js';
 import { openPreview } from '../lib/file-preview.js';
 import { selectFiles } from '../lib/view.js';
-import { AlertCircle, X } from './icons/index.js';
+import { AlertCircle, ChevronRight, X } from './icons/index.js';
 
 interface PanelState {
   mode: 'tree' | 'shared' | 'all';
@@ -172,7 +172,12 @@ function Breadcrumb({ path }: { path: string }) {
         const isLast = i === segments.length - 1;
         return (
           <span key={subpath}>
-            <span style="color:var(--muted);margin:0 2px">›</span>
+            <span
+              aria-hidden="true"
+              style="display:inline-flex;align-items:center;vertical-align:middle;color:var(--muted);margin:0 2px"
+            >
+              <ChevronRight size={12} />
+            </span>
             <button
               type="button"
               onClick={() => void refreshTree(subpath)}

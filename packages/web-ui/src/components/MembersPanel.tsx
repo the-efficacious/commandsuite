@@ -16,6 +16,7 @@ import { getClient } from '../lib/client.js';
 import { summarizePermissions as summarize } from '../lib/permissions.js';
 import { loadRoster } from '../lib/roster.js';
 import { selectMemberProfile } from '../lib/view.js';
+import { ArrowRight } from './icons/index.js';
 import { PendingEnrollments } from './members/PendingEnrollments.js';
 import { PermissionsEditor } from './members/PermissionsEditor.js';
 import { type Reveal, RevealBanner, revealTargetName } from './members/Reveal.js';
@@ -179,8 +180,9 @@ function MemberListRow({
             {member.role.title}
           </span>
         </div>
-        <span style="font-family:var(--f-mono);font-size:11px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;flex-shrink-0">
-          → Manage
+        <span style="display:inline-flex;align-items:center;gap:4px;font-family:var(--f-mono);font-size:11px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;flex-shrink-0">
+          <ArrowRight size={12} aria-hidden="true" />
+          Manage
         </span>
       </button>
     </li>

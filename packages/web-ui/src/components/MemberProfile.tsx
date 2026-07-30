@@ -37,6 +37,7 @@ import {
   selectOverview,
 } from '../lib/view.js';
 import { AgentTimeline } from './AgentTimeline.js';
+import { ArrowLeft, ArrowRight, ChevronRight } from './icons/index.js';
 import { MemberAdminForm } from './members/MemberAdminForm.js';
 import { type Reveal, RevealBanner } from './members/Reveal.js';
 import { EmptyState, ErrorCallout, Loading, Mention } from './ui/index.js';
@@ -110,7 +111,8 @@ export function MemberProfile({ name, tab, viewer }: MemberProfileProps) {
           message={`There's no teammate called "${name}" on this team.`}
           action={
             <button type="button" class="btn btn-ghost btn-sm" onClick={selectOverview}>
-              ← Back to Home
+              <ArrowLeft size={13} aria-hidden="true" />
+              Back to Home
             </button>
           }
         />
@@ -191,7 +193,8 @@ export function MemberProfile({ name, tab, viewer }: MemberProfileProps) {
         <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
           {!isSelf && (
             <button type="button" onClick={() => selectDmWith(name)} class="btn btn-ghost btn-sm">
-              → DM {name}
+              <ArrowRight size={13} aria-hidden="true" />
+              DM {name}
             </button>
           )}
           <button
@@ -200,7 +203,8 @@ export function MemberProfile({ name, tab, viewer }: MemberProfileProps) {
             class="btn btn-ghost btn-sm"
             title={`Browse ${name}'s files`}
           >
-            → Browse files
+            <ArrowRight size={13} aria-hidden="true" />
+            Browse files
           </button>
         </div>
 
@@ -232,7 +236,8 @@ export function MemberProfile({ name, tab, viewer }: MemberProfileProps) {
                 class="btn btn-primary btn-sm"
                 onClick={() => selectFiles(`/${name}`)}
               >
-                Open Files →
+                Open Files
+                <ArrowRight size={13} aria-hidden="true" />
               </button>
             }
           />
@@ -249,10 +254,11 @@ function Crumbs({ name }: { name: string }) {
   return (
     <nav aria-label="Breadcrumb" class="crumbs">
       <button type="button" onClick={selectOverview} class="text-link">
-        ← Home
+        <ArrowLeft size={13} aria-hidden="true" />
+        Home
       </button>
       <span class="sep" aria-hidden="true">
-        ›
+        <ChevronRight size={13} />
       </span>
       <span class="current">@{name}</span>
     </nav>

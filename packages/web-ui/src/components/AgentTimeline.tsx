@@ -74,6 +74,7 @@ import { joinTurns } from '../lib/trace-join.js';
 import { useWindowedList } from '../lib/use-windowed-list.js';
 import { selectObjectiveDetail } from '../lib/view.js';
 import { GenAiMessageBlock, GenAiRequestDetails } from './GenAiBlocks.js';
+import { ArrowUp, ChevronDown, ChevronUp } from './icons/index.js';
 
 type KindFilter = Record<ActivityEvent['kind'], boolean>;
 
@@ -571,7 +572,8 @@ export function TimelineBody() {
             disabled={loading}
             class="btn btn-ghost btn-sm"
           >
-            {loading ? 'Loading…' : '↑ Load older'}
+            {!loading && <ArrowUp size={12} aria-hidden="true" />}
+            {loading ? 'Loading…' : 'Load older'}
           </button>
         </div>
       )}
@@ -665,7 +667,7 @@ function ThreadItemView({ item }: { item: ThreadItem }) {
           style="font-family:var(--f-mono);font-size:12px;color:var(--steel);border-left:2px solid var(--steel);padding:6px 12px"
         >
           <span>{formatTs(item.ts)}</span>
-          <span>▼</span>
+          <ChevronDown size={13} aria-hidden="true" class="flex-shrink-0" />
           <button
             type="button"
             onClick={() => selectObjectiveDetail(item.objectiveId)}
@@ -683,7 +685,7 @@ function ThreadItemView({ item }: { item: ThreadItem }) {
           style="font-family:var(--f-mono);font-size:12px;color:var(--muted);border-left:2px solid var(--rule);padding:6px 12px"
         >
           <span>{formatTs(item.ts)}</span>
-          <span>▲</span>
+          <ChevronUp size={13} aria-hidden="true" class="flex-shrink-0" />
           <button
             type="button"
             onClick={() => selectObjectiveDetail(item.objectiveId)}
@@ -804,7 +806,7 @@ const CONTEXT_SCROLL_BOX =
 /**
  * The per-turn API-call affordance.
  *
- * One call (the Claude shape): a collapsed "full context ↓" — expand
+ * One call (the Claude shape): a collapsed "full context" — expand
  * fetches the record body by id and shows the system prompt + the
  * complete input the model saw on this call.
  *
@@ -821,7 +823,8 @@ function TurnCalls({ calls }: { calls: GenAiInferenceSummary[] }) {
     return (
       <details style="margin-top:6px">
         <summary style="font-family:var(--f-mono);font-size:11px;color:var(--muted);cursor:pointer">
-          full context ↓
+          full context{' '}
+          <ChevronDown size={11} aria-hidden="true" style="display:inline;vertical-align:-1px" />
         </summary>
         <div style="margin-top:4px">
           {ready ? (
@@ -847,7 +850,8 @@ function TurnCalls({ calls }: { calls: GenAiInferenceSummary[] }) {
         }}
       >
         <summary style="font-family:var(--f-mono);font-size:11px;color:var(--muted);cursor:pointer">
-          full context ↓
+          full context{' '}
+          <ChevronDown size={11} aria-hidden="true" style="display:inline;vertical-align:-1px" />
         </summary>
         <div style={CONTEXT_SCROLL_BOX}>
           <LazyRecordBody recordId={single.id} defaultOpen />
@@ -858,7 +862,8 @@ function TurnCalls({ calls }: { calls: GenAiInferenceSummary[] }) {
   return (
     <details style="margin-top:6px">
       <summary style="font-family:var(--f-mono);font-size:11px;color:var(--muted);cursor:pointer">
-        api calls ({calls.length}) ↓
+        api calls ({calls.length}){' '}
+        <ChevronDown size={11} aria-hidden="true" style="display:inline;vertical-align:-1px" />
       </summary>
       <div style="margin-top:4px;display:flex;flex-direction:column;gap:4px">
         {calls.map((call) => (

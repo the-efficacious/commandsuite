@@ -30,6 +30,7 @@ import { signal } from '@preact/signals';
 import { getClient } from '../lib/client.js';
 import { selectMemberProfile } from '../lib/view.js';
 import { AppearancePanel } from './AppearancePanel.js';
+import { ArrowRight } from './icons/index.js';
 import { type Reveal, RevealBanner } from './members/Reveal.js';
 import { NotificationToggle } from './NotificationToggle.js';
 import { PageHeader } from './ui/index.js';
@@ -168,7 +169,8 @@ export function AccountPanel({ viewer }: AccountPanelProps) {
               class="btn btn-ghost btn-sm"
               onClick={() => selectMemberProfile(viewer)}
             >
-              → View profile
+              <ArrowRight size={13} aria-hidden="true" />
+              View profile
             </button>
           }
         />

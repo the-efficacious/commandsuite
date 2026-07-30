@@ -1188,8 +1188,20 @@ body::before {
 .crumbs a:hover {
   color: var(--ink);
 }
+/* Crumb buttons carry a leading back icon — keep glyph and label on a
+   shared centre line instead of the text baseline. */
+.crumbs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
 .crumbs span.sep {
   color: var(--rule-strong);
+  display: inline-flex;
+  align-items: center;
+}
+.crumbs svg {
+  flex: 0 0 auto;
 }
 .crumbs .current {
   color: var(--ink);
