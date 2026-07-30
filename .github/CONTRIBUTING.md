@@ -79,6 +79,14 @@ work on long-lived shared branches instead:
 | `develop` | The integration trunk. **Branch your work from here, and merge it back here.** |
 | `review/<yyyy-mm-dd>` | Cut from `develop` when a batch is ready. The PR to `main` comes from this branch and is **frozen** during review, so the diff cannot shift under the reviewer while they are reading it. `develop` keeps moving the whole time. |
 
+> **`develop` is scaffolding, not architecture.** It exists as one isolation
+> layer for as long as every team member holds merge-to-`main` privileges under
+> a shared identity. Once per-agent identities land, team members will open pull
+> requests directly against `main` like anyone else, and **`develop` retires**
+> along with the `review/<date>` branches that feed off it. Treat this whole
+> section as temporary. No timeline is set; if you are reading it after
+> per-agent identities exist, it is stale and the fix is to delete it.
+
 turndb uses the same model, written down in its own `CONTRIBUTING.md`. It is
 stated once per repository and pointed at from everywhere else — three copies of
 a branch model is worse than one, because they drift and then nobody knows which
