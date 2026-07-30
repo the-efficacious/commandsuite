@@ -23,6 +23,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Broker, InMemoryEventLog } from 'csuite-core';
+import { FsEntryResponseSchema, FsEntrySchema } from 'csuite-sdk/schemas';
 import type { Objective, Team } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../../src/app.js';
@@ -359,5 +360,90 @@ describe('/objectives/<id>/ namespace', () => {
       authed(DAVE),
     );
     expect(afterRemove.status).toBe(403);
+  });
+
+  it('lets an objective member LIST the namespace, not just stat paths inside it', async () => {
+    // `list` gated on `members.manage || ownsPath` while stat/read/
+    // listShared all gated on `canRead`. A namespace is owned by
+    // `obj:<id>` and by no member, so the ownership test refused every
+    // member of the objective — including its assignee. Directors got
+    // through only via `members.manage`, which is why this read as a
+    // permissions problem rather than a missing branch.
+    const { app } = makeApp();
+    await uploadToHome(app, BOB, '/bob/notes.txt', 'context');
+    const createRes = await app.request(
+      '/objectives',
+      authed(BOB, {
+        title: 'Investigate flake',
+        outcome: 'root cause + fix',
+        body: '',
+        assignee: 'carol',
+        watchers: [],
+        attachments: [
+          { path: '/bob/notes.txt', name: 'notes.txt', size: 1, mimeType: 'text/plain' },
+        ],
+      }),
+    );
+    const obj = (await createRes.json()) as Objective;
+    const nsPath = `/objectives/${obj.id}`;
+
+    // carol is the assignee and holds no elevated permission.
+    const listed = await app.request(`/fs/ls?path=${encodeURIComponent(nsPath)}`, authed(CAROL));
+    expect(listed.status).toBe(200);
+    const body = (await listed.json()) as { entries: Array<{ name: string; owner: string }> };
+    expect(body.entries.map((e) => e.name)).toContain('notes.txt');
+
+    // ...and the entries carry the objective owner, which is the value
+    // the response schema used to reject.
+    expect(body.entries[0]?.owner).toBe(`obj:${obj.id}`);
+
+    // A non-member is still refused — the fix widens who may list, not
+    // whether listing is gated at all.
+    const denied = await app.request(`/fs/ls?path=${encodeURIComponent(nsPath)}`, authed(DAVE));
+    expect(denied.status).toBe(403);
+  });
+
+  it('parses a namespace entry through the published FsEntry schema', async () => {
+    // The defect was client-side: the server responded correctly and
+    // the SDK threw parsing that successful response, because
+    // `FsEntrySchema.owner` was `NameSchema` and `obj:<id>` contains a
+    // colon. Parsing the real response body here is what makes this a
+    // contract test rather than a shape assertion.
+    const { app } = makeApp();
+    await uploadToHome(app, BOB, '/bob/notes.txt', 'context');
+    const createRes = await app.request(
+      '/objectives',
+      authed(BOB, {
+        title: 'Investigate flake',
+        outcome: 'root cause + fix',
+        body: '',
+        assignee: 'carol',
+        watchers: [],
+        attachments: [
+          { path: '/bob/notes.txt', name: 'notes.txt', size: 1, mimeType: 'text/plain' },
+        ],
+      }),
+    );
+    const obj = (await createRes.json()) as Objective;
+
+    const stat = await app.request(
+      `/fs/stat?path=${encodeURIComponent(`/objectives/${obj.id}/notes.txt`)}`,
+      authed(CAROL),
+    );
+    expect(stat.status).toBe(200);
+    // The route returns `{ entry }`, so parse the envelope the SDK
+    // client actually parses rather than a shape I assumed.
+    const parsed = FsEntryResponseSchema.safeParse(await stat.json());
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.entry.owner).toBe(`obj:${obj.id}`);
+  });
+
+  it('still rejects an owner that is neither a member name nor an objective', async () => {
+    // Widening is not the same as removing. A control that must hold in
+    // both worlds, so the two assertions above mean something.
+    expect(FsEntrySchema.shape.owner.safeParse('chan:general').success).toBe(false);
+    expect(FsEntrySchema.shape.owner.safeParse('obj:has spaces').success).toBe(false);
+    expect(FsEntrySchema.shape.owner.safeParse('Cora').success).toBe(true);
+    expect(FsEntrySchema.shape.owner.safeParse('obj:obj-ms7vlmdb-15').success).toBe(true);
   });
 });

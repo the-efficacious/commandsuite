@@ -1420,11 +1420,41 @@ export const PushSubscriptionResponseSchema = z.object({
 
 export const FsEntryKindSchema = z.enum(['file', 'directory']);
 
+/**
+ * Owner of a filesystem entry.
+ *
+ * Two legitimate kinds, and the second is why this is not `NameSchema`:
+ *
+ *   - a member name — `Cora`, the owner of `/Cora/...`
+ *   - an objective namespace — `obj:<objective-id>`, the owner of
+ *     `/objectives/<id>/...`, where the ACL gate is membership of the
+ *     objective rather than any one member
+ *
+ * The server has always produced both (`OBJECTIVE_OWNER_PREFIX` in
+ * `files/paths.ts`), while this field accepted only the first. Because
+ * `NameSchema`'s pattern excludes `:`, every objective-namespace entry
+ * failed the schema that ships alongside the code producing it — the
+ * write committed and the caller was told it failed, since validation
+ * happens on the response.
+ *
+ * Widened rather than changing the producer: `obj:<id>` is part of the
+ * shipped authorization model, not a malformed name. That is the
+ * opposite call from `Broker.push`, where nothing legitimate produced
+ * the rejected value and the producer moved instead.
+ */
+export const FsOwnerSchema = z.union([
+  NameSchema,
+  z
+    .string()
+    .max(133)
+    .regex(/^obj:[a-zA-Z0-9._-]+$/, 'objective owner must be obj:<objective-id>'),
+]);
+
 export const FsEntrySchema = z.object({
   path: FsPathSchema,
   name: z.string().min(1).max(255),
   kind: FsEntryKindSchema,
-  owner: NameSchema,
+  owner: FsOwnerSchema,
   size: z.number().int().nonnegative().nullable(),
   mimeType: z.string().max(255).nullable(),
   hash: z
