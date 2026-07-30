@@ -32,7 +32,9 @@ export {
   type EventLogTailOptions,
   GENERAL_CHANNEL_ID,
   InMemoryEventLog,
+  isSecretThread,
   MAX_QUERY_LIMIT,
+  SECRET_THREAD_PREFIX,
 } from './event-log.js';
 export {
   InMemoryPushSubscriptionStore,
