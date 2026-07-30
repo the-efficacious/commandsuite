@@ -221,6 +221,65 @@ describe('stale-dist guard — the cases it must NOT refuse', () => {
 });
 
 /**
+ * The guard's limits, pinned as tests.
+ *
+ * These assert what the checker does NOT detect. That looks perverse
+ * until you notice how the gaps were found: the header named three
+ * limitations, none of these three, and a reader reasonably concluded
+ * the rest was covered. A limit stated in prose is a claim; a limit
+ * with a test is a fact someone has to deliberately change.
+ *
+ * Same pattern as turndb asserting `erase_ids`' silence so nobody
+ * "fixes" it later. If one of these starts failing, the guard got
+ * stronger — update the header and delete the case.
+ */
+describe('the guard’s limits — asserted so nobody assumes coverage', () => {
+  it('does NOT see build configuration outside src/', () => {
+    // tsup.config.ts / vite.config.ts / index.html are real build inputs
+    // and none is hashed. Under root `pnpm test` turbo covers this; under
+    // a filtered invocation nothing does.
+    const sources = { 'a.ts': 'export const a = 1\n' };
+    const dir = makePackage({ sources, distFiles: { 'a.js': 'a' }, stampFrom: sources });
+    writeFileSync(join(dir, 'tsup.config.ts'), 'export default { minify: false }\n');
+    expect(checkPackage(dir), 'clean before').toBeNull();
+
+    writeFileSync(join(dir, 'tsup.config.ts'), 'export default { minify: true }\n');
+    expect(
+      checkPackage(dir),
+      'a changed bundler config produces different output and is not detected',
+    ).toBeNull();
+  });
+
+  it('does NOT see output mutated after the build', () => {
+    // The stamp proves the INPUTS have not changed since the build. It
+    // says nothing about whether the OUTPUTS have.
+    const sources = { 'a.ts': 'export const a = 1\n' };
+    const dir = makePackage({ sources, distFiles: { 'a.js': 'built' }, stampFrom: sources });
+    expect(checkPackage(dir)).toBeNull();
+
+    writeFileSync(join(dir, 'dist', 'a.js'), 'HAND-EDITED, no build would produce this');
+    expect(checkPackage(dir), 'src still matches, so the guard is silent').toBeNull();
+  });
+
+  it('does NOT see a bundled dependency that has no build script', () => {
+    // checkPackage skips packages with no `build` script — correct, since
+    // "does it have a fresh dist" is meaningless for a package with no
+    // dist. That exemption is exactly what hides a source change in a
+    // package whose src another package BUNDLES (csuite-web-ui into
+    // csuite-web-host). Both levels correct; the composition is not.
+    const dep = mkdtempSync(join(tmpdir(), 'freshdist-'));
+    trees.push(dep);
+    mkdirSync(join(dep, 'src'), { recursive: true });
+    writeFileSync(join(dep, 'src', 'index.ts'), 'export const v = 1\n');
+    writeFileSync(join(dep, 'package.json'), JSON.stringify({ name: 'srconly', scripts: {} }));
+
+    expect(checkPackage(dep), 'no build script -> skipped entirely').toBeNull();
+    writeFileSync(join(dep, 'src', 'index.ts'), 'export const v = 2\n');
+    expect(checkPackage(dep), 'and still skipped after its source changes').toBeNull();
+  });
+});
+
+/**
  * Launcher independence. The guard originally derived the project from
  * `process.cwd()`, which is a property of the SHELL rather than of the
  * project under test. `vitest --root apps/server` launched from the repo
