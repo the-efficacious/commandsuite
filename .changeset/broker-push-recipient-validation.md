@@ -31,6 +31,17 @@ broker with three members registered — all three received it, `targets: 3`. Th
 this rejects rather than coercing an unparseable name to null; the lenient repair *is* the
 empty-string path, generalised.
 
+**This prevents the condition; it does not repair a log that already has one.** The
+validation stops new rows being written and there is no migration — a `Message` with an
+invalid `to` already in an event log stays there. That matters more than it sounds,
+because `HistoryResponseSchema` is `z.array(MessageSchema)` and a single invalid element
+fails the whole array: one bad row breaks every `/history` response whose window includes
+it, taking the valid messages in that window with it, for as long as the row exists. So a
+consumer who already has one upgrades and sees `/history` still failing, and the fix looks
+like it did not work. Measured on our own broker: 959 events, zero rows the schema would
+reject, so nothing here needs repairing — but that is a statement about this deployment,
+not about anyone else's.
+
 **This is breaking for direct `csuite-core` consumers.** `PushPayload.to` is typed
 `string | null | undefined`, and some strings that type admits are now rejected at runtime.
 Two things bound it. Anyone this breaks was already producing invalid messages — a caller
