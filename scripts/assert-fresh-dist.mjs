@@ -10,14 +10,64 @@
  * through a filtered invocation gave 27 passing tests with
  * `packages/core/dist/index.js`'s mtime unmoved.
  *
- * DOMAIN, stated rather than implied: vitest-launched runs, and only
- * those. An ad-hoc `node` script importing `packages/core/dist/index.js`
- * never reaches this code. That gap is covered by the reporting
- * practice — state the object with the result — not by more machinery
- * here.
+ * DOMAIN — read this before reusing the check for anything else.
  *
- * This checks that `dist/` corresponds to `src/`. It does NOT check that
- * the build is correct. That is what the tests importing a workspace
+ * The question it answers is narrow and exact: **does this package's
+ * `dist/` correspond to this package's `src/`?** Three things follow that
+ * are easy to assume away, all measured rather than reasoned:
+ *
+ *   1. It hashes `<pkg>/src/**` and nothing else, so **build
+ *      configuration is invisible**. Editing `packages/core/tsup.config.ts`
+ *      leaves `findStaleDists()` returning `[]`. Same for `vite.config.ts`,
+ *      `index.html`, and `package.json` — all real build inputs, none
+ *      hashed.
+ *   2. It proves the INPUTS have not changed since the build. It says
+ *      nothing about whether the OUTPUTS have. A `dist/index.html` edited
+ *      by hand after a build passes cleanly, because `src` still matches.
+ *   3. **It cannot see transitive workspace inputs**, and the reason is
+ *      this file's own exemption. `csuite-web-ui` has no build script, so
+ *      `checkPackage` skips it (correctly — it exports `./src/index.ts`
+ *      and has no `dist` by design). But `csuite-web-host` BUNDLES
+ *      web-ui's source, so editing `packages/web-ui/src/index.ts` leaves
+ *      web-host reporting fresh. The skip is right for "does web-ui have
+ *      a fresh dist" and is precisely what blinds every package that
+ *      consumes it.
+ *
+ * (3) is not patchable by hashing more directories. A correct exemption
+ * in a per-package checker becomes a hole in any aggregate claim built
+ * on it: both levels are right and the composition is wrong. It means
+ * this mechanism answers a different question from the one a PUBLISH
+ * gate asks — *does this output correspond to the tagged source graph* —
+ * and the two can both be computed correctly and disagree. Do not wire
+ * this into a release path expecting graph-aware coverage; Turbo's task
+ * hash is what covers the dependency graph, once a package's `outputs`
+ * key actually declares what it publishes.
+ *
+ * AND SAY THE UNCOMFORTABLE HALF, because "this doesn't check X" reads
+ * as "something else does" and here that is only sometimes true.
+ *
+ * Turbo's task hash DOES cover (1) and (3) — config drift and dependency
+ * drift both move it. Measured after the web-host outputs fix: editing
+ * `packages/web-ui/src/index.ts` moves `csuite-web-host#build` from
+ * `3a12cf37` to a different hash, so turbo sees a transitive source
+ * change this guard cannot.
+ *
+ * So the honest residual is narrow and specific: **dependency and config
+ * drift are covered whenever the build goes through turbo, and covered
+ * by nothing on the filtered invocations that bypass it.** Which is the
+ * case this guard exists for. It makes one way of being wrong loud there
+ * and leaves two silent — so it does not make
+ * `pnpm --filter <pkg> exec vitest` safe, it makes it less bad. The
+ * operator-facing version of that lives in `.github/CONTRIBUTING.md`
+ * beside the per-package test commands, which is where someone about to
+ * type one will actually be.
+ *
+ * It is also vitest-only. An ad-hoc `node` script importing
+ * `packages/core/dist/index.js` never reaches this code; that gap is
+ * covered by the reporting practice — state the object with the
+ * result — not by more machinery here.
+ *
+ * And it does NOT check that the build is correct. That is what the tests importing a workspace
  * package BY NAME are for: they are the only thing exercising the
  * `exports` map, the `files` list and the emitted `.d.ts` against what a
  * consumer actually receives. Do not "tidy" those into a vitest alias

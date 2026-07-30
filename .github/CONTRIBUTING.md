@@ -35,6 +35,30 @@ pnpm typecheck                         # tsc --noEmit everywhere
 pnpm test                              # all package test suites
 ```
 
+### Run tests from the root if you're going to believe the result
+
+`pnpm --filter <pkg> exec vitest run` is convenient and **bypasses turbo**,
+which is what normally keeps a package's `dist/` in step with its source.
+Tests that import a workspace package by name resolve through its
+`exports` map into `dist/`, so a filtered run can pass against a build
+that no longer matches the tree.
+
+`scripts/assert-fresh-dist.mjs` closes part of that — a vitest
+`globalSetup` that refuses when a dependency's `dist/` no longer matches
+its own `src/`, whatever launched vitest. It does **not** close all of it:
+
+| drift | root `pnpm test` | filtered run |
+|---|---|---|
+| a package's own `src/` | turbo | **the guard** |
+| build config (`tsup.config.ts`, `vite.config.ts`) | turbo | **nothing** |
+| a transitive workspace dependency | turbo | **nothing** |
+| `dist/` edited after the build | nothing | nothing |
+
+So a filtered run is fine for iterating and is **not** something to draw a
+conclusion from. Run it from the root before you report a result, and
+say which you ran — the two are different objects and only one of them
+is checked end to end.
+
 ## Project layout — where does code go?
 
 The monorepo splits into `packages/` (importable libraries) and `apps/`

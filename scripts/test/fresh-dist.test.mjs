@@ -221,6 +221,110 @@ describe('stale-dist guard — the cases it must NOT refuse', () => {
 });
 
 /**
+ * The guard's limits, pinned as tests.
+ *
+ * These assert what the checker does NOT detect. That looks perverse
+ * until you notice how the gaps were found: the header named three
+ * limitations, none of these three, and a reader reasonably concluded
+ * the rest was covered. A limit stated in prose is a claim; a limit
+ * with a test is a fact someone has to deliberately change.
+ *
+ * Same pattern as turndb asserting `erase_ids`' silence so nobody
+ * "fixes" it later. If one of these starts failing, the guard got
+ * stronger — update the header and delete the case.
+ *
+ * These are only safe BECAUSE of the positive tests around them. Each
+ * asserts a null result, so all three would pass against a `checkPackage`
+ * that detected nothing at all — Rune verified this by gutting it to an
+ * unconditional `null`: the three limit cases passed and four
+ * positive/refusal tests failed. **Negative tests pin the boundary;
+ * positive tests stop "detect nothing" from satisfying the suite.**
+ * Neither half is sufficient alone, so do not delete one set as
+ * redundant with the other.
+ */
+describe('the guard’s limits — asserted so nobody assumes coverage', () => {
+  it('does NOT see build configuration outside src/', () => {
+    // tsup.config.ts / vite.config.ts / index.html are real build inputs
+    // and none is hashed. Under root `pnpm test` turbo covers this; under
+    // a filtered invocation nothing does.
+    const sources = { 'a.ts': 'export const a = 1\n' };
+    const dir = makePackage({ sources, distFiles: { 'a.js': 'a' }, stampFrom: sources });
+    writeFileSync(join(dir, 'tsup.config.ts'), 'export default { minify: false }\n');
+    expect(checkPackage(dir), 'clean before').toBeNull();
+
+    writeFileSync(join(dir, 'tsup.config.ts'), 'export default { minify: true }\n');
+    expect(
+      checkPackage(dir),
+      'a changed bundler config produces different output and is not detected',
+    ).toBeNull();
+  });
+
+  it('does NOT see output mutated after the build', () => {
+    // The stamp proves the INPUTS have not changed since the build. It
+    // says nothing about whether the OUTPUTS have.
+    const sources = { 'a.ts': 'export const a = 1\n' };
+    const dir = makePackage({ sources, distFiles: { 'a.js': 'built' }, stampFrom: sources });
+    expect(checkPackage(dir)).toBeNull();
+
+    writeFileSync(join(dir, 'dist', 'a.js'), 'HAND-EDITED, no build would produce this');
+    expect(checkPackage(dir), 'src still matches, so the guard is silent').toBeNull();
+  });
+
+  it('does NOT see a changed dependency when checking the host that bundles it', () => {
+    // The aggregate hole, not the exemption that causes it. Asserting
+    // only that a source-only package is skipped would duplicate the
+    // test above and would still pass if some future mechanism correctly
+    // invalidated consumers — so it would not pin the thing that bit us:
+    // web-ui's source moved and web-host still reported fresh.
+    //
+    // The fixture deliberately does not model bundling. The point is that
+    // checkPackage receives ONLY the host and structurally cannot reach
+    // the dependency, so the host's verdict is unchanged by a real change
+    // to code that ends up inside its bundle.
+    const dep = mkdtempSync(join(tmpdir(), 'freshdist-dep-'));
+    trees.push(dep);
+    mkdirSync(join(dep, 'src'), { recursive: true });
+    writeFileSync(join(dep, 'src', 'index.ts'), 'export const v = 1\n');
+    writeFileSync(join(dep, 'package.json'), JSON.stringify({ name: 'srconly', scripts: {} }));
+
+    // The host DECLARES the dependency, so a graph-aware checker could
+    // find it. Ours cannot: checkPackage takes a directory and never
+    // consults dependencies at all.
+    const hostSources = { 'app.ts': "import { v } from 'srconly'\nexport const a = v\n" };
+    const host = makePackage({
+      sources: hostSources,
+      distFiles: { 'app.js': 'bundle containing srconly v=1' },
+      stampFrom: hostSources,
+    });
+    writeFileSync(
+      join(host, 'package.json'),
+      JSON.stringify({
+        name: 'hostpkg',
+        scripts: { build: 'x' },
+        dependencies: { srconly: 'workspace:*' },
+      }),
+    );
+
+    expect(checkPackage(host), 'host is fresh before the dependency moves').toBeNull();
+    writeFileSync(join(dep, 'src', 'index.ts'), 'export const v = 2\n');
+    expect(
+      checkPackage(host),
+      'host STILL fresh: its own src is unchanged and checkPackage ignores ' +
+        'the dependency it declares. Make checkPackage graph-aware and this fails.',
+    ).toBeNull();
+    expect(checkPackage(dep), 'and the dependency itself is skipped, having no dist').toBeNull();
+
+    // WHAT THIS DOES NOT ESTABLISH, stated because the honest limit is
+    // the point of the whole block. The aggregate walk lives in
+    // findStaleDists, whose workspace resolution is REPO_ROOT-bound, so a
+    // temp-dir fixture cannot take part in it. This pins that checkPackage
+    // is per-package BY CONSTRUCTION; the real composition failure was
+    // measured on the repo itself — editing packages/web-ui/src/index.ts
+    // leaves findStaleDists('apps/web-host') returning [].
+  });
+});
+
+/**
  * Launcher independence. The guard originally derived the project from
  * `process.cwd()`, which is a property of the SHELL rather than of the
  * project under test. `vitest --root apps/server` launched from the repo
