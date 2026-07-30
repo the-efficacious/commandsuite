@@ -22,7 +22,8 @@
   ],
   "type": "module",
   "files": [
-    "dist"
+    "dist",
+    "!dist/.build-stamp.json"
   ],
   "exports": {
     "./dist/index.html": "./dist/index.html",

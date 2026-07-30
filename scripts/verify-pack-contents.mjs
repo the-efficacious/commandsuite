@@ -11,6 +11,17 @@
  *   - List the tarball contents (`tar -tzf`) and verify that every
  *     declared path is present.
  *
+ *   - Reject internal build metadata anywhere in the payload. This
+ *     checks ABSENCE, which the presence check above structurally
+ *     cannot: a tarball can contain everything it declares and still
+ *     ship files it never meant to. `dist/.build-stamp.json` reached
+ *     two packages that way — `csuite-web-host` had no negation, and
+ *     `csuite-server` re-acquired the stamp under `public/` because
+ *     `sync-public.mjs` copies web-host's `dist/` wholesale, where the
+ *     server's own `dist/` negation cannot reach it. Both packages
+ *     reported OK throughout, correctly, because every declared path
+ *     was present.
+ *
  * What we deliberately don't check:
  *   - Pattern subpath imports (`./*.ts`) — can't statically resolve
  *     without expanding glob; trust the publish-side to surface
@@ -32,6 +43,14 @@ import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = resolve(fileURLToPath(import.meta.url), '..', '..');
 const PACK_DIR = '/tmp/csuite-pack-verify';
+
+/**
+ * Internal build metadata that must never reach a published tarball.
+ * Matched ANYWHERE in the payload rather than at a declared location —
+ * the freshness stamp reached `csuite-server` under `public/`, which no
+ * `dist/`-scoped exclusion could have caught.
+ */
+const FORBIDDEN_ENTRY = /(^|\/)\.build-stamp\.json$/;
 
 function discoverPublishable() {
   const candidates = [];
@@ -141,11 +160,19 @@ function main() {
     const entries = new Set(listTarballEntries(resolve(PACK_DIR, tgzName)));
     const expected = declaredPaths(pkg);
     const missing = expected.filter((p) => !entries.has(p));
-    if (missing.length === 0) {
+    const forbidden = [...entries].filter((p) => FORBIDDEN_ENTRY.test(p));
+
+    if (missing.length === 0 && forbidden.length === 0) {
       console.log(`OK (${expected.length} paths)`);
     } else {
-      console.log(`MISSING ${missing.length}/${expected.length}`);
-      for (const m of missing) console.log(`      - ${m}`);
+      if (missing.length > 0) {
+        console.log(`MISSING ${missing.length}/${expected.length}`);
+        for (const m of missing) console.log(`      - ${m}`);
+      }
+      if (forbidden.length > 0) {
+        console.log(`SHIPS ${forbidden.length} internal file(s) it should not`);
+        for (const f of forbidden) console.log(`      - ${f}`);
+      }
       failed = true;
     }
   }
