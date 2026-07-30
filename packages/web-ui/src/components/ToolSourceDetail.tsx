@@ -40,7 +40,7 @@ import {
   updateToolSource,
 } from '../lib/tool-sources.js';
 import { selectToolSources } from '../lib/view.js';
-import { KeyRound, RefreshCw, Trash2 } from './icons/index.js';
+import { ArrowLeft, KeyRound, RefreshCw, Trash2 } from './icons/index.js';
 import { ErrorCallout, Loading } from './ui/index.js';
 
 const sectionError = signal<string | null>(null);
@@ -110,7 +110,8 @@ export function ToolSourceDetail({ slug }: { slug: string }) {
     >
       <nav class="crumbs" style="margin-bottom:14px">
         <button type="button" class="text-link" onClick={selectToolSources}>
-          ← Tools
+          <ArrowLeft size={13} aria-hidden="true" />
+          Tools
         </button>
         <span class="sep">/</span>
         <span class="current">{slug}</span>

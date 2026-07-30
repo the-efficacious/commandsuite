@@ -14,6 +14,9 @@
 export {
   AlertCircle,
   AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
   AtSign,
   CheckCircle2,
   ChevronDown,

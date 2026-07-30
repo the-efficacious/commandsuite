@@ -11,7 +11,7 @@
  */
 
 import { signal } from '@preact/signals';
-import { AlertCircle, AlertTriangle, BrandMark, X } from 'csuite-web-ui';
+import { AlertCircle, AlertTriangle, ArrowRight, BrandMark, X } from 'csuite-web-ui';
 import type { JSX } from 'preact';
 import { LoginError, loginWithTotp, sessionNotice } from '../lib/session.js';
 
@@ -146,7 +146,8 @@ export function Login() {
         )}
 
         <button type="submit" disabled={!canSubmit} class="btn btn-primary btn-lg">
-          {submitting.value ? 'Signing in…' : 'Sign in →'}
+          {submitting.value ? 'Signing in…' : 'Sign in'}
+          {!submitting.value && <ArrowRight size={15} aria-hidden="true" />}
         </button>
       </form>
     </main>

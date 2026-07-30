@@ -20,6 +20,7 @@ import {
   toolSourcesError,
 } from '../lib/tool-sources.js';
 import { selectToolSourceDetail } from '../lib/view.js';
+import { ArrowRight } from './icons/index.js';
 import { EmptyState, ErrorCallout, Loading, PageHeader } from './ui/index.js';
 
 const formOpen = signal(false);
@@ -155,8 +156,9 @@ function SourceListRow({ source, isLast }: { source: ToolSourceSummary; isLast: 
             class={`dot ${source.hasCredential ? 'ok' : 'muted'}`}
             title={source.hasCredential ? 'Credential set' : 'No credential'}
           />
-          <span style="font-family:var(--f-mono);font-size:11px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase">
-            → Manage
+          <span style="display:inline-flex;align-items:center;gap:4px;font-family:var(--f-mono);font-size:11px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase">
+            <ArrowRight size={12} aria-hidden="true" />
+            Manage
           </span>
         </div>
       </button>

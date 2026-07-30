@@ -41,7 +41,7 @@ import {
   updateNotificationEndpoint,
 } from '../lib/notifications.js';
 import { selectNotifications } from '../lib/view.js';
-import { KeyRound } from './icons/index.js';
+import { ArrowLeft, KeyRound } from './icons/index.js';
 import { describeTarget, parseTargetsInput } from './NotificationsPanel.js';
 import { ErrorCallout, Loading } from './ui/index.js';
 
@@ -151,7 +151,8 @@ export function NotificationDetail({ slug }: { slug: string }) {
     >
       <nav class="crumbs" style="margin-bottom:14px">
         <button type="button" class="text-link" onClick={selectNotifications}>
-          ← Notifications
+          <ArrowLeft size={13} aria-hidden="true" />
+          Notifications
         </button>
         <span class="sep">/</span>
         <span class="current">{slug}</span>
