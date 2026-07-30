@@ -600,6 +600,10 @@ export class Client {
     const params = new URLSearchParams();
     if (query.from !== undefined) params.set('from', String(query.from));
     if (query.to !== undefined) params.set('to', String(query.to));
+    if (query.cursor !== undefined) {
+      params.set('cursor_ts', String(query.cursor.ts));
+      params.set('cursor_id', String(query.cursor.id));
+    }
     if (query.kind !== undefined) {
       const kinds = Array.isArray(query.kind) ? query.kind : [query.kind];
       for (const k of kinds) params.append('kind', k);
@@ -631,6 +635,10 @@ export class Client {
     const params = new URLSearchParams();
     if (query.from !== undefined) params.set('from', String(query.from));
     if (query.to !== undefined) params.set('to', String(query.to));
+    if (query.cursor !== undefined) {
+      params.set('cursor_ts', String(query.cursor.ts));
+      params.set('cursor_id', String(query.cursor.id));
+    }
     if (query.limit !== undefined) params.set('limit', String(query.limit));
     const qs = params.toString();
     const path = qs ? `${MEMBER_PATHS.genai(name)}?${qs}` : MEMBER_PATHS.genai(name);
@@ -659,6 +667,10 @@ export class Client {
     params.set('view', 'summary');
     if (query.from !== undefined) params.set('from', String(query.from));
     if (query.to !== undefined) params.set('to', String(query.to));
+    if (query.cursor !== undefined) {
+      params.set('cursor_ts', String(query.cursor.ts));
+      params.set('cursor_id', String(query.cursor.id));
+    }
     if (query.limit !== undefined) params.set('limit', String(query.limit));
     const path = `${MEMBER_PATHS.genai(name)}?${params.toString()}`;
     const resp = await this.request(path, { method: 'GET' });

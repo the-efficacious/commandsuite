@@ -301,6 +301,36 @@ describe('GET /members/:name/genai', () => {
     // Server-internal pointers still don't cross the wire.
     expect('requestBodyRef' in row).toBe(false);
   });
+
+  it('accepts a composite cursor without skipping equal-ts rows', async () => {
+    const ts = 1_700_000_300_000;
+    for (let i = 0; i < 3; i++) {
+      makeReadAppSingleton.genaiStore.append(
+        'engineer-1',
+        seedInference({ responseId: `msg_cursor_${i}`, ts }),
+      );
+    }
+    const first = await authGet(TOKEN, `/members/engineer-1/genai?from=${ts}&to=${ts}&limit=2`);
+    const firstBody = (await first.json()) as {
+      inferences: Array<{ id: number; ts: number; responseId: string }>;
+    };
+    const boundary = firstBody.inferences[1];
+    expect(boundary).toBeDefined();
+
+    const next = await authGet(
+      TOKEN,
+      `/members/engineer-1/genai?from=${ts}&to=${ts}&limit=2&cursor_ts=${boundary?.ts}&cursor_id=${boundary?.id}`,
+    );
+    const nextBody = (await next.json()) as {
+      inferences: Array<{ responseId: string }>;
+    };
+    expect(nextBody.inferences.map((row) => row.responseId)).toEqual(['msg_cursor_2']);
+  });
+
+  it('rejects a partial composite cursor', async () => {
+    const resp = await authGet(TOKEN, '/members/engineer-1/genai?cursor_id=1');
+    expect(resp.status).toBe(400);
+  });
 });
 
 describe('GET /members/:name/genai/:id', () => {

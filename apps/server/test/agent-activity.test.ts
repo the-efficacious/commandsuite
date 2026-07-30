@@ -295,6 +295,35 @@ describe('GET /users/:name/activity', () => {
     expect(body.activity[1]?.event.ts).toBe(2_000);
   });
 
+  it('accepts a composite cursor without skipping equal-ts rows', async () => {
+    activityStore.append('engineer-1', [sampleEvent(3_000), sampleEvent(3_000)]);
+    const firstRes = await app.request(
+      `${MEMBER_PATHS.activity('engineer-1')}?limit=2`,
+      bearer(ASSIGNEE_TOKEN),
+    );
+    const first = (await firstRes.json()) as ListActivityResponse;
+    const boundary = first.activity[1];
+    expect(boundary).toBeDefined();
+
+    const nextRes = await app.request(
+      `${MEMBER_PATHS.activity('engineer-1')}?limit=2&cursor_ts=${boundary?.event.ts}&cursor_id=${boundary?.id}`,
+      bearer(ASSIGNEE_TOKEN),
+    );
+    const next = (await nextRes.json()) as ListActivityResponse;
+
+    expect(next.activity).toHaveLength(2);
+    expect(next.activity.some((row) => row.event.ts === 3_000)).toBe(true);
+    expect(new Set([...first.activity, ...next.activity].map((row) => row.id)).size).toBe(4);
+  });
+
+  it('rejects a partial composite cursor', async () => {
+    const res = await app.request(
+      `${MEMBER_PATHS.activity('engineer-1')}?cursor_ts=3000`,
+      bearer(ASSIGNEE_TOKEN),
+    );
+    expect(res.status).toBe(400);
+  });
+
   it('returns empty list for an unknown name (no 404)', async () => {
     // We don't gate GET on name existence — an unknown slot
     // just has no rows. 403 would leak whether the slot exists;
@@ -333,6 +362,26 @@ describe('agent activity store directly', () => {
     store.append('engineer-2', [sampleEvent(2)]);
     expect(alphaRows).toEqual([1]);
     expect(bravoRows).toEqual([2]);
+  });
+
+  it('pages losslessly across records sharing a timestamp', () => {
+    const db = openDatabase(':memory:');
+    const store = createSqliteActivityStore(db);
+    store.append(
+      'engineer-1',
+      Array.from({ length: 5 }, () => sampleEvent(1_000)),
+    );
+
+    const first = store.list({ memberName: 'engineer-1', limit: 2 });
+    const boundary = first[1];
+    expect(boundary).toBeDefined();
+    const second = store.list({
+      memberName: 'engineer-1',
+      limit: 3,
+      before: { ts: boundary?.event.ts ?? 0, id: boundary?.id ?? 0 },
+    });
+
+    expect([...first, ...second].map((row) => row.id)).toEqual([5, 4, 3, 2, 1]);
   });
 
   it('skips a malformed persisted row instead of fabricating a placeholder', () => {

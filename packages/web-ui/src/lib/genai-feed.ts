@@ -26,8 +26,6 @@ import { signal } from '@preact/signals';
 import type { GenAiInferenceSummary } from 'csuite-sdk/types';
 import { getClient } from './client.js';
 
-/** In-memory cap; oldest drop first (matches the activity feed cap philosophy). */
-const MAX_CALLS = 2_000;
 /** Rows per hydration/backfill fetch. */
 const FETCH_LIMIT = 1_000;
 /** Widen fetch windows by this much to absorb capture-clock skew. */
@@ -48,6 +46,30 @@ export const memberGenAiCallsReady = signal(false);
 let subscribedName: string | null = null;
 let hydratedFrom: number | null = null;
 let refreshTimers: Array<ReturnType<typeof setTimeout>> = [];
+
+async function listAllSummaries(
+  name: string,
+  query: { from?: number; to?: number },
+): Promise<GenAiInferenceSummary[]> {
+  const all: GenAiInferenceSummary[] = [];
+  let cursor: { ts: number; id: number } | undefined;
+  for (;;) {
+    const page = await getClient().listGenaiSummaries(name, {
+      ...query,
+      limit: FETCH_LIMIT,
+      ...(cursor ? { cursor } : {}),
+    });
+    all.push(...page);
+    if (page.length < FETCH_LIMIT) return all;
+    const last = page[page.length - 1];
+    if (!last) return all;
+    const next = { ts: last.ts, id: last.id };
+    if (cursor && cursor.ts === next.ts && cursor.id === next.id) {
+      throw new Error('GenAI summary pagination cursor did not advance');
+    }
+    cursor = next;
+  }
+}
 
 /** Begin a fresh ledger for `name`. Clears any previous state. */
 export function startGenAiCallFeed(name: string): void {
@@ -74,9 +96,8 @@ export async function hydrateGenAiCalls(fromTs: number): Promise<void> {
   if (name === null) return;
   hydratedFrom = fromTs;
   try {
-    const rows = await getClient().listGenaiSummaries(name, {
+    const rows = await listAllSummaries(name, {
       from: fromTs - WINDOW_SLACK_MS,
-      limit: FETCH_LIMIT,
     });
     if (subscribedName !== name) return;
     mergeCalls(rows);
@@ -117,10 +138,9 @@ export async function extendGenAiCallsBack(fromTs: number): Promise<void> {
   if (hydratedFrom !== null && fromTs >= hydratedFrom) return;
   hydratedFrom = fromTs;
   try {
-    const rows = await getClient().listGenaiSummaries(name, {
+    const rows = await listAllSummaries(name, {
       from: fromTs - WINDOW_SLACK_MS,
       to,
-      limit: FETCH_LIMIT,
     });
     if (subscribedName !== name) return;
     mergeCalls(rows);
@@ -137,7 +157,7 @@ async function refreshGenAiCalls(): Promise<void> {
   const newest = list[list.length - 1];
   const from = (newest !== undefined ? newest.ts : (hydratedFrom ?? Date.now())) - WINDOW_SLACK_MS;
   try {
-    const rows = await getClient().listGenaiSummaries(name, { from, limit: FETCH_LIMIT });
+    const rows = await listAllSummaries(name, { from });
     if (subscribedName !== name) return;
     mergeCalls(rows);
     // Even if hydration failed earlier, a successful refresh means the
@@ -159,7 +179,7 @@ function mergeCalls(rows: GenAiInferenceSummary[]): void {
     merged.push(r);
   }
   merged.sort((a, b) => a.ts - b.ts || a.id - b.id);
-  memberGenAiCalls.value = merged.length > MAX_CALLS ? merged.slice(-MAX_CALLS) : merged;
+  memberGenAiCalls.value = merged;
 }
 
 /** Test-only reset. */

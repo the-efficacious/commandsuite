@@ -43,6 +43,7 @@
 import { signal } from '@preact/signals';
 import type {
   ActivityLlmExchange,
+  ActivityRow,
   AnthropicContentBlock,
   AnthropicMessagesEntry,
   GenAiInferenceRecord,
@@ -70,32 +71,76 @@ type PanelRow =
 const panelRows = signal<PanelRow[]>([]);
 const loading = signal(false);
 const loadError = signal<string | null>(null);
+const enrichmentError = signal<string | null>(null);
 const expanded = signal(true);
+const PAGE_LIMIT = 500;
+
+async function listAllActivity(objective: Objective, to: number): Promise<ActivityRow[]> {
+  const all: ActivityRow[] = [];
+  let cursor: { ts: number; id: number } | undefined;
+  for (;;) {
+    const page = await getClient().listActivity(objective.assignee, {
+      from: objective.createdAt,
+      to,
+      kind: 'llm_exchange',
+      limit: PAGE_LIMIT,
+      ...(cursor ? { cursor } : {}),
+    });
+    all.push(...page);
+    if (page.length < PAGE_LIMIT) return all;
+    const last = page[page.length - 1];
+    if (!last) return all;
+    const next = { ts: last.event.ts, id: last.id };
+    if (cursor && cursor.ts === next.ts && cursor.id === next.id) {
+      throw new Error('activity pagination cursor did not advance');
+    }
+    cursor = next;
+  }
+}
+
+async function listAllInferences(
+  objective: Objective,
+  to: number,
+): Promise<GenAiInferenceRecord[]> {
+  const all: GenAiInferenceRecord[] = [];
+  let cursor: { ts: number; id: number } | undefined;
+  for (;;) {
+    const page = await getClient().listGenaiInferences(objective.assignee, {
+      from: objective.createdAt,
+      to,
+      limit: PAGE_LIMIT,
+      ...(cursor ? { cursor } : {}),
+    });
+    all.push(...page);
+    if (page.length < PAGE_LIMIT) return all;
+    const last = page[page.length - 1];
+    if (!last) return all;
+    const next = { ts: last.ts, id: last.id };
+    if (cursor && cursor.ts === next.ts && cursor.id === next.id) {
+      throw new Error('GenAI pagination cursor did not advance');
+    }
+    cursor = next;
+  }
+}
 
 async function loadExchanges(objective: Objective): Promise<void> {
   loading.value = true;
   loadError.value = null;
+  enrichmentError.value = null;
   try {
     // `completedAt` is set iff status === 'done'. For cancelled or
     // still-active objectives we widen the upper bound to "now"
     // so recent activity lands in the view.
     const to = objective.completedAt ?? Date.now();
     const [rows, inferences] = await Promise.all([
-      getClient().listActivity(objective.assignee, {
-        from: objective.createdAt,
-        to,
-        kind: 'llm_exchange',
-        limit: 500,
-      }),
+      listAllActivity(objective, to),
       // Enrichment layer — degrade to markers-only on any failure
       // (older broker without the GET route, transient error).
-      getClient()
-        .listGenaiInferences(objective.assignee, {
-          from: objective.createdAt,
-          to,
-          limit: 500,
-        })
-        .catch((): GenAiInferenceRecord[] => []),
+      listAllInferences(objective, to).catch((err): GenAiInferenceRecord[] => {
+        enrichmentError.value =
+          err instanceof Error ? err.message : 'GenAI enrichment is unavailable';
+        return [];
+      }),
     ]);
     // The activity server returns newest-first; we want to render
     // oldest-first so the conversation reads top-down.
@@ -132,6 +177,7 @@ export function TracePanel({ objective }: TracePanelProps): JSX.Element {
   const list = panelRows.value;
   const isLoading = loading.value;
   const err = loadError.value;
+  const enrichmentErr = enrichmentError.value;
   const isOpen = expanded.value;
 
   useEffect(() => {
@@ -174,6 +220,18 @@ export function TracePanel({ objective }: TracePanelProps): JSX.Element {
               </div>
               <div class="body">
                 <div class="msg">{err}</div>
+              </div>
+            </div>
+          )}
+          {err === null && enrichmentErr !== null && (
+            <div class="callout warn" role="status">
+              <div class="icon" aria-hidden="true">
+                <AlertCircle size={16} />
+              </div>
+              <div class="body">
+                <div class="msg">
+                  GenAI enrichment unavailable; showing activity markers only. {enrichmentErr}
+                </div>
               </div>
             </div>
           )}

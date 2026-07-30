@@ -20,10 +20,9 @@
  * Reconnect: WebSocket doesn't auto-reconnect. We roll our own with
  * exponential backoff (1s → 30s cap, reset on successful open).
  *
- * We cap the in-memory list at `MAX_ROWS` to avoid unbounded growth
- * on long-running pages — oldest rows drop when the cap is exceeded.
- * `loadOlderMemberActivity()` fetches older rows on demand for
- * pagination.
+ * The in-memory list is not silently capped: dropping rows would make
+ * the trace look complete while losing history. `loadOlderMemberActivity()`
+ * fetches older rows on demand for pagination.
  */
 
 import { signal } from '@preact/signals';
@@ -38,9 +37,6 @@ import {
   stopGenAiCallFeed,
 } from './genai-feed.js';
 import { resetGenAiRecords } from './genai-lazy.js';
-
-/** Hard cap on the in-memory row list per subscription. */
-const MAX_ROWS = 500;
 
 /**
  * Rows for the currently-subscribed agent, **oldest-first** (newest
@@ -115,8 +111,7 @@ export function startMemberActivitySubscribe(options: StartAgentActivityOptions)
       // Server returns newest-first; flip to oldest-first for the
       // chat-style feed (newest at the bottom).
       const ascending = rows.slice().reverse();
-      memberActivityRows.value =
-        ascending.length > MAX_ROWS ? ascending.slice(-MAX_ROWS) : ascending;
+      memberActivityRows.value = ascending;
       // If the server returned fewer than requested, there's no
       // more history to fetch.
       if (rows.length < hydrationLimit) memberActivityExhausted.value = true;
@@ -229,8 +224,7 @@ function buildWsUrl(path: string): string {
  * Merge a single freshly-arrived row into the oldest-first list.
  * Deduped by `id` — if an earlier hydration already has this row,
  * we leave the list alone. Appends new rows at the tail (the live
- * edge) and, when the cap is exceeded, drops the oldest from the
- * head.
+ * edge) without silently evicting history.
  */
 function mergeRow(row: ActivityRow): void {
   const existing = memberActivityRows.value;
@@ -240,15 +234,14 @@ function mergeRow(row: ActivityRow): void {
   // that and only walk the list for out-of-order arrivals.
   const newest = existing[existing.length - 1];
   if (!newest || row.event.ts >= newest.event.ts) {
-    const next = [...existing, row];
-    memberActivityRows.value = next.length > MAX_ROWS ? next.slice(-MAX_ROWS) : next;
+    memberActivityRows.value = [...existing, row];
     return;
   }
   const inserted = [...existing];
   const idx = inserted.findIndex((r) => r.event.ts > row.event.ts);
   if (idx === -1) inserted.push(row);
   else inserted.splice(idx, 0, row);
-  memberActivityRows.value = inserted.length > MAX_ROWS ? inserted.slice(-MAX_ROWS) : inserted;
+  memberActivityRows.value = inserted;
 }
 
 /**
@@ -267,11 +260,11 @@ export async function loadOlderMemberActivity(limit = 100): Promise<void> {
   if (!oldest) return;
   memberActivityLoading.value = true;
   try {
-    // `to = oldest.ts - 1` so we don't re-fetch the oldest row.
-    // Server returns newest-first; reverse so the older batch comes
-    // back oldest-first and prepends cleanly.
+    // Composite exclusive cursor preserves rows that share the oldest
+    // visible millisecond. A timestamp-only `to = ts - 1` cursor loses
+    // same-ts rows that fell beyond the previous page boundary.
     const olderDesc = await getClient().listActivity(name, {
-      to: oldest.event.ts - 1,
+      cursor: { ts: oldest.event.ts, id: oldest.id },
       limit,
     });
     if (olderDesc.length === 0) {
@@ -288,8 +281,7 @@ export async function loadOlderMemberActivity(limit = 100): Promise<void> {
       seen.add(r.id);
       deduped.push(r);
     }
-    // Cap from the head (drop oldest) to keep newest visible.
-    memberActivityRows.value = deduped.length > MAX_ROWS ? deduped.slice(-MAX_ROWS) : deduped;
+    memberActivityRows.value = deduped;
     if (olderDesc.length < limit) memberActivityExhausted.value = true;
     // Walk the call ledger back with the feed window.
     const newOldest = olderAsc[0];

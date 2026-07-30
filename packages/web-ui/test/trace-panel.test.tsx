@@ -140,6 +140,79 @@ describe('TracePanel', () => {
       expect(banner).toBeTruthy();
     });
   });
+
+  it('paginates and joins both complete streams past 500 rows', async () => {
+    const rows = Array.from(
+      { length: 501 },
+      (_, index): ActivityRow => ({
+        ...llmRow,
+        id: 501 - index,
+        event: mkExchange({
+          ts: 1_700_000_000_000,
+          responseId: `msg_${501 - index}`,
+        }),
+      }),
+    );
+    const inferences = Array.from({ length: 501 }, (_, index) =>
+      mkInference({
+        id: index + 1,
+        ts: 1_700_000_000_000,
+        responseId: `msg_${index + 1}`,
+      }),
+    );
+    globalThis.fetch = (async (input) => {
+      const url = new URL(
+        typeof input === 'string' ? input : input instanceof URL ? input.href : input.url,
+      );
+      const cursorTs = url.searchParams.get('cursor_ts');
+      const cursorId = url.searchParams.get('cursor_id');
+      if (url.pathname.endsWith('/genai')) {
+        expect(cursorTs).toBe(cursorId === null ? null : '1700000000000');
+        expect(cursorId).toBe(cursorId === null ? null : '500');
+        const page = cursorId === null ? inferences.slice(0, 500) : inferences.slice(500);
+        return new Response(JSON.stringify({ inferences: page }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      expect(cursorTs).toBe(cursorId === null ? null : '1700000000000');
+      expect(cursorId).toBe(cursorId === null ? null : '2');
+      const activity = cursorId === null ? rows.slice(0, 500) : rows.slice(500);
+      return new Response(JSON.stringify({ activity }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof fetch;
+    setClient(new Client({ url: 'http://localhost', useCookies: true }));
+
+    render(<TracePanel objective={objective} />);
+
+    await waitFor(() =>
+      expect(screen.getByText(/LLM turns \(501 · 501 with full request\)/)).toBeTruthy(),
+    );
+  }, 30_000);
+
+  it('surfaces unavailable GenAI enrichment while retaining activity markers', async () => {
+    globalThis.fetch = (async (input) => {
+      const url = new URL(
+        typeof input === 'string' ? input : input instanceof URL ? input.href : input.url,
+      );
+      if (url.pathname.endsWith('/genai')) {
+        return new Response(JSON.stringify({ error: 'enrichment offline' }), { status: 503 });
+      }
+      return new Response(JSON.stringify({ activity: [llmRow] }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof fetch;
+    setClient(new Client({ url: 'http://localhost', useCookies: true }));
+
+    render(<TracePanel objective={objective} />);
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/enrichment unavailable; showing activity markers only/i),
+      ).toBeTruthy(),
+    );
+    expect(screen.getByText(/LLM turns \(1\)/)).toBeTruthy();
+  }, 15_000);
 });
 
 // ─── GenAI enrichment: joinTurns + enriched rendering ──────────────
