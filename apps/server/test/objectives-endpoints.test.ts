@@ -270,6 +270,81 @@ describe('GET /objectives', () => {
     const res = await app.request('/objectives?status=garbage', authed(ALICE));
     expect(res.status).toBe(400);
   });
+
+  // `related` — the relationship union for callers who hold
+  // `objectives.create`. The plain-member branch has always applied it;
+  // a privileged caller got assignee-only, so the permission that grants
+  // more authority was what removed the capability. The fixture must be
+  // PRIVILEGED and assigned NOTHING — a plain-member fixture passes
+  // against the bug, because the union already covers that path.
+  it('related returns originated and watched objectives for a privileged caller assigned none', async () => {
+    const { app } = makeApp();
+    // alice originates both and is the assignee of neither.
+    const originatedA = await createOne(app, ALICE, { assignee: 'carol' });
+    const originatedB = await createOne(app, ALICE, { assignee: 'dave' });
+    // ...and watches a third she neither originated nor was assigned.
+    const watched = await createOne(app, BOB, { assignee: 'dave', watchers: ['alice'] });
+    // A fourth alice has NO relationship with. Without this the team-wide
+    // count and the related count are both 3, and the test would pass
+    // against a route that ignores `related` entirely — the exact
+    // "returns some of the right answer" failure this suite exists to catch.
+    const unrelated = await createOne(app, BOB, { assignee: 'dave' });
+
+    // The old query shape: assignee-only. Alice is assigned nothing, so
+    // this is the empty plate that made the recovery path lie.
+    const assigneeOnly = await app.request('/objectives?assignee=alice', authed(ALICE));
+    const assigneeBody = (await assigneeOnly.json()) as ListObjectivesResponse;
+    expect(assigneeBody.objectives).toHaveLength(0);
+
+    const res = await app.request('/objectives?related=alice', authed(ALICE));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as ListObjectivesResponse;
+    // Assert the exact identities, not the cardinality: a route that
+    // returned the unrelated fourth in place of one related objective
+    // has the right count and the wrong answer.
+    expect(new Set(body.objectives.map((o) => o.id))).toEqual(
+      new Set([originatedA.id, originatedB.id, watched.id]),
+    );
+    expect(body.objectives.map((o) => o.id)).not.toContain(unrelated.id);
+  });
+
+  it('related composes with a status filter', async () => {
+    const { app } = makeApp();
+    await createOne(app, ALICE, { assignee: 'carol' });
+    const res = await app.request('/objectives?related=alice&status=active', authed(ALICE));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as ListObjectivesResponse;
+    expect(body.objectives).toHaveLength(1);
+  });
+
+  // Guards the director dashboard: `web-ui/src/lib/objectives.ts` calls
+  // listObjectives() with no arguments and relies on a privileged caller
+  // seeing team-wide. Folding the union in as the default would regress it.
+  it('a privileged caller without related still sees team-wide', async () => {
+    const { app } = makeApp();
+    await createOne(app, BOB, { assignee: 'carol' });
+    await createOne(app, BOB, { assignee: 'dave' });
+    const res = await app.request('/objectives', authed(ALICE));
+    const body = (await res.json()) as ListObjectivesResponse;
+    // alice originates neither and watches neither.
+    expect(body.objectives).toHaveLength(2);
+  });
+
+  it('rejects a plain member passing related for someone else', async () => {
+    const { app } = makeApp();
+    await createOne(app, ALICE, { assignee: 'dave' });
+    const res = await app.request('/objectives?related=dave', authed(CAROL));
+    expect(res.status).toBe(403);
+  });
+
+  it('accepts a self-scoped related filter from a plain member', async () => {
+    const { app } = makeApp();
+    await createOne(app, ALICE, { assignee: 'dave', watchers: ['carol'] });
+    const res = await app.request('/objectives?related=carol', authed(CAROL));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as ListObjectivesResponse;
+    expect(body.objectives).toHaveLength(1);
+  });
 });
 
 // ─── GET /objectives/:id ─────────────────────────────────────────────

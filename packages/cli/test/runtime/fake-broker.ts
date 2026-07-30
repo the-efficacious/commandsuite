@@ -50,6 +50,15 @@ export const FAKE_BROKER_MISSION = 'Exercise the link in isolation.';
 export const fakeBrokerObjectives: Array<Record<string, unknown>> = [];
 
 /**
+ * Raw query strings the fake broker saw on `GET /objectives`, in order.
+ * The MCP tool's choice of filter IS the agent-facing contract — asking
+ * for `assignee` instead of `related` reinstates the empty-plate defect
+ * while every server-side test stays green — so tests assert on what
+ * went out, not only on what came back.
+ */
+export const fakeBrokerObjectiveQueries: string[] = [];
+
+/**
  * Resolved tool sources the fake broker returns on /briefing
  * (`toolSources` field). Tests mutate this then push a
  * `data.kind='tool_source'` message to exercise the runner's
@@ -272,6 +281,7 @@ export async function startFakeBroker(): Promise<FakeBroker> {
     }
 
     if (url.pathname === '/objectives' && req.method === 'GET') {
+      fakeBrokerObjectiveQueries.push(url.searchParams.toString());
       res.writeHead(200, jsonHeaders);
       res.end(JSON.stringify({ objectives: fakeBrokerObjectives }));
       return;

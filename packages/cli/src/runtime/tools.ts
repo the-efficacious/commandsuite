@@ -2034,15 +2034,19 @@ async function handleObjectivesList(
       `objectives_list: invalid status '${String(args.status)}'. Must be one of: ${OBJECTIVE_STATUSES.join(', ')}.`,
     );
   }
+  // `related`, not `assignee` — this tool promises "objectives you have
+  // a relationship with", and pinning `assignee` collapsed that to the
+  // assignee-only view for any caller holding `objectives.create`,
+  // hiding everything they originated or watch.
   const list = await brokerClient.listObjectives({
-    assignee: briefing.name,
+    related: briefing.name,
     ...(status ? { status } : {}),
   });
   if (list.length === 0) {
     return textResult(
       status
-        ? `no ${status} objectives assigned to ${briefing.name}`
-        : `no objectives assigned to ${briefing.name}`,
+        ? `no ${status} objectives for ${briefing.name}`
+        : `no objectives for ${briefing.name}`,
     );
   }
   const lines = list.map(

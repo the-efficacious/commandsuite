@@ -434,10 +434,16 @@ export class Client {
    * their own; members with that permission can filter by any
    * `assignee` name. Pass `status` to scope to a single lifecycle
    * state; omit to see all.
+   *
+   * Pass `related` for the union a member actually has a stake in —
+   * assigned OR originated OR watching. `assignee` alone answers a
+   * narrower question and omits work you originated or watch, which is
+   * the whole plate for a coordinating member.
    */
   async listObjectives(query: ListObjectivesQuery = {}): Promise<Objective[]> {
     const params = new URLSearchParams();
     if (query.assignee) params.set('assignee', query.assignee);
+    if (query.related) params.set('related', query.related);
     if (query.status) params.set('status', query.status);
     const qs = params.toString();
     const path = qs ? `${PATHS.objectives}?${qs}` : PATHS.objectives;
