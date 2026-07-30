@@ -56,22 +56,22 @@ runner.
 
 Why this shape: the runner is **upstream** of the agent. That's
 what lets it inject each agent's native-instrumentation config
-(the OpenTelemetry export env for claude), own the loopback hook
-server and activity uploader, and clean up `.mcp.json`
-modifications on any exit path. A bridge running as a child of the
-agent — the older shape — couldn't do any of that.
+(the OpenTelemetry export env for claude), pass adapter configuration
+without rewriting operator files, and own the loopback hook server
+and activity uploader. A bridge running as a child of the agent —
+the older shape — couldn't do any of that.
 
-## Two auth planes, one identity
+## Three credential paths, one member identity
 
-The broker serves two kinds of clients:
+The broker accepts three credential paths:
 
 ```
-            ┌─ humans ─┐                    ┌─ runners ─────────┐
-            │ browser  │                    │ csuite claude   │
-            └────┬─────┘                    │ csuite codex         │
-                 │ HTTPS + session cookie   └─────────┬─────────┘
-                 │ (after TOTP login)                 │ HTTPS + bearer
-                 ▼                                    ▼
+        ┌─ humans ─┐       ┌─ runners ─────────┐       ┌─ federation ─┐
+        │ browser  │       │ csuite claude   │       │ RS256 JWT    │
+        └────┬─────┘       │ csuite codex         │       └───────┬──────┘
+             │ session     └─────────┬─────────┘               │ bearer
+             │ cookie                │ opaque bearer           │ token
+             ▼                       ▼                         ▼
                   ╔═══════════════════════════════════════╗
                   ║    csuite-web-host (PWA)  +  REST API    ║
                   ║         csuite-server               ║
@@ -79,10 +79,10 @@ The broker serves two kinds of clients:
                   ╚═══════════════════════════════════════╝
 ```
 
-Both planes pass through the same auth middleware and resolve to
-the same loaded member. Downstream handlers don't care which
-plane a request came from — they care about the member's
-**permissions**.
+All three pass through the same auth middleware and resolve to a
+loaded member. Federated JWT support is optional. Downstream
+handlers act on the resolved member and their **permissions**,
+not on which accepted credential path authenticated them.
 
 For the full enrollment flow (RFC 8628 device-code, multi-token,
 TOTP rotation) see [device enrollment](/docs/enrollment).
@@ -92,7 +92,7 @@ TOTP rotation) see [device enrollment](/docs/enrollment).
 csuite ships with two runners and is designed for more. Both share
 all the broker-facing plumbing — auth, briefing, IPC server, SSE
 forwarder, MCP tool dispatch, capture host, busy reporter — and
-differ only in:
+their principal adapter-specific differences are:
 
 1. **How the agent is spawned.** Claude Code runs headlessly under
    the Claude Agent SDK; codex is headless under `codex app-server`.
@@ -100,12 +100,12 @@ differ only in:
    streaming-input user message. Codex: a `turn/start` (idle) or
    `turn/steer` (active) JSON-RPC dispatch. Both bundle bursts
    within a 200ms window and share the `<channel>` rendering.
-3. **How native instrumentation is captured.** Claude Code exports
-   OpenTelemetry logs to the broker's OTLP endpoint (the runner
-   injects the OTEL export env) plus tool events over a loopback
-   hook server. Codex is captured by subscribing to its
-   `codex app-server` JSON-RPC notification stream — no per-agent
-   config injection needed.
+3. **How native instrumentation is captured.** Claude content is
+   transcript-primary: the runner tails the session transcript,
+   hooks provide lifecycle presence and the transcript path, and
+   OpenTelemetry remains a lean operational signal. Codex content
+   comes from rollout files and persisted bundles; the app-server
+   stream provides lifecycle, busy-state, and injected-input control.
 
 The runner core (`startRunner` in
 `packages/cli/src/runtime/runner.ts`) accepts a
@@ -120,8 +120,9 @@ For the per-runner reference see
 ## Permission model
 
 csuite has no fixed director / manager / individual-contributor hierarchy. Every
-member holds a flat set of leaf permissions, and every elevated
-action gates on a specific leaf:
+member resolves to a flat set of leaf permissions. Elevated actions
+gate on a specific leaf or on an explicitly documented relationship
+bypass such as self or objective originator:
 
 | Permission | What it permits |
 |---|---|
@@ -134,6 +135,7 @@ action gates on a specific leaf:
 | `activity.read` | View captured traces (self-bypass) |
 | `tools.manage` | Administer the tool-source registry (external tools) |
 | `secrets.manage` | Administer the secrets registry (env secrets for agents) |
+| `notifications.manage` | Administer inbound notification endpoints and delivery policy |
 
 The team config defines named **presets** (e.g. `admin`,
 `operator`) that members reference instead of listing every leaf.
@@ -161,14 +163,16 @@ For the full breakdown see [permissions](/docs/concepts/permissions).
                   │   CLAUDE_CODE_ENABLE_TELEMETRY=1
                   │   OTEL_EXPORTER_OTLP_ENDPOINT=<brokerUrl>/otlp
                   │   OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer …
-                  │   (+ raw-body / prompt / tool-detail opt-ins)
+                  │   OTEL_LOG_RAW_API_BODIES=file:<runner spill dir>
+                  │   prose telemetry disabled
                   │   CSUITE_RUNNER_SOCKET=/tmp/.csuite-runner-$PID.sock
                   ▼
    ┌──────────────────────────────────┐
    │         claude (CLI)             │
    │                                  │
-   │ reads .mcp.json the runner wrote │
-   │ spawns the MCP bridge from it    │
+   │ receives bridge config inline    │
+   │ from the Agent SDK options       │
+   │ (the user's .mcp.json is intact) │
    │ exports OTLP logs → broker /otlp │
    │ POSTs hook events → hook server  │
    └──────────────┬───────────────────┘
@@ -204,12 +208,12 @@ For the wire format of those IPC frames, see
 | Concept | One-line summary | Doc |
 |---|---|---|
 | **Member** | A named seat on a team. Identity = name + role + permissions + bearer token(s). | [members](/docs/concepts/members) |
-| **Permissions** | Seven leaf permissions; preset bundles; originator + self bypass rules. | [permissions](/docs/concepts/permissions) |
+| **Permissions** | Ten leaf permissions; preset bundles; originator + self bypass rules. | [permissions](/docs/concepts/permissions) |
 | **Objective** | Push-assigned, single-assignee, outcome-required, four-state work primitive with audit log + threaded discussion + attachments. | [objectives](/docs/concepts/objectives) |
 | **Channel** | Slack-style named team thread. Implicit `general` + named channels with admin/member roles. | [channels](/docs/concepts/channels) |
 | **Event / message** | Push-not-poll delivery. Routes by `data.thread`. Wraps as `<channel>` for the agent. | [events](/docs/concepts/events) |
 | **Presence** | "On the wire" via SSE registry; "currently working" via runner heartbeats with TTL. | [presence](/docs/concepts/presence) |
-| **Activity / traces** | Append-only timeline per member; per-objective trace = time-range slice. | [activity-and-traces](/docs/concepts/activity-and-traces) |
+| **Activity / traces** | Append-oriented timeline per member with explicit pruning; per-objective trace = time-range slice. | [activity-and-traces](/docs/concepts/activity-and-traces) |
 
 ## How a chat push flows end-to-end
 
@@ -229,10 +233,13 @@ For the wire format of those IPC frames, see
    `turn/start` (if idle) or `turn/steer` (if active mid-turn) on
    the JSON-RPC channel. Codex receives a UserInput item carrying
    the same `<channel>`-tagged prose.
-6. The model wakes and reacts. No user prompt, no polling.
+6. The model wakes and reacts. No human prompt, no polling.
 
-Five process boundaries for the machine plane: HTTP → broker →
-SSE → runner IPC → bridge stdio → model. Plus a parallel
+The machine delivery plane is HTTP → broker → SSE → runner →
+the adapter's native input channel (Claude Agent SDK streaming
+input or codex app-server JSON-RPC) → model. The MCP bridge is
+the tool-call path for Claude, not the channel-delivery path.
+There is also a parallel
 HTTP → broker → web-push library → push service → service worker
 → OS notification shell for humans.
 
@@ -250,25 +257,29 @@ HTTP → broker → web-push library → push service → service worker
    and after context compaction. (Tool descriptions stay static so
    the model's prompt-prefix cache survives; state freshness is
    message traffic.)
-4. **`objective_open` event** is appended to the assignee's
-   activity stream, marking the start of the time range that
-   directors will later query as this objective's trace. From here
-   on the agent's native instrumentation — Claude Code's OTLP
-   export (ingested broker-side) plus its hook events, or codex's
-   app-server item stream — flows through the activity uploader as
-   `llm_exchange` and `tool_action` events.
+4. When the runner's refreshed open-objective set gains or loses an
+   id, it enqueues an `objective_open` or `objective_close` marker.
+   It also records open markers for objectives present when a runner
+   starts. These markers describe what that runner observed; the
+   objective audit log remains authoritative for lifecycle state.
+   Claude transcript capture or codex rollout capture flows through
+   the activity uploader as `llm_exchange`, `tool_action`, and
+   `user_prompt` events.
 5. The agent works: posts discussion via `objectives_discuss`,
    transitions blocked / active via `objectives_update`, and
    eventually calls `objectives_complete` with a required result.
-6. On terminal transition the store emits the lifecycle event, the
-   tracker refreshes, and an `objective_close` is appended to the
-   assignee's stream. No batch flush — every exchange has been
-   streamed up live.
+6. On a terminal transition (or reassignment away), the tracker
+   refreshes and the runner enqueues an `objective_close` marker.
+   The uploader batches events and posts them while the runner is
+   live; its bounded queue reports any drops under sustained broker
+   unreachability.
 7. A director (or anyone with `activity.read`) opens the objective
    in the web UI. The TracePanel queries
-   `GET /members/<assignee>/activity?from=<createdAt>&to=<completedAt>&kind=llm_exchange`,
-   which 200s only for the right viewer. Each exchange renders
-   model + usage + messages + tool_use / tool_result blocks.
+   paged activity and gen_ai queries over the objective's
+   `createdAt` through `completedAt` (or the current time when there
+   is no completion timestamp). Access requires self or
+   `activity.read`. The panel joins activity markers to full-context
+   inference records and reports when that enrichment is unavailable.
 
 ## Package layout
 
@@ -288,7 +299,7 @@ HTTP → broker → web-push library → push service → service worker
          │                 │               │                 │
          └─────────────────┴───────┬───────┴─────────────────┘
                                    │
-                                   │  HTTP/2 + TLS
+                                   │  HTTP(S)
                                    │  csuite-sdk · protocol v1
                                    ▼
                      ╔═══════════════════════════════════════╗
@@ -298,7 +309,7 @@ HTTP → broker → web-push library → push service → service worker
                 ┌──────────────────────────────────────┐
                 │           csuite-core              │
                 │ registry · push fanout · event log · │
-                │ SSE delivery · auth · permissions    │
+                │ session/push stores · trace mappers  │
                 │      (runtime-agnostic logic)        │
                 └──────────────────┬───────────────────┘
                                    │
@@ -311,7 +322,7 @@ HTTP → broker → web-push library → push service → service worker
                  │   • team / role / member         │
                  │   • permissions per member       │
                  │   • TOTP secrets (KEK-encrypted) │
-                 │   • HTTPS cert + VAPID keys      │
+                 │   • HTTPS settings + VAPID keys  │
                  │                                  │
                  │  persistence:                    │
                  │   • multi-token bearer creds     │
@@ -347,8 +358,8 @@ HTTP → broker → web-push library → push service → service worker
               │     - busy signal (native events)  │
               │     - streaming ActivityUploader   │
               │  • spawns the agent with env      │
-              │  • backs up + restores .mcp.json  │
-              │    (claude only)             │
+              │  • passes the MCP bridge inline   │
+              │    through Claude SDK options     │
               └───────────────────────────────────┘
 ```
 
@@ -356,60 +367,55 @@ HTTP → broker → web-push library → push service → service worker
 
 | Package | Role | Install when you want |
 |---|---|---|
-| **`csuite`** | Meta-package. Depends on everything below, no code of its own. | The full ecosystem in one install |
+| **`csuite`** | Meta-package. Installs the CLI, server, SDK, and core; no code of its own. | The command and broker stack in one install |
 | **`csuite-sdk`** | The wire contract. Types, zod schemas, protocol constants, TS client. Everything speaks this. | To embed a client in your own Node / Workers / browser code |
-| **`csuite-core`** | Broker logic with zero runtime deps. Registry, push fanout, event log, SSE delivery, auth, permissions. | To build a custom broker runtime (Durable Objects, etc.) |
+| **`csuite-core`** | Runtime-agnostic broker logic: registry, push fanout, event/session/push stores, and trace transforms; depends on `csuite-sdk` for the shared contract. HTTP authentication and route permission checks live in the server. | To build a custom broker runtime |
 | **`csuite-server`** | Node broker. Wraps `core` in Hono + `node:sqlite`. Team config loader, first-run wizard, objectives + activity persistence, virtual filesystem, web push, optional JWT federation, built-in web UI. | To host a self-hosted broker |
-| **`csuite-web-ui`** | Host-agnostic Preact team-view UI + runtime — chat, objectives (with TracePanel), files, members, tools, secrets, roster, live subscription. Exposes `<TeamShell>`. Most of the front-end lives here. | Not published — the shared UI that web hosts mount |
-| **`csuite-web-host`** | OSS web host: TOTP auth gate + PWA that mounts `csuite-web-ui`'s `<TeamShell>`, served by the broker. | Nothing — it ships inside `csuite-server` |
+| **`csuite-web-ui`** | Published, host-agnostic Preact team-view UI + runtime — chat, objectives (with TracePanel), files, members, tools, secrets, roster, live subscription. Distributed as source and exposes `<TeamShell>`. | To embed the shared UI in another host |
+| **`csuite-web-host`** | Published reference web host: TOTP auth gate + PWA that mounts `csuite-web-ui`'s `<TeamShell>`. Its built assets also ship inside `csuite-server`. | To run or customize the standalone reference host |
 | **`csuite-cli`** | Member terminal. `csuite claude`, `csuite codex`, `csuite push`, `csuite roster`, `csuite objectives`, `csuite serve`, etc. Also hosts the internal `csuite mcp-bridge` verb. | To push / inspect from a terminal or run a runner |
 
-**Light install:** `csuite-cli` has `csuite-sdk` as its only
-hard dependency. `csuite-server` is an optional peer —
-subcommands dynamically import it and print an install hint if
-missing.
+**Light install:** `csuite-cli` does not hard-depend on
+`csuite-server`; the server is an optional peer and server-backed
+subcommands dynamically import it with an install hint when it is
+missing. The CLI itself also depends on `csuite-core`,
+`csuite-sdk`, the Claude Agent SDK, and the MCP SDK.
 
 ## Trace capture
 
-The runner maintains one append-only **activity stream** per
-member, fed entirely by each agent's **native instrumentation** —
-there is no network interception, no TLS decryption, no CA on disk. The
-runner consumes whatever the agent already emits about its own
-work and normalizes it into one `ActivityEvent` model
+The runner maintains one append-oriented **activity stream** per
+member, fed by each agent's **native instrumentation** plus
+runner-observed objective-open/close markers. There is no network
+interception, no TLS decryption, and no CA on disk. The runner
+normalizes those inputs into one `ActivityEvent` model
 (`objective_open`, `objective_close`, `llm_exchange`,
-`tool_action`).
+`tool_action`, `user_prompt`).
 
-**Claude Code** is captured via OpenTelemetry plus hooks. The
-runner injects the OTLP export env (`CLAUDE_CODE_ENABLE_TELEMETRY`,
-the OTLP endpoint + bearer header, and the raw-body / user-prompt /
-tool-detail opt-ins) into the claude child. Claude Code exports
-OTLP-JSON log records — the full Anthropic Messages request +
-response bodies, model, token usage, cost, and tool decisions — to
-the broker's `POST /otlp/v1/logs`, bearer-authenticated so they
-resolve to the member. The broker's ingest correlates them into
-`llm_exchange` and `tool_action` events. Separately, the runner
-registers in-process Agent SDK hook callbacks that forward
-Pre/PostToolUse payloads to the CaptureHost's loopback hook server;
-those carry the tool **result** content OTEL omits, and also drive
-the busy signal:
+**Claude Code content is transcript-primary.** In-process Agent SDK
+hooks expose the session transcript path and drive presence/busy.
+A `TranscriptReader` tails that JSONL and maps complete turns
+(including thinking, text, tool use, tool results, usage, and model)
+to normalized activity. The runner also injects a lean native OTEL
+configuration for operational telemetry and raw API-body references;
+the prose logging flags stay off because the transcript is the
+activity-content source:
 
 ```
 claude child
     │
-    ├── OpenTelemetry (OTLP/JSON logs) ──► broker POST /otlp/v1/logs
-    │        api_request_body + api_request + api_response_body
-    │        tool_decision / tool_result
+    ├── session transcript JSONL ──► runner TranscriptReader
+    │        thinking + text + tool_use + tool_result + usage
     │            │
-    │            ▼  otlp-ingest.ts (per-member FIFO correlator)
-    │        extractEntries  ← same pure parser, redacts messages/system
-    │            │
-    │            ▼
-    │        llm_exchange + tool_action  ──► activity store
+    │            ▼  redactJson in the transcript mapper
+    │        activity events ──► ActivityUploader
+    │                          ──► POST /members/:name/activity
     │
-    └── Pre/PostToolUse hooks ──► runner loopback hook server
-             │  carries tool RESULT content (OTEL lacks it)
-             ▼  redactJson
-         tool_action ──► ActivityUploader ──► POST /members/:name/activity
+    ├── Agent SDK hooks ──► runner loopback hook server
+    │        transcript path + presence / busy windows
+    │
+    └── OpenTelemetry ──► broker POST /otlp/v1/logs
+             operational telemetry + file-mode body_ref records
+             ──► telemetry and gen_ai/raw-body stores
 ```
 
 **Codex** is captured **rollout-primary**: a `RolloutReader` tails
@@ -427,27 +433,37 @@ bytes) to `POST /members/:name/genai` for the gen_ai + raw-body
 layer. Reasoning is summaries only — OpenAI encrypts the raw
 chain-of-thought.
 
-Both paths funnel into the same `ActivityUploader`, which batches
-`ActivityEvent`s and streams them to
-`POST /members/:name/activity`. Everything text-bearing is scrubbed
-with the core `redactJson` before it leaves the runner (and the
-OTLP bodies are redacted at broker ingest). What's captured: full
-request + response bodies, model, token usage, cost, tool decisions
-+ inputs, and tool result content (via hooks). Not captured:
-extended-thinking content (the OTEL producer redacts it) and
-request bodies larger than ~60 KB (inline-truncated; a file-mode
-body_ref is a documented follow-up).
+Both activity paths funnel into the same `ActivityUploader`, which
+batches `ActivityEvent`s and streams them to
+`POST /members/:name/activity`. Normalized activity text is scrubbed
+with the core `redactJson` before upload. Claude transcript capture
+includes extended-thinking blocks; codex exposes reasoning summaries
+because its raw chain of thought is encrypted upstream.
+The uploader queue is bounded at 1,000 events and 64 MiB: under
+sustained broker failure it evicts the oldest queued events, and a
+failed final flush can leave events unwritten. Both paths increment the
+reported `dropped` count.
 
-Because OTEL instruments Claude Code itself — before the wire —
-capture is **backend-agnostic**: it works the same against
-Anthropic direct, Amazon Bedrock, Google Vertex, a custom
-`ANTHROPIC_BASE_URL` gateway, or a local model.
+The typed `gen_ai_inference` mapper redacts registered secret
+patterns in parsed content. The separate raw-body stores
+deliberately preserve verbatim request and response bytes before
+that parsing or redaction, so they must not be described as
+scrubbed activity. Claude uses
+`OTEL_LOG_RAW_API_BODIES=file:<runner tmpdir>` to avoid the producer's
+inline truncation. The current broker resolves `body_ref` paths from
+its own filesystem, so this full-body path requires the broker to
+share access to the runner's spill directory; an unreadable, missing,
+or over-limit reference is logged and cannot be reconstructed.
+Codex uploads its rollout-trace bundle bytes directly.
+
+The capture attaches to artifacts Claude Code produces before or
+independently of provider transport. It does not introduce a
+provider-specific proxy or inspect the provider network path.
 
 Per-objective "traces" are a **time-range view** over this stream:
-the web UI queries
-`GET /members/<assignee>/activity?from=<open>&to=<close>&kind=llm_exchange`
-to reconstruct what the LLM was doing during an objective's
-lifetime. No per-objective blobs are stored anywhere.
+the web UI pages both the member activity and GenAI inference APIs
+over an objective's lifetime, then joins the current-state records.
+No per-objective blobs are stored anywhere.
 
 For the full pipeline + security posture see
 [tracing](/docs/tracing) and
@@ -462,14 +478,16 @@ For the full pipeline + security posture see
   listener, same cert.
 - **Self-signed certs** auto-generated on first boot when binding
   to a non-loopback interface. Stored under the config directory
-  at `0o600`, hot-reloadable via `SecureContext` swap (future ACME
-  renewal path).
+  at `0o600`; the server can hot-reload a supplied certificate via
+  `SecureContext` swap.
 
 ## Protocol versioning
 
-Every HTTP request carries an `X-CSUITE-Protocol: 1` header and is
-validated against the zod schemas in `csuite-sdk/schemas`.
-Breaking changes bump the version constant in
-`csuite-sdk/protocol` and are gated by the header, so older
-runners keep working against newer brokers within the same major
-version.
+The SDK adds `X-CSUITE-Protocol: 1` to its HTTP and subscription
+requests. The broker allows clients that omit it, but rejects a
+present incompatible version with 400. Request and response shapes
+are validated at typed SDK/server boundaries with the zod schemas
+in `csuite-sdk/schemas`. Breaking wire changes require a protocol
+version bump; the current code does not itself guarantee
+cross-version compatibility beyond rejecting an explicitly
+incompatible header.
