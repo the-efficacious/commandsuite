@@ -20,9 +20,17 @@
  * list — runner-managed prefixes (CSUITE_/OTEL_/…) and
  * interpreter/loader control variables (PATH, LD_*, NODE_OPTIONS, …)
  * are rejected so a `secrets.manage` holder can't break trace
- * capture or gain code execution on runner machines. It is unique
- * across secrets so a member's resolved env map can never carry two
- * values for one variable.
+ * capture or gain code execution on runner machines.
+ *
+ * `envName` is NOT globally unique, and the distinction matters. The
+ * invariant is per-member: a member's resolved env map can never carry
+ * two values for one variable. Enforcing that globally — as this store
+ * did until 2026-07-30 — also forbids the per-agent pattern the
+ * product is built around, where every member holds their own
+ * GITHUB_TOKEN under a different slug. The check therefore lives at
+ * `bind()`, which is the first moment a targeted secret actually
+ * reaches anyone, plus `create()`/`update()` for all-members secrets,
+ * which reach everyone without a binding.
  *
  * Slugs are IMMUTABLE — the change-event thread key
  * (`secret:<slug>`) rides on them; `envName`/`description` are the
@@ -84,7 +92,18 @@ const CREATE_SCHEMA = `
     updated_at INTEGER NOT NULL
   );
   CREATE UNIQUE INDEX IF NOT EXISTS secrets_slug_idx ON secrets (slug);
-  CREATE UNIQUE INDEX IF NOT EXISTS secrets_env_idx ON secrets (env_name);
+  -- env_name is deliberately NOT globally unique. The invariant that
+  -- matters is per-member: no single member may resolve two values for
+  -- one variable. A global unique index enforces that, but also forbids
+  -- the per-agent pattern this team runs on: cora-github-token and
+  -- rune-github-token both targeting GITHUB_TOKEN, bound to different
+  -- members and never colliding for anyone.
+  --
+  -- DROP rather than "stop creating": existing databases already carry
+  -- the index, and leaving it would keep rejecting the second binding
+  -- with a SQLite constraint error instead of our own message.
+  DROP INDEX IF EXISTS secrets_env_idx;
+  CREATE INDEX IF NOT EXISTS secrets_env_lookup_idx ON secrets (env_name);
 
   CREATE TABLE IF NOT EXISTS secret_bindings (
     secret_id TEXT NOT NULL,
@@ -183,7 +202,8 @@ class SqliteSecretsStore implements SecretsStore {
   private readonly deleteSecretStmt: StatementInstance;
   private readonly selectByIdStmt: StatementInstance;
   private readonly selectBySlugStmt: StatementInstance;
-  private readonly selectByEnvNameStmt: StatementInstance;
+  private readonly selectEnvRivalForMemberStmt: StatementInstance;
+  private readonly selectEnvRivalAnyoneStmt: StatementInstance;
   private readonly selectAllStmt: StatementInstance;
   private readonly selectForMemberStmt: StatementInstance;
 
@@ -220,7 +240,38 @@ class SqliteSecretsStore implements SecretsStore {
     this.deleteSecretStmt = db.prepare('DELETE FROM secrets WHERE id = ?');
     this.selectByIdStmt = db.prepare(`SELECT ${SECRET_COLS} FROM secrets WHERE id = ?`);
     this.selectBySlugStmt = db.prepare(`SELECT ${SECRET_COLS} FROM secrets WHERE slug = ?`);
-    this.selectByEnvNameStmt = db.prepare(`SELECT ${SECRET_COLS} FROM secrets WHERE env_name = ?`);
+    // Secrets other than `?2` that target env `?1` AND would actually
+    // reach member `?3` — either because they apply to everyone or
+    // because that member is bound to them. This is the conflict set:
+    // a secret targeting the same variable that reaches nobody in
+    // common is not a conflict, which is the whole point of dropping
+    // the global unique index.
+    this.selectEnvRivalForMemberStmt = db.prepare(
+      `SELECT ${SECRET_COLS} FROM secrets s
+       WHERE s.env_name = ?
+         AND s.id != ?
+         AND (
+           s.all_members = 1
+           OR EXISTS (
+             SELECT 1 FROM secret_bindings b
+             WHERE b.secret_id = s.id AND b.member_name = ?
+           )
+         )
+       LIMIT 1`,
+    );
+    // Secrets other than `?2` targeting env `?1` that reach ANYONE.
+    // Used when the secret under test applies to all members, where
+    // any reachable rival collides by definition.
+    this.selectEnvRivalAnyoneStmt = db.prepare(
+      `SELECT ${SECRET_COLS} FROM secrets s
+       WHERE s.env_name = ?
+         AND s.id != ?
+         AND (
+           s.all_members = 1
+           OR EXISTS (SELECT 1 FROM secret_bindings b WHERE b.secret_id = s.id)
+         )
+       LIMIT 1`,
+    );
     this.selectAllStmt = db.prepare(`SELECT ${SECRET_COLS} FROM secrets ORDER BY created_at ASC`);
     this.selectForMemberStmt = db.prepare(
       `SELECT ${SECRET_COLS} FROM secrets s
@@ -312,12 +363,18 @@ class SqliteSecretsStore implements SecretsStore {
     if (this.getBySlug(input.slug)) {
       throw new SecretsError('slug_taken', `a secret called "${input.slug}" already exists`);
     }
-    const envHolder = this.selectByEnvNameStmt.get(input.envName) as SecretRow | undefined;
-    if (envHolder) {
-      throw new SecretsError(
-        'env_taken',
-        `secret "${envHolder.slug}" already targets ${input.envName}`,
-      );
+    // Only an all-members secret can collide at creation, because it is
+    // the only kind that reaches anyone before a binding exists. A
+    // targeted secret sharing an env name is fine here and is caught at
+    // `bind` if it would ever reach the same member.
+    if (input.allMembers === true) {
+      const rival = this.selectEnvRivalAnyoneStmt.get(input.envName, '') as SecretRow | undefined;
+      if (rival) {
+        throw new SecretsError(
+          'env_taken',
+          `secret "${rival.slug}" already targets ${input.envName} and this secret applies to all members`,
+        );
+      }
     }
     const now = input.now ?? Date.now();
     const id = globalThis.crypto.randomUUID();
@@ -350,14 +407,33 @@ class SqliteSecretsStore implements SecretsStore {
     const existing = this.get(id);
     if (!existing) throw new SecretsError('not_found', `secret ${id} not found`);
     const envName = patch.envName ?? existing.envName;
-    if (envName !== existing.envName) {
-      validateEnvName(envName);
-      const envHolder = this.selectByEnvNameStmt.get(envName) as SecretRow | undefined;
-      if (envHolder && envHolder.id !== id) {
-        throw new SecretsError(
-          'env_taken',
-          `secret "${envHolder.slug}" already targets ${envName}`,
-        );
+    const willApplyToAll = patch.allMembers ?? existing.allMembers;
+    if (envName !== existing.envName || (willApplyToAll && !existing.allMembers)) {
+      if (envName !== existing.envName) validateEnvName(envName);
+      // Re-check against the audience this secret will have AFTER the
+      // patch, not the one it has now: widening to all-members or
+      // moving to a new variable can each create a collision that did
+      // not exist a moment ago.
+      if (willApplyToAll) {
+        const rival = this.selectEnvRivalAnyoneStmt.get(envName, id) as SecretRow | undefined;
+        if (rival) {
+          throw new SecretsError(
+            'env_taken',
+            `secret "${rival.slug}" already targets ${envName} and this secret applies to all members`,
+          );
+        }
+      } else {
+        for (const memberName of this.listBindings(id)) {
+          const rival = this.selectEnvRivalForMemberStmt.get(envName, id, memberName) as
+            | SecretRow
+            | undefined;
+          if (rival) {
+            throw new SecretsError(
+              'env_taken',
+              `${memberName} already resolves ${envName} from secret "${rival.slug}"`,
+            );
+          }
+        }
       }
     }
     this.updateSecretStmt.run(
@@ -403,9 +479,27 @@ class SqliteSecretsStore implements SecretsStore {
     return rows.map((r) => r.member_name);
   }
 
+  /**
+   * Bind a member to a secret.
+   *
+   * This is where the real invariant is enforced: a member must never
+   * resolve two values for one environment variable. Binding is the
+   * first moment a targeted secret actually reaches someone, so it is
+   * the first moment a collision can exist.
+   */
   bind(secretId: string, memberName: string, now: number = Date.now()): void {
-    if (!this.get(secretId)) {
+    const secret = this.get(secretId);
+    if (!secret) {
       throw new SecretsError('not_found', `secret ${secretId} not found`);
+    }
+    const rival = this.selectEnvRivalForMemberStmt.get(secret.envName, secretId, memberName) as
+      | SecretRow
+      | undefined;
+    if (rival) {
+      throw new SecretsError(
+        'env_taken',
+        `${memberName} already resolves ${secret.envName} from secret "${rival.slug}"`,
+      );
     }
     this.insertBindingStmt.run(secretId, memberName, now);
   }
