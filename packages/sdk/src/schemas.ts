@@ -269,6 +269,15 @@ export const GetObjectiveResponseSchema = z.object({
 
 export const ListObjectivesQuerySchema = z.object({
   assignee: NameSchema.optional(),
+  /**
+   * Scope to every objective this member has ANY relationship with —
+   * assigned, originated, or watching. Distinct from `assignee`, which
+   * is the narrower "on their plate" question: a member who originates
+   * or watches without being assigned matches `related` and not
+   * `assignee`. Members without `objectives.create` may only pass their
+   * own name.
+   */
+  related: NameSchema.optional(),
   status: ObjectiveStatusSchema.optional(),
 });
 

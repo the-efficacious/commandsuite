@@ -3149,6 +3149,7 @@ export function createApp(options: AppOptions): CreatedApp {
       const member = c.get('member');
       const raw = {
         assignee: c.req.query('assignee'),
+        related: c.req.query('related'),
         status: c.req.query('status'),
       };
       const parsed = ListObjectivesQuerySchema.safeParse(raw);
@@ -3157,23 +3158,34 @@ export function createApp(options: AppOptions): CreatedApp {
       }
       const filter = parsed.data;
 
+      // Relationship union: assigned OR originated OR watching. Watchers
+      // live in a JSON column, so this is a post-filter rather than a
+      // store predicate — the same shape the plain-member branch has
+      // always used.
+      const relatedTo = (name: string): Objective[] =>
+        objectives
+          .list(filter.status ? { status: filter.status } : {})
+          .filter((o) => o.assignee === name || o.originator === name || o.watchers.includes(name));
+
       const canListAny = hasPermission(member.permissions, 'objectives.create');
       if (!canListAny) {
-        if (filter.assignee && filter.assignee !== member.name) {
+        if (
+          (filter.assignee && filter.assignee !== member.name) ||
+          (filter.related && filter.related !== member.name)
+        ) {
           return c.json(
             { error: 'members without objectives.create may only list their own objectives' },
             403,
           );
         }
         // Default scope for a plain member: assigned OR originated OR watching.
-        const all = objectives.list(filter.status ? { status: filter.status } : {});
-        const scoped = all.filter(
-          (o) =>
-            o.assignee === member.name ||
-            o.originator === member.name ||
-            o.watchers.includes(member.name),
-        );
-        return c.json({ objectives: scoped });
+        return c.json({ objectives: relatedTo(member.name) });
+      }
+      // `related` is the explicit relationship question and applies to
+      // privileged callers too. Without it a privileged caller keeps the
+      // team-wide view the director dashboard depends on.
+      if (filter.related) {
+        return c.json({ objectives: relatedTo(filter.related) });
       }
       return c.json({ objectives: objectives.list(filter) });
     });

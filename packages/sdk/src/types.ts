@@ -1361,6 +1361,12 @@ export interface GetObjectiveResponse {
 
 export interface ListObjectivesQuery {
   assignee?: string;
+  /**
+   * Every objective this member has ANY relationship with — assigned,
+   * originated, or watching. Wider than `assignee`, which omits work a
+   * member originated or watches without being assigned.
+   */
+  related?: string;
   status?: ObjectiveStatus;
 }
 
