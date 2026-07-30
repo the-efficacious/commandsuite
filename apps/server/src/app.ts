@@ -1400,9 +1400,13 @@ export function createApp(options: AppOptions): CreatedApp {
       const fromRaw = c.req.query('from');
       const toRaw = c.req.query('to');
       const limitRaw = c.req.query('limit');
+      const cursorTsRaw = c.req.query('cursor_ts');
+      const cursorIdRaw = c.req.query('cursor_id');
       const from = fromRaw !== undefined ? Number(fromRaw) : undefined;
       const to = toRaw !== undefined ? Number(toRaw) : undefined;
       const limit = limitRaw !== undefined ? Number(limitRaw) : undefined;
+      const cursorTs = cursorTsRaw !== undefined ? Number(cursorTsRaw) : undefined;
+      const cursorId = cursorIdRaw !== undefined ? Number(cursorIdRaw) : undefined;
       if (from !== undefined && !Number.isFinite(from)) {
         return c.json({ error: 'invalid `from` parameter' }, 400);
       }
@@ -1412,10 +1416,20 @@ export function createApp(options: AppOptions): CreatedApp {
       if (limit !== undefined && !Number.isFinite(limit)) {
         return c.json({ error: 'invalid `limit` parameter' }, 400);
       }
+      if (
+        (cursorTs === undefined) !== (cursorId === undefined) ||
+        (cursorTs !== undefined && (!Number.isInteger(cursorTs) || cursorTs < 0)) ||
+        (cursorId !== undefined && (!Number.isInteger(cursorId) || cursorId < 0))
+      ) {
+        return c.json({ error: 'invalid composite cursor' }, 400);
+      }
       const rows = gStore.list({
         memberName: name,
         ...(from !== undefined ? { from } : {}),
         ...(to !== undefined ? { to } : {}),
+        ...(cursorTs !== undefined && cursorId !== undefined
+          ? { after: { ts: cursorTs, id: cursorId } }
+          : {}),
         ...(limit !== undefined ? { limit } : {}),
       });
       // `view=summary` serves the light call-ledger projection (no
@@ -3849,11 +3863,15 @@ export function createApp(options: AppOptions): CreatedApp {
       const fromRaw = c.req.query('from');
       const toRaw = c.req.query('to');
       const limitRaw = c.req.query('limit');
+      const cursorTsRaw = c.req.query('cursor_ts');
+      const cursorIdRaw = c.req.query('cursor_id');
       const kindRaw = c.req.queries('kind');
 
       const from = fromRaw !== undefined ? Number(fromRaw) : undefined;
       const to = toRaw !== undefined ? Number(toRaw) : undefined;
       const limit = limitRaw !== undefined ? Number(limitRaw) : undefined;
+      const cursorTs = cursorTsRaw !== undefined ? Number(cursorTsRaw) : undefined;
+      const cursorId = cursorIdRaw !== undefined ? Number(cursorIdRaw) : undefined;
       if (from !== undefined && !Number.isFinite(from)) {
         return c.json({ error: 'invalid `from` parameter' }, 400);
       }
@@ -3862,6 +3880,13 @@ export function createApp(options: AppOptions): CreatedApp {
       }
       if (limit !== undefined && !Number.isFinite(limit)) {
         return c.json({ error: 'invalid `limit` parameter' }, 400);
+      }
+      if (
+        (cursorTs === undefined) !== (cursorId === undefined) ||
+        (cursorTs !== undefined && (!Number.isInteger(cursorTs) || cursorTs < 0)) ||
+        (cursorId !== undefined && (!Number.isInteger(cursorId) || cursorId < 0))
+      ) {
+        return c.json({ error: 'invalid composite cursor' }, 400);
       }
       // Validate each kind discriminator. Multiple ?kind= params
       // are AND-combined at query time, OR-combined at the store
@@ -3880,6 +3905,10 @@ export function createApp(options: AppOptions): CreatedApp {
         memberName: name,
         from,
         to,
+        before:
+          cursorTs !== undefined && cursorId !== undefined
+            ? { ts: cursorTs, id: cursorId }
+            : undefined,
         kinds: kinds.length > 0 ? kinds : undefined,
         limit,
       });

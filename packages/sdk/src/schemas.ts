@@ -1151,6 +1151,12 @@ export const ListActivityResponseSchema = z.object({
 export const ListActivityQuerySchema = z.object({
   from: z.number().int().nonnegative().optional(),
   to: z.number().int().nonnegative().optional(),
+  cursor: z
+    .object({
+      ts: z.number().int().nonnegative(),
+      id: z.number().int().nonnegative(),
+    })
+    .optional(),
   kind: z.union([ActivityKindSchema, z.array(ActivityKindSchema)]).optional(),
   limit: z.number().int().positive().max(1000).optional(),
 });

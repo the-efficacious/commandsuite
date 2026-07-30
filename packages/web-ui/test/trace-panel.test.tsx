@@ -140,6 +140,61 @@ describe('TracePanel', () => {
       expect(banner).toBeTruthy();
     });
   });
+
+  it('paginates the complete objective window past 500 rows', async () => {
+    const rows = Array.from(
+      { length: 501 },
+      (_, index): ActivityRow => ({
+        ...llmRow,
+        id: 501 - index,
+        event: { ...llmRow.event, ts: 1_700_000_000_000 },
+      }),
+    );
+    globalThis.fetch = (async (input) => {
+      const url = new URL(
+        typeof input === 'string' ? input : input instanceof URL ? input.href : input.url,
+      );
+      if (url.pathname.endsWith('/genai')) {
+        return new Response(JSON.stringify({ inferences: [] }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      const cursorId = url.searchParams.get('cursor_id');
+      const activity = cursorId === null ? rows.slice(0, 500) : rows.slice(500);
+      return new Response(JSON.stringify({ activity }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof fetch;
+    setClient(new Client({ url: 'http://localhost', useCookies: true }));
+
+    render(<TracePanel objective={objective} />);
+
+    await waitFor(() => expect(screen.getByText(/LLM turns \(501\)/)).toBeTruthy());
+  });
+
+  it('surfaces unavailable GenAI enrichment while retaining activity markers', async () => {
+    globalThis.fetch = (async (input) => {
+      const url = new URL(
+        typeof input === 'string' ? input : input instanceof URL ? input.href : input.url,
+      );
+      if (url.pathname.endsWith('/genai')) {
+        return new Response(JSON.stringify({ error: 'enrichment offline' }), { status: 503 });
+      }
+      return new Response(JSON.stringify({ activity: [llmRow] }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof fetch;
+    setClient(new Client({ url: 'http://localhost', useCookies: true }));
+
+    render(<TracePanel objective={objective} />);
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/enrichment unavailable; showing activity markers only/i),
+      ).toBeTruthy(),
+    );
+    expect(screen.getByText(/LLM turns \(1\)/)).toBeTruthy();
+  });
 });
 
 // ─── GenAI enrichment: joinTurns + enriched rendering ──────────────

@@ -1606,6 +1606,8 @@ export interface GetGenaiInferenceResponse {
 export interface ListGenaiQuery {
   from?: number;
   to?: number;
+  /** Exclusive composite cursor for oldest-first traversal. */
+  cursor?: { ts: number; id: number };
   limit?: number;
 }
 
@@ -1806,6 +1808,8 @@ export interface ListActivityQuery {
   readonly from?: number;
   /** Inclusive upper bound on ts (ms since epoch). */
   readonly to?: number;
+  /** Exclusive composite cursor for newest-first traversal. */
+  readonly cursor?: { ts: number; id: number };
   /** Filter by kind — single or array. Omit for all kinds. */
   readonly kind?: ActivityKind | ActivityKind[];
   /** Max rows to return. Default 200, max 1000. Newest first. */

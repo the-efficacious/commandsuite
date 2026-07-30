@@ -193,6 +193,25 @@ describe('genai store', () => {
     expect(all.map((r) => r.ts)).toEqual([1000, 2000, 3000]);
   });
 
+  it('pages losslessly across records sharing a timestamp', () => {
+    const db = openDatabase(':memory:');
+    const store = createGenAiStore(db);
+    for (let i = 0; i < 5; i++) {
+      store.append('alice', inference({ responseId: `msg_${i}`, ts: 1_000 }));
+    }
+
+    const first = store.list({ memberName: 'alice', limit: 2 });
+    const boundary = first[1];
+    expect(boundary).toBeDefined();
+    const second = store.list({
+      memberName: 'alice',
+      limit: 3,
+      after: { ts: boundary?.ts ?? 0, id: boundary?.id ?? 0 },
+    });
+
+    expect([...first, ...second].map((row) => row.id)).toEqual([1, 2, 3, 4, 5]);
+  });
+
   it('is durable across separate store handles on the same DB', () => {
     const db = openDatabase(':memory:');
     createGenAiStore(db).append('alice', inference());
