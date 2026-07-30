@@ -12,8 +12,10 @@
  * guard is built the way it is.
  */
 
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
+  copyFileSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -23,10 +25,14 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
-import { checkPackage } from '../assert-fresh-dist.mjs';
+import setup, { checkPackage } from '../assert-fresh-dist.mjs';
 import { hashSourceTree, STAMP_FILENAME } from '../dist-stamp.mjs';
+
+const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
+const REPO_ROOT = resolve(SCRIPTS_DIR, '..');
 
 const trees = [];
 afterEach(() => {
@@ -179,6 +185,29 @@ describe('stale-dist guard — the cases it must NOT refuse', () => {
     expect(checkPackage(dir), 'no build script means no dist is expected').toBeNull();
   });
 
+  it('distinguishes never-built from build-broke from out-of-date', () => {
+    const sources = { 'a.ts': 'x\n' };
+    const noDist = makePackage({ sources, distFiles: {}, stampFrom: sources });
+    rmSync(join(noDist, 'dist'), { recursive: true });
+    expect(checkPackage(noDist)).toMatch(/no dist\/ — the package has not been built/);
+
+    const emptyDist = mkdtempSync(join(tmpdir(), 'freshdist-'));
+    trees.push(emptyDist);
+    mkdirSync(join(emptyDist, 'src'), { recursive: true });
+    mkdirSync(join(emptyDist, 'dist'), { recursive: true });
+    writeFileSync(join(emptyDist, 'src', 'a.ts'), 'x\n');
+    writeFileSync(
+      join(emptyDist, 'package.json'),
+      JSON.stringify({ name: 'p', scripts: { build: 'x' } }),
+    );
+    expect(checkPackage(emptyDist), 'an empty dist is "not built", not "broken"').toMatch(
+      /dist\/ is empty — the package has not been built/,
+    );
+
+    const brokeMidway = makePackage({ sources, distFiles: { 'a.js': 'partial' }, stampFrom: null });
+    expect(checkPackage(brokeMidway)).toMatch(/no build stamp — a build that did not finish/);
+  });
+
   it('hashes the source SET, so a rename alone changes the hash', () => {
     const dir = mkdtempSync(join(tmpdir(), 'freshdist-'));
     trees.push(dir);
@@ -188,5 +217,117 @@ describe('stale-dist guard — the cases it must NOT refuse', () => {
     rmSync(join(dir, 'src', 'a.ts'));
     writeFileSync(join(dir, 'src', 'b.ts'), 'x\n'); // same bytes, different path
     expect(hashSourceTree(dir).hash, 'path is part of the digest').not.toBe(before);
+  });
+});
+
+/**
+ * Launcher independence. The guard originally derived the project from
+ * `process.cwd()`, which is a property of the SHELL rather than of the
+ * project under test. `vitest --root apps/server` launched from the repo
+ * root therefore checked the ROOT's dependencies — of which there are
+ * none — and ran 27 real tests against a stale `csuite-core`.
+ *
+ * These spawn vitest for real, from a directory that is NOT the project
+ * root, because that gap is invisible to any in-process test: calling
+ * `setup()` directly cannot reproduce a cwd/root divergence that only a
+ * launcher creates.
+ *
+ * The passing case is not decoration. Without it these would be
+ * satisfied by a fixture that fails to start vitest at all — a non-zero
+ * exit proves nothing on its own.
+ */
+describe('launcher independence — cwd is not the project', () => {
+  function fixtureWorkspace({ stampMatches }) {
+    const root = mkdtempSync(join(tmpdir(), 'freshdist-ws-'));
+    trees.push(root);
+    mkdirSync(join(root, 'scripts'), { recursive: true });
+    mkdirSync(join(root, 'packages', 'dep', 'src'), { recursive: true });
+    mkdirSync(join(root, 'packages', 'dep', 'dist'), { recursive: true });
+    mkdirSync(join(root, 'packages', 'consumer', 'test'), { recursive: true });
+
+    // The guard resolves its repo root from its own location, so copying
+    // it in makes the fixture a self-contained workspace.
+    for (const f of ['dist-stamp.mjs', 'assert-fresh-dist.mjs']) {
+      copyFileSync(join(SCRIPTS_DIR, f), join(root, 'scripts', f));
+    }
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'fixroot', private: true }));
+
+    const dep = join(root, 'packages', 'dep');
+    writeFileSync(
+      join(dep, 'package.json'),
+      JSON.stringify({ name: 'fixdep', scripts: { build: 'x' } }),
+    );
+    writeFileSync(join(dep, 'src', 'a.ts'), 'export const a = 1\n');
+    writeFileSync(join(dep, 'dist', 'a.js'), 'a');
+    const hash = stampMatches ? hashSourceTree(dep).hash : 'deadbeef';
+    writeFileSync(join(dep, 'dist', STAMP_FILENAME), JSON.stringify({ hash, fileCount: 1 }));
+
+    const consumer = join(root, 'packages', 'consumer');
+    writeFileSync(
+      join(consumer, 'package.json'),
+      JSON.stringify({ name: 'fixconsumer', dependencies: { fixdep: 'workspace:*' } }),
+    );
+    writeFileSync(
+      join(consumer, 'vitest.config.mjs'),
+      "export default { test: { globals: true, globalSetup: ['../../scripts/assert-fresh-dist.mjs'], include: ['test/**/*.test.mjs'] } };\n",
+    );
+    writeFileSync(
+      join(consumer, 'test', 'x.test.mjs'),
+      'it("runs", () => { expect(1).toBe(1); });\n',
+    );
+    return root;
+  }
+
+  /** Launch vitest from `root`, pointed at the consumer package. cwd !== project root. */
+  function runFromRoot(root) {
+    return spawnSync(
+      process.execPath,
+      [
+        join(REPO_ROOT, 'node_modules', 'vitest', 'vitest.mjs'),
+        '--root',
+        join('packages', 'consumer'),
+        '--config',
+        'vitest.config.mjs',
+        'run',
+      ],
+      { cwd: root, encoding: 'utf8', timeout: 90_000 },
+    );
+  }
+
+  it('refuses a stale dependency when launched from outside the project', () => {
+    const result = runFromRoot(fixtureWorkspace({ stampMatches: false }));
+    const output = `${result.stdout}${result.stderr}`;
+    expect(output, 'the guard must name the stale package').toMatch(/fixdep: dist\//);
+    expect(output).toMatch(/Refusing to run/);
+    expect(result.status, 'a refused run must not exit zero').not.toBe(0);
+  });
+
+  it('fails closed when the project root cannot be determined', () => {
+    // If a vitest upgrade changes the globalSetup context shape, the
+    // guard must refuse rather than quietly fall back to process.cwd()
+    // — which is exactly the bypass this section exists to prevent, and
+    // it would return silently instead of failing.
+    expect(() => setup(undefined)).toThrow(/could not determine the vitest project root/);
+    expect(() => setup({})).toThrow(/could not determine the vitest project root/);
+  });
+
+  // NOTE — there is deliberately no in-process version of the refusal
+  // test above. `assert-fresh-dist.mjs` resolves the workspace from its
+  // OWN file location, so an imported copy always scans the real
+  // `packages/`/`apps/` and can never see a fixture. Calling `setup()`
+  // with a fixture root returns cleanly because the fixture's dependency
+  // is not a real workspace package — it looks like a pass and proves
+  // nothing. That is why the test above spawns vitest with the scripts
+  // copied INTO the fixture, and why cwd/root divergence can only be
+  // exercised by a real launcher.
+
+  it('runs the suite normally when the dependency is fresh', () => {
+    // Proves the fixture can actually start vitest, so the refusal above
+    // is the guard firing and not the harness failing to launch.
+    const result = runFromRoot(fixtureWorkspace({ stampMatches: true }));
+    const output = `${result.stdout}${result.stderr}`;
+    expect(output, 'the fixture suite must really execute').toMatch(/1 passed/);
+    expect(output).not.toMatch(/Refusing to run/);
+    expect(result.status).toBe(0);
   });
 });

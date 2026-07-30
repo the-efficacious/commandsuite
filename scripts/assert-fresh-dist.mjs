@@ -77,11 +77,23 @@ export function checkPackage(dir, name = dir) {
   const source = hashSourceTree(dir);
   if (source === null) return null;
 
-  if (!hasDist(dir)) return `${name}: no dist/ — the package has never been built`;
+  // Three distinct states, three distinct messages. "Never built",
+  // "build broke", and "build is out of date" call for different actions,
+  // and collapsing them sends someone to debug a build that simply never
+  // ran. An empty dist/ in particular is easy to mistake for a clean one.
+  if (!hasDist(dir)) return `${name}: no dist/ — the package has not been built`;
+
+  let distIsEmpty = false;
+  try {
+    distIsEmpty = readdirSync(join(dir, 'dist')).length === 0;
+  } catch {
+    distIsEmpty = false;
+  }
+  if (distIsEmpty) return `${name}: dist/ is empty — the package has not been built`;
 
   const stamp = readStamp(dir);
   if (stamp === null) {
-    return `${name}: dist/ exists but carries no build stamp — an interrupted or pre-stamp build`;
+    return `${name}: dist/ has output but no build stamp — a build that did not finish`;
   }
   if (stamp.hash !== source.hash) {
     return `${name}: dist/ was built from different sources than the ${source.fileCount} file(s) now in src/`;
@@ -137,8 +149,18 @@ function workspaceDepsOf(dir, byName) {
  *
  * From the repo root (no workspace dependencies of its own) there is
  * nothing to check — `scripts/` imports no workspace package.
+ *
+ * `fromDir` MUST be the vitest project root, not `process.cwd()`. Those
+ * differ whenever vitest is pointed at a project from elsewhere —
+ * `vitest --root apps/server` launched from the repo root runs the real
+ * server suite against the real `csuite-core`, while cwd stays at the
+ * root. Deriving the project from cwd there checks the ROOT's
+ * dependencies, of which there are none, so the guard silently passes a
+ * genuine run against a stale build. That is not a null run: 27 tests
+ * executed and imported `csuite-core` by name. Take the root from the
+ * context vitest hands `globalSetup`.
  */
-export function findStaleDists(fromDir = process.cwd()) {
+export function findStaleDists(fromDir) {
   const byName = new Map(workspacePackages().map((p) => [p.name, p]));
   const problems = [];
   for (const { name, dir } of workspaceDepsOf(fromDir, byName)) {
@@ -148,8 +170,27 @@ export function findStaleDists(fromDir = process.cwd()) {
   return problems;
 }
 
-export default function setup() {
-  const problems = findStaleDists();
+/**
+ * `globalSetup` entry. Vitest passes the project, whose `config.root` is
+ * the project directory regardless of where vitest was launched from —
+ * verified equal to `apps/server` both from that directory and from the
+ * repo root via `--root apps/server`.
+ *
+ * FAILS CLOSED if the root cannot be determined. A guard that quietly
+ * falls back to `process.cwd()` when it does not recognise its context
+ * is a guard that stops working on a vitest upgrade without anyone
+ * noticing — which is this guard's own failure mode, one level up.
+ */
+export default function setup(context) {
+  const projectRoot = context?.config?.root ?? context?.globalConfig?.root;
+  if (typeof projectRoot !== 'string' || projectRoot.length === 0) {
+    throw new Error(
+      'assert-fresh-dist: could not determine the vitest project root from globalSetup context. ' +
+        'Refusing rather than falling back to process.cwd(), which would silently skip the check ' +
+        'for any launch where cwd is not the project directory (e.g. `vitest --root <pkg>`).',
+    );
+  }
+  const problems = findStaleDists(projectRoot);
   if (problems.length === 0) return;
   throw new Error(
     [
