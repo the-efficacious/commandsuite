@@ -32,12 +32,12 @@ export const PATHS = {
   // member.
   channels: '/channels',
   // Members — requires `members.manage` for mutations. Top-level GET
-  // is dual-auth (everyone can read the teammate list); mutating verbs
+  // is tri-auth (everyone can read the teammate list); mutating verbs
   // gate on the permission. The helpers below compose the `:name`
   // subpaths.
   members: '/members',
   // Team — name, context, permission presets. `GET /team` is
-  // dual-auth (every authenticated member sees the team they're on).
+  // tri-auth (every authenticated member sees the team they're on).
   // `PATCH /team` requires `team.manage`. Permission-preset CRUD lives
   // under `/team/presets` (same gate). Mutations apply immediately to
   // the DB; live MCP sessions still need a runner restart for changes
@@ -81,12 +81,12 @@ export const PATHS = {
   presenceActivity: '/presence/activity',
   // Tool sources — registry of platform-defined external tools
   // (custom HTTP-bound tools and proxied remote MCP servers). GET is
-  // dual-auth; mutations gate on `tools.manage`; invoke gates on the
+  // tri-auth; mutations gate on `tools.manage`; invoke gates on the
   // caller being bound to the source. Subresource paths compose via
   // TOOL_SOURCE_PATHS below.
   toolSources: '/tool-sources',
   // Secrets — broker-held environment secrets injected on the agent
-  // child by the runner at spawn. GET is dual-auth (viewers see
+  // child by the runner at spawn. GET is tri-auth (viewers see
   // write-only summaries); mutations gate on `secrets.manage`;
   // `resolve` returns the decrypted env delta for the calling member
   // only. Subresource paths compose via SECRET_PATHS below.

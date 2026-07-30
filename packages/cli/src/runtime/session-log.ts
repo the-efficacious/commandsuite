@@ -2,7 +2,7 @@
  * File-backed structured logger for interactive `csuite claude`
  * sessions. When stderr is a TTY — i.e. we're wrapping claude's TUI
  * in the user's terminal — writes go to `~/.cache/commandsuite/session-<pid>.log`
- * so runner/proxy/uploader JSON lines don't corrupt the ink-rendered
+ * so runner/capture/uploader JSON lines don't corrupt the ink-rendered
  * frame. When stderr is redirected (CI, `2> file.log`, pipe to jq),
  * the default logger stays on stderr so existing automation keeps
  * working byte-for-byte.

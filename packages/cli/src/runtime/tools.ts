@@ -109,7 +109,10 @@ export function defineTools(
       inputSchema: {
         type: 'object',
         properties: {
-          body: { type: 'string', description: 'The message body the team will receive.' },
+          body: {
+            type: 'string',
+            description: 'The message body the team will receive. Max 65536 characters.',
+          },
           level: {
             type: 'string',
             enum: [...LEVELS],
@@ -119,7 +122,7 @@ export function defineTools(
             type: 'array',
             items: { type: 'string' },
             description:
-              "Optional list of file paths (e.g. ['/<name>/uploads/report.pdf']). Each must already exist and be readable to you. Use `fs_write` to upload a new file first.",
+              "Optional list of file paths (e.g. ['/<name>/uploads/report.pdf']). Max 64. Each must already exist and be readable to you. Use `fs_write` to upload a new file first.",
           },
         },
         required: ['body'],
@@ -137,7 +140,7 @@ export function defineTools(
         type: 'object',
         properties: {
           to: { type: 'string', description: 'The name of the teammate to message.' },
-          body: { type: 'string', description: 'The message body.' },
+          body: { type: 'string', description: 'The message body. Max 65536 characters.' },
           level: {
             type: 'string',
             enum: [...LEVELS],
@@ -147,7 +150,7 @@ export function defineTools(
             type: 'array',
             items: { type: 'string' },
             description:
-              'Optional list of file paths to attach. Each must already exist and be readable to you.',
+              'Optional list of file paths to attach. Max 64. Each must already exist and be readable to you.',
           },
         },
         required: ['to', 'body'],
@@ -182,7 +185,7 @@ export function defineTools(
             type: 'string',
             description: 'Channel slug (e.g. "frontend", "ops"). Must be a channel you belong to.',
           },
-          body: { type: 'string', description: 'The message body.' },
+          body: { type: 'string', description: 'The message body. Max 65536 characters.' },
           level: {
             type: 'string',
             enum: [...LEVELS],
@@ -192,7 +195,7 @@ export function defineTools(
             type: 'array',
             items: { type: 'string' },
             description:
-              'Optional list of file paths to attach. Each must already exist and be readable to you.',
+              'Optional list of file paths to attach. Max 64. Each must already exist and be readable to you.',
           },
         },
         required: ['channel', 'body'],
@@ -285,7 +288,9 @@ export function defineTools(
           },
           blockReason: {
             type: 'string',
-            description: 'Required when status=blocked. Concisely describe what is blocking you.',
+            description:
+              'Required when status=blocked. Concisely describe what is blocking you. ' +
+              'Max 2048 characters.',
           },
         },
         required: ['id', 'status'],
@@ -309,13 +314,14 @@ export function defineTools(
           id: { type: 'string', description: 'The objective id.' },
           body: {
             type: 'string',
-            description: 'The message body to post into the objective thread.',
+            description:
+              'The message body to post into the objective thread. Max 16384 characters.',
           },
           attachments: {
             type: 'array',
             items: { type: 'string' },
             description:
-              'Optional list of file paths to attach. Each must already exist and be readable to you.',
+              'Optional list of file paths to attach. Max 64. Each must already exist and be readable to you.',
           },
         },
         required: ['id', 'body'],
@@ -336,7 +342,9 @@ export function defineTools(
           result: {
             type: 'string',
             description:
-              'Required summary of what was delivered and how it meets the stated outcome.',
+              'Required summary of what was delivered and how it meets the stated outcome. ' +
+              'Max 4096 characters — the call is rejected if you exceed it, so check the ' +
+              'length before writing a long completion rather than after.',
           },
         },
         required: ['id', 'result'],
@@ -350,13 +358,54 @@ export function defineTools(
     // can see) or director authority. See `fs_shared` for a list of
     // files shared with you.
     //
-    // Objective namespaces live at `/objectives/<id>/` and are
-    // collaboratively read/write/delete-able by every member of the
-    // objective (originator + assignee + watchers). Files attached at
-    // objective-create time are mirrored into this namespace
-    // automatically — agents who are members can also `fs_write`
-    // additional files there directly, and they participate in the
-    // same membership ACL.
+    // Objective namespaces live at `/objectives/<id>/`. Files attached
+    // at objective-create time are mirrored there automatically, and
+    // the server-side membership ACL is real.
+    //
+    // INTENDED DESIGN, NOT CURRENT BEHAVIOUR: collaborative
+    // read/write/delete by every member (originator + assignee +
+    // watchers) is what this is FOR, and it does not work today for
+    // members who are not directors. Two live defects, diagnosed under
+    // objective `obj-ms7bqy3n-d` and awaiting a decision because the
+    // fix touches a published package:
+    //
+    //   1. `filesystem-store.ts` non-root `list()` gates on
+    //      `members.manage || ownsPath` and never calls `canRead()`, so
+    //      a non-director member listing the namespace gets 403.
+    //   2. Every namespace `FsEntry` has owner `obj:<id>`, and
+    //      `FsEntrySchema.owner` is `NameSchema`, whose pattern
+    //      excludes `:`. The server responds correctly — the raw
+    //      `GET /fs/read` route returns 200 with the full bytes — and
+    //      the SDK client then throws parsing that successful response.
+    //
+    // Defect 2 is VIEWER-INDEPENDENT: the parse is client-side and
+    // keys off the owner VALUE, not the caller, so it fails for
+    // directors exactly as it does for members. Whether a given tool
+    // breaks therefore depends only on whether its client method
+    // parses an `FsEntry` — which makes the matrix uneven, not
+    // uniform. Measured per operation:
+    //
+    //   fs_ls    non-director → 403 (defect 1); director → gets past
+    //            the gate and then fails the parse (defect 2).
+    //   fs_stat  fails for every viewer.
+    //   fs_read  fails for every viewer — `handleFsRead` calls
+    //            `fsStat` before fetching bytes, so it throws before
+    //            reaching the raw read. "Exact-path reads work" is
+    //            true of `GET /fs/read` and FALSE of this tool.
+    //   fs_write
+    //   fs_mkdir COMMIT server-side, then fail parsing the returned
+    //   fs_mv    entry and report an error for work that succeeded.
+    //   fs_rm    WORKS. `fsRm` returns void, parses nothing, and
+    //            `handleFsRm` has no stat preflight.
+    //   fs_shared unaffected — it never enumerates membership-only
+    //            namespace entries, so no `obj:` owner reaches it.
+    //
+    // Note the shape of that: the only namespace operation an agent
+    // can complete and be told the truth about is the DESTRUCTIVE one.
+    // Do not compress this to "the namespace doesn't work" — the
+    // per-tool descriptions below carry the caveat individually,
+    // because each is a standalone spec an agent may reach without
+    // having read any other.
     ...buildFilesystemTools(name),
     // ── Permission-gated tools ──────────────────────────────────────
     //
@@ -1327,8 +1376,15 @@ function buildFilesystemTools(name: string): Tool[] {
         `List the contents of a directory in the csuite virtual filesystem. ` +
         `Your home is \`${home}\`; passing "/" lists the set of homes you can see. ` +
         `Entries include per-item metadata (kind, size, mime type, owner). ` +
-        `Objective namespaces are listable at \`/objectives/<id>/\` if you're a ` +
-        `member (originator, assignee, or watcher) of that objective.`,
+        `KNOWN DEFECT: listing \`/objectives/<id>/\` fails for everyone, by two ` +
+        `separate causes — non-directors get a 403 from a permission check that is ` +
+        `itself the defect, and directors get past that only to have the client ` +
+        `reject the response. Both are awaiting a fix. Do not read either failure ` +
+        `as "you lack access to this objective", and do not retry — nothing you ` +
+        `can pass will make it succeed. Other namespace operations differ: ` +
+        `\`fs_rm\` works, \`fs_write\`/\`fs_mkdir\`/\`fs_mv\` succeed but report ` +
+        `failure, \`fs_stat\`/\`fs_read\` fail outright. Use message and objective ` +
+        `attachments to share work-scoped files meanwhile.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -1341,7 +1397,11 @@ function buildFilesystemTools(name: string): Tool[] {
     },
     {
       name: 'fs_stat',
-      description: `Fetch metadata for a single path. Returns null if the path does not exist.`,
+      description:
+        `Fetch metadata for a single path. Returns null if the path does not exist. ` +
+        `KNOWN DEFECT: fails for a path under \`/objectives/<id>/\` no matter who you ` +
+        `are — the entry is valid and the client rejects it while parsing. The error ` +
+        `does not mean the path is missing.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -1355,7 +1415,11 @@ function buildFilesystemTools(name: string): Tool[] {
       description:
         `Read the contents of a file. Text-like files (mime \`text/*\` or \`application/json\`) ` +
         `are returned as UTF-8; everything else is returned as base64. The response ` +
-        `always includes the path, size, mime type, and either \`text\` or \`base64\`.`,
+        `always includes the path, size, mime type, and either \`text\` or \`base64\`. ` +
+        `KNOWN DEFECT: fails for any path under \`/objectives/<id>/\`, for every viewer ` +
+        `including directors. This tool stats the file before reading it, and that stat ` +
+        `is what fails; the bytes themselves are served correctly at the HTTP layer, so ` +
+        `the file is intact and readable — just not through here. Do not retry.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -1379,9 +1443,14 @@ function buildFilesystemTools(name: string): Tool[] {
           path: {
             type: 'string',
             description:
-              `Absolute path to write. Allowed under ${home} (your home), ` +
-              `under \`/objectives/<id>/\` for any objective you're a member of, ` +
-              `or anywhere if you're a director.`,
+              `Absolute path to write. Allowed under ${home} (your home), or ` +
+              `anywhere if you're a director. Writing under \`/objectives/<id>/\` ` +
+              `is intended to work for objective members and CURRENTLY MISREPORTS ` +
+              `ITS RESULT for every caller including directors: the server commits ` +
+              `the write, then the client fails validating the response and you are ` +
+              `told it errored. Do NOT retry such a write — the file is already ` +
+              `there, and you cannot read it back to check. Write to your home ` +
+              `instead until this is fixed.`,
           },
           mimeType: {
             type: 'string',
@@ -1408,7 +1477,9 @@ function buildFilesystemTools(name: string): Tool[] {
       name: 'fs_mkdir',
       description:
         `Create a directory. Pass recursive=true to auto-create missing parents. ` +
-        `Your home is ${home}. Returns the directory's FsEntry.`,
+        `Your home is ${home}. Returns the directory's FsEntry. KNOWN DEFECT: under ` +
+        `\`/objectives/<id>/\` the directory IS created and you are then told it ` +
+        `failed — the client rejects the returned entry. Do not retry.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -1441,7 +1512,9 @@ function buildFilesystemTools(name: string): Tool[] {
       description:
         `Rename / move a file. Directory moves are not currently supported. ` +
         `Both the source and destination must sit under a tree you own (or you must be a director). ` +
-        `Returns the FsEntry at the destination path.`,
+        `Returns the FsEntry at the destination path. KNOWN DEFECT: when the destination ` +
+        `is under \`/objectives/<id>/\` the move COMMITS and is then reported as an error ` +
+        `— the client rejects the returned entry. Do not retry; the file has already moved.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -1457,10 +1530,10 @@ function buildFilesystemTools(name: string): Tool[] {
         `List every file that has been shared with you via a message attachment — ` +
         `entries another member explicitly attached to a thread you can see. Owner- ` +
         `private files from other slots never appear here. Files that live in objective ` +
-        `namespaces you're a member of (\`/objectives/<id>/...\`) are NOT in this list ` +
-        `either; access there flows from membership, not grants — use \`fs_ls\` on ` +
-        `that namespace path to see them. Returns each file's FsEntry (path, size, mime, ` +
-        `owner).`,
+        `namespaces (\`/objectives/<id>/...\`) are NOT in this list either; access there ` +
+        `flows from membership, not grants. This tool itself is unaffected by the ` +
+        `namespace defects noted on \`fs_ls\` and \`fs_read\` — it returns grant-backed ` +
+        `entries correctly. Returns each file's FsEntry (path, size, mime, owner).`,
       inputSchema: { type: 'object', properties: {} },
     },
   ];
@@ -1498,17 +1571,17 @@ function buildAuthorityTools(briefing: BriefingResponse): Tool[] {
       properties: {
         title: {
           type: 'string',
-          description: 'Short, specific title for the objective.',
+          description: 'Short, specific title for the objective. Max 200 characters.',
         },
         outcome: {
           type: 'string',
           description:
-            'Required. The tangible result that defines "done" — what specifically must be true for this objective to be marked complete.',
+            'Required. The tangible result that defines "done" — what specifically must be true for this objective to be marked complete. Max 2048 characters.',
         },
         body: {
           type: 'string',
           description:
-            'Optional longer context — constraints, scoping notes, links, reproductions.',
+            'Optional longer context — constraints, scoping notes, links, reproductions. Max 4096 characters.',
         },
         assignee: {
           type: 'string',
@@ -1518,13 +1591,13 @@ function buildAuthorityTools(briefing: BriefingResponse): Tool[] {
           type: 'array',
           items: { type: 'string' },
           description:
-            'Optional list of teammate names to add as watchers on the objective thread from the start.',
+            'Optional list of teammate names to add as watchers on the objective thread from the start. Max 64.',
         },
         attachments: {
           type: 'array',
           items: { type: 'string' },
           description:
-            "Optional list of file paths to attach to the objective. Each is mirrored into the objective's namespace at `/objectives/<id>/<basename>` so the file lives with the objective rather than in your home; every thread member (originator, assignee, watchers, directors) gets read/write access via the namespace ACL. Use `fs_write` to upload a file first.",
+            "Optional list of file paths to attach to the objective. Max 64. Each is mirrored into the objective's namespace at `/objectives/<id>/<basename>` so the file lives with the objective rather than in your home; every thread member (originator, assignee, watchers, directors) gets read/write access via the namespace ACL. Use `fs_write` to upload a file first.",
         },
       },
       required: ['title', 'outcome', 'assignee'],
@@ -1577,12 +1650,12 @@ function buildAuthorityTools(briefing: BriefingResponse): Tool[] {
         add: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Optional list of teammate names to add as watchers.',
+          description: 'Optional list of teammate names to add as watchers. Max 64.',
         },
         remove: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Optional list of teammate names to remove from watchers.',
+          description: 'Optional list of teammate names to remove from watchers. Max 64.',
         },
       },
       required: ['id'],

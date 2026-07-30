@@ -16,11 +16,13 @@
  *   - On HTTP error or network failure, the in-flight batch is
  *     RE-queued at the head and a backoff timer gates the next
  *     flush attempt (starts at 200 ms, doubles up to 30 s).
- *   - The queue has a hard cap (default 1000 events / 1 MB). If a
- *     new event would exceed either, the OLDEST queued event is
- *     dropped with a warning — we prefer losing history over
- *     stalling the uploader indefinitely when the broker is
- *     unreachable.
+ *   - The queue has a hard cap — `DEFAULT_MAX_QUEUE_EVENTS` (1000) and
+ *     `DEFAULT_MAX_QUEUE_BYTES` (64 MB), both below. If a new event
+ *     would exceed either, the OLDEST queued event is dropped with a
+ *     warning — we prefer losing history over stalling the uploader
+ *     indefinitely when the broker is unreachable. Those drops are
+ *     COUNTED (`dropped`) and surface in the run summary's
+ *     `session_end.capture`, so a run whose trace is incomplete says so.
  *
  * Concurrency: one in-flight upload at a time per uploader, and a
  * caller that asks for a flush while one is in flight awaits THAT

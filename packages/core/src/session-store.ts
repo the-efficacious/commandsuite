@@ -4,7 +4,7 @@
  * A session is a server-issued capability: after TOTP verification,
  * the caller mints a session row binding a random `id` to a member
  * name. Every subsequent request presenting the cookie resolves back
- * to the member via the dual-auth middleware, same as a bearer-token
+ * to the member via the tri-auth middleware, same as a bearer-token
  * request.
  *
  * Lifetime: sliding 7-day TTL. Every `touch()` extends `expiresAt`.

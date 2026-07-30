@@ -36,8 +36,9 @@ export function getClient(): Client {
 
 /**
  * Test helper — clears the stored client so a unit test can build a
- * fresh one against a stubbed fetch. Mirrors the `__resetForTests`
- * convention used across the shell's signal modules.
+ * fresh one against a stubbed fetch. Mirrors the
+ * `__reset<Module>ForTests` convention used across the shell's signal
+ * modules (`__resetRosterForTests`, `__resetLiveForTests`, and so on).
  */
 export function __resetClientForTests(): void {
   clientRef.value = null;

@@ -5,7 +5,7 @@
  * TOTP verification, we mint a random `id`, store a row binding that
  * id to a user name, and return it as an HttpOnly cookie. Every
  * subsequent request presenting the cookie resolves back to the user
- * via the dual-auth middleware, same as a bearer-token request.
+ * via the tri-auth middleware, same as a bearer-token request.
  *
  * Lifetime: sliding 7-day TTL. Every `touch()` bumps `last_seen` and
  * extends `expires_at`. Sessions older than their `expires_at` are
