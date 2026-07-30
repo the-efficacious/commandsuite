@@ -44,13 +44,21 @@
  * key actually declares what it publishes.
  *
  * AND SAY THE UNCOMFORTABLE HALF, because "this doesn't check X" reads
- * as "something else does" and here that is false where it matters most.
- * Under root `pnpm test`, turbo's `dependsOn: ["^build"]` covers (1) and
- * (3) — config and dependency drift both move the task hash — so this
- * guard's silence is harmless. Under a turbo-BYPASSING invocation, the
- * exact case this guard exists for, **nothing covers them.** Config
- * drift and dependency drift there are unchecked by anything at all, not
- * merely unchecked here.
+ * as "something else does" and here that is only sometimes true.
+ *
+ * Turbo's task hash DOES cover (1) and (3) — config drift and dependency
+ * drift both move it. Measured after the web-host outputs fix: editing
+ * `packages/web-ui/src/index.ts` moves `csuite-web-host#build` from
+ * `3a12cf37` to a different hash, so turbo sees a transitive source
+ * change this guard cannot.
+ *
+ * So the honest residual is narrow and specific: **dependency and config
+ * drift are covered whenever the build goes through turbo, and covered
+ * by nothing on the filtered invocations that bypass it.** Which is the
+ * case this guard exists for. It makes one way of being wrong loud there
+ * and leaves two silent — so it does not make
+ * `pnpm --filter <pkg> exec vitest` safe, it makes it less bad. If you
+ * are going to believe a result, run it from the root.
  *
  * So this guard does not make `pnpm --filter <pkg> exec vitest` safe. It
  * makes one specific way of being wrong loud, and leaves two others
