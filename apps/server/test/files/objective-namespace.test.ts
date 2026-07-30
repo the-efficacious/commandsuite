@@ -243,6 +243,80 @@ describe('/objectives/<id>/ namespace', () => {
     expect(writeDenied.status).toBe(403);
   });
 
+  it('reports canWrite from the server rule, where owner-equality would say no', async () => {
+    // The gate this replaces: `entry.owner === viewer`. For a namespace
+    // entry the owner is `obj:<id>`, so that inference is false for
+    // EVERY member including the assignee — which is why the web UI hid
+    // Delete on files its viewer was entitled to remove.
+    const { app } = makeApp();
+    await uploadToHome(app, BOB, '/bob/spec.md', 'spec');
+    const createRes = await app.request(
+      '/objectives',
+      authed(BOB, {
+        title: 'Capability on entries',
+        outcome: 'delivered',
+        body: '',
+        assignee: 'carol',
+        watchers: ['dave'],
+        attachments: [
+          { path: '/bob/spec.md', name: 'spec.md', size: 1, mimeType: 'text/markdown' },
+        ],
+      }),
+    );
+    const obj = (await createRes.json()) as Objective;
+    const nsPath = `/objectives/${obj.id}/spec.md`;
+
+    // carol is the assignee and NOT an admin.
+    const res = await app.request(`/fs/stat?path=${encodeURIComponent(nsPath)}`, authed(CAROL));
+    expect(res.status).toBe(200);
+    const { entry } = (await res.json()) as { entry: { owner: string; canWrite?: boolean } };
+
+    expect(entry.owner, 'namespace entries are owned by the objective').toBe(`obj:${obj.id}`);
+    expect(entry.owner === 'carol', 'the old inference would deny her').toBe(false);
+    expect(entry.canWrite, 'the server rule permits her — canWrite must say so').toBe(true);
+
+    // dave is a watcher: also a member, also not the owner.
+    const daveRes = await app.request(`/fs/stat?path=${encodeURIComponent(nsPath)}`, authed(DAVE));
+    const daveEntry = (await daveRes.json()) as { entry: { canWrite?: boolean } };
+    expect(daveEntry.entry.canWrite, 'watchers are objective members').toBe(true);
+
+    const bobHome = await app.request(
+      `/fs/stat?path=${encodeURIComponent('/bob/spec.md')}`,
+      authed(BOB),
+    );
+    const bobEntry = (await bobHome.json()) as { entry: { canWrite?: boolean } };
+    expect(bobEntry.entry.canWrite, 'bob owns his own home file').toBe(true);
+  });
+
+  it('reports canWrite=false for a read grant — canRead honours grants, canWrite does not', async () => {
+    // The DENYING direction, and it has to be committed: without it the
+    // suite passes against a server reporting canWrite:true for every
+    // entry, which would render a Delete button whose request then 403s.
+    //
+    // A grant is the sharpest case, because it is the one asymmetry in
+    // the rule — canRead() consults hasGrant, canWrite() deliberately
+    // does not. So the viewer can see the entry at all, and still must
+    // not be told they may change it.
+    const { app, files } = makeApp();
+    await uploadToHome(app, BOB, '/bob/spec.md', 'spec');
+    files.grant('/bob/spec.md', 'dave', 'test-grant');
+
+    const res = await app.request(
+      `/fs/stat?path=${encodeURIComponent('/bob/spec.md')}`,
+      authed(DAVE),
+    );
+    expect(res.status, 'the grant lets dave READ the entry').toBe(200);
+    const { entry } = (await res.json()) as { entry: { canWrite?: boolean } };
+    expect(entry.canWrite, 'a read grant must never confer write').toBe(false);
+
+    // Carol has no grant, so a wrong canWrite could not hide behind a 403.
+    const carol = await app.request(
+      `/fs/stat?path=${encodeURIComponent('/bob/spec.md')}`,
+      authed(CAROL),
+    );
+    expect(carol.status).toBe(403);
+  });
+
   it('drops namespace read access for a watcher the moment they are removed', async () => {
     const { app } = makeApp();
     // Set up an objective with dave as a watcher, plus an attachment
