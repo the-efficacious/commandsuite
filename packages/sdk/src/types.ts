@@ -1697,6 +1697,10 @@ export interface ActivitySessionEnd {
     readonly enqueued: number;
     readonly uploaded: number;
     readonly dropped: number;
+    /** Peak instantaneous queue occupancy in events, when reported by the runner. */
+    readonly peakQueuedEvents?: number;
+    /** Peak serialized UTF-8 event payload queued at once, when reported by the runner. */
+    readonly peakQueuedBytes?: number;
   };
 }
 

@@ -88,6 +88,10 @@ export interface ActivityUploaderStats {
   uploaded: number;
   /** Events lost: overflow-evicted, rejected after close, or dropped at final flush. */
   dropped: number;
+  /** Highest number of events queued at once during this uploader's lifetime. */
+  peakQueuedEvents: number;
+  /** Highest serialized UTF-8 payload size queued at once; excludes JS object overhead. */
+  peakQueuedBytes: number;
 }
 
 export class ActivityUploader {
@@ -113,6 +117,8 @@ export class ActivityUploader {
   private statEnqueued = 0;
   private statUploaded = 0;
   private statDropped = 0;
+  private peakQueuedEvents = 0;
+  private peakQueuedBytes = 0;
 
   constructor(options: ActivityUploaderOptions) {
     this.brokerClient = options.brokerClient;
@@ -137,7 +143,7 @@ export class ActivityUploader {
       return;
     }
     this.statEnqueued++;
-    const bytes = JSON.stringify(event).length;
+    const bytes = Buffer.byteLength(JSON.stringify(event), 'utf8');
 
     // Cap check: drop oldest until we have room.
     while (
@@ -157,6 +163,8 @@ export class ActivityUploader {
 
     this.queue.push({ event, bytes });
     this.queueBytes += bytes;
+    this.peakQueuedEvents = Math.max(this.peakQueuedEvents, this.queue.length);
+    this.peakQueuedBytes = Math.max(this.peakQueuedBytes, this.queueBytes);
 
     // Immediate flush triggers.
     if (this.queue.length >= this.maxBatchEvents || this.queueBytes >= this.maxBatchBytes) {
@@ -354,6 +362,8 @@ export class ActivityUploader {
       enqueued: this.statEnqueued,
       uploaded: this.statUploaded,
       dropped: this.statDropped,
+      peakQueuedEvents: this.peakQueuedEvents,
+      peakQueuedBytes: this.peakQueuedBytes,
     };
   }
 

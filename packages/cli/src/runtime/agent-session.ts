@@ -46,6 +46,7 @@ import { AgentAdapterError } from './agents/adapter.js';
 import { createPresence } from './presence.js';
 import { type RunnerHandle, RunnerStartupError, startRunner } from './runner.js';
 import { createSessionLog } from './session-log.js';
+import type { ActivityUploaderStats } from './trace/activity-uploader.js';
 
 /** Inputs common to every runner verb. Runner-specific knobs (claude
  * args, codex --resume, ...) live on the adapter, not here. */
@@ -79,7 +80,7 @@ export interface RunSummary {
   exitCode: number | null;
   durationMs: number;
   agentSessionId: string | null;
-  capture: { enqueued: number; uploaded: number; dropped: number } | null;
+  capture: ActivityUploaderStats | null;
 }
 
 /**

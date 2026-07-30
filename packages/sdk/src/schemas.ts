@@ -1073,6 +1073,8 @@ export const ActivityEventSchema = z.discriminatedUnion('kind', [
         enqueued: z.number().int().nonnegative(),
         uploaded: z.number().int().nonnegative(),
         dropped: z.number().int().nonnegative(),
+        peakQueuedEvents: z.number().int().nonnegative().optional(),
+        peakQueuedBytes: z.number().int().nonnegative().optional(),
       })
       .optional(),
   }),

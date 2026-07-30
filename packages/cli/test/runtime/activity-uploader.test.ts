@@ -136,7 +136,139 @@ describe('ActivityUploader', () => {
     for (let i = 0; i < 6; i++) u.enqueue(makeEvent(i));
     // Cap is 3 → only the last 3 survive.
     expect(u.__debugQueueLength()).toBe(3);
+    expect(u.stats()).toMatchObject({ enqueued: 6, dropped: 3 });
     vi.useFakeTimers();
+  });
+
+  it('records peak instantaneous queue occupancy before the queue drains', async () => {
+    const client = makeFakeClient();
+    const first = makeEvent(1);
+    const second = makeEvent(2);
+    const expectedBytes =
+      Buffer.byteLength(JSON.stringify(first), 'utf8') +
+      Buffer.byteLength(JSON.stringify(second), 'utf8');
+    const u = new ActivityUploader({
+      brokerClient: client as unknown as BrokerClient,
+      name: 'engineer-1',
+      log: () => {},
+      maxBatchEvents: 100,
+      maxBatchAgeMs: 60_000,
+    });
+
+    u.enqueue(first);
+    u.enqueue(second);
+    expect(u.stats()).toEqual({
+      enqueued: 2,
+      uploaded: 0,
+      dropped: 0,
+      peakQueuedEvents: 2,
+      peakQueuedBytes: expectedBytes,
+    });
+
+    await u.flush();
+    expect(u.__debugQueueLength()).toBe(0);
+    expect(u.stats()).toMatchObject({
+      uploaded: 2,
+      peakQueuedEvents: 2,
+      peakQueuedBytes: expectedBytes,
+    });
+  });
+
+  it('enforces maxQueueBytes using UTF-8 bytes rather than UTF-16 code units', () => {
+    vi.useRealTimers();
+    const client = makeFakeClient();
+    const first: ActivityEvent = {
+      kind: 'user_prompt',
+      ts: 1,
+      text: '😀',
+      agent: 'codex',
+    };
+    const second = makeEvent(2);
+    const firstJson = JSON.stringify(first);
+    const secondJson = JSON.stringify(second);
+    const codeUnits = firstJson.length + secondJson.length;
+    const utf8Bytes = Buffer.byteLength(firstJson, 'utf8') + Buffer.byteLength(secondJson, 'utf8');
+    expect(utf8Bytes).toBeGreaterThan(codeUnits);
+
+    const u = new ActivityUploader({
+      brokerClient: client as unknown as BrokerClient,
+      name: 'engineer-1',
+      log: () => {},
+      maxBatchEvents: 100,
+      maxBatchBytes: 128 * 1024 * 1024,
+      maxBatchAgeMs: 60_000,
+      // Both events fit by `.length`; they do not fit by UTF-8 bytes.
+      maxQueueBytes: codeUnits,
+    });
+    u.enqueue(first);
+    u.enqueue(second);
+
+    expect(u.__debugQueueLength()).toBe(1);
+    expect(u.stats().dropped).toBe(1);
+    vi.useFakeTimers();
+  });
+
+  it('triggers a batch flush from UTF-8 bytes rather than UTF-16 code units', async () => {
+    const client = makeFakeClient();
+    const event: ActivityEvent = {
+      kind: 'user_prompt',
+      ts: 1,
+      text: '界'.repeat(100),
+      agent: 'codex',
+    };
+    const json = JSON.stringify(event);
+    const codeUnits = json.length;
+    const utf8Bytes = Buffer.byteLength(json, 'utf8');
+    expect(utf8Bytes).toBeGreaterThan(codeUnits);
+
+    const u = new ActivityUploader({
+      brokerClient: client as unknown as BrokerClient,
+      name: 'engineer-1',
+      log: () => {},
+      maxBatchEvents: 100,
+      // The payload is below this threshold in code units and above it
+      // in UTF-8 bytes, so only the promised byte measure flushes now.
+      maxBatchBytes: codeUnits + 1,
+      maxBatchAgeMs: 60_000,
+    });
+    u.enqueue(event);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.uploadActivity).toHaveBeenCalledTimes(1);
+  });
+
+  it('splits POST batches using UTF-8 bytes rather than UTF-16 code units', async () => {
+    const client = makeFakeClient();
+    const event: ActivityEvent = {
+      kind: 'user_prompt',
+      ts: 1,
+      text: '界'.repeat(100),
+      agent: 'codex',
+    };
+    const json = JSON.stringify(event);
+    const codeUnits = json.length;
+    const utf8Bytes = Buffer.byteLength(json, 'utf8');
+    expect(utf8Bytes).toBeGreaterThan(codeUnits);
+    expect(codeUnits * 2).toBeLessThanOrEqual(utf8Bytes);
+
+    const u = new ActivityUploader({
+      brokerClient: client as unknown as BrokerClient,
+      name: 'engineer-1',
+      log: () => {},
+      maxBatchEvents: 100,
+      maxBatchBytes: 128 * 1024 * 1024,
+      maxBatchAgeMs: 60_000,
+      // One event fits exactly by UTF-8 bytes. Two fit only under the
+      // incorrect UTF-16-code-unit measure.
+      maxPostBytes: utf8Bytes,
+    });
+    u.enqueue(event);
+    u.enqueue({ ...event, ts: 2 });
+    await u.flush();
+    await vi.advanceTimersByTimeAsync(0);
+    const sizes = client.uploadActivity.mock.calls.map(
+      (call) => (call[1] as { events: unknown[] }).events.length,
+    );
+    expect(sizes).toEqual([1, 1]);
   });
 
   it('close() drains the queue via a final flush', async () => {
@@ -236,7 +368,7 @@ describe('ActivityUploader', () => {
     // Both events landed: the in-flight one was awaited (and counted),
     // and the one queued behind it was drained rather than dropped.
     expect(client.uploadActivity).toHaveBeenCalledTimes(2);
-    expect(u.stats()).toEqual({ enqueued: 2, uploaded: 2, dropped: 0 });
+    expect(u.stats()).toMatchObject({ enqueued: 2, uploaded: 2, dropped: 0 });
     expect(u.__debugQueueLength()).toBe(0);
   });
 
