@@ -22,19 +22,31 @@
  *
  * WHAT THIS CATCHES, AND WHAT IT DOES NOT
  * ---------------------------------------
- * zod `.parse()` catches five divergence shapes:
- *   - pattern      — a string that fails a regex (the known instance)
- *   - type         — number where string was promised, etc.
- *   - optionality  — a required field the server stopped sending
- *   - nullability  — null where the schema says non-nullable
- *   - removed      — a field dropped from the response entirely
+ * Two tiers, and the distinction is deliberate — the first is measured, the
+ * second is reasoned. Do not read them as equivalent.
  *
- * It does NOT catch a sixth:
- *   - EXTRA FIELDS. No schema in `csuite-sdk` uses `.strict()`, and zod
- *     strips unknown keys by default. A server that starts emitting a field
- *     the schema has never heard of passes here silently. Catching that
- *     needs `.strict()` on the schemas, which is a published-contract change
- *     and is NOT in scope here.
+ * MEASURED by mutation:
+ *   - pattern      — a string failing a regex. The known instance, live below.
+ *   - type         — mutated `HealthResponseSchema.version` string -> number;
+ *                    the health case failed.
+ *   - extra fields — NOT caught. Mutated `/healthz` to emit an undeclared
+ *                    field; the test stayed GREEN. See below.
+ *
+ * MECHANISM-DERIVED, not separately mutated:
+ *   - optionality  — a required field the server stopped sending.
+ *   - nullability  — null where the schema says non-nullable.
+ *   - removed      — defined as REQUIRED-field removal, which is the same
+ *                    observable as the optionality case; a dropped OPTIONAL
+ *                    field is accepted and is not a divergence zod can see.
+ *   These follow from the same `safeParse` call that the measured rows
+ *   exercise, but nobody has mutated a schema to demonstrate them here.
+ *
+ * The extra-field gap is the important one: no schema in `csuite-sdk` uses
+ * `.strict()`, and zod strips unknown keys by default. A server that starts
+ * emitting a field the schema has never heard of passes silently. Closing it
+ * means `.strict()` on published schemas — a contract change, NOT in scope.
+ * Note it is a different RELATION from the others: the five above are ways a
+ * response can CONTRADICT the schema; this is a way it can EXCEED it.
  *
  * Coverage is per-endpoint and deliberately partial — see the table below.
  * An endpoint absent from it is UNCHECKED, not proven correct. Adding a case
@@ -291,34 +303,57 @@ describe('SDK response contract', () => {
 
   // ─── The known instance — currently DIVERGENT, deliberately ────────
   //
-  // `it.fails` asserts this test does NOT pass. That is not a way of
-  // ignoring it: it pins a live, known divergence so the suite stays
-  // honest AND green, and it is self-correcting. The moment someone
-  // widens `FsEntrySchema.owner`, the body starts passing, `it.fails`
-  // starts FAILING, and whoever landed the fix is told to convert this
-  // to a plain `it()`. A skip would have gone quiet instead.
+  // This asserts the EXACT divergence rather than "this test fails".
+  //
+  // An earlier version wrapped the whole body in `it.fails`. That was
+  // wrong: `it.fails` inverts the ENTIRE callback, so a fixture, auth,
+  // routing, status, JSON or import failure satisfies it just as well as
+  // the schema divergence does. Rune demonstrated it — swapping the token
+  // for an invalid one made the endpoint fail before any parse could
+  // happen, and the file still reported 9 passed + 1 expected fail, exit
+  // 0. The red case cried green for an unrelated reason.
+  //
+  // The general rule, worth more than this test: AN INVERTED ASSERTION
+  // MUST INVERT ONLY THE ASSERTION. So below, the fetch and the status
+  // check sit on the NORMAL failure path, and only the parse is
+  // inverted — pinned to one field and one issue code.
+  //
+  // Self-correction is preserved: when `FsEntrySchema.owner` widens,
+  // `safeParse` starts succeeding, these assertions fail, and whoever
+  // landed the fix is told to convert this case to
+  // `expectMatchesContract()` like every other endpoint here.
   //
   // The divergence: `/fs/stat` returns 200 with a correct entry whose
   // `owner` is `obj:<id>`. `FsEntrySchema.owner` is `NameSchema`, which
-  // rejects the colon — so the SDK cannot parse a response its own
-  // server just produced. Every other test on this path asserts
-  // `res.status === 200` and passes, which is how it survived.
-  //
-  // The fix is proposed and NOT applied: it widens a schema in a
-  // published package, which is AndrewJon's call (obj-ms7bqy3n-d).
-  //
-  // Verified coupling — this fails for the RIGHT reason, not
-  // incidentally: applying the proposed widening turns the whole file
-  // 10/10 green, and reverting it returns to 9/10 with only this case
-  // divergent. Nothing else in the file moves either way.
-  it.fails('GET /fs/stat on an OBJECTIVE NAMESPACE path matches FsEntryResponseSchema', async () => {
+  // rejects the colon. The fix is proposed and NOT applied — it widens a
+  // schema in a published package, which is AndrewJon's call
+  // (obj-ms7bqy3n-d).
+  it('GET /fs/stat on an OBJECTIVE NAMESPACE path — KNOWN DIVERGENCE at entry.owner', async () => {
     const { app } = makeApp();
     const obj = await seedObjectiveWithFile(app);
-    await expectMatchesContract(
-      app,
+
+    // Normal path. A break in any of this is a real failure, not an
+    // expected one, and must not be swallowed by the inversion below.
+    const res = await app.request(
       `/fs/stat?path=${encodeURIComponent(`/objectives/${obj.id}/spec.txt`)}`,
       authed(ALICE),
-      FsEntryResponseSchema,
     );
+    expect(res.status, 'server should still serve the namespace entry').toBe(200);
+    const body = (await res.json()) as { entry: { owner: string } };
+    expect(body.entry.owner, 'fixture should produce an obj: owner').toBe(`obj:${obj.id}`);
+
+    // Only the parse is inverted, and only for this one field.
+    const parsed = FsEntryResponseSchema.safeParse(body);
+    expect(
+      parsed.success,
+      'FsEntry.owner appears to have been widened — convert this case to expectMatchesContract().',
+    ).toBe(false);
+    if (parsed.success) return;
+    const issue = parsed.error.issues.find((i) => i.path.join('.') === 'entry.owner');
+    expect(
+      issue,
+      'divergence is no longer at entry.owner — investigate before changing this',
+    ).toBeDefined();
+    expect(issue?.code).toBe('invalid_format');
   });
 });
