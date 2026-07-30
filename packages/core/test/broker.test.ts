@@ -701,13 +701,22 @@ describe('Broker.push recipient validation', () => {
   });
 
   it('does not append the rejected message to the event log', async () => {
-    const { broker, eventLog } = makeBroker();
-    await broker.register('agent-1');
-    await expect(broker.push({ to: 'chan:general', body: 'hi' })).rejects.toThrow();
     // Validating after the append would still reject the send while
     // leaving the rejected row durably in the log — the exact artifact
     // this change exists to stop writing.
-    expect(await eventLog.query({})).toHaveLength(0);
+    const { broker, eventLog } = makeBroker();
+    await broker.register('agent-1');
+
+    // `query` is viewer-scoped, so an empty result could mean "not
+    // appended" OR "appended and filtered out". Establish first that
+    // this query can see a message at all, then assert the count does
+    // not move — otherwise the assertion passes for a reason that has
+    // nothing to do with the change.
+    await broker.push({ body: 'a message that is appended' }, { from: 'agent-1' });
+    expect(await eventLog.query({ viewer: 'agent-1' })).toHaveLength(1);
+
+    await expect(broker.push({ to: 'chan:general', body: 'hi' })).rejects.toThrow();
+    expect(await eventLog.query({ viewer: 'agent-1' })).toHaveLength(1);
   });
 
   it('does not deliver a `to: ""` send to the whole team', async () => {
