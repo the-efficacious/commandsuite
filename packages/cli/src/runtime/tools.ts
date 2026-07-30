@@ -358,13 +358,42 @@ export function defineTools(
     // can see) or director authority. See `fs_shared` for a list of
     // files shared with you.
     //
-    // Objective namespaces live at `/objectives/<id>/` and are
-    // collaboratively read/write/delete-able by every member of the
-    // objective (originator + assignee + watchers). Files attached at
-    // objective-create time are mirrored into this namespace
-    // automatically — agents who are members can also `fs_write`
-    // additional files there directly, and they participate in the
-    // same membership ACL.
+    // Objective namespaces live at `/objectives/<id>/`. Files attached
+    // at objective-create time are mirrored there automatically, and
+    // the server-side membership ACL is real.
+    //
+    // INTENDED DESIGN, NOT CURRENT BEHAVIOUR: collaborative
+    // read/write/delete by every member (originator + assignee +
+    // watchers) is what this is FOR, and it does not work today for
+    // members who are not directors. Two live defects, diagnosed under
+    // objective `obj-ms7bqy3n-d` and awaiting a decision because the
+    // fix touches a published package:
+    //
+    //   1. `filesystem-store.ts` non-root `list()` gates on
+    //      `members.manage || ownsPath` and never calls `canRead()`, so
+    //      a non-director member listing the namespace gets 403.
+    //   2. Every namespace `FsEntry` has owner `obj:<id>`, and
+    //      `FsEntrySchema.owner` is `NameSchema`, whose pattern
+    //      excludes `:`. The server responds correctly — the raw
+    //      `GET /fs/read` route returns 200 with the full bytes — and
+    //      the SDK client then throws parsing that successful response.
+    //
+    // Defect 2 is VIEWER-INDEPENDENT: the parse is client-side and
+    // keys off the owner VALUE, not the caller, so it fails for
+    // directors exactly as it does for members. `fsStat`, `fsList`,
+    // `fsWrite`, `fsMkdir` and `fsShared` all parse, so:
+    //
+    //   - `fs_read` fails for EVERYONE — `handleFsRead` calls `fsStat`
+    //     before fetching bytes, so it throws before the working raw
+    //     read is ever reached. "Exact-path reads work" is true of the
+    //     HTTP route and FALSE of this tool.
+    //   - `fs_write`/`fs_mkdir` COMMIT and are then reported to the
+    //     agent as errors.
+    //
+    // Net: there is no working route to a namespace file from the MCP
+    // tool surface today, for any member of any role. Do not describe
+    // it to agents as working. The descriptions below say what happens
+    // now.
     ...buildFilesystemTools(name),
     // ── Permission-gated tools ──────────────────────────────────────
     //
@@ -1335,8 +1364,14 @@ function buildFilesystemTools(name: string): Tool[] {
         `List the contents of a directory in the csuite virtual filesystem. ` +
         `Your home is \`${home}\`; passing "/" lists the set of homes you can see. ` +
         `Entries include per-item metadata (kind, size, mime type, owner). ` +
-        `Objective namespaces are listable at \`/objectives/<id>/\` if you're a ` +
-        `member (originator, assignee, or watcher) of that objective.`,
+        `KNOWN LIMITATION — objective namespaces (\`/objectives/<id>/\`) are the ` +
+        `intended home for work-scoped files and are NOT usable from this tool ` +
+        `surface today. Listing one fails for everyone: non-directors get a 403 ` +
+        `from a permission check that is itself a defect, and directors get past ` +
+        `it only to have the client reject the response. Both are awaiting a fix. ` +
+        `Do not read either failure as "you lack access to this objective", and ` +
+        `do not retry — nothing you can pass will make it succeed. Use message ` +
+        `and objective attachments to share work-scoped files meanwhile.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -1387,9 +1422,14 @@ function buildFilesystemTools(name: string): Tool[] {
           path: {
             type: 'string',
             description:
-              `Absolute path to write. Allowed under ${home} (your home), ` +
-              `under \`/objectives/<id>/\` for any objective you're a member of, ` +
-              `or anywhere if you're a director.`,
+              `Absolute path to write. Allowed under ${home} (your home), or ` +
+              `anywhere if you're a director. Writing under \`/objectives/<id>/\` ` +
+              `is intended to work for objective members and CURRENTLY MISREPORTS ` +
+              `ITS RESULT for every caller including directors: the server commits ` +
+              `the write, then the client fails validating the response and you are ` +
+              `told it errored. Do NOT retry such a write — the file is already ` +
+              `there, and you cannot read it back to check. Write to your home ` +
+              `instead until this is fixed.`,
           },
           mimeType: {
             type: 'string',
@@ -1465,10 +1505,11 @@ function buildFilesystemTools(name: string): Tool[] {
         `List every file that has been shared with you via a message attachment — ` +
         `entries another member explicitly attached to a thread you can see. Owner- ` +
         `private files from other slots never appear here. Files that live in objective ` +
-        `namespaces you're a member of (\`/objectives/<id>/...\`) are NOT in this list ` +
-        `either; access there flows from membership, not grants — use \`fs_ls\` on ` +
-        `that namespace path to see them. Returns each file's FsEntry (path, size, mime, ` +
-        `owner).`,
+        `namespaces (\`/objectives/<id>/...\`) are NOT in this list either; access there ` +
+        `flows from membership, not grants. Note that objective namespaces are currently ` +
+        `unusable from every filesystem tool — see \`fs_ls\` for what fails and why — so ` +
+        `there is no working route to those files from here today. Returns each file's ` +
+        `FsEntry (path, size, mime, owner).`,
       inputSchema: { type: 'object', properties: {} },
     },
   ];
