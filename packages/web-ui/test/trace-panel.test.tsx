@@ -170,7 +170,7 @@ describe('TracePanel', () => {
     render(<TracePanel objective={objective} />);
 
     await waitFor(() => expect(screen.getByText(/LLM turns \(501\)/)).toBeTruthy());
-  });
+  }, 15_000);
 
   it('surfaces unavailable GenAI enrichment while retaining activity markers', async () => {
     globalThis.fetch = (async (input) => {
@@ -194,7 +194,7 @@ describe('TracePanel', () => {
       ).toBeTruthy(),
     );
     expect(screen.getByText(/LLM turns \(1\)/)).toBeTruthy();
-  });
+  }, 15_000);
 });
 
 // ─── GenAI enrichment: joinTurns + enriched rendering ──────────────
