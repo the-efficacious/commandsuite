@@ -57,12 +57,10 @@
  * by nothing on the filtered invocations that bypass it.** Which is the
  * case this guard exists for. It makes one way of being wrong loud there
  * and leaves two silent — so it does not make
- * `pnpm --filter <pkg> exec vitest` safe, it makes it less bad. If you
- * are going to believe a result, run it from the root.
- *
- * So this guard does not make `pnpm --filter <pkg> exec vitest` safe. It
- * makes one specific way of being wrong loud, and leaves two others
- * silent. If you are going to believe a result, run it from the root.
+ * `pnpm --filter <pkg> exec vitest` safe, it makes it less bad. The
+ * operator-facing version of that lives in `.github/CONTRIBUTING.md`
+ * beside the per-package test commands, which is where someone about to
+ * type one will actually be.
  *
  * It is also vitest-only. An ad-hoc `node` script importing
  * `packages/core/dist/index.js` never reaches this code; that gap is
