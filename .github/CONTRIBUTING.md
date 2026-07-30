@@ -99,10 +99,11 @@ nothing. Merge to `develop` once your partner has verified.
 ### Commit signing does not currently work
 
 `commit.gpgsign=true` is configured with an SSH key, and **signing fails in the
-development environment** — git's signing path goes through the gnome-keyring
-agent, which returns `communication with agent failed`. Two different people on
-two different repositories have hit it, so it is environmental rather than
-anyone's misconfiguration.
+shared development environment the core team works in** — git's signing path
+goes through the gnome-keyring agent, which returns `communication with agent
+failed`. Measured in two checkouts of two repositories by two people, so within
+that environment it is not anyone's individual misconfiguration. It says nothing
+about your machine.
 
 Disable GPG signing for the commit, but **keep the DCO `Signed-off-by` trailer**
 — that is a separate mechanism and it is required (see below).
