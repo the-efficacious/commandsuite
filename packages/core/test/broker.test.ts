@@ -1,6 +1,12 @@
+import { MessageSchema } from 'csuite-sdk/schemas';
 import type { Message } from 'csuite-sdk/types';
 import { describe, expect, it, vi } from 'vitest';
-import { Broker, InMemoryEventLog, PresenceIdentityError } from '../src/index.js';
+import {
+  Broker,
+  InMemoryEventLog,
+  InvalidRecipientError,
+  PresenceIdentityError,
+} from '../src/index.js';
 
 function makeBroker(overrides: { idFactory?: () => string; now?: () => number } = {}) {
   const eventLog = new InMemoryEventLog();
@@ -631,5 +637,134 @@ describe('InMemoryEventLog', () => {
 
     const limitOut = await log.tail({ limit: 2 });
     expect(limitOut.map((m) => m.id)).toEqual(['m3', 'm4']);
+  });
+});
+
+describe('Broker.push recipient validation', () => {
+  // The defect these cover, stated once: `push` copied `payload.to`
+  // into `message.to` unvalidated, so a library caller could make the
+  // broker emit a `Message` that `csuite-sdk`'s own `MessageSchema`
+  // rejects — one shipped artifact disagreeing with another. Confirmed
+  // live against the fetched 0.2.0 tarballs before it was fixed here:
+  // `push({to: 'chan:general'})` emitted `to: 'chan:general'` and
+  // `MessageSchema.safeParse` returned `invalid_format` at path `to`.
+  //
+  // `chan:` is the value that found it and it is worth saying why it is
+  // NOT a legitimate recipient, because it looks like one. It is a
+  // THREAD prefix (`CHANNEL_THREAD_PREFIX`, event-log.ts) that travels
+  // in `data.thread`; channel sends leave `to` unset and pass the
+  // member list in `PushContext.recipients`. The live broker log agreed
+  // — 959 events, eight distinct `to` values, all member names or null,
+  // zero the schema would reject. Nothing in the system produces a
+  // `chan:` recipient; it is reachable only through this entry point.
+
+  it('rejects a `to` that MessageSchema would reject', async () => {
+    const { broker } = makeBroker();
+    await broker.register('agent-1');
+    await expect(broker.push({ to: 'chan:general', body: 'hi' })).rejects.toThrow(
+      InvalidRecipientError,
+    );
+  });
+
+  // The general form, and the one that keeps holding after someone
+  // edits either artifact: whatever `push` emits, the published schema
+  // must accept. A test naming only `chan:` would pass again the moment
+  // a different bad prefix appeared.
+  it('emits nothing MessageSchema rejects, across the hostile set', async () => {
+    const hostile = [
+      'chan:general', // the thread prefix that found the defect
+      'obj:abc123', // objective namespace prefix — same shape
+      'agent 1', // space
+      'agent/1', // path separator
+      'a'.repeat(129), // over NameSchema's 128
+      '', // empty
+      'ünïcode', // outside the allowed class
+      '*', // wildcard, in case anyone reads it as one
+    ];
+
+    for (const to of hostile) {
+      const { broker } = makeBroker();
+      await broker.register('agent-1');
+      let emitted: Message | null = null;
+      try {
+        emitted = (await broker.push({ to, body: 'hi' })).message;
+      } catch (err) {
+        expect(err).toBeInstanceOf(InvalidRecipientError);
+        continue;
+      }
+      // If it did emit, the schema must accept it — a widened
+      // NameSchema is a legitimate future, an unparseable emission is
+      // not.
+      const parsed = MessageSchema.safeParse(emitted);
+      expect(parsed.success, `emitted an unparseable to: ${JSON.stringify(to)}`).toBe(true);
+    }
+  });
+
+  it('does not append the rejected message to the event log', async () => {
+    const { broker, eventLog } = makeBroker();
+    await broker.register('agent-1');
+    await expect(broker.push({ to: 'chan:general', body: 'hi' })).rejects.toThrow();
+    // Validating after the append would still reject the send while
+    // leaving the rejected row durably in the log — the exact artifact
+    // this change exists to stop writing.
+    expect(await eventLog.query({})).toHaveLength(0);
+  });
+
+  it('does not deliver a `to: ""` send to the whole team', async () => {
+    // THE EMPTY STRING IS THE SERIOUS CASE and it is not the one that
+    // found the bug. Measured on the pre-change broker: `to: 'chan:general'`
+    // is truthy, so it took the targeted path, missed the registry
+    // lookup and reached nobody — annoying, not dangerous. `to: ''` is
+    // falsy, so `payload.to ?? null` let it through to the
+    // `registry.allStates()` branch and delivered a message addressed
+    // to one recipient to all three registered members (`targets: 3`).
+    //
+    // That is a disclosure bug, not a validation one, and it is why
+    // this entry point rejects rather than coercing: "unparseable name,
+    // treat it as null" IS the empty-string path, generalised. An
+    // unset variable interpolated into `to` is a normal way to arrive
+    // here, and a deliberate broadcast is already spelled by omitting
+    // the field.
+    const { broker } = makeBroker();
+    const seen: string[] = [];
+    for (const name of ['alice', 'bob', 'carol']) {
+      await broker.register(name);
+      broker.subscribe(name, async () => {
+        seen.push(name);
+      });
+    }
+
+    await expect(
+      broker.push({ to: '', body: 'meant for one person' }, { from: 'alice' }),
+    ).rejects.toThrow(InvalidRecipientError);
+
+    expect(seen).toEqual([]);
+  });
+
+  it('still accepts every shape a real caller uses', async () => {
+    const { broker } = makeBroker();
+    await broker.register('agent-1');
+
+    // A member name.
+    expect((await broker.push({ to: 'agent-1', body: 'dm' })).message.to).toBe('agent-1');
+    // Omitted — broadcast.
+    expect((await broker.push({ body: 'broadcast' })).message.to).toBeNull();
+    // Explicit null — same thing.
+    expect((await broker.push({ to: null, body: 'broadcast' })).message.to).toBeNull();
+    // A channel send: no `to`, thread in data, recipients in context.
+    const channel = await broker.push(
+      { body: 'in channel', data: { thread: 'chan:general' } },
+      { from: 'agent-1', recipients: ['agent-1'] },
+    );
+    expect(channel.message.to).toBeNull();
+    expect(channel.message.data).toEqual({ thread: 'chan:general' });
+    expect(MessageSchema.safeParse(channel.message).success).toBe(true);
+  });
+
+  it('names the channel convention in the error, since that is the caller who hits it', async () => {
+    const { broker } = makeBroker();
+    const err = await broker.push({ to: 'chan:general', body: 'hi' }).catch((e) => e);
+    expect(err.message).toContain('data.thread');
+    expect(err.to).toBe('chan:general');
   });
 });

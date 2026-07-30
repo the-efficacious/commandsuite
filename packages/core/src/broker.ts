@@ -14,6 +14,7 @@
  * bookkeeping.
  */
 
+import { NameSchema } from 'csuite-sdk/schemas';
 import type { Member, Message, Presence, PushPayload, PushResult, Role } from 'csuite-sdk/types';
 import type { EventLog } from './event-log.js';
 import {
@@ -26,6 +27,35 @@ import {
 export interface BrokerLogger {
   warn(message: string, context?: Record<string, unknown>): void;
   error(message: string, context?: Record<string, unknown>): void;
+}
+
+/**
+ * `payload.to` was not a syntactically valid member name.
+ *
+ * THROWN RATHER THAN COERCED, and the reason is the routing table
+ * below rather than strictness for its own sake. `push` selects its
+ * recipient set from `targetName`: a truthy value addresses one member,
+ * and a falsy one falls through to `registry.allStates()` — every
+ * registered member on the team. So the tempting lenient repair,
+ * "unparseable name, treat it as null", turns a message its author
+ * addressed to a single recipient into a team-wide broadcast. Rejecting
+ * a send is recoverable; widening its audience silently is not.
+ *
+ * The domain is `NameSchema`'s, imported rather than restated, because
+ * this exists to make one artifact agree with another and a copied
+ * regex is a second place for them to drift apart.
+ */
+export class InvalidRecipientError extends Error {
+  readonly to: unknown;
+  constructor(to: unknown, detail: string) {
+    super(
+      `push: 'to' must be a member name (${detail}); received ${JSON.stringify(to)}. ` +
+        'Channel sends do not address a channel — they omit `to` and carry ' +
+        '`data.thread = "chan:<id>"` with an explicit recipient list in PushContext.',
+    );
+    this.name = 'InvalidRecipientError';
+    this.to = to;
+  }
 }
 
 export interface BrokerOptions {
@@ -222,7 +252,7 @@ export class Broker {
    */
   async push(payload: PushPayload, context: PushContext = { from: null }): Promise<PushResult> {
     const ts = this.now();
-    const targetName = payload.to ?? null;
+    const targetName = this.resolveTarget(payload.to);
     const message: Message = {
       id: this.idFactory(),
       ts,
@@ -355,6 +385,32 @@ export class Broker {
 
   getEventLog(): EventLog {
     return this.eventLog;
+  }
+
+  /**
+   * Normalise and validate `payload.to` into the recipient name, or
+   * null for "not addressed to anyone in particular".
+   *
+   * Runs BEFORE `eventLog.append`. Validating after the append would
+   * still reject the send while leaving the rejected message durably
+   * in the log — the exact class of row this change exists to stop
+   * being written.
+   *
+   * `undefined` and `null` both mean unaddressed and are accepted;
+   * everything else must satisfy `NameSchema`. Empty string is
+   * REJECTED rather than folded into null, even though `?? null`
+   * previously let it through to the same broadcast branch: `to: ''`
+   * is much more likely a bug at the callsite — an unset variable
+   * interpolated into a name — than a deliberate broadcast, and the
+   * deliberate form is already spelled by omitting the field.
+   */
+  private resolveTarget(to: string | null | undefined): string | null {
+    if (to === undefined || to === null) return null;
+    const parsed = NameSchema.safeParse(to);
+    if (!parsed.success) {
+      throw new InvalidRecipientError(to, parsed.error.issues[0]?.message ?? 'invalid');
+    }
+    return parsed.data;
   }
 
   private assertIdentity(target: string, name: string | null | undefined): void {

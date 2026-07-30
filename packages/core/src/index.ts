@@ -19,6 +19,7 @@ export {
   type BrokerLogger,
   type BrokerOptions,
   type IdentityContext,
+  InvalidRecipientError,
   type PushContext,
   type RegistrationResult,
 } from './broker.js';
