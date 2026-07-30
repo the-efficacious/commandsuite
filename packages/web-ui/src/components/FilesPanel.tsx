@@ -383,7 +383,18 @@ export function FilesPanel({ viewer, path }: FilesPanelProps) {
                 Download
               </a>
             )}
-            {current.mode !== 'shared' && entry.owner === viewer && (
+            {/* Ask, don't infer. `entry.owner === viewer` was wrong for
+                objective namespace entries — owner is `obj:<id>` and the
+                server's rule includes objective membership, which this
+                component cannot determine.
+
+                Strictly `=== true`, with NO fallback to the old
+                inference. Against a server too old to send `canWrite`,
+                Delete simply doesn't render: unknown capability is
+                shown as unavailable rather than guessed. A `??` fallback
+                would silently reinstate the exact defect this replaced
+                the moment the field is absent. */}
+            {current.mode !== 'shared' && entry.canWrite === true && (
               <button
                 type="button"
                 class="btn"

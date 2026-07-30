@@ -35,6 +35,30 @@ pnpm typecheck                         # tsc --noEmit everywhere
 pnpm test                              # all package test suites
 ```
 
+### Run tests from the root if you're going to believe the result
+
+`pnpm --filter <pkg> exec vitest run` is convenient and **bypasses turbo**,
+which is what normally keeps a package's `dist/` in step with its source.
+Tests that import a workspace package by name resolve through its
+`exports` map into `dist/`, so a filtered run can pass against a build
+that no longer matches the tree.
+
+`scripts/assert-fresh-dist.mjs` closes part of that — a vitest
+`globalSetup` that refuses when a dependency's `dist/` no longer matches
+its own `src/`, whatever launched vitest. It does **not** close all of it:
+
+| drift | root `pnpm test` | filtered run |
+|---|---|---|
+| a package's own `src/` | turbo | **the guard** |
+| build config (`tsup.config.ts`, `vite.config.ts`) | turbo | **nothing** |
+| a transitive workspace dependency | turbo | **nothing** |
+| `dist/` edited after the build | nothing | nothing |
+
+So a filtered run is fine for iterating and is **not** something to draw a
+conclusion from. Run it from the root before you report a result, and
+say which you ran — the two are different objects and only one of them
+is checked end to end.
+
 ## Project layout — where does code go?
 
 The monorepo splits into `packages/` (importable libraries) and `apps/`
@@ -68,6 +92,127 @@ client), `csuite-cli` (terminal).
 6. Once approved, a maintainer squashes and merges. The `Signed-off-by`
    trailers are preserved.
 
+## Internal development — team members
+
+The workflow above is for **outside contributors**. Members of the core team
+work on long-lived shared branches instead:
+
+| branch | what it is |
+|---|---|
+| `main` | Protected. Pull requests only, approved by the repository owner. |
+| `develop` | The integration trunk. **Branch your work from here, and merge it back here.** |
+| `review/<yyyy-mm-dd>` | Cut from `develop` when a batch is ready. The PR to `main` comes from this branch and is **frozen** during review, so the diff cannot shift under the reviewer while they are reading it. `develop` keeps moving the whole time. |
+
+> **`develop` is scaffolding, not architecture.** It exists as one isolation
+> layer for as long as every team member holds merge-to-`main` privileges under
+> a shared identity. Once per-agent identities land, team members will open pull
+> requests directly against `main` like anyone else, and **`develop` retires**
+> along with the `review/<date>` branches that feed off it. Treat this whole
+> section as temporary. No timeline is set; if you are reading it after
+> per-agent identities exist, it is stale and the fix is to delete it.
+
+turndb uses the same model, written down in its own `CONTRIBUTING.md`. It is
+stated once per repository and pointed at from everywhere else — three copies of
+a branch model is worse than one, because they drift and then nobody knows which
+is true.
+
+**Author proposes, partner verifies.** Every change is verified by someone who
+did not write it, and whoever did not write it decides whether it is done. A
+verifier is expected to disagree; agreement arrived at by deference is worth
+nothing. Merge to `develop` once your partner has verified.
+
+> **Open question, not yet decided:** whether outside contributions should
+> target `main` (as the workflow above says) or `develop`. As written, a PR
+> merged to `main` is not on `develop`, so the next `review/<date>` branch cut
+> from `develop` will not contain it. Until this is settled, a maintainer
+> merging an outside PR to `main` should make sure the commit reaches `develop`
+> too.
+
+### Commit signing does not currently work
+
+Observed independently on **two hosts**, in two repositories. Both hosts have
+`gpg.format=ssh` configured against an SSH key.
+
+**The failure differs between attempts, not between machines:** sometimes git's
+signing path returns `communication with agent failed`; sometimes the commit
+hangs past a bounded timeout. Both modes have been observed on the same host with
+the same config, hours apart. In every observed case the commit does not
+complete. We have not isolated the variable and are not guessing at it.
+
+This is environmental rather than one person's misconfiguration, and it says
+nothing about your machine.
+
+Disable GPG signing for the commit, but **keep the DCO `Signed-off-by` trailer**
+— that is a separate mechanism and it is required (see below).
+
+This matters if branch protection ever requires signed commits: it has to be
+solved before that requirement lands, not discovered at a rejected push.
+
+## Writing tests
+
+Assert **completeness and shape**, not presence or absence.
+
+Presence assertions — *the field appeared*, *the row is gone*, *the call
+returned* — are cheap and survive refactors, which is exactly why they are
+everywhere and exactly why they are blind to a contract silently degrading.
+
+This is not theoretical. Every defect found in a recent sweep across this
+repository and turndb survived a green test that asserted the wrong thing:
+
+- the roster tool rendered every role as `[object Object]` for the life of the
+  repo; the test asserted that teammate *names* appeared;
+- a paged read returned a short page while live rows existed; the test asserted
+  that a deleted id was *absent*, never that the page was full;
+- a trace view silently truncated its window; the test asserted that the call
+  *returned*, never that the result was complete.
+
+Before committing a test, ask **both** of these. They are not the same question,
+and the second is the one people forget:
+
+- **Would this pass against a version that returns *some* of the right answer?**
+  This catches a fix that does too little — the short page, the half-rendered
+  field, the truncated window.
+- **Would this pass against a version that refuses *more* than it should?** This
+  catches a fix that does too much. A suite full of "rejects bad input"
+  assertions passes happily against an implementation that also rejects good
+  input. If you add a validity check, test the *nearest valid thing* it must
+  still accept.
+
+If either answer is yes, it is not yet testing the contract.
+
+Prefer cheap negative invariants — `expect(out).not.toContain('[object Object]')`
+— over whole-string golden files, which fail on every cosmetic change and train
+people to regenerate the golden without reading it. And where the type system can
+make the wrong thing unrepresentable, that is better than either: tests are the
+backstop, types are the fix.
+
+## When something inexplicable happens, measure it
+
+**The reflex to attribute an anomaly to your own carelessness is the most
+efficient way to lose information.** It is fast, humble, feels responsible — and
+it deletes the datapoint. You are usually the only person who will ever see it.
+
+Three times in a single working session on this project, someone buried real
+evidence that way:
+
+- a file that "should" have been readable wasn't, filed as carelessness about
+  paths. It was the first evidence that the team was not all on one machine —
+  found again two hours later, the hard way;
+- a `git push` hung for five minutes, worked around and recorded as a local
+  hiccup. It was the credential-helper state that two people then spent an hour
+  disagreeing about;
+- a signed commit hung, worked around with `-c commit.gpgsign=false`. It was the
+  measurement that eventually settled which signing mechanism was failing, and
+  it corrected a claim already merged into this file.
+
+Each was in someone's own scrollback the whole time. So when something
+unexpected happens and the easy explanation is that you were sloppy, that is
+exactly when to spend sixty seconds measuring it instead.
+
+The related discipline: **when two careful measurements of the same thing
+disagree, stop arguing about the thing and check whether you measured the same
+thing.** Same path, different machines, different contents.
+
 ## Changesets & releases
 
 Any change that affects a published package's behavior needs a
@@ -94,6 +239,18 @@ the root `CHANGELOG.md` (dependency-only noise stripped); merging *that* PR
 publishes to npm with provenance and cuts a single `v<version>` GitHub
 release for the suite. Maintainers cut releases — contributors just add the
 changeset.
+
+For a manual release, run `pnpm release` from a clean repository root. Its
+preparation step refuses uncommitted source, builds through Turbo, verifies
+the packed payloads, and binds each package's publishable bytes to `HEAD`.
+Direct `pnpm publish` is refusal-only: first run `pnpm release:prepare` at the
+root. Package hooks never rebuild, because rebuilding a dirty tree would
+manufacture an artifact that exists in no commit.
+
+`prepublishOnly` deliberately leaves `pnpm verify-pack` independent: packing
+for inspection does not trigger the publication gate. Publishing an
+already-built tarball also triggers no lifecycle hook and remains outside
+this gate.
 
 ## DCO — Developer Certificate of Origin
 

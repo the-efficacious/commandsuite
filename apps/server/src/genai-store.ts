@@ -88,6 +88,8 @@ export interface GenAiQuery {
   model?: string;
   from?: number;
   to?: number;
+  /** Exclusive composite cursor for oldest-first traversal. */
+  after?: { ts: number; id: number };
   limit?: number;
 }
 
@@ -232,6 +234,10 @@ class SqliteGenAiStore implements GenAiStore {
     if (filter.to !== undefined) {
       conditions.push('ts <= ?');
       params.push(filter.to);
+    }
+    if (filter.after !== undefined) {
+      conditions.push('(ts > ? OR (ts = ? AND id > ?))');
+      params.push(filter.after.ts, filter.after.ts, filter.after.id);
     }
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
     const limit = Math.min(filter.limit ?? DEFAULT_LIMIT, MAX_LIMIT);

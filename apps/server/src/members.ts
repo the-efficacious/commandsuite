@@ -107,7 +107,7 @@ const PermissionLeafSchema = z.enum(PERMISSIONS);
 
 // ─────────────── Per-field schemas (single source of truth) ───────────
 //
-// Surfaced both to the composite `TeamConfigSchema` (file loader) and
+// Surfaced both to the composite `ServerConfigSchema` (file loader) and
 // to the imperative validators below (DB-backed mutators). Keeping
 // them as named top-level constants means the caps live in exactly
 // one place.
@@ -197,7 +197,7 @@ export type JwtConfig = z.infer<typeof JwtConfigSchema>;
 // Narrow, composable validators around the same Zod schemas above.
 // Used by the DB-backed mutation path (team-store.ts) so direct
 // API/CLI/MCP writes hit the same caps as the legacy file loader,
-// without round-tripping through the whole `TeamConfigSchema`.
+// without round-tripping through the whole `ServerConfigSchema`.
 // Each helper throws `MemberLoadError` on the first failure.
 
 function failFromZod(prefix: string, err: unknown): never {

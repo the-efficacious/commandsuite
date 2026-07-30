@@ -47,8 +47,34 @@ export interface EventLogQueryOptions {
 export const GENERAL_CHANNEL_ID = 'general' as const;
 export const CHANNEL_THREAD_PREFIX = 'chan:' as const;
 
+/**
+ * Thread prefix for secret lifecycle events (`secret:<slug>`).
+ *
+ * These are pushed to an explicit recipient set — the members bound to
+ * the secret plus every `secrets.manage` holder — and are deliberately
+ * NOT part of the default viewer feed. The delivery is scoped; without
+ * this the persisted row is not, because a fan-out push stores
+ * `to: null` and the default feed returns every `to: null` row to
+ * everyone. Live delivery and durable readback disagreeing is the
+ * defect; this makes them agree.
+ *
+ * Excluded for every viewer rather than only for non-recipients,
+ * because the event log has no access to secret bindings and should
+ * not grow one. Nothing is stranded: `GET /secrets` returns per-viewer
+ * summaries and `GET /secrets/resolve` returns the caller's own env
+ * delta, which is the surface built for this. The row stays in the log
+ * for forensics; it is the *feed* that stops carrying it.
+ */
+export const SECRET_THREAD_PREFIX = 'secret:' as const;
+
 export function channelThreadTag(channelId: string): string {
   return `${CHANNEL_THREAD_PREFIX}${channelId}`;
+}
+
+/** True when a message is a secret lifecycle event. */
+export function isSecretThread(ev: Pick<Message, 'data'>): boolean {
+  const tag = ev.data?.thread;
+  return typeof tag === 'string' && tag.startsWith(SECRET_THREAD_PREFIX);
 }
 
 export interface EventLog {
@@ -145,6 +171,14 @@ function matchesViewer(ev: Message, viewer: string, withOther?: string): boolean
     if (ev.from === withOther && ev.to === viewer) return true;
     return false;
   }
+  // Secret lifecycle events never appear in the default feed. They are
+  // delivered to an explicit recipient set but persist with `to: null`,
+  // so without this the next line hands every member the full history
+  // of who holds which secret. Checked before the broadcast case
+  // because that is the case that leaks it, and before the `from`
+  // case so the actor's own feed is not the exception that keeps the
+  // spam alive.
+  if (isSecretThread(ev)) return false;
   // Default feed: broadcasts + any DM where viewer is either end.
   if (ev.to === null) return true;
   if (ev.from === viewer) return true;

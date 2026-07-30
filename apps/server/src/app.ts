@@ -6,15 +6,18 @@
  *   POST /session/totp    — unauthed, exchange TOTP code for a session cookie
  *   POST /session/logout  — session-auth, clear the session
  *   GET  /session         — session-auth, return current session info
- *   GET  /briefing        — dual-auth, team-context packet for the user
- *   GET  /roster          — dual-auth, full teammate list + live connection state
- *   POST /push            — dual-auth, deliver a message to one teammate or broadcast
- *   GET  /subscribe       — dual-auth, WebSocket of live messages for a name
- *   GET  /history         — dual-auth, prior messages filtered by viewer scope
+ *   GET  /briefing        — tri-auth, team-context packet for the user
+ *   GET  /roster          — tri-auth, full teammate list + live connection state
+ *   POST /push            — tri-auth, deliver a message to one teammate or broadcast
+ *   GET  /subscribe       — tri-auth, WebSocket of live messages for a name
+ *   GET  /history         — tri-auth, prior messages filtered by viewer scope
  *
- * Dual-auth = either `Authorization: Bearer <token>` (machine plane,
- * MCP link) or `Cookie: csuite_session=<id>` (human plane, web SPA).
- * Both resolve to the same `LoadedMember`, which downstream handlers
+ * Tri-auth = `Authorization: Bearer <opaque token>` (machine plane,
+ * MCP link), `Cookie: csuite_session=<id>` (human plane, web SPA), or
+ * `Authorization: Bearer <RS256 JWT>` (federated plane, only when a
+ * JWT verifier is configured — the two bearer forms are disambiguated
+ * by shape, see `auth.ts` for the exact rule).
+ * All three resolve to the same `LoadedMember`, which downstream handlers
  * use to stamp authoritative `from` on pushes and to gate identity
  * checks on subscribe. All routes must carry `X-CSUITE-Protocol: 1` if
  * the header is present.
@@ -101,7 +104,11 @@ import type {
 import { hasPermission } from 'csuite-sdk/types';
 import { type Context, Hono } from 'hono';
 import { deleteCookie, setCookie } from 'hono/cookie';
-import { type ActivityTracker, createActivityTracker } from './activity-tracker.js';
+import {
+  ACTIVITY_TTL_MS,
+  type ActivityTracker,
+  createActivityTracker,
+} from './activity-tracker.js';
 import { type AuthBindings, createAuthMiddleware } from './auth.js';
 import { composeBriefing } from './briefing.js';
 import { type ChannelStore, ChannelsError, GENERAL_CHANNEL_ID, validateSlug } from './channels.js';
@@ -841,7 +848,7 @@ export function createApp(options: AppOptions): CreatedApp {
     });
   });
 
-  // ─── Team endpoints (dual-auth) ────────────────────────────────
+  // ─── Team endpoints (tri-auth) ────────────────────────────────
 
   app.get(PATHS.briefing, auth, (c) => {
     const member = c.get('member');
@@ -904,6 +911,7 @@ export function createApp(options: AppOptions): CreatedApp {
     return c.json({
       teammates: teammatesFromMembers(members),
       connected: presences,
+      activityWindowMs: ACTIVITY_TTL_MS,
     });
   });
 
@@ -1400,9 +1408,13 @@ export function createApp(options: AppOptions): CreatedApp {
       const fromRaw = c.req.query('from');
       const toRaw = c.req.query('to');
       const limitRaw = c.req.query('limit');
+      const cursorTsRaw = c.req.query('cursor_ts');
+      const cursorIdRaw = c.req.query('cursor_id');
       const from = fromRaw !== undefined ? Number(fromRaw) : undefined;
       const to = toRaw !== undefined ? Number(toRaw) : undefined;
       const limit = limitRaw !== undefined ? Number(limitRaw) : undefined;
+      const cursorTs = cursorTsRaw !== undefined ? Number(cursorTsRaw) : undefined;
+      const cursorId = cursorIdRaw !== undefined ? Number(cursorIdRaw) : undefined;
       if (from !== undefined && !Number.isFinite(from)) {
         return c.json({ error: 'invalid `from` parameter' }, 400);
       }
@@ -1412,10 +1424,20 @@ export function createApp(options: AppOptions): CreatedApp {
       if (limit !== undefined && !Number.isFinite(limit)) {
         return c.json({ error: 'invalid `limit` parameter' }, 400);
       }
+      if (
+        (cursorTs === undefined) !== (cursorId === undefined) ||
+        (cursorTs !== undefined && (!Number.isInteger(cursorTs) || cursorTs < 0)) ||
+        (cursorId !== undefined && (!Number.isInteger(cursorId) || cursorId < 0))
+      ) {
+        return c.json({ error: 'invalid composite cursor' }, 400);
+      }
       const rows = gStore.list({
         memberName: name,
         ...(from !== undefined ? { from } : {}),
         ...(to !== undefined ? { to } : {}),
+        ...(cursorTs !== undefined && cursorId !== undefined
+          ? { after: { ts: cursorTs, id: cursorId } }
+          : {}),
         ...(limit !== undefined ? { limit } : {}),
       });
       // `view=summary` serves the light call-ledger projection (no
@@ -1704,7 +1726,7 @@ export function createApp(options: AppOptions): CreatedApp {
       return null;
     };
 
-    // GET /tool-sources — list, per-viewer summaries. Dual-auth.
+    // GET /tool-sources — list, per-viewer summaries. Tri-auth.
     app.get(PATHS.toolSources, auth, (c) => {
       const member = c.get('member');
       const sources = toolSources.list().map((s) => summarizeSource(s, member.name));
@@ -2260,7 +2282,7 @@ export function createApp(options: AppOptions): CreatedApp {
       }
     });
 
-    // GET /secrets — list, per-viewer summaries. Dual-auth.
+    // GET /secrets — list, per-viewer summaries. Tri-auth.
     app.get(PATHS.secrets, auth, (c) => {
       const member = c.get('member');
       const list = secrets.list().map((s) => summarizeSecret(s, member.name));
@@ -2439,7 +2461,14 @@ export function createApp(options: AppOptions): CreatedApp {
       if (members.findByName(parsed.data.member) === null) {
         return c.json({ error: `no such member: ${parsed.data.member}` }, 400);
       }
-      secrets.bind(secret.id, parsed.data.member);
+      // `bind` enforces the per-member env-name invariant and throws
+      // `env_taken` when the member already resolves that variable from
+      // another secret. Without this the store's 409 surfaced as a 500.
+      try {
+        secrets.bind(secret.id, parsed.data.member);
+      } catch (err) {
+        return mapSecretsError(c, err);
+      }
       queueMicrotask(() => {
         void publishSecretEvent(secret, 'bound', member.name, {
           body: `${parsed.data.member} was given the secret '${secret.slug}' (${secret.envName}) by ${member.name}. It applies on their next runner start.`,
@@ -3149,6 +3178,7 @@ export function createApp(options: AppOptions): CreatedApp {
       const member = c.get('member');
       const raw = {
         assignee: c.req.query('assignee'),
+        related: c.req.query('related'),
         status: c.req.query('status'),
       };
       const parsed = ListObjectivesQuerySchema.safeParse(raw);
@@ -3157,23 +3187,34 @@ export function createApp(options: AppOptions): CreatedApp {
       }
       const filter = parsed.data;
 
+      // Relationship union: assigned OR originated OR watching. Watchers
+      // live in a JSON column, so this is a post-filter rather than a
+      // store predicate — the same shape the plain-member branch has
+      // always used.
+      const relatedTo = (name: string): Objective[] =>
+        objectives
+          .list(filter.status ? { status: filter.status } : {})
+          .filter((o) => o.assignee === name || o.originator === name || o.watchers.includes(name));
+
       const canListAny = hasPermission(member.permissions, 'objectives.create');
       if (!canListAny) {
-        if (filter.assignee && filter.assignee !== member.name) {
+        if (
+          (filter.assignee && filter.assignee !== member.name) ||
+          (filter.related && filter.related !== member.name)
+        ) {
           return c.json(
             { error: 'members without objectives.create may only list their own objectives' },
             403,
           );
         }
         // Default scope for a plain member: assigned OR originated OR watching.
-        const all = objectives.list(filter.status ? { status: filter.status } : {});
-        const scoped = all.filter(
-          (o) =>
-            o.assignee === member.name ||
-            o.originator === member.name ||
-            o.watchers.includes(member.name),
-        );
-        return c.json({ objectives: scoped });
+        return c.json({ objectives: relatedTo(member.name) });
+      }
+      // `related` is the explicit relationship question and applies to
+      // privileged callers too. Without it a privileged caller keeps the
+      // team-wide view the director dashboard depends on.
+      if (filter.related) {
+        return c.json({ objectives: relatedTo(filter.related) });
       }
       return c.json({ objectives: objectives.list(filter) });
     });
@@ -3849,11 +3890,15 @@ export function createApp(options: AppOptions): CreatedApp {
       const fromRaw = c.req.query('from');
       const toRaw = c.req.query('to');
       const limitRaw = c.req.query('limit');
+      const cursorTsRaw = c.req.query('cursor_ts');
+      const cursorIdRaw = c.req.query('cursor_id');
       const kindRaw = c.req.queries('kind');
 
       const from = fromRaw !== undefined ? Number(fromRaw) : undefined;
       const to = toRaw !== undefined ? Number(toRaw) : undefined;
       const limit = limitRaw !== undefined ? Number(limitRaw) : undefined;
+      const cursorTs = cursorTsRaw !== undefined ? Number(cursorTsRaw) : undefined;
+      const cursorId = cursorIdRaw !== undefined ? Number(cursorIdRaw) : undefined;
       if (from !== undefined && !Number.isFinite(from)) {
         return c.json({ error: 'invalid `from` parameter' }, 400);
       }
@@ -3862,6 +3907,13 @@ export function createApp(options: AppOptions): CreatedApp {
       }
       if (limit !== undefined && !Number.isFinite(limit)) {
         return c.json({ error: 'invalid `limit` parameter' }, 400);
+      }
+      if (
+        (cursorTs === undefined) !== (cursorId === undefined) ||
+        (cursorTs !== undefined && (!Number.isInteger(cursorTs) || cursorTs < 0)) ||
+        (cursorId !== undefined && (!Number.isInteger(cursorId) || cursorId < 0))
+      ) {
+        return c.json({ error: 'invalid composite cursor' }, 400);
       }
       // Validate each kind discriminator. Multiple ?kind= params
       // are AND-combined at query time, OR-combined at the store
@@ -3880,6 +3932,10 @@ export function createApp(options: AppOptions): CreatedApp {
         memberName: name,
         from,
         to,
+        before:
+          cursorTs !== undefined && cursorId !== undefined
+            ? { ts: cursorTs, id: cursorId }
+            : undefined,
         kinds: kinds.length > 0 ? kinds : undefined,
         limit,
       });
@@ -3962,7 +4018,7 @@ export function createApp(options: AppOptions): CreatedApp {
 
   // ─── User management endpoints ───────────────────────────────
   //
-  // `GET /users` is dual-auth — every teammate can see who's on the
+  // `GET /users` is tri-auth — every teammate can see who's on the
   // team. Mutating verbs are admin-only and require `persistMembers`
   // to be wired; without it, mutations would drift in-memory and lose
   // on restart so we 501 instead.
@@ -3987,7 +4043,7 @@ export function createApp(options: AppOptions): CreatedApp {
 
   // ─── Team config endpoints ───────────────────────────────────
   //
-  // Read is dual-auth (every authenticated member sees their team).
+  // Read is tri-auth (every authenticated member sees their team).
   // Mutations require `team.manage`. The response always reflects the
   // freshly-read DB state — there is no in-memory snapshot to go
   // stale. Note: changing team `context` / member `instructions`

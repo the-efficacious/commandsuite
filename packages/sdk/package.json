@@ -50,13 +50,15 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "!dist/.build-stamp.json"
   ],
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && node ../../scripts/dist-stamp.mjs",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "prepublishOnly": "node ../../scripts/publish-gate.mjs check",
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {

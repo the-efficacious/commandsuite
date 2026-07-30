@@ -16,11 +16,13 @@
  *   - On HTTP error or network failure, the in-flight batch is
  *     RE-queued at the head and a backoff timer gates the next
  *     flush attempt (starts at 200 ms, doubles up to 30 s).
- *   - The queue has a hard cap (default 1000 events / 1 MB). If a
- *     new event would exceed either, the OLDEST queued event is
- *     dropped with a warning — we prefer losing history over
- *     stalling the uploader indefinitely when the broker is
- *     unreachable.
+ *   - The queue has a hard cap — `DEFAULT_MAX_QUEUE_EVENTS` (1000) and
+ *     `DEFAULT_MAX_QUEUE_BYTES` (64 MB), both below. If a new event
+ *     would exceed either, the OLDEST queued event is dropped with a
+ *     warning — we prefer losing history over stalling the uploader
+ *     indefinitely when the broker is unreachable. Those drops are
+ *     COUNTED (`dropped`) and surface in the run summary's
+ *     `session_end.capture`, so a run whose trace is incomplete says so.
  *
  * Concurrency: one in-flight upload at a time per uploader, and a
  * caller that asks for a flush while one is in flight awaits THAT
@@ -86,6 +88,10 @@ export interface ActivityUploaderStats {
   uploaded: number;
   /** Events lost: overflow-evicted, rejected after close, or dropped at final flush. */
   dropped: number;
+  /** Highest number of events queued at once during this uploader's lifetime. */
+  peakQueuedEvents: number;
+  /** Highest serialized UTF-8 payload size queued at once; excludes JS object overhead. */
+  peakQueuedBytes: number;
 }
 
 export class ActivityUploader {
@@ -111,6 +117,8 @@ export class ActivityUploader {
   private statEnqueued = 0;
   private statUploaded = 0;
   private statDropped = 0;
+  private peakQueuedEvents = 0;
+  private peakQueuedBytes = 0;
 
   constructor(options: ActivityUploaderOptions) {
     this.brokerClient = options.brokerClient;
@@ -135,7 +143,7 @@ export class ActivityUploader {
       return;
     }
     this.statEnqueued++;
-    const bytes = JSON.stringify(event).length;
+    const bytes = Buffer.byteLength(JSON.stringify(event), 'utf8');
 
     // Cap check: drop oldest until we have room.
     while (
@@ -155,6 +163,8 @@ export class ActivityUploader {
 
     this.queue.push({ event, bytes });
     this.queueBytes += bytes;
+    this.peakQueuedEvents = Math.max(this.peakQueuedEvents, this.queue.length);
+    this.peakQueuedBytes = Math.max(this.peakQueuedBytes, this.queueBytes);
 
     // Immediate flush triggers.
     if (this.queue.length >= this.maxBatchEvents || this.queueBytes >= this.maxBatchBytes) {
@@ -352,6 +362,8 @@ export class ActivityUploader {
       enqueued: this.statEnqueued,
       uploaded: this.statUploaded,
       dropped: this.statDropped,
+      peakQueuedEvents: this.peakQueuedEvents,
+      peakQueuedBytes: this.peakQueuedBytes,
     };
   }
 

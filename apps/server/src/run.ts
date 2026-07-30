@@ -227,7 +227,7 @@ export interface RunServerOptions {
   /**
    * Path to the team config file — required only when auto-generating
    * VAPID keys on first boot, since we need to know where to write
-   * the new `webPush` block. Loaders (`loadTeamConfigFromFile` +
+   * the new `webPush` block. Loaders (`loadServerConfigFromFile` +
    * the CLI entry) already know this path; lib consumers that
    * construct RunServerOptions by hand can pass it explicitly.
    */

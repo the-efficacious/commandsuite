@@ -119,4 +119,78 @@ describe('SqliteEventLog', () => {
     expect(tailed[0]?.body).toBe('survive');
     expect(tailed[0]?.from).toBe('alice');
   });
+
+  // The SQL feed filter and `matchesViewer` in `csuite-core` answer the
+  // same question and must not drift. Measured on the live broker
+  // before this fix: 27 of 27 secret events were returned to a member
+  // neither bound to any of them nor holding `secrets.manage`, because
+  // a fan-out push persists `to_name = NULL` and the feed returns every
+  // such row to everyone.
+  describe('secret-event scoping', () => {
+    function secretEvent(id: string, ts: number, slug: string): Message {
+      return {
+        id,
+        ts,
+        to: null,
+        from: 'admin',
+        title: null,
+        body: `Secret '${slug}' was updated by admin.`,
+        level: 'info',
+        data: { kind: 'secret', event: 'value_set', thread: `secret:${slug}`, actor: 'admin' },
+        attachments: [],
+      };
+    }
+
+    function plain(id: string, ts: number, over: Partial<Message> = {}): Message {
+      return {
+        id,
+        ts,
+        to: null,
+        from: 'alice',
+        title: null,
+        body: 'hi',
+        level: 'info',
+        data: {},
+        attachments: [],
+        ...over,
+      };
+    }
+
+    it('keeps secret events out of the default feed', async () => {
+      const log = makeLog(tmpDbPath());
+      await log.append(secretEvent('s', 1, 'deploy-key'));
+      expect(await log.query({ viewer: 'outsider' })).toEqual([]);
+    });
+
+    it('hides them from the actor too', async () => {
+      const log = makeLog(tmpDbPath());
+      await log.append(secretEvent('s', 1, 'deploy-key'));
+      expect(await log.query({ viewer: 'admin' })).toEqual([]);
+    });
+
+    it('still returns everything else, so the empty result above means something', async () => {
+      const log = makeLog(tmpDbPath());
+      await log.append(plain('broadcast', 1));
+      await log.append(plain('dm', 2, { from: 'bob', to: 'outsider' }));
+      await log.append(plain('chan', 3, { data: { thread: 'chan:abc' } }));
+      await log.append(plain('obj', 4, { data: { thread: 'obj:obj-123' } }));
+      await log.append(secretEvent('secret', 5, 'deploy-key'));
+
+      const seen = await log.query({ viewer: 'outsider' });
+      expect(seen.map((m) => m.id).sort()).toEqual(['broadcast', 'chan', 'dm', 'obj']);
+    });
+
+    it('matches the prefix rather than one slug', async () => {
+      const log = makeLog(tmpDbPath());
+      await log.append(secretEvent('s0', 1, 'a'));
+      await log.append(secretEvent('s1', 2, 'cora-github-token'));
+      expect(await log.query({ viewer: 'outsider' })).toEqual([]);
+    });
+
+    it('leaves a channel thread that merely contains "secret:" alone', async () => {
+      const log = makeLog(tmpDbPath());
+      await log.append(plain('c', 1, { data: { thread: 'chan:top-secret:stuff' } }));
+      expect((await log.query({ viewer: 'outsider' })).map((m) => m.id)).toEqual(['c']);
+    });
+  });
 });

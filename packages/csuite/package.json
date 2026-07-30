@@ -22,6 +22,9 @@
     "bundle"
   ],
   "type": "module",
+  "scripts": {
+    "prepublishOnly": "node ../../scripts/publish-gate.mjs check"
+  },
   "bin": {
     "csuite": "./bin/csuite.mjs",
     "csuite-server": "./bin/csuite-server.mjs"

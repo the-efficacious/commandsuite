@@ -269,6 +269,11 @@ export interface BriefingResponse extends Member {
 export interface RosterResponse {
   teammates: Teammate[];
   connected: Presence[];
+  /**
+   * Window the broker applied when deciding whether an activity report
+   * is recent. Optional for compatibility with older brokers.
+   */
+  activityWindowMs?: number;
 }
 
 /** Query parameters for `GET /history`. */
@@ -1056,10 +1061,13 @@ export interface DeviceAuthorizationRequest {
 }
 
 /**
- * `POST /enroll` response. Shape mirrors RFC 8628 §3.2 with two
- * additions — `verificationUri` is camelCase to match the rest of
- * the wire and `pollUrl` is a fully-qualified hint so CLI consumers
- * don't have to reconstruct it.
+ * `POST /enroll` response. Shape mirrors RFC 8628 §3.2, with the
+ * field names camelCased to match the rest of the wire.
+ *
+ * `verificationUri` and `verificationUriComplete` are RELATIVE paths;
+ * the CLI joins them with its configured broker URL. There is no
+ * fully-qualified poll hint on this response — the caller polls the
+ * enrollment endpoint it already knows, with `deviceCode`.
  *
  * The `userCode` is what the human types into the web UI; the
  * `deviceCode` is what the CLI polls with and MUST be kept secret —
@@ -1361,6 +1369,12 @@ export interface GetObjectiveResponse {
 
 export interface ListObjectivesQuery {
   assignee?: string;
+  /**
+   * Every objective this member has ANY relationship with — assigned,
+   * originated, or watching. Wider than `assignee`, which omits work a
+   * member originated or watches without being assigned.
+   */
+  related?: string;
   status?: ObjectiveStatus;
 }
 
@@ -1606,6 +1620,8 @@ export interface GetGenaiInferenceResponse {
 export interface ListGenaiQuery {
   from?: number;
   to?: number;
+  /** Exclusive composite cursor for oldest-first traversal. */
+  cursor?: { ts: number; id: number };
   limit?: number;
 }
 
@@ -1681,6 +1697,10 @@ export interface ActivitySessionEnd {
     readonly enqueued: number;
     readonly uploaded: number;
     readonly dropped: number;
+    /** Peak instantaneous queue occupancy in events, when reported by the runner. */
+    readonly peakQueuedEvents?: number;
+    /** Peak serialized UTF-8 event payload queued at once, when reported by the runner. */
+    readonly peakQueuedBytes?: number;
   };
 }
 
@@ -1759,9 +1779,17 @@ export interface ActivityToolAction {
  * `UserPromptSubmit` hook (the same signal the runner already consumes
  * for presence). In csuite this is often an injected ambient broker
  * event rather than a human keystroke. Capturing it here gives a Claude
- * turn a real opener WITHOUT depending on the OTEL request body, which
- * truncates large (~60KB+) prompts. The text is redacted runner-side
- * before it leaves the process, so the schema only validates shape.
+ * turn a real opener WITHOUT depending on request-body capture at all.
+ *
+ * (The original rationale was that OTEL's INLINE body mode truncates
+ * large prompts at ~60 KB. The runner no longer uses inline mode — it
+ * sets `OTEL_LOG_RAW_API_BODIES=file:<dir>`, which writes complete
+ * untruncated bodies — so that truncation no longer applies. The hook
+ * remains the right source because it yields the opener directly rather
+ * than requiring a body to be parsed for it.)
+ *
+ * The text is redacted runner-side before it leaves the process, so the
+ * schema only validates shape.
  */
 export interface ActivityUserPrompt {
   readonly kind: 'user_prompt';
@@ -1806,6 +1834,8 @@ export interface ListActivityQuery {
   readonly from?: number;
   /** Inclusive upper bound on ts (ms since epoch). */
   readonly to?: number;
+  /** Exclusive composite cursor for newest-first traversal. */
+  readonly cursor?: { ts: number; id: number };
   /** Filter by kind — single or array. Omit for all kinds. */
   readonly kind?: ActivityKind | ActivityKind[];
   /** Max rows to return. Default 200, max 1000. Newest first. */
@@ -1846,6 +1876,14 @@ export interface FsEntry {
   createdAt: number;
   createdBy: string;
   updatedAt: number;
+  /**
+   * Whether the requesting viewer may mutate this entry — the server's
+   * `canWrite()` predicate, evaluated per request. Optional: an older
+   * server omits it. Treat `undefined` as unknown rather than false, and
+   * do not reconstruct the rule from `owner` — that inference is wrong
+   * for objective namespace entries.
+   */
+  canWrite?: boolean;
 }
 
 /**

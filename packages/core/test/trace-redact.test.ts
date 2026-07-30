@@ -171,3 +171,71 @@ describe('registered secret values', () => {
     expect(out.tool_result.stdout).toBe(`GITHUB_TOKEN=${REDACTED}\nPATH=/usr/bin`);
   });
 });
+
+/**
+ * These pin what the module header CLAIMS, so a future edit that makes
+ * the claim false fails here rather than living on as a comment nobody
+ * re-checks. Every case below corresponds to a sentence in
+ * `redact.ts`'s doc comments — two of which were false when written.
+ */
+describe('redactJson — the documented contract', () => {
+  afterEach(() => clearRegisteredSecretValues());
+
+  it('rewrites values but never drops structure', () => {
+    // Header claims: "every key and every array slot is preserved, so
+    // this rewrites values and never drops structure."
+    registerSecretValues(['registered-literal']);
+    const input = {
+      keep: 'registered-literal',
+      nested: { arr: ['a', 'registered-literal', 'c'], n: 0, flag: false, nil: null },
+      empty: {},
+    };
+    const out = redactJson(input);
+    expect(Object.keys(out)).toEqual(['keep', 'nested', 'empty']);
+    expect(Object.keys(out.nested)).toEqual(['arr', 'n', 'flag', 'nil']);
+    // The array keeps its length AND its element positions — a filter
+    // that dropped the redacted element would still be length 3 if it
+    // appended, so assert the shape exactly.
+    expect(out.nested.arr).toEqual(['a', REDACTED, 'c']);
+    expect(out.nested.n).toBe(0);
+    expect(out.nested.flag).toBe(false);
+    expect(out.nested.nil).toBeNull();
+    expect(out.empty).toEqual({});
+  });
+
+  it('scrubs content fields, not only transport metadata', () => {
+    // Header claims content IS scrubbed. The previous header said the
+    // opposite ("we never scrub message contents, tool arguments, or
+    // model completions"), which is the claim this pins against.
+    registerSecretValues(['registered-literal']);
+    const out = redactJson({
+      text: 'assistant said registered-literal',
+      tool_use: { input: { cmd: 'echo registered-literal' } },
+      tool_result: { content: 'registered-literal' },
+      thinking: 'reasoning about registered-literal',
+    });
+    expect(out.text).toBe(`assistant said ${REDACTED}`);
+    expect(out.tool_use.input.cmd).toBe(`echo ${REDACTED}`);
+    expect(out.tool_result.content).toBe(REDACTED);
+    expect(out.thinking).toBe(`reasoning about ${REDACTED}`);
+  });
+
+  it('passes functions and symbols through unchanged — it does not sanitise them', () => {
+    // Header used to claim these were "coerced to null". They are not:
+    // `typeof fn !== 'object'`, so they take the passthrough branch.
+    const fn = () => 1;
+    const sym = Symbol('s');
+    const out = redactJson({ fn, sym, ok: 'plain' });
+    expect(out.fn).toBe(fn);
+    expect(out.sym).toBe(sym);
+    expect(out.ok).toBe('plain');
+  });
+
+  it('leaves a string with nothing to redact byte-identical', () => {
+    // The "refuses more than it should" direction: a redactor that
+    // over-matched would still pass every assertion above.
+    const clean = 'PATH=/usr/bin and a sha like 0f1e2d3c4b5a and normal prose.';
+    expect(redactJson({ s: clean }).s).toBe(clean);
+    expect(redactJson({ s: clean }).s).not.toContain(REDACTED);
+  });
+});

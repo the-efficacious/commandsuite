@@ -269,6 +269,15 @@ export const GetObjectiveResponseSchema = z.object({
 
 export const ListObjectivesQuerySchema = z.object({
   assignee: NameSchema.optional(),
+  /**
+   * Scope to every objective this member has ANY relationship with —
+   * assigned, originated, or watching. Distinct from `assignee`, which
+   * is the narrower "on their plate" question: a member who originates
+   * or watches without being assigned matches `related` and not
+   * `assignee`. Members without `objectives.create` may only pass their
+   * own name.
+   */
+  related: NameSchema.optional(),
   status: ObjectiveStatusSchema.optional(),
 });
 
@@ -1064,6 +1073,8 @@ export const ActivityEventSchema = z.discriminatedUnion('kind', [
         enqueued: z.number().int().nonnegative(),
         uploaded: z.number().int().nonnegative(),
         dropped: z.number().int().nonnegative(),
+        peakQueuedEvents: z.number().int().nonnegative().optional(),
+        peakQueuedBytes: z.number().int().nonnegative().optional(),
       })
       .optional(),
   }),
@@ -1151,6 +1162,12 @@ export const ListActivityResponseSchema = z.object({
 export const ListActivityQuerySchema = z.object({
   from: z.number().int().nonnegative().optional(),
   to: z.number().int().nonnegative().optional(),
+  cursor: z
+    .object({
+      ts: z.number().int().nonnegative(),
+      id: z.number().int().nonnegative(),
+    })
+    .optional(),
   kind: z.union([ActivityKindSchema, z.array(ActivityKindSchema)]).optional(),
   limit: z.number().int().positive().max(1000).optional(),
 });
@@ -1360,6 +1377,9 @@ export const BriefingResponseSchema = MemberSchema.extend({
 export const RosterResponseSchema = z.object({
   teammates: z.array(TeammateSchema),
   connected: z.array(PresenceSchema),
+  // Optional so clients remain compatible with brokers that predate
+  // server-reported activity-window semantics.
+  activityWindowMs: z.number().int().positive().optional(),
 });
 
 export const HistoryResponseSchema = z.object({
@@ -1413,6 +1433,18 @@ export const FsEntrySchema = z.object({
     .nullable(),
   createdAt: z.number().int().nonnegative(),
   createdBy: NameSchema,
+  /**
+   * Whether the requesting viewer may mutate this entry — the server's
+   * own `canWrite()` predicate, evaluated per request.
+   *
+   * Present so a client does not have to RECONSTRUCT the rule. A UI that
+   * infers "can I delete this" from `owner === me` is wrong for objective
+   * namespace entries, whose owner is `obj:<id>` and whose write rule
+   * includes objective membership — information the client does not have
+   * and cannot derive. Optional so older servers that omit it still
+   * parse; a client seeing `undefined` should ask rather than guess.
+   */
+  canWrite: z.boolean().optional(),
   updatedAt: z.number().int().nonnegative(),
 });
 

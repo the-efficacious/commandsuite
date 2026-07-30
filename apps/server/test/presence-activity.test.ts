@@ -136,6 +136,7 @@ describe('POST /presence/activity', () => {
       headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
     });
     const body = (await roster.json()) as RosterResponse;
+    expect(body.activityWindowMs).toBe(ACTIVITY_TTL_MS);
     const alice = body.connected.find((p) => p.name === 'alice');
     // Never reported → idle → both fields absent.
     expect(alice?.activity).toBeUndefined();

@@ -165,7 +165,8 @@ Web Push notifications.
                     ▼
        ┌─────────────────────────┐
        │   the agent             │  ◀── the AGENT: does the work
-       │   claude / codex        │      claude reads .mcp.json
+       │   claude / codex        │      claude gets the bridge inline
+       │                         │      (SDK opt; your .mcp.json untouched)
        │                         │      codex reads our ephemeral CODEX_HOME
        └────────────┬────────────┘
                     │ stdio MCP (claude) / stdio JSON-RPC (codex)
@@ -367,8 +368,14 @@ open http://127.0.0.1:5173
 
 ### Running a test agent
 
-The runner writes `.mcp.json` in CWD and spawns the agent there —
-**where you invoke it matters.** Use an alias for the built CLI:
+The runner spawns the agent with your current directory as its working
+directory — **where you invoke it matters.** (`cwd` defaults to
+`process.cwd()`; override it with `--cwd <dir>`.) The runner does **not**
+write `.mcp.json` or any other file into your tree: the csuite bridge is
+passed to Claude Code inline as an SDK option, and your own `.mcp.json`
+is left alone.
+
+Use an alias for the built CLI:
 
 ```bash
 # ~/.bashrc or ~/.zshrc

@@ -12,7 +12,7 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev --filter=csuite-server --filter=csuite-web-host",
-    "test": "turbo run test",
+    "test": "turbo run test && vitest run",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
@@ -21,7 +21,8 @@
     "changeset": "changeset",
     "version-packages": "changeset version && node scripts/aggregate-changelog.mjs",
     "verify-pack": "node scripts/verify-pack-contents.mjs",
-    "release": "changeset publish",
+    "release:prepare": "node scripts/publish-gate.mjs prepare",
+    "release": "pnpm release:prepare && changeset publish",
     "wizard": "node packages/cli/dist/index.js setup",
     "csuite": "node packages/cli/dist/index.js"
   },
@@ -31,7 +32,8 @@
     "@changesets/cli": "^2.31.1",
     "turbo": "^2.10.6",
     "typescript": "^6.0.3",
-    "vite": "^8.1.5"
+    "vite": "^8.1.5",
+    "vitest": "^4.1.10"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

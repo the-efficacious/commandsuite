@@ -169,6 +169,10 @@ class SqliteActivityStore implements CoreActivityStore {
       conditions.push('ts <= ?');
       params.push(filter.to);
     }
+    if (filter.before !== undefined) {
+      conditions.push('(ts < ? OR (ts = ? AND id < ?))');
+      params.push(filter.before.ts, filter.before.ts, filter.before.id);
+    }
     if (filter.kinds && filter.kinds.length > 0) {
       const placeholders = filter.kinds.map(() => '?').join(',');
       conditions.push(`kind IN (${placeholders})`);

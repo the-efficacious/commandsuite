@@ -37,6 +37,8 @@ export interface ListActivityFilter {
   from?: number;
   /** Upper bound (inclusive) on `event.ts`. Omit for no upper bound. */
   to?: number;
+  /** Exclusive composite cursor for newest-first traversal. */
+  before?: { ts: number; id: number };
   /** If set, only return rows whose `event.kind` is in this list. */
   kinds?: readonly ActivityKind[];
   /**
@@ -193,6 +195,13 @@ export class InMemoryActivityStore implements ActivityStore {
       if (!row) continue;
       if (filter.from !== undefined && row.event.ts < filter.from) continue;
       if (filter.to !== undefined && row.event.ts > filter.to) continue;
+      if (
+        filter.before !== undefined &&
+        (row.event.ts > filter.before.ts ||
+          (row.event.ts === filter.before.ts && row.id >= filter.before.id))
+      ) {
+        continue;
+      }
       if (kindSet && !kindSet.has(row.event.kind)) continue;
       matches.push(row);
       if (matches.length >= limit) break;

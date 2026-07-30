@@ -434,10 +434,16 @@ export class Client {
    * their own; members with that permission can filter by any
    * `assignee` name. Pass `status` to scope to a single lifecycle
    * state; omit to see all.
+   *
+   * Pass `related` for the union a member actually has a stake in —
+   * assigned OR originated OR watching. `assignee` alone answers a
+   * narrower question and omits work you originated or watch, which is
+   * the whole plate for a coordinating member.
    */
   async listObjectives(query: ListObjectivesQuery = {}): Promise<Objective[]> {
     const params = new URLSearchParams();
     if (query.assignee) params.set('assignee', query.assignee);
+    if (query.related) params.set('related', query.related);
     if (query.status) params.set('status', query.status);
     const qs = params.toString();
     const path = qs ? `${PATHS.objectives}?${qs}` : PATHS.objectives;
@@ -600,6 +606,10 @@ export class Client {
     const params = new URLSearchParams();
     if (query.from !== undefined) params.set('from', String(query.from));
     if (query.to !== undefined) params.set('to', String(query.to));
+    if (query.cursor !== undefined) {
+      params.set('cursor_ts', String(query.cursor.ts));
+      params.set('cursor_id', String(query.cursor.id));
+    }
     if (query.kind !== undefined) {
       const kinds = Array.isArray(query.kind) ? query.kind : [query.kind];
       for (const k of kinds) params.append('kind', k);
@@ -631,6 +641,10 @@ export class Client {
     const params = new URLSearchParams();
     if (query.from !== undefined) params.set('from', String(query.from));
     if (query.to !== undefined) params.set('to', String(query.to));
+    if (query.cursor !== undefined) {
+      params.set('cursor_ts', String(query.cursor.ts));
+      params.set('cursor_id', String(query.cursor.id));
+    }
     if (query.limit !== undefined) params.set('limit', String(query.limit));
     const qs = params.toString();
     const path = qs ? `${MEMBER_PATHS.genai(name)}?${qs}` : MEMBER_PATHS.genai(name);
@@ -659,6 +673,10 @@ export class Client {
     params.set('view', 'summary');
     if (query.from !== undefined) params.set('from', String(query.from));
     if (query.to !== undefined) params.set('to', String(query.to));
+    if (query.cursor !== undefined) {
+      params.set('cursor_ts', String(query.cursor.ts));
+      params.set('cursor_id', String(query.cursor.id));
+    }
     if (query.limit !== undefined) params.set('limit', String(query.limit));
     const path = `${MEMBER_PATHS.genai(name)}?${params.toString()}`;
     const resp = await this.request(path, { method: 'GET' });
