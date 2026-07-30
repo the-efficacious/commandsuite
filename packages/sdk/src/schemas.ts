@@ -1375,6 +1375,9 @@ export const BriefingResponseSchema = MemberSchema.extend({
 export const RosterResponseSchema = z.object({
   teammates: z.array(TeammateSchema),
   connected: z.array(PresenceSchema),
+  // Optional so clients remain compatible with brokers that predate
+  // server-reported activity-window semantics.
+  activityWindowMs: z.number().int().positive().optional(),
 });
 
 export const HistoryResponseSchema = z.object({

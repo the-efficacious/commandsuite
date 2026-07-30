@@ -92,8 +92,9 @@ export function defineTools(
       name: 'roster',
       description:
         `List all teammates currently on the csuite net. Returns each teammate's name, ` +
-        `role, authority, connection state, and any working or blocked activity reported ` +
-        `within the last 30 seconds. Recent activity is not executor liveness.`,
+        `role, authority, connection state, and any recently reported working or blocked ` +
+        `activity. The response uses the broker's reporting window when supplied and says ` +
+        `when the window is unknown; recent activity is not executor liveness.`,
       inputSchema: { type: 'object', properties: {} },
     },
     {
@@ -1854,6 +1855,10 @@ async function handleRoster(
 ): Promise<CallToolResult> {
   const roster = await brokerClient.roster();
   const presenceByName = new Map(roster.connected.map((presence) => [presence.name, presence]));
+  const activityWindow =
+    roster.activityWindowMs === undefined
+      ? 'within an unknown window'
+      : `within last ${roster.activityWindowMs / 1_000}s`;
   if (roster.teammates.length === 0) {
     return textResult('team roster: (no slots defined)');
   }
@@ -1862,13 +1867,10 @@ async function handleRoster(
     const conn = presence?.connected ?? 0;
     const self = t.name === briefing.name ? ' (you)' : '';
     const state = conn > 0 ? `connected=${conn}` : 'offline';
-    // Authority: apps/server/src/activity-tracker.ts ACTIVITY_TTL_MS.
-    // These strings are not coupled to it; the broker must eventually
-    // send the window so version-skewed clients render the value it used.
     const activity =
       presence?.activity === 'working' || presence?.activity === 'blocked'
-        ? `reported ${presence.activity} within last 30s`
-        : 'no report within last 30s (idle, lapsed, or never reported)';
+        ? `reported ${presence.activity} ${activityWindow}`
+        : `no report ${activityWindow} (idle, lapsed, or never reported)`;
     const auth = t.permissions.includes('members.manage')
       ? ' [admin]'
       : t.permissions.includes('objectives.create')
