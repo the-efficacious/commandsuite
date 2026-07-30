@@ -128,8 +128,19 @@ repository and turndb survived a green test that asserted the wrong thing:
 - a trace view silently truncated its window; the test asserted that the call
   *returned*, never that the result was complete.
 
-Before committing a test, ask: **would this pass against a version that returns
-*some* of the right answer?** If yes, it is not yet testing the contract.
+Before committing a test, ask **both** of these. They are not the same question,
+and the second is the one people forget:
+
+- **Would this pass against a version that returns *some* of the right answer?**
+  This catches a fix that does too little — the short page, the half-rendered
+  field, the truncated window.
+- **Would this pass against a version that refuses *more* than it should?** This
+  catches a fix that does too much. A suite full of "rejects bad input"
+  assertions passes happily against an implementation that also rejects good
+  input. If you add a validity check, test the *nearest valid thing* it must
+  still accept.
+
+If either answer is yes, it is not yet testing the contract.
 
 Prefer cheap negative invariants — `expect(out).not.toContain('[object Object]')`
 — over whole-string golden files, which fail on every cosmetic change and train
