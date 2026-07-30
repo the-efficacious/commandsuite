@@ -39,12 +39,17 @@ const UI_SRC = join(REPO_ROOT, 'packages/web-ui/src');
  * the component receives its mutator as a prop and no enumeration of SDK
  * method names can see that. Verbs survive indirection; names do not.
  *
+ * The verb may be followed by a capital/underscore/paren (`onAddMember`,
+ * `remove(`) OR end there (`onSubmit`, `onRename`) — a shorthand handler
+ * whose identifier IS the verb was invisible to the first version, which
+ * marked three real mutations non-mutating, one of them capability-gated.
+ *
  * Deliberately over-inclusive. This annotates the candidate set, it does
  * not filter it — every control is emitted either way, so a false positive
  * costs a row and a false negative would cost coverage.
  */
 const MUTATING_VERB =
-  /\b(?:on)?(?:join|leave|remove|delete|destroy|create|add|update|save|set|write|put|post|send|submit|archive|rename|revoke|rotate|cancel|complete|reassign|discuss|bind|unbind|approve|reject|replay|refresh|enroll|logout|prune|clear|reset|apply|confirm|upload|move|mkdir|rm|mv)[A-Z_(]/i;
+  /\b(?:on)?(?:join|leave|remove|delete|destroy|create|add|update|save|set|write|put|post|send|submit|archive|rename|revoke|rotate|cancel|complete|reassign|discuss|bind|unbind|approve|reject|replay|refresh|enroll|logout|prune|clear|reset|apply|confirm|upload|move|mkdir|rm|mv)(?:[A-Z_(]|\b)/i;
 
 function tsxFiles(dir, acc = []) {
   for (const e of readdirSync(dir, { withFileTypes: true })) {

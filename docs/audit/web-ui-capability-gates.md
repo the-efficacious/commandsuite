@@ -30,15 +30,53 @@ Both failures are worse than an incomplete sweep:
 | | |
 |---|---|
 | controls (`<button>`, `<form>`, or carrying `onClick`/`onSubmit`) | **200** |
-| of those, mutating (verb-based annotation, deliberately over-inclusive) | **69** |
-| mutating controls with a render guard | 35 |
-| mutating controls with a `disabled` expression | 39 |
+| of those, mutating (verb-based annotation, deliberately over-inclusive) | **73** |
+| mutating controls with a render guard | 36 |
+| mutating controls with a `disabled` expression | 40 |
 
-Mutating controls by gate class: **CAPABILITY 20**, state 16, data 14, ungated 19.
+Mutating controls by gate class: **CAPABILITY 21**, state 17, data 14, ungated 21.
 
 Mutation is detected by verb rather than by an enumerated method list: the list
 version missed `onJoin(c.slug)` in `ChannelBrowse`, where the component receives
 its mutator as a prop. No enumeration of SDK method names can see that.
+
+## Two properties, converging at different rates
+
+**The candidate set is complete and verified.** 200 controls, AST-derived over
+top-level `&&`, nested ternaries at any depth, and `disabled` expressions. Rune
+independently reproduced the generated table byte-for-byte against the committed
+one. That property is settled.
+
+**The mutation annotation is a heuristic and will keep having gaps.** It
+pattern-matches an identifier to guess whether a handler changes server state.
+Making it *correct* means resolving every handler to its definition and
+following it through props — real static analysis, not a better regex. Three
+blind spots have been found by three readings:
+
+| # | blind spot | found by |
+|---|---|---|
+| 1 | regex `&&` in a 14-line window — no ternaries, no distant controls | Rune |
+| 2 | name-based enumeration — missed `onJoin` passed as a **prop** | me, second pass |
+| 3 | verb needing `[A-Z_(]` after it — missed exact-name handlers `onSubmit`, `onRename` | Rune |
+
+**(3) is the current fix.** Four rows flipped to mutating: `ChannelCreate.tsx:71`,
+`ChannelSettings.tsx:202`, `NotificationDetail.tsx:688`, `ObjectiveCreate.tsx:160`.
+`ChannelSettings.tsx:202` is the one that mattered — capability-guarded by
+`isAdmin` and previously labelled non-mutating, so the artifact was *wrong about
+a capability-gated mutation* rather than merely incomplete.
+
+**What the annotation still cannot see**, stated rather than discovered:
+
+- a handler whose identifier contains no state-changing verb (`doIt`, `go`, `fire`)
+- a mutation reached through a wrapper whose own name is neutral
+- a handler that conditionally mutates depending on runtime state
+- anything requiring type resolution to distinguish a local update from a server one
+
+**Because every control is emitted rather than filtered, a wrong annotation is a
+visible error rather than an invisible omission.** Under the earlier filtering
+approach `ChannelSettings.tsx:202` would simply have been absent. That is the
+whole reason for annotating instead of filtering, and it is why a fourth blind
+spot should land as a row someone reclassifies, not as a blocker.
 
 ## Findings
 
@@ -87,12 +125,12 @@ anyone concludes which controls are non-capability.
 | `components/ChannelBrowse.tsx:69` | no | data | `{() => void loadChannels()}` | `loadErr !== null` *(&&)* | — |
 | `components/ChannelBrowse.tsx:124` | no | CAPABILITY | `{() => selectChannel(c.slug)}` | `c.joined` *(ternary:then)*<br>`list !== null` *(&&)* | — |
 | `components/ChannelBrowse.tsx:132` | **yes** | CAPABILITY | `{() => void onJoin(c.slug)}` | `c.joined` *(ternary:else)*<br>`list !== null` *(&&)* | `{isJoining}` |
-| `components/ChannelCreate.tsx:71` | no | ungated | `{onSubmit}` | _none_ | — |
+| `components/ChannelCreate.tsx:71` | **yes** | ungated | `{onSubmit}` | _none_ | — |
 | `components/ChannelCreate.tsx:136` | no | state | `button` | _none_ | `{submitting.value || slugInput.value.length === 0}` |
 | `components/ChannelCreate.tsx:143` | no | ungated | `{() => history.back()}` | _none_ | — |
 | `components/ChannelHeader.tsx:65` | **yes** | CAPABILITY | `{() => { settingsOpen.value = !open; }}` | `(canManage || canLeave)` *(&&)* | — |
 | `components/ChannelSettings.tsx:179` | no | ungated | `{onClose}` | _none_ | — |
-| `components/ChannelSettings.tsx:202` | no | CAPABILITY | `{onRename}` | `isAdmin` *(&&)* | — |
+| `components/ChannelSettings.tsx:202` | **yes** | CAPABILITY | `{onRename}` | `isAdmin` *(&&)* | — |
 | `components/ChannelSettings.tsx:220` | no | CAPABILITY | `button` | `isAdmin` *(&&)* | `{renameBusy.value || renameInput.value.length === 0}` |
 | `components/ChannelSettings.tsx:263` | **yes** | CAPABILITY | `{() => void onRemoveMember(m.memberName)}` | `(isAdmin || m.memberName === viewer)` *(&&)* | `{memberBusy.value === `remove:${m.memberName}`}` |
 | `components/ChannelSettings.tsx:282` | **yes** | CAPABILITY | `{onAddMember}` | `isAdmin && addableTeammates.length > 0` *(&&)* | — |
@@ -145,7 +183,7 @@ anyone concludes which controls are non-capability.
 | `components/NotificationDetail.tsx:539` | no | state | `button` | _none_ | `{busy !== null}` |
 | `components/NotificationDetail.tsx:558` | **yes** | ungated | `{(e) => { e.preventDefault(); void run('meta-save', () => up` | _none_ | — |
 | `components/NotificationDetail.tsx:659` | no | state | `button` | _none_ | `{busy !== null}` |
-| `components/NotificationDetail.tsx:688` | no | state | `{() => void run('deliveries-refresh', () => loadNotification` | _none_ | `{busy !== null}` |
+| `components/NotificationDetail.tsx:688` | **yes** | state | `{() => void run('deliveries-refresh', () => loadNotification` | _none_ | `{busy !== null}` |
 | `components/NotificationDetail.tsx:745` | **yes** | state | `{() => void run(`replay-${delivery.id}`, () => replayNotific` | _none_ | `{busy !== null}` |
 | `components/NotificationDetail.tsx:779` | **yes** | state | `{() => void run('toggle-enabled', () => updateNotificationEn` | _none_ | `{busy !== null}` |
 | `components/NotificationDetail.tsx:791` | **yes** | state | `{() => { if (!confirming) { confirmDelete.value = true; retu` | _none_ | `{busy !== null}` |
@@ -166,7 +204,7 @@ anyone concludes which controls are non-capability.
 | `components/NotificationsPanel.tsx:504` | **yes** | data | `{(e) => { e.preventDefault(); if (profileSecretInput.value.l` | `secretOpen` *(&&)* | — |
 | `components/NotificationsPanel.tsx:530` | no | state | `button` | `secretOpen` *(&&)* | `{busy !== null}` |
 | `components/ObjectiveCreate.tsx:144` | no | ungated | `{selectObjectivesList}` | _none_ | — |
-| `components/ObjectiveCreate.tsx:160` | no | ungated | `{onSubmit}` | _none_ | — |
+| `components/ObjectiveCreate.tsx:160` | **yes** | ungated | `{onSubmit}` | _none_ | — |
 | `components/ObjectiveCreate.tsx:249` | no | data | `{() => { watchers.value = watchers.value.filter((x) => x !==` | `watchers.value.length > 0` *(&&)* | — |
 | `components/ObjectiveCreate.tsx:319` | no | data | `{() => dismissUpload(u.localId)}` | `uploads.length > 0` *(&&)* | — |
 | `components/ObjectiveCreate.tsx:359` | no | CAPABILITY | `button` | _none_ | `{!canSubmit}` |
