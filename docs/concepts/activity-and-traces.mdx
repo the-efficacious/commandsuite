@@ -90,55 +90,35 @@ the busy signal, and a loopback hook server. It does no network
 interception — instead each agent's native instrumentation feeds
 events into it. Two capture paths exist, one per agent.
 
-### Claude Code: OpenTelemetry + tool hooks
+### Claude Code: transcript + hooks + OpenTelemetry
 
-The runner injects OpenTelemetry env into the Claude Code child
-(`CaptureHost.envVars()`): `CLAUDE_CODE_ENABLE_TELEMETRY=1`, the
-OTLP exporter config pointed at `<brokerUrl>/otlp`, a bearer
-`Authorization` header, and the `OTEL_LOG_RAW_API_BODIES` /
-`OTEL_LOG_USER_PROMPTS` / `OTEL_LOG_TOOL_DETAILS` /
-`OTEL_LOG_TOOL_CONTENT` opt-ins. Claude Code then exports its work
-as OTLP-JSON log records:
+Claude activity is transcript-primary. In-process Agent SDK hooks
+give the runner the session transcript path and drive presence.
+The `TranscriptReader` tails complete JSONL records and maps them
+to redacted activity:
 
 ```
 Claude Code child
    │
-   │  OTLP-JSON log records            in-process SDK hook forward
-   │  (raw Anthropic bodies,           (Pre/PostToolUse → loopback)
-   │   token/cost accounting,                    │
-   │   tool decisions)                           │
-   ▼                                             ▼
-POST <brokerUrl>/otlp/v1/logs            runner hook server
-   │  (bearer → member)                   (carries tool RESULT
-   ▼                                        content OTEL omits)
-broker OTLP ingest (otlp-ingest.ts)              │
-   │  correlate per-model FIFO by                 │
-   │  event.sequence, across batches              │
-   │  api_request_body + api_request +            │
-   │  api_response_body → one exchange            │
-   ▼                                              ▼
-extractEntries (core, the same pure parser)   tool_action
-   │  → AnthropicMessagesEntry → llm_exchange     │
-   │  tool_decision/tool_result → tool_action     │
-   ▼                                              ▼
-       activity store  ◄──────────  ActivityUploader (batched)
+   ├── transcript JSONL ──► TranscriptReader
+   │      thinking + text + tool_use + tool_result + usage
+   │                       ──► ActivityUploader ──► activity store
+   │
+   ├── Agent SDK hooks ───► loopback hook server
+   │      transcript_path + presence / busy
+   │
+   └── native OTEL ───────► broker /otlp/v1/logs
+          operational telemetry + file-mode body_ref
+                            ──► telemetry + gen_ai/raw-body stores
 ```
 
-The broker's OTLP ingest maps `claude_code.*` log records to
-activity. `api_request_body` + `api_request` (model, token usage,
-`cost_usd`, `request_id`, duration) + `api_response_body`
-correlate into one `llm_exchange`, parsed by the same pure
-`extractEntries` parser in `csuite-core`. Correlation is
-per-model FIFO keyed on `event.sequence`, stateful across Claude
-Code's ~500ms telemetry flush batches, and kept per member. The
-`tool_decision` / `tool_result` records become `tool_action`
-events.
-
-OTEL is post-hoc and, critically, **carries no tool result
-content**. The runner also registers in-process Agent SDK hook
-callbacks that forward Pre/PostToolUse events to the loopback hook
-server, which emits `tool_action` events carrying the tool RESULT
-content that OTEL leaves out.
+The injected prose-content OTEL flags stay off. The one content
+flag is `OTEL_LOG_RAW_API_BODIES=file:<runner tmpdir>`: complete
+request/response bodies spill to files and OTEL carries their
+paths. The broker correlates those records into full-context
+inferences and preserves the bytes verbatim before parsing.
+Because the broker opens `body_ref` on its own filesystem, this
+currently requires shared access to the runner's spill directory.
 
 Because OTEL instruments Claude Code itself — before any request
 hits the wire — capture is **backend-agnostic**: it works whether
@@ -281,27 +261,32 @@ chronologically:
   during the objective is part of the trace, not invisible.
 
 The two layers are deliberately separate stores: the exchange
-marker is the always-present, live-streamed cost/liveness floor
-read from the agent's transcript; the inference record is the
-rich-but-intermittent wiretap of the actual API call. Neither can
-substitute for the other, so the trace surfaces join them at read
-time.
+marker is the transcript-derived cost/liveness floor, while the
+inference record preserves the richer API-call context. The
+activity uploader can report bounded loss under sustained broker
+failure, and body capture has its own availability constraints, so
+neither layer is a global completeness guarantee or a substitute
+for the other. The trace surfaces join them at read time.
 
-Reassignment shifts the trace cleanly. The old assignee's
-`objective_close` (with `result: 'reassigned'`) closes their
-window; the new assignee's `objective_open` opens theirs. Each
-section renders against its own assignee.
+On reassignment, each runner's objective tracker observes a
+different open set and enqueues close/open markers. The tracker
+cannot distinguish reassignment from other reasons an objective
+left the set, so the marker's result is only a hint; the objective
+audit log is the source of truth.
 
 ## What's redacted
 
-The same core redaction (`csuite-core`) runs on every
-capture path before an event is stored:
+The same core redaction (`csuite-core`) runs on normalized
+activity before it is stored:
 
-- **Claude `llm_exchange`** — bodies flow through the
-  `extractEntries` redaction layer at broker ingest.
-- **`tool_action` (Claude hooks) and all codex events** — the
-  runner runs `redactJson` on tool input/result and turn content
-  before upload.
+- **Claude transcript events** — the runner applies `redactJson`
+  to thinking, text, tool input/result, and turn content.
+- **Codex events** — the runner applies `redactJson` to assistant
+  text, reasoning summaries, tool input, and tool result.
+
+The raw-body store is deliberately different: it preserves
+verbatim request/response bytes before parsing or redaction.
+Treat its access control and retention as the protection boundary.
 
 | Scrubs | Patterns in string values (replaces with `[REDACTED]`) |
 |---|---|
@@ -370,25 +355,21 @@ WAL, online prune doesn't block live writes for long.
 
 ## Limitations
 
-- **Extended-thinking content is not captured (Claude).** Claude
-  Code's OTEL producer redacts extended-thinking blocks before
-  export, so they never reach the broker. This is a hard limit of
-  the native telemetry, not something the runner can opt out of.
-  Codex reasoning is likewise summaries only — OpenAI encrypts the
-  raw chain-of-thought.
-- **Tool result content arrives via hooks, not OTEL (Claude).**
-  OTEL's `tool_result` record carries only a size, not the output
-  body. The runner's hook server fills that gap. If the hooks
-  aren't wired (e.g. capture disabled with `--no-trace`), tool
-  actions still appear from OTEL but without their result content.
-- **Large request bodies are inline-truncated (Claude).** The OTEL
-  producer inlines request bodies up to a ~60KB cap; a body over
-  that is truncated, and the affected `llm_exchange` renders with
-  `model=null` rather than a parsed request. A file-mode
-  `body_ref` for oversized bodies is a documented follow-up.
+- **Claude extended thinking and tool results come from the
+  transcript.** The runner tails Claude Code's complete transcript
+  and preserves thinking, text, tool-use, and tool-result blocks in
+  normalized activity. Codex reasoning remains summaries only
+  because OpenAI encrypts the raw chain of thought upstream.
+- **Claude file-mode raw bodies require shared filesystem
+  access.** The broker currently resolves `body_ref` by opening the
+  runner's spill path. A remote broker without access to that path
+  cannot reconstruct the body; the failure is logged.
+- **Raw-body references have a 64 MiB read ceiling.** Oversized
+  files are refused and logged rather than truncated.
 - **Uploader queue cap.** The uploader caps its in-flight buffer
   and evicts oldest-first under sustained broker unreachability.
-  Events dropped here won't appear later.
+  Events dropped here won't appear later, but the count is logged
+  and included in `session_end.capture`.
 
 Presence activity (the live `idle | working | blocked` state) is a
 separate signal from this trace stream — it brackets the whole
@@ -409,12 +390,14 @@ that model.
   ledger (summary hydration + live catch-up sweeps)
 - `packages/web-ui/src/lib/genai-lazy.ts` — full-record loader by
   id (per-call expand)
-- `packages/core/src/trace/anthropic.ts` — the pure
-  `extractEntries` parser (shared by OTLP ingest)
+- `packages/core/src/trace/anthropic.ts` — Anthropic-body to
+  normalized gen_ai mapper
 - `packages/cli/src/runtime/trace/host.ts` — runner capture host
   (uploader + busy + hook server; `envVars()` OTEL config)
-- `packages/cli/src/runtime/trace/hook-server.ts` — Claude Code
-  tool-hook endpoint
+- `packages/cli/src/runtime/trace/transcript-reader.ts` — Claude
+  transcript → activity content
+- `packages/cli/src/runtime/trace/hook-server.ts` — Claude hook
+  endpoint for transcript discovery and presence
 - `packages/cli/src/runtime/agents/codex/rollout-reader.ts` +
   `rollout-parser.ts` — codex rollout → activity (content);
   `bundle-reader.ts` — codex trace bundles → gen_ai + raw bodies
