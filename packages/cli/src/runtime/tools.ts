@@ -380,20 +380,32 @@ export function defineTools(
     //
     // Defect 2 is VIEWER-INDEPENDENT: the parse is client-side and
     // keys off the owner VALUE, not the caller, so it fails for
-    // directors exactly as it does for members. `fsStat`, `fsList`,
-    // `fsWrite`, `fsMkdir` and `fsShared` all parse, so:
+    // directors exactly as it does for members. Whether a given tool
+    // breaks therefore depends only on whether its client method
+    // parses an `FsEntry` — which makes the matrix uneven, not
+    // uniform. Measured per operation:
     //
-    //   - `fs_read` fails for EVERYONE — `handleFsRead` calls `fsStat`
-    //     before fetching bytes, so it throws before the working raw
-    //     read is ever reached. "Exact-path reads work" is true of the
-    //     HTTP route and FALSE of this tool.
-    //   - `fs_write`/`fs_mkdir` COMMIT and are then reported to the
-    //     agent as errors.
+    //   fs_ls    non-director → 403 (defect 1); director → gets past
+    //            the gate and then fails the parse (defect 2).
+    //   fs_stat  fails for every viewer.
+    //   fs_read  fails for every viewer — `handleFsRead` calls
+    //            `fsStat` before fetching bytes, so it throws before
+    //            reaching the raw read. "Exact-path reads work" is
+    //            true of `GET /fs/read` and FALSE of this tool.
+    //   fs_write
+    //   fs_mkdir COMMIT server-side, then fail parsing the returned
+    //   fs_mv    entry and report an error for work that succeeded.
+    //   fs_rm    WORKS. `fsRm` returns void, parses nothing, and
+    //            `handleFsRm` has no stat preflight.
+    //   fs_shared unaffected — it never enumerates membership-only
+    //            namespace entries, so no `obj:` owner reaches it.
     //
-    // Net: there is no working route to a namespace file from the MCP
-    // tool surface today, for any member of any role. Do not describe
-    // it to agents as working. The descriptions below say what happens
-    // now.
+    // Note the shape of that: the only namespace operation an agent
+    // can complete and be told the truth about is the DESTRUCTIVE one.
+    // Do not compress this to "the namespace doesn't work" — the
+    // per-tool descriptions below carry the caveat individually,
+    // because each is a standalone spec an agent may reach without
+    // having read any other.
     ...buildFilesystemTools(name),
     // ── Permission-gated tools ──────────────────────────────────────
     //
@@ -1364,14 +1376,15 @@ function buildFilesystemTools(name: string): Tool[] {
         `List the contents of a directory in the csuite virtual filesystem. ` +
         `Your home is \`${home}\`; passing "/" lists the set of homes you can see. ` +
         `Entries include per-item metadata (kind, size, mime type, owner). ` +
-        `KNOWN LIMITATION — objective namespaces (\`/objectives/<id>/\`) are the ` +
-        `intended home for work-scoped files and are NOT usable from this tool ` +
-        `surface today. Listing one fails for everyone: non-directors get a 403 ` +
-        `from a permission check that is itself a defect, and directors get past ` +
-        `it only to have the client reject the response. Both are awaiting a fix. ` +
-        `Do not read either failure as "you lack access to this objective", and ` +
-        `do not retry — nothing you can pass will make it succeed. Use message ` +
-        `and objective attachments to share work-scoped files meanwhile.`,
+        `KNOWN DEFECT: listing \`/objectives/<id>/\` fails for everyone, by two ` +
+        `separate causes — non-directors get a 403 from a permission check that is ` +
+        `itself the defect, and directors get past that only to have the client ` +
+        `reject the response. Both are awaiting a fix. Do not read either failure ` +
+        `as "you lack access to this objective", and do not retry — nothing you ` +
+        `can pass will make it succeed. Other namespace operations differ: ` +
+        `\`fs_rm\` works, \`fs_write\`/\`fs_mkdir\`/\`fs_mv\` succeed but report ` +
+        `failure, \`fs_stat\`/\`fs_read\` fail outright. Use message and objective ` +
+        `attachments to share work-scoped files meanwhile.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -1384,7 +1397,11 @@ function buildFilesystemTools(name: string): Tool[] {
     },
     {
       name: 'fs_stat',
-      description: `Fetch metadata for a single path. Returns null if the path does not exist.`,
+      description:
+        `Fetch metadata for a single path. Returns null if the path does not exist. ` +
+        `KNOWN DEFECT: fails for a path under \`/objectives/<id>/\` no matter who you ` +
+        `are — the entry is valid and the client rejects it while parsing. The error ` +
+        `does not mean the path is missing.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -1398,7 +1415,11 @@ function buildFilesystemTools(name: string): Tool[] {
       description:
         `Read the contents of a file. Text-like files (mime \`text/*\` or \`application/json\`) ` +
         `are returned as UTF-8; everything else is returned as base64. The response ` +
-        `always includes the path, size, mime type, and either \`text\` or \`base64\`.`,
+        `always includes the path, size, mime type, and either \`text\` or \`base64\`. ` +
+        `KNOWN DEFECT: fails for any path under \`/objectives/<id>/\`, for every viewer ` +
+        `including directors. This tool stats the file before reading it, and that stat ` +
+        `is what fails; the bytes themselves are served correctly at the HTTP layer, so ` +
+        `the file is intact and readable — just not through here. Do not retry.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -1456,7 +1477,9 @@ function buildFilesystemTools(name: string): Tool[] {
       name: 'fs_mkdir',
       description:
         `Create a directory. Pass recursive=true to auto-create missing parents. ` +
-        `Your home is ${home}. Returns the directory's FsEntry.`,
+        `Your home is ${home}. Returns the directory's FsEntry. KNOWN DEFECT: under ` +
+        `\`/objectives/<id>/\` the directory IS created and you are then told it ` +
+        `failed — the client rejects the returned entry. Do not retry.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -1489,7 +1512,9 @@ function buildFilesystemTools(name: string): Tool[] {
       description:
         `Rename / move a file. Directory moves are not currently supported. ` +
         `Both the source and destination must sit under a tree you own (or you must be a director). ` +
-        `Returns the FsEntry at the destination path.`,
+        `Returns the FsEntry at the destination path. KNOWN DEFECT: when the destination ` +
+        `is under \`/objectives/<id>/\` the move COMMITS and is then reported as an error ` +
+        `— the client rejects the returned entry. Do not retry; the file has already moved.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -1506,10 +1531,9 @@ function buildFilesystemTools(name: string): Tool[] {
         `entries another member explicitly attached to a thread you can see. Owner- ` +
         `private files from other slots never appear here. Files that live in objective ` +
         `namespaces (\`/objectives/<id>/...\`) are NOT in this list either; access there ` +
-        `flows from membership, not grants. Note that objective namespaces are currently ` +
-        `unusable from every filesystem tool — see \`fs_ls\` for what fails and why — so ` +
-        `there is no working route to those files from here today. Returns each file's ` +
-        `FsEntry (path, size, mime, owner).`,
+        `flows from membership, not grants. This tool itself is unaffected by the ` +
+        `namespace defects noted on \`fs_ls\` and \`fs_read\` — it returns grant-backed ` +
+        `entries correctly. Returns each file's FsEntry (path, size, mime, owner).`,
       inputSchema: { type: 'object', properties: {} },
     },
   ];
