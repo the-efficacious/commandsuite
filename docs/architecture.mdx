@@ -56,10 +56,10 @@ runner.
 
 Why this shape: the runner is **upstream** of the agent. That's
 what lets it inject each agent's native-instrumentation config
-(the OpenTelemetry export env for claude), own the loopback hook
-server and activity uploader, and clean up `.mcp.json`
-modifications on any exit path. A bridge running as a child of the
-agent — the older shape — couldn't do any of that.
+(the OpenTelemetry export env for claude), pass adapter configuration
+without rewriting operator files, and own the loopback hook server
+and activity uploader. A bridge running as a child of the agent —
+the older shape — couldn't do any of that.
 
 ## Three credential paths, one member identity
 
@@ -170,8 +170,9 @@ For the full breakdown see [permissions](/docs/concepts/permissions).
    ┌──────────────────────────────────┐
    │         claude (CLI)             │
    │                                  │
-   │ reads .mcp.json the runner wrote │
-   │ spawns the MCP bridge from it    │
+   │ receives bridge config inline    │
+   │ from the Agent SDK options       │
+   │ (the user's .mcp.json is intact) │
    │ exports OTLP logs → broker /otlp │
    │ POSTs hook events → hook server  │
    └──────────────┬───────────────────┘
@@ -357,8 +358,8 @@ HTTP → broker → web-push library → push service → service worker
               │     - busy signal (native events)  │
               │     - streaming ActivityUploader   │
               │  • spawns the agent with env      │
-              │  • backs up + restores .mcp.json  │
-              │    (claude only)             │
+              │  • passes the MCP bridge inline   │
+              │    through Claude SDK options     │
               └───────────────────────────────────┘
 ```
 
