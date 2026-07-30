@@ -232,6 +232,18 @@ publishes to npm with provenance and cuts a single `v<version>` GitHub
 release for the suite. Maintainers cut releases — contributors just add the
 changeset.
 
+For a manual release, run `pnpm release` from a clean repository root. Its
+preparation step refuses uncommitted source, builds through Turbo, verifies
+the packed payloads, and binds each package's publishable bytes to `HEAD`.
+Direct `pnpm publish` is refusal-only: first run `pnpm release:prepare` at the
+root. Package hooks never rebuild, because rebuilding a dirty tree would
+manufacture an artifact that exists in no commit.
+
+`prepublishOnly` deliberately leaves `pnpm verify-pack` independent: packing
+for inspection does not trigger the publication gate. Publishing an
+already-built tarball also triggers no lifecycle hook and remains outside
+this gate.
+
 ## DCO — Developer Certificate of Origin
 
 CommandSuite uses the [DCO](https://developercertificate.org) to track the
