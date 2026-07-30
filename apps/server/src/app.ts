@@ -104,7 +104,11 @@ import type {
 import { hasPermission } from 'csuite-sdk/types';
 import { type Context, Hono } from 'hono';
 import { deleteCookie, setCookie } from 'hono/cookie';
-import { type ActivityTracker, createActivityTracker } from './activity-tracker.js';
+import {
+  ACTIVITY_TTL_MS,
+  type ActivityTracker,
+  createActivityTracker,
+} from './activity-tracker.js';
 import { type AuthBindings, createAuthMiddleware } from './auth.js';
 import { composeBriefing } from './briefing.js';
 import { type ChannelStore, ChannelsError, GENERAL_CHANNEL_ID, validateSlug } from './channels.js';
@@ -907,6 +911,7 @@ export function createApp(options: AppOptions): CreatedApp {
     return c.json({
       teammates: teammatesFromMembers(members),
       connected: presences,
+      activityWindowMs: ACTIVITY_TTL_MS,
     });
   });
 

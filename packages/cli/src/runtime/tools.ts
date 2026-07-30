@@ -92,7 +92,9 @@ export function defineTools(
       name: 'roster',
       description:
         `List all teammates currently on the csuite net. Returns each teammate's name, ` +
-        `role, authority, and connection state.`,
+        `role, authority, connection state, and any recently reported working or blocked ` +
+        `activity. The response uses the broker's reporting window when supplied and says ` +
+        `when the window is unknown; recent activity is not executor liveness.`,
       inputSchema: { type: 'object', properties: {} },
     },
     {
@@ -1852,20 +1854,29 @@ async function handleRoster(
   briefing: BriefingResponse,
 ): Promise<CallToolResult> {
   const roster = await brokerClient.roster();
-  const connectedByName = new Map(roster.connected.map((a) => [a.name, a.connected]));
+  const presenceByName = new Map(roster.connected.map((presence) => [presence.name, presence]));
+  const activityWindow =
+    roster.activityWindowMs === undefined
+      ? 'within an unknown window'
+      : `within last ${roster.activityWindowMs / 1_000}s`;
   if (roster.teammates.length === 0) {
     return textResult('team roster: (no slots defined)');
   }
   const lines = roster.teammates.map((t) => {
-    const conn = connectedByName.get(t.name) ?? 0;
+    const presence = presenceByName.get(t.name);
+    const conn = presence?.connected ?? 0;
     const self = t.name === briefing.name ? ' (you)' : '';
     const state = conn > 0 ? `connected=${conn}` : 'offline';
+    const activity =
+      presence?.activity === 'working' || presence?.activity === 'blocked'
+        ? `reported ${presence.activity} ${activityWindow}`
+        : `no report ${activityWindow} (idle, lapsed, or never reported)`;
     const auth = t.permissions.includes('members.manage')
       ? ' [admin]'
       : t.permissions.includes('objectives.create')
         ? ' [operator]'
         : '';
-    return `- ${t.name}${self} [${t.role.title}]${auth} ${state}`;
+    return `- ${t.name}${self} [${t.role.title}]${auth} ${state}; activity=${activity}`;
   });
   return textResult(`team ${briefing.team.name} roster:\n${lines.join('\n')}`);
 }

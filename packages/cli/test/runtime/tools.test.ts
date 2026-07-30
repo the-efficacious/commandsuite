@@ -103,6 +103,85 @@ describe('defineTools — chat surface includes channel tools', () => {
   });
 });
 
+describe('roster — recent activity without liveness claims', () => {
+  it('distinguishes recent working and blocked reports from no recent report', async () => {
+    const broker = makeBroker({
+      roster: vi.fn().mockResolvedValue({
+        teammates: [
+          ...BRIEFING.teammates,
+          { name: 'reviewer', role: { title: 'reviewer', description: '' }, permissions: [] },
+        ],
+        connected: [
+          {
+            name: 'scout',
+            connected: 1,
+            createdAt: 1,
+            lastSeen: 2,
+            role: BRIEFING.teammates[0]?.role ?? null,
+            activity: 'working',
+            busy: true,
+          },
+          {
+            name: 'director',
+            connected: 1,
+            createdAt: 1,
+            lastSeen: 2,
+            role: BRIEFING.teammates[1]?.role ?? null,
+            activity: 'blocked',
+            busy: false,
+          },
+        ],
+        activityWindowMs: 45_000,
+      }),
+    });
+
+    const text = getCallText(await handleToolCall('roster', {}, broker, BRIEFING));
+
+    expect(text).toMatch(
+      /scout \(you\) \[engineer\] connected=1; activity=reported working within last 45s/,
+    );
+    expect(text).toMatch(
+      /director \[director\] \[admin\] connected=1; activity=reported blocked within last 45s/,
+    );
+    expect(text).toMatch(
+      /reviewer \[reviewer\] offline; activity=no report within last 45s \(idle, lapsed, or never reported\)/,
+    );
+    expect(text).not.toContain('activity=idle');
+  });
+
+  it('describes the activity window and disclaims liveness in the tool metadata', () => {
+    const roster = defineTools(BRIEFING).find((tool) => tool.name === 'roster');
+    expect(roster?.description).toContain("broker's reporting window when supplied");
+    expect(roster?.description).toContain('window is unknown');
+    expect(roster?.description).toContain('not executor liveness');
+  });
+
+  it('renders an unknown window instead of inventing one for an older broker', async () => {
+    const broker = makeBroker({
+      roster: vi.fn().mockResolvedValue({
+        teammates: BRIEFING.teammates,
+        connected: [
+          {
+            name: 'scout',
+            connected: 1,
+            createdAt: 1,
+            lastSeen: 2,
+            role: BRIEFING.teammates[0]?.role ?? null,
+            activity: 'working',
+          },
+        ],
+      }),
+    });
+
+    const text = getCallText(await handleToolCall('roster', {}, broker, BRIEFING));
+    expect(text).toContain('activity=reported working within an unknown window');
+    expect(text).toContain(
+      'director [director] [admin] offline; activity=no report within an unknown window (idle, lapsed, or never reported)',
+    );
+    expect(text).not.toMatch(/within last \d+s/);
+  });
+});
+
 // ─── external tools (tool sources) ──────────────────────────────────
 
 const EXTERNAL_SOURCES = [

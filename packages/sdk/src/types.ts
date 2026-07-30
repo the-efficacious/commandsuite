@@ -269,6 +269,11 @@ export interface BriefingResponse extends Member {
 export interface RosterResponse {
   teammates: Teammate[];
   connected: Presence[];
+  /**
+   * Window the broker applied when deciding whether an activity report
+   * is recent. Optional for compatibility with older brokers.
+   */
+  activityWindowMs?: number;
 }
 
 /** Query parameters for `GET /history`. */
