@@ -229,10 +229,12 @@ before it leaves the runner:
 - **Codex** assistant text, reasoning, tool input, and tool
   result all pass through `redactJson` in the adapter.
 
-The raw-body layer has a different contract: it stores verbatim
-request and response bytes before parsing or redaction. Registered
-secret scrubbing therefore does not make the raw store safe to
-expose; access control and retention are the protection boundary.
+Parsed `gen_ai_inference` content is also redacted by the core
+Anthropic and OpenAI mappers. The raw-body layer has a different
+contract: it stores verbatim request and response bytes before
+parsing or redaction. Registered secret scrubbing therefore does
+not make the raw store safe to expose; access control and retention
+are the protection boundary.
 
 ## Presence / activity signal
 
