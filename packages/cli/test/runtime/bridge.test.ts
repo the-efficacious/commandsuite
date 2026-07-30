@@ -39,6 +39,7 @@ import {
   FAKE_BROKER_TEAM_NAME,
   FAKE_BROKER_TOKEN,
   type FakeBroker,
+  fakeBrokerObjectiveQueries,
   startFakeBroker,
 } from './fake-broker.js';
 
@@ -272,5 +273,49 @@ describeIfBuilt('runner + bridge end-to-end', () => {
     expect(result.content[0]?.text ?? '').toContain('[reviewer]');
     expect(result.content[0]?.text ?? '').toContain('[engineer]');
     expect(result.content[0]?.text ?? '').not.toContain('[object Object]');
+  });
+
+  // The tool's choice of filter IS the agent-facing contract. `assignee`
+  // collapses to assignee-only for any caller holding `objectives.create`
+  // — which is every coordinating member — hiding everything they
+  // originated or watch. Every server-side test stays green through that
+  // regression, so it has to be asserted on the wire.
+  it('objectives_list queries by relationship, not assignee', async () => {
+    fakeBrokerObjectiveQueries.length = 0;
+    send({
+      jsonrpc: '2.0',
+      id: 5,
+      method: 'tools/call',
+      params: { name: 'objectives_list', arguments: {} },
+    });
+    const response = await waitForMessage((m) => m.id === 5);
+    const result = response.result as { content: Array<{ type: string; text: string }> };
+
+    expect(fakeBrokerObjectiveQueries).toHaveLength(1);
+    const params = new URLSearchParams(fakeBrokerObjectiveQueries[0] ?? '');
+    expect(params.get('related')).toBe(FAKE_BROKER_NAME);
+    expect(params.has('assignee')).toBe(false);
+
+    // The empty-state text said "assigned to", which stayed misleading
+    // even once the query was right.
+    expect(result.content[0]?.text ?? '').toContain(`no objectives for ${FAKE_BROKER_NAME}`);
+    expect(result.content[0]?.text ?? '').not.toContain('assigned to');
+  });
+
+  it('objectives_list forwards a status filter alongside the relationship', async () => {
+    fakeBrokerObjectiveQueries.length = 0;
+    send({
+      jsonrpc: '2.0',
+      id: 6,
+      method: 'tools/call',
+      params: { name: 'objectives_list', arguments: { status: 'active' } },
+    });
+    await waitForMessage((m) => m.id === 6);
+
+    expect(fakeBrokerObjectiveQueries).toHaveLength(1);
+    const params = new URLSearchParams(fakeBrokerObjectiveQueries[0] ?? '');
+    expect(params.get('related')).toBe(FAKE_BROKER_NAME);
+    expect(params.get('status')).toBe('active');
+    expect(params.has('assignee')).toBe(false);
   });
 });

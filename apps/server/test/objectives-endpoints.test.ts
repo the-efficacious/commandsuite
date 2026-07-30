@@ -280,15 +280,15 @@ describe('GET /objectives', () => {
   it('related returns originated and watched objectives for a privileged caller assigned none', async () => {
     const { app } = makeApp();
     // alice originates both and is the assignee of neither.
-    await createOne(app, ALICE, { assignee: 'carol' });
-    await createOne(app, ALICE, { assignee: 'dave' });
+    const originatedA = await createOne(app, ALICE, { assignee: 'carol' });
+    const originatedB = await createOne(app, ALICE, { assignee: 'dave' });
     // ...and watches a third she neither originated nor was assigned.
-    await createOne(app, BOB, { assignee: 'dave', watchers: ['alice'] });
+    const watched = await createOne(app, BOB, { assignee: 'dave', watchers: ['alice'] });
     // A fourth alice has NO relationship with. Without this the team-wide
     // count and the related count are both 3, and the test would pass
     // against a route that ignores `related` entirely — the exact
     // "returns some of the right answer" failure this suite exists to catch.
-    await createOne(app, BOB, { assignee: 'dave' });
+    const unrelated = await createOne(app, BOB, { assignee: 'dave' });
 
     // The old query shape: assignee-only. Alice is assigned nothing, so
     // this is the empty plate that made the recovery path lie.
@@ -299,9 +299,13 @@ describe('GET /objectives', () => {
     const res = await app.request('/objectives?related=alice', authed(ALICE));
     expect(res.status).toBe(200);
     const body = (await res.json()) as ListObjectivesResponse;
-    // Two originated + one watched = 3, against a team-wide total of 4.
-    // Asserted on the count, not the presence of any one record.
-    expect(body.objectives).toHaveLength(3);
+    // Assert the exact identities, not the cardinality: a route that
+    // returned the unrelated fourth in place of one related objective
+    // has the right count and the wrong answer.
+    expect(new Set(body.objectives.map((o) => o.id))).toEqual(
+      new Set([originatedA.id, originatedB.id, watched.id]),
+    );
+    expect(body.objectives.map((o) => o.id)).not.toContain(unrelated.id);
   });
 
   it('related composes with a status filter', async () => {
