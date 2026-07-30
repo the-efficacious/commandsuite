@@ -103,6 +103,58 @@ describe('defineTools — chat surface includes channel tools', () => {
   });
 });
 
+describe('roster — recent activity without liveness claims', () => {
+  it('distinguishes recent working and blocked reports from no recent report', async () => {
+    const broker = makeBroker({
+      roster: vi.fn().mockResolvedValue({
+        teammates: [
+          ...BRIEFING.teammates,
+          { name: 'reviewer', role: { title: 'reviewer', description: '' }, permissions: [] },
+        ],
+        connected: [
+          {
+            name: 'scout',
+            connected: 1,
+            createdAt: 1,
+            lastSeen: 2,
+            role: BRIEFING.teammates[0]?.role ?? null,
+            activity: 'working',
+            busy: true,
+          },
+          {
+            name: 'director',
+            connected: 1,
+            createdAt: 1,
+            lastSeen: 2,
+            role: BRIEFING.teammates[1]?.role ?? null,
+            activity: 'blocked',
+            busy: false,
+          },
+        ],
+      }),
+    });
+
+    const text = getCallText(await handleToolCall('roster', {}, broker, BRIEFING));
+
+    expect(text).toMatch(
+      /scout \(you\) \[engineer\] connected=1; activity=reported working within last \d+s/,
+    );
+    expect(text).toMatch(
+      /director \[director\] \[admin\] connected=1; activity=reported blocked within last \d+s/,
+    );
+    expect(text).toMatch(
+      /reviewer \[reviewer\] offline; activity=no report within last \d+s \(idle, lapsed, or never reported\)/,
+    );
+    expect(text).not.toContain('activity=idle');
+  });
+
+  it('describes the activity window and disclaims liveness in the tool metadata', () => {
+    const roster = defineTools(BRIEFING).find((tool) => tool.name === 'roster');
+    expect(roster?.description).toMatch(/reported within the last \d+ seconds/);
+    expect(roster?.description).toContain('not executor liveness');
+  });
+});
+
 // ─── external tools (tool sources) ──────────────────────────────────
 
 const EXTERNAL_SOURCES = [
