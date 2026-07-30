@@ -39,6 +39,31 @@
  * Coverage is per-endpoint and deliberately partial — see the table below.
  * An endpoint absent from it is UNCHECKED, not proven correct. Adding a case
  * is three lines; that is the point of the table.
+ *
+ * AND IT ONLY SEES HTTP RESPONSES
+ * -------------------------------
+ * This checks what the SERVER emits over HTTP. It cannot see a published
+ * LIBRARY API emitting a value that fails its own schema, because no HTTP
+ * response is involved.
+ *
+ * That gap is real and demonstrated, not hypothetical. `Broker.push` in
+ * `csuite-core` takes the published `PushPayload` interface, whose `to` is
+ * `string | null`, assigns it straight onto `Message.to`, and appends to the
+ * event log without a runtime parse. So:
+ *
+ *   const b = new Broker({ eventLog: new InMemoryEventLog() });
+ *   const r = await b.push({ to: 'chan:general', body: 'x' });
+ *   MessageSchema.safeParse(r.message).success  // false
+ *
+ * `MessageSchema.to` is `NameSchema`; `'chan:general'` fails the regex. No
+ * in-tree server path does this — the HTTP layer parses payloads and internal
+ * callers pass names or null — but it is a value the published API permits
+ * and emits. Found by @Rune by type/write-site tracing, which is the method
+ * that reaches what a grep and a stored-data query both miss.
+ *
+ * Covering that needs a different mechanism: parsing the return values of
+ * published library entry points, not HTTP responses. Out of scope here and
+ * named so it is not mistaken for covered.
  */
 
 import { mkdtempSync, rmSync } from 'node:fs';
