@@ -715,7 +715,17 @@ describe('Broker.push recipient validation', () => {
     await broker.push({ body: 'a message that is appended' }, { from: 'agent-1' });
     expect(await eventLog.query({ viewer: 'agent-1' })).toHaveLength(1);
 
-    await expect(broker.push({ to: 'chan:general', body: 'hi' })).rejects.toThrow();
+    // `from: 'agent-1'` is load-bearing, not decoration. Seeing SOME
+    // message is not enough — the query must be able to see the exact
+    // row whose absence is asserted, and it is scoped by sender/target
+    // relationship. Measured: a row with `from: null, to: 'chan:general'`
+    // is invisible to `viewer: 'agent-1'` (query returns 0 with the row
+    // present), so an earlier version of this test passed under a
+    // validate-AFTER-append mutation. With `from: 'agent-1'` the same
+    // row is visible, and that mutation now shows length 2.
+    await expect(
+      broker.push({ to: 'chan:general', body: 'hi' }, { from: 'agent-1' }),
+    ).rejects.toThrow();
     expect(await eventLog.query({ viewer: 'agent-1' })).toHaveLength(1);
   });
 
