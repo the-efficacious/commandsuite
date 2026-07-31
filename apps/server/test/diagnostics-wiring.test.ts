@@ -111,6 +111,59 @@ describe('wiring: a real failure is retained', () => {
     expect(r[0]?.member_name).toBe('turner');
   });
 
+  it('retention failure does not replace the operation it observes', () => {
+    // THE WORST DEFECT THIS OBJECTIVE PRODUCED, found by Rune. Every
+    // site calls diagnostics beside an existing stderr warning, so an
+    // emitter that throws propagates out of the catch it was added to,
+    // skips the logger, and changes what the original operation does.
+    // Measured before the fix: `Error: diagnostic store unavailable`
+    // escaped getBlob and the warning never fired.
+    //
+    // The coupling is real rather than theoretical — retention shares
+    // the activity DB handle with the streams it reports on, so a
+    // full or corrupt handle fails both together. That is precisely
+    // when the product most needs its prior behaviour intact.
+    const { db, diagnostics } = harness();
+    const warn = vi.fn();
+    const store = createRawBodyStore(db, {
+      logger: { debug: vi.fn(), info: vi.fn(), warn, error: vi.fn() },
+      diagnostics: diagnostics.emit,
+    });
+    const { hash } = store.appendBody({
+      memberName: 'm',
+      kind: 'request',
+      bytes: Buffer.from('{}'),
+    });
+    db.prepare('UPDATE raw_blob SET bytes = ? WHERE hash = ?').run(Buffer.from([0x00]), hash);
+    // Break retention underneath a live store.
+    db.exec('DROP TABLE diagnostic_event');
+
+    expect(store.getBlob(hash)).toBeNull(); // original behaviour intact
+    expect(warn).toHaveBeenCalled(); // stderr line still fires
+    // …and retention says so WITHOUT consulting the store that failed.
+    expect(diagnostics.health()).toBe('unknown');
+  });
+
+  it('a failure heals on an observed recovery, and stays queryable', () => {
+    // Criterion 4 through the production path. Wiring only the failure
+    // half latches a member unresolved forever — the permanent false
+    // sickness the store round fixed, reintroduced one layer out.
+    const { db, diagnostics } = harness();
+    const store = createRawBodyStore(db, { logger: quiet, diagnostics: diagnostics.emit });
+
+    // An incident: correlator raw capture failed for this member.
+    diagnostics.emit.correlatorRawCaptureFailed('turner', new Error('x'));
+    expect(diagnostics.unresolved('turner')).toHaveLength(1);
+
+    // The success path fires on the next good capture.
+    diagnostics.emit.correlatorRawCaptureSucceeded('turner');
+
+    expect(diagnostics.unresolved('turner')).toHaveLength(0); // healthy NOW
+    const hist = diagnostics.query({ member: 'turner', from: 0, to: Date.now() + 1000 });
+    expect(hist.count).toBeGreaterThan(0); // history still queryable
+    void store;
+  });
+
   it('a store constructed WITHOUT diagnostics still works and retains nothing', () => {
     // Retention is optional by design: a broker without it behaves
     // exactly as before. "No opinion" has to be a real state here too.

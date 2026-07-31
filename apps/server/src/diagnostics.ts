@@ -899,7 +899,18 @@ function buildStore(
     }
   }
 
-  const emit: DiagnosticEmitter = {
+  /**
+   * Set when a retention write throws.
+   *
+   * IN MEMORY, deliberately. The store shares a database handle with
+   * the operations it observes, so a full, busy or corrupt handle can
+   * fail both — and recording "retention is broken" through the broken
+   * store is the recursion this objective exists to close. `health()`
+   * consults this BEFORE touching SQLite.
+   */
+  let writeFailed = false;
+
+  const rawEmit: DiagnosticEmitter = {
     correlatorBodyRefUnreadable(member, path, err) {
       record({
         cause: 'correlator.body_ref_unreadable',
@@ -1029,6 +1040,33 @@ function buildStore(
       clearState.run('toolinvoke.audit_append_failed', member);
     },
   };
+
+  /**
+   * Production adapter: retention MUST NOT replace the failure it is
+   * observing.
+   *
+   * Every site calls diagnostics beside an existing stderr warning. An
+   * emitter that throws propagates out of the catch block it was added
+   * to, skips the logger, and changes what the original operation does
+   * — so adding retention would have made the product worse at exactly
+   * the moments it matters. Measured: a throwing emitter escaped
+   * `getBlob` and the warning never fired.
+   *
+   * Swallowing is right here and nowhere else: the alternative is a
+   * diagnostic subsystem with the authority to break capture.
+   */
+  const emit: DiagnosticEmitter = Object.fromEntries(
+    Object.entries(rawEmit).map(([name, fn]) => [
+      name,
+      (...args: unknown[]) => {
+        try {
+          (fn as (...a: unknown[]) => void)(...args);
+        } catch {
+          writeFailed = true;
+        }
+      },
+    ]),
+  ) as unknown as DiagnosticEmitter;
 
   return {
     emit,
@@ -1284,6 +1322,9 @@ function buildStore(
       // thing that criterion exists to prevent. It is reported when the
       // store cannot read its own state — which deliberately does NOT
       // depend on this same store having recorded the failure.
+      // The latch first: if a write threw, the store cannot be trusted
+      // to describe itself, and asking it would be the recursion.
+      if (writeFailed) return 'unknown';
       let last: number;
       try {
         last = metaNum('overflow_last', 0);

@@ -1421,6 +1421,9 @@ export function createApp(options: AppOptions): CreatedApp {
       if (telemetryStore !== undefined && telemetryRecords.length > 0) {
         try {
           telemetryStore.append(member.name, telemetryRecords);
+          // Observed recovery, not a timeout: this member's telemetry
+          // is landing again.
+          diagnostics?.emit.otlpLogsStored(member.name);
         } catch (err) {
           diagnostics?.emit.otlpLogsStoreFailed(member.name, records.length);
           logger.warn('otlp logs store failed', {
@@ -1436,6 +1439,7 @@ export function createApp(options: AppOptions): CreatedApp {
           for (const inf of inferences) {
             genaiStore.append(member.name, inf);
           }
+          diagnostics?.emit.otlpGenaiIngested(member.name);
         } catch (err) {
           diagnostics?.emit.otlpGenaiIngestFailed(member.name, genaiRecords.length);
           logger.warn('otlp genai ingest failed', {
@@ -1460,6 +1464,7 @@ export function createApp(options: AppOptions): CreatedApp {
       const raw = await c.req.json().catch(() => null);
       try {
         telemetryStore.append(member.name, parseOtlpMetrics(raw));
+        diagnostics?.emit.otlpMetricsStored(member.name);
       } catch (err) {
         diagnostics?.emit.otlpMetricsStoreFailed(member.name, 0);
         logger.warn('otlp metrics store failed', {
@@ -1702,6 +1707,7 @@ export function createApp(options: AppOptions): CreatedApp {
           });
           gStore.append(name, { ...rec, requestSha256, responseSha256 });
           accepted++;
+          diagnostics?.emit.codexGenaiIngestEntrySucceeded(member.name);
         } catch (err) {
           diagnostics?.emit.codexGenaiIngestEntryFailed(member.name);
           logger.warn('codex genai ingest entry failed', {
@@ -2240,6 +2246,7 @@ export function createApp(options: AppOptions): CreatedApp {
               isError: result.isError === true,
             },
           ]);
+          diagnostics?.emit.toolinvokeAuditAppended(member.name);
         } catch (err) {
           diagnostics?.emit.toolinvokeAuditAppendFailed(member.name);
           logger.warn('tool invoke audit append failed', {
@@ -3952,6 +3959,8 @@ export function createApp(options: AppOptions): CreatedApp {
           checkObjectiveContext(parsed.data.events, name, objectives, broker, logger);
         }
 
+        // Observed recovery: this member's activity is landing again.
+        diagnostics?.emit.activityAppended(name);
         return c.json({ accepted: rows.length }, 201);
       } catch (err) {
         diagnostics?.emit.activityAppendFailed(name, parsed.data.events.length);

@@ -202,6 +202,29 @@ export interface Presence {
    * continuously.
    */
   captureHealth?: CaptureHealthState;
+  /**
+   * Completeness failures the broker has RETAINED for this member and
+   * that have not been observed to recover.
+   *
+   * Follows `captureHealth`'s absence rule, not `activity`'s: absent
+   * means this broker retains no diagnostics and has no opinion — never
+   * "this member is clean". `0` is the positive statement that it
+   * looked and found none outstanding.
+   *
+   * This is the surface an agent reads about ITSELF. The failures it
+   * counts are ones the product already detected and, until now, wrote
+   * to a terminal nobody kept: the agent could not find out that its
+   * own capture had failed.
+   */
+  diagnosticsUnresolved?: number;
+  /**
+   * Health of the retention subsystem itself.
+   *
+   * `unknown` is reachable and load-bearing: a store that cannot say "I
+   * do not know" would make this signal the thing it exists to prevent,
+   * one layer down.
+   */
+  diagnosticsRetention?: 'healthy' | 'degraded' | 'unknown';
 }
 
 /**

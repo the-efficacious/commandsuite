@@ -159,6 +159,37 @@ describe('diagnostic census guard', () => {
     expect(countAllSites()).toBe(TOTAL_SITES);
   });
 
+  it('every observed-recovery method has a production call site', () => {
+    // Rune found all eight recovery methods referenced ONLY in their
+    // own definitions: the failure half was wired and the healing half
+    // was not, so the first incident latched a member unresolved
+    // forever. `rg` found it in one command; this makes that command a
+    // test.
+    //
+    // LIMIT, stated: this is a static reference check, not behavioural.
+    // It proves a call site exists, not that it fires on the right
+    // success. My behavioural attempt called the emitter directly and
+    // survived unwiring the correlator entirely — a wiring test that
+    // did not test the wiring, which is why this guard is here instead
+    // of in place of one.
+    const RECOVERIES = [
+      'correlatorBodyRefRead',
+      'correlatorRawCaptureSucceeded',
+      'otlpLogsStored',
+      'otlpGenaiIngested',
+      'otlpMetricsStored',
+      'codexGenaiIngestEntrySucceeded',
+      'activityAppended',
+      'toolinvokeAuditAppended',
+    ];
+    const production = (readdirSync(SRC, { recursive: true }) as string[])
+      .filter((f) => f.endsWith('.ts') && !f.endsWith('diagnostics.ts'))
+      .map((f) => readFileSync(join(SRC, f), 'utf8'))
+      .join('\n');
+    const unwired = RECOVERIES.filter((m) => !production.includes(`.${m}(`));
+    expect(unwired).toEqual([]);
+  });
+
   it('the cause enum has one code per registered site plus overflow', () => {
     // 14 capture-module + 7 app.ts + retention.overflow + retention.fanout_truncated.
     expect(DIAGNOSTIC_CAUSES.length).toBe(REGISTERED.size + APP_IN_SCOPE.length + 2);

@@ -305,6 +305,8 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
     if (bodyRef) {
       try {
         bytes = readBodyRef(bodyRef);
+        // Observed recovery: this member's body_ref reads are working.
+        diag?.correlatorBodyRefRead(who);
       } catch (err) {
         diag?.correlatorBodyRefUnreadable(who, bodyRef, err);
         log('genai-correlator: body_ref unreadable', {
@@ -354,6 +356,8 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
         });
         hash = res.hash;
         exchangeId = res.exchangeId;
+        // Observed recovery: raw capture is landing for this member.
+        diag?.correlatorRawCaptureSucceeded(who);
         // The bytes are durably captured — consume the spill file (the
         // broker deleting it IS the designed lifecycle; Claude Code
         // never cleans up after itself). Best-effort: an unlink failure
