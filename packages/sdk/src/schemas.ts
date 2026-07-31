@@ -19,6 +19,22 @@ export const LogLevelSchema = z.enum(['debug', 'info', 'notice', 'warning', 'err
 export const ActivityStateSchema = z.enum(['idle', 'working', 'blocked']);
 
 /**
+ * Whether a member's VERBATIM capture is reaching the broker.
+ *
+ * Two states, both emitted explicitly — there is deliberately no
+ * "unknown" or "pending" member here. A broker that knows about this
+ * field always says which of the two applies to a member it has
+ * evaluated; **the absence of the field is what carries "no opinion,"
+ * and absence must never be read as `ok`.**
+ *
+ * No `pending`: healthy correlation lag means every normal turn is
+ * briefly unmatched (measured p50 ~4.2s), so a user-visible "maybe"
+ * would flicker continuously on healthy traffic. Pending is tracked
+ * internally and reported as `ok` until the evidence threshold is met.
+ */
+export const CaptureHealthStateSchema = z.enum(['ok', 'gap']);
+
+/**
  * Member names — alphanumeric plus `.`, `_`, `-`, 1-128 chars.
  */
 export const NameSchema = z
@@ -137,6 +153,28 @@ export const PresenceSchema = z.object({
   // Back-compat mirror of `activity === 'working'`. Omitted when
   // `activity` is; older UIs that only read the boolean keep working.
   busy: z.boolean().optional(),
+  /**
+   * Whether this member's VERBATIM capture is reaching the broker.
+   *
+   * `'ok'` and `'gap'` are BOTH emitted explicitly by a broker that
+   * knows about this field. **Absence means "old broker, no opinion" —
+   * never "healthy."** That distinction is the whole point: the
+   * optional-for-compatibility precedent (`activityWindowMs`) is what
+   * makes the field safe to add, and it would silently reintroduce the
+   * exact ambiguity this exists to remove if absence read as fine.
+   *
+   * A member can report activity all day while none of their bodies
+   * arrive — `TracePanel` renders their markers either way, by design,
+   * because rich-layer coverage is deliberately best-effort. That makes
+   * *this turn has no rich record* (normal) and *this member has none
+   * at all* (systematic failure) look identical. This is the second
+   * signal that separates them.
+   *
+   * `'gap'` is only ever set once a marker has aged past the grace
+   * window; there is no user-visible "maybe" state, because healthy
+   * correlation lag means every normal turn is briefly unmatched.
+   */
+  captureHealth: CaptureHealthStateSchema.optional(),
 });
 
 /**

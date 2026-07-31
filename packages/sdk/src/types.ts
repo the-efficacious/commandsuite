@@ -26,6 +26,17 @@ export type LogLevel = 'debug' | 'info' | 'notice' | 'warning' | 'error' | 'crit
  */
 export type ActivityState = 'idle' | 'working' | 'blocked';
 
+/**
+ * Whether a member's verbatim capture is reaching the broker.
+ *
+ * Deliberately two states. There is no `unknown` member: a broker that
+ * knows about this says which applies, and **field absence is what
+ * carries "no opinion."** There is no `pending` either — healthy
+ * correlation lag leaves every normal turn briefly unmatched, so a
+ * user-visible "maybe" would flicker on healthy traffic.
+ */
+export type CaptureHealthState = 'ok' | 'gap';
+
 // ─────────────────────────── Permissions ──────────────────────────────
 
 /**
@@ -167,6 +178,23 @@ export interface Presence {
    * look) from plain `idle`. Optional — absent when `activity` is absent.
    */
   busy?: boolean;
+  /**
+   * Whether this member's VERBATIM capture is reaching the broker.
+   *
+   * **Absence means "this broker has no opinion" — NOT "healthy."** A
+   * broker that knows about the field emits `'ok'` or `'gap'`
+   * explicitly for every member it evaluates; only an older broker
+   * omits it. Reading absence as healthy would reintroduce the exact
+   * ambiguity the field exists to remove.
+   *
+   * `'gap'` means completed exchange markers have aged past the grace
+   * window without their stored bodies appearing — the member is
+   * working and their verbatim capture is not arriving. There is no
+   * user-visible intermediate state: healthy correlation lag leaves
+   * every normal turn briefly unmatched, so a "maybe" would flicker
+   * continuously.
+   */
+  captureHealth?: CaptureHealthState;
 }
 
 /**

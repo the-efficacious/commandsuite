@@ -113,6 +113,7 @@ import {
 } from './activity-tracker.js';
 import { type AuthBindings, createAuthMiddleware } from './auth.js';
 import { composeBriefing } from './briefing.js';
+import type { CaptureHealthStore } from './capture-health.js';
 import { type ChannelStore, ChannelsError, GENERAL_CHANNEL_ID, validateSlug } from './channels.js';
 import { type EnrollmentStore, formatUserCode, normalizeUserCode } from './enrollments.js';
 import {
@@ -273,6 +274,16 @@ export interface AppOptions {
    * disk).
    */
   rawBodyStore?: RawBodyStore;
+  /**
+   * Capture-health detector. When wired, `GET /roster` reports per
+   * member whether their verbatim capture is reaching the broker.
+   *
+   * Omit and the roster simply carries no `captureHealth` field —
+   * which is the "no opinion" signal, NOT a healthy one. A member can
+   * work all day while none of their bodies arrive, and every other
+   * surface renders that identically to working normally.
+   */
+  captureHealth?: CaptureHealthStore;
   version: string;
   logger: Logger;
   /**
@@ -477,6 +488,7 @@ export function createApp(options: AppOptions): CreatedApp {
     telemetryStore,
     genaiStore,
     rawBodyStore,
+    captureHealth,
     version,
     logger,
     shutdownSignal,
@@ -915,10 +927,25 @@ export function createApp(options: AppOptions): CreatedApp {
     // For non-idle members we surface `activity` plus `busy = activity
     // === 'working'`, so `blocked` reads as not-busy (an operator should
     // look) while still exposing the distinct state to new UIs.
+    //
+    // `captureHealth` follows a DIFFERENT absence rule from `activity`,
+    // deliberately. `activity` omits the field for idle members and a
+    // reader treats absence as idle — safe, because idle is the benign
+    // default. Capture health has no benign default: absence has to
+    // mean "this broker has no opinion," so a broker that CAN evaluate
+    // it emits `ok` explicitly rather than omitting. Reading an absent
+    // field as healthy is exactly the conflation this exists to remove,
+    // and it is only absent when the store isn't wired at all.
     const presences = broker.listPresences().map((p) => {
       const activity = activityTracker.getActivity(p.name);
-      if (activity === 'idle') return p;
-      return { ...p, activity, busy: activity === 'working' };
+      const health = captureHealth?.forMember(p.name);
+      // `pending` is internal — an aged-out marker hasn't earned a
+      // claim yet, and healthy lag means every turn is briefly
+      // unmatched. Surfacing it would flicker on healthy traffic.
+      const captureField =
+        health === undefined ? {} : { captureHealth: health.state === 'gap' ? 'gap' : 'ok' };
+      if (activity === 'idle') return { ...p, ...captureField };
+      return { ...p, activity, busy: activity === 'working', ...captureField };
     });
     return c.json({
       teammates: teammatesFromMembers(members),
