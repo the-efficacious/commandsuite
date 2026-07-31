@@ -463,8 +463,14 @@ export interface DiagnosticWindowResult {
  * the right emitter established the event or its affected set.
  *
  * Criterion 9's guarantee is architectural, so the boundary has to be
- * one too. An internal factory exposes the raw closure for the store's
- * own mechanics tests; production has no route to it.
+ * one too. An internal factory exposes the raw closures for the
+ * store's own mechanics tests; production has no route to them.
+ *
+ * THERE WERE THREE DOORS TO THE SAME ROOM, not one. Closing generic
+ * `record` and then `emit.recovered` still left `store.resolve`
+ * public, which cleared any incident — including a point cause that
+ * can never have one. Closing a bypass means enumerating every route
+ * to the capability, not fixing the route someone named.
  *
  * BLOB CORRUPTION RESOLVES ITS OWN ATTRIBUTION. `getBlob(hash)` has no
  * member, so these methods look the affected set up from `raw_exchange`
@@ -520,8 +526,6 @@ export interface DiagnosticStore {
    * retainable.
    */
   readonly emit: DiagnosticEmitter;
-  /** An observed recovery. The ONLY thing that clears unresolved state. */
-  resolve(cause: DiagnosticCause, member: string | null): void;
   /** Causes currently unresolved for a member, oldest first. */
   unresolved(member: string | null): Array<{ cause: DiagnosticCause; since: number }>;
   query(opts: {
@@ -612,7 +616,10 @@ const SCHEMA = `
 export function createDiagnosticStoreInternalForTests(
   db: DatabaseSyncInstance,
   options: DiagnosticOptions = {},
-): DiagnosticStore & { record(input: DiagnosticInput): void } {
+): DiagnosticStore & {
+  record(input: DiagnosticInput): void;
+  resolve(cause: DiagnosticCause, member: string | null): void;
+} {
   return buildStore(db, options);
 }
 
@@ -626,7 +633,10 @@ export function createDiagnosticStore(
 function buildStore(
   db: DatabaseSyncInstance,
   options: DiagnosticOptions = {},
-): DiagnosticStore & { record(input: DiagnosticInput): void } {
+): DiagnosticStore & {
+  record(input: DiagnosticInput): void;
+  resolve(cause: DiagnosticCause, member: string | null): void;
+} {
   db.exec(SCHEMA);
 
   const now = options.now ?? (() => Date.now());
