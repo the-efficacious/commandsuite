@@ -176,11 +176,13 @@ describe('relay per-record resolution', () => {
     expect(broker.declared).toEqual(['1']); // one resolved, not two
   });
 
-  it('falls back to one inline body when body_ref resolution fails', async () => {
+  it('a failed ref preserves its file and falls back to the last inline body', async () => {
     const { dir, broker, sendPayload } = await harness();
-    const missing = join(dir, 'absent.json');
-    const inline = '{"source":"inline-fallback"}';
-    const payload = batch([missing]) as {
+    const invalid = join(dir, 'invalid.json');
+    writeFileSync(invalid, Buffer.from([0xff]));
+    const earlierInline = '{"source":"earlier-inline"}';
+    const lastInline = '{"source":"last-inline"}';
+    const payload = batch([invalid]) as {
       resourceLogs: Array<{
         scopeLogs: Array<{
           logRecords: Array<{ attributes: Attr[] }>;
@@ -189,7 +191,8 @@ describe('relay per-record resolution', () => {
     };
     const attrs = payload.resourceLogs[0]?.scopeLogs[0]?.logRecords[0]?.attributes;
     if (attrs === undefined) throw new Error('fixture record missing attributes');
-    attrs.push({ key: 'body', value: { stringValue: inline } });
+    attrs.unshift({ key: 'body', value: { stringValue: earlierInline } });
+    attrs.push({ key: 'body', value: { stringValue: lastInline } });
 
     const response = await sendPayload(payload);
 
@@ -197,9 +200,10 @@ describe('relay per-record resolution', () => {
     expect(broker.declared).toEqual(['0']);
     const forwarded = attrsOf(broker.received[0], 0);
     expect(forwarded.filter((attr) => attr.key === 'body')).toEqual([
-      { key: 'body', value: { stringValue: inline } },
+      { key: 'body', value: { stringValue: lastInline } },
     ]);
     expect(forwarded.some((attr) => attr.key === 'body_ref')).toBe(false);
+    expect(existsSync(invalid)).toBe(true);
   });
 
   it('a redelivery after a successful ack succeeds instead of failing forever', async () => {

@@ -148,16 +148,12 @@ describe('otlp relay — a resolved body_ref must not be shadowed by an inline b
     });
   }
 
-  it('does not unlink the spool copy while a shadowing body is still on the wire', async () => {
-    // The unlink is earned by `refs.length` matching the broker's
-    // captured count — a count of substitutions PERFORMED, not of
-    // substitutions that survived. A shadowed ref therefore deletes the
-    // only copy of bytes the broker never stored.
-    const { attributes, flat, bodyPath } = await relayRecord('ref-first');
-    const shadowed =
-      attributes.filter((attr) => attr.key === 'body').length > 1 || flat.body !== SPOOL_BYTES;
-    if (shadowed) {
-      expect(existsSync(bodyPath)).toBe(true);
-    }
+  it('unlinks only after the spool bytes become the sole forwarded body', async () => {
+    const { response, attributes, flat, bodyPath } = await relayRecord('ref-first');
+
+    expect(response.status).toBe(200);
+    expect(attributes.filter((attr) => attr.key === 'body')).toHaveLength(1);
+    expect(flat.body).toBe(SPOOL_BYTES);
+    expect(existsSync(bodyPath)).toBe(false);
   });
 });
