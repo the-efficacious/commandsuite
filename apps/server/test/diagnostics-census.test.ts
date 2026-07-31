@@ -92,7 +92,7 @@ function messagesIn(file: string): string[] {
   for (const pat of [/this\.log\.warn\(/g, /(?<!\.)\blog\(\s*'/g]) {
     for (const m of src.matchAll(pat)) {
       const q = /'([^']+)'/.exec(src.slice(m.index, m.index + 200));
-      if (q?.[1] !== undefined && q[1].includes(': ')) out.push(q[1]);
+      if (q?.[1]?.includes(': ') === true) out.push(q[1]);
     }
   }
   return out;

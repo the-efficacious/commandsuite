@@ -126,6 +126,49 @@ export type DiagnosticCause = (typeof DIAGNOSTIC_CAUSES)[number];
  */
 export type Attribution = 'producer' | 'affected' | 'observer' | 'unattributed';
 
+/**
+ * Stored stand-in for "no member resolved".
+ *
+ * SQLite does NOT consider two NULLs equal, so a nullable column inside
+ * a composite PRIMARY KEY silently defeats `ON CONFLICT`: two identical
+ * unattributed folds produce two rows, not one, and the same applies to
+ * unresolved state. Measured directly before this was changed — NULL
+ * gave 2 rows where a real member gave 1. `NameSchema` forbids the
+ * empty string, so it can never collide with a real member.
+ */
+const UNATTRIBUTED = '';
+
+/**
+ * How a cause behaves for CURRENT health.
+ *
+ *   point     a one-off loss. It is history the moment it happens and
+ *             creates no unresolved state — a malformed row skipped
+ *             last Tuesday is not an ongoing illness, and there is no
+ *             coherent "recovery" event for it.
+ *   incident  an ongoing condition with a named observed recovery. Only
+ *             these create unresolved state.
+ *
+ * Without this split, wiring all 21 sites would mark every member
+ * permanently sick from their first malformed record onward — the
+ * mirror of permanent false health, and just as wrong.
+ */
+export type HealthMode = 'point' | 'incident';
+
+const CAUSE_MODE: Record<string, HealthMode> = {
+  'correlator.body_ref_unreadable': 'incident',
+  'correlator.raw_capture_failed': 'incident',
+  'otlp.logs_store_failed': 'incident',
+  'otlp.genai_ingest_failed': 'incident',
+  'otlp.metrics_store_failed': 'incident',
+  'codex.genai_ingest_entry_failed': 'incident',
+  'activity.append_failed': 'incident',
+  'toolinvoke.audit_append_failed': 'incident',
+};
+/** Everything not named above is a point event. */
+export function healthMode(cause: DiagnosticCause): HealthMode {
+  return CAUSE_MODE[cause] ?? 'point';
+}
+
 /** Coverage of an answer. `indeterminate` is a state, not a zero. */
 export type Coverage = 'exact' | 'bucket' | 'indeterminate';
 
@@ -252,6 +295,7 @@ export interface DiagnosticOptions {
   /** Hard row caps. Exceeding one evicts oldest AND raises the floor. */
   maxDetailRows?: number;
   maxBucketRows?: number;
+  maxStateRows?: number;
 }
 
 const DEFAULT_DETAIL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days of per-event detail
@@ -259,6 +303,9 @@ const DEFAULT_HOUR_MS = 30 * 24 * 60 * 60 * 1000; // 30 days at hour resolution
 const DEFAULT_DAY_MS = 400 * 24 * 60 * 60 * 1000; // ~13 months at day resolution
 const DEFAULT_MAX_DETAIL_ROWS = 50_000;
 const DEFAULT_MAX_BUCKET_ROWS = 200_000;
+const DEFAULT_MAX_STATE_ROWS = 20_000;
+/** Cap on affected-member fanout for a single diagnostic. */
+const MAX_FANOUT = 256;
 
 const HOUR = 3_600_000;
 const DAY = 86_400_000;
@@ -267,7 +314,7 @@ const SCHEMA = `
   CREATE TABLE IF NOT EXISTS diagnostic_event (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     cause TEXT NOT NULL,
-    member_name TEXT,
+    member_name TEXT NOT NULL,
     attribution TEXT NOT NULL,
     ts INTEGER NOT NULL,
     fields TEXT NOT NULL
@@ -277,8 +324,9 @@ const SCHEMA = `
 
   CREATE TABLE IF NOT EXISTS diagnostic_bucket (
     cause TEXT NOT NULL,
-    member_name TEXT,
+    member_name TEXT NOT NULL,
     bucket_start INTEGER NOT NULL,
+    bucket_end INTEGER NOT NULL,
     resolution TEXT NOT NULL,
     n INTEGER NOT NULL,
     first_ts INTEGER NOT NULL,
@@ -289,7 +337,7 @@ const SCHEMA = `
 
   CREATE TABLE IF NOT EXISTS diagnostic_state (
     cause TEXT NOT NULL,
-    member_name TEXT,
+    member_name TEXT NOT NULL,
     since INTEGER NOT NULL,
     PRIMARY KEY (cause, member_name)
   );
@@ -312,6 +360,7 @@ export function createDiagnosticStore(
   const dayMs = options.dayMs ?? DEFAULT_DAY_MS;
   const maxDetailRows = options.maxDetailRows ?? DEFAULT_MAX_DETAIL_ROWS;
   const maxBucketRows = options.maxBucketRows ?? DEFAULT_MAX_BUCKET_ROWS;
+  const maxStateRows = options.maxStateRows ?? DEFAULT_MAX_STATE_ROWS;
 
   const insertEvent: StatementInstance = db.prepare(
     `INSERT INTO diagnostic_event (cause, member_name, attribution, ts, fields)
@@ -322,7 +371,7 @@ export function createDiagnosticStore(
      ON CONFLICT (cause, member_name) DO NOTHING`,
   );
   const clearState: StatementInstance = db.prepare(
-    `DELETE FROM diagnostic_state WHERE cause = ? AND member_name IS ?`,
+    `DELETE FROM diagnostic_state WHERE cause = ? AND member_name = ?`,
   );
   const getMeta: StatementInstance = db.prepare(`SELECT value FROM diagnostic_meta WHERE key = ?`);
   const setMeta: StatementInstance = db.prepare(
@@ -330,16 +379,55 @@ export function createDiagnosticStore(
      ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
   );
 
+  /** Fold a set of rows into a bucket row, accumulating deterministically. */
+  const foldBucket: StatementInstance = db.prepare(
+    `INSERT INTO diagnostic_bucket (cause, member_name, bucket_start, bucket_end, resolution, n, first_ts, last_ts)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (cause, member_name, bucket_start, resolution) DO UPDATE SET
+       n = n + excluded.n,
+       first_ts = MIN(first_ts, excluded.first_ts),
+       last_ts = MAX(last_ts, excluded.last_ts)`,
+  );
+
   function metaNum(key: string, fallback: number): number {
     const row = getMeta.get(key) as { value: string } | undefined;
     return row === undefined ? fallback : Number(row.value);
   }
-  function raiseFloor(to: number): void {
-    if (to > metaNum('coverage_floor', 0)) setMeta.run('coverage_floor', String(to));
+  /**
+   * The floor is the FIRST FULLY COVERED INSTANT, so it must be the
+   * EXCLUSIVE end of everything destroyed — not the last timestamp
+   * removed. With the inclusive form, a query starting exactly at a
+   * removed event's timestamp passed the `from < floor` guard and
+   * answered confidently from whatever survived.
+   */
+  function raiseFloor(firstCoveredInstant: number): void {
+    if (firstCoveredInstant > metaNum('coverage_floor', 0)) {
+      setMeta.run('coverage_floor', String(firstCoveredInstant));
+    }
   }
-  function bumpOverflow(): void {
+
+  /**
+   * Overflow is recorded as a QUERYABLE EVENT, not only a meta counter.
+   * "Record an overflow fact" is not met by a number no query surface
+   * returns — the caller asking what happened to a window must be able
+   * to see that evidence was shed.
+   */
+  function recordOverflow(): void {
+    const ts = now();
     setMeta.run('overflow_count', String(metaNum('overflow_count', 0) + 1));
-    setMeta.run('overflow_last', String(now()));
+    setMeta.run('overflow_last', String(ts));
+    // Folded STRAIGHT TO A BUCKET, not written as a detail event.
+    //
+    // Written as an event it was subject to the same detail cap that
+    // produced it — the overflow fact was evicted by the mechanism it
+    // exists to report, and the query for it came back empty. Found
+    // while testing the repair for the missing-overflow defect, which
+    // is the same defect one layer in.
+    //
+    // At hour resolution this is also bounded by construction: sustained
+    // overflow is one row per hour, not one row per eviction.
+    const start = Math.floor(ts / HOUR) * HOUR;
+    foldBucket.run('retention.overflow', UNATTRIBUTED, start, start + HOUR, 'hour', 1, ts, ts);
   }
 
   /**
@@ -352,75 +440,121 @@ export function createDiagnosticStore(
    * destroying exactly what the bound was supposed to protect.
    */
   function enforceCaps(): void {
+    // Each cap is delete + floor + overflow-fact as ONE transaction. A
+    // crash between the delete and the floor raise destroys evidence
+    // while leaving coverage confident, which is the precise failure
+    // the floor exists to prevent.
     const detail = db.prepare(`SELECT COUNT(*) AS n FROM diagnostic_event`).get() as { n: number };
     if (Number(detail.n) > maxDetailRows) {
       const over = Number(detail.n) - maxDetailRows;
       const cut = db
         .prepare(`SELECT MAX(ts) AS t FROM (SELECT ts FROM diagnostic_event ORDER BY ts LIMIT ?)`)
         .get(over) as { t: number | null };
-      db.prepare(
-        `DELETE FROM diagnostic_event WHERE id IN
-           (SELECT id FROM diagnostic_event ORDER BY ts LIMIT ?)`,
-      ).run(over);
-      if (cut.t !== null) raiseFloor(Number(cut.t));
-      bumpOverflow();
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        db.prepare(
+          `DELETE FROM diagnostic_event WHERE id IN
+             (SELECT id FROM diagnostic_event ORDER BY ts LIMIT ?)`,
+        ).run(over);
+        // +1: the removed instant itself is NOT covered.
+        if (cut.t !== null) raiseFloor(Number(cut.t) + 1);
+        recordOverflow();
+        db.exec('COMMIT');
+      } catch (err) {
+        db.exec('ROLLBACK');
+        throw err;
+      }
     }
+
     const bucket = db.prepare(`SELECT COUNT(*) AS n FROM diagnostic_bucket`).get() as { n: number };
     if (Number(bucket.n) > maxBucketRows) {
       const over = Number(bucket.n) - maxBucketRows;
+      // The floor comes from the removed rows' own EXCLUSIVE ends, so a
+      // day bucket raises it by a day and an hour bucket by an hour.
+      // Adding a fixed HOUR left day-bucket evidence destroyed below a
+      // floor that claimed to cover it.
       const cut = db
         .prepare(
-          `SELECT MAX(bucket_start) AS t FROM
-             (SELECT bucket_start FROM diagnostic_bucket ORDER BY bucket_start LIMIT ?)`,
+          `SELECT MAX(bucket_end) AS t FROM
+             (SELECT bucket_end FROM diagnostic_bucket ORDER BY bucket_start LIMIT ?)`,
         )
         .get(over) as { t: number | null };
-      db.prepare(
-        `DELETE FROM diagnostic_bucket WHERE rowid IN
-           (SELECT rowid FROM diagnostic_bucket ORDER BY bucket_start LIMIT ?)`,
-      ).run(over);
-      if (cut.t !== null) raiseFloor(Number(cut.t) + HOUR);
-      bumpOverflow();
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        db.prepare(
+          `DELETE FROM diagnostic_bucket WHERE rowid IN
+             (SELECT rowid FROM diagnostic_bucket ORDER BY bucket_start LIMIT ?)`,
+        ).run(over);
+        if (cut.t !== null) raiseFloor(Number(cut.t));
+        recordOverflow();
+        db.exec('COMMIT');
+      } catch (err) {
+        db.exec('ROLLBACK');
+        throw err;
+      }
+    }
+
+    // Unresolved state was the remaining unbounded axis: events and
+    // buckets were capped, `(cause, member)` was not, and member
+    // cardinality is exactly what criterion 5 named. Evicting the
+    // OLDEST unresolved rows loses the least recent evidence, and the
+    // overflow fact says it happened.
+    const st = db.prepare(`SELECT COUNT(*) AS n FROM diagnostic_state`).get() as { n: number };
+    if (Number(st.n) > maxStateRows) {
+      const over = Number(st.n) - maxStateRows;
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        db.prepare(
+          `DELETE FROM diagnostic_state WHERE rowid IN
+             (SELECT rowid FROM diagnostic_state ORDER BY since LIMIT ?)`,
+        ).run(over);
+        recordOverflow();
+        db.exec('COMMIT');
+      } catch (err) {
+        db.exec('ROLLBACK');
+        throw err;
+      }
     }
   }
-
-  /** Fold a set of rows into a bucket row, accumulating deterministically. */
-  const foldBucket: StatementInstance = db.prepare(
-    `INSERT INTO diagnostic_bucket (cause, member_name, bucket_start, resolution, n, first_ts, last_ts)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT (cause, member_name, bucket_start, resolution) DO UPDATE SET
-       n = n + excluded.n,
-       first_ts = MIN(first_ts, excluded.first_ts),
-       last_ts = MAX(last_ts, excluded.last_ts)`,
-  );
 
   return {
     record(input: DiagnosticInput): void {
       const ts = now();
       const fields = JSON.stringify(sanitize(input.fields ?? {}));
-      const members =
-        input.members !== undefined && input.members.length > 0
-          ? [...new Set(input.members)]
-          : [null];
-      for (const m of members) {
-        insertEvent.run(input.cause, m, input.attribution, ts, fields);
-        // Unresolved state is per (cause, member) and survives every
-        // sweep. Only `resolve()` clears it.
-        upsertState.run(input.cause, m, ts);
+      // Bounded, deduped fanout: a corrupt blob referenced by a very
+      // large number of members must not turn one diagnostic into an
+      // unbounded insert burst.
+      const named = [...new Set(input.members ?? [])].slice(0, MAX_FANOUT);
+      const members = named.length > 0 ? named : [UNATTRIBUTED];
+      const mode = healthMode(input.cause);
+
+      // ATOMIC. A throw between the event insert and the state upsert
+      // would leave an event with no unresolved state, or the reverse.
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        for (const m of members) {
+          insertEvent.run(input.cause, m, input.attribution, ts, fields);
+          // Only incidents create unresolved state. A point event is
+          // history the instant it happens.
+          if (mode === 'incident') upsertState.run(input.cause, m, ts);
+        }
+        db.exec('COMMIT');
+      } catch (err) {
+        db.exec('ROLLBACK');
+        throw err;
       }
       enforceCaps();
     },
 
     resolve(cause: DiagnosticCause, member: string | null): void {
-      clearState.run(cause, member);
+      clearState.run(cause, member ?? UNATTRIBUTED);
     },
 
     unresolved(member: string | null) {
       return (
         db
-          .prepare(
-            `SELECT cause, since FROM diagnostic_state WHERE member_name IS ? ORDER BY since`,
-          )
-          .all(member) as Array<{ cause: DiagnosticCause; since: number }>
+          .prepare(`SELECT cause, since FROM diagnostic_state WHERE member_name = ? ORDER BY since`)
+          .all(member ?? UNATTRIBUTED) as Array<{ cause: DiagnosticCause; since: number }>
       ).map((r) => ({ cause: r.cause, since: Number(r.since) }));
     },
 
@@ -433,8 +567,10 @@ export function createDiagnosticStore(
       const params: Array<string | number | null> = [from, to];
       let memberClause = '';
       if (opts.member !== undefined) {
-        memberClause = ' AND member_name IS ?';
-        params.push(opts.member);
+        // `null` here means "the unattributed bucket", which is stored
+        // under the sentinel rather than SQL NULL — see UNATTRIBUTED.
+        memberClause = ' AND member_name = ?';
+        params.push(opts.member ?? UNATTRIBUTED);
       }
       let causeClause = '';
       if (opts.cause !== undefined) {
@@ -464,13 +600,19 @@ export function createDiagnosticStore(
         )
         .get(...params) as { n: number; first_ts: number | null; last_ts: number | null };
 
-      const bucketParams: Array<string | number | null> = [to, from - DAY, ...params.slice(2)];
+      // TRUE interval overlap. The previous form was
+      // `bucket_start >= from - DAY`, which admitted every bucket in the
+      // preceding 24 hours — so a narrow Wednesday query could count
+      // Tuesday's evidence. `bucket_end` is stored per row, so mixed
+      // hour and day buckets each contribute their own width and the
+      // union end is correct rather than derived from one resolution.
+      const bucketParams: Array<string | number | null> = [to, from, ...params.slice(2)];
       const bk = db
         .prepare(
           `SELECT COALESCE(SUM(n),0) AS n, MIN(first_ts) AS first_ts, MAX(last_ts) AS last_ts,
-                  MIN(bucket_start) AS lo, MAX(bucket_start) AS hi, MIN(resolution) AS res
+                  MIN(bucket_start) AS lo, MAX(bucket_end) AS hi, MIN(resolution) AS res
              FROM diagnostic_bucket
-            WHERE bucket_start <= ? AND bucket_start >= ?${memberClause}${causeClause}`,
+            WHERE bucket_start <= ? AND bucket_end > ?${memberClause}${causeClause}`,
         )
         .get(...bucketParams) as {
         n: number;
@@ -499,9 +641,8 @@ export function createDiagnosticStore(
       // A window narrower than a bucket gets the bucket's interval back
       // and a `bucket` coverage flag — never a boolean-looking answer
       // the data cannot support.
-      const width = bk.res === 'day' ? DAY : HOUR;
       const lo = bk.lo === null ? from : Number(bk.lo);
-      const hi = bk.hi === null ? to : Number(bk.hi) + width;
+      const hi = bk.hi === null ? to : Number(bk.hi);
       const firsts = [ev.first_ts, bk.first_ts].filter((x) => x !== null).map(Number);
       const lasts = [ev.last_ts, bk.last_ts].filter((x) => x !== null).map(Number);
       return {
@@ -528,71 +669,115 @@ export function createDiagnosticStore(
     sweep(): void {
       const t = now();
 
-      const detailCut = t - detailMs;
-      const rows = db
-        .prepare(
-          `SELECT cause, member_name, ts FROM diagnostic_event
+      // ATOMIC per stage. Successful-repeat idempotence is not
+      // crash idempotence: an earlier version upserted buckets row by
+      // row and deleted the sources afterwards outside a transaction,
+      // so a throw between the two made the NEXT sweep fold the same
+      // rows again and double the count. Running a successful sweep
+      // three times cannot establish this property; only wrapping it
+      // can.
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        const detailCut = t - detailMs;
+        const rows = db
+          .prepare(
+            `SELECT cause, member_name, ts FROM diagnostic_event
             WHERE ts < ?`,
-        )
-        .all(detailCut) as Array<{ cause: string; member_name: string | null; ts: number }>;
-      for (const r of rows) {
-        const start = Math.floor(Number(r.ts) / HOUR) * HOUR;
-        foldBucket.run(r.cause, r.member_name, start, 'hour', 1, Number(r.ts), Number(r.ts));
-      }
-      db.prepare(`DELETE FROM diagnostic_event WHERE ts < ?`).run(detailCut);
+          )
+          .all(detailCut) as Array<{ cause: string; member_name: string | null; ts: number }>;
+        for (const r of rows) {
+          const start = Math.floor(Number(r.ts) / HOUR) * HOUR;
+          foldBucket.run(
+            r.cause,
+            r.member_name,
+            start,
+            start + HOUR,
+            'hour',
+            1,
+            Number(r.ts),
+            Number(r.ts),
+          );
+        }
+        db.prepare(`DELETE FROM diagnostic_event WHERE ts < ?`).run(detailCut);
 
-      const hourCut = t - hourMs;
-      const hourRows = db
-        .prepare(
-          `SELECT cause, member_name, bucket_start, n, first_ts, last_ts
+        const hourCut = t - hourMs;
+        const hourRows = db
+          .prepare(
+            `SELECT cause, member_name, bucket_start, n, first_ts, last_ts
              FROM diagnostic_bucket
             WHERE resolution = 'hour' AND bucket_start < ?`,
-        )
-        .all(hourCut) as Array<{
-        cause: string;
-        member_name: string | null;
-        bucket_start: number;
-        n: number;
-        first_ts: number;
-        last_ts: number;
-      }>;
-      for (const r of hourRows) {
-        const start = Math.floor(Number(r.bucket_start) / DAY) * DAY;
-        foldBucket.run(
-          r.cause,
-          r.member_name,
-          start,
-          'day',
-          Number(r.n),
-          Number(r.first_ts),
-          Number(r.last_ts),
-        );
-      }
-      db.prepare(
-        `DELETE FROM diagnostic_bucket
-          WHERE resolution = 'hour' AND bucket_start < ?`,
-      ).run(hourCut);
-
-      // Past the day horizon evidence genuinely goes. The floor moves
-      // with it so queries below say `indeterminate` rather than zero.
-      const dayCut = t - dayMs;
-      const dropped = db
-        .prepare(
-          `SELECT COUNT(*) AS n FROM diagnostic_bucket
-            WHERE resolution = 'day' AND bucket_start < ?`,
-        )
-        .get(dayCut) as { n: number };
-      if (Number(dropped.n) > 0) {
+          )
+          .all(hourCut) as Array<{
+          cause: string;
+          member_name: string | null;
+          bucket_start: number;
+          n: number;
+          first_ts: number;
+          last_ts: number;
+        }>;
+        for (const r of hourRows) {
+          const start = Math.floor(Number(r.bucket_start) / DAY) * DAY;
+          foldBucket.run(
+            r.cause,
+            r.member_name,
+            start,
+            start + DAY,
+            'day',
+            Number(r.n),
+            Number(r.first_ts),
+            Number(r.last_ts),
+          );
+        }
         db.prepare(
-          `DELETE FROM diagnostic_bucket WHERE resolution = 'day' AND bucket_start < ?`,
-        ).run(dayCut);
-        raiseFloor(dayCut);
+          `DELETE FROM diagnostic_bucket
+          WHERE resolution = 'hour' AND bucket_start < ?`,
+        ).run(hourCut);
+
+        // Past the day horizon evidence genuinely goes. The floor moves
+        // with it so queries below say `indeterminate` rather than zero.
+        const dayCut = t - dayMs;
+        const dropped = db
+          .prepare(
+            `SELECT COUNT(*) AS n FROM diagnostic_bucket
+            WHERE resolution = 'day' AND bucket_start < ?`,
+          )
+          .get(dayCut) as { n: number };
+        if (Number(dropped.n) > 0) {
+          // The floor is the exclusive END of the newest bucket removed,
+          // not `dayCut` — an aligned day bucket straddling the cut
+          // extends past it, and using the cut left destroyed evidence
+          // below a floor that claimed to cover it.
+          const removedEnd = db
+            .prepare(
+              `SELECT MAX(bucket_end) AS t FROM diagnostic_bucket
+              WHERE resolution = 'day' AND bucket_start < ?`,
+            )
+            .get(dayCut) as { t: number | null };
+          db.prepare(
+            `DELETE FROM diagnostic_bucket WHERE resolution = 'day' AND bucket_start < ?`,
+          ).run(dayCut);
+          raiseFloor(removedEnd.t === null ? dayCut : Number(removedEnd.t));
+        }
+        db.exec('COMMIT');
+      } catch (err) {
+        db.exec('ROLLBACK');
+        throw err;
       }
       enforceCaps();
     },
 
     health(): RetentionHealth {
-      const last = metaNum('overflow_last', 0);
+      // `unknown` must be reachable or the recursion criterion fails on
+      // its own terms: a store that cannot say "I don't know" is the
+      // thing that criterion exists to prevent. It is reported when the
+      // store cannot read its own state — which deliberately does NOT
+      // depend on this same store having recorded the failure.
+      let last: number;
+      try {
+        last = metaNum('overflow_last', 0);
+      } catch {
+        return 'unknown';
+      }
       if (last === 0) return 'healthy';
       // Overflow within the detail window means evidence is actively
       // being shed; say `degraded` rather than reporting healthy while
