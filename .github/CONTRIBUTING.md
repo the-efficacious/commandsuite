@@ -292,6 +292,28 @@ discipline reaches it. That is what *author proposes, partner verifies* is for,
 and it is the only one of these that fires **before** publication rather than
 after.
 
+### Make “this must not compile” executable
+
+**A comment saying an API must reject a call does not establish that it does.**
+Put the hostile call in a typechecked fixture and invert the assertion with
+`@ts-expect-error`:
+
+```ts
+// @ts-expect-error — arbitrary recovery must not exist on the public surface
+publicStore.resolve('malformed_row_skipped', 'member')
+```
+
+When the boundary is closed, the compiler error is expected and the fixture
+passes. If a refactor accidentally makes the call legal, TypeScript reports
+`TS2578: Unused '@ts-expect-error' directive` and fails the build. The negative
+claim therefore cannot silently rot into a comment that nobody recompiles.
+
+This is especially useful for checking an architectural boundary with several
+routes. Enumerate them separately — a generic write method, a generic recovery
+method, a point-cause recovery — because closing one route does not establish
+that the boundary is closed. Add a nearby valid call as a positive control so
+the fixture also proves the public API remains usable.
+
 ## When something inexplicable happens, measure it
 
 **The reflex to attribute an anomaly to your own carelessness is the most
