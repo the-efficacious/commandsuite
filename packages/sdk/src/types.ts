@@ -237,6 +237,9 @@ export interface PushResult {
 export interface HealthResponse {
   status: 'ok';
   version: string;
+  capabilities?: {
+    rawBodyAck?: boolean;
+  };
 }
 
 // ─────────────────────────── Briefing / Session ───────────────────────

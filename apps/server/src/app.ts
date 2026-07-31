@@ -638,7 +638,7 @@ export function createApp(options: AppOptions): CreatedApp {
   });
 
   app.get(PATHS.health, (c) => {
-    return c.json({ status: 'ok' as const, version });
+    return c.json({ status: 'ok' as const, version, capabilities: { rawBodyAck: true } });
   });
 
   // ─── Platform pairing-code handshake ──────────────────────────────
@@ -1321,16 +1321,27 @@ export function createApp(options: AppOptions): CreatedApp {
   // are pure downstream queries. Auth is the standard bearer plane; the
   // OTEL exporter's `Bearer%20` header form is normalized in auth.ts.
   //
-  // The response is always `200 { partialSuccess: {} }` — the OTLP
-  // success shape. Parsing never throws and storage failures are logged
-  // rather than surfaced, because an OTEL exporter that gets a non-2xx
-  // will retry the batch indefinitely; we'd rather drop a malformed
-  // batch than wedge the exporter.
+  // Native exporters always receive the OTLP success shape: parsing never
+  // throws and storage failures are logged rather than wedging an exporter
+  // in an infinite retry. CommandSuite's runner-local relay opts into an
+  // additional capture acknowledgement with `X-CSuite-Raw-Bodies`; that
+  // extension reports how many raw-body ledger rows this synchronous ingest
+  // appended, so the runner deletes spool files only after durable capture.
   if (telemetryStore !== undefined || genaiStore !== undefined) {
     app.post('/otlp/v1/logs', auth, async (c) => {
       const member = c.get('member');
+      const expectedRawBodiesHeader = c.req.header('X-CSuite-Raw-Bodies');
+      const expectedRawBodies =
+        expectedRawBodiesHeader !== undefined && /^\d+$/.test(expectedRawBodiesHeader)
+          ? Number(expectedRawBodiesHeader)
+          : null;
       const raw = await c.req.json().catch(() => null);
       const records = parseOtlpLogs(raw);
+      // Take the baseline after the only await. Correlation and both count()
+      // calls below are synchronous, so another request cannot interleave and
+      // inflate this request's acknowledgement delta.
+      const rawBodiesBefore =
+        expectedRawBodies !== null && rawBodyStore !== undefined ? rawBodyStore.count() : 0;
 
       // Split the batch. The gen_ai correlator consumes the four api-body
       // records (api_request_body / api_request / api_response_body /
@@ -1374,6 +1385,11 @@ export function createApp(options: AppOptions): CreatedApp {
         }
       }
 
+      if (expectedRawBodies !== null) {
+        const rawBodiesCaptured =
+          rawBodyStore !== undefined ? rawBodyStore.count() - rawBodiesBefore : 0;
+        return c.json({ partialSuccess: {}, csuite: { rawBodiesCaptured } }, 200);
+      }
       return c.json({ partialSuccess: {} }, 200);
     });
   }

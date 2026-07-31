@@ -78,7 +78,11 @@ describe('app GET /healthz', () => {
     const { app } = makeApp();
     const res = await app.request('/healthz');
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ status: 'ok', version: '0.0.0' });
+    expect(await res.json()).toEqual({
+      status: 'ok',
+      version: '0.0.0',
+      capabilities: { rawBodyAck: true },
+    });
   });
 });
 

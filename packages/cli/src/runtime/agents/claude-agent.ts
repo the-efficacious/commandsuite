@@ -228,7 +228,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
           process.stderr.write(`${JSON.stringify(record)}\n`);
         },
       });
-      return { channelSink: sink };
+      return { channelSink: sink, requireRawBodyAck: true };
     },
 
     prepare(ctx: AgentSessionContext): AgentPrepared {

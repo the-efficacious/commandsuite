@@ -84,6 +84,9 @@ export const fakeBrokerToolInvocations: Array<{
  */
 export const fakeBrokerSecrets: { env: Record<string, string> | null } = { env: {} };
 
+/** Whether `/healthz` advertises the remote-Claude raw-body acknowledgement. */
+export const fakeBrokerCapabilities: { rawBodyAck: boolean } = { rawBodyAck: true };
+
 /**
  * Activity events received on POST /members/:name/activity, in arrival
  * order. The conformance suite reads this to assert the run bracket
@@ -147,7 +150,13 @@ export async function startFakeBroker(): Promise<FakeBroker> {
 
     if (url.pathname === '/healthz' && req.method === 'GET') {
       res.writeHead(200, jsonHeaders);
-      res.end(JSON.stringify({ status: 'ok', version: 'fake' }));
+      res.end(
+        JSON.stringify({
+          status: 'ok',
+          version: 'fake',
+          ...(fakeBrokerCapabilities.rawBodyAck ? { capabilities: { rawBodyAck: true } } : {}),
+        }),
+      );
       return;
     }
 
