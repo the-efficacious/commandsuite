@@ -153,7 +153,7 @@ describe('spool residue by body_ref failure class', () => {
     // Path authority: a body_ref is attacker-influencable in the general
     // case, so nothing outside the spool may be read OR mutated,
     // whatever the resolution classified it as.
-    const { dir, send } = await harness();
+    const { send } = await harness();
     const outside = mkdtempSync(join(tmpdir(), 'csuite-outside-'));
     dirs.push(outside);
     const victim = join(outside, 'not-ours.json');
