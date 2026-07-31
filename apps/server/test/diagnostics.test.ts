@@ -522,6 +522,48 @@ describe('checkpoint regressions', () => {
     );
   });
 
+  it('an unrelated row does not restore exactness across a refusal', () => {
+    // Rune's mixed-window fixture. The refusal check was gated on the
+    // member's own result count, so ONE unrelated row made the window
+    // read `exact` again — asserting completeness while a refused
+    // affected set from the same window might also contain them.
+    //
+    // Retained rows are partial evidence and are still returned. They
+    // cannot restore exactness, because the refused set is precisely
+    // the thing nobody can consult.
+    const h = store();
+    h.at(T0);
+    h.s.record({ cause: 'activity.append_failed', members: ['m299'] });
+    h.s.record({
+      cause: 'rawstore.blob_hash_mismatch',
+      members: Array.from({ length: 300 }, (_, i) => `m${i}`),
+    });
+
+    const r = h.s.query({ member: 'm299', from: T0 - HOUR, to: T0 + HOUR });
+    expect(r.coverage).toBe('indeterminate');
+    expect(r.count).toBeGreaterThan(0); // the retained row is still returned
+  });
+
+  it('an unfiltered query stays exact across a refusal', () => {
+    // Positive control for the predicate above: the global loss fact is
+    // exact, and a rule that made every query indeterminate after any
+    // refusal would satisfy the test above while destroying the surface.
+    const h = store();
+    h.at(T0);
+    h.s.record({ cause: 'activity.append_failed', members: ['m299'] });
+    h.s.record({
+      cause: 'rawstore.blob_hash_mismatch',
+      members: Array.from({ length: 300 }, (_, i) => `m${i}`),
+    });
+
+    // `bucket` is the right answer here — the loss fact IS a bucket —
+    // and the property being controlled for is that it is not
+    // INDETERMINATE. A rule that made every query indeterminate after
+    // any refusal would satisfy the mixed-window test above while
+    // destroying the surface for everyone else.
+    expect(h.s.query({ from: T0 - HOUR, to: T0 + HOUR }).coverage).not.toBe('indeterminate');
+  });
+
   it('a forged safe field cannot be constructed OR persisted', () => {
     // The brand makes the literal fail to compile; validShape catches a
     // cast, because a brand is compile-time only and a forged value is

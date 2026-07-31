@@ -853,13 +853,20 @@ export function createDiagnosticStore(
       const evN = Number(ev.n ?? 0);
       const bkN = Number(bk.n ?? 0);
 
-      // A MEMBER-FILTERED query crossing a fanout refusal cannot be
-      // answered. The affected set for that instant was never stored,
-      // so "this member has no rows" and "this member was in the
-      // refused set" are indistinguishable — and returning `exact, 0`
-      // asserts the first. Unfiltered queries are unaffected: the
-      // global loss fact is exact.
-      if (opts.member !== undefined && evN + bkN === 0) {
+      // A MEMBER-FILTERED window crossing a fanout refusal is not exact,
+      // REGARDLESS of what else it contains.
+      //
+      // This was previously gated on `evN + bkN === 0`, so a single
+      // unrelated row for the member restored `exact` — asserting the
+      // window was complete while a refused affected set from the same
+      // window might also have contained them. Retained rows are
+      // partial evidence and are still returned; they cannot restore
+      // exactness, because the refused set is exactly the thing nobody
+      // can consult.
+      //
+      // Unfiltered queries are unaffected: the global loss fact is exact.
+      let refusalCrosses = false;
+      if (opts.member !== undefined) {
         const refused = db
           .prepare(
             `SELECT COALESCE(SUM(n),0) AS n FROM diagnostic_bucket
@@ -867,16 +874,7 @@ export function createDiagnosticStore(
                 AND bucket_start <= ? AND bucket_end > ?`,
           )
           .get(to, from) as { n: number };
-        if (Number(refused.n) > 0) {
-          return {
-            interval: { from, to },
-            resolution: 'none',
-            count: 0,
-            first: null,
-            last: null,
-            coverage: 'indeterminate',
-          };
-        }
+        refusalCrosses = Number(refused.n) > 0;
       }
 
       if (bkN === 0) {
@@ -886,7 +884,7 @@ export function createDiagnosticStore(
           count: evN,
           first: ev.first_ts === null ? null : Number(ev.first_ts),
           last: ev.last_ts === null ? null : Number(ev.last_ts),
-          coverage: 'exact',
+          coverage: refusalCrosses ? 'indeterminate' : 'exact',
         };
       }
 
@@ -904,7 +902,7 @@ export function createDiagnosticStore(
         count: evN + bkN,
         first: firsts.length > 0 ? Math.min(...firsts) : null,
         last: lasts.length > 0 ? Math.max(...lasts) : null,
-        coverage: 'bucket',
+        coverage: refusalCrosses ? 'indeterminate' : 'bucket',
       };
     },
 
