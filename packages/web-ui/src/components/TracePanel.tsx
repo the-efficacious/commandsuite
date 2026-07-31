@@ -55,6 +55,7 @@ import { highlightXmlTags } from '../lib/channel-highlight.js';
 import { getClient } from '../lib/client.js';
 import { highlightJson } from '../lib/json-highlight.js';
 import { describeQuerySource, parseToolName, prettyModel } from '../lib/model-format.js';
+import type { TurnJoin } from '../lib/trace-join.js';
 import { joinTurns } from '../lib/trace-join.js';
 import { GenAiMessageBlock, GenAiRequestDetails } from './GenAiBlocks.js';
 import { AlertCircle } from './icons/index.js';
@@ -65,7 +66,13 @@ export { type JoinResult, joinTurns, type TurnJoin } from '../lib/trace-join.js'
 
 /** One rendered row of the objective trace, in chronological order. */
 type PanelRow =
-  | { kind: 'turn'; ts: number; exchange: ActivityLlmExchange; calls: GenAiInferenceRecord[] }
+  | {
+      kind: 'turn';
+      ts: number;
+      exchange: ActivityLlmExchange;
+      calls: GenAiInferenceRecord[];
+      match: TurnJoin<GenAiInferenceRecord>['match'];
+    }
   | { kind: 'sidecar'; ts: number; record: GenAiInferenceRecord };
 
 const panelRows = signal<PanelRow[]>([]);
@@ -156,6 +163,7 @@ async function loadExchanges(objective: Objective): Promise<void> {
           ts: t.exchange.ts,
           exchange: t.exchange,
           calls: t.calls,
+          match: t.match,
         }),
       ),
       ...joined.orphans.map((r): PanelRow => ({ kind: 'sidecar', ts: r.ts, record: r })),
@@ -242,7 +250,12 @@ export function TracePanel({ objective }: TracePanelProps): JSX.Element {
           )}
           {list.map((row, i) =>
             row.kind === 'turn' ? (
-              <TurnRow key={`t${row.ts}-${i}`} exchange={row.exchange} calls={row.calls} />
+              <TurnRow
+                key={`t${row.ts}-${i}`}
+                exchange={row.exchange}
+                calls={row.calls}
+                match={row.match}
+              />
             ) : (
               <SidecarRow key={`s${row.record.id}`} record={row.record} />
             ),
@@ -256,9 +269,11 @@ export function TracePanel({ objective }: TracePanelProps): JSX.Element {
 function TurnRow({
   exchange,
   calls,
+  match,
 }: {
   exchange: ActivityLlmExchange;
   calls: GenAiInferenceRecord[];
+  match: TurnJoin<GenAiInferenceRecord>['match'];
 }): JSX.Element {
   const source = calls[0]?.querySource ?? exchange.querySource ?? null;
   return (
@@ -274,7 +289,7 @@ function TurnRow({
         {source !== null && <span>{source}</span>}
       </div>
       <div style="margin-top:8px">
-        <AnthropicEntryView entry={exchange.entry} calls={calls} />
+        <AnthropicEntryView entry={exchange.entry} calls={calls} match={match} />
       </div>
     </div>
   );
@@ -343,9 +358,11 @@ function SidecarRow({ record }: { record: GenAiInferenceRecord }): JSX.Element {
 function AnthropicEntryView({
   entry,
   calls,
+  match,
 }: {
   entry: AnthropicMessagesEntry;
   calls: GenAiInferenceRecord[];
+  match: TurnJoin<GenAiInferenceRecord>['match'];
 }): JSX.Element {
   const usage = entry.response?.usage;
   return (
@@ -365,14 +382,21 @@ function AnthropicEntryView({
         {entry.response?.stopReason && (
           <span style="margin-left:8px">stop={entry.response.stopReason}</span>
         )}
-        {calls.length === 0 && (
+        {match === 'unmatched-exact' ? (
+          <span
+            style="margin-left:8px;font-style:italic;color:var(--ember)"
+            title="This turn asserted a response identity, but that exact captured record never arrived"
+          >
+            capture unmatched
+          </span>
+        ) : calls.length === 0 ? (
           <span
             style="margin-left:8px;font-style:italic"
             title="No captured request body for this call — showing the activity marker only"
           >
             marker only
           </span>
-        )}
+        ) : null}
       </div>
       {/* Full-request layers from the joined record(s). One call is
           the Claude shape; a codex turn lists each aggregated

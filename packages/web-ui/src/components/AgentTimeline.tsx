@@ -70,6 +70,7 @@ import {
   memberActivityName,
   memberActivityRows,
 } from '../lib/member-activity.js';
+import type { TurnJoin } from '../lib/trace-join.js';
 import { joinTurns } from '../lib/trace-join.js';
 import { useWindowedList } from '../lib/use-windowed-list.js';
 import { selectObjectiveDetail } from '../lib/view.js';
@@ -150,6 +151,7 @@ type ThreadItem =
        * full context lazy-loads by record id on expand.
        */
       calls: GenAiInferenceSummary[];
+      match: TurnJoin<GenAiInferenceSummary>['match'];
     }
   | {
       /**
@@ -227,8 +229,8 @@ export function buildThread(
     if (row.event.kind === 'llm_exchange') exchanges.push(row.event);
   }
   const joined = joinTurns(exchanges, calls);
-  const callsByExchange = new Map<ActivityLlmExchange, GenAiInferenceSummary[]>();
-  for (const t of joined.turns) callsByExchange.set(t.exchange, t.calls);
+  const joinsByExchange = new Map<ActivityLlmExchange, TurnJoin<GenAiInferenceSummary>>();
+  for (const t of joined.turns) joinsByExchange.set(t.exchange, t);
 
   // Index tool_action results by toolUseId (for folding), and collect
   // the set of tool_use block ids that appear across captured
@@ -301,6 +303,7 @@ export function buildThread(
       }
       case 'llm_exchange': {
         const entry = ev.entry;
+        const joinedTurn = joinsByExchange.get(ev);
         thread.push({
           key: `r${row.id}-turn`,
           variant: 'turn',
@@ -311,7 +314,10 @@ export function buildThread(
           stopReason: entry.response?.stopReason ?? null,
           messages: entry.response?.messages ?? [],
           folds,
-          calls: callsByExchange.get(ev) ?? [],
+          calls: joinedTurn?.calls ?? [],
+          match:
+            joinedTurn?.match ??
+            (typeof entry.response?.responseId === 'string' ? 'unmatched-exact' : 'unmatched'),
         });
         break;
       }
@@ -780,7 +786,7 @@ function TurnBlock({ item }: { item: Extract<ThreadItem, { variant: 'turn' }> })
           BETWEEN the header and the response so expanding it reads
           as the turn unfolding into the full thread the model saw,
           with the response continuing below it. */}
-      <TurnCalls calls={item.calls} />
+      <TurnCalls calls={item.calls} match={item.match} />
       {body.map((block, i) => (
         <TurnContentBlock key={i} block={block} />
       ))}
@@ -817,7 +823,13 @@ const CONTEXT_SCROLL_BOX =
  * No calls: an honest "not captured" once the ledger has hydrated
  * (loading before that) — the genai layer is best-effort.
  */
-function TurnCalls({ calls }: { calls: GenAiInferenceSummary[] }) {
+function TurnCalls({
+  calls,
+  match,
+}: {
+  calls: GenAiInferenceSummary[];
+  match: TurnJoin<GenAiInferenceSummary>['match'];
+}) {
   const ready = memberGenAiCallsReady.value;
   if (calls.length === 0) {
     return (
@@ -829,7 +841,9 @@ function TurnCalls({ calls }: { calls: GenAiInferenceSummary[] }) {
         <div style="margin-top:4px">
           {ready ? (
             <div style="font-family:var(--f-sans);font-size:12px;color:var(--muted);font-style:italic">
-              The request body for this call wasn't captured — no full context available.
+              {match === 'unmatched-exact'
+                ? 'Capture unmatched — this turn’s exact request record never arrived.'
+                : "The request body for this call wasn't captured — no full context available."}
             </div>
           ) : (
             <div style="font-family:var(--f-mono);font-size:11px;color:var(--muted)">loading…</div>
