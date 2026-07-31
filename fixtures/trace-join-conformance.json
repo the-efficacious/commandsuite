@@ -1,0 +1,436 @@
+{
+  "$comment": [
+    "CONFORMANCE CORPUS for the two independent trace joins.",
+    "",
+    "Two implementations decide whether an exchange marker has its API",
+    "record, in different languages against different inputs:",
+    "",
+    "  packages/web-ui/src/lib/trace-join.ts   TypeScript over fetched arrays",
+    "  apps/server/src/capture-health.ts       SQL over three broker tables",
+    "",
+    "The original contract said reuse one join. That was narrowed after",
+    "the reuse turned out to trade a drift risk for a package-boundary",
+    "problem and an unmeasured cost profile. The PROPERTY that mattered",
+    "survives: the health check and the UI must never disagree about what",
+    "counts as matched. This corpus is how that is enforced. Both run it;",
+    "a disagreement is a test failure in whichever one moved.",
+    "",
+    "`expect.ui` and `expect.broker` are separate on purpose. Where they",
+    "differ, the difference is a DECLARED divergence with a reason, not an",
+    "accident — see `divergence`. A case with no `divergence` key asserts",
+    "that both implementations agree, and that is the interesting half.",
+    "",
+    "Every call in this corpus has a complete stored body chain on the",
+    "broker side. Body PRESENCE is tested exhaustively in",
+    "capture-health.test.ts; isolating it here keeps this corpus about",
+    "MATCHING, so a failure names the join rather than the storage."
+  ],
+  "cases": [
+    {
+      "name": "claude-exact-match",
+      "why": "The ordinary Claude turn. Both joins match on responseId.",
+      "markers": [
+        {
+          "responseId": "msg_a",
+          "startedAt": 1000,
+          "endedAt": 2000,
+          "model": "claude-opus-5",
+          "querySource": null
+        }
+      ],
+      "calls": [
+        {
+          "id": 1,
+          "ts": 1500,
+          "model": "claude-opus-5",
+          "responseId": "msg_a",
+          "querySource": "repl_main_thread"
+        }
+      ],
+      "expect": {
+        "ui": {
+          "matched": [0],
+          "callsPerTurn": [[1]],
+          "orphans": []
+        },
+        "broker": {
+          "matched": [0],
+          "evaluated": true
+        }
+      }
+    },
+    {
+      "name": "claude-missing-record",
+      "why": "The failure this whole surface exists to detect: a marker whose record never arrived. Both joins must leave it unmatched.",
+      "markers": [
+        {
+          "responseId": "msg_gone",
+          "startedAt": 1000,
+          "endedAt": 2000,
+          "model": "claude-opus-5",
+          "querySource": null
+        }
+      ],
+      "calls": [],
+      "expect": {
+        "ui": {
+          "matched": [],
+          "callsPerTurn": [[]],
+          "orphans": []
+        },
+        "broker": {
+          "matched": [],
+          "evaluated": true
+        }
+      }
+    },
+    {
+      "name": "claude-wrong-response-id",
+      "why": "A record exists in the window but carries a different id. Exact match must NOT fall back to containment for an id-bearing marker — that would glue the wrong call to the turn and clear a real gap.",
+      "markers": [
+        {
+          "responseId": "msg_a",
+          "startedAt": 1000,
+          "endedAt": 2000,
+          "model": "claude-opus-5",
+          "querySource": null
+        }
+      ],
+      "calls": [
+        {
+          "id": 1,
+          "ts": 1500,
+          "model": "claude-opus-5",
+          "responseId": "msg_different",
+          "querySource": "repl_main_thread"
+        }
+      ],
+      "expect": {
+        "ui": {
+          "matched": [0],
+          "callsPerTurn": [[1]],
+          "orphans": []
+        },
+        "broker": {
+          "matched": [],
+          "evaluated": true
+        }
+      },
+      "divergence": "DECLARED, and UNLIKE the others this one looks like a defect rather than a decision. I expected both to leave it unmatched and wrote the case to assert that; the corpus disagreed with me on its first run. trace-join.ts:143 excludes only exchanges that SUCCEEDED at exact match from the containment pass — `if (exactMatched.has(exIndex)) return`. An id-bearing marker whose record never arrived is not in that set, so it still participates in containment and absorbs whatever unmatched record sits in its window. The comment above that line says the exclusion exists so a stray record 'should surface as an orphan instead of being silently glued to the wrong turn', which is exactly what happens here to a turn that failed to match. The UI therefore renders a body that is NOT this turn's body, with nothing marking it as a guess. The broker is asking whether these specific bytes were captured and answers no, which is right for its question. Recorded as measured, flagged for the UI owners: the guard arguably wants `if (typeof marker responseId === 'string') return` rather than membership in exactMatched. Not changed here — this corpus documents the joins, it does not get to redesign one of them."
+    },
+    {
+      "name": "claude-partial-outage",
+      "why": "One captured turn, one not, in the same session. The captured one must not clear the other — the latch that mattered when a runner broke mid-session and ran 18 hours.",
+      "markers": [
+        {
+          "responseId": "msg_ok",
+          "startedAt": 1000,
+          "endedAt": 2000,
+          "model": "claude-opus-5",
+          "querySource": null
+        },
+        {
+          "responseId": "msg_broken",
+          "startedAt": 3000,
+          "endedAt": 4000,
+          "model": "claude-opus-5",
+          "querySource": null
+        }
+      ],
+      "calls": [
+        {
+          "id": 1,
+          "ts": 1500,
+          "model": "claude-opus-5",
+          "responseId": "msg_ok",
+          "querySource": "repl_main_thread"
+        }
+      ],
+      "expect": {
+        "ui": {
+          "matched": [0],
+          "callsPerTurn": [[1], []],
+          "orphans": []
+        },
+        "broker": {
+          "matched": [0],
+          "evaluated": true
+        }
+      }
+    },
+    {
+      "name": "codex-containment",
+      "why": "A Codex turn: the marker carries no responseId because the exchange aggregates a whole turn across several API calls. The UI joins it by interval containment. The broker has no containment predicate, so it declines to assess rather than reporting healthy.",
+      "markers": [
+        {
+          "responseId": null,
+          "startedAt": 1000,
+          "endedAt": 4000,
+          "model": "gpt-5",
+          "querySource": "codex_main_thread"
+        }
+      ],
+      "calls": [
+        {
+          "id": 1,
+          "ts": 2000,
+          "model": "gpt-5",
+          "responseId": "resp_x",
+          "querySource": "codex_main_thread"
+        }
+      ],
+      "expect": {
+        "ui": {
+          "matched": [0],
+          "callsPerTurn": [[1]],
+          "orphans": []
+        },
+        "broker": {
+          "matched": [],
+          "evaluated": false
+        }
+      },
+      "divergence": "DECLARED. Containment is not implemented in the broker. It reports `unevaluated` for this member rather than `ok`, so the surface never claims a property nothing evaluated. When containment lands, `broker.evaluated` becomes true and `matched` becomes [0] — and this line is what proves the two agreed afterwards."
+    },
+    {
+      "name": "codex-genuinely-absent",
+      "why": "A Codex member whose bodies really are missing. The UI leaves the turn unmatched; the broker still declines. This is the case the containment follow-on has to fix, and recording it now means the fix has a committed expectation to move.",
+      "markers": [
+        {
+          "responseId": null,
+          "startedAt": 1000,
+          "endedAt": 4000,
+          "model": "gpt-5",
+          "querySource": "codex_main_thread"
+        }
+      ],
+      "calls": [],
+      "expect": {
+        "ui": {
+          "matched": [],
+          "callsPerTurn": [[]],
+          "orphans": []
+        },
+        "broker": {
+          "matched": [],
+          "evaluated": false
+        }
+      },
+      "divergence": "DECLARED and this one is the hole, not a design choice. The UI correctly shows nothing joined; the broker cannot tell this apart from `codex-containment` and says so. Both agree the marker is unmatched — they disagree about whether that is a claim worth making."
+    },
+    {
+      "name": "mixed-adapters-one-member",
+      "why": "A member with both id-bearing and id-less markers. Zero eligible is what makes a member unassessable; one eligible marker means the exact join has something to say and a gap in it must not be downgraded.",
+      "markers": [
+        {
+          "responseId": null,
+          "startedAt": 1000,
+          "endedAt": 2000,
+          "model": "gpt-5",
+          "querySource": "codex_main_thread"
+        },
+        {
+          "responseId": "msg_broken",
+          "startedAt": 3000,
+          "endedAt": 4000,
+          "model": "claude-opus-5",
+          "querySource": null
+        }
+      ],
+      "calls": [],
+      "expect": {
+        "ui": {
+          "matched": [],
+          "callsPerTurn": [[], []],
+          "orphans": []
+        },
+        "broker": {
+          "matched": [],
+          "evaluated": true
+        }
+      }
+    },
+    {
+      "name": "record-outside-the-window",
+      "why": "A record whose timestamp sits far outside any turn interval, with an id that matches. Exact match is time-independent by design: both joins must pair them regardless of the clock, because broker-receipt and agent clocks disagree by design and ~33% of receipt deltas are negative.",
+      "markers": [
+        {
+          "responseId": "msg_a",
+          "startedAt": 1000,
+          "endedAt": 2000,
+          "model": "claude-opus-5",
+          "querySource": null
+        }
+      ],
+      "calls": [
+        {
+          "id": 1,
+          "ts": 999000,
+          "model": "claude-opus-5",
+          "responseId": "msg_a",
+          "querySource": "repl_main_thread"
+        }
+      ],
+      "expect": {
+        "ui": {
+          "matched": [0],
+          "callsPerTurn": [[1]],
+          "orphans": []
+        },
+        "broker": {
+          "matched": [0],
+          "evaluated": true
+        }
+      }
+    },
+    {
+      "name": "duplicate-response-id",
+      "why": "Two records carrying the same responseId — a redelivery duplicate, which the wire layer's at-least-once contract explicitly permits. One marker must match, and must not double-count.",
+      "markers": [
+        {
+          "responseId": "msg_a",
+          "startedAt": 1000,
+          "endedAt": 2000,
+          "model": "claude-opus-5",
+          "querySource": null
+        }
+      ],
+      "calls": [
+        {
+          "id": 1,
+          "ts": 1500,
+          "model": "claude-opus-5",
+          "responseId": "msg_a",
+          "querySource": "repl_main_thread"
+        },
+        {
+          "id": 2,
+          "ts": 1600,
+          "model": "claude-opus-5",
+          "responseId": "msg_a",
+          "querySource": "repl_main_thread"
+        }
+      ],
+      "expect": {
+        "ui": {
+          "matched": [0],
+          "callsPerTurn": [[1]],
+          "orphans": [2]
+        },
+        "broker": {
+          "matched": [0],
+          "evaluated": true
+        }
+      }
+    },
+    {
+      "name": "two-markers-one-record",
+      "why": "Two turns claim the same responseId. Neither join may satisfy both from one record — the UI's `used` set and the broker's per-marker EXISTS have to reach the same verdict on which turn is left wanting.",
+      "markers": [
+        {
+          "responseId": "msg_dup",
+          "startedAt": 1000,
+          "endedAt": 2000,
+          "model": "claude-opus-5",
+          "querySource": null
+        },
+        {
+          "responseId": "msg_dup",
+          "startedAt": 3000,
+          "endedAt": 4000,
+          "model": "claude-opus-5",
+          "querySource": null
+        }
+      ],
+      "calls": [
+        {
+          "id": 1,
+          "ts": 1500,
+          "model": "claude-opus-5",
+          "responseId": "msg_dup",
+          "querySource": "repl_main_thread"
+        }
+      ],
+      "expect": {
+        "ui": {
+          "matched": [0],
+          "callsPerTurn": [[1], []],
+          "orphans": []
+        },
+        "broker": {
+          "matched": [0, 1],
+          "evaluated": true
+        }
+      },
+      "divergence": "DECLARED, and this one is a genuine semantic difference neither side is wrong about. The UI is RENDERING and must not show one record under two turns, so its `used` set gives the record to the first claimant and the second renders empty. The broker is asking `were these bytes captured`, and for both markers the answer is yes — the same stored body satisfies both. Content addressing is many-to-one and the broker's claim is availability, not per-turn identity. Recorded rather than reconciled: forcing either to the other's answer would break the thing it is actually for."
+    },
+    {
+      "name": "containment-rejects-a-different-model",
+      "why": "A record sitting squarely inside a Codex turn's window but from a different model must NOT join it. Without the model check the UI would glue an unrelated call into the turn and render it as that turn's body.",
+      "markers": [
+        {
+          "responseId": null,
+          "startedAt": 1000,
+          "endedAt": 4000,
+          "model": "gpt-5",
+          "querySource": "codex_main_thread"
+        }
+      ],
+      "calls": [
+        {
+          "id": 1,
+          "ts": 2000,
+          "model": "some-other-model",
+          "responseId": "resp_y",
+          "querySource": "codex_main_thread"
+        }
+      ],
+      "expect": {
+        "ui": {
+          "matched": [],
+          "callsPerTurn": [[]],
+          "orphans": [1]
+        },
+        "broker": {
+          "matched": [],
+          "evaluated": false
+        }
+      },
+      "divergence": "DECLARED. The marker carries no responseId, so the broker's exact-match domain excludes it and it reports `unevaluated` rather than claiming health it never measured. The case exists to pin the UI's containment guards, which the broker has no counterpart for until containment lands there."
+    },
+    {
+      "name": "containment-rejects-a-different-source-class",
+      "why": "A subagent record inside a main-thread turn's window must NOT join it. A parent turn's window happily contains a subagent call that ran during it, so containment only pairs records and exchanges of the same class.",
+      "markers": [
+        {
+          "responseId": null,
+          "startedAt": 1000,
+          "endedAt": 4000,
+          "model": "gpt-5",
+          "querySource": "codex_main_thread"
+        }
+      ],
+      "calls": [
+        {
+          "id": 1,
+          "ts": 2000,
+          "model": "gpt-5",
+          "responseId": "resp_z",
+          "querySource": "codex_subagent:abc12345"
+        }
+      ],
+      "expect": {
+        "ui": {
+          "matched": [],
+          "callsPerTurn": [[]],
+          "orphans": [1]
+        },
+        "broker": {
+          "matched": [],
+          "evaluated": false
+        }
+      },
+      "divergence": "DECLARED. The marker carries no responseId, so the broker's exact-match domain excludes it and it reports `unevaluated` rather than claiming health it never measured. The case exists to pin the UI's containment guards, which the broker has no counterpart for until containment lands there."
+    }
+  ]
+}

@@ -27,7 +27,7 @@ import { getClient } from '../lib/client.js';
 import { memberActivityError, startMemberActivitySubscribe } from '../lib/member-activity.js';
 import { objectives as objectivesSignal } from '../lib/objectives.js';
 import { PERMISSION_META, sortLeaves, summarizePermissions } from '../lib/permissions.js';
-import { roster as rosterSignal } from '../lib/roster.js';
+import { presenceCaptureWarning, roster as rosterSignal } from '../lib/roster.js';
 import type { ProfileTab } from '../lib/routes.js';
 import {
   selectDmWith,
@@ -72,8 +72,13 @@ export function MemberProfile({ name, tab, viewer }: MemberProfileProps) {
 
   const teammate: Teammate | undefined =
     rosterResp?.teammates.find((t) => t.name === name) ?? b?.teammates.find((t) => t.name === name);
-  const connected = rosterResp?.connected.find((c) => c.name === name)?.connected ?? 0;
+  const presence = rosterResp?.connected.find((c) => c.name === name);
+  const connected = presence?.connected ?? 0;
   const online = connected > 0;
+  // Orthogonal to `online`: a member can be connected and capturing
+  // nothing. Null on the healthy path and when the broker has no
+  // opinion — absence is never rendered as health.
+  const captureWarning = presenceCaptureWarning(presence);
 
   const availableTabs = tabsFor({ isAdmin, isSelf });
   const effectiveTab = availableTabs.includes(tab) ? tab : 'overview';
@@ -152,6 +157,22 @@ export function MemberProfile({ name, tab, viewer }: MemberProfileProps) {
           <span class={`badge ${badgeClassFor(permSummary)}`}>
             {displayRole.title.toUpperCase()}
           </span>
+          {captureWarning === 'gap' && (
+            <span
+              class="badge warn"
+              title="Turns are being recorded for this member but their request/response bodies are not reaching the broker."
+            >
+              NO CAPTURE
+            </span>
+          )}
+          {captureWarning === 'unevaluated' && (
+            <span
+              class="badge soft"
+              title="This broker cannot assess capture health for this member — not a claim that capture is healthy."
+            >
+              CAPTURE UNCHECKED
+            </span>
+          )}
           <span class={`badge ${online ? 'soft' : 'muted'}`}>
             {online ? '● ONLINE' : '◇ OFFLINE'}
           </span>
