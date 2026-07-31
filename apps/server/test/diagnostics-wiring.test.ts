@@ -180,3 +180,79 @@ describe('wiring: a real failure is retained', () => {
     expect(rows(db).filter((x) => x.cause.startsWith('rawstore.'))).toHaveLength(0);
   });
 });
+
+/**
+ * Boundaries where evidence can be discarded.
+ *
+ * ONE PROPERTY, discovered three times at three boundaries: *a loss of
+ * evidence must not read as absence of the thing lost.* It was written
+ * into the contract, fixed at detail expiry, fixed again at cap
+ * eviction, and re-emerged at the process boundary — because it is not
+ * a property of the retention table, it is a property of every
+ * transition where state can be dropped.
+ *
+ * So this enumerates the boundaries rather than waiting for the next
+ * one to be found. Same discipline as enumerating the bypass routes,
+ * which is why that one stayed closed.
+ *
+ *     detail expiry      diagnostics.test.ts — expiry never heals
+ *     cap eviction       diagnostics.test.ts — floor + unknown latch
+ *     process restart    HERE
+ *     DB replacement     not asserted — see the note below
+ */
+describe('evidence survives each boundary', () => {
+  it('a retention outage survives the process that observed it', () => {
+    // The latch is in memory, so a restart would clear it and the new
+    // process would report from SQLite as though the gap never
+    // happened — "expiry heals", at a process boundary.
+    //
+    // So the first write that succeeds after a failure durably records
+    // that the store was unavailable, and the latch clears only if
+    // that record itself lands.
+    const { db, diagnostics } = harness();
+    diagnostics.emit.activityAppendFailed('m', 1);
+    db.exec('DROP TABLE diagnostic_event'); // retention breaks
+    diagnostics.emit.activityAppendFailed('m', 1); // this write fails
+    expect(diagnostics.health()).toBe('unknown');
+
+    // Repair the store, then let one more write succeed.
+    db.exec(`CREATE TABLE diagnostic_event (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, cause TEXT NOT NULL,
+      member_name TEXT NOT NULL, attribution TEXT NOT NULL,
+      ts INTEGER NOT NULL, fields TEXT NOT NULL)`);
+    diagnostics.emit.activityAppendFailed('m', 1);
+
+    // A NEW process reading the same database must still find the gap.
+    const reopened = createDiagnosticStore(db);
+    const outage = reopened.query({
+      cause: 'retention.unavailable',
+      from: 0,
+      to: Date.now() + 60_000,
+    });
+    expect(outage.count).toBeGreaterThan(0);
+  });
+
+  it('the crash-before-persist window is real and is not claimed away', () => {
+    // THE HONEST RESIDUAL. If the process dies after a failed write and
+    // before any later write succeeds, nothing durable was ever
+    // recorded and a new process reports from SQLite as though the
+    // outage did not happen. Persisting at failure time is not
+    // available — the store is what just failed.
+    //
+    // Asserted so the window is a known property with a test naming
+    // it, rather than something discovered later. Stated in the result
+    // too: a window named costs nothing; a window found costs the claim.
+    const { db, diagnostics } = harness();
+    db.exec('DROP TABLE diagnostic_event');
+    diagnostics.emit.activityAppendFailed('m', 1); // fails, latches
+    expect(diagnostics.health()).toBe('unknown'); // this process knows
+
+    db.exec(`CREATE TABLE diagnostic_event (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, cause TEXT NOT NULL,
+      member_name TEXT NOT NULL, attribution TEXT NOT NULL,
+      ts INTEGER NOT NULL, fields TEXT NOT NULL)`);
+    // Simulate a restart with no intervening successful write.
+    const reopened = createDiagnosticStore(db);
+    expect(reopened.health()).toBe('healthy'); // …the next one does NOT
+  });
+});

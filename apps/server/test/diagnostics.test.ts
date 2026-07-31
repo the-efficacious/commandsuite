@@ -298,7 +298,7 @@ describe('cause enum', () => {
     // being closed, criterion 4's bound stops being true.
     const set = new Set(DIAGNOSTIC_CAUSES);
     expect(set.size).toBe(DIAGNOSTIC_CAUSES.length);
-    expect(DIAGNOSTIC_CAUSES.length).toBe(23); // 21 sites + overflow + fanout_truncated
+    expect(DIAGNOSTIC_CAUSES.length).toBe(24); // 21 sites + 3 retention facts
   });
 });
 

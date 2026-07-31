@@ -1439,7 +1439,11 @@ export function createApp(options: AppOptions): CreatedApp {
           for (const inf of inferences) {
             genaiStore.append(member.name, inf);
           }
-          diagnostics?.emit.otlpGenaiIngested(member.name);
+          // ONLY when an append actually happened. A body-only or
+          // correlation-pending batch yields zero inferences and
+          // attempts no write, so clearing the incident here would
+          // report health from an operation that never ran.
+          if (inferences.length > 0) diagnostics?.emit.otlpGenaiIngested(member.name);
         } catch (err) {
           diagnostics?.emit.otlpGenaiIngestFailed(member.name, genaiRecords.length);
           logger.warn('otlp genai ingest failed', {
@@ -1463,8 +1467,10 @@ export function createApp(options: AppOptions): CreatedApp {
       const member = c.get('member');
       const raw = await c.req.json().catch(() => null);
       try {
-        telemetryStore.append(member.name, parseOtlpMetrics(raw));
-        diagnostics?.emit.otlpMetricsStored(member.name);
+        const metrics = parseOtlpMetrics(raw);
+        telemetryStore.append(member.name, metrics);
+        // Same rule: an empty parse writes nothing and heals nothing.
+        if (metrics.length > 0) diagnostics?.emit.otlpMetricsStored(member.name);
       } catch (err) {
         diagnostics?.emit.otlpMetricsStoreFailed(member.name, 0);
         logger.warn('otlp metrics store failed', {
@@ -3959,8 +3965,8 @@ export function createApp(options: AppOptions): CreatedApp {
           checkObjectiveContext(parsed.data.events, name, objectives, broker, logger);
         }
 
-        // Observed recovery: this member's activity is landing again.
-        diagnostics?.emit.activityAppended(name);
+        // Same rule: an empty accepted set exercises no write.
+        if (rows.length > 0) diagnostics?.emit.activityAppended(name);
         return c.json({ accepted: rows.length }, 201);
       } catch (err) {
         diagnostics?.emit.activityAppendFailed(name, parsed.data.events.length);

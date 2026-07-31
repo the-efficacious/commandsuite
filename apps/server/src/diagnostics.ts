@@ -109,6 +109,8 @@ export const DIAGNOSTIC_CAUSES = [
   'retention.overflow',
   // affected-member fanout exceeded its bound — see MAX_FANOUT
   'retention.fanout_truncated',
+  // the store was unreachable for a period — see the durable latch
+  'retention.unavailable',
 ] as const;
 
 export type DiagnosticCause = (typeof DIAGNOSTIC_CAUSES)[number];
@@ -242,6 +244,7 @@ const CAUSE_SPEC: Record<DiagnosticCause, CauseSpec> = {
   },
   'retention.overflow': { mode: 'point', attribution: 'unattributed', fields: ['count'] },
   'retention.fanout_truncated': { mode: 'point', attribution: 'unattributed', fields: ['count'] },
+  'retention.unavailable': { mode: 'point', attribution: 'unattributed', fields: ['count'] },
 };
 
 export function causeSpec(cause: DiagnosticCause): CauseSpec {
@@ -1052,8 +1055,18 @@ function buildStore(
    * the moments it matters. Measured: a throwing emitter escaped
    * `getBlob` and the warning never fired.
    *
-   * Swallowing is right here and nowhere else: the alternative is a
-   * diagnostic subsystem with the authority to break capture.
+   * IF YOU ARE HERE TO REMOVE THIS EMPTY CATCH, READ THIS FIRST.
+   * A general rule says never swallow an exception, and applying it
+   * here restores a defect while cleaning up a smell. The alternative
+   * to swallowing is a diagnostic subsystem holding authority to break
+   * capture — and because this store shares the activity DB handle
+   * with the streams it reports on, a full or corrupt handle fails the
+   * original operation and the diagnostic insert TOGETHER. That is
+   * precisely the moment the product's prior behaviour must survive.
+   *
+   * The failure is not discarded: it latches below and surfaces as
+   * retention health `unknown`. What is discarded is the exception's
+   * ability to propagate into an unrelated caller.
    */
   const emit: DiagnosticEmitter = Object.fromEntries(
     Object.entries(rawEmit).map(([name, fn]) => [
@@ -1061,6 +1074,31 @@ function buildStore(
       (...args: unknown[]) => {
         try {
           (fn as (...a: unknown[]) => void)(...args);
+          // The latch is PROCESS-LOCAL, so a restart would heal it
+          // silently — "expiry heals" at a process boundary, which is
+          // the defect this store exists to prevent. So the first
+          // write that succeeds after a failure durably records that
+          // the store was unavailable, and the latch clears ONLY if
+          // that record itself lands.
+          if (writeFailed) {
+            try {
+              const ts = now();
+              const start = Math.floor(ts / HOUR) * HOUR;
+              foldBucket.run(
+                'retention.unavailable',
+                UNATTRIBUTED,
+                start,
+                start + HOUR,
+                'hour',
+                1,
+                ts,
+                ts,
+              );
+              writeFailed = false;
+            } catch {
+              // Still broken. Stay `unknown`.
+            }
+          }
         } catch {
           writeFailed = true;
         }
