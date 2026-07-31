@@ -266,26 +266,31 @@ must be absent*, *this must not appear*, add at least one asserting the
 mechanism still admits what it should. Absence assertions are cheap to satisfy
 by breaking the thing that produces presence.
 
-This completes a three-part defence against a check whose answer was fixed
-before it ran:
+This completes a defence against a check whose answer was fixed before it ran:
 
-| | |
-|---|---|
-| **mutate** | delete or invert the thing and watch a *specific named* test fail |
-| **confirm it applied** | a mutation that silently didn't apply is indistinguishable from one that survived |
-| **positive control** | prove the check can pass when it should |
+| | | |
+|---|---|---|
+| **mutate** | delete or invert the thing and watch a *specific named* test fail | author-side |
+| **confirm it applied** | a mutation that silently didn't apply is indistinguishable from one that survived | author-side |
+| **positive control** | prove the check can pass when it should | author-side |
+| **a second measurer** | someone else measuring the same system disagrees with your result | structural |
 
-The first two catch a test that cannot fail. The third catches a test that
-cannot pass.
+The first catches a test that cannot fail; the second catches a mutation that
+never ran; the third catches a test that cannot pass.
 
-**All three are author-side, and that is their limit.** They fire only if you
-remember to run them on the check that needed it. The backstop is structural and
-already in this document: *author proposes, partner verifies.* In the session
-these rules came from, one instance was caught by neither mutation nor grep nor
-self-audit — a colleague's independent measurement of the same system simply
-disagreed with the result, before it had misled anyone. A second artifact
-disagreeing works when every author-side defence has failed to fire, which is
-the case you cannot detect from inside.
+**The fourth exists because the first three share a blind spot.** They are all
+things the author does, so they all fail together when the author's *frame* is
+wrong rather than their code. A probe once passed OTEL's `key=value` header
+format to curl, which needs `key: value` — no credential was ever sent, and the
+401 it measured was its own malformed input. Mutating that probe finds nothing:
+it was internally consistent, and every author-side check would have agreed with
+it. What caught it was a colleague's unrelated row count contradicting the
+result, before it had reached anyone's decision.
+
+So when a check's *frame* is the thing in question, no amount of author-side
+discipline reaches it. That is what *author proposes, partner verifies* is for,
+and it is the only one of these that fires **before** publication rather than
+after.
 
 ## When something inexplicable happens, measure it
 
