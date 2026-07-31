@@ -18,6 +18,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { openDatabase } from '../src/db.js';
 import {
+  causeSpec,
   classifyError,
   createDiagnosticStore,
   DIAGNOSTIC_CAUSES,
@@ -76,18 +77,32 @@ describe('safe context', () => {
     expect(classifyError(weird)).toBe('unclassified');
   });
 
-  it('drops unknown fields rather than storing them', () => {
+  it('keeps only the fields the CAUSE permits, and no unknown keys', () => {
+    // Truncating a value is not refusing it. The policy is a property
+    // of the cause, so a hash offered to a path-only cause is dropped
+    // rather than stored at 64 characters.
     const { s, db } = store();
     s.record({
-      cause: 'correlator.body_ref_unreadable',
+      cause: 'correlator.body_ref_unreadable', // policy: ['path']
       members: ['turner'],
-      attribution: 'producer',
       // biome-ignore lint/suspicious/noExplicitAny: deliberately hostile input
-      fields: { hash: 'abc', secret: '/etc/shadow' } as any,
+      fields: { ...digestPath('/tmp/x'), hash: 'abc', secret: '/etc/shadow' } as any,
     });
     const row = db.prepare('SELECT fields FROM diagnostic_event').get() as { fields: string };
-    expect(row.fields).toContain('abc');
-    expect(row.fields).not.toContain('shadow');
+    expect(row.fields).toContain('pathDigest'); // permitted
+    expect(row.fields).not.toContain('abc'); // hash: not permitted for this cause
+    expect(row.fields).not.toContain('shadow'); // unknown key: never
+  });
+
+  it('the caller cannot choose attribution — the cause owns it', () => {
+    // A caller could previously pair `members: []` with 'producer', or
+    // declare a blob corruption attributable to whoever read it.
+    const { s, db } = store();
+    s.record({ cause: 'activity.append_failed', members: [] });
+    const row = db.prepare('SELECT attribution FROM diagnostic_event').get() as {
+      attribution: string;
+    };
+    expect(row.attribution).toBe('unattributed');
   });
 });
 
@@ -96,7 +111,7 @@ describe('attribution', () => {
     // `getBlob(hash)` has no member. Dropping the event would make the
     // store silent about exactly the corruption it exists to surface.
     const { s } = store();
-    s.record({ cause: 'rawstore.blob_gunzip_failed', attribution: 'unattributed' });
+    s.record({ cause: 'rawstore.blob_gunzip_failed' });
 
     const r = s.query({ member: null, from: T0 - HOUR, to: T0 + HOUR });
     expect(r.count).toBe(1);
@@ -110,7 +125,6 @@ describe('attribution', () => {
     s.record({
       cause: 'rawstore.blob_hash_mismatch',
       members: ['turner', 'lea'],
-      attribution: 'affected',
       fields: { hash: 'deadbeef' },
     });
 
@@ -131,7 +145,6 @@ describe('current health vs historical presence', () => {
     h.s.record({
       cause: 'activity.append_failed',
       members: ['turner'],
-      attribution: 'producer',
     });
     expect(h.s.unresolved('turner')).toHaveLength(1);
 
@@ -150,7 +163,6 @@ describe('current health vs historical presence', () => {
     h.s.record({
       cause: 'correlator.raw_capture_failed',
       members: ['turner'],
-      attribution: 'producer',
     });
 
     h.at(T0 + 10 * DAY);
@@ -166,7 +178,7 @@ describe('retention and coverage', () => {
     const h = store({ detailMs: HOUR });
     h.at(T0);
     for (let i = 0; i < 3; i++) {
-      h.s.record({ cause: 'otlp.genai_ingest_failed', members: ['lea'], attribution: 'producer' });
+      h.s.record({ cause: 'otlp.genai_ingest_failed', members: ['lea'] });
     }
     h.at(T0 + 5 * HOUR);
     h.s.sweep();
@@ -183,7 +195,7 @@ describe('retention and coverage', () => {
     // gets the interval actually answered and a coverage flag.
     const h = store({ detailMs: HOUR });
     h.at(T0);
-    h.s.record({ cause: 'otlp.logs_store_failed', members: ['lea'], attribution: 'producer' });
+    h.s.record({ cause: 'otlp.logs_store_failed', members: ['lea'] });
     h.at(T0 + 5 * HOUR);
     h.s.sweep();
 
@@ -202,7 +214,6 @@ describe('retention and coverage', () => {
     h.s.record({
       cause: 'codex.genai_ingest_entry_failed',
       members: ['x'],
-      attribution: 'producer',
     });
     h.at(T0 + 5 * HOUR);
     h.s.sweep();
@@ -221,7 +232,7 @@ describe('retention and coverage', () => {
     // makes eviction speak.
     const h = store({ detailMs: HOUR, hourMs: 2 * HOUR, dayMs: 3 * DAY });
     h.at(T0);
-    h.s.record({ cause: 'rawstore.blob_gunzip_failed', attribution: 'unattributed' });
+    h.s.record({ cause: 'rawstore.blob_gunzip_failed' });
 
     h.at(T0 + 30 * DAY);
     h.s.sweep();
@@ -239,7 +250,7 @@ describe('retention and coverage', () => {
     h.at(T0);
     for (let i = 0; i < 20; i++) {
       h.at(T0 + i * 1000);
-      h.s.record({ cause: 'activity.append_failed', members: ['m'], attribution: 'producer' });
+      h.s.record({ cause: 'activity.append_failed', members: ['m'] });
     }
 
     expect(h.s.coverageFloor()).toBeGreaterThanOrEqual(T0);
@@ -260,7 +271,7 @@ describe('retention health', () => {
     h.at(T0);
     for (let i = 0; i < 10; i++) {
       h.at(T0 + i * 1000);
-      h.s.record({ cause: 'activity.append_failed', members: ['m'], attribution: 'producer' });
+      h.s.record({ cause: 'activity.append_failed', members: ['m'] });
     }
     expect(h.s.health()).toBe('degraded');
   });
@@ -272,7 +283,7 @@ describe('cause enum', () => {
     // being closed, criterion 4's bound stops being true.
     const set = new Set(DIAGNOSTIC_CAUSES);
     expect(set.size).toBe(DIAGNOSTIC_CAUSES.length);
-    expect(DIAGNOSTIC_CAUSES.length).toBe(22); // 21 sites + retention.overflow
+    expect(DIAGNOSTIC_CAUSES.length).toBe(23); // 21 sites + overflow + fanout_truncated
   });
 });
 
@@ -293,8 +304,8 @@ describe('repairs', () => {
     // original test recorded ONE unattributed event and passed.
     const h = store({ detailMs: HOUR });
     h.at(T0);
-    h.s.record({ cause: 'rawstore.blob_gunzip_failed', attribution: 'unattributed' });
-    h.s.record({ cause: 'rawstore.blob_gunzip_failed', attribution: 'unattributed' });
+    h.s.record({ cause: 'rawstore.blob_gunzip_failed' });
+    h.s.record({ cause: 'rawstore.blob_gunzip_failed' });
     h.at(T0 + 5 * HOUR);
     h.s.sweep();
 
@@ -308,8 +319,8 @@ describe('repairs', () => {
 
   it('unresolved state for the same unattributed cause is one row, not two', () => {
     const h = store();
-    h.s.record({ cause: 'otlp.logs_store_failed', attribution: 'unattributed' });
-    h.s.record({ cause: 'otlp.logs_store_failed', attribution: 'unattributed' });
+    h.s.record({ cause: 'otlp.logs_store_failed' });
+    h.s.record({ cause: 'otlp.logs_store_failed' });
     expect(h.s.unresolved(null)).toHaveLength(1);
   });
 
@@ -319,7 +330,7 @@ describe('repairs', () => {
     // could count Tuesday.
     const h = store({ detailMs: HOUR });
     h.at(T0);
-    h.s.record({ cause: 'otlp.logs_store_failed', members: ['lea'], attribution: 'producer' });
+    h.s.record({ cause: 'otlp.logs_store_failed', members: ['lea'] });
     h.at(T0 + 10 * HOUR);
     h.s.sweep();
 
@@ -337,7 +348,7 @@ describe('repairs', () => {
     h.at(T0);
     for (let i = 0; i < 10; i++) {
       h.at(T0 + i * 1000);
-      h.s.record({ cause: 'activity.append_failed', members: ['m'], attribution: 'producer' });
+      h.s.record({ cause: 'activity.append_failed', members: ['m'] });
     }
     // The DISCRIMINATING instant is the newest one destroyed, not
     // `floor - 1`. Ten records at T0..T0+9000 with a cap of 2 destroys
@@ -360,7 +371,7 @@ describe('repairs', () => {
     h.at(T0);
     for (let i = 0; i < 10; i++) {
       h.at(T0 + i * 1000);
-      h.s.record({ cause: 'activity.append_failed', members: ['m'], attribution: 'producer' });
+      h.s.record({ cause: 'activity.append_failed', members: ['m'] });
     }
     // Queried from the coverage floor, not below it: a window reaching
     // below the floor is correctly `indeterminate`, and asking for one
@@ -373,7 +384,7 @@ describe('repairs', () => {
     // Folded to a bucket they persist and stay bounded.
     for (let i = 10; i < 40; i++) {
       h.at(T0 + i * 1000);
-      h.s.record({ cause: 'activity.append_failed', members: ['m'], attribution: 'producer' });
+      h.s.record({ cause: 'activity.append_failed', members: ['m'] });
     }
     const r = h.s.query({
       cause: 'retention.overflow',
@@ -400,7 +411,7 @@ describe('repairs', () => {
     const h = store({ maxStateRows: 5 });
     for (let i = 0; i < 50; i++) {
       h.at(T0 + i);
-      h.s.record({ cause: 'activity.append_failed', members: [`m${i}`], attribution: 'producer' });
+      h.s.record({ cause: 'activity.append_failed', members: [`m${i}`] });
     }
     const n = h.db.prepare(`SELECT COUNT(*) AS n FROM diagnostic_state`).get() as { n: number };
     expect(Number(n.n)).toBeLessThanOrEqual(5);
@@ -414,7 +425,6 @@ describe('repairs', () => {
     h.s.record({
       cause: 'genaistore.malformed_row_skipped',
       members: ['lea'],
-      attribution: 'affected',
     });
     expect(h.s.unresolved('lea')).toHaveLength(0);
     // …but it is still history.
@@ -423,7 +433,7 @@ describe('repairs', () => {
 
   it('an INCIDENT cause does create unresolved state', () => {
     const h = store();
-    h.s.record({ cause: 'activity.append_failed', members: ['lea'], attribution: 'producer' });
+    h.s.record({ cause: 'activity.append_failed', members: ['lea'] });
     expect(h.s.unresolved('lea')).toHaveLength(1);
   });
 
@@ -432,9 +442,89 @@ describe('repairs', () => {
     h.s.record({
       cause: 'rawstore.blob_hash_mismatch',
       members: Array.from({ length: 5000 }, (_, i) => `m${i}`),
-      attribution: 'affected',
     });
     const n = h.db.prepare(`SELECT COUNT(*) AS n FROM diagnostic_event`).get() as { n: number };
     expect(Number(n.n)).toBeLessThanOrEqual(256);
+  });
+});
+
+/**
+ * Rune's four checkpoint failures, reproduced with his fixtures.
+ *
+ * These four passed my suite at `767b6d0` while I claimed all seven
+ * findings were repaired. Three of them are defects my own repairs
+ * INTRODUCED — the caps and the fanout bound each created a new silent
+ * loss while closing an older one. The fourth is a finding I
+ * acknowledged and did not implement.
+ *
+ * Kept with his parameter values rather than re-derived, so the record
+ * shows the exact shapes that discriminated.
+ */
+describe('checkpoint regressions', () => {
+  it('an evicted unresolved member does not read clean — health latches to unknown', () => {
+    // maxStateRows: 1, his fixture. The cap added to satisfy "never
+    // evict evidence and return clean" was itself evicting evidence and
+    // returning clean, and `health()` then aged back to healthy after
+    // detailMs although the lost state can never be reconstructed.
+    const h = store({ maxStateRows: 1 });
+    h.at(T0);
+    h.s.record({ cause: 'activity.append_failed', members: ['evicted'] });
+    h.at(T0 + 1000);
+    h.s.record({ cause: 'activity.append_failed', members: ['kept'] });
+
+    expect(h.s.unresolved('evicted')).toHaveLength(0); // the state is genuinely gone
+    expect(h.s.health()).toBe('unknown'); // …and the store says so
+
+    // It must NOT age back to healthy. Time does not reconstruct it.
+    h.at(T0 + 400 * DAY);
+    expect(h.s.health()).toBe('unknown');
+  });
+
+  it('the bucket cap does not break its own bound by recording its overflow', () => {
+    // maxBucketRows: 1, his fixture. Deleting exactly to the cap and
+    // then inserting the overflow fact left the table at max + 1: a
+    // bound that breaks itself by reporting that it was reached. He
+    // measured 2 rows under a cap of 1.
+    const h = store({ detailMs: 1, maxBucketRows: 1 });
+    h.at(T0);
+    h.s.record({ cause: 'otlp.logs_store_failed', members: ['a'] });
+    h.at(T0 + HOUR);
+    h.s.record({ cause: 'otlp.genai_ingest_failed', members: ['b'] });
+    h.at(T0 + 2 * HOUR);
+    h.s.sweep();
+
+    const n = h.db.prepare('SELECT COUNT(*) AS n FROM diagnostic_bucket').get() as { n: number };
+    expect(Number(n.n)).toBeLessThanOrEqual(1);
+  });
+
+  it('fanout truncation records a queryable loss instead of dropping members silently', () => {
+    // 300 affected members, his fixture. `slice(0, 256)` kept the first
+    // 256 and dropped 44 with no fact, so the stored set looked like
+    // the complete affected set.
+    const h = store();
+    h.at(T0);
+    h.s.record({
+      cause: 'rawstore.blob_hash_mismatch',
+      members: Array.from({ length: 300 }, (_, i) => `m${i}`),
+    });
+
+    const loss = h.s.query({
+      cause: 'retention.fanout_truncated',
+      from: T0 - HOUR,
+      to: T0 + HOUR,
+    });
+    expect(loss.count).toBeGreaterThan(0);
+  });
+
+  it('a new cause cannot silently default to point', () => {
+    // `Record<string, HealthMode>` let an unregistered cause default,
+    // which is the quiet-failure shape this module exists to remove,
+    // inside the module. `Record<DiagnosticCause, CauseSpec>` makes it
+    // a compile error; this asserts every cause has a policy at runtime
+    // too, so the table cannot be widened with a cast.
+    for (const c of DIAGNOSTIC_CAUSES) {
+      expect(causeSpec(c), c).toBeDefined();
+      expect(['point', 'incident']).toContain(causeSpec(c).mode);
+    }
   });
 });

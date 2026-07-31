@@ -160,7 +160,7 @@ describe('diagnostic census guard', () => {
   });
 
   it('the cause enum has one code per registered site plus overflow', () => {
-    // 14 capture-module messages + 7 app.ts + 1 retention.overflow.
-    expect(DIAGNOSTIC_CAUSES.length).toBe(REGISTERED.size + APP_IN_SCOPE.length + 1);
+    // 14 capture-module + 7 app.ts + retention.overflow + retention.fanout_truncated.
+    expect(DIAGNOSTIC_CAUSES.length).toBe(REGISTERED.size + APP_IN_SCOPE.length + 2);
   });
 });

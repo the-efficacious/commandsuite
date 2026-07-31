@@ -107,6 +107,8 @@ export const DIAGNOSTIC_CAUSES = [
   'enrollment.source_label_truncated',
   // the store's own overflow — see `recordOverflow`
   'retention.overflow',
+  // affected-member fanout exceeded its bound — see MAX_FANOUT
+  'retention.fanout_truncated',
 ] as const;
 
 export type DiagnosticCause = (typeof DIAGNOSTIC_CAUSES)[number];
@@ -154,19 +156,100 @@ const UNATTRIBUTED = '';
  */
 export type HealthMode = 'point' | 'incident';
 
-const CAUSE_MODE: Record<string, HealthMode> = {
-  'correlator.body_ref_unreadable': 'incident',
-  'correlator.raw_capture_failed': 'incident',
-  'otlp.logs_store_failed': 'incident',
-  'otlp.genai_ingest_failed': 'incident',
-  'otlp.metrics_store_failed': 'incident',
-  'codex.genai_ingest_entry_failed': 'incident',
-  'activity.append_failed': 'incident',
-  'toolinvoke.audit_append_failed': 'incident',
+/** Which safe fields a cause is allowed to carry. */
+export type FieldPolicy = 'path' | 'hash' | 'count' | 'none';
+
+export interface CauseSpec {
+  mode: HealthMode;
+  /** The attribution this cause ALWAYS uses. Not a caller decision. */
+  attribution: Attribution;
+  /** Fields permitted. Anything else is dropped before storage. */
+  fields: readonly FieldPolicy[];
+}
+
+/**
+ * The per-cause policy table.
+ *
+ * `Record<DiagnosticCause, CauseSpec>` is EXHAUSTIVE BY TYPE: adding a
+ * cause without a policy is a compile error. The previous
+ * `Record<string, HealthMode>` silently defaulted a new cause to
+ * `point`, which is the quiet-failure shape this module exists to
+ * remove, inside the module itself.
+ *
+ * ATTRIBUTION IS A PROPERTY OF THE CAUSE, not of the call site. A
+ * caller cannot pair `members: []` with `producer`, and cannot decide
+ * that a blob corruption is attributable to whoever happened to read
+ * it — `getBlob(hash)` has no member, and the affected set is resolved
+ * from `raw_exchange` by the wiring rather than guessed here.
+ */
+const CAUSE_SPEC: Record<DiagnosticCause, CauseSpec> = {
+  'correlator.body_ref_unreadable': { mode: 'incident', attribution: 'producer', fields: ['path'] },
+  'correlator.body_length_mismatch': { mode: 'point', attribution: 'producer', fields: ['count'] },
+  'correlator.unlink_after_capture_failed': {
+    mode: 'point',
+    attribution: 'producer',
+    fields: ['path'],
+  },
+  'correlator.raw_capture_failed': { mode: 'incident', attribution: 'producer', fields: ['hash'] },
+  'correlator.body_json_parse_failed': {
+    mode: 'point',
+    attribution: 'producer',
+    fields: ['count'],
+  },
+  'correlator.inference_build_failed': { mode: 'point', attribution: 'producer', fields: ['none'] },
+  'correlator.request_id_assign_failed': {
+    mode: 'point',
+    attribution: 'producer',
+    fields: ['hash'],
+  },
+  'correlator.malformed_record_skipped': {
+    mode: 'point',
+    attribution: 'producer',
+    fields: ['none'],
+  },
+  'rawstore.blob_gunzip_failed': { mode: 'point', attribution: 'affected', fields: ['hash'] },
+  'rawstore.blob_hash_mismatch': { mode: 'point', attribution: 'affected', fields: ['hash'] },
+  'genaistore.unserializable_record_skipped': {
+    mode: 'point',
+    attribution: 'producer',
+    fields: ['none'],
+  },
+  'genaistore.malformed_row_skipped': { mode: 'point', attribution: 'affected', fields: ['none'] },
+  'telemetrystore.unserializable_record_skipped': {
+    mode: 'point',
+    attribution: 'producer',
+    fields: ['none'],
+  },
+  'telemetrystore.malformed_row_skipped': {
+    mode: 'point',
+    attribution: 'affected',
+    fields: ['none'],
+  },
+  'otlp.logs_store_failed': { mode: 'incident', attribution: 'producer', fields: ['count'] },
+  'otlp.genai_ingest_failed': { mode: 'incident', attribution: 'producer', fields: ['count'] },
+  'otlp.metrics_store_failed': { mode: 'incident', attribution: 'producer', fields: ['count'] },
+  'codex.genai_ingest_entry_failed': {
+    mode: 'incident',
+    attribution: 'producer',
+    fields: ['none'],
+  },
+  'activity.append_failed': { mode: 'incident', attribution: 'producer', fields: ['count'] },
+  'toolinvoke.audit_append_failed': { mode: 'incident', attribution: 'producer', fields: ['none'] },
+  'enrollment.source_label_truncated': {
+    mode: 'point',
+    attribution: 'unattributed',
+    fields: ['count'],
+  },
+  'retention.overflow': { mode: 'point', attribution: 'unattributed', fields: ['count'] },
+  'retention.fanout_truncated': { mode: 'point', attribution: 'unattributed', fields: ['count'] },
 };
-/** Everything not named above is a point event. */
+
+export function causeSpec(cause: DiagnosticCause): CauseSpec {
+  return CAUSE_SPEC[cause];
+}
+
 export function healthMode(cause: DiagnosticCause): HealthMode {
-  return CAUSE_MODE[cause] ?? 'point';
+  return CAUSE_SPEC[cause].mode;
 }
 
 /** Coverage of an answer. `indeterminate` is a state, not a zero. */
@@ -233,8 +316,24 @@ export function digestPath(path: string): { pathDigest: string; pathLength: numb
   };
 }
 
-function sanitize(fields: SafeFields): SafeFields {
+/**
+ * Filter to the fields this CAUSE is permitted to carry.
+ *
+ * Truncating a value is not the same as refusing it: the previous
+ * version accepted any `SafeFields` from any caller and merely capped
+ * the string lengths, so a caller could persist an arbitrary
+ * 128-character `errorCode` or a `pathDigest` that was never a digest.
+ * The policy is a property of the cause, so it is applied here rather
+ * than trusted at the call site.
+ */
+function sanitize(fields: SafeFields, allow: readonly FieldPolicy[]): SafeFields {
+  const ok = new Set(allow);
   const out: SafeFields = {};
+  if (!ok.has('path')) {
+    fields = { ...fields, pathDigest: undefined, pathLength: undefined };
+  }
+  if (!ok.has('hash')) fields = { ...fields, hash: undefined };
+  if (!ok.has('count')) fields = { ...fields, count: undefined };
   if (fields.pathDigest !== undefined) out.pathDigest = fields.pathDigest.slice(0, 32);
   if (fields.pathLength !== undefined) out.pathLength = Math.trunc(fields.pathLength);
   if (fields.hash !== undefined) out.hash = fields.hash.slice(0, 64);
@@ -247,11 +346,10 @@ function sanitize(fields: SafeFields): SafeFields {
 export interface DiagnosticInput {
   cause: DiagnosticCause;
   /**
-   * Members this concerns. Empty means unattributed, which is recorded
-   * explicitly as a row with `member_name IS NULL` rather than dropped.
+   * Members this concerns. Empty records an explicit `unattributed`
+   * row rather than dropping the diagnostic.
    */
   members?: readonly string[];
-  attribution: Attribution;
   fields?: SafeFields;
 }
 
@@ -406,6 +504,23 @@ export function createDiagnosticStore(
     }
   }
 
+  /** Fanout loss is a queryable fact, folded like overflow. */
+  function recordFanoutTruncated(n: number): void {
+    const ts = now();
+    const start = Math.floor(ts / HOUR) * HOUR;
+    foldBucket.run(
+      'retention.fanout_truncated',
+      UNATTRIBUTED,
+      start,
+      start + HOUR,
+      'hour',
+      n,
+      ts,
+      ts,
+    );
+    setMeta.run('fanout_truncated_last', String(ts));
+  }
+
   /**
    * Overflow is recorded as a QUERYABLE EVENT, not only a meta counter.
    * "Record an overflow fact" is not met by a number no query surface
@@ -468,7 +583,11 @@ export function createDiagnosticStore(
 
     const bucket = db.prepare(`SELECT COUNT(*) AS n FROM diagnostic_bucket`).get() as { n: number };
     if (Number(bucket.n) > maxBucketRows) {
-      const over = Number(bucket.n) - maxBucketRows;
+      // Reserve a row for the overflow fact this enforcement is about
+      // to record. Deleting exactly to the cap and THEN inserting left
+      // the table at max + 1 — a bound that breaks itself by reporting
+      // that it was reached.
+      const over = Number(bucket.n) - maxBucketRows + 1;
       // The floor comes from the removed rows' own EXCLUSIVE ends, so a
       // day bucket raises it by a day and an hour bucket by an hour.
       // Adding a fixed HOUR left day-bucket evidence destroyed below a
@@ -509,6 +628,13 @@ export function createDiagnosticStore(
              (SELECT rowid FROM diagnostic_state ORDER BY since LIMIT ?)`,
         ).run(over);
         recordOverflow();
+        // PERSISTENT, not ageing. Evicting unresolved state destroys
+        // current health that cannot be reconstructed — the member
+        // simply reads clean afterwards. So retention health latches to
+        // `unknown` and stays there; a time-based recovery here would
+        // be the cap that exists to prevent reading clean, reading
+        // clean.
+        setMeta.run('state_evicted', '1');
         db.exec('COMMIT');
       } catch (err) {
         db.exec('ROLLBACK');
@@ -520,20 +646,27 @@ export function createDiagnosticStore(
   return {
     record(input: DiagnosticInput): void {
       const ts = now();
-      const fields = JSON.stringify(sanitize(input.fields ?? {}));
+      const spec = CAUSE_SPEC[input.cause];
+      const fields = JSON.stringify(sanitize(input.fields ?? {}, spec.fields));
       // Bounded, deduped fanout: a corrupt blob referenced by a very
       // large number of members must not turn one diagnostic into an
       // unbounded insert burst.
-      const named = [...new Set(input.members ?? [])].slice(0, MAX_FANOUT);
+      const all = [...new Set(input.members ?? [])];
+      const named = all.slice(0, MAX_FANOUT);
+      const truncated = all.length - named.length;
       const members = named.length > 0 ? named : [UNATTRIBUTED];
-      const mode = healthMode(input.cause);
+      // Attribution comes from the CAUSE, never the caller — a caller
+      // cannot pair `members: []` with `producer`, and cannot decide a
+      // blob corruption belongs to whoever happened to read it.
+      const attribution: Attribution = named.length === 0 ? 'unattributed' : spec.attribution;
+      const mode = spec.mode;
 
       // ATOMIC. A throw between the event insert and the state upsert
       // would leave an event with no unresolved state, or the reverse.
       db.exec('BEGIN IMMEDIATE');
       try {
         for (const m of members) {
-          insertEvent.run(input.cause, m, input.attribution, ts, fields);
+          insertEvent.run(input.cause, m, attribution, ts, fields);
           // Only incidents create unresolved state. A point event is
           // history the instant it happens.
           if (mode === 'incident') upsertState.run(input.cause, m, ts);
@@ -543,6 +676,10 @@ export function createDiagnosticStore(
         db.exec('ROLLBACK');
         throw err;
       }
+      // Truncation is LOSS and must say so. `slice()` alone dropped
+      // members 257..N with no fact and no unknown attribution, so the
+      // stored set looked like the complete affected set.
+      if (truncated > 0) recordFanoutTruncated(truncated);
       enforceCaps();
     },
 
@@ -778,6 +915,7 @@ export function createDiagnosticStore(
       } catch {
         return 'unknown';
       }
+      if (metaNum('state_evicted', 0) === 1) return 'unknown';
       if (last === 0) return 'healthy';
       // Overflow within the detail window means evidence is actively
       // being shed; say `degraded` rather than reporting healthy while
