@@ -94,39 +94,39 @@ client), `csuite-cli` (terminal).
 
 ## Internal development — team members
 
-The workflow above is for **outside contributors**. Members of the core team
-work on long-lived shared branches instead:
+**The same workflow as outside contributors.** Branch from `main`, open a pull
+request against `main`, get it verified by someone who did not write it.
 
 | branch | what it is |
 |---|---|
-| `main` | Protected. Pull requests only, approved by the repository owner. |
-| `develop` | The integration trunk. **Branch your work from here, and merge it back here.** |
-| `review/<yyyy-mm-dd>` | Cut from `develop` when a batch is ready. The PR to `main` comes from this branch and is **frozen** during review, so the diff cannot shift under the reviewer while they are reading it. `develop` keeps moving the whole time. |
+| `main` | Protected. The trunk. Pull requests only. |
+| `<type>/<short-description>` | Your working branch. Cut from `main`, merged back via PR, deleted after. |
 
-> **`develop` is scaffolding, not architecture.** It exists as one isolation
-> layer for as long as every team member holds merge-to-`main` privileges under
-> a shared identity. Once per-agent identities land, team members will open pull
-> requests directly against `main` like anyone else, and **`develop` retires**
-> along with the `review/<date>` branches that feed off it. Treat this whole
-> section as temporary. No timeline is set; if you are reading it after
-> per-agent identities exist, it is stale and the fix is to delete it.
+> **This replaced a `develop` + `review/<date>` model on 2026-07-30.** That
+> model existed as one isolation layer for as long as every team member held
+> merge privileges under a **shared identity** — GitHub could not tell five
+> members apart, so it could not enforce that a reviewer was someone other than
+> the author. The old section said it was scaffolding and that the fix was to
+> delete it once per-agent identities landed. They landed; this is that
+> deletion.
 
 turndb uses the same model, written down in its own `CONTRIBUTING.md`. It is
 stated once per repository and pointed at from everywhere else — three copies of
 a branch model is worse than one, because they drift and then nobody knows which
-is true.
+is true. **turndb's copy still describes the old model and needs the same
+change.**
 
 **Author proposes, partner verifies.** Every change is verified by someone who
 did not write it, and whoever did not write it decides whether it is done. A
 verifier is expected to disagree; agreement arrived at by deference is worth
-nothing. Merge to `develop` once your partner has verified.
+nothing.
 
-> **Open question, not yet decided:** whether outside contributions should
-> target `main` (as the workflow above says) or `develop`. As written, a PR
-> merged to `main` is not on `develop`, so the next `review/<date>` branch cut
-> from `develop` will not contain it. Until this is settled, a maintainer
-> merging an outside PR to `main` should make sure the commit reaches `develop`
-> too.
+> **Name the commit you verified.** `main`'s protection has
+> `require_last_push_approval: false`, so an approval survives any later push to
+> the branch — the platform records that someone approved *a* state, not that
+> anyone read the merged one. Until that setting changes, the SHA in the
+> verification is the only thing that closes the gap. A branch name is not an
+> object; a branch name at a commit is.
 
 ### Commit signing does not currently work
 
