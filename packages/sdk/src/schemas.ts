@@ -209,6 +209,11 @@ export const PushResultSchema = z.object({
 export const HealthResponseSchema = z.object({
   status: z.literal('ok'),
   version: z.string(),
+  capabilities: z
+    .object({
+      rawBodyAck: z.boolean().optional(),
+    })
+    .optional(),
 });
 
 // ───────────────────────── Objectives ─────────────────────────

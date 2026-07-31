@@ -75,6 +75,46 @@ function inference() {
   };
 }
 
+function otlpInlineClaudeCall(requestBody: unknown, responseBody: unknown) {
+  const attrs = (eventName: string, values: Record<string, string>) => [
+    { key: 'event.name', value: { stringValue: `claude_code.${eventName}` } },
+    ...Object.entries(values).map(([key, value]) => ({ key, value: { stringValue: value } })),
+  ];
+  return {
+    resourceLogs: [
+      {
+        scopeLogs: [
+          {
+            logRecords: [
+              {
+                timeUnixNano: '1700000000000000000',
+                attributes: attrs('api_request_body', {
+                  body: JSON.stringify(requestBody),
+                  model: 'claude-opus-4-6',
+                }),
+              },
+              {
+                timeUnixNano: '1700000001000000000',
+                attributes: attrs('api_request', {
+                  request_id: 'req_relay_1',
+                  model: 'claude-opus-4-6',
+                }),
+              },
+              {
+                timeUnixNano: '1700000002000000000',
+                attributes: attrs('api_response_body', {
+                  body: JSON.stringify(responseBody),
+                  request_id: 'req_relay_1',
+                }),
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+}
+
 async function post(
   app: ReturnType<typeof makeApp>['app'],
   name: string,
@@ -156,6 +196,58 @@ describe('POST /members/:name/genai', () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ accepted: 0 });
     expect(genaiStore.count()).toBe(0);
+  });
+});
+
+describe('POST /otlp/v1/logs runner-relay acknowledgement', () => {
+  it('acknowledges both byte-exact Claude bodies and preserves the derived record', async () => {
+    const { app, genaiStore, rawBodyStore } = makeApp();
+    const request = {
+      model: 'claude-opus-4-6',
+      system: [{ type: 'text', text: 'Be exact.' }],
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }],
+    };
+    const response = {
+      id: 'msg_relay_1',
+      model: 'claude-opus-4-6',
+      role: 'assistant',
+      content: [{ type: 'text', text: 'hi' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 7, output_tokens: 2 },
+    };
+    const res = await app.request('/otlp/v1/logs', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${TOKEN}`,
+        'Content-Type': 'application/json',
+        'X-CSuite-Raw-Bodies': '2',
+      },
+      body: JSON.stringify(otlpInlineClaudeCall(request, response)),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      partialSuccess: {},
+      csuite: { rawBodiesCaptured: 2 },
+    });
+    expect(rawBodyStore.count()).toBe(2);
+    const requestRow = rawBodyStore.list({ memberName: 'engineer-1', kind: 'request' })[0];
+    const responseRow = rawBodyStore.list({ memberName: 'engineer-1', kind: 'response' })[0];
+    expect(rawBodyStore.getBlob(requestRow?.hash ?? '')?.toString('utf8')).toBe(
+      JSON.stringify(request),
+    );
+    expect(rawBodyStore.getBlob(responseRow?.hash ?? '')?.toString('utf8')).toBe(
+      JSON.stringify(response),
+    );
+    const [derived] = genaiStore.list({ memberName: 'engineer-1' });
+    expect(derived).toMatchObject({
+      provider: 'anthropic',
+      model: 'claude-opus-4-6',
+      responseId: 'msg_relay_1',
+      usage: { inputTokens: 7, outputTokens: 2 },
+      requestSha256: requestRow?.hash,
+      responseSha256: responseRow?.hash,
+    });
   });
 });
 

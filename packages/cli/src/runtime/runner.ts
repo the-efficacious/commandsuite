@@ -80,6 +80,12 @@ export interface RunnerOptions {
   url: string;
   token: string;
   /**
+   * Require broker acknowledgement for runner-relayed Claude raw bodies.
+   * Claude sets this; Codex does not need it because it uploads bytes through
+   * its own bundle path. A missing capability aborts before the agent spawns.
+   */
+  requireRawBodyAck?: boolean;
+  /**
    * Where the runner binds its IPC socket. Defaults to a pid-scoped
    * path under `$TMPDIR`. Override for tests that want a predictable
    * location or for running multiple runners with deterministic paths.
@@ -321,6 +327,23 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
   // use this to avoid binding an ephemeral hook port.
   let captureHost: CaptureHost | null = null;
   if (!options.noTrace) {
+    if (options.requireRawBodyAck === true) {
+      let health: Awaited<ReturnType<BrokerClient['health']>>;
+      try {
+        health = await brokerClient.health();
+      } catch (err) {
+        throw new RunnerStartupError(
+          `cannot verify broker capture compatibility: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+      if (health.capabilities?.rawBodyAck !== true) {
+        throw new RunnerStartupError(
+          `this broker cannot acknowledge remote Claude capture; upgrade the broker before launching the runner`,
+        );
+      }
+    }
     try {
       captureHost = await startCaptureHost({
         brokerClient,
