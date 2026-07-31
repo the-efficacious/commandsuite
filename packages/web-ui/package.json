@@ -41,17 +41,17 @@
   },
   "dependencies": {
     "csuite-sdk": "workspace:*",
-    "@preact/signals": "^2.9.4",
+    "@preact/signals": "^2.10.0",
     "dompurify": "^3.4.12",
     "highlight.js": "^11.11.1",
-    "lucide-preact": "^1.26.0",
+    "lucide-preact": "^1.27.0",
     "marked": "^18.0.7",
     "preact": "^10.29.7"
   },
   "devDependencies": {
     "@preact/preset-vite": "^2.10.6",
     "@testing-library/preact": "^3.2.4",
-    "@types/node": "^26.1.1",
+    "@types/node": "^26.1.2",
     "happy-dom": "^20.11.1",
     "typescript": "^6.0.3",
     "vite": "^8.1.5",
