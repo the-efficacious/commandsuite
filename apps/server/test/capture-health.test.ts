@@ -191,6 +191,24 @@ describe('capture-health detector', () => {
     expect(f.health('cora').state).toBe('pending');
   });
 
+  it('a fully matched fresh marker clears pending immediately', () => {
+    const f = fixture();
+    f.sessionStart('cora');
+    f.marker('cora', 'msg_fresh', FRESH);
+    f.captured('cora', 'msg_fresh', 'req_fresh', 'res_fresh');
+
+    expect(f.health('cora').state).toBe('ok');
+  });
+
+  it('a fresh marker before the latest session boundary cannot make the new session pending', () => {
+    const f = fixture();
+    f.sessionStart('cora', NOW - 10_000);
+    f.marker('cora', 'msg_old_fresh', NOW - 9_000);
+    f.sessionStart('cora', NOW - 5_000);
+
+    expect(f.health('cora').state).toBe('ok');
+  });
+
   it('a healthy body earlier in the session does NOT clear a later unmatched marker', () => {
     // The latch. A session that captures once and then breaks must not
     // read as healthy for the rest of its life — Turner's ran 18 hours.

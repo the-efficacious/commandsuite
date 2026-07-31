@@ -99,13 +99,11 @@ export interface CaptureHealthOptions {
  * exchange separately per side; gen_ai appends later), so the invariant
  * cannot be asserted in place of the joins.
  */
-const UNMATCHED_SQL = `
-  SELECT COUNT(*) AS n, MIN(a.created_at) AS since
+const UNMATCHED_PREDICATE = `
   FROM member_activity a
   WHERE a.member_name = ?
     AND a.kind = 'llm_exchange'
     AND a.created_at >= ?
-    AND a.created_at <= ?
     AND json_extract(a.event_json, '$.entry.response.responseId') IS NOT NULL
     AND NOT EXISTS (
       SELECT 1 FROM gen_ai_inference g
@@ -126,6 +124,40 @@ const UNMATCHED_SQL = `
         AND EXISTS (SELECT 1 FROM raw_blob b WHERE b.hash = g.request_sha256)
         AND EXISTS (SELECT 1 FROM raw_blob b WHERE b.hash = g.response_sha256)
     )
+`;
+
+/**
+ * Markers that are unmatched AND aged past the grace window. These are
+ * the evidence: a definitive gap.
+ */
+const UNMATCHED_SQL = `
+  SELECT COUNT(*) AS n, MIN(a.created_at) AS since
+  ${UNMATCHED_PREDICATE}
+    AND a.created_at <= ?
+`;
+
+/**
+ * Markers that are unmatched but still INSIDE the grace window.
+ *
+ * This shares `UNMATCHED_PREDICATE` with the aged query and differs only
+ * in the time bound, which is the whole point. An earlier version
+ * counted every fresh marker regardless of correspondence, so a marker
+ * whose gen_ai row and both bodies had already landed still reported
+ * `pending` — criterion 4 says a match clears it, and it did not.
+ *
+ * That is the FALSE-POSITIVE direction, and it is the third time a
+ * detector in this family has been one predicate away from flagging
+ * healthy members: the polarity inversion, the Codex `ok`, and this.
+ *
+ * It also missed the session bound, so a marker from the previous
+ * session could hold a fresh empty session in `pending`. Both found by
+ * Rune with discriminating fixtures; the bound is now inherited from
+ * the shared predicate rather than restated.
+ */
+const PENDING_UNMATCHED_SQL = `
+  SELECT COUNT(*) AS n
+  ${UNMATCHED_PREDICATE}
+    AND a.created_at > ?
 `;
 
 /**
@@ -150,16 +182,6 @@ const CENSUS_SQL = `
   WHERE a.member_name = ?
     AND a.kind = 'llm_exchange'
     AND a.created_at >= ?
-`;
-
-/** Markers newer than the grace window — evidence not yet earned. */
-const PENDING_SQL = `
-  SELECT COUNT(*) AS n
-  FROM member_activity a
-  WHERE a.member_name = ?
-    AND a.kind = 'llm_exchange'
-    AND a.created_at > ?
-    AND json_extract(a.event_json, '$.entry.response.responseId') IS NOT NULL
 `;
 
 /**
@@ -192,7 +214,7 @@ export function createCaptureHealthStore(
 
   const sessionStmt: StatementInstance = db.prepare(SESSION_START_SQL);
   const unmatchedStmt: StatementInstance = db.prepare(UNMATCHED_SQL);
-  const pendingStmt: StatementInstance = db.prepare(PENDING_SQL);
+  const pendingStmt: StatementInstance = db.prepare(PENDING_UNMATCHED_SQL);
   const censusStmt: StatementInstance = db.prepare(CENSUS_SQL);
 
   return {
@@ -216,7 +238,7 @@ export function createCaptureHealthStore(
 
       // Nothing aged and unmatched. If anything is still inside the
       // grace window, say so INTERNALLY — callers surface nothing.
-      const fresh = pendingStmt.get(name, cutoff) as { n: number } | undefined;
+      const fresh = pendingStmt.get(name, boundary, cutoff) as { n: number } | undefined;
       if ((fresh?.n ?? 0) > 0) return { state: 'pending' };
 
       // No gap found — but "found none" and "looked" are different
