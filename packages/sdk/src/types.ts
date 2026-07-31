@@ -29,13 +29,20 @@ export type ActivityState = 'idle' | 'working' | 'blocked';
 /**
  * Whether a member's verbatim capture is reaching the broker.
  *
- * Deliberately two states. There is no `unknown` member: a broker that
- * knows about this says which applies, and **field absence is what
- * carries "no opinion."** There is no `pending` either — healthy
- * correlation lag leaves every normal turn briefly unmatched, so a
- * user-visible "maybe" would flicker on healthy traffic.
+ * ```
+ * ok            evaluated, no gap
+ * gap           evaluated, definitive gap
+ * unevaluated   this broker cannot assess this member
+ * (absent)      old broker, no opinion
+ * ```
+ *
+ * The last two are different claims and must not be collapsed.
+ * **Field absence carries "no opinion"**; `unevaluated` is this broker
+ * positively stating it did not evaluate. There is no `pending` —
+ * healthy correlation lag leaves every normal turn briefly unmatched,
+ * so a user-visible "maybe" would flicker on healthy traffic.
  */
-export type CaptureHealthState = 'ok' | 'gap';
+export type CaptureHealthState = 'ok' | 'gap' | 'unevaluated';
 
 // ─────────────────────────── Permissions ──────────────────────────────
 

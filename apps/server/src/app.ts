@@ -941,9 +941,26 @@ export function createApp(options: AppOptions): CreatedApp {
       const health = captureHealth?.forMember(p.name);
       // `pending` is internal — an aged-out marker hasn't earned a
       // claim yet, and healthy lag means every turn is briefly
-      // unmatched. Surfacing it would flicker on healthy traffic.
+      // unmatched. Surfacing it would flicker on healthy traffic, so it
+      // maps to `ok`: no gap has been established.
+      //
+      // `unevaluated` is NOT collapsed into `ok`. A Codex member is not
+      // assessed by the exact-match join at all, and reporting them
+      // healthy would be this broker claiming a property it never
+      // evaluated — the same conflation the whole signal exists to
+      // remove. It stays distinct from an absent field, which means a
+      // broker too old to have an opinion at all.
       const captureField =
-        health === undefined ? {} : { captureHealth: health.state === 'gap' ? 'gap' : 'ok' };
+        health === undefined
+          ? {}
+          : {
+              captureHealth:
+                health.state === 'gap'
+                  ? ('gap' as const)
+                  : health.state === 'unevaluated'
+                    ? ('unevaluated' as const)
+                    : ('ok' as const),
+            };
       if (activity === 'idle') return { ...p, ...captureField };
       return { ...p, activity, busy: activity === 'working', ...captureField };
     });

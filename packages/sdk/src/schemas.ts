@@ -31,8 +31,14 @@ export const ActivityStateSchema = z.enum(['idle', 'working', 'blocked']);
  * briefly unmatched (measured p50 ~4.2s), so a user-visible "maybe"
  * would flicker continuously on healthy traffic. Pending is tracked
  * internally and reported as `ok` until the evidence threshold is met.
+ *
+ * `'unevaluated'` is a POSITIVE statement that this broker cannot
+ * assess this member — currently Codex members, whose markers carry no
+ * `responseId` to match on and whose containment join is not built.
+ * Reporting them `ok` would assert a property never evaluated, which is
+ * the same conflation this whole signal exists to remove, one layer up.
  */
-export const CaptureHealthStateSchema = z.enum(['ok', 'gap']);
+export const CaptureHealthStateSchema = z.enum(['ok', 'gap', 'unevaluated']);
 
 /**
  * Member names — alphanumeric plus `.`, `_`, `-`, 1-128 chars.

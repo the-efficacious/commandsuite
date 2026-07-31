@@ -78,6 +78,7 @@ export const CAPTURE_GRACE_MS = 15_000;
 export type CaptureHealth =
   | { state: 'ok' }
   | { state: 'pending' }
+  | { state: 'unevaluated'; reason: 'no-exact-match-adapter' }
   | { state: 'gap'; unmatchedMarkers: number; since: number };
 
 export interface CaptureHealthOptions {
@@ -127,6 +128,30 @@ const UNMATCHED_SQL = `
     )
 `;
 
+/**
+ * Marker census for the session, split by exact-match eligibility.
+ *
+ * A member with markers but NONE eligible is a Codex member: the
+ * containment join that would assess them is not built, so the honest
+ * answer is `unevaluated`, not `ok`. Reporting `ok` would assert a
+ * property never evaluated — the same conflation this module exists to
+ * remove, one layer up.
+ *
+ * A member with NO markers at all is a different case and stays `ok`:
+ * nothing was produced, so nothing failed to be captured. Markers
+ * failing to arrive is the activity path, not this one.
+ */
+const CENSUS_SQL = `
+  SELECT
+    COUNT(*) AS total,
+    SUM(CASE WHEN json_extract(a.event_json, '$.entry.response.responseId') IS NOT NULL
+             THEN 1 ELSE 0 END) AS eligible
+  FROM member_activity a
+  WHERE a.member_name = ?
+    AND a.kind = 'llm_exchange'
+    AND a.created_at >= ?
+`;
+
 /** Markers newer than the grace window — evidence not yet earned. */
 const PENDING_SQL = `
   SELECT COUNT(*) AS n
@@ -168,6 +193,7 @@ export function createCaptureHealthStore(
   const sessionStmt: StatementInstance = db.prepare(SESSION_START_SQL);
   const unmatchedStmt: StatementInstance = db.prepare(UNMATCHED_SQL);
   const pendingStmt: StatementInstance = db.prepare(PENDING_SQL);
+  const censusStmt: StatementInstance = db.prepare(CENSUS_SQL);
 
   return {
     forMember(name: string): CaptureHealth {
@@ -192,6 +218,19 @@ export function createCaptureHealthStore(
       // grace window, say so INTERNALLY — callers surface nothing.
       const fresh = pendingStmt.get(name, cutoff) as { n: number } | undefined;
       if ((fresh?.n ?? 0) > 0) return { state: 'pending' };
+
+      // No gap found — but "found none" and "looked" are different
+      // claims. A member whose markers are ALL ineligible for the exact
+      // join was never assessed by anything above, and saying `ok` here
+      // would be the detector asserting a property it did not evaluate.
+      const census = censusStmt.get(name, boundary) as
+        | { total: number | null; eligible: number | null }
+        | undefined;
+      const total = census?.total ?? 0;
+      const eligible = census?.eligible ?? 0;
+      if (total > 0 && eligible === 0) {
+        return { state: 'unevaluated', reason: 'no-exact-match-adapter' };
+      }
 
       return { state: 'ok' };
     },

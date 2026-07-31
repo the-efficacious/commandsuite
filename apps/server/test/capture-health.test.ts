@@ -137,7 +137,47 @@ describe('capture-health detector', () => {
     // Capture IS working — gen_ai rows exist, they just don't join by id.
     f.captured('seamus', 'resp_x', 'req_x', 'res_x');
 
-    expect(f.health('seamus').state).toBe('ok');
+    expect(f.health('seamus').state).not.toBe('gap');
+  });
+
+  it('reports a Codex member UNEVALUATED, not ok — it was never assessed', () => {
+    // The containment join is not built, so nothing above examined this
+    // member at all. `ok` would be the detector asserting a property it
+    // never evaluated — the same conflation it exists to remove, one
+    // layer up. This must stay distinct from a healthy Claude member
+    // AND from an absent field (a broker with no opinion).
+    const f = fixture();
+    f.sessionStart('seamus');
+    f.marker('seamus', null);
+    f.captured('seamus', 'resp_x', 'req_x', 'res_x');
+
+    const h = f.health('seamus');
+    expect(h.state).toBe('unevaluated');
+    expect(h.state === 'unevaluated' && h.reason).toBe('no-exact-match-adapter');
+  });
+
+  it('a Codex member with NO capture at all is also unevaluated, not gap', () => {
+    // The honest answer for a genuinely-broken Codex member is still
+    // "not assessed" until containment lands — claiming `gap` here
+    // would be right by accident, from a predicate that cannot tell
+    // this case from the healthy one above.
+    const f = fixture();
+    f.sessionStart('seamus');
+    f.marker('seamus', null);
+
+    expect(f.health('seamus').state).toBe('unevaluated');
+  });
+
+  it('a member with BOTH eligible and ineligible markers is still evaluated', () => {
+    // Only a member with zero eligible markers is unassessable. One
+    // eligible marker means the exact join has something to say, and a
+    // gap in it must not be downgraded to `unevaluated`.
+    const f = fixture();
+    f.sessionStart('mixed');
+    f.marker('mixed', null);
+    f.marker('mixed', 'msg_broken');
+
+    expect(f.health('mixed').state).toBe('gap');
   });
 
   it('does not surface a claim for a marker still inside the grace window', () => {
@@ -296,5 +336,20 @@ describe('capture-health detector', () => {
   it('makes no claim for a member with no session on record', () => {
     const f = fixture();
     expect(f.health('nobody').state).toBe('ok');
+  });
+
+  it('a session with no exchanges at all is ok, NOT unevaluated', () => {
+    // Zero eligible markers is only "unassessable" when there were
+    // markers to assess. A member who has produced no exchanges has
+    // nothing that failed to be captured — markers failing to ARRIVE is
+    // the activity path, a different detector.
+    //
+    // Without the total > 0 guard this returns `unevaluated`, and every
+    // freshly-started member on the roster would carry a caveat that
+    // says nothing. That mutation survived until this test existed.
+    const f = fixture();
+    f.sessionStart('quiet');
+
+    expect(f.health('quiet').state).toBe('ok');
   });
 });
