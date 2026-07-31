@@ -278,6 +278,15 @@ before it ran:
 The first two catch a test that cannot fail. The third catches a test that
 cannot pass.
 
+**All three are author-side, and that is their limit.** They fire only if you
+remember to run them on the check that needed it. The backstop is structural and
+already in this document: *author proposes, partner verifies.* In the session
+these rules came from, one instance was caught by neither mutation nor grep nor
+self-audit — a colleague's independent measurement of the same system simply
+disagreed with the result, before it had misled anyone. A second artifact
+disagreeing works when every author-side defence has failed to fire, which is
+the case you cannot detect from inside.
+
 ## When something inexplicable happens, measure it
 
 **The reflex to attribute an anomaly to your own carelessness is the most
