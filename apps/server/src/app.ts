@@ -53,6 +53,7 @@ import {
   DeviceAuthorizationRequestSchema,
   DeviceTokenRequestSchema,
   DiscussObjectiveRequestSchema,
+  FsEntrySchema,
   FsMkdirRequestSchema,
   FsMoveRequestSchema,
   FsPathSchema,
@@ -61,6 +62,7 @@ import {
   ListObjectivesQuerySchema,
   LogLevelSchema,
   NameSchema,
+  PendingEnrollmentSchema,
   PushPayloadSchema,
   PushSubscriptionPayloadSchema,
   ReassignObjectiveRequestSchema,
@@ -420,6 +422,16 @@ const API_PATH_PREFIXES = [
 
 const DEFAULT_MAX_FILE_SIZE = 25 * 1024 * 1024;
 const HARD_CAP_MAX_FILE_SIZE = 1024 * 1024 * 1024;
+
+/**
+ * Enrollment source-label limits, READ OFF `PendingEnrollmentSchema` rather
+ * than restated here. These fields were unbounded at the producer while the
+ * schema capped them, so `/enroll/pending` returned rows the SDK refused to
+ * parse. Deriving the number means raising the schema cap cannot leave this
+ * boundary behind — which is the failure being fixed, not a hypothetical.
+ */
+const SOURCE_IP_MAX = PendingEnrollmentSchema.shape.sourceIp.unwrap().maxLength ?? 64;
+const SOURCE_UA_MAX = PendingEnrollmentSchema.shape.sourceUa.unwrap().maxLength ?? 512;
 
 function isApiPath(pathname: string): boolean {
   for (const p of API_PATH_PREFIXES) {
@@ -4507,6 +4519,34 @@ export function createApp(options: AppOptions): CreatedApp {
       return 'unknown';
     }
 
+    /**
+     * Bound an enrollment source label to what `PendingEnrollmentSchema`
+     * will accept, and say so when it had to cut.
+     *
+     * Called ONLY on the value that gets STORED — never on the rate-limit
+     * key, which keeps the full `ipKey()` string. Truncating the bucket key
+     * would merge every client sharing a long forwarded prefix into one
+     * bucket, so a rate limit tuned per-client would start firing across
+     * unrelated ones.
+     *
+     * The `…` is inside the limit, not appended past it: the result is
+     * always <= max, so this cannot itself produce the oversize value it
+     * exists to prevent.
+     */
+    function boundSourceLabel(
+      field: 'sourceIp' | 'sourceUa',
+      value: string | null,
+      max: number,
+    ): string | null {
+      if (value === null || value.length <= max) return value;
+      logger.warn('enrollment source label truncated', {
+        field,
+        originalLength: value.length,
+        max,
+      });
+      return `${value.slice(0, max - 1)}…`;
+    }
+
     function checkMintLimit(key: string): { ok: true } | { ok: false; retryAfter: number } {
       const t = now();
       const bucket = mintBuckets.get(key);
@@ -4558,8 +4598,27 @@ export function createApp(options: AppOptions): CreatedApp {
       if (!parsed.success) {
         return c.json({ error: 'invalid enroll payload', details: parsed.error.issues }, 400);
       }
-      const sourceIp = ip === 'unknown' ? null : ip;
-      const sourceUa = c.req.header('User-Agent') ?? null;
+      // TRUNCATE — do not reject. `sourceIp`/`sourceUa` are LABELS THE
+      // ENROLLING USER DID NOT CHOOSE: one is derived from proxy headers,
+      // the other is whatever their client sends. Refusing the enrollment
+      // would deny a legitimate device a login over a field its operator
+      // cannot see, cannot edit, and did not author. These are audit
+      // context, not a claim the caller is making, so a bounded prefix is
+      // strictly better than no enrollment at all.
+      //
+      // Contrast the `mime` REJECTION on POST /fs/write, which is deliberate
+      // and asserted from both sides — see test/producer-boundary-bounds.test.ts.
+      //
+      // Truncation is RECORDED in two places, because a silently-cut value
+      // is indistinguishable from a genuine one at the limit: the stored
+      // value ends in `…` so the record itself says it was cut, and a
+      // warning names the field and the original length.
+      const sourceIp = ip === 'unknown' ? null : boundSourceLabel('sourceIp', ip, SOURCE_IP_MAX);
+      const sourceUa = boundSourceLabel(
+        'sourceUa',
+        c.req.header('User-Agent') ?? null,
+        SOURCE_UA_MAX,
+      );
       const minted = enrollmentsStore.mint({
         sourceIp,
         sourceUa,
@@ -4940,6 +4999,25 @@ export function createApp(options: AppOptions): CreatedApp {
       const collideRaw = c.req.query('collide') ?? 'error';
       if (!pathRaw) return c.json({ error: '`path` query parameter is required' }, 400);
       if (!mime) return c.json({ error: '`mime` query parameter is required' }, 400);
+      // REJECT — do not truncate. `mime` is a CLAIM ABOUT THE CONTENT the
+      // caller is uploading. Trimming it to fit produces a different, still
+      // well-formed claim that the caller never made, and the bytes get
+      // stored under it. A wrong content type is worse than a refused write,
+      // so the caller is told and nothing is persisted.
+      //
+      // Contrast `sourceUa`/`sourceIp` on POST /enroll, which are TRUNCATED
+      // on purpose. That inversion is deliberate and is asserted from both
+      // sides — see the paired tests naming each other in
+      // test/producer-boundary-bounds.test.ts before making these agree.
+      //
+      // The bound is READ OFF the schema the SDK uses to parse the entry back
+      // rather than repeated as a literal `255` here: a second copy of the
+      // limit is exactly how the producer and the consumer drifted apart in
+      // the first place.
+      const parsedMime = FsEntrySchema.shape.mimeType.safeParse(mime);
+      if (!parsedMime.success) {
+        return c.json({ error: 'invalid mime', details: parsedMime.error.issues }, 400);
+      }
       const parsedPath = FsPathSchema.safeParse(pathRaw);
       if (!parsedPath.success) {
         return c.json({ error: 'invalid path', details: parsedPath.error.issues }, 400);
