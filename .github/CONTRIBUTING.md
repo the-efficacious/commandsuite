@@ -121,12 +121,10 @@ did not write it, and whoever did not write it decides whether it is done. A
 verifier is expected to disagree; agreement arrived at by deference is worth
 nothing.
 
-> **Name the commit you verified.** `main`'s protection has
-> `require_last_push_approval: false`, so an approval survives any later push to
-> the branch — the platform records that someone approved *a* state, not that
-> anyone read the merged one. Until that setting changes, the SHA in the
-> verification is the only thing that closes the gap. A branch name is not an
-> object; a branch name at a commit is.
+> **Name the commit you verified.** A branch moves. An approval recorded
+> against a branch may not describe the state that ultimately merges, so a
+> verification that names only the branch has not said what was checked. State
+> the SHA. **A branch name is not an object; a branch name at a commit is.**
 
 ### Commit signing does not currently work
 
