@@ -64,6 +64,17 @@ import type {
 const LEVELS: readonly LogLevel[] = ['debug', 'info', 'notice', 'warning', 'error', 'critical'];
 const OBJECTIVE_STATUSES: readonly ObjectiveStatus[] = ['active', 'blocked', 'done', 'cancelled'];
 
+/**
+ * The non-terminal statuses. An agent's "open plate" is the union of the
+ * two, which is why `objectives_list` accepts `open` as a filter: a
+ * lifecycle status selects one, and recovering agents need both in a
+ * single call. `status=active` alone silently omits blocked work.
+ */
+const OPEN_OBJECTIVE_STATUSES: readonly ObjectiveStatus[] = ['active', 'blocked'];
+
+/** What `objectives_list` accepts: the four statuses plus the `open` union. */
+const OBJECTIVE_LIST_FILTERS: readonly string[] = [...OBJECTIVE_STATUSES, 'open'];
+
 const DEFAULT_RECENT_LIMIT = 50;
 const MAX_RECENT_LIMIT = 500;
 
@@ -236,18 +247,37 @@ export function defineTools(
       description:
         `List objectives you have a relationship with — ` +
         `assigned to you, originated by you, or objectives you're watching. ` +
-        `Use \`status\` to filter (active | blocked | done | cancelled); omit to see all ` +
-        `statuses. Objectives always carry a required outcome — use \`objectives_view\` ` +
-        `for full detail including the watcher list and audit log. Returns each objective's ` +
-        `id, title, outcome, status, assignee, originator, and timestamps.`,
+        `**After a restart or context compaction, call this with \`status: "open"\`** — ` +
+        `that is your whole open plate (active + blocked) in one call. ` +
+        `The unfiltered call also returns every completed and cancelled objective you ` +
+        `have ever been related to, which on a long-running team is large enough to ` +
+        `overflow an agent's tool-result limit; prefer \`open\` for recovery and reach ` +
+        `for the unfiltered call when you actually want history. ` +
+        `\`status\` accepts a single lifecycle state (active | blocked | done | cancelled) ` +
+        `or \`open\` for the active+blocked union; omit it to return all statuses. ` +
+        `\`assignee\` narrows to one member's plate — pass your own name to separate ` +
+        `what you own from what you merely watch or originated. ` +
+        `Objectives always carry a required outcome — use \`objectives_view\` ` +
+        `for full detail including the body, watcher list, attachments and audit log. ` +
+        `Each row renders the objective's id, status, title, assignee, originator, ` +
+        `outcome, and last-updated time.`,
       inputSchema: {
         type: 'object',
         properties: {
           status: {
             type: 'string',
-            enum: [...OBJECTIVE_STATUSES],
+            enum: [...OBJECTIVE_LIST_FILTERS],
             description:
-              'Filter by lifecycle status. Omit to return all statuses. Defaults to no filter.',
+              'Filter by lifecycle status, or `open` for the active+blocked union — ' +
+              'the whole open plate in one call, which is what recovery wants. ' +
+              'Omit to return all statuses including completed and cancelled history.',
+          },
+          assignee: {
+            type: 'string',
+            description:
+              'Narrow to objectives assigned to this member. Pass your own name for ' +
+              'your own plate as distinct from what you watch or originated. Always a ' +
+              'subset of what you can already see.',
           },
         },
       },
@@ -2083,34 +2113,71 @@ async function handleObjectivesList(
   brokerClient: BrokerClient,
   briefing: BriefingResponse,
 ): Promise<CallToolResult> {
-  const status = typeof args.status === 'string' ? (args.status as ObjectiveStatus) : undefined;
-  if (status !== undefined && !OBJECTIVE_STATUSES.includes(status)) {
+  const filter = typeof args.status === 'string' ? args.status : undefined;
+  if (filter !== undefined && !OBJECTIVE_LIST_FILTERS.includes(filter)) {
     return errorResult(
-      `objectives_list: invalid status '${String(args.status)}'. Must be one of: ${OBJECTIVE_STATUSES.join(', ')}.`,
+      `objectives_list: invalid status '${String(args.status)}'. Must be one of: ${OBJECTIVE_LIST_FILTERS.join(', ')}.`,
     );
   }
+  const assignee =
+    typeof args.assignee === 'string' && args.assignee.length > 0 ? args.assignee : undefined;
+
   // `related`, not `assignee` — this tool promises "objectives you have
   // a relationship with", and pinning `assignee` collapsed that to the
   // assignee-only view for any caller holding `objectives.create`,
   // hiding everything they originated or watch.
+  //
+  // `open` spans two statuses and the server's `status` takes one, so it
+  // is applied here over the unfiltered relationship set.
+  const serverStatus = filter && filter !== 'open' ? (filter as ObjectiveStatus) : undefined;
   const list = await brokerClient.listObjectives({
     related: briefing.name,
-    ...(status ? { status } : {}),
+    ...(serverStatus ? { status: serverStatus } : {}),
   });
-  if (list.length === 0) {
+
+  let rows = list;
+  if (filter === 'open') {
+    rows = rows.filter((o) => OPEN_OBJECTIVE_STATUSES.includes(o.status));
+  }
+  // `assignee` is applied HERE rather than sent to the server, which
+  // honours it on exactly one of three branches: it is silently dropped
+  // whenever `related` is also present, and a caller without
+  // `objectives.create` always gets the whole relationship union no
+  // matter what they asked for. Sending it would return a superset with
+  // nothing saying so. Narrowing the related set is also self-scoping by
+  // construction — the result can only ever be a subset of what this
+  // member could already see, so it cannot be used to fish.
+  if (assignee) {
+    rows = rows.filter((o) => o.assignee === assignee);
+  }
+
+  const scope = [
+    filter === 'open' ? 'open' : filter,
+    assignee ? `assigned to ${assignee}` : undefined,
+  ]
+    .filter(Boolean)
+    .join(' ');
+  if (rows.length === 0) {
     return textResult(
-      status
-        ? `no ${status} objectives for ${briefing.name}`
-        : `no objectives for ${briefing.name}`,
+      scope ? `no ${scope} objectives for ${briefing.name}` : `no objectives for ${briefing.name}`,
     );
   }
-  const lines = list.map(
-    (o) =>
+  const lines = rows.map((o) => {
+    // `(you)` mirrors the web UI's own row treatment. Without it an agent
+    // cannot tell work it owns from work it merely watches, which is the
+    // whole reason assignee is rendered.
+    const own = o.assignee === briefing.name ? ' (you)' : '';
+    return (
       `- ${o.id} [${o.status}] ${o.title}\n` +
+      `    assignee: ${o.assignee}${own}  originator: ${o.originator}\n` +
       `    outcome: ${o.outcome}\n` +
-      `    updated: ${formatAgentTimestamp(o.updatedAt)} (${formatRelativeAge(o.updatedAt)})`,
-  );
-  return textResult(`objectives for ${briefing.name}:\n${lines.join('\n')}`);
+      `    updated: ${formatAgentTimestamp(o.updatedAt)} (${formatRelativeAge(o.updatedAt)})`
+    );
+  });
+  const heading = scope
+    ? `${scope} objectives for ${briefing.name}`
+    : `objectives for ${briefing.name}`;
+  return textResult(`${heading}:\n${lines.join('\n')}`);
 }
 
 async function handleObjectivesView(

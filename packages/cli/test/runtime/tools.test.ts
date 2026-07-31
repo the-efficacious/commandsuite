@@ -18,6 +18,7 @@ import type {
   ChannelSummary,
   GetChannelResponse,
   Message,
+  Objective,
   PushPayload,
   PushResult,
 } from 'csuite-sdk/types';
@@ -836,5 +837,174 @@ describe('handleToolCall — notifications admin handlers', () => {
     );
     expect(getCallText(result as never)).toContain('d-2');
     expect(getCallText(result as never)).toContain('delivered');
+  });
+});
+
+// ── objectives_list ────────────────────────────────────────────────
+//
+// Four harness consumers independently followed this tool's own
+// description into the unfiltered call and had the result spilled or
+// truncated (Cora 102,962 chars, Lea 103,478, Turner 99,425 / 804 lines,
+// Rune truncated at 25,741 tokens). Two separate defects sat behind that:
+// the renderer dropped `assignee` and `originator` that `:242` promised,
+// so an agent could not tell work it owns from work it merely watches;
+// and `status` takes ONE lifecycle state while an open plate is the union
+// of active and blocked, so no single call established it.
+//
+// These assert the EMITTED TEXT. A test that reads `listObjectives` and
+// checks the fields exist upstream passes against the broken renderer —
+// the fields were always present in the data and dropped at render.
+
+function makeObjective(overrides: Partial<Objective> = {}): Objective {
+  return {
+    id: 'obj-1',
+    title: 'Ship the thing',
+    body: '',
+    outcome: 'PR merged to main',
+    status: 'active',
+    assignee: 'scout',
+    originator: 'director',
+    watchers: [],
+    attachments: [],
+    blockReason: null,
+    result: null,
+    createdAt: 1_700_000_000_000,
+    updatedAt: 1_700_000_000_000,
+    completedAt: null,
+    ...overrides,
+  } as Objective;
+}
+
+describe('handleToolCall — objectives_list', () => {
+  const PLATE: Objective[] = [
+    makeObjective({ id: 'obj-active-mine', status: 'active', assignee: 'scout' }),
+    makeObjective({ id: 'obj-blocked-mine', status: 'blocked', assignee: 'scout' }),
+    makeObjective({
+      id: 'obj-active-theirs',
+      status: 'active',
+      assignee: 'director',
+      originator: 'scout',
+    }),
+    makeObjective({ id: 'obj-done', status: 'done', assignee: 'scout' }),
+    makeObjective({ id: 'obj-cancelled', status: 'cancelled', assignee: 'director' }),
+  ];
+
+  function brokerFor(rows: Objective[]) {
+    const listObjectives = vi.fn(async (query: { status?: string }) =>
+      query.status ? rows.filter((o) => o.status === query.status) : rows,
+    );
+    return { broker: makeBroker({ listObjectives } as never), listObjectives };
+  }
+
+  it('renders assignee and originator on every row', async () => {
+    const { broker } = brokerFor(PLATE);
+    const text = getCallText(await handleToolCall('objectives_list', {}, broker, BRIEFING));
+
+    // Every rendered row carries both fields — not just the first.
+    const rows = text.split('\n- ').slice(1);
+    expect(rows).toHaveLength(PLATE.length);
+    for (const row of rows) {
+      expect(row).toMatch(/assignee: \S+/);
+      expect(row).toMatch(/originator: \S+/);
+    }
+  });
+
+  it('marks the caller’s own rows so ownership is readable without a second call', async () => {
+    const { broker } = brokerFor(PLATE);
+    const text = getCallText(await handleToolCall('objectives_list', {}, broker, BRIEFING));
+
+    // scout is assignee here, so the row says so...
+    expect(text).toMatch(/obj-active-mine[\s\S]*?assignee: scout \(you\)/);
+    // ...and the objective scout merely ORIGINATED is not marked as hers.
+    expect(text).toMatch(/obj-active-theirs[\s\S]*?assignee: director {2}originator: scout/);
+    expect(text).not.toMatch(/assignee: director \(you\)/);
+  });
+
+  it('status=open returns active AND blocked, and no terminal rows', async () => {
+    const { broker, listObjectives } = brokerFor(PLATE);
+    const text = getCallText(
+      await handleToolCall('objectives_list', { status: 'open' }, broker, BRIEFING),
+    );
+
+    // Both open states present — a filter that refused either would leave
+    // an agent's plate half-established, which is the defect.
+    expect(text).toContain('obj-active-mine');
+    expect(text).toContain('obj-blocked-mine');
+    expect(text).toContain('obj-active-theirs');
+    // Neither terminal state.
+    expect(text).not.toContain('obj-done');
+    expect(text).not.toContain('obj-cancelled');
+
+    // `open` spans two statuses; the server's filter takes one, so it must
+    // not be forwarded as a lifecycle status.
+    expect(listObjectives).toHaveBeenCalledWith({ related: 'scout' });
+  });
+
+  it('assignee narrows the emitted set and is never sent to the server', async () => {
+    const { broker, listObjectives } = brokerFor(PLATE);
+    const text = getCallText(
+      await handleToolCall('objectives_list', { assignee: 'scout' }, broker, BRIEFING),
+    );
+
+    expect(text).toContain('obj-active-mine');
+    expect(text).toContain('obj-done');
+    // Assigned to director — scout only originates or watches it.
+    expect(text).not.toContain('obj-active-theirs');
+    expect(text).not.toContain('obj-cancelled');
+
+    // The server honours `assignee` on exactly one of three branches and
+    // silently returns the whole relationship union on the other two, so
+    // sending it would produce a superset with nothing saying so.
+    const query = listObjectives.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(query).not.toHaveProperty('assignee');
+    expect(query.related).toBe('scout');
+  });
+
+  it('composes open with assignee for the whole own open plate in one call', async () => {
+    const { broker } = brokerFor(PLATE);
+    const text = getCallText(
+      await handleToolCall(
+        'objectives_list',
+        { status: 'open', assignee: 'scout' },
+        broker,
+        BRIEFING,
+      ),
+    );
+
+    expect(text).toContain('obj-active-mine');
+    expect(text).toContain('obj-blocked-mine');
+    expect(text).not.toContain('obj-active-theirs');
+    expect(text).not.toContain('obj-done');
+  });
+
+  it('names the scope when a filtered list is empty', async () => {
+    const { broker } = brokerFor([makeObjective({ id: 'obj-done', status: 'done' })]);
+    const text = getCallText(
+      await handleToolCall('objectives_list', { status: 'open' }, broker, BRIEFING),
+    );
+    // "no objectives for scout" would read as an empty plate rather than
+    // an empty OPEN plate.
+    expect(text).toBe('no open objectives for scout');
+  });
+
+  it('rejects an unknown status and names open as accepted', async () => {
+    const { broker } = brokerFor(PLATE);
+    const text = getCallText(
+      await handleToolCall('objectives_list', { status: 'garbage' }, broker, BRIEFING),
+    );
+    expect(text).toContain('open');
+    expect(text).toContain('active');
+  });
+
+  it('prescribes the open call for recovery in its own description', async () => {
+    // The description is the only spec an agent has for a tool it cannot
+    // read. Four consumers made the unfiltered call because this text told
+    // them to; it must now point at the one that fits.
+    const tool = defineTools(BRIEFING).find((t) => t.name === 'objectives_list');
+    expect(tool?.description).toMatch(/status: "open"/);
+    expect(tool?.description).toMatch(/restart or context compaction/);
+    // And it must still promise exactly what the renderer emits.
+    expect(tool?.description).toMatch(/assignee/);
+    expect(tool?.description).toMatch(/originator/);
   });
 });
