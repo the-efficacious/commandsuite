@@ -20,7 +20,7 @@ import { briefing, loadBriefing } from '../lib/briefing.js';
 import { getClient } from '../lib/client.js';
 import { objectives } from '../lib/objectives.js';
 import { type PermissionSummary, summarizePermissions } from '../lib/permissions.js';
-import { presenceActivity, roster } from '../lib/roster.js';
+import { presenceActivity, presenceCaptureWarning, roster } from '../lib/roster.js';
 import { selectMemberProfile } from '../lib/view.js';
 import { ErrorCallout, Loading, PageHeader } from './ui/index.js';
 
@@ -78,6 +78,12 @@ export function TeamHome({ viewer }: TeamHomeProps) {
             const online = (conn?.connected ?? 0) > 0;
             // 3-state activity, orthogonal to the connection state above.
             const activity = presenceActivity(conn);
+            // Capture health is orthogonal to BOTH connection and
+            // activity: a member can be online, working, and silently
+            // capturing nothing. That combination is exactly the failure
+            // this badge exists for, so it renders alongside rather than
+            // instead of the activity state.
+            const captureWarning = presenceCaptureWarning(conn);
             const working = activity === 'working';
             const blocked = activity === 'blocked';
             const isSelf = t.name === viewer;
@@ -114,6 +120,24 @@ export function TeamHome({ viewer }: TeamHomeProps) {
                         <span class={`badge ${roleBadgeVariant(summary)}`}>
                           {t.role.title.toUpperCase()}
                         </span>
+                        {captureWarning === 'gap' && (
+                          <span
+                            class="badge warn"
+                            style="font-size:9.5px;letter-spacing:.06em"
+                            title="This member is producing turns whose request/response bodies are not reaching the broker. Their activity is recorded; the verbatim exchanges are not."
+                          >
+                            NO CAPTURE
+                          </span>
+                        )}
+                        {captureWarning === 'unevaluated' && (
+                          <span
+                            class="badge soft"
+                            style="font-size:9.5px;letter-spacing:.06em"
+                            title="This broker cannot assess capture health for this member — not a claim that capture is healthy."
+                          >
+                            CAPTURE UNCHECKED
+                          </span>
+                        )}
                         {summary.kind !== 'baseline' && (
                           <span
                             class="badge soft"

@@ -25,6 +25,7 @@ import { fileURLToPath } from 'node:url';
 import { serve } from '@hono/node-server';
 import { Broker, registerSecretValues } from 'csuite-core';
 import { createApp } from './app.js';
+import { createCaptureHealthStore } from './capture-health.js';
 import { createSqliteChannelStore } from './channels.js';
 import { type DatabaseSyncInstance, openDatabase } from './db.js';
 import { EnrollmentStore } from './enrollments.js';
@@ -452,6 +453,12 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   // capture (and unlink the consumed spill files — the default).
   const rawBodyStore: RawBodyStore = createRawBodyStore(activityDb, { logger: log });
 
+  // Capture-health detector. Reads the three streams above — activity
+  // markers, gen_ai rows, raw bodies — and answers, per member, whether
+  // verbatim capture is actually arriving. Same handle: it is a query
+  // over what those stores already wrote, not a fourth writer.
+  const captureHealth = createCaptureHealthStore(activityDb);
+
   // Virtual filesystem for file attachments. Blob store holds
   // content-addressed bytes on disk; the filesystem store holds path
   // tree + permissions + refcount metadata in the main SQLite.
@@ -654,6 +661,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
     telemetryStore: telemetryStore,
     genaiStore: genaiStore,
     rawBodyStore: rawBodyStore,
+    captureHealth,
     files: filesStore,
     ...(options.maxFileSize !== undefined ? { maxFileSize: options.maxFileSize } : {}),
     ...(persistMembers !== undefined ? { persistMembers } : {}),
