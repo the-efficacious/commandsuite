@@ -1,5 +1,17 @@
 # csuite
 
+## 0.3.2
+
+### Patch Changes
+
+- [#58](https://github.com/the-efficacious/commandsuite/pull/58) [`6800958`](https://github.com/the-efficacious/commandsuite/commit/6800958da90dbe87e89a1a49f6976b18f6e4177f) Thanks [@sureforge](https://github.com/sureforge)! - Correct package authorship metadata to identify Efficacious, Inc.
+
+- Updated dependencies [[`6800958`](https://github.com/the-efficacious/commandsuite/commit/6800958da90dbe87e89a1a49f6976b18f6e4177f), [`cc2cb94`](https://github.com/the-efficacious/commandsuite/commit/cc2cb949859e8b742592104175f676597d2fdbab), [`3542523`](https://github.com/the-efficacious/commandsuite/commit/35425234db188071c3758716fb67b438da55af83)]:
+  - csuite-cli@0.3.2
+  - csuite-core@0.3.2
+  - csuite-sdk@0.3.2
+  - csuite-server@0.3.2
+
 ## 0.3.1
 
 ### Patch Changes
