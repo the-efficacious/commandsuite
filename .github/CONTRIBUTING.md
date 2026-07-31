@@ -85,8 +85,10 @@ client), `csuite-cli` (terminal).
    signed off — see the DCO section below.
 3. **Push** to your fork and open a PR against `the-efficacious/commandsuite:main`.
 4. CI runs `lint`, `build`, `typecheck`, and `test` on every PR; a DCO
-   check verifies every commit is signed off (see the DCO section below).
-   All of these checks must pass.
+   check verifies every commit is signed off (see the DCO section below);
+   a commit-convention check verifies the PR title and every commit
+   subject (see "Commit message conventions"). All of these checks must
+   pass.
 5. A maintainer will review. Expect some back-and-forth — that's
    normal.
 6. Once approved, a maintainer squashes and merges. The `Signed-off-by`
@@ -522,18 +524,57 @@ every PR; it'll tell you which commits are missing sign-off and how to fix them.
 
 ## Commit message conventions
 
-Use clear, imperative-mood subject lines. Conventional Commits-style
-prefixes are appreciated but not required:
+Commits follow Conventional Commits. This is **required**, and CI enforces
+the parts of it a machine can decide.
 
-- `feat: ...` for new functionality
-- `fix: ...` for bug fixes
-- `docs: ...` for doc-only changes
-- `chore: ...` for tooling / infra
-- `refactor: ...` for non-behavioral code changes
-- `test: ...` for test-only changes
+```
+type(scope): subject
+```
 
-Keep the subject under 72 chars. If the change needs context, put it
-in the body (explain **why**, not what — the diff shows what).
+- **type** — one of `feat` `fix` `docs` `chore` `refactor` `test` `ci`
+  `perf` `build`. Lowercase, and the list is closed. Append `!` for a
+  breaking change (`feat!:`, `fix(web-ui)!:`).
+- **scope** — optional; if the parentheses are there they must have
+  something in them.
+- **subject** — **72 characters or fewer including the prefix**, imperative
+  mood, no trailing period.
+- **body** — explains **why**, not what. The diff shows what.
+
+### The PR title is a commit subject
+
+This repo squash-merges, and GitHub uses the **pull request title** as the
+squash subject for any PR with more than one commit. That title is what
+lands in `main`'s history, so it is held to the convention exactly like a
+commit subject is, and it is re-checked when you edit it.
+
+The `(#123)` GitHub appends to the squash subject does not count against
+the 72 characters — the limit is measured on the subject as you wrote it.
+The line in `git log` will therefore run up to about seven characters
+longer than the limit.
+
+### What CI decides and what review carries
+
+The `.github/workflows/commit-convention.yml` workflow checks the PR title
+and every commit the PR adds, and names the offending subject and the rule
+it broke. It decides the shape, the type, the length, and the trailing
+period — the rules with one unarguable answer.
+
+**Imperative mood and "the body explains why" are conventions, not gates.**
+Nothing checks them. They are not softer requirements; they are the ones
+where a mechanical verdict would be arguable, and a check people can
+reasonably dispute is a check the whole convention gets routed around.
+Review carries them.
+
+The check runs only on commits your PR adds. Existing history is not
+rewritten and is not checked — several subjects already in `main` predate
+this rule and would fail it.
+
+### Bodies, and who they are for
+
+Write commit and PR bodies for someone reading the history months from now
+who was not present for the work: what changed, why, the risk, and what is
+not covered. The discovery narrative — what you tried, what you got wrong
+first — belongs in review, where the people who need it are.
 
 ## Code style
 

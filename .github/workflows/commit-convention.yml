@@ -1,0 +1,73 @@
+name: Commit convention
+
+# Verifies that every subject a pull request would put into the history
+# follows the convention in CONTRIBUTING.md — the PR title as well as every
+# commit the PR adds. Self-contained, modelled on `dco.yml`.
+#
+# The PR title is checked because it is the subject that actually lands:
+# this repo squash-merges with `squash_merge_commit_title =
+# COMMIT_OR_PR_TITLE`, so GitHub uses the title whenever a PR has more than
+# one commit. A check that walked only the commit range would have gone
+# green on every non-conforming subject currently in this repo's history.
+#
+# `edited` is in the trigger list for the same reason: the title can be
+# changed after a green run, and that is how the longest subject in the
+# history was produced.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: commit-convention-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  convention:
+    name: Verify commit subjects
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # The validator proves it discriminates in the same job that enforces
+      # it. A validator degraded to reject-everything fails its own positive
+      # fixtures here, rather than blocking every PR with a green suite
+      # sitting in a different workflow.
+      - name: Self-test the validator
+        run: pnpm vitest run scripts/test/check-commit-convention.test.mjs
+
+      # `pull_request.base.sha` is the base branch head at event time, not the
+      # merge base, so the base branch is fetched by name and excluded by
+      # name. That is what keeps the check off commits that are already on
+      # `main`, including when the author has merged `main` into the branch.
+      - name: Fetch the base branch
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: git fetch --no-tags origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"
+
+      # The title goes through the environment, never interpolated into the
+      # script body: it is attacker-controlled text on a fork PR.
+      - name: Check the PR title and every commit the PR adds
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          node scripts/check-commit-convention.mjs \
+            --pr-title "$PR_TITLE" \
+            --head "$HEAD_SHA" \
+            --base-ref "origin/$BASE_REF"
