@@ -1,5 +1,14 @@
 # csuite-web-ui
 
+## 0.3.3
+
+### Patch Changes
+
+- [#66](https://github.com/the-efficacious/commandsuite/pull/66) [`1d618e4`](https://github.com/the-efficacious/commandsuite/commit/1d618e491a9630662b3cdef8afdf9b4f7322d2a5) Thanks [@sureforge](https://github.com/sureforge)! - Keep id-bearing turns visibly unmatched when their exact inference record never arrives, instead of attaching a compatible neighbouring record by interval containment.
+
+- Updated dependencies [[`5f638aa`](https://github.com/the-efficacious/commandsuite/commit/5f638aa670267c4cdc8472cf86b61ba0d0d38e51), [`676f315`](https://github.com/the-efficacious/commandsuite/commit/676f31504a4afd7dae0483a55e1d14a1c3ef934b), [`40e5513`](https://github.com/the-efficacious/commandsuite/commit/40e55138e45c4a610f111896f95ad3bed8052a23)]:
+  - csuite-sdk@0.3.3
+
 ## 0.3.2
 
 ### Patch Changes

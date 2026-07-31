@@ -66,6 +66,9 @@ function bodyRefsToInline(
         const refAttr = (attrs as OtlpAttribute[]).find((attr) => attr?.key === 'body_ref');
         const bodyRef = refAttr?.value?.stringValue;
         if (typeof bodyRef !== 'string' || bodyRef.length === 0) continue;
+        const inlineAttr = (attrs as OtlpAttribute[]).findLast(
+          (attr) => attr?.key === 'body' && typeof attr.value?.stringValue === 'string',
+        );
 
         try {
           const absoluteRef = resolve(bodyRef);
@@ -82,13 +85,35 @@ function bodyRefsToInline(
             throw new Error('not byte-exact UTF-8 JSON');
           }
           if (refAttr === undefined) continue;
+          // Claude may emit an inline `body` beside the FILE-mode
+          // `body_ref`. Converting the ref in place without removing that
+          // attribute creates duplicate `body` keys; the broker flattens
+          // attributes last-wins, so array order would decide whether the
+          // acknowledged spool bytes were actually stored. A resolved ref is
+          // authoritative: leave exactly one body attribute carrying its
+          // byte-exact contents before the file can enter the unlink set.
+          for (let i = attrs.length - 1; i >= 0; i--) {
+            const attr = (attrs as OtlpAttribute[])[i];
+            if (attr !== refAttr && attr?.key === 'body') attrs.splice(i, 1);
+          }
           refAttr.key = 'body';
           refAttr.value = { stringValue: text };
           refs.push(absoluteRef);
         } catch (err) {
-          // Preserve the broker's established per-record degradation: leave
-          // this body_ref untouched and continue with healthy siblings. It is
-          // deliberately absent from the acknowledgement count.
+          // A broken ref must not suppress a usable inline body. The broker's
+          // correlator prefers body_ref and only considers body in an `else
+          // if`, so forwarding both would discard the fallback. Keep exactly
+          // one inline body, remove the failed ref, and do not add the ref to
+          // the acknowledgement/unlink set. Without an inline fallback,
+          // preserve the ref for the broker's established per-record skip.
+          if (inlineAttr !== undefined && refAttr !== undefined) {
+            for (let i = attrs.length - 1; i >= 0; i--) {
+              const attr = (attrs as OtlpAttribute[])[i];
+              if (attr === refAttr || (attr !== inlineAttr && attr?.key === 'body')) {
+                attrs.splice(i, 1);
+              }
+            }
+          }
           unresolved.push(`${bodyRef}: ${err instanceof Error ? err.message : String(err)}`);
         }
       }

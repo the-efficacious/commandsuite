@@ -129,13 +129,14 @@ describe('relay per-record resolution', () => {
     servers.push(broker.server);
     const relay = await startOtlpRelay({ brokerUrl: broker.url, token: 't', rawBodiesDir: dir });
     relays.push(relay);
-    const send = (refs: string[]) =>
+    const sendPayload = (payload: Record<string, unknown>) =>
       fetch(`${relay.endpoint}/v1/logs`, {
         method: 'POST',
         headers: { Authorization: 'Bearer t', 'Content-Type': 'application/json' },
-        body: JSON.stringify(batch(refs)),
+        body: JSON.stringify(payload),
       });
-    return { dir, broker, send };
+    const send = (refs: string[]) => sendPayload(batch(refs));
+    return { dir, broker, send, sendPayload };
   }
 
   it('an unresolvable body_ref does not strand the healthy bodies beside it', async () => {
@@ -173,6 +174,36 @@ describe('relay per-record resolution', () => {
 
     expect(res.status).toBe(200);
     expect(broker.declared).toEqual(['1']); // one resolved, not two
+  });
+
+  it('a failed ref preserves its file and falls back to the last inline body', async () => {
+    const { dir, broker, sendPayload } = await harness();
+    const invalid = join(dir, 'invalid.json');
+    writeFileSync(invalid, Buffer.from([0xff]));
+    const earlierInline = '{"source":"earlier-inline"}';
+    const lastInline = '{"source":"last-inline"}';
+    const payload = batch([invalid]) as {
+      resourceLogs: Array<{
+        scopeLogs: Array<{
+          logRecords: Array<{ attributes: Attr[] }>;
+        }>;
+      }>;
+    };
+    const attrs = payload.resourceLogs[0]?.scopeLogs[0]?.logRecords[0]?.attributes;
+    if (attrs === undefined) throw new Error('fixture record missing attributes');
+    attrs.unshift({ key: 'body', value: { stringValue: earlierInline } });
+    attrs.push({ key: 'body', value: { stringValue: lastInline } });
+
+    const response = await sendPayload(payload);
+
+    expect(response.status).toBe(200);
+    expect(broker.declared).toEqual(['0']);
+    const forwarded = attrsOf(broker.received[0], 0);
+    expect(forwarded.filter((attr) => attr.key === 'body')).toEqual([
+      { key: 'body', value: { stringValue: lastInline } },
+    ]);
+    expect(forwarded.some((attr) => attr.key === 'body_ref')).toBe(false);
+    expect(existsSync(invalid)).toBe(true);
   });
 
   it('a redelivery after a successful ack succeeds instead of failing forever', async () => {
