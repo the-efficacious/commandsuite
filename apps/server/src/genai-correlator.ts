@@ -78,6 +78,7 @@
 
 import { readFileSync, statSync, unlinkSync } from 'node:fs';
 import { anthropicToGenAi } from 'csuite-core';
+import type { DiagnosticEmitter } from './diagnostics.js';
 import type { GenAiInferenceInput } from './genai-store.js';
 import type { RawBodyStore } from './raw-body-store.js';
 import type { TelemetryRecord } from './telemetry-store.js';
@@ -113,6 +114,14 @@ export function isGenAiLogRecord(name: string): boolean {
 export interface GenAiCorrelatorOptions {
   /** Structured logger for skip/continue diagnostics. Optional. */
   log?: (msg: string, ctx?: Record<string, unknown>) => void;
+  /**
+   * Retained completeness diagnostics. Optional so a correlator can be
+   * constructed without one (tests, and a broker with retention
+   * unwired), but every completeness failure below reports to it when
+   * present — the stderr line stays for live tailing and is no longer
+   * the only record.
+   */
+  diagnostics?: DiagnosticEmitter;
   /** Clock, injectable for tests. Last-resort ts when a record has none. */
   now?: () => number;
   /**
@@ -228,6 +237,7 @@ interface Normalized {
 
 export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiCorrelator {
   const log = opts.log ?? (() => {});
+  const diag = opts.diagnostics;
   const now = opts.now ?? Date.now;
   const maxBodyBytes = opts.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
   const readBodyRef = opts.readBodyRef ?? defaultReadBodyRef(maxBodyBytes);
@@ -235,6 +245,7 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
   const maxPending = opts.maxPending ?? DEFAULT_MAX_PENDING;
   const rawStore = opts.rawStore;
   const memberName = opts.memberName ?? 'unknown';
+  const who = memberName;
   const unlinkAfterCapture = opts.unlinkAfterCapture ?? true;
 
   // Cross-batch state.
@@ -294,7 +305,10 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
     if (bodyRef) {
       try {
         bytes = readBodyRef(bodyRef);
+        // Observed recovery: this member's body_ref reads are working.
+        diag?.correlatorBodyRefRead(who);
       } catch (err) {
+        diag?.correlatorBodyRefUnreadable(who, bodyRef, err);
         log('genai-correlator: body_ref unreadable', {
           body_ref: bodyRef,
           error: err instanceof Error ? err.message : String(err),
@@ -311,6 +325,7 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
     // worth keeping.
     const declared = Number(attrs.body_length);
     if (Number.isFinite(declared) && declared !== bytes.length) {
+      diag?.correlatorBodyLengthMismatch(who, declared, bytes.length);
       log('genai-correlator: body length mismatch', {
         kind,
         body_ref: bodyRef,
@@ -341,6 +356,8 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
         });
         hash = res.hash;
         exchangeId = res.exchangeId;
+        // Observed recovery: raw capture is landing for this member.
+        diag?.correlatorRawCaptureSucceeded(who);
         // The bytes are durably captured — consume the spill file (the
         // broker deleting it IS the designed lifecycle; Claude Code
         // never cleans up after itself). Best-effort: an unlink failure
@@ -349,6 +366,7 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
           try {
             unlinkSync(bodyRef);
           } catch (err) {
+            diag?.correlatorUnlinkAfterCaptureFailed(who, bodyRef, err);
             log('genai-correlator: unlink after capture failed', {
               body_ref: bodyRef,
               error: err instanceof Error ? err.message : String(err),
@@ -358,6 +376,7 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
       } catch (err) {
         // Isolation: a raw-store failure must never break the gen_ai
         // path — the text below still flows to the correlation state.
+        diag?.correlatorRawCaptureFailed(who, err);
         log('genai-correlator: raw capture failed', {
           kind,
           body_ref: bodyRef,
@@ -383,6 +402,7 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
         requestBody = JSON.parse(p.requestText);
         responseBody = JSON.parse(p.responseText);
       } catch (err) {
+        diag?.correlatorBodyJsonParseFailed(who, p.requestText.length + p.responseText.length);
         log('genai-correlator: body JSON parse failed', {
           error: err instanceof Error ? err.message : String(err),
         });
@@ -403,6 +423,7 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
         responseSha256: p.responseHash,
       });
     } catch (err) {
+      diag?.correlatorInferenceBuildFailed(who, err);
       log('genai-correlator: failed to build inference', {
         error: err instanceof Error ? err.message : String(err),
       });
@@ -474,6 +495,7 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
                     agentName: asStr(attrs['agent.name']),
                   });
                 } catch (err) {
+                  diag?.correlatorRequestIdAssignFailed(who, err);
                   log('genai-correlator: raw request_id assign failed', {
                     request_id: realRequestId,
                     error: err instanceof Error ? err.message : String(err),
@@ -517,6 +539,7 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
           }
         }
       } catch (err) {
+        diag?.correlatorMalformedRecordSkipped(who);
         log('genai-correlator: skipped malformed record', {
           error: err instanceof Error ? err.message : String(err),
         });

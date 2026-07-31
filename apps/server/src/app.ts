@@ -115,6 +115,7 @@ import { type AuthBindings, createAuthMiddleware } from './auth.js';
 import { composeBriefing } from './briefing.js';
 import type { CaptureHealthStore } from './capture-health.js';
 import { type ChannelStore, ChannelsError, GENERAL_CHANNEL_ID, validateSlug } from './channels.js';
+import type { DiagnosticStore } from './diagnostics.js';
 import { type EnrollmentStore, formatUserCode, normalizeUserCode } from './enrollments.js';
 import {
   basenameOf,
@@ -284,6 +285,12 @@ export interface AppOptions {
    * surface renders that identically to working normally.
    */
   captureHealth?: CaptureHealthStore;
+  /**
+   * Retained completeness diagnostics. Optional: a broker without it
+   * behaves exactly as before and the stderr lines remain, which is
+   * what "no opinion" looks like for retention.
+   */
+  diagnostics?: DiagnosticStore;
   version: string;
   logger: Logger;
   /**
@@ -489,6 +496,7 @@ export function createApp(options: AppOptions): CreatedApp {
     genaiStore,
     rawBodyStore,
     captureHealth,
+    diagnostics,
     version,
     logger,
     shutdownSignal,
@@ -565,10 +573,16 @@ export function createApp(options: AppOptions): CreatedApp {
     if (!corr) {
       corr = createGenAiCorrelator({
         log: (msg, ctx) => logger.warn(msg, ctx),
+        // Per-member correlator, so its diagnostics carry that member
+        // as producer without the call sites having to say so.
+        ...(diagnostics !== undefined ? { diagnostics: diagnostics.emit } : {}),
+        memberName,
         // Raw capture-before-parse: when the raw-body store is wired,
         // the correlator content-addresses every body verbatim before
         // parsing and unlinks the consumed spill file (its default).
-        ...(rawBodyStore !== undefined ? { rawStore: rawBodyStore, memberName } : {}),
+        // memberName is set unconditionally above: the correlator needs
+        // it to attribute diagnostics even when raw capture is unwired.
+        ...(rawBodyStore !== undefined ? { rawStore: rawBodyStore } : {}),
       });
       genaiCorrelators.set(memberName, corr);
     }
@@ -961,8 +975,25 @@ export function createApp(options: AppOptions): CreatedApp {
                     ? ('unevaluated' as const)
                     : ('ok' as const),
             };
-      if (activity === 'idle') return { ...p, ...captureField };
-      return { ...p, activity, busy: activity === 'working', ...captureField };
+      // Retained completeness failures for this member that have not
+      // been observed to recover. Same absence rule as `captureHealth`
+      // and NOT `activity`'s: absent means this broker retains no
+      // diagnostics and has no opinion — never "this member is clean".
+      // `0` is the positive statement that it looked and found none.
+      //
+      // This is the field an agent reads about ITSELF. Every failure it
+      // counts is one the product already detected and, until now,
+      // wrote to a terminal nobody kept — so the agent could not find
+      // out that its own capture had failed.
+      const diagField =
+        diagnostics === undefined
+          ? {}
+          : {
+              diagnosticsUnresolved: diagnostics.unresolved(p.name).length,
+              diagnosticsRetention: diagnostics.health(),
+            };
+      if (activity === 'idle') return { ...p, ...captureField, ...diagField };
+      return { ...p, activity, busy: activity === 'working', ...captureField, ...diagField };
     });
     return c.json({
       teammates: teammatesFromMembers(members),
@@ -1407,7 +1438,11 @@ export function createApp(options: AppOptions): CreatedApp {
       if (telemetryStore !== undefined && telemetryRecords.length > 0) {
         try {
           telemetryStore.append(member.name, telemetryRecords);
+          // Observed recovery, not a timeout: this member's telemetry
+          // is landing again.
+          diagnostics?.emit.otlpLogsStored(member.name);
         } catch (err) {
+          diagnostics?.emit.otlpLogsStoreFailed(member.name, records.length);
           logger.warn('otlp logs store failed', {
             member: member.name,
             error: err instanceof Error ? err.message : String(err),
@@ -1421,7 +1456,13 @@ export function createApp(options: AppOptions): CreatedApp {
           for (const inf of inferences) {
             genaiStore.append(member.name, inf);
           }
+          // ONLY when an append actually happened. A body-only or
+          // correlation-pending batch yields zero inferences and
+          // attempts no write, so clearing the incident here would
+          // report health from an operation that never ran.
+          if (inferences.length > 0) diagnostics?.emit.otlpGenaiIngested(member.name);
         } catch (err) {
+          diagnostics?.emit.otlpGenaiIngestFailed(member.name, genaiRecords.length);
           logger.warn('otlp genai ingest failed', {
             member: member.name,
             error: err instanceof Error ? err.message : String(err),
@@ -1443,8 +1484,12 @@ export function createApp(options: AppOptions): CreatedApp {
       const member = c.get('member');
       const raw = await c.req.json().catch(() => null);
       try {
-        telemetryStore.append(member.name, parseOtlpMetrics(raw));
+        const metrics = parseOtlpMetrics(raw);
+        telemetryStore.append(member.name, metrics);
+        // Same rule: an empty parse writes nothing and heals nothing.
+        if (metrics.length > 0) diagnostics?.emit.otlpMetricsStored(member.name);
       } catch (err) {
+        diagnostics?.emit.otlpMetricsStoreFailed(member.name, 0);
         logger.warn('otlp metrics store failed', {
           member: member.name,
           error: err instanceof Error ? err.message : String(err),
@@ -1685,7 +1730,9 @@ export function createApp(options: AppOptions): CreatedApp {
           });
           gStore.append(name, { ...rec, requestSha256, responseSha256 });
           accepted++;
+          diagnostics?.emit.codexGenaiIngestEntrySucceeded(member.name);
         } catch (err) {
+          diagnostics?.emit.codexGenaiIngestEntryFailed(member.name);
           logger.warn('codex genai ingest entry failed', {
             member: name,
             error: err instanceof Error ? err.message : String(err),
@@ -2222,7 +2269,9 @@ export function createApp(options: AppOptions): CreatedApp {
               isError: result.isError === true,
             },
           ]);
+          diagnostics?.emit.toolinvokeAuditAppended(member.name);
         } catch (err) {
+          diagnostics?.emit.toolinvokeAuditAppendFailed(member.name);
           logger.warn('tool invoke audit append failed', {
             source: source.slug,
             tool: toolName,
@@ -3933,8 +3982,11 @@ export function createApp(options: AppOptions): CreatedApp {
           checkObjectiveContext(parsed.data.events, name, objectives, broker, logger);
         }
 
+        // Same rule: an empty accepted set exercises no write.
+        if (rows.length > 0) diagnostics?.emit.activityAppended(name);
         return c.json({ accepted: rows.length }, 201);
       } catch (err) {
+        diagnostics?.emit.activityAppendFailed(name, parsed.data.events.length);
         logger.warn('agent activity append failed', {
           name,
           error: err instanceof Error ? err.message : String(err),
@@ -4599,6 +4651,7 @@ export function createApp(options: AppOptions): CreatedApp {
       max: number,
     ): string | null {
       if (value === null || value.length <= max) return value;
+      diagnostics?.emit.enrollmentSourceLabelTruncated('source', 1);
       logger.warn('enrollment source label truncated', {
         field,
         originalLength: value.length,

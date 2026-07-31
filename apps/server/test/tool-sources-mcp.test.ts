@@ -17,7 +17,9 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { z } from 'zod';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
+import { createDiagnosticStore } from '../src/diagnostics.js';
 import { testKek } from '../src/kek.js';
+import { createSqliteActivityStore } from '../src/member-activity.js';
 import { createMemberStore, setKek } from '../src/members.js';
 import { SessionStore } from '../src/sessions.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
@@ -98,11 +100,18 @@ function makeApp() {
     version: '0.0.0',
     logger: noopLog,
   });
+  // Retention + activity store, so the broker-side audit path runs and
+  // its recovery can be observed. The audit is what
+  // `toolinvoke.audit_append_failed` reports on.
+  const activityDb = openDatabase(':memory:');
+  const diagnostics = createDiagnosticStore(activityDb);
   const { app } = createApp({
     broker,
     members,
     tokens,
     sessions,
+    activityStore: createSqliteActivityStore(activityDb, noopLog),
+    diagnostics,
     teamStore: mockTeamStore({
       name: 'demo-team',
       context: '',
@@ -113,7 +122,7 @@ function makeApp() {
     version: '0.0.0',
     logger: noopLog,
   });
-  return { app, mcpManager };
+  return { app, mcpManager, diagnostics };
 }
 
 function authed(token: string, body?: unknown, method?: string): RequestInit {
@@ -198,6 +207,40 @@ describe('mcp tool sources', () => {
     };
     expect(result.isError).toBeUndefined();
     expect(result.content[0]?.text).toBe('echo: hello upstream');
+  });
+
+  it('a successful invoke clears a tool-audit incident, history intact', async () => {
+    // POSITIVE CONTROL for the tool-audit recovery family. Added here
+    // rather than in diagnostics-recovery-placement.test.ts because
+    // this file already has the live MCP harness the route needs — a
+    // second copy would be the expensive way to prove the same branch.
+    //
+    // What it establishes: the recovery call sits in the branch that
+    // runs when the broker-side audit append SUCCEEDS. It does not
+    // re-test the invoke relay itself, which the test above covers.
+    const { app, mcpManager, diagnostics } = makeApp();
+    managers.push(mcpManager);
+    await setupMcpSource(app);
+    await app.request('/tool-sources/up/refresh', authed(ADMIN, undefined, 'POST'));
+
+    diagnostics.emit.toolinvokeAuditAppendFailed('bound');
+    expect(diagnostics.unresolved('bound').map((u) => u.cause)).toContain(
+      'toolinvoke.audit_append_failed',
+    );
+
+    const res = await app.request(
+      '/tool-sources/up/tools/echo/invoke',
+      authed(BOUND, { args: { text: 'hello upstream' } }),
+    );
+    expect(res.status).toBe(200);
+
+    expect(diagnostics.unresolved('bound').map((u) => u.cause)).not.toContain(
+      'toolinvoke.audit_append_failed',
+    );
+    // Criterion 4: healthy now, the failure still queryable.
+    expect(
+      diagnostics.query({ member: 'bound', from: 0, to: Date.now() + 60_000 }).count,
+    ).toBeGreaterThan(0);
   });
 
   it('404s tools missing from the cache with a refresh hint', async () => {

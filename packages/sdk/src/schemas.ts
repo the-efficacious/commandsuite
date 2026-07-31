@@ -181,6 +181,11 @@ export const PresenceSchema = z.object({
    * correlation lag means every normal turn is briefly unmatched.
    */
   captureHealth: CaptureHealthStateSchema.optional(),
+  // Retained completeness failures for this member that have not been
+  // observed to recover. Absence means "this broker retains no
+  // diagnostics", never "clean" — same rule as `captureHealth`.
+  diagnosticsUnresolved: z.number().int().nonnegative().optional(),
+  diagnosticsRetention: z.enum(['healthy', 'degraded', 'unknown']).optional(),
 });
 
 /**

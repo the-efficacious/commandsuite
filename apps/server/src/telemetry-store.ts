@@ -35,6 +35,7 @@
  */
 
 import type { DatabaseSyncInstance, StatementInstance } from './db.js';
+import type { DiagnosticEmitter } from './diagnostics.js';
 import { logger as defaultLogger, type Logger } from './logger.js';
 
 const CREATE_SCHEMA = `
@@ -116,6 +117,8 @@ export interface TelemetryStore {
 
 export interface TelemetryStoreOptions {
   logger?: Logger;
+  /** Retained completeness diagnostics. */
+  diagnostics?: DiagnosticEmitter;
 }
 
 interface TelemetryRowRaw {
@@ -140,10 +143,12 @@ class SqliteTelemetryStore implements TelemetryStore {
   private readonly db: DatabaseSyncInstance;
   private readonly insertStmt: StatementInstance;
   private readonly log: Logger;
+  private readonly diag: DiagnosticEmitter | undefined;
 
-  constructor(db: DatabaseSyncInstance, log: Logger) {
+  constructor(db: DatabaseSyncInstance, log: Logger, diag?: DiagnosticEmitter) {
     this.db = db;
     this.log = log;
+    this.diag = diag;
     this.db.exec(CREATE_SCHEMA);
     this.insertStmt = db.prepare(
       `INSERT INTO telemetry
@@ -172,6 +177,7 @@ class SqliteTelemetryStore implements TelemetryStore {
         scope = rec.scope == null ? null : JSON.stringify(rec.scope);
         payload = JSON.stringify(rec.payload ?? {});
       } catch (err) {
+        this.diag?.telemetrystoreUnserializableRecordSkipped(memberName);
         this.log.warn('telemetry-store: skipped unserializable record', {
           memberName,
           name: rec.name,
@@ -283,6 +289,7 @@ class SqliteTelemetryStore implements TelemetryStore {
         receivedAt: Number(raw.received_at),
       };
     } catch (err) {
+      this.diag?.telemetrystoreMalformedRowSkipped(Number(raw.id));
       this.log.warn('telemetry-store: skipped malformed row', {
         id: Number(raw.id),
         error: err instanceof Error ? err.message : String(err),
@@ -296,5 +303,5 @@ export function createTelemetryStore(
   db: DatabaseSyncInstance,
   opts: TelemetryStoreOptions = {},
 ): TelemetryStore {
-  return new SqliteTelemetryStore(db, opts.logger ?? defaultLogger);
+  return new SqliteTelemetryStore(db, opts.logger ?? defaultLogger, opts.diagnostics);
 }

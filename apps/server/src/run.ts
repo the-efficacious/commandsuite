@@ -28,6 +28,7 @@ import { createApp } from './app.js';
 import { createCaptureHealthStore } from './capture-health.js';
 import { createSqliteChannelStore } from './channels.js';
 import { type DatabaseSyncInstance, openDatabase } from './db.js';
+import { createDiagnosticStore } from './diagnostics.js';
 import { EnrollmentStore } from './enrollments.js';
 import { createSqliteFilesystemStore, LocalBlobStore } from './files/index.js';
 import { createGenAiStore, type GenAiStore } from './genai-store.js';
@@ -439,19 +440,33 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   // handle — both are heavy-write, per-member operational streams we
   // keep off the main broker write lock — but is otherwise fully
   // independent (its own `telemetry` table, no shared append path).
-  const telemetryStore: TelemetryStore = createTelemetryStore(activityDb, { logger: log });
+  // Retained completeness diagnostics. Constructed FIRST because every
+  // store below reports into it: a completeness failure that only
+  // reached stderr is why a full day of missing capture went unnoticed.
+  const diagnostics = createDiagnosticStore(activityDb);
+
+  const telemetryStore: TelemetryStore = createTelemetryStore(activityDb, {
+    logger: log,
+    diagnostics: diagnostics.emit,
+  });
 
   // Full-fidelity GenAI inference store. Shares the dedicated activity DB
   // handle (same heavy-write, off-the-main-lock rationale as the
   // telemetry sink) but is otherwise independent — its own
   // `gen_ai_inference` table, its own append path.
-  const genaiStore: GenAiStore = createGenAiStore(activityDb, { logger: log });
+  const genaiStore: GenAiStore = createGenAiStore(activityDb, {
+    logger: log,
+    diagnostics: diagnostics.emit,
+  });
 
   // Content-addressed raw-body store: the verbatim request/response
   // bytes UNDER the gen_ai derived view, captured before parse/redact.
   // Same activity-DB handle; the per-member correlators in app.ts do the
   // capture (and unlink the consumed spill files — the default).
-  const rawBodyStore: RawBodyStore = createRawBodyStore(activityDb, { logger: log });
+  const rawBodyStore: RawBodyStore = createRawBodyStore(activityDb, {
+    logger: log,
+    diagnostics: diagnostics.emit,
+  });
 
   // Capture-health detector. Reads the three streams above — activity
   // markers, gen_ai rows, raw bodies — and answers, per member, whether
@@ -662,6 +677,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
     genaiStore: genaiStore,
     rawBodyStore: rawBodyStore,
     captureHealth,
+    diagnostics,
     files: filesStore,
     ...(options.maxFileSize !== undefined ? { maxFileSize: options.maxFileSize } : {}),
     ...(persistMembers !== undefined ? { persistMembers } : {}),
