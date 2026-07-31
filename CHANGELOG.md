@@ -5,6 +5,80 @@ CommandSuite versions in lockstep — one version per release train —
 so each section below is one release. Per-package `CHANGELOG.md`
 files still ship inside every npm tarball.
 
+## 0.3.2 (2026-07-31)
+
+### csuite-cli
+
+#### Patch Changes
+
+- [#58](https://github.com/the-efficacious/commandsuite/pull/58) [`6800958`](https://github.com/the-efficacious/commandsuite/commit/6800958da90dbe87e89a1a49f6976b18f6e4177f) Thanks [@sureforge](https://github.com/sureforge)! - Correct package authorship metadata to identify Efficacious, Inc.
+
+- [#60](https://github.com/the-efficacious/commandsuite/pull/60) [`cc2cb94`](https://github.com/the-efficacious/commandsuite/commit/cc2cb949859e8b742592104175f676597d2fdbab) Thanks [@keencaliper](https://github.com/keencaliper)! - The `fs_*` MCP tool descriptions no longer tell agents that objective namespaces are broken.
+
+  Six descriptions — `fs_ls`, `fs_stat`, `fs_read`, `fs_write`, `fs_mkdir`, `fs_mv` — carried `KNOWN DEFECT` notices stating that operations under `/objectives/<id>/` fail, misreport their result, or must not be retried, and instructing agents to write to their home instead. **Those defects were fixed in 0.3.1, and the notices shipped in the same artifact as the fix**, so the published package documented its own working feature as broken.
+
+  All six claims were re-verified against a live broker before removal, as a non-director member rather than a director: `fs_write`, `fs_mkdir`, `fs_mv`, `fs_ls`, `fs_stat`, and `fs_read` all succeed under `/objectives/<id>/` and report honestly. The descriptions now state the real rule — these operations work for members of the objective and for directors, and the entries are owned by `obj:<id>` rather than by a member.
+
+  A tool description is a **specification**: it sits in every agent's context and is the only spec an agent has for a tool whose source it cannot read. A wrong one is not a documentation nit, it is the tool being wrong for every caller at once. The measured cost here was not only the deflected work — a teammate routed evidence around the namespace on the doc's instruction, then read a genuine unrelated defect as the documented one, because the text had pre-loaded a wrong explanation. **A stale "known defect" notice also consumes the signal from the next real failure.**
+
+  `fs_ls` gains a note about a limit that _is_ live: it renders directories with a trailing slash (`/you/notes/`) while paths are stored without one and the API rejects a trailing slash, so the listing's own output is not valid input to the next call. Documented until that is fixed rather than left for the next caller to rediscover.
+
+  Guarded by a test that fails if any of the phrases returns, matched over the whole tool JSON rather than the top-level description — `fs_write` carried its notice on a nested property, which a top-level check would have missed. The test asserts the positive half too, so deleting every mention of objective namespaces does not pass. It is a guard against re-introduction, not a proof of accuracy; the behaviour it now claims is established in `apps/server/test/files/objective-namespace.test.ts`.
+
+### csuite-server
+
+#### Patch Changes
+
+- [#58](https://github.com/the-efficacious/commandsuite/pull/58) [`6800958`](https://github.com/the-efficacious/commandsuite/commit/6800958da90dbe87e89a1a49f6976b18f6e4177f) Thanks [@sureforge](https://github.com/sureforge)! - Correct package authorship metadata to identify Efficacious, Inc.
+
+- [#57](https://github.com/the-efficacious/commandsuite/pull/57) [`3542523`](https://github.com/the-efficacious/commandsuite/commit/35425234db188071c3758716fb67b438da55af83) Thanks [@keencaliper](https://github.com/keencaliper)! - The server no longer writes `mime`, `sourceUa`, or `sourceIp` values that its own published schemas refuse to read back.
+
+  Two endpoints produced values their consumer schema rejected, so a successful request could store a row the SDK then threw on. `POST /fs/write` checked that `mime` was present but never bounded it, while `FsEntrySchema.mimeType` caps it at 255; `POST /enroll` recorded the raw `User-Agent` header and the raw `ipKey()` result, while `PendingEnrollmentSchema` caps them at 512 and 64. Both were live in 0.3.1: a 300-character `mime` returned `200`, persisted, and came back out of `/fs/stat` as an entry `FsEntrySchema.safeParse` rejected; a 600-character `User-Agent` produced an `/enroll/pending` row failing with `too_big maximum:512`.
+
+  **The two are fixed in opposite directions, deliberately.** Reject when the value is a **claim about content**; truncate when it is a **label the user did not choose**.
+
+  `mime` is now **refused** with `400` before anything is persisted, and is never trimmed to fit. A truncated MIME type is not a shorter version of the caller's claim — it is a different, still well-formed claim they never made, silently attached to their bytes. A refused upload is recoverable; mislabeled stored content is not.
+
+  `sourceUa` and `sourceIp` are now **truncated** to their schema bounds and the enrollment proceeds. These are audit context the enrolling user never authored — one derived from proxy headers, the other from whatever their client sends. Refusing would deny a legitimate device a login over a field its operator cannot see, cannot edit, and did not write.
+
+  Truncation is **recorded**, because a silently-cut value is indistinguishable from a genuine one sitting at the limit: the stored value ends in `…` so the record itself says it was cut, and a warning names the field and the original length. The `…` lives inside the bound, so the marker cannot produce the oversize value it exists to prevent.
+
+  Both limits are read off the published schemas rather than restated as literals — a second copy of the number is how the producer and consumer drifted apart originally.
+
+  The bound applies only to the **stored** `sourceIp`, never to the rate-limit key, which keeps the full `ipKey()` string. Truncating the bucket key would merge every client sharing a long forwarded prefix into one bucket, letting a single client exhaust the enrollment mint limit for everyone behind the same proxy chain.
+
+  Verified by mutation rather than by review: collapsing either policy into the other fails both cross-referencing tests, a `400` that still persists the row fails the absence check, dropping the `…` or the warning each fails its own test, and bounding the rate-limit key fails the bucket-separation test.
+
+### csuite-core
+
+#### Patch Changes
+
+- [#58](https://github.com/the-efficacious/commandsuite/pull/58) [`6800958`](https://github.com/the-efficacious/commandsuite/commit/6800958da90dbe87e89a1a49f6976b18f6e4177f) Thanks [@sureforge](https://github.com/sureforge)! - Correct package authorship metadata to identify Efficacious, Inc.
+
+### csuite-sdk
+
+#### Patch Changes
+
+- [#58](https://github.com/the-efficacious/commandsuite/pull/58) [`6800958`](https://github.com/the-efficacious/commandsuite/commit/6800958da90dbe87e89a1a49f6976b18f6e4177f) Thanks [@sureforge](https://github.com/sureforge)! - Correct package authorship metadata to identify Efficacious, Inc.
+
+### csuite
+
+#### Patch Changes
+
+- [#58](https://github.com/the-efficacious/commandsuite/pull/58) [`6800958`](https://github.com/the-efficacious/commandsuite/commit/6800958da90dbe87e89a1a49f6976b18f6e4177f) Thanks [@sureforge](https://github.com/sureforge)! - Correct package authorship metadata to identify Efficacious, Inc.
+
+### csuite-web-ui
+
+#### Patch Changes
+
+- [#58](https://github.com/the-efficacious/commandsuite/pull/58) [`6800958`](https://github.com/the-efficacious/commandsuite/commit/6800958da90dbe87e89a1a49f6976b18f6e4177f) Thanks [@sureforge](https://github.com/sureforge)! - Correct package authorship metadata to identify Efficacious, Inc.
+
+### csuite-web-host
+
+#### Patch Changes
+
+- [#58](https://github.com/the-efficacious/commandsuite/pull/58) [`6800958`](https://github.com/the-efficacious/commandsuite/commit/6800958da90dbe87e89a1a49f6976b18f6e4177f) Thanks [@sureforge](https://github.com/sureforge)! - Correct package authorship metadata to identify Efficacious, Inc.
+
 ## 0.3.1 (2026-07-31)
 
 ### csuite-cli

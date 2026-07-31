@@ -1,5 +1,14 @@
 # csuite-web-ui
 
+## 0.3.2
+
+### Patch Changes
+
+- [#58](https://github.com/the-efficacious/commandsuite/pull/58) [`6800958`](https://github.com/the-efficacious/commandsuite/commit/6800958da90dbe87e89a1a49f6976b18f6e4177f) Thanks [@sureforge](https://github.com/sureforge)! - Correct package authorship metadata to identify Efficacious, Inc.
+
+- Updated dependencies [[`6800958`](https://github.com/the-efficacious/commandsuite/commit/6800958da90dbe87e89a1a49f6976b18f6e4177f)]:
+  - csuite-sdk@0.3.2
+
 ## 0.3.1
 
 ### Patch Changes
