@@ -395,6 +395,63 @@ compile-negatives all assume the fixture exercises the mechanism it names. A
 fixture that fails for the wrong reason is one edit away from passing for the
 wrong reason.
 
+### Assert the output the consumer actually reads
+
+The previous section asks whether the fixture reached the code. This one is its
+mirror at the other end: **did what the code produced reach the consumer, and
+did anything assert the form the consumer reads it in?**
+
+**The consumer is usually not the caller.** Tests call a function and read its
+return value, so the return value is what gets asserted — and the return value
+is frequently not the product. A commit-subject validator was mutated twice
+during one pull request, one layer apart:
+
+| mutation | suite result | what it actually did |
+|---|---|---|
+| the `missing-prefix` message replaced with the literal `ok` | all green | every failure became unactionable |
+| `main()` changed to always return `0` | all green | the check could never fail CI |
+
+Every test asserted an exported function and every one of them still passed.
+The first destroyed the sentence a contributor reads; the second destroyed the
+exit status the workflow reads, which is the *only* thing CI observes. **A
+validator that diagnoses every input perfectly and exits `0` is not a weaker
+version of working — it is a green check, and the suite could not see it.**
+
+So name the consumer before you decide what to assert:
+
+| the deliverable | the consumer | what it reads |
+|---|---|---|
+| a CLI, a script, a git hook | a shell, a CI runner | the exit status, and which stream the text went to |
+| an HTTP route | a client | the status code and the body, not the handler's return |
+| a badge, a warning, a tool description | a person or an agent | the rendered string |
+| a log line | whatever retains it | that something retained it |
+
+**"Name the string the deliverable must produce" above is this rule for the
+case where the output is text on a screen, and its grep is the right tool
+there. The grep does not generalise** — no search for a string finds an exit
+status, a stream, or a status code. What generalises is the question.
+
+Two executable forms:
+
+- **When the product is a process, drive it as a process.** `spawnSync` the
+  script, assert the exit status *and* the stream — text on stdout that the
+  consumer reads from stderr is as invisible as text never produced. Testing
+  only the exported functions leaves the entire command line — argument
+  parsing, stream choice, exit code — unasserted.
+- **When the product is read at a boundary you do not own** — a workflow file,
+  a manifest, a generated config — assert the artefact. A validator can be
+  correct while the workflow invokes it with the wrong arguments, and the suite
+  will not know. Read the file in a test and assert the decisions in it.
+
+Why a rule: both mutations were found by mutating and neither would have been
+found by re-reading the tests, which looked thorough — **68 cases**, positive
+controls in both directions, every rule diagnosed by name, a real git
+repository for the revision range. Run against that suite, the exit-code
+mutation produces **68 passed, 0 failed** — byte-identical to the unmutated
+run. **The completeness was real and all of it was on one side of the
+boundary.** The question never asked was not *is the rule right* but *does
+anything downstream ever see it*.
+
 ## When something inexplicable happens, measure it
 
 **The reflex to attribute an anomaly to your own carelessness is the most
