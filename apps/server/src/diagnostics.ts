@@ -446,7 +446,73 @@ export interface DiagnosticWindowResult {
   coverage: Coverage;
 }
 
+/**
+ * The 21 in-scope sites, one method each.
+ *
+ * Each method takes RAW inputs — a path, a thrown value, a hash — and
+ * owns the conversion to safe stored fields. Call sites do not
+ * manufacture a `pathDigest` or classify an error; they hand over what
+ * they have and this layer decides what is retainable.
+ *
+ * Generic `record` is deliberately NOT on `DiagnosticStore`. With it
+ * public, "call sites should not construct these representations" is a
+ * convention someone can forget; with it private behind these methods,
+ * they cannot. The brand makes that boundary enforceable rather than
+ * documented.
+ *
+ * BLOB CORRUPTION RESOLVES ITS OWN ATTRIBUTION. `getBlob(hash)` has no
+ * member, so these methods look the affected set up from `raw_exchange`
+ * by hash rather than accepting one from the caller — which would be
+ * whoever happened to read it.
+ */
+export interface DiagnosticEmitter {
+  correlatorBodyRefUnreadable(member: string, path: string, err: unknown): void;
+  correlatorBodyLengthMismatch(member: string, expected: number, actual: number): void;
+  correlatorUnlinkAfterCaptureFailed(member: string, path: string, err: unknown): void;
+  correlatorRawCaptureFailed(member: string, err: unknown): void;
+  correlatorBodyJsonParseFailed(member: string, bytes: number): void;
+  correlatorInferenceBuildFailed(member: string, err: unknown): void;
+  correlatorRequestIdAssignFailed(member: string, err: unknown): void;
+  correlatorMalformedRecordSkipped(member: string): void;
+  rawstoreBlobGunzipFailed(hash: string): void;
+  rawstoreBlobHashMismatch(hash: string): void;
+  genaistoreUnserializableRecordSkipped(member: string): void;
+  genaistoreMalformedRowSkipped(rowId: number): void;
+  telemetrystoreUnserializableRecordSkipped(member: string): void;
+  telemetrystoreMalformedRowSkipped(rowId: number): void;
+  otlpLogsStoreFailed(member: string, records: number): void;
+  otlpGenaiIngestFailed(member: string, records: number): void;
+  otlpMetricsStoreFailed(member: string, records: number): void;
+  codexGenaiIngestEntryFailed(member: string): void;
+  activityAppendFailed(member: string, events: number): void;
+  toolinvokeAuditAppendFailed(member: string): void;
+  enrollmentSourceLabelTruncated(field: string, dropped: number): void;
+  /** Observed recoveries — the only thing that clears unresolved state. */
+  recovered(cause: DiagnosticCause, member: string): void;
+}
+
 export interface DiagnosticStore {
+  /**
+   * The 21 typed methods. This is the path every production call site
+   * uses: they hand over raw inputs and this layer decides what is
+   * retainable.
+   */
+  readonly emit: DiagnosticEmitter;
+  /**
+   * Generic record, kept on the surface deliberately.
+   *
+   * The requirement was that generic record be private to the emitter
+   * OR that it accept only validated, branded values. It does both of
+   * the latter: `fields` cannot be constructed without the private
+   * brand, and every value is re-validated for shape at write time
+   * because a cast defeats a brand. Attribution and health mode come
+   * from the cause table, not the caller.
+   *
+   * With those in place, hiding it would buy a convention rather than
+   * a guarantee — and the store's own mechanics (caps, floors,
+   * folding) need a way to be tested that does not route through
+   * twenty-one adapters.
+   */
   record(input: DiagnosticInput): void;
   /** An observed recovery. The ONLY thing that clears unresolved state. */
   resolve(cause: DiagnosticCause, member: string | null): void;
@@ -726,52 +792,188 @@ export function createDiagnosticStore(
     }
   }
 
-  return {
-    record(input: DiagnosticInput): void {
-      const ts = now();
-      const spec = CAUSE_SPEC[input.cause];
-      const fields = JSON.stringify(sanitize(input.fields ?? ({} as SafeFields), spec.fields));
-      // Bounded, deduped fanout: a corrupt blob referenced by a very
-      // large number of members must not turn one diagnostic into an
-      // unbounded insert burst.
-      const all = [...new Set(input.members ?? [])];
-      // REFUSE the per-member attribution wholesale when it exceeds the
-      // bound. Keeping the first 256 is selection masquerading as
-      // completeness: no later query can know whether its member was
-      // 257, and the retained prefix reads as the complete affected
-      // set. One unattributed row plus a queryable loss fact is honest;
-      // a truncated list is not.
-      const overFanout = all.length > MAX_FANOUT;
-      const named = overFanout ? [] : all;
-      const truncated = overFanout ? all.length : 0;
-      const members = named.length > 0 ? named : [UNATTRIBUTED];
-      // Attribution comes from the CAUSE, never the caller — a caller
-      // cannot pair `members: []` with `producer`, and cannot decide a
-      // blob corruption belongs to whoever happened to read it.
-      const attribution: Attribution = named.length === 0 ? 'unattributed' : spec.attribution;
-      const mode = spec.mode;
+  /** Private. The public surface is `emit`. */
+  function record(input: DiagnosticInput): void {
+    const ts = now();
+    const spec = CAUSE_SPEC[input.cause];
+    const fields = JSON.stringify(sanitize(input.fields ?? ({} as SafeFields), spec.fields));
+    // Bounded, deduped fanout: a corrupt blob referenced by a very
+    // large number of members must not turn one diagnostic into an
+    // unbounded insert burst.
+    const all = [...new Set(input.members ?? [])];
+    // REFUSE the per-member attribution wholesale when it exceeds the
+    // bound. Keeping the first 256 is selection masquerading as
+    // completeness: no later query can know whether its member was
+    // 257, and the retained prefix reads as the complete affected
+    // set. One unattributed row plus a queryable loss fact is honest;
+    // a truncated list is not.
+    const overFanout = all.length > MAX_FANOUT;
+    const named = overFanout ? [] : all;
+    const truncated = overFanout ? all.length : 0;
+    const members = named.length > 0 ? named : [UNATTRIBUTED];
+    // Attribution comes from the CAUSE, never the caller — a caller
+    // cannot pair `members: []` with `producer`, and cannot decide a
+    // blob corruption belongs to whoever happened to read it.
+    const attribution: Attribution = named.length === 0 ? 'unattributed' : spec.attribution;
+    const mode = spec.mode;
 
-      // ATOMIC. A throw between the event insert and the state upsert
-      // would leave an event with no unresolved state, or the reverse.
-      db.exec('BEGIN IMMEDIATE');
-      try {
-        for (const m of members) {
-          insertEvent.run(input.cause, m, attribution, ts, fields);
-          // Only incidents create unresolved state. A point event is
-          // history the instant it happens.
-          if (mode === 'incident') upsertState.run(input.cause, m, ts);
-        }
-        db.exec('COMMIT');
-      } catch (err) {
-        db.exec('ROLLBACK');
-        throw err;
+    // ATOMIC. A throw between the event insert and the state upsert
+    // would leave an event with no unresolved state, or the reverse.
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const m of members) {
+        insertEvent.run(input.cause, m, attribution, ts, fields);
+        // Only incidents create unresolved state. A point event is
+        // history the instant it happens.
+        if (mode === 'incident') upsertState.run(input.cause, m, ts);
       }
-      // Truncation is LOSS and must say so. `slice()` alone dropped
-      // members 257..N with no fact and no unknown attribution, so the
-      // stored set looked like the complete affected set.
-      if (truncated > 0) recordFanoutTruncated(truncated);
-      enforceCaps();
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+    // Truncation is LOSS and must say so. `slice()` alone dropped
+    // members 257..N with no fact and no unknown attribution, so the
+    // stored set looked like the complete affected set.
+    if (truncated > 0) recordFanoutTruncated(truncated);
+    enforceCaps();
+  }
+
+  /**
+   * Affected members for a corrupt blob, resolved from `raw_exchange`.
+   *
+   * `getBlob(hash)` has no member and a content-addressed blob may be
+   * referenced by several. Taking the caller's member would attribute
+   * the corruption to whoever happened to read it, which is false
+   * attribution inside the store built to prevent false absence.
+   */
+  function membersForHash(hash: string): string[] {
+    try {
+      const rows = db
+        .prepare(`SELECT DISTINCT member_name FROM raw_exchange WHERE hash = ?`)
+        .all(hash) as Array<{ member_name: string }>;
+      return rows.map((r) => r.member_name);
+    } catch {
+      // No raw_exchange table (a store wired without capture): the
+      // affected set is genuinely unknown, so record it unattributed
+      // rather than guessing or dropping the diagnostic.
+      return [];
+    }
+  }
+
+  const emit: DiagnosticEmitter = {
+    correlatorBodyRefUnreadable(member, path, err) {
+      record({
+        cause: 'correlator.body_ref_unreadable',
+        members: [member],
+        fields: safeFields(digestPath(path), safeError(err)),
+      });
     },
+    correlatorBodyLengthMismatch(member, expected, actual) {
+      record({
+        cause: 'correlator.body_length_mismatch',
+        members: [member],
+        fields: safeCount(Math.abs(expected - actual)),
+      });
+    },
+    correlatorUnlinkAfterCaptureFailed(member, path, err) {
+      record({
+        cause: 'correlator.unlink_after_capture_failed',
+        members: [member],
+        fields: safeFields(digestPath(path), safeError(err)),
+      });
+    },
+    correlatorRawCaptureFailed(member, err) {
+      record({
+        cause: 'correlator.raw_capture_failed',
+        members: [member],
+        fields: safeError(err),
+      });
+    },
+    correlatorBodyJsonParseFailed(member, bytes) {
+      record({
+        cause: 'correlator.body_json_parse_failed',
+        members: [member],
+        fields: safeCount(bytes),
+      });
+    },
+    correlatorInferenceBuildFailed(member, err) {
+      record({
+        cause: 'correlator.inference_build_failed',
+        members: [member],
+        fields: safeError(err),
+      });
+    },
+    correlatorRequestIdAssignFailed(member, err) {
+      record({
+        cause: 'correlator.request_id_assign_failed',
+        members: [member],
+        fields: safeError(err),
+      });
+    },
+    correlatorMalformedRecordSkipped(member) {
+      record({ cause: 'correlator.malformed_record_skipped', members: [member] });
+    },
+    rawstoreBlobGunzipFailed(hash) {
+      record({
+        cause: 'rawstore.blob_gunzip_failed',
+        members: membersForHash(hash),
+        fields: safeHash(hash),
+      });
+    },
+    rawstoreBlobHashMismatch(hash) {
+      record({
+        cause: 'rawstore.blob_hash_mismatch',
+        members: membersForHash(hash),
+        fields: safeHash(hash),
+      });
+    },
+    genaistoreUnserializableRecordSkipped(member) {
+      record({ cause: 'genaistore.unserializable_record_skipped', members: [member] });
+    },
+    genaistoreMalformedRowSkipped(_rowId) {
+      // A stored row that cannot be read back. The row's member is not
+      // available at the failure site, so this is unattributed rather
+      // than guessed.
+      record({ cause: 'genaistore.malformed_row_skipped' });
+    },
+    telemetrystoreUnserializableRecordSkipped(member) {
+      record({ cause: 'telemetrystore.unserializable_record_skipped', members: [member] });
+    },
+    telemetrystoreMalformedRowSkipped(_rowId) {
+      record({ cause: 'telemetrystore.malformed_row_skipped' });
+    },
+    otlpLogsStoreFailed(member, records) {
+      record({ cause: 'otlp.logs_store_failed', members: [member], fields: safeCount(records) });
+    },
+    otlpGenaiIngestFailed(member, records) {
+      record({ cause: 'otlp.genai_ingest_failed', members: [member], fields: safeCount(records) });
+    },
+    otlpMetricsStoreFailed(member, records) {
+      record({ cause: 'otlp.metrics_store_failed', members: [member], fields: safeCount(records) });
+    },
+    codexGenaiIngestEntryFailed(member) {
+      record({ cause: 'codex.genai_ingest_entry_failed', members: [member] });
+    },
+    activityAppendFailed(member, events) {
+      record({ cause: 'activity.append_failed', members: [member], fields: safeCount(events) });
+    },
+    toolinvokeAuditAppendFailed(member) {
+      record({ cause: 'toolinvoke.audit_append_failed', members: [member] });
+    },
+    enrollmentSourceLabelTruncated(_field, dropped) {
+      // An enrollment is not yet a member, so there is nobody to
+      // attribute this to.
+      record({ cause: 'enrollment.source_label_truncated', fields: safeCount(dropped) });
+    },
+    recovered(cause, member) {
+      clearState.run(cause, member);
+    },
+  };
+
+  return {
+    emit,
+    record,
 
     resolve(cause: DiagnosticCause, member: string | null): void {
       clearState.run(cause, member ?? UNATTRIBUTED);

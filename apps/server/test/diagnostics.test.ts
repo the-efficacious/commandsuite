@@ -35,6 +35,13 @@ afterEach(() => {
   for (const d of dbs.splice(0)) d.close();
 });
 
+/**
+ * These exercise the STORE's mechanics — caps, floors, folding,
+ * coverage — through generic `record`, which is why it stays on the
+ * surface. What stops a call site inventing a field value is the brand
+ * plus runtime shape validation, not the reachability of this method.
+ * Emitter behaviour has its own tests below.
+ */
 function store(opts: Parameters<typeof createDiagnosticStore>[1] = {}) {
   const db = openDatabase(':memory:');
   dbs.push(db);
@@ -617,5 +624,123 @@ describe('checkpoint regressions', () => {
       expect(causeSpec(c), c).toBeDefined();
       expect(['point', 'incident']).toContain(causeSpec(c).mode);
     }
+  });
+});
+
+/**
+ * The typed emitter — criterion 9's other half.
+ *
+ * Each method takes RAW inputs and owns the conversion. These assert
+ * that ownership: a call site hands over a path and an error and gets
+ * a digest and a finite code, without ever being able to supply either.
+ */
+describe('typed emitter', () => {
+  it('turns a raw path into a digest and never stores the path', () => {
+    const { s, db } = store();
+    s.emit.correlatorBodyRefUnreadable(
+      'turner',
+      '/tmp/csuite-otel-bodies-Turner-1495904/req.json',
+      Object.assign(new Error('x'), { code: 'ENOENT' }),
+    );
+    const row = db.prepare('SELECT fields, member_name FROM diagnostic_event').get() as {
+      fields: string;
+      member_name: string;
+    };
+    expect(row.member_name).toBe('turner');
+    expect(row.fields).toContain('pathDigest');
+    expect(row.fields).not.toContain('Turner-1495904');
+    expect(row.fields).not.toContain('/tmp');
+  });
+
+  it('classifies a raw thrown value and never stores its message', () => {
+    const { s, db } = store();
+    s.emit.correlatorRawCaptureFailed('lea', new Error('token=sk-live-9f3 at /home/x/.secret'));
+    const row = db.prepare('SELECT fields FROM diagnostic_event').get() as { fields: string };
+    expect(row.fields).toContain('unclassified');
+    expect(row.fields).not.toContain('sk-live');
+  });
+
+  it('resolves blob attribution from raw_exchange, not from a caller', () => {
+    // getBlob(hash) has no member and the blob may have several. The
+    // emitter looks the affected set up rather than accepting one —
+    // taking the caller's member would blame whoever read it.
+    const { s, db } = store();
+    db.exec(`CREATE TABLE raw_exchange (member_name TEXT NOT NULL, kind TEXT, hash TEXT NOT NULL)`);
+    const h = 'c'.repeat(64);
+    db.prepare(`INSERT INTO raw_exchange (member_name, kind, hash) VALUES (?,?,?)`).run(
+      'turner',
+      'request',
+      h,
+    );
+    db.prepare(`INSERT INTO raw_exchange (member_name, kind, hash) VALUES (?,?,?)`).run(
+      'lea',
+      'response',
+      h,
+    );
+
+    s.emit.rawstoreBlobHashMismatch(h);
+
+    const rows = db
+      .prepare(`SELECT member_name FROM diagnostic_event ORDER BY member_name`)
+      .all() as Array<{ member_name: string }>;
+    expect(rows.map((r) => r.member_name)).toEqual(['lea', 'turner']);
+  });
+
+  it('records a corrupt blob with no known referents as unattributed', () => {
+    // Not dropped. A corruption nobody can be attributed for is still a
+    // corruption, and omitting it would make the store silent about
+    // exactly what it exists to surface.
+    const { s, db } = store();
+    db.exec(`CREATE TABLE raw_exchange (member_name TEXT NOT NULL, kind TEXT, hash TEXT NOT NULL)`);
+    s.emit.rawstoreBlobGunzipFailed('d'.repeat(64));
+    const row = db.prepare('SELECT member_name, attribution FROM diagnostic_event').get() as {
+      member_name: string;
+      attribution: string;
+    };
+    expect(row.member_name).toBe('');
+    expect(row.attribution).toBe('unattributed');
+  });
+
+  it('an incident clears only on an observed recovery', () => {
+    const { s } = store();
+    s.emit.activityAppendFailed('turner', 12);
+    expect(s.unresolved('turner')).toHaveLength(1);
+    s.emit.recovered('activity.append_failed', 'turner');
+    expect(s.unresolved('turner')).toHaveLength(0);
+  });
+
+  it('every emitter method is covered by the cause enum', () => {
+    // The emitter and the enum must not drift: a method whose cause is
+    // unregistered would write a row the census guard never sees.
+    const { s, db } = store();
+    db.exec(`CREATE TABLE raw_exchange (member_name TEXT NOT NULL, kind TEXT, hash TEXT NOT NULL)`);
+    const e = s.emit;
+    e.correlatorBodyRefUnreadable('m', '/p', new Error('x'));
+    e.correlatorBodyLengthMismatch('m', 10, 4);
+    e.correlatorUnlinkAfterCaptureFailed('m', '/p', new Error('x'));
+    e.correlatorRawCaptureFailed('m', new Error('x'));
+    e.correlatorBodyJsonParseFailed('m', 12);
+    e.correlatorInferenceBuildFailed('m', new Error('x'));
+    e.correlatorRequestIdAssignFailed('m', new Error('x'));
+    e.correlatorMalformedRecordSkipped('m');
+    e.rawstoreBlobGunzipFailed('a'.repeat(64));
+    e.rawstoreBlobHashMismatch('b'.repeat(64));
+    e.genaistoreUnserializableRecordSkipped('m');
+    e.genaistoreMalformedRowSkipped(1);
+    e.telemetrystoreUnserializableRecordSkipped('m');
+    e.telemetrystoreMalformedRowSkipped(1);
+    e.otlpLogsStoreFailed('m', 3);
+    e.otlpGenaiIngestFailed('m', 3);
+    e.otlpMetricsStoreFailed('m', 3);
+    e.codexGenaiIngestEntryFailed('m');
+    e.activityAppendFailed('m', 3);
+    e.toolinvokeAuditAppendFailed('m');
+    e.enrollmentSourceLabelTruncated('sourceUa', 40);
+
+    const causes = (
+      db.prepare('SELECT DISTINCT cause FROM diagnostic_event').all() as Array<{ cause: string }>
+    ).map((r) => r.cause);
+    expect(causes).toHaveLength(21);
+    for (const c of causes) expect(DIAGNOSTIC_CAUSES).toContain(c);
   });
 });
