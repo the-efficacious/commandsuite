@@ -987,6 +987,50 @@ describe('handleToolCall — objectives_list', () => {
     expect(text).toBe('no open objectives for scout');
   });
 
+  // The scope phrase composes a premodifying status word with a
+  // postmodifying assignee clause. Asserting only the `status`-alone case
+  // tests the one combination that cannot come out wrong — every phrase
+  // below is reachable by an ordinary agent and each has to be read by
+  // one. These are exact-string assertions for that reason: a "contains
+  // the assignee name" check passes against the ungrammatical version.
+  it.each([
+    [{ assignee: 'scout' }, 'no objectives assigned to scout'],
+    [{ assignee: 'director' }, 'no objectives for scout assigned to director'],
+    [{ status: 'open', assignee: 'scout' }, 'no open objectives assigned to scout'],
+    [{ status: 'done', assignee: 'director' }, 'no done objectives for scout assigned to director'],
+  ])('reads as a sentence when %o comes back empty', async (args, expected) => {
+    // Assigned to someone the filters below exclude, so every case is empty.
+    const { broker } = brokerFor([
+      makeObjective({ id: 'obj-x', status: 'blocked', assignee: 'nobody' }),
+    ]);
+    const text = getCallText(await handleToolCall('objectives_list', args, broker, BRIEFING));
+    expect(text).toBe(expected);
+  });
+
+  it.each([
+    [{ assignee: 'scout' }, 'objectives assigned to scout:'],
+    [{ status: 'open', assignee: 'scout' }, 'open objectives assigned to scout:'],
+    [{ assignee: 'director' }, 'objectives for scout assigned to director:'],
+  ])('heads a non-empty %o result with the same phrase', async (args, expected) => {
+    const { broker } = brokerFor([
+      makeObjective({ id: 'obj-mine', status: 'active', assignee: 'scout' }),
+      makeObjective({ id: 'obj-theirs', status: 'active', assignee: 'director' }),
+    ]);
+    const text = getCallText(await handleToolCall('objectives_list', args, broker, BRIEFING));
+    expect(text.split('\n')[0]).toBe(expected);
+  });
+
+  it('does not say "for scout assigned to scout" when the plate is the caller’s own', async () => {
+    // The redundancy is the tell that the phrase was assembled rather than
+    // written: these are two different questions and the narrow one is the
+    // only one being asked.
+    const { broker } = brokerFor([makeObjective({ id: 'obj-mine', assignee: 'scout' })]);
+    const text = getCallText(
+      await handleToolCall('objectives_list', { assignee: 'scout' }, broker, BRIEFING),
+    );
+    expect(text).not.toContain('for scout assigned to scout');
+  });
+
   it('rejects an unknown status and names open as accepted', async () => {
     const { broker } = brokerFor(PLATE);
     const text = getCallText(

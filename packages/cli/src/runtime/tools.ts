@@ -2151,16 +2151,22 @@ async function handleObjectivesList(
     rows = rows.filter((o) => o.assignee === assignee);
   }
 
-  const scope = [
-    filter === 'open' ? 'open' : filter,
-    assignee ? `assigned to ${assignee}` : undefined,
-  ]
-    .filter(Boolean)
-    .join(' ');
+  // The status word premodifies ("open objectives") and the assignee
+  // clause postmodifies ("objectives … assigned to X"); joining them into
+  // one prefix produced "no open assigned to X objectives for Y". When the
+  // assignee IS the caller, "for Y assigned to Y" is redundant — the whole
+  // point of the filter is that those are different questions, so the
+  // phrase should say only the narrower one.
+  const subject =
+    assignee === undefined
+      ? `objectives for ${briefing.name}`
+      : assignee === briefing.name
+        ? `objectives assigned to ${briefing.name}`
+        : `objectives for ${briefing.name} assigned to ${assignee}`;
+  const statusWord = filter === 'open' ? 'open' : filter;
+  const phrase = statusWord ? `${statusWord} ${subject}` : subject;
   if (rows.length === 0) {
-    return textResult(
-      scope ? `no ${scope} objectives for ${briefing.name}` : `no objectives for ${briefing.name}`,
-    );
+    return textResult(`no ${phrase}`);
   }
   const lines = rows.map((o) => {
     // `(you)` mirrors the web UI's own row treatment. Without it an agent
@@ -2174,10 +2180,7 @@ async function handleObjectivesList(
       `    updated: ${formatAgentTimestamp(o.updatedAt)} (${formatRelativeAge(o.updatedAt)})`
     );
   });
-  const heading = scope
-    ? `${scope} objectives for ${briefing.name}`
-    : `objectives for ${briefing.name}`;
-  return textResult(`${heading}:\n${lines.join('\n')}`);
+  return textResult(`${phrase}:\n${lines.join('\n')}`);
 }
 
 async function handleObjectivesView(
