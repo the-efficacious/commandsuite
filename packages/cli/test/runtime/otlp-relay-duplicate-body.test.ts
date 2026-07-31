@@ -90,7 +90,9 @@ describe('otlp relay — a resolved body_ref must not be shadowed by an inline b
   afterEach(async () => {
     await Promise.all(relays.splice(0).map((relay) => relay.close()));
     await Promise.all(
-      servers.splice(0).map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
+      servers
+        .splice(0)
+        .map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
     );
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });

@@ -129,13 +129,14 @@ describe('relay per-record resolution', () => {
     servers.push(broker.server);
     const relay = await startOtlpRelay({ brokerUrl: broker.url, token: 't', rawBodiesDir: dir });
     relays.push(relay);
-    const send = (refs: string[]) =>
+    const sendPayload = (payload: Record<string, unknown>) =>
       fetch(`${relay.endpoint}/v1/logs`, {
         method: 'POST',
         headers: { Authorization: 'Bearer t', 'Content-Type': 'application/json' },
-        body: JSON.stringify(batch(refs)),
+        body: JSON.stringify(payload),
       });
-    return { dir, broker, send };
+    const send = (refs: string[]) => sendPayload(batch(refs));
+    return { dir, broker, send, sendPayload };
   }
 
   it('an unresolvable body_ref does not strand the healthy bodies beside it', async () => {
@@ -173,6 +174,32 @@ describe('relay per-record resolution', () => {
 
     expect(res.status).toBe(200);
     expect(broker.declared).toEqual(['1']); // one resolved, not two
+  });
+
+  it('falls back to one inline body when body_ref resolution fails', async () => {
+    const { dir, broker, sendPayload } = await harness();
+    const missing = join(dir, 'absent.json');
+    const inline = '{"source":"inline-fallback"}';
+    const payload = batch([missing]) as {
+      resourceLogs: Array<{
+        scopeLogs: Array<{
+          logRecords: Array<{ attributes: Attr[] }>;
+        }>;
+      }>;
+    };
+    const attrs = payload.resourceLogs[0]?.scopeLogs[0]?.logRecords[0]?.attributes;
+    if (attrs === undefined) throw new Error('fixture record missing attributes');
+    attrs.push({ key: 'body', value: { stringValue: inline } });
+
+    const response = await sendPayload(payload);
+
+    expect(response.status).toBe(200);
+    expect(broker.declared).toEqual(['0']);
+    const forwarded = attrsOf(broker.received[0], 0);
+    expect(forwarded.filter((attr) => attr.key === 'body')).toEqual([
+      { key: 'body', value: { stringValue: inline } },
+    ]);
+    expect(forwarded.some((attr) => attr.key === 'body_ref')).toBe(false);
   });
 
   it('a redelivery after a successful ack succeeds instead of failing forever', async () => {
