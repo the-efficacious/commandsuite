@@ -216,6 +216,29 @@ this exact failure mode and had their own note open. Knowing the shape does not
 fire mid-task. A grep does not require you to have the right instinct at the
 right moment, which is precisely what fails.
 
+### Sample on the operation, not after it
+
+**A probe that samples after the next operation cannot observe a transient
+violation.** Any invariant that is restored quickly is invisible to a check that
+looks late — and **a bound that holds only between operations is not a bound.**
+
+A store with a hard row cap deleted exactly to the cap and then inserted one
+more row recording that the cap had been hit, leaving it one over. The author's
+probe recorded many rows in a loop, then counted: the overshoot had already been
+corrected by the next enforcement, so the probe returned a clean result and the
+defect was invisible. A second probe that stopped *on* the enforcement measured
+two rows under a cap of one.
+
+The clean result was an artefact of where sampling stopped. This is the same
+failure as a check that cannot fail, wearing the opposite sign: instead of a
+green that proves nothing, a **negative result that proves nothing**.
+
+So when you are checking an invariant that some later step repairs — a cap, a
+lock, a queue depth, a temporary file — take the measurement at the moment the
+invariant is under stress, not after the system has had a chance to tidy up. If
+you get a negative result from a loop, ask what ran between the violation and
+your assertion.
+
 ## When something inexplicable happens, measure it
 
 **The reflex to attribute an anomaly to your own carelessness is the most
