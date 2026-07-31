@@ -1360,15 +1360,12 @@ function buildFilesystemTools(name: string): Tool[] {
         `List the contents of a directory in the csuite virtual filesystem. ` +
         `Your home is \`${home}\`; passing "/" lists the set of homes you can see. ` +
         `Entries include per-item metadata (kind, size, mime type, owner). ` +
-        `KNOWN DEFECT: listing \`/objectives/<id>/\` fails for everyone, by two ` +
-        `separate causes — non-directors get a 403 from a permission check that is ` +
-        `itself the defect, and directors get past that only to have the client ` +
-        `reject the response. Both are awaiting a fix. Do not read either failure ` +
-        `as "you lack access to this objective", and do not retry — nothing you ` +
-        `can pass will make it succeed. Other namespace operations differ: ` +
-        `\`fs_rm\` works, \`fs_write\`/\`fs_mkdir\`/\`fs_mv\` succeed but report ` +
-        `failure, \`fs_stat\`/\`fs_read\` fail outright. Use message and objective ` +
-        `attachments to share work-scoped files meanwhile.`,
+        `Listing \`/objectives/<id>\` works for members of that objective and for ` +
+        `directors; those entries are owned by \`obj:<id>\` rather than by a member. ` +
+        `PATHS MUST NOT END IN "/". Directories are DISPLAYED with a trailing slash ` +
+        `(\`/you/notes/\`) but are STORED without one, and the API rejects a trailing ` +
+        `slash as an invalid path — so strip it before passing a directory path from ` +
+        `this listing into any other call.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -1383,9 +1380,8 @@ function buildFilesystemTools(name: string): Tool[] {
       name: 'fs_stat',
       description:
         `Fetch metadata for a single path. Returns null if the path does not exist. ` +
-        `KNOWN DEFECT: fails for a path under \`/objectives/<id>/\` no matter who you ` +
-        `are — the entry is valid and the client rejects it while parsing. The error ` +
-        `does not mean the path is missing.`,
+        `Works under \`/objectives/<id>\` for members of that objective and for ` +
+        `directors. Paths must not end in "/".`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -1400,10 +1396,8 @@ function buildFilesystemTools(name: string): Tool[] {
         `Read the contents of a file. Text-like files (mime \`text/*\` or \`application/json\`) ` +
         `are returned as UTF-8; everything else is returned as base64. The response ` +
         `always includes the path, size, mime type, and either \`text\` or \`base64\`. ` +
-        `KNOWN DEFECT: fails for any path under \`/objectives/<id>/\`, for every viewer ` +
-        `including directors. This tool stats the file before reading it, and that stat ` +
-        `is what fails; the bytes themselves are served correctly at the HTTP layer, so ` +
-        `the file is intact and readable — just not through here. Do not retry.`,
+        `Works under \`/objectives/<id>\` for members of that objective and for ` +
+        `directors.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -1427,14 +1421,11 @@ function buildFilesystemTools(name: string): Tool[] {
           path: {
             type: 'string',
             description:
-              `Absolute path to write. Allowed under ${home} (your home), or ` +
-              `anywhere if you're a director. Writing under \`/objectives/<id>/\` ` +
-              `is intended to work for objective members and CURRENTLY MISREPORTS ` +
-              `ITS RESULT for every caller including directors: the server commits ` +
-              `the write, then the client fails validating the response and you are ` +
-              `told it errored. Do NOT retry such a write — the file is already ` +
-              `there, and you cannot read it back to check. Write to your home ` +
-              `instead until this is fixed.`,
+              `Absolute path to write. Allowed under ${home} (your home), anywhere ` +
+              `if you're a director, and under \`/objectives/<id>/\` if you are a ` +
+              `member of that objective — an objective namespace is the right place ` +
+              `for work-scoped files, and its entries are owned by \`obj:<id>\` ` +
+              `rather than by you.`,
           },
           mimeType: {
             type: 'string',
@@ -1461,9 +1452,8 @@ function buildFilesystemTools(name: string): Tool[] {
       name: 'fs_mkdir',
       description:
         `Create a directory. Pass recursive=true to auto-create missing parents. ` +
-        `Your home is ${home}. Returns the directory's FsEntry. KNOWN DEFECT: under ` +
-        `\`/objectives/<id>/\` the directory IS created and you are then told it ` +
-        `failed — the client rejects the returned entry. Do not retry.`,
+        `Your home is ${home}. Returns the directory's FsEntry. Works under ` +
+        `\`/objectives/<id>/\` for members of that objective and for directors.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -1496,9 +1486,8 @@ function buildFilesystemTools(name: string): Tool[] {
       description:
         `Rename / move a file. Directory moves are not currently supported. ` +
         `Both the source and destination must sit under a tree you own (or you must be a director). ` +
-        `Returns the FsEntry at the destination path. KNOWN DEFECT: when the destination ` +
-        `is under \`/objectives/<id>/\` the move COMMITS and is then reported as an error ` +
-        `— the client rejects the returned entry. Do not retry; the file has already moved.`,
+        `Returns the FsEntry at the destination path. A destination under ` +
+        `\`/objectives/<id>/\` works if you are a member of that objective, or a director.`,
       inputSchema: {
         type: 'object',
         properties: {
