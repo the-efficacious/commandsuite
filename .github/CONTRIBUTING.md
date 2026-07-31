@@ -239,6 +239,39 @@ invariant is under stress, not after the system has had a chance to tidy up. If
 you get a negative result from a loop, ask what ran between the violation and
 your assertion.
 
+### Every suite of negatives needs one positive control
+
+**A check that always says no satisfies every negative fixture you can write.**
+
+A validator was added to reject forged values: a path digest that wasn't a
+digest, a hash that wasn't a hash, an error code outside the finite set. Four
+tests asserted each forgery was refused, and all four passed. They would also
+have passed against a validator that discarded its input and returned nothing —
+which is a real possibility, because "drop anything that fails the shape check"
+is one typo away from "drop everything".
+
+So the fifth test asserts a *legitimate* value survives: a digest produced by
+the real constructor is still persisted. That one costs a line and is the only
+thing standing between the suite and a validator that has quietly stopped
+validating.
+
+The general form: whenever your tests are mostly *this must be rejected*, *this
+must be absent*, *this must not appear*, add at least one asserting the
+mechanism still admits what it should. Absence assertions are cheap to satisfy
+by breaking the thing that produces presence.
+
+This completes a three-part defence against a check whose answer was fixed
+before it ran:
+
+| | |
+|---|---|
+| **mutate** | delete or invert the thing and watch a *specific named* test fail |
+| **confirm it applied** | a mutation that silently didn't apply is indistinguishable from one that survived |
+| **positive control** | prove the check can pass when it should |
+
+The first two catch a test that cannot fail. The third catches a test that
+cannot pass.
+
 ## When something inexplicable happens, measure it
 
 **The reflex to attribute an anomaly to your own carelessness is the most
