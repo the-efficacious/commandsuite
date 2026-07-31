@@ -975,8 +975,25 @@ export function createApp(options: AppOptions): CreatedApp {
                     ? ('unevaluated' as const)
                     : ('ok' as const),
             };
-      if (activity === 'idle') return { ...p, ...captureField };
-      return { ...p, activity, busy: activity === 'working', ...captureField };
+      // Retained completeness failures for this member that have not
+      // been observed to recover. Same absence rule as `captureHealth`
+      // and NOT `activity`'s: absent means this broker retains no
+      // diagnostics and has no opinion — never "this member is clean".
+      // `0` is the positive statement that it looked and found none.
+      //
+      // This is the field an agent reads about ITSELF. Every failure it
+      // counts is one the product already detected and, until now,
+      // wrote to a terminal nobody kept — so the agent could not find
+      // out that its own capture had failed.
+      const diagField =
+        diagnostics === undefined
+          ? {}
+          : {
+              diagnosticsUnresolved: diagnostics.unresolved(p.name).length,
+              diagnosticsRetention: diagnostics.health(),
+            };
+      if (activity === 'idle') return { ...p, ...captureField, ...diagField };
+      return { ...p, activity, busy: activity === 'working', ...captureField, ...diagField };
     });
     return c.json({
       teammates: teammatesFromMembers(members),
