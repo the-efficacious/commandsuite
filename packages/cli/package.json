@@ -3,7 +3,7 @@
   "version": "0.3.1",
   "description": "CLI for csuite — wrap agents with csuite claude-code, push objectives, manage the team.",
   "license": "Apache-2.0",
-  "author": "Andrew Jon Przybilla <andrewjon@efficacious.io>",
+  "author": "Efficacious, Inc.",
   "homepage": "https://github.com/the-efficacious/commandsuite#readme",
   "repository": {
     "type": "git",

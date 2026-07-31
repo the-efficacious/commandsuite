@@ -3,7 +3,7 @@
   "version": "0.3.1",
   "description": "Preact team-view UI + runtime for CommandSuite — chat, objectives, files, members, tools, secrets. Host-agnostic; a host mounts it via <TeamShell>. Distributed as TypeScript source — build it with your host's bundler (Vite + @preact/preset-vite is the reference setup).",
   "license": "Apache-2.0",
-  "author": "Andrew Jon Przybilla <andrewjon@efficacious.io>",
+  "author": "Efficacious, Inc.",
   "homepage": "https://github.com/the-efficacious/commandsuite#readme",
   "repository": {
     "type": "git",
