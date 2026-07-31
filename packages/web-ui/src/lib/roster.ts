@@ -41,6 +41,31 @@ export function presenceActivity(p: Presence | undefined): ActivityState {
   return p.busy === true ? 'working' : 'idle';
 }
 
+/**
+ * Whether to warn a human that a member's verbatim capture has stopped.
+ *
+ * ABSENCE IS NOT HEALTH, and this reads the OPPOSITE way from
+ * `presenceActivity` above. There, an absent field means idle and that
+ * is a safe default. Here, an absent field means the broker is too old
+ * to have an opinion — so `undefined` is "no opinion", NOT "healthy",
+ * and it must not render as a green state.
+ *
+ * `'unevaluated'` is a positive statement that this broker cannot
+ * assess the member (currently Codex, whose markers carry no response
+ * id). It is distinct from both: the broker looked and declined, rather
+ * than not being asked.
+ *
+ * Returns `null` when there is nothing to tell a human — either no
+ * opinion exists, or capture is fine. Callers render only a non-null
+ * result, so the roster stays quiet on the healthy path.
+ */
+export function presenceCaptureWarning(p: Presence | undefined): 'gap' | 'unevaluated' | null {
+  if (!p) return null;
+  if (p.captureHealth === 'gap') return 'gap';
+  if (p.captureHealth === 'unevaluated') return 'unevaluated';
+  return null;
+}
+
 const REFRESH_MS = 10_000;
 
 export async function loadRoster(): Promise<RosterResponse> {
