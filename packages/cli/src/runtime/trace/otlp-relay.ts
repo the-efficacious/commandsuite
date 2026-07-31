@@ -41,11 +41,15 @@ interface OtlpAttribute {
   value?: { stringValue?: unknown };
 }
 
-function bodyRefsToInline(raw: unknown, spoolDir: string): { payload: unknown; refs: string[] } {
+function bodyRefsToInline(
+  raw: unknown,
+  spoolDir: string,
+): { payload: unknown; refs: string[]; unresolved: string[] } {
   const refs: string[] = [];
-  if (!raw || typeof raw !== 'object') return { payload: raw, refs };
+  const unresolved: string[] = [];
+  if (!raw || typeof raw !== 'object') return { payload: raw, refs, unresolved };
   const resourceLogs = (raw as { resourceLogs?: unknown }).resourceLogs;
-  if (!Array.isArray(resourceLogs)) return { payload: raw, refs };
+  if (!Array.isArray(resourceLogs)) return { payload: raw, refs, unresolved };
 
   for (const resource of resourceLogs) {
     if (!resource || typeof resource !== 'object') continue;
@@ -63,29 +67,34 @@ function bodyRefsToInline(raw: unknown, spoolDir: string): { payload: unknown; r
         const bodyRef = refAttr?.value?.stringValue;
         if (typeof bodyRef !== 'string' || bodyRef.length === 0) continue;
 
-        const absoluteRef = resolve(bodyRef);
-        const rel = relative(spoolDir, absoluteRef);
-        if (!isAbsolute(absoluteRef) || rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
-          throw new Error(`body_ref is outside the runner spool: ${bodyRef}`);
+        try {
+          const absoluteRef = resolve(bodyRef);
+          const rel = relative(spoolDir, absoluteRef);
+          if (!isAbsolute(absoluteRef) || rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
+            throw new Error('outside the runner spool');
+          }
+          const stat = statSync(absoluteRef);
+          if (!stat.isFile()) throw new Error('not a file');
+          if (stat.size > MAX_BODY_BYTES) throw new Error(`exceeds ${MAX_BODY_BYTES} bytes`);
+          const bytes = readFileSync(absoluteRef);
+          const text = bytes.toString('utf8');
+          if (!Buffer.from(text, 'utf8').equals(bytes)) {
+            throw new Error('not byte-exact UTF-8 JSON');
+          }
+          if (refAttr === undefined) continue;
+          refAttr.key = 'body';
+          refAttr.value = { stringValue: text };
+          refs.push(absoluteRef);
+        } catch (err) {
+          // Preserve the broker's established per-record degradation: leave
+          // this body_ref untouched and continue with healthy siblings. It is
+          // deliberately absent from the acknowledgement count.
+          unresolved.push(`${bodyRef}: ${err instanceof Error ? err.message : String(err)}`);
         }
-        const stat = statSync(absoluteRef);
-        if (!stat.isFile()) throw new Error(`body_ref is not a file: ${bodyRef}`);
-        if (stat.size > MAX_BODY_BYTES) {
-          throw new Error(`body_ref exceeds ${MAX_BODY_BYTES} bytes: ${bodyRef}`);
-        }
-        const bytes = readFileSync(absoluteRef);
-        const text = bytes.toString('utf8');
-        if (!Buffer.from(text, 'utf8').equals(bytes)) {
-          throw new Error(`body_ref is not byte-exact UTF-8 JSON: ${bodyRef}`);
-        }
-        if (refAttr === undefined) continue;
-        refAttr.key = 'body';
-        refAttr.value = { stringValue: text };
-        refs.push(absoluteRef);
       }
     }
   }
-  return { payload: raw, refs };
+  return { payload: raw, refs, unresolved };
 }
 
 function readRequestBody(req: IncomingMessage): Promise<Buffer> {
@@ -145,6 +154,12 @@ export async function startOtlpRelay(options: OtlpRelayOptions): Promise<OtlpRel
         const parsed = JSON.parse(input.toString('utf8')) as unknown;
         const transformed = bodyRefsToInline(parsed, spoolDir);
         refs = transformed.refs;
+        if (transformed.unresolved.length > 0) {
+          log('otlp-relay: raw body unavailable; forwarding record for broker-side skip', {
+            count: transformed.unresolved.length,
+            errors: transformed.unresolved,
+          });
+        }
         output = Buffer.from(JSON.stringify(transformed.payload), 'utf8');
       }
 
