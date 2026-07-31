@@ -258,8 +258,33 @@ export type Coverage = 'exact' | 'bucket' | 'indeterminate';
 /** Health of the retention subsystem itself (criterion 7). */
 export type RetentionHealth = 'healthy' | 'degraded' | 'unknown';
 
+/**
+ * Brand carried only by values the constructors below produce.
+ *
+ * The symbol is module-private, so a caller CANNOT write a `SafeFields`
+ * literal: `{ pathDigest: 'secret-path-fragment', pathLength: 20 }`
+ * fails to compile. Filtering field NAMES by a per-cause policy was not
+ * enough — it kept `pathDigest` for a path-permitted cause without
+ * establishing that the value ever went through `digestPath()`, so a
+ * caller could persist a raw path fragment in a field whose whole
+ * purpose is that raw paths are never stored.
+ *
+ * The type system owns this rather than a review convention, because a
+ * forged value is indistinguishable from a real one once written.
+ */
+declare const SAFE_BRAND: unique symbol;
+
 /** Safe, bounded context. Paths and error text never appear here. */
 export interface SafeFields {
+  /**
+   * Present only on constructor output. REQUIRED, not optional: an
+   * optional brand is satisfied by any literal that omits it, so the
+   * first version of this rejected nothing and a forged
+   * `{ pathDigest: 'secret-path-fragment' }` compiled. Caught by
+   * compiling the hostile literal rather than by assuming the brand
+   * worked.
+   */
+  readonly [SAFE_BRAND]: true;
   /** sha256(path) first 16 hex — recurrence without reconstruction. */
   pathDigest?: string;
   /** Length of the original path, in bytes. */
@@ -308,12 +333,36 @@ export function classifyError(err: unknown): string {
   return 'unclassified';
 }
 
-/** Digest a path for recurrence detection without retaining it. */
-export function digestPath(path: string): { pathDigest: string; pathLength: number } {
+/**
+ * Digest a path for recurrence detection without retaining it.
+ *
+ * The ONLY way to obtain a `pathDigest` the store will accept.
+ */
+export function digestPath(path: string): SafeFields {
   return {
     pathDigest: createHash('sha256').update(path, 'utf8').digest('hex').slice(0, 16),
     pathLength: Buffer.byteLength(path, 'utf8'),
-  };
+  } as SafeFields;
+}
+
+/** The only way to attach a content address. */
+export function safeHash(hash: string): SafeFields {
+  return { hash: hash.slice(0, 64) } as SafeFields;
+}
+
+/** The only way to attach a bounded count. */
+export function safeCount(n: number): SafeFields {
+  return { count: Math.trunc(n) } as SafeFields;
+}
+
+/** The only way to attach a classified error code. */
+export function safeError(err: unknown): SafeFields {
+  return { errorCode: classifyError(err) } as SafeFields;
+}
+
+/** Merge constructor outputs. Still unforgeable — inputs are branded. */
+export function safeFields(...parts: readonly SafeFields[]): SafeFields {
+  return Object.assign({}, ...parts) as SafeFields;
 }
 
 /**
@@ -326,9 +375,43 @@ export function digestPath(path: string): { pathDigest: string; pathLength: numb
  * The policy is a property of the cause, so it is applied here rather
  * than trusted at the call site.
  */
+const HEX16 = /^[0-9a-f]{16}$/;
+const HEX64 = /^[0-9a-f]{64}$/;
+
+/**
+ * Runtime shape validation, because the brand is compile-time only.
+ *
+ * A cast defeats the type, so every retained value must also LOOK like
+ * what it claims: a path digest is exactly 16 lowercase hex, a content
+ * address exactly 64, an error code a member of the finite set. A value
+ * that fails is dropped rather than stored — a field-name allowlist is
+ * not a value-provenance boundary.
+ */
+function validShape(f: SafeFields): SafeFields {
+  const out = {} as SafeFields;
+  if (typeof f.pathDigest === 'string' && HEX16.test(f.pathDigest)) {
+    out.pathDigest = f.pathDigest;
+    if (typeof f.pathLength === 'number' && Number.isFinite(f.pathLength)) {
+      out.pathLength = Math.trunc(f.pathLength);
+    }
+  }
+  if (typeof f.hash === 'string' && HEX64.test(f.hash)) out.hash = f.hash;
+  if (
+    typeof f.errorCode === 'string' &&
+    (KNOWN_ERROR_CODES.has(f.errorCode) ||
+      ['unclassified', 'SYNTAX', 'TYPE', 'RANGE'].includes(f.errorCode))
+  ) {
+    out.errorCode = f.errorCode;
+  }
+  if (typeof f.count === 'number' && Number.isFinite(f.count)) out.count = Math.trunc(f.count);
+  if (typeof f.kind === 'string' && /^[a-z_]{1,32}$/.test(f.kind)) out.kind = f.kind;
+  return out;
+}
+
 function sanitize(fields: SafeFields, allow: readonly FieldPolicy[]): SafeFields {
+  fields = validShape(fields);
   const ok = new Set(allow);
-  const out: SafeFields = {};
+  const out = {} as SafeFields;
   if (!ok.has('path')) {
     fields = { ...fields, pathDigest: undefined, pathLength: undefined };
   }
@@ -647,13 +730,20 @@ export function createDiagnosticStore(
     record(input: DiagnosticInput): void {
       const ts = now();
       const spec = CAUSE_SPEC[input.cause];
-      const fields = JSON.stringify(sanitize(input.fields ?? {}, spec.fields));
+      const fields = JSON.stringify(sanitize(input.fields ?? ({} as SafeFields), spec.fields));
       // Bounded, deduped fanout: a corrupt blob referenced by a very
       // large number of members must not turn one diagnostic into an
       // unbounded insert burst.
       const all = [...new Set(input.members ?? [])];
-      const named = all.slice(0, MAX_FANOUT);
-      const truncated = all.length - named.length;
+      // REFUSE the per-member attribution wholesale when it exceeds the
+      // bound. Keeping the first 256 is selection masquerading as
+      // completeness: no later query can know whether its member was
+      // 257, and the retained prefix reads as the complete affected
+      // set. One unattributed row plus a queryable loss fact is honest;
+      // a truncated list is not.
+      const overFanout = all.length > MAX_FANOUT;
+      const named = overFanout ? [] : all;
+      const truncated = overFanout ? all.length : 0;
       const members = named.length > 0 ? named : [UNATTRIBUTED];
       // Attribution comes from the CAUSE, never the caller — a caller
       // cannot pair `members: []` with `producer`, and cannot decide a
@@ -762,6 +852,32 @@ export function createDiagnosticStore(
 
       const evN = Number(ev.n ?? 0);
       const bkN = Number(bk.n ?? 0);
+
+      // A MEMBER-FILTERED query crossing a fanout refusal cannot be
+      // answered. The affected set for that instant was never stored,
+      // so "this member has no rows" and "this member was in the
+      // refused set" are indistinguishable — and returning `exact, 0`
+      // asserts the first. Unfiltered queries are unaffected: the
+      // global loss fact is exact.
+      if (opts.member !== undefined && evN + bkN === 0) {
+        const refused = db
+          .prepare(
+            `SELECT COALESCE(SUM(n),0) AS n FROM diagnostic_bucket
+              WHERE cause = 'retention.fanout_truncated'
+                AND bucket_start <= ? AND bucket_end > ?`,
+          )
+          .get(to, from) as { n: number };
+        if (Number(refused.n) > 0) {
+          return {
+            interval: { from, to },
+            resolution: 'none',
+            count: 0,
+            first: null,
+            last: null,
+            coverage: 'indeterminate',
+          };
+        }
+      }
 
       if (bkN === 0) {
         return {

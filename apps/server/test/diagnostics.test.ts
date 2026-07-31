@@ -23,6 +23,7 @@ import {
   createDiagnosticStore,
   DIAGNOSTIC_CAUSES,
   digestPath,
+  safeHash,
 } from '../src/diagnostics.js';
 
 const T0 = 1_800_000_000_000;
@@ -86,7 +87,7 @@ describe('safe context', () => {
       cause: 'correlator.body_ref_unreadable', // policy: ['path']
       members: ['turner'],
       // biome-ignore lint/suspicious/noExplicitAny: deliberately hostile input
-      fields: { ...digestPath('/tmp/x'), hash: 'abc', secret: '/etc/shadow' } as any,
+      fields: { ...digestPath('/tmp/x'), hash: 'a'.repeat(64), secret: '/etc/shadow' } as any,
     });
     const row = db.prepare('SELECT fields FROM diagnostic_event').get() as { fields: string };
     expect(row.fields).toContain('pathDigest'); // permitted
@@ -125,7 +126,7 @@ describe('attribution', () => {
     s.record({
       cause: 'rawstore.blob_hash_mismatch',
       members: ['turner', 'lea'],
-      fields: { hash: 'deadbeef' },
+      fields: safeHash('d'.repeat(64)),
     });
 
     expect(s.query({ member: 'turner', from: T0 - HOUR, to: T0 + HOUR }).count).toBe(1);
@@ -495,6 +496,54 @@ describe('checkpoint regressions', () => {
 
     const n = h.db.prepare('SELECT COUNT(*) AS n FROM diagnostic_bucket').get() as { n: number };
     expect(Number(n.n)).toBeLessThanOrEqual(1);
+  });
+
+  it('an omitted member reads INDETERMINATE, not an exact zero', () => {
+    // Rune's fixture: 300 affected members, then query m299. A global
+    // loss fact made the loss visible in aggregate but left the
+    // per-member answer confidently wrong — the retained prefix read as
+    // the complete affected set. Keeping the first 256 is selection
+    // masquerading as completeness, so the per-member attribution is
+    // now refused wholesale rather than truncated.
+    const h = store();
+    h.at(T0);
+    h.s.record({
+      cause: 'rawstore.blob_hash_mismatch',
+      members: Array.from({ length: 300 }, (_, i) => `m${i}`),
+    });
+
+    const omitted = h.s.query({ member: 'm299', from: T0 - HOUR, to: T0 + HOUR });
+    expect(omitted.coverage).toBe('indeterminate');
+    // And a member that WOULD have been in the retained prefix is
+    // equally unknown — the prefix is not a partial answer, it is no
+    // answer.
+    expect(h.s.query({ member: 'm0', from: T0 - HOUR, to: T0 + HOUR }).coverage).toBe(
+      'indeterminate',
+    );
+  });
+
+  it('a forged safe field cannot be constructed OR persisted', () => {
+    // The brand makes the literal fail to compile; validShape catches a
+    // cast, because a brand is compile-time only and a forged value is
+    // indistinguishable from a real one once written.
+    const { s, db } = store();
+    s.record({
+      cause: 'correlator.body_ref_unreadable',
+      members: ['m'],
+      // biome-ignore lint/suspicious/noExplicitAny: simulates a cast past the brand
+      fields: { pathDigest: 'secret-path-fragment', pathLength: 20 } as any,
+    });
+    const row = db.prepare('SELECT fields FROM diagnostic_event').get() as { fields: string };
+    expect(row.fields).not.toContain('secret-path-fragment');
+    expect(row.fields).toBe('{}');
+  });
+
+  it('a real digest from the constructor IS persisted', () => {
+    // The other direction: validation must not reject legitimate values.
+    const { s, db } = store();
+    s.record({ cause: 'correlator.body_ref_unreadable', members: ['m'], fields: digestPath('/x') });
+    const row = db.prepare('SELECT fields FROM diagnostic_event').get() as { fields: string };
+    expect(row.fields).toContain('pathDigest');
   });
 
   it('fanout truncation records a queryable loss instead of dropping members silently', () => {
