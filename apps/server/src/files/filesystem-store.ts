@@ -386,13 +386,24 @@ class SqliteFilesystemStore implements FilesystemStore {
         .map((r) => this.withCapability(rowToEntry(r), viewer));
     }
 
-    if (!viewer.permissions.includes('members.manage') && !this.ownsPath(normalized, viewer)) {
+    // `canRead`, not `ownsPath`. Objective namespaces are owned by
+    // `obj:<id>` and by no member, so an ownership test refuses every
+    // member of the objective — including its assignee. `canRead`
+    // already resolves objective membership and grants, and `stat`,
+    // `read` and `listShared` all gate on it; `list` was the one that
+    // did not, which is why `fs_ls /objectives/<id>` returned 403 to
+    // the person the namespace was created for.
+    if (!this.canRead(normalized, viewer)) {
       throw new FsError('forbidden', `cannot list ${normalized}`);
     }
     const target = this.getEntryStmt.get(normalized) as FsEntryRow | undefined;
     if (!target) {
-      // Owner listing their own non-existent home is fine — return empty.
-      if (this.ownsPath(normalized, viewer) || viewer.permissions.includes('members.manage')) {
+      // Owner listing their own non-existent home is fine — return
+      // empty. Same for an objective member whose namespace has no
+      // files yet: the namespace exists as a concept before anything
+      // is written to it, and 404 there is indistinguishable from
+      // "you may not look".
+      if (this.canRead(normalized, viewer)) {
         return [];
       }
       throw new FsError('not_found', `no such path: ${normalized}`);

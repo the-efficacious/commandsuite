@@ -343,59 +343,28 @@ describe('SDK response contract', () => {
     );
   });
 
-  // ─── The known instance — currently DIVERGENT, deliberately ────────
+  // Converted from a pinned KNOWN DIVERGENCE on 2026-07-30, which is
+  // what the inverted assertion existed to force. `FsEntrySchema.owner`
+  // is now `FsOwnerSchema` — a member name OR `obj:<objective-id>` —
+  // so the namespace entry parses and this joins every other endpoint
+  // here as an ordinary contract check.
   //
-  // This asserts the EXACT divergence rather than "this test fails".
-  //
-  // An earlier version wrapped the whole body in `it.fails`. That was
-  // wrong: `it.fails` inverts the ENTIRE callback, so a fixture, auth,
-  // routing, status, JSON or import failure satisfies it just as well as
-  // the schema divergence does. Rune demonstrated it — swapping the token
-  // for an invalid one made the endpoint fail before any parse could
-  // happen, and the file still reported 9 passed + 1 expected fail, exit
-  // 0. The red case cried green for an unrelated reason.
-  //
-  // The general rule, worth more than this test: AN INVERTED ASSERTION
-  // MUST INVERT ONLY THE ASSERTION. So below, the fetch and the status
-  // check sit on the NORMAL failure path, and only the parse is
-  // inverted — pinned to one field and one issue code.
-  //
-  // Self-correction is preserved: when `FsEntrySchema.owner` widens,
-  // `safeParse` starts succeeding, these assertions fail, and whoever
-  // landed the fix is told to convert this case to
-  // `expectMatchesContract()` like every other endpoint here.
-  //
-  // The divergence: `/fs/stat` returns 200 with a correct entry whose
-  // `owner` is `obj:<id>`. `FsEntrySchema.owner` is `NameSchema`, which
-  // rejects the colon. The fix is proposed and NOT applied — it widens a
-  // schema in a published package, which is AndrewJon's call
-  // (obj-ms7bqy3n-d).
-  it('GET /fs/stat on an OBJECTIVE NAMESPACE path — KNOWN DIVERGENCE at entry.owner', async () => {
+  // Keeping the history because the failure mode was unusual: the
+  // server always responded correctly and the SDK client threw parsing
+  // that successful response, so the break was client-side and
+  // viewer-independent. Validation ran after the write had committed.
+  it('GET /fs/stat on an objective namespace path matches the published contract', async () => {
     const { app } = makeApp();
     const obj = await seedObjectiveWithFile(app);
+    const path = `/fs/stat?path=${encodeURIComponent(`/objectives/${obj.id}/spec.txt`)}`;
 
-    // Normal path. A break in any of this is a real failure, not an
-    // expected one, and must not be swallowed by the inversion below.
-    const res = await app.request(
-      `/fs/stat?path=${encodeURIComponent(`/objectives/${obj.id}/spec.txt`)}`,
-      authed(ALICE),
-    );
-    expect(res.status, 'server should still serve the namespace entry').toBe(200);
-    const body = (await res.json()) as { entry: { owner: string } };
+    await expectMatchesContract(app, path, authed(ALICE), FsEntryResponseSchema);
+
+    // The owner really is the objective form — otherwise this would
+    // pass by never exercising the widened branch at all.
+    const body = (await (await app.request(path, authed(ALICE))).json()) as {
+      entry: { owner: string };
+    };
     expect(body.entry.owner, 'fixture should produce an obj: owner').toBe(`obj:${obj.id}`);
-
-    // Only the parse is inverted, and only for this one field.
-    const parsed = FsEntryResponseSchema.safeParse(body);
-    expect(
-      parsed.success,
-      'FsEntry.owner appears to have been widened — convert this case to expectMatchesContract().',
-    ).toBe(false);
-    if (parsed.success) return;
-    const issue = parsed.error.issues.find((i) => i.path.join('.') === 'entry.owner');
-    expect(
-      issue,
-      'divergence is no longer at entry.owner — investigate before changing this',
-    ).toBeDefined();
-    expect(issue?.code).toBe('invalid_format');
   });
 });

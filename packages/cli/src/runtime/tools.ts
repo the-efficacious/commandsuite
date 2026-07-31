@@ -364,50 +364,32 @@ export function defineTools(
     // at objective-create time are mirrored there automatically, and
     // the server-side membership ACL is real.
     //
-    // INTENDED DESIGN, NOT CURRENT BEHAVIOUR: collaborative
-    // read/write/delete by every member (originator + assignee +
-    // watchers) is what this is FOR, and it does not work today for
-    // members who are not directors. Two live defects, diagnosed under
-    // objective `obj-ms7bqy3n-d` and awaiting a decision because the
-    // fix touches a published package:
+    // Collaborative read/write/delete by every member of an objective
+    // (originator + assignee + watchers) is what this namespace is FOR,
+    // and it works. It did not until 2026-07-30, and the two defects
+    // are recorded here because their shape is worth keeping:
     //
-    //   1. `filesystem-store.ts` non-root `list()` gates on
-    //      `members.manage || ownsPath` and never calls `canRead()`, so
-    //      a non-director member listing the namespace gets 403.
-    //   2. Every namespace `FsEntry` has owner `obj:<id>`, and
-    //      `FsEntrySchema.owner` is `NameSchema`, whose pattern
-    //      excludes `:`. The server responds correctly — the raw
-    //      `GET /fs/read` route returns 200 with the full bytes — and
-    //      the SDK client then throws parsing that successful response.
+    //   1. `filesystem-store.ts` non-root `list()` gated on
+    //      `members.manage || ownsPath` and never called `canRead()`.
+    //      An objective namespace is owned by `obj:<id>` and by no
+    //      member, so an ownership test refused every member of the
+    //      objective, including its assignee. `stat`, `read` and
+    //      `listShared` all gated on `canRead` already; `list` was the
+    //      one that did not.
+    //   2. `FsEntrySchema.owner` was `NameSchema`, whose pattern
+    //      excludes `:`, so every namespace entry failed the schema
+    //      shipped alongside the code producing it. The server
+    //      responded correctly and the SDK client threw parsing that
+    //      successful response.
     //
-    // Defect 2 is VIEWER-INDEPENDENT: the parse is client-side and
-    // keys off the owner VALUE, not the caller, so it fails for
-    // directors exactly as it does for members. Whether a given tool
-    // breaks therefore depends only on whether its client method
-    // parses an `FsEntry` — which makes the matrix uneven, not
-    // uniform. Measured per operation:
-    //
-    //   fs_ls    non-director → 403 (defect 1); director → gets past
-    //            the gate and then fails the parse (defect 2).
-    //   fs_stat  fails for every viewer.
-    //   fs_read  fails for every viewer — `handleFsRead` calls
-    //            `fsStat` before fetching bytes, so it throws before
-    //            reaching the raw read. "Exact-path reads work" is
-    //            true of `GET /fs/read` and FALSE of this tool.
-    //   fs_write
-    //   fs_mkdir COMMIT server-side, then fail parsing the returned
-    //   fs_mv    entry and report an error for work that succeeded.
-    //   fs_rm    WORKS. `fsRm` returns void, parses nothing, and
-    //            `handleFsRm` has no stat preflight.
-    //   fs_shared unaffected — it never enumerates membership-only
-    //            namespace entries, so no `obj:` owner reaches it.
-    //
-    // Note the shape of that: the only namespace operation an agent
-    // can complete and be told the truth about is the DESTRUCTIVE one.
-    // Do not compress this to "the namespace doesn't work" — the
-    // per-tool descriptions below carry the caveat individually,
-    // because each is a standalone spec an agent may reach without
-    // having read any other.
+    // Defect 2's failure mode is the one to remember: validation ran on
+    // the RESPONSE, after the write had committed. `fs_write` and
+    // `fs_mkdir` reported an error for work that had already succeeded,
+    // so an agent that retried hit a collision on a file it was told it
+    // never wrote, and one that gave up left a file it did not know
+    // existed. `fs_rm` alone "worked" throughout — it returns void and
+    // parses nothing. The only namespace operation an agent could
+    // complete and be told the truth about was the destructive one.
     ...buildFilesystemTools(name),
     // ── Permission-gated tools ──────────────────────────────────────
     //
