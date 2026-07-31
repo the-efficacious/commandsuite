@@ -184,6 +184,38 @@ people to regenerate the golden without reading it. And where the type system ca
 make the wrong thing unrepresentable, that is better than either: tests are the
 backstop, types are the fix.
 
+### Name the string the deliverable must produce, then grep the tests for it
+
+**A test that proves a helper does not prove its callers exist.**
+
+A capture-health warning shipped with seven tests on the function that computes
+it — absence rules, polarity, every state. All seven passed. Deleting the badge
+markup from *both* screens that were supposed to render it left all seven still
+passing. The helper was proven; the thing the work existed to deliver was not.
+
+It was found in one command:
+
+```
+rg 'NO CAPTURE|CAPTURE UNCHECKED' packages/web-ui/test   →   zero
+```
+
+A grep for the exact string the surface must render, run against the tests that
+claim to prove it renders. That is the whole technique. It took seconds and
+found what a full mutation suite over the helper had missed, because those
+mutations were all *inside* the layer that was already covered.
+
+Do this whenever the deliverable is something a person or an agent has to
+actually see: a badge, a log line, a tool description, a field on a response.
+Then add the assertion that greps for — a component render, an end-to-end
+response body — and **delete each producer independently** to watch its own test
+fail.
+
+Why a rule and not just care: this failure appeared **seven times in one working
+session across four people**, including twice by authors who had written down
+this exact failure mode and had their own note open. Knowing the shape does not
+fire mid-task. A grep does not require you to have the right instinct at the
+right moment, which is precisely what fails.
+
 ## When something inexplicable happens, measure it
 
 **The reflex to attribute an anomaly to your own carelessness is the most
