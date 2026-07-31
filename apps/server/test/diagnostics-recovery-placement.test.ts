@@ -56,6 +56,11 @@ function makeApp() {
     activityStore: createSqliteActivityStore(activityDb, quiet),
     telemetryStore: createTelemetryStore(activityDb, { logger: quiet }),
     genaiStore: createGenAiStore(activityDb, { logger: quiet }),
+    // POST /members/:name/genai is gated on rawBodyStore, not just
+    // genaiStore — the codex route content-addresses bodies before
+    // mapping them. Omitting it made the route 404 and the codex
+    // fixture fail for a reason unrelated to recovery placement.
+    rawBodyStore: createRawBodyStore(activityDb, { logger: quiet }),
     diagnostics,
   });
   return { app, diagnostics, db, activityDb };
@@ -310,5 +315,99 @@ describe('correlator recovery — positive controls', () => {
     );
     rmSync(file, { force: true });
     db.close();
+  });
+});
+
+/**
+ * The last three recovery families, driven through their real routes.
+ *
+ * These were briefly left as "named residuals". They are not
+ * irreducible uncertainty — they are executable production paths with
+ * existing harnesses, so naming them was coverage work deferred, not a
+ * limit disclosed. Each has distinct success preconditions and can
+ * independently become unreachable while the reference census stays
+ * green.
+ */
+function claudeCallBatch() {
+  // A full request/response pair, so the correlator emits an inference
+  // and `genaiStore.append` actually runs. A body-only batch (above)
+  // deliberately does not.
+  const attrs = (eventName: string, values: Record<string, string>) => [
+    { key: 'event.name', value: { stringValue: `claude_code.${eventName}` } },
+    ...Object.entries(values).map(([key, value]) => ({ key, value: { stringValue: value } })),
+  ];
+  return {
+    resourceLogs: [
+      {
+        scopeLogs: [
+          {
+            logRecords: [
+              {
+                timeUnixNano: '1700000000000000000',
+                attributes: attrs('api_request_body', {
+                  body: JSON.stringify({ model: 'claude-opus-4-6', messages: [] }),
+                  model: 'claude-opus-4-6',
+                }),
+              },
+              {
+                timeUnixNano: '1700000001000000000',
+                attributes: attrs('api_request', {
+                  request_id: 'req_1',
+                  model: 'claude-opus-4-6',
+                }),
+              },
+              {
+                timeUnixNano: '1700000002000000000',
+                attributes: attrs('api_response_body', {
+                  body: JSON.stringify({ id: 'msg_1', content: [], usage: {} }),
+                  request_id: 'req_1',
+                }),
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+}
+
+describe('recovery placement — the remaining families', () => {
+  it('a batch that DOES produce an inference clears the genai incident', async () => {
+    const { app, diagnostics } = makeApp();
+    diagnostics.emit.otlpGenaiIngestFailed('turner', 5);
+    expect(causes(diagnostics)).toContain('otlp.genai_ingest_failed');
+
+    const res = await post(app, '/otlp/v1/logs', claudeCallBatch());
+
+    expect(res.status).toBe(200);
+    expect(causes(diagnostics)).not.toContain('otlp.genai_ingest_failed');
+    // History survives the recovery.
+    expect(
+      diagnostics.query({ member: 'turner', from: 0, to: Date.now() + 60_000 }).count,
+    ).toBeGreaterThan(0);
+  });
+
+  it('an accepted codex bundle clears the codex incident', async () => {
+    const { app, diagnostics } = makeApp();
+    diagnostics.emit.codexGenaiIngestEntryFailed('turner');
+    expect(causes(diagnostics)).toContain('codex.genai_ingest_entry_failed');
+
+    const b64 = (v: unknown) => Buffer.from(JSON.stringify(v), 'utf8').toString('base64');
+    const res = await post(app, '/members/turner/genai', {
+      inferences: [
+        {
+          requestBase64: b64({ model: 'gpt-5.5', input: [] }),
+          responseBase64: b64({ response_id: 'resp_1', output_items: [] }),
+          model: 'gpt-5.5',
+          responseId: 'resp_1',
+          threadId: 'thread-1',
+          querySource: 'codex_main_thread',
+          ts: 1_700_000_000_000,
+        },
+      ],
+    });
+
+    expect(res.status).toBe(200);
+    expect(causes(diagnostics)).not.toContain('codex.genai_ingest_entry_failed');
   });
 });
