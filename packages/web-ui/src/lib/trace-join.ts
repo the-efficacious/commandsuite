@@ -66,6 +66,8 @@ export interface TurnJoin<T extends JoinableCall> {
   exchange: ActivityLlmExchange;
   /** The turn's inference records, ts-ascending. Often 1 (Claude), N (codex), or 0 (body never exported). */
   calls: T[];
+  /** How the rich record layer related to this marker. */
+  match: 'exact' | 'containment' | 'unmatched-exact' | 'unmatched';
 }
 
 export interface JoinResult<T extends JoinableCall> {
@@ -128,8 +130,9 @@ export function joinTurns<T extends JoinableCall>(
   // Pass 2 — interval containment for the rest. Each remaining call
   // picks the turn whose window it falls into (same source class,
   // compatible model); ties go to the window it sits deepest inside,
-  // then the nearest start. Exactly-matched exchanges don't
-  // participate — their call identity is already known, and a stray
+  // then the nearest start. Id-bearing exchanges don't participate:
+  // their call identity is asserted whether or not its record arrived,
+  // and a stray
   // main-thread record in their window (e.g. a compaction call the
   // transcript never logged) should surface as an orphan instead of
   // being silently glued to the wrong turn.
@@ -140,7 +143,7 @@ export function joinTurns<T extends JoinableCall>(
     let bestOutside = Number.POSITIVE_INFINITY;
     let bestStartDelta = Number.POSITIVE_INFINITY;
     exchanges.forEach((ex, exIndex) => {
-      if (exactMatched.has(exIndex)) return;
+      if (typeof ex.entry.response?.responseId === 'string') return;
       if (sourceClass(ex.querySource) !== callClass) return;
       const exModel = ex.entry.request.model;
       if (exModel !== null && call.model !== null && exModel !== call.model) return;
@@ -163,10 +166,18 @@ export function joinTurns<T extends JoinableCall>(
     }
   }
 
-  const turns = exchanges.map((ex, exIndex) => {
+  const turns = exchanges.map((ex, exIndex): TurnJoin<T> => {
     const list = turnCalls.get(exIndex) ?? [];
     list.sort((a, b) => a.ts - b.ts);
-    return { exchange: ex, calls: list };
+    const match =
+      list.length > 0
+        ? exactMatched.has(exIndex)
+          ? 'exact'
+          : 'containment'
+        : typeof ex.entry.response?.responseId === 'string'
+          ? 'unmatched-exact'
+          : 'unmatched';
+    return { exchange: ex, calls: list, match };
   });
   const orphans = calls.filter((c) => !used.has(c.id)).sort((a, b) => a.ts - b.ts);
   return { turns, orphans };

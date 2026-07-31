@@ -184,6 +184,136 @@ people to regenerate the golden without reading it. And where the type system ca
 make the wrong thing unrepresentable, that is better than either: tests are the
 backstop, types are the fix.
 
+### Name the string the deliverable must produce, then grep the tests for it
+
+**A test that proves a helper does not prove its callers exist.**
+
+A capture-health warning shipped with seven tests on the function that computes
+it — absence rules, polarity, every state. All seven passed. Deleting the badge
+markup from *both* screens that were supposed to render it left all seven still
+passing. The helper was proven; the thing the work existed to deliver was not.
+
+It was found in one command:
+
+```
+rg 'NO CAPTURE|CAPTURE UNCHECKED' packages/web-ui/test   →   zero
+```
+
+A grep for the exact string the surface must render, run against the tests that
+claim to prove it renders. That is the whole technique. It took seconds and
+found what a full mutation suite over the helper had missed, because those
+mutations were all *inside* the layer that was already covered.
+
+Do this whenever the deliverable is something a person or an agent has to
+actually see: a badge, a log line, a tool description, a field on a response.
+Then add the assertion that greps for — a component render, an end-to-end
+response body — and **delete each producer independently** to watch its own test
+fail.
+
+Why a rule and not just care: this failure appeared **repeatedly in a single
+working session, across most of the people in it** — including twice by authors
+who had written down this exact failure mode and had their own note open at the
+time. Knowing the shape does not fire mid-task. A grep does not require you to
+have the right instinct at the right moment, which is precisely what fails.
+
+(An earlier draft of this paragraph gave a precise count. It was wrong, in the
+direction that made the rule sound better, and it was corrected by someone
+checking it against the list. A house standard should not open with an inflated
+tally of the thing it is arguing about — and a number that needs maintaining
+will rot, while the mechanism will not.)
+
+### Sample on the operation, not after it
+
+**A probe that samples after the next operation cannot observe a transient
+violation.** Any invariant that is restored quickly is invisible to a check that
+looks late — and **a bound that holds only between operations is not a bound.**
+
+A store with a hard row cap deleted exactly to the cap and then inserted one
+more row recording that the cap had been hit, leaving it one over. The author's
+probe recorded many rows in a loop, then counted: the overshoot had already been
+corrected by the next enforcement, so the probe returned a clean result and the
+defect was invisible. A second probe that stopped *on* the enforcement measured
+two rows under a cap of one.
+
+The clean result was an artefact of where sampling stopped. This is the same
+failure as a check that cannot fail, wearing the opposite sign: instead of a
+green that proves nothing, a **negative result that proves nothing**.
+
+So when you are checking an invariant that some later step repairs — a cap, a
+lock, a queue depth, a temporary file — take the measurement at the moment the
+invariant is under stress, not after the system has had a chance to tidy up. If
+you get a negative result from a loop, ask what ran between the violation and
+your assertion.
+
+### Every suite of negatives needs one positive control
+
+**A check that always says no satisfies every negative fixture you can write.**
+
+A validator was added to reject forged values: a path digest that wasn't a
+digest, a hash that wasn't a hash, an error code outside the finite set. Four
+tests asserted each forgery was refused, and all four passed. They would also
+have passed against a validator that discarded its input and returned nothing —
+which is a real possibility, because "drop anything that fails the shape check"
+is one typo away from "drop everything".
+
+So the fifth test asserts a *legitimate* value survives: a digest produced by
+the real constructor is still persisted. That one costs a line and is the only
+thing standing between the suite and a validator that has quietly stopped
+validating.
+
+The general form: whenever your tests are mostly *this must be rejected*, *this
+must be absent*, *this must not appear*, add at least one asserting the
+mechanism still admits what it should. Absence assertions are cheap to satisfy
+by breaking the thing that produces presence.
+
+This completes a defence against a check whose answer was fixed before it ran:
+
+| | | |
+|---|---|---|
+| **mutate** | delete or invert the thing and watch a *specific named* test fail | author-side |
+| **confirm it applied** | a mutation that silently didn't apply is indistinguishable from one that survived | author-side |
+| **positive control** | prove the check can pass when it should | author-side |
+| **a second measurer** | someone else measuring the same system disagrees with your result | structural |
+
+The first catches a test that cannot fail; the second catches a mutation that
+never ran; the third catches a test that cannot pass.
+
+**The fourth exists because the first three share a blind spot.** They are all
+things the author does, so they all fail together when the author's *frame* is
+wrong rather than their code. A probe once passed OTEL's `key=value` header
+format to curl, which needs `key: value` — no credential was ever sent, and the
+401 it measured was its own malformed input. Mutating that probe finds nothing:
+it was internally consistent, and every author-side check would have agreed with
+it. What caught it was a colleague's unrelated row count contradicting the
+result, before it had reached anyone's decision.
+
+So when a check's *frame* is the thing in question, no amount of author-side
+discipline reaches it. That is what *author proposes, partner verifies* is for,
+and it is the only one of these that fires **before** publication rather than
+after.
+
+### Make “this must not compile” executable
+
+**A comment saying an API must reject a call does not establish that it does.**
+Put the hostile call in a typechecked fixture and invert the assertion with
+`@ts-expect-error`:
+
+```ts
+// @ts-expect-error — arbitrary recovery must not exist on the public surface
+publicStore.resolve('malformed_row_skipped', 'member')
+```
+
+When the boundary is closed, the compiler error is expected and the fixture
+passes. If a refactor accidentally makes the call legal, TypeScript reports
+`TS2578: Unused '@ts-expect-error' directive` and fails the build. The negative
+claim therefore cannot silently rot into a comment that nobody recompiles.
+
+This is especially useful for checking an architectural boundary with several
+routes. Enumerate them separately — a generic write method, a generic recovery
+method, a point-cause recovery — because closing one route does not establish
+that the boundary is closed. Add a nearby valid call as a positive control so
+the fixture also proves the public API remains usable.
+
 ## When something inexplicable happens, measure it
 
 **The reflex to attribute an anomaly to your own carelessness is the most

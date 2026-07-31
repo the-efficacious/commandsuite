@@ -453,6 +453,25 @@ describe('TracePanel — genai enrichment', () => {
     expect(screen.queryByText(/system instructions/)).toBeNull();
   });
 
+  it('renders a failed exact identity as unmatched while its compatible spare stays a sidecar', async () => {
+    const ex = mkExchange({ ts: 1_700_000_000_000, responseId: 'msg_missing' });
+    const spare = mkInference({
+      id: 9,
+      ts: 1_700_000_000_100,
+      responseId: 'msg_spare',
+    });
+    stubRouted(
+      { activity: [{ id: 1, memberName: 'engineer-1', createdAt: ex.ts, event: ex }] },
+      { inferences: [spare] },
+    );
+    render(<TracePanel objective={objective} />);
+
+    await waitFor(() => expect(screen.getByText(/LLM turns \(1 · 1 sidecar\)/)).toBeTruthy());
+    expect(screen.getByText(/capture unmatched/)).toBeTruthy();
+    expect(screen.queryByText(/marker only/)).toBeNull();
+    expect(screen.getByText(/You are Claude Code, full block\./)).toBeTruthy();
+  });
+
   it('renders turnless records as attributed sidecar rows', async () => {
     const ex = mkExchange({ ts: 1_700_000_000_000, responseId: 'msg_A' });
     const main = mkInference({ id: 1, ts: 1_700_000_000_000, responseId: 'msg_A' });

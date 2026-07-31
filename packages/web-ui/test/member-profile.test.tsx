@@ -854,6 +854,49 @@ describe('AgentTimeline — turn spine rendering', () => {
     });
   });
 
+  it('distinguishes a failed exact identity from an id-less marker-only turn', async () => {
+    briefing.value = COMMANDER_BRIEFING;
+    memberActivityName.value = 'engineer-1';
+    routeGenaiRecord(null);
+    const event = LLM_ROW.event;
+    if (event.kind !== 'llm_exchange') throw new Error('expected llm exchange fixture');
+    const response = event.entry.response;
+    if (response == null) throw new Error('expected response fixture');
+    const idBearing: ActivityRow = {
+      ...LLM_ROW,
+      event: {
+        ...event,
+        entry: {
+          ...event.entry,
+          response: {
+            stopReason: response.stopReason ?? null,
+            stopSequence: response.stopSequence ?? null,
+            messages: response.messages ?? [],
+            usage: response.usage ?? null,
+            status: response.status ?? null,
+            responseId: 'msg_missing',
+          },
+        },
+      },
+    };
+    memberActivityRows.value = [idBearing];
+    memberGenAiCalls.value = [];
+    memberGenAiCallsReady.value = true;
+    memberActivityLoading.value = false;
+
+    const { container } = render(<AgentTimeline />);
+    const details = [...container.querySelectorAll('details')].find((d) =>
+      d.querySelector('summary')?.textContent?.includes('full context'),
+    );
+    (details as HTMLDetailsElement).open = true;
+    details?.dispatchEvent(new Event('toggle'));
+
+    await waitFor(() => {
+      expect((container.textContent ?? '').toLowerCase()).toContain('capture unmatched');
+      expect((container.textContent ?? '').toLowerCase()).not.toContain("wasn't captured");
+    });
+  });
+
   it('renders turnless calls as attributed ghost rows, toggleable via the api-calls chip', async () => {
     __resetAgentTimelineForTests();
     briefing.value = COMMANDER_BRIEFING;
