@@ -229,6 +229,67 @@ describeIfBuilt('runner + bridge end-to-end', () => {
     expect(completeTool?.description).toContain('acceptance');
   });
 
+  it('no fs tool description tells an agent the objective namespace is broken', async () => {
+    // A tool description is a SPECIFICATION. It sits in every agent's
+    // context and is the only spec an agent has for a tool whose source it
+    // cannot read, so a description that is wrong is not a documentation
+    // nit — it is the tool being wrong for every caller at once.
+    //
+    // This exact class shipped. `fs_ls`/`fs_stat`/`fs_read`/`fs_write`/
+    // `fs_mkdir`/`fs_mv` all carried "KNOWN DEFECT" notices telling agents
+    // the objective namespace failed and to write to their home instead.
+    // Those defects were fixed in 0.3.1 (#54) — and the notices shipped in
+    // the SAME artifact as the fix, so the published package documented its
+    // own working feature as broken.
+    //
+    // The measured cost, on 2026-07-31: a teammate routed his evidence
+    // around the namespace on the doc's instruction, and then — when he hit
+    // a genuine, unrelated defect — read it as the documented one, because
+    // the text had pre-loaded a wrong explanation. A stale "known defect"
+    // notice does not only waste the work it deflects; it consumes the
+    // signal from the next real failure.
+    //
+    // WHAT THIS TEST IS. A guard against re-introducing the specific
+    // language, not a proof that the descriptions are accurate — no test
+    // can check prose against behaviour. The BEHAVIOUR these descriptions
+    // now claim is established separately, in
+    // `apps/server/test/files/objective-namespace.test.ts`. If that file
+    // ever goes red, this test will still pass and will then be asserting
+    // something false. They belong to each other.
+    send({ jsonrpc: '2.0', id: 99, method: 'tools/list', params: {} });
+    const response = await waitForMessage((m) => m.id === 99);
+    const result = response.result as {
+      tools: Array<{ name: string; description: string; inputSchema?: unknown }>;
+    };
+
+    const fsTools = result.tools.filter((t) => t.name.startsWith('fs_'));
+    expect(fsTools.length, 'fixture must actually expose fs tools').toBeGreaterThan(0);
+
+    // The vocabulary that shipped. Matched over the whole tool JSON because
+    // `fs_write` carried its notice on a nested property description, not
+    // on the tool's own `description` — checking only the top level would
+    // have missed the worst instance of the six.
+    for (const tool of fsTools) {
+      const blob = JSON.stringify(tool);
+      for (const phrase of ['KNOWN DEFECT', 'MISREPORTS', 'Do not retry', 'until this is fixed']) {
+        expect(blob, `${tool.name} still warns agents off a working surface`).not.toContain(phrase);
+      }
+    }
+
+    // The positive half. Absence alone would also pass if someone deleted
+    // every mention of objective namespaces, which would leave an agent
+    // with no idea the surface exists.
+    const fsWrite = fsTools.find((t) => t.name === 'fs_write');
+    expect(JSON.stringify(fsWrite)).toContain('/objectives/<id>/');
+
+    // The one namespace-adjacent gotcha that IS live: `fs_ls` renders
+    // directories with a trailing slash that the path schema rejects, so
+    // the listing's own output is not valid input. Documented until that is
+    // fixed; delete this assertion when it is, not before.
+    const fsLs = fsTools.find((t) => t.name === 'fs_ls');
+    expect(fsLs?.description).toContain('MUST NOT END IN "/"');
+  });
+
   it('send tool issues POST /push to the broker via runner dispatch', async () => {
     send({
       jsonrpc: '2.0',
