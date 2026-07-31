@@ -210,11 +210,17 @@ Then add the assertion that greps for — a component render, an end-to-end
 response body — and **delete each producer independently** to watch its own test
 fail.
 
-Why a rule and not just care: this failure appeared **seven times in one working
-session across four people**, including twice by authors who had written down
-this exact failure mode and had their own note open. Knowing the shape does not
-fire mid-task. A grep does not require you to have the right instinct at the
-right moment, which is precisely what fails.
+Why a rule and not just care: this failure appeared **repeatedly in a single
+working session, across most of the people in it** — including twice by authors
+who had written down this exact failure mode and had their own note open at the
+time. Knowing the shape does not fire mid-task. A grep does not require you to
+have the right instinct at the right moment, which is precisely what fails.
+
+(An earlier draft of this paragraph gave a precise count. It was wrong, in the
+direction that made the rule sound better, and it was corrected by someone
+checking it against the list. A house standard should not open with an inflated
+tally of the thing it is arguing about — and a number that needs maintaining
+will rot, while the mechanism will not.)
 
 ### Sample on the operation, not after it
 
