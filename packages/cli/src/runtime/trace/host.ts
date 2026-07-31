@@ -33,23 +33,21 @@
  * transcript. The ONE content flag we DO set is
  * `OTEL_LOG_RAW_API_BODIES=file:<dir>`: FILE mode makes Claude write the
  * COMPLETE untruncated Anthropic request/response bodies to a per-runner
- * directory and emit a `body_ref` file path on each OTEL log record. The
- * broker resolves those refs into the authoritative full-context gen_ai
- * inference records (a NEW additive layer, distinct from the transcript).
+ * directory and emit a `body_ref` file path on each OTEL log record. A
+ * runner-local relay resolves those refs and forwards inline bodies to the
+ * broker's authoritative full-context gen_ai inference layer.
  * For codex the runner's app-server adapter is the source (no
  * transcript). Either way the sink is identical.
  *
  * Everything is loopback-only (the hook server) and scoped to the
  * runner's lifetime. On `close()` the uploader drains (best-effort),
  * and the transcript reader + hook server tear down. The raw-bodies
- * dir is deliberately LEFT IN PLACE at close: the BROKER owns file
- * deletion (it captures each body's bytes into its content-addressed
- * store and unlinks the file after capture), so removing the dir here
- * would destroy any not-yet-captured tail of the session. Dirs
- * orphaned by dead runners are swept at the NEXT host start instead.
+ * dir is deliberately LEFT IN PLACE at close: the relay unlinks a body only
+ * after broker acknowledgement, so removing the dir here would destroy an
+ * unacknowledged tail. Completed empty dirs are swept at the NEXT host start.
  */
 
-import { mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import process from 'node:process';
@@ -58,7 +56,10 @@ import type { ActivityEvent } from 'csuite-sdk/types';
 import { ActivityUploader, type ActivityUploaderStats } from './activity-uploader.js';
 import { type BusySignal, createBusySignal } from './busy.js';
 import { type HookServer, startHookServer } from './hook-server.js';
+import { type OtlpRelay, startOtlpRelay } from './otlp-relay.js';
 import { attachTranscriptReader, type TranscriptReader } from './transcript-reader.js';
+
+const CAPTURE_COMPLETE_MARKER = '.csuite-capture-complete';
 
 export interface CaptureHostOptions {
   brokerClient: BrokerClient;
@@ -159,14 +160,11 @@ export async function startCaptureHost(options: CaptureHostOptions): Promise<Cap
       process.stderr.write(`${JSON.stringify(record)}\n`);
     });
 
-  // Sweep raw-bodies dirs orphaned by DEAD runners. Since the broker
-  // owns per-file deletion (unlink-after-capture) and close() leaves
-  // the dir in place, a runner that crashed (or whose broker never
-  // captured its tail) leaves a `csuite-otel-bodies-<name>-<pid>` dir
-  // behind. Any such dir whose trailing pid is no longer alive is
-  // safe to remove — its writer is gone and no capture is pending for
-  // a dead session. Live-pid dirs (including EPERM: exists but owned
-  // by someone else) and our own are never touched. Entirely
+  // Sweep only dirs carrying an explicit completed-capture marker.
+  // PID death is NOT evidence that the spool was shipped: a crash or
+  // network outage can leave the only copy here. Unmarked dirs survive
+  // indefinitely for recovery rather than being silently discarded.
+  // Entirely
   // best-effort — the sweep can never prevent host start.
   try {
     let swept = 0;
@@ -175,6 +173,12 @@ export async function startCaptureHost(options: CaptureHostOptions): Promise<Cap
       if (!match) continue;
       const pid = Number(match[1]);
       if (pid === process.pid) continue; // our own (or a same-pid sibling) — alive by definition
+      const dir = join(tmpdir(), entry);
+      if (!existsSync(join(dir, CAPTURE_COMPLETE_MARKER))) continue;
+      // A marker records that the spool was empty when close() ran. Re-check
+      // at deletion time so a late writer can never turn that old fact into
+      // authority to delete newly unshipped bytes.
+      if (readdirSync(dir).some((child) => child !== CAPTURE_COMPLETE_MARKER)) continue;
       let alive = true;
       try {
         process.kill(pid, 0); // signal 0 = liveness probe, sends nothing
@@ -185,7 +189,7 @@ export async function startCaptureHost(options: CaptureHostOptions): Promise<Cap
       }
       if (alive) continue;
       try {
-        rmSync(join(tmpdir(), entry), { recursive: true, force: true });
+        rmSync(dir, { recursive: true, force: true });
         swept++;
       } catch {
         // Best-effort per dir — a racing sweep or permissions issue is fine.
@@ -213,6 +217,16 @@ export async function startCaptureHost(options: CaptureHostOptions): Promise<Cap
   const safeName = options.name.replace(/[^A-Za-z0-9_-]+/g, '_') || 'runner';
   const rawBodiesDir = join(tmpdir(), `csuite-otel-bodies-${safeName}-${process.pid}`);
   mkdirSync(rawBodiesDir, { recursive: true });
+
+  // Claude posts OTLP to loopback. The relay resolves FILE-mode body_ref
+  // paths on the runner, then forwards inline byte-exact bodies to the
+  // broker. Codex does not use this endpoint; it keeps its bundle upload.
+  const otlpRelay: OtlpRelay = await startOtlpRelay({
+    brokerUrl: options.brokerUrl,
+    token: options.token,
+    rawBodiesDir,
+    log,
+  });
 
   // Streaming activity uploader — batches events, ships to broker.
   const uploader = new ActivityUploader({
@@ -296,15 +310,12 @@ export async function startCaptureHost(options: CaptureHostOptions): Promise<Cap
      * redundant. Returns a delta, not a full replacement.
      */
     envVars(): Record<string, string> {
-      // Broker base with any trailing slash stripped (same as the old
-      // OTEL code); the OTLP endpoint is `${base}/otlp`.
-      const base = options.brokerUrl.replace(/\/+$/, '');
       return {
         CLAUDE_CODE_ENABLE_TELEMETRY: '1',
         OTEL_METRICS_EXPORTER: 'otlp',
         OTEL_LOGS_EXPORTER: 'otlp',
         OTEL_EXPORTER_OTLP_PROTOCOL: 'http/json',
-        OTEL_EXPORTER_OTLP_ENDPOINT: `${base}/otlp`,
+        OTEL_EXPORTER_OTLP_ENDPOINT: otlpRelay.endpoint,
         // LITERAL space after "Bearer" — the OTEL JS exporter does NOT
         // url-decode header values, so an encoded `%20` would fail the
         // broker's `Bearer ` check. csuite_ tokens are base64url, so
@@ -366,12 +377,35 @@ export async function startCaptureHost(options: CaptureHostOptions): Promise<Cap
           error: err instanceof Error ? err.message : String(err),
         });
       });
+      await otlpRelay.close().catch((err: unknown) => {
+        log('capture-host: OTLP relay close failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+      // A completed marker is earned only when no body file remains after
+      // the relay stopped accepting work. The next host start may remove
+      // this directory. Any unacknowledged file prevents the marker and is
+      // retained across crashes/restarts for explicit recovery.
+      try {
+        const remaining = readdirSync(rawBodiesDir).filter(
+          (entry) => entry !== CAPTURE_COMPLETE_MARKER,
+        );
+        if (remaining.length === 0) {
+          writeFileSync(join(rawBodiesDir, CAPTURE_COMPLETE_MARKER), '', { mode: 0o600 });
+        } else {
+          log('capture-host: retaining unshipped raw-body spool', {
+            rawBodiesDir,
+            remaining: remaining.length,
+          });
+        }
+      } catch (err) {
+        log('capture-host: could not mark raw-body spool complete', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
       // The FILE-mode raw bodies dir is deliberately NOT removed here.
-      // The broker owns file deletion (it unlinks each body file after
-      // capturing its bytes into the content-addressed store); rm'ing
-      // the dir at close would destroy any not-yet-captured tail of
-      // the session. Orphaned dirs from dead runners are swept at the
-      // next host start.
+      // Removing it would destroy an unacknowledged tail; a future host
+      // start sweeps only explicitly completed empty spools.
       //
       // Final safety net for the busy signal. Sub-systems above (hook
       // server drain, codex sniff drain at its own teardown) should

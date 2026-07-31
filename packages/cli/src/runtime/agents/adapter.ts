@@ -216,7 +216,7 @@ export interface AgentAdapter {
    * only sees history via `recent`. The second-bridge policy defaults
    * to `displace-old`.
    */
-  runnerOptions?(): Pick<RunnerOptions, 'channelSink' | 'onSecondBridge'>;
+  runnerOptions?(): Pick<RunnerOptions, 'channelSink' | 'onSecondBridge' | 'requireRawBodyAck'>;
   /**
    * Write agent config / compute env + args for the spawn. Throwing
    * here aborts the session cleanly (runner shuts down; nothing was

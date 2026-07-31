@@ -7,9 +7,9 @@
  * only — the content-logging flags stay off; content is transcript-
  * primary), exposes a working hook endpoint that drives PRESENCE ONLY
  * (no content emission), enqueues activity, and tears down on close.
- * The raw-bodies dir lifecycle is covered too: close() must LEAVE the
- * dir in place (the broker owns file deletion), and host start sweeps
- * dirs orphaned by dead pids while keeping live-pid dirs.
+ * The raw-bodies dir lifecycle is covered too: close() must LEAVE an
+ * unshipped spool in place, and host start sweeps only dead-pid dirs
+ * carrying an explicit completed-capture marker.
  * There is no MITM proxy / CA anymore — those checks are gone.
  */
 
@@ -66,9 +66,8 @@ describe('CaptureHost', () => {
       await host.close().catch(() => {});
       host = null;
     }
-    // close() intentionally leaves the raw-bodies dir behind (the broker
-    // owns file deletion) — remove this process's dir so tests don't
-    // litter the real tmpdir.
+    // close() intentionally leaves the raw-bodies dir behind — remove this
+    // process's dir so tests don't litter the real tmpdir.
     rmSync(join(tmpdir(), `csuite-otel-bodies-${BASE.name}-${process.pid}`), {
       recursive: true,
       force: true,
@@ -112,7 +111,7 @@ describe('CaptureHost', () => {
     expect(env.NODE_TLS_REJECT_UNAUTHORIZED).toBeUndefined();
   });
 
-  it('the FILE-mode raw bodies dir SURVIVES close() — the broker owns file deletion', async () => {
+  it('the FILE-mode raw bodies dir SURVIVES close() while a body is unacknowledged', async () => {
     host = await startCaptureHost({ ...BASE, brokerClient: stubBrokerClient().client });
     const bodiesDir = host.envVars().OTEL_LOG_RAW_API_BODIES?.slice('file:'.length) ?? '';
     expect(existsSync(bodiesDir)).toBe(true);
@@ -120,19 +119,26 @@ describe('CaptureHost', () => {
     writeFileSync(join(bodiesDir, 'req_test.response.json'), '{"id":"msg_test"}');
     await host.close();
     host = null;
-    // close() must NOT rm the dir — the broker unlinks each file after
-    // capture, and rm'ing here would destroy the uncaptured tail.
+    // close() must NOT rm the dir; doing so would destroy the uncaptured tail.
     expect(existsSync(bodiesDir)).toBe(true);
     expect(existsSync(join(bodiesDir, 'req_test.response.json'))).toBe(true);
   });
 
-  it('start sweeps stale raw-bodies dirs of dead pids, keeps live-pid dirs and its own', async () => {
+  it('start sweeps completed dead-pid spools but retains unshipped and live spools', async () => {
     // A dir whose trailing pid can't exist (way above any real pid) → dead.
     const deadDir = join(tmpdir(), 'csuite-otel-bodies-x-999999999');
+    const unshippedDir = join(tmpdir(), 'csuite-otel-bodies-unshipped-999999998');
+    const lateWriteDir = join(tmpdir(), 'csuite-otel-bodies-late-999999997');
     // A dir carrying THIS process's pid → alive, must be kept.
     const aliveDir = join(tmpdir(), `csuite-otel-bodies-y-${process.pid}`);
     mkdirSync(deadDir, { recursive: true });
+    mkdirSync(unshippedDir, { recursive: true });
+    mkdirSync(lateWriteDir, { recursive: true });
     mkdirSync(aliveDir, { recursive: true });
+    writeFileSync(join(deadDir, '.csuite-capture-complete'), '');
+    writeFileSync(join(lateWriteDir, '.csuite-capture-complete'), '');
+    writeFileSync(join(lateWriteDir, 'late.request.json'), '{"late":true}');
+    writeFileSync(join(aliveDir, '.csuite-capture-complete'), '');
     const logged: Array<{ msg: string; ctx?: Record<string, unknown> }> = [];
     try {
       host = await startCaptureHost({
@@ -141,8 +147,11 @@ describe('CaptureHost', () => {
         brokerClient: stubBrokerClient().client,
       });
       const ownDir = host.envVars().OTEL_LOG_RAW_API_BODIES?.slice('file:'.length) ?? '';
-      // Dead-pid dir swept; alive-pid dir kept; our own dir created + kept.
+      // Completed dead-pid dir swept. An unmarked dead-pid spool and a
+      // completed live-pid spool are both retained.
       expect(existsSync(deadDir)).toBe(false);
+      expect(existsSync(unshippedDir)).toBe(true);
+      expect(existsSync(lateWriteDir)).toBe(true);
       expect(existsSync(aliveDir)).toBe(true);
       expect(existsSync(ownDir)).toBe(true);
       const sweepLog = logged.find((l) => l.msg === 'capture-host: swept stale raw-bodies dirs');
@@ -155,19 +164,21 @@ describe('CaptureHost', () => {
       expect(existsSync(ownDir)).toBe(true);
     } finally {
       rmSync(deadDir, { recursive: true, force: true });
+      rmSync(unshippedDir, { recursive: true, force: true });
+      rmSync(lateWriteDir, { recursive: true, force: true });
       rmSync(aliveDir, { recursive: true, force: true });
     }
   });
 
-  it('envVars strips a trailing slash from brokerUrl before appending /otlp', async () => {
+  it('envVars points Claude OTLP at a runner-local relay', async () => {
     host = await startCaptureHost({
       ...BASE,
       brokerUrl: 'http://127.0.0.1:8787/',
       brokerClient: stubBrokerClient().client,
     });
     const env = host.envVars();
-    // No double slash — trailing slash stripped before `${base}/otlp`.
-    expect(env.OTEL_EXPORTER_OTLP_ENDPOINT).toBe('http://127.0.0.1:8787/otlp');
+    expect(env.OTEL_EXPORTER_OTLP_ENDPOINT).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/otlp$/);
+    expect(env.OTEL_EXPORTER_OTLP_ENDPOINT).not.toContain('8787');
   });
 
   it('enqueue forwards events to the activity uploader', async () => {
