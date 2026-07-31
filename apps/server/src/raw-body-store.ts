@@ -39,6 +39,7 @@
 import { createHash } from 'node:crypto';
 import { gunzipSync, gzipSync } from 'node:zlib';
 import type { DatabaseSyncInstance, StatementInstance } from './db.js';
+import type { DiagnosticEmitter } from './diagnostics.js';
 import { logger as defaultLogger, type Logger } from './logger.js';
 
 const CREATE_SCHEMA = `
@@ -170,6 +171,13 @@ export interface RawBodyStore {
 
 export interface RawBodyStoreOptions {
   logger?: Logger;
+  /**
+   * Retained completeness diagnostics. Blob corruption has no member at
+   * this call site — `getBlob(hash)` takes only a hash — so the emitter
+   * resolves the affected set from `raw_exchange` itself rather than
+   * being handed one from here.
+   */
+  diagnostics?: DiagnosticEmitter;
 }
 
 interface RawExchangeRowRaw {
@@ -202,10 +210,12 @@ class SqliteRawBodyStore implements RawBodyStore {
   private readonly assignStmt: StatementInstance;
   private readonly getBlobStmt: StatementInstance;
   private readonly log: Logger;
+  private readonly diag: DiagnosticEmitter | undefined;
 
-  constructor(db: DatabaseSyncInstance, log: Logger) {
+  constructor(db: DatabaseSyncInstance, log: Logger, diag?: DiagnosticEmitter) {
     this.db = db;
     this.log = log;
+    this.diag = diag;
     this.db.exec(CREATE_SCHEMA);
     this.insertBlobStmt = db.prepare(
       `INSERT OR IGNORE INTO raw_blob (hash, bytes, byte_length, stored_length, first_seen_at)
@@ -272,6 +282,7 @@ class SqliteRawBodyStore implements RawBodyStore {
     try {
       bytes = gunzipSync(Buffer.from(row.bytes));
     } catch (err) {
+      this.diag?.rawstoreBlobGunzipFailed(hash);
       this.log.warn('raw-body-store: blob gunzip failed', {
         hash,
         error: err instanceof Error ? err.message : String(err),
@@ -282,6 +293,7 @@ class SqliteRawBodyStore implements RawBodyStore {
     // that no longer hash to their key.
     const actual = sha256Hex(bytes);
     if (actual !== hash) {
+      this.diag?.rawstoreBlobHashMismatch(hash);
       this.log.warn('raw-body-store: blob hash mismatch', { hash, actual });
       return null;
     }
@@ -365,5 +377,5 @@ export function createRawBodyStore(
   db: DatabaseSyncInstance,
   opts: RawBodyStoreOptions = {},
 ): RawBodyStore {
-  return new SqliteRawBodyStore(db, opts.logger ?? defaultLogger);
+  return new SqliteRawBodyStore(db, opts.logger ?? defaultLogger, opts.diagnostics);
 }

@@ -28,6 +28,7 @@
 
 import type { GenAiInference } from 'csuite-sdk/types';
 import type { DatabaseSyncInstance, StatementInstance } from './db.js';
+import type { DiagnosticEmitter } from './diagnostics.js';
 import { logger as defaultLogger, type Logger } from './logger.js';
 
 const CREATE_SCHEMA = `
@@ -106,6 +107,8 @@ export interface GenAiStore {
 
 export interface GenAiStoreOptions {
   logger?: Logger;
+  /** Retained completeness diagnostics. */
+  diagnostics?: DiagnosticEmitter;
 }
 
 interface GenAiRowRaw {
@@ -136,10 +139,12 @@ class SqliteGenAiStore implements GenAiStore {
   private readonly db: DatabaseSyncInstance;
   private readonly insertStmt: StatementInstance;
   private readonly log: Logger;
+  private readonly diag: DiagnosticEmitter | undefined;
 
-  constructor(db: DatabaseSyncInstance, log: Logger) {
+  constructor(db: DatabaseSyncInstance, log: Logger, diag?: DiagnosticEmitter) {
     this.db = db;
     this.log = log;
+    this.diag = diag;
     this.db.exec(CREATE_SCHEMA);
     // Best-effort schema migrations for databases that predate the
     // sha256 provenance columns. Each ALTER is wrapped individually; we
@@ -179,6 +184,7 @@ class SqliteGenAiStore implements GenAiStore {
       inputMessages = JSON.stringify(rec.inputMessages ?? []);
       outputMessages = JSON.stringify(rec.outputMessages ?? []);
     } catch (err) {
+      this.diag?.genaistoreUnserializableRecordSkipped(memberName);
       this.log.warn('genai-store: skipped unserializable record', {
         memberName,
         responseId: rec.responseId,
@@ -286,6 +292,7 @@ class SqliteGenAiStore implements GenAiStore {
         receivedAt: Number(raw.received_at),
       };
     } catch (err) {
+      this.diag?.genaistoreMalformedRowSkipped(Number(raw.id));
       this.log.warn('genai-store: skipped malformed row', {
         id: Number(raw.id),
         error: err instanceof Error ? err.message : String(err),
@@ -299,5 +306,5 @@ export function createGenAiStore(
   db: DatabaseSyncInstance,
   opts: GenAiStoreOptions = {},
 ): GenAiStore {
-  return new SqliteGenAiStore(db, opts.logger ?? defaultLogger);
+  return new SqliteGenAiStore(db, opts.logger ?? defaultLogger, opts.diagnostics);
 }

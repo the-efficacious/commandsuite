@@ -115,6 +115,7 @@ import { type AuthBindings, createAuthMiddleware } from './auth.js';
 import { composeBriefing } from './briefing.js';
 import type { CaptureHealthStore } from './capture-health.js';
 import { type ChannelStore, ChannelsError, GENERAL_CHANNEL_ID, validateSlug } from './channels.js';
+import type { DiagnosticStore } from './diagnostics.js';
 import { type EnrollmentStore, formatUserCode, normalizeUserCode } from './enrollments.js';
 import {
   basenameOf,
@@ -284,6 +285,12 @@ export interface AppOptions {
    * surface renders that identically to working normally.
    */
   captureHealth?: CaptureHealthStore;
+  /**
+   * Retained completeness diagnostics. Optional: a broker without it
+   * behaves exactly as before and the stderr lines remain, which is
+   * what "no opinion" looks like for retention.
+   */
+  diagnostics?: DiagnosticStore;
   version: string;
   logger: Logger;
   /**
@@ -489,6 +496,7 @@ export function createApp(options: AppOptions): CreatedApp {
     genaiStore,
     rawBodyStore,
     captureHealth,
+    diagnostics,
     version,
     logger,
     shutdownSignal,
@@ -565,10 +573,16 @@ export function createApp(options: AppOptions): CreatedApp {
     if (!corr) {
       corr = createGenAiCorrelator({
         log: (msg, ctx) => logger.warn(msg, ctx),
+        // Per-member correlator, so its diagnostics carry that member
+        // as producer without the call sites having to say so.
+        ...(diagnostics !== undefined ? { diagnostics: diagnostics.emit } : {}),
+        memberName,
         // Raw capture-before-parse: when the raw-body store is wired,
         // the correlator content-addresses every body verbatim before
         // parsing and unlinks the consumed spill file (its default).
-        ...(rawBodyStore !== undefined ? { rawStore: rawBodyStore, memberName } : {}),
+        // memberName is set unconditionally above: the correlator needs
+        // it to attribute diagnostics even when raw capture is unwired.
+        ...(rawBodyStore !== undefined ? { rawStore: rawBodyStore } : {}),
       });
       genaiCorrelators.set(memberName, corr);
     }
@@ -1408,6 +1422,7 @@ export function createApp(options: AppOptions): CreatedApp {
         try {
           telemetryStore.append(member.name, telemetryRecords);
         } catch (err) {
+          diagnostics?.emit.otlpLogsStoreFailed(member.name, records.length);
           logger.warn('otlp logs store failed', {
             member: member.name,
             error: err instanceof Error ? err.message : String(err),
@@ -1422,6 +1437,7 @@ export function createApp(options: AppOptions): CreatedApp {
             genaiStore.append(member.name, inf);
           }
         } catch (err) {
+          diagnostics?.emit.otlpGenaiIngestFailed(member.name, genaiRecords.length);
           logger.warn('otlp genai ingest failed', {
             member: member.name,
             error: err instanceof Error ? err.message : String(err),
@@ -1445,6 +1461,7 @@ export function createApp(options: AppOptions): CreatedApp {
       try {
         telemetryStore.append(member.name, parseOtlpMetrics(raw));
       } catch (err) {
+        diagnostics?.emit.otlpMetricsStoreFailed(member.name, 0);
         logger.warn('otlp metrics store failed', {
           member: member.name,
           error: err instanceof Error ? err.message : String(err),
@@ -1686,6 +1703,7 @@ export function createApp(options: AppOptions): CreatedApp {
           gStore.append(name, { ...rec, requestSha256, responseSha256 });
           accepted++;
         } catch (err) {
+          diagnostics?.emit.codexGenaiIngestEntryFailed(member.name);
           logger.warn('codex genai ingest entry failed', {
             member: name,
             error: err instanceof Error ? err.message : String(err),
@@ -2223,6 +2241,7 @@ export function createApp(options: AppOptions): CreatedApp {
             },
           ]);
         } catch (err) {
+          diagnostics?.emit.toolinvokeAuditAppendFailed(member.name);
           logger.warn('tool invoke audit append failed', {
             source: source.slug,
             tool: toolName,
@@ -3935,6 +3954,7 @@ export function createApp(options: AppOptions): CreatedApp {
 
         return c.json({ accepted: rows.length }, 201);
       } catch (err) {
+        diagnostics?.emit.activityAppendFailed(name, parsed.data.events.length);
         logger.warn('agent activity append failed', {
           name,
           error: err instanceof Error ? err.message : String(err),
@@ -4599,6 +4619,7 @@ export function createApp(options: AppOptions): CreatedApp {
       max: number,
     ): string | null {
       if (value === null || value.length <= max) return value;
+      diagnostics?.emit.enrollmentSourceLabelTruncated('source', 1);
       logger.warn('enrollment source label truncated', {
         field,
         originalLength: value.length,
