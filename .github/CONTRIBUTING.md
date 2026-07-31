@@ -314,6 +314,85 @@ method, a point-cause recovery — because closing one route does not establish
 that the boundary is closed. Add a nearby valid call as a positive control so
 the fixture also proves the public API remains usable.
 
+### Two questions for any fixture written under pressure
+
+**Does it reach the thing it names, and what does its opposite failure look
+like?** The next two sections are those questions. Between them they account
+for the two ways a fixture can be complete and meaningless — and fixtures
+written in a hurry, answering a finding, are when both go unasked.
+
+### A suite answering a finding inherits the finding's polarity
+
+**When tests are written in response to a defect, they get built in the
+direction the defect names — and completeness in one direction reads as
+completeness.**
+
+A false recovery was found: a health incident cleared by an operation that had
+not actually run. The response was four tests, all asserting *does not clear* —
+zero-input paths, failure paths, each a faithful answer to the finding. All
+four passed. So would an implementation in which no recovery ever fired at all,
+leaving every incident latched forever. The suite proved false healing was
+impossible and said nothing about whether true healing was possible, because
+the finding it answered only named the first.
+
+Nobody involved was careless: the negatives were a *complete* answer to the
+direction that was named. That is the mechanism — a finding names one sign, and
+a suite that fully covers that sign looks finished.
+
+The two directions are not symmetric conveniences; they guard against different
+defects. **Negative placement tests prevent false healing; positive placement
+tests prevent permanent sickness.** A suite covering one direction silently
+accepts the other failure.
+
+So at the moment you finish a suite written in response to a finding — that
+moment specifically — ask what the opposite failure looks like, and add the
+fixture that would catch it. This is the positive-control rule's sibling: that
+one catches a check that cannot pass; this one catches a whole suite aimed the
+wrong way while every individual test is right.
+
+### Confirm the fixture reached the code under test
+
+The mutation table above already requires one thing that sounds bureaucratic
+and isn't: *confirm the mutation applied before reading the count, because a
+mutation that silently didn't apply is indistinguishable from a survivor.* The
+same discipline, reflected onto fixtures:
+
+**Confirm the fixture reached the code under test before reading the verdict —
+a fixture that never arrives is indistinguishable from one that passed.**
+
+Five fixtures in one session did not exercise the thing they named. In every
+case the fixture died *before the branch it named*, and only noise disclosed
+it — each happened to fail loudly, which is luck, not method:
+
+| what broke | what the fixture believed | the missing assertion |
+|---|---|---|
+| the request 404'd on an unwired store | the POST succeeded | assert 2xx before checking the effect |
+| an array was passed where one record was expected | the induced error was raised | assert the error you induced, by identity |
+| an empty batch took the success path | the failure branch ran | assert the operation actually failed |
+| an invented record shape was ignored | the parser consumed the record | assert the consumer saw it |
+
+Two executable forms, one per direction:
+
+- **On the failure side, assert the specific failure, not any failure.**
+  `rejects.toThrow(/the reason you induced/)` where a bare `rejects.toThrow()`
+  is satisfied by an upstream type error, a 404, or a missing import just as
+  happily as by the defect under test.
+- **On the success side, assert a value the target branch uniquely produces**,
+  not a value that "no complaints" also produces. An assertion that an incident
+  cleared is satisfied by a recovery that fired spuriously; an assertion on the
+  row the success path alone writes is not.
+
+Where the path is deep, assert one intermediate observable that only the
+intended route sets — a 2xx before the effect, the consumer having seen the
+record, the branch having run. It costs a line per fixture.
+
+This is the helper-versus-caller problem moved inside a single test: you assert
+the outcome and *infer* the path, and the path is what broke. The other
+practices here do not reach it — mutation, positive controls and
+compile-negatives all assume the fixture exercises the mechanism it names. A
+fixture that fails for the wrong reason is one edit away from passing for the
+wrong reason.
+
 ## When something inexplicable happens, measure it
 
 **The reflex to attribute an anomaly to your own carelessness is the most
