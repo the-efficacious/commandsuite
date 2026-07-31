@@ -20,7 +20,8 @@ import { openDatabase } from '../src/db.js';
 import {
   causeSpec,
   classifyError,
-  createDiagnosticStore,
+  type createDiagnosticStore,
+  createDiagnosticStoreInternalForTests,
   DIAGNOSTIC_CAUSES,
   digestPath,
   safeHash,
@@ -46,12 +47,21 @@ function store(opts: Parameters<typeof createDiagnosticStore>[1] = {}) {
   const db = openDatabase(':memory:');
   dbs.push(db);
   let clock = T0;
-  const s = createDiagnosticStore(db, { now: () => clock, ...opts });
+  const s = createDiagnosticStoreInternalForTests(db, { now: () => clock, ...opts });
+  // Blob attribution is resolved from raw_exchange by the emitter, so
+  // the mechanics tests below drive multi-member and unattributed cases
+  // through real referent rows rather than by asserting a member list.
+  db.exec(`CREATE TABLE raw_exchange (member_name TEXT NOT NULL, kind TEXT, hash TEXT NOT NULL)`);
+  const ins = db.prepare(`INSERT INTO raw_exchange (member_name, kind, hash) VALUES (?,?,?)`);
   return {
     s,
     db,
     at(t: number) {
       clock = t;
+    },
+    /** Register members as referents of a blob hash. */
+    referents(hash: string, members: readonly string[]) {
+      for (const m of members) ins.run(m, 'request', hash);
     },
   };
 }
@@ -150,10 +160,7 @@ describe('current health vs historical presence', () => {
     // permanent false health and just as wrong.
     const h = store();
     h.at(T0);
-    h.s.record({
-      cause: 'activity.append_failed',
-      members: ['turner'],
-    });
+    h.s.emit.activityAppendFailed('turner', 1);
     expect(h.s.unresolved('turner')).toHaveLength(1);
 
     h.at(T0 + DAY);
@@ -258,7 +265,7 @@ describe('retention and coverage', () => {
     h.at(T0);
     for (let i = 0; i < 20; i++) {
       h.at(T0 + i * 1000);
-      h.s.record({ cause: 'activity.append_failed', members: ['m'] });
+      h.s.emit.activityAppendFailed('m', 1);
     }
 
     expect(h.s.coverageFloor()).toBeGreaterThanOrEqual(T0);
@@ -279,7 +286,7 @@ describe('retention health', () => {
     h.at(T0);
     for (let i = 0; i < 10; i++) {
       h.at(T0 + i * 1000);
-      h.s.record({ cause: 'activity.append_failed', members: ['m'] });
+      h.s.emit.activityAppendFailed('m', 1);
     }
     expect(h.s.health()).toBe('degraded');
   });
@@ -356,7 +363,7 @@ describe('repairs', () => {
     h.at(T0);
     for (let i = 0; i < 10; i++) {
       h.at(T0 + i * 1000);
-      h.s.record({ cause: 'activity.append_failed', members: ['m'] });
+      h.s.emit.activityAppendFailed('m', 1);
     }
     // The DISCRIMINATING instant is the newest one destroyed, not
     // `floor - 1`. Ten records at T0..T0+9000 with a cap of 2 destroys
@@ -379,7 +386,7 @@ describe('repairs', () => {
     h.at(T0);
     for (let i = 0; i < 10; i++) {
       h.at(T0 + i * 1000);
-      h.s.record({ cause: 'activity.append_failed', members: ['m'] });
+      h.s.emit.activityAppendFailed('m', 1);
     }
     // Queried from the coverage floor, not below it: a window reaching
     // below the floor is correctly `indeterminate`, and asking for one
@@ -392,7 +399,7 @@ describe('repairs', () => {
     // Folded to a bucket they persist and stay bounded.
     for (let i = 10; i < 40; i++) {
       h.at(T0 + i * 1000);
-      h.s.record({ cause: 'activity.append_failed', members: ['m'] });
+      h.s.emit.activityAppendFailed('m', 1);
     }
     const r = h.s.query({
       cause: 'retention.overflow',
@@ -419,7 +426,7 @@ describe('repairs', () => {
     const h = store({ maxStateRows: 5 });
     for (let i = 0; i < 50; i++) {
       h.at(T0 + i);
-      h.s.record({ cause: 'activity.append_failed', members: [`m${i}`] });
+      h.s.emit.activityAppendFailed(`m${i}`, 1);
     }
     const n = h.db.prepare(`SELECT COUNT(*) AS n FROM diagnostic_state`).get() as { n: number };
     expect(Number(n.n)).toBeLessThanOrEqual(5);
@@ -441,7 +448,7 @@ describe('repairs', () => {
 
   it('an INCIDENT cause does create unresolved state', () => {
     const h = store();
-    h.s.record({ cause: 'activity.append_failed', members: ['lea'] });
+    h.s.emit.activityAppendFailed('lea', 1);
     expect(h.s.unresolved('lea')).toHaveLength(1);
   });
 
@@ -476,9 +483,9 @@ describe('checkpoint regressions', () => {
     // detailMs although the lost state can never be reconstructed.
     const h = store({ maxStateRows: 1 });
     h.at(T0);
-    h.s.record({ cause: 'activity.append_failed', members: ['evicted'] });
+    h.s.emit.activityAppendFailed('evicted', 1);
     h.at(T0 + 1000);
-    h.s.record({ cause: 'activity.append_failed', members: ['kept'] });
+    h.s.emit.activityAppendFailed('kept', 1);
 
     expect(h.s.unresolved('evicted')).toHaveLength(0); // the state is genuinely gone
     expect(h.s.health()).toBe('unknown'); // …and the store says so
@@ -540,7 +547,7 @@ describe('checkpoint regressions', () => {
     // the thing nobody can consult.
     const h = store();
     h.at(T0);
-    h.s.record({ cause: 'activity.append_failed', members: ['m299'] });
+    h.s.emit.activityAppendFailed('m299', 1);
     h.s.record({
       cause: 'rawstore.blob_hash_mismatch',
       members: Array.from({ length: 300 }, (_, i) => `m${i}`),
@@ -557,7 +564,7 @@ describe('checkpoint regressions', () => {
     // refusal would satisfy the test above while destroying the surface.
     const h = store();
     h.at(T0);
-    h.s.record({ cause: 'activity.append_failed', members: ['m299'] });
+    h.s.emit.activityAppendFailed('m299', 1);
     h.s.record({
       cause: 'rawstore.blob_hash_mismatch',
       members: Array.from({ length: 300 }, (_, i) => `m${i}`),
@@ -664,19 +671,9 @@ describe('typed emitter', () => {
     // getBlob(hash) has no member and the blob may have several. The
     // emitter looks the affected set up rather than accepting one —
     // taking the caller's member would blame whoever read it.
-    const { s, db } = store();
-    db.exec(`CREATE TABLE raw_exchange (member_name TEXT NOT NULL, kind TEXT, hash TEXT NOT NULL)`);
     const h = 'c'.repeat(64);
-    db.prepare(`INSERT INTO raw_exchange (member_name, kind, hash) VALUES (?,?,?)`).run(
-      'turner',
-      'request',
-      h,
-    );
-    db.prepare(`INSERT INTO raw_exchange (member_name, kind, hash) VALUES (?,?,?)`).run(
-      'lea',
-      'response',
-      h,
-    );
+    const { s, db, referents } = store();
+    referents(h, ['turner', 'lea']);
 
     s.emit.rawstoreBlobHashMismatch(h);
 
@@ -691,7 +688,6 @@ describe('typed emitter', () => {
     // corruption, and omitting it would make the store silent about
     // exactly what it exists to surface.
     const { s, db } = store();
-    db.exec(`CREATE TABLE raw_exchange (member_name TEXT NOT NULL, kind TEXT, hash TEXT NOT NULL)`);
     s.emit.rawstoreBlobGunzipFailed('d'.repeat(64));
     const row = db.prepare('SELECT member_name, attribution FROM diagnostic_event').get() as {
       member_name: string;
@@ -705,7 +701,7 @@ describe('typed emitter', () => {
     const { s } = store();
     s.emit.activityAppendFailed('turner', 12);
     expect(s.unresolved('turner')).toHaveLength(1);
-    s.emit.recovered('activity.append_failed', 'turner');
+    s.emit.activityAppended('turner');
     expect(s.unresolved('turner')).toHaveLength(0);
   });
 
@@ -713,7 +709,6 @@ describe('typed emitter', () => {
     // The emitter and the enum must not drift: a method whose cause is
     // unregistered would write a row the census guard never sees.
     const { s, db } = store();
-    db.exec(`CREATE TABLE raw_exchange (member_name TEXT NOT NULL, kind TEXT, hash TEXT NOT NULL)`);
     const e = s.emit;
     e.correlatorBodyRefUnreadable('m', '/p', new Error('x'));
     e.correlatorBodyLengthMismatch('m', 10, 4);

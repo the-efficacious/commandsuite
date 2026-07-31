@@ -454,11 +454,17 @@ export interface DiagnosticWindowResult {
  * manufacture a `pathDigest` or classify an error; they hand over what
  * they have and this layer decides what is retainable.
  *
- * Generic `record` is deliberately NOT on `DiagnosticStore`. With it
- * public, "call sites should not construct these representations" is a
- * convention someone can forget; with it private behind these methods,
- * they cannot. The brand makes that boundary enforceable rather than
- * documented.
+ * Generic `record` is NOT on `DiagnosticStore`. Branding `fields` is
+ * not sufficient on its own: fields are optional, so a caller could
+ * still emit `rawstore.blob_hash_mismatch` with a hand-picked member
+ * list and no hash at all — manufacturing an affected-corruption
+ * attribution without the emitter's `raw_exchange` lookup. Runtime
+ * validation proves the SHAPE of fields that exist; it cannot prove
+ * the right emitter established the event or its affected set.
+ *
+ * Criterion 9's guarantee is architectural, so the boundary has to be
+ * one too. An internal factory exposes the raw closure for the store's
+ * own mechanics tests; production has no route to it.
  *
  * BLOB CORRUPTION RESOLVES ITS OWN ATTRIBUTION. `getBlob(hash)` has no
  * member, so these methods look the affected set up from `raw_exchange`
@@ -487,8 +493,24 @@ export interface DiagnosticEmitter {
   activityAppendFailed(member: string, events: number): void;
   toolinvokeAuditAppendFailed(member: string): void;
   enrollmentSourceLabelTruncated(field: string, dropped: number): void;
-  /** Observed recoveries — the only thing that clears unresolved state. */
-  recovered(cause: DiagnosticCause, member: string): void;
+  // ── Observed recoveries ────────────────────────────────────────
+  //
+  // One method per INCIDENT cause, named for the success that actually
+  // heals it. A generic `recovered(cause, member)` let a call site pick
+  // which incident its success cleared, which is the same convention
+  // this interface exists to replace — a site that succeeded at writing
+  // activity should not be able to clear a correlator incident.
+  //
+  // Point causes have no method here and cannot be cleared: they never
+  // create unresolved state, so "recovering" one is meaningless.
+  correlatorBodyRefRead(member: string): void;
+  correlatorRawCaptureSucceeded(member: string): void;
+  otlpLogsStored(member: string): void;
+  otlpGenaiIngested(member: string): void;
+  otlpMetricsStored(member: string): void;
+  codexGenaiIngestEntrySucceeded(member: string): void;
+  activityAppended(member: string): void;
+  toolinvokeAuditAppended(member: string): void;
 }
 
 export interface DiagnosticStore {
@@ -498,22 +520,6 @@ export interface DiagnosticStore {
    * retainable.
    */
   readonly emit: DiagnosticEmitter;
-  /**
-   * Generic record, kept on the surface deliberately.
-   *
-   * The requirement was that generic record be private to the emitter
-   * OR that it accept only validated, branded values. It does both of
-   * the latter: `fields` cannot be constructed without the private
-   * brand, and every value is re-validated for shape at write time
-   * because a cast defeats a brand. Attribution and health mode come
-   * from the cause table, not the caller.
-   *
-   * With those in place, hiding it would buy a convention rather than
-   * a guarantee — and the store's own mechanics (caps, floors,
-   * folding) need a way to be tested that does not route through
-   * twenty-one adapters.
-   */
-  record(input: DiagnosticInput): void;
   /** An observed recovery. The ONLY thing that clears unresolved state. */
   resolve(cause: DiagnosticCause, member: string | null): void;
   /** Causes currently unresolved for a member, oldest first. */
@@ -595,10 +601,32 @@ const SCHEMA = `
   );
 `;
 
+/**
+ * Internal factory exposing the raw insert for the store's OWN
+ * mechanics tests — caps, floors, folding, coverage — which need states
+ * the emitter has no reason to produce.
+ *
+ * Not exported from the package surface and not reachable from
+ * production: `createDiagnosticStore` returns the narrow interface.
+ */
+export function createDiagnosticStoreInternalForTests(
+  db: DatabaseSyncInstance,
+  options: DiagnosticOptions = {},
+): DiagnosticStore & { record(input: DiagnosticInput): void } {
+  return buildStore(db, options);
+}
+
 export function createDiagnosticStore(
   db: DatabaseSyncInstance,
   options: DiagnosticOptions = {},
 ): DiagnosticStore {
+  return buildStore(db, options);
+}
+
+function buildStore(
+  db: DatabaseSyncInstance,
+  options: DiagnosticOptions = {},
+): DiagnosticStore & { record(input: DiagnosticInput): void } {
   db.exec(SCHEMA);
 
   const now = options.now ?? (() => Date.now());
@@ -966,8 +994,29 @@ export function createDiagnosticStore(
       // attribute this to.
       record({ cause: 'enrollment.source_label_truncated', fields: safeCount(dropped) });
     },
-    recovered(cause, member) {
-      clearState.run(cause, member);
+    correlatorBodyRefRead(member) {
+      clearState.run('correlator.body_ref_unreadable', member);
+    },
+    correlatorRawCaptureSucceeded(member) {
+      clearState.run('correlator.raw_capture_failed', member);
+    },
+    otlpLogsStored(member) {
+      clearState.run('otlp.logs_store_failed', member);
+    },
+    otlpGenaiIngested(member) {
+      clearState.run('otlp.genai_ingest_failed', member);
+    },
+    otlpMetricsStored(member) {
+      clearState.run('otlp.metrics_store_failed', member);
+    },
+    codexGenaiIngestEntrySucceeded(member) {
+      clearState.run('codex.genai_ingest_entry_failed', member);
+    },
+    activityAppended(member) {
+      clearState.run('activity.append_failed', member);
+    },
+    toolinvokeAuditAppended(member) {
+      clearState.run('toolinvoke.audit_append_failed', member);
     },
   };
 
