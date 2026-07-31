@@ -41,7 +41,12 @@ interface Case {
     querySource: string | null;
   }>;
   expect: {
-    ui: { matched: number[]; callsPerTurn: number[][]; orphans: number[] };
+    ui: {
+      matched: number[];
+      callsPerTurn: number[][];
+      orphans: number[];
+      matchStates?: Array<'exact' | 'containment' | 'unmatched-exact' | 'unmatched'>;
+    };
     broker: { matched: number[]; evaluated: boolean };
   };
   divergence?: string;
@@ -117,6 +122,9 @@ describe('trace-join conformance corpus (UI side)', () => {
         c.expect.ui.callsPerTurn,
       );
       expect(result.orphans.map((o) => o.id)).toEqual(c.expect.ui.orphans);
+      if (c.expect.ui.matchStates !== undefined) {
+        expect(result.turns.map((t) => t.match)).toEqual(c.expect.ui.matchStates);
+      }
     });
   }
 
