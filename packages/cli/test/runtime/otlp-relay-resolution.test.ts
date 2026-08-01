@@ -39,7 +39,19 @@
  * This preserves the ack invariant exactly rather than weakening it.
  */
 
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  truncateSync,
+  writeFileSync,
+} from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -80,7 +92,10 @@ function attrsOf(payload: unknown, index: number): Attr[] {
  * construction: it never claims to have captured more than it was told
  * to expect, so a mismatch in these tests is the relay's accounting.
  */
-async function startBroker(): Promise<{
+async function startBroker(
+  status = 200,
+  beforeReply?: () => void,
+): Promise<{
   url: string;
   server: Server;
   received: unknown[];
@@ -96,7 +111,8 @@ async function startBroker(): Promise<{
       received.push(JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown);
       const header = String(req.headers['x-csuite-raw-bodies'] ?? '0');
       declared.push(header);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
+      beforeReply?.();
+      res.writeHead(status, { 'Content-Type': 'application/json' });
       res.end(
         JSON.stringify({ partialSuccess: {}, csuite: { rawBodiesCaptured: Number(header) } }),
       );
@@ -122,10 +138,10 @@ describe('relay per-record resolution', () => {
     for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
   });
 
-  async function harness() {
+  async function harness(brokerStatus = 200, beforeReply?: () => void) {
     const dir = mkdtempSync(join(tmpdir(), 'csuite-relay-res-'));
     dirs.push(dir);
-    const broker = await startBroker();
+    const broker = await startBroker(brokerStatus, beforeReply);
     servers.push(broker.server);
     const relay = await startOtlpRelay({ brokerUrl: broker.url, token: 't', rawBodiesDir: dir });
     relays.push(relay);
@@ -203,7 +219,57 @@ describe('relay per-record resolution', () => {
       { key: 'body', value: { stringValue: lastInline } },
     ]);
     expect(forwarded.some((attr) => attr.key === 'body_ref')).toBe(false);
+    expect(existsSync(invalid)).toBe(false);
+    const quarantineDir = `${dir}.quarantine`;
+    dirs.push(quarantineDir);
+    expect(readdirSync(quarantineDir)).toHaveLength(1);
+    expect(readdirSync(quarantineDir)[0]).toMatch(/^invalid\.json\.invalid-utf8\..+\.quarantined$/);
+  });
+
+  // Criterion 4 says "inside the EXACT rawBodiesDir". A path one level
+  // deeper satisfies the older `relative()` confinement — `sub/nested.json`
+  // neither starts with `..` nor is absolute — so the `dirname` clause is
+  // the only thing enforcing "exact". Measured: removing that clause alone
+  // leaves every other fixture green while this file gets moved out of the
+  // spool tree, which is the arbitrary-rename shape the criterion forbids.
+  it('does not quarantine a path nested below the spool, only direct children', async () => {
+    const { dir, broker, send } = await harness();
+    const sub = join(dir, 'sub');
+    mkdirSync(sub);
+    const nested = join(sub, 'nested.json');
+    writeFileSync(nested, Buffer.from([0xff]));
+
+    expect((await send([nested])).status).toBe(200);
+    expect(broker.declared).toEqual(['0']);
+
+    // Left exactly where it was, and no quarantine directory brought into
+    // existence on its behalf.
+    expect(existsSync(nested)).toBe(true);
+    expect(readFileSync(nested)).toEqual(Buffer.from([0xff]));
+    expect(existsSync(`${dir}.quarantine`)).toBe(false);
+  });
+
+  // The quarantine directory is itself a rename target, so it is authority
+  // too: a pre-existing world-writable one must not be used. Without this
+  // the mode check can be deleted with the whole suite still green.
+  it('refuses a quarantine directory that is not private to the runner', async () => {
+    const { dir, broker, send } = await harness();
+    const quarantineDir = `${dir}.quarantine`;
+    dirs.push(quarantineDir);
+    mkdirSync(quarantineDir, { mode: 0o777 });
+    chmodSync(quarantineDir, 0o777); // defeat umask — the mode is the subject
+    const invalid = join(dir, 'invalid.json');
+    const bytes = Buffer.from([0xff]);
+    writeFileSync(invalid, bytes);
+
+    expect((await send([invalid])).status).toBe(200);
+    expect(broker.declared).toEqual(['0']);
+
+    // The degraded body stays in the active spool rather than being moved
+    // into a directory other users can read or replace.
     expect(existsSync(invalid)).toBe(true);
+    expect(readFileSync(invalid)).toEqual(bytes);
+    expect(readdirSync(quarantineDir)).toEqual([]);
   });
 
   it('a redelivery after a successful ack succeeds instead of failing forever', async () => {
@@ -224,5 +290,106 @@ describe('relay per-record resolution', () => {
     // The exporter never observed that 200 and redelivers the batch.
     expect((await send([p])).status).toBe(200);
     expect((await send([p])).status).toBe(200);
+  });
+
+  it('quarantines invalid UTF-8 beside the drained spool while healthy siblings ack', async () => {
+    const { dir, broker, send } = await harness();
+    const good = join(dir, 'good.json');
+    const invalid = join(dir, 'invalid.json');
+    const invalidBytes = Buffer.from([0xff, 0xfe, 0x00]);
+    writeFileSync(good, '{"ok":true}');
+    writeFileSync(invalid, invalidBytes);
+
+    const response = await send([good, invalid]);
+
+    expect(response.status).toBe(200);
+    expect(broker.declared).toEqual(['1']);
+    expect(existsSync(good)).toBe(false);
+    expect(existsSync(invalid)).toBe(false);
+    expect(readdirSync(dir)).toEqual([]);
+    const quarantineDir = `${dir}.quarantine`;
+    dirs.push(quarantineDir);
+    const quarantined = readdirSync(quarantineDir);
+    expect(quarantined).toHaveLength(1);
+    expect(quarantined[0]).toMatch(/^invalid\.json\.invalid-utf8\..+\.quarantined$/);
+    expect(readFileSync(join(quarantineDir, quarantined[0] ?? ''))).toEqual(invalidBytes);
+  });
+
+  it('quarantines an oversized regular file without reading or deleting its only copy', async () => {
+    const { dir, broker, send } = await harness();
+    const oversized = join(dir, 'oversized.json');
+    writeFileSync(oversized, '');
+    truncateSync(oversized, 64 * 1024 * 1024 + 1);
+
+    expect((await send([oversized])).status).toBe(200);
+
+    expect(broker.declared).toEqual(['0']);
+    expect(existsSync(oversized)).toBe(false);
+    expect(readdirSync(dir)).toEqual([]);
+    const quarantineDir = `${dir}.quarantine`;
+    dirs.push(quarantineDir);
+    const quarantined = readdirSync(quarantineDir);
+    expect(quarantined).toHaveLength(1);
+    expect(quarantined[0]).toMatch(/^oversized\.json\.oversized\..+\.quarantined$/);
+    expect(statSync(join(quarantineDir, quarantined[0] ?? '')).size).toBe(64 * 1024 * 1024 + 1);
+  });
+
+  it('never quarantines an outside path, symlink, directory, or missing ref', async () => {
+    const { dir, broker, send } = await harness();
+    const outsideDir = mkdtempSync(join(tmpdir(), 'csuite-relay-outside-'));
+    dirs.push(outsideDir);
+    const outside = join(outsideDir, 'outside.json');
+    writeFileSync(outside, Buffer.from([0xff]));
+    const target = join(dir, 'target.json');
+    writeFileSync(target, Buffer.from([0xff]));
+    const symlink = join(dir, 'symlink.json');
+    symlinkSync(target, symlink);
+    const directory = join(dir, 'directory.json');
+    mkdirSync(directory);
+    const missing = join(dir, 'missing.json');
+
+    expect((await send([outside, symlink, directory, missing])).status).toBe(200);
+
+    expect(broker.declared).toEqual(['0']);
+    expect(readFileSync(outside)).toEqual(Buffer.from([0xff]));
+    expect(readFileSync(target)).toEqual(Buffer.from([0xff]));
+    expect(existsSync(symlink)).toBe(true);
+    expect(existsSync(directory)).toBe(true);
+    expect(existsSync(missing)).toBe(false);
+    expect(existsSync(`${dir}.quarantine`)).toBe(false);
+  });
+
+  it('quarantines degraded siblings even when an acknowledged ref disappears before unlink', async () => {
+    let healthy = '';
+    const { dir, broker, send } = await harness(200, () => {
+      rmSync(healthy, { force: true });
+    });
+    healthy = join(dir, 'healthy.json');
+    const invalid = join(dir, 'invalid.json');
+    const invalidBytes = Buffer.from([0xff]);
+    writeFileSync(healthy, '{"ok":true}');
+    writeFileSync(invalid, invalidBytes);
+
+    expect((await send([healthy, invalid])).status).toBe(200);
+
+    expect(broker.declared).toEqual(['1']);
+    expect(existsSync(invalid)).toBe(false);
+    const quarantineDir = `${dir}.quarantine`;
+    dirs.push(quarantineDir);
+    const quarantined = readdirSync(quarantineDir);
+    expect(quarantined).toHaveLength(1);
+    expect(readFileSync(join(quarantineDir, quarantined[0] ?? ''))).toEqual(invalidBytes);
+  });
+
+  it('does not quarantine before the broker acknowledges the batch', async () => {
+    const { dir, send } = await harness(503);
+    const invalid = join(dir, 'invalid.json');
+    const bytes = Buffer.from([0xff]);
+    writeFileSync(invalid, bytes);
+
+    expect((await send([invalid])).status).toBe(503);
+
+    expect(readFileSync(invalid)).toEqual(bytes);
+    expect(existsSync(`${dir}.quarantine`)).toBe(false);
   });
 });
