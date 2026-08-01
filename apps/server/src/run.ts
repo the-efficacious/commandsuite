@@ -65,6 +65,7 @@ import { openTeamAndMembers, type TeamStore } from './team-store.js';
 import { createTelemetryStore, type TelemetryStore } from './telemetry-store.js';
 import { TokenStore } from './tokens.js';
 import { createMcpClientManager, createSqliteToolSourceStore } from './tool-sources/index.js';
+import { createSqliteVariablesStore, migrateIdentityToVariables } from './variables.js';
 import { SERVER_VERSION } from './version.js';
 
 export { composeBriefing } from './briefing.js';
@@ -189,6 +190,13 @@ export {
   otpauthUri,
   verifyCode as verifyTotpCode,
 } from './totp.js';
+export {
+  createSqliteVariablesStore,
+  IDENTITY_ENV_NAMES,
+  type IdentityMigrationResult,
+  migrateIdentityToVariables,
+  type VariablesStore,
+} from './variables.js';
 export {
   createTtyWizardIO,
   type RunWizardOptions,
@@ -409,6 +417,23 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   // an agent echoed into its context. The app layer registers new
   // values as they're written; this covers pre-existing rows at boot.
   const secretsStore = createSqliteSecretsStore(db);
+  // Variables registry — runner env vars that are NOT secrets, in the
+  // same main DB and the same env namespace. Constructed before the
+  // redactor registration below so the identity migration has already
+  // moved those rows OUT of `secrets` by the time values are read.
+  const variablesStore = createSqliteVariablesStore(db);
+  // MUST run before `registerSecretValues` below: identity values that
+  // are still in `secrets` when that call happens stay registered for
+  // the life of the process, and the migration would appear to have
+  // done nothing until the next restart.
+  const identityMigration = migrateIdentityToVariables(db, secretsStore, variablesStore, log);
+  if (identityMigration.skipped.length > 0) {
+    // Named rather than swallowed: a skipped row is identity that is
+    // still a secret, and is still being scrubbed from traces.
+    log.warn('identity rows left in the secrets store', {
+      skipped: identityMigration.skipped,
+    });
+  }
   // External Notifications registry — endpoints/profiles are
   // config-class; delivery receipts are bounded by the per-endpoint
   // ingress rate limit. Main DB.
@@ -671,6 +696,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
     toolSources: toolSourceStore,
     mcpManager,
     secrets: secretsStore,
+    variables: variablesStore,
     notifications: notificationsStore,
     activityStore: activityStore,
     telemetryStore: telemetryStore,

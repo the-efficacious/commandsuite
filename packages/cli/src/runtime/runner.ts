@@ -304,10 +304,31 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
         }
         secretsEnv[name] = value;
       }
-      registerSecretValues(Object.values(secretsEnv));
+      // Register ONLY the values that came from the secrets store.
+      // Variables — git identity and anything else an operator marked
+      // non-secret — must reach the trace verbatim; registering them
+      // is what made a member's own name vanish from their own traces.
+      //
+      // A broker that predates `secretEnvNames` sends nothing here, and
+      // then every value is registered. That is the old behaviour and
+      // the fail-closed direction: an unredacted secret is a leak, an
+      // over-redacted variable is only a loss.
+      const secretNames = resolved.secretEnvNames;
+      const registeredNames =
+        secretNames === undefined
+          ? Object.keys(secretsEnv)
+          : secretNames.filter((name) => name in secretsEnv);
+      registerSecretValues(registeredNames.map((name) => secretsEnv[name] as string));
       if (Object.keys(secretsEnv).length > 0) {
         // Names only — the values must never reach the log stream.
-        log('runner: secrets resolved', { envNames: Object.keys(secretsEnv) });
+        // `registeredEnvNames` is the audit that matters: which of
+        // these will be scrubbed from this member's traces. Nothing
+        // reported that before, which is why a redacted name surfaced
+        // as a byte-count mystery instead of a log line.
+        log('runner: secrets resolved', {
+          envNames: Object.keys(secretsEnv),
+          registeredEnvNames: registeredNames,
+        });
       }
     } catch (err) {
       if (err instanceof ClientError && err.status === 404) {

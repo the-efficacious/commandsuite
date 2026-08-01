@@ -23,6 +23,7 @@ import {
   PROTOCOL_VERSION,
   SECRET_PATHS,
   TOOL_SOURCE_PATHS,
+  VARIABLE_PATHS,
 } from './protocol.js';
 import {
   ActivityReportSchema,
@@ -31,6 +32,7 @@ import {
   ApproveEnrollmentResponseSchema,
   BindSecretRequestSchema,
   BindToolSourceRequestSchema,
+  BindVariableRequestSchema,
   BriefingResponseSchema,
   ChannelSchema,
   CreateChannelRequestSchema,
@@ -39,6 +41,7 @@ import {
   CreateNotificationProfileRequestSchema,
   CreateSecretRequestSchema,
   CreateToolSourceRequestSchema,
+  CreateVariableRequestSchema,
   DeviceAuthorizationRequestSchema,
   DeviceAuthorizationResponseSchema,
   DeviceTokenErrorResponseSchema,
@@ -53,6 +56,7 @@ import {
   GetObjectiveResponseSchema,
   GetSecretResponseSchema,
   GetToolSourceResponseSchema,
+  GetVariableResponseSchema,
   HealthResponseSchema,
   HistoryResponseSchema,
   InvokeToolRequestSchema,
@@ -70,6 +74,7 @@ import {
   ListSecretsResponseSchema,
   ListTokensResponseSchema,
   ListToolSourcesResponseSchema,
+  ListVariablesResponseSchema,
   MemberSchema,
   MessageSchema,
   NotificationEndpointSchema,
@@ -92,12 +97,14 @@ import {
   SetNotificationSecretRequestSchema,
   SetSecretValueRequestSchema,
   SetToolCredentialRequestSchema,
+  SetVariableValueRequestSchema,
   TeamSchema,
   ToolSourceSchema,
   UpdateNotificationEndpointRequestSchema,
   UpdateNotificationProfileRequestSchema,
   UpdateSecretRequestSchema,
   UpdateToolSourceRequestSchema,
+  UpdateVariableRequestSchema,
   UploadActivityResponseSchema,
   VapidPublicKeyResponseSchema,
 } from './schemas.js';
@@ -109,6 +116,7 @@ import type {
   ApproveEnrollmentResponse,
   BindSecretRequest,
   BindToolSourceRequest,
+  BindVariableRequest,
   BriefingResponse,
   CancelObjectiveRequest,
   Channel,
@@ -121,6 +129,7 @@ import type {
   CreateObjectiveRequest,
   CreateSecretRequest,
   CreateToolSourceRequest,
+  CreateVariableRequest,
   DeviceAuthorizationRequest,
   DeviceAuthorizationResponse,
   DeviceTokenErrorCode,
@@ -137,6 +146,7 @@ import type {
   GetObjectiveResponse,
   GetSecretResponse,
   GetToolSourceResponse,
+  GetVariableResponse,
   HealthResponse,
   HistoryQuery,
   InvokeToolResponse,
@@ -172,6 +182,7 @@ import type {
   SetNotificationSecretRequest,
   SetSecretValueRequest,
   SetToolCredentialRequest,
+  SetVariableValueRequest,
   Team,
   TokenInfo,
   ToolSource,
@@ -183,10 +194,12 @@ import type {
   UpdateObjectiveRequest,
   UpdateSecretRequest,
   UpdateToolSourceRequest,
+  UpdateVariableRequest,
   UpdateWatchersRequest,
   UploadActivityRequest,
   UploadActivityResponse,
   VapidPublicKeyResponse,
+  VariableSummary,
 } from './types.js';
 
 // Re-exported from `./types` (canonical home) so `csuite-sdk`
@@ -1288,6 +1301,95 @@ export class Client {
   async resolveSecrets(): Promise<ResolveSecretsResponse> {
     const resp = await this.request(PATHS.secretsResolve, { method: 'GET' });
     return ResolveSecretsResponseSchema.parse(await this.json(resp));
+  }
+
+  // ────────────────────────── Variables ────────────────────
+  //
+  // Runner environment variables that are NOT secrets. Same shape as
+  // the secrets methods above; the difference is that these return the
+  // VALUE to a `secrets.manage` holder, and the values are never
+  // registered with the trace redactor.
+
+  /**
+   * List variables. Summaries carry the value itself for a caller
+   * holding `secrets.manage` — the capability that distinguishes a
+   * variable from a secret.
+   */
+  async listVariables(): Promise<VariableSummary[]> {
+    const resp = await this.request(PATHS.variables, { method: 'GET' });
+    return ListVariablesResponseSchema.parse(await this.json(resp)).variables;
+  }
+
+  /** Fetch one variable, with its value for a `secrets.manage` holder. */
+  async getVariable(slug: string): Promise<GetVariableResponse> {
+    const resp = await this.request(VARIABLE_PATHS.one(slug), { method: 'GET' });
+    return GetVariableResponseSchema.parse(await this.json(resp));
+  }
+
+  /** Register a new variable (requires `secrets.manage`). Value set separately. */
+  async createVariable(input: CreateVariableRequest): Promise<VariableSummary> {
+    const validated = CreateVariableRequestSchema.parse(input);
+    const resp = await this.request(PATHS.variables, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(validated),
+    });
+    return GetVariableResponseSchema.parse(await this.json(resp)).variable;
+  }
+
+  /** Update envName/description/enabled/allMembers (requires `secrets.manage`). */
+  async updateVariable(slug: string, input: UpdateVariableRequest): Promise<VariableSummary> {
+    const validated = UpdateVariableRequestSchema.parse(input);
+    const resp = await this.request(VARIABLE_PATHS.one(slug), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(validated),
+    });
+    return GetVariableResponseSchema.parse(await this.json(resp)).variable;
+  }
+
+  /** Delete a variable and its bindings (requires `secrets.manage`). */
+  async deleteVariable(slug: string): Promise<void> {
+    const resp = await this.request(VARIABLE_PATHS.one(slug), { method: 'DELETE' });
+    await this.json(resp);
+  }
+
+  /**
+   * Set the variable's value. Readable afterwards, unlike a secret —
+   * an operator who cannot read back a git author name cannot check it
+   * is the right one.
+   */
+  async setVariableValue(slug: string, input: SetVariableValueRequest): Promise<void> {
+    const validated = SetVariableValueRequestSchema.parse(input);
+    const resp = await this.request(VARIABLE_PATHS.value(slug), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(validated),
+    });
+    await this.json(resp);
+  }
+
+  /** Remove the variable's value (requires `secrets.manage`). */
+  async deleteVariableValue(slug: string): Promise<void> {
+    const resp = await this.request(VARIABLE_PATHS.value(slug), { method: 'DELETE' });
+    await this.json(resp);
+  }
+
+  /** Bind a member to a variable (requires `secrets.manage`). */
+  async bindVariable(slug: string, input: BindVariableRequest): Promise<void> {
+    const validated = BindVariableRequestSchema.parse(input);
+    const resp = await this.request(VARIABLE_PATHS.bindings(slug), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(validated),
+    });
+    await this.json(resp);
+  }
+
+  /** Unbind a member from a variable (requires `secrets.manage`). */
+  async unbindVariable(slug: string, member: string): Promise<void> {
+    const resp = await this.request(VARIABLE_PATHS.binding(slug, member), { method: 'DELETE' });
+    await this.json(resp);
   }
 
   // ────────────────── External Notifications ───────────────

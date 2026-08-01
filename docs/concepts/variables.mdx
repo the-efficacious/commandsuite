@@ -1,0 +1,123 @@
+---
+title: Variables
+description: Broker-held runner environment variables that are not secrets — readable values, delivered exactly like secrets, and never scrubbed from captured traces.
+section: Concepts
+order: 47
+---
+
+# Variables
+
+A **variable** is a broker-held value delivered to bound members'
+runners and injected into the agent process as an environment
+variable at spawn — structurally identical to a [secret](/concepts/secrets),
+and different in exactly two ways:
+
+- **Its value is readable.** `csuite variables view` prints it back to
+  a caller holding `secrets.manage`. A secret's value leaves the
+  broker only on the runner's resolve call.
+- **It is never registered with the trace redactor**, so it appears
+  verbatim in captured traces.
+
+```
+csuite variables add author-name --env GIT_AUTHOR_NAME
+csuite variables set-value author-name --value "Ada Lovelace"
+csuite variables bind author-name scout
+csuite variables view author-name        # prints the value back
+```
+
+## Why this exists
+
+Until variables, the secrets registry was the only path into a
+runner's environment, and **every value in it was registered for
+redaction unconditionally**. So a git author name — a value published
+in every commit its member has ever written — had to be stored as a
+secret, and was then scrubbed from every trace on the team.
+
+Which members it happened to was decided by a length threshold rather
+than by anything meaningful: registered values shorter than six
+characters are ignored, so a six-character name vanished from its own
+traces while a four-character one did not. **The published corpus
+carried a per-member redaction bias that nothing in the corpus
+declared.**
+
+The repair is classification, not tuning. The length threshold is
+unchanged and goes back to its actual job — keeping very short
+*secret* values from shredding ordinary trace content.
+
+## Choosing between a secret and a variable
+
+**Use a secret** for anything confidential: tokens, keys, passwords,
+signing material. Values are KEK-encrypted at rest, write-only over
+the wire, and scrubbed from captured bodies wherever they appear.
+
+**Use a variable** for values that are already public, or that you
+would be willing to read in a trace: git identity, a region name, a
+non-secret endpoint, a feature flag.
+
+The test is not "is this sensitive?" but **"would I mind seeing this
+in a published trace?"** A variable's value is stored in plaintext and
+is deliberately not redacted — putting a credential in one publishes
+it to every trace the agent produces.
+
+## Git identity migrates automatically
+
+`GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME` and
+`GIT_COMMITTER_EMAIL` move from the secrets store to the variables
+store **automatically, at broker start**, carrying their values and
+bindings. There is no operator step.
+
+That choice is deliberate: an operator step that has not been run
+leaves identity registered for redaction — the exact state the
+migration exists to end — and it fails silently, because everything
+keeps working and names simply keep disappearing from traces.
+
+The migration runs in one transaction and rolls back whole on any
+error, logging at boot. **A row it cannot move is named in the log
+rather than dropped**; the common case is a secret bound to no member,
+whose value has no reader, and it is left exactly where it is.
+
+## One environment namespace, two stores
+
+Secrets and variables write into the same environment map, so they
+share one invariant: **a member can never resolve two values for one
+environment variable name.** It makes no difference which store they
+come from.
+
+Binding a variable that would collide with a secret for the same
+member — or the reverse — fails with `env_taken` and names the rival:
+
+```
+scout already resolves GIT_AUTHOR_NAME from secret "scout-git-author-name"
+```
+
+**A collision is an error, never a precedence rule.** If the two
+stores ever disagree about one member's environment, `/secrets/resolve`
+refuses rather than picking a winner; a silent precedence rule is one
+more thing to remember, and it would be remembered wrong.
+
+The same env name in both stores is fine when they reach different
+members, exactly as two secrets targeting `GITHUB_TOKEN` for different
+agents are fine.
+
+## Administration
+
+Every mutation requires `secrets.manage` — configuring the team's
+runner environment stays a privileged act whether or not the value is
+confidential. Reading a variable's **value** requires the same
+permission; other members see the metadata and `hasValue`, the same
+view they would get for a secret.
+
+Delivery is `enabled && (allMembers || bound)`, identical to secrets.
+Changes take effect on the member's **next runner start** — the agent
+environment is frozen at spawn — and every change fans out an event
+telling bound members exactly that.
+
+## What this does not fix
+
+A variable is not redacted, which is the point. **It does not make the
+raw body store byte-verbatim in general**: a genuine secret appearing
+in a captured body is still rewritten before the body is
+content-addressed, so a stored body containing one is not the bytes
+that went on the wire. That is correct behaviour for a secret and it
+is still a gap in the store's fidelity claim — see
+[Activity and traces](/concepts/activity-and-traces).

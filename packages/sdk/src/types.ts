@@ -675,7 +675,102 @@ export interface BindSecretRequest {
  * environment.
  */
 export interface ResolveSecretsResponse {
+  /**
+   * The merged env delta for the calling member — secrets AND
+   * variables together, since the runner injects one environment map.
+   */
   env: Record<string, string>;
+  /**
+   * Which keys of `env` came from the SECRETS store, and are therefore
+   * the only ones the runner may register with the trace redactor.
+   *
+   * Optional for one reason: a runner talking to a broker that predates
+   * this field must not silently stop redacting. When it is absent the
+   * runner registers everything, which is the old behaviour and the
+   * fail-closed direction. A broker that sends it is authoritative.
+   */
+  secretEnvNames?: string[];
+}
+
+// ────────────────────────── Variables ─────────────────────────────
+//
+// A runner environment variable that is NOT a secret. Structurally
+// identical to `Secret` — slug, env name, bindings, one value — and
+// different in exactly two ways: the value is READABLE by an
+// authorised caller, and it is never registered with the trace
+// redactor, so it survives verbatim in captured traces.
+//
+// The distinction exists because the secrets store used to be the only
+// path into a runner's environment. Git identity had to be stored as a
+// secret and was then scrubbed from every trace on the team — a value
+// published in every commit, redacted from the record of the work that
+// produced it.
+
+/**
+ * A broker-held runner environment variable. Same shape as `Secret`;
+ * the difference is in what may be read and what gets redacted, not in
+ * the metadata.
+ */
+export interface Variable {
+  id: string;
+  slug: string;
+  /** Target environment variable name (validated, reserved names rejected). */
+  envName: string;
+  /** Freeform admin label / purpose note. */
+  description: string;
+  enabled: boolean;
+  /** When true, every team member receives this variable. */
+  allMembers: boolean;
+  createdBy: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Per-viewer summary returned from `GET /variables`. */
+export interface VariableSummary extends Variable {
+  /** Whether a value is set. */
+  hasValue: boolean;
+  /** Whether the caller is bound (directly or via allMembers). */
+  bound: boolean;
+  /**
+   * The value itself, in the clear. Present only for callers holding
+   * `secrets.manage` — a variable is not secret, but who may configure
+   * the team's runner environment is still a privileged question.
+   */
+  value?: string;
+}
+
+export interface ListVariablesResponse {
+  variables: VariableSummary[];
+}
+
+export interface GetVariableResponse {
+  variable: VariableSummary;
+  /** Bound member names. Only present for viewers with `secrets.manage`. */
+  boundMembers?: string[];
+}
+
+export interface CreateVariableRequest {
+  slug: string;
+  envName: string;
+  description?: string;
+  allMembers?: boolean;
+  enabled?: boolean;
+}
+
+export interface UpdateVariableRequest {
+  envName?: string;
+  description?: string;
+  allMembers?: boolean;
+  enabled?: boolean;
+}
+
+export interface SetVariableValueRequest {
+  value: string;
+}
+
+export interface BindVariableRequest {
+  member: string;
 }
 
 // ────────────────── External Notifications ────────────────────────
