@@ -54,6 +54,7 @@ const COMMANDER_BRIEFING: BriefingResponse = {
   ],
   openObjectives: [],
   toolSources: [],
+  processRules: [],
   instructions: 'Lead the team.',
 };
 

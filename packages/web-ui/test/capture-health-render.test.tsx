@@ -43,6 +43,7 @@ const BRIEFING: BriefingResponse = {
   ],
   openObjectives: [],
   toolSources: [],
+  processRules: [],
   instructions: '',
 };
 

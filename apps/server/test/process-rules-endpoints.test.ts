@@ -53,7 +53,7 @@ function makeApp() {
     version: '0.0.0',
     logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   });
-  return { app, processRules };
+  return { app, processRules, broker };
 }
 
 function authed(token: string, body?: unknown): RequestInit {
@@ -195,5 +195,63 @@ describe('a disputed rule is served, and says what is disputed', () => {
     const disputed = rules.find((r) => r.anchor === 'merge-model');
     expect(disputed?.status).toBe('disputed');
     expect(disputed?.disputeReason).toContain('director to settle');
+  });
+});
+
+describe('criterion 7 — an amendment takes effect with nobody broadcasting it', () => {
+  it('a member who never saw an announcement receives the current rule', async () => {
+    // The negative control, and the point of the objective. Nothing is
+    // pushed, posted or announced: the member fetches a briefing and
+    // the current text is simply there.
+    const { app, broker } = makeApp();
+    await seed(app);
+
+    const before = (await (await app.request('/briefing', authed(CORA))).json()) as {
+      processRules: ProcessRule[];
+    };
+    expect(before.processRules[0]?.text).toBe(RULE);
+
+    // Count everything the broker has emitted, so "no broadcast" is
+    // asserted rather than assumed.
+    const emitted: unknown[] = [];
+    const originalPush = broker.push.bind(broker);
+    broker.push = (async (...args: unknown[]) => {
+      emitted.push(args);
+      return originalPush(...(args as Parameters<typeof originalPush>));
+    }) as typeof broker.push;
+
+    await app.request(
+      '/process-rules/release-cadence/amend',
+      authed(LEA, {
+        text: RULE_V2,
+        reason: 'Director tightened it.',
+        disposition: 'correction',
+        changeKind: 'refinement',
+      }),
+    );
+
+    // Nothing was announced to anyone.
+    expect(emitted).toHaveLength(0);
+
+    // And the member — who saw nothing — gets the new text on their
+    // next briefing, with the version moved so they can tell.
+    const after = (await (await app.request('/briefing', authed(CORA))).json()) as {
+      processRules: ProcessRule[];
+    };
+    expect(after.processRules[0]?.text).toBe(RULE_V2);
+    expect(after.processRules[0]?.version).toBe(2);
+    expect(after.processRules[0]?.anchor).toBe('release-cadence');
+  });
+
+  it('a broker with no rules serves an empty list, not a missing field', async () => {
+    // Absent and empty must not be the same observation for a client:
+    // `.default([])` makes an older broker parse, and this asserts a
+    // current broker is explicit rather than relying on that.
+    const { app } = makeApp();
+    const briefing = (await (await app.request('/briefing', authed(CORA))).json()) as {
+      processRules: ProcessRule[];
+    };
+    expect(Array.isArray(briefing.processRules)).toBe(true);
+    expect(briefing.processRules).toHaveLength(0);
   });
 });
