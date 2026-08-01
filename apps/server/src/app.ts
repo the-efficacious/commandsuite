@@ -40,6 +40,7 @@ import {
   ActivityReportSchema,
   AddChannelMemberRequestSchema,
   AmendObjectiveRequestSchema,
+  AmendProcessRuleRequestSchema,
   ApproveEnrollmentRequestSchema,
   BindSecretRequestSchema,
   BindToolSourceRequestSchema,
@@ -52,6 +53,7 @@ import {
   CreateNotificationEndpointRequestSchema,
   CreateNotificationProfileRequestSchema,
   CreateObjectiveRequestSchema,
+  CreateProcessRuleRequestSchema,
   CreateSecretRequestSchema,
   CreateToolSourceRequestSchema,
   CreateVariableRequestSchema,
@@ -161,6 +163,7 @@ import {
 } from './notifications/index.js';
 import { ObjectivesError, type ObjectivesStore } from './objectives.js';
 import { parseOtlpLogs, parseOtlpMetrics } from './otlp-parse.js';
+import { ProcessRulesError, type ProcessRulesStore } from './process-rules.js';
 import type { PushSubscriptionStore } from './push/store.js';
 import type { RawBodyStore } from './raw-body-store.js';
 import { SecretsError, type SecretsStore } from './secrets.js';
@@ -247,6 +250,13 @@ export interface AppOptions {
    * are registered iff this is provided. Same opt-out pattern as
    * `objectives`.
    */
+  /**
+   * Team process rules — standing instructions injected into every
+   * briefing as current state. The `/process-rules*` endpoints are
+   * registered iff this is provided, and the briefing composer reads
+   * `listForInjection()` when it is.
+   */
+  processRules?: ProcessRulesStore;
   secrets?: SecretsStore;
   /**
    * Variables registry — broker-held runner environment variables that
@@ -512,6 +522,7 @@ export function createApp(options: AppOptions): CreatedApp {
     activityStore,
     toolSources,
     mcpManager,
+    processRules,
     secrets,
     variables,
     notifications,
@@ -1090,7 +1101,14 @@ export function createApp(options: AppOptions): CreatedApp {
       }
       values.add(block.text);
     }
-    return c.json(briefing);
+    // Process rules ride in their own field, never inside
+    // `instructions`. That field inherits `MemberSchema`'s 8192 cap —
+    // sized for what a human authors, and also bounding what the server
+    // composes — so rules inside it would push a member's briefing over
+    // it and the runner would refuse to start. In their own field an
+    // old runner ignores them and starts normally: degraded, not fatal.
+    const rules = processRules ? processRules.listForInjection() : [];
+    return c.json({ ...briefing, processRules: rules });
   });
 
   app.get(PATHS.roster, auth, (c) => {
@@ -2812,6 +2830,95 @@ export function createApp(options: AppOptions): CreatedApp {
         });
       });
       return c.json({ ok: true, boundMembers: secrets.listBindings(secret.id) });
+    });
+  }
+
+  // ─── Team process rules ───────────────────────────────────────────
+  // Standing instructions injected into every briefing as current
+  // state. Reading is tri-auth — a rule that binds you is a rule you
+  // must be able to read. Mutating gates on `objectives.create`: the
+  // same authority that amends a contract, because nothing yet
+  // distinguishes the two and a new leaf would be a surface to grant,
+  // migrate and document for no present gain. The leaf's NAME is wrong
+  // for this use and that is recorded rather than fixed silently.
+
+  if (processRules !== undefined) {
+    const requireProcessManage = (
+      // biome-ignore lint/suspicious/noExplicitAny: helper is only ever called inside a route handler
+      ctx: Context<any, string, Record<string, unknown>>,
+    ): Response | null =>
+      hasPermission(ctx.get('member').permissions, 'objectives.create')
+        ? null
+        : ctx.json({ error: 'amending a process rule requires objectives.create' }, 403);
+
+    const mapProcessError = (
+      // biome-ignore lint/suspicious/noExplicitAny: helper is only ever called inside a route handler
+      ctx: Context<any, string, Record<string, unknown>>,
+      err: unknown,
+    ): Response => {
+      if (err instanceof ProcessRulesError) {
+        const status = err.code === 'not_found' ? 404 : err.code === 'anchor_taken' ? 409 : 400;
+        return ctx.json({ error: err.message, code: err.code }, status);
+      }
+      return ctx.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+    };
+
+    // GET /process-rules — every rule, including retired and disputed.
+    // "Which rules exist" and "which rules bind" are different
+    // questions; this answers the first and the caller decides.
+    app.get(PATHS.processRules, auth, (c) => c.json({ rules: processRules.list() }));
+
+    app.get(`${PATHS.processRules}/:anchor`, auth, (c) => {
+      const rule = processRules.get(c.req.param('anchor'));
+      if (!rule) return c.json({ error: 'no such process rule' }, 404);
+      return c.json({ rule });
+    });
+
+    // GET /process-rules/:anchor/history — RETRIEVED, never resident.
+    // This is what keeps the injected block bounded by the number of
+    // rules rather than by the number of times they have changed.
+    app.get(`${PATHS.processRules}/:anchor/history`, auth, (c) => {
+      const anchor = c.req.param('anchor');
+      if (!processRules.get(anchor)) return c.json({ error: 'no such process rule' }, 404);
+      return c.json({ anchor, amendments: processRules.history(anchor) });
+    });
+
+    app.post(PATHS.processRules, auth, async (c) => {
+      const denied = requireProcessManage(c);
+      if (denied) return denied;
+      const raw = await c.req.json().catch(() => null);
+      const parsed = CreateProcessRuleRequestSchema.safeParse(raw);
+      if (!parsed.success) {
+        return c.json({ error: 'invalid process rule payload', details: parsed.error.issues }, 400);
+      }
+      try {
+        return c.json({ rule: processRules.create(parsed.data, c.get('member').name) }, 201);
+      } catch (err) {
+        return mapProcessError(c, err);
+      }
+    });
+
+    // POST /process-rules/:anchor/amend — the disposition is #79's,
+    // same field and same meaning, so "does work started under the old
+    // rule finish under it" has one answer across contracts and process.
+    app.post(`${PATHS.processRules}/:anchor/amend`, auth, async (c) => {
+      const denied = requireProcessManage(c);
+      if (denied) return denied;
+      const raw = await c.req.json().catch(() => null);
+      const parsed = AmendProcessRuleRequestSchema.safeParse(raw);
+      if (!parsed.success) {
+        return c.json({ error: 'invalid amendment payload', details: parsed.error.issues }, 400);
+      }
+      try {
+        const { rule, amendment } = processRules.amend(
+          c.req.param('anchor'),
+          parsed.data,
+          c.get('member').name,
+        );
+        return c.json({ rule, amendment });
+      } catch (err) {
+        return mapProcessError(c, err);
+      }
     });
   }
 

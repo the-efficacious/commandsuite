@@ -311,6 +311,12 @@ export interface HealthResponse {
  * public `Teammate` projection.
  */
 export interface BriefingResponse extends Member {
+  /**
+   * Process rules in force, as current state. Carried separately from
+   * `instructions` because that field's cap is sized for authored text
+   * and also bounds composed output — see `BriefingResponseSchema`.
+   */
+  processRules: ProcessRule[];
   team: Team;
   teammates: Teammate[];
   /** Objectives currently assigned to this member with status === 'active' or 'blocked'. */

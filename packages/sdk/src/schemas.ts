@@ -1611,6 +1611,20 @@ export const BriefingResponseSchema = MemberSchema.extend({
   team: TeamSchema,
   teammates: z.array(TeammateSchema),
   openObjectives: z.array(ObjectiveSchema),
+  /**
+   * Process rules in force, as CURRENT STATE. Its own field, not part
+   * of `instructions`, and deliberately so: `instructions` inherits
+   * `MemberSchema`'s 8192 cap, which is sized for what a human authors
+   * and also bounds what the server composes. Rules inside it would
+   * push a member's briefing over that cap and the runner would refuse
+   * to start; in their own field an old runner ignores them and starts
+   * normally. Degraded beats fatal.
+   *
+   * Defaulted so a runner talking to a broker that predates process
+   * rules still parses — absent means "this broker has none", which is
+   * true of every broker before this shipped.
+   */
+  processRules: z.array(ProcessRuleSchema).default([]),
   // Defaulted so pre-tool-sources brokers (and test fixtures) that
   // omit the field still parse.
   toolSources: z.array(ResolvedToolSourceSchema).default([]),

@@ -44,6 +44,11 @@ export const PATHS = {
   // to `instructions`-class strings (the MCP protocol freezes those
   // per session).
   team: '/team',
+  // Team process rules — the standing instructions injected into every
+  // member's briefing as current state. GET is tri-auth; mutations gate
+  // on `objectives.create`, the same authority that amends a contract.
+  // History is a subresource so it is retrieved rather than resident.
+  processRules: '/process-rules',
   teamPresets: '/team/presets',
   // Filesystem — per-member home directories with content-addressed
   // blob storage. The dedicated `read/*` catch-all supports friendly
@@ -233,6 +238,14 @@ export const SECRET_PATHS = {
   bindings: (slug: string) => `/secrets/${encodeURIComponent(slug)}/bindings`,
   binding: (slug: string, name: string) =>
     `/secrets/${encodeURIComponent(slug)}/bindings/${encodeURIComponent(name)}`,
+} as const;
+
+/** Path builders for process-rule subresources. */
+export const PROCESS_RULE_PATHS = {
+  one: (anchor: string) => `/process-rules/${encodeURIComponent(anchor)}`,
+  amend: (anchor: string) => `/process-rules/${encodeURIComponent(anchor)}/amend`,
+  /** Retrieved on demand — never part of the injected block. */
+  history: (anchor: string) => `/process-rules/${encodeURIComponent(anchor)}/history`,
 } as const;
 
 /** Path builders for variable subresources. Mirrors `SECRET_PATHS`. */

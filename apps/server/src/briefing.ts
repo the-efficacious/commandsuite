@@ -88,6 +88,14 @@ export function composeBriefing(input: ComposeBriefingInput): BriefingResponse {
     teammates,
     openObjectives,
     toolSources: input.toolSources ?? [],
+    // Process rules are attached by the `/briefing` route from the
+    // rules store, not composed here — they are current state read at
+    // request time, and they deliberately do NOT enter `instructions`
+    // (that field's 8192 cap is sized for authored text and also
+    // bounds composed output; rules inside it would stop a runner
+    // starting). Empty here so composition stays a pure function of
+    // its input.
+    processRules: [],
   };
 }
 
