@@ -310,6 +310,8 @@ describe('POST /otlp/v1/logs runner-relay acknowledgement', () => {
     const rawBody = JSON.parse(
       rawBodyStore.getBlob(rawRequest?.hash ?? '')?.toString('utf8') ?? '{}',
     );
+    expect(JSON.stringify(rawBody.messages)).toContain(`stdout: ${REDACTED}`);
+    expect(JSON.stringify(rawBody.messages)).not.toContain(secret);
     const rawSystem = rawBody.system.map((part: { text?: string }) => part.text ?? '').join('');
     const capturedBlock = rawSystem.slice(
       rawSystem.indexOf(context),
