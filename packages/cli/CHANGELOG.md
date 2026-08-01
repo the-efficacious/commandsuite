@@ -23,6 +23,13 @@
   caller without `objectives.create` always receives the whole relationship
   union — so forwarding it would return a superset with nothing saying so.
 
+  The scope phrase in the heading and the empty-state line also changed, so
+  emitted output differs for any call passing `assignee`: the status word
+  premodifies and the assignee clause postmodifies (`no open objectives
+  assigned to X`), and a caller filtering to their own plate no longer gets
+  the redundant `for X assigned to X`. Calls passing only `status` emit
+  byte-identical output to before.
+
 - Updated dependencies []:
   - csuite-core@0.3.4
   - csuite-sdk@0.3.4
