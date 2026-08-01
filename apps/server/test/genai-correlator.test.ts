@@ -23,6 +23,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { openDatabase } from '../src/db.js';
+import { createDiagnosticStore } from '../src/diagnostics.js';
 import { createGenAiCorrelator, isGenAiLogRecord } from '../src/genai-correlator.js';
 import { createRawBodyStore, type RawBodyStore } from '../src/raw-body-store.js';
 import type { TelemetryRecord } from '../src/telemetry-store.js';
@@ -469,8 +470,14 @@ describe('genai correlator raw capture', () => {
   });
 
   it('stores a malformed-JSON request body raw while the genai path skips', () => {
-    const rawStore = createRawBodyStore(openDatabase(':memory:'));
-    const corr = createGenAiCorrelator({ rawStore, memberName: 'alice' });
+    const db = openDatabase(':memory:');
+    const rawStore = createRawBodyStore(db);
+    const diagnostics = createDiagnosticStore(db);
+    const corr = createGenAiCorrelator({
+      rawStore,
+      diagnostics: diagnostics.emit,
+      memberName: 'alice',
+    });
     const badBytes = Buffer.from('not json {{{', 'utf8');
     const badRef = join(dir, `bad-${fileSeq++}.json`);
     writeFileSync(badRef, badBytes);
@@ -489,6 +496,32 @@ describe('genai correlator raw capture', () => {
     expect(rawStore.count()).toBe(2);
     expect(rawStore.getBlob(sha256(badBytes))?.equals(badBytes)).toBe(true);
     expect(existsSync(badRef)).toBe(false);
+    expect(diagnostics.unresolved('alice')).toContainEqual({
+      cause: 'context.briefing_check_unavailable',
+      since: expect.any(Number),
+    });
+  });
+
+  it('surfaces an incomplete captured exchange as current context-check health', () => {
+    const db = openDatabase(':memory:');
+    const diagnostics = createDiagnosticStore(db);
+    const corr = createGenAiCorrelator({
+      diagnostics: diagnostics.emit,
+      memberName: 'alice',
+      ttlMs: 10,
+    });
+    const reqRef = writeBody(REQUEST_BODY);
+
+    corr.ingest([
+      logRecord('api_request_body', 1, { body_ref: reqRef, model: 'claude-opus-4-6' }),
+      logRecord('api_request', 2, { request_id: 'req_gap', model: 'claude-opus-4-6' }),
+    ]);
+    corr.sweep(1_700_000_000_100);
+
+    expect(diagnostics.unresolved('alice')).toContainEqual({
+      cause: 'context.briefing_check_unavailable',
+      since: expect.any(Number),
+    });
   });
 
   it('still emits the inference when the raw store throws (failure isolation)', () => {

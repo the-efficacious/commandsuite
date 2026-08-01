@@ -119,9 +119,10 @@ import {
   createActivityTracker,
 } from './activity-tracker.js';
 import { type AuthBindings, createAuthMiddleware } from './auth.js';
-import { briefingCaptureExemptions, composeBriefing } from './briefing.js';
+import { briefingCaptureBlocks, briefingCaptureExemptions, composeBriefing } from './briefing.js';
 import type { CaptureHealthStore } from './capture-health.js';
 import { type ChannelStore, ChannelsError, GENERAL_CHANNEL_ID, validateSlug } from './channels.js';
+import { contextResendBody, contextResendKey, inspectBriefingContext } from './context-watchdog.js';
 import type { DiagnosticStore } from './diagnostics.js';
 import { type EnrollmentStore, formatUserCode, normalizeUserCode } from './enrollments.js';
 import {
@@ -592,6 +593,12 @@ export function createApp(options: AppOptions): CreatedApp {
   // this member. Keep prior session values too: a runner's prompt is
   // frozen, while an operator may edit the live team/member record.
   const briefingExemptions = new Map<string, Set<string>>();
+  const briefingBlockVersions = new Map<
+    string,
+    Map<ReturnType<typeof briefingCaptureBlocks>[number]['kind'], Set<string>>
+  >();
+  const contextLastResentAt = new Map<string, number>();
+  const contextAwaitingConfirmation = new Set<string>();
   const exemptionsFor = (memberName: string): readonly string[] => {
     const exemptions = new Set(briefingExemptions.get(memberName) ?? []);
     const current = members.findByName(memberName);
@@ -630,6 +637,95 @@ export function createApp(options: AppOptions): CreatedApp {
       genaiCorrelators.set(memberName, corr);
     }
     return corr;
+  };
+  const inspectCapturedBriefing = (
+    memberName: string,
+    inference: Parameters<typeof inspectBriefingContext>[0]['inference'],
+    systemProjectionObservable: boolean,
+  ): void => {
+    const current = members.findByName(memberName);
+    if (!current) return;
+    const composeInput = {
+      self: current,
+      team: teamStore.getTeam(),
+      teammates: teammatesFromMembers(members),
+      openObjectives: [],
+    };
+    const blocks = briefingCaptureBlocks(composeInput);
+    const observedAt = now();
+    const observations = inspectBriefingContext({
+      memberName,
+      inference,
+      systemProjectionObservable,
+      blocks,
+      now: observedAt,
+      lastResentAt: contextLastResentAt,
+      awaitingConfirmation: contextAwaitingConfirmation,
+      knownPriorVersions: briefingBlockVersions.get(memberName),
+    });
+    if (telemetryStore !== undefined && observations.length > 0) {
+      try {
+        telemetryStore.append(
+          memberName,
+          observations.map((item) => item.telemetry),
+        );
+        diagnostics?.emit.contextPresenceTelemetryStored(memberName);
+      } catch (err) {
+        diagnostics?.emit.contextPresenceTelemetryFailed(memberName, observations.length);
+        logger.warn('context watchdog telemetry append failed', {
+          member: memberName,
+          count: observations.length,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    const unobservable = observations.filter((item) => !item.observable);
+    if (unobservable.length > 0) {
+      diagnostics?.emit.contextBriefingCheckUnavailable(memberName, unobservable.length);
+    } else {
+      diagnostics?.emit.contextBriefingCheckSucceeded(memberName);
+    }
+    if (observations.some((item) => item.deliveryUnconfirmed)) {
+      diagnostics?.emit.contextBlockResendUnconfirmed(
+        memberName,
+        observations.filter((item) => item.deliveryUnconfirmed).length,
+      );
+    } else {
+      diagnostics?.emit.contextBlockDeliveryConfirmed(memberName);
+    }
+    for (const item of observations) {
+      const key = contextResendKey(memberName, item.block);
+      if (item.present === true) contextAwaitingConfirmation.delete(key);
+    }
+    const firing = observations.filter((item) => item.resendFired);
+    if (firing.length === 0) return;
+    for (const item of firing) {
+      const key = contextResendKey(memberName, item.block);
+      contextLastResentAt.set(key, observedAt);
+      contextAwaitingConfirmation.add(key);
+    }
+    void broker
+      .push(
+        {
+          to: memberName,
+          title: 'persistent context restored',
+          level: 'notice',
+          body: contextResendBody(firing),
+        },
+        { from: 'csuite' },
+      )
+      .catch((err: unknown) => {
+        diagnostics?.emit.contextBlockResendUnconfirmed(memberName, firing.length);
+        logger.warn('context watchdog resend failed', {
+          member: memberName,
+          blocks: firing.map((item) => item.block.kind),
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    logger.info('context watchdog re-sent missing briefing blocks', {
+      member: memberName,
+      blocks: firing.map((item) => item.block.kind),
+    });
   };
 
   const app = new Hono<AppBindings>();
@@ -979,6 +1075,19 @@ export function createApp(options: AppOptions): CreatedApp {
       briefingExemptions.set(member.name, remembered);
     }
     for (const block of briefingCaptureExemptions(composeInput)) remembered.add(block);
+    let versions = briefingBlockVersions.get(member.name);
+    if (!versions) {
+      versions = new Map();
+      briefingBlockVersions.set(member.name, versions);
+    }
+    for (const block of briefingCaptureBlocks(composeInput, briefing.instructions)) {
+      let values = versions.get(block.kind);
+      if (!values) {
+        values = new Set();
+        versions.set(block.kind, values);
+      }
+      values.add(block.text);
+    }
     return c.json(briefing);
   });
 
@@ -1505,6 +1614,9 @@ export function createApp(options: AppOptions): CreatedApp {
           const inferences = getGenAiCorrelator(member.name).ingest(genaiRecords);
           for (const inf of inferences) {
             genaiStore.append(member.name, inf);
+            // Claude declares the structured system projection conformant:
+            // empty means genuinely absent, not unavailable capture.
+            inspectCapturedBriefing(member.name, inf, true);
           }
           // ONLY when an append actually happened. A body-only or
           // correlation-pending batch yields zero inferences and
@@ -1759,10 +1871,12 @@ export function createApp(options: AppOptions): CreatedApp {
           // model-only record rather than vanishing (raw already captured).
           let requestBody: unknown = null;
           let responseBody: unknown = null;
+          let requestParsed = false;
           try {
             requestBody = JSON.parse(reqBytes.toString('utf8'));
+            requestParsed = true;
           } catch {
-            /* keep null */
+            diagnostics?.emit.contextBriefingCheckUnavailable(member.name, 1);
           }
           try {
             responseBody = JSON.parse(respBytes.toString('utf8'));
@@ -1780,6 +1894,12 @@ export function createApp(options: AppOptions): CreatedApp {
             ts: envelope.eventTs ?? undefined,
           });
           gStore.append(name, { ...rec, requestSha256, responseSha256 });
+          if (requestParsed) {
+            // #118: Codex does not yet populate instructions on chained
+            // Responses turns. Declare that projection unavailable instead
+            // of letting a provider name decide observability forever.
+            inspectCapturedBriefing(member.name, rec, rec.systemInstructions.length > 0);
+          }
           accepted++;
           diagnostics?.emit.codexGenaiIngestEntrySucceeded(member.name);
         } catch (err) {

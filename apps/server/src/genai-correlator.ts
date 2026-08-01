@@ -406,6 +406,7 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
         responseBody = JSON.parse(p.responseText);
       } catch (err) {
         diag?.correlatorBodyJsonParseFailed(who, p.requestText.length + p.responseText.length);
+        diag?.contextBriefingCheckUnavailable(who, 1);
         log('genai-correlator: body JSON parse failed', {
           error: err instanceof Error ? err.message : String(err),
         });
@@ -436,19 +437,26 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
 
   function evictStale(nowMs: number): void {
     const cutoff = nowMs - ttlMs;
+    let gaps = 0;
     // Drain the stale prefix of the FIFO (oldest-first).
     while (fifo.length > 0 && (fifo[0]?.startedAt ?? 0) < cutoff) {
       fifo.shift();
+      gaps++;
     }
     // Hard cap — drop the oldest overflow.
     while (fifo.length > maxPending) {
       fifo.shift();
+      gaps++;
     }
     // Evict stale pending exchanges that never completed.
     for (const [key, p] of pending) {
       const stamp = Math.max(p.startedAt, p.endedAt);
-      if (stamp < cutoff) pending.delete(key);
+      if (stamp < cutoff) {
+        pending.delete(key);
+        gaps++;
+      }
     }
+    if (gaps > 0) diag?.contextBriefingCheckUnavailable(who, gaps);
   }
 
   function ingest(records: TelemetryRecord[]): GenAiInferenceInput[] {
@@ -471,7 +479,10 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
               startedAt: ts,
               model: asStr(attrs.model),
             });
-            while (fifo.length > maxPending) fifo.shift();
+            while (fifo.length > maxPending) {
+              fifo.shift();
+              diag?.contextBriefingCheckUnavailable(who, 1);
+            }
             break;
           }
           case EV_API_REQUEST: {
@@ -544,6 +555,7 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
         }
       } catch (err) {
         diag?.correlatorMalformedRecordSkipped(who);
+        diag?.contextBriefingCheckUnavailable(who, 1);
         log('genai-correlator: skipped malformed record', {
           error: err instanceof Error ? err.message : String(err),
         });

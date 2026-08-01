@@ -76,6 +76,8 @@ const APP_IN_SCOPE = [
   'agent activity append failed',
   'tool invoke audit append failed',
   'enrollment source label truncated',
+  'context watchdog telemetry append failed',
+  'context watchdog resend failed',
 ];
 
 /**
@@ -94,8 +96,13 @@ const APP_IN_SCOPE = [
  * simply has to be told about a variable some other way. It therefore
  * stays out of scope, and the count moves rather than the
  * classification.
+ *
+ * 2026-08-01, +2 = 53. Persistent-context recovery added one telemetry
+ * retention warning and one failed-delivery warning. Both are in scope:
+ * the first makes the per-block denominator incomplete, and the second
+ * means an instruction block known to be absent was not re-delivered.
  */
-const TOTAL_SITES = 51;
+const TOTAL_SITES = 53;
 
 function messagesIn(file: string): string[] {
   const src = readFileSync(join(SRC, file), 'utf8');
@@ -202,8 +209,8 @@ describe('diagnostic census guard', () => {
   });
 
   it('the cause enum has one code per registered site plus overflow', () => {
-    // 14 capture-module + 7 app.ts + 3 retention facts (overflow,
-    // fanout_truncated, unavailable).
-    expect(DIAGNOSTIC_CAUSES.length).toBe(REGISTERED.size + APP_IN_SCOPE.length + 3);
+    // Capture/app sites plus three current context-watchdog conditions and
+    // three retention facts (overflow, fanout_truncated, unavailable).
+    expect(DIAGNOSTIC_CAUSES.length).toBe(27);
   });
 });

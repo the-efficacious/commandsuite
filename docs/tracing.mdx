@@ -379,6 +379,58 @@ audit requirements.
 
 ## Limitations
 
+### Persistent-context recovery
+
+For every completed captured request, the broker checks each current
+team-context, role-description, and personal-instructions block for exact
+literal presence in the structured system-instruction field preserved by the
+capture pipeline. A summary or paraphrase does not count. Each check emits a
+`csuite.context_block.presence` telemetry row keyed by member, block kind, and
+the block's SHA-256; it records presence and whether recovery fired.
+If the current block is absent but a different block version known to have
+been issued during this broker process is present, telemetry classifies the
+turn as `stale` rather than `missing` and records the matched prior hash.
+Recovery still sends the current text in both cases. Issued-version memory is
+not durable across a broker restart, so `missing` means no **known** prior
+version matched; it does not prove that no older version ever existed.
+
+Each ingest adapter declares whether its structured system projection is
+authoritative. Claude declares it observable, so an empty field means the
+block is genuinely absent. Codex currently declares chained turns without
+`instructions` unobservable—a named adapter-conformance gap rather than
+evidence of absence. A future adapter cannot call the watchdog without an
+explicit declaration, so it cannot silently inherit a resend loop. Unobservable checks emit
+`state=unobservable` with no `present` value, raise current briefing-check
+health, and never re-send. Treating an unavailable observation as `false`
+would produce both adapter-biased fallout telemetry and an endless resend
+loop. The projection gap is tracked separately; recovery starts automatically
+once the adapter supplies the structured field.
+
+When a block is absent, the broker sends its exact text as a targeted
+`persistent context restored` notice. This is next-turn injection, not an
+interrupt: detection occurs after the captured response completes, and runner
+adapters queue inbound notices. This preserves work already in progress at the
+cost of at most one already-started turn of drift.
+
+Recovery ordinarily suppresses duplicate sends per member, block kind, and
+block content for five minutes. Five minutes is an operator-chosen backoff, not
+a measured threshold. Presence telemetry still records every evaluated turn
+during the cooldown. If the next evaluated turn is still missing a block after
+a send, that observation proves delivery did not take effect: the broker
+bypasses the cooldown, sends again, and raises the current
+`context.block_resend_unconfirmed` diagnostic. A present observation clears
+that incident.
+
+There is deliberately **no byte ceiling**: operator-authored
+instruction blocks are unbounded, and truncating one would turn exact recovery
+into a different contract. Operators therefore own the size of persistent
+blocks.
+
+Malformed captured JSON or an evicted incomplete correlation raises the
+current `context.briefing_check_unavailable` diagnostic until a later request
+is successfully evaluated. Historical parse-failure evidence remains retained
+separately.
+
 - **Claude file-mode raw bodies require shared filesystem
   access.** Claude emits complete bodies to a runner-local spill
   file and sends its path in OTEL. The current broker opens that
