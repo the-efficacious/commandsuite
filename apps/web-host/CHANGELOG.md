@@ -1,5 +1,18 @@
 # csuite-web-host
 
+## 0.4.0
+
+### Patch Changes
+
+- [#129](https://github.com/the-efficacious/commandsuite/pull/129) [`a00f59e`](https://github.com/the-efficacious/commandsuite/commit/a00f59e71c68ef7a9fef5ff16ecda709e0217066) Thanks [@sureforge](https://github.com/sureforge)! - Remove length caps from team context, role descriptions, personal instructions,
+  and composed briefings. Show character counts and explicitly approximate token
+  estimates on the web, CLI, and agent administration surfaces, and warn when an
+  oversized briefing is requested by a runner that may still enforce the former
+  8192-character client-side limit.
+- Updated dependencies [[`c0e1b89`](https://github.com/the-efficacious/commandsuite/commit/c0e1b8974c795b91001fa45a8b5c4b2174af0ed9), [`94bee08`](https://github.com/the-efficacious/commandsuite/commit/94bee08d593c4aac56aaf563d7d1b2865bce405e), [`e5a9210`](https://github.com/the-efficacious/commandsuite/commit/e5a9210991b00871656e2cda6a0dd28722a6facf), [`d384bff`](https://github.com/the-efficacious/commandsuite/commit/d384bff9d97ac222fb2fcf022d84e26c6da18a00), [`a00f59e`](https://github.com/the-efficacious/commandsuite/commit/a00f59e71c68ef7a9fef5ff16ecda709e0217066)]:
+  - csuite-sdk@0.4.0
+  - csuite-web-ui@0.4.0
+
 ## 0.3.5
 
 ### Patch Changes
