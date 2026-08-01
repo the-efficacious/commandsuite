@@ -200,9 +200,20 @@ export function briefingCaptureBlocks(
     (block) => block.text.length > 0 && composed.includes(block.text),
   );
 
-  const documentText = input.processDocument?.text.trim() ?? '';
-  return documentText.length > 0
-    ? [...composedBlocks, { kind: 'process_document', text: documentText }]
+  // VERBATIM, not trimmed. The runner renders `doc.text` exactly as
+  // stored, so trimming here would make membership "what was sent,
+  // normalised" — a different string from what was sent. A document of
+  // `"  rule\n"` is legal (the store only refuses text whose trimmed
+  // value is EMPTY, it does not normalise valid text), and a trimmed
+  // projection would exempt and re-send `"rule"` while the runner
+  // received `"  rule\n"`.
+  //
+  // The guard mirrors the store's own invariant — a document that is
+  // only whitespace cannot exist — but it decides WHETHER to project,
+  // never WHAT to project.
+  const doc = input.processDocument;
+  return doc !== null && doc.text.trim().length > 0
+    ? [...composedBlocks, { kind: 'process_document', text: doc.text }]
     : composedBlocks;
 }
 

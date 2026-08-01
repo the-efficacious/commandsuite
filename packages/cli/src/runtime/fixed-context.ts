@@ -40,12 +40,21 @@
  * `PROCESS_DOCUMENT_MAX` — a real ceiling, unlike the predecessor
  * design which held N rules with nothing capping N.
  *
- * KNOWN GAP, stated because a reader will otherwise assume otherwise:
- * `#103`'s context watchdog does NOT watch this block. Its projection
- * selects blocks by substring-matching the composed `instructions`
- * string, and this is not in it — so a process document that falls out
- * of an agent's context mid-session is not detected or re-sent. It
- * returns at the next runner start.
+ * THE WATCHDOG DOES WATCH THIS BLOCK. `#103` projects it alongside the
+ * three authored blocks, so a document that falls out of an agent's
+ * context mid-session is detected on an observable turn and re-sent —
+ * it does not wait for the next runner start.
+ *
+ * Its membership test differs from theirs and has to. They are
+ * composed into `instructions`, so the projection confirms them by
+ * substring; this is never in that string, so a substring test could
+ * only ever return false for it. Membership here is that it was SENT,
+ * and the text projected is `doc.text` verbatim — the same bytes
+ * rendered below, so the watchdog looks for exactly what the agent
+ * received.
+ *
+ * Codex remains the exception: its system projection is unobservable,
+ * so absence cannot be asserted and nothing is re-sent (`#118`).
  */
 
 import type { BriefingResponse, ProcessDocument } from 'csuite-sdk/types';
