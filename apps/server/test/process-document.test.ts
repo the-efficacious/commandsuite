@@ -338,10 +338,97 @@ describe('a well-formed but untrue history row is an error', () => {
     expect(() => s.history()).toThrow(/version 1 is the creation/);
   });
 
+  /**
+   * Rune's third pass. `write()` rejects a no-op before it appends
+   * history, so `fields = []` is a row the writer cannot produce — an
+   * edit event claiming nothing changed. `z.array()` accepted it and
+   * the refinement iterated zero fields and succeeded, so the record
+   * passed every check while asserting something false.
+   */
+  it('rejects fields=[] — an edit that changed nothing cannot exist', () => {
+    const { db, s } = seeded();
+    db.exec("UPDATE process_document_edits SET fields = '[]' WHERE version = 2");
+    expect(() => s.history()).toThrow(/changed nothing cannot exist/);
+  });
+
+  it('rejects a repeated field name, which the writer also cannot produce', () => {
+    const { db, s } = seeded();
+    db.exec(`UPDATE process_document_edits SET fields = '["text","text"]' WHERE version = 2`);
+    expect(() => s.history()).toThrow(/same field twice/);
+  });
+
   it('still reads a healthy history, so the guard is not refusing everything', () => {
     const { s } = seeded();
     const edits = s.history();
     expect(edits).toHaveLength(2);
     expect(edits[1]?.previous.text).toBe(V1);
+  });
+});
+
+// ─── the reader must not accept what the writer cannot emit ──────────
+//
+// Lea's general form of Rune's findings: every gap between the read
+// schema's accepted set and the write path's producible set is a
+// record that exists in the reader's model and not in reality — and
+// each one renders as something plausible, which is why they have all
+// been quiet rather than loud. Asked of the whole schema once, rather
+// than closed instance by instance.
+
+describe('records the writer cannot produce are rejected on read', () => {
+  function seeded() {
+    const db = openDatabase(':memory:');
+    const s = createSqliteProcessDocumentStore(db);
+    s.write({ text: V1, reason: 'r', disposition: 'correction' }, 'AndrewJon', AT);
+    s.write({ text: V2, reason: 'r', disposition: 'correction' }, 'Lea', AT + 1);
+    return { db, s };
+  }
+
+  /**
+   * NOTE THE REASON THIS PASSES. It is the non-empty constraint, not
+   * the subset check — verified by mutation: removing the
+   * previous-keys-must-be-listed rule leaves all 27 tests green.
+   *
+   * That rule is UNREACHABLE at one editable field. The only ways to
+   * hold a prior value for an unlisted field are `fields = []` (caught
+   * first by the non-empty rule) or a second field (which does not
+   * exist yet); an unknown key is stripped by the schema before the
+   * refinement sees it. So the rule is correct, generalises, and
+   * cannot be exercised — the same degeneracy as criterion 6, and
+   * named here rather than left looking verified.
+   */
+  it('rejects fields=[] before the subset rule is ever reached', () => {
+    const { db, s } = seeded();
+    db.exec(`UPDATE process_document_edits SET fields = '[]' WHERE version = 2`);
+    expect(() => s.history()).toThrow(/changed nothing cannot exist/);
+  });
+
+  it('rejects any prior value on version 1, not just prior text', () => {
+    const { db, s } = seeded();
+    db.exec(`UPDATE process_document_edits SET previous = '{"text":"invented"}' WHERE version = 1`);
+    expect(() => s.history()).toThrow(/cannot have prior values/);
+  });
+
+  /**
+   * The cross-record one. Every surviving row is individually valid
+   * and the list is ordered, so a deleted row reads as a complete
+   * history unless something checks the sequence.
+   */
+  it('rejects a history with a version deleted out of the middle', () => {
+    const db = openDatabase(':memory:');
+    const s = createSqliteProcessDocumentStore(db);
+    s.write({ text: 'one', reason: 'r', disposition: 'correction' }, 'a', AT);
+    s.write({ text: 'two', reason: 'r', disposition: 'correction' }, 'b', AT + 1);
+    s.write({ text: 'three', reason: 'r', disposition: 'correction' }, 'c', AT + 2);
+    expect(s.history()).toHaveLength(3);
+
+    db.exec('DELETE FROM process_document_edits WHERE version = 2');
+    expect(() => s.history()).toThrow(/not contiguous/);
+    expect(() => s.history()).toThrow(/truncated history being served as a complete one/);
+  });
+
+  it('rejects a history missing version 1', () => {
+    const { db, s } = seeded();
+    db.exec('DELETE FROM process_document_edits WHERE version = 1');
+    expect(() => s.history()).toThrow(/not contiguous/);
   });
 });

@@ -306,7 +306,7 @@ class SqliteProcessDocumentStore implements ProcessDocumentStore {
    */
   history(): ProcessDocumentEdit[] {
     const rows = this.selectHistoryStmt.all() as unknown as EditRow[];
-    return rows.map((row, i) => {
+    const edits = rows.map((row, i) => {
       const candidate = {
         version: row.version,
         ts: row.ts,
@@ -329,6 +329,29 @@ class SqliteProcessDocumentStore implements ProcessDocumentStore {
       }
       return parsed.data;
     });
+
+    // CROSS-RECORD, because per-record validity is not history.
+    //
+    // `write()` emits versions 1, 2, 3 … with no gaps — the next
+    // version is always `current.version + 1`. So a gap is a DELETED
+    // row, and without this check a truncated history reads as a
+    // complete one: every surviving record is individually valid, the
+    // list is ordered, and nothing says a version is missing. That is
+    // the append-only claim failing silently, which is the same
+    // reader-accepts-what-the-writer-cannot-emit shape as the record
+    // checks above, one level up.
+    edits.forEach((edit, i) => {
+      if (edit.version !== i + 1) {
+        throw new ProcessDocumentError(
+          'corrupt_history',
+          `process document history is not contiguous — expected v${i + 1} at position ` +
+            `${i + 1} and found v${edit.version}. A version is missing, so this is a ` +
+            'truncated history being served as a complete one.',
+        );
+      }
+    });
+
+    return edits;
   }
 }
 

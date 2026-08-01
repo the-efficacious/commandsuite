@@ -788,13 +788,13 @@ export const ResolveSecretsResponseSchema = z.object({
  *
  * This is NOT an `instructions` cap — there is no longer any such
  * thing, since #122 removed every length cap on authored text in #129.
- * That is precisely why this one has to exist on its own terms rather
- * than by analogy to a number that no longer exists. The
- * document rides in its own briefing field precisely because
- * `MemberSchema.instructions` is capped at 8192 for authored text and
- * that cap also bounds composed output — on this team the longest
- * composed briefing sits 20 characters under it, so a process document
- * inside that string stops a runner rather than truncating.
+ * That is precisely why this ceiling has to stand on its own terms
+ * rather than by analogy to a number that no longer exists.
+ *
+ * And the document rides in its own briefing field for a reason that
+ * never depended on any cap: a member authors their own
+ * `instructions`, this is authored by whoever holds `process.manage`,
+ * and one string would collapse two authorities into one field.
  */
 export const PROCESS_DOCUMENT_MAX = 16_384;
 
@@ -857,7 +857,20 @@ export const ProcessDocumentEditSchema = z
     actor: NameSchema,
     reason: z.string().min(1).max(2048),
     disposition: AmendmentDispositionSchema,
-    fields: z.array(ProcessDocumentFieldSchema),
+    /**
+     * Non-empty and duplicate-free, because the writer cannot produce
+     * either. `write()` rejects a no-op before it appends history, so a
+     * stored `[]` is an edit event claiming nothing changed — and a
+     * repeated name is a record asserting one field moved twice in one
+     * edit. Both are shapes only corruption creates, and `z.array()`
+     * alone accepts both.
+     */
+    fields: z
+      .array(ProcessDocumentFieldSchema)
+      .min(1, 'an edit that changed nothing cannot exist — write() rejects it before history')
+      .refine((f) => new Set(f).size === f.length, {
+        message: 'an edit cannot record the same field twice',
+      }),
     /** Same shape as what the edit API accepts, by construction. */
     previous: z.object(EDITABLE_PROCESS_DOCUMENT_SHAPE).partial().default({}),
   })
@@ -875,18 +888,31 @@ export const ProcessDocumentEditSchema = z
     // field must have retained that field's prior value. Criterion 3's
     // "retained, not reconstructed" is exactly this, and without it
     // the claim is unenforced.
+    const previousKeys = Object.keys(edit.previous);
+
     if (edit.version === 1) {
-      if (edit.previous.text !== undefined) {
+      // The whole map, not just `text`. Checking one field would be
+      // complete today and silently partial the moment a second field
+      // exists — the reader would accept a creation carrying prior
+      // values the writer never emits.
+      if (previousKeys.length > 0) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          path: ['previous', 'text'],
+          path: ['previous'],
           message:
-            'version 1 is the creation and cannot have prior text — a record claiming ' +
-            'otherwise is not the history of this document',
+            'version 1 is the creation and cannot have prior values — a record claiming ' +
+            `otherwise is not the history of this document (has: ${previousKeys.join(', ')})`,
         });
       }
       return;
     }
+
+    // Both directions. `write()` retains a prior value for EXACTLY the
+    // fields it changed, so the two sets are equal, and each direction
+    // is a different lie:
+    //
+    //   field with no prior value    "nothing before" for something that moved
+    //   prior value with no field    a change the record does not admit to
     for (const field of edit.fields) {
       if (edit.previous[field] === undefined) {
         ctx.addIssue({
@@ -895,6 +921,17 @@ export const ProcessDocumentEditSchema = z
           message:
             `edit v${edit.version} says it changed '${field}' but retained no prior ` +
             `value for it — reporting that as "nothing before" would be false`,
+        });
+      }
+    }
+    for (const key of previousKeys) {
+      if (!edit.fields.includes(key as (typeof edit.fields)[number])) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['previous', key],
+          message:
+            `edit v${edit.version} retained a prior '${key}' but does not list it as ` +
+            'changed — a record holding evidence of a change it does not admit to',
         });
       }
     }
