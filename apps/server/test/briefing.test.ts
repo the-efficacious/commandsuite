@@ -52,6 +52,7 @@ describe('composeBriefing', () => {
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
+      processDocument: null,
     };
     const briefing = composeBriefing(input);
     const exemptions = briefingCaptureExemptions(input);
@@ -66,6 +67,7 @@ describe('composeBriefing', () => {
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
+      processDocument: null,
     };
     const personalBlock = ALPHA_1.instructions;
     const composedWithoutPersonal = composeBriefing(input).instructions.replace(personalBlock, '');
@@ -79,6 +81,7 @@ describe('composeBriefing', () => {
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
+      processDocument: null,
     });
     expect(briefing.name).toBe('director-1');
     expect(briefing.role.title).toBe('director');
@@ -94,6 +97,7 @@ describe('composeBriefing', () => {
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
+      processDocument: null,
     });
     expect(briefing.instructions).toContain('You: engineer-1');
     expect(briefing.instructions).toContain('Your role here: engineer');
@@ -108,6 +112,7 @@ describe('composeBriefing', () => {
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
+      processDocument: null,
       brokerVersion: '0.4.0',
       runnerVersion: '0.3.4',
     });
@@ -123,6 +128,7 @@ describe('composeBriefing', () => {
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
+      processDocument: null,
     };
     const briefing = composeBriefing(input);
     expect(briefing.instructions).toContain('CommandSuite/csuite: broker=unknown runner=unknown');
@@ -145,6 +151,7 @@ describe('composeBriefing', () => {
         team: TEAM,
         teammates: TEAMMATES,
         openObjectives: [],
+        processDocument: null,
         brokerVersion: 'x'.repeat(64),
         runnerVersion,
       });
@@ -159,6 +166,7 @@ describe('composeBriefing', () => {
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
+      processDocument: null,
       brokerVersion: '0.5.0-alpha.20260801+broker',
       runnerVersion: '0.5.0-alpha.20260731+runner',
     });
@@ -173,6 +181,7 @@ describe('composeBriefing', () => {
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
+      processDocument: null,
     });
     expect(briefing.teammates.some((t) => t.name === 'engineer-1')).toBe(true);
     const linesAfterHeader = briefing.instructions
@@ -191,6 +200,7 @@ describe('composeBriefing', () => {
       team: teamNoContext,
       teammates: TEAMMATES,
       openObjectives: [],
+      processDocument: null,
     });
     expect(briefing.instructions).not.toContain('Context:');
     expect(briefing.instructions).toContain(`${teamNoContext.name} CommandSuite/csuite`);
@@ -202,6 +212,7 @@ describe('composeBriefing', () => {
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
+      processDocument: null,
     });
     expect(briefing.instructions).not.toContain('Personal instructions:');
   });
@@ -212,6 +223,7 @@ describe('composeBriefing', () => {
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
+      processDocument: null,
     });
     expect(briefing.instructions).toContain('Your own sends are suppressed by the link');
   });
@@ -246,6 +258,7 @@ describe('composeBriefing', () => {
           amendments: [],
         },
       ],
+      processDocument: null,
     });
     // openObjectives surfaces on the response body for non-briefing callers.
     expect(briefing.openObjectives).toHaveLength(1);
@@ -262,6 +275,7 @@ describe('composeBriefing', () => {
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
+      processDocument: null,
     });
     expect(briefing.instructions).toContain('── Objectives ──');
     expect(briefing.instructions).toContain('kind="objective"');
@@ -286,6 +300,7 @@ describe('composeBriefing', () => {
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
+      processDocument: null,
     });
     expect(briefing.instructions).toContain('thread="primary"');
     expect(briefing.instructions).toContain('thread="dm"');

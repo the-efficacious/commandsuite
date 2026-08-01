@@ -39,8 +39,21 @@ export interface ComposeBriefingInput {
    * written. `null` is rendered as an explicit empty state by the
    * runner, never omitted — omitting it makes "no document exists"
    * indistinguishable from "your runner cannot read this field".
+   *
+   * REQUIRED, not optional, and that is the point. Three call sites
+   * build a `ComposeBriefingInput`: one passes the canonical object
+   * and two construct a literal by hand. An optional field is carried
+   * by the first and silently dropped by the other two — and one of
+   * those is the watchdog's own entry point, where dropping it means
+   * the projection never looks for the document at all.
+   *
+   * Requiring it makes the partial literal fail to compile. `null` is
+   * a real answer someone has to write rather than a lookup they have
+   * to perform, so `composeBriefing` stays a pure function of its
+   * input. A reminder closes this instance; the type closes the
+   * mechanism for whatever field is added next.
    */
-  processDocument?: ProcessDocument | null;
+  processDocument: ProcessDocument | null;
   self: Member;
   team: Team;
   /** Version loaded by the broker process composing this response. */
@@ -141,24 +154,56 @@ export function briefingCaptureExemptions(
   return briefingCaptureBlocks(input, composed).map((block) => block.text);
 }
 
-export type BriefingBlockKind = 'team_context' | 'role_description' | 'personal_instructions';
+export type BriefingBlockKind =
+  | 'team_context'
+  | 'role_description'
+  | 'personal_instructions'
+  | 'process_document';
 
 export interface BriefingCaptureBlock {
   kind: BriefingBlockKind;
   text: string;
 }
 
-/** Exact, named blocks present in the composed briefing. */
+/**
+ * Exact, named blocks this member was sent.
+ *
+ * TWO MEMBERSHIP TESTS, because the blocks arrive by two routes.
+ *
+ * The three authored blocks are composed INTO the `instructions`
+ * string, so `composed.includes(...)` is the right test: it confirms
+ * the text actually reached the prose rather than trusting that it
+ * should have.
+ *
+ * The process document is not in that string and never will be — it
+ * rides in its own briefing field, because a member authors their
+ * `instructions` and whoever holds `process.manage` authors this, and
+ * one string would collapse two authorities. So a substring search of
+ * the composed prose can only ever return false for it, and adding it
+ * to the list above would be a silent no-op rather than a feature.
+ *
+ * Its membership test is that it was SENT: the input carries a
+ * document with text. The runner renders that text verbatim into the
+ * agent's fixed context, so the same string is what the watchdog then
+ * looks for in the captured turn.
+ */
 export function briefingCaptureBlocks(
   input: ComposeBriefingInput,
   composed = composeBriefing(input).instructions,
 ): BriefingCaptureBlock[] {
-  const blocks: BriefingCaptureBlock[] = [
+  const authored: BriefingCaptureBlock[] = [
     { kind: 'team_context', text: input.team.context.trim() },
     { kind: 'role_description', text: input.self.role.description.trim() },
     { kind: 'personal_instructions', text: input.self.instructions.trim() },
   ];
-  return blocks.filter((block) => block.text.length > 0 && composed.includes(block.text));
+  const composedBlocks = authored.filter(
+    (block) => block.text.length > 0 && composed.includes(block.text),
+  );
+
+  const documentText = input.processDocument?.text.trim() ?? '';
+  return documentText.length > 0
+    ? [...composedBlocks, { kind: 'process_document', text: documentText }]
+    : composedBlocks;
 }
 
 function composePrompt(
