@@ -5,6 +5,16 @@ CommandSuite versions in lockstep — one version per release train —
 so each section below is one release. Per-package `CHANGELOG.md`
 files still ship inside every npm tarball.
 
+## 0.3.5 (2026-08-01)
+
+### csuite-cli
+
+#### Patch Changes
+
+- [#96](https://github.com/the-efficacious/commandsuite/pull/96) [`9f9d2cf`](https://github.com/the-efficacious/commandsuite/commit/9f9d2cf29376eba28314e22c566635d74fc86730) Thanks [@sureforge](https://github.com/sureforge)! - Atomically quarantine oversized, unreadable, or invalid-UTF-8 Claude body files after the broker acknowledges their batch, preserving the only copy and its degradation reason without pinning the active spool. Quarantine is limited to private, runner-owned regular files directly inside the runner's raw-body directory; outside paths, symlinks, directories, devices, missing files, and changed identities are reported but never moved.
+
+  Quarantine retention remains unbounded and is not solved by this change.
+
 ## 0.3.4 (2026-07-31)
 
 ### csuite-cli

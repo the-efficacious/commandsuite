@@ -1,5 +1,17 @@
 # csuite-cli
 
+## 0.3.5
+
+### Patch Changes
+
+- [#96](https://github.com/the-efficacious/commandsuite/pull/96) [`9f9d2cf`](https://github.com/the-efficacious/commandsuite/commit/9f9d2cf29376eba28314e22c566635d74fc86730) Thanks [@sureforge](https://github.com/sureforge)! - Atomically quarantine oversized, unreadable, or invalid-UTF-8 Claude body files after the broker acknowledges their batch, preserving the only copy and its degradation reason without pinning the active spool. Quarantine is limited to private, runner-owned regular files directly inside the runner's raw-body directory; outside paths, symlinks, directories, devices, missing files, and changed identities are reported but never moved.
+
+  Quarantine retention remains unbounded and is not solved by this change.
+
+- Updated dependencies []:
+  - csuite-core@0.3.5
+  - csuite-sdk@0.3.5
+
 ## 0.3.4
 
 ### Patch Changes
@@ -26,7 +38,7 @@
   The scope phrase in the heading and the empty-state line also changed, so
   emitted output differs for any call passing `assignee`: the status word
   premodifies and the assignee clause postmodifies (`no open objectives
-  assigned to X`), and a caller filtering to their own plate no longer gets
+assigned to X`), and a caller filtering to their own plate no longer gets
   the redundant `for X assigned to X`. Calls passing only `status` emit
   byte-identical output to before.
 
