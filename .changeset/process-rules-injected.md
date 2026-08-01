@@ -48,3 +48,11 @@ two gaps stop cancelling.
 Also adds `scripts/mutate.sh`, which asserts a mutation actually applied
 before interpreting the suite — an unapplied patch and a killed mutant
 are otherwise the same green.
+
+Process rules are reachable from MCP, not only over HTTP:
+`process_rules_list` and `process_rules_history` ungated,
+`process_rules_create` and `process_rules_amend` gated on
+`objectives.create`. The routes were built first and tested against
+`fetch`, which proves a human with a session cookie can amend a rule
+and proves nothing about the member who actually holds that permission
+here — an agent, reaching the broker through MCP.
