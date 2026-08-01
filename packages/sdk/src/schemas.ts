@@ -765,6 +765,84 @@ export const ResolveSecretsResponseSchema = z.object({
 // looser rule here would let a variable claim a name a secret is
 // forbidden from taking.
 
+// ──────────────────────── Team process rules ──────────────────────
+
+export const ProcessRuleProvenanceSchema = z.enum(['director', 'lead_uncontested', 'unattributed']);
+export const ProcessRuleStatusSchema = z.enum(['in_force', 'disputed', 'retired']);
+export const ProcessRuleChangeKindSchema = z.enum(['reversal', 'refinement', 'wording']);
+export const ProcessRuleFieldSchema = z.enum(['title', 'text', 'status', 'provenance']);
+
+/** Immutable, and the identity a reader tracks across amendments. */
+export const ProcessRuleAnchorSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(/^[a-z0-9][a-z0-9-]*$/, 'anchor must be lowercase alphanumeric with hyphens');
+
+export const ProcessRuleSchema = z.object({
+  anchor: ProcessRuleAnchorSchema,
+  title: z.string().min(1).max(200),
+  text: z.string().min(1).max(4096),
+  status: ProcessRuleStatusSchema,
+  provenance: ProcessRuleProvenanceSchema,
+  attribution: z.string().max(200).nullable(),
+  disputeReason: z.string().max(2048).nullable(),
+  version: z.number().int().positive(),
+  createdBy: NameSchema,
+  createdAt: z.number().int().nonnegative(),
+  updatedAt: z.number().int().nonnegative(),
+});
+
+export const ProcessRuleAmendmentSchema = z.object({
+  anchor: ProcessRuleAnchorSchema,
+  version: z.number().int().positive(),
+  ts: z.number().int().nonnegative(),
+  actor: NameSchema,
+  disposition: AmendmentDispositionSchema,
+  changeKind: ProcessRuleChangeKindSchema,
+  reason: z.string().min(1).max(2048),
+  fields: z.array(ProcessRuleFieldSchema).min(1),
+  previous: z
+    .object({
+      title: z.string().optional(),
+      text: z.string().optional(),
+      status: z.string().optional(),
+      provenance: z.string().optional(),
+    })
+    .default({}),
+});
+
+export const ListProcessRulesResponseSchema = z.object({
+  rules: z.array(ProcessRuleSchema),
+});
+
+export const ProcessRuleHistoryResponseSchema = z.object({
+  anchor: ProcessRuleAnchorSchema,
+  amendments: z.array(ProcessRuleAmendmentSchema),
+});
+
+export const CreateProcessRuleRequestSchema = z.object({
+  anchor: ProcessRuleAnchorSchema,
+  title: z.string().min(1).max(200),
+  text: z.string().min(1).max(4096),
+  provenance: ProcessRuleProvenanceSchema,
+  attribution: z.string().max(200).optional(),
+  status: ProcessRuleStatusSchema.optional(),
+  disputeReason: z.string().max(2048).optional(),
+});
+
+export const AmendProcessRuleRequestSchema = z.object({
+  title: z.string().min(1).max(200).optional(),
+  text: z.string().min(1).max(4096).optional(),
+  status: ProcessRuleStatusSchema.optional(),
+  provenance: ProcessRuleProvenanceSchema.optional(),
+  attribution: z.string().max(200).optional(),
+  disputeReason: z.string().max(2048).optional(),
+  reason: z.string().min(1).max(2048),
+  disposition: AmendmentDispositionSchema,
+  changeKind: ProcessRuleChangeKindSchema,
+});
+
 export const VariableSummarySchema = SecretSummarySchema.extend({
   /** Readable — this is the field secrets deliberately do not have. */
   value: z.string().optional(),

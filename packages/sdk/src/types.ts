@@ -692,6 +692,148 @@ export interface ResolveSecretsResponse {
   secretEnvNames?: string[];
 }
 
+// ──────────────────────── Team process rules ──────────────────────
+//
+// A process rule is a standing instruction that binds how members
+// work — release cadence, what needs approval before it starts, who
+// gates a merge. Until now they lived in a director-to-lead DM and in
+// broadcasts: no agent other than the lead knew any of them, and an
+// agent whose context had cleared knew none.
+//
+// Rules are INJECTED into every member's briefing as current state,
+// never broadcast. Broadcast is the first thing compaction discards;
+// fixed context survives it.
+
+/**
+ * Where a rule's authority comes from. Required, because "the
+ * director said this" and "the lead proposed it and nobody objected"
+ * are different kinds of binding, and a store that cannot express the
+ * difference presents both as equally settled.
+ */
+export type ProcessRuleProvenance =
+  /** Stated by a director, quotable. */
+  | 'director'
+  /** Proposed by the lead and not contested — weaker than adoption. */
+  | 'lead_uncontested'
+  /** In the record with no attributable origin. */
+  | 'unattributed';
+
+/**
+ * Whether a rule currently binds.
+ *
+ * `disputed` is the load-bearing one and it is not decoration: one of
+ * this team's four real rules is recorded in a form its author cannot
+ * stand behind, and observed practice contradicts it. A store that
+ * can only hold "in force" or nothing would have to either drop that
+ * rule or assert it — both false. Same shape as an unobservable
+ * capture projection: the third state exists because asserting either
+ * of the first two would be a claim we cannot support.
+ */
+export type ProcessRuleStatus = 'in_force' | 'disputed' | 'retired';
+
+/**
+ * How a rule's text moved. Stated by the amender, not inferred — a
+ * reversal and a rewording are the same prose diff, and this team's
+ * merge model changed twice in one evening.
+ *
+ * Distinct from `AmendmentDisposition`, which answers a different
+ * question: whether work already underway is bound by the change.
+ * A refinement can be retroactive and a reversal can be forward-only.
+ */
+export type ProcessRuleChangeKind =
+  /** The rule now says the opposite of what it said. */
+  | 'reversal'
+  /** Same rule, tightened or narrowed. */
+  | 'refinement'
+  /** No change in what is required; clearer words. */
+  | 'wording';
+
+/** Fields of a rule that carry weight and can be amended. */
+export type ProcessRuleField = 'title' | 'text' | 'status' | 'provenance';
+
+export interface ProcessRule {
+  /**
+   * Stable anchor, immutable, and the identity a reader tracks across
+   * amendments. Text changes; this does not — which is what makes a
+   * reversal distinguishable from a rewording rather than both being
+   * "the rules block changed".
+   */
+  anchor: string;
+  title: string;
+  /** The rule as it currently stands. This is what gets injected. */
+  text: string;
+  status: ProcessRuleStatus;
+  provenance: ProcessRuleProvenance;
+  /**
+   * Who or what the rule is attributed to, when `provenance` is not
+   * `unattributed`. Free text: a name, or a quote's speaker.
+   */
+  attribution: string | null;
+  /**
+   * Why the status is `disputed`, required when it is. A disputed
+   * rule that does not say what is in dispute is worse than an absent
+   * one — a reader cannot tell whether to follow it.
+   */
+  disputeReason: string | null;
+  /** Increments on every amendment. Injected alongside the text. */
+  version: number;
+  createdBy: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
+ * One entry in a rule's amendment record. Deliberately the same shape
+ * as `ObjectiveAmendment`'s contract variant — same `disposition`
+ * field, same meaning — so "does work started under the old version
+ * finish under it" has one answer across contracts and process.
+ */
+export interface ProcessRuleAmendment {
+  anchor: string;
+  version: number;
+  ts: number;
+  actor: string;
+  /** Identical semantics to a contract amendment. */
+  disposition: AmendmentDisposition;
+  /** Reversal, refinement or wording. Orthogonal to `disposition`. */
+  changeKind: ProcessRuleChangeKind;
+  reason: string;
+  fields: ProcessRuleField[];
+  previous: Partial<Record<ProcessRuleField, string>>;
+}
+
+export interface ListProcessRulesResponse {
+  rules: ProcessRule[];
+}
+
+/** History is RETRIEVED, never resident in the injected block. */
+export interface ProcessRuleHistoryResponse {
+  anchor: string;
+  amendments: ProcessRuleAmendment[];
+}
+
+export interface CreateProcessRuleRequest {
+  anchor: string;
+  title: string;
+  text: string;
+  provenance: ProcessRuleProvenance;
+  attribution?: string;
+  status?: ProcessRuleStatus;
+  disputeReason?: string;
+}
+
+export interface AmendProcessRuleRequest {
+  title?: string;
+  text?: string;
+  status?: ProcessRuleStatus;
+  provenance?: ProcessRuleProvenance;
+  attribution?: string;
+  disputeReason?: string;
+  reason: string;
+  disposition: AmendmentDisposition;
+  changeKind: ProcessRuleChangeKind;
+}
+
 // ────────────────────────── Variables ─────────────────────────────
 //
 // A runner environment variable that is NOT a secret. Structurally
