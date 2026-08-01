@@ -22,6 +22,7 @@
  * Type-only: no runtime assertions, checked by `tsc --noEmit`.
  */
 
+import { inspectBriefingContext } from '../src/context-watchdog.js';
 import { createDiagnosticStore } from '../src/diagnostics.js';
 
 declare const db: Parameters<typeof createDiagnosticStore>[0];
@@ -68,3 +69,19 @@ store.emit.activityAppended('m');
 store.unresolved('m');
 store.query({ member: 'm', from: 0, to: 1 });
 store.health();
+
+const contextInspection = {
+  memberName: 'm',
+  inference: { systemInstructions: [] },
+  blocks: [],
+  now: 0,
+  lastResentAt: new Map<string, number>(),
+};
+
+// Adapter observability must be declared at every call site. If this
+// becomes optional, a future adapter silently inherits an absence
+// claim and an unbounded re-send loop for a projection it cannot see.
+// @ts-expect-error systemProjectionObservable is a required adapter declaration
+inspectBriefingContext(contextInspection);
+
+inspectBriefingContext({ ...contextInspection, systemProjectionObservable: false });

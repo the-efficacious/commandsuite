@@ -18,10 +18,12 @@ import type { Permission, Team } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
+import { createDiagnosticStore } from '../src/diagnostics.js';
 import { createGenAiStore } from '../src/genai-store.js';
 import { createMemberStore } from '../src/members.js';
 import { createRawBodyStore } from '../src/raw-body-store.js';
 import { SessionStore } from '../src/sessions.js';
+import { createTelemetryStore } from '../src/telemetry-store.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
@@ -42,6 +44,8 @@ function makeApp(team: Team = TEAM, permissions: Permission[] = []) {
   const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
   const genaiStore = createGenAiStore(db, { logger });
   const rawBodyStore = createRawBodyStore(db, { logger });
+  const telemetryStore = createTelemetryStore(db, { logger });
+  const diagnostics = createDiagnosticStore(db);
   const tokens = createTokenStoreFromMembers(db, members);
   const { app } = createApp({
     broker,
@@ -50,11 +54,13 @@ function makeApp(team: Team = TEAM, permissions: Permission[] = []) {
     sessions: new SessionStore(db),
     genaiStore,
     rawBodyStore,
+    telemetryStore,
+    diagnostics,
     teamStore: mockTeamStore(team),
     version: '0.0.0',
     logger,
   });
-  return { app, genaiStore, rawBodyStore };
+  return { app, broker, diagnostics, genaiStore, rawBodyStore, telemetryStore };
 }
 
 afterEach(() => clearRegisteredSecretValues());
@@ -157,6 +163,38 @@ async function post(
 }
 
 describe('POST /members/:name/genai', () => {
+  it('does not claim absence or re-send when the Codex system projection is unobservable', async () => {
+    const test = makeApp({ ...TEAM, context: 'Durable team rules.' });
+    const pushed: unknown[] = [];
+    test.broker.subscribe('engineer-1', async (message) => {
+      pushed.push(message);
+    });
+    const item = inference();
+    item.requestBase64 = b64({
+      type: 'response.create',
+      model: 'gpt-5.5',
+      input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] }],
+    });
+
+    const res = await post(test.app, 'engineer-1', { inferences: [item] });
+    expect(res.status).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(pushed).toEqual([]);
+    const [unobservable] = test.telemetryStore.list({
+      name: 'csuite.context_block.presence',
+    });
+    expect(unobservable?.attributes).toMatchObject({
+      'context.block.observable': false,
+      'context.block.state': 'unobservable',
+      'context.block.resend_fired': false,
+    });
+    expect(unobservable?.attributes).not.toHaveProperty('context.block.present');
+    expect(test.diagnostics.unresolved('engineer-1')).toContainEqual({
+      cause: 'context.briefing_check_unavailable',
+      since: expect.any(Number),
+    });
+  });
+
   it('content-addresses raw bytes and stores a mapped GenAiInference', async () => {
     const { app, genaiStore, rawBodyStore } = makeApp();
     const res = await post(app, 'engineer-1', { inferences: [inference()] });
@@ -269,6 +307,160 @@ describe('POST /members/:name/genai', () => {
 });
 
 describe('POST /otlp/v1/logs runner-relay acknowledgement', () => {
+  it('classifies an issued prior block as stale after the authored block changes', async () => {
+    const issued = 'Rules issued to this session.';
+    const current = 'Rules authored after this session started.';
+    const test = makeApp({ ...TEAM, context: issued }, ['team.manage']);
+    await test.app.request('/briefing', { headers: { Authorization: `Bearer ${TOKEN}` } });
+    const update = await test.app.request('/team', {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ context: current }),
+    });
+    expect(update.status).toBe(200);
+
+    await test.app.request('/otlp/v1/logs', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(
+        otlpInlineClaudeCall(
+          {
+            model: 'claude-opus-4-6',
+            system: [{ type: 'text', text: issued }],
+            messages: [],
+          },
+          {
+            id: 'msg_stale_context',
+            role: 'assistant',
+            content: [{ type: 'text', text: 'done' }],
+            stop_reason: 'end_turn',
+            usage: { input_tokens: 1, output_tokens: 1 },
+          },
+        ),
+      ),
+    });
+
+    const [stale] = test.telemetryStore.list({ name: 'csuite.context_block.presence' });
+    expect(stale?.attributes).toMatchObject({
+      'context.block.state': 'stale',
+      'context.block.prior_version_present': true,
+      'context.block.matched_prior_sha256': expect.any(String),
+    });
+  });
+
+  it('re-sends an exact missing block, records its absence, and never fires when present', async () => {
+    const context = 'Merge only after an independent approval.';
+    const missing = makeApp({ ...TEAM, context });
+    const pushed: Array<{ title: string | null; body: string }> = [];
+    missing.broker.subscribe('engineer-1', async (message) => {
+      pushed.push({ title: message.title, body: message.body });
+    });
+    const response = {
+      id: 'msg_context',
+      role: 'assistant',
+      content: [{ type: 'text', text: 'done' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 1, output_tokens: 1 },
+    };
+    await missing.app.request('/otlp/v1/logs', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(
+        otlpInlineClaudeCall(
+          {
+            model: 'claude-opus-4-6',
+            system: [{ type: 'text', text: 'The team has merge rules.' }],
+            // Exact text outside `system` does not count. #104 guarantees
+            // the structured system field, so matching the whole body would
+            // accept a quotation or tool result as persistent context.
+            messages: [{ role: 'user', content: [{ type: 'text', text: context }] }],
+          },
+          response,
+        ),
+      ),
+    });
+    await vi.waitFor(() => expect(pushed).toHaveLength(1));
+    expect(pushed[0]?.title).toBe('persistent context restored');
+    expect(pushed[0]?.body).toContain(context);
+    const [absent] = missing.telemetryStore.list({ name: 'csuite.context_block.presence' });
+    expect(absent?.attributes).toMatchObject({
+      'context.block.kind': 'team_context',
+      'context.block.present': false,
+      'context.block.resend_fired': true,
+    });
+
+    // The next captured turn still lacks the block, proving that the first
+    // delivery did not land. That bypasses the cooldown, re-sends, and is
+    // retained as current health rather than silently suppressing recovery.
+    await missing.app.request('/otlp/v1/logs', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(
+        otlpInlineClaudeCall(
+          {
+            model: 'claude-opus-4-6',
+            system: [{ type: 'text', text: 'The team has merge rules.' }],
+            messages: [{ role: 'user', content: [{ type: 'text', text: context }] }],
+          },
+          { ...response, id: 'msg_context_still_missing' },
+        ),
+      ),
+    });
+    await vi.waitFor(() => expect(pushed).toHaveLength(2));
+    expect(missing.diagnostics.unresolved('engineer-1')).toContainEqual({
+      cause: 'context.block_resend_unconfirmed',
+      since: expect.any(Number),
+    });
+
+    await missing.app.request('/otlp/v1/logs', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(
+        otlpInlineClaudeCall(
+          {
+            model: 'claude-opus-4-6',
+            system: [{ type: 'text', text: `prefix\n${context}\nsuffix` }],
+            messages: [],
+          },
+          { ...response, id: 'msg_context_confirmed' },
+        ),
+      ),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(pushed).toHaveLength(2);
+    expect(missing.diagnostics.unresolved('engineer-1')).not.toContainEqual({
+      cause: 'context.block_resend_unconfirmed',
+      since: expect.any(Number),
+    });
+
+    const present = makeApp({ ...TEAM, context });
+    const negative: unknown[] = [];
+    present.broker.subscribe('engineer-1', async (message) => {
+      negative.push(message);
+    });
+    await present.app.request('/otlp/v1/logs', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(
+        otlpInlineClaudeCall(
+          {
+            model: 'claude-opus-4-6',
+            system: [{ type: 'text', text: `prefix\n${context}\nsuffix` }],
+            messages: [],
+          },
+          response,
+        ),
+      ),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(negative).toEqual([]);
+    const [seen] = present.telemetryStore.list({ name: 'csuite.context_block.presence' });
+    expect(seen?.attributes).toMatchObject({
+      'context.block.present': true,
+      'context.block.resend_fired': false,
+    });
+  });
+
   it('rebuilds Claude briefing exemptions after a cold broker start and still redacts a tool result', async () => {
     const secret = 'registered-claude-route';
     const context = secret;

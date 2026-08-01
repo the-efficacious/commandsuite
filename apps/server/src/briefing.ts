@@ -101,11 +101,27 @@ export function briefingCaptureExemptions(
   input: ComposeBriefingInput,
   composed = composeBriefing(input).instructions,
 ): string[] {
-  const context = input.team.context.trim();
-  const description = input.self.role.description.trim();
-  const personal = input.self.instructions.trim();
-  const blocks = [context, description, personal];
-  return blocks.filter((block) => block.length > 0 && composed.includes(block));
+  return briefingCaptureBlocks(input, composed).map((block) => block.text);
+}
+
+export type BriefingBlockKind = 'team_context' | 'role_description' | 'personal_instructions';
+
+export interface BriefingCaptureBlock {
+  kind: BriefingBlockKind;
+  text: string;
+}
+
+/** Exact, named blocks present in the composed briefing. */
+export function briefingCaptureBlocks(
+  input: ComposeBriefingInput,
+  composed = composeBriefing(input).instructions,
+): BriefingCaptureBlock[] {
+  const blocks: BriefingCaptureBlock[] = [
+    { kind: 'team_context', text: input.team.context.trim() },
+    { kind: 'role_description', text: input.self.role.description.trim() },
+    { kind: 'personal_instructions', text: input.self.instructions.trim() },
+  ];
+  return blocks.filter((block) => block.text.length > 0 && composed.includes(block.text));
 }
 
 function composePrompt(

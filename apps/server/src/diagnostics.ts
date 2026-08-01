@@ -88,6 +88,10 @@ export const DIAGNOSTIC_CAUSES = [
   'correlator.inference_build_failed',
   'correlator.request_id_assign_failed',
   'correlator.malformed_record_skipped',
+  // persistent-context watchdog (3)
+  'context.briefing_check_unavailable',
+  'context.block_resend_unconfirmed',
+  'context.presence_telemetry_failed',
   // raw-body-store (2)
   'rawstore.blob_gunzip_failed',
   'rawstore.blob_hash_mismatch',
@@ -208,6 +212,21 @@ const CAUSE_SPEC: Record<DiagnosticCause, CauseSpec> = {
     mode: 'point',
     attribution: 'producer',
     fields: ['none'],
+  },
+  'context.briefing_check_unavailable': {
+    mode: 'incident',
+    attribution: 'producer',
+    fields: ['count'],
+  },
+  'context.block_resend_unconfirmed': {
+    mode: 'incident',
+    attribution: 'producer',
+    fields: ['count'],
+  },
+  'context.presence_telemetry_failed': {
+    mode: 'incident',
+    attribution: 'producer',
+    fields: ['count'],
   },
   'rawstore.blob_gunzip_failed': { mode: 'point', attribution: 'affected', fields: ['hash'] },
   'rawstore.blob_hash_mismatch': { mode: 'point', attribution: 'affected', fields: ['hash'] },
@@ -489,6 +508,9 @@ export interface DiagnosticEmitter {
   correlatorInferenceBuildFailed(member: string, err: unknown): void;
   correlatorRequestIdAssignFailed(member: string, err: unknown): void;
   correlatorMalformedRecordSkipped(member: string): void;
+  contextBriefingCheckUnavailable(member: string, records: number): void;
+  contextBlockResendUnconfirmed(member: string, blocks: number): void;
+  contextPresenceTelemetryFailed(member: string, records: number): void;
   rawstoreBlobGunzipFailed(hash: string): void;
   rawstoreBlobHashMismatch(hash: string): void;
   genaistoreUnserializableRecordSkipped(member: string): void;
@@ -514,6 +536,9 @@ export interface DiagnosticEmitter {
   // create unresolved state, so "recovering" one is meaningless.
   correlatorBodyRefRead(member: string): void;
   correlatorRawCaptureSucceeded(member: string): void;
+  contextBriefingCheckSucceeded(member: string): void;
+  contextBlockDeliveryConfirmed(member: string): void;
+  contextPresenceTelemetryStored(member: string): void;
   otlpLogsStored(member: string): void;
   otlpGenaiIngested(member: string): void;
   otlpMetricsStored(member: string): void;
@@ -966,6 +991,27 @@ function buildStore(
     correlatorMalformedRecordSkipped(member) {
       record({ cause: 'correlator.malformed_record_skipped', members: [member] });
     },
+    contextBriefingCheckUnavailable(member, records) {
+      record({
+        cause: 'context.briefing_check_unavailable',
+        members: [member],
+        fields: safeCount(records),
+      });
+    },
+    contextBlockResendUnconfirmed(member, blocks) {
+      record({
+        cause: 'context.block_resend_unconfirmed',
+        members: [member],
+        fields: safeCount(blocks),
+      });
+    },
+    contextPresenceTelemetryFailed(member, records) {
+      record({
+        cause: 'context.presence_telemetry_failed',
+        members: [member],
+        fields: safeCount(records),
+      });
+    },
     rawstoreBlobGunzipFailed(hash) {
       record({
         cause: 'rawstore.blob_gunzip_failed',
@@ -1023,6 +1069,15 @@ function buildStore(
     },
     correlatorRawCaptureSucceeded(member) {
       clearState.run('correlator.raw_capture_failed', member);
+    },
+    contextBriefingCheckSucceeded(member) {
+      clearState.run('context.briefing_check_unavailable', member);
+    },
+    contextBlockDeliveryConfirmed(member) {
+      clearState.run('context.block_resend_unconfirmed', member);
+    },
+    contextPresenceTelemetryStored(member) {
+      clearState.run('context.presence_telemetry_failed', member);
     },
     otlpLogsStored(member) {
       clearState.run('otlp.logs_store_failed', member);

@@ -153,6 +153,18 @@ describe('attribution', () => {
 });
 
 describe('current health vs historical presence', () => {
+  it('keeps a briefing-check gap current until a later captured request is evaluated', () => {
+    const h = store();
+    h.s.emit.contextBriefingCheckUnavailable('rune', 1);
+    expect(h.s.unresolved('rune')).toEqual([
+      { cause: 'context.briefing_check_unavailable', since: T0 },
+    ]);
+
+    h.s.emit.contextBriefingCheckSucceeded('rune');
+    expect(h.s.unresolved('rune')).toEqual([]);
+    expect(h.s.query({ member: 'rune', from: T0 - HOUR, to: T0 + HOUR }).count).toBe(1);
+  });
+
   it('a recovered member is currently healthy while the failure stays queryable', () => {
     // THE COMPOSITION. "Expiry must not read clean" plus a surviving
     // historical fact leaves a member sick forever unless recovery is
@@ -293,12 +305,12 @@ describe('retention health', () => {
 });
 
 describe('cause enum', () => {
-  it('is finite, unique, and covers the 21 in-scope sites plus overflow', () => {
+  it('is finite, unique, and covers the in-scope sites plus overflow', () => {
     // This is the cardinality basis for the bucket tables. If it stops
     // being closed, criterion 4's bound stops being true.
     const set = new Set(DIAGNOSTIC_CAUSES);
     expect(set.size).toBe(DIAGNOSTIC_CAUSES.length);
-    expect(DIAGNOSTIC_CAUSES.length).toBe(24); // 21 sites + 3 retention facts
+    expect(DIAGNOSTIC_CAUSES.length).toBe(27); // 24 sites/conditions + 3 retention facts
   });
 });
 
