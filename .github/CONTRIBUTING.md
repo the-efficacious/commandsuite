@@ -626,6 +626,31 @@ The check runs only on commits your PR adds. Existing history is not
 rewritten and is not checked — several subjects already in `main` predate
 this rule and would fail it.
 
+### Authors whose subjects we do not write
+
+**Dependabot is exempt, by author, and nothing else is.** It generates both
+the PR title and the commit subject from the update it found, and the summary
+text — *"bump the minor-and-patch group across 1 directory with 8 updates"* —
+grows with the number of packages, so its length is not something this repo
+can bound. Retitling does not help: the generated commit subject fails the
+same rules, and editing the title does not change what the bot committed.
+
+The exemption is **scoped to the author, not to the rules**. A subject that
+Dependabot may ship is still refused from you — that pair is asserted in
+`scripts/test/check-commit-convention.test.mjs`, so widening the vocabulary
+for everyone fails its own suite. Passing no author at all enforces
+everything, so a misconfigured workflow fails closed rather than silently
+exempting the repo.
+
+**An exempt run still prints every subject it did not check.** A green check
+that quietly enforced nothing is the same defect as a doc describing
+behaviour the code does not have.
+
+Setting `commit-message.prefix` in `dependabot.yml` was considered and does
+not work: it changes only future PRs — subjects already generated are not
+rewritten — and `chore(deps): ` is one character *longer* than
+`deps(deps): `, so a 76-character subject becomes 77.
+
 ### Bodies, and who they are for
 
 Write commit and PR bodies for someone reading the history months from now

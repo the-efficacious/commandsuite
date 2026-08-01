@@ -66,8 +66,16 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # The PR author, so the script can skip authors whose subjects this
+          # repo does not write. Taken from the event payload rather than
+          # `github.actor`: the actor is whoever triggered the run, so a
+          # maintainer clicking "rerun" on a bot PR would otherwise change the
+          # answer. Passed through the environment like the title, and the
+          # login is GitHub's, not submitter-supplied text.
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
           node scripts/check-commit-convention.mjs \
             --pr-title "$PR_TITLE" \
             --head "$HEAD_SHA" \
-            --base-ref "origin/$BASE_REF"
+            --base-ref "origin/$BASE_REF" \
+            --author "$PR_AUTHOR"
