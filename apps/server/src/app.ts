@@ -576,9 +576,24 @@ export function createApp(options: AppOptions): CreatedApp {
   // this member. Keep prior session values too: a runner's prompt is
   // frozen, while an operator may edit the live team/member record.
   const briefingExemptions = new Map<string, Set<string>>();
-  const exemptionsFor = (memberName: string): readonly string[] => [
-    ...(briefingExemptions.get(memberName) ?? []),
-  ];
+  const exemptionsFor = (memberName: string): readonly string[] => {
+    const exemptions = new Set(briefingExemptions.get(memberName) ?? []);
+    const current = members.findByName(memberName);
+    if (current) {
+      // Cold-broker/restart path: a live runner may continue uploading
+      // without refetching /briefing. Rebuild the current authored blocks
+      // from authoritative storage rather than depending on process memory.
+      for (const block of briefingCaptureExemptions({
+        self: current,
+        team: teamStore.getTeam(),
+        teammates: teammatesFromMembers(members),
+        openObjectives: [],
+      })) {
+        exemptions.add(block);
+      }
+    }
+    return [...exemptions];
+  };
   const otlpExemptionsFor = (memberName: string): readonly string[] =>
     exemptionsFor(memberName).map((block) => JSON.stringify(block).slice(1, -1));
   const getGenAiCorrelator = (memberName: string): GenAiCorrelator => {

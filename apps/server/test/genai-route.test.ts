@@ -269,18 +269,16 @@ describe('POST /members/:name/genai', () => {
 });
 
 describe('POST /otlp/v1/logs runner-relay acknowledgement', () => {
-  it('preserves the issued Claude briefing block while redacting a tool result in the same request', async () => {
+  it('rebuilds Claude briefing exemptions after a cold broker start and still redacts a tool result', async () => {
     const secret = 'registered-claude-route';
     const context = `Claude team context\ncontains ${secret}.`;
     registerSecretValues([secret]);
     const { app, genaiStore, rawBodyStore } = makeApp({ ...TEAM, context });
-    const briefingRes = await app.request('/briefing', {
-      headers: { Authorization: `Bearer ${TOKEN}` },
-    });
-    const briefing = (await briefingRes.json()) as { instructions: string };
     const request = {
       model: 'claude-opus-4-6',
-      system: [{ type: 'text', text: `harness prefix\n${briefing.instructions}` }],
+      // Deliberately do not call /briefing first: this is the broker-restarted
+      // while the runner session remained live shape.
+      system: [{ type: 'text', text: `harness prefix\n${context}` }],
       messages: [
         {
           role: 'user',
