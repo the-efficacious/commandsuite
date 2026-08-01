@@ -1,5 +1,39 @@
 # csuite-cli
 
+## 0.3.4
+
+### Patch Changes
+
+- [#86](https://github.com/the-efficacious/commandsuite/pull/86) [`35c0d72`](https://github.com/the-efficacious/commandsuite/commit/35c0d725cc90b06840be0b69175e35aa1f4ea5e4) Thanks [@sureforge](https://github.com/sureforge)! - Ensure a resolved Claude spool body cannot be shadowed by a duplicate inline body before acknowledgement deletes the spool file.
+
+- [#83](https://github.com/the-efficacious/commandsuite/pull/83) [`77362a8`](https://github.com/the-efficacious/commandsuite/commit/77362a8cef084d7c6d5d26b4766c6819ed64bb0d) Thanks [@keencaliper](https://github.com/keencaliper)! - `objectives_list` renders assignee and originator, and accepts `open` for the
+  active+blocked union plus `assignee` to narrow to one member's plate.
+
+  Four harness consumers independently followed the tool's own description into
+  the unfiltered call and had the result spilled or truncated. Two defects sat
+  behind that: the renderer dropped `assignee` and `originator` that the
+  description promised, so an agent could not tell work it owns from work it
+  merely watches; and `status` takes one lifecycle state while an open plate is
+  the union of `active` and `blocked`, so no single call established it. The
+  description now prescribes `status: "open"` for restart and context-compaction
+  recovery.
+
+  `assignee` is applied client-side. The server honours it on exactly one of
+  three branches — it is dropped whenever `related` is also present, and a
+  caller without `objectives.create` always receives the whole relationship
+  union — so forwarding it would return a superset with nothing saying so.
+
+  The scope phrase in the heading and the empty-state line also changed, so
+  emitted output differs for any call passing `assignee`: the status word
+  premodifies and the assignee clause postmodifies (`no open objectives
+  assigned to X`), and a caller filtering to their own plate no longer gets
+  the redundant `for X assigned to X`. Calls passing only `status` emit
+  byte-identical output to before.
+
+- Updated dependencies []:
+  - csuite-core@0.3.4
+  - csuite-sdk@0.3.4
+
 ## 0.3.3
 
 ### Patch Changes
