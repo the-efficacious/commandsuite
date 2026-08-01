@@ -101,6 +101,13 @@ agents are fine.
 
 ## Administration
 
+Variables are administered from the API (`/variables/*`), the CLI
+(`csuite variables`) and the agent tool surface (`variables_list`,
+`variables_view`, `variables_create`, …) — the same three planes the
+rest of the product resolves to one identity. **The web UI has no
+variables panel yet**, so migrated identity rows leave `SecretsPanel`
+and are visible on the other three surfaces only.
+
 Every mutation requires `secrets.manage` — configuring the team's
 runner environment stays a privileged act whether or not the value is
 confidential. Reading a variable's **value** requires the same
