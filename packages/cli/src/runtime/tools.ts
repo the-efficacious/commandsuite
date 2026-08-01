@@ -59,6 +59,7 @@ import type {
   ToolCredentialKind,
   ToolSourceKind,
   ToolSourceSummary,
+  VariableSummary,
 } from 'csuite-sdk/types';
 
 const LEVELS: readonly LogLevel[] = ['debug', 'info', 'notice', 'warning', 'error', 'critical'];
@@ -460,6 +461,7 @@ export function defineTools(
     // session transcript — the tool description teaches the human-
     // drops-the-key alternative).
     ...buildSecretsAdminTools(briefing),
+    ...buildVariablesAdminTools(briefing),
     // External Notifications administration, gated on
     // `notifications.manage`. The agent-self-provisioning surface for
     // inbound webhooks: an admin agent can register an endpoint,
@@ -930,6 +932,142 @@ function buildToolAdminTools(briefing: BriefingResponse): Tool[] {
  * environment without the value ever entering prompts or context.
  * The broker enforces the same permission independently (403).
  */
+/**
+ * Variables administration — same `secrets.manage` gate as secrets.
+ * A variable is a broker-held runner environment variable that is NOT
+ * a secret: its value is readable, and it is never registered with the
+ * trace redactor, so it appears verbatim in captured traces.
+ */
+function buildVariablesAdminTools(briefing: BriefingResponse): Tool[] {
+  if (!briefing.permissions.includes('secrets.manage')) return [];
+
+  return [
+    {
+      name: 'variables_list',
+      description:
+        'List every registered runner environment VARIABLE: slug, target env var name, the ' +
+        'VALUE ITSELF, enabled state, and whether it is open to all members. Variables are ' +
+        'the non-secret half of the runner environment — git identity (GIT_AUTHOR_NAME, ' +
+        'GIT_AUTHOR_EMAIL, GIT_COMMITTER_NAME, GIT_COMMITTER_EMAIL) lives here, not in ' +
+        '`secrets_list`. Use `secrets_list` for credentials. A value here is NOT redacted ' +
+        'from captured traces, by design — never put a credential in one.',
+      inputSchema: { type: 'object', properties: {} },
+    },
+    {
+      name: 'variables_view',
+      description:
+        'Inspect one variable: env var name, description, bound members, and its value. ' +
+        'Unlike `secrets_view`, the value IS returned.',
+      inputSchema: {
+        type: 'object',
+        properties: { slug: { type: 'string', description: 'The variable slug.' } },
+        required: ['slug'],
+      },
+    },
+    {
+      name: 'variables_create',
+      description:
+        'Register a new runner environment variable that is not a secret. Use this ONLY for ' +
+        'values you would be willing to read in a published trace — they are never redacted. ' +
+        'Anything confidential belongs in `secrets_create`. `envName` follows the same rules ' +
+        'as secrets (uppercase POSIX; CSUITE_/OTEL_ prefixes and PATH/NODE_OPTIONS-style ' +
+        'control variables rejected), and a member may not resolve one env name from both a ' +
+        'secret and a variable — binding a collision fails with 409. Creating stores NO value ' +
+        'and binds NOBODY: follow with `variables_set_value` and `variables_bindings`. Members ' +
+        'pick it up on their next runner start.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          slug: {
+            type: 'string',
+            description: 'Lowercase letters/digits/dashes, max 64. Immutable.',
+          },
+          envName: {
+            type: 'string',
+            description: 'Target environment variable, e.g. "GIT_AUTHOR_NAME".',
+          },
+          description: { type: 'string', description: 'What this variable is for.' },
+          allMembers: {
+            type: 'boolean',
+            description: 'Deliver to every member (including future ones). Default false.',
+          },
+        },
+        required: ['slug', 'envName'],
+      },
+    },
+    {
+      name: 'variables_update',
+      description:
+        'Update a variable: envName, description, enabled, or allMembers. The slug cannot ' +
+        'change. Returns the updated variable.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          slug: { type: 'string' },
+          envName: { type: 'string' },
+          description: { type: 'string' },
+          enabled: { type: 'boolean' },
+          allMembers: { type: 'boolean' },
+        },
+        required: ['slug'],
+      },
+    },
+    {
+      name: 'variables_delete',
+      description: 'Delete a variable, its value and every binding. Not reversible.',
+      inputSchema: {
+        type: 'object',
+        properties: { slug: { type: 'string' } },
+        required: ['slug'],
+      },
+    },
+    {
+      name: 'variables_set_value',
+      description:
+        "Set a variable's value. Readable afterwards by any `secrets.manage` holder and " +
+        'NOT redacted from traces — this is the difference from `secrets_set_value`. Members ' +
+        'receive it on their next runner start.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          slug: { type: 'string' },
+          value: { type: 'string', description: 'The value. Not a place for credentials.' },
+        },
+        required: ['slug', 'value'],
+      },
+    },
+    {
+      name: 'variables_delete_value',
+      description: "Remove a variable's value. It delivers nothing until a new value is set.",
+      inputSchema: {
+        type: 'object',
+        properties: { slug: { type: 'string' } },
+        required: ['slug'],
+      },
+    },
+    {
+      name: 'variables_bindings',
+      description:
+        'Add and/or remove member bindings on a variable. Binding fails with 409 when that ' +
+        'member already resolves the same env name from a secret or another variable — the ' +
+        'two stores share one environment namespace. Returns the resulting bound set.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          slug: { type: 'string' },
+          add: { type: 'array', items: { type: 'string' }, description: 'Member names to bind.' },
+          remove: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Member names to unbind.',
+          },
+        },
+        required: ['slug'],
+      },
+    },
+  ];
+}
+
 function buildSecretsAdminTools(briefing: BriefingResponse): Tool[] {
   if (!briefing.permissions.includes('secrets.manage')) return [];
 
@@ -1806,6 +1944,22 @@ export async function handleToolCall(
         return await handleSecretsDeleteValue(args, brokerClient, briefing);
       case 'secrets_bindings':
         return await handleSecretsBindings(args, brokerClient, briefing);
+      case 'variables_list':
+        return await handleVariablesList(brokerClient, briefing);
+      case 'variables_view':
+        return await handleVariablesView(args, brokerClient, briefing);
+      case 'variables_create':
+        return await handleVariablesCreate(args, brokerClient, briefing);
+      case 'variables_update':
+        return await handleVariablesUpdate(args, brokerClient, briefing);
+      case 'variables_delete':
+        return await handleVariablesDelete(args, brokerClient, briefing);
+      case 'variables_set_value':
+        return await handleVariablesSetValue(args, brokerClient, briefing);
+      case 'variables_delete_value':
+        return await handleVariablesDeleteValue(args, brokerClient, briefing);
+      case 'variables_bindings':
+        return await handleVariablesBindings(args, brokerClient, briefing);
       case 'notifications_list':
         return await handleNotificationsList(brokerClient, briefing);
       case 'notifications_view':
@@ -2972,6 +3126,180 @@ async function handleSecretsDeleteValue(
   if (!slug) return errorResult('secrets_delete_value: `slug` is required');
   await brokerClient.deleteSecretValue(slug);
   return textResult(`value removed from '${slug}'. It delivers nothing until a new value is set.`);
+}
+
+function formatVariableLine(v: VariableSummary): string {
+  const flags = [v.enabled ? 'enabled' : 'DISABLED', v.allMembers ? 'all-members' : null]
+    .filter(Boolean)
+    .join(', ');
+  const desc = v.description.length > 0 ? ` — ${v.description}` : '';
+  // The value is shown because that is the point of the surface. When
+  // it is absent, say WHICH absence: unset, or set but not visible to
+  // this caller. Rendering both as blank is how an agent concludes a
+  // variable is unconfigured when it is merely unreadable.
+  const value =
+    v.value !== undefined
+      ? `= ${JSON.stringify(v.value)}`
+      : v.hasValue
+        ? '(value hidden)'
+        : 'NO-VALUE';
+  return `- ${v.slug} → $${v.envName} ${value}${desc}  (${flags})`;
+}
+
+async function handleVariablesList(
+  brokerClient: BrokerClient,
+  briefing: BriefingResponse,
+): Promise<CallToolResult> {
+  const denied = requireSecretsManage(briefing, 'variables_list');
+  if (denied) return denied;
+  const variables = await brokerClient.listVariables();
+  if (variables.length === 0) {
+    return textResult('no variables registered. Use `variables_create` to register one.');
+  }
+  return textResult(
+    `variables (${variables.length}) — values are NOT redacted from traces:\n${variables
+      .map(formatVariableLine)
+      .join('\n')}`,
+  );
+}
+
+async function handleVariablesView(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+  briefing: BriefingResponse,
+): Promise<CallToolResult> {
+  const denied = requireSecretsManage(briefing, 'variables_view');
+  if (denied) return denied;
+  const slug = typeof args.slug === 'string' ? args.slug : '';
+  if (!slug) return errorResult('variables_view: `slug` is required');
+  const detail = await brokerClient.getVariable(slug);
+  const lines: string[] = [formatVariableLine(detail.variable)];
+  lines.push(
+    detail.variable.allMembers
+      ? '  access: all members'
+      : `  bound: ${detail.boundMembers && detail.boundMembers.length > 0 ? detail.boundMembers.join(', ') : '(nobody — no agent receives this variable)'}`,
+  );
+  return textResult(lines.join('\n'));
+}
+
+async function handleVariablesCreate(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+  briefing: BriefingResponse,
+): Promise<CallToolResult> {
+  const denied = requireSecretsManage(briefing, 'variables_create');
+  if (denied) return denied;
+  const slug = typeof args.slug === 'string' ? args.slug : '';
+  const envName = typeof args.envName === 'string' ? args.envName : '';
+  if (!slug) return errorResult('variables_create: `slug` is required');
+  if (!envName) return errorResult('variables_create: `envName` is required');
+  const created = await brokerClient.createVariable({
+    slug,
+    envName,
+    ...(typeof args.description === 'string' ? { description: args.description } : {}),
+    ...(typeof args.allMembers === 'boolean' ? { allMembers: args.allMembers } : {}),
+  });
+  return textResult(
+    `registered variable '${created.slug}' → $${created.envName}. Its value will NOT be ` +
+      'redacted from captured traces. Next: `variables_set_value`, then `variables_bindings`.',
+  );
+}
+
+async function handleVariablesUpdate(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+  briefing: BriefingResponse,
+): Promise<CallToolResult> {
+  const denied = requireSecretsManage(briefing, 'variables_update');
+  if (denied) return denied;
+  const slug = typeof args.slug === 'string' ? args.slug : '';
+  if (!slug) return errorResult('variables_update: `slug` is required');
+  const updated = await brokerClient.updateVariable(slug, {
+    ...(typeof args.envName === 'string' ? { envName: args.envName } : {}),
+    ...(typeof args.description === 'string' ? { description: args.description } : {}),
+    ...(typeof args.enabled === 'boolean' ? { enabled: args.enabled } : {}),
+    ...(typeof args.allMembers === 'boolean' ? { allMembers: args.allMembers } : {}),
+  });
+  return textResult(
+    `updated '${updated.slug}': envName=${updated.envName} enabled=${updated.enabled} ` +
+      `allMembers=${updated.allMembers}. Changes apply on each member's next runner start.`,
+  );
+}
+
+async function handleVariablesDelete(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+  briefing: BriefingResponse,
+): Promise<CallToolResult> {
+  const denied = requireSecretsManage(briefing, 'variables_delete');
+  if (denied) return denied;
+  const slug = typeof args.slug === 'string' ? args.slug : '';
+  if (!slug) return errorResult('variables_delete: `slug` is required');
+  await brokerClient.deleteVariable(slug);
+  return textResult(`deleted variable '${slug}' (value and bindings removed).`);
+}
+
+async function handleVariablesSetValue(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+  briefing: BriefingResponse,
+): Promise<CallToolResult> {
+  const denied = requireSecretsManage(briefing, 'variables_set_value');
+  if (denied) return denied;
+  const slug = typeof args.slug === 'string' ? args.slug : '';
+  const value = typeof args.value === 'string' ? args.value : '';
+  if (!slug) return errorResult('variables_set_value: `slug` is required');
+  if (!value) return errorResult('variables_set_value: `value` is required');
+  await brokerClient.setVariableValue(slug, { value });
+  return textResult(
+    `value set for '${slug}'. It is readable and is NOT redacted from traces. Members ` +
+      'receive it on their next runner start.',
+  );
+}
+
+async function handleVariablesDeleteValue(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+  briefing: BriefingResponse,
+): Promise<CallToolResult> {
+  const denied = requireSecretsManage(briefing, 'variables_delete_value');
+  if (denied) return denied;
+  const slug = typeof args.slug === 'string' ? args.slug : '';
+  if (!slug) return errorResult('variables_delete_value: `slug` is required');
+  await brokerClient.deleteVariableValue(slug);
+  return textResult(`value removed from '${slug}'. It delivers nothing until a new value is set.`);
+}
+
+async function handleVariablesBindings(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+  briefing: BriefingResponse,
+): Promise<CallToolResult> {
+  const denied = requireSecretsManage(briefing, 'variables_bindings');
+  if (denied) return denied;
+  const slug = typeof args.slug === 'string' ? args.slug : '';
+  if (!slug) return errorResult('variables_bindings: `slug` is required');
+  const add = Array.isArray(args.add)
+    ? args.add.filter((v): v is string => typeof v === 'string')
+    : [];
+  const remove = Array.isArray(args.remove)
+    ? args.remove.filter((v): v is string => typeof v === 'string')
+    : [];
+  if (add.length === 0 && remove.length === 0) {
+    return errorResult('variables_bindings: pass `add` and/or `remove` member names');
+  }
+  for (const member of add) {
+    await brokerClient.bindVariable(slug, { member });
+  }
+  for (const member of remove) {
+    await brokerClient.unbindVariable(slug, member);
+  }
+  const detail = await brokerClient.getVariable(slug);
+  const bound = detail.boundMembers ?? [];
+  return textResult(
+    `'${slug}' bound to: ${bound.length > 0 ? bound.join(', ') : '(nobody)'}. ` +
+      "Applies on each member's next runner start.",
+  );
 }
 
 async function handleSecretsBindings(

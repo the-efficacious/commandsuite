@@ -32,6 +32,20 @@
  * reaches anyone, plus `create()`/`update()` for all-members secrets,
  * which reach everyone without a binding.
  *
+ * That check now spans TWO tables. Variables (`variables.ts`) write
+ * into the same environment map, and a member resolving one name from
+ * both stores is the same violation as resolving it from two secrets —
+ * so the rival lookup lives in `env-namespace.ts` and queries both. A
+ * secret and a variable targeting the same name for the same member is
+ * an error, never a precedence rule.
+ *
+ * The counterpart to `allDecryptedValues()` is the point of the split:
+ * secret values are registered with the trace redactor and scrubbed
+ * from captured bodies; variable values are never registered and
+ * appear verbatim. Storing a published value (a git author name) here
+ * rather than there is what made it vanish from every trace on the
+ * team — see the header of `variables.ts`.
+ *
  * Slugs are IMMUTABLE — the change-event thread key
  * (`secret:<slug>`) rides on them; `envName`/`description` are the
  * mutable fields. FK cascades are NOT enforced by this codebase, so
@@ -41,6 +55,12 @@
 import { isReservedEnvName } from 'csuite-sdk/schemas';
 import type { Secret } from 'csuite-sdk/types';
 import type { DatabaseSyncInstance, StatementInstance } from './db.js';
+import {
+  ensureEnvNamespaceSchema,
+  envRivalMessage,
+  findEnvRivalAnyone,
+  findEnvRivalForMember,
+} from './env-namespace.js';
 import { decryptField, encryptField } from './kek.js';
 import { getKek } from './members.js';
 import { validateSourceSlug } from './tool-sources/index.js';
@@ -78,51 +98,6 @@ export function validateEnvName(envName: string): void {
     );
   }
 }
-
-const CREATE_SCHEMA = `
-  CREATE TABLE IF NOT EXISTS secrets (
-    id TEXT PRIMARY KEY,
-    slug TEXT NOT NULL,
-    env_name TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
-    all_members INTEGER NOT NULL DEFAULT 0 CHECK(all_members IN (0,1)),
-    created_by TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-  );
-  CREATE UNIQUE INDEX IF NOT EXISTS secrets_slug_idx ON secrets (slug);
-  -- env_name is deliberately NOT globally unique. The invariant that
-  -- matters is per-member: no single member may resolve two values for
-  -- one variable. A global unique index enforces that, but also forbids
-  -- the per-agent pattern this team runs on: cora-github-token and
-  -- rune-github-token both targeting GITHUB_TOKEN, bound to different
-  -- members and never colliding for anyone.
-  --
-  -- DROP rather than "stop creating": existing databases already carry
-  -- the index, and leaving it would keep rejecting the second binding
-  -- with a SQLite constraint error instead of our own message.
-  DROP INDEX IF EXISTS secrets_env_idx;
-  CREATE INDEX IF NOT EXISTS secrets_env_lookup_idx ON secrets (env_name);
-
-  CREATE TABLE IF NOT EXISTS secret_bindings (
-    secret_id TEXT NOT NULL,
-    member_name TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    PRIMARY KEY (secret_id, member_name),
-    FOREIGN KEY (secret_id) REFERENCES secrets(id)
-  );
-  CREATE INDEX IF NOT EXISTS secret_bindings_member_idx
-    ON secret_bindings (member_name);
-
-  CREATE TABLE IF NOT EXISTS secret_values (
-    secret_id TEXT PRIMARY KEY,
-    value_enc TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL,
-    FOREIGN KEY (secret_id) REFERENCES secrets(id)
-  );
-`;
 
 interface SecretRow {
   id: string;
@@ -202,8 +177,6 @@ class SqliteSecretsStore implements SecretsStore {
   private readonly deleteSecretStmt: StatementInstance;
   private readonly selectByIdStmt: StatementInstance;
   private readonly selectBySlugStmt: StatementInstance;
-  private readonly selectEnvRivalForMemberStmt: StatementInstance;
-  private readonly selectEnvRivalAnyoneStmt: StatementInstance;
   private readonly selectAllStmt: StatementInstance;
   private readonly selectForMemberStmt: StatementInstance;
 
@@ -219,7 +192,7 @@ class SqliteSecretsStore implements SecretsStore {
 
   constructor(db: DatabaseSyncInstance) {
     this.db = db;
-    this.db.exec(CREATE_SCHEMA);
+    ensureEnvNamespaceSchema(db);
 
     this.beginStmt = db.prepare('BEGIN');
     this.commitStmt = db.prepare('COMMIT');
@@ -240,38 +213,6 @@ class SqliteSecretsStore implements SecretsStore {
     this.deleteSecretStmt = db.prepare('DELETE FROM secrets WHERE id = ?');
     this.selectByIdStmt = db.prepare(`SELECT ${SECRET_COLS} FROM secrets WHERE id = ?`);
     this.selectBySlugStmt = db.prepare(`SELECT ${SECRET_COLS} FROM secrets WHERE slug = ?`);
-    // Secrets other than `?2` that target env `?1` AND would actually
-    // reach member `?3` — either because they apply to everyone or
-    // because that member is bound to them. This is the conflict set:
-    // a secret targeting the same variable that reaches nobody in
-    // common is not a conflict, which is the whole point of dropping
-    // the global unique index.
-    this.selectEnvRivalForMemberStmt = db.prepare(
-      `SELECT ${SECRET_COLS} FROM secrets s
-       WHERE s.env_name = ?
-         AND s.id != ?
-         AND (
-           s.all_members = 1
-           OR EXISTS (
-             SELECT 1 FROM secret_bindings b
-             WHERE b.secret_id = s.id AND b.member_name = ?
-           )
-         )
-       LIMIT 1`,
-    );
-    // Secrets other than `?2` targeting env `?1` that reach ANYONE.
-    // Used when the secret under test applies to all members, where
-    // any reachable rival collides by definition.
-    this.selectEnvRivalAnyoneStmt = db.prepare(
-      `SELECT ${SECRET_COLS} FROM secrets s
-       WHERE s.env_name = ?
-         AND s.id != ?
-         AND (
-           s.all_members = 1
-           OR EXISTS (SELECT 1 FROM secret_bindings b WHERE b.secret_id = s.id)
-         )
-       LIMIT 1`,
-    );
     this.selectAllStmt = db.prepare(`SELECT ${SECRET_COLS} FROM secrets ORDER BY created_at ASC`);
     this.selectForMemberStmt = db.prepare(
       `SELECT ${SECRET_COLS} FROM secrets s
@@ -368,11 +309,11 @@ class SqliteSecretsStore implements SecretsStore {
     // targeted secret sharing an env name is fine here and is caught at
     // `bind` if it would ever reach the same member.
     if (input.allMembers === true) {
-      const rival = this.selectEnvRivalAnyoneStmt.get(input.envName, '') as SecretRow | undefined;
+      const rival = findEnvRivalAnyone(this.db, input.envName, 'secret', '');
       if (rival) {
         throw new SecretsError(
           'env_taken',
-          `secret "${rival.slug}" already targets ${input.envName} and this secret applies to all members`,
+          `${rival.kind} "${rival.slug}" already targets ${input.envName} and this secret applies to all members`,
         );
       }
     }
@@ -415,23 +356,18 @@ class SqliteSecretsStore implements SecretsStore {
       // moving to a new variable can each create a collision that did
       // not exist a moment ago.
       if (willApplyToAll) {
-        const rival = this.selectEnvRivalAnyoneStmt.get(envName, id) as SecretRow | undefined;
+        const rival = findEnvRivalAnyone(this.db, envName, 'secret', id);
         if (rival) {
           throw new SecretsError(
             'env_taken',
-            `secret "${rival.slug}" already targets ${envName} and this secret applies to all members`,
+            `${rival.kind} "${rival.slug}" already targets ${envName} and this secret applies to all members`,
           );
         }
       } else {
         for (const memberName of this.listBindings(id)) {
-          const rival = this.selectEnvRivalForMemberStmt.get(envName, id, memberName) as
-            | SecretRow
-            | undefined;
+          const rival = findEnvRivalForMember(this.db, envName, 'secret', id, memberName);
           if (rival) {
-            throw new SecretsError(
-              'env_taken',
-              `${memberName} already resolves ${envName} from secret "${rival.slug}"`,
-            );
+            throw new SecretsError('env_taken', envRivalMessage(memberName, envName, rival));
           }
         }
       }
@@ -492,14 +428,9 @@ class SqliteSecretsStore implements SecretsStore {
     if (!secret) {
       throw new SecretsError('not_found', `secret ${secretId} not found`);
     }
-    const rival = this.selectEnvRivalForMemberStmt.get(secret.envName, secretId, memberName) as
-      | SecretRow
-      | undefined;
+    const rival = findEnvRivalForMember(this.db, secret.envName, 'secret', secretId, memberName);
     if (rival) {
-      throw new SecretsError(
-        'env_taken',
-        `${memberName} already resolves ${secret.envName} from secret "${rival.slug}"`,
-      );
+      throw new SecretsError('env_taken', envRivalMessage(memberName, secret.envName, rival));
     }
     this.insertBindingStmt.run(secretId, memberName, now);
   }

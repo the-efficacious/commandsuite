@@ -92,6 +92,13 @@ export const PATHS = {
   // only. Subresource paths compose via SECRET_PATHS below.
   secrets: '/secrets',
   secretsResolve: '/secrets/resolve',
+  // Variables — broker-held runner environment variables that are NOT
+  // secrets. Same lifecycle as `/secrets/*` and the same
+  // `secrets.manage` gate on mutations; the difference is that a
+  // variable's VALUE is readable by an authorised caller and is never
+  // registered with the trace redactor. `/secrets/resolve` returns
+  // both, merged, and marks which keys are secret.
+  variables: '/variables',
   // External Notifications — inbound webhooks / API calls routed to
   // members and channels as ambient input. Admin surface under
   // `/notifications/*` gates on `notifications.manage`; the ingress
@@ -222,6 +229,15 @@ export const SECRET_PATHS = {
   bindings: (slug: string) => `/secrets/${encodeURIComponent(slug)}/bindings`,
   binding: (slug: string, name: string) =>
     `/secrets/${encodeURIComponent(slug)}/bindings/${encodeURIComponent(name)}`,
+} as const;
+
+/** Path builders for variable subresources. Mirrors `SECRET_PATHS`. */
+export const VARIABLE_PATHS = {
+  one: (slug: string) => `/variables/${encodeURIComponent(slug)}`,
+  value: (slug: string) => `/variables/${encodeURIComponent(slug)}/value`,
+  bindings: (slug: string) => `/variables/${encodeURIComponent(slug)}/bindings`,
+  binding: (slug: string, name: string) =>
+    `/variables/${encodeURIComponent(slug)}/bindings/${encodeURIComponent(name)}`,
 } as const;
 
 /**

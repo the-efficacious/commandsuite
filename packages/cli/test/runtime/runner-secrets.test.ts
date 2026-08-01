@@ -37,6 +37,7 @@ describe('runner secrets', () => {
     await broker?.close();
     broker = null;
     fakeBrokerSecrets.env = {};
+    fakeBrokerSecrets.secretEnvNames = undefined;
     clearRegisteredSecretValues();
   });
 
@@ -88,6 +89,62 @@ describe('runner secrets', () => {
       noTrace: true,
     });
     expect(redactSecrets('stdout: ghx_should_be_scrubbed end')).toBe(`stdout: ${REDACTED} end`);
+  });
+
+  it('registers only the values the broker classified as secrets', async () => {
+    // Criterion 2's runner half. Variables reach the agent environment
+    // exactly like secrets and must NOT be registered — registering
+    // them is what scrubbed members' own git identity from their own
+    // traces. Both values are present in `env`; only one is in
+    // `secretEnvNames`.
+    fakeBrokerSecrets.env = {
+      GITHUB_TOKEN: 'ghx_should_be_scrubbed',
+      GIT_AUTHOR_NAME: 'Turnerlike',
+    };
+    fakeBrokerSecrets.secretEnvNames = ['GITHUB_TOKEN'];
+    broker = await startFakeBroker();
+    runner = await startRunner({
+      url: broker.url,
+      token: FAKE_BROKER_TOKEN,
+      log: () => {},
+      noTrace: true,
+    });
+
+    // Both are injected — classification changes redaction, not delivery.
+    expect(runner.secretsEnv).toEqual({
+      GITHUB_TOKEN: 'ghx_should_be_scrubbed',
+      GIT_AUTHOR_NAME: 'Turnerlike',
+    });
+    // One request, both behaviours, so a fixture cannot pass by
+    // scrubbing everything or by scrubbing nothing.
+    expect(redactSecrets('commit by Turnerlike using ghx_should_be_scrubbed')).toBe(
+      `commit by Turnerlike using ${REDACTED}`,
+    );
+  });
+
+  it('registers every value when the broker sends no classification', async () => {
+    // The fallback, pinned beside the behaviour above deliberately: a
+    // test asserting "only secretEnvNames are registered" invites an
+    // implementation that drops the undefined case, and that case is
+    // the fail-closed direction against a broker predating the split.
+    // An unredacted secret is a leak; an over-redacted variable is only
+    // a loss.
+    fakeBrokerSecrets.env = {
+      GITHUB_TOKEN: 'ghx_should_be_scrubbed',
+      GIT_AUTHOR_NAME: 'Turnerlike',
+    };
+    fakeBrokerSecrets.secretEnvNames = undefined; // older broker
+    broker = await startFakeBroker();
+    runner = await startRunner({
+      url: broker.url,
+      token: FAKE_BROKER_TOKEN,
+      log: () => {},
+      noTrace: true,
+    });
+
+    expect(redactSecrets('commit by Turnerlike using ghx_should_be_scrubbed')).toBe(
+      `commit by ${REDACTED} using ${REDACTED}`,
+    );
   });
 
   it('starts with empty secretsEnv when the broker predates /secrets/resolve', async () => {

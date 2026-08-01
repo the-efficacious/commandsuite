@@ -1052,3 +1052,109 @@ describe('handleToolCall — objectives_list', () => {
     expect(tool?.description).toMatch(/originator/);
   });
 });
+
+describe('variables admin tools — the agent-facing half of the runner environment', () => {
+  const ADMIN_BRIEFING = { ...BRIEFING, permissions: ['secrets.manage' as const] };
+
+  it('are gated on secrets.manage, like secrets', () => {
+    expect(defineTools(BRIEFING).map((t) => t.name)).not.toContain('variables_list');
+    expect(defineTools(ADMIN_BRIEFING).map((t) => t.name)).toContain('variables_list');
+  });
+
+  it('exposes the same verbs as the secrets surface', () => {
+    // After the split, identity leaves `secrets_list` and has to arrive
+    // somewhere an agent can reach. A partial surface is how a
+    // capability becomes an accident of where it was built.
+    const names = defineTools(ADMIN_BRIEFING).map((t) => t.name);
+    for (const verb of [
+      'list',
+      'view',
+      'create',
+      'update',
+      'delete',
+      'set_value',
+      'delete_value',
+      'bindings',
+    ]) {
+      expect(names).toContain(`secrets_${verb}`);
+      expect(names).toContain(`variables_${verb}`);
+    }
+  });
+
+  it('states the classification rule in the descriptions, since that is the only spec an agent gets', () => {
+    const tools = defineTools(ADMIN_BRIEFING);
+    const list = tools.find((t) => t.name === 'variables_list');
+    // An agent that cannot tell which store holds git identity will
+    // look in the wrong one and conclude it is unconfigured.
+    expect(list?.description).toContain('GIT_AUTHOR_NAME');
+    expect(list?.description).toContain('secrets_list');
+    // And the residue: a value here is published, not protected.
+    expect(list?.description).toMatch(/NOT redacted/);
+    const create = tools.find((t) => t.name === 'variables_create');
+    expect(create?.description).toMatch(/409|collision|collid/i);
+  });
+
+  it('rechecks the permission defensively even though the broker also enforces it', async () => {
+    const broker = makeBroker({});
+    const result = await handleToolCall('variables_list', {}, broker, BRIEFING);
+    expect(getCallText(result as never)).toContain('secrets.manage');
+  });
+
+  it('renders the value, and distinguishes unset from not-visible', async () => {
+    const listVariables = vi.fn(async () => [
+      {
+        id: '1',
+        slug: 'cora-git-author-name',
+        envName: 'GIT_AUTHOR_NAME',
+        description: '',
+        enabled: true,
+        allMembers: false,
+        createdBy: 'admin',
+        createdAt: 0,
+        updatedAt: 0,
+        hasValue: true,
+        bound: true,
+        value: 'Cora',
+      },
+      {
+        id: '2',
+        slug: 'hidden',
+        envName: 'REGION',
+        description: '',
+        enabled: true,
+        allMembers: false,
+        createdBy: 'admin',
+        createdAt: 0,
+        updatedAt: 0,
+        hasValue: true,
+        bound: false,
+        // value withheld — set, but not visible to this caller
+      },
+      {
+        id: '3',
+        slug: 'empty',
+        envName: 'UNSET_ONE',
+        description: '',
+        enabled: true,
+        allMembers: false,
+        createdBy: 'admin',
+        createdAt: 0,
+        updatedAt: 0,
+        hasValue: false,
+        bound: false,
+      },
+    ]);
+    const broker = makeBroker({ listVariables } as never);
+    const text = getCallText(
+      (await handleToolCall('variables_list', {}, broker, ADMIN_BRIEFING)) as never,
+    );
+
+    // The value itself — the capability that distinguishes this surface.
+    expect(text).toContain('"Cora"');
+    // Set-but-hidden and unset must not render identically; an agent
+    // that reads both as blank concludes a configured variable is
+    // missing and re-creates it.
+    expect(text).toContain('(value hidden)');
+    expect(text).toContain('NO-VALUE');
+  });
+});

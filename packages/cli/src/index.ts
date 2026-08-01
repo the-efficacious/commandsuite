@@ -47,6 +47,7 @@ import { runServeCommand } from './commands/serve.js';
 import { runSetupCommand } from './commands/setup.js';
 import { runTeamCommand } from './commands/team.js';
 import { runToolsCommand } from './commands/tools.js';
+import { runVariablesCommand } from './commands/variables.js';
 import { createClaudeAdapter } from './runtime/agents/claude-agent.js';
 import { createCodexAdapter } from './runtime/agents/codex/codex-agent.js';
 import { CLI_VERSION } from './version.js';
@@ -70,6 +71,7 @@ usage:
   csuite objectives  list|view|create|update|complete|cancel|reassign   team objectives
   csuite tools       list|show|add|rm|enable|disable|cred|bind|unbind|def|def-rm|refresh   tool-source registry (platform tools)
   csuite secrets     list|view|add|update|set-value|delete-value|bind|unbind|rm   broker-held env secrets (values are write-only)
+  csuite variables   list|view|add|update|set-value|delete-value|bind|unbind|rm   broker-held env variables that are NOT secrets (values readable, never redacted from traces)
   csuite notifications list|view|add|update|rm|set-secret|delete-secret|deliveries|replay|profiles   external-notification endpoints (inbound webhooks → agents; alias: hooks)
   csuite serve       [--config-path <path>] [--port <n>] [--host <h>] [--db <path>]
   csuite prune-traces --older-than <duration> [--activity-db <path>] [--yes]   delete activity rows older than the cutoff
@@ -231,6 +233,10 @@ async function main(): Promise<void> {
       return;
     case 'secrets':
       await handleSecrets(rest);
+      return;
+    case 'variables':
+    case 'vars':
+      await handleVariables(rest);
       return;
     case 'notifications':
     case 'hooks':
@@ -695,6 +701,17 @@ async function handleSecrets(args: string[]): Promise<void> {
   try {
     const client = makeClient(clientOpts);
     await runSecretsCommand(passthrough, client, (line) => log(line));
+  } catch (err) {
+    if (err instanceof UsageError) fail(err.message, 2);
+    fail(err instanceof Error ? err.message : String(err));
+  }
+}
+
+async function handleVariables(args: string[]): Promise<void> {
+  const { clientOpts, passthrough } = splitClientOpts(args);
+  try {
+    const client = makeClient(clientOpts);
+    await runVariablesCommand(passthrough, client, (line) => log(line));
   } catch (err) {
     if (err instanceof UsageError) fail(err.message, 2);
     fail(err instanceof Error ? err.message : String(err));

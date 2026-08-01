@@ -83,8 +83,19 @@ const APP_IN_SCOPE = [
  *
  * Measured, not estimated: 33 `logger.warn` + 3 `logger.error` +
  * 8 correlator `log()` + 6 `this.log.warn` = 50.
+ *
+ * 2026-08-01, +1 = 51. `app.ts` gained `failed to fanout variable
+ * event` with the variables registry. The decision this guard exists
+ * to force: it is OPERATIONAL, not a completeness claim. It reports a
+ * change-notification that did not reach members — the same class as
+ * the `failed to fanout secret event` and `failed to fanout
+ * tool-source event` sites beside it, neither of which is in
+ * `APP_IN_SCOPE`. Nothing captured is lost when it fires; a member
+ * simply has to be told about a variable some other way. It therefore
+ * stays out of scope, and the count moves rather than the
+ * classification.
  */
-const TOTAL_SITES = 50;
+const TOTAL_SITES = 51;
 
 function messagesIn(file: string): string[] {
   const src = readFileSync(join(SRC, file), 'utf8');

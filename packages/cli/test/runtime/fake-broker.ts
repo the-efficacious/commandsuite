@@ -82,7 +82,16 @@ export const fakeBrokerToolInvocations: Array<{
  * the endpoint 404 (a broker that predates the secrets feature).
  * Default: empty map — no secrets, endpoint present.
  */
-export const fakeBrokerSecrets: { env: Record<string, string> | null } = { env: {} };
+export const fakeBrokerSecrets: {
+  env: Record<string, string> | null;
+  /**
+   * Which keys of `env` came from the SECRETS store. `undefined` models
+   * a broker that predates the secrets/variables split and sends no
+   * classification at all — the runner must then register everything,
+   * which is the fail-closed direction.
+   */
+  secretEnvNames?: string[];
+} = { env: {} };
 
 /** Whether `/healthz` advertises the remote-Claude raw-body acknowledgement. */
 export const fakeBrokerCapabilities: { rawBodyAck: boolean } = { rawBodyAck: true };
@@ -255,7 +264,14 @@ export async function startFakeBroker(): Promise<FakeBroker> {
         return;
       }
       res.writeHead(200, jsonHeaders);
-      res.end(JSON.stringify({ env: fakeBrokerSecrets.env }));
+      res.end(
+        JSON.stringify({
+          env: fakeBrokerSecrets.env,
+          ...(fakeBrokerSecrets.secretEnvNames !== undefined
+            ? { secretEnvNames: fakeBrokerSecrets.secretEnvNames }
+            : {}),
+        }),
+      );
       return;
     }
 

@@ -691,6 +691,57 @@ export const BindSecretRequestSchema = z.object({
 
 export const ResolveSecretsResponseSchema = z.object({
   env: z.record(z.string(), z.string()),
+  /**
+   * Optional so a runner keeps working against a broker that predates
+   * it. Absent means "assume every key is secret" — the old behaviour,
+   * and the safe direction to be wrong in.
+   */
+  secretEnvNames: z.array(z.string()).optional(),
+});
+
+// ────────────────────────── Variables ─────────────────────────────
+//
+// Same grammar as secrets: a variable and a secret share one
+// environment namespace, so they must share one name validator. A
+// looser rule here would let a variable claim a name a secret is
+// forbidden from taking.
+
+export const VariableSummarySchema = SecretSummarySchema.extend({
+  /** Readable — this is the field secrets deliberately do not have. */
+  value: z.string().optional(),
+});
+
+export const ListVariablesResponseSchema = z.object({
+  variables: z.array(VariableSummarySchema),
+});
+
+export const GetVariableResponseSchema = z.object({
+  variable: VariableSummarySchema,
+  boundMembers: z.array(NameSchema).optional(),
+});
+
+export const CreateVariableRequestSchema = z.object({
+  slug: SecretSlugSchema,
+  envName: SecretEnvNameSchema,
+  description: z.string().max(1024).optional(),
+  allMembers: z.boolean().optional(),
+  enabled: z.boolean().optional(),
+});
+
+export const UpdateVariableRequestSchema = z.object({
+  envName: SecretEnvNameSchema.optional(),
+  description: z.string().max(1024).optional(),
+  allMembers: z.boolean().optional(),
+  enabled: z.boolean().optional(),
+});
+
+/** Readable at rest, unlike `SetSecretValueRequestSchema`. */
+export const SetVariableValueRequestSchema = z.object({
+  value: SecretValueSchema,
+});
+
+export const BindVariableRequestSchema = z.object({
+  member: NameSchema,
 });
 
 // ────────────────── External Notifications ────────────────────

@@ -42,6 +42,7 @@ import {
   ApproveEnrollmentRequestSchema,
   BindSecretRequestSchema,
   BindToolSourceRequestSchema,
+  BindVariableRequestSchema,
   CancelObjectiveRequestSchema,
   CompleteObjectiveRequestSchema,
   CreateChannelRequestSchema,
@@ -51,6 +52,7 @@ import {
   CreateObjectiveRequestSchema,
   CreateSecretRequestSchema,
   CreateToolSourceRequestSchema,
+  CreateVariableRequestSchema,
   DeviceAuthorizationRequestSchema,
   DeviceTokenRequestSchema,
   DiscussObjectiveRequestSchema,
@@ -73,6 +75,7 @@ import {
   SetNotificationSecretRequestSchema,
   SetSecretValueRequestSchema,
   SetToolCredentialRequestSchema,
+  SetVariableValueRequestSchema,
   TotpLoginRequestSchema,
   UpdateMemberRequestSchema,
   UpdateNotificationEndpointRequestSchema,
@@ -80,6 +83,7 @@ import {
   UpdateObjectiveRequestSchema,
   UpdateSecretRequestSchema,
   UpdateToolSourceRequestSchema,
+  UpdateVariableRequestSchema,
   UpdateWatchersRequestSchema,
   UploadActivityRequestSchema,
 } from 'csuite-sdk/schemas';
@@ -103,6 +107,8 @@ import type {
   Teammate,
   ToolSource,
   ToolSourceSummary,
+  Variable,
+  VariableSummary,
 } from 'csuite-sdk/types';
 import { hasPermission } from 'csuite-sdk/types';
 import { type Context, Hono } from 'hono';
@@ -167,6 +173,7 @@ import {
   ToolSourcesError,
 } from './tool-sources/index.js';
 import { generateSecret, otpauthUri, verifyCode as verifyTotpCode } from './totp.js';
+import type { VariablesStore } from './variables.js';
 
 export interface AppOptions {
   broker: Broker;
@@ -238,6 +245,14 @@ export interface AppOptions {
    * `objectives`.
    */
   secrets?: SecretsStore;
+  /**
+   * Variables registry — broker-held runner environment variables that
+   * are NOT secrets. The `/variables*` endpoints are registered iff
+   * this is provided, and `/secrets/resolve` merges them into the env
+   * delta it returns. Values here are readable and are never
+   * registered with the trace redactor.
+   */
+  variables?: VariablesStore;
   /**
    * External Notifications registry — inbound webhook/API endpoints
    * routed to members and channels as ambient input. The
@@ -495,6 +510,7 @@ export function createApp(options: AppOptions): CreatedApp {
     toolSources,
     mcpManager,
     secrets,
+    variables,
     notifications,
     telemetryStore,
     genaiStore,
@@ -2327,26 +2343,29 @@ export function createApp(options: AppOptions): CreatedApp {
   // Registry mutations gate on `secrets.manage`. Registered iff a
   // SecretsStore is provided.
 
-  if (secrets !== undefined) {
-    const mapSecretsError = (
-      // biome-ignore lint/suspicious/noExplicitAny: Hono's Context type is invariant; helper is only ever called inside a route handler
-      ctx: Context<any, string, Record<string, unknown>>,
-      err: unknown,
-    ): Response => {
-      if (err instanceof SecretsError) {
-        const status =
-          err.code === 'not_found'
-            ? 404
-            : err.code === 'slug_taken' || err.code === 'env_taken'
-              ? 409
-              : err.code === 'no_kek'
-                ? 503
-                : 400;
-        return ctx.json({ error: err.message, code: err.code }, status);
-      }
-      return ctx.json({ error: err instanceof Error ? err.message : String(err) }, 500);
-    };
+  // Shared by the secrets AND variables route blocks: both stores
+  // raise `SecretsError`, and a second identical mapper would create
+  // a branch where one surface handles a code the other misses.
+  const mapSecretsError = (
+    // biome-ignore lint/suspicious/noExplicitAny: Hono's Context type is invariant; helper is only ever called inside a route handler
+    ctx: Context<any, string, Record<string, unknown>>,
+    err: unknown,
+  ): Response => {
+    if (err instanceof SecretsError) {
+      const status =
+        err.code === 'not_found'
+          ? 404
+          : err.code === 'slug_taken' || err.code === 'env_taken'
+            ? 409
+            : err.code === 'no_kek'
+              ? 503
+              : 400;
+      return ctx.json({ error: err.message, code: err.code }, status);
+    }
+    return ctx.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+  };
 
+  if (secrets !== undefined) {
     const summarizeSecret = (secret: Secret, viewer: string): SecretSummary => ({
       ...secret,
       hasValue: secrets.hasValue(secret.id),
@@ -2426,13 +2445,31 @@ export function createApp(options: AppOptions): CreatedApp {
     app.get(PATHS.secretsResolve, auth, (c) => {
       const member = c.get('member');
       try {
-        const env = secrets.resolveFor(member.name);
-        // Delivery audit: names only, never values.
+        const secretEnv = secrets.resolveFor(member.name);
+        const variableEnv = variables !== undefined ? variables.resolveFor(member.name) : {};
+        // A member resolving one env name from both stores is the same
+        // violation as resolving it from two secrets. create/bind/update
+        // reject it on both sides, so reaching here means an invariant
+        // has already been broken — fail rather than pick a winner. A
+        // silent precedence rule would be one more thing to remember,
+        // and it would be remembered wrong.
+        const collisions = Object.keys(variableEnv).filter((name) => name in secretEnv);
+        if (collisions.length > 0) {
+          throw new SecretsError(
+            'env_taken',
+            `${member.name} resolves ${collisions.join(', ')} from both a secret and a variable; resolve the conflict before the runner can start`,
+          );
+        }
+        const env = { ...secretEnv, ...variableEnv };
+        // Delivery audit: names only, never values. The split is logged
+        // because "which of these is redacted" is otherwise invisible.
         logger.info('secrets resolved', {
           member: member.name,
           envNames: Object.keys(env),
+          secretEnvNames: Object.keys(secretEnv),
+          variableEnvNames: Object.keys(variableEnv),
         });
-        return c.json({ env });
+        return c.json({ env, secretEnvNames: Object.keys(secretEnv) });
       } catch (err) {
         return mapSecretsError(c, err);
       }
@@ -2653,6 +2690,302 @@ export function createApp(options: AppOptions): CreatedApp {
         });
       });
       return c.json({ ok: true, boundMembers: secrets.listBindings(secret.id) });
+    });
+  }
+
+  // ─── Variable endpoints ───────────────────────────────────────────
+  // Broker-held runner environment variables that are NOT secrets.
+  // Identical lifecycle and the same `secrets.manage` gate on
+  // mutations — configuring the team's runner environment stays a
+  // privileged act whether or not the value is confidential.
+  //
+  // Two deliberate differences from `/secrets/*`:
+  //
+  //   - GET returns the VALUE to a `secrets.manage` holder. That is
+  //     the capability the split exists to provide; an operator who
+  //     cannot read back a git author name cannot check it is right.
+  //   - Nothing here calls `registerSecretValues`. `PUT
+  //     /secrets/:slug/value` does, and a variable route that copied
+  //     it would reintroduce the whole defect for the first variable
+  //     an operator sets — visible until the next restart and clean
+  //     afterwards, which is close to unfindable.
+
+  if (variables !== undefined) {
+    const summarizeVariable = (
+      variable: Variable,
+      viewer: string,
+      canManage: boolean,
+    ): VariableSummary => {
+      const summary: VariableSummary = {
+        ...variable,
+        hasValue: variables.hasValue(variable.id),
+        bound: variable.allMembers || variables.isBound(variable.id, viewer),
+      };
+      // Readable, but not to everyone: a non-manager sees the same
+      // metadata they would see for a secret and no value.
+      if (canManage) {
+        const value = variables.getValue(variable.id);
+        if (value !== null) summary.value = value;
+      }
+      return summary;
+    };
+
+    /**
+     * Recipients for a variable change event. Same shape as
+     * `secretRecipients` — delivery set plus every `secrets.manage`
+     * holder — and the body doubles as the "restart your runner"
+     * signal, since agent env is frozen at spawn either way.
+     */
+    const variableRecipients = (variable: Variable, extraMember?: string): Set<string> => {
+      const names = new Set<string>();
+      if (variable.allMembers) {
+        for (const m of members.members()) names.add(m.name);
+      } else {
+        for (const name of variables.listBindings(variable.id)) names.add(name);
+      }
+      for (const m of members.members()) {
+        if (m.permissions.includes('secrets.manage')) names.add(m.name);
+      }
+      if (extraMember) names.add(extraMember);
+      return names;
+    };
+
+    const publishVariableEvent = async (
+      variable: Variable,
+      event: string,
+      actor: string,
+      opts: { body: string; recipients?: Set<string>; extra?: Record<string, unknown> },
+    ): Promise<void> => {
+      const recipients = opts.recipients ?? variableRecipients(variable);
+      try {
+        await broker.push(
+          {
+            body: opts.body,
+            level: 'info',
+            data: {
+              kind: 'variable',
+              event,
+              variable_slug: variable.slug,
+              env_name: variable.envName,
+              thread: `variable:${variable.slug}`,
+              actor,
+              ...(opts.extra ?? {}),
+            },
+          },
+          { from: actor, recipients: [...recipients] },
+        );
+      } catch (err) {
+        logger.warn('failed to fanout variable event', {
+          variable: variable.slug,
+          event,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    };
+
+    const canManageVariables = (
+      // biome-ignore lint/suspicious/noExplicitAny: helper is only ever called inside a route handler
+      ctx: Context<any, string, Record<string, unknown>>,
+    ): boolean => hasPermission(ctx.get('member').permissions, 'secrets.manage');
+
+    const requireVariablesManage = (
+      // biome-ignore lint/suspicious/noExplicitAny: helper is only ever called inside a route handler
+      ctx: Context<any, string, Record<string, unknown>>,
+    ): Response | null =>
+      canManageVariables(ctx) ? null : ctx.json({ error: 'requires secrets.manage' }, 403);
+
+    // GET /variables — list, per-viewer summaries. Tri-auth.
+    app.get(PATHS.variables, auth, (c) => {
+      const member = c.get('member');
+      const canManage = canManageVariables(c);
+      const list = variables.list().map((v) => summarizeVariable(v, member.name, canManage));
+      return c.json({ variables: list });
+    });
+
+    // POST /variables — create (secrets.manage). Value set separately.
+    app.post(PATHS.variables, auth, async (c) => {
+      const denied = requireVariablesManage(c);
+      if (denied) return denied;
+      const member = c.get('member');
+      const raw = await c.req.json().catch(() => null);
+      const parsed = CreateVariableRequestSchema.safeParse(raw);
+      if (!parsed.success) {
+        return c.json({ error: 'invalid variable payload', details: parsed.error.issues }, 400);
+      }
+      try {
+        const variable = variables.create({ ...parsed.data, creator: member.name });
+        queueMicrotask(() => {
+          void publishVariableEvent(variable, 'created', member.name, {
+            body: `Variable '${variable.slug}' (${variable.envName}) was created by ${member.name}.`,
+          });
+        });
+        return c.json({ variable: summarizeVariable(variable, member.name, true) }, 201);
+      } catch (err) {
+        return mapSecretsError(c, err);
+      }
+    });
+
+    // GET /variables/:slug — one, with the value for a manager.
+    app.get(`${PATHS.variables}/:slug`, auth, (c) => {
+      const member = c.get('member');
+      const variable = variables.getBySlug(c.req.param('slug'));
+      if (!variable) return c.json({ error: 'no such variable' }, 404);
+      const canManage = canManageVariables(c);
+      return c.json({
+        variable: summarizeVariable(variable, member.name, canManage),
+        ...(canManage ? { boundMembers: variables.listBindings(variable.id) } : {}),
+      });
+    });
+
+    // PATCH /variables/:slug — mutable fields (secrets.manage).
+    app.patch(`${PATHS.variables}/:slug`, auth, async (c) => {
+      const denied = requireVariablesManage(c);
+      if (denied) return denied;
+      const member = c.get('member');
+      const variable = variables.getBySlug(c.req.param('slug'));
+      if (!variable) return c.json({ error: 'no such variable' }, 404);
+      const raw = await c.req.json().catch(() => null);
+      const parsed = UpdateVariableRequestSchema.safeParse(raw);
+      if (!parsed.success) {
+        return c.json({ error: 'invalid variable payload', details: parsed.error.issues }, 400);
+      }
+      const preRecipients = variableRecipients(variable);
+      try {
+        const updated = variables.update(variable.id, parsed.data);
+        const event =
+          variable.enabled && !updated.enabled
+            ? 'disabled'
+            : !variable.enabled && updated.enabled
+              ? 'enabled'
+              : 'updated';
+        queueMicrotask(() => {
+          void publishVariableEvent(updated, event, member.name, {
+            body: `Variable '${updated.slug}' (${updated.envName}) was ${event} by ${member.name}.`,
+            recipients: event === 'disabled' ? preRecipients : variableRecipients(updated),
+          });
+        });
+        return c.json({ variable: summarizeVariable(updated, member.name, true) });
+      } catch (err) {
+        return mapSecretsError(c, err);
+      }
+    });
+
+    // DELETE /variables/:slug — delete + cascade (secrets.manage).
+    app.delete(`${PATHS.variables}/:slug`, auth, (c) => {
+      const denied = requireVariablesManage(c);
+      if (denied) return denied;
+      const member = c.get('member');
+      const variable = variables.getBySlug(c.req.param('slug'));
+      if (!variable) return c.json({ error: 'no such variable' }, 404);
+      const preRecipients = variableRecipients(variable);
+      try {
+        variables.delete(variable.id);
+        queueMicrotask(() => {
+          void publishVariableEvent(variable, 'deleted', member.name, {
+            body: `Variable '${variable.slug}' was deleted by ${member.name}.`,
+            recipients: preRecipients,
+          });
+        });
+        return c.json({ ok: true });
+      } catch (err) {
+        return mapSecretsError(c, err);
+      }
+    });
+
+    // PUT /variables/:slug/value — set the value (secrets.manage).
+    //
+    // The counterpart secrets route calls `registerSecretValues` here.
+    // This one MUST NOT: a variable is a value we publish, and
+    // registering it is exactly the defect this store exists to fix.
+    app.put(`${PATHS.variables}/:slug/value`, auth, async (c) => {
+      const denied = requireVariablesManage(c);
+      if (denied) return denied;
+      const member = c.get('member');
+      const variable = variables.getBySlug(c.req.param('slug'));
+      if (!variable) return c.json({ error: 'no such variable' }, 404);
+      const raw = await c.req.json().catch(() => null);
+      const parsed = SetVariableValueRequestSchema.safeParse(raw);
+      if (!parsed.success) {
+        return c.json({ error: 'invalid value payload', details: parsed.error.issues }, 400);
+      }
+      try {
+        variables.setValue(variable.id, parsed.data.value);
+        queueMicrotask(() => {
+          void publishVariableEvent(variable, 'value_set', member.name, {
+            body: `The value of variable '${variable.slug}' was updated by ${member.name}. Running agents pick this up on their next runner start.`,
+          });
+        });
+        return c.json({ ok: true });
+      } catch (err) {
+        return mapSecretsError(c, err);
+      }
+    });
+
+    // DELETE /variables/:slug/value (secrets.manage).
+    app.delete(`${PATHS.variables}/:slug/value`, auth, (c) => {
+      const denied = requireVariablesManage(c);
+      if (denied) return denied;
+      const member = c.get('member');
+      const variable = variables.getBySlug(c.req.param('slug'));
+      if (!variable) return c.json({ error: 'no such variable' }, 404);
+      variables.deleteValue(variable.id);
+      queueMicrotask(() => {
+        void publishVariableEvent(variable, 'value_cleared', member.name, {
+          body: `The value of variable '${variable.slug}' was cleared by ${member.name}.`,
+        });
+      });
+      return c.json({ ok: true });
+    });
+
+    // POST /variables/:slug/bindings — bind a member (secrets.manage).
+    app.post(`${PATHS.variables}/:slug/bindings`, auth, async (c) => {
+      const denied = requireVariablesManage(c);
+      if (denied) return denied;
+      const member = c.get('member');
+      const variable = variables.getBySlug(c.req.param('slug'));
+      if (!variable) return c.json({ error: 'no such variable' }, 404);
+      const raw = await c.req.json().catch(() => null);
+      const parsed = BindVariableRequestSchema.safeParse(raw);
+      if (!parsed.success) {
+        return c.json({ error: 'invalid binding payload', details: parsed.error.issues }, 400);
+      }
+      if (members.findByName(parsed.data.member) === null) {
+        return c.json({ error: `no such member: ${parsed.data.member}` }, 400);
+      }
+      // `bind` enforces the per-member env-name invariant ACROSS both
+      // stores and throws `env_taken` when the member already resolves
+      // that name from a secret or another variable.
+      try {
+        variables.bind(variable.id, parsed.data.member);
+      } catch (err) {
+        return mapSecretsError(c, err);
+      }
+      queueMicrotask(() => {
+        void publishVariableEvent(variable, 'bound', member.name, {
+          body: `${parsed.data.member} was given the variable '${variable.slug}' (${variable.envName}) by ${member.name}. It applies on their next runner start.`,
+          extra: { member: parsed.data.member },
+        });
+      });
+      return c.json({ ok: true, boundMembers: variables.listBindings(variable.id) });
+    });
+
+    // DELETE /variables/:slug/bindings/:name — unbind (secrets.manage).
+    app.delete(`${PATHS.variables}/:slug/bindings/:name`, auth, (c) => {
+      const denied = requireVariablesManage(c);
+      if (denied) return denied;
+      const member = c.get('member');
+      const variable = variables.getBySlug(c.req.param('slug'));
+      if (!variable) return c.json({ error: 'no such variable' }, 404);
+      const name = c.req.param('name');
+      variables.unbind(variable.id, name);
+      queueMicrotask(() => {
+        void publishVariableEvent(variable, 'unbound', member.name, {
+          body: `${name}'s access to variable '${variable.slug}' was removed by ${member.name}.`,
+          recipients: variableRecipients(variable, name),
+          extra: { member: name },
+        });
+      });
+      return c.json({ ok: true, boundMembers: variables.listBindings(variable.id) });
     });
   }
 
