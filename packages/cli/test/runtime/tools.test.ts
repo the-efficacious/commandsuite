@@ -1194,6 +1194,7 @@ describe('objectives_view renders amendments WITH the record', () => {
         ts: 1_700_000_120_000,
         actor: 'lea',
         reason: 'Lifecycle timing error — main did not carry the outcome.',
+        eventId: 'ev-completed',
         eventKind: 'completed' as const,
         eventTs: 1_700_000_100_000,
         correction: 'Completed at an approved PR head. The merge bar is satisfied by c8f0d18.',
@@ -1203,11 +1204,24 @@ describe('objectives_view renders amendments WITH the record', () => {
 
   const EVENTS = [
     {
+      id: 'ev-completed',
       objectiveId: 'obj-1',
       ts: 1_700_000_100_000,
       actor: 'rune',
       kind: 'completed' as const,
       payload: { result: 'Outcome satisfied at 38198b0 in PR #106.', contractVersion: 2 },
+    },
+    // Same millisecond, different event. Keying the CORRECTED marker on
+    // the timestamp branded this one too — a durable surface asserting
+    // something false about a record, inside the feature built to stop
+    // that.
+    {
+      id: 'ev-watcher',
+      objectiveId: 'obj-1',
+      ts: 1_700_000_100_000,
+      actor: 'rune',
+      kind: 'watcher_added' as const,
+      payload: { name: 'turner', contractVersion: 2 },
     },
   ];
 
@@ -1242,7 +1256,15 @@ describe('objectives_view renders amendments WITH the record', () => {
     );
     expect(text).toContain('event corrections:');
     expect(text).toContain('c8f0d18');
-    expect(text).toContain('[CORRECTED');
+    // Exactly one event is marked — the one named by id, not everything
+    // sharing its millisecond.
+    expect(text.split('[CORRECTED')).toHaveLength(2);
+    const marked = text
+      .split('\n')
+      .filter((l) => l.includes('[CORRECTED'))
+      .join('');
+    expect(marked).toContain('completed');
+    expect(marked).not.toContain('watcher_added');
   });
 
   it('says nothing about amendments on an objective that has none', async () => {

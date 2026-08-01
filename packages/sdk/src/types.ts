@@ -1517,6 +1517,9 @@ export type ObjectiveAmendment =
       actor: string;
       reason: string;
       /** The event being corrected. It remains in the log, unrewritten. */
+      /** Durable id of the corrected event. */
+      eventId: string;
+      /** Kind and timestamp of the corrected event, for display. */
       eventKind: ObjectiveEventKind;
       eventTs: number;
       /** What the record should say instead. */
@@ -1524,6 +1527,12 @@ export type ObjectiveAmendment =
     };
 
 export interface ObjectiveEvent {
+  /**
+   * Durable, unique per event. A timestamp is not an identity — create
+   * emits two events in the same millisecond — so anything naming a
+   * specific event (a correction) uses this.
+   */
+  id: string;
   objectiveId: string;
   ts: number;
   actor: string;
@@ -1614,8 +1623,13 @@ export interface AmendObjectiveRequest {
  * unrewritable.
  */
 export interface CorrectObjectiveEventRequest {
-  /** Timestamp of the event being corrected, from the event log. */
-  eventTs: number;
+  /**
+   * Durable id of the event being corrected, from the event log.
+   * Unambiguous by construction: a timestamp is not, because create
+   * emits `assigned` and `watcher_added` in the same millisecond and a
+   * watcher batch emits several of one kind.
+   */
+  eventId: string;
   /** What the record should say instead. */
   correction: string;
   reason: string;

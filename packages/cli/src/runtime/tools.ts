@@ -1794,20 +1794,21 @@ function buildAuthorityTools(briefing: BriefingResponse): Tool[] {
         'Requires `objectives.create`. The original event is NEVER rewritten: this appends a ' +
         'superseding record naming it, and `objectives_view` marks the corrected event inline ' +
         'so a reader of the log sees it. Does NOT change the contract version — correcting ' +
-        'the record of what happened is not a change to what was required. Get `eventTs` ' +
-        'from the event log in `objectives_view`.',
+        'the record of what happened is not a change to what was required. Get `eventId` ' +
+        'from the event log in `objectives_view` — a timestamp is NOT an identity, because ' +
+        'creation emits two events in the same millisecond.',
       inputSchema: {
         type: 'object',
         properties: {
           id: { type: 'string', description: 'The objective id.' },
-          eventTs: {
-            type: 'number',
-            description: 'Timestamp of the event being corrected, from `objectives_view`.',
+          eventId: {
+            type: 'string',
+            description: 'Durable id of the event being corrected, shown by `objectives_view`.',
           },
           correction: { type: 'string', description: 'What the record should say instead.' },
           reason: { type: 'string', description: 'REQUIRED. Why the record was wrong.' },
         },
-        required: ['id', 'eventTs', 'correction', 'reason'],
+        required: ['id', 'eventId', 'correction', 'reason'],
       },
     });
   }
@@ -2449,15 +2450,15 @@ async function handleObjectivesCorrectEvent(
 ): Promise<CallToolResult> {
   const id = typeof args.id === 'string' ? args.id : '';
   if (!id) return errorResult('objectives_correct_event: `id` is required');
-  const eventTs = typeof args.eventTs === 'number' ? args.eventTs : Number.NaN;
-  if (!Number.isFinite(eventTs)) {
-    return errorResult('objectives_correct_event: `eventTs` is required (see `objectives_view`)');
+  const eventId = typeof args.eventId === 'string' ? args.eventId : '';
+  if (!eventId) {
+    return errorResult('objectives_correct_event: `eventId` is required (see `objectives_view`)');
   }
   const correction = typeof args.correction === 'string' ? args.correction : '';
   const reason = typeof args.reason === 'string' ? args.reason : '';
   if (!correction) return errorResult('objectives_correct_event: `correction` is required');
   if (!reason) return errorResult('objectives_correct_event: `reason` is required');
-  const updated = await brokerClient.correctObjectiveEvent(id, { eventTs, correction, reason });
+  const updated = await brokerClient.correctObjectiveEvent(id, { eventId, correction, reason });
   return textResult(
     `recorded a correction on '${updated.id}'. The original event is unchanged and is now ` +
       'marked corrected in `objectives_view`.',
@@ -2526,7 +2527,7 @@ async function handleObjectivesView(
     for (const a of eventCorrections) {
       if (a.target !== 'event') continue;
       lines.push(
-        `  ${formatAgentTimestamp(a.ts)} ${a.actor} corrects the ${a.eventKind} of ${formatAgentTimestamp(a.eventTs)}`,
+        `  ${formatAgentTimestamp(a.ts)} ${a.actor} corrects the ${a.eventKind} ${a.eventId} of ${formatAgentTimestamp(a.eventTs)}`,
       );
       lines.push(`    correction: ${a.correction}`);
       lines.push(`    reason: ${a.reason}`);
@@ -2534,15 +2535,24 @@ async function handleObjectivesView(
   }
 
   lines.push('events:');
-  const correctedTs = new Set(eventCorrections.map((a) => (a.target === 'event' ? a.eventTs : -1)));
+  // Marked by EVENT ID, not timestamp. Keying on `ts` marked every
+  // event sharing that millisecond — so correcting `watcher_added`
+  // also branded the `assigned` beside it: a durable surface asserting
+  // something false about a record, inside the feature built to stop
+  // exactly that.
+  const correctedIds = new Set(
+    eventCorrections.map((a) => (a.target === 'event' ? a.eventId : '')),
+  );
   for (const ev of events) {
     const ts = formatAgentTimestamp(ev.ts);
     const age = formatRelativeAge(ev.ts);
     // Mark a superseded event inline too. Reading the log top-down is
     // how an agent reconstructs what happened, and an uncorrected-
     // looking `completed` is exactly the thing that misled a reader.
-    const mark = correctedTs.has(ev.ts) ? ' [CORRECTED — see event corrections above]' : '';
-    lines.push(`  ${ts} (${age}) ${ev.actor} ${ev.kind} ${JSON.stringify(ev.payload)}${mark}`);
+    const mark = correctedIds.has(ev.id) ? ' [CORRECTED — see event corrections above]' : '';
+    lines.push(
+      `  ${ts} (${age}) ${ev.id} ${ev.actor} ${ev.kind} ${JSON.stringify(ev.payload)}${mark}`,
+    );
   }
   return textResult(lines.join('\n'));
 }

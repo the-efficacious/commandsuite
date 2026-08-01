@@ -97,7 +97,7 @@ function makeApp() {
     version: '0.0.0',
     logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   });
-  return { app, objectives };
+  return { app, objectives, db };
 }
 
 function authed(token: string, body?: unknown, method?: string): RequestInit {
@@ -355,7 +355,7 @@ describe('criterion 4 — a lifecycle event is corrected by superseding, never r
       await app.request(
         `/objectives/${obj.id}/correct-event`,
         authed(LEA, {
-          eventTs: completed.ts,
+          eventId: completed.id,
           correction:
             'Completed at an approved PR head, before merge. The merge bar is satisfied by c8f0d18.',
           reason:
@@ -368,7 +368,7 @@ describe('criterion 4 — a lifecycle event is corrected by superseding, never r
     const a = corrected.amendments.find((x) => x.target === 'event');
     if (a?.target !== 'event') throw new Error('expected an event correction');
     expect(a.eventKind).toBe('completed');
-    expect(a.eventTs).toBe(completed.ts);
+    expect(a.eventId).toBe(completed.id);
     expect(a.correction).toContain('c8f0d18');
 
     // The original event is untouched, and the result still reads as
@@ -390,8 +390,105 @@ describe('criterion 4 — a lifecycle event is corrected by superseding, never r
     const obj = await createObjective(app, NARROWED_BEFORE);
     const res = await app.request(
       `/objectives/${obj.id}/correct-event`,
-      authed(LEA, { eventTs: 1, correction: 'x', reason: 'y' }),
+      authed(LEA, { eventId: 'ev-nope', correction: 'x', reason: 'y' }),
     );
     expect(res.status).toBe(404);
+  });
+});
+
+describe('criterion 2 — the two writes are one transaction', () => {
+  it('rolls back the current row when appending the amendment event fails', async () => {
+    // Found by Rune in verification. `amend` writes the row and appends
+    // the superseded text to the log. If the second fails and the first
+    // stands, the contract has moved and its prior text is
+    // unrecoverable — strictly worse than the immutability this
+    // replaces, because today an outcome cannot silently change.
+    const { app, db } = makeApp();
+    const obj = await createObjective(app, STRUCK_CRITERION);
+
+    // Fail ONLY the event insert, through the real route.
+    db.exec(`CREATE TRIGGER block_amend_event BEFORE INSERT ON objective_events
+             WHEN NEW.kind = 'amended'
+             BEGIN SELECT RAISE(ABORT, 'injected event-store failure'); END`);
+
+    const failed = await app.request(
+      `/objectives/${obj.id}/amend`,
+      authed(LEA, { outcome: 'new text', reason: 'r', disposition: 'correction' }),
+    );
+    expect(failed.status).toBe(500);
+
+    const afterFailure = (await (
+      await app.request(`/objectives/${obj.id}`, authed(LEA))
+    ).json()) as { objective: Objective };
+    // The contract did NOT move.
+    expect(afterFailure.objective.outcome).toBe(STRUCK_CRITERION);
+    expect(afterFailure.objective.outcomeVersion).toBe(1);
+    expect(afterFailure.objective.amendments).toHaveLength(0);
+
+    // And a retry after the fault clears leaves version and amendment
+    // count in agreement — a rolled-back attempt must not have consumed
+    // a version, or `outcomeVersion` stops answering criterion 7.
+    db.exec('DROP TRIGGER block_amend_event');
+    const ok = (await (
+      await app.request(
+        `/objectives/${obj.id}/amend`,
+        authed(LEA, { outcome: 'new text', reason: 'r', disposition: 'correction' }),
+      )
+    ).json()) as Objective;
+    expect(ok.outcome).toBe('new text');
+    expect(ok.outcomeVersion).toBe(2);
+    expect(ok.amendments).toHaveLength(1);
+  });
+});
+
+describe('a correction names one event by durable id, never by timestamp', () => {
+  it('distinguishes two events emitted in the SAME millisecond', () => {
+    // Found by Rune. `create` emits `assigned` and `watcher_added` at
+    // one `now`, so a timestamp selector would silently correct
+    // whichever came first and report success. Deterministic here via a
+    // fixed clock rather than hoping the wall clock collides.
+    const { objectives } = makeApp();
+    const AT = 1_700_000_000_000;
+    const { objective } = objectives.create(
+      { title: 't', outcome: STRUCK_CRITERION, assignee: 'carol', watchers: ['rune'] },
+      'lea',
+      AT,
+    );
+    const events = objectives.events(objective.id);
+    const atAT = events.filter((e) => e.ts === AT);
+    expect(atAT.length).toBeGreaterThan(1);
+    // Every event carries a distinct id despite the shared timestamp.
+    expect(new Set(atAT.map((e) => e.id)).size).toBe(atAT.length);
+
+    const assigned = events.find((e) => e.kind === 'assigned');
+    const watcher = events.find((e) => e.kind === 'watcher_added');
+    if (!assigned || !watcher) throw new Error('expected both events');
+
+    const { objective: fixed } = objectives.correctEvent(
+      objective.id,
+      { eventId: watcher.id, correction: 'x', reason: 'y' },
+      'lea',
+    );
+    const corr = fixed.amendments.find((a) => a.target === 'event');
+    if (corr?.target !== 'event') throw new Error('expected an event correction');
+    // The one named, not the one that happened to sort first.
+    expect(corr.eventId).toBe(watcher.id);
+    expect(corr.eventKind).toBe('watcher_added');
+    expect(corr.eventId).not.toBe(assigned.id);
+  });
+
+  it('refuses an unknown event id', () => {
+    const { objectives } = makeApp();
+    const { objective } = objectives.create(
+      { title: 't', outcome: STRUCK_CRITERION, assignee: 'carol' },
+      'lea',
+    );
+    expect(() =>
+      objectives.correctEvent(
+        objective.id,
+        { eventId: 'ev-nope', correction: 'x', reason: 'y' },
+        'lea',
+      ),
+    ).toThrow(/no correctable event/);
   });
 });

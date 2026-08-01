@@ -263,6 +263,7 @@ export const ObjectiveAmendmentSchema = z.discriminatedUnion('target', [
     ts: z.number().int().nonnegative(),
     actor: NameSchema,
     reason: z.string().min(1).max(2048),
+    eventId: z.string().min(1),
     eventKind: ObjectiveEventKindSchema,
     eventTs: z.number().int().nonnegative(),
     correction: z.string().min(1).max(4096),
@@ -283,7 +284,7 @@ export const AmendObjectiveRequestSchema = z.object({
 });
 
 export const CorrectObjectiveEventRequestSchema = z.object({
-  eventTs: z.number().int().nonnegative(),
+  eventId: z.string().min(1),
   correction: z.string().min(1).max(4096),
   reason: z.string().min(1).max(2048),
 });
@@ -311,6 +312,7 @@ export const ObjectiveSchema = z.object({
 });
 
 export const ObjectiveEventSchema = z.object({
+  id: z.string().default(''),
   objectiveId: z.string().min(1),
   ts: z.number().int().nonnegative(),
   actor: NameSchema,

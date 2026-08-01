@@ -78,6 +78,12 @@ const CREATE_SCHEMA = `
   CREATE INDEX IF NOT EXISTS objectives_created_idx ON objectives (created_at);
 
   CREATE TABLE IF NOT EXISTS objective_events (
+    -- Durable, unique per event. A timestamp is NOT an identity: create
+    -- emits assigned and watcher_added in the same millisecond, and a
+    -- watcher batch emits several of one kind. A correction has to name
+    -- exactly one event, and a selector that is only USUALLY unique is
+    -- the shape this store exists to remove.
+    event_id TEXT,
     objective_id TEXT NOT NULL,
     ts INTEGER NOT NULL,
     actor TEXT NOT NULL,
@@ -107,6 +113,7 @@ interface ObjectiveRow {
 }
 
 interface ObjectiveEventRow {
+  event_id?: string | null;
   objective_id: string;
   ts: number;
   actor: string;
@@ -175,6 +182,7 @@ function rowToObjective(row: ObjectiveRow, amendments: ObjectiveAmendment[] = []
 function rowToEvent(row: ObjectiveEventRow): ObjectiveEvent {
   const kind = ObjectiveEventKindSchema.parse(row.kind);
   return {
+    id: row.event_id ?? '',
     objectiveId: row.objective_id,
     ts: row.ts,
     actor: row.actor,
@@ -332,6 +340,7 @@ class SqliteObjectivesStore implements ObjectivesStore {
     for (const alter of [
       "ALTER TABLE objectives ADD COLUMN watchers TEXT NOT NULL DEFAULT '[]'",
       "ALTER TABLE objectives ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'",
+      'ALTER TABLE objective_events ADD COLUMN event_id TEXT',
       'ALTER TABLE objectives ADD COLUMN outcome_version INTEGER NOT NULL DEFAULT 1',
     ]) {
       try {
@@ -340,6 +349,16 @@ class SqliteObjectivesStore implements ObjectivesStore {
         const msg = (err as Error).message ?? '';
         if (!msg.includes('duplicate column name')) throw err;
       }
+    }
+    // Backfill ids for rows written before the column existed. ROWID is
+    // stable for an append-only table that never deletes, so this is
+    // deterministic and runs once.
+    try {
+      this.db.exec(
+        "UPDATE objective_events SET event_id = 'ev-' || ROWID WHERE event_id IS NULL OR event_id = ''",
+      );
+    } catch {
+      /* best-effort: a broker must still boot if the backfill fails */
     }
     this.listAllStmt = db.prepare('SELECT * FROM objectives ORDER BY created_at DESC, id DESC');
     this.listByAssigneeStmt = db.prepare(
@@ -370,7 +389,7 @@ class SqliteObjectivesStore implements ObjectivesStore {
       'UPDATE objectives SET attachments = ?, updated_at = ? WHERE id = ?',
     );
     this.insertEventStmt = db.prepare(
-      'INSERT INTO objective_events (objective_id, ts, actor, kind, payload) VALUES (?, ?, ?, ?, ?)',
+      'INSERT INTO objective_events (event_id, objective_id, ts, actor, kind, payload) VALUES (?, ?, ?, ?, ?, ?)',
     );
     this.listEventsStmt = db.prepare(
       'SELECT * FROM objective_events WHERE objective_id = ? ORDER BY ts ASC, ROWID ASC',
@@ -895,15 +914,36 @@ class SqliteObjectivesStore implements ObjectivesStore {
       previous,
     };
 
-    this.db
-      .prepare(
-        `UPDATE objectives SET title = ?, outcome = ?, body = ?, outcome_version = ?, updated_at = ?
-          WHERE id = ?`,
-      )
-      .run(next.title, next.outcome, next.body, version, now, id);
-    const event = this.appendEvent(id, now, actor, 'amended', {
-      ...amendment,
-    } as unknown as Record<string, unknown>);
+    // ONE TRANSACTION, and it is the whole invariant. Two writes:
+    // the row moves to the new text, and the append-only log gains the
+    // superseded text. If the second fails and the first stands, the
+    // contract has changed and its prior text and reason are
+    // unrecoverable — precisely the state this store exists to make
+    // impossible, and worse than the immutability it replaces.
+    //
+    // The caller also sees a 500 in that case, so they are told the
+    // amendment failed while the contract actually moved.
+    let event: ObjectiveEvent;
+    this.db.prepare('BEGIN').run();
+    try {
+      this.db
+        .prepare(
+          `UPDATE objectives SET title = ?, outcome = ?, body = ?, outcome_version = ?, updated_at = ?
+            WHERE id = ?`,
+        )
+        .run(next.title, next.outcome, next.body, version, now, id);
+      event = this.appendEvent(id, now, actor, 'amended', {
+        ...amendment,
+      } as unknown as Record<string, unknown>);
+      this.db.prepare('COMMIT').run();
+    } catch (err) {
+      try {
+        this.db.prepare('ROLLBACK').run();
+      } catch {
+        /* rollback of a failed tx can itself fail — nothing to do */
+      }
+      throw err;
+    }
 
     return { objective: this.get(id) as Objective, events: [event] };
   }
@@ -929,21 +969,34 @@ class SqliteObjectivesStore implements ObjectivesStore {
     const row = this.getStmt.get(id) as unknown as ObjectiveRow | undefined;
     if (!row) throw new ObjectivesError('not_found', `objective ${id} not found`);
 
-    const target = (this.listEventsStmt.all(id) as unknown as ObjectiveEventRow[]).find(
-      (e) => e.ts === input.eventTs && e.kind !== 'event_corrected',
+    // Selected by durable id, so the target is unambiguous by
+    // construction rather than by validation. The ambiguity guard below
+    // should be unreachable; it is kept because a guard on an
+    // unreachable state is cheap and fails loudly if the assumption
+    // stops holding.
+    const candidates = (this.listEventsStmt.all(id) as unknown as ObjectiveEventRow[]).filter(
+      (e) => e.event_id === input.eventId && e.kind !== 'event_corrected',
     );
-    if (!target) {
+    if (candidates.length === 0) {
       throw new ObjectivesError(
         'not_found',
-        `no correctable event at ts ${input.eventTs} on objective ${id}`,
+        `no correctable event '${input.eventId}' on objective ${id}`,
       );
     }
+    if (candidates.length > 1) {
+      throw new ObjectivesError(
+        'invalid_transition',
+        `event id '${input.eventId}' matches ${candidates.length} events on objective ${id}`,
+      );
+    }
+    const target = candidates[0] as ObjectiveEventRow;
 
     const amendment: ObjectiveAmendment = {
       target: 'event',
       ts: now,
       actor,
       reason: input.reason,
+      eventId: input.eventId,
       eventKind: ObjectiveEventKindSchema.parse(target.kind),
       eventTs: target.ts,
       correction: input.correction,
@@ -974,8 +1027,9 @@ class SqliteObjectivesStore implements ObjectivesStore {
       const row = this.getStmt.get(id) as unknown as ObjectiveRow | undefined;
       stamped = { ...payload, contractVersion: row?.outcome_version ?? 1 };
     }
-    this.insertEventStmt.run(id, ts, actor, kind, JSON.stringify(stamped));
-    return { objectiveId: id, ts, actor, kind, payload: stamped };
+    const eventId = `ev-${globalThis.crypto.randomUUID()}`;
+    this.insertEventStmt.run(eventId, id, ts, actor, kind, JSON.stringify(stamped));
+    return { id: eventId, objectiveId: id, ts, actor, kind, payload: stamped };
   }
 }
 
