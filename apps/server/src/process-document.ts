@@ -65,7 +65,7 @@ import type {
 import type { DatabaseSyncInstance, StatementInstance } from './db.js';
 
 export class ProcessDocumentError extends Error {
-  readonly code: 'not_found' | 'invalid_input';
+  readonly code: 'not_found' | 'invalid_input' | 'corrupt_history';
   constructor(code: ProcessDocumentError['code'], message: string) {
     super(message);
     this.name = 'ProcessDocumentError';
@@ -74,7 +74,7 @@ export class ProcessDocumentError extends Error {
 }
 
 /** The mutable half of the document — what a write produces. */
-type EditableFields = Pick<ProcessDocument, 'text'>;
+export type EditableFields = Pick<ProcessDocument, 'text'>;
 
 /**
  * Every invariant that must hold of a WHOLE document, in one place,
@@ -89,7 +89,7 @@ type EditableFields = Pick<ProcessDocument, 'text'>;
  * producing. Any validator that can see the delta will grow that
  * defect again, so this one cannot see it.
  */
-function assertDocumentInvariants(next: EditableFields): void {
+export function assertDocumentInvariants(next: EditableFields): void {
   const text = next.text.trim();
   if (text.length === 0) {
     throw new ProcessDocumentError(
@@ -286,8 +286,16 @@ class SqliteProcessDocumentStore implements ProcessDocumentStore {
       actor: row.actor,
       reason: row.reason,
       disposition: row.disposition as ProcessDocumentEdit['disposition'],
-      fields: safeParse<ProcessDocumentField[]>(row.fields, []),
-      previous: safeParse<ProcessDocumentEdit['previous']>(row.previous, {}),
+      // NO FALLBACK. This store writes both columns itself, so a
+      // parse failure is corruption or a broken invariant, never
+      // optional input. The fallbacks that used to be here converted a
+      // damaged row into a valid-looking one: an unreadable `previous`
+      // became `{}`, which renders as "created — no prior text", so a
+      // caller was told there had been nothing before rather than that
+      // the retained record is unreadable. That is criterion 3 failing
+      // in the reassuring direction, which is the worst direction.
+      fields: parseColumn<ProcessDocumentField[]>(row.fields, row.version, 'fields'),
+      previous: parseColumn<ProcessDocumentEdit['previous']>(row.previous, row.version, 'previous'),
     }));
   }
 }
@@ -303,11 +311,23 @@ function rowToDocument(row: DocumentRow): ProcessDocument {
   };
 }
 
-function safeParse<T>(raw: string, fallback: T): T {
+/**
+ * Parses a column this store wrote. Throws rather than degrading.
+ *
+ * "Retained, not reconstructed" is only true if an unreadable record
+ * says so. A fallback here would answer a question about history with
+ * a confident wrong answer.
+ */
+function parseColumn<T>(raw: string, version: number, column: string): T {
   try {
     return JSON.parse(raw) as T;
-  } catch {
-    return fallback;
+  } catch (err) {
+    throw new ProcessDocumentError(
+      'corrupt_history',
+      `process document edit v${version} has an unreadable '${column}' column — ` +
+        'the retained prior text cannot be trusted, and reporting it as absent would ' +
+        `say there was nothing before. Underlying: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 }
 

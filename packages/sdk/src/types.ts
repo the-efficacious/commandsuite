@@ -337,10 +337,18 @@ export interface BriefingResponse extends Member {
   /**
    * The team's process document as one authored whole, or `null` when
    * none has been set. Carried separately from `instructions` because
-   * that field's 8192 cap is sized for authored text and also bounds
-   * composed output.
+   * that field is authored by the member and this is authored by
+   * whoever holds `process.manage` — one string would collapse two
+   * authorities into one field. (An 8192 cap on that field also
+   * motivated this historically; #122 removed it in #129 and the
+   * decision is unchanged.)
    */
-  processDocument: ProcessDocument | null;
+  /**
+   * `undefined` when the broker did not send the field at all — an
+   * older broker without the feature. Distinct from `null`, which is a
+   * broker saying the team has no document.
+   */
+  processDocument?: ProcessDocument | null;
 }
 
 /** Response from `GET /roster`. */

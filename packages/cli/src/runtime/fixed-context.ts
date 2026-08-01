@@ -58,7 +58,14 @@ const SUBHEAD2 = 'has never moved.';
  * The process-document block. Always a string — absence is rendered,
  * never omitted.
  */
-export function renderProcessDocumentBlock(doc: ProcessDocument | null): string {
+export function renderProcessDocumentBlock(doc: ProcessDocument | null | undefined): string {
+  if (doc === undefined) {
+    // The broker did not send the field. That is NOT "no document" —
+    // it is an older broker with no opinion, and telling a member the
+    // team has no process when nobody asked the question is a
+    // confident wrong answer.
+    return 'Team process: unavailable — this broker does not report a process document.';
+  }
   if (doc === null) {
     // Deliberately says what IS true rather than staying silent, so a
     // member can tell this apart from a runner that cannot read the
@@ -86,6 +93,8 @@ export function renderProcessDocumentBlock(doc: ProcessDocument | null): string 
  * separately.
  */
 export function composeFixedContext(briefing: BriefingResponse): string {
-  const block = renderProcessDocumentBlock(briefing.processDocument ?? null);
+  // No `?? null` — that would re-collapse absent into null here after
+  // the schema went to the trouble of keeping them apart.
+  const block = renderProcessDocumentBlock(briefing.processDocument);
   return briefing.instructions.length > 0 ? `${briefing.instructions}\n\n${block}` : block;
 }

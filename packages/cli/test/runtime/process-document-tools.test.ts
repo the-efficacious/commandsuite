@@ -168,6 +168,33 @@ describe('process_document_history', () => {
     expect(text).toMatch(/work already underway finished under the prior text/);
   });
 
+  /**
+   * The content assertion, not a wording one.
+   *
+   * This tool IS the fetch — there is no fetch-by-version — so an
+   * agent holding `process.manage` can only see what changed if the
+   * prior text appears in what the tool actually prints. An earlier
+   * version rendered a character count instead, and the test above
+   * passed on that loss because it asserted the surrounding wording.
+   * Assert the bytes.
+   */
+  it('prints the FULL prior text, which is the whole point of the fetch', async () => {
+    const priorText = 'Squash-merge to main.\nEscalate patches to AndrewJon.';
+    const broker = makeBroker({
+      processDocumentHistory: async () => [edit({ version: 2, previous: { text: priorText } })],
+    });
+    const text = getCallText(
+      await handleToolCall('process_document_history', {}, broker, BRIEFING),
+    );
+    // Every line of the superseded document, verbatim.
+    for (const line of priorText.split('\n')) {
+      expect(text).toContain(line);
+    }
+    // And delimited, so a reader can tell where the old text ends.
+    expect(text).toMatch(/text before v2/);
+    expect(text).toMatch(/end text before v2/);
+  });
+
   it('says there is no history when no document has been set', async () => {
     const broker = makeBroker({ processDocumentHistory: async () => [] });
     const text = getCallText(

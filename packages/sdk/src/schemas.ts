@@ -778,16 +778,18 @@ export const ResolveSecretsResponseSchema = z.object({
  * 16384 characters. Basis, so the number is arguable rather than
  * arbitrary: this document is resident in EVERY member's context in
  * EVERY session, so its size is a recurring cost paid by everyone, not
- * a one-off. Twice the authored-instructions cap is ample for a team
- * process — the four rules this team actually had rendered to 1085
- * characters — while bounding that recurring cost at a number someone
- * can reason about.
+ * a one-off. 16384 is ample for a team process — the four rules this
+ * team actually had rendered to 1085 characters — while bounding that
+ * recurring cost at a number someone can reason about.
  *
  * The predecessor design had no ceiling at all: it held N rules with
  * nothing capping N, so the injected block was unbounded and nothing
  * reported it. One document with one cap is the whole fix.
  *
- * This is NOT the `instructions` cap and must never become it. The
+ * This is NOT an `instructions` cap — there is no longer any such
+ * thing, since #122 removed every length cap on authored text in #129.
+ * That is precisely why this one has to exist on its own terms rather
+ * than by analogy to a number that no longer exists. The
  * document rides in its own briefing field precisely because
  * `MemberSchema.instructions` is capped at 8192 for authored text and
  * that cap also bounds composed output — on this team the longest
@@ -1674,7 +1676,20 @@ export const BriefingResponseSchema = MemberSchema.extend({
    * `.default(null)` so an older broker that omits the field parses
    * rather than failing the client-side schema.
    */
-  processDocument: ProcessDocumentSchema.nullable().default(null),
+  /**
+   * THREE states, and `.default(null)` would destroy the one that
+   * matters. An older broker OMITS this field; a broker that has it
+   * and holds no document sends `null`. Defaulting absent to `null`
+   * makes a new runner tell its member "this team has no process
+   * document" when the truth is "this broker has no opinion" — the
+   * exact collapse the explicit empty state exists to prevent, done
+   * before the renderer ever sees it.
+   *
+   *   absent     -> unavailable from this broker
+   *   null       -> no document has been set
+   *   document   -> render it
+   */
+  processDocument: ProcessDocumentSchema.nullable().optional(),
 });
 
 export const RosterResponseSchema = z.object({

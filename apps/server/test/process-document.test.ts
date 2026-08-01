@@ -252,3 +252,42 @@ describe('history is retrievable, not resident', () => {
     ]);
   });
 });
+
+// ─── corrupt history fails loud ──────────────────────────────────────
+//
+// Found by Rune. `history()` used to parse the two completeness-bearing
+// JSON columns with fallbacks — malformed `fields` became `[]`,
+// malformed `previous` became `{}`. A damaged row was then returned as
+// "created — no prior text", telling the caller there had been nothing
+// before rather than that the retained record is unreadable. Criterion
+// 3 failing in the reassuring direction.
+//
+// The distinction that decides it: this store WRITES both columns. A
+// fallback is appropriate for input you did not write; on your own
+// writes it converts an invariant violation into a plausible record.
+
+describe('a corrupt history row is an error, not an empty one', () => {
+  function corrupt(column: 'previous' | 'fields') {
+    const db = openDatabase(':memory:');
+    const s = createSqliteProcessDocumentStore(db);
+    s.write({ text: V1, reason: 'r', disposition: 'correction' }, 'AndrewJon', AT);
+    s.write({ text: V2, reason: 'r', disposition: 'correction' }, 'Lea', AT + 1);
+    db.exec(`UPDATE process_document_edits SET ${column} = '{not json' WHERE version = 2`);
+    return s;
+  }
+
+  it('throws rather than reporting an unreadable prior text as absent', () => {
+    const s = corrupt('previous');
+    expect(() => s.history()).toThrow(/unreadable 'previous' column/);
+    // The specific lie it used to tell.
+    expect(() => s.history()).toThrow(/would say there was nothing before/);
+  });
+
+  it('throws on an unreadable fields column too', () => {
+    expect(() => corrupt('fields').history()).toThrow(/unreadable 'fields' column/);
+  });
+
+  it('names the version, so the damaged row is findable', () => {
+    expect(() => corrupt('previous').history()).toThrow(/v2/);
+  });
+});

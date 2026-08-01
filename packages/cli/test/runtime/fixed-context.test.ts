@@ -14,6 +14,7 @@
  * separates them, and that line is what these tests pin.
  */
 
+import { BriefingResponseSchema } from 'csuite-sdk/schemas';
 import type { BriefingResponse, ProcessDocument } from 'csuite-sdk/types';
 import { describe, expect, it } from 'vitest';
 import {
@@ -107,5 +108,66 @@ describe('a briefing with no authored instructions', () => {
     const composed = composeFixedContext(briefing({ instructions: '', processDocument: DOC }));
     expect(composed.startsWith('Team process')).toBe(true);
     expect(composed).toContain('Squash-merge to main.');
+  });
+});
+
+// ─── three states must survive PARSING, not just rendering ───────────
+//
+// Found by Rune. The renderer distinguishes absent from null, but
+// `BriefingResponseSchema` used `.default(null)` — so an older broker
+// that omits the field had it turned into `null` before the renderer
+// ever saw it, and a new runner confidently told its member "this team
+// has no process document" when the truth was "this broker has no
+// opinion."
+//
+// A renderer-only test cannot catch that. These go through the schema.
+
+describe('the three states survive the parse', () => {
+  const base = {
+    name: 'cora',
+    role: { title: 'engineer', description: '' },
+    permissions: [],
+    instructions: 'standing instructions',
+    team: { name: 'demo', context: '', permissionPresets: {} },
+    teammates: [],
+    openObjectives: [],
+    toolSources: [],
+  };
+
+  it('keeps an OMITTED field distinguishable from an explicit null', () => {
+    // Exactly what an older broker sends: the key is not there.
+    const parsed = BriefingResponseSchema.parse({ ...base });
+    expect(parsed.processDocument).toBeUndefined();
+
+    const rendered = composeFixedContext(parsed as BriefingResponse);
+    expect(rendered).toMatch(/unavailable/i);
+    expect(rendered).toMatch(/does not report a process document/i);
+    // And crucially NOT the healthy empty state.
+    expect(rendered).not.toMatch(/no process document has been set/i);
+  });
+
+  it('renders an explicit null as "none has been set"', () => {
+    const parsed = BriefingResponseSchema.parse({ ...base, processDocument: null });
+    expect(parsed.processDocument).toBeNull();
+    const rendered = composeFixedContext(parsed as BriefingResponse);
+    expect(rendered).toMatch(/no process document has been set/i);
+    expect(rendered).not.toMatch(/unavailable/i);
+  });
+
+  it('renders a document when one is present', () => {
+    const parsed = BriefingResponseSchema.parse({ ...base, processDocument: DOC });
+    const rendered = composeFixedContext(parsed as BriefingResponse);
+    expect(rendered).toContain('Squash-merge to main.');
+    expect(rendered).not.toMatch(/unavailable/i);
+    expect(rendered).not.toMatch(/no process document has been set/i);
+  });
+
+  it('gives all three states different renderings', () => {
+    const render = (o: object) =>
+      composeFixedContext(BriefingResponseSchema.parse(o) as BriefingResponse);
+    const absent = render({ ...base });
+    const empty = render({ ...base, processDocument: null });
+    const present = render({ ...base, processDocument: DOC });
+    expect(new Set([absent, empty, present]).size).toBe(3);
   });
 });

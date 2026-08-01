@@ -2542,11 +2542,21 @@ async function handleProcessDocumentHistory(brokerClient: BrokerClient): Promise
       e.disposition === 'correction'
         ? 'retroactive — the prior text was never validly binding'
         : 'forward-only — work already underway finished under the prior text';
+    // The FULL prior text, delimited. Rendering a character count
+    // here was a real defect: this tool IS the fetch — there is no
+    // fetch-by-version — so a count told the one member who holds
+    // `process.manage` that the text exists somewhere they cannot
+    // reach. The description promises the full text; a renderer is a
+    // compression step and this is where content gets silently
+    // dropped.
     const prior =
       e.previous.text === undefined
         ? '      (created — no prior text)'
-        : `      prior text was ${e.previous.text.length} characters; ` +
-          'fetch it from this record if you need to compare';
+        : [
+            `      --- text before v${e.version} (${e.previous.text.length} chars) ---`,
+            e.previous.text,
+            `      --- end text before v${e.version} ---`,
+          ].join('\n');
     return `  v${e.version} by ${e.actor} — ${e.disposition} (${binding})\n      reason: ${e.reason}\n${prior}`;
   });
   return textResult(
