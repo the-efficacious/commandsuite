@@ -1744,8 +1744,10 @@ function buildProcessRuleTools(briefing: BriefingResponse): Tool[] {
       description:
         'Retrieve the superseded text behind one process rule, oldest amendment first. ' +
         'This is the other half of "history retrievable, not resident": the injected ' +
-        'block carries only current state so it cannot grow without bound, and the ' +
-        'prior text lives here. Each amendment records who changed it, when, which ' +
+        'block carries only current state, so amending a rule adds nothing to what sits ' +
+        'in your context and the prior text lives here instead. That is not a ceiling on ' +
+        'the block — nothing caps the number of rules. Each amendment records who ' +
+        'changed it, when, which ' +
         'fields moved, the reason, the `changeKind` (`reversal` | `refinement` | ' +
         '`wording`) and the `disposition` — and the previous value of every field it ' +
         'touched. Use it to answer "was I working under a different rule when I started ' +

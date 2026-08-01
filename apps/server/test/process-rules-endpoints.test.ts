@@ -140,7 +140,9 @@ describe('criterion 4 — history is retrievable, not resident', () => {
     }
     const listed = await (await app.request('/process-rules', authed(CORA))).text();
     // Five amendments happened; none of their text is in what a member
-    // is served. This is what keeps the injected block bounded.
+    // is served — amendment churn adds nothing resident. This is NOT a
+    // ceiling on the block: nothing caps the number of rules, so the
+    // total is unbounded. What this pins is the churn property only.
     expect(listed).not.toContain('churn');
     expect(listed).not.toContain('revision 0');
     expect(listed).toContain('revision 4'); // current state only

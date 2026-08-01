@@ -39,10 +39,18 @@
  *
  * HISTORY IS RETRIEVABLE, NOT RESIDENT. Amendments live in an
  * append-only table and are served by their own endpoint. The injected
- * block carries only current text plus a version, so it is bounded by
- * the number of rules rather than by the number of times they have
- * changed — which matters because the instruction cap is being removed
- * and nothing else would bound it.
+ * block carries only current text plus a version, so amendment churn
+ * contributes ZERO resident growth — a rule amended fifty times costs
+ * what one never touched costs.
+ *
+ * THAT IS NOT A CEILING, and this comment said it was. Per-rule text
+ * caps at 4096; the number of rules does not cap; so the injected
+ * block as a whole is UNBOUNDED. Moving rules out of `instructions`
+ * escaped that field's cap deliberately and removed the only thing
+ * that would ever have caught growth here. Nothing reports the total.
+ * A future cap on composed output has to bound this field too, or it
+ * will bound `instructions` and leave the rules outside it — which is
+ * how they came to be outside in the first place.
  */
 
 import { PROCESS_RULE_FIELDS } from 'csuite-sdk/schemas';
