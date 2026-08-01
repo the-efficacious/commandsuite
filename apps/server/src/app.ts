@@ -628,6 +628,12 @@ export function createApp(options: AppOptions): CreatedApp {
         team: teamStore.getTeam(),
         teammates: teammatesFromMembers(members),
         openObjectives: [],
+        // Read from storage, not from process memory. This is the
+        // cold-broker path: a live runner keeps uploading without
+        // refetching /briefing, so omitting the document here means
+        // the captured copy is redacted, never matches the sent text,
+        // and resends every turn forever.
+        processDocument: processDocument ? processDocument.get() : null,
       })) {
         exemptions.add(block);
       }
@@ -667,6 +673,10 @@ export function createApp(options: AppOptions): CreatedApp {
       team: teamStore.getTeam(),
       teammates: teammatesFromMembers(members),
       openObjectives: [],
+      // The watchdog's own input. Omitting the document here does not
+      // degrade the feature — it removes it, because this is what
+      // decides which blocks are looked for at all.
+      processDocument: processDocument ? processDocument.get() : null,
     };
     const blocks = briefingCaptureBlocks(composeInput);
     const observedAt = now();
