@@ -107,8 +107,12 @@ const APP_IN_SCOPE = [
  * bounded `unknown` in complimentary context and still returns the
  * complete briefing. The warning distinguishes a rejected report
  * from an older client that sent no report at all.
+ *
+ * 2026-08-01, +1 = 55. `briefing exceeds legacy runner instruction
+ * limit` is OPERATIONAL: no content is lost by the broker, but a
+ * pre-0.4.0 runner will reject the response locally and fail to start.
  */
-const TOTAL_SITES = 54;
+const TOTAL_SITES = 55;
 
 function messagesIn(file: string): string[] {
   const src = readFileSync(join(SRC, file), 'utf8');

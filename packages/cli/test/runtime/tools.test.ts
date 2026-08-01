@@ -47,6 +47,54 @@ const BRIEFING: BriefingResponse = {
   toolSources: [],
 };
 
+const ADMIN_BRIEFING: BriefingResponse = {
+  ...BRIEFING,
+  permissions: ['team.manage', 'members.manage'],
+};
+
+describe('instruction authoring tools report text cost', () => {
+  it('removes the old caps from the agent-facing schemas', () => {
+    const tools = defineTools(ADMIN_BRIEFING);
+    const json = JSON.stringify(
+      tools.filter((tool) => ['team_update', 'members_add', 'members_update'].includes(tool.name)),
+    );
+    expect(json).not.toContain('8192');
+    expect(json).not.toContain('512 chars');
+  });
+
+  it('reports team context metrics and labels the estimate method', async () => {
+    const broker = makeBroker({ getTeam: vi.fn(async () => ADMIN_BRIEFING.team) } as never);
+    const text = getCallText(
+      (await handleToolCall('team_get', {}, broker, ADMIN_BRIEFING)) as never,
+    );
+    expect(text).toContain('context size: 0 characters · ≈0 estimated tokens (characters ÷ 4)');
+  });
+
+  it('reports role and personal-instruction metrics after member creation', async () => {
+    const broker = makeBroker({
+      createMember: vi.fn(async () => ({
+        member: {
+          name: 'newbie',
+          role: { title: 'engineer', description: '12345' },
+          permissions: [],
+          instructions: '12345678',
+        },
+        token: 'secret-token',
+      })),
+    } as never);
+    const text = getCallText(
+      (await handleToolCall(
+        'members_add',
+        { name: 'newbie', title: 'engineer', description: '12345', instructions: '12345678' },
+        broker,
+        ADMIN_BRIEFING,
+      )) as never,
+    );
+    expect(text).toContain('role description: 5 characters · ≈2 estimated tokens');
+    expect(text).toContain('personal instructions: 8 characters · ≈2 estimated tokens');
+  });
+});
+
 function makeBroker(overrides: Partial<BrokerClient> = {}): BrokerClient {
   return overrides as BrokerClient;
 }

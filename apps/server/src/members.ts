@@ -113,13 +113,13 @@ const PermissionLeafSchema = z.enum(PERMISSIONS);
 // one place.
 
 const TeamNameSchema = z.string().min(1).max(128);
-const TeamContextSchema = z.string().max(8192).default('');
+const TeamContextSchema = z.string().default('');
 const MemberNameSchema = z
   .string()
   .min(1)
   .max(128)
   .regex(NAME_REGEX, 'name must be alphanumeric with . _ - allowed');
-const InstructionsSchema = z.string().max(8192).default('');
+const InstructionsSchema = z.string().default('');
 const RawPermissionsSchema = z.array(z.string().min(1).max(64)).max(32).default([]);
 const TotpSecretSchema = z
   .string()
@@ -135,7 +135,7 @@ const PresetLeavesSchema = z.array(PermissionLeafSchema).max(32);
 
 const RoleSchema = z.object({
   title: z.string().min(1).max(64),
-  description: z.string().max(512).default(''),
+  description: z.string().default(''),
 });
 
 export const SelfSignedConfigSchema = z.object({

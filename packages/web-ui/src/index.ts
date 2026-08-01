@@ -55,6 +55,7 @@ export {
 } from './components/icons/index.js';
 export { RouteModal, type RouteModalProps } from './components/RouteModal.js';
 export { Hint, type HintKind, type HintProps } from './components/ui/Hint.js';
+export { TextMetrics } from './components/ui/TextMetrics.js';
 export { ToastContainer } from './components/ui/ToastContainer.js';
 export type { SignOutHandler, UnauthorizedHandler } from './lib/handlers.js';
 export type { Identity } from './lib/identity.js';

@@ -22,7 +22,7 @@ import { objectives } from '../lib/objectives.js';
 import { type PermissionSummary, summarizePermissions } from '../lib/permissions.js';
 import { presenceActivity, presenceCaptureWarning, roster } from '../lib/roster.js';
 import { selectMemberProfile } from '../lib/view.js';
-import { ErrorCallout, Loading, PageHeader } from './ui/index.js';
+import { ErrorCallout, Loading, PageHeader, TextMetrics } from './ui/index.js';
 
 export interface TeamHomeProps {
   viewer: string;
@@ -244,6 +244,7 @@ function TeamContextSection({ context, canManage }: { context: string; canManage
         <div style="font-family:var(--f-sans);font-size:11.5px;color:var(--muted);font-style:italic;margin-top:6px">
           Standing context every member inherits. Agents see edits on their next session.
         </div>
+        <TextMetrics text={ctxDraft.value} />
         <div class="flex items-center gap-2" style="margin-top:12px">
           <button type="submit" class="btn btn-primary btn-sm" disabled={busy}>
             {busy ? 'Saving…' : 'Save'}

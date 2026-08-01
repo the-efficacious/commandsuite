@@ -15,6 +15,7 @@
 
 import { parseArgs } from 'node:util';
 import type { Client } from 'csuite-sdk/client';
+import { formatTextMetrics } from 'csuite-sdk/text-metrics';
 import { UsageError } from './errors.js';
 
 export async function runTeamCommand(
@@ -56,6 +57,7 @@ async function runGet(
   }
   stdout(`name      ${team.name}`);
   stdout('context');
+  stdout(`  [${formatTextMetrics(team.context)}]`);
   if (team.context.trim().length === 0) {
     stdout('  (none)');
   } else {
@@ -92,4 +94,5 @@ async function runSet(
   const team = await client.updateTeam(patch);
   stdout(`updated team '${team.name}'`);
   stdout(`  fields: ${Object.keys(patch).join(', ')}`);
+  if (patch.context !== undefined) stdout(`  context: ${formatTextMetrics(team.context)}`);
 }

@@ -70,12 +70,12 @@ export const PermissionPresetsSchema = z.record(
  */
 export const RoleSchema = z.object({
   title: z.string().min(1).max(64),
-  description: z.string().max(512).default(''),
+  description: z.string().default(''),
 });
 
 export const TeamSchema = z.object({
   name: z.string().min(1).max(128),
-  context: z.string().max(8192).default(''),
+  context: z.string().default(''),
   permissionPresets: PermissionPresetsSchema.default({}),
 });
 
@@ -94,7 +94,7 @@ export const TeammateSchema = z.object({
  * Returned from self-scope briefing and admin-scope member listings.
  */
 export const MemberSchema = TeammateSchema.extend({
-  instructions: z.string().max(8192).default(''),
+  instructions: z.string().default(''),
 });
 
 /**
@@ -1348,14 +1348,14 @@ const PermissionRefListSchema = z.array(z.string().min(1).max(64)).max(32);
 export const CreateMemberRequestSchema = z.object({
   name: NameSchema,
   role: RoleSchema,
-  instructions: z.string().max(8192).default(''),
+  instructions: z.string().default(''),
   permissions: PermissionRefListSchema,
 });
 
 export const UpdateMemberRequestSchema = z
   .object({
     role: RoleSchema.optional(),
-    instructions: z.string().max(8192).optional(),
+    instructions: z.string().optional(),
     permissions: PermissionRefListSchema.optional(),
   })
   .refine(
@@ -1511,7 +1511,7 @@ export const ApproveEnrollmentRequestSchema = z.discriminatedUnion('mode', [
     userCode: UserCodeSchema,
     memberName: NameSchema,
     role: RoleSchema,
-    instructions: z.string().max(8192).default(''),
+    instructions: z.string().default(''),
     permissions: PermissionRefListSchema,
     label: TokenLabelSchema.optional(),
   }),

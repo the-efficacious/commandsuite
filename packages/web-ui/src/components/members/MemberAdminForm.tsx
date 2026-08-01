@@ -15,9 +15,11 @@
 
 import { signal } from '@preact/signals';
 import type { Member, Permission, PermissionPresets } from 'csuite-sdk/types';
+import { useState } from 'preact/hooks';
 import { loadBriefing } from '../../lib/briefing.js';
 import { getClient } from '../../lib/client.js';
 import { loadRoster } from '../../lib/roster.js';
+import { TextMetrics } from '../ui/index.js';
 import { MemberTokenList } from './MemberTokenList.js';
 import { PermissionsEditor } from './PermissionsEditor.js';
 import type { Reveal } from './Reveal.js';
@@ -73,6 +75,8 @@ export function MemberAdminForm({
   const rowKey = member.name;
   const busy = actionBusy.value;
   const disabled = busy !== null;
+  const [roleDescription, setRoleDescription] = useState(member.role.description);
+  const [instructions, setInstructions] = useState(member.instructions);
 
   async function onChangePermissions(next: Permission[]): Promise<void> {
     if (isLastAdmin && !next.includes('members.manage')) {
@@ -226,12 +230,14 @@ export function MemberAdminForm({
             class="input"
             rows={2}
             style="font-size:13px;font-family:var(--f-sans);text-transform:none;letter-spacing:normal;color:var(--ink)"
-            defaultValue={member.role.description}
+            value={roleDescription}
             disabled={disabled}
+            onInput={(e) => setRoleDescription((e.currentTarget as HTMLTextAreaElement).value)}
             onBlur={(e) =>
               void onChangeRoleDescription((e.currentTarget as HTMLTextAreaElement).value)
             }
           />
+          <TextMetrics text={roleDescription} />
         </label>
 
         <label style="display:flex;flex-direction:column;gap:4px;font-family:var(--f-mono);font-size:11px;letter-spacing:.04em;color:var(--muted);text-transform:uppercase">
@@ -239,15 +245,16 @@ export function MemberAdminForm({
           <textarea
             class="input"
             rows={6}
-            maxLength={8192}
             placeholder="Standing instructions for this member. Pinned into the agent's system prompt at runner startup."
             style="font-size:13px;font-family:var(--f-sans);text-transform:none;letter-spacing:normal;color:var(--ink);white-space:pre-wrap"
-            defaultValue={member.instructions}
+            value={instructions}
             disabled={disabled}
+            onInput={(e) => setInstructions((e.currentTarget as HTMLTextAreaElement).value)}
             onBlur={(e) =>
               void onChangeInstructions((e.currentTarget as HTMLTextAreaElement).value)
             }
           />
+          <TextMetrics text={instructions} />
         </label>
 
         {/* Role title, role description, and personal instructions are
