@@ -34,7 +34,12 @@ import {
   openaiResponsesToGenAi,
   registerSecretValues,
 } from 'csuite-core';
-import { PATHS, PROTOCOL_HEADER, PROTOCOL_VERSION } from 'csuite-sdk/protocol';
+import {
+  PATHS,
+  PROTOCOL_HEADER,
+  PROTOCOL_VERSION,
+  RUNNER_VERSION_HEADER,
+} from 'csuite-sdk/protocol';
 import {
   ActivityKindSchema,
   ActivityReportSchema,
@@ -1031,6 +1036,15 @@ export function createApp(options: AppOptions): CreatedApp {
 
   app.get(PATHS.briefing, auth, (c) => {
     const member = c.get('member');
+    const reportedRunnerVersion = c.req.header(RUNNER_VERSION_HEADER);
+    let runnerVersion: string | undefined;
+    if (reportedRunnerVersion !== undefined) {
+      if (!/^[0-9A-Za-z][0-9A-Za-z.+-]{0,63}$/.test(reportedRunnerVersion)) {
+        logger.warn('briefing runner version rejected', { member: member.name });
+      } else {
+        runnerVersion = reportedRunnerVersion;
+      }
+    }
     // Live open objectives for this member — included in the briefing
     // so the runner can seed its open-plate snapshot (the source for
     // `context_refresh` re-briefs) and the web UI can render the plate.
@@ -1063,6 +1077,8 @@ export function createApp(options: AppOptions): CreatedApp {
     const composeInput = {
       self: member,
       team: teamStore.getTeam(),
+      brokerVersion: version,
+      runnerVersion,
       teammates: teammatesFromMembers(members),
       openObjectives,
       // Structured field only — never rendered into the prose (same

@@ -8,6 +8,8 @@
 export const PROTOCOL_VERSION = 1 as const;
 export const PROTOCOL_HEADER = 'X-CSUITE-Protocol' as const;
 export const AUTH_HEADER = 'Authorization' as const;
+/** Loaded version of the long-lived runner requesting its briefing. */
+export const RUNNER_VERSION_HEADER = 'X-CSUITE-Runner-Version' as const;
 
 export const PATHS = {
   health: '/healthz',

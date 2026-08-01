@@ -1,5 +1,5 @@
 import { Broker, InMemoryEventLog } from 'csuite-core';
-import { PROTOCOL_HEADER } from 'csuite-sdk/protocol';
+import { PROTOCOL_HEADER, RUNNER_VERSION_HEADER } from 'csuite-sdk/protocol';
 import type { BriefingResponse, Message, RosterResponse, Team } from 'csuite-sdk/types';
 import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
@@ -42,6 +42,12 @@ function makeApp() {
   const db = openDatabase(':memory:');
   const sessions = new SessionStore(db);
   const tokens = createTokenStoreFromMembers(db, members);
+  const logger = {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  };
   const { app } = createApp({
     broker,
     members,
@@ -49,14 +55,9 @@ function makeApp() {
     sessions,
     teamStore: mockTeamStore(TEAM),
     version: '0.0.0',
-    logger: {
-      debug: vi.fn(),
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-    },
+    logger,
   });
-  return { app, broker, members, sessions, db, tokens };
+  return { app, broker, members, sessions, db, tokens, logger };
 }
 
 function authed(token: string, body?: unknown): RequestInit {
@@ -111,6 +112,48 @@ describe('app GET /briefing', () => {
     expect(body.name).toBe('build-bot');
     expect(body.role.title).toBe('engineer');
     expect(body.permissions).toEqual([]);
+  });
+
+  it('distinguishes an absent runner report from a rejected one without withholding briefing', async () => {
+    const { app, logger } = makeApp();
+    const absent = await app.request('/briefing', authed(BOT_TOKEN));
+    expect(absent.status).toBe(200);
+    expect(((await absent.json()) as BriefingResponse).instructions).toContain('runner=unknown');
+    expect(logger.warn).not.toHaveBeenCalledWith(
+      'briefing runner version rejected',
+      expect.anything(),
+    );
+
+    const rejected = await app.request('/briefing', {
+      headers: {
+        Authorization: `Bearer ${BOT_TOKEN}`,
+        [RUNNER_VERSION_HEADER]: 'not a version',
+      },
+    });
+    expect(rejected.status).toBe(200);
+    expect(((await rejected.json()) as BriefingResponse).instructions).toContain('runner=unknown');
+    expect(logger.warn).toHaveBeenCalledWith('briefing runner version rejected', {
+      member: 'build-bot',
+    });
+  });
+
+  it('renders a bounded opaque runner version reported by the runner', async () => {
+    const { app, logger } = makeApp();
+    const res = await app.request('/briefing', {
+      headers: {
+        Authorization: `Bearer ${BOT_TOKEN}`,
+        [RUNNER_VERSION_HEADER]: '0.5.0-rc.1+build.3',
+      },
+    });
+    expect(res.status).toBe(200);
+    const instructions = ((await res.json()) as BriefingResponse).instructions;
+    expect(instructions).toContain(
+      'demo-team CommandSuite/csuite: broker=0.0.0 runner=0.5.0-rc…d.3',
+    );
+    expect(logger.warn).not.toHaveBeenCalledWith(
+      'briefing runner version rejected',
+      expect.anything(),
+    );
   });
 
   it('requires auth', async () => {
