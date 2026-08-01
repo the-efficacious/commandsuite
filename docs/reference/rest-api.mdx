@@ -429,6 +429,64 @@ assignee, watchers, plus members with `members.manage` (implicit).
 Names must resolve to known members. Adding a watcher fires a
 `watcher_added` audit event; removing fires `watcher_removed`.
 
+## Process document
+
+The team's process as one authored document. Reads are open to every
+member — what binds you is not privileged information. Writes require
+`process.manage`, a dedicated leaf: under this design the permission is
+the entire authority.
+
+The current document is also served on `GET /briefing` as
+`processDocument`, which is how it reaches a member's fixed context.
+These endpoints exist for what injection does not carry.
+
+### `GET /process-document`
+
+| | |
+|---|---|
+| **Auth** | dual |
+| **Returns** | `{ document: ProcessDocument \| null }` |
+
+`null` rather than 404 when none has been set. A team that has never
+written one is a real state, not a missing resource, and a 404 would
+make the caller guess which it was.
+
+### `GET /process-document/history`
+
+| | |
+|---|---|
+| **Auth** | dual |
+| **Returns** | `{ edits: ProcessDocumentEdit[] }`, oldest first |
+
+Retrieved, never resident. Each edit carries the author, reason,
+`disposition` and the **full prior text**, so the diff is derived from
+two stored strings rather than cached — a cached diff is a second copy
+that can drift from the text it describes.
+
+Version 1 is the creation and carries no prior text.
+
+### `PUT /process-document`
+
+| | |
+|---|---|
+| **Auth** | dual; requires `process.manage` |
+| **Body** | `EditProcessDocumentRequest` — `{ text, reason, disposition }` |
+| **Returns** | `{ document, edit }` — **201** on create, **200** on edit |
+
+Create and edit are one path. The first authorised write produces
+version 1 with a real author and reason; history begins there rather
+than at a migration that would have to invent the document's text. It
+also means the invariant validator runs on the real endpoint for both.
+
+`text` replaces the document entirely. The document move and the
+history append are one transaction — a document whose text moved
+without its prior version recorded is unrecoverable, and worse than
+immutability.
+
+`text` is capped at 16384 characters. That is a real ceiling with a
+stated basis: the document is resident in every member's context in
+every session, so its length is a recurring cost paid by everyone.
+
 ## Tool sources
 
 Registry of platform-defined external tools — see

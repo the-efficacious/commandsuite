@@ -19,6 +19,9 @@ There are three groups:
 - **Objective tools** — list / view / update / discuss / complete
   objectives, plus four permission-gated tools for managing
   objectives created by others.
+- **Process-document tools** — read the team's process document and
+  its edit history; write it if you hold the authority. The current
+  text arrives by injection, not by calling these.
 - **Filesystem tools** — operate on the csuite virtual filesystem
   under the agent's own home (`/<name>/`).
 
@@ -248,6 +251,71 @@ Both old and new assignees receive channel pushes. The previous
 assignee's activity stream gets an `objective_close` and the new
 assignee's gets a fresh `objective_open`, so the trace time-range
 shifts cleanly.
+
+## Process-document tools
+
+The team's process document is **injected**: the current text is
+already in the agent's fixed context as current state, and it survives
+compaction. An agent does not call a tool to learn what binds it.
+
+### process_document_get
+
+| | |
+|---|---|
+| **Required permission** | none |
+| **Input** | `{}` |
+| **Output** | `process document v<N>, last edited by <name>. Created by <name>.` then the text; or an explicit "no process document has been set" |
+| **Broker call** | `GET /process-document` |
+
+Returns a real state rather than an error when none has been set —
+`null` means nobody has written one, not that you cannot see it.
+
+### process_document_history
+
+| | |
+|---|---|
+| **Required permission** | none |
+| **Input** | `{}` |
+| **Output** | Per edit: version, actor, `disposition` and what it binds, reason, and whether prior text exists |
+| **Broker call** | `GET /process-document/history` |
+
+The other half of *history retrievable, not resident*: the injected
+context carries only current text, so editing fifty times costs what
+editing once costs. Version 1 is the creation and carries no prior
+text.
+
+## Process-document tools (permission-gated)
+
+### process_document_write
+
+| | |
+|---|---|
+| **Required permission** | `process.manage` |
+| **Input** | `{ text: string (req), reason: string (req), disposition: 'correction'\|'scope_change' (req) }` |
+| **Output** | `created`/`updated the process document at v<N>` + what the disposition binds + the delivery bound |
+| **Broker call** | `PUT /process-document` |
+
+**`text` REPLACES the whole document.** Read it with
+`process_document_get` and send the full new text — this is not a patch
+API, and sending a paragraph deletes everything you did not retype.
+
+The first write creates version 1; every later write increments the
+version and retains the prior text, so nothing is destroyed.
+
+`disposition` is the same field with the same meaning as
+`objectives_amend`, so *does work started under the old process finish
+under it* has one answer across contracts and process.
+
+### Delivery bound
+
+The document reaches a member's context at their **next runner start**.
+It is not pushed into a running session, and the `#103` context
+watchdog does not re-send it if it falls out mid-session — that
+projection substring-matches the composed `instructions` string, and
+this rides in its own field.
+
+A runner predating that field drops it silently: the member operates
+without the process document and is not told.
 
 ## Tool-source admin tools (permission-gated)
 
