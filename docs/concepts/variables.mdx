@@ -73,8 +73,14 @@ keeps working and names simply keep disappearing from traces.
 
 The migration runs in one transaction and rolls back whole on any
 error, logging at boot. **A row it cannot move is named in the log
-rather than dropped**; the common case is a secret bound to no member,
-whose value has no reader, and it is left exactly where it is.
+rather than dropped** — a secret with no stored value, or one that
+cannot be decrypted because no KEK is active.
+
+**Binding does not gate it.** An identity secret bound to nobody
+reaches no runner, but it is still registered for redaction — boot
+registers every stored value regardless of binding — so it goes on
+scrubbing that name from *every* member's captured bodies. Values are
+read by decrypting the stored row directly for exactly that reason.
 
 ## One environment namespace, two stores
 
@@ -105,8 +111,8 @@ Variables are administered from the API (`/variables/*`), the CLI
 (`csuite variables`) and the agent tool surface (`variables_list`,
 `variables_view`, `variables_create`, …) — the same three planes the
 rest of the product resolves to one identity. **The web UI has no
-variables panel yet**, so migrated identity rows leave `SecretsPanel`
-and are visible on the other three surfaces only.
+variables panel yet** (#111), so migrated identity rows leave
+`SecretsPanel` and are visible on the other three surfaces only.
 
 Every mutation requires `secrets.manage` — configuring the team's
 runner environment stays a privileged act whether or not the value is

@@ -35,4 +35,4 @@ values.
 
 The web UI has no variables panel yet, so migrated rows leave
 `SecretsPanel` and are visible on the API, CLI and MCP surfaces only.
-Filed rather than left implicit.
+Filed as #111 rather than left implicit.
