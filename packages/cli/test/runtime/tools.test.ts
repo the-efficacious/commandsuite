@@ -1259,3 +1259,49 @@ describe('objectives_view renders amendments WITH the record', () => {
     expect(text).not.toContain('[CORRECTED');
   });
 });
+
+describe('objectives_list marks an amended contract', () => {
+  const row = (over: Record<string, unknown>) => ({
+    id: 'obj-1',
+    title: 'a contract',
+    body: '',
+    outcome: 'the outcome',
+    status: 'active' as const,
+    assignee: 'scout',
+    originator: 'lea',
+    watchers: [],
+    createdAt: 1_700_000_000_000,
+    updatedAt: 1_700_000_000_000,
+    completedAt: null,
+    result: null,
+    blockReason: null,
+    attachments: [],
+    outcomeVersion: 1,
+    amendments: [],
+    ...over,
+  });
+
+  it('tells a recovering agent the contract moved, without opening it', async () => {
+    // objectives_list is the documented recovery path after a cleared
+    // context. A verifier who checked v2, came back, and reads v3 here
+    // must not be shown a current object as though it were the one
+    // they knew — that is #77's failure shape.
+    const broker = makeBroker({
+      listObjectives: vi.fn(async () => [row({ outcomeVersion: 3 })]),
+    } as never);
+    const text = getCallText(
+      (await handleToolCall('objectives_list', {}, broker, BRIEFING)) as never,
+    );
+    expect(text).toContain('contract v3');
+    expect(text).toContain('amended');
+  });
+
+  it('stays quiet for a contract that has never been amended', async () => {
+    const broker = makeBroker({ listObjectives: vi.fn(async () => [row({})]) } as never);
+    const text = getCallText(
+      (await handleToolCall('objectives_list', {}, broker, BRIEFING)) as never,
+    );
+    expect(text).not.toContain('contract v');
+    expect(text).not.toContain('amended');
+  });
+});

@@ -2394,8 +2394,16 @@ async function handleObjectivesList(
     // cannot tell work it owns from work it merely watches, which is the
     // whole reason assignee is rendered.
     const own = o.assignee === briefing.name ? ' (you)' : '';
+    // The contract version belongs HERE, not only on `objectives_view`.
+    // For an agent recovering from a cleared context this list IS the
+    // record it sees — `objectives_list status=open` is the documented
+    // recovery path, and `view` is what you call once you already know
+    // something is worth opening. Without the marker a verifier who
+    // checked v2, came back, and reads v3 here has no way to know the
+    // contract moved under them.
+    const amended = o.outcomeVersion > 1 ? ` [contract v${o.outcomeVersion} — amended]` : '';
     return (
-      `- ${o.id} [${o.status}] ${o.title}\n` +
+      `- ${o.id} [${o.status}]${amended} ${o.title}\n` +
       `    assignee: ${o.assignee}${own}  originator: ${o.originator}\n` +
       `    outcome: ${o.outcome}\n` +
       `    updated: ${formatAgentTimestamp(o.updatedAt)} (${formatRelativeAge(o.updatedAt)})`
