@@ -5,7 +5,10 @@
  * are meaningful only on the runner. This relay receives Claude's native
  * OTLP/HTTP JSON on loopback, replaces every in-spool `body_ref` attribute
  * with the byte-exact UTF-8 body, and forwards the otherwise unchanged batch
- * to the broker. Operational logs and metrics pass through untouched.
+ * to the broker. A runner-owned regular file that cannot be represented is
+ * atomically moved, after broker acknowledgement, from the active spool into
+ * a reason-bearing sibling quarantine. Operational logs and metrics pass
+ * through untouched.
  *
  * A broker 2xx is not sufficient acknowledgement: the OTLP route deliberately
  * contains ingest errors so an exporter is not wedged forever. CommandSuite's
@@ -13,9 +16,20 @@
  * when that count exactly equals the number resolved in this batch.
  */
 
-import { readFileSync, statSync, unlinkSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+} from 'node:fs';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 const MAX_OTLP_BYTES = 256 * 1024 * 1024;
 const MAX_BODY_BYTES = 64 * 1024 * 1024;
@@ -41,15 +55,98 @@ interface OtlpAttribute {
   value?: { stringValue?: unknown };
 }
 
+type QuarantineReason = 'invalid-utf8' | 'oversized' | 'unreadable';
+
+interface QuarantineCandidate {
+  path: string;
+  reason: QuarantineReason;
+  device: bigint;
+  inode: bigint;
+}
+
+function ownedByRunner(uid: number): boolean {
+  return typeof process.getuid !== 'function' || uid === process.getuid();
+}
+
+function quarantineDirFor(spoolDir: string): string {
+  // The sibling name deliberately cannot match CaptureHost's active-spool
+  // sweep regex. Retention is unbounded here; a later retention policy must
+  // preserve durable gap metadata before it can remove the only copy.
+  return `${spoolDir}.quarantine`;
+}
+
+function quarantineBodies(spoolDir: string, candidates: QuarantineCandidate[], log: Log): void {
+  if (candidates.length === 0) return;
+  const quarantineDir = quarantineDirFor(spoolDir);
+  let quarantineReady = false;
+
+  for (const candidate of candidates) {
+    try {
+      // Revalidate immediately before the atomic rename. A body_ref is
+      // attacker-influenced; never move a replacement symlink, directory,
+      // device, outside-spool path, or a file owned by another uid.
+      const current = lstatSync(candidate.path, { bigint: true });
+      if (
+        !current.isFile() ||
+        !ownedByRunner(Number(current.uid)) ||
+        current.dev !== candidate.device ||
+        current.ino !== candidate.inode
+      ) {
+        throw new Error('source identity changed before quarantine');
+      }
+      if (!quarantineReady) {
+        try {
+          mkdirSync(quarantineDir, { mode: 0o700 });
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+        }
+        const quarantineStat = lstatSync(quarantineDir, { bigint: true });
+        if (
+          !quarantineStat.isDirectory() ||
+          !ownedByRunner(Number(quarantineStat.uid)) ||
+          (Number(quarantineStat.mode) & 0o077) !== 0
+        ) {
+          throw new Error('quarantine path is not a private runner-owned directory');
+        }
+        quarantineReady = true;
+      }
+      const target = join(
+        quarantineDir,
+        `${basename(candidate.path)}.${candidate.reason}.${Date.now()}.${randomUUID()}.quarantined`,
+      );
+      renameSync(candidate.path, target);
+      log('otlp-relay: quarantined unavailable raw body', {
+        source: candidate.path,
+        quarantine: target,
+        reason: candidate.reason,
+      });
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT') continue;
+      log('otlp-relay: could not quarantine unavailable raw body', {
+        source: candidate.path,
+        reason: candidate.reason,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+}
+
 function bodyRefsToInline(
   raw: unknown,
   spoolDir: string,
-): { payload: unknown; refs: string[]; unresolved: string[] } {
+): {
+  payload: unknown;
+  refs: string[];
+  quarantine: QuarantineCandidate[];
+  unresolved: string[];
+} {
   const refs: string[] = [];
+  const quarantine: QuarantineCandidate[] = [];
   const unresolved: string[] = [];
-  if (!raw || typeof raw !== 'object') return { payload: raw, refs, unresolved };
+  if (!raw || typeof raw !== 'object') return { payload: raw, refs, quarantine, unresolved };
   const resourceLogs = (raw as { resourceLogs?: unknown }).resourceLogs;
-  if (!Array.isArray(resourceLogs)) return { payload: raw, refs, unresolved };
+  if (!Array.isArray(resourceLogs)) return { payload: raw, refs, quarantine, unresolved };
 
   for (const resource of resourceLogs) {
     if (!resource || typeof resource !== 'object') continue;
@@ -70,18 +167,52 @@ function bodyRefsToInline(
           (attr) => attr?.key === 'body' && typeof attr.value?.stringValue === 'string',
         );
 
+        let candidateIdentity: { device: bigint; inode: bigint } | undefined;
+        let quarantineReason: QuarantineReason | undefined;
         try {
           const absoluteRef = resolve(bodyRef);
           const rel = relative(spoolDir, absoluteRef);
-          if (!isAbsolute(absoluteRef) || rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
+          if (
+            !isAbsolute(absoluteRef) ||
+            rel === '' ||
+            rel.startsWith('..') ||
+            isAbsolute(rel) ||
+            dirname(absoluteRef) !== spoolDir
+          ) {
             throw new Error('outside the runner spool');
           }
-          const stat = statSync(absoluteRef);
-          if (!stat.isFile()) throw new Error('not a file');
-          if (stat.size > MAX_BODY_BYTES) throw new Error(`exceeds ${MAX_BODY_BYTES} bytes`);
-          const bytes = readFileSync(absoluteRef);
+          const pathStat = lstatSync(absoluteRef, { bigint: true });
+          if (!pathStat.isFile()) throw new Error('not a regular file');
+          if (!ownedByRunner(Number(pathStat.uid))) throw new Error('not owned by the runner');
+          const fd = openSync(absoluteRef, constants.O_RDONLY | constants.O_NOFOLLOW);
+          let bytes: Buffer;
+          try {
+            const opened = fstatSync(fd, { bigint: true });
+            if (
+              !opened.isFile() ||
+              !ownedByRunner(Number(opened.uid)) ||
+              opened.dev !== pathStat.dev ||
+              opened.ino !== pathStat.ino
+            ) {
+              throw new Error('source identity changed while opening');
+            }
+            candidateIdentity = { device: opened.dev, inode: opened.ino };
+            if (opened.size > BigInt(MAX_BODY_BYTES)) {
+              quarantineReason = 'oversized';
+              throw new Error(`exceeds ${MAX_BODY_BYTES} bytes`);
+            }
+            try {
+              bytes = readFileSync(fd);
+            } catch (err) {
+              quarantineReason = 'unreadable';
+              throw err;
+            }
+          } finally {
+            closeSync(fd);
+          }
           const text = bytes.toString('utf8');
           if (!Buffer.from(text, 'utf8').equals(bytes)) {
+            quarantineReason = 'invalid-utf8';
             throw new Error('not byte-exact UTF-8 JSON');
           }
           if (refAttr === undefined) continue;
@@ -114,12 +245,20 @@ function bodyRefsToInline(
               }
             }
           }
+          if (candidateIdentity !== undefined && quarantineReason !== undefined) {
+            quarantine.push({
+              path: resolve(bodyRef),
+              reason: quarantineReason,
+              device: candidateIdentity.device,
+              inode: candidateIdentity.inode,
+            });
+          }
           unresolved.push(`${bodyRef}: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
     }
   }
-  return { payload: raw, refs, unresolved };
+  return { payload: raw, refs, quarantine, unresolved };
 }
 
 function readRequestBody(req: IncomingMessage): Promise<Buffer> {
@@ -175,10 +314,12 @@ export async function startOtlpRelay(options: OtlpRelayOptions): Promise<OtlpRel
       const input = await readRequestBody(req);
       let output = input;
       let refs: string[] = [];
+      let quarantine: QuarantineCandidate[] = [];
       if (req.url === '/otlp/v1/logs') {
         const parsed = JSON.parse(input.toString('utf8')) as unknown;
         const transformed = bodyRefsToInline(parsed, spoolDir);
         refs = transformed.refs;
+        quarantine = transformed.quarantine;
         if (transformed.unresolved.length > 0) {
           log('otlp-relay: raw body unavailable; forwarding record for broker-side skip', {
             count: transformed.unresolved.length,
@@ -213,7 +354,20 @@ export async function startOtlpRelay(options: OtlpRelayOptions): Promise<OtlpRel
       }
       const acknowledged = upstream.ok && (refs.length === 0 || captured === refs.length);
       if (acknowledged) {
-        for (const ref of new Set(refs)) unlinkSync(ref);
+        quarantineBodies(spoolDir, quarantine, log);
+        for (const ref of new Set(refs)) {
+          try {
+            unlinkSync(ref);
+          } catch (err) {
+            // The broker already acknowledged these bytes. A concurrent
+            // unlink must not strand unrelated degraded siblings or turn a
+            // successful ingest into a retry of the whole batch.
+            log('otlp-relay: could not remove acknowledged raw body', {
+              ref,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
       } else if (refs.length > 0) {
         log('otlp-relay: broker did not acknowledge every raw body', {
           expected: refs.length,

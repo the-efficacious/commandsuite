@@ -127,15 +127,18 @@ describe('CaptureHost', () => {
   it('start sweeps completed dead-pid spools but retains unshipped and live spools', async () => {
     // A dir whose trailing pid can't exist (way above any real pid) → dead.
     const deadDir = join(tmpdir(), 'csuite-otel-bodies-x-999999999');
+    const quarantineDir = `${deadDir}.quarantine`;
     const unshippedDir = join(tmpdir(), 'csuite-otel-bodies-unshipped-999999998');
     const lateWriteDir = join(tmpdir(), 'csuite-otel-bodies-late-999999997');
     // A dir carrying THIS process's pid → alive, must be kept.
     const aliveDir = join(tmpdir(), `csuite-otel-bodies-y-${process.pid}`);
     mkdirSync(deadDir, { recursive: true });
+    mkdirSync(quarantineDir, { recursive: true });
     mkdirSync(unshippedDir, { recursive: true });
     mkdirSync(lateWriteDir, { recursive: true });
     mkdirSync(aliveDir, { recursive: true });
     writeFileSync(join(deadDir, '.csuite-capture-complete'), '');
+    writeFileSync(join(quarantineDir, 'body.json.invalid-utf8.test.quarantined'), 'preserved');
     writeFileSync(join(lateWriteDir, '.csuite-capture-complete'), '');
     writeFileSync(join(lateWriteDir, 'late.request.json'), '{"late":true}');
     writeFileSync(join(aliveDir, '.csuite-capture-complete'), '');
@@ -150,6 +153,8 @@ describe('CaptureHost', () => {
       // Completed dead-pid dir swept. An unmarked dead-pid spool and a
       // completed live-pid spool are both retained.
       expect(existsSync(deadDir)).toBe(false);
+      expect(existsSync(quarantineDir)).toBe(true);
+      expect(existsSync(join(quarantineDir, 'body.json.invalid-utf8.test.quarantined'))).toBe(true);
       expect(existsSync(unshippedDir)).toBe(true);
       expect(existsSync(lateWriteDir)).toBe(true);
       expect(existsSync(aliveDir)).toBe(true);
@@ -164,6 +169,7 @@ describe('CaptureHost', () => {
       expect(existsSync(ownDir)).toBe(true);
     } finally {
       rmSync(deadDir, { recursive: true, force: true });
+      rmSync(quarantineDir, { recursive: true, force: true });
       rmSync(unshippedDir, { recursive: true, force: true });
       rmSync(lateWriteDir, { recursive: true, force: true });
       rmSync(aliveDir, { recursive: true, force: true });

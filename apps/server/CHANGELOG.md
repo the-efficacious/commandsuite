@@ -1,5 +1,13 @@
 # csuite-server
 
+## 0.3.4
+
+### Patch Changes
+
+- Updated dependencies []:
+  - csuite-core@0.3.4
+  - csuite-sdk@0.3.4
+
 ## 0.3.3
 
 ### Patch Changes
