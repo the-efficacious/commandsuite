@@ -34,7 +34,11 @@ import {
   briefingCaptureExemptions,
   composeBriefing,
 } from '../src/briefing.js';
-import { contextResendBody, inspectBriefingContext } from '../src/context-watchdog.js';
+import {
+  CONTEXT_PRESENCE_EVENT,
+  contextResendBody,
+  inspectBriefingContext,
+} from '../src/context-watchdog.js';
 import { openDatabase } from '../src/db.js';
 import { createGenAiStore } from '../src/genai-store.js';
 import { createMemberStore } from '../src/members.js';
@@ -102,6 +106,42 @@ describe('membership is what was sent, not a substring of the prose', () => {
 
   it('projects nothing when the team has no document', () => {
     expect(briefingCaptureBlocks(input(null)).map((b) => b.kind)).not.toContain('process_document');
+  });
+
+  /**
+   * VERBATIM, including boundary whitespace.
+   *
+   * The store only refuses text whose TRIMMED value is empty — it does
+   * not normalise valid text — so `"  rule\n"` is a legal document and
+   * the runner renders it exactly. A trimmed projection would exempt
+   * and re-send `"rule"`, which is not what the agent received, and
+   * criterion 4 says exactly the document text.
+   *
+   * The existing exact-text case uses a string with no boundary
+   * whitespace and cannot distinguish the two. This one can.
+   */
+  it('projects the sent bytes, including leading and trailing whitespace', () => {
+    const padded = { ...DOC, text: '  Squash-merge to main.\n' };
+    const block = briefingCaptureBlocks(input(padded)).find((b) => b.kind === 'process_document');
+    expect(block?.text).toBe('  Squash-merge to main.\n');
+    // Not the normalised form.
+    expect(block?.text).not.toBe('Squash-merge to main.');
+  });
+
+  it('carries the same bytes into the derived exemption', () => {
+    const padded = { ...DOC, text: '  Squash-merge to main.\n' };
+    expect(briefingCaptureExemptions(input(padded))).toContain('  Squash-merge to main.\n');
+  });
+
+  it('carries the same bytes into the resend body', () => {
+    const padded = { ...DOC, text: '  Squash-merge to main.\n' };
+    const [block] = briefingCaptureBlocks(input(padded)).filter(
+      (b) => b.kind === 'process_document',
+    );
+    const body = contextResendBody([{ block, present: false, resendFired: true } as never]);
+    // The recovery must hand back what the runner received, byte for
+    // byte, or the agent re-anchors on a different block.
+    expect(body).toContain('  Squash-merge to main.\n');
   });
 
   it('projects nothing for a document that is only whitespace', () => {
@@ -414,5 +454,231 @@ describe('the cold-broker rebuild carries the document', () => {
   it('rebuilds nothing for a team with no document', () => {
     const { processDocument } = coldApp(false);
     expect(processDocument.get()).toBeNull();
+  });
+});
+
+// ─── a stale document is absent, so an edit reaches a live session ───
+//
+// The projection is built from the CURRENT stored document, so an
+// agent still carrying yesterday's text does not contain today's — the
+// watchdog sees the current text as absent and re-sends it. That means
+// an edit now reaches a running session on an observable turn, which
+// the docs previously said it could not. Tested rather than asserted.
+
+describe('an edited document reaches a session still holding the old one', () => {
+  const inference = (system: string) => ({
+    systemInstructions: [{ type: 'text' as const, content: system }],
+  });
+
+  it('treats the previous version as absence of the current one', () => {
+    const previous = 'Squash-merge to main.';
+    const current = 'Merge commits to main.';
+    const [observation] = inspectBriefingContext({
+      memberName: 'cora',
+      // The agent's context still holds the superseded text.
+      inference: inference(`preamble\n${previous}\nsuffix`),
+      blocks: [{ kind: 'process_document', text: current }],
+      now: 1_000_000,
+      lastResentAt: new Map(),
+      systemProjectionObservable: true,
+    });
+    expect(observation?.present).toBe(false);
+    expect(observation?.resendFired).toBe(true);
+  });
+
+  it('classifies it as stale rather than merely missing, when the prior text is known', () => {
+    const previous = 'Squash-merge to main.';
+    const current = 'Merge commits to main.';
+    const [observation] = inspectBriefingContext({
+      memberName: 'cora',
+      inference: inference(`preamble\n${previous}\nsuffix`),
+      blocks: [{ kind: 'process_document', text: current }],
+      now: 1_000_000,
+      lastResentAt: new Map(),
+      systemProjectionObservable: true,
+      knownPriorVersions: new Map([['process_document', new Set([previous])]]),
+    });
+    // Distinguishes "you lost it" from "yours is out of date".
+    expect(observation?.priorVersionPresent).toBe(true);
+    expect(observation?.resendFired).toBe(true);
+  });
+});
+
+// ─── the watchdog's OWN input, through the real app ──────────────────
+//
+// Found by Rune: mutating `app.ts:679` — the hand-built input inside
+// `inspectCapturedBriefing` — to a valid `null` left all 22 tests in
+// this file green. The tests above exercise `briefingCaptureBlocks`
+// with an input I construct, and the cold-redaction test exercises
+// `exemptionsFor` at `:636`. Neither drives the site that decides
+// which blocks are examined at all.
+//
+// Required typing closes OMISSION — a partial literal will not compile
+// — and leaves SUBSTITUTION open, which is the failure a hurried caller
+// actually commits, because `null` is the easy thing to write when you
+// do not have the value to hand.
+//
+// This test fetches no briefing, because `:679` exists precisely to
+// serve runners that never refetch.
+
+describe('the watchdog resends through the real app, with no briefing fetch', () => {
+  const RUNNER = 'csuite_test_watchdog_runner_token';
+  const DOCUMENT = 'Keep a conversation running before action.\nSquash-merge to main.';
+
+  function watchdogApp() {
+    const broker = new Broker({ eventLog: new InMemoryEventLog(), now: () => 1 });
+    const members = createMemberStore([
+      {
+        name: 'cora',
+        role: { title: 'engineer', description: '' },
+        permissions: [],
+        token: RUNNER,
+      },
+    ]);
+    const db = openDatabase(':memory:');
+    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const processDocument = createSqliteProcessDocumentStore(db);
+    processDocument.write(
+      { text: DOCUMENT, reason: 'seeded', disposition: 'scope_change' },
+      'AndrewJon',
+      1,
+    );
+    const telemetryStore = createTelemetryStore(db, { logger });
+    const { app } = createApp({
+      broker,
+      members,
+      tokens: createTokenStoreFromMembers(db, members),
+      sessions: new SessionStore(db),
+      teamStore: mockTeamStore(TEAM),
+      processDocument,
+      genaiStore: createGenAiStore(db, { logger }),
+      rawBodyStore: createRawBodyStore(db, { logger }),
+      telemetryStore,
+      version: '0.0.0',
+      logger,
+    });
+
+    // Observe every push the broker makes to this member.
+    const pushes: { title: string | null; body: string }[] = [];
+    const originalPush = broker.push.bind(broker);
+    broker.push = (async (payload: never, opts?: never) => {
+      const p = payload as { title?: string | null; body?: string };
+      pushes.push({ title: p.title ?? null, body: p.body ?? '' });
+      return originalPush(payload, opts as never);
+    }) as typeof broker.push;
+
+    return { app, pushes, telemetryStore };
+  }
+
+  const capture = (system: string) => {
+    const attrs = (eventName: string, values: Record<string, string>) => [
+      { key: 'event.name', value: { stringValue: `claude_code.${eventName}` } },
+      ...Object.entries(values).map(([key, value]) => ({ key, value: { stringValue: value } })),
+    ];
+    return {
+      resourceLogs: [
+        {
+          scopeLogs: [
+            {
+              logRecords: [
+                {
+                  timeUnixNano: '1700000000000000000',
+                  attributes: attrs('api_request_body', {
+                    body: JSON.stringify({
+                      model: 'claude-opus-4-6',
+                      system: [{ type: 'text', text: system }],
+                      messages: [],
+                    }),
+                    model: 'claude-opus-4-6',
+                  }),
+                },
+                {
+                  timeUnixNano: '1700000001000000000',
+                  attributes: attrs('api_request', {
+                    request_id: 'req_watchdog_1',
+                    model: 'claude-opus-4-6',
+                  }),
+                },
+                // The response is REQUIRED. Without it the correlator
+                // holds the exchange pending and emits no inference, so
+                // the watchdog never runs and the assertions below fail
+                // against an empty array — which reads identically to
+                // "the feature is broken".
+                {
+                  timeUnixNano: '1700000002000000000',
+                  attributes: attrs('api_response_body', {
+                    body: JSON.stringify({
+                      id: 'msg_watchdog_1',
+                      role: 'assistant',
+                      content: [{ type: 'text', text: 'done' }],
+                      stop_reason: 'end_turn',
+                      usage: { input_tokens: 1, output_tokens: 1 },
+                    }),
+                    request_id: 'req_watchdog_1',
+                  }),
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+  };
+
+  const ingest = (app: ReturnType<typeof watchdogApp>['app'], system: string) =>
+    app.request('/otlp/v1/logs', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${RUNNER}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(capture(system)),
+    });
+
+  it('re-sends the exact document when an observable turn lacks it', async () => {
+    const { app, pushes, telemetryStore } = watchdogApp();
+    await ingest(app, 'a system prompt with no process document in it at all');
+
+    const restored = pushes.filter((p) => p.title === 'persistent context restored');
+    expect(restored).toHaveLength(1);
+    // The exact bytes, not a summary and not a normalised copy.
+    expect(restored[0]?.body).toContain(DOCUMENT);
+    expect(restored[0]?.body).toContain('<persistent_context kind="process_document">');
+
+    const presence = telemetryStore
+      .list({ name: CONTEXT_PRESENCE_EVENT })
+      .filter((row) => row.attributes?.['context.block.kind'] === 'process_document');
+    expect(presence).toHaveLength(1);
+    expect(presence[0]?.attributes).toMatchObject({
+      'context.block.kind': 'process_document',
+      'context.block.present': false,
+      'context.block.resend_fired': true,
+    });
+  });
+
+  /**
+   * The negative control. Without it the test above would pass on a
+   * broker that re-sends unconditionally, which is a loop rather than
+   * a recovery.
+   */
+  it('re-sends nothing for a document the turn already contains', async () => {
+    const { app, pushes, telemetryStore } = watchdogApp();
+    // Contains the document. The three authored blocks are absent, so
+    // a restore push still fires FOR THOSE — assert about this block
+    // rather than about the push existing, or the test measures the
+    // wrong thing.
+    await ingest(app, `preamble\n${DOCUMENT}\nsuffix`);
+
+    const restored = pushes.filter((p) => p.title === 'persistent context restored');
+    for (const push of restored) {
+      expect(push.body).not.toContain('kind="process_document"');
+      expect(push.body).not.toContain(DOCUMENT);
+    }
+
+    const presence = telemetryStore
+      .list({ name: CONTEXT_PRESENCE_EVENT })
+      .filter((row) => row.attributes?.['context.block.kind'] === 'process_document');
+    expect(presence).toHaveLength(1);
+    expect(presence[0]?.attributes).toMatchObject({
+      'context.block.present': true,
+      'context.block.resend_fired': false,
+    });
   });
 });

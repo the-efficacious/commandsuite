@@ -308,13 +308,23 @@ under it* has one answer across contracts and process.
 
 ### Delivery bound
 
-The document reaches a member's context at their **next runner start**.
-It is not pushed into a running session, and the `#103` context
-watchdog does not re-send it if it falls out mid-session — that
-projection substring-matches the composed `instructions` string, and
-this rides in its own field.
+The document reaches a member's context at their **next runner start**,
+and the `#103` context watchdog then keeps it there: if it falls out
+mid-session, an observable turn detects the absence and re-sends it.
 
-A runner predating that field drops it silently: the member operates
+Its membership test differs from the authored blocks' and has to.
+Those are confirmed by substring against the composed `instructions`;
+this is never in that string, so its test is that it was **sent**, and
+the bytes projected are the document's own.
+
+Because the projection uses the current stored document, an agent
+holding a superseded version reads as missing the current one — so an
+edit reaches a running session too.
+
+**Codex members are the exception**: their system projection is
+unobservable, so absence cannot be asserted and nothing is re-sent.
+
+A runner predating the field drops it silently: the member operates
 without the process document and is not told.
 
 ## Tool-source admin tools (permission-gated)

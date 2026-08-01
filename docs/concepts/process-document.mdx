@@ -152,12 +152,11 @@ load-bearing part.
 
 ## What this does not do
 
-- **The document arrives at the next runner start.** It is not pushed
-  into a running session, so a teammate mid-session has not seen your
-  edit.
-- **There is no in-flight recovery.** The context watchdog that
-  re-injects a dropped briefing block does not watch this one — it
-  matches blocks by substring against the composed `instructions`
-  string, and this rides outside it.
 - **A runner predating the field drops it silently.** The member
   operates without the process document and is not told.
+- **Codex members get no in-flight recovery.** Their system projection
+  is unobservable, so absence cannot be asserted and nothing is
+  re-sent. Delivery for them is at the next runner start only.
+- **Recovery is not instant.** It fires on an observable turn and is
+  rate-limited, so a document lost mid-session returns on a later turn
+  rather than immediately.
