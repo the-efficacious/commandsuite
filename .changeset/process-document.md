@@ -57,7 +57,3 @@ own `instructions`, this is authored by whoever holds `process.manage`,
 and one string collapses two authorities into one field. The cap
 argument that also motivated it has already expired — #122 landed in
 #129 — and the decision is unchanged.
-
-Known gap: `#103`'s context watchdog does not watch this block, so a
-document lost from an agent's context mid-session returns at the next
-runner start rather than being re-sent.
