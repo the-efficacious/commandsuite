@@ -266,7 +266,9 @@ describe('process document editable fields', () => {
       .filter((k) => !META.includes(k))
       .sort();
     const previousFields = Object.keys(
-      ProcessDocumentEditSchema.shape.previous.unwrap().shape,
+      // No .unwrap(): `previous` is now a required strict object rather
+      // than wrapped in a default, which is the point of the change.
+      ProcessDocumentEditSchema.shape.previous.shape,
     ).sort();
 
     // Every field an edit accepts is a field the record can hold.

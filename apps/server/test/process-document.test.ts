@@ -432,3 +432,79 @@ describe('records the writer cannot produce are rejected on read', () => {
     expect(() => s.history()).toThrow(/not contiguous/);
   });
 });
+
+// ─── contiguity is not completeness ──────────────────────────────────
+//
+// Rune's third pass, and it is my own contiguity find one step
+// further: `1,2,3` minus v3 leaves `[1,2]`, where every version still
+// equals its index + 1. The sequence check passes and a truncated
+// history is served as complete. I caught interior deletion and missed
+// the suffix, which is the case an attacker or a bad migration would
+// actually produce.
+
+describe('history completeness is anchored to the document, not to itself', () => {
+  function three() {
+    const db = openDatabase(':memory:');
+    const s = createSqliteProcessDocumentStore(db);
+    s.write({ text: 'one', reason: 'r', disposition: 'correction' }, 'a', AT);
+    s.write({ text: 'two', reason: 'r', disposition: 'correction' }, 'b', AT + 1);
+    s.write({ text: 'three', reason: 'r', disposition: 'correction' }, 'c', AT + 2);
+    return { db, s };
+  }
+
+  it('rejects deletion of the LAST edit, which contiguity alone cannot see', () => {
+    const { db, s } = three();
+    db.exec('DELETE FROM process_document_edits WHERE version = 3');
+    // [1,2] is perfectly contiguous. Only the document's own version
+    // says an edit is missing.
+    expect(() => s.history()).toThrow(/at v3 but history holds 2 edit/);
+    expect(() => s.history()).toThrow(/edits are missing/);
+  });
+
+  it('rejects deletion of the ENTIRE history while the document stands', () => {
+    const { db, s } = three();
+    db.exec('DELETE FROM process_document_edits');
+    expect(() => s.history()).toThrow(/at v3 but history holds 0 edit/);
+  });
+
+  it('still returns an empty history for a team with no document', () => {
+    const s = createSqliteProcessDocumentStore(openDatabase(':memory:'));
+    expect(s.history()).toEqual([]);
+  });
+
+  it('reads a healthy three-edit history, so the anchor is not refusing everything', () => {
+    expect(
+      three()
+        .s.history()
+        .map((e) => e.version),
+    ).toEqual([1, 2, 3]);
+  });
+});
+
+// ─── the reader must not silently erase corruption ───────────────────
+
+describe('previous is required and strict', () => {
+  function seeded() {
+    const db = openDatabase(':memory:');
+    const s = createSqliteProcessDocumentStore(db);
+    s.write({ text: V1, reason: 'r', disposition: 'correction' }, 'AndrewJon', AT);
+    s.write({ text: V2, reason: 'r', disposition: 'correction' }, 'Lea', AT + 1);
+    return { db, s };
+  }
+
+  it('rejects an unknown key rather than stripping it', () => {
+    const { db, s } = seeded();
+    // Valid JSON. Previously stripped to {} and, on version 1, passed
+    // as a clean creation — the reader erasing the evidence.
+    db.exec(`UPDATE process_document_edits SET previous = '{"unknown":"value"}' WHERE version = 1`);
+    expect(() => s.history()).toThrow();
+  });
+
+  it('rejects an unknown key alongside a legitimate one', () => {
+    const { db, s } = seeded();
+    db.exec(
+      `UPDATE process_document_edits SET previous = '{"text":"x","smuggled":"y"}' WHERE version = 2`,
+    );
+    expect(() => s.history()).toThrow();
+  });
+});

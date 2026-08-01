@@ -351,6 +351,28 @@ class SqliteProcessDocumentStore implements ProcessDocumentStore {
       }
     });
 
+    // CONTIGUITY IS NOT COMPLETENESS. `1,2,3` minus v3 leaves `[1,2]`,
+    // where every version still equals its index + 1 — so the check
+    // above passes and a truncated history is served as a complete
+    // one. Deleting every row returns `[]` just as cleanly while the
+    // document itself still sits at v3.
+    //
+    // The document row is the authority: `write()` moves it and
+    // appends history in ONE transaction, so the current version is
+    // exactly the number of edits that must exist. Anchoring to it
+    // catches suffix deletion and total deletion, which counting
+    // relative to the surviving rows never can.
+    const document = this.get();
+    const expected = document?.version ?? 0;
+    if (edits.length !== expected) {
+      throw new ProcessDocumentError(
+        'corrupt_history',
+        `process document is at v${expected} but history holds ${edits.length} edit(s) — ` +
+          `${expected > edits.length ? 'edits are missing' : 'there are more edits than versions'}. ` +
+          'Serving this as the complete history would understate what has changed.',
+      );
+    }
+
     return edits;
   }
 }

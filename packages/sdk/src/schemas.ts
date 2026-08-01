@@ -871,8 +871,23 @@ export const ProcessDocumentEditSchema = z
       .refine((f) => new Set(f).size === f.length, {
         message: 'an edit cannot record the same field twice',
       }),
-    /** Same shape as what the edit API accepts, by construction. */
-    previous: z.object(EDITABLE_PROCESS_DOCUMENT_SHAPE).partial().default({}),
+    /**
+     * Same shape as what the edit API accepts — and REQUIRED and
+     * STRICT, because `.partial().default({})` did two lossy things
+     * before the refinement ever ran:
+     *
+     *   unknown key   silently STRIPPED, so corruption was erased
+     *                 rather than rejected: `{"unknown":"v"}` became
+     *                 `{}` and passed version 1 as a clean creation
+     *   omitted       defaulted to `{}` — but the writer always emits
+     *                 this column, so an absent one is not a record
+     *                 the write path can produce
+     *
+     * Stripping is not degeneracy; it is the reader accepting
+     * corruption and hiding it. Strict also makes the whole-map check
+     * below actually whole, rather than true-of-known-keys.
+     */
+    previous: z.object(EDITABLE_PROCESS_DOCUMENT_SHAPE).partial().strict(),
   })
   .superRefine((edit, ctx) => {
     // RECORD-LEVEL INVARIANT, not a shape check.
