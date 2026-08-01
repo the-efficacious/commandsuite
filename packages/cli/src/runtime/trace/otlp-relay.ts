@@ -354,8 +354,20 @@ export async function startOtlpRelay(options: OtlpRelayOptions): Promise<OtlpRel
       }
       const acknowledged = upstream.ok && (refs.length === 0 || captured === refs.length);
       if (acknowledged) {
-        for (const ref of new Set(refs)) unlinkSync(ref);
         quarantineBodies(spoolDir, quarantine, log);
+        for (const ref of new Set(refs)) {
+          try {
+            unlinkSync(ref);
+          } catch (err) {
+            // The broker already acknowledged these bytes. A concurrent
+            // unlink must not strand unrelated degraded siblings or turn a
+            // successful ingest into a retry of the whole batch.
+            log('otlp-relay: could not remove acknowledged raw body', {
+              ref,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
       } else if (refs.length > 0) {
         log('otlp-relay: broker did not acknowledge every raw body', {
           expected: refs.length,

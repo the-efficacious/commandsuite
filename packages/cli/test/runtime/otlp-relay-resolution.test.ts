@@ -92,7 +92,10 @@ function attrsOf(payload: unknown, index: number): Attr[] {
  * construction: it never claims to have captured more than it was told
  * to expect, so a mismatch in these tests is the relay's accounting.
  */
-async function startBroker(status = 200): Promise<{
+async function startBroker(
+  status = 200,
+  beforeReply?: () => void,
+): Promise<{
   url: string;
   server: Server;
   received: unknown[];
@@ -108,6 +111,7 @@ async function startBroker(status = 200): Promise<{
       received.push(JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown);
       const header = String(req.headers['x-csuite-raw-bodies'] ?? '0');
       declared.push(header);
+      beforeReply?.();
       res.writeHead(status, { 'Content-Type': 'application/json' });
       res.end(
         JSON.stringify({ partialSuccess: {}, csuite: { rawBodiesCaptured: Number(header) } }),
@@ -134,10 +138,10 @@ describe('relay per-record resolution', () => {
     for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
   });
 
-  async function harness(brokerStatus = 200) {
+  async function harness(brokerStatus = 200, beforeReply?: () => void) {
     const dir = mkdtempSync(join(tmpdir(), 'csuite-relay-res-'));
     dirs.push(dir);
-    const broker = await startBroker(brokerStatus);
+    const broker = await startBroker(brokerStatus, beforeReply);
     servers.push(broker.server);
     const relay = await startOtlpRelay({ brokerUrl: broker.url, token: 't', rawBodiesDir: dir });
     relays.push(relay);
@@ -353,6 +357,28 @@ describe('relay per-record resolution', () => {
     expect(existsSync(directory)).toBe(true);
     expect(existsSync(missing)).toBe(false);
     expect(existsSync(`${dir}.quarantine`)).toBe(false);
+  });
+
+  it('quarantines degraded siblings even when an acknowledged ref disappears before unlink', async () => {
+    let healthy = '';
+    const { dir, broker, send } = await harness(200, () => {
+      rmSync(healthy, { force: true });
+    });
+    healthy = join(dir, 'healthy.json');
+    const invalid = join(dir, 'invalid.json');
+    const invalidBytes = Buffer.from([0xff]);
+    writeFileSync(healthy, '{"ok":true}');
+    writeFileSync(invalid, invalidBytes);
+
+    expect((await send([healthy, invalid])).status).toBe(200);
+
+    expect(broker.declared).toEqual(['1']);
+    expect(existsSync(invalid)).toBe(false);
+    const quarantineDir = `${dir}.quarantine`;
+    dirs.push(quarantineDir);
+    const quarantined = readdirSync(quarantineDir);
+    expect(quarantined).toHaveLength(1);
+    expect(readFileSync(join(quarantineDir, quarantined[0] ?? ''))).toEqual(invalidBytes);
   });
 
   it('does not quarantine before the broker acknowledges the batch', async () => {
