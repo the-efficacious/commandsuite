@@ -40,6 +40,7 @@
  */
 
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -219,6 +220,52 @@ describe('relay per-record resolution', () => {
     dirs.push(quarantineDir);
     expect(readdirSync(quarantineDir)).toHaveLength(1);
     expect(readdirSync(quarantineDir)[0]).toMatch(/^invalid\.json\.invalid-utf8\..+\.quarantined$/);
+  });
+
+  // Criterion 4 says "inside the EXACT rawBodiesDir". A path one level
+  // deeper satisfies the older `relative()` confinement — `sub/nested.json`
+  // neither starts with `..` nor is absolute — so the `dirname` clause is
+  // the only thing enforcing "exact". Measured: removing that clause alone
+  // leaves every other fixture green while this file gets moved out of the
+  // spool tree, which is the arbitrary-rename shape the criterion forbids.
+  it('does not quarantine a path nested below the spool, only direct children', async () => {
+    const { dir, broker, send } = await harness();
+    const sub = join(dir, 'sub');
+    mkdirSync(sub);
+    const nested = join(sub, 'nested.json');
+    writeFileSync(nested, Buffer.from([0xff]));
+
+    expect((await send([nested])).status).toBe(200);
+    expect(broker.declared).toEqual(['0']);
+
+    // Left exactly where it was, and no quarantine directory brought into
+    // existence on its behalf.
+    expect(existsSync(nested)).toBe(true);
+    expect(readFileSync(nested)).toEqual(Buffer.from([0xff]));
+    expect(existsSync(`${dir}.quarantine`)).toBe(false);
+  });
+
+  // The quarantine directory is itself a rename target, so it is authority
+  // too: a pre-existing world-writable one must not be used. Without this
+  // the mode check can be deleted with the whole suite still green.
+  it('refuses a quarantine directory that is not private to the runner', async () => {
+    const { dir, broker, send } = await harness();
+    const quarantineDir = `${dir}.quarantine`;
+    dirs.push(quarantineDir);
+    mkdirSync(quarantineDir, { mode: 0o777 });
+    chmodSync(quarantineDir, 0o777); // defeat umask — the mode is the subject
+    const invalid = join(dir, 'invalid.json');
+    const bytes = Buffer.from([0xff]);
+    writeFileSync(invalid, bytes);
+
+    expect((await send([invalid])).status).toBe(200);
+    expect(broker.declared).toEqual(['0']);
+
+    // The degraded body stays in the active spool rather than being moved
+    // into a directory other users can read or replace.
+    expect(existsSync(invalid)).toBe(true);
+    expect(readFileSync(invalid)).toEqual(bytes);
+    expect(readdirSync(quarantineDir)).toEqual([]);
   });
 
   it('a redelivery after a successful ack succeeds instead of failing forever', async () => {
