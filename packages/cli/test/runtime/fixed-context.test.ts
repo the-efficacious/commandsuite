@@ -94,8 +94,10 @@ describe('a document is rendered as current state', () => {
    * The two authorities stay two strings. A member authors
    * `instructions`; whoever holds `process.manage` authors the
    * document. They are concatenated for the agent and never merged in
-   * the record — which is the durable reason for the separate field,
-   * outliving the 8192 cap that also motivates it today.
+   * the record — which is the durable reason for the separate field.
+   * The 8192 cap that also motivated it has since been removed (#122,
+   * in #129) and this reason is unaffected, which is the point of it
+   * being the durable one.
    */
   it('keeps the document out of the instructions string itself', () => {
     const b = briefing({ processDocument: DOC });

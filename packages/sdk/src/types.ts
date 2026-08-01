@@ -342,8 +342,7 @@ export interface BriefingResponse extends Member {
    * authorities into one field. (An 8192 cap on that field also
    * motivated this historically; #122 removed it in #129 and the
    * decision is unchanged.)
-   */
-  /**
+   *
    * `undefined` when the broker did not send the field at all — an
    * older broker without the feature. Distinct from `null`, which is a
    * broker saying the team has no document.
