@@ -1,5 +1,12 @@
 # csuite-web-ui
 
+## 0.3.5
+
+### Patch Changes
+
+- Updated dependencies []:
+  - csuite-sdk@0.3.5
+
 ## 0.3.4
 
 ### Patch Changes
