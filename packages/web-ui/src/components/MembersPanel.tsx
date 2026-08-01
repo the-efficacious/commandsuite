@@ -20,7 +20,7 @@ import { ArrowRight } from './icons/index.js';
 import { PendingEnrollments } from './members/PendingEnrollments.js';
 import { PermissionsEditor } from './members/PermissionsEditor.js';
 import { type Reveal, RevealBanner, revealTargetName } from './members/Reveal.js';
-import { EmptyState, ErrorCallout, Loading, PageHeader } from './ui/index.js';
+import { EmptyState, ErrorCallout, Loading, PageHeader, TextMetrics } from './ui/index.js';
 
 const members = signal<Member[] | null>(null);
 const loadError = signal<string | null>(null);
@@ -270,6 +270,7 @@ function CreateMemberForm({ presets }: { presets: PermissionPresets }) {
               formRoleDescription.value = (e.currentTarget as HTMLTextAreaElement).value;
             }}
           />
+          <TextMetrics text={formRoleDescription.value} />
         </Labeled>
         <Labeled label="Instructions" hint="Personal working directives (private)">
           <textarea
@@ -280,6 +281,7 @@ function CreateMemberForm({ presets }: { presets: PermissionPresets }) {
               formInstructions.value = (e.currentTarget as HTMLTextAreaElement).value;
             }}
           />
+          <TextMetrics text={formInstructions.value} />
         </Labeled>
         <div style="display:flex;flex-direction:column;gap:4px">
           <div class="eyebrow">Permissions</div>

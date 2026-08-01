@@ -61,6 +61,9 @@ export const fakeBrokerObjectiveQueries: string[] = [];
 /** Runner-version headers observed on briefing fetches, including refreshes. */
 export const fakeBrokerBriefingRunnerVersions: Array<string | undefined> = [];
 
+/** Personal instructions returned by /briefing; mutable for compatibility tests. */
+export const fakeBrokerInstructions: { value: string } = { value: '' };
+
 /**
  * Resolved tool sources the fake broker returns on /briefing
  * (`toolSources` field). Tests mutate this then push a
@@ -198,7 +201,7 @@ export async function startFakeBroker(): Promise<FakeBroker> {
             'objectives.watch',
             'activity.read',
           ],
-          instructions: '',
+          instructions: fakeBrokerInstructions.value,
           team: {
             name: FAKE_BROKER_TEAM_NAME,
             context: FAKE_BROKER_MISSION,

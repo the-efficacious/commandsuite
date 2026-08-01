@@ -41,13 +41,11 @@
  * would have to invent its text.
  *
  * IT RIDES IN ITS OWN BRIEFING FIELD, and the durable reason is not
- * the instruction cap. Three reasons, in increasing durability: the
- * 8192 cap makes an oversized `instructions` fatal (dies with #122);
- * deployed runners keep validating it locally (dies when every runner
- * upgrades); and a member authors their own `instructions` while this
- * is authored by whoever holds `process.manage` (never dies). The
- * third is the one to build to — one string collapses two authorities
- * into one field.
+ * the instruction cap — which has since been removed (#122, landed in
+ * #129) without changing this decision at all. A member authors their
+ * own `instructions`; this is authored by whoever holds
+ * `process.manage`. One string collapses two authorities into one
+ * field, and that is true at any cap or none.
  *
  * HISTORY IS RETRIEVED, NEVER RESIDENT. Superseded text lives in
  * `process_document_edits` and is served by its own endpoint. What is

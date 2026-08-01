@@ -18,7 +18,7 @@ const TEAM: Team = {
   permissionPresets: {},
 };
 
-function makeApp() {
+function makeApp(options: { instructions?: string; context?: string } = {}) {
   const broker = new Broker({
     eventLog: new InMemoryEventLog(),
     now: () => 1_700_000_000_000,
@@ -34,6 +34,7 @@ function makeApp() {
     {
       name: 'build-bot',
       role: { title: 'engineer', description: '' },
+      instructions: options.instructions ?? '',
       permissions: [],
       token: BOT_TOKEN,
     },
@@ -53,7 +54,7 @@ function makeApp() {
     members,
     tokens,
     sessions,
-    teamStore: mockTeamStore(TEAM),
+    teamStore: mockTeamStore({ ...TEAM, context: options.context ?? TEAM.context }),
     version: '0.0.0',
     logger,
   });
@@ -152,6 +153,48 @@ describe('app GET /briefing', () => {
     );
     expect(logger.warn).not.toHaveBeenCalledWith(
       'briefing runner version rejected',
+      expect.anything(),
+    );
+  });
+
+  it('returns an oversized composed briefing and warns when a legacy runner will reject it', async () => {
+    const { app, logger } = makeApp({ instructions: 'x'.repeat(8_300) });
+
+    const legacy = await app.request('/briefing', authed(BOT_TOKEN));
+    expect(legacy.status).toBe(200);
+    const body = (await legacy.json()) as BriefingResponse;
+    expect(body.instructions.length).toBeGreaterThan(8_192);
+    expect(logger.warn).toHaveBeenCalledWith('briefing exceeds legacy runner instruction limit', {
+      member: 'build-bot',
+      characters: body.instructions.length,
+      runnerVersion: 'unknown',
+    });
+
+    logger.warn.mockClear();
+    const reportedLegacy = await app.request('/briefing', {
+      headers: {
+        Authorization: `Bearer ${BOT_TOKEN}`,
+        [RUNNER_VERSION_HEADER]: '0.3.4',
+      },
+    });
+    expect(reportedLegacy.status).toBe(200);
+    expect(logger.warn).toHaveBeenCalledWith('briefing exceeds legacy runner instruction limit', {
+      member: 'build-bot',
+      characters: expect.any(Number),
+      runnerVersion: '0.3.4',
+    });
+
+    logger.warn.mockClear();
+    const current = await app.request('/briefing', {
+      headers: {
+        Authorization: `Bearer ${BOT_TOKEN}`,
+        [RUNNER_VERSION_HEADER]: '0.4.0',
+      },
+    });
+    expect(current.status).toBe(200);
+    expect(((await current.json()) as BriefingResponse).instructions.length).toBeGreaterThan(8_192);
+    expect(logger.warn).not.toHaveBeenCalledWith(
+      'briefing exceeds legacy runner instruction limit',
       expect.anything(),
     );
   });

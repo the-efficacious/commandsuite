@@ -39,6 +39,7 @@
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { Client as BrokerClient, ClientError } from 'csuite-sdk/client';
 import { PROCESS_DOCUMENT_MAX } from 'csuite-sdk/schemas';
+import { formatTextMetrics } from 'csuite-sdk/text-metrics';
 import type {
   Attachment,
   BriefingResponse,
@@ -581,7 +582,7 @@ function buildAdminTools(briefing: BriefingResponse): Tool[] {
           context: {
             type: 'string',
             description:
-              'New team context (≤ 8192 chars). The standing context every member ' +
+              'New team context. The standing context every member ' +
               'inherits: what the team is here to do plus any shared background.',
           },
         },
@@ -651,11 +652,11 @@ function buildAdminTools(briefing: BriefingResponse): Tool[] {
           title: { type: 'string', description: 'Role title (1–64 chars).' },
           description: {
             type: 'string',
-            description: 'Optional role description (≤ 512 chars).',
+            description: 'Optional role description.',
           },
           instructions: {
             type: 'string',
-            description: 'Optional personal instructions for this member (≤ 8192 chars).',
+            description: 'Optional personal instructions for this member.',
           },
           permissions: {
             type: 'array',
@@ -2936,6 +2937,7 @@ async function handleTeamGet(brokerClient: BrokerClient): Promise<CallToolResult
   const presetNames = Object.keys(team.permissionPresets);
   const lines = [
     `team: ${team.name}`,
+    `context size: ${formatTextMetrics(team.context)}`,
     `context: ${team.context.length === 0 ? '(empty)' : team.context}`,
     `presets: ${presetNames.length === 0 ? '(none)' : presetNames.join(', ')}`,
   ];
@@ -2955,6 +2957,7 @@ async function handleTeamUpdate(
   const team = await brokerClient.updateTeam(patch);
   return textResult(
     `team_update applied: fields=${Object.keys(patch).join(',')} name='${team.name}'\n` +
+      (patch.context !== undefined ? `context size: ${formatTextMetrics(team.context)}\n` : '') +
       `note: live MCP sessions still see the OLD briefing until the runner restarts.`,
   );
 }
@@ -3018,6 +3021,8 @@ async function handleMembersAdd(
   });
   return textResult(
     `member '${result.member.name}' created.\n` +
+      `role description: ${formatTextMetrics(description)}\n` +
+      `personal instructions: ${formatTextMetrics(instructions)}\n` +
       `bearer token (capture now — not shown again):\n  ${result.token}`,
   );
 }
@@ -3051,6 +3056,12 @@ async function handleMembersUpdate(
   const member = await brokerClient.updateMember(name, patch);
   return textResult(
     `member '${member.name}' updated: fields=${Object.keys(patch).join(',')}\n` +
+      (patch.role !== undefined
+        ? `role description: ${formatTextMetrics(member.role.description)}\n`
+        : '') +
+      (patch.instructions !== undefined
+        ? `personal instructions: ${formatTextMetrics(member.instructions)}\n`
+        : '') +
       `note: instruction changes apply to that member's NEXT MCP session, not the live one.`,
   );
 }

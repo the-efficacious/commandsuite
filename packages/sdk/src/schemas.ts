@@ -70,12 +70,12 @@ export const PermissionPresetsSchema = z.record(
  */
 export const RoleSchema = z.object({
   title: z.string().min(1).max(64),
-  description: z.string().max(512).default(''),
+  description: z.string().default(''),
 });
 
 export const TeamSchema = z.object({
   name: z.string().min(1).max(128),
-  context: z.string().max(8192).default(''),
+  context: z.string().default(''),
   permissionPresets: PermissionPresetsSchema.default({}),
 });
 
@@ -94,7 +94,7 @@ export const TeammateSchema = z.object({
  * Returned from self-scope briefing and admin-scope member listings.
  */
 export const MemberSchema = TeammateSchema.extend({
-  instructions: z.string().max(8192).default(''),
+  instructions: z.string().default(''),
 });
 
 /**
@@ -1471,14 +1471,14 @@ const PermissionRefListSchema = z.array(z.string().min(1).max(64)).max(32);
 export const CreateMemberRequestSchema = z.object({
   name: NameSchema,
   role: RoleSchema,
-  instructions: z.string().max(8192).default(''),
+  instructions: z.string().default(''),
   permissions: PermissionRefListSchema,
 });
 
 export const UpdateMemberRequestSchema = z
   .object({
     role: RoleSchema.optional(),
-    instructions: z.string().max(8192).optional(),
+    instructions: z.string().optional(),
     permissions: PermissionRefListSchema.optional(),
   })
   .refine(
@@ -1634,7 +1634,7 @@ export const ApproveEnrollmentRequestSchema = z.discriminatedUnion('mode', [
     userCode: UserCodeSchema,
     memberName: NameSchema,
     role: RoleSchema,
-    instructions: z.string().max(8192).default(''),
+    instructions: z.string().default(''),
     permissions: PermissionRefListSchema,
     label: TokenLabelSchema.optional(),
   }),
@@ -1662,11 +1662,14 @@ export const BriefingResponseSchema = MemberSchema.extend({
   /**
    * The team's process document, or `null` when none is set.
    *
-   * Its OWN field, and the durable reason is authority separation, not
-   * the 8192 cap: a member authors their own `instructions`, while the
-   * process document is authored by whoever holds `process.manage`.
-   * One string would collapse two authorities into one field. The cap
-   * argument is real today and expires with #122; this one does not.
+   * Its OWN field, and the durable reason is authority separation: a
+   * member authors their own `instructions`, while the process
+   * document is authored by whoever holds `process.manage`. One string
+   * would collapse two authorities into one field.
+   *
+   * The cap argument that also motivated this has already expired —
+   * #122 landed in #129 and no length cap remains in source. The field
+   * is still right, on authority separation alone.
    *
    * `.default(null)` so an older broker that omits the field parses
    * rather than failing the client-side schema.

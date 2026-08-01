@@ -29,7 +29,7 @@ import type {
   PermissionPresets,
   Teammate,
 } from 'csuite-sdk/types';
-import { ToastContainer } from 'csuite-web-ui';
+import { TextMetrics, ToastContainer } from 'csuite-web-ui';
 import type { JSX } from 'preact';
 import { useEffect } from 'preact/hooks';
 import { getClient } from '../lib/client.js';
@@ -566,6 +566,7 @@ function ApprovalCard({
                 placeholder="ships code"
                 autoComplete="off"
               />
+              <TextMetrics text={f.createDescription} />
             </label>
             <label style="display:flex;flex-direction:column;gap:4px">
               <span style="font-family:var(--f-mono);font-size:11px;letter-spacing:.04em;color:var(--muted);text-transform:uppercase">
@@ -581,6 +582,7 @@ function ApprovalCard({
                 placeholder="Standing guidance for this member — how they should work, what to prioritize."
                 autoComplete="off"
               />
+              <TextMetrics text={f.createInstructions} />
             </label>
             <fieldset style="border:none;padding:0;margin:0;display:flex;flex-direction:column;gap:6px">
               <legend style="font-family:var(--f-mono);font-size:11px;letter-spacing:.04em;color:var(--muted);text-transform:uppercase;margin-bottom:4px">

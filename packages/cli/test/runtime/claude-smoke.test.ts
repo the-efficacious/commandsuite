@@ -30,7 +30,12 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { runClaudeCommand } from '../../src/commands/claude.js';
 import { writeFakeClaude } from './conformance/fake-agents.js';
-import { FAKE_BROKER_TOKEN, type FakeBroker, startFakeBroker } from './fake-broker.js';
+import {
+  FAKE_BROKER_TOKEN,
+  type FakeBroker,
+  fakeBrokerInstructions,
+  startFakeBroker,
+} from './fake-broker.js';
 
 const CLI_BINARY = resolve(fileURLToPath(new URL('../../dist/index.js', import.meta.url)));
 const describeIfBuilt = existsSync(CLI_BINARY) ? describe : describe.skip;
@@ -56,8 +61,41 @@ describeIfBuilt('csuite claude end-to-end', () => {
   });
 
   afterEach(() => {
+    fakeBrokerInstructions.value = '';
     rmSync(sandbox, { recursive: true, force: true });
   });
+
+  it('starts when the briefing exceeds the former 8192-character client cap', async () => {
+    fakeBrokerInstructions.value = 'oversized instruction '.repeat(500);
+    expect(fakeBrokerInstructions.value.length).toBeGreaterThan(8_192);
+
+    const prevClaudePath = process.env.CLAUDE_PATH;
+    process.env.CLAUDE_PATH = fakeClaudePath;
+    const prevTranscript = process.env.FAKE_CLAUDE_TRANSCRIPT;
+    process.env.FAKE_CLAUDE_TRANSCRIPT = transcriptPath;
+    const prevExitCode = process.env.FAKE_AGENT_EXIT_CODE;
+    process.env.FAKE_AGENT_EXIT_CODE = '0';
+    try {
+      const exitCode = await runClaudeCommand({
+        url: broker.url,
+        token: FAKE_BROKER_TOKEN,
+        cwd: sandbox,
+        log: () => {},
+        bridgeCommand: process.execPath,
+        bridgeArgs: [CLI_BINARY, 'mcp-bridge'],
+        noTrace: true,
+      });
+      expect(exitCode).toBe(0);
+      expect(JSON.parse(readFileSync(transcriptPath, 'utf8')).initialized).toBe(true);
+    } finally {
+      if (prevClaudePath === undefined) delete process.env.CLAUDE_PATH;
+      else process.env.CLAUDE_PATH = prevClaudePath;
+      if (prevTranscript === undefined) delete process.env.FAKE_CLAUDE_TRANSCRIPT;
+      else process.env.FAKE_CLAUDE_TRANSCRIPT = prevTranscript;
+      if (prevExitCode === undefined) delete process.env.FAKE_AGENT_EXIT_CODE;
+      else process.env.FAKE_AGENT_EXIT_CODE = prevExitCode;
+    }
+  }, 30_000);
 
   it('starts a runner, drives fake claude through the SDK, and leaves project .mcp.json untouched', async () => {
     const mcpPath = join(sandbox, '.mcp.json');

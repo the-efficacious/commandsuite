@@ -25,10 +25,21 @@ interface FakeClient {
 function fakeClient(overrides: Partial<FakeClient> = {}): { client: Client; calls: FakeClient } {
   const calls: FakeClient = {
     listMembers: vi.fn().mockResolvedValue([]),
-    createMember: vi
-      .fn()
-      .mockResolvedValue({ member: { name: 'newbie' }, token: 'csuite_fake_token' }),
-    updateMember: vi.fn().mockResolvedValue({ name: 'alice' }),
+    createMember: vi.fn().mockResolvedValue({
+      member: {
+        name: 'newbie',
+        role: { title: 'engineer', description: 'ships code' },
+        instructions: '',
+        permissions: [],
+      },
+      token: 'csuite_fake_token',
+    }),
+    updateMember: vi.fn().mockResolvedValue({
+      name: 'alice',
+      role: { title: 'lead', description: 'leads the team' },
+      instructions: 'review every PR',
+      permissions: [],
+    }),
     deleteMember: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
@@ -100,6 +111,12 @@ describe('csuite member create', () => {
       permissions: ['operator'],
     });
     expect(out.lines.some((l) => l.includes('csuite_fake_token'))).toBe(true);
+    expect(out.lines).toContain(
+      '  role description: 10 characters · ≈3 estimated tokens (characters ÷ 4)',
+    );
+    expect(out.lines).toContain(
+      '  personal instructions: 0 characters · ≈0 estimated tokens (characters ÷ 4)',
+    );
   });
 
   it('errors when --name is missing', async () => {
@@ -151,6 +168,12 @@ describe('csuite member update', () => {
       instructions: 'review every PR',
       permissions: ['admin'],
     });
+    expect(out.lines).toContain(
+      '  role description: 14 characters · ≈4 estimated tokens (characters ÷ 4)',
+    );
+    expect(out.lines).toContain(
+      '  personal instructions: 15 characters · ≈4 estimated tokens (characters ÷ 4)',
+    );
   });
 
   it('errors when no fields are provided', async () => {

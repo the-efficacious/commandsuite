@@ -6,19 +6,20 @@
  * WHY THE DOCUMENT ARRIVES IN ITS OWN FIELD. Three reasons, and only
  * the last one is durable:
  *
- *   1. `BriefingResponse.instructions` inherits `MemberSchema`'s 8192
- *      cap. On this team the longest composed briefing sits 20
- *      characters under it, so a process document inside that string
- *      does not truncate — the client-side schema rejects the response
- *      and the runner does not start. Expires when #122 lands.
+ *   1. `BriefingResponse.instructions` inherited `MemberSchema`'s
+ *      8192 cap, which made an oversized document fatal rather than
+ *      truncating. DEAD — #122 landed in #129 and no cap remains in
+ *      source.
  *   2. A deployed runner keeps validating that cap locally whatever
- *      the broker does. Expires when every runner upgrades.
+ *      the broker does. STILL TRUE: the deployed 0.3.4 rejects >8192
+ *      and does not start. Expires when every runner upgrades.
  *   3. A member authors their own `instructions`; the process document
  *      is authored by whoever holds `process.manage`. One string
  *      collapses two authorities into one field. Never expires.
  *
- * Build to reason 3. If you are reading this because #122 removed the
- * cap: reason 1 has evaporated and the decision still holds.
+ * Reason 1 has already expired and this field is still right. Build to
+ * reason 3, and do not merge them on the grounds that the cap is gone
+ * — that was never the load-bearing argument.
  *
  * WHY ABSENCE RENDERS AS A LINE RATHER THAN AS NOTHING. Three states
  * collapse into one if a missing document renders nothing:

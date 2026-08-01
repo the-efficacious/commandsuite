@@ -69,7 +69,15 @@ roster.
 A private prose block that's composed into the member's own
 briefing — into the agent's system prompt for runners, into the
 human's dashboard for browsers. **Not visible to teammates.**
-Up to 8192 characters.
+There is no length cap. Role descriptions and team context are likewise
+uncapped: authored text and the composed briefing are not the same size
+budget.
+
+The web editor, CLI, and agent-facing administration tools report Unicode
+character counts and an explicitly estimated token count for team context,
+role descriptions, and personal instructions. The estimate is
+`ceil(characters / 4)`, a rough English-prose planning aid rather than a model
+tokenizer.
 
 Use this for personal working directives: "always run tests before
 proposing a fix", "this director's preferred tone is terse",

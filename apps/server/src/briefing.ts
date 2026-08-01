@@ -110,18 +110,20 @@ export function composeBriefing(input: ComposeBriefingInput): BriefingResponse {
     // The team's process document rides HERE, never inside
     // `instructions` — and the durable reason is NOT the cap.
     //
-    //   1. the 8192 cap makes an oversized `instructions` fatal
-    //      -> dies when #122 removes it
+    //   1. the 8192 cap made an oversized `instructions` fatal
+    //      -> DEAD. #122 landed in #129; there is no cap in source.
     //   2. deployed runners keep validating it locally
-    //      -> dies when every runner upgrades
+    //      -> dies when every runner upgrades. True today: the
+    //         deployed 0.3.4 still rejects >8192 and will not start.
     //   3. a member authors their own `instructions`; the process
     //      document is authored by whoever holds `process.manage`
     //      -> never dies
     //
-    // Reason 3 is why this field exists. Merging them collapses two
-    // authorities into one string, and no amount of cap removal makes
-    // that acceptable. If you are here because #122 landed and reason
-    // 1 has evaporated: it has, and the decision still holds.
+    // Reason 1 has already expired and the field is still right.
+    // Reason 3 is why: merging them collapses two authorities into one
+    // string, and no cap removal makes that acceptable. Do not undo
+    // this on the grounds that the cap is gone — that was never the
+    // load-bearing argument.
     processDocument: input.processDocument ?? null,
   };
 }
