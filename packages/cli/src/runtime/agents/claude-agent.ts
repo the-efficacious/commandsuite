@@ -43,6 +43,7 @@ import {
   type Options as SdkOptions,
   type SpawnedProcess,
 } from '@anthropic-ai/claude-agent-sdk';
+import { composeFixedContext } from '../fixed-context.js';
 import { type HudHandle, startHud } from '../hud.js';
 import type {
   AgentAdapter,
@@ -257,7 +258,11 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
         });
       }
 
-      const briefing = runner.briefing.instructions;
+      // The briefing is more than its `instructions` string: process
+      // rules ride in their own field because that string's cap would
+      // stop the runner starting. One composer so a future block does
+      // not have to be added to each adapter separately.
+      const briefing = composeFixedContext(runner.briefing);
       sdkOptions = {
         cwd,
         env,

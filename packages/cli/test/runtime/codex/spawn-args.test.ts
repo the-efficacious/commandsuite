@@ -78,6 +78,7 @@ const MINIMAL_BRIEFING: BriefingResponse = {
   teammates: [],
   openObjectives: [],
   toolSources: [],
+  processRules: [],
 };
 
 // Plain object (no `as const`) so spread-extension types stay assignable

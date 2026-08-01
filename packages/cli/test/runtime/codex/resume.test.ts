@@ -87,6 +87,7 @@ const MINIMAL_BRIEFING: BriefingResponse = {
   teammates: [],
   openObjectives: [],
   toolSources: [],
+  processRules: [],
 };
 
 const THREAD_A = '019f0000-0000-7000-8000-00000000000a';
