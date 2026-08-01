@@ -28,8 +28,19 @@
  *   - objectives_discuss  — post into the objective thread
  *   - objectives_complete — mark done with required result
  *
+ * Process-rule tools:
+ *   - process_rules_list    — every rule, including retired ones
+ *   - process_rules_history — superseded text behind one rule
+ *
+ * The rules IN FORCE are already in this agent's fixed context; it does
+ * not need a tool call to learn what binds it. These exist for the two
+ * things injection deliberately omits — retired rules, and the prior
+ * text of an amended one.
+ *
  * Permission-gated objective tools (only appear in the toolbox when the
  * caller holds the matching leaf permission):
+ *   - process_rules_create — requires `objectives.create`
+ *   - process_rules_amend  — requires `objectives.create`
  *   - objectives_create   — requires `objectives.create`
  *   - objectives_cancel   — requires `objectives.cancel` (or being the objective's originator)
  *   - objectives_watchers — requires `objectives.watch` (or being the objective's originator)
@@ -54,6 +65,7 @@ import type {
   NotificationProfileSummary,
   NotificationTarget,
   ObjectiveStatus,
+  ProcessRule,
   ResolvedToolSource,
   SecretSummary,
   ToolCredentialKind,
@@ -441,6 +453,12 @@ export function defineTools(
     // originated" rule so the agent doesn't try to touch someone
     // else's objective and eat a 403.
     ...buildAuthorityTools(briefing),
+    // Process rules. The rules in force are already in this agent's
+    // fixed context, so `list` is not how it learns what binds it —
+    // these cover what injection deliberately leaves out (retired
+    // rules, superseded text) and the amendment path, which is gated
+    // on `objectives.create` exactly as contract amendment is.
+    ...buildProcessRuleTools(briefing),
     // Admin tools for live team/member/preset management. Each gated
     // on the corresponding `team.manage` or `members.manage`
     // permission so non-admin agents don't see them in their toolbox.
@@ -1680,6 +1698,205 @@ function buildFilesystemTools(name: string): Tool[] {
   ];
 }
 
+/**
+ * Process-rule tools.
+ *
+ * WHY THESE EXIST AT ALL, given the rules are injected. Three things
+ * the fixed-context block cannot carry:
+ *
+ *   - retired rules. The block shows what is in force. "Was this ever
+ *     a rule?" is a different question and it comes up in exactly the
+ *     situation where someone is being held to something.
+ *   - superseded text. Kept out of the block on purpose so it stays
+ *     bounded by the number of rules rather than by how often they
+ *     have changed. Bounded means retrievable elsewhere, not gone.
+ *   - the amendment path. Read is universal; write is not.
+ *
+ * WHY THE WRITE GATE IS `objectives.create`. It is the same permission
+ * that amends an objective's contract, deliberately: changing what
+ * binds the team is one authority, not two. The leaf is NAMED wrong
+ * for this use — it says `create` and it also governs amendment of
+ * both contracts and process — but adding a second leaf would let the
+ * two drift, and one authority behind two names is worse than one
+ * badly-named authority.
+ */
+function buildProcessRuleTools(briefing: BriefingResponse): Tool[] {
+  const tools: Tool[] = [
+    {
+      name: 'process_rules_list',
+      description:
+        'List the team process rules. **You do not need this to find out what binds ' +
+        'you** — every rule in force is already in your fixed context, injected as ' +
+        'current state, and it stays correct across compaction. Call this when you need ' +
+        'what the injected block deliberately leaves out: rules that have been ' +
+        '`retired`, and the exact `version` and `anchor` of a rule so you can ask for ' +
+        'its history. Returns every rule regardless of status, each with its anchor, ' +
+        'title, text, status (`in_force` | `disputed` | `retired`), provenance, ' +
+        'attribution, and current version. A `disputed` rule is one recorded in a form ' +
+        'its own author will not stand behind — it is shown, not hidden, and must not ' +
+        'be treated as settled. Readable by every member: a rule that binds you is not ' +
+        'privileged information.',
+      inputSchema: { type: 'object', properties: {} },
+    },
+    {
+      name: 'process_rules_history',
+      description:
+        'Retrieve the superseded text behind one process rule, oldest amendment first. ' +
+        'This is the other half of "history retrievable, not resident": the injected ' +
+        'block carries only current state so it cannot grow without bound, and the ' +
+        'prior text lives here. Each amendment records who changed it, when, which ' +
+        'fields moved, the reason, the `changeKind` (`reversal` | `refinement` | ' +
+        '`wording`) and the `disposition` — and the previous value of every field it ' +
+        'touched. Use it to answer "was I working under a different rule when I started ' +
+        'this?", which a prose diff of the current text cannot tell you. Returns an ' +
+        'empty list for a rule that has never been amended; 404s for an unknown anchor.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          anchor: {
+            type: 'string',
+            description:
+              "The rule's stable anchor, shown in your injected rules block as " +
+              '`[anchor vN]` and by `process_rules_list`. The anchor survives ' +
+              'amendments — that is what makes a reversal distinguishable from a ' +
+              'rewording.',
+          },
+        },
+        required: ['anchor'],
+      },
+    },
+  ];
+
+  if (!briefing.permissions.includes('objectives.create')) return tools;
+
+  tools.push({
+    name: 'process_rules_create',
+    description:
+      'Adopt a new team process rule. Requires `objectives.create` — the same authority ' +
+      "that sets an objective's contract. The rule enters every member's injected " +
+      'context at their next runner start; it is NOT pushed into a running session, so ' +
+      'do not assume a teammate mid-session has seen it. **Record provenance honestly**: ' +
+      '`director` means a director stated it, `lead_uncontested` means the lead proposed ' +
+      'it and nobody objected — which binds more weakly than adoption and is rendered ' +
+      'that way — and `unattributed` means nobody can say where it came from. Rendering ' +
+      'the second as the first launders it. If the rule is real but its own author will ' +
+      'not stand behind the wording, create it with `status: "disputed"` and a ' +
+      '`disputeReason`; that is better than either omitting it or presenting it as ' +
+      'settled. Anchors are lowercase alphanumeric with hyphens and must be unique.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        anchor: {
+          type: 'string',
+          description:
+            'Stable identity, lowercase alphanumeric with hyphens, e.g. `merge-model`. ' +
+            'It never changes across amendments — pick something that names the SUBJECT ' +
+            'of the rule, not its current content, or a reversal will make it a lie.',
+        },
+        title: { type: 'string', description: 'Short label, max 200 characters.' },
+        text: { type: 'string', description: 'The rule itself, max 4096 characters.' },
+        provenance: {
+          type: 'string',
+          enum: ['director', 'lead_uncontested', 'unattributed'],
+          description:
+            'Where the rule actually came from. `lead_uncontested` is rendered to every ' +
+            'member as "not contested — weaker than adoption"; do not use `director` for ' +
+            'something a director never said.',
+        },
+        attribution: {
+          type: 'string',
+          description: 'Who stated or proposed it, by name. Omit only if genuinely unknown.',
+        },
+        status: {
+          type: 'string',
+          enum: ['in_force', 'disputed', 'retired'],
+          description:
+            "Defaults to `in_force`. Use `disputed` when the rule is real but its author won't " +
+            'stand behind it — a `disputeReason` is then required.',
+        },
+        disputeReason: {
+          type: 'string',
+          description: 'Required when status is `disputed`. What specifically is unsettled.',
+        },
+      },
+      required: ['anchor', 'title', 'text', 'provenance'],
+    },
+  });
+
+  tools.push({
+    name: 'process_rules_amend',
+    description:
+      'Amend a process rule in place. Requires `objectives.create`. The anchor survives, ' +
+      'the version increments, and the prior text stays retrievable via ' +
+      '`process_rules_history` — so amending is not destructive and does not need a ' +
+      'broadcast to take effect. Every member picks up the new text at their next runner ' +
+      'start whether or not they saw an announcement. **`disposition` is the same field ' +
+      'with the same meaning as `objectives_amend`\'s**, deliberately, so "does work ' +
+      'started under the old rule finish under it?" has one answer across contracts and ' +
+      'process: `correction` binds retroactively (the prior text was never validly ' +
+      'binding), `scope_change` binds forward only (work already underway finishes under ' +
+      'the old rule). `changeKind` is separate and answers a different question — whether ' +
+      'the rule REVERSED, was refined, or was only reworded. A reversal recorded as a ' +
+      'wording change is how a team loses track of what it decided. Pass only the fields ' +
+      'you are changing.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        anchor: {
+          type: 'string',
+          description: 'The rule to amend. Shown as `[anchor vN]` in your injected block.',
+        },
+        title: { type: 'string', description: 'New title, if it is changing.' },
+        text: { type: 'string', description: 'New rule text, if it is changing.' },
+        status: {
+          type: 'string',
+          enum: ['in_force', 'disputed', 'retired'],
+          description:
+            'New status. `retired` removes it from every injected block at the next ' +
+            'runner start but keeps it listable and its history intact. Moving TO ' +
+            '`disputed` requires a `disputeReason`.',
+        },
+        provenance: {
+          type: 'string',
+          enum: ['director', 'lead_uncontested', 'unattributed'],
+          description: 'Correct the recorded origin, if that is what was wrong.',
+        },
+        attribution: { type: 'string', description: 'Correct who stated or proposed it.' },
+        disputeReason: {
+          type: 'string',
+          description: 'What is unsettled. Required when moving the rule to `disputed`.',
+        },
+        reason: {
+          type: 'string',
+          description:
+            'Why the rule is changing. Required, max 2048 characters. This is what a ' +
+            'reader six weeks from now has instead of the conversation you are in.',
+        },
+        disposition: {
+          type: 'string',
+          enum: ['correction', 'scope_change'],
+          description:
+            '`correction` — retroactive; work was never validly held to the prior text. ' +
+            '`scope_change` — forward-only; work already underway finishes under the ' +
+            'prior text. Same field and meaning as `objectives_amend`.',
+        },
+        changeKind: {
+          type: 'string',
+          enum: ['reversal', 'refinement', 'wording'],
+          description:
+            '`reversal` — the rule now says the opposite of what it said. `refinement` — ' +
+            'same direction, narrower or clearer. `wording` — no change in what it ' +
+            'requires. Recording a reversal as a wording change destroys the one signal ' +
+            'the anchor exists to preserve.',
+        },
+      },
+      required: ['anchor', 'reason', 'disposition', 'changeKind'],
+    },
+  });
+
+  return tools;
+}
+
 function buildAuthorityTools(briefing: BriefingResponse): Tool[] {
   const { permissions } = briefing;
   const canCreate = permissions.includes('objectives.create');
@@ -1934,6 +2151,14 @@ export async function handleToolCall(
         return await handleObjectivesCreate(args, brokerClient, briefing);
       case 'objectives_amend':
         return await handleObjectivesAmend(args, brokerClient);
+      case 'process_rules_list':
+        return await handleProcessRulesList(brokerClient);
+      case 'process_rules_history':
+        return await handleProcessRulesHistory(args, brokerClient);
+      case 'process_rules_create':
+        return await handleProcessRulesCreate(args, brokerClient);
+      case 'process_rules_amend':
+        return await handleProcessRulesAmend(args, brokerClient);
       case 'objectives_correct_event':
         return await handleObjectivesCorrectEvent(args, brokerClient);
       case 'objectives_cancel':
@@ -2441,6 +2666,163 @@ async function handleObjectivesAmend(
   return textResult(
     `amended '${updated.id}' to contract version ${updated.outcomeVersion} (${disposition}: ${binding}). ` +
       'The prior text is kept and shown by `objectives_view`.',
+  );
+}
+
+/**
+ * Renders status inline rather than only for `disputed`. A reader
+ * scanning a list should not have to notice an absence to conclude a
+ * rule is in force.
+ */
+function renderRuleLine(rule: ProcessRule): string {
+  const origin =
+    rule.provenance === 'director'
+      ? `stated by ${rule.attribution ?? 'a director'}`
+      : rule.provenance === 'lead_uncontested'
+        ? `proposed by ${rule.attribution ?? 'the lead'}, not contested — weaker than adoption`
+        : 'no attributable origin';
+  const head = `[${rule.anchor} v${rule.version}] ${rule.title} — ${rule.status} (${origin})`;
+  const dispute =
+    rule.status === 'disputed'
+      ? `\n    DISPUTED — do not treat as settled: ${rule.disputeReason ?? 'reason not recorded'}`
+      : '';
+  return `${head}\n    ${rule.text}${dispute}`;
+}
+
+async function handleProcessRulesList(brokerClient: BrokerClient): Promise<CallToolResult> {
+  const rules = await brokerClient.listProcessRules();
+  if (rules.length === 0) {
+    return textResult('no process rules are recorded for this team.');
+  }
+  const retired = rules.filter((r) => r.status === 'retired').length;
+  // Say what is in force separately from the total. "4 rules" reads as
+  // "4 rules bind me" when one of them is retired.
+  const inForce = rules.length - retired;
+  const header =
+    `${rules.length} process rule${rules.length === 1 ? '' : 's'} ` +
+    `(${inForce} in force, ${retired} retired). ` +
+    'The ones in force are already in your fixed context as current state.';
+  return textResult([header, '', ...rules.map(renderRuleLine)].join('\n'));
+}
+
+async function handleProcessRulesHistory(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+): Promise<CallToolResult> {
+  const anchor = typeof args.anchor === 'string' ? args.anchor : '';
+  if (!anchor) return errorResult('process_rules_history: `anchor` is required');
+  const amendments = await brokerClient.processRuleHistory(anchor);
+  if (amendments.length === 0) {
+    return textResult(
+      `'${anchor}' has never been amended — the text you were given is the original.`,
+    );
+  }
+  const lines = amendments.map((a) => {
+    const prior = a.fields
+      .map((f) => `      ${f} was: ${a.previous[f] ?? '(not recorded)'}`)
+      .join('\n');
+    const binding =
+      a.disposition === 'correction'
+        ? 'retroactive — the prior text was never validly binding'
+        : 'forward-only — work already underway finished under the prior text';
+    return (
+      `  v${a.version} by ${a.actor} — ${a.changeKind}, ${a.disposition} (${binding})\n` +
+      `      reason: ${a.reason}\n${prior}`
+    );
+  });
+  return textResult(
+    [`'${anchor}' — ${amendments.length} amendment(s), oldest first:`, ...lines].join('\n'),
+  );
+}
+
+async function handleProcessRulesCreate(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+): Promise<CallToolResult> {
+  const anchor = typeof args.anchor === 'string' ? args.anchor : '';
+  if (!anchor) return errorResult('process_rules_create: `anchor` is required');
+  const title = typeof args.title === 'string' ? args.title : '';
+  if (!title) return errorResult('process_rules_create: `title` is required');
+  const text = typeof args.text === 'string' ? args.text : '';
+  if (!text) return errorResult('process_rules_create: `text` is required');
+  const provenance = args.provenance;
+  if (
+    provenance !== 'director' &&
+    provenance !== 'lead_uncontested' &&
+    provenance !== 'unattributed'
+  ) {
+    return errorResult(
+      'process_rules_create: `provenance` must be "director", "lead_uncontested" or "unattributed"',
+    );
+  }
+  const rule = await brokerClient.createProcessRule({
+    anchor,
+    title,
+    text,
+    provenance,
+    ...(typeof args.attribution === 'string' ? { attribution: args.attribution } : {}),
+    ...(args.status === 'in_force' || args.status === 'disputed' || args.status === 'retired'
+      ? { status: args.status }
+      : {}),
+    ...(typeof args.disputeReason === 'string' ? { disputeReason: args.disputeReason } : {}),
+  });
+  return textResult(
+    `adopted '${rule.anchor}' v${rule.version} (${rule.status}). ` +
+      'Every member receives it in their injected context at their NEXT runner start — ' +
+      'a teammate already running has not seen it.',
+  );
+}
+
+async function handleProcessRulesAmend(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+): Promise<CallToolResult> {
+  const anchor = typeof args.anchor === 'string' ? args.anchor : '';
+  if (!anchor) return errorResult('process_rules_amend: `anchor` is required');
+  const reason = typeof args.reason === 'string' ? args.reason : '';
+  if (!reason) return errorResult('process_rules_amend: `reason` is required');
+  if (args.disposition !== 'correction' && args.disposition !== 'scope_change') {
+    return errorResult(
+      'process_rules_amend: `disposition` must be "correction" (retroactive) or ' +
+        '"scope_change" (forward-only) — the same field and meaning as `objectives_amend`',
+    );
+  }
+  if (
+    args.changeKind !== 'reversal' &&
+    args.changeKind !== 'refinement' &&
+    args.changeKind !== 'wording'
+  ) {
+    return errorResult(
+      'process_rules_amend: `changeKind` must be "reversal", "refinement" or "wording"',
+    );
+  }
+  const { rule, amendment } = await brokerClient.amendProcessRule(anchor, {
+    ...(typeof args.title === 'string' ? { title: args.title } : {}),
+    ...(typeof args.text === 'string' ? { text: args.text } : {}),
+    ...(args.status === 'in_force' || args.status === 'disputed' || args.status === 'retired'
+      ? { status: args.status }
+      : {}),
+    ...(args.provenance === 'director' ||
+    args.provenance === 'lead_uncontested' ||
+    args.provenance === 'unattributed'
+      ? { provenance: args.provenance }
+      : {}),
+    ...(typeof args.attribution === 'string' ? { attribution: args.attribution } : {}),
+    ...(typeof args.disputeReason === 'string' ? { disputeReason: args.disputeReason } : {}),
+    reason,
+    disposition: args.disposition,
+    changeKind: args.changeKind,
+  });
+  const binding =
+    amendment.disposition === 'correction'
+      ? 'retroactive — work was never validly held to the prior text'
+      : 'forward-only — work already underway finishes under the prior text';
+  return textResult(
+    `amended '${rule.anchor}' to v${rule.version} — ${amendment.changeKind}, ` +
+      `${amendment.disposition} (${binding}). Changed: ${amendment.fields.join(', ')}. ` +
+      'The prior text stays retrievable via `process_rules_history`. ' +
+      'No broadcast is needed for this to take effect, and none is sent: every member ' +
+      'receives the amended rule at their next runner start.',
   );
 }
 

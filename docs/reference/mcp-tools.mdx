@@ -19,6 +19,10 @@ There are three groups:
 - **Objective tools** — list / view / update / discuss / complete
   objectives, plus four permission-gated tools for managing
   objectives created by others.
+- **Process-rule tools** — read the rules that bind the team,
+  including retired ones and superseded text; amend them if you hold
+  the authority. The rules *in force* arrive by injection, not by
+  calling these.
 - **Filesystem tools** — operate on the csuite virtual filesystem
   under the agent's own home (`/<name>/`).
 
@@ -248,6 +252,123 @@ Both old and new assignees receive channel pushes. The previous
 assignee's activity stream gets an `objective_close` and the new
 assignee's gets a fresh `objective_open`, so the trace time-range
 shifts cleanly.
+
+## Process-rule tools
+
+The rules that bind how the team works are **injected**, not fetched:
+every rule in force is already in the agent's fixed context as current
+state, and it survives compaction. An agent does not call a tool to
+learn what binds it.
+
+These tools cover what injection deliberately leaves out.
+
+### process_rules_list
+
+Every process rule, including `retired` and `disputed` ones. Readable
+by every member — a rule that binds you is not privileged information.
+
+| | |
+|---|---|
+| **Required permission** | none |
+| **Input** | `{}` |
+| **Output** | `N process rules (X in force, Y retired)` then per-rule `[<anchor> v<N>] <title> — <status> (<origin>)` + text, with a `DISPUTED — do not treat as settled: <reason>` line where it applies |
+| **Broker call** | `GET /process-rules` |
+
+In-force and total are reported separately on purpose: "4 rules" reads
+as "4 rules bind me" when one of them is retired.
+
+### process_rules_history
+
+The superseded text behind one rule, oldest amendment first. This is
+the other half of *history retrievable, not resident* — the injected
+block carries only current state so it cannot grow without bound, and
+the prior text lives here.
+
+| | |
+|---|---|
+| **Required permission** | none |
+| **Input** | `{ anchor: string (req) }` |
+| **Output** | Per amendment: version, actor, `changeKind`, `disposition` and what it binds, reason, and the previous value of every field touched |
+| **Broker call** | `GET /process-rules/:anchor/history` |
+
+Returns "never been amended" rather than an empty list, so *unchanged*
+and *no history recorded* are distinguishable. 404s for an unknown
+anchor.
+
+## Process-rule tools (permission-gated)
+
+Both write tools are gated on **`objectives.create`** — the same
+authority that amends an objective's contract. That is deliberate:
+changing what binds the team is one authority, not two. The leaf is
+**named wrong for this use** (it says `create` and it governs amendment
+of both contracts and process), but a second leaf would let the two
+drift, and one authority under two names is worse than one
+badly-named authority.
+
+The gate is the **permission, not the role**. A member the rule binds
+hardest still cannot amend it without the leaf.
+
+### process_rules_create
+
+Adopt a new rule.
+
+| | |
+|---|---|
+| **Required permission** | `objectives.create` |
+| **Input** | `{ anchor: string (req), title: string (req), text: string (req), provenance: 'director'\|'lead_uncontested'\|'unattributed' (req), attribution?: string, status?: 'in_force'\|'disputed'\|'retired', disputeReason?: string }` |
+| **Output** | `adopted '<anchor>' v1 (<status>)` plus the delivery bound |
+| **Broker call** | `POST /process-rules` |
+
+`provenance` is required and rendered to every member: `director`
+shows as "stated by X", `lead_uncontested` as "proposed by X and not
+contested — weaker than adoption". Recording the second as the first
+launders it into an authority nobody exercised.
+
+Pick an anchor that names the **subject** of the rule, not its current
+content — it never changes, so `squash-merge` becomes a lie the moment
+the rule reverses, where `merge-model` does not.
+
+### process_rules_amend
+
+Amend a rule in place. The anchor survives, the version increments,
+and the prior text stays retrievable.
+
+| | |
+|---|---|
+| **Required permission** | `objectives.create` |
+| **Input** | `{ anchor: string (req), reason: string (req), disposition: 'correction'\|'scope_change' (req), changeKind: 'reversal'\|'refinement'\|'wording' (req), title?, text?, status?, provenance?, attribution?, disputeReason? }` |
+| **Output** | `amended '<anchor>' to v<N> — <changeKind>, <disposition>` + what it binds + fields changed |
+| **Broker call** | `POST /process-rules/:anchor/amend` |
+
+`disposition` is **the same field with the same meaning as
+`objectives_amend`'s**, so *does work started under the old rule finish
+under it?* has one answer across contracts and process:
+
+- `correction` — retroactive; the prior text was never validly binding.
+- `scope_change` — forward-only; work already underway finishes under
+  the prior text.
+
+`changeKind` answers a different question — whether the rule
+**reversed**, was refined, or was only reworded. A reversal recorded as
+a wording change destroys the one signal the stable anchor exists to
+preserve.
+
+**No broadcast is needed and none is sent.** The amendment takes effect
+because the rule is injected, so a member who never saw an announcement
+still receives the current text.
+
+### Delivery bound
+
+Rules reach a member's context at their **next runner start**. They are
+not pushed into a running session, and the `#103` context watchdog does
+not re-send them if they fall out mid-session — its projection selects
+blocks by substring-matching the composed `instructions` string, and
+these rules ride in their own briefing field.
+
+A runner older than that field drops it silently: the member operates
+without the rules and is not told. So "present in every member's
+injected context" is bounded by "every member on a runner new enough to
+read the field."
 
 ## Tool-source admin tools (permission-gated)
 

@@ -429,6 +429,91 @@ assignee, watchers, plus members with `members.manage` (implicit).
 Names must resolve to known members. Adding a watcher fires a
 `watcher_added` audit event; removing fires `watcher_removed`.
 
+## Process rules
+
+The team's process rules. Reads are open to every member — a rule that
+binds you is not privileged information. Writes require
+`objectives.create`, the same authority that amends an objective's
+contract.
+
+Rules in force are also served on `GET /briefing` as `processRules`,
+which is how they reach a member's fixed context. These endpoints exist
+for what injection deliberately leaves out.
+
+### `GET /process-rules`
+
+| | |
+|---|---|
+| **Auth** | dual |
+| **Returns** | `ListProcessRulesResponse` — `{ rules: ProcessRule[] }` |
+
+Every rule regardless of status, including `retired`. This is a
+superset of what is injected: the briefing carries what is in force,
+this answers "what exists".
+
+### `GET /process-rules/:anchor`
+
+| | |
+|---|---|
+| **Auth** | dual |
+| **Returns** | `{ rule: ProcessRule }`; 404 if unknown |
+
+### `GET /process-rules/:anchor/history`
+
+| | |
+|---|---|
+| **Auth** | dual |
+| **Returns** | `ProcessRuleHistoryResponse` — `{ anchor, amendments: ProcessRuleAmendment[] }`; 404 if the anchor is unknown |
+
+Retrieved, never resident. This is what keeps the injected block
+bounded by the *number of rules* rather than by how often they have
+changed. Each amendment carries the previous value of every field it
+touched, so the superseded text is recoverable without ever being
+resident in anyone's context.
+
+### `POST /process-rules`
+
+| | |
+|---|---|
+| **Auth** | dual; requires `objectives.create` |
+| **Body** | `CreateProcessRuleRequest` — `{ anchor, title, text, provenance, attribution?, status?, disputeReason? }` |
+| **Returns** | `{ rule: ProcessRule }`, 201; 409 `anchor_taken` if the anchor exists |
+
+`anchor` is lowercase alphanumeric with hyphens and is the rule's
+immutable identity across every later amendment. `provenance` is
+required — `director`, `lead_uncontested` or `unattributed` — because
+"a director stated this" and "the lead proposed it and nobody objected"
+bind differently and are rendered differently to every member.
+
+`status: 'disputed'` requires a `disputeReason`. It exists for a rule
+that is real but recorded in a form its own author will not stand
+behind: a store offering only *in force* or *absent* would have to
+either assert it or drop it, and both are false.
+
+### `POST /process-rules/:anchor/amend`
+
+| | |
+|---|---|
+| **Auth** | dual; requires `objectives.create` |
+| **Body** | `AmendProcessRuleRequest` — `{ reason, disposition, changeKind, title?, text?, status?, provenance?, attribution?, disputeReason? }` |
+| **Returns** | `{ rule: ProcessRule, amendment: ProcessRuleAmendment }`; 404 if unknown |
+
+One transaction: the rule moves, the version increments, and the
+amendment row capturing the prior values is written together with it.
+A partial failure that moved the contract while losing the prior text
+is the exact defect this shape prevents.
+
+`disposition` is the same field with the same semantics as
+`POST /objectives/:id/amend` — `correction` binds retroactively,
+`scope_change` forward only — so *does work started under the old rule
+finish under it?* has one answer across contracts and process.
+`changeKind` is orthogonal and records whether the rule `reversal`-ed,
+was a `refinement`, or was only a `wording` change.
+
+No message is sent. The amendment takes effect because rules are
+injected; every member picks up the new text at their next runner
+start whether or not anyone announced it.
+
 ## Tool sources
 
 Registry of platform-defined external tools — see

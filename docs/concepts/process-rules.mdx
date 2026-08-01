@@ -1,0 +1,149 @@
+---
+title: Process rules
+description: The rules that bind how a team works, held as current state and injected into every member's fixed context — amendable in place, with the superseded text retrievable and never resident.
+section: Concepts
+order: 32
+---
+
+# Process rules
+
+A process rule is something the team has decided about **how it
+works** — the merge model, what counts as verification, who ratifies
+what. Objectives carry the contract for one piece of work. Process
+rules carry the contract for all of it.
+
+## The problem they solve
+
+A rule announced in chat is not a rule anyone can be held to.
+
+Broadcast is the first thing an agent's context loses to compaction,
+and a member who joins later never saw it at all. So the durable
+surface holds the stale version, the correction lives in a message,
+and the gap between them is invisible to everyone except the person
+who happened to read the thread.
+
+Process rules close that the same way [objectives](/concepts/objectives)
+closed it for contracts: the rule is **state**, not an event. What a
+member receives is always what applies now.
+
+## Injected, not fetched
+
+Rules in force are served on `GET /briefing` and rendered by the runner
+into the agent's **fixed context** — the standing instructions handed
+to the agent at start. That placement is the whole mechanism:
+
+- fixed context survives compaction; chat history does not.
+- a member who never saw an announcement still has the current rule.
+- an agent does not need to remember to check.
+
+An agent therefore never calls a tool to find out what binds it. The
+[`process_rules_list`](/reference/mcp-tools) tool exists for the
+things injection deliberately leaves out — retired rules, and the
+anchor and version needed to ask for history.
+
+## Anchors: identity that survives amendment
+
+Every rule has an immutable **anchor** — `merge-model`, not
+`squash-merge`. Text moves; the anchor does not.
+
+This is what makes a **reversal** distinguishable from a **rewording**.
+A team whose merge model changes twice in one evening cannot tell those
+apart from a prose diff, and the difference is precisely what matters:
+one means "you were wrong about what we do", the other means "we said
+it more clearly".
+
+Pick an anchor that names the *subject* of the rule. An anchor naming
+its current content becomes a lie the moment the rule reverses.
+
+## Provenance is required, and is not a formality
+
+Rules carry where they came from:
+
+| provenance | rendered to every member as |
+|---|---|
+| `director` | *stated by X* |
+| `lead_uncontested` | *proposed by X and not contested — weaker than adoption* |
+| `unattributed` | *no attributable origin* |
+
+"A director said this" and "the lead proposed it and nobody objected"
+bind differently. Rendering them identically launders the second into
+an authority nobody actually exercised — so the distinction is stored,
+required, and shown.
+
+## Disputed is a real status
+
+A rule can be `in_force`, `retired`, or **`disputed`** — real, being
+followed by someone, but recorded in a form its own author will not
+stand behind, or contradicted by observed practice.
+
+A store offering only *in force* or *absent* forces a false choice:
+assert the rule as settled, or drop it and hide that people are
+following it. Both are wrong. A disputed rule **is injected**, and is
+injected with its dispute reason and an explicit
+*do not treat as settled*.
+
+## Amendment: one field, one answer
+
+Amending a rule requires **`objectives.create`** — the same permission
+that amends an objective's contract. Changing what binds the team is
+one authority, not two.
+
+The gate is the *permission*, not the role. A member the rule binds
+hardest still cannot amend it without the leaf; a member holding the
+leaf can, whatever their title.
+
+The leaf is **named wrong for this use.** It says `create` and it
+governs amendment of both contracts and process. A second leaf was
+considered and rejected: two names for one authority lets them drift,
+which is worse than one badly-named authority.
+
+Each amendment records two orthogonal things:
+
+**`disposition`** — the same field with the same meaning as an
+objective contract amendment, so *does work started under the old rule
+finish under it?* has one answer across contracts and process.
+
+- `correction` — retroactive. The prior text was never validly binding.
+- `scope_change` — forward-only. Work already underway finishes under
+  the prior text.
+
+**`changeKind`** — what actually happened to the rule: `reversal`,
+`refinement`, or `wording`. Recording a reversal as a wording change
+destroys the one signal the stable anchor exists to preserve.
+
+No announcement is sent, and none is needed. The amendment takes effect
+because the rule is injected.
+
+## History: retrievable, not resident
+
+Amending changes what is injected. It does **not** grow what is
+injected.
+
+The block carries current state only; every superseded value lives
+behind `GET /process-rules/:anchor/history`. So the injected block is
+bounded by the **number of rules**, not by how often they have changed
+— a rule amended fifty times costs the same context as one never
+touched.
+
+That bound matters because nothing else enforces it. `instructions`
+inherits an 8192-character cap sized for authored text, and rules ride
+in their own briefing field specifically so they are not subject to
+it — which also means the cap is not there to catch unbounded growth.
+Keeping history out of the block is the bound.
+
+## What this does not do
+
+Stated plainly, because the alternative is a reader assuming otherwise:
+
+- **Rules arrive at the next runner start.** They are not pushed into a
+  running session. A teammate mid-session has not seen a rule you
+  adopted a minute ago.
+- **There is no in-flight recovery.** The context watchdog that
+  re-injects a dropped briefing block does not watch this one — it
+  selects blocks by substring-matching the composed `instructions`
+  string, and these rules are not in it. A rules block lost mid-session
+  returns at the next start.
+- **A runner older than the field drops it silently.** The member
+  operates without the rules and is not told. So *"present in every
+  member's injected context"* is bounded by *"every member on a runner
+  new enough to read the field."*

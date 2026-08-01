@@ -19,6 +19,7 @@ import {
   NOTIFICATION_PATHS,
   OBJECTIVE_PATHS,
   PATHS,
+  PROCESS_RULE_PATHS,
   PROTOCOL_HEADER,
   PROTOCOL_VERSION,
   SECRET_PATHS,
@@ -29,6 +30,7 @@ import {
   ActivityReportSchema,
   AddChannelMemberRequestSchema,
   AmendObjectiveRequestSchema,
+  AmendProcessRuleRequestSchema,
   ApproveEnrollmentRequestSchema,
   ApproveEnrollmentResponseSchema,
   BindSecretRequestSchema,
@@ -41,6 +43,7 @@ import {
   CreateMemberResponseSchema,
   CreateNotificationEndpointRequestSchema,
   CreateNotificationProfileRequestSchema,
+  CreateProcessRuleRequestSchema,
   CreateSecretRequestSchema,
   CreateToolSourceRequestSchema,
   CreateVariableRequestSchema,
@@ -73,6 +76,7 @@ import {
   ListNotificationProfilesResponseSchema,
   ListObjectivesResponseSchema,
   ListPendingEnrollmentsResponseSchema,
+  ListProcessRulesResponseSchema,
   ListSecretsResponseSchema,
   ListTokensResponseSchema,
   ListToolSourcesResponseSchema,
@@ -83,6 +87,9 @@ import {
   NotificationProfileSchema,
   ObjectiveSchema,
   PermissionPresetsSchema,
+  ProcessRuleAmendmentSchema,
+  ProcessRuleHistoryResponseSchema,
+  ProcessRuleSchema,
   PushPayloadSchema,
   PushResultSchema,
   PushSubscriptionResponseSchema,
@@ -115,6 +122,7 @@ import type {
   ActivityRow,
   AddChannelMemberRequest,
   AmendObjectiveRequest,
+  AmendProcessRuleRequest,
   ApproveEnrollmentRequest,
   ApproveEnrollmentResponse,
   BindSecretRequest,
@@ -131,6 +139,7 @@ import type {
   CreateNotificationEndpointRequest,
   CreateNotificationProfileRequest,
   CreateObjectiveRequest,
+  CreateProcessRuleRequest,
   CreateSecretRequest,
   CreateToolSourceRequest,
   CreateVariableRequest,
@@ -168,6 +177,8 @@ import type {
   PendingEnrollment,
   Permission,
   PermissionPresets,
+  ProcessRule,
+  ProcessRuleAmendment,
   PushPayload,
   PushResult,
   PushSubscriptionPayload,
@@ -570,6 +581,79 @@ export class Client {
       body: JSON.stringify(validated),
     });
     return ObjectiveSchema.parse(await this.json(resp));
+  }
+
+  // ─── Process rules ──────────────────────────────────────────────
+  // The rules in force reach a member by injection, not by calling
+  // these. These are for the two things injection deliberately does
+  // not carry: every rule including retired ones, and the superseded
+  // text behind each amendment.
+
+  /**
+   * Every process rule, including `retired` and `disputed` ones.
+   * Readable by any member — a rule that binds you is not privileged
+   * information. This is a superset of what is injected: the block
+   * carries what is in force, this answers "what exists".
+   */
+  async listProcessRules(): Promise<ProcessRule[]> {
+    const resp = await this.request(PATHS.processRules);
+    return ListProcessRulesResponseSchema.parse(await this.json(resp)).rules;
+  }
+
+  /** One rule by anchor, whatever its status. */
+  async getProcessRule(anchor: string): Promise<ProcessRule> {
+    const resp = await this.request(PROCESS_RULE_PATHS.one(anchor));
+    const body = (await this.json(resp)) as { rule: unknown };
+    return ProcessRuleSchema.parse(body.rule);
+  }
+
+  /**
+   * The superseded text behind a rule, oldest first. RETRIEVED, never
+   * resident: this is what keeps the injected block bounded by the
+   * number of rules rather than by how often they have changed.
+   */
+  async processRuleHistory(anchor: string): Promise<ProcessRuleAmendment[]> {
+    const resp = await this.request(PROCESS_RULE_PATHS.history(anchor));
+    return ProcessRuleHistoryResponseSchema.parse(await this.json(resp)).amendments;
+  }
+
+  /** Adopt a new rule. Requires `objectives.create`. */
+  async createProcessRule(payload: CreateProcessRuleRequest): Promise<ProcessRule> {
+    const validated = CreateProcessRuleRequestSchema.parse(payload);
+    const resp = await this.request(PATHS.processRules, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(validated),
+    });
+    const body = (await this.json(resp)) as { rule: unknown };
+    return ProcessRuleSchema.parse(body.rule);
+  }
+
+  /**
+   * Amend a rule in place. Requires `objectives.create` — the same
+   * gate as amending an objective's contract, and deliberately not
+   * the role the rule binds.
+   *
+   * The anchor survives, so a reversal and a rewording are told apart
+   * by `changeKind` rather than by diffing prose. `disposition` is
+   * #79's field with #79's meaning: `correction` binds retroactively,
+   * `scope_change` only forward.
+   */
+  async amendProcessRule(
+    anchor: string,
+    payload: AmendProcessRuleRequest,
+  ): Promise<{ rule: ProcessRule; amendment: ProcessRuleAmendment }> {
+    const validated = AmendProcessRuleRequestSchema.parse(payload);
+    const resp = await this.request(PROCESS_RULE_PATHS.amend(anchor), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(validated),
+    });
+    const body = (await this.json(resp)) as { rule: unknown; amendment: unknown };
+    return {
+      rule: ProcessRuleSchema.parse(body.rule),
+      amendment: ProcessRuleAmendmentSchema.parse(body.amendment),
+    };
   }
 
   /**

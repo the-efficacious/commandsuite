@@ -13,8 +13,16 @@
  *
  * Carried in their own field, an old runner ignores them and starts
  * normally: the member operates without the rules rather than not at
- * all. Degraded beats fatal, and the degradation is diagnosable
- * broker-side because the broker knows the runner's version.
+ * all. Degraded beats fatal.
+ *
+ * BUT THE DEGRADATION IS CURRENTLY SILENT, and that is worth stating
+ * plainly rather than leaving as an inference. A runner older than the
+ * field drops it without complaint; the member never learns there were
+ * rules, and nothing broker-side says so either. `#124` gives the
+ * broker the runner's version, which is the input a warning needs —
+ * the warning itself is not built here. Until it is, "every member's
+ * injected context" is bounded by "every member on a runner new enough
+ * to read the field."
  *
  * WHAT THE BLOCK CARRIES, AND WHY EACH PART. A rule's text alone is not
  * enough to act on:
