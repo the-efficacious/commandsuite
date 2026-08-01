@@ -492,3 +492,123 @@ describe('a correction names one event by durable id, never by timestamp', () =>
     ).toThrow(/no correctable event/);
   });
 });
+
+describe('the durable event id survives a legacy database', () => {
+  /** A database written before `event_id` existed. */
+  function legacyDb() {
+    const db = openDatabase(':memory:');
+    db.exec(`
+      CREATE TABLE objectives (
+        id TEXT PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL DEFAULT '',
+        outcome TEXT NOT NULL, status TEXT NOT NULL, assignee TEXT NOT NULL,
+        originator TEXT NOT NULL, watchers TEXT NOT NULL DEFAULT '[]',
+        created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+        completed_at INTEGER, result TEXT, block_reason TEXT
+      );
+      CREATE TABLE objective_events (
+        objective_id TEXT NOT NULL, ts INTEGER NOT NULL, actor TEXT NOT NULL,
+        kind TEXT NOT NULL, payload TEXT NOT NULL
+      );
+      INSERT INTO objectives VALUES
+        ('obj-old','t','','o','done','carol','lea','[]',1,1,2,'r',NULL);
+      INSERT INTO objective_events (objective_id, ts, actor, kind, payload) VALUES
+        ('obj-old', 1000, 'lea', 'assigned', '{}'),
+        ('obj-old', 1000, 'lea', 'watcher_added', '{"name":"rune"}'),
+        ('obj-old', 2000, 'carol', 'completed', '{"result":"at a PR head"}');
+    `);
+    return db;
+  }
+
+  it('backfills distinct, non-empty, stable ids and makes a historical event correctable', () => {
+    const db = legacyDb();
+    const store = createSqliteObjectivesStore(db);
+
+    const events = store.events('obj-old');
+    expect(events).toHaveLength(3);
+    const ids = events.map((e) => e.id);
+    expect(ids.every((i) => i.length > 0)).toBe(true);
+    expect(new Set(ids).size).toBe(3);
+
+    // The motivating case is an EXISTING event: a completion recorded
+    // at a PR head. It has to be nameable, or the correction surface
+    // cannot reach the thing it was built for.
+    const completed = events.find((e) => e.kind === 'completed');
+    if (!completed) throw new Error('no completed event');
+    const { objective } = store.correctEvent(
+      'obj-old',
+      { eventId: completed.id, correction: 'merged as c8f0d18', reason: 'lifecycle timing' },
+      'lea',
+    );
+    const corr = objective.amendments.find((a) => a.target === 'event');
+    if (corr?.target !== 'event') throw new Error('expected an event correction');
+    expect(corr.eventId).toBe(completed.id);
+
+    // Reopening must not renumber them — a correction stored today has
+    // to still name the same event tomorrow. (The correction itself
+    // appended a fourth event, so compare the original three.)
+    const reopened = createSqliteObjectivesStore(db);
+    expect(
+      reopened
+        .events('obj-old')
+        .map((e) => e.id)
+        .slice(0, 3),
+    ).toEqual(ids);
+    expect(reopened.events('obj-old')).toHaveLength(4);
+  });
+
+  it('refuses to boot degraded when the backfill cannot complete', () => {
+    // Best-effort was the shape rejected on #105: booting with empty
+    // ids leaves historical events uncorrectable, and a later restart
+    // may heal it so the reporter cannot reproduce it.
+    const db = legacyDb();
+    db.exec(`CREATE TRIGGER block_backfill BEFORE UPDATE ON objective_events
+             BEGIN SELECT RAISE(ABORT, 'injected backfill failure'); END`);
+    expect(() => createSqliteObjectivesStore(db)).toThrow();
+  });
+
+  it('refuses to boot when the backfill SUCCEEDS but leaves rows unfilled', () => {
+    // Distinct from the abort case: here the UPDATE completes without
+    // error and the rows are still empty. Without the post-backfill
+    // assertion the store boots with a correction surface that cannot
+    // name historical events — functional-looking and silently partial.
+    // Exactly ONE unfilled row, deliberately: with two the unique
+    // index trips on the duplicate empty string and the assertion is
+    // never reached. One empty value is unique, so the assertion is the
+    // only thing standing between this and a degraded boot.
+    const db = openDatabase(':memory:');
+    db.exec(`
+      CREATE TABLE objectives (
+        id TEXT PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL DEFAULT '',
+        outcome TEXT NOT NULL, status TEXT NOT NULL, assignee TEXT NOT NULL,
+        originator TEXT NOT NULL, watchers TEXT NOT NULL DEFAULT '[]',
+        created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+        completed_at INTEGER, result TEXT, block_reason TEXT
+      );
+      CREATE TABLE objective_events (
+        objective_id TEXT NOT NULL, ts INTEGER NOT NULL, actor TEXT NOT NULL,
+        kind TEXT NOT NULL, payload TEXT NOT NULL
+      );
+      INSERT INTO objectives VALUES ('obj-one','t','','o','done','carol','lea','[]',1,1,2,'r',NULL);
+      INSERT INTO objective_events (objective_id, ts, actor, kind, payload)
+        VALUES ('obj-one', 2000, 'carol', 'completed', '{}');
+      CREATE TRIGGER blank_after_update AFTER UPDATE ON objective_events
+        BEGIN UPDATE objective_events SET event_id = '' WHERE ROWID = NEW.ROWID; END;
+    `);
+    expect(() => createSqliteObjectivesStore(db)).toThrow(/event_id/);
+  });
+
+  it('enforces id uniqueness in storage, not by probability', () => {
+    const db = legacyDb();
+    createSqliteObjectivesStore(db);
+    const one = db.prepare('SELECT event_id FROM objective_events LIMIT 1').get() as {
+      event_id: string;
+    };
+    expect(() =>
+      db
+        .prepare(
+          'INSERT INTO objective_events (event_id, objective_id, ts, actor, kind, payload) VALUES (?,?,?,?,?,?)',
+        )
+        .run(one.event_id, 'obj-old', 3000, 'lea', 'blocked', '{}'),
+    ).toThrow(/UNIQUE|constraint/i);
+  });
+});

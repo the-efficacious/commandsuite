@@ -350,15 +350,50 @@ class SqliteObjectivesStore implements ObjectivesStore {
         if (!msg.includes('duplicate column name')) throw err;
       }
     }
-    // Backfill ids for rows written before the column existed. ROWID is
-    // stable for an append-only table that never deletes, so this is
-    // deterministic and runs once.
+    // Give every event a durable, UNIQUE id — one transaction, and it
+    // FAILS LOUDLY rather than booting degraded.
+    //
+    // Best-effort was wrong here and it was the shape we rejected on
+    // #105: a swallowed failure boots with `event_id = ''` on every
+    // pre-existing event, which makes exactly the historical events a
+    // correction surface exists for uncorrectable — and a later
+    // restart might silently heal it, so the reporter cannot
+    // reproduce what the next person sees.
+    //
+    // The unique index is what makes the selector unambiguous BY
+    // STORAGE rather than by the probability that two UUIDs differ.
+    // The ambiguity guard in `correctEvent` stays: it is now
+    // unreachable, and a guard on an unreachable state is cheap and
+    // fails loudly if this assumption ever stops holding.
+    //
+    // ROWID is stable for an append-only table that never deletes, so
+    // the backfill is deterministic and runs once.
+    this.db.prepare('BEGIN').run();
     try {
       this.db.exec(
         "UPDATE objective_events SET event_id = 'ev-' || ROWID WHERE event_id IS NULL OR event_id = ''",
       );
-    } catch {
-      /* best-effort: a broker must still boot if the backfill fails */
+      const leftover = this.db
+        .prepare(
+          "SELECT COUNT(*) AS n FROM objective_events WHERE event_id IS NULL OR event_id = ''",
+        )
+        .get() as { n: number } | undefined;
+      if ((leftover?.n ?? 0) > 0) {
+        throw new Error(
+          `${leftover?.n} objective_events rows still have no event_id after backfill`,
+        );
+      }
+      this.db.exec(
+        'CREATE UNIQUE INDEX IF NOT EXISTS objective_events_event_id_idx ON objective_events (event_id)',
+      );
+      this.db.prepare('COMMIT').run();
+    } catch (err) {
+      try {
+        this.db.prepare('ROLLBACK').run();
+      } catch {
+        /* rollback of a failed tx can itself fail — nothing to do */
+      }
+      throw err;
     }
     this.listAllStmt = db.prepare('SELECT * FROM objectives ORDER BY created_at DESC, id DESC');
     this.listByAssigneeStmt = db.prepare(
