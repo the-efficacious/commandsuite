@@ -201,6 +201,39 @@ describe('criteria 2 and 3 — current text directly, prior text recoverable', (
     expect(amended.outcome).toBe(NARROWED_BEFORE);
   });
 
+  it('refuses an amendment that does not state its disposition', async () => {
+    // The amender picks; it cannot be inferred from the text, and an
+    // amender who cannot say which it is has not finished thinking
+    // about the amendment. The TYPE requires it, but a type is not a
+    // guard against a caller that is not TypeScript — this is the
+    // runtime half.
+    const { app } = makeApp();
+    const obj = await createObjective(app, NARROWED_BEFORE);
+    const res = await app.request(
+      `/objectives/${obj.id}/amend`,
+      authed(LEA, { outcome: 'moved', reason: 'because' }),
+    );
+    expect(res.status).toBe(400);
+
+    const unchanged = (await (await app.request(`/objectives/${obj.id}`, authed(LEA))).json()) as {
+      objective: Objective;
+    };
+    expect(unchanged.objective.outcome).toBe(NARROWED_BEFORE);
+    expect(unchanged.objective.outcomeVersion).toBe(1);
+  });
+
+  it('refuses an amendment with no reason', async () => {
+    // Without it an amendment is a silent replacement, which is the
+    // thing this replaces.
+    const { app } = makeApp();
+    const obj = await createObjective(app, NARROWED_BEFORE);
+    const res = await app.request(
+      `/objectives/${obj.id}/amend`,
+      authed(LEA, { outcome: 'moved', disposition: 'correction' }),
+    );
+    expect(res.status).toBe(400);
+  });
+
   it('rejects an amendment that changes nothing rather than bumping the version', async () => {
     const { app } = makeApp();
     const obj = await createObjective(app, NARROWED_BEFORE);
