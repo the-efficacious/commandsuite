@@ -34,6 +34,15 @@ touch other members or shape the team itself.
 | **`tools.manage`** | Administer the tool-source registry: register/update/delete sources, set write-only credentials, bind members, define custom tools, refresh MCP discovery. Does NOT bypass invoke binding — admins bind themselves like anyone else. See [tool sources](/docs/concepts/tool-sources). |
 | **`secrets.manage`** | Administer the secrets registry: register/update/delete secrets, set write-only values, bind members. Does NOT bypass delivery binding — admins bind themselves like anyone else. See [secrets](/docs/concepts/secrets). |
 | **`notifications.manage`** | Administer External Notifications: register/update/delete endpoints and auth profiles, set write-only signing secrets, view/replay delivery receipts. Non-holders can still list/view endpoints that target them. See [external notifications](/docs/concepts/external-notifications). |
+| **`process.manage`** | Create and edit the team's [process document](/docs/concepts/process-document) — the standing statement of how the team works, injected into every member's fixed context. **Under this design the permission IS the authority**: whoever holds it can rewrite what binds every member, which is why it is a dedicated leaf rather than a reuse of `objectives.create`. Ships granted to nobody; who holds it is a deliberate decision. |
+
+**Adding a sensitive permission?** `process.manage` is withheld from
+the seeded `admin` preset by an explicit list in `wizard.ts`. That list
+is a convention: the seeded preset is otherwise derived from every
+leaf, so a new permission is granted to the bootstrap admin
+automatically unless you add it there. That default is right for most
+permissions and wrong for any leaf whose point is that holding it is a
+deliberate decision — and nothing will remind you.
 
 ### Self-bypass rules
 
@@ -67,7 +76,7 @@ of listing every leaf:
         "objectives.create", "objectives.cancel",
         "objectives.reassign", "objectives.watch",
         "activity.read", "tools.manage", "secrets.manage",
-        "notifications.manage"
+        "notifications.manage", "process.manage"
       ],
       "operator": ["objectives.create", "objectives.cancel"]
     }

@@ -3,7 +3,12 @@ import { describe, expect, it } from 'vitest';
 import type { WebSocket as WsWebSocket } from 'ws';
 import { Client, ClientError } from '../src/client.js';
 import { PROTOCOL_HEADER, PROTOCOL_VERSION, RUNNER_VERSION_HEADER } from '../src/protocol.js';
-import type { Message, PushResult } from '../src/types.js';
+import {
+  EditProcessDocumentRequestSchema,
+  PROCESS_DOCUMENT_FIELDS,
+  ProcessDocumentEditSchema,
+} from '../src/schemas.js';
+import type { Message, ProcessDocumentField, PushResult } from '../src/types.js';
 
 /**
  * Minimal stand-in for `ws.WebSocket`. Exposes `.on('message'|'close'|'error')`
@@ -67,6 +72,7 @@ describe('Client', () => {
           teammates: [],
           openObjectives: [],
           toolSources: [],
+          processDocument: null,
         });
       }),
     });
@@ -236,5 +242,94 @@ describe('Client', () => {
     await iteration;
     expect(ws.closed).toBe(true);
     expect(received).toHaveLength(0);
+  });
+});
+
+// ─── the edit API and the record cannot name different fields ────────
+//
+// WHY THIS IS IN THE SDK AND NOT THE STORE. The store's types come
+// from types.ts and its tests never cross a parse boundary, so
+// decoupling these two zod shapes is INVISIBLE there — verified by
+// mutation: pointing `previous` at an empty object left all 14 store
+// tests green. The schema layer is where the derivation is load-
+// bearing, so this is where it has to be asserted.
+//
+// The defect being guarded is real and cost a partner's review on the
+// predecessor: the request accepted two fields the record had no
+// column for, so editing them wrote the new value and recorded no
+// prior one — silently, when paired with a field that was tracked.
+describe('process document editable fields', () => {
+  const META = ['reason', 'disposition'];
+
+  it('has one derived list behind the request, the record and the enum', () => {
+    const requestFields = Object.keys(EditProcessDocumentRequestSchema.shape)
+      .filter((k) => !META.includes(k))
+      .sort();
+    const previousFields = Object.keys(
+      // No .unwrap(): `previous` is now a required strict object rather
+      // than wrapped in a default, which is the point of the change.
+      ProcessDocumentEditSchema.shape.previous.shape,
+    ).sort();
+
+    // Every field an edit accepts is a field the record can hold.
+    expect(previousFields).toEqual(requestFields);
+    // And the enum names exactly those, so `fields` cannot record a
+    // name that neither of the other two knows about.
+    expect([...PROCESS_DOCUMENT_FIELDS].sort()).toEqual(requestFields);
+  });
+
+  it('keeps the runtime list and the TS union naming the same set', () => {
+    // Fails TYPECHECK, not the test run, if they diverge. `pnpm test`
+    // does not typecheck here; `pnpm typecheck` is the gate.
+    const runtimeIsInUnion: ProcessDocumentField[] = [...PROCESS_DOCUMENT_FIELDS];
+    const unionIsInRuntime: (typeof PROCESS_DOCUMENT_FIELDS)[number][] = runtimeIsInUnion;
+    expect(unionIsInRuntime.length).toBeGreaterThan(0);
+  });
+});
+
+// ─── `previous` is REQUIRED, asserted where omission can happen ──────
+//
+// The store reconstructs the column from the row every time, so an
+// omitted `previous` cannot arise there — it arises at the response
+// boundary, where a broker (or a forged payload) sends an edit without
+// it. `.default({})` used to materialise `{}` silently, which is a
+// record the write path never emits.
+describe('process document edit parsing', () => {
+  const valid = {
+    version: 2,
+    ts: 1,
+    actor: 'lea',
+    reason: 'r',
+    disposition: 'correction' as const,
+    fields: ['text' as const],
+    previous: { text: 'before' },
+  };
+
+  it('accepts a well-formed edit, so the negatives below mean something', () => {
+    expect(ProcessDocumentEditSchema.safeParse(valid).success).toBe(true);
+  });
+
+  /**
+   * ISOLATES `required`. A version-2 edit with `previous` omitted is
+   * rejected by the refinement anyway — it claims to have changed
+   * `text` and retains no prior value — so it would pass this test
+   * even with `.default({})` restored, for the wrong reason.
+   *
+   * Version 1 is the case where an omitted `previous` is otherwise
+   * consistent: the creation legitimately has no prior values, so
+   * `{}` satisfies every refinement. Only the field being REQUIRED
+   * rejects it, and the writer always emits the column.
+   */
+  it('rejects a version-1 edit with `previous` omitted, which only `required` catches', () => {
+    const creation = { ...valid, version: 1, previous: {} };
+    expect(ProcessDocumentEditSchema.safeParse(creation).success).toBe(true);
+
+    const { previous: _omitted, ...withoutPrevious } = creation;
+    expect(ProcessDocumentEditSchema.safeParse(withoutPrevious).success).toBe(false);
+  });
+
+  it('rejects an unknown key in `previous` rather than stripping it', () => {
+    const forged = { ...valid, previous: { text: 'before', smuggled: 'x' } };
+    expect(ProcessDocumentEditSchema.safeParse(forged).success).toBe(false);
   });
 });

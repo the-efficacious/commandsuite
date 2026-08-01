@@ -758,6 +758,222 @@ export const ResolveSecretsResponseSchema = z.object({
   secretEnvNames: z.array(z.string()).optional(),
 });
 
+// ─────────────────────── Team process document ────────────────────
+//
+// The team's process as ONE authored document, injected into every
+// member's fixed context. Not a list of rulings: a list is a changelog
+// wearing the costume of a specification, and it only ever
+// accumulates, whereas a document gets edited and superseded content
+// leaves.
+//
+// Authority is the edit permission and nothing else. There is no
+// per-statement provenance, no anchors and no citation machinery —
+// whoever holds the leaf can change what binds the team, and the
+// record says who did it, why, and what the text was before.
+
+/**
+ * The ceiling on the injected document, and therefore the answer to
+ * "state the ceiling, or state that there is none."
+ *
+ * 16384 characters. Basis, so the number is arguable rather than
+ * arbitrary: this document is resident in EVERY member's context in
+ * EVERY session, so its size is a recurring cost paid by everyone, not
+ * a one-off. 16384 is ample for a team process — the four rules this
+ * team actually had rendered to 1085 characters — while bounding that
+ * recurring cost at a number someone can reason about.
+ *
+ * The predecessor design had no ceiling at all: it held N rules with
+ * nothing capping N, so the injected block was unbounded and nothing
+ * reported it. One document with one cap is the whole fix.
+ *
+ * This is NOT an `instructions` cap — there is no longer any such
+ * thing, since #122 removed every length cap on authored text in #129.
+ * That is precisely why this ceiling has to stand on its own terms
+ * rather than by analogy to a number that no longer exists.
+ *
+ * And the document rides in its own briefing field for a reason that
+ * never depended on any cap: a member authors their own
+ * `instructions`, this is authored by whoever holds `process.manage`,
+ * and one string would collapse two authorities into one field.
+ */
+export const PROCESS_DOCUMENT_MAX = 16_384;
+
+/**
+ * THE single list of what an edit may change.
+ *
+ * One shape drives all three of: what the edit API accepts, what the
+ * history record can hold, and what the field enum names. They cannot
+ * disagree, because there is only one of them.
+ *
+ * This exists because of a real defect in the predecessor: the request
+ * schema accepted two fields the history record had no columns for, so
+ * editing them wrote the new value and recorded no prior one — and
+ * paired with a tracked field it did that silently, because the record
+ * looked well-formed. Adding the missing entries would have made the
+ * two lists agree that day without stopping the next field from being
+ * accepted before it was recordable.
+ *
+ * Today the list has one entry. That is exactly when this construction
+ * is worth building, not a reason to skip it: the second field is
+ * where the defect appears, and by then nobody is thinking about it.
+ */
+const EDITABLE_PROCESS_DOCUMENT_SHAPE = {
+  text: z.string().min(1).max(PROCESS_DOCUMENT_MAX),
+};
+
+type EditableProcessDocumentField = keyof typeof EDITABLE_PROCESS_DOCUMENT_SHAPE;
+
+/** Derived from the shape's own keys — not a second list to maintain. */
+export const PROCESS_DOCUMENT_FIELDS = Object.keys(EDITABLE_PROCESS_DOCUMENT_SHAPE) as [
+  EditableProcessDocumentField,
+  ...EditableProcessDocumentField[],
+];
+
+export const ProcessDocumentFieldSchema = z.enum(PROCESS_DOCUMENT_FIELDS);
+
+export const ProcessDocumentSchema = z.object({
+  text: z.string().min(1).max(PROCESS_DOCUMENT_MAX),
+  /** 1 on the first write. Incremented by every edit. */
+  version: z.number().int().positive(),
+  createdBy: NameSchema,
+  createdAt: z.number().int().nonnegative(),
+  updatedBy: NameSchema,
+  updatedAt: z.number().int().nonnegative(),
+});
+
+/**
+ * One entry in the append-only edit history.
+ *
+ * `previous` is empty on version 1 — the document was created, so
+ * there is no prior text. Every later edit carries the text as it
+ * stood before, retained rather than reconstructed, so the diff the
+ * outcome asks for is derived from two stored strings.
+ */
+export const ProcessDocumentEditSchema = z
+  .object({
+    /** The version this edit PRODUCED. */
+    version: z.number().int().positive(),
+    ts: z.number().int().nonnegative(),
+    actor: NameSchema,
+    reason: z.string().min(1).max(2048),
+    disposition: AmendmentDispositionSchema,
+    /**
+     * Non-empty and duplicate-free, because the writer cannot produce
+     * either. `write()` rejects a no-op before it appends history, so a
+     * stored `[]` is an edit event claiming nothing changed — and a
+     * repeated name is a record asserting one field moved twice in one
+     * edit. Both are shapes only corruption creates, and `z.array()`
+     * alone accepts both.
+     */
+    fields: z
+      .array(ProcessDocumentFieldSchema)
+      .min(1, 'an edit that changed nothing cannot exist — write() rejects it before history')
+      .refine((f) => new Set(f).size === f.length, {
+        message: 'an edit cannot record the same field twice',
+      }),
+    /**
+     * Same shape as what the edit API accepts — and REQUIRED and
+     * STRICT, because `.partial().default({})` did two lossy things
+     * before the refinement ever ran:
+     *
+     *   unknown key   silently STRIPPED, so corruption was erased
+     *                 rather than rejected: `{"unknown":"v"}` became
+     *                 `{}` and passed version 1 as a clean creation
+     *   omitted       defaulted to `{}` — but the writer always emits
+     *                 this column, so an absent one is not a record
+     *                 the write path can produce
+     *
+     * Stripping is not degeneracy; it is the reader accepting
+     * corruption and hiding it. Strict also makes the whole-map check
+     * below actually whole, rather than true-of-known-keys.
+     */
+    previous: z.object(EDITABLE_PROCESS_DOCUMENT_SHAPE).partial().strict(),
+  })
+  .superRefine((edit, ctx) => {
+    // RECORD-LEVEL INVARIANT, not a shape check.
+    //
+    // Shape alone cannot express this: `previous` is partial, so `{}`
+    // is structurally valid for every version — and `{}` renders as
+    // "created — no prior text", which is the same lie a corrupt row
+    // told before. Syntactic JSON validation does not catch it either,
+    // because `{}` is valid JSON.
+    //
+    // The relationship that has to hold: version 1 IS the creation and
+    // has no prior text; any later edit that claims to have changed a
+    // field must have retained that field's prior value. Criterion 3's
+    // "retained, not reconstructed" is exactly this, and without it
+    // the claim is unenforced.
+    const previousKeys = Object.keys(edit.previous);
+
+    if (edit.version === 1) {
+      // The whole map, not just `text`. Checking one field would be
+      // complete today and silently partial the moment a second field
+      // exists — the reader would accept a creation carrying prior
+      // values the writer never emits.
+      if (previousKeys.length > 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['previous'],
+          message:
+            'version 1 is the creation and cannot have prior values — a record claiming ' +
+            `otherwise is not the history of this document (has: ${previousKeys.join(', ')})`,
+        });
+      }
+      return;
+    }
+
+    // Both directions. `write()` retains a prior value for EXACTLY the
+    // fields it changed, so the two sets are equal, and each direction
+    // is a different lie:
+    //
+    //   field with no prior value    "nothing before" for something that moved
+    //   prior value with no field    a change the record does not admit to
+    for (const field of edit.fields) {
+      if (edit.previous[field] === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['previous', field],
+          message:
+            `edit v${edit.version} says it changed '${field}' but retained no prior ` +
+            `value for it — reporting that as "nothing before" would be false`,
+        });
+      }
+    }
+    for (const key of previousKeys) {
+      if (!edit.fields.includes(key as (typeof edit.fields)[number])) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['previous', key],
+          message:
+            `edit v${edit.version} retained a prior '${key}' but does not list it as ` +
+            'changed — a record holding evidence of a change it does not admit to',
+        });
+      }
+    }
+  });
+
+/**
+ * Create-or-edit. One request shape and one endpoint for both, so the
+ * invariant validator is exercised through the real path rather than
+ * only by a unit test calling it directly.
+ */
+export const EditProcessDocumentRequestSchema = z
+  .object(EDITABLE_PROCESS_DOCUMENT_SHAPE)
+  .partial()
+  .extend({
+    reason: z.string().min(1).max(2048),
+    disposition: AmendmentDispositionSchema,
+  });
+
+export const GetProcessDocumentResponseSchema = z.object({
+  /** `null` when no document has been set — an explicit state, not an absent field. */
+  document: ProcessDocumentSchema.nullable(),
+});
+
+export const ProcessDocumentHistoryResponseSchema = z.object({
+  edits: z.array(ProcessDocumentEditSchema),
+});
+
 // ────────────────────────── Variables ─────────────────────────────
 //
 // Same grammar as secrets: a variable and a secret share one
@@ -1536,6 +1752,31 @@ export const BriefingResponseSchema = MemberSchema.extend({
   // Defaulted so pre-tool-sources brokers (and test fixtures) that
   // omit the field still parse.
   toolSources: z.array(ResolvedToolSourceSchema).default([]),
+  /**
+   * The team's process document, or `null` when none is set.
+   *
+   * Its OWN field, and the durable reason is authority separation: a
+   * member authors their own `instructions`, while the process
+   * document is authored by whoever holds `process.manage`. One string
+   * would collapse two authorities into one field.
+   *
+   * The cap argument that also motivated this has already expired —
+   * #122 landed in #129 and no length cap remains in source. The field
+   * is still right, on authority separation alone.
+   *
+   * THREE states, and `.default(null)` would destroy the one that
+   * matters. An older broker OMITS this field; a broker that has it
+   * and holds no document sends `null`. Defaulting absent to `null`
+   * makes a new runner tell its member "this team has no process
+   * document" when the truth is "this broker has no opinion" — the
+   * exact collapse the explicit empty state exists to prevent, done
+   * before the renderer ever sees it.
+   *
+   *   absent     -> unavailable from this broker
+   *   null       -> no document has been set
+   *   document   -> render it
+   */
+  processDocument: ProcessDocumentSchema.nullable().optional(),
 });
 
 export const RosterResponseSchema = z.object({

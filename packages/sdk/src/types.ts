@@ -68,6 +68,16 @@ export const PERMISSIONS = [
   'tools.manage',
   'secrets.manage',
   'notifications.manage',
+  /**
+   * Edit the team's process document. A DEDICATED leaf rather than a
+   * reuse of `objectives.create`: under this design the permission is
+   * the entire authority — whoever holds it can rewrite what binds the
+   * team — and "can create an objective" is not a comparable power.
+   *
+   * Ships granted to nobody. Who holds it is a deliberate decision,
+   * not an inheritance from an existing preset.
+   */
+  'process.manage',
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -324,6 +334,20 @@ export interface BriefingResponse extends Member {
    * briefing prose (same staleness rule as `openObjectives`).
    */
   toolSources: ResolvedToolSource[];
+  /**
+   * The team's process document as one authored whole, or `null` when
+   * none has been set. Carried separately from `instructions` because
+   * that field is authored by the member and this is authored by
+   * whoever holds `process.manage` — one string would collapse two
+   * authorities into one field. (An 8192 cap on that field also
+   * motivated this historically; #122 removed it in #129 and the
+   * decision is unchanged.)
+   *
+   * `undefined` when the broker did not send the field at all — an
+   * older broker without the feature. Distinct from `null`, which is a
+   * broker saying the team has no document.
+   */
+  processDocument?: ProcessDocument | null;
 }
 
 /** Response from `GET /roster`. */
@@ -1479,6 +1503,74 @@ export type ObjectiveEventKind =
  * about the amendment.
  */
 export type AmendmentDisposition = 'correction' | 'scope_change';
+
+// ─────────────────────── Team process document ────────────────────
+
+/**
+ * What an edit may change. Mirrors `EDITABLE_PROCESS_DOCUMENT_SHAPE`
+ * in schemas.ts, which is the single runtime source that also drives
+ * the request schema and the history record's `previous` map.
+ */
+export type ProcessDocumentField = 'text';
+
+/**
+ * The team's process, as one authored document.
+ *
+ * There is at most one per team. `version` is 1 after the first write
+ * and increments on every edit; `createdBy` is whoever wrote version 1
+ * and never changes, `updatedBy` is whoever wrote the current version.
+ */
+export interface ProcessDocument {
+  text: string;
+  version: number;
+  createdBy: string;
+  createdAt: number;
+  updatedBy: string;
+  updatedAt: number;
+}
+
+/**
+ * One entry in the append-only edit history.
+ *
+ * `previous` is empty for version 1 (creation has no prior text) and
+ * carries the superseded text for every later version. The diff is
+ * DERIVED from prior and current text, never stored — a cached diff is
+ * a second copy that can drift from the text it describes, which is
+ * the defect this whole feature treats.
+ */
+export interface ProcessDocumentEdit {
+  /** The version this edit produced. */
+  version: number;
+  ts: number;
+  actor: string;
+  reason: string;
+  disposition: AmendmentDisposition;
+  fields: ProcessDocumentField[];
+  previous: { text?: string };
+}
+
+export interface EditProcessDocumentRequest {
+  text?: string;
+  /** Required. What a reader has instead of the conversation you are in. */
+  reason: string;
+  /**
+   * `correction` — retroactive; the prior text was never validly
+   * binding. `scope_change` — forward-only; work already underway
+   * finishes under the prior text. Same field and meaning as an
+   * objective contract amendment, so "does work started under the old
+   * process finish under it" has one answer across both.
+   */
+  disposition: AmendmentDisposition;
+}
+
+export interface GetProcessDocumentResponse {
+  /** `null` when none has been set — an explicit state, not an absent field. */
+  document: ProcessDocument | null;
+}
+
+export interface ProcessDocumentHistoryResponse {
+  edits: ProcessDocumentEdit[];
+}
 
 /** Contract fields that carry contract weight and can be amended. */
 export type AmendableField = 'title' | 'outcome' | 'body';

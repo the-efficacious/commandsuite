@@ -1,0 +1,163 @@
+---
+title: Process document
+description: The team's process as one authored document, injected into every member's fixed context, edited by whoever holds process.manage, with an append-only record of who changed it, why, and the prior text.
+section: Concepts
+order: 32
+---
+
+# Process document
+
+The process document is what the team has decided about **how it
+works** — the merge model, what counts as verification, who ratifies
+what. [Objectives](/concepts/objectives) carry the contract for one
+piece of work. This carries the contract for all of it.
+
+There is at most one per team, and it is authored: a person or agent
+writes it and edits it, the way they would a README.
+
+## The problem it solves
+
+A rule announced in chat is not a rule anyone can be held to.
+
+Broadcast is the first thing an agent's context loses to compaction,
+and a member who joins later never saw it. So the durable surface holds
+the stale version, the correction lives in a message, and the gap
+between them is invisible to everyone except whoever read the thread.
+
+The document closes that the same way objectives closed it for
+contracts: the process is **state**, not an event. What a member
+receives is always what applies now.
+
+## Injected, not fetched
+
+The current document is served on `GET /briefing` and rendered by the
+runner into the agent's **fixed context** — the standing instructions
+handed to the agent at start. That placement is the mechanism:
+
+- fixed context survives compaction; chat history does not
+- a member who never saw an announcement still has the current text
+- an agent does not need to remember to check
+
+So an agent never calls a tool to find out what binds it.
+[`process_document_get`](/reference/mcp-tools) exists for the version
+number and the author, not for the text.
+
+## Why one document rather than a list of rules
+
+An earlier design held N discrete rules with per-rule anchors,
+provenance and status. It was replaced, and the reasons are worth
+keeping because they generalise.
+
+**A list of rulings is a changelog wearing the costume of a
+specification.** Four bullets tell a reader what four decisions were
+made and leave them to compose "how we work" from the pieces. A team's
+merge model changing twice reads as history rather than as current
+practice.
+
+**A list only accumulates.** Nothing removes a rule, so the injected
+block grows without bound and nothing reports it. A document gets
+*edited* — superseded content leaves rather than piling up — and its
+size is bounded by whoever maintains it.
+
+**Authority replaced attribution.** The old design carried per-rule
+provenance so that "the director said this" could not be laundered from
+"the lead proposed it and nobody objected". That was a real protection,
+but a store can only ever check such a field is non-null, never that
+anyone said anything. Under one document the authority is the edit
+permission, and the record says who edited it and why.
+
+## Editing
+
+Editing requires **`process.manage`**, a dedicated permission that
+ships granted to nobody.
+
+Under this design the permission **is** the authority. Whoever holds it
+can rewrite what binds every member. It is deliberately not
+`objectives.create` — "can create an objective" and "can rewrite the
+team's process" were comparable powers under the old design and are not
+under this one.
+
+There is no separate creation step. The first authorised write produces
+version 1 with a real author and a real reason; every later write
+increments the version. That is why history begins at a real edit
+rather than at a migration that would have had to invent the text.
+
+**A write replaces the whole document.** Read it first and send the
+full new text — this is not a patch API, and sending a paragraph
+deletes everything you did not retype.
+
+Every write records:
+
+- **author** — who
+- **reason** — required. What a reader six weeks from now has instead
+  of the conversation you were in.
+- **prior text** — the whole of it, retained rather than reconstructed
+- **`disposition`** — the same field with the same meaning as an
+  objective contract amendment, so *does work started under the old
+  process finish under it* has one answer across both:
+  - `correction` — retroactive. The prior text was never validly
+    binding.
+  - `scope_change` — forward-only. Work already underway finishes under
+    the prior text.
+
+The **diff is derived** from the prior and current text, never stored.
+A cached diff is a second copy that can drift from the text it
+describes, which is the defect this whole feature treats.
+
+## No document is a state, not silence
+
+A team that has never written one renders an explicit line — *no
+process document has been set for this team* — rather than nothing.
+
+That costs a sentence of context and buys a real distinction. Rendering
+nothing collapses three cases a member cannot then tell apart:
+
+```
+no document has been written        member sees nothing
+runner too old to read the field    member sees nothing
+broker without the feature          member sees nothing
+```
+
+The middle one is the silent-degradation case. Rendering nothing makes
+the healthy state wear the costume of the broken one.
+
+## History: retrievable, not resident
+
+Editing changes what is injected. It does **not** grow what is
+injected.
+
+The block carries current text only; every superseded version lives
+behind `GET /process-document/history`. Editing fifty times costs
+exactly what editing once costs.
+
+**The ceiling is 16384 characters**, and that number has a basis: the
+document is resident in every member's context in every session, so its
+length is a recurring cost paid by everyone rather than a one-off. The
+predecessor design had no ceiling at all — it held N rules with nothing
+capping N.
+
+## Why it is not part of `instructions`
+
+The document is carried in its own briefing field, never folded into
+the composed `instructions` string.
+
+The durable reason is **authority separation**. A member authors their
+own `instructions`; the process document is authored by whoever holds
+`process.manage`. One string collapses two authorities into one field.
+
+An 8192-character cap on `instructions` also motivated this
+historically, and that argument has since expired — the cap was removed
+in #122. The decision is unchanged, because the cap was never the
+load-bearing part.
+
+## What this does not do
+
+- **The document arrives at the next runner start.** It is not pushed
+  into a running session, so a teammate mid-session has not seen your
+  edit.
+- **There is no in-flight recovery.** The context watchdog that
+  re-injects a dropped briefing block does not watch this one — it
+  matches blocks by substring against the composed `instructions`
+  string, and this rides outside it.
+- **A runner predating the field drops it silently.** The member
+  operates without the process document and is not told.

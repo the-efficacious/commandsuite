@@ -19,6 +19,7 @@ import {
   NOTIFICATION_PATHS,
   OBJECTIVE_PATHS,
   PATHS,
+  PROCESS_DOCUMENT_PATHS,
   PROTOCOL_HEADER,
   PROTOCOL_VERSION,
   RUNNER_VERSION_HEADER,
@@ -49,6 +50,7 @@ import {
   DeviceAuthorizationResponseSchema,
   DeviceTokenErrorResponseSchema,
   DeviceTokenResponseSchema,
+  EditProcessDocumentRequestSchema,
   EnrollTotpResponseSchema,
   FsEntryResponseSchema,
   FsListResponseSchema,
@@ -57,6 +59,7 @@ import {
   GetGenaiInferenceResponseSchema,
   GetNotificationEndpointResponseSchema,
   GetObjectiveResponseSchema,
+  GetProcessDocumentResponseSchema,
   GetSecretResponseSchema,
   GetToolSourceResponseSchema,
   GetVariableResponseSchema,
@@ -84,6 +87,9 @@ import {
   NotificationProfileSchema,
   ObjectiveSchema,
   PermissionPresetsSchema,
+  ProcessDocumentEditSchema,
+  ProcessDocumentHistoryResponseSchema,
+  ProcessDocumentSchema,
   PushPayloadSchema,
   PushResultSchema,
   PushSubscriptionResponseSchema,
@@ -140,6 +146,7 @@ import type {
   DeviceTokenErrorCode,
   DeviceTokenResponse,
   DiscussObjectiveRequest,
+  EditProcessDocumentRequest,
   EnrollTotpResponse,
   FsEntry,
   FsWriteCollisionStrategy,
@@ -169,6 +176,8 @@ import type {
   PendingEnrollment,
   Permission,
   PermissionPresets,
+  ProcessDocument,
+  ProcessDocumentEdit,
   PushPayload,
   PushResult,
   PushSubscriptionPayload,
@@ -575,6 +584,63 @@ export class Client {
       body: JSON.stringify(validated),
     });
     return ObjectiveSchema.parse(await this.json(resp));
+  }
+
+  // ─── Team process document ──────────────────────────────────────
+  // The document reaches a member by injection on the briefing. These
+  // are for what injection deliberately does not carry: the edit
+  // history, and the write path.
+
+  /**
+   * The team's process document, or `null` when none has been set.
+   * Readable by every member — what binds you is not privileged.
+   *
+   * `null` is a real state, not a missing resource: a team that has
+   * never written one is a team with no process document, and the
+   * runner renders that explicitly rather than showing nothing.
+   */
+  async getProcessDocument(): Promise<ProcessDocument | null> {
+    const resp = await this.request(PATHS.processDocument);
+    return GetProcessDocumentResponseSchema.parse(await this.json(resp)).document;
+  }
+
+  /**
+   * The edit history, oldest first. RETRIEVED, never resident — this
+   * is what keeps the injected size a function of the document rather
+   * than of how often it has changed.
+   *
+   * The diff the outcome asks for is derived from `previous.text` and
+   * the current text. It is deliberately not stored: a cached diff is
+   * a second copy that can drift from the text it describes.
+   */
+  async processDocumentHistory(): Promise<ProcessDocumentEdit[]> {
+    const resp = await this.request(PROCESS_DOCUMENT_PATHS.history);
+    return ProcessDocumentHistoryResponseSchema.parse(await this.json(resp)).edits;
+  }
+
+  /**
+   * Create or edit the process document. Requires `process.manage`.
+   *
+   * One method for both, because there is one endpoint for both: the
+   * first authorised write produces version 1 with a real author and
+   * reason, and every later write records the prior text. A separate
+   * creation path would need its own validation and would not be
+   * exercised by the edit tests.
+   */
+  async writeProcessDocument(
+    payload: EditProcessDocumentRequest,
+  ): Promise<{ document: ProcessDocument; edit: ProcessDocumentEdit }> {
+    const validated = EditProcessDocumentRequestSchema.parse(payload);
+    const resp = await this.request(PATHS.processDocument, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(validated),
+    });
+    const body = (await this.json(resp)) as { document: unknown; edit: unknown };
+    return {
+      document: ProcessDocumentSchema.parse(body.document),
+      edit: ProcessDocumentEditSchema.parse(body.edit),
+    };
   }
 
   /**

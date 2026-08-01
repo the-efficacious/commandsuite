@@ -33,6 +33,7 @@ import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import type { BriefingResponse } from 'csuite-sdk/types';
 import { CLI_VERSION } from '../../../version.js';
+import { composeFixedContext } from '../../fixed-context.js';
 import type { Presence } from '../../presence.js';
 import type { BusySignal } from '../../trace/busy.js';
 import type { CaptureHost } from '../../trace/host.js';
@@ -631,8 +632,10 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
   //    reloaded thread; absent fields would keep whatever the persisted
   //    thread had, and a resumed agent must not come back more (or
   //    less) restricted than a fresh one.
-  const developerInstructions =
-    opts.briefing.instructions.length > 0 ? opts.briefing.instructions : undefined;
+  const developerInstructions = (() => {
+    const fixed = composeFixedContext(opts.briefing);
+    return fixed.length > 0 ? fixed : undefined;
+  })();
   // Match claude's posture: `--dangerously-skip-permissions` on the
   // claude side disables prompting but doesn't sandbox the filesystem or
   // network (claude has no built-in sandbox). `danger-full-access` is the

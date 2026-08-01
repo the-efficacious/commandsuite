@@ -43,6 +43,7 @@ import {
   type Options as SdkOptions,
   type SpawnedProcess,
 } from '@anthropic-ai/claude-agent-sdk';
+import { composeFixedContext } from '../fixed-context.js';
 import { type HudHandle, startHud } from '../hud.js';
 import type {
   AgentAdapter,
@@ -257,7 +258,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
         });
       }
 
-      const briefing = runner.briefing.instructions;
+      const briefing = composeFixedContext(runner.briefing);
       sdkOptions = {
         cwd,
         env,

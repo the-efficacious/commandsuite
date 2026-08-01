@@ -45,6 +45,7 @@ const BRIEFING: BriefingResponse = {
   ],
   openObjectives: [],
   toolSources: [],
+  processDocument: null,
 };
 
 const ADMIN_BRIEFING: BriefingResponse = {

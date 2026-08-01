@@ -50,11 +50,42 @@ const TOTP_MAX_CONFIRM_ATTEMPTS = 3;
 export const DEFAULT_ADMIN_ROLE_TITLE = 'director';
 
 /**
+ * Leaves deliberately withheld from the seeded `admin` preset.
+ *
+ * `admin` is derived from `PERMISSIONS` on purpose, so a new leaf is
+ * granted to the bootstrap admin without anyone remembering to add it.
+ * That default is right for almost everything and wrong for a leaf
+ * whose whole point is that holding it is a decision.
+ *
+ * `process.manage` rewrites the document that binds every member. It
+ * ships held by nobody — including the bootstrap admin, who is created
+ * by a wizard rather than chosen — and a director grants it
+ * deliberately. Withholding it here is genesis behaviour: it is not a
+ * migration, so searching migrations would not find it.
+ *
+ * Adding to this list should be rare and should say why.
+ *
+ * RESIDUAL, stated because the next person to hit it should find a
+ * note rather than a surprise: THIS LIST IS A CONVENTION. A new
+ * sensitive leaf auto-grants to the bootstrap admin unless someone
+ * remembers to add it here. That is the correct trade — most
+ * permissions should be admin-default, and inverting the polarity
+ * would mean every ordinary leaf needed a manual grant — but the
+ * class is not closed by this list, only this instance. If you are
+ * adding a permission whose point is that holding it is a decision,
+ * nothing will remind you.
+ */
+const WITHHELD_FROM_SEEDED_ADMIN: readonly Permission[] = ['process.manage'];
+
+/**
  * Default permission presets seeded with every new team. The operator
  * can edit them via the API/CLI/MCP after first boot.
+ *
+ * Still derived from `PERMISSIONS` minus the withheld set, so a future
+ * leaf is included automatically and only the named exceptions are not.
  */
 export const DEFAULT_PERMISSION_PRESETS: PermissionPresets = {
-  admin: [...PERMISSIONS],
+  admin: PERMISSIONS.filter((p) => !WITHHELD_FROM_SEEDED_ADMIN.includes(p)),
   operator: ['objectives.create', 'objectives.cancel', 'objectives.reassign'],
 };
 

@@ -42,6 +42,7 @@ function mkBriefing(permissions: BriefingResponse['permissions']): BriefingRespo
     ],
     openObjectives: [],
     toolSources: [],
+    processDocument: null,
   };
 }
 

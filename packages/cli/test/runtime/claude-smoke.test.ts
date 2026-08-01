@@ -173,6 +173,8 @@ describeIfBuilt('csuite claude end-to-end', () => {
       'presets_delete',
       'presets_list',
       'presets_set',
+      'process_document_get',
+      'process_document_history',
       'recent',
       'roster',
       'send',
