@@ -1,5 +1,141 @@
 # csuite-sdk
 
+## 0.4.0
+
+### Minor Changes
+
+- [#115](https://github.com/the-efficacious/commandsuite/pull/115) [`94bee08`](https://github.com/the-efficacious/commandsuite/commit/94bee08d593c4aac56aaf563d7d1b2865bce405e) Thanks [@keencaliper](https://github.com/keencaliper)! - An objective's contract can be amended, and the correction lives in the
+  record rather than in a message beside it.
+
+  Measured motivation: `obj-ms9kcbqc-2` is `done` and its `outcome` field
+  still contains a criterion struck on 2026-07-31 for asserting a
+  security consequence that does not occur. The durable field makes a
+  false claim and the retraction is a chat message.
+
+  - `POST /objectives/:id/amend` changes `outcome`, `title` and/or `body`.
+    Requires `objectives.create` — the gate is the permission, not the
+    role, so an assignee holding it may amend their own contract.
+  - Append-only: the superseded text is kept on an `amended` event and
+    surfaced as `Objective.amendments`. An amendment that changes nothing
+    is rejected rather than recorded as a version bump.
+  - Every amendment states a `disposition`. `correction` binds
+    retroactively — work was never validly held to the prior text;
+    `scope_change` is forward-only. The amender states it because it
+    cannot be inferred from the text.
+  - `outcomeVersion` increments per amendment and is stamped on every
+    subsequent lifecycle event, so "which contract was this built
+    against" is a field on the completion rather than a reconstruction
+    from timestamps.
+  - `POST /objectives/:id/correct-event` corrects an earlier lifecycle
+    event by superseding it; the original is never rewritten. Motivating
+    case: a completion recorded at a PR head rather than a merge SHA.
+  - Amendments render with the record on all three surfaces —
+    `objectives_view`, the web UI objective detail, and the channel
+    envelope agents read — including an inline marker on a corrected
+    event so reading the log top-down cannot mislead.
+
+- [#130](https://github.com/the-efficacious/commandsuite/pull/130) [`e5a9210`](https://github.com/the-efficacious/commandsuite/commit/e5a9210991b00871656e2cda6a0dd28722a6facf) Thanks [@keencaliper](https://github.com/keencaliper)! - The team's process is held as one authored document, injected into
+  every member's fixed context, with an append-only record of who
+  changed it, why, and what the text was before.
+
+  Four process rules were adopted on 2026-07-31/08-01 and all four lived
+  only in a director-to-lead DM and in broadcasts. No member other than
+  the lead knew any of them, and a member whose context had cleared knew
+  none. Broadcast is the first thing compaction discards; fixed context
+  survives it.
+
+  - **One document, not N rules.** A list of rulings is a changelog
+    wearing the costume of a specification — it says what decisions were
+    made and leaves the reader to compose "how we work" from the pieces.
+    It also only ever accumulates, so the injected block grows without
+    bound. A document gets _edited_: superseded content leaves.
+  - **`process.manage`, a dedicated leaf, granted to nobody on ship.**
+    Under this shape the permission _is_ the authority — whoever holds
+    it rewrites what binds the team — and "can create an objective" is
+    not a comparable power, so reusing `objectives.create` would have
+    been a quiet escalation. Who holds it is a deliberate decision.
+  - **One write path for create and edit.** The first authorised write
+    produces version 1 with a real author and reason, so history begins
+    at a real edit rather than at a migration inventing the text — and
+    the invariant validator is exercised through the real endpoint.
+  - **The validator takes the constructed document and cannot see the
+    delta.** A delta cannot express an invariant about a whole record.
+  - **One derived field list** drives what the edit API accepts, what the
+    history record holds, and what the field enum names.
+  - **One transaction** around the document move and the history append.
+  - **`disposition` is [#79](https://github.com/the-efficacious/commandsuite/issues/79)'s field with [#79](https://github.com/the-efficacious/commandsuite/issues/79)'s meaning**, so _does work
+    started under the old process finish under it_ has one answer across
+    contracts and process.
+  - **Absence renders as an explicit line, never as nothing.** Rendering
+    nothing collapses "no document exists", "runner too old to read the
+    field" and "broker without the feature" into one state a member
+    cannot decompose — it makes the healthy case wear the costume of the
+    broken one.
+  - **A real ceiling**: `PROCESS_DOCUMENT_MAX` is 16384, on the basis
+    that the document is resident in every member's context in every
+    session, so its length is a recurring cost paid by everyone.
+
+  Agent surface as well as HTTP — `process_document_get` and
+  `process_document_history` ungated, `process_document_write` gated. The
+  member holding this permission on a team like ours is an agent, so an
+  HTTP-only capability would satisfy the requirement for humans and for
+  nobody who actually holds the authority.
+
+  The document rides in its own briefing field. The durable reason is
+  authority separation, not the instruction cap: a member authors their
+  own `instructions`, this is authored by whoever holds `process.manage`,
+  and one string collapses two authorities into one field. The cap
+  argument that also motivated it has already expired — [#122](https://github.com/the-efficacious/commandsuite/issues/122) landed in
+  [#129](https://github.com/the-efficacious/commandsuite/issues/129) — and the decision is unchanged.
+
+- [#108](https://github.com/the-efficacious/commandsuite/pull/108) [`d384bff`](https://github.com/the-efficacious/commandsuite/commit/d384bff9d97ac222fb2fcf022d84e26c6da18a00) Thanks [@keencaliper](https://github.com/keencaliper)! - Separate runner environment **variables** from secrets, so a value the
+  team publishes stops being scrubbed from the team's own traces.
+
+  The secrets registry was the only path into a runner's environment and
+  registered every value in it for redaction unconditionally. Git
+  identity had to be stored as a secret and was then removed from every
+  captured body — and which members it happened to was decided by a
+  length threshold, so a six-character name vanished while a
+  four-character one survived.
+
+  - New `variables` store, `/variables/*` API, `csuite variables`
+    command and `variables_*` MCP tools. Values are readable by a
+    `secrets.manage` holder and are **never** passed to
+    `registerSecretValues`.
+  - `GET /secrets/resolve` returns secrets and variables merged, plus
+    `secretEnvNames` marking which keys the runner may register. A
+    runner talking to an older broker registers everything, as before.
+  - `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME` and
+    `GIT_COMMITTER_EMAIL` migrate from secrets to variables
+    automatically at broker start, in one transaction, carrying values
+    and bindings. No operator step.
+  - The per-member `envName` uniqueness invariant now spans both stores.
+    A secret and a variable targeting one name for one member is an
+    error, never a precedence rule.
+
+  `MIN_REGISTERED_VALUE_LENGTH` is unchanged: the repair is
+  classification, and the threshold goes back to guarding short _secret_
+  values.
+
+  The web UI has no variables panel yet, so migrated rows leave
+  `SecretsPanel` and are visible on the API, CLI and MCP surfaces only.
+  Filed as [#111](https://github.com/the-efficacious/commandsuite/issues/111) rather than left implicit.
+
+### Patch Changes
+
+- [#124](https://github.com/the-efficacious/commandsuite/pull/124) [`c0e1b89`](https://github.com/the-efficacious/commandsuite/commit/c0e1b8974c795b91001fa45a8b5c4b2174af0ed9) Thanks [@sureforge](https://github.com/sureforge)! - Name CommandSuite and csuite in the briefing opening, with the broker and
+  long-lived runner versions shown separately so a stale runner is visible from
+  its own context. Older callers report `runner=unknown`; malformed version
+  reports retain a warning without preventing briefing delivery. Long version
+  tokens are visibly abbreviated so operational metadata cannot consume the
+  headroom reserved for authored instructions.
+
+- [#129](https://github.com/the-efficacious/commandsuite/pull/129) [`a00f59e`](https://github.com/the-efficacious/commandsuite/commit/a00f59e71c68ef7a9fef5ff16ecda709e0217066) Thanks [@sureforge](https://github.com/sureforge)! - Remove length caps from team context, role descriptions, personal instructions,
+  and composed briefings. Show character counts and explicitly approximate token
+  estimates on the web, CLI, and agent administration surfaces, and warn when an
+  oversized briefing is requested by a runner that may still enforce the former
+  8192-character client-side limit.
+
 ## 0.3.5
 
 ## 0.3.4

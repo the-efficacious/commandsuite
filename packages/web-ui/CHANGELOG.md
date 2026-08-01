@@ -1,5 +1,49 @@
 # csuite-web-ui
 
+## 0.4.0
+
+### Minor Changes
+
+- [#115](https://github.com/the-efficacious/commandsuite/pull/115) [`94bee08`](https://github.com/the-efficacious/commandsuite/commit/94bee08d593c4aac56aaf563d7d1b2865bce405e) Thanks [@keencaliper](https://github.com/keencaliper)! - An objective's contract can be amended, and the correction lives in the
+  record rather than in a message beside it.
+
+  Measured motivation: `obj-ms9kcbqc-2` is `done` and its `outcome` field
+  still contains a criterion struck on 2026-07-31 for asserting a
+  security consequence that does not occur. The durable field makes a
+  false claim and the retraction is a chat message.
+
+  - `POST /objectives/:id/amend` changes `outcome`, `title` and/or `body`.
+    Requires `objectives.create` — the gate is the permission, not the
+    role, so an assignee holding it may amend their own contract.
+  - Append-only: the superseded text is kept on an `amended` event and
+    surfaced as `Objective.amendments`. An amendment that changes nothing
+    is rejected rather than recorded as a version bump.
+  - Every amendment states a `disposition`. `correction` binds
+    retroactively — work was never validly held to the prior text;
+    `scope_change` is forward-only. The amender states it because it
+    cannot be inferred from the text.
+  - `outcomeVersion` increments per amendment and is stamped on every
+    subsequent lifecycle event, so "which contract was this built
+    against" is a field on the completion rather than a reconstruction
+    from timestamps.
+  - `POST /objectives/:id/correct-event` corrects an earlier lifecycle
+    event by superseding it; the original is never rewritten. Motivating
+    case: a completion recorded at a PR head rather than a merge SHA.
+  - Amendments render with the record on all three surfaces —
+    `objectives_view`, the web UI objective detail, and the channel
+    envelope agents read — including an inline marker on a corrected
+    event so reading the log top-down cannot mislead.
+
+### Patch Changes
+
+- [#129](https://github.com/the-efficacious/commandsuite/pull/129) [`a00f59e`](https://github.com/the-efficacious/commandsuite/commit/a00f59e71c68ef7a9fef5ff16ecda709e0217066) Thanks [@sureforge](https://github.com/sureforge)! - Remove length caps from team context, role descriptions, personal instructions,
+  and composed briefings. Show character counts and explicitly approximate token
+  estimates on the web, CLI, and agent administration surfaces, and warn when an
+  oversized briefing is requested by a runner that may still enforce the former
+  8192-character client-side limit.
+- Updated dependencies [[`c0e1b89`](https://github.com/the-efficacious/commandsuite/commit/c0e1b8974c795b91001fa45a8b5c4b2174af0ed9), [`94bee08`](https://github.com/the-efficacious/commandsuite/commit/94bee08d593c4aac56aaf563d7d1b2865bce405e), [`e5a9210`](https://github.com/the-efficacious/commandsuite/commit/e5a9210991b00871656e2cda6a0dd28722a6facf), [`d384bff`](https://github.com/the-efficacious/commandsuite/commit/d384bff9d97ac222fb2fcf022d84e26c6da18a00), [`a00f59e`](https://github.com/the-efficacious/commandsuite/commit/a00f59e71c68ef7a9fef5ff16ecda709e0217066)]:
+  - csuite-sdk@0.4.0
+
 ## 0.3.5
 
 ### Patch Changes
