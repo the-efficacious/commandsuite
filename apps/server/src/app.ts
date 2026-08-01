@@ -36,6 +36,7 @@ import {
 } from 'csuite-core';
 import {
   PATHS,
+  PROCESS_DOCUMENT_PATHS,
   PROTOCOL_HEADER,
   PROTOCOL_VERSION,
   RUNNER_VERSION_HEADER,
@@ -63,6 +64,7 @@ import {
   DeviceAuthorizationRequestSchema,
   DeviceTokenRequestSchema,
   DiscussObjectiveRequestSchema,
+  EditProcessDocumentRequestSchema,
   FsEntrySchema,
   FsMkdirRequestSchema,
   FsMoveRequestSchema,
@@ -166,6 +168,7 @@ import {
 } from './notifications/index.js';
 import { ObjectivesError, type ObjectivesStore } from './objectives.js';
 import { parseOtlpLogs, parseOtlpMetrics } from './otlp-parse.js';
+import { ProcessDocumentError, type ProcessDocumentStore } from './process-document.js';
 import type { PushSubscriptionStore } from './push/store.js';
 import type { RawBodyStore } from './raw-body-store.js';
 import { SecretsError, type SecretsStore } from './secrets.js';
@@ -261,6 +264,12 @@ export interface AppOptions {
    * registered with the trace redactor.
    */
   variables?: VariablesStore;
+  /**
+   * The team's process document. The `/process-document*` endpoints
+   * are registered iff this is provided, and `GET /briefing` carries
+   * the current document in its own field.
+   */
+  processDocument?: ProcessDocumentStore;
   /**
    * External Notifications registry — inbound webhook/API endpoints
    * routed to members and channels as ambient input. The
@@ -519,6 +528,7 @@ export function createApp(options: AppOptions): CreatedApp {
     mcpManager,
     secrets,
     variables,
+    processDocument,
     notifications,
     telemetryStore,
     genaiStore,
@@ -1084,6 +1094,12 @@ export function createApp(options: AppOptions): CreatedApp {
       // Structured field only — never rendered into the prose (same
       // staleness rule as openObjectives).
       toolSources: toolSources ? toolSources.resolveFor(member.name) : [],
+      // Structured field only, same as toolSources — the runner
+      // renders it into fixed context; the broker never folds it into
+      // the composed `instructions` prose, because that string is
+      // authored by the member and this is authored by whoever holds
+      // `process.manage`.
+      processDocument: processDocument ? processDocument.get() : null,
       externalNotificationEndpoints,
     };
     const briefing = composeBriefing(composeInput);
@@ -2828,6 +2844,62 @@ export function createApp(options: AppOptions): CreatedApp {
         });
       });
       return c.json({ ok: true, boundMembers: secrets.listBindings(secret.id) });
+    });
+  }
+
+  // ─── Process document endpoints ───────────────────────────────────
+  // The team's process as one authored document. Reads are open to
+  // every member — what binds you is not privileged information.
+  // Writes require `process.manage`, a DEDICATED leaf: under this
+  // shape the permission is the entire authority, and "can create an
+  // objective" is not a comparable power to "can rewrite what binds
+  // the team".
+  if (processDocument) {
+    const requireProcessManage = (
+      // biome-ignore lint/suspicious/noExplicitAny: helper is only ever called inside a route handler
+      ctx: Context<any, string, Record<string, unknown>>,
+    ): Response | null => {
+      const member = ctx.get('member');
+      if (!hasPermission(member.permissions, 'process.manage')) {
+        return ctx.json({ error: 'requires process.manage' }, 403);
+      }
+      return null;
+    };
+
+    // `document: null` rather than 404 when none is set. "No document
+    // exists" is a real state of a real team, not a missing resource,
+    // and a 404 would make the caller guess which it was.
+    app.get(PATHS.processDocument, auth, (c) => c.json({ document: processDocument.get() }));
+
+    // RETRIEVED, never resident. This is what keeps the injected size
+    // a function of the document rather than of how often it changed.
+    app.get(PROCESS_DOCUMENT_PATHS.history, auth, (c) =>
+      c.json({ edits: processDocument.history() }),
+    );
+
+    // Create-or-edit through ONE path, so the invariant validator runs
+    // on the real endpoint for both and version 1 has a real author.
+    app.put(PATHS.processDocument, auth, async (c) => {
+      const denied = requireProcessManage(c);
+      if (denied) return denied;
+      const raw = await c.req.json().catch(() => null);
+      const parsed = EditProcessDocumentRequestSchema.safeParse(raw);
+      if (!parsed.success) {
+        return c.json(
+          { error: 'invalid process document payload', details: parsed.error.issues },
+          400,
+        );
+      }
+      try {
+        const existed = processDocument.get() !== null;
+        const { document, edit } = processDocument.write(parsed.data, c.get('member').name);
+        return c.json({ document, edit }, existed ? 200 : 201);
+      } catch (err) {
+        if (err instanceof ProcessDocumentError) {
+          return c.json({ error: err.message, code: err.code }, 400);
+        }
+        return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+      }
     });
   }
 

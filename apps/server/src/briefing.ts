@@ -27,12 +27,20 @@
 import type {
   BriefingResponse,
   Member,
+  ProcessDocument,
   ResolvedToolSource,
   Team,
   Teammate,
 } from 'csuite-sdk/types';
 
 export interface ComposeBriefingInput {
+  /**
+   * The team's process document, or `null` when none has been
+   * written. `null` is rendered as an explicit empty state by the
+   * runner, never omitted — omitting it makes "no document exists"
+   * indistinguishable from "your runner cannot read this field".
+   */
+  processDocument?: ProcessDocument | null;
   self: Member;
   team: Team;
   /** Version loaded by the broker process composing this response. */
@@ -99,6 +107,22 @@ export function composeBriefing(input: ComposeBriefingInput): BriefingResponse {
     teammates,
     openObjectives,
     toolSources: input.toolSources ?? [],
+    // The team's process document rides HERE, never inside
+    // `instructions` — and the durable reason is NOT the cap.
+    //
+    //   1. the 8192 cap makes an oversized `instructions` fatal
+    //      -> dies when #122 removes it
+    //   2. deployed runners keep validating it locally
+    //      -> dies when every runner upgrades
+    //   3. a member authors their own `instructions`; the process
+    //      document is authored by whoever holds `process.manage`
+    //      -> never dies
+    //
+    // Reason 3 is why this field exists. Merging them collapses two
+    // authorities into one string, and no amount of cap removal makes
+    // that acceptable. If you are here because #122 landed and reason
+    // 1 has evaporated: it has, and the decision still holds.
+    processDocument: input.processDocument ?? null,
   };
 }
 

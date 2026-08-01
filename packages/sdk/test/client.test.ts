@@ -3,7 +3,12 @@ import { describe, expect, it } from 'vitest';
 import type { WebSocket as WsWebSocket } from 'ws';
 import { Client, ClientError } from '../src/client.js';
 import { PROTOCOL_HEADER, PROTOCOL_VERSION, RUNNER_VERSION_HEADER } from '../src/protocol.js';
-import type { Message, PushResult } from '../src/types.js';
+import {
+  EditProcessDocumentRequestSchema,
+  PROCESS_DOCUMENT_FIELDS,
+  ProcessDocumentEditSchema,
+} from '../src/schemas.js';
+import type { Message, ProcessDocumentField, PushResult } from '../src/types.js';
 
 /**
  * Minimal stand-in for `ws.WebSocket`. Exposes `.on('message'|'close'|'error')`
@@ -67,6 +72,7 @@ describe('Client', () => {
           teammates: [],
           openObjectives: [],
           toolSources: [],
+          processDocument: null,
         });
       }),
     });
@@ -236,5 +242,45 @@ describe('Client', () => {
     await iteration;
     expect(ws.closed).toBe(true);
     expect(received).toHaveLength(0);
+  });
+});
+
+// ─── the edit API and the record cannot name different fields ────────
+//
+// WHY THIS IS IN THE SDK AND NOT THE STORE. The store's types come
+// from types.ts and its tests never cross a parse boundary, so
+// decoupling these two zod shapes is INVISIBLE there — verified by
+// mutation: pointing `previous` at an empty object left all 14 store
+// tests green. The schema layer is where the derivation is load-
+// bearing, so this is where it has to be asserted.
+//
+// The defect being guarded is real and cost a partner's review on the
+// predecessor: the request accepted two fields the record had no
+// column for, so editing them wrote the new value and recorded no
+// prior one — silently, when paired with a field that was tracked.
+describe('process document editable fields', () => {
+  const META = ['reason', 'disposition'];
+
+  it('has one derived list behind the request, the record and the enum', () => {
+    const requestFields = Object.keys(EditProcessDocumentRequestSchema.shape)
+      .filter((k) => !META.includes(k))
+      .sort();
+    const previousFields = Object.keys(
+      ProcessDocumentEditSchema.shape.previous.unwrap().shape,
+    ).sort();
+
+    // Every field an edit accepts is a field the record can hold.
+    expect(previousFields).toEqual(requestFields);
+    // And the enum names exactly those, so `fields` cannot record a
+    // name that neither of the other two knows about.
+    expect([...PROCESS_DOCUMENT_FIELDS].sort()).toEqual(requestFields);
+  });
+
+  it('keeps the runtime list and the TS union naming the same set', () => {
+    // Fails TYPECHECK, not the test run, if they diverge. `pnpm test`
+    // does not typecheck here; `pnpm typecheck` is the gate.
+    const runtimeIsInUnion: ProcessDocumentField[] = [...PROCESS_DOCUMENT_FIELDS];
+    const unionIsInRuntime: (typeof PROCESS_DOCUMENT_FIELDS)[number][] = runtimeIsInUnion;
+    expect(unionIsInRuntime.length).toBeGreaterThan(0);
   });
 });

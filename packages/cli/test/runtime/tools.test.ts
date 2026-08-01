@@ -45,6 +45,7 @@ const BRIEFING: BriefingResponse = {
   ],
   openObjectives: [],
   toolSources: [],
+  processDocument: null,
 };
 
 function makeBroker(overrides: Partial<BrokerClient> = {}): BrokerClient {

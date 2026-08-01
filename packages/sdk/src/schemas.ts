@@ -758,6 +758,129 @@ export const ResolveSecretsResponseSchema = z.object({
   secretEnvNames: z.array(z.string()).optional(),
 });
 
+// ─────────────────────── Team process document ────────────────────
+//
+// The team's process as ONE authored document, injected into every
+// member's fixed context. Not a list of rulings: a list is a changelog
+// wearing the costume of a specification, and it only ever
+// accumulates, whereas a document gets edited and superseded content
+// leaves.
+//
+// Authority is the edit permission and nothing else. There is no
+// per-statement provenance, no anchors and no citation machinery —
+// whoever holds the leaf can change what binds the team, and the
+// record says who did it, why, and what the text was before.
+
+/**
+ * The ceiling on the injected document, and therefore the answer to
+ * "state the ceiling, or state that there is none."
+ *
+ * 16384 characters. Basis, so the number is arguable rather than
+ * arbitrary: this document is resident in EVERY member's context in
+ * EVERY session, so its size is a recurring cost paid by everyone, not
+ * a one-off. Twice the authored-instructions cap is ample for a team
+ * process — the four rules this team actually had rendered to 1085
+ * characters — while bounding that recurring cost at a number someone
+ * can reason about.
+ *
+ * The predecessor design had no ceiling at all: it held N rules with
+ * nothing capping N, so the injected block was unbounded and nothing
+ * reported it. One document with one cap is the whole fix.
+ *
+ * This is NOT the `instructions` cap and must never become it. The
+ * document rides in its own briefing field precisely because
+ * `MemberSchema.instructions` is capped at 8192 for authored text and
+ * that cap also bounds composed output — on this team the longest
+ * composed briefing sits 20 characters under it, so a process document
+ * inside that string stops a runner rather than truncating.
+ */
+export const PROCESS_DOCUMENT_MAX = 16_384;
+
+/**
+ * THE single list of what an edit may change.
+ *
+ * One shape drives all three of: what the edit API accepts, what the
+ * history record can hold, and what the field enum names. They cannot
+ * disagree, because there is only one of them.
+ *
+ * This exists because of a real defect in the predecessor: the request
+ * schema accepted two fields the history record had no columns for, so
+ * editing them wrote the new value and recorded no prior one — and
+ * paired with a tracked field it did that silently, because the record
+ * looked well-formed. Adding the missing entries would have made the
+ * two lists agree that day without stopping the next field from being
+ * accepted before it was recordable.
+ *
+ * Today the list has one entry. That is exactly when this construction
+ * is worth building, not a reason to skip it: the second field is
+ * where the defect appears, and by then nobody is thinking about it.
+ */
+const EDITABLE_PROCESS_DOCUMENT_SHAPE = {
+  text: z.string().min(1).max(PROCESS_DOCUMENT_MAX),
+};
+
+type EditableProcessDocumentField = keyof typeof EDITABLE_PROCESS_DOCUMENT_SHAPE;
+
+/** Derived from the shape's own keys — not a second list to maintain. */
+export const PROCESS_DOCUMENT_FIELDS = Object.keys(EDITABLE_PROCESS_DOCUMENT_SHAPE) as [
+  EditableProcessDocumentField,
+  ...EditableProcessDocumentField[],
+];
+
+export const ProcessDocumentFieldSchema = z.enum(PROCESS_DOCUMENT_FIELDS);
+
+export const ProcessDocumentSchema = z.object({
+  text: z.string().min(1).max(PROCESS_DOCUMENT_MAX),
+  /** 1 on the first write. Incremented by every edit. */
+  version: z.number().int().positive(),
+  createdBy: NameSchema,
+  createdAt: z.number().int().nonnegative(),
+  updatedBy: NameSchema,
+  updatedAt: z.number().int().nonnegative(),
+});
+
+/**
+ * One entry in the append-only edit history.
+ *
+ * `previous` is empty on version 1 — the document was created, so
+ * there is no prior text. Every later edit carries the text as it
+ * stood before, retained rather than reconstructed, so the diff the
+ * outcome asks for is derived from two stored strings.
+ */
+export const ProcessDocumentEditSchema = z.object({
+  /** The version this edit PRODUCED. */
+  version: z.number().int().positive(),
+  ts: z.number().int().nonnegative(),
+  actor: NameSchema,
+  reason: z.string().min(1).max(2048),
+  disposition: AmendmentDispositionSchema,
+  fields: z.array(ProcessDocumentFieldSchema),
+  /** Same shape as what the edit API accepts, by construction. */
+  previous: z.object(EDITABLE_PROCESS_DOCUMENT_SHAPE).partial().default({}),
+});
+
+/**
+ * Create-or-edit. One request shape and one endpoint for both, so the
+ * invariant validator is exercised through the real path rather than
+ * only by a unit test calling it directly.
+ */
+export const EditProcessDocumentRequestSchema = z
+  .object(EDITABLE_PROCESS_DOCUMENT_SHAPE)
+  .partial()
+  .extend({
+    reason: z.string().min(1).max(2048),
+    disposition: AmendmentDispositionSchema,
+  });
+
+export const GetProcessDocumentResponseSchema = z.object({
+  /** `null` when no document has been set — an explicit state, not an absent field. */
+  document: ProcessDocumentSchema.nullable(),
+});
+
+export const ProcessDocumentHistoryResponseSchema = z.object({
+  edits: z.array(ProcessDocumentEditSchema),
+});
+
 // ────────────────────────── Variables ─────────────────────────────
 //
 // Same grammar as secrets: a variable and a secret share one
@@ -1536,6 +1659,19 @@ export const BriefingResponseSchema = MemberSchema.extend({
   // Defaulted so pre-tool-sources brokers (and test fixtures) that
   // omit the field still parse.
   toolSources: z.array(ResolvedToolSourceSchema).default([]),
+  /**
+   * The team's process document, or `null` when none is set.
+   *
+   * Its OWN field, and the durable reason is authority separation, not
+   * the 8192 cap: a member authors their own `instructions`, while the
+   * process document is authored by whoever holds `process.manage`.
+   * One string would collapse two authorities into one field. The cap
+   * argument is real today and expires with #122; this one does not.
+   *
+   * `.default(null)` so an older broker that omits the field parses
+   * rather than failing the client-side schema.
+   */
+  processDocument: ProcessDocumentSchema.nullable().default(null),
 });
 
 export const RosterResponseSchema = z.object({

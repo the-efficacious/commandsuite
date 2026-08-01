@@ -438,6 +438,7 @@ describe('<Sidebar />', () => {
       ],
       openObjectives: [],
       toolSources: [],
+      processDocument: null,
       instructions: '',
     };
     // roster.value stays null from beforeEach reset.
@@ -535,6 +536,7 @@ describe('<TeamHome />', () => {
       teammates: [],
       openObjectives: [],
       toolSources: [],
+      processDocument: null,
       instructions: '',
     };
     roster.value = {
@@ -572,6 +574,7 @@ describe('<TeamHome />', () => {
       teammates: [],
       openObjectives: [],
       toolSources: [],
+      processDocument: null,
       instructions: '',
     };
     roster.value = {
@@ -631,6 +634,7 @@ describe('<TeamHome />', () => {
       teammates: [],
       openObjectives: [],
       toolSources: [],
+      processDocument: null,
       instructions: '',
     };
     roster.value = {
@@ -661,6 +665,7 @@ describe('<TeamHome />', () => {
       teammates: [],
       openObjectives: [],
       toolSources: [],
+      processDocument: null,
       instructions: '',
     };
     roster.value = {
@@ -712,6 +717,7 @@ describe('briefing bootstrap', () => {
       ],
       openObjectives: [],
       toolSources: [],
+      processDocument: null,
       instructions: '',
     };
     render(<Sidebar viewer="director-1" />);
@@ -768,6 +774,7 @@ describe('<Sidebar /> overview button', () => {
       ],
       openObjectives: [],
       toolSources: [],
+      processDocument: null,
       instructions: '',
     };
     render(<Sidebar viewer="director-1" />);
@@ -801,6 +808,7 @@ describe('<TeamHome /> context header', () => {
       ],
       openObjectives: [],
       toolSources: [],
+      processDocument: null,
       instructions: '',
     };
     roster.value = {

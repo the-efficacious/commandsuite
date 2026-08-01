@@ -38,6 +38,7 @@
 
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { Client as BrokerClient, ClientError } from 'csuite-sdk/client';
+import { PROCESS_DOCUMENT_MAX } from 'csuite-sdk/schemas';
 import type {
   Attachment,
   BriefingResponse,
@@ -441,6 +442,11 @@ export function defineTools(
     // originated" rule so the agent doesn't try to touch someone
     // else's objective and eat a 403.
     ...buildAuthorityTools(briefing),
+    // The team's process document. Reading it is not how an agent
+    // learns what binds it — the document is already in its fixed
+    // context. These cover the edit history, which injection
+    // deliberately leaves out, and the write path.
+    ...buildProcessDocumentTools(briefing),
     // Admin tools for live team/member/preset management. Each gated
     // on the corresponding `team.manage` or `members.manage`
     // permission so non-admin agents don't see them in their toolbox.
@@ -1680,6 +1686,98 @@ function buildFilesystemTools(name: string): Tool[] {
   ];
 }
 
+/**
+ * Process-document tools.
+ *
+ * The document itself is injected, so `get` is not how an agent learns
+ * what binds it. These exist for the two things injection does not
+ * carry: the superseded text behind each edit, and the write path.
+ *
+ * The write gate is `process.manage`, a DEDICATED leaf rather than a
+ * reuse of `objectives.create`. Under this design the permission IS
+ * the authority — whoever holds it can rewrite what binds the team —
+ * and "can create an objective" is not a comparable power.
+ */
+function buildProcessDocumentTools(briefing: BriefingResponse): Tool[] {
+  const tools: Tool[] = [
+    {
+      name: 'process_document_get',
+      description:
+        "Read the team's process document. **You do not need this to find out what binds " +
+        'you** — the current document is already in your fixed context, injected as current ' +
+        'state, and it stays correct across compaction. Call this when you want the version ' +
+        'number, who last edited it, or to confirm what the broker holds. Returns `null` ' +
+        'when no document has been set, which is a real state of a real team and not an ' +
+        'error: it means nobody has written one yet, not that you cannot see it. Readable ' +
+        'by every member — what binds you is not privileged information.',
+      inputSchema: { type: 'object', properties: {} },
+    },
+    {
+      name: 'process_document_history',
+      description:
+        'Retrieve the edit history of the process document, oldest first. This is the other ' +
+        'half of "history retrievable, not resident": your injected context carries only the ' +
+        'current text, so editing it fifty times costs what editing it once costs, and the ' +
+        'superseded text lives here. Each entry records who edited it, when, why, the ' +
+        '`disposition`, and the FULL text as it stood before that edit — so the diff is ' +
+        'derived from two stored strings rather than cached. Use it to answer "was I working ' +
+        'under different process when I started this?", which the current text cannot tell ' +
+        'you. Version 1 is the creation and carries no prior text. Returns an empty list ' +
+        'when no document has been set.',
+      inputSchema: { type: 'object', properties: {} },
+    },
+  ];
+
+  if (!briefing.permissions.includes('process.manage')) return tools;
+
+  tools.push({
+    name: 'process_document_write',
+    description:
+      "Create or replace the team's process document. Requires `process.manage`. **This is " +
+      'the whole authority** — whoever holds this leaf decides what binds every member, so ' +
+      'the record of who changed it and why is the only accountability there is. ' +
+      '**The text you supply REPLACES the document; it is not appended.** Read it first ' +
+      'with `process_document_get` and send the full new text, or you will delete everything ' +
+      'you did not retype. The first write creates version 1; every later write increments ' +
+      'the version and retains the prior text, so nothing is destroyed. The document reaches ' +
+      "every member's injected context at their NEXT runner start — it is NOT pushed into a " +
+      'running session, so a teammate mid-session has not seen your edit. No broadcast is ' +
+      'needed for it to take effect and none is sent.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        text: {
+          type: 'string',
+          description:
+            'The complete new document, which REPLACES the current text entirely. Not a ' +
+            'patch, not an addition. Max ' +
+            String(PROCESS_DOCUMENT_MAX) +
+            " characters — it is resident in every member's context in every session, so " +
+            'its length is a recurring cost paid by everyone.',
+        },
+        reason: {
+          type: 'string',
+          description:
+            'Why the process is changing. Required, max 2048 characters. This is what a ' +
+            'reader six weeks from now has instead of the conversation you are in.',
+        },
+        disposition: {
+          type: 'string',
+          enum: ['correction', 'scope_change'],
+          description:
+            '`correction` — retroactive; the prior text was never validly binding. ' +
+            '`scope_change` — forward-only; work already underway finishes under the prior ' +
+            'text. Same field and meaning as `objectives_amend`, so "does work started under ' +
+            'the old process finish under it" has one answer across contracts and process.',
+        },
+      },
+      required: ['text', 'reason', 'disposition'],
+    },
+  });
+
+  return tools;
+}
+
 function buildAuthorityTools(briefing: BriefingResponse): Tool[] {
   const { permissions } = briefing;
   const canCreate = permissions.includes('objectives.create');
@@ -1932,6 +2030,12 @@ export async function handleToolCall(
         return await handleObjectivesComplete(args, brokerClient);
       case 'objectives_create':
         return await handleObjectivesCreate(args, brokerClient, briefing);
+      case 'process_document_get':
+        return await handleProcessDocumentGet(brokerClient);
+      case 'process_document_history':
+        return await handleProcessDocumentHistory(brokerClient);
+      case 'process_document_write':
+        return await handleProcessDocumentWrite(args, brokerClient);
       case 'objectives_amend':
         return await handleObjectivesAmend(args, brokerClient);
       case 'objectives_correct_event':
@@ -2411,6 +2515,80 @@ async function handleObjectivesList(
     );
   });
   return textResult(`${phrase}:\n${lines.join('\n')}`);
+}
+
+async function handleProcessDocumentGet(brokerClient: BrokerClient): Promise<CallToolResult> {
+  const doc = await brokerClient.getProcessDocument();
+  if (doc === null) {
+    return textResult(
+      'no process document has been set for this team. That is a real state, not an error — ' +
+        'nobody has written one yet.',
+    );
+  }
+  return textResult(
+    `process document v${doc.version}, last edited by ${doc.updatedBy}. ` +
+      `Created by ${doc.createdBy}.\n\n${doc.text}`,
+  );
+}
+
+async function handleProcessDocumentHistory(brokerClient: BrokerClient): Promise<CallToolResult> {
+  const edits = await brokerClient.processDocumentHistory();
+  if (edits.length === 0) {
+    return textResult('no process document has been set, so there is no history.');
+  }
+  const lines = edits.map((e) => {
+    const binding =
+      e.disposition === 'correction'
+        ? 'retroactive — the prior text was never validly binding'
+        : 'forward-only — work already underway finished under the prior text';
+    const prior =
+      e.previous.text === undefined
+        ? '      (created — no prior text)'
+        : `      prior text was ${e.previous.text.length} characters; ` +
+          'fetch it from this record if you need to compare';
+    return `  v${e.version} by ${e.actor} — ${e.disposition} (${binding})\n      reason: ${e.reason}\n${prior}`;
+  });
+  return textResult(
+    [`process document — ${edits.length} edit(s), oldest first:`, ...lines].join('\n'),
+  );
+}
+
+async function handleProcessDocumentWrite(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+): Promise<CallToolResult> {
+  const text = typeof args.text === 'string' ? args.text : '';
+  if (!text) {
+    return errorResult(
+      'process_document_write: `text` is required, and it REPLACES the whole document — ' +
+        'read the current one with `process_document_get` first',
+    );
+  }
+  const reason = typeof args.reason === 'string' ? args.reason : '';
+  if (!reason) return errorResult('process_document_write: `reason` is required');
+  if (args.disposition !== 'correction' && args.disposition !== 'scope_change') {
+    return errorResult(
+      'process_document_write: `disposition` must be "correction" (retroactive) or ' +
+        '"scope_change" (forward-only) — the same field and meaning as `objectives_amend`',
+    );
+  }
+  const { document, edit } = await brokerClient.writeProcessDocument({
+    text,
+    reason,
+    disposition: args.disposition,
+  });
+  const binding =
+    edit.disposition === 'correction'
+      ? 'retroactive — work was never validly held to the prior text'
+      : 'forward-only — work already underway finishes under the prior text';
+  const created = edit.version === 1;
+  return textResult(
+    `${created ? 'created' : 'updated'} the process document at v${document.version} ` +
+      `(${edit.disposition}: ${binding}). ` +
+      `${created ? 'History begins here.' : 'The prior text is retained and retrievable via `process_document_history`.'} ` +
+      'Every member receives it in their injected context at their NEXT runner start — ' +
+      'a teammate already running has not seen it. No broadcast is needed and none was sent.',
+  );
 }
 
 async function handleObjectivesAmend(

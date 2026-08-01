@@ -59,6 +59,7 @@ import {
   findLatestThreadId,
   spawnCodex,
 } from '../../../src/runtime/agents/codex/adapter.js';
+import { composeFixedContext } from '../../../src/runtime/fixed-context.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -87,6 +88,7 @@ const MINIMAL_BRIEFING: BriefingResponse = {
   teammates: [],
   openObjectives: [],
   toolSources: [],
+  processDocument: null,
 };
 
 const THREAD_A = '019f0000-0000-7000-8000-00000000000a';
@@ -161,7 +163,12 @@ describe('spawnCodex — resume', () => {
     expect(resumeCall?.[1]).toMatchObject({
       threadId: THREAD_B,
       cwd: '/tmp',
-      developerInstructions: 'briefing prose',
+      // Composed, not the raw briefing string: the runner hands the
+      // agent `instructions` PLUS the process-document block. With no
+      // document set that block is an explicit line rather than
+      // nothing, so a member can tell "the team has no process" apart
+      // from "my runner cannot read that field".
+      developerInstructions: composeFixedContext(MINIMAL_BRIEFING),
       approvalPolicy: 'never',
       sandbox: 'danger-full-access',
     });

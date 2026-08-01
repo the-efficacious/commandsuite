@@ -101,6 +101,8 @@ export const PATHS = {
   // registered with the trace redactor. `/secrets/resolve` returns
   // both, merged, and marks which keys are secret.
   variables: '/variables',
+  /** The team's process document. Singleton; no id in the path. */
+  processDocument: '/process-document',
   // External Notifications — inbound webhooks / API calls routed to
   // members and channels as ambient input. Admin surface under
   // `/notifications/*` gates on `notifications.manage`; the ingress
@@ -235,6 +237,11 @@ export const SECRET_PATHS = {
   bindings: (slug: string) => `/secrets/${encodeURIComponent(slug)}/bindings`,
   binding: (slug: string, name: string) =>
     `/secrets/${encodeURIComponent(slug)}/bindings/${encodeURIComponent(name)}`,
+} as const;
+
+/** The process document's edit history — RETRIEVED, never injected. */
+export const PROCESS_DOCUMENT_PATHS = {
+  history: '/process-document/history',
 } as const;
 
 /** Path builders for variable subresources. Mirrors `SECRET_PATHS`. */
