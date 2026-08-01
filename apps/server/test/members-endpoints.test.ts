@@ -7,7 +7,12 @@
  * exactly once per successful mutation and never on 4xx/5xx.
  */
 
-import { Broker, InMemoryEventLog } from 'csuite-core';
+import {
+  Broker,
+  clearRegisteredSecretValues,
+  InMemoryEventLog,
+  registerSecretValues,
+} from 'csuite-core';
 import type { Member, Team, Teammate } from 'csuite-sdk/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
@@ -98,6 +103,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  clearRegisteredSecretValues();
   vi.restoreAllMocks();
 });
 
@@ -220,6 +226,22 @@ describe('PATCH /members/:name', () => {
     const body = (await res.json()) as Member;
     expect(body.instructions).toBe('pin this guidance into the system prompt');
     expect(persistMembers).toHaveBeenCalledTimes(1);
+  });
+
+  it('warns but stores intact when instructions contain a registered secret', async () => {
+    registerSecretValues(['registered-instruction-secret']);
+    const { app } = makeApp();
+    const instructions = 'Refer to registered-instruction-secret by environment variable name.';
+    const res = await app.request('/members/scout', {
+      method: 'PATCH',
+      headers: { ...authed(ADMIN_TOKEN), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instructions }),
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('X-CSuite-Warning')).toContain('will appear verbatim');
+    const body = (await res.json()) as Member & { warning: string };
+    expect(body.instructions).toBe(instructions);
+    expect(body.warning).toContain('use a secret reference');
   });
 
   it('updates permissions via preset names', async () => {

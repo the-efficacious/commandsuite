@@ -112,6 +112,8 @@ export function isGenAiLogRecord(name: string): boolean {
 }
 
 export interface GenAiCorrelatorOptions {
+  /** Exact briefing blocks issued to this member, read at emission time. */
+  getRedactionExemptions?: () => readonly string[];
   /** Structured logger for skip/continue diagnostics. Optional. */
   log?: (msg: string, ctx?: Record<string, unknown>) => void;
   /**
@@ -334,9 +336,10 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
       });
     }
 
-    // Raw capture FIRST — verbatim bytes, content-addressed, before
-    // anything parses or redacts them. Unconditional: a body whose JSON
-    // later fails to parse is still preserved here.
+    // Raw capture FIRST within the correlator — input bytes are
+    // content-addressed before this layer parses them. Inline OTLP bodies
+    // have already passed attribute redaction upstream; broker briefing
+    // blocks are exempt there. A body whose JSON later fails still lands.
     let hash: string | null = null;
     let exchangeId: number | null = null;
     if (rawStore) {
@@ -412,6 +415,7 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
       const inference = anthropicToGenAi({
         requestBody,
         responseBody,
+        redactionExemptions: opts.getRedactionExemptions?.(),
         querySource: p.querySource,
         agentName: p.agentName,
         ts: p.startedAt || p.endedAt || now(),

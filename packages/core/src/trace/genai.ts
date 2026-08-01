@@ -23,9 +23,12 @@
 
 import type { GenAiInference, GenAiMessage, GenAiPart, GenAiUsage } from 'csuite-sdk';
 import { asString, parseUsage } from './anthropic.js';
+import type { RedactionOptions } from './redact.js';
 import { redactJson } from './redact.js';
 
 export interface AnthropicToGenAiInput {
+  /** Exact instruction blocks issued by the broker; applied only to the system field. */
+  redactionExemptions?: RedactionOptions['exemptions'];
   /** Parsed Anthropic Messages REQUEST body (has `system`, `messages`, `model`). */
   requestBody: unknown;
   /** Parsed Anthropic Messages RESPONSE body (has `content`, `stop_reason`, `usage`, `id`). */
@@ -75,7 +78,7 @@ export function anthropicToGenAi(input: AnthropicToGenAiInput): GenAiInference {
   const stopReason = asString(res?.stop_reason);
   const finishReasons = stopReason ? [stopReason] : [];
 
-  const systemInstructions = mapContent(req?.system);
+  const systemInstructions = mapContent(req?.system, { exemptions: input.redactionExemptions });
   const inputMessages = mapMessages(req?.messages);
   const outputMessages = mapOutput(res);
 
@@ -134,21 +137,21 @@ function mapOutput(res: Record<string, unknown> | null): GenAiMessage[] {
  * Anthropic `content` is either a plain string, an array of blocks, or
  * absent. Used for both message content and the request `system` prompt.
  */
-function mapContent(content: unknown): GenAiPart[] {
-  if (typeof content === 'string') return [{ type: 'text', content: redactJson(content) }];
+function mapContent(content: unknown, options: RedactionOptions = {}): GenAiPart[] {
+  if (typeof content === 'string') return [{ type: 'text', content: redactJson(content, options) }];
   if (content == null) return [];
-  if (!Array.isArray(content)) return [{ type: 'generic', content: redactJson(content) }];
-  return content.map(mapBlock);
+  if (!Array.isArray(content)) return [{ type: 'generic', content: redactJson(content, options) }];
+  return content.map((block) => mapBlock(block, options));
 }
 
 /** Map one Anthropic content block to a typed `GenAiPart`. Never throws. */
-function mapBlock(block: unknown): GenAiPart {
+function mapBlock(block: unknown, options: RedactionOptions = {}): GenAiPart {
   const b = asRecord(block);
-  if (!b) return { type: 'generic', content: redactJson(block) };
+  if (!b) return { type: 'generic', content: redactJson(block, options) };
   try {
     switch (asString(b.type)) {
       case 'text':
-        return { type: 'text', content: redactJson(asString(b.text) ?? '') };
+        return { type: 'text', content: redactJson(asString(b.text) ?? '', options) };
       case 'tool_use':
         return {
           type: 'tool_call',
