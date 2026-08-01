@@ -280,6 +280,42 @@ describe('genai correlator', () => {
     expect(out).toHaveLength(0);
   });
 
+  // The link capture-health's gap detection rests on. `UNMATCHED_PREDICATE`
+  // treats a completed `llm_exchange` marker as unmatched unless a gen_ai row
+  // AND both `raw_exchange` rows AND both blobs exist. Three of us read that
+  // SQL and concluded a body the runner could not resolve leaves the marker
+  // unmatched — but the premise, that an unresolvable `body_ref` writes no raw
+  // row, was asserted nowhere. If it DID write one, the marker could match,
+  // capture health would read clean, and a real capture gap would be invisible.
+  //
+  // The sibling test above proves the gen_ai record is not emitted. That is a
+  // different store: the raw path is deliberately independent of the gen_ai
+  // path ("an unreadable body never blocks other records"), so neither result
+  // implies the other.
+  it('writes NO raw_exchange row for a body_ref it cannot resolve', () => {
+    const rawStore = createRawBodyStore(openDatabase(':memory:'));
+    const corr = createGenAiCorrelator({ rawStore, memberName: 'alice' });
+    const resRef = writeBody(RESPONSE_BODY);
+    const resBytes = readFileSync(resRef);
+    const missing = join(dir, 'does-not-exist.json');
+
+    corr.ingest([
+      logRecord('api_request_body', 1, { body_ref: missing, model: 'claude-opus-4-6' }),
+      logRecord('api_request', 2, { request_id: 'req_gap', model: 'claude-opus-4-6' }),
+      logRecord('api_response_body', 3, { body_ref: resRef, request_id: 'req_gap' }),
+    ]);
+
+    // No request row, and no blob it could have pointed at.
+    expect(rawStore.list({ memberName: 'alice', kind: 'request' })).toHaveLength(0);
+
+    // The healthy sibling in the same batch still landed — this asserts the
+    // absence is specific to the unresolvable ref rather than the raw store
+    // being inert in this fixture, which would make the check vacuous.
+    const responses = rawStore.list({ memberName: 'alice', kind: 'response' });
+    expect(responses).toHaveLength(1);
+    expect(rawStore.getBlob(responses[0]?.hash ?? '')).toEqual(resBytes);
+  });
+
   it('tolerates an inline body when no body_ref is present', () => {
     const corr = createGenAiCorrelator();
     const out = corr.ingest([
