@@ -45,6 +45,7 @@
  * and nothing else would bound it.
  */
 
+import { PROCESS_RULE_FIELDS } from 'csuite-sdk/schemas';
 import type {
   AmendProcessRuleRequest,
   CreateProcessRuleRequest,
@@ -60,6 +61,47 @@ export class ProcessRulesError extends Error {
     super(message);
     this.name = 'ProcessRulesError';
     this.code = code;
+  }
+}
+
+/** The mutable half of a rule — what `create` builds and `amend` moves. */
+type AmendableFields = Pick<
+  ProcessRule,
+  'title' | 'text' | 'status' | 'provenance' | 'attribution' | 'disputeReason'
+>;
+
+/**
+ * Every invariant that must hold of a WHOLE rule, checked in one place
+ * by both `create` and `amend`.
+ *
+ * It takes the fully constructed rule, never a delta. `amend`
+ * originally checked only the fields the amendment supplied, which
+ * cannot express an invariant about a whole rule: amending
+ * `provenance` to `director` on a rule created as `unattributed`
+ * passed, because the amendment did not mention `attribution` and the
+ * check never looked at the row it was producing. The result rendered
+ * as "stated by a director" for a rule no director stated — the exact
+ * laundering `provenance` exists to prevent, reachable only by the two
+ * members the field constrains.
+ *
+ * Any check that inspects only what changed will grow this defect
+ * again, so this signature deliberately cannot see the delta.
+ */
+function assertRuleInvariants(rule: Omit<AmendableFields, 'title' | 'text'>): void {
+  // A disputed rule that does not say what is in dispute is worse than
+  // an absent one: a reader cannot tell whether to follow it.
+  if (rule.status === 'disputed' && !rule.disputeReason) {
+    throw new ProcessRulesError(
+      'invalid_input',
+      'a disputed rule must state disputeReason — what is in dispute',
+    );
+  }
+  if (rule.provenance !== 'unattributed' && !rule.attribution) {
+    throw new ProcessRulesError(
+      'invalid_input',
+      `provenance '${rule.provenance}' requires an attribution — ` +
+        'rendering an unattributed rule as one someone stated launders it',
+    );
   }
 }
 
@@ -215,20 +257,12 @@ class SqliteProcessRulesStore implements ProcessRulesStore {
       );
     }
     const status = input.status ?? 'in_force';
-    // A disputed rule that does not say what is in dispute is worse
-    // than an absent one: a reader cannot tell whether to follow it.
-    if (status === 'disputed' && !input.disputeReason) {
-      throw new ProcessRulesError(
-        'invalid_input',
-        'a disputed rule must state disputeReason — what is in dispute',
-      );
-    }
-    if (input.provenance !== 'unattributed' && !input.attribution) {
-      throw new ProcessRulesError(
-        'invalid_input',
-        `provenance '${input.provenance}' requires an attribution`,
-      );
-    }
+    assertRuleInvariants({
+      status,
+      provenance: input.provenance,
+      attribution: input.attribution ?? null,
+      disputeReason: input.disputeReason ?? null,
+    });
     this.insertStmt.run(
       input.anchor,
       input.title,
@@ -253,9 +287,19 @@ class SqliteProcessRulesStore implements ProcessRulesStore {
     const current = this.get(anchor);
     if (!current) throw new ProcessRulesError('not_found', `no rule anchored '${anchor}'`);
 
+    // Change detection is driven by PROCESS_RULE_FIELDS, which is
+    // derived from the one shape that also defines what `amend`
+    // accepts and what `previous` can hold. A field cannot be
+    // accepted here and go unrecorded: it is the same list.
+    //
+    // This loop replaced four hand-written `if` blocks plus two bare
+    // assignments for `attribution` and `disputeReason` — the two
+    // fields the request took and the record never kept. Paired with a
+    // title change that loss was silent: the amendment looked
+    // well-formed because `previous.title` was present.
     const fields: ProcessRuleField[] = [];
-    const previous: Partial<Record<ProcessRuleField, string>> = {};
-    const next = {
+    const previous: ProcessRuleAmendment['previous'] = {};
+    const next: AmendableFields = {
       title: current.title,
       text: current.text,
       status: current.status,
@@ -263,41 +307,32 @@ class SqliteProcessRulesStore implements ProcessRulesStore {
       attribution: current.attribution,
       disputeReason: current.disputeReason,
     };
-    if (input.title !== undefined && input.title !== current.title) {
-      fields.push('title');
-      previous.title = current.title;
-      next.title = input.title;
+    for (const field of PROCESS_RULE_FIELDS) {
+      const incoming = input[field];
+      // `undefined` means "leave alone". `null` is a real value on the
+      // nullable fields and means "clear it", which is how a rule moves
+      // back to `unattributed` without keeping a stale attribution.
+      if (incoming === undefined) continue;
+      if (incoming === current[field]) continue;
+      fields.push(field);
+      (previous as Record<string, unknown>)[field] = current[field];
+      (next as Record<string, unknown>)[field] = incoming;
     }
-    if (input.text !== undefined && input.text !== current.text) {
-      fields.push('text');
-      previous.text = current.text;
-      next.text = input.text;
-    }
-    if (input.status !== undefined && input.status !== current.status) {
-      fields.push('status');
-      previous.status = current.status;
-      next.status = input.status;
-    }
-    if (input.provenance !== undefined && input.provenance !== current.provenance) {
-      fields.push('provenance');
-      previous.provenance = current.provenance;
-      next.provenance = input.provenance;
-    }
-    if (input.attribution !== undefined) next.attribution = input.attribution;
-    if (input.disputeReason !== undefined) next.disputeReason = input.disputeReason;
 
     if (fields.length === 0) {
       throw new ProcessRulesError(
         'invalid_input',
-        'amendment changes nothing — supply a title, text, status or provenance that differs',
+        `amendment changes nothing — supply one of ${PROCESS_RULE_FIELDS.join(', ')} that differs`,
       );
     }
-    if (next.status === 'disputed' && !next.disputeReason) {
-      throw new ProcessRulesError(
-        'invalid_input',
-        'a disputed rule must state disputeReason — what is in dispute',
-      );
-    }
+
+    // The SAME invariant `create` enforces, applied to the fully
+    // constructed rule rather than to the amendment's own fields.
+    // Checking only what the amendment supplied let an amendment
+    // manufacture authority creation refuses: `unattributed` with no
+    // attribution, amended to `director` without supplying one, left a
+    // rule rendering as "stated by a director" that no director stated.
+    assertRuleInvariants(next);
 
     const version = current.version + 1;
     const amendment: ProcessRuleAmendment = {
@@ -361,7 +396,7 @@ class SqliteProcessRulesStore implements ProcessRulesStore {
       changeKind: row.change_kind as ProcessRuleAmendment['changeKind'],
       reason: row.reason,
       fields: safeParse<ProcessRuleField[]>(row.fields, []),
-      previous: safeParse<Partial<Record<ProcessRuleField, string>>>(row.previous, {}),
+      previous: safeParse<ProcessRuleAmendment['previous']>(row.previous, {}),
     }));
   }
 }

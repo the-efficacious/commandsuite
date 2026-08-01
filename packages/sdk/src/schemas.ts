@@ -770,7 +770,50 @@ export const ResolveSecretsResponseSchema = z.object({
 export const ProcessRuleProvenanceSchema = z.enum(['director', 'lead_uncontested', 'unattributed']);
 export const ProcessRuleStatusSchema = z.enum(['in_force', 'disputed', 'retired']);
 export const ProcessRuleChangeKindSchema = z.enum(['reversal', 'refinement', 'wording']);
-export const ProcessRuleFieldSchema = z.enum(['title', 'text', 'status', 'provenance']);
+
+/**
+ * THE single list of what an amendment may change.
+ *
+ * It was two lists. `AmendProcessRuleRequestSchema` accepted
+ * `attribution` and `disputeReason`; the field enum and the `previous`
+ * map held only the other four. So an amendment that moved
+ * `attribution` wrote the new value to the rule and recorded no prior
+ * one — and paired with a title change it did that *silently*, since
+ * the amendment looked well-formed and `previous.title` was there. An
+ * append-only record that drops a prior value on a field its own API
+ * accepts is not an append-only record.
+ *
+ * Adding the two missing entries would have made today's lists match
+ * without stopping the next field from being accepted before it is
+ * recordable. So there is now one shape and everything derives from
+ * it: what `amend` accepts, what `previous` can hold, and what the
+ * field enum names. "Accepted but untracked" is unrepresentable rather
+ * than findable.
+ *
+ * Values are the PRIOR type as well as the incoming one — `previous`
+ * holds the same fields with the same types, which is why one shape
+ * serves both. `attribution` and `disputeReason` are nullable because
+ * a rule may genuinely have neither, and "was null" has to survive as
+ * distinct from "was not recorded".
+ */
+const AMENDABLE_PROCESS_RULE_SHAPE = {
+  title: z.string().min(1).max(200),
+  text: z.string().min(1).max(4096),
+  status: ProcessRuleStatusSchema,
+  provenance: ProcessRuleProvenanceSchema,
+  attribution: z.string().max(200).nullable(),
+  disputeReason: z.string().max(2048).nullable(),
+};
+
+type AmendableProcessRuleField = keyof typeof AMENDABLE_PROCESS_RULE_SHAPE;
+
+/** Derived from the shape's own keys — not a second list to maintain. */
+export const PROCESS_RULE_FIELDS = Object.keys(AMENDABLE_PROCESS_RULE_SHAPE) as [
+  AmendableProcessRuleField,
+  ...AmendableProcessRuleField[],
+];
+
+export const ProcessRuleFieldSchema = z.enum(PROCESS_RULE_FIELDS);
 
 /** Immutable, and the identity a reader tracks across amendments. */
 export const ProcessRuleAnchorSchema = z
@@ -802,14 +845,13 @@ export const ProcessRuleAmendmentSchema = z.object({
   changeKind: ProcessRuleChangeKindSchema,
   reason: z.string().min(1).max(2048),
   fields: z.array(ProcessRuleFieldSchema).min(1),
-  previous: z
-    .object({
-      title: z.string().optional(),
-      text: z.string().optional(),
-      status: z.string().optional(),
-      provenance: z.string().optional(),
-    })
-    .default({}),
+  /**
+   * The prior value of every field this amendment touched. Same shape
+   * as what `amend` accepts, by construction — see
+   * `AMENDABLE_PROCESS_RULE_SHAPE`. A field the API takes is a field
+   * this can hold.
+   */
+  previous: z.object(AMENDABLE_PROCESS_RULE_SHAPE).partial().default({}),
 });
 
 export const ListProcessRulesResponseSchema = z.object({
@@ -831,17 +873,19 @@ export const CreateProcessRuleRequestSchema = z.object({
   disputeReason: z.string().max(2048).optional(),
 });
 
-export const AmendProcessRuleRequestSchema = z.object({
-  title: z.string().min(1).max(200).optional(),
-  text: z.string().min(1).max(4096).optional(),
-  status: ProcessRuleStatusSchema.optional(),
-  provenance: ProcessRuleProvenanceSchema.optional(),
-  attribution: z.string().max(200).optional(),
-  disputeReason: z.string().max(2048).optional(),
-  reason: z.string().min(1).max(2048),
-  disposition: AmendmentDispositionSchema,
-  changeKind: ProcessRuleChangeKindSchema,
-});
+/**
+ * Derived from the same shape as `previous`, so the set of fields an
+ * amendment may change and the set the record can recover are the same
+ * set by construction.
+ */
+export const AmendProcessRuleRequestSchema = z
+  .object(AMENDABLE_PROCESS_RULE_SHAPE)
+  .partial()
+  .extend({
+    reason: z.string().min(1).max(2048),
+    disposition: AmendmentDispositionSchema,
+    changeKind: ProcessRuleChangeKindSchema,
+  });
 
 export const VariableSummarySchema = SecretSummarySchema.extend({
   /** Readable — this is the field secrets deliberately do not have. */

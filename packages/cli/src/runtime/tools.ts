@@ -1707,9 +1707,10 @@ function buildFilesystemTools(name: string): Tool[] {
  *   - retired rules. The block shows what is in force. "Was this ever
  *     a rule?" is a different question and it comes up in exactly the
  *     situation where someone is being held to something.
- *   - superseded text. Kept out of the block on purpose so it stays
- *     bounded by the number of rules rather than by how often they
- *     have changed. Bounded means retrievable elsewhere, not gone.
+ *   - superseded text. Kept out of the block on purpose, so amendment
+ *     churn adds nothing resident. (Not a total ceiling — nothing caps
+ *     the number of rules.) Out of the block means retrievable
+ *     elsewhere, not gone.
  *   - the amendment path. Read is universal; write is not.
  *
  * WHY THE WRITE GATE IS `objectives.create`. It is the same permission

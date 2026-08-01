@@ -400,3 +400,237 @@ describe('the four real rules round-trip verbatim', () => {
     expect(s.listForInjection()).toHaveLength(4);
   });
 });
+
+// ─── every accepted field is a recoverable field ─────────────────────
+//
+// Found by Rune, driving the real store rather than reading the code.
+// `AmendProcessRuleRequestSchema` accepted `attribution` and
+// `disputeReason`; the field enum and `previous` held only the other
+// four. So the row moved and no prior value was kept — and paired with
+// a title change the loss was SILENT, because the amendment looked
+// well-formed with `previous.title` present.
+
+describe('an amendment can recover the prior value of every field it accepts', () => {
+  function attributed() {
+    const s = store();
+    s.create(
+      {
+        anchor: 'merge-model',
+        title: 'Merge model',
+        text: 'Squash-merge to main.',
+        provenance: 'director',
+        attribution: 'AndrewJon',
+      },
+      'lea',
+      AT,
+    );
+    return s;
+  }
+
+  it('accepts an amendment that changes only attribution', () => {
+    const s = attributed();
+    // Before the fix this threw "amendment changes nothing" — change
+    // detection could not see a field the request accepted.
+    const { amendment } = s.amend(
+      'merge-model',
+      {
+        attribution: 'Lea',
+        reason: 'Misattributed; Lea proposed it.',
+        disposition: 'correction',
+        changeKind: 'wording',
+      },
+      'lea',
+      AT + 1,
+    );
+    expect(amendment.fields).toEqual(['attribution']);
+    expect(amendment.previous.attribution).toBe('AndrewJon');
+    expect(s.get('merge-model')?.attribution).toBe('Lea');
+  });
+
+  it('records BOTH priors when attribution moves paired with a tracked field', () => {
+    // The silent case, and the one a reasonable person skips as
+    // redundant with the one above. It is not: the amendment succeeded
+    // before the fix, and dropped the attribution prior on the floor.
+    const s = attributed();
+    const { amendment } = s.amend(
+      'merge-model',
+      {
+        title: 'How we merge',
+        attribution: 'Lea',
+        reason: 'Retitled and reattributed together.',
+        disposition: 'correction',
+        changeKind: 'wording',
+      },
+      'lea',
+      AT + 1,
+    );
+    expect([...amendment.fields].sort()).toEqual(['attribution', 'title']);
+    expect(amendment.previous.title).toBe('Merge model');
+    expect(amendment.previous.attribution).toBe('AndrewJon');
+  });
+
+  it('recovers the prior disputeReason, not just the fact of a dispute', () => {
+    const s = store();
+    s.create(
+      {
+        anchor: 'merge-model',
+        title: 'Merge model',
+        text: 'Squash-merge to main.',
+        provenance: 'director',
+        attribution: 'AndrewJon',
+        status: 'disputed',
+        disputeReason: 'contradicted by observed practice',
+      },
+      'lea',
+      AT,
+    );
+    const { amendment } = s.amend(
+      'merge-model',
+      {
+        disputeReason: 'AndrewJon has not confirmed this wording',
+        reason: 'Sharpen what is actually unsettled.',
+        disposition: 'correction',
+        changeKind: 'refinement',
+      },
+      'lea',
+      AT + 1,
+    );
+    expect(amendment.fields).toEqual(['disputeReason']);
+    expect(amendment.previous.disputeReason).toBe('contradicted by observed practice');
+  });
+
+  it('keeps "was null" distinct from "was not recorded"', () => {
+    const s = store();
+    s.create({ anchor: 'x', title: 'T', text: 'X', provenance: 'unattributed' }, 'lea', AT);
+    const { amendment } = s.amend(
+      'x',
+      {
+        provenance: 'director',
+        attribution: 'AndrewJon',
+        reason: 'AndrewJon stated this after all.',
+        disposition: 'correction',
+        changeKind: 'wording',
+      },
+      'lea',
+      AT + 1,
+    );
+    // `null`, not absent — a reader must be able to tell the rule had
+    // no attribution from the record failing to track one.
+    expect(amendment.previous.attribution).toBeNull();
+    expect('attribution' in amendment.previous).toBe(true);
+  });
+});
+
+// ─── amend enforces create's invariant, on the whole rule ────────────
+//
+// Also Rune's. `create` refuses an attributed provenance with no
+// attribution; `amend` checked only the fields the amendment supplied,
+// so `unattributed` -> `director` with no attribution passed and the
+// renderer produced "stated by a director" for a rule no director
+// stated. That is precisely the laundering `provenance` exists to
+// prevent, and the gate means only the two members the field
+// constrains can reach it.
+
+describe('amendment cannot manufacture authority creation refuses', () => {
+  function unattributed() {
+    const s = store();
+    s.create(
+      {
+        anchor: 'merge-model',
+        title: 'Merge model',
+        text: 'Squash-merge.',
+        provenance: 'unattributed',
+      },
+      'lea',
+      AT,
+    );
+    return s;
+  }
+
+  it('refuses unattributed -> director with no attribution', () => {
+    const s = unattributed();
+    expect(() =>
+      s.amend(
+        'merge-model',
+        {
+          provenance: 'director',
+          reason: 'Claiming director authority without naming one.',
+          disposition: 'correction',
+          changeKind: 'wording',
+        },
+        'lea',
+        AT + 1,
+      ),
+    ).toThrow(ProcessRulesError);
+    // And the rule did not move.
+    expect(s.get('merge-model')?.provenance).toBe('unattributed');
+    expect(s.history('merge-model')).toHaveLength(0);
+  });
+
+  it('accepts unattributed -> director WITH an attribution, and records both priors', () => {
+    const s = unattributed();
+    const { rule, amendment } = s.amend(
+      'merge-model',
+      {
+        provenance: 'director',
+        attribution: 'AndrewJon',
+        reason: 'AndrewJon stated it; origin was recorded as unknown.',
+        disposition: 'correction',
+        changeKind: 'wording',
+      },
+      'lea',
+      AT + 1,
+    );
+    expect(rule.provenance).toBe('director');
+    expect(rule.attribution).toBe('AndrewJon');
+    expect([...amendment.fields].sort()).toEqual(['attribution', 'provenance']);
+    expect(amendment.previous.provenance).toBe('unattributed');
+    expect(amendment.previous.attribution).toBeNull();
+  });
+
+  it('clears attribution when moving back to unattributed', () => {
+    const s = store();
+    s.create(
+      {
+        anchor: 'merge-model',
+        title: 'Merge model',
+        text: 'Squash-merge.',
+        provenance: 'director',
+        attribution: 'AndrewJon',
+      },
+      'lea',
+      AT,
+    );
+    // The request must be able to say "set this to null". Without it a
+    // downgrade keeps a stale attribution, which is the same laundering
+    // in the other direction.
+    const { rule, amendment } = s.amend(
+      'merge-model',
+      {
+        provenance: 'unattributed',
+        attribution: null,
+        reason: 'Nobody can say where this came from.',
+        disposition: 'correction',
+        changeKind: 'wording',
+      },
+      'lea',
+      AT + 1,
+    );
+    expect(rule.provenance).toBe('unattributed');
+    expect(rule.attribution).toBeNull();
+    expect(amendment.previous.attribution).toBe('AndrewJon');
+  });
+
+  it('still refuses a disputed rule with no reason, through amend', () => {
+    const s = store();
+    s.create({ anchor: 'x', title: 'T', text: 'X', provenance: 'unattributed' }, 'lea', AT);
+    expect(() =>
+      s.amend(
+        'x',
+        { status: 'disputed', reason: 'r', disposition: 'correction', changeKind: 'wording' },
+        'lea',
+        AT + 1,
+      ),
+    ).toThrow(/disputeReason/);
+  });
+});

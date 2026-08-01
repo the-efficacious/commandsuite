@@ -609,8 +609,9 @@ export class Client {
 
   /**
    * The superseded text behind a rule, oldest first. RETRIEVED, never
-   * resident: this is what keeps the injected block bounded by the
-   * number of rules rather than by how often they have changed.
+   * resident, so amendment churn contributes nothing to what sits in a
+   * member's context. Not a total ceiling: nothing caps the number of
+   * rules, so the injected block as a whole is unbounded.
    */
   async processRuleHistory(anchor: string): Promise<ProcessRuleAmendment[]> {
     const resp = await this.request(PROCESS_RULE_PATHS.history(anchor));

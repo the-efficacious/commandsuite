@@ -755,7 +755,20 @@ export type ProcessRuleChangeKind =
   | 'wording';
 
 /** Fields of a rule that carry weight and can be amended. */
-export type ProcessRuleField = 'title' | 'text' | 'status' | 'provenance';
+/**
+ * Everything an amendment may change. Mirrors
+ * `AMENDABLE_PROCESS_RULE_SHAPE` in schemas.ts, which is the single
+ * runtime source — `PROCESS_RULE_FIELDS`, what `amend` accepts and
+ * what `previous` can hold all derive from it. A test asserts this
+ * union and that shape's keys are the same set.
+ */
+export type ProcessRuleField =
+  | 'title'
+  | 'text'
+  | 'status'
+  | 'provenance'
+  | 'attribution'
+  | 'disputeReason';
 
 export interface ProcessRule {
   /**
@@ -805,7 +818,21 @@ export interface ProcessRuleAmendment {
   changeKind: ProcessRuleChangeKind;
   reason: string;
   fields: ProcessRuleField[];
-  previous: Partial<Record<ProcessRuleField, string>>;
+  /**
+   * The prior value of every field in `fields`. `attribution` and
+   * `disputeReason` are nullable because a rule may genuinely have had
+   * neither, and "was null" must survive as distinct from "was not
+   * recorded" — otherwise clearing a field is indistinguishable from
+   * never tracking it.
+   */
+  previous: {
+    title?: string;
+    text?: string;
+    status?: ProcessRuleStatus;
+    provenance?: ProcessRuleProvenance;
+    attribution?: string | null;
+    disputeReason?: string | null;
+  };
 }
 
 export interface ListProcessRulesResponse {
@@ -833,8 +860,10 @@ export interface AmendProcessRuleRequest {
   text?: string;
   status?: ProcessRuleStatus;
   provenance?: ProcessRuleProvenance;
-  attribution?: string;
-  disputeReason?: string;
+  /** `null` clears it. Distinct from omitting the field, which leaves it alone. */
+  attribution?: string | null;
+  /** `null` clears it. A rule moving to `disputed` still needs one. */
+  disputeReason?: string | null;
   reason: string;
   disposition: AmendmentDisposition;
   changeKind: ProcessRuleChangeKind;

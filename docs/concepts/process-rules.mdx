@@ -120,16 +120,32 @@ Amending changes what is injected. It does **not** grow what is
 injected.
 
 The block carries current state only; every superseded value lives
-behind `GET /process-rules/:anchor/history`. So the injected block is
-bounded by the **number of rules**, not by how often they have changed
-— a rule amended fifty times costs the same context as one never
-touched.
+behind `GET /process-rules/:anchor/history`. A rule amended fifty times
+costs the same context as one never touched.
 
-That bound matters because nothing else enforces it. `instructions`
-inherits an 8192-character cap sized for authored text, and rules ride
-in their own briefing field specifically so they are not subject to
-it — which also means the cap is not there to catch unbounded growth.
-Keeping history out of the block is the bound.
+**There is no total ceiling, and saying "the block is bounded" without
+that qualification is wrong.** The honest statement:
+
+```
+resident history growth per amendment   0
+per-rule text ceiling                   4096 (+ bounded metadata)
+number of rules                         unbounded
+total injected process block            UNBOUNDED
+```
+
+What holds is the property that matters here — **amendment churn
+contributes nothing resident.** What does not hold is any ceiling on
+the block as a whole, because nothing caps the number of rules.
+
+That residue is real and worth naming. `instructions` inherits an
+8192-character cap sized for authored text; rules ride in their own
+briefing field specifically so they are not subject to it — which also
+removed the only thing that would ever have caught unbounded growth.
+Every rule is resident in every member's context, every session.
+Twenty rules at 500 characters is 10 KB per member and nothing
+anywhere reports it. A future cap on composed output has to bound this
+field too, or it will bound `instructions` and leave the rules outside
+it — which is how this field came to be outside in the first place.
 
 ## What this does not do
 

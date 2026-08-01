@@ -465,11 +465,14 @@ this answers "what exists".
 | **Auth** | dual |
 | **Returns** | `ProcessRuleHistoryResponse` — `{ anchor, amendments: ProcessRuleAmendment[] }`; 404 if the anchor is unknown |
 
-Retrieved, never resident. This is what keeps the injected block
-bounded by the *number of rules* rather than by how often they have
-changed. Each amendment carries the previous value of every field it
-touched, so the superseded text is recoverable without ever being
-resident in anyone's context.
+Retrieved, never resident, so amendment churn contributes zero growth
+to what sits in a member's context. Not a total ceiling: per-rule text
+caps at 4096 and the number of rules does not cap, so the injected
+block as a whole is unbounded.
+
+Each amendment carries the previous value of **every field the amend
+API accepts**, so the superseded rule is fully recoverable without ever
+being resident in anyone's context.
 
 ### `POST /process-rules`
 

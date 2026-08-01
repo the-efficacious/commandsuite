@@ -31,8 +31,12 @@ correction is a message.
   `changeKind` is orthogonal: it says whether the rule reversed,
   narrowed or was reworded.
 - History is **retrieved, never resident**: `GET
-  /process-rules/:anchor/history`. The injected block is bounded by the
-  number of rules, not by how often they changed.
+  /process-rules/:anchor/history`, so amendment churn contributes zero
+  resident growth. This is **not** a total ceiling and the docs no
+  longer claim one: per-rule text caps at 4096, the number of rules
+  does not cap, so the injected block as a whole is unbounded. Moving
+  rules out of `instructions` escaped that cap on purpose and removed
+  the only thing that would have caught growth here.
 - Rules ride in their **own briefing field, never inside
   `instructions`** — that field inherits an 8192 cap sized for authored
   text which also bounds composed output, and rules inside it would

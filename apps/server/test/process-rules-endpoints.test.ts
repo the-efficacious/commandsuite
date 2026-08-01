@@ -220,6 +220,16 @@ describe('criterion 7 — an amendment takes effect with nobody broadcasting it'
       return originalPush(...(args as Parameters<typeof originalPush>));
     }) as typeof broker.push;
 
+    // POSITIVE CONTROL, BEFORE THE ABSENCE ASSERTION. `expect(emitted)
+    // .toHaveLength(0)` is only evidence if this counter fires when
+    // something IS announced. Wrap the wrong object, or wrap a method
+    // the routes do not use, and the assertion below passes while
+    // watching nothing. So drive a real announcement through the same
+    // broker first and prove the counter moves.
+    await app.request('/push', authed(LEA, { body: 'a real announcement' }));
+    expect(emitted).toHaveLength(1);
+    const announcedBeforeAmend = emitted.length;
+
     await app.request(
       '/process-rules/release-cadence/amend',
       authed(LEA, {
@@ -230,8 +240,9 @@ describe('criterion 7 — an amendment takes effect with nobody broadcasting it'
       }),
     );
 
-    // Nothing was announced to anyone.
-    expect(emitted).toHaveLength(0);
+    // Nothing was announced to anyone — the amendment added nothing to
+    // a counter that has just been shown to work.
+    expect(emitted).toHaveLength(announcedBeforeAmend);
 
     // And the member — who saw nothing — gets the new text on their
     // next briefing, with the version moved so they can tell.

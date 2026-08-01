@@ -2874,9 +2874,9 @@ export function createApp(options: AppOptions): CreatedApp {
       return c.json({ rule });
     });
 
-    // GET /process-rules/:anchor/history — RETRIEVED, never resident.
-    // This is what keeps the injected block bounded by the number of
-    // rules rather than by the number of times they have changed.
+    // GET /process-rules/:anchor/history — RETRIEVED, never resident,
+    // so amendment churn adds nothing to what sits in a member's
+    // context. Not a total ceiling: nothing caps the number of rules.
     app.get(`${PATHS.processRules}/:anchor/history`, auth, (c) => {
       const anchor = c.req.param('anchor');
       if (!processRules.get(anchor)) return c.json({ error: 'no such process rule' }, 404);

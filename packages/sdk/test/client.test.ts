@@ -3,7 +3,12 @@ import { describe, expect, it } from 'vitest';
 import type { WebSocket as WsWebSocket } from 'ws';
 import { Client, ClientError } from '../src/client.js';
 import { PROTOCOL_HEADER, PROTOCOL_VERSION } from '../src/protocol.js';
-import type { Message, PushResult } from '../src/types.js';
+import {
+  AmendProcessRuleRequestSchema,
+  PROCESS_RULE_FIELDS,
+  ProcessRuleAmendmentSchema,
+} from '../src/schemas.js';
+import type { Message, ProcessRuleField, PushResult } from '../src/types.js';
 
 /**
  * Minimal stand-in for `ws.WebSocket`. Exposes `.on('message'|'close'|'error')`
@@ -211,5 +216,35 @@ describe('Client', () => {
     await iteration;
     expect(ws.closed).toBe(true);
     expect(received).toHaveLength(0);
+  });
+});
+
+// ─── the amendable-field list cannot drift from its type ─────────────
+//
+// `PROCESS_RULE_FIELDS` is derived from AMENDABLE_PROCESS_RULE_SHAPE,
+// which also defines what `amend` accepts and what `previous` holds —
+// those three cannot disagree by construction. The one thing that
+// still can is the hand-written `ProcessRuleField` union in types.ts,
+// which is the house pattern for every type in this package.
+//
+// These assignments fail TYPECHECK, not the test run, if the union and
+// the runtime list stop naming the same set. `pnpm test` does not
+// typecheck here; `pnpm typecheck` is the gate that catches it.
+describe('process rule fields', () => {
+  it('keeps the runtime list and the TS union naming the same set', () => {
+    const runtimeIsInUnion: ProcessRuleField[] = [...PROCESS_RULE_FIELDS];
+    const unionIsInRuntime: (typeof PROCESS_RULE_FIELDS)[number][] = runtimeIsInUnion;
+    // Every field an amendment accepts must also be one `previous` can
+    // hold. Asserted at runtime too, because the derivation is the
+    // claim and a reader should see it checked.
+    const previousKeys = Object.keys(
+      ProcessRuleAmendmentSchema.shape.previous.unwrap().shape,
+    ).sort();
+    expect(previousKeys).toEqual([...unionIsInRuntime].sort());
+    expect(previousKeys).toEqual(
+      Object.keys(AmendProcessRuleRequestSchema.shape)
+        .filter((k) => !['reason', 'disposition', 'changeKind'].includes(k))
+        .sort(),
+    );
   });
 });

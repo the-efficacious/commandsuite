@@ -41,8 +41,16 @@
  *   diffing prose.
  *
  * HISTORY IS NOT HERE. Superseded text lives behind
- * `GET /process-rules/:anchor/history`. The block is bounded by the
- * number of rules, not by how often they have changed.
+ * `GET /process-rules/:anchor/history`, so amendment churn contributes
+ * nothing resident — a rule amended fifty times costs what one never
+ * touched costs.
+ *
+ * That is NOT a total ceiling, and calling the block "bounded" without
+ * saying so overstates it: per-rule text is capped at 4096 but the
+ * number of rules is not capped at all, so the block as a whole is
+ * unbounded. Moving rules out of `instructions` escaped that field's
+ * cap deliberately, and with it the only thing that would have caught
+ * growth here.
  *
  * KNOWN GAP, stated because a reader will otherwise assume otherwise:
  * `#103`'s context watchdog does NOT watch this block. Its projection
