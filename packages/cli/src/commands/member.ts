@@ -19,6 +19,7 @@
 
 import { parseArgs } from 'node:util';
 import type { Client } from 'csuite-sdk/client';
+import { formatTextMetrics } from 'csuite-sdk/text-metrics';
 import { UsageError } from './errors.js';
 
 const NAME_REGEX = /^[a-zA-Z0-9._-]+$/;
@@ -116,6 +117,8 @@ async function runCreate(
   stdout(
     `✓ created member '${result.member.name}' (role=${title}, permissions=${permissions.join(',') || 'baseline'})`,
   );
+  stdout(`  role description: ${formatTextMetrics(description)}`);
+  stdout(`  personal instructions: ${formatTextMetrics(instructions)}`);
   stdout('');
   stdout('  ┌─ BEARER TOKEN — save this now; it is not persisted anywhere else ─┐');
   stdout(`  │ ${result.token}`);
@@ -181,8 +184,14 @@ async function runUpdate(
       .filter((s) => s.length > 0);
   }
 
-  await client.updateMember(name, patch);
+  const member = await client.updateMember(name, patch);
   stdout(`✓ updated member '${name}'`);
+  if (patch.role !== undefined) {
+    stdout(`  role description: ${formatTextMetrics(member.role.description)}`);
+  }
+  if (patch.instructions !== undefined) {
+    stdout(`  personal instructions: ${formatTextMetrics(member.instructions)}`);
+  }
 }
 
 async function runDelete(

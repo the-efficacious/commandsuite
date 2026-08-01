@@ -7,6 +7,7 @@ export default defineConfig({
     schemas: 'src/schemas.ts',
     protocol: 'src/protocol.ts',
     client: 'src/client.ts',
+    'text-metrics': 'src/text-metrics.ts',
   },
   format: ['esm'],
   dts: true,

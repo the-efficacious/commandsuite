@@ -1087,6 +1087,18 @@ export function createApp(options: AppOptions): CreatedApp {
       externalNotificationEndpoints,
     };
     const briefing = composeBriefing(composeInput);
+    const isBearerRequest = c.req.header('Authorization')?.startsWith('Bearer ') === true;
+    if (
+      isBearerRequest &&
+      briefing.instructions.length > 8_192 &&
+      runnerMayEnforceLegacyBriefingCap(runnerVersion)
+    ) {
+      logger.warn('briefing exceeds legacy runner instruction limit', {
+        member: member.name,
+        characters: briefing.instructions.length,
+        runnerVersion: runnerVersion ?? 'unknown',
+      });
+    }
     let remembered = briefingExemptions.get(member.name);
     if (!remembered) {
       remembered = new Set<string>();
@@ -5817,6 +5829,20 @@ export function createApp(options: AppOptions): CreatedApp {
     injectWebSocket,
     ...(notificationDispatcher !== undefined ? { notificationDispatcher } : {}),
   };
+}
+
+/**
+ * Runners before 0.4.0 parse briefings with `max(8192)` locally. An
+ * absent report is also legacy: runners only began reporting their
+ * version in the same release that removes the cap.
+ */
+function runnerMayEnforceLegacyBriefingCap(version: string | undefined): boolean {
+  if (version === undefined) return true;
+  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version);
+  if (!match) return true;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  return major === 0 && minor < 4;
 }
 
 /**

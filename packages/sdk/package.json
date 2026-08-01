@@ -47,6 +47,10 @@
     "./client": {
       "types": "./dist/client.d.ts",
       "import": "./dist/client.js"
+    },
+    "./text-metrics": {
+      "types": "./dist/text-metrics.d.ts",
+      "import": "./dist/text-metrics.js"
     }
   },
   "files": [
