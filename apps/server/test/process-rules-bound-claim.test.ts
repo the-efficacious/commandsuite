@@ -22,6 +22,33 @@
  * So any surface that explains the history/residency property must
  * also carry the qualification. Saying only the first line is how a
  * reader concludes there is a ceiling.
+ *
+ * WHAT THIS GUARD DOES AND DOES NOT DO. Stated exactly, because an
+ * earlier version of this comment claimed the last line:
+ *
+ *   reintroduce a known phrasing into an enrolled file    CAUGHT
+ *   strip the qualification out of an enrolled file       CAUGHT
+ *   an enrolled file is renamed or deleted                CAUGHT (ENOENT)
+ *   the enrolment list is emptied                         CAUGHT (tripwire)
+ *   a NEW file nobody has enrolled                        NOT CAUGHT
+ *
+ * `SURFACES` is curated. Nothing detects an unenrolled file, so a new
+ * doc asserting a ceiling tomorrow passes this suite green. Enrol new
+ * surfaces by hand.
+ *
+ * Rune disproved the claim by writing that file and running the suite
+ * rather than by reading this list. Both directions are now verified
+ * with his exact case: unenrolled it passes 9/9, enrolled it fails
+ * naming the phrasing.
+ *
+ * WHY NOT DISCOVER THE SET FROM THE TREE. Proposed and rejected.
+ * "Files that explain residency" is a semantic criterion with no
+ * closed set: a scan matching `process rule` + `resident` catches a
+ * file saying "keeps the injected block bounded" and misses one saying
+ * "the block stays small". It would buy coverage and pay with a
+ * completeness claim that cannot be stated accurately — which is the
+ * defect this file exists to guard. A curated list honest about being
+ * curated beats a scan that is not.
  */
 
 import { readFileSync } from 'node:fs';
@@ -30,8 +57,13 @@ import { describe, expect, it } from 'vitest';
 const ROOT = new URL('../../../', import.meta.url);
 
 /**
- * Every surface that documents the residency property. Adding a new
- * one without the qualification is the failure this catches.
+ * The ENROLLED surfaces — those known to document the residency
+ * property, curated by hand.
+ *
+ * This list is the guard's boundary, not its coverage. A surface not
+ * on it is not checked at all. If you add a file explaining
+ * history-is-not-resident, add it here; nothing will tell you that you
+ * forgot.
  */
 const SURFACES = [
   'apps/server/src/process-rules.ts',
@@ -65,7 +97,7 @@ function read(rel: string): string {
   return readFileSync(new URL(rel, ROOT), 'utf8');
 }
 
-describe('the injected process-rules block is never described as bounded', () => {
+describe('no ENROLLED surface describes the injected block as bounded', () => {
   for (const rel of SURFACES) {
     it(`${rel} makes no unqualified boundedness claim`, () => {
       const body = read(rel);
@@ -76,9 +108,10 @@ describe('the injected process-rules block is never described as bounded', () =>
     });
   }
 
-  it('every surface that discusses residency also carries the qualification', () => {
-    // Scoped to the surfaces that actually explain the property —
+  it('every ENROLLED surface that discusses residency carries the qualification', () => {
+    // Scoped to enrolled surfaces that actually explain the property —
     // a file merely mentioning process rules need not restate it.
+    // This does NOT reach unenrolled files; see the header.
     const discussesResidency = SURFACES.filter((rel) => {
       const body = read(rel);
       return body.includes('resident') && body.toLowerCase().includes('process rule');
