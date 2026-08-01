@@ -12,7 +12,11 @@
 
 import { describe, expect, it } from 'vitest';
 import { anthropicToGenAi } from '../src/trace/genai.js';
-import { REDACTED } from '../src/trace/redact.js';
+import {
+  clearRegisteredSecretValues,
+  REDACTED,
+  registerSecretValues,
+} from '../src/trace/redact.js';
 
 function requestBody() {
   return {
@@ -206,6 +210,32 @@ describe('anthropicToGenAi', () => {
     expect(rec.systemInstructions[0]).toEqual({ type: 'text', content: `key ${REDACTED} here` });
     const call = rec.inputMessages[0]?.parts[0];
     expect(call).toMatchObject({ type: 'tool_call', arguments: { token: REDACTED } });
+  });
+
+  it('preserves an exact briefing block while redacting the same secret in a tool result', () => {
+    const secret = 'registered-value-claude';
+    const block = `Context: use the reference ${secret}.`;
+    registerSecretValues([secret]);
+    try {
+      const rec = anthropicToGenAi({
+        requestBody: {
+          model: 'm',
+          system: [{ type: 'text', text: `harness prefix\n${block}\nharness suffix` }],
+          messages: [
+            { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: secret }] },
+          ],
+        },
+        responseBody: responseBody(),
+        redactionExemptions: [block],
+      });
+      expect(rec.systemInstructions).toEqual([
+        { type: 'text', content: `harness prefix\n${block}\nharness suffix` },
+      ]);
+      expect(JSON.stringify(rec.inputMessages)).toContain(REDACTED);
+      expect(JSON.stringify(rec.inputMessages)).not.toContain(secret);
+    } finally {
+      clearRegisteredSecretValues();
+    }
   });
 
   it('prefers explicit overrides for model, responseId, usage, and ts', () => {

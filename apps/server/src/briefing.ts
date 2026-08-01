@@ -91,6 +91,21 @@ export function composeBriefing(input: ComposeBriefingInput): BriefingResponse {
   };
 }
 
+/**
+ * Exact operator-authored blocks present in this member's composed briefing.
+ * These values are used only while redacting the system-instruction field of
+ * that member's captured request. Keeping the projection here prevents the
+ * capture path from guessing prompt positions or adapter formatting.
+ */
+export function briefingCaptureExemptions(input: ComposeBriefingInput): string[] {
+  const composed = composeBriefing(input).instructions;
+  return [
+    input.team.context.trim(),
+    input.self.role.description.trim(),
+    input.self.instructions.trim(),
+  ].filter((block) => block.length > 0 && composed.includes(block));
+}
+
 function composePrompt(
   self: Member,
   team: Team,

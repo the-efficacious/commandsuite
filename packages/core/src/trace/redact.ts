@@ -76,6 +76,14 @@ const SECRET_PATTERNS: readonly RegExp[] = [
 
 export const REDACTED = '[REDACTED]';
 
+export interface RedactionOptions {
+  /**
+   * Exact broker-composed instruction substrings that must survive capture.
+   * Exemptions are scoped to the call; they are never registered globally.
+   */
+  exemptions?: readonly string[];
+}
+
 /**
  * Values shorter than this are never registered — scrubbing very
  * short literals ("dev", "1234") would shred ordinary trace content
@@ -122,8 +130,38 @@ export function clearRegisteredSecretValues(): void {
  * the input comes back unchanged. Non-string inputs are coerced via
  * `String()` for defensive use at API boundaries.
  */
-export function redactSecrets(input: string): string {
+export function redactSecrets(input: string, options: RedactionOptions = {}): string {
   if (typeof input !== 'string') return String(input);
+  const exemptions = options.exemptions?.filter((value) => value.length > 0) ?? [];
+  if (exemptions.length > 0) {
+    const spans: Array<[number, number]> = [];
+    for (const exemption of exemptions) {
+      let from = 0;
+      while (from <= input.length - exemption.length) {
+        const start = input.indexOf(exemption, from);
+        if (start < 0) break;
+        spans.push([start, start + exemption.length]);
+        from = start + exemption.length;
+      }
+    }
+    if (spans.length > 0) {
+      spans.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+      const merged: Array<[number, number]> = [];
+      for (const span of spans) {
+        const last = merged.at(-1);
+        if (last && span[0] <= last[1]) last[1] = Math.max(last[1], span[1]);
+        else merged.push([...span]);
+      }
+      let cursor = 0;
+      let out = '';
+      for (const [start, end] of merged) {
+        out += redactSecrets(input.slice(cursor, start));
+        out += input.slice(start, end);
+        cursor = end;
+      }
+      return out + redactSecrets(input.slice(cursor));
+    }
+  }
   let out = input;
   for (const pattern of SECRET_PATTERNS) {
     out = out.replace(pattern, REDACTED);
@@ -132,6 +170,11 @@ export function redactSecrets(input: string): string {
     if (out.includes(value)) out = out.split(value).join(REDACTED);
   }
   return out;
+}
+
+/** Whether text contains a literal value currently registered for redaction. */
+export function containsRegisteredSecretValue(input: string): boolean {
+  return registeredValues.some((value) => input.includes(value));
 }
 
 /**
@@ -166,19 +209,19 @@ export function redactHeaders(headers: Record<string, string>): Record<string, s
  * `typeof fn !== 'object'`, so functions take the passthrough branch.
  * Real trace data is parsed JSON and contains none of these.
  */
-export function redactJson<T>(value: T): T {
+export function redactJson<T>(value: T, options: RedactionOptions = {}): T {
   if (typeof value === 'string') {
-    return redactSecrets(value) as unknown as T;
+    return redactSecrets(value, options) as unknown as T;
   }
   if (value === null || typeof value !== 'object') {
     return value;
   }
   if (Array.isArray(value)) {
-    return value.map((item) => redactJson(item)) as unknown as T;
+    return value.map((item) => redactJson(item, options)) as unknown as T;
   }
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-    out[k] = redactJson(v);
+    out[k] = redactJson(v, options);
   }
   return out as unknown as T;
 }

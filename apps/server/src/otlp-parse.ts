@@ -32,7 +32,7 @@
  * the same `Number()`-level precision the record contract already uses.
  */
 
-import { redactJson } from 'csuite-core';
+import { type RedactionOptions, redactJson } from 'csuite-core';
 import type { TelemetryRecord } from './telemetry-store.js';
 
 function isObject(v: unknown): v is Record<string, unknown> {
@@ -130,7 +130,10 @@ function scopeToJson(scope: unknown): Record<string, unknown> | null {
  * Parse an OTLP/JSON `ExportLogsServiceRequest` into one record per log
  * record. Every record is kept regardless of `event.name`.
  */
-export function parseOtlpLogs(payload: unknown): TelemetryRecord[] {
+export function parseOtlpLogs(
+  payload: unknown,
+  redaction: RedactionOptions = {},
+): TelemetryRecord[] {
   const out: TelemetryRecord[] = [];
   const root = isObject(payload) ? payload : {};
   for (const rl of asArray(root.resourceLogs)) {
@@ -144,7 +147,7 @@ export function parseOtlpLogs(payload: unknown): TelemetryRecord[] {
       for (const lr of asArray(sl.logRecords)) {
         if (!isObject(lr)) continue;
         try {
-          const attributes = stripPii(redactJson(flattenAttributes(lr.attributes)));
+          const attributes = stripPii(redactJson(flattenAttributes(lr.attributes), redaction));
           const eventName = attributes['event.name'];
           const name =
             typeof eventName === 'string' && eventName.length > 0 ? eventName : '(unnamed)';
@@ -157,7 +160,7 @@ export function parseOtlpLogs(payload: unknown): TelemetryRecord[] {
             resource,
             scope,
             payload: {
-              body: redactJson(anyValueToJs(lr.body)),
+              body: redactJson(anyValueToJs(lr.body), redaction),
               severityNumber: lr.severityNumber ?? null,
               severityText: lr.severityText ?? null,
             },

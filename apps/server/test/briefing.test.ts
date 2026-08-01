@@ -1,6 +1,6 @@
 import type { Member, Team, Teammate } from 'csuite-sdk/types';
 import { describe, expect, it } from 'vitest';
-import { composeBriefing } from '../src/briefing.js';
+import { briefingCaptureExemptions, composeBriefing } from '../src/briefing.js';
 
 const TEAM: Team = {
   name: 'demo-team',
@@ -46,6 +46,20 @@ const TEAMMATES: Teammate[] = [
 ];
 
 describe('composeBriefing', () => {
+  it('projects exact authored blocks from this member briefing without positional guesses', () => {
+    const input = {
+      self: ALPHA_1,
+      team: TEAM,
+      teammates: TEAMMATES,
+      openObjectives: [],
+    };
+    const briefing = composeBriefing(input);
+    const exemptions = briefingCaptureExemptions(input);
+    expect(exemptions).toEqual([TEAM.context, ALPHA_1.role.description, ALPHA_1.instructions]);
+    for (const block of exemptions) expect(briefing.instructions).toContain(block);
+    expect(exemptions).not.toContain(DIRECTOR.role.description);
+  });
+
   it('includes name, role, permissions, team, and teammates', () => {
     const briefing = composeBriefing({
       self: DIRECTOR,

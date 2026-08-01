@@ -67,7 +67,7 @@ import { TokenStore } from './tokens.js';
 import { createMcpClientManager, createSqliteToolSourceStore } from './tool-sources/index.js';
 import { SERVER_VERSION } from './version.js';
 
-export { composeBriefing } from './briefing.js';
+export { briefingCaptureExemptions, composeBriefing } from './briefing.js';
 export { type DatabaseSyncInstance, openDatabase } from './db.js';
 export {
   DEFAULT_POLL_INTERVAL_S,

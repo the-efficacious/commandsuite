@@ -2,14 +2,16 @@
  * Content-addressed raw API body store.
  *
  * The fidelity layer UNDER the gen_ai view: the complete request and
- * response BYTES of every Claude `/v1/messages` call, exactly as sent
- * and received on the wire, captured BEFORE anything parses, reshapes,
- * or redacts them. The `gen_ai_inference` table is the queryable
+ * response BYTES handed to this store by the correlator. For Claude
+ * inline-body OTLP, attribute redaction runs before the correlator (with
+ * exact briefing-block exemptions); this store cannot claim provider-wire
+ * identity for those inputs. It does preserve its input before this layer
+ * parses or reshapes it. The `gen_ai_inference` table is the queryable
  * derived view; each of its rows points back at its source bytes here
  * by sha256 (`request_sha256` / `response_sha256`).
  *
  * ── INVARIANT (the point of this store) ────────────────────────────────
- * Raw bytes are stored VERBATIM: un-redacted, un-parsed, un-reshaped.
+ * Input bytes are stored VERBATIM: un-parsed and un-reshaped in this layer.
  * `sha256(gunzip(raw_blob.bytes))` MUST equal the `hash` primary key.
  * Nothing in this path may call redactJson or otherwise rewrite the
  * body — thinking blocks that arrive redacted-at-source
