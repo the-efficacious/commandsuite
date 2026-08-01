@@ -220,7 +220,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
 
   let briefing: BriefingResponse;
   try {
-    briefing = await brokerClient.briefing();
+    briefing = await brokerClient.briefing({ runnerVersion: CLI_VERSION });
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
     // When the failure looks like a connection problem (broker unreachable)
@@ -592,7 +592,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
     if (toolsRefreshInflight) return;
     toolsRefreshInflight = true;
     try {
-      const fresh = await brokerClient.briefing();
+      const fresh = await brokerClient.briefing({ runnerVersion: CLI_VERSION });
       const next = fresh.toolSources;
       if (JSON.stringify(next) === JSON.stringify(externalTools)) return;
       externalTools = next;

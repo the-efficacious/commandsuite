@@ -101,8 +101,14 @@ const APP_IN_SCOPE = [
  * retention warning and one failed-delivery warning. Both are in scope:
  * the first makes the per-block denominator incomplete, and the second
  * means an instruction block known to be absent was not re-delivered.
+ *
+ * 2026-08-01, +1 = 54. `briefing runner version rejected` is
+ * OPERATIONAL, not a completeness claim: the broker substitutes a
+ * bounded `unknown` in complimentary context and still returns the
+ * complete briefing. The warning distinguishes a rejected report
+ * from an older client that sent no report at all.
  */
-const TOTAL_SITES = 53;
+const TOTAL_SITES = 54;
 
 function messagesIn(file: string): string[] {
   const src = readFileSync(join(SRC, file), 'utf8');

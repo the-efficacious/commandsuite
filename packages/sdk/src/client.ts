@@ -21,6 +21,7 @@ import {
   PATHS,
   PROTOCOL_HEADER,
   PROTOCOL_VERSION,
+  RUNNER_VERSION_HEADER,
   SECRET_PATHS,
   TOOL_SOURCE_PATHS,
   VARIABLE_PATHS,
@@ -428,8 +429,12 @@ export class Client {
    * `instructions` string ready for `new Server({instructions})` in
    * the MCP link.
    */
-  async briefing(): Promise<BriefingResponse> {
-    const resp = await this.request(PATHS.briefing, { method: 'GET' });
+  async briefing(options: { runnerVersion?: string } = {}): Promise<BriefingResponse> {
+    const headers = new Headers();
+    if (options.runnerVersion !== undefined) {
+      headers.set(RUNNER_VERSION_HEADER, options.runnerVersion);
+    }
+    const resp = await this.request(PATHS.briefing, { method: 'GET', headers });
     return BriefingResponseSchema.parse(await this.json(resp));
   }
 
