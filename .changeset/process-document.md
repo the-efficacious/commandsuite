@@ -57,3 +57,17 @@ own `instructions`, this is authored by whoever holds `process.manage`,
 and one string collapses two authorities into one field. The cap
 argument that also motivated it has already expired — #122 landed in
 #129 — and the decision is unchanged.
+
+The `#103` context watchdog watches this block alongside the three
+authored ones, so a document lost from an agent's context mid-session
+is detected on an observable turn and re-sent. Its membership test
+differs and has to: the authored blocks are confirmed by substring
+against the composed `instructions`, and this is never in that string,
+so its test is that it was sent.
+
+Because the projection is built from the CURRENT stored document, an
+agent still holding a superseded version does not contain the current
+one — so an edit reaches a running session too, classified as stale
+rather than merely missing when the prior text is known. Codex is the
+exception: its system projection is unobservable, so absence cannot be
+asserted and nothing is re-sent (`#118`).

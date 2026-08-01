@@ -104,6 +104,42 @@ describe('membership is what was sent, not a substring of the prose', () => {
     expect(briefingCaptureBlocks(input(null)).map((b) => b.kind)).not.toContain('process_document');
   });
 
+  /**
+   * VERBATIM, including boundary whitespace.
+   *
+   * The store only refuses text whose TRIMMED value is empty — it does
+   * not normalise valid text — so `"  rule\n"` is a legal document and
+   * the runner renders it exactly. A trimmed projection would exempt
+   * and re-send `"rule"`, which is not what the agent received, and
+   * criterion 4 says exactly the document text.
+   *
+   * The existing exact-text case uses a string with no boundary
+   * whitespace and cannot distinguish the two. This one can.
+   */
+  it('projects the sent bytes, including leading and trailing whitespace', () => {
+    const padded = { ...DOC, text: '  Squash-merge to main.\n' };
+    const block = briefingCaptureBlocks(input(padded)).find((b) => b.kind === 'process_document');
+    expect(block?.text).toBe('  Squash-merge to main.\n');
+    // Not the normalised form.
+    expect(block?.text).not.toBe('Squash-merge to main.');
+  });
+
+  it('carries the same bytes into the derived exemption', () => {
+    const padded = { ...DOC, text: '  Squash-merge to main.\n' };
+    expect(briefingCaptureExemptions(input(padded))).toContain('  Squash-merge to main.\n');
+  });
+
+  it('carries the same bytes into the resend body', () => {
+    const padded = { ...DOC, text: '  Squash-merge to main.\n' };
+    const [block] = briefingCaptureBlocks(input(padded)).filter(
+      (b) => b.kind === 'process_document',
+    );
+    const body = contextResendBody([{ block, present: false, resendFired: true } as never]);
+    // The recovery must hand back what the runner received, byte for
+    // byte, or the agent re-anchors on a different block.
+    expect(body).toContain('  Squash-merge to main.\n');
+  });
+
   it('projects nothing for a document that is only whitespace', () => {
     const blank = { ...DOC, text: '   \n  ' };
     expect(briefingCaptureBlocks(input(blank)).map((b) => b.kind)).not.toContain(
@@ -414,5 +450,52 @@ describe('the cold-broker rebuild carries the document', () => {
   it('rebuilds nothing for a team with no document', () => {
     const { processDocument } = coldApp(false);
     expect(processDocument.get()).toBeNull();
+  });
+});
+
+// ─── a stale document is absent, so an edit reaches a live session ───
+//
+// The projection is built from the CURRENT stored document, so an
+// agent still carrying yesterday's text does not contain today's — the
+// watchdog sees the current text as absent and re-sends it. That means
+// an edit now reaches a running session on an observable turn, which
+// the docs previously said it could not. Tested rather than asserted.
+
+describe('an edited document reaches a session still holding the old one', () => {
+  const inference = (system: string) => ({
+    systemInstructions: [{ type: 'text' as const, content: system }],
+  });
+
+  it('treats the previous version as absence of the current one', () => {
+    const previous = 'Squash-merge to main.';
+    const current = 'Merge commits to main.';
+    const [observation] = inspectBriefingContext({
+      memberName: 'cora',
+      // The agent's context still holds the superseded text.
+      inference: inference(`preamble\n${previous}\nsuffix`),
+      blocks: [{ kind: 'process_document', text: current }],
+      now: 1_000_000,
+      lastResentAt: new Map(),
+      systemProjectionObservable: true,
+    });
+    expect(observation?.present).toBe(false);
+    expect(observation?.resendFired).toBe(true);
+  });
+
+  it('classifies it as stale rather than merely missing, when the prior text is known', () => {
+    const previous = 'Squash-merge to main.';
+    const current = 'Merge commits to main.';
+    const [observation] = inspectBriefingContext({
+      memberName: 'cora',
+      inference: inference(`preamble\n${previous}\nsuffix`),
+      blocks: [{ kind: 'process_document', text: current }],
+      now: 1_000_000,
+      lastResentAt: new Map(),
+      systemProjectionObservable: true,
+      knownPriorVersions: new Map([['process_document', new Set([previous])]]),
+    });
+    // Distinguishes "you lost it" from "yours is out of date".
+    expect(observation?.priorVersionPresent).toBe(true);
+    expect(observation?.resendFired).toBe(true);
   });
 });
