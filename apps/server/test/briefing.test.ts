@@ -95,11 +95,76 @@ describe('composeBriefing', () => {
       teammates: TEAMMATES,
       openObjectives: [],
     });
-    expect(briefing.instructions).toContain('you go by engineer-1');
+    expect(briefing.instructions).toContain('You: engineer-1');
     expect(briefing.instructions).toContain('Your role here: engineer');
     expect(briefing.instructions).toContain(TEAM.name);
     expect(briefing.instructions).toContain(TEAM.context);
     expect(briefing.instructions).toContain(ALPHA_1.instructions);
+  });
+
+  it('names CommandSuite and csuite with separate broker and runner versions in one opening line', () => {
+    const briefing = composeBriefing({
+      self: ALPHA_1,
+      team: TEAM,
+      teammates: TEAMMATES,
+      openObjectives: [],
+      brokerVersion: '0.4.0',
+      runnerVersion: '0.3.4',
+    });
+    const [opening, identity] = briefing.instructions.split('\n');
+    expect(opening).toBe('demo-team CommandSuite/csuite: broker=0.4.0 runner=0.3.4');
+    expect(identity).toBe('You: engineer-1');
+    expect(briefing.instructions).not.toContain('\nTeam: demo-team\n');
+  });
+
+  it('names unavailable versions as unknown without changing capture blocks', () => {
+    const input = {
+      self: ALPHA_1,
+      team: TEAM,
+      teammates: TEAMMATES,
+      openObjectives: [],
+    };
+    const briefing = composeBriefing(input);
+    expect(briefing.instructions).toContain('CommandSuite/csuite: broker=unknown runner=unknown');
+    expect(briefingCaptureExemptions(input)).toEqual([
+      TEAM.context,
+      ALPHA_1.role.description,
+      ALPHA_1.instructions,
+    ]);
+  });
+
+  it('never grows the composed briefing relative to the replaced opening', () => {
+    const legacyChars =
+      `You've connected to the csuite net. In this team you go by ${ALPHA_1.name}.`.length +
+      1 +
+      `Team: ${TEAM.name}`.length;
+
+    for (const runnerVersion of ['x'.repeat(64), undefined]) {
+      const briefing = composeBriefing({
+        self: ALPHA_1,
+        team: TEAM,
+        teammates: TEAMMATES,
+        openObjectives: [],
+        brokerVersion: 'x'.repeat(64),
+        runnerVersion,
+      });
+      const [opening = '', identity = ''] = briefing.instructions.split('\n');
+      expect(opening.length + 1 + identity.length).toBeLessThanOrEqual(legacyChars);
+    }
+  });
+
+  it('bounds long versions while retaining both ends', () => {
+    const briefing = composeBriefing({
+      self: ALPHA_1,
+      team: TEAM,
+      teammates: TEAMMATES,
+      openObjectives: [],
+      brokerVersion: '0.5.0-alpha.20260801+broker',
+      runnerVersion: '0.5.0-alpha.20260731+runner',
+    });
+    const [opening] = briefing.instructions.split('\n');
+    expect(opening).toContain('broker=0.5.0-al…ker');
+    expect(opening).toContain('runner=0.5.0-al…ner');
   });
 
   it('lists other teammates and filters self out of the rendered list', () => {
@@ -128,7 +193,7 @@ describe('composeBriefing', () => {
       openObjectives: [],
     });
     expect(briefing.instructions).not.toContain('Context:');
-    expect(briefing.instructions).toContain(`Team: ${teamNoContext.name}`);
+    expect(briefing.instructions).toContain(`${teamNoContext.name} CommandSuite/csuite`);
   });
 
   it('omits the personal-instructions block when the member has none', () => {

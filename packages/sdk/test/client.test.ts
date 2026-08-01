@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import { describe, expect, it } from 'vitest';
 import type { WebSocket as WsWebSocket } from 'ws';
 import { Client, ClientError } from '../src/client.js';
-import { PROTOCOL_HEADER, PROTOCOL_VERSION } from '../src/protocol.js';
+import { PROTOCOL_HEADER, PROTOCOL_VERSION, RUNNER_VERSION_HEADER } from '../src/protocol.js';
 import {
   AmendProcessRuleRequestSchema,
   PROCESS_RULE_FIELDS,
@@ -56,6 +56,31 @@ function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
 }
 
 describe('Client', () => {
+  it('sends runner version only when the briefing caller declares the long-lived runner', async () => {
+    const seen: Array<string | null> = [];
+    const client = new Client({
+      url: 'http://example.test:8717',
+      token: 'test-secret',
+      fetch: makeFakeFetch((_url, init) => {
+        seen.push(new Headers(init.headers).get(RUNNER_VERSION_HEADER));
+        return jsonResponse({
+          name: 'rune',
+          role: { title: 'agent', description: '' },
+          permissions: [],
+          instructions: '',
+          team: { name: 'team', context: '', permissionPresets: {} },
+          teammates: [],
+          openObjectives: [],
+          toolSources: [],
+        });
+      }),
+    });
+
+    await client.briefing();
+    await client.briefing({ runnerVersion: '0.3.4' });
+    expect(seen).toEqual([null, '0.3.4']);
+  });
+
   it('sends protocol header and bearer token on authenticated calls', async () => {
     let captured: { url: URL; headers: Headers } | null = null;
     const client = new Client({

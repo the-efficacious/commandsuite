@@ -35,6 +35,10 @@ import type {
 export interface ComposeBriefingInput {
   self: Member;
   team: Team;
+  /** Version loaded by the broker process composing this response. */
+  brokerVersion?: string;
+  /** Version reported explicitly by the long-lived runner process. */
+  runnerVersion?: string;
   /** Every teammate on the team, including the caller. */
   teammates: Teammate[];
   /**
@@ -77,7 +81,14 @@ export interface ComposeBriefingInput {
 export function composeBriefing(input: ComposeBriefingInput): BriefingResponse {
   const { self, team, teammates, openObjectives } = input;
   const others = teammates.filter((t) => t.name !== self.name);
-  const instructions = composePrompt(self, team, others, input.externalNotificationEndpoints ?? []);
+  const instructions = composePrompt(
+    self,
+    team,
+    others,
+    input.brokerVersion,
+    input.runnerVersion,
+    input.externalNotificationEndpoints ?? [],
+  );
 
   return {
     name: self.name,
@@ -136,6 +147,8 @@ function composePrompt(
   self: Member,
   team: Team,
   others: Teammate[],
+  brokerVersion?: string,
+  runnerVersion?: string,
   externalNotificationEndpoints: string[] = [],
 ): string {
   const longestName = others.reduce((max, t) => Math.max(max, t.name.length), 0);
@@ -150,10 +163,10 @@ function composePrompt(
       : `Your role here: ${self.role.title}`;
 
   const parts: Array<string | false> = [
-    `You've connected to the csuite net. In this team you go by ${self.name}.`,
+    `${team.name} CommandSuite/csuite: broker=${displayVersion(brokerVersion)} runner=${displayVersion(runnerVersion)}`,
+    `You: ${self.name}`,
     roleLine,
     ``,
-    `Team: ${team.name}`,
     team.context.trim().length > 0 && `Context: ${team.context}`,
     ``,
     selfInstructions.length > 0 && `Personal instructions:`,
@@ -200,4 +213,11 @@ function composePrompt(
   }
 
   return parts.filter((p): p is string => typeof p === 'string').join('\n');
+}
+
+/** Keep operational version metadata from consuming authored-instruction headroom. */
+function displayVersion(version: string | undefined): string {
+  if (version === undefined) return 'unknown';
+  if (version.length <= 12) return version;
+  return `${version.slice(0, 8)}…${version.slice(-3)}`;
 }

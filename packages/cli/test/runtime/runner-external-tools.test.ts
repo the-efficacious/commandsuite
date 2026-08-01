@@ -20,10 +20,12 @@ import { createInterface } from 'node:readline';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { RunnerHandle } from '../../src/runtime/runner.js';
 import { startRunner } from '../../src/runtime/runner.js';
+import { CLI_VERSION } from '../../src/version.js';
 import {
   FAKE_BROKER_NAME,
   FAKE_BROKER_TOKEN,
   type FakeBroker,
+  fakeBrokerBriefingRunnerVersions,
   fakeBrokerToolInvocations,
   fakeBrokerToolSources,
   startFakeBroker,
@@ -101,6 +103,7 @@ describe('runner external tools', () => {
     broker = null;
     fakeBrokerToolSources.length = 0;
     fakeBrokerToolInvocations.length = 0;
+    fakeBrokerBriefingRunnerVersions.length = 0;
   });
 
   it('lists briefing tools as <source>__<name> and dispatches calls to the broker', async () => {
@@ -206,6 +209,7 @@ describe('runner external tools', () => {
     await waitFor(() => received.some((f) => f.kind === 'mcp_response' && f.id === 2));
     const after = received.find((f) => f.kind === 'mcp_response' && f.id === 2);
     expect((after?.result?.tools ?? []).map((t) => t.name)).toContain('jira__get_issue');
+    expect(fakeBrokerBriefingRunnerVersions).toEqual([CLI_VERSION, CLI_VERSION]);
   });
 
   it('does not emit list_changed when the refetched set is unchanged', async () => {

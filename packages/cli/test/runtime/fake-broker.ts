@@ -58,6 +58,9 @@ export const fakeBrokerObjectives: Array<Record<string, unknown>> = [];
  */
 export const fakeBrokerObjectiveQueries: string[] = [];
 
+/** Runner-version headers observed on briefing fetches, including refreshes. */
+export const fakeBrokerBriefingRunnerVersions: Array<string | undefined> = [];
+
 /**
  * Resolved tool sources the fake broker returns on /briefing
  * (`toolSources` field). Tests mutate this then push a
@@ -177,6 +180,8 @@ export async function startFakeBroker(): Promise<FakeBroker> {
     }
 
     if (url.pathname === '/briefing' && req.method === 'GET') {
+      const reported = req.headers['x-csuite-runner-version'];
+      fakeBrokerBriefingRunnerVersions.push(typeof reported === 'string' ? reported : undefined);
       res.writeHead(200, jsonHeaders);
       res.end(
         JSON.stringify({
