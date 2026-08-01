@@ -330,6 +330,73 @@ describe('identity migration', () => {
     expect(secrets.getBySlug('valueless-git-author-name')).not.toBeNull();
   });
 
+  it('rolls back whole when a row fails mid-migration, leaving nothing half-moved', () => {
+    // Criterion 3 says a half-migrated state is the outcome to refuse:
+    // a secret deleted before its variable exists loses a value that
+    // cannot be regenerated, and a variable created without deleting
+    // the secret leaves the member resolving one env name from both
+    // stores — which `resolveFor` then refuses, breaking every runner
+    // start. That was a decision stated before building, and a decision
+    // settled in argument but unpinned in code is one the next edit
+    // reverses silently.
+    const { db, secrets, variables } = makeApp();
+    for (const [slug, env] of [
+      ['a-git-author-name', 'GIT_AUTHOR_NAME'],
+      ['b-git-author-email', 'GIT_AUTHOR_EMAIL'],
+    ] as const) {
+      const s = secrets.create({ slug, envName: env, creator: 'admin' });
+      secrets.setValue(s.id, `value-for-${slug}`);
+      secrets.bind(s.id, 'bound');
+    }
+
+    // Fail the SECOND variable insert, so the first row has already been
+    // written and deleted when the error lands — the exact shape that
+    // would leave the batch half-applied without a transaction.
+    let inserts = 0;
+    const failing = new Proxy(db, {
+      get(target, prop, receiver) {
+        if (prop !== 'prepare') return Reflect.get(target, prop, receiver);
+        return (sql: string) => {
+          const stmt = target.prepare(sql);
+          if (!sql.includes('INSERT INTO variables')) return stmt;
+          return new Proxy(stmt, {
+            get(st, p, r) {
+              if (p !== 'run') return Reflect.get(st, p, r);
+              return (...args: unknown[]) => {
+                inserts += 1;
+                if (inserts === 2) throw new Error('disk full');
+                return (st.run as (...a: unknown[]) => unknown)(...args);
+              };
+            },
+          });
+        };
+      },
+    });
+
+    const result = migrateIdentityToVariables(
+      failing as unknown as typeof db,
+      secrets,
+      variables,
+      noopLog,
+    );
+
+    expect(result.migrated).toEqual([]);
+    // Both secrets are exactly where they were — including the first,
+    // which had already been inserted and deleted inside the transaction.
+    expect(secrets.getBySlug('a-git-author-name')).not.toBeNull();
+    expect(secrets.getBySlug('b-git-author-email')).not.toBeNull();
+    expect(variables.getBySlug('a-git-author-name')).toBeNull();
+    expect(variables.getBySlug('b-git-author-email')).toBeNull();
+    // The values survived, which is the part that cannot be regenerated.
+    expect(secrets.allDecryptedValues()).toContain('value-for-a-git-author-name');
+    expect(secrets.allDecryptedValues()).toContain('value-for-b-git-author-email');
+    // And it said so rather than reporting a clean run.
+    expect(noopLog.warn).toHaveBeenCalledWith(
+      'identity migration rolled back; identity remains registered for redaction',
+      expect.objectContaining({ error: 'disk full' }),
+    );
+  });
+
   it('after migration the identity value is no longer registered at boot', () => {
     const { db, secrets, variables } = makeApp();
     identitySeed(secrets);
