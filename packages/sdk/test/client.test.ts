@@ -286,3 +286,50 @@ describe('process document editable fields', () => {
     expect(unionIsInRuntime.length).toBeGreaterThan(0);
   });
 });
+
+// ─── `previous` is REQUIRED, asserted where omission can happen ──────
+//
+// The store reconstructs the column from the row every time, so an
+// omitted `previous` cannot arise there — it arises at the response
+// boundary, where a broker (or a forged payload) sends an edit without
+// it. `.default({})` used to materialise `{}` silently, which is a
+// record the write path never emits.
+describe('process document edit parsing', () => {
+  const valid = {
+    version: 2,
+    ts: 1,
+    actor: 'lea',
+    reason: 'r',
+    disposition: 'correction' as const,
+    fields: ['text' as const],
+    previous: { text: 'before' },
+  };
+
+  it('accepts a well-formed edit, so the negatives below mean something', () => {
+    expect(ProcessDocumentEditSchema.safeParse(valid).success).toBe(true);
+  });
+
+  /**
+   * ISOLATES `required`. A version-2 edit with `previous` omitted is
+   * rejected by the refinement anyway — it claims to have changed
+   * `text` and retains no prior value — so it would pass this test
+   * even with `.default({})` restored, for the wrong reason.
+   *
+   * Version 1 is the case where an omitted `previous` is otherwise
+   * consistent: the creation legitimately has no prior values, so
+   * `{}` satisfies every refinement. Only the field being REQUIRED
+   * rejects it, and the writer always emits the column.
+   */
+  it('rejects a version-1 edit with `previous` omitted, which only `required` catches', () => {
+    const creation = { ...valid, version: 1, previous: {} };
+    expect(ProcessDocumentEditSchema.safeParse(creation).success).toBe(true);
+
+    const { previous: _omitted, ...withoutPrevious } = creation;
+    expect(ProcessDocumentEditSchema.safeParse(withoutPrevious).success).toBe(false);
+  });
+
+  it('rejects an unknown key in `previous` rather than stripping it', () => {
+    const forged = { ...valid, previous: { text: 'before', smuggled: 'x' } };
+    expect(ProcessDocumentEditSchema.safeParse(forged).success).toBe(false);
+  });
+});

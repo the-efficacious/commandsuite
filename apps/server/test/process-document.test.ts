@@ -402,6 +402,28 @@ describe('records the writer cannot produce are rejected on read', () => {
     expect(() => s.history()).toThrow(/changed nothing cannot exist/);
   });
 
+  /**
+   * THE PAIRED CORRUPTION, which isolates `.min(1)`.
+   *
+   * The test above does not. Its row still carries `previous.text`, so
+   * removing `.min(1)` leaves it failing via the SUBSET rule — a
+   * prior value for a field the edit does not list. Two paths to one
+   * failure, and the test is named for the path it does not exercise.
+   * Redundancy absorbing a mutation, in a test I wrote about
+   * redundancy absorbing mutations.
+   *
+   * `fields=[]` WITH `previous={}` is consistent with every other
+   * refinement: nothing claimed, nothing retained, version 1 rule not
+   * applicable. Only the non-empty constraint rejects it — and the
+   * writer cannot emit it, because `write()` refuses a no-op before it
+   * appends history.
+   */
+  it('rejects fields=[] paired with previous={}, which only min(1) catches', () => {
+    const { db, s } = seeded();
+    db.exec(`UPDATE process_document_edits SET fields = '[]', previous = '{}' WHERE version = 2`);
+    expect(() => s.history()).toThrow(/changed nothing cannot exist/);
+  });
+
   it('rejects any prior value on version 1, not just prior text', () => {
     const { db, s } = seeded();
     db.exec(`UPDATE process_document_edits SET previous = '{"text":"invented"}' WHERE version = 1`);
