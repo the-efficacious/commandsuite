@@ -122,6 +122,10 @@ export const OBJECTIVE_PATHS = {
   reassign: (id: string) => `/objectives/${encodeURIComponent(id)}/reassign`,
   discuss: (id: string) => `/objectives/${encodeURIComponent(id)}/discuss`,
   watchers: (id: string) => `/objectives/${encodeURIComponent(id)}/watchers`,
+  /** Amend the contract text. Requires `objectives.create`. */
+  amend: (id: string) => `/objectives/${encodeURIComponent(id)}/amend`,
+  /** Correct an earlier lifecycle event. Requires `objectives.create`. */
+  correctEvent: (id: string) => `/objectives/${encodeURIComponent(id)}/correct-event`,
 } as const;
 
 /**

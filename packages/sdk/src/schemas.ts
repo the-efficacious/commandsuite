@@ -225,6 +225,70 @@ export const HealthResponseSchema = z.object({
 
 export const ObjectiveStatusSchema = z.enum(['active', 'blocked', 'done', 'cancelled']);
 
+export const ObjectiveEventKindSchema = z.enum([
+  'assigned',
+  'blocked',
+  'unblocked',
+  'completed',
+  'cancelled',
+  'reassigned',
+  'watcher_added',
+  'watcher_removed',
+  'amended',
+  'event_corrected',
+]);
+
+export const AmendmentDispositionSchema = z.enum(['correction', 'scope_change']);
+export const AmendableFieldSchema = z.enum(['title', 'outcome', 'body']);
+
+export const ObjectiveAmendmentSchema = z.discriminatedUnion('target', [
+  z.object({
+    target: z.literal('contract'),
+    version: z.number().int().positive(),
+    ts: z.number().int().nonnegative(),
+    actor: NameSchema,
+    disposition: AmendmentDispositionSchema,
+    reason: z.string().min(1).max(2048),
+    fields: z.array(AmendableFieldSchema).min(1),
+    previous: z
+      .object({
+        title: z.string().optional(),
+        outcome: z.string().optional(),
+        body: z.string().optional(),
+      })
+      .default({}),
+  }),
+  z.object({
+    target: z.literal('event'),
+    ts: z.number().int().nonnegative(),
+    actor: NameSchema,
+    reason: z.string().min(1).max(2048),
+    eventId: z.string().min(1),
+    eventKind: ObjectiveEventKindSchema,
+    eventTs: z.number().int().nonnegative(),
+    correction: z.string().min(1).max(4096),
+  }),
+]);
+
+/**
+ * At least one contract field, and `reason`/`disposition` are
+ * required. An amendment that supplies no field is rejected upstream
+ * rather than recorded as a no-op version bump.
+ */
+export const AmendObjectiveRequestSchema = z.object({
+  title: z.string().min(1).max(200).optional(),
+  outcome: z.string().min(1).max(2048).optional(),
+  body: z.string().max(4096).optional(),
+  reason: z.string().min(1).max(2048),
+  disposition: AmendmentDispositionSchema,
+});
+
+export const CorrectObjectiveEventRequestSchema = z.object({
+  eventId: z.string().min(1),
+  correction: z.string().min(1).max(4096),
+  reason: z.string().min(1).max(2048),
+});
+
 export const ObjectiveSchema = z.object({
   id: z.string().min(1),
   title: z.string().min(1).max(200),
@@ -240,20 +304,15 @@ export const ObjectiveSchema = z.object({
   result: z.string().nullable(),
   blockReason: z.string().nullable(),
   attachments: z.array(AttachmentSchema).default([]),
+  // Defaulted so a client reading an older broker's response still
+  // parses: absent means "never amended, version 1", which is the
+  // truth for every objective created before amendment existed.
+  outcomeVersion: z.number().int().positive().default(1),
+  amendments: z.array(ObjectiveAmendmentSchema).default([]),
 });
 
-export const ObjectiveEventKindSchema = z.enum([
-  'assigned',
-  'blocked',
-  'unblocked',
-  'completed',
-  'cancelled',
-  'reassigned',
-  'watcher_added',
-  'watcher_removed',
-]);
-
 export const ObjectiveEventSchema = z.object({
+  id: z.string().default(''),
   objectiveId: z.string().min(1),
   ts: z.number().int().nonnegative(),
   actor: NameSchema,

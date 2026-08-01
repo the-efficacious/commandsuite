@@ -39,12 +39,14 @@ import {
   ActivityKindSchema,
   ActivityReportSchema,
   AddChannelMemberRequestSchema,
+  AmendObjectiveRequestSchema,
   ApproveEnrollmentRequestSchema,
   BindSecretRequestSchema,
   BindToolSourceRequestSchema,
   BindVariableRequestSchema,
   CancelObjectiveRequestSchema,
   CompleteObjectiveRequestSchema,
+  CorrectObjectiveEventRequestSchema,
   CreateChannelRequestSchema,
   CreateMemberRequestSchema,
   CreateNotificationEndpointRequestSchema,
@@ -4041,6 +4043,72 @@ export function createApp(options: AppOptions): CreatedApp {
       }
     });
 
+    // POST /objectives/:id/amend — requires `objectives.create`.
+    //
+    // The gate is the PERMISSION, not the role. An assignee who holds
+    // `objectives.create` may amend their own contract; that looks
+    // wrong at a glance and is right — the constraint is "can this
+    // member author contracts", not "is this member the executor".
+    app.post(`${PATHS.objectives}/:id/amend`, auth, async (c) => {
+      const member = c.get('member');
+      const id = c.req.param('id');
+      const current = objectives.get(id);
+      if (!current) return c.json({ error: `no such objective: ${id}` }, 404);
+      if (!hasPermission(member.permissions, 'objectives.create')) {
+        return c.json({ error: 'amend requires objectives.create permission' }, 403);
+      }
+      const raw = await c.req.json().catch(() => null);
+      const parsed = AmendObjectiveRequestSchema.safeParse(raw);
+      if (!parsed.success) {
+        return c.json({ error: 'invalid amend payload', details: parsed.error.issues }, 400);
+      }
+      try {
+        const { objective: updated, events } = objectives.amend(id, parsed.data, member.name);
+        queueMicrotask(() => {
+          for (const ev of events) {
+            void publishObjectiveEvent(updated, ev, member.name);
+          }
+        });
+        return c.json(updated);
+      } catch (err) {
+        const mapped = mapObjectivesError(err);
+        return c.json(mapped.body, mapped.status as 400 | 404 | 409 | 500);
+      }
+    });
+
+    // POST /objectives/:id/correct-event — requires `objectives.create`.
+    // Appends a superseding record; the target event is never rewritten.
+    app.post(`${PATHS.objectives}/:id/correct-event`, auth, async (c) => {
+      const member = c.get('member');
+      const id = c.req.param('id');
+      const current = objectives.get(id);
+      if (!current) return c.json({ error: `no such objective: ${id}` }, 404);
+      if (!hasPermission(member.permissions, 'objectives.create')) {
+        return c.json({ error: 'correcting an event requires objectives.create permission' }, 403);
+      }
+      const raw = await c.req.json().catch(() => null);
+      const parsed = CorrectObjectiveEventRequestSchema.safeParse(raw);
+      if (!parsed.success) {
+        return c.json({ error: 'invalid correction payload', details: parsed.error.issues }, 400);
+      }
+      try {
+        const { objective: updated, events } = objectives.correctEvent(
+          id,
+          parsed.data,
+          member.name,
+        );
+        queueMicrotask(() => {
+          for (const ev of events) {
+            void publishObjectiveEvent(updated, ev, member.name);
+          }
+        });
+        return c.json(updated);
+      } catch (err) {
+        const mapped = mapObjectivesError(err);
+        return c.json(mapped.body, mapped.status as 400 | 404 | 409 | 500);
+      }
+    });
+
     // POST /objectives/:id/reassign — requires `objectives.reassign`.
     app.post(`${PATHS.objectives}/:id/reassign`, auth, async (c) => {
       const member = c.get('member');
@@ -6109,6 +6177,55 @@ function systemMessageForEvent(
     case 'watcher_removed': {
       const cs = typeof event?.payload.name === 'string' ? event.payload.name : '(unknown)';
       return [header, `title:   ${objective.title}`, `watcher: ${cs}`].join('\n');
+    }
+    case 'amended': {
+      // The agent executing the contract has to learn that it moved,
+      // and — because `disposition` decides whether work already done
+      // is still valid — has to learn which kind of change it was
+      // WITHOUT opening the objective. A `correction` means it was
+      // never validly held to the old text; a `scope_change` is a new
+      // demand on work already underway.
+      const fields = Array.isArray(event?.payload.fields)
+        ? (event.payload.fields as string[]).join(', ')
+        : '(unknown)';
+      const disposition =
+        typeof event?.payload.disposition === 'string' ? event.payload.disposition : '(unstated)';
+      const reason =
+        typeof event?.payload.reason === 'string' ? event.payload.reason : '(no reason given)';
+      const version =
+        typeof event?.payload.version === 'number'
+          ? event.payload.version
+          : objective.outcomeVersion;
+      return [
+        header,
+        `title:       ${objective.title}`,
+        `changed:     ${fields}`,
+        `disposition: ${disposition}${
+          disposition === 'correction'
+            ? ' (retroactive — work was never validly held to the prior text)'
+            : disposition === 'scope_change'
+              ? ' (forward-only — work already underway finishes under the prior text)'
+              : ''
+        }`,
+        `version:     ${version}`,
+        `reason:      ${reason}`,
+        `outcome:     ${objective.outcome}`,
+      ].join('\n');
+    }
+    case 'event_corrected': {
+      const correctedKind =
+        typeof event?.payload.eventKind === 'string' ? event.payload.eventKind : '(unknown)';
+      const correction =
+        typeof event?.payload.correction === 'string' ? event.payload.correction : '';
+      const reason =
+        typeof event?.payload.reason === 'string' ? event.payload.reason : '(no reason given)';
+      return [
+        header,
+        `title:      ${objective.title}`,
+        `corrects:   ${correctedKind}`,
+        `correction: ${correction}`,
+        `reason:     ${reason}`,
+      ].join('\n');
     }
   }
 }
