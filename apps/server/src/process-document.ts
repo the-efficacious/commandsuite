@@ -55,12 +55,11 @@
  * predecessor, which held N rules with nothing capping N.
  */
 
-import { PROCESS_DOCUMENT_FIELDS } from 'csuite-sdk/schemas';
+import { PROCESS_DOCUMENT_FIELDS, ProcessDocumentEditSchema } from 'csuite-sdk/schemas';
 import type {
   EditProcessDocumentRequest,
   ProcessDocument,
   ProcessDocumentEdit,
-  ProcessDocumentField,
 } from 'csuite-sdk/types';
 import type { DatabaseSyncInstance, StatementInstance } from './db.js';
 
@@ -279,24 +278,57 @@ class SqliteProcessDocumentStore implements ProcessDocumentStore {
     return { document: this.get() as ProcessDocument, edit };
   }
 
+  /**
+   * THREE LEVELS, and only the first is a parse.
+   *
+   *   syntax       is it JSON?                    JSON.parse throws
+   *   shape        is `fields` actually an array? a cast is not a check
+   *   cross-field  a later edit claiming to have
+   *                changed `text` must have
+   *                retained the prior `text`      the record-level rule
+   *
+   * `JSON.parse` succeeding proves the bytes are JSON. It proves
+   * nothing about the record being the record. The damaging
+   * corruptions are WELL-FORMED: `previous = '{}'` parses cleanly and
+   * renders as "created — no prior text", telling a caller there was
+   * nothing before; `fields = '{}'` parses to an object a cast then
+   * calls an array. Both are the original lie wearing valid syntax,
+   * and an earlier fix here caught only level 1.
+   *
+   * So the reconstructed record goes through the schema, whose
+   * refinement carries the relationship shape cannot express. This is
+   * the read path criterion 3's "retained, not reconstructed" promise
+   * is made on, so it is validated here rather than trusted.
+   *
+   * No fallback at any level: this store writes both columns itself,
+   * so a failure is corruption or a broken invariant, never optional
+   * input.
+   */
   history(): ProcessDocumentEdit[] {
-    return (this.selectHistoryStmt.all() as unknown as EditRow[]).map((row) => ({
-      version: row.version,
-      ts: row.ts,
-      actor: row.actor,
-      reason: row.reason,
-      disposition: row.disposition as ProcessDocumentEdit['disposition'],
-      // NO FALLBACK. This store writes both columns itself, so a
-      // parse failure is corruption or a broken invariant, never
-      // optional input. The fallbacks that used to be here converted a
-      // damaged row into a valid-looking one: an unreadable `previous`
-      // became `{}`, which renders as "created — no prior text", so a
-      // caller was told there had been nothing before rather than that
-      // the retained record is unreadable. That is criterion 3 failing
-      // in the reassuring direction, which is the worst direction.
-      fields: parseColumn<ProcessDocumentField[]>(row.fields, row.version, 'fields'),
-      previous: parseColumn<ProcessDocumentEdit['previous']>(row.previous, row.version, 'previous'),
-    }));
+    const rows = this.selectHistoryStmt.all() as unknown as EditRow[];
+    return rows.map((row, i) => {
+      const candidate = {
+        version: row.version,
+        ts: row.ts,
+        actor: row.actor,
+        reason: row.reason,
+        disposition: row.disposition,
+        fields: parseColumn<unknown>(row.fields, row.version, 'fields'),
+        previous: parseColumn<unknown>(row.previous, row.version, 'previous'),
+      };
+      const parsed = ProcessDocumentEditSchema.safeParse(candidate);
+      if (!parsed.success) {
+        throw new ProcessDocumentError(
+          'corrupt_history',
+          `process document edit v${row.version} is not a valid history record ` +
+            `(row ${i + 1} of ${rows.length}): ` +
+            parsed.error.issues
+              .map((iss) => `${iss.path.join('.') || '(root)'} — ${iss.message}`)
+              .join('; '),
+        );
+      }
+      return parsed.data;
+    });
   }
 }
 

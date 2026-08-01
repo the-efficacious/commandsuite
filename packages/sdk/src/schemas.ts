@@ -849,17 +849,56 @@ export const ProcessDocumentSchema = z.object({
  * stood before, retained rather than reconstructed, so the diff the
  * outcome asks for is derived from two stored strings.
  */
-export const ProcessDocumentEditSchema = z.object({
-  /** The version this edit PRODUCED. */
-  version: z.number().int().positive(),
-  ts: z.number().int().nonnegative(),
-  actor: NameSchema,
-  reason: z.string().min(1).max(2048),
-  disposition: AmendmentDispositionSchema,
-  fields: z.array(ProcessDocumentFieldSchema),
-  /** Same shape as what the edit API accepts, by construction. */
-  previous: z.object(EDITABLE_PROCESS_DOCUMENT_SHAPE).partial().default({}),
-});
+export const ProcessDocumentEditSchema = z
+  .object({
+    /** The version this edit PRODUCED. */
+    version: z.number().int().positive(),
+    ts: z.number().int().nonnegative(),
+    actor: NameSchema,
+    reason: z.string().min(1).max(2048),
+    disposition: AmendmentDispositionSchema,
+    fields: z.array(ProcessDocumentFieldSchema),
+    /** Same shape as what the edit API accepts, by construction. */
+    previous: z.object(EDITABLE_PROCESS_DOCUMENT_SHAPE).partial().default({}),
+  })
+  .superRefine((edit, ctx) => {
+    // RECORD-LEVEL INVARIANT, not a shape check.
+    //
+    // Shape alone cannot express this: `previous` is partial, so `{}`
+    // is structurally valid for every version — and `{}` renders as
+    // "created — no prior text", which is the same lie a corrupt row
+    // told before. Syntactic JSON validation does not catch it either,
+    // because `{}` is valid JSON.
+    //
+    // The relationship that has to hold: version 1 IS the creation and
+    // has no prior text; any later edit that claims to have changed a
+    // field must have retained that field's prior value. Criterion 3's
+    // "retained, not reconstructed" is exactly this, and without it
+    // the claim is unenforced.
+    if (edit.version === 1) {
+      if (edit.previous.text !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['previous', 'text'],
+          message:
+            'version 1 is the creation and cannot have prior text — a record claiming ' +
+            'otherwise is not the history of this document',
+        });
+      }
+      return;
+    }
+    for (const field of edit.fields) {
+      if (edit.previous[field] === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['previous', field],
+          message:
+            `edit v${edit.version} says it changed '${field}' but retained no prior ` +
+            `value for it — reporting that as "nothing before" would be false`,
+        });
+      }
+    }
+  });
 
 /**
  * Create-or-edit. One request shape and one endpoint for both, so the
@@ -1673,10 +1712,6 @@ export const BriefingResponseSchema = MemberSchema.extend({
    * #122 landed in #129 and no length cap remains in source. The field
    * is still right, on authority separation alone.
    *
-   * `.default(null)` so an older broker that omits the field parses
-   * rather than failing the client-side schema.
-   */
-  /**
    * THREE states, and `.default(null)` would destroy the one that
    * matters. An older broker OMITS this field; a broker that has it
    * and holds no document sends `null`. Defaulting absent to `null`

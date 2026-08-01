@@ -291,3 +291,57 @@ describe('a corrupt history row is an error, not an empty one', () => {
     expect(() => corrupt('previous').history()).toThrow(/v2/);
   });
 });
+
+// ─── valid JSON is not a valid record ────────────────────────────────
+//
+// Rune's second pass. The first fix caught only SYNTAX. The damaging
+// corruptions are well-formed:
+//
+//   previous = '{}'   parses cleanly, renders "created — no prior text"
+//   fields   = '{}'   parses to an object a cast then calls an array
+//
+// Both are the original lie wearing valid syntax. Three levels, and
+// only the first was guarded:
+//
+//   syntax       is it JSON?                      JSON.parse
+//   shape        is `fields` an array?            the schema
+//   cross-field  a later edit claiming `text`
+//                must have retained prior text    the refinement
+
+describe('a well-formed but untrue history row is an error', () => {
+  function seeded() {
+    const db = openDatabase(':memory:');
+    const s = createSqliteProcessDocumentStore(db);
+    s.write({ text: V1, reason: 'r', disposition: 'correction' }, 'AndrewJon', AT);
+    s.write({ text: V2, reason: 'r', disposition: 'correction' }, 'Lea', AT + 1);
+    return { db, s };
+  }
+
+  it('rejects previous={} on an edit that claims to have changed text', () => {
+    const { db, s } = seeded();
+    // Valid JSON. Parses. Would have rendered "created — no prior text"
+    // for an edit that demonstrably changed the document.
+    db.exec("UPDATE process_document_edits SET previous = '{}' WHERE version = 2");
+    expect(() => s.history()).toThrow(/retained no prior value/);
+    expect(() => s.history()).toThrow(/v2/);
+  });
+
+  it('rejects fields={} — an object is not an array', () => {
+    const { db, s } = seeded();
+    db.exec("UPDATE process_document_edits SET fields = '{}' WHERE version = 2");
+    expect(() => s.history()).toThrow(/not a valid history record/);
+  });
+
+  it('rejects prior text on version 1, which IS the creation', () => {
+    const { db, s } = seeded();
+    db.exec(`UPDATE process_document_edits SET previous = '{"text":"invented"}' WHERE version = 1`);
+    expect(() => s.history()).toThrow(/version 1 is the creation/);
+  });
+
+  it('still reads a healthy history, so the guard is not refusing everything', () => {
+    const { s } = seeded();
+    const edits = s.history();
+    expect(edits).toHaveLength(2);
+    expect(edits[1]?.previous.text).toBe(V1);
+  });
+});
