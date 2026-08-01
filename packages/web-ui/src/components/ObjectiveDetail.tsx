@@ -363,11 +363,70 @@ function OverviewTab({
       <section class="card">
         <div class="eyebrow" style="margin-bottom:10px">
           Outcome
+          {objective.outcomeVersion > 1 && (
+            <span style="margin-left:8px;color:var(--muted);font-weight:400">
+              contract v{objective.outcomeVersion} — amended
+            </span>
+          )}
         </div>
         <div style="font-family:var(--f-sans);font-size:14.5px;color:var(--ink);white-space:pre-wrap;line-height:1.55">
           {objective.outcome}
         </div>
       </section>
+
+      {objective.amendments.length > 0 && (
+        <section class="card">
+          <div class="eyebrow" style="margin-bottom:10px">
+            Amendments
+          </div>
+          {/*
+            Rendered here, with the record, rather than left in the
+            discussion thread. A reader who sees `done` and a result
+            must not have to go find a chat message to learn the
+            contract moved or that the completion was recorded at the
+            wrong moment — the structured field is the one they trust,
+            and it is the one that used to be silently wrong.
+          */}
+          {objective.amendments.map((a) => (
+            <div
+              key={`${a.target}-${a.ts}`}
+              style="margin-bottom:14px;padding-left:10px;border-left:2px solid var(--line)"
+            >
+              {a.target === 'contract' ? (
+                <>
+                  <div style="font-size:12.5px;color:var(--muted)">
+                    v{a.version} · {a.actor} · changed {a.fields.join(', ')} ·{' '}
+                    <strong style="color:var(--ink)">{a.disposition}</strong>{' '}
+                    {a.disposition === 'correction'
+                      ? '(retroactive — work was never validly held to the prior text)'
+                      : '(forward-only — work already underway finishes under the prior text)'}
+                  </div>
+                  <div style="font-size:13.5px;color:var(--ink);margin-top:4px">{a.reason}</div>
+                  {Object.entries(a.previous).map(([field, prev]) => (
+                    <details key={field} style="margin-top:6px">
+                      <summary style="font-size:12.5px;color:var(--muted);cursor:pointer">
+                        superseded {field}
+                      </summary>
+                      <div style="font-family:var(--f-sans);font-size:13px;color:var(--muted);white-space:pre-wrap;line-height:1.5;margin-top:4px">
+                        {prev}
+                      </div>
+                    </details>
+                  ))}
+                </>
+              ) : (
+                <>
+                  <div style="font-size:12.5px;color:var(--muted)">
+                    {a.actor} · corrects the <strong style="color:var(--ink)">{a.eventKind}</strong>{' '}
+                    event
+                  </div>
+                  <div style="font-size:13.5px;color:var(--ink);margin-top:4px">{a.correction}</div>
+                  <div style="font-size:12.5px;color:var(--muted);margin-top:4px">{a.reason}</div>
+                </>
+              )}
+            </div>
+          ))}
+        </section>
+      )}
 
       {objective.body && (
         <section class="card">

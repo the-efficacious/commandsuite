@@ -1407,6 +1407,27 @@ export interface Objective {
   /** Set while status === 'blocked'; cleared on unblock. */
   blockReason: string | null;
   /**
+   * The contract version the `title`/`outcome`/`body` above represent.
+   * 1 on creation, incremented by each contract amendment.
+   *
+   * Every lifecycle event records the version current when it was
+   * emitted, so "which contract was this work built against" is a
+   * field on the completion rather than a reconstruction from
+   * timestamps.
+   */
+  outcomeVersion: number;
+  /**
+   * Ordered amendment record — contract changes and lifecycle-event
+   * corrections, oldest first. Empty for an objective that has never
+   * been amended.
+   *
+   * Present on the objective itself, deliberately: the structured
+   * field is the one a reader trusts, and an amendment that lives
+   * only in a discussion thread reproduces the defect this exists to
+   * remove.
+   */
+  amendments: ObjectiveAmendment[];
+  /**
    * Files attached to the objective at creation time. Thread members
    * (originator, assignee, watchers) all receive read grants for each
    * attachment, so any thread-scoped UI can render them alongside
@@ -1436,7 +1457,71 @@ export type ObjectiveEventKind =
   | 'cancelled'
   | 'reassigned'
   | 'watcher_added'
-  | 'watcher_removed';
+  | 'watcher_removed'
+  /** The contract text changed. Payload is an `ObjectiveAmendment`. */
+  | 'amended'
+  /**
+   * An earlier lifecycle event was corrected. The original event is
+   * never rewritten — this one supersedes it and names it.
+   */
+  | 'event_corrected';
+
+/**
+ * Whether an amendment binds work that was already underway.
+ *
+ * The amender states this; it is not inferable from the text. A
+ * criterion struck because it asserted something untrue is a
+ * `correction` and work was never validly held to it. A criterion
+ * added mid-flight is a `scope_change` and is a new demand on work
+ * already in progress.
+ *
+ * An amender who cannot say which one it is has not finished thinking
+ * about the amendment.
+ */
+export type AmendmentDisposition = 'correction' | 'scope_change';
+
+/** Contract fields that carry contract weight and can be amended. */
+export type AmendableField = 'title' | 'outcome' | 'body';
+
+/**
+ * One entry in an objective's amendment record.
+ *
+ * Ordered, append-only, and rendered WITH the objective rather than
+ * beside it — a reader who sees the current contract must not have to
+ * find a discussion post to learn it was corrected.
+ *
+ * The sequence is NOT monotone improvement: a real amendment on
+ * 2026-08-01 reversed the ruling that preceded it by 45 seconds. So
+ * an entry carries its `reason`, not only the superseded text — a
+ * reader who sees only the final state learns the right answer and
+ * nothing about how it was reached.
+ */
+export type ObjectiveAmendment =
+  | {
+      target: 'contract';
+      /** Contract version this amendment produced. Starts at 1 on creation. */
+      version: number;
+      ts: number;
+      actor: string;
+      disposition: AmendmentDisposition;
+      /** Why. Required — an amendment without a reason is a silent replacement. */
+      reason: string;
+      /** Which fields changed. Distinguishes an outcome move from a prose fix. */
+      fields: AmendableField[];
+      /** The superseded values, keyed by field. Only changed fields appear. */
+      previous: Partial<Record<AmendableField, string>>;
+    }
+  | {
+      target: 'event';
+      ts: number;
+      actor: string;
+      reason: string;
+      /** The event being corrected. It remains in the log, unrewritten. */
+      eventKind: ObjectiveEventKind;
+      eventTs: number;
+      /** What the record should say instead. */
+      correction: string;
+    };
 
 export interface ObjectiveEvent {
   objectiveId: string;
@@ -1494,6 +1579,46 @@ export interface CancelObjectiveRequest {
 export interface ReassignObjectiveRequest {
   to: string;
   note?: string;
+}
+
+/**
+ * Amend the contract. Requires `objectives.create` — the contract is
+ * not the executor's to rewrite, and the gate is the permission
+ * rather than the role (an assignee who holds it may amend).
+ *
+ * At least one field must be supplied and must actually differ; an
+ * amendment that changes nothing is rejected rather than recorded as
+ * a no-op version bump.
+ */
+export interface AmendObjectiveRequest {
+  title?: string;
+  outcome?: string;
+  body?: string;
+  /** Required. Without it an amendment is a silent replacement. */
+  reason: string;
+  /**
+   * Required. Whether work already underway is bound by this. See
+   * `AmendmentDisposition` — the amender states it because it cannot
+   * be inferred from the text.
+   */
+  disposition: AmendmentDisposition;
+}
+
+/**
+ * Correct an earlier lifecycle event. Requires `objectives.create`.
+ *
+ * The original event is never rewritten — this appends a superseding
+ * record naming it. The motivating case: an objective completed at a
+ * PR head rather than the merge SHA, where the author could only mark
+ * it "provisional" in prose because the completed event was
+ * unrewritable.
+ */
+export interface CorrectObjectiveEventRequest {
+  /** Timestamp of the event being corrected, from the event log. */
+  eventTs: number;
+  /** What the record should say instead. */
+  correction: string;
+  reason: string;
 }
 
 /**
