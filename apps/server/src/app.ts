@@ -30,6 +30,7 @@ import { createNodeWebSocket } from '@hono/node-ws';
 import {
   type Broker,
   clampQueryLimit,
+  containsRegisteredSecretValue,
   openaiResponsesToGenAi,
   registerSecretValues,
 } from 'csuite-core';
@@ -118,7 +119,7 @@ import {
   createActivityTracker,
 } from './activity-tracker.js';
 import { type AuthBindings, createAuthMiddleware } from './auth.js';
-import { composeBriefing } from './briefing.js';
+import { briefingCaptureExemptions, composeBriefing } from './briefing.js';
 import type { CaptureHealthStore } from './capture-health.js';
 import { type ChannelStore, ChannelsError, GENERAL_CHANNEL_ID, validateSlug } from './channels.js';
 import type { DiagnosticStore } from './diagnostics.js';
@@ -283,9 +284,12 @@ export interface AppOptions {
   /**
    * Content-addressed raw-body store. When provided alongside
    * `genaiStore`, the per-member correlators capture every resolved
-   * request/response body VERBATIM (sha256 + gzip) BEFORE parsing, link
+   * request/response body as received by the correlator (sha256 + gzip)
+   * BEFORE parsing, link
    * the derived gen_ai rows to the raw bytes by hash, and unlink the
-   * consumed body_ref spill files. Omit to skip raw capture (bodies are
+   * consumed body_ref spill files. Inline OTLP attributes have already
+   * passed attribute redaction; broker-issued briefing blocks are exempt.
+   * Omit to skip raw capture (bodies are
    * then only parsed into the derived view, and spill files are left on
    * disk).
    */
@@ -584,6 +588,28 @@ export function createApp(options: AppOptions): CreatedApp {
   // lazily created on first api-body record. Only used when `genaiStore`
   // is wired; otherwise the map stays empty.
   const genaiCorrelators = new Map<string, GenAiCorrelator>();
+  // Every entry is an exact block from a briefing actually issued to
+  // this member. Keep prior session values too: a runner's prompt is
+  // frozen, while an operator may edit the live team/member record.
+  const briefingExemptions = new Map<string, Set<string>>();
+  const exemptionsFor = (memberName: string): readonly string[] => {
+    const exemptions = new Set(briefingExemptions.get(memberName) ?? []);
+    const current = members.findByName(memberName);
+    if (current) {
+      // Cold-broker/restart path: a live runner may continue uploading
+      // without refetching /briefing. Rebuild the current authored blocks
+      // from authoritative storage rather than depending on process memory.
+      for (const block of briefingCaptureExemptions({
+        self: current,
+        team: teamStore.getTeam(),
+        teammates: teammatesFromMembers(members),
+        openObjectives: [],
+      })) {
+        exemptions.add(block);
+      }
+    }
+    return [...exemptions];
+  };
   const getGenAiCorrelator = (memberName: string): GenAiCorrelator => {
     let corr = genaiCorrelators.get(memberName);
     if (!corr) {
@@ -593,6 +619,7 @@ export function createApp(options: AppOptions): CreatedApp {
         // as producer without the call sites having to say so.
         ...(diagnostics !== undefined ? { diagnostics: diagnostics.emit } : {}),
         memberName,
+        getRedactionExemptions: () => exemptionsFor(memberName),
         // Raw capture-before-parse: when the raw-body store is wired,
         // the correlator content-addresses every body verbatim before
         // parsing and unlinks the consumed spill file (its default).
@@ -935,7 +962,7 @@ export function createApp(options: AppOptions): CreatedApp {
         if (reaches) externalNotificationEndpoints.push(endpoint.slug);
       }
     }
-    const briefing = composeBriefing({
+    const composeInput = {
       self: member,
       team: teamStore.getTeam(),
       teammates: teammatesFromMembers(members),
@@ -944,7 +971,14 @@ export function createApp(options: AppOptions): CreatedApp {
       // staleness rule as openObjectives).
       toolSources: toolSources ? toolSources.resolveFor(member.name) : [],
       externalNotificationEndpoints,
-    });
+    };
+    const briefing = composeBriefing(composeInput);
+    let remembered = briefingExemptions.get(member.name);
+    if (!remembered) {
+      remembered = new Set<string>();
+      briefingExemptions.set(member.name, remembered);
+    }
+    for (const block of briefingCaptureExemptions(composeInput)) remembered.add(block);
     return c.json(briefing);
   });
 
@@ -1427,7 +1461,7 @@ export function createApp(options: AppOptions): CreatedApp {
           ? Number(expectedRawBodiesHeader)
           : null;
       const raw = await c.req.json().catch(() => null);
-      const records = parseOtlpLogs(raw);
+      const records = parseOtlpLogs(raw, { exemptions: exemptionsFor(member.name) });
       // Take the baseline after the only await. Correlation and both count()
       // calls below are synchronous, so another request cannot interleave and
       // inflate this request's acknowledgement delta.
@@ -1738,6 +1772,7 @@ export function createApp(options: AppOptions): CreatedApp {
           const rec = openaiResponsesToGenAi({
             requestBody,
             responseBody,
+            redactionExemptions: exemptionsFor(member.name),
             model: envelope.model,
             responseId: strOrNull(inf.responseId),
             querySource: envelope.querySource,
@@ -4527,9 +4562,14 @@ export function createApp(options: AppOptions): CreatedApp {
       return c.json({ error: 'no fields to update (name, context)' }, 400);
     }
     try {
+      const warning =
+        patch.context !== undefined && containsRegisteredSecretValue(patch.context)
+          ? 'Team context contains a registered secret value. It was stored intact and will appear verbatim in captured traces; use a secret reference instead of a secret value.'
+          : null;
       const updated = teamStore.updateTeam(patch, member.name);
       logger.info('team updated', { fields: Object.keys(patch), updatedBy: member.name });
-      return c.json({ team: updated });
+      if (warning) c.header('X-CSuite-Warning', warning);
+      return c.json({ team: updated, ...(warning ? { warning } : {}) });
     } catch (err) {
       if (err instanceof MemberLoadError) return c.json({ error: err.message }, 400);
       throw err;
@@ -4730,6 +4770,13 @@ export function createApp(options: AppOptions): CreatedApp {
       patch.permissions = nextPermissions;
       patch.rawPermissions = nextRaw;
     }
+    const warningText = [parsed.data.role?.description, parsed.data.instructions].find(
+      (text) => text !== undefined && containsRegisteredSecretValue(text),
+    );
+    const warning =
+      warningText !== undefined
+        ? 'The member role description or personal instructions contain a registered secret value. The block was stored intact and will appear verbatim in captured traces; use a secret reference instead of a secret value.'
+        : null;
     try {
       members.updateMember(parsedName.data, patch);
     } catch (err) {
@@ -4742,7 +4789,8 @@ export function createApp(options: AppOptions): CreatedApp {
       return c.json({ error: `member vanished after update: ${parsedName.data}` }, 500);
     }
     logger.info('member updated', { name: updated.name, patch, updatedBy: member.name });
-    return c.json(loadedToMember(updated));
+    if (warning) c.header('X-CSuite-Warning', warning);
+    return c.json({ ...loadedToMember(updated), ...(warning ? { warning } : {}) });
   });
 
   app.delete(`${PATHS.members}/:name`, auth, (c) => {

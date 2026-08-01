@@ -79,7 +79,9 @@ export {
 } from './trace/openai-responses.js';
 export {
   clearRegisteredSecretValues,
+  containsRegisteredSecretValue,
   REDACTED,
+  type RedactionOptions,
   redactHeaders,
   redactJson,
   redactSecrets,

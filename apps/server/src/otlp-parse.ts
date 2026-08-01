@@ -32,7 +32,7 @@
  * the same `Number()`-level precision the record contract already uses.
  */
 
-import { redactJson } from 'csuite-core';
+import { type RedactionOptions, redactJson } from 'csuite-core';
 import type { TelemetryRecord } from './telemetry-store.js';
 
 function isObject(v: unknown): v is Record<string, unknown> {
@@ -130,7 +130,10 @@ function scopeToJson(scope: unknown): Record<string, unknown> | null {
  * Parse an OTLP/JSON `ExportLogsServiceRequest` into one record per log
  * record. Every record is kept regardless of `event.name`.
  */
-export function parseOtlpLogs(payload: unknown): TelemetryRecord[] {
+export function parseOtlpLogs(
+  payload: unknown,
+  redaction: RedactionOptions = {},
+): TelemetryRecord[] {
   const out: TelemetryRecord[] = [];
   const root = isObject(payload) ? payload : {};
   for (const rl of asArray(root.resourceLogs)) {
@@ -144,7 +147,29 @@ export function parseOtlpLogs(payload: unknown): TelemetryRecord[] {
       for (const lr of asArray(sl.logRecords)) {
         if (!isObject(lr)) continue;
         try {
-          const attributes = stripPii(redactJson(flattenAttributes(lr.attributes)));
+          const rawAttributes = flattenAttributes(lr.attributes);
+          const rawEventName = rawAttributes['event.name'];
+          const attributes = stripPii(redactJson(rawAttributes));
+          // Claude FILE-mode request bytes arrive inline as a JSON-string
+          // attribute. Scope exemptions structurally to `system`; applying
+          // them to the whole body would also exempt identical text in
+          // messages and tool results.
+          if (
+            typeof rawEventName === 'string' &&
+            rawEventName.endsWith('api_request_body') &&
+            typeof rawAttributes.body === 'string'
+          ) {
+            try {
+              const requestBody = JSON.parse(rawAttributes.body) as unknown;
+              const redactedBody = redactJson(requestBody);
+              if (isObject(requestBody) && isObject(redactedBody) && 'system' in requestBody) {
+                redactedBody.system = redactJson(requestBody.system, redaction);
+              }
+              attributes.body = JSON.stringify(redactedBody);
+            } catch {
+              // Malformed bodies retain ordinary full-attribute redaction.
+            }
+          }
           const eventName = attributes['event.name'];
           const name =
             typeof eventName === 'string' && eventName.length > 0 ? eventName : '(unnamed)';

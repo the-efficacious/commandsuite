@@ -13,7 +13,11 @@
 
 import { describe, expect, it } from 'vitest';
 import { openaiResponsesToGenAi } from '../src/trace/openai-responses.js';
-import { REDACTED } from '../src/trace/redact.js';
+import {
+  clearRegisteredSecretValues,
+  REDACTED,
+  registerSecretValues,
+} from '../src/trace/redact.js';
 
 function requestBody() {
   return {
@@ -162,6 +166,30 @@ describe('openaiResponsesToGenAi', () => {
     const rec = openaiResponsesToGenAi({ requestBody: req, responseBody: {} });
     expect(JSON.stringify(rec.systemInstructions)).toContain(REDACTED);
     expect(JSON.stringify(rec.inputMessages[0]?.parts[0])).toContain(REDACTED);
+  });
+
+  it('preserves an exact briefing block while redacting the same secret in a tool result', () => {
+    const secret = 'registered-value-104';
+    const block = `Personal instructions: refer to ${secret} only by name.`;
+    registerSecretValues([secret]);
+    try {
+      const rec = openaiResponsesToGenAi({
+        requestBody: {
+          model: 'gpt-5.5',
+          instructions: `adapter prefix\n${block}\nadapter suffix`,
+          input: [{ type: 'function_call_output', call_id: 'c', output: `stdout: ${secret}` }],
+        },
+        responseBody: {},
+        redactionExemptions: [block],
+      });
+      expect(rec.systemInstructions).toEqual([
+        { type: 'text', content: `adapter prefix\n${block}\nadapter suffix` },
+      ]);
+      expect(JSON.stringify(rec.inputMessages)).toContain(`stdout: ${REDACTED}`);
+      expect(JSON.stringify(rec.inputMessages)).not.toContain(secret);
+    } finally {
+      clearRegisteredSecretValues();
+    }
   });
 
   it('never drops an unknown item — falls back to generic', () => {

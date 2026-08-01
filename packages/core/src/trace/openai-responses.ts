@@ -38,9 +38,12 @@
 
 import type { GenAiInference, GenAiMessage, GenAiPart, GenAiUsage } from 'csuite-sdk';
 import { asString } from './anthropic.js';
+import type { RedactionOptions } from './redact.js';
 import { redactJson } from './redact.js';
 
 export interface OpenAiResponsesToGenAiInput {
+  /** Exact instruction blocks issued by the broker; applied only to the instructions field. */
+  redactionExemptions?: RedactionOptions['exemptions'];
   /** Parsed Responses API `response.create` REQUEST body. */
   requestBody: unknown;
   /** Parsed codex RESPONSE payload (`response_id`, `token_usage`, `output_items`). */
@@ -80,7 +83,9 @@ export function openaiResponsesToGenAi(input: OpenAiResponsesToGenAiInput): GenA
   const outputItems = Array.isArray(res?.output_items) ? res.output_items : [];
   const finishReasons = deriveFinishReasons(outputItems);
 
-  const systemInstructions = mapInstructions(req?.instructions);
+  const systemInstructions = mapInstructions(req?.instructions, {
+    exemptions: input.redactionExemptions,
+  });
   const inputMessages = mapItems(req?.input);
   const outputMessages = mapItems(outputItems);
 
@@ -143,12 +148,14 @@ function deriveFinishReasons(outputItems: unknown[]): string[] {
 }
 
 /** The `instructions` string → the system-instructions parts. */
-function mapInstructions(instructions: unknown): GenAiPart[] {
+function mapInstructions(instructions: unknown, options: RedactionOptions = {}): GenAiPart[] {
   if (typeof instructions === 'string') {
-    return instructions.length > 0 ? [{ type: 'text', content: redactJson(instructions) }] : [];
+    return instructions.length > 0
+      ? [{ type: 'text', content: redactJson(instructions, options) }]
+      : [];
   }
   if (instructions == null) return [];
-  return [{ type: 'generic', content: redactJson(instructions) }];
+  return [{ type: 'generic', content: redactJson(instructions, options) }];
 }
 
 /** Map a Responses `input` / `output_items` array to one message per item. */

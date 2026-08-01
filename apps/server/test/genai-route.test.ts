@@ -6,9 +6,16 @@
  * `openai`) linked by sha256, and gate on self (403) + auth (401).
  */
 
-import { Broker, InMemoryEventLog } from 'csuite-core';
-import type { Team } from 'csuite-sdk/types';
-import { describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
+import {
+  Broker,
+  clearRegisteredSecretValues,
+  InMemoryEventLog,
+  REDACTED,
+  registerSecretValues,
+} from 'csuite-core';
+import type { Permission, Team } from 'csuite-sdk/types';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createGenAiStore } from '../src/genai-store.js';
@@ -21,13 +28,13 @@ import { mockTeamStore } from './helpers/test-stores.js';
 const TEAM: Team = { name: 'demo-team', context: '', permissionPresets: {} };
 const TOKEN = 'csuite_test_genai';
 
-function makeApp() {
+function makeApp(team: Team = TEAM, permissions: Permission[] = []) {
   const broker = new Broker({ eventLog: new InMemoryEventLog() });
   const members = createMemberStore([
     {
       name: 'engineer-1',
       role: { title: 'engineer', description: '' },
-      permissions: [],
+      permissions,
       token: TOKEN,
     },
   ]);
@@ -43,12 +50,33 @@ function makeApp() {
     sessions: new SessionStore(db),
     genaiStore,
     rawBodyStore,
-    teamStore: mockTeamStore(TEAM),
+    teamStore: mockTeamStore(team),
     version: '0.0.0',
     logger,
   });
   return { app, genaiStore, rawBodyStore };
 }
+
+afterEach(() => clearRegisteredSecretValues());
+
+describe('instruction write warnings', () => {
+  it('warns and stores team context intact when it contains a registered value', async () => {
+    const secret = 'registered-team-write';
+    registerSecretValues([secret]);
+    const { app } = makeApp(TEAM, ['team.manage']);
+    const context = `Reference ${secret} by environment variable name.`;
+    const res = await app.request('/team', {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ context }),
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('X-CSuite-Warning')).toContain('will appear verbatim');
+    const body = (await res.json()) as { team: Team; warning: string };
+    expect(body.team.context).toBe(context);
+    expect(body.warning).toContain('use a secret reference');
+  });
+});
 
 const b64 = (o: unknown): string => Buffer.from(JSON.stringify(o), 'utf8').toString('base64');
 
@@ -155,6 +183,47 @@ describe('POST /members/:name/genai', () => {
     expect(rec?.inputMessages?.length).toBeGreaterThan(0);
   });
 
+  it('uses this member briefing to preserve its block and redact the same-request tool result', async () => {
+    const secret = 'registered-route-value';
+    const context = `The exact team context contains ${secret}.`;
+    registerSecretValues([secret]);
+    const { app, genaiStore, rawBodyStore } = makeApp({ ...TEAM, context });
+
+    const briefingRes = await app.request('/briefing', {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
+    const briefing = (await briefingRes.json()) as { instructions: string };
+    expect(briefing.instructions).toContain(context);
+
+    const item = inference();
+    item.requestBase64 = b64({
+      model: 'gpt-5.5',
+      instructions: `adapter prefix\n${briefing.instructions}\nadapter suffix`,
+      input: [{ type: 'function_call_output', call_id: 'c', output: `stdout: ${secret}` }],
+    });
+    const res = await post(app, 'engineer-1', { inferences: [item] });
+    expect(res.status).toBe(200);
+
+    const [stored] = genaiStore.list({ memberName: 'engineer-1' });
+    const systemText = stored?.systemInstructions
+      .map((part) => ('content' in part ? String(part.content) : ''))
+      .join('');
+    expect(systemText).toContain(context);
+    expect(JSON.stringify(stored?.inputMessages)).toContain(`stdout: ${REDACTED}`);
+    expect(JSON.stringify(stored?.inputMessages)).not.toContain(secret);
+    const rawRequest = rawBodyStore.list({ memberName: 'engineer-1', kind: 'request' })[0];
+    const rawBody = JSON.parse(
+      rawBodyStore.getBlob(rawRequest?.hash ?? '')?.toString('utf8') ?? '{}',
+    );
+    const rawSystem = String(rawBody.instructions ?? '');
+    const sha = (text: string) => createHash('sha256').update(text).digest('hex');
+    const capturedBlock = rawSystem.slice(
+      rawSystem.indexOf(context),
+      rawSystem.indexOf(context) + context.length,
+    );
+    expect(sha(capturedBlock)).toBe(sha(context));
+  });
+
   it('captures raw bytes even when a body is not valid JSON (model-only record)', async () => {
     const { app, genaiStore, rawBodyStore } = makeApp();
     const bad = {
@@ -200,6 +269,58 @@ describe('POST /members/:name/genai', () => {
 });
 
 describe('POST /otlp/v1/logs runner-relay acknowledgement', () => {
+  it('rebuilds Claude briefing exemptions after a cold broker start and still redacts a tool result', async () => {
+    const secret = 'registered-claude-route';
+    const context = secret;
+    registerSecretValues([secret]);
+    const { app, genaiStore, rawBodyStore } = makeApp({ ...TEAM, context });
+    const request = {
+      model: 'claude-opus-4-6',
+      // Deliberately do not call /briefing first: this is the broker-restarted
+      // while the runner session remained live shape.
+      system: [{ type: 'text', text: `harness prefix\n${context}` }],
+      messages: [
+        {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: 't', content: `stdout: ${secret}` }],
+        },
+      ],
+    };
+    const response = {
+      id: 'msg_exempt',
+      role: 'assistant',
+      content: [{ type: 'text', text: 'done' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 1, output_tokens: 1 },
+    };
+    const res = await app.request('/otlp/v1/logs', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(otlpInlineClaudeCall(request, response)),
+    });
+    expect(res.status).toBe(200);
+    const [stored] = genaiStore.list({ memberName: 'engineer-1' });
+    const systemText = stored?.systemInstructions
+      .map((part) => ('content' in part ? String(part.content) : ''))
+      .join('');
+    expect(systemText).toContain(context);
+    expect(JSON.stringify(stored?.inputMessages)).toContain(`stdout: ${REDACTED}`);
+    expect(JSON.stringify(stored?.inputMessages)).not.toContain(secret);
+    const rawRequest = rawBodyStore.list({ memberName: 'engineer-1', kind: 'request' })[0];
+    const rawBody = JSON.parse(
+      rawBodyStore.getBlob(rawRequest?.hash ?? '')?.toString('utf8') ?? '{}',
+    );
+    expect(JSON.stringify(rawBody.messages)).toContain(`stdout: ${REDACTED}`);
+    expect(JSON.stringify(rawBody.messages)).not.toContain(secret);
+    const rawSystem = rawBody.system.map((part: { text?: string }) => part.text ?? '').join('');
+    const capturedBlock = rawSystem.slice(
+      rawSystem.indexOf(context),
+      rawSystem.indexOf(context) + context.length,
+    );
+    const sha = (text: string) => createHash('sha256').update(text).digest('hex');
+    expect(sha(capturedBlock)).toBe(sha(context));
+  });
+
   it('acknowledges both byte-exact Claude bodies and preserves the derived record', async () => {
     const { app, genaiStore, rawBodyStore } = makeApp();
     const request = {

@@ -149,11 +149,15 @@ OTLP batches. Request bodies initially lack a request id, so the accounting
 record claims the oldest unclaimed body of its model; responses then pair by
 `request_id`. Stale unclaimed bodies are emitted as request-only records.
 
-A `body_ref` is read once as bytes, content-addressed in `raw_blob` /
-`raw_exchange` **before parsing or redaction**, and then mapped to a typed
-`gen_ai_inference`. This is deliberately different from the redacted activity
-stream: the raw store preserves verbatim bodies, including bytes that fail to
-parse.
+A `body_ref` is read once by the runner relay, byte-checked, and carried to the
+broker in an OTLP attribute before it is mapped to a typed `gen_ai_inference`.
+The broker currently applies literal redaction while parsing those attributes,
+before `raw_blob` / `raw_exchange` content-addresses the result. Broker-composed
+instruction blocks are exempt and therefore remain byte-exact; registered
+values elsewhere do not. Consequently the Claude raw store is content-exact
+for the broker's post-redaction body, not a general claim of provider-wire
+verbatim capture. Codex's direct bundle ingest content-addresses its request
+and response bytes before mapping.
 
 The default reader opens the referenced path on the broker's filesystem and
 has a 64 MiB read ceiling. Therefore the current file-mode path requires the
@@ -173,6 +177,16 @@ and tool decisions.
 when the broker can resolve the runner's `body_ref` path. This is not a global
 completeness guarantee: the uploader has a bounded, reported queue, and the
 file-sharing deployment constraint above is real.
+
+The derived full-context inference preserves the exact persistent instruction
+blocks the broker issued (team context, role description, personal
+instructions, and the process block when configured), even when one contains
+a registered redaction literal. Exact preservation makes block-presence checks
+possible across agent-specific prompt formatting. Redaction still applies to
+every other field in the same request, including tool results. Secret values
+therefore do not belong in instruction blocks; refer to the environment
+variable or secret slug instead. Instruction writes containing an already
+registered value return a warning and still store the text intact.
 
 The capture path remains backend-agnostic because it consumes artifacts Claude
 Code produces before or independently of the provider wire. There is no TLS

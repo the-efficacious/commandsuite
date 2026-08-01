@@ -9,7 +9,8 @@
  *     survive the round trip into a flat record.
  */
 
-import { describe, expect, it } from 'vitest';
+import { clearRegisteredSecretValues, REDACTED, registerSecretValues } from 'csuite-core';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   anyValueToJs,
   flattenAttributes,
@@ -112,6 +113,8 @@ const METRICS_PAYLOAD = {
   ],
 };
 
+afterEach(() => clearRegisteredSecretValues());
+
 describe('anyValueToJs / flattenAttributes', () => {
   it('coerces each AnyValue scalar shape', () => {
     expect(anyValueToJs({ stringValue: 'x' })).toBe('x');
@@ -192,6 +195,37 @@ describe('parseOtlpLogs', () => {
     expect(parseOtlpLogs(null)).toEqual([]);
     expect(parseOtlpLogs({})).toEqual([]);
     expect(parseOtlpLogs({ resourceLogs: 'nope' })).toEqual([]);
+  });
+
+  it('fails closed when an exempted request body is not valid JSON', () => {
+    const secret = 'malformed-body-secret';
+    registerSecretValues([secret]);
+    const malformedBody = `{"system":"${secret}"`;
+    const payload = {
+      resourceLogs: [
+        {
+          scopeLogs: [
+            {
+              logRecords: [
+                {
+                  attributes: [
+                    {
+                      key: 'event.name',
+                      value: { stringValue: 'claude_code.api_request_body' },
+                    },
+                    { key: 'body', value: { stringValue: malformedBody } },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    const [record] = parseOtlpLogs(payload, { exemptions: [secret] });
+    expect(record?.attributes.body).toContain(REDACTED);
+    expect(record?.attributes.body).not.toContain(secret);
   });
 
   it('strips codex operator PII (user.email / user.account_id) at ingest', () => {
