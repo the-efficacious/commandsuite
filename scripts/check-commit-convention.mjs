@@ -70,6 +70,31 @@ export const TYPES = Object.freeze([
 /** Maximum subject length, **including** the `type(scope): ` prefix. */
 export const MAX_SUBJECT_LENGTH = 72;
 
+/**
+ * Authors whose subjects we do not write and cannot edit.
+ *
+ * Dependabot generates both the PR title and the commit subject from the
+ * update it found; the summary text ("bump the minor-and-patch group across
+ * 1 directory with 8 updates") grows with the number of packages, so its
+ * length is not something this repo can bound. Retitling does not help —
+ * the generated commit subject fails the same rules, and a maintainer who
+ * edits the title has not changed what the bot committed.
+ *
+ * Scoped to the author rather than the rule: a human PR gets exactly the
+ * gate it got before this list existed. `[bot]` logins are reserved by
+ * GitHub for Apps, so this cannot be claimed by an ordinary account.
+ *
+ * The alternatives and why they were not taken:
+ *
+ *   - Adding `deps` to TYPES widens the vocabulary for every author, which
+ *     is the one thing this gate exists to hold.
+ *   - Setting `commit-message.prefix` in `dependabot.yml` fixes only future
+ *     PRs — the subjects already generated are not rewritten — and the
+ *     length rule survives it: `chore(deps): ` is one character LONGER than
+ *     `deps(deps): `, so the 76-character subject becomes 77.
+ */
+export const GENERATED_AUTHORS = new Set(['dependabot[bot]']);
+
 /** The ` (#123)` GitHub appends when it squashes. Stripped before measuring. */
 const PR_NUMBER_SUFFIX = / \(#\d+\)$/;
 
@@ -284,6 +309,20 @@ function main(argv) {
   if (records.length === 0) {
     console.error('Nothing to check: pass --pr-title and/or --head with --base-ref.');
     return 1;
+  }
+
+  // An exempt author still gets a run that names every subject it did not
+  // check. A green check that silently enforced nothing is the same defect
+  // as a doc that describes behaviour the code does not have.
+  if (args.author !== undefined && GENERATED_AUTHORS.has(args.author)) {
+    console.log(
+      `::notice::${args.author} authors these subjects; this repo cannot edit them. ` +
+        `Convention NOT enforced on ${records.length} subject(s).`,
+    );
+    for (const { ref, subject } of records) {
+      console.log(`  not checked  ${ref}: ${subjectAsAuthored(subject)}`);
+    }
+    return 0;
   }
 
   const { ok, failures, checked } = checkRecords(records);

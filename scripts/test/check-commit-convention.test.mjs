@@ -317,6 +317,58 @@ describe('the command line', () => {
     expect(r.stdout).toContain('PR title');
   });
 
+  // Dependabot writes both the PR title and the commit subject, and the
+  // summary text grows with the number of packages, so this repo cannot bound
+  // its length. The exemption is scoped to the AUTHOR, and the pair below is
+  // the whole claim: the same subject that a bot may ship is still refused
+  // from an author we control. Asserting only the bot half would pass against
+  // a script that had simply stopped enforcing.
+  describe('authors whose subjects this repo does not write', () => {
+    // The real subject from PR #75, which fails on two independent rules.
+    const GENERATED =
+      'deps(deps): bump the minor-and-patch group across 1 directory with 8 updates';
+
+    it('exempts dependabot, and names every subject it did not check', () => {
+      const r = run(['--pr-title', GENERATED, '--author', 'dependabot[bot]']);
+      expect(r.status).toBe(0);
+      // A green check that silently enforced nothing would be the same defect
+      // as a doc describing behaviour the code does not have.
+      expect(r.stdout).toContain('NOT enforced');
+      expect(r.stdout).toContain('dependabot[bot]');
+      expect(r.stdout).toContain('not checked');
+      expect(r.stdout).toContain(GENERATED);
+    });
+
+    it('still fails the SAME subject from an author we control', () => {
+      const r = run(['--pr-title', GENERATED, '--author', 'keencaliper']);
+      expect(r.status).toBe(1);
+      expect(r.stdout).toContain('[length]');
+      expect(r.stdout).toContain('[unknown-type]');
+    });
+
+    it('fails closed when no author is supplied at all', () => {
+      const r = run(['--pr-title', GENERATED]);
+      expect(r.status).toBe(1);
+    });
+
+    it('does not exempt an author that merely resembles the bot', () => {
+      for (const impostor of [
+        'dependabot',
+        'Dependabot[bot]',
+        'dependabot[bot] ',
+        'xdependabot[bot]',
+      ]) {
+        const r = run(['--pr-title', GENERATED, '--author', impostor]);
+        expect(r.status, impostor).toBe(1);
+      }
+    });
+
+    it('does not exempt a compliant-author PR from an unrelated bot', () => {
+      const r = run(['--pr-title', GENERATED, '--author', 'renovate[bot]']);
+      expect(r.status).toBe(1);
+    });
+  });
+
   it('exits 1 when given nothing to check, rather than passing vacuously', () => {
     const r = run([]);
     expect(r.status).toBe(1);
