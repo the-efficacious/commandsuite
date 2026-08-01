@@ -60,6 +60,19 @@ describe('composeBriefing', () => {
     expect(exemptions).not.toContain(DIRECTOR.role.description);
   });
 
+  it('does not exempt an authored block absent from the composed briefing', () => {
+    const input = {
+      self: ALPHA_1,
+      team: TEAM,
+      teammates: TEAMMATES,
+      openObjectives: [],
+    };
+    const personalBlock = ALPHA_1.instructions;
+    const composedWithoutPersonal = composeBriefing(input).instructions.replace(personalBlock, '');
+
+    expect(briefingCaptureExemptions(input, composedWithoutPersonal)).not.toContain(personalBlock);
+  });
+
   it('includes name, role, permissions, team, and teammates', () => {
     const briefing = composeBriefing({
       self: DIRECTOR,

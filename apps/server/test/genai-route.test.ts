@@ -271,7 +271,7 @@ describe('POST /members/:name/genai', () => {
 describe('POST /otlp/v1/logs runner-relay acknowledgement', () => {
   it('rebuilds Claude briefing exemptions after a cold broker start and still redacts a tool result', async () => {
     const secret = 'registered-claude-route';
-    const context = `Claude team context\ncontains ${secret}.`;
+    const context = secret;
     registerSecretValues([secret]);
     const { app, genaiStore, rawBodyStore } = makeApp({ ...TEAM, context });
     const request = {

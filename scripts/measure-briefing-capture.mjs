@@ -107,10 +107,13 @@ try {
   const mapper = 'system' in matched.body ? anthropicToGenAi : openaiResponsesToGenAi;
   // Mirror the Claude inline-body boundary: OTLP parsing redacts the JSON
   // body attribute before the correlator content-addresses and parses it.
-  const wireText = JSON.stringify(matched.body);
-  const beforeBody = JSON.parse(redactJson(wireText));
-  const transportExemptions = exemptions.map((block) => JSON.stringify(block).slice(1, -1));
-  const afterBody = JSON.parse(redactJson(wireText, { exemptions: transportExemptions }));
+  const beforeBody = redactJson(matched.body);
+  const afterBody = redactJson(matched.body);
+  if ('system' in matched.body) {
+    afterBody.system = redactJson(matched.body.system, { exemptions });
+  } else if ('instructions' in matched.body) {
+    afterBody.instructions = redactJson(matched.body.instructions, { exemptions });
+  }
   const before = mapper({ requestBody: beforeBody, responseBody: {} });
   const after = mapper({
     requestBody: afterBody,

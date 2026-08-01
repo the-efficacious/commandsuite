@@ -594,8 +594,6 @@ export function createApp(options: AppOptions): CreatedApp {
     }
     return [...exemptions];
   };
-  const otlpExemptionsFor = (memberName: string): readonly string[] =>
-    exemptionsFor(memberName).map((block) => JSON.stringify(block).slice(1, -1));
   const getGenAiCorrelator = (memberName: string): GenAiCorrelator => {
     let corr = genaiCorrelators.get(memberName);
     if (!corr) {
@@ -1447,7 +1445,7 @@ export function createApp(options: AppOptions): CreatedApp {
           ? Number(expectedRawBodiesHeader)
           : null;
       const raw = await c.req.json().catch(() => null);
-      const records = parseOtlpLogs(raw, { exemptions: otlpExemptionsFor(member.name) });
+      const records = parseOtlpLogs(raw, { exemptions: exemptionsFor(member.name) });
       // Take the baseline after the only await. Correlation and both count()
       // calls below are synchronous, so another request cannot interleave and
       // inflate this request's acknowledgement delta.
