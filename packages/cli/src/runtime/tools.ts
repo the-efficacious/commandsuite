@@ -1749,6 +1749,70 @@ function buildAuthorityTools(briefing: BriefingResponse): Tool[] {
   const cancelScope = canCancel
     ? 'You can cancel any non-terminal objective on the team.'
     : "You can cancel objectives you originated (created). Attempting to cancel someone else's objective will be refused by the server.";
+  if (canCreate) {
+    tools.push({
+      name: 'objectives_amend',
+      description:
+        "Amend an objective's contract — its outcome, title and/or body. Requires " +
+        "`objectives.create`; the contract is not the executor's to rewrite, though an " +
+        'assignee who holds that permission may amend their own. The PRIOR TEXT IS KEPT and ' +
+        'rendered by `objectives_view`, so this corrects the record rather than replacing it ' +
+        'silently. Supply at least one field that actually differs — a no-op is rejected ' +
+        'rather than recorded as a version bump. `disposition` is REQUIRED and you must ' +
+        'choose deliberately: `correction` means the prior text was wrong and work was never ' +
+        'validly held to it (retroactive); `scope_change` means a new demand, and work ' +
+        'already underway finishes under the prior text (forward-only). If you cannot say ' +
+        'which one it is, you have not finished thinking about the amendment.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'The objective id.' },
+          outcome: { type: 'string', description: 'Replacement outcome text.' },
+          title: { type: 'string', description: 'Replacement title.' },
+          body: { type: 'string', description: 'Replacement body.' },
+          reason: {
+            type: 'string',
+            description:
+              'REQUIRED. Why the contract changed. Without it an amendment is a silent replacement.',
+          },
+          disposition: {
+            type: 'string',
+            enum: ['correction', 'scope_change'],
+            description:
+              'REQUIRED. `correction` = retroactive (the prior text was wrong). ' +
+              '`scope_change` = forward-only (a new demand on work already underway).',
+          },
+        },
+        required: ['id', 'reason', 'disposition'],
+      },
+    });
+    tools.push({
+      name: 'objectives_correct_event',
+      description:
+        'Correct an earlier lifecycle event on an objective — most often a completion ' +
+        'recorded at the wrong moment, such as at a PR head rather than the merge SHA. ' +
+        'Requires `objectives.create`. The original event is NEVER rewritten: this appends a ' +
+        'superseding record naming it, and `objectives_view` marks the corrected event inline ' +
+        'so a reader of the log sees it. Does NOT change the contract version — correcting ' +
+        'the record of what happened is not a change to what was required. Get `eventId` ' +
+        'from the event log in `objectives_view` — a timestamp is NOT an identity, because ' +
+        'creation emits two events in the same millisecond.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'The objective id.' },
+          eventId: {
+            type: 'string',
+            description: 'Durable id of the event being corrected, shown by `objectives_view`.',
+          },
+          correction: { type: 'string', description: 'What the record should say instead.' },
+          reason: { type: 'string', description: 'REQUIRED. Why the record was wrong.' },
+        },
+        required: ['id', 'eventId', 'correction', 'reason'],
+      },
+    });
+  }
+
   tools.push({
     name: 'objectives_cancel',
     description:
@@ -1868,6 +1932,10 @@ export async function handleToolCall(
         return await handleObjectivesComplete(args, brokerClient);
       case 'objectives_create':
         return await handleObjectivesCreate(args, brokerClient, briefing);
+      case 'objectives_amend':
+        return await handleObjectivesAmend(args, brokerClient);
+      case 'objectives_correct_event':
+        return await handleObjectivesCorrectEvent(args, brokerClient);
       case 'objectives_cancel':
         return await handleObjectivesCancel(args, brokerClient, briefing);
       case 'objectives_watchers':
@@ -2327,14 +2395,74 @@ async function handleObjectivesList(
     // cannot tell work it owns from work it merely watches, which is the
     // whole reason assignee is rendered.
     const own = o.assignee === briefing.name ? ' (you)' : '';
+    // The contract version belongs HERE, not only on `objectives_view`.
+    // For an agent recovering from a cleared context this list IS the
+    // record it sees — `objectives_list status=open` is the documented
+    // recovery path, and `view` is what you call once you already know
+    // something is worth opening. Without the marker a verifier who
+    // checked v2, came back, and reads v3 here has no way to know the
+    // contract moved under them.
+    const amended = o.outcomeVersion > 1 ? ` [contract v${o.outcomeVersion} — amended]` : '';
     return (
-      `- ${o.id} [${o.status}] ${o.title}\n` +
+      `- ${o.id} [${o.status}]${amended} ${o.title}\n` +
       `    assignee: ${o.assignee}${own}  originator: ${o.originator}\n` +
       `    outcome: ${o.outcome}\n` +
       `    updated: ${formatAgentTimestamp(o.updatedAt)} (${formatRelativeAge(o.updatedAt)})`
     );
   });
   return textResult(`${phrase}:\n${lines.join('\n')}`);
+}
+
+async function handleObjectivesAmend(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+): Promise<CallToolResult> {
+  const id = typeof args.id === 'string' ? args.id : '';
+  if (!id) return errorResult('objectives_amend: `id` is required');
+  const reason = typeof args.reason === 'string' ? args.reason : '';
+  if (!reason) return errorResult('objectives_amend: `reason` is required');
+  const disposition = args.disposition === 'scope_change' ? 'scope_change' : 'correction';
+  if (args.disposition !== 'correction' && args.disposition !== 'scope_change') {
+    return errorResult(
+      'objectives_amend: `disposition` must be "correction" (retroactive) or "scope_change" (forward-only)',
+    );
+  }
+  const updated = await brokerClient.amendObjective(id, {
+    ...(typeof args.outcome === 'string' ? { outcome: args.outcome } : {}),
+    ...(typeof args.title === 'string' ? { title: args.title } : {}),
+    ...(typeof args.body === 'string' ? { body: args.body } : {}),
+    reason,
+    disposition,
+  });
+  const binding =
+    disposition === 'correction'
+      ? 'retroactive — work was never validly held to the prior text'
+      : 'forward-only — work already underway finishes under the prior text';
+  return textResult(
+    `amended '${updated.id}' to contract version ${updated.outcomeVersion} (${disposition}: ${binding}). ` +
+      'The prior text is kept and shown by `objectives_view`.',
+  );
+}
+
+async function handleObjectivesCorrectEvent(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+): Promise<CallToolResult> {
+  const id = typeof args.id === 'string' ? args.id : '';
+  if (!id) return errorResult('objectives_correct_event: `id` is required');
+  const eventId = typeof args.eventId === 'string' ? args.eventId : '';
+  if (!eventId) {
+    return errorResult('objectives_correct_event: `eventId` is required (see `objectives_view`)');
+  }
+  const correction = typeof args.correction === 'string' ? args.correction : '';
+  const reason = typeof args.reason === 'string' ? args.reason : '';
+  if (!correction) return errorResult('objectives_correct_event: `correction` is required');
+  if (!reason) return errorResult('objectives_correct_event: `reason` is required');
+  const updated = await brokerClient.correctObjectiveEvent(id, { eventId, correction, reason });
+  return textResult(
+    `recorded a correction on '${updated.id}'. The original event is unchanged and is now ` +
+      'marked corrected in `objectives_view`.',
+  );
 }
 
 async function handleObjectivesView(
@@ -2362,11 +2490,69 @@ async function handleObjectivesView(
   if (objective.body) lines.push(`body: ${objective.body}`);
   if (objective.blockReason) lines.push(`block reason: ${objective.blockReason}`);
   if (objective.result) lines.push(`result: ${objective.result}`);
+
+  // Amendments render WITH the record, never only in the event log.
+  // A reader who sees `status: done` and a result must not have to go
+  // reconstruct that the contract moved, or that the completion was
+  // recorded at the wrong moment. The structured field is the one an
+  // agent trusts, and it is the one that used to lie.
+  const contractAmendments = objective.amendments.filter((a) => a.target === 'contract');
+  const eventCorrections = objective.amendments.filter((a) => a.target === 'event');
+
+  if (objective.outcomeVersion > 1 || contractAmendments.length > 0) {
+    lines.push(
+      `contract version: ${objective.outcomeVersion} — the outcome above has been amended ${
+        contractAmendments.length === 1 ? 'once' : `${contractAmendments.length} times`
+      }`,
+    );
+    lines.push('amendments:');
+    for (const a of contractAmendments) {
+      if (a.target !== 'contract') continue;
+      const binding =
+        a.disposition === 'correction'
+          ? 'retroactive — work was never validly held to the prior text'
+          : 'forward-only — work already underway finishes under the prior text';
+      lines.push(
+        `  v${a.version} ${formatAgentTimestamp(a.ts)} ${a.actor} changed ${a.fields.join(', ')}`,
+      );
+      lines.push(`    disposition: ${a.disposition} (${binding})`);
+      lines.push(`    reason: ${a.reason}`);
+      for (const [field, prev] of Object.entries(a.previous)) {
+        lines.push(`    superseded ${field}: ${prev}`);
+      }
+    }
+  }
+  if (eventCorrections.length > 0) {
+    lines.push('event corrections:');
+    for (const a of eventCorrections) {
+      if (a.target !== 'event') continue;
+      lines.push(
+        `  ${formatAgentTimestamp(a.ts)} ${a.actor} corrects the ${a.eventKind} ${a.eventId} of ${formatAgentTimestamp(a.eventTs)}`,
+      );
+      lines.push(`    correction: ${a.correction}`);
+      lines.push(`    reason: ${a.reason}`);
+    }
+  }
+
   lines.push('events:');
+  // Marked by EVENT ID, not timestamp. Keying on `ts` marked every
+  // event sharing that millisecond — so correcting `watcher_added`
+  // also branded the `assigned` beside it: a durable surface asserting
+  // something false about a record, inside the feature built to stop
+  // exactly that.
+  const correctedIds = new Set(
+    eventCorrections.map((a) => (a.target === 'event' ? a.eventId : '')),
+  );
   for (const ev of events) {
     const ts = formatAgentTimestamp(ev.ts);
     const age = formatRelativeAge(ev.ts);
-    lines.push(`  ${ts} (${age}) ${ev.actor} ${ev.kind} ${JSON.stringify(ev.payload)}`);
+    // Mark a superseded event inline too. Reading the log top-down is
+    // how an agent reconstructs what happened, and an uncorrected-
+    // looking `completed` is exactly the thing that misled a reader.
+    const mark = correctedIds.has(ev.id) ? ' [CORRECTED — see event corrections above]' : '';
+    lines.push(
+      `  ${ts} (${age}) ${ev.id} ${ev.actor} ${ev.kind} ${JSON.stringify(ev.payload)}${mark}`,
+    );
   }
   return textResult(lines.join('\n'));
 }

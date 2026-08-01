@@ -177,6 +177,8 @@ describe('composeBriefing', () => {
           result: null,
           blockReason: null,
           attachments: [],
+          outcomeVersion: 1,
+          amendments: [],
         },
       ],
     });

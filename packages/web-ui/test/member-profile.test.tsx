@@ -99,6 +99,8 @@ const OBJECTIVE: Objective = {
   result: null,
   blockReason: null,
   attachments: [],
+  outcomeVersion: 1,
+  amendments: [],
 };
 
 const LLM_ROW: ActivityRow = {

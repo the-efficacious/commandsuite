@@ -308,7 +308,13 @@ describe('ObjectivesStore.cancel', () => {
   it('omits reason in the event payload when none provided', () => {
     const { store, objective } = basicCreate();
     const { events } = store.cancel(objective.id, {}, 'manager', LATER);
-    expect(events[0]?.payload).toEqual({});
+    // Asserts the absence of `reason`, not an empty payload: every
+    // lifecycle event now also carries `contractVersion` so the record
+    // can say which contract the work was done against. Checking the
+    // whole object equals `{}` tested the stamping too, which is not
+    // what this test is about.
+    expect(events[0]?.payload).not.toHaveProperty('reason');
+    expect(events[0]?.payload.contractVersion).toBe(1);
   });
 
   it('refuses to cancel a done objective', () => {

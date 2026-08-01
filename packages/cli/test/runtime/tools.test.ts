@@ -1158,3 +1158,172 @@ describe('variables admin tools — the agent-facing half of the runner environm
     expect(text).toContain('NO-VALUE');
   });
 });
+
+describe('objectives_view renders amendments WITH the record', () => {
+  const AMENDED_OBJECTIVE = {
+    id: 'obj-1',
+    title: 'a contract',
+    body: '',
+    outcome: '7. STRUCK — it asserts a consequence that does not occur.',
+    status: 'done' as const,
+    assignee: 'rune',
+    originator: 'lea',
+    watchers: [],
+    createdAt: 1_700_000_000_000,
+    updatedAt: 1_700_000_100_000,
+    completedAt: 1_700_000_100_000,
+    result: 'Outcome satisfied at 38198b0 in PR #106.',
+    blockReason: null,
+    attachments: [],
+    outcomeVersion: 2,
+    amendments: [
+      {
+        target: 'contract' as const,
+        version: 2,
+        ts: 1_700_000_050_000,
+        actor: 'lea',
+        disposition: 'correction' as const,
+        reason: 'Redaction is broker-side at otlp-parse.ts:147.',
+        fields: ['outcome' as const],
+        previous: {
+          outcome: '7. **The result states that stored request bodies become un-redacted.**',
+        },
+      },
+      {
+        target: 'event' as const,
+        ts: 1_700_000_120_000,
+        actor: 'lea',
+        reason: 'Lifecycle timing error — main did not carry the outcome.',
+        eventId: 'ev-completed',
+        eventKind: 'completed' as const,
+        eventTs: 1_700_000_100_000,
+        correction: 'Completed at an approved PR head. The merge bar is satisfied by c8f0d18.',
+      },
+    ],
+  };
+
+  const EVENTS = [
+    {
+      id: 'ev-completed',
+      objectiveId: 'obj-1',
+      ts: 1_700_000_100_000,
+      actor: 'rune',
+      kind: 'completed' as const,
+      payload: { result: 'Outcome satisfied at 38198b0 in PR #106.', contractVersion: 2 },
+    },
+    // Same millisecond, different event. Keying the CORRECTED marker on
+    // the timestamp branded this one too — a durable surface asserting
+    // something false about a record, inside the feature built to stop
+    // that.
+    {
+      id: 'ev-watcher',
+      objectiveId: 'obj-1',
+      ts: 1_700_000_100_000,
+      actor: 'rune',
+      kind: 'watcher_added' as const,
+      payload: { name: 'turner', contractVersion: 2 },
+    },
+  ];
+
+  it('shows the superseded text, the disposition and its binding force', async () => {
+    const broker = makeBroker({
+      getObjective: vi.fn(async () => ({ objective: AMENDED_OBJECTIVE, events: EVENTS })),
+    } as never);
+    const text = getCallText(
+      (await handleToolCall('objectives_view', { id: 'obj-1' }, broker, BRIEFING)) as never,
+    );
+
+    // Current contract, read directly.
+    expect(text).toContain('7. STRUCK');
+    expect(text).toContain('contract version: 2');
+    // The prior text survives where a reader will see it.
+    expect(text).toContain('become un-redacted');
+    // Disposition alone is not enough — what it BINDS is the actionable part.
+    expect(text).toContain('correction');
+    expect(text).toContain('retroactive');
+    expect(text).toContain('otlp-parse.ts:147');
+  });
+
+  it('marks a corrected completion inline, so reading the log top-down cannot mislead', async () => {
+    // The measured failure: an objective completed at a PR head, where
+    // the author could only say "provisional" in a discussion post. A
+    // reader scanning events must not see an uncorrected `completed`.
+    const broker = makeBroker({
+      getObjective: vi.fn(async () => ({ objective: AMENDED_OBJECTIVE, events: EVENTS })),
+    } as never);
+    const text = getCallText(
+      (await handleToolCall('objectives_view', { id: 'obj-1' }, broker, BRIEFING)) as never,
+    );
+    expect(text).toContain('event corrections:');
+    expect(text).toContain('c8f0d18');
+    // Exactly one event is marked — the one named by id, not everything
+    // sharing its millisecond.
+    expect(text.split('[CORRECTED')).toHaveLength(2);
+    const marked = text
+      .split('\n')
+      .filter((l) => l.includes('[CORRECTED'))
+      .join('');
+    expect(marked).toContain('completed');
+    expect(marked).not.toContain('watcher_added');
+  });
+
+  it('says nothing about amendments on an objective that has none', async () => {
+    // A never-amended contract must not grow noise implying it moved.
+    const clean = { ...AMENDED_OBJECTIVE, outcomeVersion: 1, amendments: [] };
+    const broker = makeBroker({
+      getObjective: vi.fn(async () => ({ objective: clean, events: EVENTS })),
+    } as never);
+    const text = getCallText(
+      (await handleToolCall('objectives_view', { id: 'obj-1' }, broker, BRIEFING)) as never,
+    );
+    expect(text).not.toContain('contract version');
+    expect(text).not.toContain('amendments:');
+    expect(text).not.toContain('[CORRECTED');
+  });
+});
+
+describe('objectives_list marks an amended contract', () => {
+  const row = (over: Record<string, unknown>) => ({
+    id: 'obj-1',
+    title: 'a contract',
+    body: '',
+    outcome: 'the outcome',
+    status: 'active' as const,
+    assignee: 'scout',
+    originator: 'lea',
+    watchers: [],
+    createdAt: 1_700_000_000_000,
+    updatedAt: 1_700_000_000_000,
+    completedAt: null,
+    result: null,
+    blockReason: null,
+    attachments: [],
+    outcomeVersion: 1,
+    amendments: [],
+    ...over,
+  });
+
+  it('tells a recovering agent the contract moved, without opening it', async () => {
+    // objectives_list is the documented recovery path after a cleared
+    // context. A verifier who checked v2, came back, and reads v3 here
+    // must not be shown a current object as though it were the one
+    // they knew — that is #77's failure shape.
+    const broker = makeBroker({
+      listObjectives: vi.fn(async () => [row({ outcomeVersion: 3 })]),
+    } as never);
+    const text = getCallText(
+      (await handleToolCall('objectives_list', {}, broker, BRIEFING)) as never,
+    );
+    expect(text).toContain('contract v3');
+    expect(text).toContain('amended');
+  });
+
+  it('stays quiet for a contract that has never been amended', async () => {
+    const broker = makeBroker({ listObjectives: vi.fn(async () => [row({})]) } as never);
+    const text = getCallText(
+      (await handleToolCall('objectives_list', {}, broker, BRIEFING)) as never,
+    );
+    expect(text).not.toContain('contract v');
+    expect(text).not.toContain('amended');
+  });
+});
