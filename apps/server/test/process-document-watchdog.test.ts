@@ -458,15 +458,19 @@ describe('the cold-broker rebuild carries the document', () => {
   });
 });
 
-// ─── a stale document is absent, so an edit reaches a live session ───
+// ─── stale is restart-pending, missing is resent ─────────────────────
 //
 // The projection is built from the CURRENT stored document, so an
-// agent still carrying yesterday's text does not contain today's — the
-// watchdog sees the current text as absent and re-sends it. That means
-// an edit now reaches a running session on an observable turn, which
-// the docs previously said it could not. Tested rather than asserted.
+// agent still carrying yesterday's text does not contain today's.
+// When the WATCHDOG KNOWS the prior version (it issued it), the state
+// is `stale` and nothing is re-sent: the runner's drain-and-restart is
+// the remediation, the roster reports restart-pending meanwhile, and
+// re-injecting the new text would put two versions in one frozen
+// context and re-fire every cooldown. When the prior text is NOT
+// recognisable, the block has genuinely fallen out — that is `missing`
+// and the resend is recovery, not delivery.
 
-describe('an edited document reaches a session still holding the old one', () => {
+describe('a session holding superseded text', () => {
   const inference = (system: string) => ({
     systemInstructions: [{ type: 'text' as const, content: system }],
     inputMessages: [],
@@ -500,9 +504,10 @@ describe('an edited document reaches a session still holding the old one', () =>
       systemProjectionObservable: true,
       knownPriorVersions: new Map([['process_document', new Set([previous])]]),
     });
-    // Distinguishes "you lost it" from "yours is out of date".
+    // Distinguishes "you lost it" from "yours is out of date" — and
+    // out-of-date is the restart protocol's job, not the resend's.
     expect(observation?.priorVersionPresent).toBe(true);
-    expect(observation?.resendFired).toBe(true);
+    expect(observation?.resendFired).toBe(false);
   });
 });
 

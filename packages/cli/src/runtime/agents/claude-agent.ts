@@ -197,16 +197,26 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 
 export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter {
   let executable: ClaudeExecutable | null = null;
-  // Populated by prepare(), consumed by spawn().
+  // Populated by prepare(), consumed by spawn(); the mutable parts
+  // (systemPrompt, resume/sessionId) are refreshed by respawn().
   let sdkOptions: SdkOptions = {};
 
   // Streaming-input queue + channel sink, live from construction: the
   // runner needs a sink before the agent spawns, and events arriving
   // during the SDK subprocess's cold start simply wait in the stream.
-  const queue = new ClaudeMessageQueue();
+  // A REF, not a const queue: the sink reads it at flush time, so a
+  // restart re-points it at a fresh queue (detachForRestart) and the
+  // swap window buffers for the successor instead of dropping.
+  const queueRef = { current: new ClaudeMessageQueue() };
   let sink: ClaudeChannelSink | null = null;
 
-  return {
+  // What resume posture the NEXT spawn uses. Starts as the operator's
+  // choice; respawn() overrides it with the predecessor's session id
+  // so the successor continues the same conversation under the new
+  // system prompt.
+  let effectiveResume: string | true | undefined = options.resume;
+
+  const adapter: AgentAdapter = {
     meta: CLAUDE_META,
 
     locate(): void {
@@ -219,7 +229,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
 
     runnerOptions() {
       sink = createClaudeChannelSink({
-        queue,
+        getQueue: () => queueRef.current,
         log: (msg, ctx) => {
           // The session log isn't created yet when runnerOptions() is
           // called; route through stderr-JSON like other pre-session
@@ -287,9 +297,9 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
         permissionMode: 'bypassPermissions',
         allowDangerouslySkipPermissions: true,
         ...(options.model !== undefined ? { model: options.model } : {}),
-        ...(typeof options.resume === 'string'
-          ? { resume: options.resume }
-          : options.resume === true
+        ...(typeof effectiveResume === 'string'
+          ? { resume: effectiveResume }
+          : effectiveResume === true
             ? { continue: true }
             : {}),
         ...(runner.captureHost !== null
@@ -310,9 +320,9 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
           `csuite claude: briefing pinned to system prompt (${briefing.length} chars)`,
         );
       }
-      if (typeof options.resume === 'string') {
-        bannerLines.push(`csuite claude: resuming session ${options.resume}`);
-      } else if (options.resume === true) {
+      if (typeof effectiveResume === 'string') {
+        bannerLines.push(`csuite claude: resuming session ${effectiveResume}`);
+      } else if (effectiveResume === true) {
         bannerLines.push('csuite claude: continuing most recent session in this directory');
       }
 
@@ -322,6 +332,10 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
 
     async spawn(ctx: AgentSessionContext): Promise<AgentProcess> {
       const { runner, log } = ctx;
+      // Captured per spawn: a respawn re-points `queueRef` first, so
+      // this generation's stream, depth checks, and shutdown all act
+      // on ITS queue while the successor's fills behind it.
+      const queue = queueRef.current;
 
       let child: ChildProcess | null = null;
       let resolveExit!: (code: number) => void;
@@ -371,7 +385,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
       // the session. Resume/continue sessions take their id from `init`
       // instead (the SDK forbids combining `sessionId` with them).
       let sessionId: string | null = null;
-      if (options.resume === undefined) {
+      if (effectiveResume === undefined) {
         sessionId = randomUUID();
         sdkOptions.sessionId = sessionId;
       }
@@ -379,7 +393,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
       log('claude: starting agent sdk session', {
         executable: executable?.path,
         model: options.model ?? null,
-        resume: options.resume ?? null,
+        resume: effectiveResume ?? null,
         sessionId,
         cwd: ctx.cwd,
       });
@@ -492,6 +506,47 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
       };
     },
 
+    detachForRestart(): void {
+      // Ambient input re-points to the successor's queue. The old
+      // queue keeps whatever the dying generation has not consumed;
+      // its shutdown logs and drops those (the broker replays unread
+      // messages on the next subscribe anyway).
+      queueRef.current = new ClaudeMessageQueue();
+    },
+
+    async respawn(
+      ctx: AgentSessionContext,
+      prior: { sessionId: string | null },
+    ): Promise<AgentProcess> {
+      const fresh = composeFixedContext(ctx.runner.briefing);
+      // The three mutable spawn inputs, recomputed: system prompt from
+      // the runner's CURRENT packet, resume posture from the
+      // predecessor, and no minted session id (the SDK forbids
+      // combining `sessionId` with resume/continue).
+      sdkOptions.systemPrompt =
+        fresh.length > 0
+          ? { type: 'preset', preset: 'claude_code', append: fresh }
+          : { type: 'preset', preset: 'claude_code' };
+      delete sdkOptions.sessionId;
+      delete sdkOptions.continue;
+      if (prior.sessionId !== null) {
+        effectiveResume = prior.sessionId;
+        sdkOptions.resume = prior.sessionId;
+      } else {
+        // Predecessor never revealed an id (it may never have run a
+        // turn). Continue the most recent session in this cwd rather
+        // than starting cold.
+        effectiveResume = true;
+        delete sdkOptions.resume;
+        sdkOptions.continue = true;
+      }
+      ctx.log('claude: respawning with refreshed instructions', {
+        briefingChars: fresh.length,
+        resume: effectiveResume,
+      });
+      return adapter.spawn(ctx);
+    },
+
     async doctor(): Promise<AgentDoctorCheck[]> {
       const resolved = executable ?? resolveClaudeExecutable();
       const checks: AgentDoctorCheck[] = [
@@ -517,4 +572,5 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
       return checks;
     },
   };
+  return adapter;
 }

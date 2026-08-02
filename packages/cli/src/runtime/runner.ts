@@ -51,7 +51,7 @@ import { createInterface } from 'node:readline';
 import { registerSecretValues } from 'csuite-core';
 import { Client as BrokerClient, ClientError } from 'csuite-sdk/client';
 import { isReservedEnvName } from 'csuite-sdk/schemas';
-import type { InstructionsResponse, Objective, ResolvedToolSource } from 'csuite-sdk/types';
+import type { InstructionsResponse, Message, Objective, ResolvedToolSource } from 'csuite-sdk/types';
 import { CLI_VERSION } from '../version.js';
 import { startActivityReporter } from './busy-reporter.js';
 import type { ChannelEventSink } from './forwarder.js';
@@ -156,13 +156,35 @@ export interface RunnerOptions {
    * deaf to live traffic.
    */
   channelSink?: ChannelEventSink;
+  /**
+   * Invoked for every `data.kind === 'instructions'` channel event —
+   * an instruction-bearing edit changed this member's composed text.
+   * The driver wires this to its restart coordinator. When absent the
+   * event is still delivered to the agent as an ordinary channel
+   * message; nothing restarts.
+   */
+  onInstructionsEvent?: (message: Message) => void;
 }
 
 export interface RunnerHandle {
   /** The path the IPC socket is bound at. */
   readonly socketPath: string;
-  /** The briefing fetched at startup. Frozen. */
+  /**
+   * The CURRENT instruction packet. Fetched at startup and swapped by
+   * `refreshInstructions()` — a live property, not a startup snapshot,
+   * so an adapter respawning an agent composes the successor's fixed
+   * context from what the broker holds now. (The AGENT's copy is still
+   * frozen per session; refreshing this is what makes the restart able
+   * to un-freeze it.)
+   */
   readonly briefing: InstructionsResponse;
+  /**
+   * Refetch the instruction packet, swap the live snapshot (including
+   * the external-tools surface, with a `tools/list_changed` push when
+   * it changed), and return it. Failures reject; callers decide
+   * whether stale-but-cached is acceptable for their operation.
+   */
+  refreshInstructions(): Promise<InstructionsResponse>;
   /**
    * The live capture host owning the activity uploader, the busy
    * signal, and the Claude Code hook server. `null` when the runner
@@ -622,6 +644,33 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
     toolsRefreshTimer.unref?.();
   };
 
+  // Full-packet refresh, for the restart path. Unlike
+  // `refreshExternalTools` (which deliberately discards everything but
+  // the tool surface — nothing else can change mid-session for a
+  // frozen prompt), this swaps the WHOLE live snapshot: the respawned
+  // agent's fixed context is composed from `briefing`, so the swap is
+  // the mechanism by which an instruction edit reaches the successor
+  // session. The MCP dispatch reads the same variable per-call, so the
+  // toolbox follows without further wiring.
+  const refreshInstructions = async (): Promise<InstructionsResponse> => {
+    const fresh = await brokerClient.instructions({ runnerVersion: CLI_VERSION });
+    const toolsChanged = JSON.stringify(fresh.toolSources) !== JSON.stringify(externalTools);
+    briefing = fresh;
+    externalTools = fresh.toolSources;
+    log('runner: instructions refreshed', {
+      composedSha256: fresh.composedSha256 ?? null,
+      toolsChanged,
+    });
+    if (toolsChanged) {
+      activeBridge?.sendNotification({
+        kind: 'mcp_notification',
+        method: 'notifications/tools/list_changed',
+        params: {},
+      });
+    }
+    return fresh;
+  };
+
   const forwarderPromise = runForwarder({
     sink,
     brokerClient,
@@ -635,6 +684,9 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
     onToolSourceEvent: () => {
       scheduleExternalToolsRefresh();
     },
+    ...(options.onInstructionsEvent !== undefined
+      ? { onInstructionsEvent: options.onInstructionsEvent }
+      : {}),
   });
   // Forwarder never throws outward — it catches its own errors and
   // just logs them. Attach a tail-catch anyway in case a refactor
@@ -686,7 +738,13 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
 
   return {
     socketPath,
-    briefing,
+    // A getter, not a snapshot: `refreshInstructions` reassigns the
+    // closure variable and every consumer — adapter respawns, the MCP
+    // dispatch, the re-brief composer — must see the current packet.
+    get briefing() {
+      return briefing;
+    },
+    refreshInstructions,
     captureHost,
     secretsEnv,
     presence,

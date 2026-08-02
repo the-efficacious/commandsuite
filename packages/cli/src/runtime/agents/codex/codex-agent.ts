@@ -62,6 +62,14 @@ export interface CodexAdapterOptions {
 export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
   let codexBinary = '';
 
+  // What resume posture the NEXT spawn uses. Starts as the operator's
+  // choice; respawn() overrides it with the predecessor's thread id.
+  // A full re-spawn per generation is sound for codex because the
+  // sessions dir is durable OUTSIDE the ephemeral CODEX_HOME (each
+  // home symlinks it in), so tearing one home down and resuming from
+  // a fresh one loses nothing.
+  let effectiveResume: string | true | undefined = options.resume;
+
   // Buffering channel sink. The runner needs a sink up front, but the
   // codex channel sink can't exist until after spawnCodex creates the
   // JSON-RPC client. Events queue until the real sink is attached,
@@ -86,7 +94,7 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
     },
   };
 
-  return {
+  const adapter: AgentAdapter = {
     meta: CODEX_META,
 
     locate(): void {
@@ -131,7 +139,7 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
         codexBinary,
         cwd: ctx.cwd,
         model: options.model,
-        resume: options.resume,
+        resume: effectiveResume,
         codexArgs: options.codexArgs,
         presence: ctx.presence,
         // Share the capture host's busy signal so codex tool-lifecycle
@@ -163,7 +171,7 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
       const threadId = spawned.getThreadId();
       process.stderr.write(
         (threadId
-          ? `csuite codex: thread ${threadId}${options.resume ? ' (resumed)' : ''} — pick it up later with: csuite codex --resume ${threadId}\n`
+          ? `csuite codex: thread ${threadId}${effectiveResume ? ' (resumed)' : ''} — pick it up later with: csuite codex --resume ${threadId}\n`
           : '') +
           `csuite codex: agent connected — Ctrl-C to stop. Direct it via the broker:\n` +
           `    csuite push --agent ${runner.briefing.name} --body "your instructions"\n\n`,
@@ -211,5 +219,26 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
         },
       };
     },
+
+    detachForRestart(): void {
+      // Back to the pre-attach buffer: events queue until the
+      // successor's spawn attaches its live sink — the same mechanism
+      // that already covers codex's 5-15s cold start.
+      liveSink = null;
+    },
+
+    async respawn(
+      ctx: AgentSessionContext,
+      prior: { sessionId: string | null },
+    ): Promise<AgentProcess> {
+      // `sessionId` is the codex thread id. `true` (most recent thread
+      // on this machine) when the predecessor never revealed one.
+      effectiveResume = prior.sessionId ?? true;
+      ctx.log('codex: respawning with refreshed instructions', {
+        resume: effectiveResume,
+      });
+      return adapter.spawn(ctx);
+    },
   };
+  return adapter;
 }

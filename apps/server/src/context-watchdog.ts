@@ -75,8 +75,17 @@ export function inspectInstructionContext(input: {
               (system.includes(candidate) || inConversation(candidate)),
           );
     const priorVersionPresent = priorVersion !== undefined;
+    // STALE does not resend. A session holding a PRIOR version of the
+    // block is restart-pending — the runner's drain-and-restart is the
+    // remediation, and the broker's roster reports it meanwhile.
+    // Re-injecting the new text would put two versions in one context
+    // and re-fire every cooldown for the life of the frozen prompt.
+    // MISSING still resends: the block fell out entirely (compaction,
+    // an adapter gap), and recovery cannot wait for an edit to happen.
     const resendFired =
-      present === false && (deliveryUnconfirmed || input.now - last >= CONTEXT_RESEND_COOLDOWN_MS);
+      present === false &&
+      !priorVersionPresent &&
+      (deliveryUnconfirmed || input.now - last >= CONTEXT_RESEND_COOLDOWN_MS);
     return {
       block,
       observable,

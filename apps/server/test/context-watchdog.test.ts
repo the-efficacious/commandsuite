@@ -105,7 +105,13 @@ describe('persistent context watchdog', () => {
       systemProjectionObservable: true,
     });
 
-    expect(observation).toMatchObject({ present: false, priorVersionPresent: true });
+    // Stale never resends — restart is the remediation; the resend is
+    // reserved for `missing` (the block fell out entirely).
+    expect(observation).toMatchObject({
+      present: false,
+      priorVersionPresent: true,
+      resendFired: false,
+    });
     expect(observation?.telemetry.attributes).toMatchObject({
       'context.block.state': 'stale',
       'context.block.prior_version_present': true,

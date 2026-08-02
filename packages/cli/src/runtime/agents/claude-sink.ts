@@ -74,7 +74,15 @@ export class ClaudeMessageQueue {
 }
 
 export interface ClaudeChannelSinkOptions {
-  queue: ClaudeMessageQueue;
+  /**
+   * Where flushed bundles go — read AT FLUSH TIME, not bound at
+   * construction. The indirection is what makes agent restart
+   * loss-free: the adapter re-points this at a fresh queue before
+   * shutting the old session down, so events arriving during the swap
+   * wait in the successor's stream (the same cold-start property a
+   * first spawn relies on) instead of dying with the predecessor.
+   */
+  getQueue: () => ClaudeMessageQueue;
   log: (msg: string, ctx?: Record<string, unknown>) => void;
   /** Bundle window in milliseconds. Defaults to 200ms. */
   bundleWindowMs?: number;
@@ -101,7 +109,7 @@ export function createClaudeChannelSink(opts: ClaudeChannelSinkOptions): ClaudeC
     }
     if (buffer.length === 0) return;
     const body = buffer.splice(0, buffer.length).join('\n');
-    const accepted = opts.queue.push({
+    const accepted = opts.getQueue().push({
       type: 'user',
       message: { role: 'user', content: body },
       parent_tool_use_id: null,
@@ -131,7 +139,7 @@ export function createClaudeChannelSink(opts: ClaudeChannelSinkOptions): ClaudeC
       opts.log('claude-sink: received channel event', {
         bytes: text.length,
         bufferDepth: buffer.length + 1,
-        queueDepth: opts.queue.depth,
+        queueDepth: opts.getQueue().depth,
       });
       buffer.push(text);
       scheduleFlush();
