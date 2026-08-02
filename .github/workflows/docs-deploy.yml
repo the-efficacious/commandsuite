@@ -71,6 +71,10 @@ jobs:
         if: github.event_name != 'pull_request'
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: 02abc51d1248dbb8db863f5b8e70af04
+          # The "CommandSuite" account. The previous value (02abc51d…) was the
+          # account this project was on before the domain moved; CLOUDFLARE_API_TOKEN
+          # has no access to it, so deploys failed with `Authentication error
+          # [code: 10000]` against /accounts/02abc51d…/workers/services/.
+          accountId: f3a95f089537b9e68cdae019cef3cb90
           workingDirectory: docs/site
           command: deploy -c dist/client/wrangler.json
