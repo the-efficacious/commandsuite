@@ -153,14 +153,14 @@ describe('attribution', () => {
 });
 
 describe('current health vs historical presence', () => {
-  it('keeps a briefing-check gap current until a later captured request is evaluated', () => {
+  it('keeps a packet-check gap current until a later captured request is evaluated', () => {
     const h = store();
-    h.s.emit.contextBriefingCheckUnavailable('rune', 1);
+    h.s.emit.contextInstructionsCheckUnavailable('rune', 1);
     expect(h.s.unresolved('rune')).toEqual([
       { cause: 'context.briefing_check_unavailable', since: T0 },
     ]);
 
-    h.s.emit.contextBriefingCheckSucceeded('rune');
+    h.s.emit.contextInstructionsCheckSucceeded('rune');
     expect(h.s.unresolved('rune')).toEqual([]);
     expect(h.s.query({ member: 'rune', from: T0 - HOUR, to: T0 + HOUR }).count).toBe(1);
   });

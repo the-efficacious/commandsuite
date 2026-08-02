@@ -187,7 +187,7 @@ export interface ToolSourceStore {
   list(): ToolSource[];
   /** Enabled sources visible to a member: allMembers OR explicitly bound. */
   listForMember(memberName: string): ToolSource[];
-  /** The briefing projection: visible sources with their tool lists. */
+  /** The instructions-response projection: visible sources with their tool lists. */
   resolveFor(memberName: string): ResolvedToolSource[];
   get(id: string): ToolSource | null;
   getBySlug(slug: string): ToolSource | null;

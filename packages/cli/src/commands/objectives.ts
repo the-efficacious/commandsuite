@@ -64,9 +64,9 @@ async function runList(client: Client, args: string[]): Promise<Objective[]> {
   if (values.mine === true) {
     // --mine resolves server-side via the session's own name;
     // passing the string literal 'self' would be wrong, so we fetch
-    // the briefing first to learn our own name.
-    const briefing = await client.briefing();
-    query.assignee = briefing.name;
+    // the instructions first to learn our own name.
+    const instructions = await client.instructions();
+    query.assignee = instructions.name;
   }
   if (typeof values.assignee === 'string') query.assignee = values.assignee;
   if (typeof values.status === 'string') {

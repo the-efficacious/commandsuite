@@ -22,8 +22,8 @@ import { signal } from '@preact/signals';
 import type { Member, Objective, Teammate } from 'csuite-sdk/types';
 import { hasPermission } from 'csuite-sdk/types';
 import { useEffect } from 'preact/hooks';
-import { briefing } from '../lib/briefing.js';
 import { getClient } from '../lib/client.js';
+import { instructions } from '../lib/instructions.js';
 import { memberActivityError, startMemberActivitySubscribe } from '../lib/member-activity.js';
 import { objectives as objectivesSignal } from '../lib/objectives.js';
 import { PERMISSION_META, sortLeaves, summarizePermissions } from '../lib/permissions.js';
@@ -48,8 +48,8 @@ const manageMember = signal<Member | null>(null);
  * Full team roster as returned by `/members`. Kept alongside
  * `manageMember` so the "is this the last admin?" guard reads from
  * a fresh list fetched by the same call that hydrated the form —
- * `briefing.teammates` used to be the source here and was stale
- * between mount and the next briefing refresh, incorrectly blocking
+ * `instructions.teammates` used to be the source here and was stale
+ * between mount and the next instructions refresh, incorrectly blocking
  * legitimate demotes.
  */
 const manageAllMembers = signal<Member[]>([]);
@@ -64,7 +64,7 @@ export interface MemberProfileProps {
 }
 
 export function MemberProfile({ name, tab, viewer }: MemberProfileProps) {
-  const b = briefing.value;
+  const b = instructions.value;
   const rosterResp = rosterSignal.value;
   const objectives = objectivesSignal.value;
   const isAdmin = b !== null && hasPermission(b.permissions, 'members.manage');
@@ -98,12 +98,12 @@ export function MemberProfile({ name, tab, viewer }: MemberProfileProps) {
         class="flex-1 overflow-y-auto"
         style="padding:18px max(1rem,env(safe-area-inset-right)) 18px max(1rem,env(safe-area-inset-left))"
       >
-        <div class="eyebrow">Loading briefing…</div>
+        <div class="eyebrow">Loading instructions…</div>
       </div>
     );
   }
 
-  // Not-found: the briefing has loaded but this name isn't on the team.
+  // Not-found: the instructions has loaded but this name isn't on the team.
   if (!teammate && b.name !== name) {
     return (
       <div
@@ -125,7 +125,7 @@ export function MemberProfile({ name, tab, viewer }: MemberProfileProps) {
     );
   }
 
-  // Use the viewer's own briefing identity when viewing self — the
+  // Use the viewer's own instructions identity when viewing self — the
   // roster may not include the viewer.
   const displayRole = teammate?.role ?? (isSelf ? b.role : { title: '—', description: '' });
   const displayPerms = teammate?.permissions ?? (isSelf ? b.permissions : []);
@@ -342,7 +342,7 @@ function OverviewTab({
     (o) => o.assignee !== name && o.watchers.includes(name),
   ).length;
 
-  const b = briefing.value;
+  const b = instructions.value;
   const permsLabel = teammate
     ? summarizePermissions(teammate.permissions, b?.team.permissionPresets ?? {}).label
     : isSelf && selfBrief
@@ -506,7 +506,7 @@ function ManageTab({
 
   // `manageAllMembers` is the list the Manage tab just fetched itself,
   // so it reflects the permission state right now (not the stale
-  // briefing snapshot that's only refreshed at Shell boot). The guard
+  // instructions snapshot that's only refreshed at Shell boot). The guard
   // blocks "strip the last admin" when there's truly only one, but
   // correctly allows an admin demoting a peer when ≥2 admins exist.
   const totalAdmins = manageAllMembers.value.filter((m) =>

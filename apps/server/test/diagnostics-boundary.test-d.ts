@@ -22,7 +22,7 @@
  * Type-only: no runtime assertions, checked by `tsc --noEmit`.
  */
 
-import { inspectBriefingContext } from '../src/context-watchdog.js';
+import { inspectInstructionContext } from '../src/context-watchdog.js';
 import { createDiagnosticStore } from '../src/diagnostics.js';
 
 declare const db: Parameters<typeof createDiagnosticStore>[0];
@@ -72,7 +72,7 @@ store.health();
 
 const contextInspection = {
   memberName: 'm',
-  inference: { systemInstructions: [] },
+  inference: { systemInstructions: [], inputMessages: [] },
   blocks: [],
   now: 0,
   lastResentAt: new Map<string, number>(),
@@ -82,6 +82,18 @@ const contextInspection = {
 // becomes optional, a future adapter silently inherits an absence
 // claim and an unbounded re-send loop for a projection it cannot see.
 // @ts-expect-error systemProjectionObservable is a required adapter declaration
-inspectBriefingContext(contextInspection);
+inspectInstructionContext(contextInspection);
 
-inspectBriefingContext({ ...contextInspection, systemProjectionObservable: false });
+inspectInstructionContext({ ...contextInspection, systemProjectionObservable: false });
+
+// A resend lands in the conversation, so the conversation is the only
+// place delivery can be confirmed from. If `inputMessages` becomes
+// optional, a caller silently inherits an empty conversation, every
+// resend becomes unconfirmable, and the unconfirmed bypass re-fires on
+// each captured request — the loop this field exists to close.
+inspectInstructionContext({
+  ...contextInspection,
+  // @ts-expect-error inputMessages is required: confirmation reads the conversation
+  inference: { systemInstructions: [] },
+  systemProjectionObservable: false,
+});

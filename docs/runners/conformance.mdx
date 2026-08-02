@@ -18,7 +18,7 @@ must prove before it ships.
 The short version:
 
 1. **Implement the `AgentAdapter` interface** — everything else
-   (auth, briefing, IPC, forwarder, capture, secrets, signals,
+   (auth, instructions, IPC, forwarder, capture, secrets, signals,
    teardown, run summary) is inherited from the shared driver.
 2. **Declare a capture tier** (0–3) instead of pretending parity.
 3. **Emit nothing yourself** — the driver produces the

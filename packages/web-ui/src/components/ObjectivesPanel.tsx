@@ -12,7 +12,7 @@
 import { signal } from '@preact/signals';
 import type { Objective, ObjectiveStatus } from 'csuite-sdk/types';
 import { useEffect } from 'preact/hooks';
-import { briefing } from '../lib/briefing.js';
+import { instructions } from '../lib/instructions.js';
 import { loadObjectives, objectives, objectivesLoaded } from '../lib/objectives.js';
 import { selectObjectiveCreate, selectObjectiveDetail } from '../lib/view.js';
 import { AlertTriangle } from './icons/index.js';
@@ -32,7 +32,7 @@ const STATUS_BADGE: Record<ObjectiveStatus, string> = {
 const panelError = signal<string | null>(null);
 
 export function ObjectivesPanel({ viewer }: ObjectivesPanelProps) {
-  const b = briefing.value;
+  const b = instructions.value;
   const list = objectives.value;
   const loaded = objectivesLoaded.value;
   const err = panelError.value;

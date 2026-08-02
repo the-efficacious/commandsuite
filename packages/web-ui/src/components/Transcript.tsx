@@ -16,8 +16,8 @@
  */
 
 import { useEffect } from 'preact/hooks';
-import { briefing } from '../lib/briefing.js';
 import { isInspectorOpen, toggleInspector } from '../lib/inspector.js';
+import { instructions } from '../lib/instructions.js';
 import {
   dmOther,
   messagesByThread,
@@ -45,7 +45,7 @@ export function Transcript({ viewer }: TranscriptProps) {
   const v = view.value;
   const _map = messagesByThread.value;
   void _map;
-  const b = briefing.value;
+  const b = instructions.value;
   const isDirector = b?.permissions.includes('members.manage') ?? false;
 
   const threadKey = v.kind === 'thread' ? v.key : null;

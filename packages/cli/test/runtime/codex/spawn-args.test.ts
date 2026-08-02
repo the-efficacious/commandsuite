@@ -48,7 +48,7 @@ vi.mock('../../../src/runtime/agents/codex/channel-sink.js', () => ({
   })),
 }));
 
-import type { BriefingResponse } from 'csuite-sdk/types';
+import type { InstructionsResponse } from 'csuite-sdk/types';
 import { spawnCodex } from '../../../src/runtime/agents/codex/adapter.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -69,7 +69,7 @@ function makeFakeChild() {
   return child;
 }
 
-const MINIMAL_BRIEFING: BriefingResponse = {
+const MINIMAL_PACKET: InstructionsResponse = {
   name: 'test-agent',
   role: { title: 'tester', description: '' },
   team: { name: 'test-team', context: '', permissionPresets: {} },
@@ -85,7 +85,7 @@ const MINIMAL_BRIEFING: BriefingResponse = {
 // to `CodexSpawnOptions` — `as const` would freeze `bridgeArgs` to a
 // readonly tuple and break the mutable `string[]` parameter shape.
 const BASE_OPTS = {
-  briefing: MINIMAL_BRIEFING,
+  instructions: MINIMAL_PACKET,
   runnerSocketPath: '/tmp/sock',
   bridgeCommand: '/usr/bin/node',
   bridgeArgs: ['/path/to/cli', 'mcp-bridge'],

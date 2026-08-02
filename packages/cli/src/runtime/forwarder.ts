@@ -84,6 +84,16 @@ export interface ForwarderOptions {
    */
   onToolSourceEvent?: (message: Message) => void;
   /**
+   * Invoked for every message whose `data.kind` is `'instructions'` —
+   * an instruction-bearing edit changed this member's composed text.
+   * The driver uses this to schedule a drain-and-restart of the agent
+   * at the next idle boundary, since a live session's system prompt
+   * cannot be changed in place. Fires for self-originated events too:
+   * a member editing its own instructions is still running the old
+   * ones.
+   */
+  onInstructionsEvent?: (message: Message) => void;
+  /**
    * Optional presence signal. Flipped to `connecting` before each
    * subscribe attempt, `online` on first successful message, and
    * `offline` when the stream errors or ends. The HUD uses this to
@@ -93,8 +103,17 @@ export interface ForwarderOptions {
 }
 
 export async function runForwarder(opts: ForwarderOptions): Promise<void> {
-  const { sink, brokerClient, name, signal, log, onObjectiveEvent, onToolSourceEvent, presence } =
-    opts;
+  const {
+    sink,
+    brokerClient,
+    name,
+    signal,
+    log,
+    onObjectiveEvent,
+    onToolSourceEvent,
+    onInstructionsEvent,
+    presence,
+  } = opts;
   let backoff = BACKOFF_START_MS;
 
   // Channel id → slug cache for the `channel_slug` meta key. Messages
@@ -174,6 +193,19 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
             onToolSourceEvent(message);
           } catch (err) {
             log('onToolSourceEvent handler threw', {
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+
+        // Instruction edits schedule a drain-and-restart. Self-echo
+        // exempt like the two above: the member who edited is still
+        // running the superseded text.
+        if (dataKind === 'instructions' && onInstructionsEvent) {
+          try {
+            onInstructionsEvent(message);
+          } catch (err) {
+            log('onInstructionsEvent handler threw', {
               error: err instanceof Error ? err.message : String(err),
             });
           }

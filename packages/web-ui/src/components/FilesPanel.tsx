@@ -22,9 +22,9 @@
 import { signal } from '@preact/signals';
 import { FS_PATHS } from 'csuite-sdk/protocol';
 import type { FsEntry } from 'csuite-sdk/types';
-import { briefing } from '../lib/briefing.js';
 import { getClient } from '../lib/client.js';
 import { openPreview } from '../lib/file-preview.js';
+import { instructions } from '../lib/instructions.js';
 import { selectFiles } from '../lib/view.js';
 import { AlertCircle, ChevronRight, X } from './icons/index.js';
 
@@ -216,7 +216,7 @@ export function FilesPanel({ viewer, path }: FilesPanelProps) {
   }
 
   const entries = current.entries ?? [];
-  const isAdmin = briefing.value?.permissions.includes('members.manage') ?? false;
+  const isAdmin = instructions.value?.permissions.includes('members.manage') ?? false;
 
   return (
     <div class="flex-1 flex flex-col min-h-0" style="padding:16px;overflow-y:auto">

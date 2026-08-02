@@ -81,7 +81,7 @@ export const TeamSchema = z.object({
 
 /**
  * Public projection of a team member — what teammates see in the
- * roster and briefing. Omits `instructions` (private to the member).
+ * roster and instruction packet. Omits `instructions` (private to the member).
  */
 export const TeammateSchema = z.object({
   name: NameSchema,
@@ -91,7 +91,7 @@ export const TeammateSchema = z.object({
 
 /**
  * Full member record — includes the private `instructions` field.
- * Returned from self-scope briefing and admin-scope member listings.
+ * Returned from self-scope instructions and admin-scope member listings.
  */
 export const MemberSchema = TeammateSchema.extend({
   instructions: z.string().default(''),
@@ -791,7 +791,7 @@ export const ResolveSecretsResponseSchema = z.object({
  * That is precisely why this ceiling has to stand on its own terms
  * rather than by analogy to a number that no longer exists.
  *
- * And the document rides in its own briefing field for a reason that
+ * And the document rides in its own response field for a reason that
  * never depended on any cap: a member authors their own
  * `instructions`, this is authored by whoever holds `process.manage`,
  * and one string would collapse two authorities into one field.
@@ -1743,9 +1743,22 @@ export const RejectEnrollmentRequestSchema = z.object({
   reason: z.string().max(256).optional(),
 });
 
-// ───────────────────────── Briefing + session ─────────────────
+// ─────────────────────── Instructions + session ───────────────
 
-export const BriefingResponseSchema = MemberSchema.extend({
+/** The wire-stable block kinds — see `InstructionBlockKind` in types. */
+export const InstructionBlockKindSchema = z.enum([
+  'team_context',
+  'role_description',
+  'personal_instructions',
+  'process_document',
+]);
+
+export const InstructionBlockDescriptorSchema = z.object({
+  kind: InstructionBlockKindSchema,
+  sha256: z.string().regex(/^[0-9a-f]{64}$/),
+});
+
+export const InstructionsResponseSchema = MemberSchema.extend({
   team: TeamSchema,
   teammates: z.array(TeammateSchema),
   openObjectives: z.array(ObjectiveSchema),
@@ -1755,14 +1768,10 @@ export const BriefingResponseSchema = MemberSchema.extend({
   /**
    * The team's process document, or `null` when none is set.
    *
-   * Its OWN field, and the durable reason is authority separation: a
-   * member authors their own `instructions`, while the process
-   * document is authored by whoever holds `process.manage`. One string
-   * would collapse two authorities into one field.
-   *
-   * The cap argument that also motivated this has already expired —
-   * #122 landed in #129 and no length cap remains in source. The field
-   * is still right, on authority separation alone.
+   * Its OWN field, and the reason is authority separation: a member
+   * authors their own `instructions`, while the process document is
+   * authored by whoever holds `process.manage`. One string would
+   * collapse two authorities into one field.
    *
    * THREE states, and `.default(null)` would destroy the one that
    * matters. An older broker OMITS this field; a broker that has it
@@ -1777,6 +1786,14 @@ export const BriefingResponseSchema = MemberSchema.extend({
    *   document   -> render it
    */
   processDocument: ProcessDocumentSchema.nullable().optional(),
+  // Optional: absent from brokers that predate the instruction-block
+  // model. Same reasoning as processDocument's absent state — a
+  // missing field is an older broker, not an empty answer.
+  blocks: z.array(InstructionBlockDescriptorSchema).optional(),
+  composedSha256: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/)
+    .optional(),
 });
 
 export const RosterResponseSchema = z.object({
@@ -1785,6 +1802,10 @@ export const RosterResponseSchema = z.object({
   // Optional so clients remain compatible with brokers that predate
   // server-reported activity-window semantics.
   activityWindowMs: z.number().int().positive().optional(),
+  // Optional so clients remain compatible with brokers that predate
+  // instruction versioning. Unknown-issued members are never listed —
+  // unknown is not pending.
+  restartPending: z.array(NameSchema).optional(),
 });
 
 export const HistoryResponseSchema = z.object({

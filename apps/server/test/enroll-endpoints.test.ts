@@ -292,7 +292,7 @@ describe('POST /enroll/approve', () => {
     };
     expect(pollBody.member.name).toBe('newcomer');
 
-    const briefingRes = await app.request('/briefing', {
+    const briefingRes = await app.request('/instructions', {
       headers: { Authorization: `Bearer ${pollBody.token}` },
     });
     expect(briefingRes.status).toBe(200);
@@ -393,10 +393,10 @@ describe('member CRUD ↔ token store', () => {
     const { token } = (await res.json()) as { token: string };
     // The freshly-created token authenticates immediately.
     expect(tokens.resolve(token)).not.toBeNull();
-    const briefing = await app.request('/briefing', {
+    const packet = await app.request('/instructions', {
       headers: { Authorization: `Bearer ${token}` },
     });
-    expect(briefing.status).toBe(200);
+    expect(packet.status).toBe(200);
   });
 
   it('member delete revokes every active token', async () => {

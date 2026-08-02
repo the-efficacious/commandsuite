@@ -36,7 +36,7 @@ Two kinds:
 admin ──REST/CLI──▶ registry (sources + tools + bindings + creds)
                         │ resolved per member
                         ▼
-agent ◀─ tools/list ── runner ◀── briefing.toolSources ── broker
+agent ◀─ tools/list ── runner ◀── instructions.toolSources ── broker
 agent ── tools/call(jira__create_issue) ─▶ runner
              ─▶ POST /tool-sources/jira/tools/create_issue/invoke
                     │ 403 unless bound · audit tool_action
@@ -45,10 +45,10 @@ agent ── tools/call(jira__create_issue) ─▶ runner
         fetch + cred    MCP client relay + cred
 ```
 
-1. The briefing carries the member's **resolved tools** — every
-   enabled source the member is bound to (or that is open to
-   `allMembers`), with each tool's name, description, and input
-   schema.
+1. The instructions response carries the member's **resolved
+   tools** — every enabled source the member is bound to (or that
+   is open to `allMembers`), with each tool's name, description,
+   and input schema.
 2. The runner merges them into the agent's MCP toolbox, namespaced
    **`<source>__<name>`** (source slugs contain no underscores, so
    the first `__` is unambiguous). To the agent they are ordinary
@@ -68,7 +68,7 @@ problems are HTTP errors (403 unbound, 404 unknown, 409 disabled).
 
 Registry changes fan out as `data.kind = 'tool_source'` channel
 events to the source's visible members plus every `tools.manage`
-holder. A member's runner reacts by refetching the briefing and —
+holder. A member's runner reacts by refetching its instructions and —
 only when its resolved set actually changed — emitting
 `notifications/tools/list_changed` so the agent re-lists tools
 **mid-session, no restart**.

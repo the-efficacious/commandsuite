@@ -112,7 +112,7 @@ export function isGenAiLogRecord(name: string): boolean {
 }
 
 export interface GenAiCorrelatorOptions {
-  /** Exact briefing blocks issued to this member, read at emission time. */
+  /** Exact instruction packet blocks issued to this member, read at emission time. */
   getRedactionExemptions?: () => readonly string[];
   /** Structured logger for skip/continue diagnostics. Optional. */
   log?: (msg: string, ctx?: Record<string, unknown>) => void;
@@ -338,7 +338,7 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
 
     // Raw capture FIRST within the correlator — input bytes are
     // content-addressed before this layer parses them. Inline OTLP bodies
-    // have already passed attribute redaction upstream; broker briefing
+    // have already passed attribute redaction upstream; broker instruction packet
     // blocks are exempt there. A body whose JSON later fails still lands.
     let hash: string | null = null;
     let exchangeId: number | null = null;
@@ -406,7 +406,7 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
         responseBody = JSON.parse(p.responseText);
       } catch (err) {
         diag?.correlatorBodyJsonParseFailed(who, p.requestText.length + p.responseText.length);
-        diag?.contextBriefingCheckUnavailable(who, 1);
+        diag?.contextInstructionsCheckUnavailable(who, 1);
         log('genai-correlator: body JSON parse failed', {
           error: err instanceof Error ? err.message : String(err),
         });
@@ -456,7 +456,7 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
         gaps++;
       }
     }
-    if (gaps > 0) diag?.contextBriefingCheckUnavailable(who, gaps);
+    if (gaps > 0) diag?.contextInstructionsCheckUnavailable(who, gaps);
   }
 
   function ingest(records: TelemetryRecord[]): GenAiInferenceInput[] {
@@ -481,7 +481,7 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
             });
             while (fifo.length > maxPending) {
               fifo.shift();
-              diag?.contextBriefingCheckUnavailable(who, 1);
+              diag?.contextInstructionsCheckUnavailable(who, 1);
             }
             break;
           }
@@ -555,7 +555,7 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
         }
       } catch (err) {
         diag?.correlatorMalformedRecordSkipped(who);
-        diag?.contextBriefingCheckUnavailable(who, 1);
+        diag?.contextInstructionsCheckUnavailable(who, 1);
         log('genai-correlator: skipped malformed record', {
           error: err instanceof Error ? err.message : String(err),
         });

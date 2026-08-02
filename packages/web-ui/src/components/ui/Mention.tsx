@@ -15,7 +15,7 @@
 import { signal } from '@preact/signals';
 import type { ComponentChildren } from 'preact';
 import { useId } from 'preact/hooks';
-import { briefing } from '../../lib/briefing.js';
+import { instructions } from '../../lib/instructions.js';
 import { roster } from '../../lib/roster.js';
 import { selectAgentDetail, selectDmWith } from '../../lib/view.js';
 import { ArrowRight } from '../icons/index.js';
@@ -89,7 +89,7 @@ export function __closeMentionCardsForTests(): void {
 }
 
 function MemberHoverCard({ id, name }: { id: string; name: string }) {
-  const b = briefing.value;
+  const b = instructions.value;
   const r = roster.value;
   const teammate =
     r?.teammates.find((t) => t.name === name) ?? b?.teammates.find((t) => t.name === name);

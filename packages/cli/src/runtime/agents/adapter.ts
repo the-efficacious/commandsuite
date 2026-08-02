@@ -5,7 +5,7 @@
  *
  * A runner (`csuite claude`, `csuite codex`, ...) is the parent
  * process that owns one csuite session. Everything broker-side is
- * SHARED and lives in the driver + `startRunner`: auth, briefing, IPC
+ * SHARED and lives in the driver + `startRunner`: auth, instructions, IPC
  * socket, SSE forwarder, objectives tracker, capture host, secrets,
  * presence, signal handling, teardown ordering, and the end-of-run
  * summary. An adapter implements ONLY what is specific to one agent
@@ -236,4 +236,24 @@ export interface AgentAdapter {
    * Local-only: must not contact a broker or spawn the agent proper.
    */
   doctor?(): Promise<AgentDoctorCheck[]>;
+  /**
+   * Re-point ambient input (the channel sink's delivery target) at a
+   * buffer for a successor agent process. Called by the driver's
+   * restart coordinator BEFORE the current process is shut down, so
+   * events arriving during the swap wait for the successor instead of
+   * dying with the predecessor. Optional; adapters whose sinks buffer
+   * natively when the agent is down may omit it.
+   */
+  detachForRestart?(): void;
+  /**
+   * Spawn a successor agent process with CURRENT instructions (read
+   * from `ctx.runner.instructions`, which the driver refreshes first),
+   * resuming the prior conversation where the framework supports it.
+   * Called only after the previous process has fully shut down —
+   * resume integrity depends on the predecessor having flushed its
+   * transcript. Absence means the adapter does not support in-place
+   * restart: edits apply at the next manual start, and the broker
+   * keeps listing the member restart-pending.
+   */
+  respawn?(ctx: AgentSessionContext, prior: { sessionId: string | null }): Promise<AgentProcess>;
 }

@@ -21,16 +21,100 @@
  * ends the session gracefully rather than being forwarded.
  */
 
+import { existsSync, promises as fs } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
 import type { ChannelEvent, ChannelEventSink } from '../../forwarder.js';
 import { type HudHandle, startHud } from '../../hud.js';
 import type {
   AgentAdapter,
   AgentAdapterMeta,
+  AgentDoctorCheck,
   AgentPrepared,
   AgentProcess,
   AgentSessionContext,
 } from '../adapter.js';
 import { findCodexBinary, spawnCodex } from './adapter.js';
+
+/**
+ * uid-0 posture. Codex has no root refusal — it runs with sandbox
+ * `danger-full-access` regardless — so uid 0 is a WARN, never a FAIL:
+ * the session works, but nothing contains it, and every file it
+ * touches is root-owned.
+ */
+function codexRootCheck(): AgentDoctorCheck {
+  const name = 'not running as root';
+  const uid = typeof process.getuid === 'function' ? process.getuid() : null;
+  if (uid === null) {
+    return {
+      name,
+      status: 'WARN',
+      detail: 'no effective uid on this platform — cannot verify the session user',
+    };
+  }
+  if (uid !== 0) {
+    return { name, status: 'PASS', detail: `uid ${uid}` };
+  }
+  const sudoUser = process.env.SUDO_USER;
+  const sudoPart =
+    sudoUser !== undefined && sudoUser !== '' && sudoUser !== 'root'
+      ? ` Drop the sudo to run as ${sudoUser}.`
+      : '';
+  return {
+    name,
+    status: 'WARN',
+    detail:
+      'uid 0 — codex runs with sandbox danger-full-access, and as root nothing ' +
+      'contains it: every file it creates is root-owned and system-wide writes ' +
+      `succeed.${sudoPart}`,
+  };
+}
+
+/** Linux tmpfs f_type, per statfs(2). */
+const TMPFS_MAGIC = 0x01021994;
+
+/**
+ * Codex stages apply-patch work under its cache dir. A RAM-backed
+ * cache silently erases it on reboot or memory pressure, which
+ * surfaces as "codex lost my patch" long after the cause. The named
+ * dir often does not exist yet on a cold machine, so the probe walks
+ * up to the nearest existing ancestor — the filesystem the dir WILL
+ * be created on is the one that answers.
+ */
+async function codexCacheCheck(): Promise<AgentDoctorCheck> {
+  const name = 'codex cache dir not tmpfs';
+  const configured = process.env.XDG_CACHE_HOME;
+  const cacheDir =
+    configured !== undefined && configured !== '' ? configured : join(homedir(), '.cache');
+  let probe = cacheDir;
+  let hops = 0;
+  while (!existsSync(probe)) {
+    const parent = dirname(probe);
+    if (parent === probe || ++hops > 64) break;
+    probe = parent;
+  }
+  try {
+    const stats = await fs.statfs(probe);
+    if (stats.type === TMPFS_MAGIC) {
+      return {
+        name,
+        status: 'WARN',
+        detail:
+          `${cacheDir} is RAM-backed (tmpfs) — codex stages apply-patch work ` +
+          'under its cache, and a reboot or memory pressure erases it. Point ' +
+          '$XDG_CACHE_HOME at disk.',
+      };
+    }
+    const via = probe === cacheDir ? cacheDir : `via existing parent ${probe}`;
+    return { name, status: 'PASS', detail: `${cacheDir} is disk-backed (${via})` };
+  } catch (err) {
+    return {
+      name,
+      status: 'WARN',
+      detail: `could not stat ${probe}: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
 
 export const CODEX_META: AgentAdapterMeta = {
   id: 'codex',
@@ -62,6 +146,14 @@ export interface CodexAdapterOptions {
 export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
   let codexBinary = '';
 
+  // What resume posture the NEXT spawn uses. Starts as the operator's
+  // choice; respawn() overrides it with the predecessor's thread id.
+  // A full re-spawn per generation is sound for codex because the
+  // sessions dir is durable OUTSIDE the ephemeral CODEX_HOME (each
+  // home symlinks it in), so tearing one home down and resuming from
+  // a fresh one loses nothing.
+  let effectiveResume: string | true | undefined = options.resume;
+
   // Buffering channel sink. The runner needs a sink up front, but the
   // codex channel sink can't exist until after spawnCodex creates the
   // JSON-RPC client. Events queue until the real sink is attached,
@@ -86,7 +178,7 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
     },
   };
 
-  return {
+  const adapter: AgentAdapter = {
     meta: CODEX_META,
 
     locate(): void {
@@ -122,7 +214,7 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
     async spawn(ctx: AgentSessionContext): Promise<AgentProcess> {
       const { runner, log } = ctx;
       const spawned = await spawnCodex({
-        briefing: runner.briefing,
+        instructions: runner.instructions,
         runnerSocketPath: runner.socketPath,
         bridgeCommand: ctx.bridgeCommand,
         bridgeArgs: [...ctx.bridgeArgs],
@@ -131,7 +223,7 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
         codexBinary,
         cwd: ctx.cwd,
         model: options.model,
-        resume: options.resume,
+        resume: effectiveResume,
         codexArgs: options.codexArgs,
         presence: ctx.presence,
         // Share the capture host's busy signal so codex tool-lifecycle
@@ -163,10 +255,10 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
       const threadId = spawned.getThreadId();
       process.stderr.write(
         (threadId
-          ? `csuite codex: thread ${threadId}${options.resume ? ' (resumed)' : ''} — pick it up later with: csuite codex --resume ${threadId}\n`
+          ? `csuite codex: thread ${threadId}${effectiveResume ? ' (resumed)' : ''} — pick it up later with: csuite codex --resume ${threadId}\n`
           : '') +
           `csuite codex: agent connected — Ctrl-C to stop. Direct it via the broker:\n` +
-          `    csuite push --agent ${runner.briefing.name} --body "your instructions"\n\n`,
+          `    csuite push --agent ${runner.instructions.name} --body "your instructions"\n\n`,
       );
 
       // HUD strip — same chrome as `csuite claude` (2-row footer
@@ -189,7 +281,7 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
       // A no-op when stdout isn't a TTY.
       const hud: HudHandle = startHud({
         presence: ctx.presence,
-        label: `csuite codex · ${runner.briefing.name}`,
+        label: `csuite codex · ${runner.instructions.name}`,
         reserveBottomSpace: true,
         log,
       });
@@ -211,5 +303,30 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
         },
       };
     },
+
+    detachForRestart(): void {
+      // Back to the pre-attach buffer: events queue until the
+      // successor's spawn attaches its live sink — the same mechanism
+      // that already covers codex's 5-15s cold start.
+      liveSink = null;
+    },
+
+    async respawn(
+      ctx: AgentSessionContext,
+      prior: { sessionId: string | null },
+    ): Promise<AgentProcess> {
+      // `sessionId` is the codex thread id. `true` (most recent thread
+      // on this machine) when the predecessor never revealed one.
+      effectiveResume = prior.sessionId ?? true;
+      ctx.log('codex: respawning with refreshed instructions', {
+        resume: effectiveResume,
+      });
+      return adapter.spawn(ctx);
+    },
+
+    async doctor(): Promise<AgentDoctorCheck[]> {
+      return [codexRootCheck(), await codexCacheCheck()];
+    },
   };
+  return adapter;
 }

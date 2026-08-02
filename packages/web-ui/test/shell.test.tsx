@@ -18,10 +18,10 @@ import { __resetComposerForTests, Composer } from '../src/components/Composer.js
 import { NavColumn as Sidebar } from '../src/components/shell/NavColumn.js';
 import { TeamHome } from '../src/components/TeamHome.js';
 import { Transcript } from '../src/components/Transcript.js';
-import { __resetBriefingForTests, briefing } from '../src/lib/briefing.js';
 import { __resetChannelsForTests, channels as channelsSignal } from '../src/lib/channels.js';
 import { __resetClientForTests, setClient } from '../src/lib/client.js';
 import { __resetIdentityForTests, identity } from '../src/lib/identity.js';
+import { __resetInstructionsForTests, instructions } from '../src/lib/instructions.js';
 import { __resetLiveForTests } from '../src/lib/live.js';
 import { __resetMessagesForTests, appendMessages } from '../src/lib/messages.js';
 import { __resetRosterForTests, roster } from '../src/lib/roster.js';
@@ -76,7 +76,7 @@ beforeEach(() => {
     expiresAt: 9_999_999_999_999,
   };
   __resetMessagesForTests();
-  __resetBriefingForTests();
+  __resetInstructionsForTests();
   __resetRosterForTests();
   __resetLiveForTests();
   __resetChannelsForTests();
@@ -422,8 +422,8 @@ describe('<Sidebar />', () => {
     expect(idleBtn.querySelector('.dot.ok')).toBeTruthy();
   });
 
-  it('falls back to briefing teammates when roster is still null (cold start)', () => {
-    briefing.value = {
+  it('falls back to instructions teammates when roster is still null (cold start)', () => {
+    instructions.value = {
       name: 'director-1',
       role: { title: 'director', description: '' },
       permissions: ['members.manage'],
@@ -522,13 +522,13 @@ describe('<Composer />', () => {
 });
 
 describe('<TeamHome />', () => {
-  it('shows loading state until briefing + roster populated', () => {
+  it('shows loading state until instructions + roster populated', () => {
     render(<TeamHome viewer="director-1" />);
     expect(screen.getByText(/loading/i)).toBeTruthy();
   });
 
   it('marks teammates as online when connected count > 0', async () => {
-    briefing.value = {
+    instructions.value = {
       name: 'director-1',
       role: { title: 'director', description: '' },
       permissions: ['members.manage'],
@@ -566,7 +566,7 @@ describe('<TeamHome />', () => {
   });
 
   it('renders the three activity states distinctly on the roster', async () => {
-    briefing.value = {
+    instructions.value = {
       name: 'director-1',
       role: { title: 'director', description: '' },
       permissions: ['members.manage'],
@@ -626,7 +626,7 @@ describe('<TeamHome />', () => {
   });
 
   it('clicking a teammate opens their profile', async () => {
-    briefing.value = {
+    instructions.value = {
       name: 'director-1',
       role: { title: 'director', description: '' },
       permissions: ['members.manage'],
@@ -657,7 +657,7 @@ describe('<TeamHome />', () => {
   });
 
   it('self-row links to own profile too', () => {
-    briefing.value = {
+    instructions.value = {
       name: 'director-1',
       role: { title: 'director', description: '' },
       permissions: ['members.manage'],
@@ -701,9 +701,9 @@ describe('<Transcript /> empty state', () => {
   });
 });
 
-describe('briefing bootstrap', () => {
-  it('NavColumn reflects team + viewer identity from briefing', () => {
-    briefing.value = {
+describe('instructions bootstrap', () => {
+  it('NavColumn reflects team + viewer identity from instructions', () => {
+    instructions.value = {
       name: 'director-1',
       role: { title: 'director', description: '' },
       permissions: ['members.manage'],
@@ -756,7 +756,7 @@ describe('<Sidebar /> overview button', () => {
   });
 
   it('renders team name and viewer name in the NavColumn team header', () => {
-    briefing.value = {
+    instructions.value = {
       name: 'director-1',
       role: { title: 'director', description: '' },
       permissions: ['members.manage'],
@@ -790,7 +790,7 @@ describe('<Sidebar /> overview button', () => {
 
 describe('<TeamHome /> context header', () => {
   function seedTeamHome(permissions: Permission[], context: string): void {
-    briefing.value = {
+    instructions.value = {
       name: 'director-1',
       role: { title: 'director', description: '' },
       permissions,
@@ -823,7 +823,7 @@ describe('<TeamHome /> context header', () => {
     };
   }
 
-  it('renders team name and context at the top when briefing is set', () => {
+  it('renders team name and context at the top when instructions is set', () => {
     seedTeamHome(['members.manage'], 'Longer context about the operating window.');
     render(<TeamHome viewer="director-1" />);
     expect(screen.getByText('demo-team')).toBeTruthy();
@@ -844,7 +844,7 @@ describe('<TeamHome /> context header', () => {
     expect(screen.getByRole('button', { name: /add team context/i })).toBeTruthy();
   });
 
-  it('shows loading UI when briefing is null', () => {
+  it('shows loading UI when instructions is null', () => {
     roster.value = {
       teammates: [
         {

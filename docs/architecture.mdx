@@ -24,7 +24,7 @@ runner.
    │                         │
    │   ── runner, long-lived ──
    │   • broker Client       │   <── HTTP + SSE
-   │   • briefing (cached)   │
+   │   • instructions cached │
    │   • IPC server (UDS)    │
    │   • capture host (native)
    │   • objectives tracker  │
@@ -90,7 +90,7 @@ TOTP rotation) see [device enrollment](/docs/enrollment).
 ## The runner abstraction
 
 csuite ships with two runners and is designed for more. Both share
-all the broker-facing plumbing — auth, briefing, IPC server, SSE
+all the broker-facing plumbing — auth, instructions, IPC server, SSE
 forwarder, MCP tool dispatch, capture host, busy reporter — and
 their principal adapter-specific differences are:
 
@@ -151,7 +151,7 @@ For the full breakdown see [permissions](/docs/concepts/permissions).
    │   csuite claude                │
    │                                  │
    │   ── runner (parent) ──          │
-   │   • briefing + objectives        │
+   │   • instructions + objectives    │
    │   • SSE forwarder                │
    │   • CaptureHost (OTLP ingest is  │
    │     broker-side; hook server +   │
@@ -253,7 +253,7 @@ HTTP → broker → web-push library → push service → service worker
    assignee, watchers).
 3. The assignee's runner sees the event on SSE; the objectives
    tracker refreshes its open-plate snapshot — the seed for the
-   `context_refresh` re-brief the runner pushes at session attach
+   `context_refresh` push the runner sends at session attach
    and after context compaction. (Tool descriptions stay static so
    the model's prompt-prefix cache survives; state freshness is
    message traffic.)
@@ -349,7 +349,7 @@ HTTP → broker → web-push library → push service → service worker
               │     csuite claude / codex       │
               │             (runner)              │
               │                                   │
-              │  • briefing + member identity     │
+              │  • instructions + member identity │
               │  • objectives tracker (open set)  │
               │  • SSE forwarder → notification   │
               │    sink (per-runner)              │

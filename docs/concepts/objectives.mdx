@@ -21,7 +21,7 @@ An objective is:
 - **Outcome-required** — every objective has a non-empty `outcome`
   field set at creation time. It's the tangible definition of
   done, and it appears in the assignment push and in every
-  `context_refresh` re-brief so the acceptance criteria survive
+  `context_refresh` push so the acceptance criteria survive
   restarts and compaction.
 - **Four-state** — `active → blocked → done | cancelled`. `done`
   and `cancelled` are terminal; `active ↔ blocked` is the only
@@ -104,7 +104,7 @@ Once assigned, the agent sees, almost immediately:
 1. A channel event on the `obj:<id>` thread announcing the
    assignment, with the title + outcome.
 2. A refresh of the runner's open-plate snapshot — the seed for
-   the `context_refresh` re-briefs pushed at session attach and
+   the `context_refresh` pushes sent at session attach and
    after context compaction.
 3. An `objective_open` event appended to its activity stream,
    marking the start of the time range that directors will later

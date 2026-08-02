@@ -4,7 +4,7 @@
  * The fidelity layer UNDER the gen_ai view: the complete request and
  * response BYTES handed to this store by the correlator. For Claude
  * inline-body OTLP, attribute redaction runs before the correlator (with
- * exact briefing-block exemptions); this store cannot claim provider-wire
+ * exact instruction-block exemptions); this store cannot claim provider-wire
  * identity for those inputs. It does preserve its input before this layer
  * parses or reshapes it. The `gen_ai_inference` table is the queryable
  * derived view; each of its rows points back at its source bytes here

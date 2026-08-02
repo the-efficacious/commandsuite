@@ -14,7 +14,7 @@ action is gated on a specific leaf.
 
 The ten leaves cover everything the system gates. Anything not
 on this list is baseline participation: posting in your DMs and
-the general channel, reading your own briefing, taking the
+the general channel, reading your own instructions, taking the
 objectives you're assigned, completing them, posting in their
 threads, managing your own files, rotating your own token. That's
 what it means to be on a team. Permissions are for actions that
@@ -92,7 +92,7 @@ of listing every leaf:
 ```
 
 The server resolves preset references at config load time. What
-reaches the wire (`Member.permissions`, `BriefingResponse.permissions`,
+reaches the wire (`Member.permissions`, `InstructionsResponse.permissions`,
 the `objectives_create` tool's local re-check) is always the flat
 leaf list. Members can reference any mix of preset names and
 leaves; the server validates every entry resolves.

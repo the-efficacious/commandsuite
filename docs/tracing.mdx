@@ -281,8 +281,9 @@ tool_use, and tool_result entries inline — alongside the
 
 The panel is gated server-side: `GET /members/:name/activity`
 requires `activity.read` (or self). The client-side gate (the
-TracePanel only mounts when the briefing carries `activity.read`)
-is a UX optimization; the server is the real boundary. Watchers,
+TracePanel only mounts when the viewer's instructions carry
+`activity.read`) is a UX optimization; the server is the real
+boundary. Watchers,
 originators, and assignees of OTHER members' objectives all get
 403 on the GET endpoint.
 
@@ -326,7 +327,7 @@ csuite codex --no-trace
 
 This disables the capture subsystem: no OTEL env injection, no
 hook server, no activity uploader, no busy reporter. The runner
-still handles the briefing, SSE forwarder, objectives, and
+still handles the instructions, SSE forwarder, objectives, and
 bridge IPC normally.
 
 Use `--no-trace` when you're debugging the runner / bridge
@@ -382,15 +383,20 @@ audit requirements.
 ### Persistent-context recovery
 
 For every completed captured request, the broker checks each current
-team-context, role-description, and personal-instructions block for exact
-literal presence in the structured system-instruction field preserved by the
+instruction block — team context, role description, personal instructions,
+and the process document — for exact literal presence in the structured
+system-instruction field preserved by the
 capture pipeline. A summary or paraphrase does not count. Each check emits a
 `csuite.context_block.presence` telemetry row keyed by member, block kind, and
 the block's SHA-256; it records presence and whether recovery fired.
 If the current block is absent but a different block version known to have
 been issued during this broker process is present, telemetry classifies the
 turn as `stale` rather than `missing` and records the matched prior hash.
-Recovery still sends the current text in both cases. Issued-version memory is
+Recovery re-sends the current text only for `missing` — the block fell out
+of context entirely. A `stale` session is restart-pending: the runner's
+drain-and-restart applies the new text at the next idle boundary, and
+re-injecting it beside the superseded copy would put two versions in one
+context. Issued-version memory is
 not durable across a broker restart, so `missing` means no **known** prior
 version matched; it does not prove that no older version ever existed.
 
@@ -400,8 +406,8 @@ block is genuinely absent. Codex currently declares chained turns without
 `instructions` unobservable—a named adapter-conformance gap rather than
 evidence of absence. A future adapter cannot call the watchdog without an
 explicit declaration, so it cannot silently inherit a resend loop. Unobservable checks emit
-`state=unobservable` with no `present` value, raise current briefing-check
-health, and never re-send. Treating an unavailable observation as `false`
+`state=unobservable` with no `present` value, raise the current
+instructions-check health, and never re-send. Treating an unavailable observation as `false`
 would produce both adapter-biased fallout telemetry and an endless resend
 loop. The projection gap is tracked separately; recovery starts automatically
 once the adapter supplies the structured field.
@@ -427,9 +433,11 @@ into a different contract. Operators therefore own the size of persistent
 blocks.
 
 Malformed captured JSON or an evicted incomplete correlation raises the
-current `context.briefing_check_unavailable` diagnostic until a later request
-is successfully evaluated. Historical parse-failure evidence remains retained
-separately.
+`context.briefing_check_unavailable` diagnostic until a later request is
+successfully evaluated. (That cause id's spelling is a pinned wire
+identifier — stored diagnostic rows key on it, so it does not follow
+the code's vocabulary.) Historical parse-failure evidence remains
+retained separately.
 
 - **Claude file-mode raw bodies require shared filesystem
   access.** Claude emits complete bodies to a runner-local spill

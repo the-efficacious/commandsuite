@@ -15,7 +15,7 @@
  *      deny (defense in depth — we configure approvalPolicy=never and
  *      mcp default_tools_approval_mode=never, so these shouldn't fire).
  *   7. `thread/start` — or `thread/resume` for a persisted thread —
- *      carrying the briefing as developerInstructions.
+ *      carrying the instructions as developerInstructions.
  *   8. Hold the process alive until codex exits (we treat codex exit
  *      as the runner's signal to stop).
  *   9. On shutdown: flush the channel sink, `turn/interrupt` if a turn
@@ -31,7 +31,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
-import type { BriefingResponse } from 'csuite-sdk/types';
+import type { InstructionsResponse } from 'csuite-sdk/types';
 import { CLI_VERSION } from '../../../version.js';
 import { composeFixedContext } from '../../fixed-context.js';
 import type { Presence } from '../../presence.js';
@@ -95,7 +95,7 @@ export function findCodexBinary(): string {
 }
 
 export interface CodexSpawnOptions {
-  briefing: BriefingResponse;
+  instructions: InstructionsResponse;
   /**
    * Path to the runner's IPC socket. Used both for the bridge subprocess
    * (via CODEX_HOME's config.toml env block) and is otherwise unused
@@ -238,13 +238,13 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
   //    member so threads survive the ephemeral home; resolve `--resume`
   //    (bare form = newest rollout on disk) BEFORE touching anything so
   //    "nothing to resume" fails fast with no cleanup owed.
-  const sessionsDir = opts.sessionsDir ?? defaultSessionsDir(opts.briefing.name);
+  const sessionsDir = opts.sessionsDir ?? defaultSessionsDir(opts.instructions.name);
   let resumeThreadId: string | null = null;
   if (opts.resume === true) {
     resumeThreadId = findLatestThreadId(sessionsDir);
     if (resumeThreadId === null) {
       throw new CodexAdapterError(
-        `--resume: no previous codex session found for ${opts.briefing.name} ` +
+        `--resume: no previous codex session found for ${opts.instructions.name} ` +
           `(looked in ${sessionsDir}) — start one without --resume first`,
       );
     }
@@ -626,14 +626,14 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
 
   // 8. Open the thread — `thread/start` fresh, or `thread/resume` when
   //    the caller named (or asked for the latest) persisted thread.
-  //    Both carry the briefing as developerInstructions and lock down
+  //    Both carry the instructions as developerInstructions and lock down
   //    `approvalPolicy: never` so headless runs never elicit a UI
   //    prompt. On resume the overrides re-assert our posture on the
   //    reloaded thread; absent fields would keep whatever the persisted
   //    thread had, and a resumed agent must not come back more (or
   //    less) restricted than a fresh one.
   const developerInstructions = (() => {
-    const fixed = composeFixedContext(opts.briefing);
+    const fixed = composeFixedContext(opts.instructions);
     return fixed.length > 0 ? fixed : undefined;
   })();
   // Match claude's posture: `--dangerously-skip-permissions` on the
@@ -672,7 +672,7 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
     await teardown(`${method.replace('/', '-')}-failed`);
     const hint =
       resumeThreadId !== null
-        ? ` (thread ${resumeThreadId} — was it started by csuite codex as ${opts.briefing.name} on this machine?)`
+        ? ` (thread ${resumeThreadId} — was it started by csuite codex as ${opts.instructions.name} on this machine?)`
         : '';
     throw new CodexAdapterError(
       `codex ${method} failed: ${err instanceof Error ? err.message : String(err)}${hint}`,

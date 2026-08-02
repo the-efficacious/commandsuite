@@ -21,7 +21,7 @@ import type {
 } from 'csuite-sdk/types';
 import { hasPermission } from 'csuite-sdk/types';
 import { useEffect } from 'preact/hooks';
-import { briefing } from '../lib/briefing.js';
+import { instructions } from '../lib/instructions.js';
 import {
   createNotificationEndpoint,
   createNotificationProfile,
@@ -69,7 +69,7 @@ export function describeTarget(t: NotificationTarget): string {
 }
 
 export function NotificationsPanel() {
-  const b = briefing.value;
+  const b = instructions.value;
 
   useEffect(() => {
     void loadNotificationEndpoints();

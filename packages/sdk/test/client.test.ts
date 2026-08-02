@@ -56,7 +56,7 @@ function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
 }
 
 describe('Client', () => {
-  it('sends runner version only when the briefing caller declares the long-lived runner', async () => {
+  it('sends runner version only when the instructions caller declares the long-lived runner', async () => {
     const seen: Array<string | null> = [];
     const client = new Client({
       url: 'http://example.test:8717',
@@ -77,8 +77,8 @@ describe('Client', () => {
       }),
     });
 
-    await client.briefing();
-    await client.briefing({ runnerVersion: '0.3.4' });
+    await client.instructions();
+    await client.instructions({ runnerVersion: '0.3.4' });
     expect(seen).toEqual([null, '0.3.4']);
   });
 

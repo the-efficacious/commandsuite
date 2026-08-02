@@ -2,7 +2,7 @@
  * Runner channel-delivery integration test.
  *
  * Proves broker SSE events reach the adapter-supplied channel sink
- * end-to-end through a real runner (briefing, forwarder loop, sink
+ * end-to-end through a real runner (instructions, forwarder loop, sink
  * wiring) — the seam both the claude and codex sinks implement. This
  * carries the integration coverage the bridge test used to provide
  * when channel events rode the bridge as MCP notifications:

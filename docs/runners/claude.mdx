@@ -38,7 +38,7 @@ csuite claude [--no-trace] [--no-secrets] [--doctor] [--skip-doctor]
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--no-trace` | bool | off | Disable activity capture: no capture host (activity uploader, busy signal, hook server), no OpenTelemetry export env, no hook forwarders. The runner still does briefing + IPC + objectives normally. |
+| `--no-trace` | bool | off | Disable activity capture: no capture host (activity uploader, busy signal, hook server), no OpenTelemetry export env, no hook forwarders. The runner still does instructions + IPC + objectives normally. |
 | `--no-secrets` | bool | off | Skip resolving/injecting broker-held secrets into the agent's environment. |
 | `--doctor` | bool | off | Run the preflight checks, print the full report, exit. Doesn't spawn the agent. Exit code is 1 if any check FAILed. |
 | `--skip-doctor` | bool | off | Skip the silent preflight that runs by default before spawning. Useful in CI / scripted reruns where you've already validated the environment. |
@@ -62,16 +62,17 @@ than silently forwarded.
 2. **Run preflight.** Unless `--skip-doctor` is set, runs the doctor
    checks silently. WARN states proceed; any FAIL aborts and dumps the
    full report to stderr.
-3. **Start the runner.** `startRunner()` fetches the briefing, binds
-   the IPC socket, starts the SSE forwarder. Failures surface as a
+3. **Start the runner.** `startRunner()` fetches the instructions,
+   binds the IPC socket, starts the SSE forwarder. Failures surface as a
    `RunnerStartupError` with an actionable hint.
 4. **Start the capture host** (unless `--no-trace`). Binds the
    loopback hook server on a random ephemeral port, starts the batched
    activity uploader, and computes the OpenTelemetry export env
    (below). No CA, no proxy, no network interception.
-5. **Compose the SDK options.** The csuite MCP bridge entry, the team
-   briefing appended to Claude Code's system-prompt preset, the
-   `bypassPermissions` posture, model/resume knobs, in-process hook
+5. **Compose the SDK options.** The csuite MCP bridge entry, the
+   composed instructions appended to Claude Code's system-prompt
+   preset, the `bypassPermissions` posture, model/resume knobs,
+   in-process hook
    forwarders, and the child environment (broker secrets + the capture
    host's OTEL delta). **Nothing is written to the working tree** —
    the MCP config travels inline on the invocation the SDK composes,
@@ -95,7 +96,7 @@ still prints it on startup:
 | SDK option | Replaces | Why |
 |---|---|---|
 | `permissionMode: 'bypassPermissions'` | `--dangerously-skip-permissions` | The intended trust posture, applied session-wide: an autonomous teammate never stops for per-tool yes/no prompts. Controls live at the csuite layer (permissions, broker 403s, credential scoping) and at the workstation boundary — see [permissions → trust posture](/docs/concepts/permissions). |
-| `systemPrompt: { preset: 'claude_code', append: <briefing> }` | `--append-system-prompt` | Pins the team briefing (team name + context, role, personal instructions, teammates) on top of Claude Code's own system prompt. Survives compaction. Live objective state is deliberately NOT in the prose — it arrives as message traffic plus `context_refresh` re-briefs. |
+| `systemPrompt: { preset: 'claude_code', append: <instructions> }` | `--append-system-prompt` | Pins the composed instructions (team name + context, role, personal instructions, teammates) on top of Claude Code's own system prompt. Survives compaction. Live objective state is deliberately NOT in the prose — it arrives as message traffic plus `context_refresh` pushes. |
 | streaming input (below) | `--dangerously-load-development-channels server:csuite` | Broker events used to ride an experimental MCP notification surface that required a development flag. They are now ordinary SDK streaming-input messages — the unstable dependency is gone. |
 
 The member's own Claude config still loads exactly as it would under a
@@ -123,9 +124,9 @@ a turn; one arriving mid-turn is queued and folded into the
 conversation. Events that arrive during the subprocess's cold start
 simply wait in the stream — nothing is dropped.
 
-`context_refresh` re-briefs (pushed by the runner when the agent's MCP
-session comes up, or after a compact/clear) arrive through the same
-path. Capability updates (`tools/list_changed`) reach the agent
+Context refreshes (`context_refresh` pushes the runner sends when the
+agent's MCP session comes up, or after a compact/clear) arrive
+through the same path. Capability updates (`tools/list_changed`) reach the agent
 through the bridge's stdio MCP transport, not the sink.
 
 ## Capture: how the activity stream is fed
@@ -139,8 +140,8 @@ the SDK runs the same Claude Code underneath:
   redacted, untruncated (including thinking).
 - **Presence (hooks).** PreToolUse / PostToolUse / PostToolUseFailure
   (tool windows), UserPromptSubmit / Stop (the turn bracket),
-  Notification (human-blocking), SubagentStop, SessionStart (re-brief
-  trigger on compact/clear). These used to be `type: "http"` hook
+  Notification (human-blocking), SubagentStop, SessionStart
+  (context-refresh trigger on compact/clear). These used to be `type: "http"` hook
   entries written into the member's `.claude/settings.json`; they are
   now **in-process SDK hook callbacks** that forward each payload to
   the same loopback endpoint — same payloads, same routing, no

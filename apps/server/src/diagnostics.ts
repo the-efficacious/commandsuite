@@ -89,6 +89,9 @@ export const DIAGNOSTIC_CAUSES = [
   'correlator.request_id_assign_failed',
   'correlator.malformed_record_skipped',
   // persistent-context watchdog (3)
+  // Persisted cause id — pinned to its original spelling. Stored rows
+  // and wire consumers key on the string; code identifiers around it
+  // say "instructions", the id must not follow them.
   'context.briefing_check_unavailable',
   'context.block_resend_unconfirmed',
   'context.presence_telemetry_failed',
@@ -508,7 +511,7 @@ export interface DiagnosticEmitter {
   correlatorInferenceBuildFailed(member: string, err: unknown): void;
   correlatorRequestIdAssignFailed(member: string, err: unknown): void;
   correlatorMalformedRecordSkipped(member: string): void;
-  contextBriefingCheckUnavailable(member: string, records: number): void;
+  contextInstructionsCheckUnavailable(member: string, records: number): void;
   contextBlockResendUnconfirmed(member: string, blocks: number): void;
   contextPresenceTelemetryFailed(member: string, records: number): void;
   rawstoreBlobGunzipFailed(hash: string): void;
@@ -536,7 +539,7 @@ export interface DiagnosticEmitter {
   // create unresolved state, so "recovering" one is meaningless.
   correlatorBodyRefRead(member: string): void;
   correlatorRawCaptureSucceeded(member: string): void;
-  contextBriefingCheckSucceeded(member: string): void;
+  contextInstructionsCheckSucceeded(member: string): void;
   contextBlockDeliveryConfirmed(member: string): void;
   contextPresenceTelemetryStored(member: string): void;
   otlpLogsStored(member: string): void;
@@ -991,7 +994,7 @@ function buildStore(
     correlatorMalformedRecordSkipped(member) {
       record({ cause: 'correlator.malformed_record_skipped', members: [member] });
     },
-    contextBriefingCheckUnavailable(member, records) {
+    contextInstructionsCheckUnavailable(member, records) {
       record({
         cause: 'context.briefing_check_unavailable',
         members: [member],
@@ -1070,7 +1073,7 @@ function buildStore(
     correlatorRawCaptureSucceeded(member) {
       clearState.run('correlator.raw_capture_failed', member);
     },
-    contextBriefingCheckSucceeded(member) {
+    contextInstructionsCheckSucceeded(member) {
       clearState.run('context.briefing_check_unavailable', member);
     },
     contextBlockDeliveryConfirmed(member) {

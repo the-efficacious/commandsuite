@@ -30,9 +30,9 @@ receives is always what applies now.
 
 ## Injected, not fetched
 
-The current document is served on `GET /briefing` and rendered by the
-runner into the agent's **fixed context** — the standing instructions
-handed to the agent at start. That placement is the mechanism:
+The current document is served on `GET /instructions` and rendered by
+the runner into the agent's **fixed context** — the standing
+instructions handed to the agent at start. That placement is the mechanism:
 
 - fixed context survives compaction; chat history does not
 - a member who never saw an announcement still has the current text
@@ -104,6 +104,12 @@ The **diff is derived** from the prior and current text, never stored.
 A cached diff is a second copy that can drift from the text it
 describes, which is the defect this whole feature treats.
 
+An edit does not wait for the next session. It fans out one
+`kind: 'instructions'` channel event to every member whose composed
+context changed; each affected runner restarts its agent at the next
+idle boundary, resuming the same conversation under the new text, and
+the roster lists those members as restart-pending until it does.
+
 ## No document is a state, not silence
 
 A team that has never written one renders an explicit line — *no
@@ -138,8 +144,8 @@ capping N.
 
 ## Why it is not part of `instructions`
 
-The document is carried in its own briefing field, never folded into
-the composed `instructions` string.
+The document is carried in its own field on the instructions
+response, never folded into the composed `instructions` string.
 
 The durable reason is **authority separation**. A member authors their
 own `instructions`; the process document is authored by whoever holds
@@ -156,7 +162,8 @@ load-bearing part.
   operates without the process document and is not told.
 - **Codex members get no in-flight recovery.** Their system projection
   is unobservable, so absence cannot be asserted and nothing is
-  re-sent. Delivery for them is at the next runner start only.
+  re-sent. A document that falls out of their context comes back at
+  the next agent restart only.
 - **Recovery is not instant.** It fires on an observable turn and is
   rate-limited, so a document lost mid-session returns on a later turn
   rather than immediately.

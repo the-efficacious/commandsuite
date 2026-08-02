@@ -18,7 +18,7 @@
  *
  * On mount the shell:
  *   - Wires the client + identity + callbacks into internal signals.
- *   - Loads briefing, history, roster, objectives (non-fatal failures
+ *   - Loads instructions, history, roster, objectives (non-fatal failures
  *     land in a dismissable banner; 401 triggers `onUnauthorized`).
  *   - Starts live WebSocket subscription and roster polling.
  *   - Installs global ⌘K / Ctrl-K to toggle the command palette.
@@ -64,7 +64,6 @@ import { TeamHome } from './components/TeamHome.js';
 import { ToolSourceDetail } from './components/ToolSourceDetail.js';
 import { ToolSourcesPanel } from './components/ToolSourcesPanel.js';
 import { Transcript } from './components/Transcript.js';
-import { loadBriefing } from './lib/briefing.js';
 import { channelBySlug, loadChannels } from './lib/channels.js';
 import { setClient } from './lib/client.js';
 import { setEmbeddedShell, setTeamSettingsHandler } from './lib/embedded.js';
@@ -77,6 +76,7 @@ import {
 } from './lib/handlers.js';
 import { type Identity, setIdentity } from './lib/identity.js';
 import { closeInspector } from './lib/inspector.js';
+import { loadInstructions } from './lib/instructions.js';
 import { startSubscribe, streamConnected } from './lib/live.js';
 import { appendMessages, dmOther, messagesByThread, objectiveThreadKey } from './lib/messages.js';
 import { loadNotificationEndpoints } from './lib/notifications.js';
@@ -187,13 +187,13 @@ export function TeamShell(props: TeamShellProps): JSX.Element {
 
     const boot = async () => {
       try {
-        await loadBriefing();
+        await loadInstructions();
       } catch (err) {
         if (isUnauthorized(err)) {
           handleUnauthorized('Your session expired — please sign in again.');
           return;
         }
-        recordFailure('briefing', err);
+        recordFailure('instructions', err);
       }
       try {
         const history = await props.client.history({ limit: 100 });

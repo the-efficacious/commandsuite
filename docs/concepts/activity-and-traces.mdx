@@ -156,7 +156,8 @@ retries with backoff when the broker is unreachable.
 runner's objectives tracker rather than either capture path:
 
 - `objective_open` fires when the agent's open objective set
-  gains an id (initial briefing, new assignment, reassignment-in).
+  gains an id (initial instructions fetch, new assignment,
+  reassignment-in).
 - `objective_close` fires when an id leaves the set (completed,
   cancelled, reassigned-out). The `result` field is a hint —
   `done` is the default, but the broker's audit log has the
@@ -319,7 +320,7 @@ an objective doesn't grant trace access; that's a separate
 permission.
 
 The TracePanel in the web UI is gated client-side too — it only
-mounts when `briefing.permissions.includes('activity.read')` —
+mounts when the viewer's instructions carry `activity.read` —
 but the server is the real boundary; client gating is a UX
 optimization.
 

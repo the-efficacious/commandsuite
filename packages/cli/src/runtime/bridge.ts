@@ -6,7 +6,7 @@
  *   stdio <──── MCP JSON-RPC ────>  agent (Claude Code, etc.)
  *   IPC   <──── csuite IPC frames ──>  runner (the member's `csuite claude` process)
  *
- * It doesn't talk to the csuite broker, doesn't hold a briefing, doesn't
+ * It doesn't talk to the csuite broker, doesn't hold a instructions, doesn't
  * own a tools set, doesn't maintain state beyond "I have one socket
  * open to the runner, I speak MCP stdio." All of that lives in the
  * runner process.

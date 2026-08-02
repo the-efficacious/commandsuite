@@ -5,7 +5,7 @@
  * A secret is a named value an admin drops on the broker once; the
  * runner resolves the set bound to its member immediately before
  * spawning the agent and injects each as an environment variable on
- * the agent child. The value never appears in briefing prose,
+ * the agent child. The value never appears in composed instructions,
  * prompts, or MCP traffic — the agent just finds the variable set.
  *
  * Shares the main `DatabaseSync` handle with channels/objectives.

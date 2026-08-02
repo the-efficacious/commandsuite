@@ -13,7 +13,7 @@ One server = one team. Exposes:
 
 ### Chat + identity
 - `GET /healthz` — liveness probe (no auth)
-- `GET /briefing` — name, role, permissions, team, teammates, open objectives, and composed instructions for the authenticated slot
+- `GET /instructions` — name, role, permissions, team, teammates, open objectives, and composed instructions for the authenticated slot
 - `GET /roster` — full slot list plus runtime connection state
 - `POST /push` — deliver a message to one teammate (DM) or broadcast
 - `GET /subscribe?name=…` — long-lived WebSocket stream; `name` must equal the caller's name

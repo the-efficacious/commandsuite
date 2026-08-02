@@ -40,7 +40,7 @@
  * author and a real reason instead of being seeded by a migration that
  * would have to invent its text.
  *
- * IT RIDES IN ITS OWN BRIEFING FIELD, and the durable reason is not
+ * IT RIDES IN ITS OWN FIELD ON THE INSTRUCTIONS RESPONSE, and the durable reason is not
  * the instruction cap — which has since been removed (#122, landed in
  * #129) without changing this decision at all. A member authors their
  * own `instructions`; this is authored by whoever holds
