@@ -16,13 +16,13 @@ session cookie). All paths and types are defined by
 `csuite-sdk` — `csuite-sdk/protocol` for path constants,
 `csuite-sdk/schemas` for zod request / response shapes.
 
-Every request carries `X-CSUITE-Protocol: 1` and is validated
+Every request carries `X-CSUITE-Protocol: 2` and is validated
 against the schema. Schema mismatches return 400 with a JSON
 error body. Long-lived runners additionally send
 `X-CSUITE-Runner-Version: <version>` (the
 `RUNNER_VERSION_HEADER` constant in `packages/sdk/src/protocol.ts`)
 so the broker knows which client version it is composing for — see
-`GET /briefing` below.
+`GET /instructions` below.
 
 ## Auth
 
@@ -63,24 +63,41 @@ Liveness probe. Cheap; always responds 200 if the process is up.
 `X-CSuite-Raw-Bodies` capture acknowledgement (see
 [OTLP telemetry ingest](#otlp-telemetry-ingest)).
 
-## Briefing
+## Instructions
 
-### `GET /briefing`
+### `GET /instructions`
 
 | | |
 |---|---|
 | **Auth** | dual |
 | **Body** | — |
 | **Request headers** | `X-CSUITE-Runner-Version: <version>` (optional) |
-| **Returns** | `BriefingResponse` |
+| **Returns** | `InstructionsResponse` |
 
-The team-context packet. Returns the caller's full member record
-(name, role, instructions, permissions) plus the team
+The member's composed instruction packet. Returns the caller's full
+member record (name, role, instructions, permissions) plus the team
 (name, context, permissionPresets), the public projection
 of every teammate, the caller's currently-open objectives, the
 external tools resolved for them (`toolSources`), and the team's
 process document (`processDocument` — `null` when none is set,
 absent on brokers that predate the field).
+
+The response also names what was composed, by content hash:
+
+- `blocks` — one `{ kind, sha256 }` descriptor per operator-authored
+  instruction block actually present in this packet. Kinds are
+  `team_context`, `role_description`, `personal_instructions`, and
+  `process_document` (the wire strings are pinned — they double as
+  the context watchdog's telemetry vocabulary). Empty blocks are
+  omitted rather than descriptor'd.
+- `composedSha256` — sha256 of the **canonical** composition: the
+  composed `instructions` prose with the transient broker/runner
+  version line normalized out, plus the process-document text. The
+  broker records this hash as "issued" to the member on every fetch
+  and compares it against the current composition to decide
+  restart-pending (`GET /roster` below). Two fetches that differ
+  only in reported runner version share a hash by construction — a
+  runner upgrade never reads as an instruction edit.
 
 `X-CSUITE-Runner-Version` is how a long-lived runner reports its
 loaded version. The value must match
@@ -91,13 +108,15 @@ composed `instructions` prose —
 captured trace records which broker and runner composed the
 session's context (values longer than 12 characters are shortened
 for display). The SDK sends it via
-`client.briefing({ runnerVersion })`.
+`client.instructions({ runnerVersion })`.
 
-The runner caches this at startup and uses it for the entire
-session — the composed `instructions` prose is pinned into the
-agent's system prompt, `openObjectives` seeds the runner's
-`context_refresh` re-brief, and `permissions` decides which
-permission-gated tools appear in `tools/list`.
+The runner caches this at startup and uses it for the session — the
+composed `instructions` prose is pinned into the agent's system
+prompt, `openObjectives` seeds the runner's `context_refresh` push,
+and `permissions` decides which permission-gated tools appear in
+`tools/list`. It refetches mid-session in exactly two cases: a
+`tool_source` registry event (to recompute the external toolbox) and
+the drain-and-restart cycle an instruction edit triggers (below).
 
 ## Roster
 
@@ -106,11 +125,18 @@ permission-gated tools appear in `tools/list`.
 | | |
 |---|---|
 | **Auth** | dual |
-| **Returns** | `{ teammates: Teammate[], connected: Presence[] }` |
+| **Returns** | `RosterResponse` — `{ teammates: Teammate[], connected: Presence[], restartPending: string[], activityWindowMs }` |
 
 Public projection of teammates plus a parallel list of live
 presence (connection count, last-seen, busy flag). For the
 presence model see [presence](/docs/concepts/presence).
+
+`restartPending` lists members whose current composed instructions
+differ from what their live session was issued — their runner
+restarts the agent at its next idle boundary to pick the edit up.
+The tracking is in-memory and deliberately forgetful: a member whose
+issued hash is unknown (the broker restarted since their
+`GET /instructions` fetch) is NOT listed — unknown is not pending.
 
 ## Push / subscribe / history
 
@@ -230,11 +256,20 @@ permissions in any mix; the server resolves at create time.
 |---|---|
 | **Auth** | manage |
 | **Body** | `UpdateMemberRequest` — `{ role?, instructions?, permissions? }` |
-| **Returns** | `Teammate` |
+| **Returns** | `Member` (plus `warning`, mirrored in an `X-CSuite-Warning` header, when the new role description or instructions contain a registered secret value) |
 
 Patches any subset of fields. Enforces "at least one
 `members.manage` member must remain" — rejects with 400 if the
 update would remove the only admin's permission.
+
+Role and instructions edits fan out one `kind: 'instructions'`
+channel event to every member whose composed instruction text
+changed — a role edit also reaches teammates whose roster line
+moved, since that line is composed into their prose. Each affected
+runner restarts its agent at the next idle boundary under the new
+text, resuming the same conversation; `GET /roster` lists those
+members in `restartPending` until it does. Permission-only patches
+never touch the prose and fan nothing out.
 
 ### `DELETE /members/:name`
 
@@ -379,10 +414,15 @@ member is a 404 (indistinguishable, so ids don't leak ownership).
 
 Team-level config: name, context, and the named permission presets
 members reference in their raw permissions. Reads are open to every
-authenticated member; mutations require `team.manage`. Changes to
-`context` (like member `instructions`) reach a member's composed
-briefing on their next runner start — the MCP protocol freezes
-instructions-class strings per session.
+authenticated member; mutations require `team.manage`.
+
+A `context` edit is instruction-bearing: it fans out one
+`kind: 'instructions'` channel event to every member whose composed
+instruction text changed, each affected runner restarts its agent at
+the next idle boundary under the new text, and `GET /roster` lists
+those members in `restartPending` until it does. A `name`-only patch
+fans out the same way — the team name is the first line of every
+member's composed prose, so it moves every composition.
 
 ### `GET /team`
 
@@ -584,7 +624,7 @@ member — what binds you is not privileged information. Writes require
 `process.manage`, a dedicated leaf: under this design the permission is
 the entire authority.
 
-The current document is also served on `GET /briefing` as
+The current document is also served on `GET /instructions` as
 `processDocument`, which is how it reaches a member's fixed context.
 These endpoints exist for what injection does not carry.
 
@@ -635,6 +675,12 @@ immutability.
 stated basis: the document is resident in every member's context in
 every session, so its length is a recurring cost paid by everyone.
 
+Like every instruction-bearing edit, a write fans out one
+`kind: 'instructions'` channel event to each member whose composed
+context changed. Their runners restart the agent at the next idle
+boundary under the new text, and `GET /roster` lists those members
+in `restartPending` until they do.
+
 ## Tool sources
 
 Registry of platform-defined external tools — see
@@ -661,7 +707,7 @@ requires the caller be bound to the source (or the source be
 
 Registry changes fan out as `data.kind = 'tool_source'` channel
 events (thread `tool:<slug>`) to the source's visible members plus
-`tools.manage` holders — runners refetch the briefing and emit
+`tools.manage` holders — runners refetch their instructions and emit
 `tools/list_changed` when their resolved set changes.
 
 ## Secrets

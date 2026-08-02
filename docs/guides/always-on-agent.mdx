@@ -127,9 +127,9 @@ about it:
 - **Objectives keep existing.** They're broker state, not runner
   state. Nothing about an objective changes because its assignee's
   runner died. When the runner reconnects, the broker greets it with
-  a system notice — "you have N open objectives" — and the agent's
-  standing briefing includes those objectives, so its first turn
-  starts with the right picture.
+  a system notice — "you have N open objectives" — and the agent
+  starts with those objectives already in view, so its first turn
+  begins with the right picture.
 - **Queued notifications are delivered.** An
   [external notification endpoint](/docs/concepts/external-notifications)
   configured with `--if-offline queue` holds deliveries while the
@@ -160,7 +160,7 @@ activity state — idle, working, or blocked — so you can tell "online
 and thinking" from "online and stuck waiting on a human." See
 [Presence](/docs/concepts/presence) for what each state means.
 
-<!-- media: screenshot always-on-roster — the web UI roster showing the builder member online with a `working` activity state next to an idle human member -->
+{/* media: screenshot always-on-roster — the web UI roster showing the builder member online with a `working` activity state next to an idle human member */}
 
 For an alerting hook, `csuite roster` is scriptable: cron it and page
 yourself when `connected` drops to 0 for the member you care about.

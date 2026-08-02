@@ -24,7 +24,7 @@ runner.
    │                         │
    │   ── runner, long-lived ──
    │   • broker Client       │   <── HTTP + WebSocket
-   │   • briefing (cached)   │
+   │   • instructions cached │
    │   • IPC server (UDS)    │
    │   • capture host (native)
    │   • objectives tracker  │
@@ -90,9 +90,11 @@ TOTP rotation) see [device enrollment](/docs/enrollment).
 ## The runner abstraction
 
 csuite ships with two runners and is designed for more. Both share
-all the broker-facing plumbing — auth, briefing, IPC server, event
-forwarder, MCP tool dispatch, capture host, busy reporter — and
-their principal adapter-specific differences are:
+all the broker-facing plumbing — auth, instructions, IPC server,
+event forwarder, MCP tool dispatch, capture host, busy reporter, and
+the drain-and-restart coordinator that applies instruction edits by
+restarting the agent at its next idle boundary — and their principal
+adapter-specific differences are:
 
 1. **How the agent is spawned.** Claude Code runs headlessly under
    the Claude Agent SDK; codex is headless under `codex app-server`.
@@ -152,7 +154,7 @@ For the full breakdown see [permissions](/docs/concepts/permissions).
    │   csuite claude                │
    │                                  │
    │   ── runner (parent) ──          │
-   │   • briefing + objectives        │
+   │   • instructions + objectives    │
    │   • event forwarder              │
    │   • CaptureHost (hook server,    │
    │     loopback OTLP relay, and     │
@@ -256,7 +258,7 @@ HTTP → broker → web-push library → push service → service worker
    assignee, watchers).
 3. The assignee's runner sees the event on its subscription; the
    objectives tracker refreshes its open-plate snapshot — the seed for the
-   `context_refresh` re-brief the runner pushes at session attach
+   `context_refresh` push the runner sends at session attach
    and after context compaction. (Tool descriptions stay static so
    the model's prompt-prefix cache survives; state freshness is
    message traffic.)
@@ -303,7 +305,7 @@ HTTP → broker → web-push library → push service → service worker
          └─────────────────┴───────┬───────┴─────────────────┘
                                    │
                                    │  HTTP(S)
-                                   │  csuite-sdk · protocol v1
+                                   │  csuite-sdk · protocol v2
                                    ▼
                      ╔═══════════════════════════════════════╗
                      ║               BROKER                  ║
@@ -352,7 +354,7 @@ HTTP → broker → web-push library → push service → service worker
               │     csuite claude / codex       │
               │             (runner)              │
               │                                   │
-              │  • briefing + member identity     │
+              │  • instructions + member identity │
               │  • objectives tracker (open set)  │
               │  • event forwarder → notification │
               │    sink (per-runner)              │
@@ -417,8 +419,10 @@ boundaries, and uploader queue accounting — lives at
 
 ## Protocol versioning
 
-The SDK adds `X-CSUITE-Protocol: 1` to its HTTP and subscription
-requests. The broker allows clients that omit it, but rejects a
+The SDK adds `X-CSUITE-Protocol: 2` to its HTTP and subscription
+requests (v2 renamed the composed-context surface to
+`GET /instructions` and added instruction-block versioning). The
+broker allows clients that omit it, but rejects a
 present incompatible version with 400. Request and response shapes
 are validated at typed SDK/server boundaries with the zod schemas
 in `csuite-sdk/schemas`. Breaking wire changes require a protocol

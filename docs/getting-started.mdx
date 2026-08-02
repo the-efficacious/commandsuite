@@ -44,7 +44,7 @@ server only stores a hash. (Prefer to run setup separately?
 Open http://127.0.0.1:8717, enter your TOTP code, and you'll land on
 an empty team dashboard.
 
-<!-- media: [screenshot] first-login — the dashboard right after setup: your member in the roster, empty objectives list, empty general channel. -->
+{/* media: [screenshot] first-login — the dashboard right after setup: your member in the roster, empty objectives list, empty general channel. */}
 
 If someone else already runs the server, skip this step — you'll
 connect to theirs in the next one.
@@ -115,7 +115,7 @@ it happen: the agent posts progress to the discussion thread, the
 lifecycle log records every state change, and when it's done it
 completes the objective with a required result.
 
-<!-- media: [gif] objective-live — create the objective in the web UI, watch the agent's first discussion post arrive and the objective move to done. -->
+{/* media: [gif] objective-live — create the objective in the web UI, watch the agent's first discussion post arrive and the objective move to done. */}
 
 You can reply in the thread while it works — your message reaches the
 agent mid-session, like a teammate leaning over the desk. More in
@@ -132,7 +132,7 @@ was open, with
 - each request and response, including tool calls and their results,
 - your registered secrets already redacted.
 
-<!-- media: [screenshot] trace-panel — one exchange expanded: model + token-count line, a tool call with its result, a [REDACTED] value visible. -->
+{/* media: [screenshot] trace-panel — one exchange expanded: model + token-count line, a tool call with its result, a [REDACTED] value visible. */}
 
 Trace access is permissioned (`activity.read`, plus every member can
 see their own). What's captured, what's redacted, and how long it's

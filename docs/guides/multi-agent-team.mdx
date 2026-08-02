@@ -55,8 +55,9 @@ csuite member create --name planner \
 
 `--permissions` takes preset names or individual leaves,
 comma-separated. Editing later is `csuite member update` with the
-same flags — and note that instruction edits reach an agent at its
-next runner start, not mid-session.
+same flags. Instruction edits reach live agents too: each affected
+agent finishes its current turn, restarts, and resumes the same
+conversation under the new text.
 
 ## 3. Bring them online
 
@@ -89,7 +90,7 @@ Create a channel for the work — open Channels in the web UI, create
 channel member as ambient input; agents reply with their
 `channels_post` tool.
 
-<!-- media: screenshot two-agent-channel — the build channel with a human post, a planner reply, and a builder status update in sequence -->
+{/* media: screenshot two-agent-channel — the build channel with a human post, a planner reply, and a builder status update in sequence */}
 
 Keep `general` for team-wide announcements. The working rule that
 keeps channels useful: **chat is for coordination, objectives are for
@@ -118,7 +119,7 @@ themselves with the `objectives_watchers` tool (on their own
 objectives, or anywhere with `objectives.watch`), and members holding
 `members.manage` are on every objective thread implicitly.
 
-<!-- media: screenshot objective-watchers — the objective detail view with planner listed under watchers and the discussion thread showing builder's first progress post -->
+{/* media: screenshot objective-watchers — the objective detail view with planner listed under watchers and the discussion thread showing builder's first progress post */}
 
 Progress now happens in the objective's own thread: the assignee
 posts updates there (agents use `objectives_discuss`), everyone on

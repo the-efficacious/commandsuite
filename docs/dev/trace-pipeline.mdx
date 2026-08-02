@@ -179,8 +179,8 @@ one.)
 
 `POST /otlp/v1/logs` (`apps/server/src/app.ts`) parses records with
 `parseOtlpLogs`, which applies **attribute redaction at ingest** —
-registered secret values are scrubbed, with broker-issued briefing
-blocks exempt so instruction-block presence checks stay byte-exact.
+registered secret values are scrubbed, with broker-issued
+instruction blocks exempt so the presence checks stay byte-exact.
 The batch is then split: the four Claude api-body record kinds
 (`api_request_body`, `api_request`, `api_response_body`, `api_error`)
 go to the per-member **`GenAiCorrelator`**; `api_request` and
@@ -216,8 +216,8 @@ parsed content) that points back at its source bytes by hash.
 
 One fidelity caveat: for Claude's OTLP path, attribute redaction runs
 *before* the correlator, so the Claude raw store holds the broker's
-post-redaction bytes — byte-exact for broker-issued briefing blocks
-(exempt), but not a provider-wire-verbatim claim. Codex's bundle
+post-redaction bytes — byte-exact for broker-issued instruction
+blocks (exempt), but not a provider-wire-verbatim claim. Codex's bundle
 ingest content-addresses its request/response bytes before any parse
 or redaction, so its raw layer is verbatim as uploaded.
 
@@ -277,25 +277,39 @@ truncation.
 |---|---|
 | Normalized activity (transcript mapper, codex adapter) | `redactJson` at the runner, before upload |
 | Parsed `gen_ai_inference` content | `redactJson` in the core Anthropic / OpenAI mappers |
-| Claude OTLP attributes | Redacted at broker ingest, briefing blocks exempt |
+| Claude OTLP attributes | Redacted at broker ingest, instruction blocks exempt |
 | Raw-body stores | **Not** a redaction surface: codex bytes verbatim; Claude bytes post-attribute-redaction. Access control (`activity.read` / self) and retention are the protection boundary |
 
 Secret values therefore do not belong in instruction blocks or
 variables; register them as secrets and reference the slug.
 
-## Briefing presence checks
+## Instruction-block presence checks
 
 For each completed captured inference, the broker's context watchdog
 (`apps/server/src/context-watchdog.ts`) checks every current
-instruction block for literal presence in the inference's structured
-system-instructions projection, emits a
-`csuite.context_block.presence` telemetry row (state
-`current` / `stale` / `missing` / `unobservable`), and re-sends a
-missing block as a next-turn notice with a five-minute per-block
-cooldown (bypassed when a prior send is provably unconfirmed). Each
-ingest adapter declares whether its system projection is observable —
-Claude declares it observable; codex chained turns without
-`instructions` are unobservable and never trigger a resend.
+instruction block for literal presence anywhere in the captured
+request — the structured system-instructions projection or the sent
+conversation (a re-sent block lands as a channel message, so on
+later turns it lives in `inputMessages`, often inside a tool
+result). Each check emits a `csuite.context_block.presence`
+telemetry row (state `current` / `stale` / `missing` /
+`unobservable`).
+
+Only `missing` triggers recovery: the block fell out of context
+entirely, and the current text is re-sent as a next-turn notice with
+a five-minute per-block cooldown (bypassed when a prior send is
+provably unconfirmed). `stale` — a known prior version of the block
+is present — never re-sends: that session is restart-pending, the
+runner's drain-and-restart is the remediation, and injecting the new
+text beside the superseded copy would put two versions in one
+context. Issued-version memory is in-process only, so after a broker
+restart an old block reads as `missing`, not `stale`.
+
+Each ingest adapter declares whether its system projection is
+observable — Claude declares it observable; codex chained turns
+without `instructions` are unobservable, and a conversation miss
+proves nothing there, so absence is never asserted and nothing is
+re-sent (a conversation hit still counts as present).
 
 ## Storage
 

@@ -29,7 +29,7 @@ contract and a conformance suite — see
 
 1. **Authenticates** with `--token`, `$CSUITE_TOKEN`, or the entry
    saved by `csuite connect`.
-2. **Fetches the briefing** — the member's identity, permissions,
+2. **Fetches the member's instructions** — its identity, permissions,
    teammates, team context, and currently open objectives.
 3. **Runs a preflight** (the same checks as `--doctor`) and refuses
    to start on a failure instead of dying mid-session.
@@ -40,13 +40,19 @@ contract and a conformance suite — see
 6. **Delivers events** — chat, DMs, objective updates — into the
    agent's session the moment they arrive. No polling, no human
    relay.
-7. **Tears down cleanly** on exit: finishes uploading traces and
+7. **Restarts the agent when its instructions change.** An edit to
+   the team context, the member's role or instructions, or the
+   process document doesn't wait for the next session: the runner
+   lets the agent finish its current turn, restarts it, and resumes
+   the same conversation under the new text. The roster reports the
+   member as restart-pending until that happens.
+8. **Tears down cleanly** on exit: finishes uploading traces and
    prints a run summary on every exit path.
 
 Run one runner per agent; a fleet is several runner processes,
 each with its own member identity.
 
-<!-- media: screenshot runner-terminal — a runner mid-session: startup banner with session id, activity feed showing tool lines and a per-turn summary, status strip at the bottom -->
+{/* media: screenshot runner-terminal — a runner mid-session: startup banner with session id, activity feed showing tool lines and a per-turn summary, status strip at the bottom */}
 
 ## The team toolbox
 
@@ -93,8 +99,9 @@ behavior. The wiring lives in
 
 - **Schedule agents.** One runner is one agent for the life of one
   process.
-- **Keep state on your machine.** Briefing, objectives, history, and
-  traces all live on the broker; restarting a runner loses nothing.
+- **Keep state on your machine.** Instructions, objectives, history,
+  and traces all live on the broker; restarting a runner loses
+  nothing.
 - **Grant authority.** Permissions are enforced by the broker on
   every request — the toolbox only hides what a member couldn't use
   anyway.

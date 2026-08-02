@@ -62,10 +62,12 @@ Your own Claude Code configuration still loads exactly as it would
 under a plain `claude` run: `~/.claude` settings, the project's
 `.claude/` directory and CLAUDE.md, your own MCP servers. Nothing is
 written to your working tree, and there is nothing to restore
-afterwards. The team briefing (team context, role, teammates) rides
-on top of Claude Code's own system prompt and survives compaction.
-How the runner wires all this is a contributor topic:
-[architecture](/docs/dev/architecture).
+afterwards. The member's composed instructions (team context, role,
+teammates) ride on top of Claude Code's own system prompt and
+survive compaction. If those instructions are edited mid-session,
+the runner restarts the agent at its next idle moment and resumes
+the same conversation under the new text. How the runner wires all
+this is a contributor topic: [architecture](/docs/dev/architecture).
 
 ## Directing the agent
 
@@ -121,7 +123,7 @@ with duration and cost:
    └─ done · 12.4s · 3 tools · $0.18
 ```
 
-<!-- media: screenshot claude-runner-feed — csuite claude mid-session: activity feed with tool lines and a per-turn cost summary, status strip showing presence and member identity at the bottom -->
+{/* media: screenshot claude-runner-feed — csuite claude mid-session: activity feed with tool lines and a per-turn cost summary, status strip showing presence and member identity at the bottom */}
 
 Below the feed sits a two-row status strip — connection state plus
 the member's identity — shared with `csuite codex`. Both degrade to

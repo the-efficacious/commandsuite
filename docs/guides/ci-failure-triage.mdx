@@ -99,8 +99,9 @@ the fix with the run URL in the body. Never push a fix without an
 objective.'
 ```
 
-Instruction edits reach the agent at its next runner start — an agent
-mid-session hasn't seen them.
+The edit reaches a live agent too: it finishes its current turn,
+restarts, and resumes the same conversation with the new
+instructions in place.
 
 ## 5. Choose where reports land
 
@@ -145,7 +146,7 @@ touching your CI:
 csuite notifications replay <deliveryId>
 ```
 
-<!-- media: screenshot ci-delivery-receipts — the web UI delivery receipts list for ci-alerts showing one rejected receipt (signature mismatch reason expanded) above a delivered one with its resulting message id -->
+{/* media: screenshot ci-delivery-receipts — the web UI delivery receipts list for ci-alerts showing one rejected receipt (signature mismatch reason expanded) above a delivered one with its resulting message id */}
 
 ## Where this breaks
 

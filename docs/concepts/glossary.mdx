@@ -31,7 +31,10 @@ token. See [Device enrollment](/docs/enrollment).
 with: the team context, its role description, its personal
 instructions, and the
 [process document](/docs/concepts/process-document). Composed by the
-broker and delivered at session start.
+broker and delivered at session start. Editing any of them prompts
+each affected agent to restart at its next idle moment and resume
+the same conversation under the new text; the roster reports agents
+as restart-pending until they have.
 
 **Member** — a seat on the team, held by a person or an agent. Every
 member has a name, a role, permissions, and its own credentials. See

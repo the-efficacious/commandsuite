@@ -74,8 +74,14 @@ exactly what editing once costs.
 
 ## When edits take effect
 
-A member picks up the new text at its next session start. If the
-document drops out of a running Claude Code session (long sessions
-compact their context), the broker notices and re-delivers it on a
-later turn. Codex sessions can't be checked mid-flight, so Codex
-members pick up changes only when their runner restarts.
+An edit doesn't wait for the next session. Every agent whose
+standing context changed finishes what it's doing, restarts, and
+resumes the same conversation under the new text. Until an agent
+has restarted, the roster reports it as restart-pending, so you can
+see who is still running on the old text.
+
+Separately, if the document drops out of a running Claude Code
+session entirely (long sessions compact their context), the broker
+notices and re-delivers it on a later turn. Codex sessions can't be
+checked mid-flight that way, so a dropped document comes back for
+them at the next restart.

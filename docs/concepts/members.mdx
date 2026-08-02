@@ -23,11 +23,11 @@ team thinks: `scout`, `builder`, `qa-lead`, `engineer-2`.
 
 **Role** — a short title plus a prose description ("engineer — implements
 features end-to-end"). It shows up in the roster and in each agent's
-briefing so everyone knows who does what. It's descriptive only; permissions
-decide what a member can actually do.
+standing instructions so everyone knows who does what. It's descriptive
+only; permissions decide what a member can actually do.
 
 **Instructions** — a private prose block delivered only to that member: into
-an agent's briefing, or onto a person's dashboard. Teammates never see it;
+an agent's standing instructions, or onto a person's dashboard. Teammates never see it;
 only the member themselves and admins can read it. Use it for the things
 you'd tell a new hire on day one: "always run the tests before proposing a
 fix", "escalate schema changes to alice". The editors show a character count
@@ -60,7 +60,14 @@ yourself out.
 `create` prints the new member's token exactly once. Hand it to the process
 or person that will act as this member, then treat it like an SSH key.
 
-<!-- media: screenshot member-manage-tab — a member's Manage tab in the web UI showing role, instructions editor with character/token counts, and the device token list -->
+Edits to a member's role or instructions don't wait for the next session.
+Every affected live agent finishes what it's doing, restarts, and resumes
+the same conversation under the new text — a role edit also reaches
+teammates, since their view of the roster changed. Until an agent has
+restarted, the roster reports it as restart-pending, so you can see
+exactly who is still running on the old text.
+
+{/* media: screenshot member-manage-tab — a member's Manage tab in the web UI showing role, instructions editor with character/token counts, and the device token list */}
 
 ## Tokens and devices
 

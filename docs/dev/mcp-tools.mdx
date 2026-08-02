@@ -12,9 +12,9 @@ contributing to it — the user-facing story lives in the concepts
 pages.
 
 The csuite runner exposes a fixed toolbox to whatever agent it
-spawns. Tool descriptions are composed from the briefing at runtime
-(the member's fs home path, permission-scoped wording) so what the
-model sees is stable for the session.
+spawns. Tool descriptions are composed from the instructions packet
+at runtime (the member's fs home path, permission-scoped wording) so
+what the model sees is stable for the session.
 
 The groups:
 
@@ -367,18 +367,23 @@ under it* has one answer across contracts and process.
 
 ### Delivery bound
 
-The document reaches a member's context at their **next runner start**,
-and the `#103` context watchdog then keeps it there: if it falls out
-mid-session, an observable turn detects the absence and re-sends it.
+An edit fans out one `kind: 'instructions'` broker event to every
+member whose composed context changed. Each affected runner restarts
+its agent at the next idle boundary, resuming the same conversation
+under the new text, and `GET /roster` lists those members in
+`restartPending` until it does. The `#103` context watchdog keeps
+the document in place mid-session: if it falls out of context
+entirely, an observable turn detects the absence and re-sends it.
 
 Its membership test differs from the authored blocks' and has to.
 Those are confirmed by substring against the composed `instructions`;
 this is never in that string, so its test is that it was **sent**, and
 the bytes projected are the document's own.
 
-Because the projection uses the current stored document, an agent
-holding a superseded version reads as missing the current one — so an
-edit reaches a running session too.
+An agent still holding a superseded version reads as **stale**, not
+missing — it is restart-pending, never re-sent content, because
+injecting the new text beside the old would put two versions in one
+context.
 
 **Codex members are the partial exception**: a codex-uploaded
 inference is treated as observable only when it carries a non-empty
@@ -393,9 +398,11 @@ without the process document and is not told.
 Team-level config and permission presets. Reads are open on the
 HTTP API, but the tools only surface to `team.manage` holders so the
 toolbox stays narrow — any agent can pull team data from its
-briefing. Changes to `context` reach members' composed briefings on
-their next runner start (the MCP protocol freezes
-instructions-class strings per session).
+instructions. A `context` edit is instruction-bearing: the broker
+fans it out and each affected runner restarts its agent at the next
+idle boundary, resuming the same conversation under the new composed
+text; the roster lists those members restart-pending until it does
+(the `team_update` result restates this to the calling agent).
 
 | Tool | Input | What it does |
 |---|---|---|
@@ -413,7 +420,7 @@ the permission independently on every call.
 | Tool | Input | What it does |
 |---|---|---|
 | `members_add` | `{ name (req), title (req), description?, instructions?, permissions?: string[] }` | Create a member. `permissions` accepts preset names or leaves. Returns the member plus the plaintext bearer token — emitted exactly once. `POST /members`. |
-| `members_update` | `{ name (req), title?, description?, instructions?, permissions?: string[] }` | Update role, instructions, or permissions. `instructions` changes apply to the member's next MCP session. Enforces "at least one `members.manage` holder remains". `PATCH /members/:name`. |
+| `members_update` | `{ name (req), title?, description?, instructions?, permissions?: string[] }` | Update role, instructions, or permissions. Role and instructions edits fan out as an instructions event: the member's runner restarts its agent at the next idle boundary with the new composed text (a role edit also reaches teammates whose roster line changed). Enforces "at least one `members.manage` holder remains". `PATCH /members/:name`. |
 | `members_remove` | `{ name (req) }` | Delete a member; all bearer tokens revoked. Refused if it would leave zero `members.manage` holders. `DELETE /members/:name`. |
 
 ## Tool-source admin tools (permission-gated)
@@ -620,15 +627,15 @@ never appear here.
 Tool descriptions are **static** for the lifetime of a session. The
 only interpolation is boot-stable and functional (the member's fs
 home path, permission-scoped wording) — never live state, and never
-identity/roster prose (that lives in the system-prompt briefing).
-Mutating descriptions mid-session would invalidate the model's
-prompt-prefix cache, so state freshness rides message traffic
-instead:
+identity/roster prose (that lives in the system-prompt
+instructions). Mutating descriptions mid-session would invalidate
+the model's prompt-prefix cache, so state freshness rides message
+traffic instead:
 
 - **Objective lifecycle events** (assigned / blocked / completed /
   cancelled / reassigned) arrive as ordinary channel notifications
   the moment they happen.
-- **Context re-briefs** — the runner re-asserts the open plate with
+- **Context refreshes** — the runner re-asserts the open plate with
   a `context_refresh` channel push (tagged
   `meta.kind = "context_refresh"`, `meta.from = "csuite"`) at
   session attach (first `tools/list` on a fresh bridge connection)
@@ -636,14 +643,19 @@ instead:
   source=compact|clear). Empty plates are skipped.
 
 The runner's objectives tracker keeps the open-plate snapshot fresh
-(debounced 150ms to coalesce bursts) — it seeds the re-brief and
-the objective_open/close activity markers.
+(debounced 150ms to coalesce bursts) — it seeds the context refresh
+and the objective_open/close activity markers.
 
 `notifications/tools/list_changed` fires only for genuine
 capability changes: when a `tool_source` registry event changes the
-member's resolved external-tools set, the runner refetches the
-briefing and emits it so the agent re-lists. See
+member's resolved external-tools set, the runner refetches its
+instructions and emits it so the agent re-lists. See
 [tool sources](/docs/concepts/tool-sources).
+
+Instruction edits are the one exception that does NOT ride message
+traffic at all: a `kind: 'instructions'` event schedules a
+drain-and-restart, and the successor session composes fresh tool
+descriptions and a fresh system prompt from the refetched packet.
 
 ## Error semantics
 

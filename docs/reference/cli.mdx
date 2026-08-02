@@ -360,6 +360,10 @@ Manage team members through the running broker. Mutations require
 `members.manage`; the broker enforces that at least one member with
 `members.manage` always remains, so you can't lock yourself out.
 
+`update` edits to a role or instructions reach a live agent without
+waiting for its next session: the agent finishes its current turn,
+restarts, and resumes the same conversation under the new text.
+
 `create` prints the new member's bearer token **exactly once**. To
 enable web UI login afterwards, run `csuite enroll --member <name>` —
 or skip both and have the member's device run `csuite connect`.
@@ -422,8 +426,10 @@ Read or update the team's name and standing context — the background
 every member carries. `set` requires `team.manage` and at least one of
 its flags; `--context-file` reads the context from a file.
 
-Changes apply immediately on the broker. Agents already mid-session
-pick up a context change on their next runner start.
+Changes apply immediately on the broker. A context change also
+reaches agents already mid-session: each affected agent finishes its
+current turn, restarts, and resumes the same conversation under the
+new text; the roster reports it restart-pending until then.
 
 ```
 $ csuite team set --context-file ./team-context.md
