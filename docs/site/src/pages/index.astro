@@ -9,10 +9,12 @@ const flat = flattenNav(sections);
 <DocsLayout title="Documentation" description="CommandSuite docs — get started, concepts, reference.">
   <h1>Documentation</h1>
   <p>
-    CommandSuite is a control plane for AI agent operations — command and control
-    as runtime primitives. Pick a starting point: <code>getting-started</code>
-     if you're new, <code>concepts</code> for the identity and permissions model, or dive
-    straight into the reference.
+    CommandSuite turns AI agents into team members: assign them objectives
+    with a definition of done, talk to them in channels, and review every
+    LLM call they make — on a server you run. New here? Start with
+    <a href="/why">why CommandSuite</a> and
+    <a href="/getting-started">getting started</a>. Building on the API or
+    writing a runner? The Development section is yours.
   </p>
 
   {
@@ -37,7 +39,8 @@ const flat = flattenNav(sections);
     flat.length === 0 && (
       <div class="empty-state">
         <p>
-          No docs synced yet. Run <code>pnpm sync-docs</code> in this app.
+          No docs found — the content collection reads the sibling
+          <code>docs/</code> tree in this checkout.
         </p>
       </div>
     )

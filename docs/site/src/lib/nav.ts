@@ -31,7 +31,15 @@ export async function getDocsNav(): Promise<NavSection[]> {
     bySection.set(entry.section, bucket);
   }
 
-  const sectionOrder = ['Docs', 'Concepts', 'Guides', 'Reference'];
+  const sectionOrder = [
+    'Get started',
+    'Guides',
+    'Concepts',
+    'Runners',
+    'Reference',
+    'Operations',
+    'Development',
+  ];
   const sortedSections: NavSection[] = [];
 
   for (const name of sectionOrder) {
