@@ -195,6 +195,55 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   });
 }
 
+/**
+ * uid-0 posture. Claude refuses `--dangerously-skip-permissions` as
+ * root, so a root session is a hard preflight FAIL — unless the
+ * environment DECLARES a root container via IS_SANDBOX, which the
+ * vendor reads for presence (not truth): the refusal is skipped, the
+ * session runs, and nothing constrains what it writes — the whole
+ * filesystem is root-writable. That earns a WARN, not silence.
+ */
+function claudeRootCheck(): AgentDoctorCheck {
+  const name = 'not running as root';
+  const uid = typeof process.getuid === 'function' ? process.getuid() : null;
+  if (uid === null) {
+    return {
+      name,
+      status: 'WARN',
+      detail:
+        'no effective uid on this platform — cannot verify the session user; a ' +
+        'root session would surface at spawn instead',
+    };
+  }
+  if (uid !== 0) {
+    return { name, status: 'PASS', detail: `uid ${uid}` };
+  }
+  const sudoUser = process.env.SUDO_USER;
+  const sudoPart =
+    sudoUser !== undefined && sudoUser !== '' && sudoUser !== 'root'
+      ? ` Drop the sudo to run as ${sudoUser}.`
+      : '';
+  const sandbox = process.env.IS_SANDBOX;
+  if (sandbox !== undefined && sandbox !== '') {
+    return {
+      name,
+      status: 'WARN',
+      detail:
+        'uid 0 with IS_SANDBOX set — claude skips its root refusal in declared ' +
+        'containers, so the session runs; nothing constrains what it writes, and ' +
+        `the whole filesystem is root-writable.${sudoPart}`,
+    };
+  }
+  return {
+    name,
+    status: 'FAIL',
+    detail:
+      'uid 0 — claude refuses --dangerously-skip-permissions as root, and the ' +
+      'runner depends on that flag. Run csuite claude from an ordinary user ' +
+      `account.${sudoPart}`,
+  };
+}
+
 export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter {
   let executable: ClaudeExecutable | null = null;
   // Populated by prepare(), consumed by spawn(); the mutable parts
@@ -548,28 +597,12 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
     },
 
     async doctor(): Promise<AgentDoctorCheck[]> {
-      const resolved = executable ?? resolveClaudeExecutable();
-      const checks: AgentDoctorCheck[] = [
-        {
-          name: 'claude agent sdk',
-          status: 'PASS',
-          detail: `@anthropic-ai/claude-agent-sdk ${resolved.sdkVersion ?? 'unknown version'}`,
-        },
-      ];
-      if (resolved.source === 'env') {
-        checks.push({
-          name: 'claude executable',
-          status: 'WARN',
-          detail: `CLAUDE_PATH override in effect: ${resolved.path} (the SDK's bundled Claude Code is bypassed)`,
-        });
-      } else {
-        checks.push({
-          name: 'claude executable',
-          status: 'PASS',
-          detail: `bundled Claude Code ${resolved.bundledCliVersion ?? 'unknown version'} at ${resolved.path}`,
-        });
-      }
-      return checks;
+      // Binary/SDK facts are the shared `<id> binary` host check and
+      // the prepare() banner; the adapter's own preflight is the one
+      // property only this framework cares about this hard: claude
+      // refuses `--dangerously-skip-permissions` as root, and the
+      // runner depends on that flag.
+      return [claudeRootCheck()];
     },
   };
   return adapter;

@@ -21,16 +21,100 @@
  * ends the session gracefully rather than being forwarded.
  */
 
+import { existsSync, promises as fs } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
 import type { ChannelEvent, ChannelEventSink } from '../../forwarder.js';
 import { type HudHandle, startHud } from '../../hud.js';
 import type {
   AgentAdapter,
   AgentAdapterMeta,
+  AgentDoctorCheck,
   AgentPrepared,
   AgentProcess,
   AgentSessionContext,
 } from '../adapter.js';
 import { findCodexBinary, spawnCodex } from './adapter.js';
+
+/**
+ * uid-0 posture. Codex has no root refusal — it runs with sandbox
+ * `danger-full-access` regardless — so uid 0 is a WARN, never a FAIL:
+ * the session works, but nothing contains it, and every file it
+ * touches is root-owned.
+ */
+function codexRootCheck(): AgentDoctorCheck {
+  const name = 'not running as root';
+  const uid = typeof process.getuid === 'function' ? process.getuid() : null;
+  if (uid === null) {
+    return {
+      name,
+      status: 'WARN',
+      detail: 'no effective uid on this platform — cannot verify the session user',
+    };
+  }
+  if (uid !== 0) {
+    return { name, status: 'PASS', detail: `uid ${uid}` };
+  }
+  const sudoUser = process.env.SUDO_USER;
+  const sudoPart =
+    sudoUser !== undefined && sudoUser !== '' && sudoUser !== 'root'
+      ? ` Drop the sudo to run as ${sudoUser}.`
+      : '';
+  return {
+    name,
+    status: 'WARN',
+    detail:
+      'uid 0 — codex runs with sandbox danger-full-access, and as root nothing ' +
+      'contains it: every file it creates is root-owned and system-wide writes ' +
+      `succeed.${sudoPart}`,
+  };
+}
+
+/** Linux tmpfs f_type, per statfs(2). */
+const TMPFS_MAGIC = 0x01021994;
+
+/**
+ * Codex stages apply-patch work under its cache dir. A RAM-backed
+ * cache silently erases it on reboot or memory pressure, which
+ * surfaces as "codex lost my patch" long after the cause. The named
+ * dir often does not exist yet on a cold machine, so the probe walks
+ * up to the nearest existing ancestor — the filesystem the dir WILL
+ * be created on is the one that answers.
+ */
+async function codexCacheCheck(): Promise<AgentDoctorCheck> {
+  const name = 'codex cache dir not tmpfs';
+  const configured = process.env.XDG_CACHE_HOME;
+  const cacheDir =
+    configured !== undefined && configured !== '' ? configured : join(homedir(), '.cache');
+  let probe = cacheDir;
+  let hops = 0;
+  while (!existsSync(probe)) {
+    const parent = dirname(probe);
+    if (parent === probe || ++hops > 64) break;
+    probe = parent;
+  }
+  try {
+    const stats = await fs.statfs(probe);
+    if (stats.type === TMPFS_MAGIC) {
+      return {
+        name,
+        status: 'WARN',
+        detail:
+          `${cacheDir} is RAM-backed (tmpfs) — codex stages apply-patch work ` +
+          'under its cache, and a reboot or memory pressure erases it. Point ' +
+          '$XDG_CACHE_HOME at disk.',
+      };
+    }
+    const via = probe === cacheDir ? cacheDir : `via existing parent ${probe}`;
+    return { name, status: 'PASS', detail: `${cacheDir} is disk-backed (${via})` };
+  } catch (err) {
+    return {
+      name,
+      status: 'WARN',
+      detail: `could not stat ${probe}: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
 
 export const CODEX_META: AgentAdapterMeta = {
   id: 'codex',
@@ -238,6 +322,10 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
         resume: effectiveResume,
       });
       return adapter.spawn(ctx);
+    },
+
+    async doctor(): Promise<AgentDoctorCheck[]> {
+      return [codexRootCheck(), await codexCacheCheck()];
     },
   };
   return adapter;

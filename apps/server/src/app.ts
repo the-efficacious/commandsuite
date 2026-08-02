@@ -6081,7 +6081,7 @@ function checkObjectiveContext(
 ): void {
   // Only inspect the most recent llm_exchange in this batch.
   const llmEvent = events.findLast((e) => e.kind === 'llm_exchange');
-  if (!llmEvent || llmEvent.kind !== 'llm_exchange') return;
+  if (llmEvent?.kind !== 'llm_exchange') return;
 
   const active = [
     ...objectivesStore.list({ assignee: name, status: 'active' }),

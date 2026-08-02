@@ -100,8 +100,9 @@ function authed(token: string, body?: unknown, method?: string): RequestInit {
 
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
 
-const instructionEvents = (pushed: Array<{ data: Record<string, unknown> }>) =>
-  pushed.filter((p) => p.data?.kind === 'instructions');
+const instructionEvents = (
+  pushed: Array<{ data: Record<string, unknown>; recipients?: string[] }>,
+) => pushed.filter((p) => p.data?.kind === 'instructions');
 
 // ─── one canonical path, no aliases ──────────────────────────────────
 
@@ -251,9 +252,7 @@ describe('instruction edit fanout', () => {
 // ─── restart-pending: issued vs current, and unknown is not pending ──
 
 describe('restart-pending on the roster', () => {
-  const rosterPending = async (app: {
-    request: (path: string, init: RequestInit) => Promise<Response>;
-  }): Promise<string[]> => {
+  const rosterPending = async (app: ReturnType<typeof makeApp>['app']): Promise<string[]> => {
     const res = await app.request('/roster', authed(CORA));
     return ((await res.json()) as { restartPending: string[] }).restartPending;
   };

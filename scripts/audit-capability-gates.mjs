@@ -167,7 +167,7 @@ console.error(
 
 const byClass = {};
 for (const r of mutating) byClass[r.klass] = (byClass[r.klass] ?? 0) + 1;
-console.error('mutating controls by gate class: ' + JSON.stringify(byClass));
+console.error(`mutating controls by gate class: ${JSON.stringify(byClass)}`);
 
 console.log('| control | mutates? | class | handler | render guards | disabled |');
 console.log('|---|---|---|---|---|---|');

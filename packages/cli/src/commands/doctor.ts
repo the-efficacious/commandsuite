@@ -9,10 +9,15 @@
  *   2. Agent version detected, WARNed when outside the adapter's
  *      declared tested range (`meta.testedVersions`) — advisory only,
  *      agents move fast and untested ≠ broken
- *   3. `$TMPDIR` writable — scratch space for the runner
- *   4. Can bind a loopback TCP listener — for the hook server the
+ *   3. Node at or above the supported floor (node:sqlite and the
+ *      broker's fetch surface do not exist below 22)
+ *   4. `$TMPDIR` writable — scratch space for the runner
+ *   5. Can bind a loopback TCP listener — for the hook server the
  *      capture host owns
- *   5. Any adapter-specific checks (`adapter.doctor()`)
+ *   6. Git identity set — a member whose commits do not attribute is
+ *      invisible in the record (WARN, never FAIL: not every session
+ *      commits)
+ *   7. Any adapter-specific checks (`adapter.doctor()`)
  *
  * The doctor never reaches out to a broker or spawns an agent session;
  * it's a local check the member runs before their first
@@ -95,8 +100,12 @@ export async function runAgentDoctor(
     }
   }
 
+  checks.push(nodeVersionCheck(process.versions.node));
   checks.push(await checkTmpdir());
   checks.push(await checkLoopbackBind());
+  checks.push(
+    gitIdentityCheck(await readGitConfig('user.name'), await readGitConfig('user.email')),
+  );
 
   if (adapter.doctor) {
     try {
@@ -167,6 +176,89 @@ async function checkAgentVersion(
     };
   }
   return { name, status: 'PASS', detail: `${detected} (tested range ${rangeText})` };
+}
+
+/**
+ * Pure over its input so the unreachable branches are testable — a
+ * healthy dev machine never takes the FAIL path, and an untested FAIL
+ * detail is a sentence nobody has read.
+ */
+export function nodeVersionCheck(version: string): DoctorCheck {
+  const name = 'node >= 22';
+  const parsed = extractVersion(version);
+  if (parsed === null) {
+    return {
+      name,
+      status: 'WARN',
+      detail: `could not parse a node version from '${version}' — cannot verify the floor`,
+    };
+  }
+  const major = Number.parseInt(parsed.split('.')[0] ?? '0', 10);
+  if (major >= 22) {
+    return { name, status: 'PASS', detail: `node ${parsed}` };
+  }
+  return {
+    name,
+    status: 'FAIL',
+    detail:
+      `node ${parsed} is below the supported minimum 22 — node:sqlite and the ` +
+      'fetch surface the runner depends on do not exist there. Upgrade node ' +
+      '(see .nvmrc).',
+  };
+}
+
+/**
+ * Pure over the two config halves, same rationale as
+ * `nodeVersionCheck`. WARN, never FAIL: not every session commits, but
+ * a member whose commits do not attribute is invisible in the record.
+ */
+export function gitIdentityCheck(
+  userName: string | null,
+  userEmail: string | null,
+): DoctorCheck {
+  const name = 'git identity';
+  if (userName !== null && userEmail !== null) {
+    return { name, status: 'PASS', detail: `${userName} <${userEmail}>` };
+  }
+  if (userName === null && userEmail === null) {
+    return {
+      name,
+      status: 'WARN',
+      detail:
+        'git user.name and user.email are unset — commits made from this session ' +
+        'will not attribute to this member. Set both with git config.',
+    };
+  }
+  if (userName === null) {
+    return {
+      name,
+      status: 'WARN',
+      detail:
+        'git user.name is unset — commits made from this session will not ' +
+        'attribute to this member. Set it with git config.',
+    };
+  }
+  return {
+    name,
+    status: 'WARN',
+    detail:
+      'git user.email is unset — commits made from this session will not ' +
+      'attribute to this member. Set it with git config.',
+  };
+}
+
+/** `git config --get <key>`, or null when unset / git absent. */
+async function readGitConfig(key: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync('git', ['config', '--get', key], {
+      timeout: 5000,
+      encoding: 'utf8',
+    });
+    const value = stdout.trim();
+    return value.length > 0 ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 /** First semver-looking triple in the version output. */
