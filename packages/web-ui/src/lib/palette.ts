@@ -8,8 +8,8 @@
 
 import { computed, signal } from '@preact/signals';
 import type { Objective, Teammate } from 'csuite-sdk/types';
-import { instructions } from './instructions.js';
 import { joinedChannels } from './channels.js';
+import { instructions } from './instructions.js';
 import { objectives as objectivesSignal } from './objectives.js';
 import { roster } from './roster.js';
 

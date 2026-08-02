@@ -23,8 +23,8 @@ import {
   NotificationsPanel,
   parseTargetsInput,
 } from '../src/components/NotificationsPanel.js';
-import { __resetInstructionsForTests, instructions } from '../src/lib/instructions.js';
 import { __resetClientForTests, setClient } from '../src/lib/client.js';
+import { __resetInstructionsForTests, instructions } from '../src/lib/instructions.js';
 import { __resetNotificationsForTests } from '../src/lib/notifications.js';
 
 const originalFetch = globalThis.fetch;

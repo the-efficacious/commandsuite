@@ -14,7 +14,6 @@ import { signal } from '@preact/signals';
 import type { ChannelMember, ChannelSummary, Teammate } from 'csuite-sdk/types';
 import type { JSX } from 'preact';
 import { useEffect } from 'preact/hooks';
-import { instructions } from '../lib/instructions.js';
 import {
   addChannelMember,
   archiveChannel,
@@ -23,6 +22,7 @@ import {
   renameChannel,
 } from '../lib/channels.js';
 import { getClient } from '../lib/client.js';
+import { instructions } from '../lib/instructions.js';
 import { roster } from '../lib/roster.js';
 import { selectChannelsBrowse } from '../lib/view.js';
 import { AlertCircle, X } from './icons/index.js';

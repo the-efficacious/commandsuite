@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   ApproveEnrollmentRequestSchema,
-  InstructionsResponseSchema,
   CreateMemberRequestSchema,
+  InstructionsResponseSchema,
   MemberSchema,
   RoleSchema,
   TeamSchema,

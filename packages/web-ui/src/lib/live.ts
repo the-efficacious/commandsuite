@@ -22,13 +22,13 @@
 
 import { signal } from '@preact/signals';
 import { MessageSchema } from 'csuite-sdk/schemas';
-import { loadInstructions } from './instructions.js';
 import { getClient } from './client.js';
+import { loadInstructions } from './instructions.js';
 import { appendMessages } from './messages.js';
-import { loadRoster } from './roster.js';
 import { loadNotificationEndpoints } from './notifications.js';
 import { notifyNewMessage } from './notify.js';
 import { loadObjectives } from './objectives.js';
+import { loadRoster } from './roster.js';
 import { loadSecrets } from './secrets.js';
 import { loadToolSources } from './tool-sources.js';
 

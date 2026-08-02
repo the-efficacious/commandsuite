@@ -17,14 +17,14 @@
  *    restart-pending — the broker does not guess.
  */
 
+import { createHash } from 'node:crypto';
 import { Broker, InMemoryEventLog } from 'csuite-core';
 import { RUNNER_VERSION_HEADER } from 'csuite-sdk/protocol';
 import type { InstructionBlockDescriptor } from 'csuite-sdk/types';
-import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
-import { composedInstructionsSha256 } from '../src/instructions.js';
 import { openDatabase } from '../src/db.js';
+import { composedInstructionsSha256 } from '../src/instructions.js';
 import { createMemberStore } from '../src/members.js';
 import { createSqliteProcessDocumentStore } from '../src/process-document.js';
 import { SessionStore } from '../src/sessions.js';
@@ -80,7 +80,9 @@ function makeApp() {
     pushed.push({
       body: (payload as { body: string }).body,
       data: (payload as { data: Record<string, unknown> }).data,
-      ...(opts && 'recipients' in opts ? { recipients: (opts as { recipients: string[] }).recipients } : {}),
+      ...(opts && 'recipients' in opts
+        ? { recipients: (opts as { recipients: string[] }).recipients }
+        : {}),
     });
     return originalPush(payload as never, opts as never);
   }) as typeof broker.push;

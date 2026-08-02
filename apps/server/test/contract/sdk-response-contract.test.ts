@@ -95,11 +95,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Broker, InMemoryEventLog } from 'csuite-core';
 import {
-  InstructionsResponseSchema,
   FsEntryResponseSchema,
   FsListResponseSchema,
   GetObjectiveResponseSchema,
   HealthResponseSchema,
+  InstructionsResponseSchema,
   ListChannelsResponseSchema,
   ListMembersResponseSchema,
   ListObjectivesResponseSchema,

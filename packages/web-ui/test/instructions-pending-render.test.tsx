@@ -14,8 +14,8 @@ import { Client } from 'csuite-sdk/client';
 import type { InstructionsResponse, ProcessDocument, RosterResponse } from 'csuite-sdk/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { __resetTeamHomeForTests, TeamHome } from '../src/components/TeamHome.js';
-import { instructions } from '../src/lib/instructions.js';
 import { __resetClientForTests, setClient } from '../src/lib/client.js';
+import { instructions } from '../src/lib/instructions.js';
 import { objectives as objectivesSignal } from '../src/lib/objectives.js';
 import { roster } from '../src/lib/roster.js';
 
@@ -28,9 +28,7 @@ const DOC: ProcessDocument = {
   updatedAt: 2,
 };
 
-function packetWith(
-  overrides: Partial<InstructionsResponse> = {},
-): InstructionsResponse {
+function packetWith(overrides: Partial<InstructionsResponse> = {}): InstructionsResponse {
   return {
     name: 'director-1',
     role: { title: 'director', description: '' },
@@ -150,7 +148,9 @@ describe('the team process panel', () => {
     render(<TeamHome viewer="director-1" />);
 
     expect(
-      screen.getByText('Team process: unavailable — this broker does not report a process document.'),
+      screen.getByText(
+        'Team process: unavailable — this broker does not report a process document.',
+      ),
     ).toBeTruthy();
     expect(screen.queryByText('+ Add team process')).toBeNull();
   });

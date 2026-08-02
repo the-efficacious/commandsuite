@@ -51,7 +51,12 @@ import { createInterface } from 'node:readline';
 import { registerSecretValues } from 'csuite-core';
 import { Client as BrokerClient, ClientError } from 'csuite-sdk/client';
 import { isReservedEnvName } from 'csuite-sdk/schemas';
-import type { InstructionsResponse, Message, Objective, ResolvedToolSource } from 'csuite-sdk/types';
+import type {
+  InstructionsResponse,
+  Message,
+  Objective,
+  ResolvedToolSource,
+} from 'csuite-sdk/types';
 import { CLI_VERSION } from '../version.js';
 import { startActivityReporter } from './busy-reporter.js';
 import type { ChannelEventSink } from './forwarder.js';

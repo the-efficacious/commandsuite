@@ -255,8 +255,5 @@ export interface AgentAdapter {
    * restart: edits apply at the next manual start, and the broker
    * keeps listing the member restart-pending.
    */
-  respawn?(
-    ctx: AgentSessionContext,
-    prior: { sessionId: string | null },
-  ): Promise<AgentProcess>;
+  respawn?(ctx: AgentSessionContext, prior: { sessionId: string | null }): Promise<AgentProcess>;
 }

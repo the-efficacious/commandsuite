@@ -119,7 +119,9 @@ describe('app GET /instructions', () => {
     const { app, logger } = makeApp();
     const absent = await app.request('/instructions', authed(BOT_TOKEN));
     expect(absent.status).toBe(200);
-    expect(((await absent.json()) as InstructionsResponse).instructions).toContain('runner=unknown');
+    expect(((await absent.json()) as InstructionsResponse).instructions).toContain(
+      'runner=unknown',
+    );
     expect(logger.warn).not.toHaveBeenCalledWith(
       'instructions runner version rejected',
       expect.anything(),
@@ -132,7 +134,9 @@ describe('app GET /instructions', () => {
       },
     });
     expect(rejected.status).toBe(200);
-    expect(((await rejected.json()) as InstructionsResponse).instructions).toContain('runner=unknown');
+    expect(((await rejected.json()) as InstructionsResponse).instructions).toContain(
+      'runner=unknown',
+    );
     expect(logger.warn).toHaveBeenCalledWith('instructions runner version rejected', {
       member: 'build-bot',
     });

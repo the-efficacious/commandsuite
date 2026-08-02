@@ -16,8 +16,8 @@
  */
 
 import { useEffect } from 'preact/hooks';
-import { instructions } from '../lib/instructions.js';
 import { isInspectorOpen, toggleInspector } from '../lib/inspector.js';
+import { instructions } from '../lib/instructions.js';
 import {
   dmOther,
   messagesByThread,

@@ -431,9 +431,7 @@ describe('POST /otlp/v1/logs runner-relay acknowledgement', () => {
           {
             model: 'claude-opus-4-6',
             system: [{ type: 'text', text: 'The team has merge rules.' }],
-            messages: [
-              { role: 'user', content: [{ type: 'text', text: pushed[1]?.body ?? '' }] },
-            ],
+            messages: [{ role: 'user', content: [{ type: 'text', text: pushed[1]?.body ?? '' }] }],
           },
           { ...response, id: 'msg_context_confirmed' },
         ),
@@ -445,9 +443,7 @@ describe('POST /otlp/v1/logs runner-relay acknowledgement', () => {
       cause: 'context.block_resend_unconfirmed',
       since: expect.any(Number),
     });
-    const confirmed = missing.telemetryStore
-      .list({ name: 'csuite.context_block.presence' })
-      .at(-1);
+    const confirmed = missing.telemetryStore.list({ name: 'csuite.context_block.presence' }).at(-1);
     expect(confirmed?.attributes).toMatchObject({
       'context.block.state': 'current',
       'context.block.present_in': 'input_messages',

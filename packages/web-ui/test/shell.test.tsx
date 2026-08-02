@@ -18,10 +18,10 @@ import { __resetComposerForTests, Composer } from '../src/components/Composer.js
 import { NavColumn as Sidebar } from '../src/components/shell/NavColumn.js';
 import { TeamHome } from '../src/components/TeamHome.js';
 import { Transcript } from '../src/components/Transcript.js';
-import { __resetInstructionsForTests, instructions } from '../src/lib/instructions.js';
 import { __resetChannelsForTests, channels as channelsSignal } from '../src/lib/channels.js';
 import { __resetClientForTests, setClient } from '../src/lib/client.js';
 import { __resetIdentityForTests, identity } from '../src/lib/identity.js';
+import { __resetInstructionsForTests, instructions } from '../src/lib/instructions.js';
 import { __resetLiveForTests } from '../src/lib/live.js';
 import { __resetMessagesForTests, appendMessages } from '../src/lib/messages.js';
 import { __resetRosterForTests, roster } from '../src/lib/roster.js';

@@ -103,7 +103,10 @@ function consumeCodeParam(): string | null {
  */
 async function loadTeamContext(): Promise<void> {
   try {
-    const [instructions, roster] = await Promise.all([getClient().instructions(), getClient().roster()]);
+    const [instructions, roster] = await Promise.all([
+      getClient().instructions(),
+      getClient().roster(),
+    ]);
     teammates.value = roster.teammates;
     permissionPresets.value = instructions.team.permissionPresets;
     // Default the bind dropdown to the first non-self teammate so

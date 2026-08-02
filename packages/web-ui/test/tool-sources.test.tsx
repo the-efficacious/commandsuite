@@ -14,8 +14,8 @@ import {
   __resetToolSourcesPanelForTests,
   ToolSourcesPanel,
 } from '../src/components/ToolSourcesPanel.js';
-import { __resetInstructionsForTests, instructions } from '../src/lib/instructions.js';
 import { __resetClientForTests, setClient } from '../src/lib/client.js';
+import { __resetInstructionsForTests, instructions } from '../src/lib/instructions.js';
 import { __resetToolSourcesForTests, toolSources } from '../src/lib/tool-sources.js';
 
 const originalFetch = globalThis.fetch;

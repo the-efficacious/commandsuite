@@ -64,7 +64,6 @@ import { TeamHome } from './components/TeamHome.js';
 import { ToolSourceDetail } from './components/ToolSourceDetail.js';
 import { ToolSourcesPanel } from './components/ToolSourcesPanel.js';
 import { Transcript } from './components/Transcript.js';
-import { loadInstructions } from './lib/instructions.js';
 import { channelBySlug, loadChannels } from './lib/channels.js';
 import { setClient } from './lib/client.js';
 import { setEmbeddedShell, setTeamSettingsHandler } from './lib/embedded.js';
@@ -77,6 +76,7 @@ import {
 } from './lib/handlers.js';
 import { type Identity, setIdentity } from './lib/identity.js';
 import { closeInspector } from './lib/inspector.js';
+import { loadInstructions } from './lib/instructions.js';
 import { startSubscribe, streamConnected } from './lib/live.js';
 import { appendMessages, dmOther, messagesByThread, objectiveThreadKey } from './lib/messages.js';
 import { loadNotificationEndpoints } from './lib/notifications.js';

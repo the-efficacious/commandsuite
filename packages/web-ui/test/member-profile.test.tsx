@@ -15,7 +15,12 @@
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { Client } from 'csuite-sdk/client';
-import type { ActivityRow, InstructionsResponse, Objective, RosterResponse } from 'csuite-sdk/types';
+import type {
+  ActivityRow,
+  InstructionsResponse,
+  Objective,
+  RosterResponse,
+} from 'csuite-sdk/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   __resetAgentTimelineForTests,
@@ -26,8 +31,8 @@ import {
   simplifyToolResult,
 } from '../src/components/AgentTimeline.js';
 import { MemberProfile } from '../src/components/MemberProfile.js';
-import { instructions } from '../src/lib/instructions.js';
 import { __resetClientForTests, setClient } from '../src/lib/client.js';
+import { instructions } from '../src/lib/instructions.js';
 import {
   __resetMemberActivityForTests,
   memberActivityLoading,

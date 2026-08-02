@@ -130,16 +130,13 @@ import {
   createActivityTracker,
 } from './activity-tracker.js';
 import { type AuthBindings, createAuthMiddleware } from './auth.js';
-import {
-  composedInstructionsSha256,
-  composeInstructions,
-  instructionBlocks,
-  instructionCaptureExemptions,
-  sha256Hex,
-} from './instructions.js';
 import type { CaptureHealthStore } from './capture-health.js';
 import { type ChannelStore, ChannelsError, GENERAL_CHANNEL_ID, validateSlug } from './channels.js';
-import { contextResendBody, contextResendKey, inspectInstructionContext } from './context-watchdog.js';
+import {
+  contextResendBody,
+  contextResendKey,
+  inspectInstructionContext,
+} from './context-watchdog.js';
 import type { DiagnosticStore } from './diagnostics.js';
 import { type EnrollmentStore, formatUserCode, normalizeUserCode } from './enrollments.js';
 import {
@@ -155,6 +152,13 @@ import {
   isGenAiLogRecord,
 } from './genai-correlator.js';
 import type { GenAiStore } from './genai-store.js';
+import {
+  composedInstructionsSha256,
+  composeInstructions,
+  instructionBlocks,
+  instructionCaptureExemptions,
+  sha256Hex,
+} from './instructions.js';
 import type { JwtVerifier } from './jwt.js';
 import type { Logger } from './logger.js';
 import type { ActivityStore } from './member-activity.js';

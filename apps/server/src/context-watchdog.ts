@@ -71,8 +71,7 @@ export function inspectInstructionContext(input: {
         ? undefined
         : [...(input.knownPriorVersions?.get(block.kind) ?? [])].find(
             (candidate) =>
-              candidate !== block.text &&
-              (system.includes(candidate) || inConversation(candidate)),
+              candidate !== block.text && (system.includes(candidate) || inConversation(candidate)),
           );
     const priorVersionPresent = priorVersion !== undefined;
     // STALE does not resend. A session holding a PRIOR version of the

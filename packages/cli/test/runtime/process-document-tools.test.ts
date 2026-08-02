@@ -160,9 +160,7 @@ describe('process_document_history', () => {
         edit(),
       ],
     });
-    const text = getCallText(
-      await handleToolCall('process_document_history', {}, broker, PACKET),
-    );
+    const text = getCallText(await handleToolCall('process_document_history', {}, broker, PACKET));
     expect(text).toMatch(/created — no prior text/);
     expect(text).toMatch(/v2 by Lea/);
     expect(text).toMatch(/work already underway finished under the prior text/);
@@ -183,9 +181,7 @@ describe('process_document_history', () => {
     const broker = makeBroker({
       processDocumentHistory: async () => [edit({ version: 2, previous: { text: priorText } })],
     });
-    const text = getCallText(
-      await handleToolCall('process_document_history', {}, broker, PACKET),
-    );
+    const text = getCallText(await handleToolCall('process_document_history', {}, broker, PACKET));
     // Every line of the superseded document, verbatim.
     for (const line of priorText.split('\n')) {
       expect(text).toContain(line);
@@ -197,9 +193,7 @@ describe('process_document_history', () => {
 
   it('says there is no history when no document has been set', async () => {
     const broker = makeBroker({ processDocumentHistory: async () => [] });
-    const text = getCallText(
-      await handleToolCall('process_document_history', {}, broker, PACKET),
-    );
+    const text = getCallText(await handleToolCall('process_document_history', {}, broker, PACKET));
     expect(text).toMatch(/no process document has been set/i);
   });
 });

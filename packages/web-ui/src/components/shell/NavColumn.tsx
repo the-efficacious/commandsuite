@@ -27,11 +27,11 @@
 import type { ActivityState, ChannelSummary, Teammate } from 'csuite-sdk/types';
 import { hasPermission } from 'csuite-sdk/types';
 import type { ComponentChildren } from 'preact';
-import { instructions } from '../../lib/instructions.js';
 import { channels, joinedChannels } from '../../lib/channels.js';
 import { embeddedShell, teamSettingsHandler } from '../../lib/embedded.js';
 import { handleSignOut, hasSignOutHandler } from '../../lib/handlers.js';
 import { inboxCount } from '../../lib/inbox.js';
+import { instructions } from '../../lib/instructions.js';
 import {
   channelThreadKey,
   dmThreadKey,

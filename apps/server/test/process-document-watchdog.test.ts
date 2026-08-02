@@ -30,17 +30,17 @@ import type { Member, ProcessDocument, Team, Teammate } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import {
-  instructionBlocks,
-  instructionCaptureExemptions,
-  composeInstructions,
-} from '../src/instructions.js';
-import {
   CONTEXT_PRESENCE_EVENT,
   contextResendBody,
   inspectInstructionContext,
 } from '../src/context-watchdog.js';
 import { openDatabase } from '../src/db.js';
 import { createGenAiStore } from '../src/genai-store.js';
+import {
+  composeInstructions,
+  instructionBlocks,
+  instructionCaptureExemptions,
+} from '../src/instructions.js';
 import { createMemberStore } from '../src/members.js';
 import { createSqliteProcessDocumentStore } from '../src/process-document.js';
 import { createRawBodyStore } from '../src/raw-body-store.js';
@@ -135,9 +135,7 @@ describe('membership is what was sent, not a substring of the prose', () => {
 
   it('carries the same bytes into the resend body', () => {
     const padded = { ...DOC, text: '  Squash-merge to main.\n' };
-    const [block] = instructionBlocks(input(padded)).filter(
-      (b) => b.kind === 'process_document',
-    );
+    const [block] = instructionBlocks(input(padded)).filter((b) => b.kind === 'process_document');
     const body = contextResendBody([{ block, present: false, resendFired: true } as never]);
     // The recovery must hand back what the runner received, byte for
     // byte, or the agent re-anchors on a different block.
@@ -146,9 +144,7 @@ describe('membership is what was sent, not a substring of the prose', () => {
 
   it('projects nothing for a document that is only whitespace', () => {
     const blank = { ...DOC, text: '   \n  ' };
-    expect(instructionBlocks(input(blank)).map((b) => b.kind)).not.toContain(
-      'process_document',
-    );
+    expect(instructionBlocks(input(blank)).map((b) => b.kind)).not.toContain('process_document');
   });
 
   it('still projects the three authored blocks by their own test', () => {

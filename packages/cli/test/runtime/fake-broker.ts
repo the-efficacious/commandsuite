@@ -184,7 +184,9 @@ export async function startFakeBroker(): Promise<FakeBroker> {
 
     if (url.pathname === '/instructions' && req.method === 'GET') {
       const reported = req.headers['x-csuite-runner-version'];
-      fakeBrokerInstructionsRunnerVersions.push(typeof reported === 'string' ? reported : undefined);
+      fakeBrokerInstructionsRunnerVersions.push(
+        typeof reported === 'string' ? reported : undefined,
+      );
       res.writeHead(200, jsonHeaders);
       res.end(
         JSON.stringify({

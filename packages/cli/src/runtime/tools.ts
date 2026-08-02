@@ -42,9 +42,9 @@ import { PROCESS_DOCUMENT_MAX } from 'csuite-sdk/schemas';
 import { formatTextMetrics } from 'csuite-sdk/text-metrics';
 import type {
   Attachment,
-  InstructionsResponse,
   CustomToolBinding,
   FsEntry,
+  InstructionsResponse,
   LogLevel,
   Message,
   NotificationAuthKind,
@@ -570,7 +570,7 @@ function buildAdminTools(instructions: InstructionsResponse): Tool[] {
       name: 'team_update',
       description:
         'Update one or more team-level fields. `context` changes the team ' +
-        'instruction block composed into every member\'s fixed context; the broker ' +
+        "instruction block composed into every member's fixed context; the broker " +
         'fans the edit out and each affected runner restarts its agent at the next ' +
         'idle boundary, resuming the same conversation under the new text. Until ' +
         'then the roster lists those members restart-pending. ' +
@@ -3093,7 +3093,10 @@ async function handleMembersRemove(
 // authoritative (403s independently); the local re-check just gives a
 // faster, clearer error when a stale client name-calls a hidden tool.
 
-function requireToolsManage(instructions: InstructionsResponse, tool: string): CallToolResult | null {
+function requireToolsManage(
+  instructions: InstructionsResponse,
+  tool: string,
+): CallToolResult | null {
   if (!instructions.permissions.includes('tools.manage')) {
     return errorResult(`${tool}: you do not have the tools.manage permission on this team`);
   }
@@ -3375,7 +3378,10 @@ async function handleToolSourcesRefresh(
 // authoritative (403s independently); the local re-check just gives a
 // faster, clearer error. Values NEVER appear in any result text.
 
-function requireSecretsManage(instructions: InstructionsResponse, tool: string): CallToolResult | null {
+function requireSecretsManage(
+  instructions: InstructionsResponse,
+  tool: string,
+): CallToolResult | null {
   if (!instructions.permissions.includes('secrets.manage')) {
     return errorResult(`${tool}: you do not have the secrets.manage permission on this team`);
   }

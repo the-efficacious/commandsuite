@@ -16,8 +16,8 @@
 import { signal } from '@preact/signals';
 import type { Member, Permission, PermissionPresets } from 'csuite-sdk/types';
 import { useState } from 'preact/hooks';
-import { loadInstructions } from '../../lib/instructions.js';
 import { getClient } from '../../lib/client.js';
+import { loadInstructions } from '../../lib/instructions.js';
 import { loadRoster, roster } from '../../lib/roster.js';
 import { TextMetrics } from '../ui/index.js';
 import { MemberTokenList } from './MemberTokenList.js';

@@ -14,9 +14,9 @@
 
 import type { Client as BrokerClient } from 'csuite-sdk/client';
 import type {
-  InstructionsResponse,
   ChannelSummary,
   GetChannelResponse,
+  InstructionsResponse,
   Message,
   Objective,
   PushPayload,
@@ -65,9 +65,7 @@ describe('instruction authoring tools report text cost', () => {
 
   it('reports team context metrics and labels the estimate method', async () => {
     const broker = makeBroker({ getTeam: vi.fn(async () => ADMIN_PACKET.team) } as never);
-    const text = getCallText(
-      (await handleToolCall('team_get', {}, broker, ADMIN_PACKET)) as never,
-    );
+    const text = getCallText((await handleToolCall('team_get', {}, broker, ADMIN_PACKET)) as never);
     expect(text).toContain('context size: 0 characters · ≈0 estimated tokens (characters ÷ 4)');
   });
 

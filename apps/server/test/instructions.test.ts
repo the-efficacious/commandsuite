@@ -1,6 +1,6 @@
 import type { Member, Team, Teammate } from 'csuite-sdk/types';
 import { describe, expect, it } from 'vitest';
-import { instructionCaptureExemptions, composeInstructions } from '../src/instructions.js';
+import { composeInstructions, instructionCaptureExemptions } from '../src/instructions.js';
 
 const TEAM: Team = {
   name: 'demo-team',
@@ -70,9 +70,14 @@ describe('composeInstructions', () => {
       processDocument: null,
     };
     const personalBlock = ALPHA_1.instructions;
-    const composedWithoutPersonal = composeInstructions(input).instructions.replace(personalBlock, '');
+    const composedWithoutPersonal = composeInstructions(input).instructions.replace(
+      personalBlock,
+      '',
+    );
 
-    expect(instructionCaptureExemptions(input, composedWithoutPersonal)).not.toContain(personalBlock);
+    expect(instructionCaptureExemptions(input, composedWithoutPersonal)).not.toContain(
+      personalBlock,
+    );
   });
 
   it('includes name, role, permissions, team, and teammates', () => {

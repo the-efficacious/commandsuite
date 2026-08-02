@@ -22,9 +22,9 @@
 import { signal } from '@preact/signals';
 import { FS_PATHS } from 'csuite-sdk/protocol';
 import type { FsEntry } from 'csuite-sdk/types';
-import { instructions } from '../lib/instructions.js';
 import { getClient } from '../lib/client.js';
 import { openPreview } from '../lib/file-preview.js';
+import { instructions } from '../lib/instructions.js';
 import { selectFiles } from '../lib/view.js';
 import { AlertCircle, ChevronRight, X } from './icons/index.js';
 
