@@ -69,7 +69,11 @@ import { createMcpClientManager, createSqliteToolSourceStore } from './tool-sour
 import { createSqliteVariablesStore, migrateIdentityToVariables } from './variables.js';
 import { SERVER_VERSION } from './version.js';
 
-export { briefingCaptureExemptions, composeBriefing } from './briefing.js';
+export {
+  composedInstructionsSha256,
+  composeInstructions,
+  instructionCaptureExemptions,
+} from './instructions.js';
 export { type DatabaseSyncInstance, openDatabase } from './db.js';
 export {
   DEFAULT_POLL_INTERVAL_S,

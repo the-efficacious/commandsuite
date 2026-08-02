@@ -227,7 +227,7 @@ describe('POST /members/:name/genai', () => {
     registerSecretValues([secret]);
     const { app, genaiStore, rawBodyStore } = makeApp({ ...TEAM, context });
 
-    const briefingRes = await app.request('/briefing', {
+    const briefingRes = await app.request('/instructions', {
       headers: { Authorization: `Bearer ${TOKEN}` },
     });
     const briefing = (await briefingRes.json()) as { instructions: string };
@@ -311,7 +311,7 @@ describe('POST /otlp/v1/logs runner-relay acknowledgement', () => {
     const issued = 'Rules issued to this session.';
     const current = 'Rules authored after this session started.';
     const test = makeApp({ ...TEAM, context: issued }, ['team.manage']);
-    await test.app.request('/briefing', { headers: { Authorization: `Bearer ${TOKEN}` } });
+    await test.app.request('/instructions', { headers: { Authorization: `Bearer ${TOKEN}` } });
     const update = await test.app.request('/team', {
       method: 'PATCH',
       headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
@@ -370,10 +370,14 @@ describe('POST /otlp/v1/logs runner-relay acknowledgement', () => {
           {
             model: 'claude-opus-4-6',
             system: [{ type: 'text', text: 'The team has merge rules.' }],
-            // Exact text outside `system` does not count. #104 guarantees
-            // the structured system field, so matching the whole body would
-            // accept a quotation or tool result as persistent context.
-            messages: [{ role: 'user', content: [{ type: 'text', text: context }] }],
+            // A paraphrase is not the block: only the exact composed
+            // text counts, wherever it appears.
+            messages: [
+              {
+                role: 'user',
+                content: [{ type: 'text', text: 'merge rules: get an approval first' }],
+              },
+            ],
           },
           response,
         ),
@@ -389,9 +393,10 @@ describe('POST /otlp/v1/logs runner-relay acknowledgement', () => {
       'context.block.resend_fired': true,
     });
 
-    // The next captured turn still lacks the block, proving that the first
-    // delivery did not land. That bypasses the cooldown, re-sends, and is
-    // retained as current health rather than silently suppressing recovery.
+    // The next captured turn still lacks the block everywhere, proving
+    // that the first delivery did not land. That bypasses the cooldown,
+    // re-sends, and is retained as current health rather than silently
+    // suppressing recovery.
     await missing.app.request('/otlp/v1/logs', {
       method: 'POST',
       headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
@@ -400,7 +405,7 @@ describe('POST /otlp/v1/logs runner-relay acknowledgement', () => {
           {
             model: 'claude-opus-4-6',
             system: [{ type: 'text', text: 'The team has merge rules.' }],
-            messages: [{ role: 'user', content: [{ type: 'text', text: context }] }],
+            messages: [],
           },
           { ...response, id: 'msg_context_still_missing' },
         ),
@@ -412,6 +417,12 @@ describe('POST /otlp/v1/logs runner-relay acknowledgement', () => {
       since: expect.any(Number),
     });
 
+    // A delivered resend lands in the CONVERSATION — the runner's system
+    // projection is composed once at start and cannot change. The exact
+    // payload the watchdog pushed, arriving in a message, is what
+    // confirms delivery; requiring it in `system` would make every
+    // resend unconfirmable and the bypass above re-fire on each
+    // captured request (observed live, 2026-08-01).
     await missing.app.request('/otlp/v1/logs', {
       method: 'POST',
       headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
@@ -419,8 +430,10 @@ describe('POST /otlp/v1/logs runner-relay acknowledgement', () => {
         otlpInlineClaudeCall(
           {
             model: 'claude-opus-4-6',
-            system: [{ type: 'text', text: `prefix\n${context}\nsuffix` }],
-            messages: [],
+            system: [{ type: 'text', text: 'The team has merge rules.' }],
+            messages: [
+              { role: 'user', content: [{ type: 'text', text: pushed[1]?.body ?? '' }] },
+            ],
           },
           { ...response, id: 'msg_context_confirmed' },
         ),
@@ -431,6 +444,13 @@ describe('POST /otlp/v1/logs runner-relay acknowledgement', () => {
     expect(missing.diagnostics.unresolved('engineer-1')).not.toContainEqual({
       cause: 'context.block_resend_unconfirmed',
       since: expect.any(Number),
+    });
+    const confirmed = missing.telemetryStore
+      .list({ name: 'csuite.context_block.presence' })
+      .at(-1);
+    expect(confirmed?.attributes).toMatchObject({
+      'context.block.state': 'current',
+      'context.block.present_in': 'input_messages',
     });
 
     const present = makeApp({ ...TEAM, context });

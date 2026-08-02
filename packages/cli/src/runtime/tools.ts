@@ -42,7 +42,7 @@ import { PROCESS_DOCUMENT_MAX } from 'csuite-sdk/schemas';
 import { formatTextMetrics } from 'csuite-sdk/text-metrics';
 import type {
   Attachment,
-  BriefingResponse,
+  InstructionsResponse,
   CustomToolBinding,
   FsEntry,
   LogLevel,
@@ -96,7 +96,7 @@ const MAX_RECENT_LIMIT = 500;
  * events (each one followed by a `tools/list_changed`).
  */
 export function defineTools(
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
   externalTools: ResolvedToolSource[] = briefing.toolSources,
 ): Tool[] {
   const { name } = briefing;
@@ -544,7 +544,7 @@ async function handleExternalToolCall(
   return result as CallToolResult;
 }
 
-function buildAdminTools(briefing: BriefingResponse): Tool[] {
+function buildAdminTools(briefing: InstructionsResponse): Tool[] {
   const { permissions } = briefing;
   const canManageTeam = permissions.includes('team.manage');
   const canManageMembers = permissions.includes('members.manage');
@@ -719,7 +719,7 @@ function buildAdminTools(briefing: BriefingResponse): Tool[] {
  * independently (403), and every save-time validation failure comes
  * back with a message naming the exact problem.
  */
-function buildToolAdminTools(briefing: BriefingResponse): Tool[] {
+function buildToolAdminTools(briefing: InstructionsResponse): Tool[] {
   if (!briefing.permissions.includes('tools.manage')) return [];
 
   return [
@@ -945,7 +945,7 @@ function buildToolAdminTools(briefing: BriefingResponse): Tool[] {
  * a secret: its value is readable, and it is never registered with the
  * trace redactor, so it appears verbatim in captured traces.
  */
-function buildVariablesAdminTools(briefing: BriefingResponse): Tool[] {
+function buildVariablesAdminTools(briefing: InstructionsResponse): Tool[] {
   if (!briefing.permissions.includes('secrets.manage')) return [];
 
   return [
@@ -1075,7 +1075,7 @@ function buildVariablesAdminTools(briefing: BriefingResponse): Tool[] {
   ];
 }
 
-function buildSecretsAdminTools(briefing: BriefingResponse): Tool[] {
+function buildSecretsAdminTools(briefing: InstructionsResponse): Tool[] {
   if (!briefing.permissions.includes('secrets.manage')) return [];
 
   return [
@@ -1227,7 +1227,7 @@ function buildSecretsAdminTools(briefing: BriefingResponse): Tool[] {
  * the sender at the hook URL, then debug with delivery receipts and
  * replay. The broker enforces the same permission independently.
  */
-function buildNotificationsAdminTools(briefing: BriefingResponse): Tool[] {
+function buildNotificationsAdminTools(briefing: InstructionsResponse): Tool[] {
   if (!briefing.permissions.includes('notifications.manage')) return [];
 
   const targetsSchema = {
@@ -1699,7 +1699,7 @@ function buildFilesystemTools(name: string): Tool[] {
  * the authority — whoever holds it can rewrite what binds the team —
  * and "can create an objective" is not a comparable power.
  */
-function buildProcessDocumentTools(briefing: BriefingResponse): Tool[] {
+function buildProcessDocumentTools(briefing: InstructionsResponse): Tool[] {
   const tools: Tool[] = [
     {
       name: 'process_document_get',
@@ -1779,7 +1779,7 @@ function buildProcessDocumentTools(briefing: BriefingResponse): Tool[] {
   return tools;
 }
 
-function buildAuthorityTools(briefing: BriefingResponse): Tool[] {
+function buildAuthorityTools(briefing: InstructionsResponse): Tool[] {
   const { permissions } = briefing;
   const canCreate = permissions.includes('objectives.create');
   const canCancel = permissions.includes('objectives.cancel');
@@ -2001,7 +2001,7 @@ export async function handleToolCall(
   name: string,
   rawArgs: Record<string, unknown> | undefined,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
   externalTools: ResolvedToolSource[] = briefing.toolSources,
 ): Promise<CallToolResult> {
   const args = rawArgs ?? {};
@@ -2179,7 +2179,7 @@ export async function handleToolCall(
 
 async function handleRoster(
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const roster = await brokerClient.roster();
   const presenceByName = new Map(roster.connected.map((presence) => [presence.name, presence]));
@@ -2298,7 +2298,7 @@ async function resolveAttachmentPaths(
 async function handleRecent(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const withOther = typeof args.with === 'string' ? args.with : undefined;
   const channelSlug = typeof args.channel === 'string' ? args.channel : undefined;
@@ -2353,7 +2353,7 @@ async function handleRecent(
 
 async function handleChannelsList(
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const channels = await brokerClient.listChannels();
   if (channels.length === 0) {
@@ -2438,7 +2438,7 @@ async function handleChannelsPost(
 async function handleObjectivesList(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const filter = typeof args.status === 'string' ? args.status : undefined;
   if (filter !== undefined && !OBJECTIVE_LIST_FILTERS.includes(filter)) {
@@ -2822,7 +2822,7 @@ async function handleObjectivesComplete(
 async function handleObjectivesCreate(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   if (
     !briefing.permissions.includes('members.manage') &&
@@ -2871,7 +2871,7 @@ async function handleObjectivesCreate(
 async function handleObjectivesCancel(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   if (
     !briefing.permissions.includes('members.manage') &&
@@ -2890,7 +2890,7 @@ async function handleObjectivesCancel(
 async function handleObjectivesWatchers(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   if (
     !briefing.permissions.includes('members.manage') &&
@@ -2924,7 +2924,7 @@ async function handleObjectivesWatchers(
 async function handleObjectivesReassign(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   if (!briefing.permissions.includes('members.manage')) {
     return errorResult('objectives_reassign: you do not have the required permission on this team');
@@ -3091,7 +3091,7 @@ async function handleMembersRemove(
 // authoritative (403s independently); the local re-check just gives a
 // faster, clearer error when a stale client name-calls a hidden tool.
 
-function requireToolsManage(briefing: BriefingResponse, tool: string): CallToolResult | null {
+function requireToolsManage(briefing: InstructionsResponse, tool: string): CallToolResult | null {
   if (!briefing.permissions.includes('tools.manage')) {
     return errorResult(`${tool}: you do not have the tools.manage permission on this team`);
   }
@@ -3112,7 +3112,7 @@ function formatSourceLine(s: ToolSourceSummary): string {
 
 async function handleToolSourcesList(
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireToolsManage(briefing, 'tool_sources_list');
   if (denied) return denied;
@@ -3128,7 +3128,7 @@ async function handleToolSourcesList(
 async function handleToolSourcesView(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireToolsManage(briefing, 'tool_sources_view');
   if (denied) return denied;
@@ -3162,7 +3162,7 @@ async function handleToolSourcesView(
 async function handleToolSourcesCreate(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireToolsManage(briefing, 'tool_sources_create');
   if (denied) return denied;
@@ -3193,7 +3193,7 @@ async function handleToolSourcesCreate(
 async function handleToolSourcesUpdate(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireToolsManage(briefing, 'tool_sources_update');
   if (denied) return denied;
@@ -3214,7 +3214,7 @@ async function handleToolSourcesUpdate(
 async function handleToolSourcesDelete(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireToolsManage(briefing, 'tool_sources_delete');
   if (denied) return denied;
@@ -3229,7 +3229,7 @@ async function handleToolSourcesDelete(
 async function handleToolSourcesDefineTool(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireToolsManage(briefing, 'tool_sources_define_tool');
   if (denied) return denied;
@@ -3264,7 +3264,7 @@ async function handleToolSourcesDefineTool(
 async function handleToolSourcesDeleteTool(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireToolsManage(briefing, 'tool_sources_delete_tool');
   if (denied) return denied;
@@ -3280,7 +3280,7 @@ async function handleToolSourcesDeleteTool(
 async function handleToolSourcesBindings(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireToolsManage(briefing, 'tool_sources_bindings');
   if (denied) return denied;
@@ -3311,7 +3311,7 @@ async function handleToolSourcesBindings(
 async function handleToolSourcesSetCredential(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireToolsManage(briefing, 'tool_sources_set_credential');
   if (denied) return denied;
@@ -3341,7 +3341,7 @@ async function handleToolSourcesSetCredential(
 async function handleToolSourcesDeleteCredential(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireToolsManage(briefing, 'tool_sources_delete_credential');
   if (denied) return denied;
@@ -3354,7 +3354,7 @@ async function handleToolSourcesDeleteCredential(
 async function handleToolSourcesRefresh(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireToolsManage(briefing, 'tool_sources_refresh');
   if (denied) return denied;
@@ -3373,7 +3373,7 @@ async function handleToolSourcesRefresh(
 // authoritative (403s independently); the local re-check just gives a
 // faster, clearer error. Values NEVER appear in any result text.
 
-function requireSecretsManage(briefing: BriefingResponse, tool: string): CallToolResult | null {
+function requireSecretsManage(briefing: InstructionsResponse, tool: string): CallToolResult | null {
   if (!briefing.permissions.includes('secrets.manage')) {
     return errorResult(`${tool}: you do not have the secrets.manage permission on this team`);
   }
@@ -3394,7 +3394,7 @@ function formatSecretLine(s: SecretSummary): string {
 
 async function handleSecretsList(
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireSecretsManage(briefing, 'secrets_list');
   if (denied) return denied;
@@ -3408,7 +3408,7 @@ async function handleSecretsList(
 async function handleSecretsView(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireSecretsManage(briefing, 'secrets_view');
   if (denied) return denied;
@@ -3427,7 +3427,7 @@ async function handleSecretsView(
 async function handleSecretsCreate(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireSecretsManage(briefing, 'secrets_create');
   if (denied) return denied;
@@ -3451,7 +3451,7 @@ async function handleSecretsCreate(
 async function handleSecretsUpdate(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireSecretsManage(briefing, 'secrets_update');
   if (denied) return denied;
@@ -3472,7 +3472,7 @@ async function handleSecretsUpdate(
 async function handleSecretsDelete(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireSecretsManage(briefing, 'secrets_delete');
   if (denied) return denied;
@@ -3485,7 +3485,7 @@ async function handleSecretsDelete(
 async function handleSecretsSetValue(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireSecretsManage(briefing, 'secrets_set_value');
   if (denied) return denied;
@@ -3503,7 +3503,7 @@ async function handleSecretsSetValue(
 async function handleSecretsDeleteValue(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireSecretsManage(briefing, 'secrets_delete_value');
   if (denied) return denied;
@@ -3533,7 +3533,7 @@ function formatVariableLine(v: VariableSummary): string {
 
 async function handleVariablesList(
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireSecretsManage(briefing, 'variables_list');
   if (denied) return denied;
@@ -3551,7 +3551,7 @@ async function handleVariablesList(
 async function handleVariablesView(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireSecretsManage(briefing, 'variables_view');
   if (denied) return denied;
@@ -3570,7 +3570,7 @@ async function handleVariablesView(
 async function handleVariablesCreate(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireSecretsManage(briefing, 'variables_create');
   if (denied) return denied;
@@ -3593,7 +3593,7 @@ async function handleVariablesCreate(
 async function handleVariablesUpdate(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireSecretsManage(briefing, 'variables_update');
   if (denied) return denied;
@@ -3614,7 +3614,7 @@ async function handleVariablesUpdate(
 async function handleVariablesDelete(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireSecretsManage(briefing, 'variables_delete');
   if (denied) return denied;
@@ -3627,7 +3627,7 @@ async function handleVariablesDelete(
 async function handleVariablesSetValue(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireSecretsManage(briefing, 'variables_set_value');
   if (denied) return denied;
@@ -3645,7 +3645,7 @@ async function handleVariablesSetValue(
 async function handleVariablesDeleteValue(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireSecretsManage(briefing, 'variables_delete_value');
   if (denied) return denied;
@@ -3658,7 +3658,7 @@ async function handleVariablesDeleteValue(
 async function handleVariablesBindings(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireSecretsManage(briefing, 'variables_bindings');
   if (denied) return denied;
@@ -3690,7 +3690,7 @@ async function handleVariablesBindings(
 async function handleSecretsBindings(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireSecretsManage(briefing, 'secrets_bindings');
   if (denied) return denied;
@@ -3726,7 +3726,7 @@ async function handleSecretsBindings(
 // in any result text.
 
 function requireNotificationsManage(
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
   tool: string,
 ): CallToolResult | null {
   if (!briefing.permissions.includes('notifications.manage')) {
@@ -3820,7 +3820,7 @@ function parseNotificationPolicy(
 
 async function handleNotificationsList(
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireNotificationsManage(briefing, 'notifications_list');
   if (denied) return denied;
@@ -3838,7 +3838,7 @@ async function handleNotificationsList(
 async function handleNotificationsView(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireNotificationsManage(briefing, 'notifications_view');
   if (denied) return denied;
@@ -3873,7 +3873,7 @@ async function handleNotificationsView(
 async function handleNotificationsCreate(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireNotificationsManage(briefing, 'notifications_create');
   if (denied) return denied;
@@ -3918,7 +3918,7 @@ async function handleNotificationsCreate(
 async function handleNotificationsUpdate(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireNotificationsManage(briefing, 'notifications_update');
   if (denied) return denied;
@@ -3957,7 +3957,7 @@ async function handleNotificationsUpdate(
 async function handleNotificationsDelete(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireNotificationsManage(briefing, 'notifications_delete');
   if (denied) return denied;
@@ -3973,7 +3973,7 @@ async function handleNotificationsDelete(
 async function handleNotificationsSetSecret(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireNotificationsManage(briefing, 'notifications_set_secret');
   if (denied) return denied;
@@ -3991,7 +3991,7 @@ async function handleNotificationsSetSecret(
 async function handleNotificationsDeleteSecret(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireNotificationsManage(briefing, 'notifications_delete_secret');
   if (denied) return denied;
@@ -4004,7 +4004,7 @@ async function handleNotificationsDeleteSecret(
 async function handleNotificationsDeliveries(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireNotificationsManage(briefing, 'notifications_deliveries');
   if (denied) return denied;
@@ -4026,7 +4026,7 @@ async function handleNotificationsDeliveries(
 async function handleNotificationsReplay(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireNotificationsManage(briefing, 'notifications_replay');
   if (denied) return denied;
@@ -4044,7 +4044,7 @@ function formatProfileLine(p: NotificationProfileSummary): string {
 
 async function handleNotificationsProfiles(
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireNotificationsManage(briefing, 'notifications_profiles');
   if (denied) return denied;
@@ -4062,7 +4062,7 @@ async function handleNotificationsProfiles(
 async function handleNotificationsProfileCreate(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireNotificationsManage(briefing, 'notifications_profile_create');
   if (denied) return denied;
@@ -4086,7 +4086,7 @@ async function handleNotificationsProfileCreate(
 async function handleNotificationsProfileDelete(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireNotificationsManage(briefing, 'notifications_profile_delete');
   if (denied) return denied;
@@ -4099,7 +4099,7 @@ async function handleNotificationsProfileDelete(
 async function handleNotificationsProfileSetSecret(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const denied = requireNotificationsManage(briefing, 'notifications_profile_set_secret');
   if (denied) return denied;
@@ -4129,7 +4129,7 @@ function formatFsEntry(entry: FsEntry): string {
 async function handleFsLs(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
 ): Promise<CallToolResult> {
   const raw = typeof args.path === 'string' ? args.path : `/${briefing.name}`;
   const entries = await brokerClient.fsList(raw);

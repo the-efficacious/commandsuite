@@ -4,7 +4,7 @@
  * The runner holds all the heavyweight state for a single agent run:
  *
  *   - the broker `Client` (authenticated to the csuite server)
- *   - the cached `BriefingResponse` (name, role, permissions, team
+ *   - the cached `InstructionsResponse` (name, role, permissions, team
  *     context, initial open objectives)
  *   - the live SSE forwarder (chat + objective events from the broker)
  *   - the objectives tracker (keeps the "open objectives" snapshot
@@ -51,7 +51,7 @@ import { createInterface } from 'node:readline';
 import { registerSecretValues } from 'csuite-core';
 import { Client as BrokerClient, ClientError } from 'csuite-sdk/client';
 import { isReservedEnvName } from 'csuite-sdk/schemas';
-import type { BriefingResponse, Objective, ResolvedToolSource } from 'csuite-sdk/types';
+import type { InstructionsResponse, Objective, ResolvedToolSource } from 'csuite-sdk/types';
 import { CLI_VERSION } from '../version.js';
 import { startActivityReporter } from './busy-reporter.js';
 import type { ChannelEventSink } from './forwarder.js';
@@ -162,7 +162,7 @@ export interface RunnerHandle {
   /** The path the IPC socket is bound at. */
   readonly socketPath: string;
   /** The briefing fetched at startup. Frozen. */
-  readonly briefing: BriefingResponse;
+  readonly briefing: InstructionsResponse;
   /**
    * The live capture host owning the activity uploader, the busy
    * signal, and the Claude Code hook server. `null` when the runner
@@ -218,9 +218,9 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
 
   const brokerClient = new BrokerClient({ url: options.url, token: options.token });
 
-  let briefing: BriefingResponse;
+  let briefing: InstructionsResponse;
   try {
-    briefing = await brokerClient.briefing({ runnerVersion: CLI_VERSION });
+    briefing = await brokerClient.instructions({ runnerVersion: CLI_VERSION });
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
     // When the failure looks like a connection problem (broker unreachable)
@@ -592,7 +592,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
     if (toolsRefreshInflight) return;
     toolsRefreshInflight = true;
     try {
-      const fresh = await brokerClient.briefing({ runnerVersion: CLI_VERSION });
+      const fresh = await brokerClient.instructions({ runnerVersion: CLI_VERSION });
       const next = fresh.toolSources;
       if (JSON.stringify(next) === JSON.stringify(externalTools)) return;
       externalTools = next;
@@ -724,7 +724,7 @@ function composeRebrief(open: Objective[]): string {
  */
 async function handleMcpRequest(
   frame: { id: number; method: string; params: Record<string, unknown> | undefined },
-  briefing: BriefingResponse,
+  briefing: InstructionsResponse,
   brokerClient: BrokerClient,
   externalTools: ResolvedToolSource[],
 ): Promise<IpcMcpResponse> {

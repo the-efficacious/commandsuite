@@ -1,6 +1,6 @@
 import { Broker, InMemoryEventLog } from 'csuite-core';
 import { PROTOCOL_HEADER, RUNNER_VERSION_HEADER } from 'csuite-sdk/protocol';
-import type { BriefingResponse, Message, RosterResponse, Team } from 'csuite-sdk/types';
+import type { InstructionsResponse, Message, RosterResponse, Team } from 'csuite-sdk/types';
 import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
@@ -88,12 +88,12 @@ describe('app GET /healthz', () => {
   });
 });
 
-describe('app GET /briefing', () => {
-  it('returns the team-context briefing for the authenticated slot', async () => {
+describe('app GET /instructions', () => {
+  it('returns the composed instruction packet for the authenticated slot', async () => {
     const { app } = makeApp();
-    const res = await app.request('/briefing', authed(OP_TOKEN));
+    const res = await app.request('/instructions', authed(OP_TOKEN));
     expect(res.status).toBe(200);
-    const body = (await res.json()) as BriefingResponse;
+    const body = (await res.json()) as InstructionsResponse;
     expect(body.name).toBe('director-1');
     expect(body.role.title).toBe('director');
     expect(body.permissions).toContain('members.manage');
@@ -107,9 +107,9 @@ describe('app GET /briefing', () => {
 
   it('returns empty permissions for plain members', async () => {
     const { app } = makeApp();
-    const res = await app.request('/briefing', authed(BOT_TOKEN));
+    const res = await app.request('/instructions', authed(BOT_TOKEN));
     expect(res.status).toBe(200);
-    const body = (await res.json()) as BriefingResponse;
+    const body = (await res.json()) as InstructionsResponse;
     expect(body.name).toBe('build-bot');
     expect(body.role.title).toBe('engineer');
     expect(body.permissions).toEqual([]);
@@ -117,91 +117,64 @@ describe('app GET /briefing', () => {
 
   it('distinguishes an absent runner report from a rejected one without withholding briefing', async () => {
     const { app, logger } = makeApp();
-    const absent = await app.request('/briefing', authed(BOT_TOKEN));
+    const absent = await app.request('/instructions', authed(BOT_TOKEN));
     expect(absent.status).toBe(200);
-    expect(((await absent.json()) as BriefingResponse).instructions).toContain('runner=unknown');
+    expect(((await absent.json()) as InstructionsResponse).instructions).toContain('runner=unknown');
     expect(logger.warn).not.toHaveBeenCalledWith(
-      'briefing runner version rejected',
+      'instructions runner version rejected',
       expect.anything(),
     );
 
-    const rejected = await app.request('/briefing', {
+    const rejected = await app.request('/instructions', {
       headers: {
         Authorization: `Bearer ${BOT_TOKEN}`,
         [RUNNER_VERSION_HEADER]: 'not a version',
       },
     });
     expect(rejected.status).toBe(200);
-    expect(((await rejected.json()) as BriefingResponse).instructions).toContain('runner=unknown');
-    expect(logger.warn).toHaveBeenCalledWith('briefing runner version rejected', {
+    expect(((await rejected.json()) as InstructionsResponse).instructions).toContain('runner=unknown');
+    expect(logger.warn).toHaveBeenCalledWith('instructions runner version rejected', {
       member: 'build-bot',
     });
   });
 
   it('renders a bounded opaque runner version reported by the runner', async () => {
     const { app, logger } = makeApp();
-    const res = await app.request('/briefing', {
+    const res = await app.request('/instructions', {
       headers: {
         Authorization: `Bearer ${BOT_TOKEN}`,
         [RUNNER_VERSION_HEADER]: '0.5.0-rc.1+build.3',
       },
     });
     expect(res.status).toBe(200);
-    const instructions = ((await res.json()) as BriefingResponse).instructions;
+    const instructions = ((await res.json()) as InstructionsResponse).instructions;
     expect(instructions).toContain(
       'demo-team CommandSuite/csuite: broker=0.0.0 runner=0.5.0-rc…d.3',
     );
     expect(logger.warn).not.toHaveBeenCalledWith(
-      'briefing runner version rejected',
+      'instructions runner version rejected',
       expect.anything(),
     );
   });
 
-  it('returns an oversized composed briefing and warns when a legacy runner will reject it', async () => {
+  it('serves an oversized composed packet whole — no cap, no warning', async () => {
+    // The 8192-cap era is fully dead: the cap itself (#122, removed in
+    // #129) and the legacy-runner warning that outlived it (removed
+    // with zero deployed runners). This is the guard against either
+    // quietly returning.
     const { app, logger } = makeApp({ instructions: 'x'.repeat(8_300) });
-
-    const legacy = await app.request('/briefing', authed(BOT_TOKEN));
-    expect(legacy.status).toBe(200);
-    const body = (await legacy.json()) as BriefingResponse;
+    const res = await app.request('/instructions', authed(BOT_TOKEN));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as InstructionsResponse;
     expect(body.instructions.length).toBeGreaterThan(8_192);
-    expect(logger.warn).toHaveBeenCalledWith('briefing exceeds legacy runner instruction limit', {
-      member: 'build-bot',
-      characters: body.instructions.length,
-      runnerVersion: 'unknown',
-    });
-
-    logger.warn.mockClear();
-    const reportedLegacy = await app.request('/briefing', {
-      headers: {
-        Authorization: `Bearer ${BOT_TOKEN}`,
-        [RUNNER_VERSION_HEADER]: '0.3.4',
-      },
-    });
-    expect(reportedLegacy.status).toBe(200);
-    expect(logger.warn).toHaveBeenCalledWith('briefing exceeds legacy runner instruction limit', {
-      member: 'build-bot',
-      characters: expect.any(Number),
-      runnerVersion: '0.3.4',
-    });
-
-    logger.warn.mockClear();
-    const current = await app.request('/briefing', {
-      headers: {
-        Authorization: `Bearer ${BOT_TOKEN}`,
-        [RUNNER_VERSION_HEADER]: '0.4.0',
-      },
-    });
-    expect(current.status).toBe(200);
-    expect(((await current.json()) as BriefingResponse).instructions.length).toBeGreaterThan(8_192);
-    expect(logger.warn).not.toHaveBeenCalledWith(
-      'briefing exceeds legacy runner instruction limit',
-      expect.anything(),
-    );
+    // Complete, not truncated at the old boundary.
+    expect(body.instructions).toContain('x'.repeat(8_300));
+    expect(logger.warn).not.toHaveBeenCalled();
   });
 
   it('requires auth', async () => {
     const { app } = makeApp();
-    const res = await app.request('/briefing');
+    const res = await app.request('/instructions');
     expect(res.status).toBe(401);
   });
 });

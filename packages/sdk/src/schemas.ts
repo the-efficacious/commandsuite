@@ -1743,9 +1743,22 @@ export const RejectEnrollmentRequestSchema = z.object({
   reason: z.string().max(256).optional(),
 });
 
-// ───────────────────────── Briefing + session ─────────────────
+// ─────────────────────── Instructions + session ───────────────
 
-export const BriefingResponseSchema = MemberSchema.extend({
+/** The wire-stable block kinds — see `InstructionBlockKind` in types. */
+export const InstructionBlockKindSchema = z.enum([
+  'team_context',
+  'role_description',
+  'personal_instructions',
+  'process_document',
+]);
+
+export const InstructionBlockDescriptorSchema = z.object({
+  kind: InstructionBlockKindSchema,
+  sha256: z.string().regex(/^[0-9a-f]{64}$/),
+});
+
+export const InstructionsResponseSchema = MemberSchema.extend({
   team: TeamSchema,
   teammates: z.array(TeammateSchema),
   openObjectives: z.array(ObjectiveSchema),
@@ -1755,14 +1768,10 @@ export const BriefingResponseSchema = MemberSchema.extend({
   /**
    * The team's process document, or `null` when none is set.
    *
-   * Its OWN field, and the durable reason is authority separation: a
-   * member authors their own `instructions`, while the process
-   * document is authored by whoever holds `process.manage`. One string
-   * would collapse two authorities into one field.
-   *
-   * The cap argument that also motivated this has already expired —
-   * #122 landed in #129 and no length cap remains in source. The field
-   * is still right, on authority separation alone.
+   * Its OWN field, and the reason is authority separation: a member
+   * authors their own `instructions`, while the process document is
+   * authored by whoever holds `process.manage`. One string would
+   * collapse two authorities into one field.
    *
    * THREE states, and `.default(null)` would destroy the one that
    * matters. An older broker OMITS this field; a broker that has it
@@ -1777,6 +1786,14 @@ export const BriefingResponseSchema = MemberSchema.extend({
    *   document   -> render it
    */
   processDocument: ProcessDocumentSchema.nullable().optional(),
+  // Optional: absent from brokers that predate the instruction-block
+  // model. Same reasoning as processDocument's absent state — a
+  // missing field is an older broker, not an empty answer.
+  blocks: z.array(InstructionBlockDescriptorSchema).optional(),
+  composedSha256: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/)
+    .optional(),
 });
 
 export const RosterResponseSchema = z.object({
@@ -1785,6 +1802,10 @@ export const RosterResponseSchema = z.object({
   // Optional so clients remain compatible with brokers that predate
   // server-reported activity-window semantics.
   activityWindowMs: z.number().int().positive().optional(),
+  // Optional so clients remain compatible with brokers that predate
+  // instruction versioning. Unknown-issued members are never listed —
+  // unknown is not pending.
+  restartPending: z.array(NameSchema).optional(),
 });
 
 export const HistoryResponseSchema = z.object({

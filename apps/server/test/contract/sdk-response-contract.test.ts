@@ -95,7 +95,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Broker, InMemoryEventLog } from 'csuite-core';
 import {
-  BriefingResponseSchema,
+  InstructionsResponseSchema,
   FsEntryResponseSchema,
   FsListResponseSchema,
   GetObjectiveResponseSchema,
@@ -284,9 +284,9 @@ describe('SDK response contract', () => {
     await expectMatchesContract(app, '/healthz', {}, HealthResponseSchema);
   });
 
-  it('GET /briefing matches BriefingResponseSchema', async () => {
+  it('GET /instructions matches InstructionsResponseSchema', async () => {
     const { app } = makeApp();
-    await expectMatchesContract(app, '/briefing', authed(ALICE), BriefingResponseSchema);
+    await expectMatchesContract(app, '/instructions', authed(ALICE), InstructionsResponseSchema);
   });
 
   it('GET /roster matches RosterResponseSchema', async () => {

@@ -36,7 +36,7 @@ import {
   BindSecretRequestSchema,
   BindToolSourceRequestSchema,
   BindVariableRequestSchema,
-  BriefingResponseSchema,
+  InstructionsResponseSchema,
   ChannelSchema,
   CorrectObjectiveEventRequestSchema,
   CreateChannelRequestSchema,
@@ -127,7 +127,7 @@ import type {
   BindSecretRequest,
   BindToolSourceRequest,
   BindVariableRequest,
-  BriefingResponse,
+  InstructionsResponse,
   CancelObjectiveRequest,
   Channel,
   ChannelSummary,
@@ -430,21 +430,28 @@ export class Client {
   }
 
   /**
-   * Fetch the team-context briefing for the authenticated member.
+   * Fetch the composed instruction packet for the authenticated
+   * member.
    *
    * Returns the caller's name, role, permissions, team
    * (name/context/presets), list of teammates, open objectives
-   * currently on the caller's plate, and the member's personal
+   * currently on the caller's plate, the member's personal
    * `instructions` string ready for `new Server({instructions})` in
-   * the MCP link.
+   * the MCP link, and — from brokers with the instruction-block model
+   * — the named `blocks` descriptors plus the `composedSha256`
+   * instruction-version identifier.
+   *
+   * Replaced `briefing()` in the briefing→instructions rename
+   * (protocol v2) — removed rather than deprecated: there were zero
+   * deployed consumers of the old method at the time.
    */
-  async briefing(options: { runnerVersion?: string } = {}): Promise<BriefingResponse> {
+  async instructions(options: { runnerVersion?: string } = {}): Promise<InstructionsResponse> {
     const headers = new Headers();
     if (options.runnerVersion !== undefined) {
       headers.set(RUNNER_VERSION_HEADER, options.runnerVersion);
     }
-    const resp = await this.request(PATHS.briefing, { method: 'GET', headers });
-    return BriefingResponseSchema.parse(await this.json(resp));
+    const resp = await this.request(PATHS.instructions, { method: 'GET', headers });
+    return InstructionsResponseSchema.parse(await this.json(resp));
   }
 
   /**

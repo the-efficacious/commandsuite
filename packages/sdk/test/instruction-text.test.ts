@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ApproveEnrollmentRequestSchema,
-  BriefingResponseSchema,
+  InstructionsResponseSchema,
   CreateMemberRequestSchema,
   MemberSchema,
   RoleSchema,
@@ -48,8 +48,8 @@ describe('authored instruction fields have no length cap', () => {
     if (enrollment.mode === 'create') expect(enrollment.instructions).toBe(LONG);
   });
 
-  it('parses a composed briefing longer than the former authored-text cap', () => {
-    const parsed = BriefingResponseSchema.parse({
+  it('parses composed instructions longer than the former authored-text cap', () => {
+    const parsed = InstructionsResponseSchema.parse({
       name: 'member',
       role: { title: 'engineer', description: '' },
       permissions: [],

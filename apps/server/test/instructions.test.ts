@@ -1,6 +1,6 @@
 import type { Member, Team, Teammate } from 'csuite-sdk/types';
 import { describe, expect, it } from 'vitest';
-import { briefingCaptureExemptions, composeBriefing } from '../src/briefing.js';
+import { instructionCaptureExemptions, composeInstructions } from '../src/instructions.js';
 
 const TEAM: Team = {
   name: 'demo-team',
@@ -45,7 +45,7 @@ const TEAMMATES: Teammate[] = [
   },
 ];
 
-describe('composeBriefing', () => {
+describe('composeInstructions', () => {
   it('projects exact authored blocks from this member briefing without positional guesses', () => {
     const input = {
       self: ALPHA_1,
@@ -54,8 +54,8 @@ describe('composeBriefing', () => {
       openObjectives: [],
       processDocument: null,
     };
-    const briefing = composeBriefing(input);
-    const exemptions = briefingCaptureExemptions(input);
+    const briefing = composeInstructions(input);
+    const exemptions = instructionCaptureExemptions(input);
     expect(exemptions).toEqual([TEAM.context, ALPHA_1.role.description, ALPHA_1.instructions]);
     for (const block of exemptions) expect(briefing.instructions).toContain(block);
     expect(exemptions).not.toContain(DIRECTOR.role.description);
@@ -70,13 +70,13 @@ describe('composeBriefing', () => {
       processDocument: null,
     };
     const personalBlock = ALPHA_1.instructions;
-    const composedWithoutPersonal = composeBriefing(input).instructions.replace(personalBlock, '');
+    const composedWithoutPersonal = composeInstructions(input).instructions.replace(personalBlock, '');
 
-    expect(briefingCaptureExemptions(input, composedWithoutPersonal)).not.toContain(personalBlock);
+    expect(instructionCaptureExemptions(input, composedWithoutPersonal)).not.toContain(personalBlock);
   });
 
   it('includes name, role, permissions, team, and teammates', () => {
-    const briefing = composeBriefing({
+    const briefing = composeInstructions({
       self: DIRECTOR,
       team: TEAM,
       teammates: TEAMMATES,
@@ -92,7 +92,7 @@ describe('composeBriefing', () => {
   });
 
   it('renders complementary instructions that reference team context', () => {
-    const briefing = composeBriefing({
+    const briefing = composeInstructions({
       self: ALPHA_1,
       team: TEAM,
       teammates: TEAMMATES,
@@ -107,7 +107,7 @@ describe('composeBriefing', () => {
   });
 
   it('names CommandSuite and csuite with separate broker and runner versions in one opening line', () => {
-    const briefing = composeBriefing({
+    const briefing = composeInstructions({
       self: ALPHA_1,
       team: TEAM,
       teammates: TEAMMATES,
@@ -130,9 +130,9 @@ describe('composeBriefing', () => {
       openObjectives: [],
       processDocument: null,
     };
-    const briefing = composeBriefing(input);
+    const briefing = composeInstructions(input);
     expect(briefing.instructions).toContain('CommandSuite/csuite: broker=unknown runner=unknown');
-    expect(briefingCaptureExemptions(input)).toEqual([
+    expect(instructionCaptureExemptions(input)).toEqual([
       TEAM.context,
       ALPHA_1.role.description,
       ALPHA_1.instructions,
@@ -146,7 +146,7 @@ describe('composeBriefing', () => {
       `Team: ${TEAM.name}`.length;
 
     for (const runnerVersion of ['x'.repeat(64), undefined]) {
-      const briefing = composeBriefing({
+      const briefing = composeInstructions({
         self: ALPHA_1,
         team: TEAM,
         teammates: TEAMMATES,
@@ -161,7 +161,7 @@ describe('composeBriefing', () => {
   });
 
   it('bounds long versions while retaining both ends', () => {
-    const briefing = composeBriefing({
+    const briefing = composeInstructions({
       self: ALPHA_1,
       team: TEAM,
       teammates: TEAMMATES,
@@ -176,7 +176,7 @@ describe('composeBriefing', () => {
   });
 
   it('lists other teammates and filters self out of the rendered list', () => {
-    const briefing = composeBriefing({
+    const briefing = composeInstructions({
       self: ALPHA_1,
       team: TEAM,
       teammates: TEAMMATES,
@@ -195,7 +195,7 @@ describe('composeBriefing', () => {
 
   it('omits the context line when team.context is empty', () => {
     const teamNoContext: Team = { ...TEAM, context: '' };
-    const briefing = composeBriefing({
+    const briefing = composeInstructions({
       self: DIRECTOR,
       team: teamNoContext,
       teammates: TEAMMATES,
@@ -207,7 +207,7 @@ describe('composeBriefing', () => {
   });
 
   it('omits the personal-instructions block when the member has none', () => {
-    const briefing = composeBriefing({
+    const briefing = composeInstructions({
       self: ENGINEER_2,
       team: TEAM,
       teammates: TEAMMATES,
@@ -218,7 +218,7 @@ describe('composeBriefing', () => {
   });
 
   it('notes that the link suppresses self-echoes on the live stream', () => {
-    const briefing = composeBriefing({
+    const briefing = composeInstructions({
       self: ENGINEER_2,
       team: TEAM,
       teammates: TEAMMATES,
@@ -234,7 +234,7 @@ describe('composeBriefing', () => {
     // new objective was assigned mid-session. Live state reaches the
     // agent as message traffic (channel events + the runner's
     // `context_refresh` re-briefs) instead.
-    const briefing = composeBriefing({
+    const briefing = composeInstructions({
       self: ALPHA_1,
       team: TEAM,
       teammates: TEAMMATES,
@@ -270,7 +270,7 @@ describe('composeBriefing', () => {
   });
 
   it('teaches the objective mechanism in instructions regardless of current plate', () => {
-    const briefing = composeBriefing({
+    const briefing = composeInstructions({
       self: ALPHA_1,
       team: TEAM,
       teammates: TEAMMATES,
@@ -295,7 +295,7 @@ describe('composeBriefing', () => {
   });
 
   it('teaches all three channel thread types and the context_refresh re-brief', () => {
-    const briefing = composeBriefing({
+    const briefing = composeInstructions({
       self: ALPHA_1,
       team: TEAM,
       teammates: TEAMMATES,

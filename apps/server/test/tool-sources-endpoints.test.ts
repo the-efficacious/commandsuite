@@ -9,7 +9,7 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { Broker, InMemoryEventLog } from 'csuite-core';
-import type { BriefingResponse, ToolSourceSummary } from 'csuite-sdk/types';
+import type { InstructionsResponse, ToolSourceSummary } from 'csuite-sdk/types';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
@@ -455,15 +455,15 @@ describe('briefing integration', () => {
     );
 
     const boundBriefing = (await (
-      await app.request('/briefing', authed(BOUND))
-    ).json()) as BriefingResponse;
+      await app.request('/instructions', authed(BOUND))
+    ).json()) as InstructionsResponse;
     expect(boundBriefing.toolSources).toHaveLength(1);
     expect(boundBriefing.toolSources[0]?.source).toBe('jira');
     expect(boundBriefing.toolSources[0]?.tools[0]?.name).toBe('get_issue');
 
     const outsiderBriefing = (await (
-      await app.request('/briefing', authed(OUTSIDER))
-    ).json()) as BriefingResponse;
+      await app.request('/instructions', authed(OUTSIDER))
+    ).json()) as InstructionsResponse;
     expect(outsiderBriefing.toolSources).toHaveLength(0);
   });
 
@@ -474,8 +474,8 @@ describe('briefing integration', () => {
       authed(ADMIN, { slug: 'shared', kind: 'custom', allMembers: true }),
     );
     const briefing = (await (
-      await app.request('/briefing', authed(OUTSIDER))
-    ).json()) as BriefingResponse;
+      await app.request('/instructions', authed(OUTSIDER))
+    ).json()) as InstructionsResponse;
     expect(briefing.toolSources).toHaveLength(1);
   });
 });

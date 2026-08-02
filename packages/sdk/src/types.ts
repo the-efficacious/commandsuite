@@ -310,17 +310,42 @@ export interface HealthResponse {
   };
 }
 
-// ─────────────────────────── Briefing / Session ───────────────────────
+// ────────────────────────── Instructions / Session ────────────────────
 
 /**
- * Full team-context packet returned from `GET /briefing`. Used by
+ * The named kinds of operator-authored instruction blocks composed
+ * into a member's fixed context. The strings are a wire and telemetry
+ * contract (`persistent_context kind="…"` re-sends, the context
+ * watchdog's `context.block.kind` attribute) — the TypeScript names
+ * were renamed briefing→instructions; these values must not be.
+ */
+export type InstructionBlockKind =
+  | 'team_context'
+  | 'role_description'
+  | 'personal_instructions'
+  | 'process_document';
+
+/**
+ * One instruction block as issued to a member, identified by content
+ * hash. The text itself rides in the composed `instructions` string
+ * (or `processDocument`); the descriptor names what was composed so a
+ * runner or UI can compare versions without re-deriving composition.
+ */
+export interface InstructionBlockDescriptor {
+  kind: InstructionBlockKind;
+  /** sha256 (hex) of the exact block text as composed. */
+  sha256: string;
+}
+
+/**
+ * Full instruction packet returned from `GET /instructions`. Used by
  * the runner and the web UI to initialize themselves with team/
  * role/permissions/objectives context. Extends `Member` so the
  * caller's own name/role/permissions/instructions are flat at the
- * top level — teammates appear in the `teammates` list as the
- * public `Teammate` projection.
+ * top level — teammates appear in the `teammates` list as the public
+ * `Teammate` projection.
  */
-export interface BriefingResponse extends Member {
+export interface InstructionsResponse extends Member {
   team: Team;
   teammates: Teammate[];
   /** Objectives currently assigned to this member with status === 'active' or 'blocked'. */
@@ -339,21 +364,43 @@ export interface BriefingResponse extends Member {
    * none has been set. Carried separately from `instructions` because
    * that field is authored by the member and this is authored by
    * whoever holds `process.manage` — one string would collapse two
-   * authorities into one field. (An 8192 cap on that field also
-   * motivated this historically; #122 removed it in #129 and the
-   * decision is unchanged.)
+   * authorities into one field.
    *
    * `undefined` when the broker did not send the field at all — an
    * older broker without the feature. Distinct from `null`, which is a
    * broker saying the team has no document.
    */
   processDocument?: ProcessDocument | null;
+  /**
+   * The named blocks composed into this packet, by content hash.
+   * Absent from brokers that predate the instruction-block model.
+   */
+  blocks?: InstructionBlockDescriptor[];
+  /**
+   * sha256 (hex) of the CANONICAL composition — the composed
+   * instructions with the transient broker/runner version line
+   * normalized out, plus the process-document text. This is the
+   * session's instruction-version identifier: the broker records it as
+   * "issued" on each fetch and compares it against the current
+   * composition to decide restart-pending. Two fetches that differ
+   * only in reported runner version share a hash by construction.
+   */
+  composedSha256?: string;
 }
 
 /** Response from `GET /roster`. */
 export interface RosterResponse {
   teammates: Teammate[];
   connected: Presence[];
+  /**
+   * Members whose current composed instructions differ from what
+   * their live session was issued — a restart at the next safe
+   * boundary picks up the edit. Absent from brokers that predate
+   * instruction versioning; empty when nothing is pending. A member
+   * whose issued version is unknown (broker restarted since their
+   * fetch) is NOT listed — unknown is not pending.
+   */
+  restartPending?: string[];
   /**
    * Window the broker applied when deciding whether an activity report
    * is recent. Optional for compatibility with older brokers.

@@ -31,7 +31,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
-import type { BriefingResponse } from 'csuite-sdk/types';
+import type { InstructionsResponse } from 'csuite-sdk/types';
 import { CLI_VERSION } from '../../../version.js';
 import { composeFixedContext } from '../../fixed-context.js';
 import type { Presence } from '../../presence.js';
@@ -95,7 +95,7 @@ export function findCodexBinary(): string {
 }
 
 export interface CodexSpawnOptions {
-  briefing: BriefingResponse;
+  briefing: InstructionsResponse;
   /**
    * Path to the runner's IPC socket. Used both for the bridge subprocess
    * (via CODEX_HOME's config.toml env block) and is otherwise unused

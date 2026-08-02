@@ -182,7 +182,7 @@ export async function startFakeBroker(): Promise<FakeBroker> {
       return;
     }
 
-    if (url.pathname === '/briefing' && req.method === 'GET') {
+    if (url.pathname === '/instructions' && req.method === 'GET') {
       const reported = req.headers['x-csuite-runner-version'];
       fakeBrokerBriefingRunnerVersions.push(typeof reported === 'string' ? reported : undefined);
       res.writeHead(200, jsonHeaders);

@@ -7,13 +7,13 @@
  */
 
 import { signal } from '@preact/signals';
-import type { BriefingResponse } from 'csuite-sdk/types';
+import type { InstructionsResponse } from 'csuite-sdk/types';
 import { getClient } from './client.js';
 
-export const briefing = signal<BriefingResponse | null>(null);
+export const briefing = signal<InstructionsResponse | null>(null);
 
-export async function loadBriefing(): Promise<BriefingResponse> {
-  const resp = await getClient().briefing();
+export async function loadBriefing(): Promise<InstructionsResponse> {
+  const resp = await getClient().instructions();
   briefing.value = resp;
   return resp;
 }

@@ -184,7 +184,7 @@ describe('mcp tool sources', () => {
     expect(((await second.json()) as { changed: boolean }).changed).toBe(false);
 
     // The briefing now resolves the discovered tool for bound members.
-    const briefing = (await (await app.request('/briefing', authed(BOUND))).json()) as {
+    const briefing = (await (await app.request('/instructions', authed(BOUND))).json()) as {
       toolSources: Array<{ source: string; tools: Array<{ name: string }> }>;
     };
     expect(briefing.toolSources[0]?.tools[0]?.name).toBe('echo');

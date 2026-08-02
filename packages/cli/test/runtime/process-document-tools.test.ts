@@ -16,11 +16,11 @@
  */
 
 import type { Client as BrokerClient } from 'csuite-sdk/client';
-import type { BriefingResponse, ProcessDocument, ProcessDocumentEdit } from 'csuite-sdk/types';
+import type { InstructionsResponse, ProcessDocument, ProcessDocumentEdit } from 'csuite-sdk/types';
 import { describe, expect, it } from 'vitest';
 import { defineTools, handleToolCall } from '../../src/runtime/tools.js';
 
-const BRIEFING: BriefingResponse = {
+const BRIEFING: InstructionsResponse = {
   name: 'scout',
   role: { title: 'engineer', description: '' },
   permissions: [],
@@ -33,7 +33,7 @@ const BRIEFING: BriefingResponse = {
 };
 
 /** The same member, holding the edit authority. */
-const AUTHORITY: BriefingResponse = { ...BRIEFING, permissions: ['process.manage'] };
+const AUTHORITY: InstructionsResponse = { ...BRIEFING, permissions: ['process.manage'] };
 
 function makeBroker(overrides: Partial<BrokerClient> = {}): BrokerClient {
   return overrides as BrokerClient;
@@ -74,7 +74,7 @@ describe('the write tool is gated on process.manage', () => {
    * predecessor's gate; holding it must not carry this authority.
    */
   it('withholds it from a holder of objectives.create', () => {
-    const other: BriefingResponse = {
+    const other: InstructionsResponse = {
       ...BRIEFING,
       permissions: ['objectives.create', 'members.manage', 'team.manage'],
     };

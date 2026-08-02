@@ -48,7 +48,7 @@ vi.mock('../../../src/runtime/agents/codex/channel-sink.js', () => ({
   })),
 }));
 
-import type { BriefingResponse } from 'csuite-sdk/types';
+import type { InstructionsResponse } from 'csuite-sdk/types';
 import { spawnCodex } from '../../../src/runtime/agents/codex/adapter.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -69,7 +69,7 @@ function makeFakeChild() {
   return child;
 }
 
-const MINIMAL_BRIEFING: BriefingResponse = {
+const MINIMAL_BRIEFING: InstructionsResponse = {
   name: 'test-agent',
   role: { title: 'tester', description: '' },
   team: { name: 'test-team', context: '', permissionPresets: {} },

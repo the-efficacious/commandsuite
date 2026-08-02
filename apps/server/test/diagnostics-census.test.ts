@@ -102,15 +102,27 @@ const APP_IN_SCOPE = [
  * the first makes the per-block denominator incomplete, and the second
  * means an instruction block known to be absent was not re-delivered.
  *
- * 2026-08-01, +1 = 54. `briefing runner version rejected` is
+ * 2026-08-01, +1 = 54. `instructions runner version rejected` is
  * OPERATIONAL, not a completeness claim: the broker substitutes a
  * bounded `unknown` in complimentary context and still returns the
  * complete briefing. The warning distinguishes a rejected report
  * from an older client that sent no report at all.
  *
- * 2026-08-01, +1 = 55. `briefing exceeds legacy runner instruction
- * limit` is OPERATIONAL: no content is lost by the broker, but a
- * pre-0.4.0 runner will reject the response locally and fail to start.
+ * 2026-08-01, +1 = 55. `instructions exceed legacy runner cap` is
+ * OPERATIONAL: no content is lost by the broker, but a pre-0.4.0
+ * runner will reject the response locally and fail to start.
+ *
+ * 2026-08-01, +1 = 56. `failed to fanout instructions event` is
+ * OPERATIONAL, same class as the secret/variable/tool-source fanout
+ * sites beside it: a change-notification that did not reach members.
+ * Nothing captured is lost; the affected members surface as
+ * restart-pending on the roster regardless, because pending derives
+ * from the issued-vs-current hash comparison, not from the event.
+ *
+ * 2026-08-01, −1 = 55. `instructions exceed legacy runner cap`
+ * removed along with the legacy-cap machinery it served: it warned
+ * about pre-0.4.0 runners rejecting oversized packets locally, and
+ * zero deployed runners remained when the wire renamed (protocol v2).
  */
 const TOTAL_SITES = 55;
 

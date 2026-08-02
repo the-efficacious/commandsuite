@@ -146,7 +146,7 @@ describe('a team with no document', () => {
 
   it('carries null on the briefing, so the field is present and explicit', async () => {
     const { app } = makeApp();
-    const res = await app.request('/briefing', authed(BOUND));
+    const res = await app.request('/instructions', authed(BOUND));
     const body = (await res.json()) as { processDocument: unknown };
     // Present-and-null, never absent: an absent field is what an older
     // broker sends, and a member must be able to tell those apart.
@@ -155,27 +155,32 @@ describe('a team with no document', () => {
   });
 });
 
-// ─── criterion 1: injected, always current, no announcement ──────────
+// ─── criterion 1: injected, always current, announced as an edit ─────
+//
+// The original criterion said "no announcement": the document reached
+// members only through their next fetch, silently. The instruction-
+// block model reversed that deliberately — an edit now fans out ONE
+// `data.kind: 'instructions'` notice to affected members, because the
+// edit is a restart trigger, not just new text to pick up eventually.
 
 describe('criterion 1 — the document is injected as current state', () => {
-  it('reaches a member who was told nothing, and updates without a broadcast', async () => {
+  it('reaches a member on the next fetch, and the edit announces itself once', async () => {
     const { app, broker } = makeApp();
     await app.request('/process-document', authed(EDITOR, write(V1)));
 
-    const before = (await (await app.request('/briefing', authed(BOUND))).json()) as {
+    const before = (await (await app.request('/instructions', authed(BOUND))).json()) as {
       processDocument: ProcessDocument;
     };
     expect(before.processDocument.text).toBe(V1);
     expect(before.processDocument.version).toBe(1);
 
-    // POSITIVE CONTROL FIRST. `toHaveLength(0)` against an observer
-    // that never fires is vacuous — misname the method and this test
-    // passes while watching nothing. Prove the counter works by
-    // driving a real announcement through the same broker.
-    const announced: unknown[] = [];
+    // POSITIVE CONTROL FIRST. An observer that never fires satisfies
+    // any count — prove the counter works by driving a real
+    // announcement through the same broker.
+    const announced: Array<[Record<string, unknown>, Record<string, unknown>]> = [];
     const originalPush = broker.push.bind(broker);
     broker.push = (async (...args: unknown[]) => {
-      announced.push(args);
+      announced.push(args as [Record<string, unknown>, Record<string, unknown>]);
       return originalPush(...(args as Parameters<typeof originalPush>));
     }) as typeof broker.push;
 
@@ -185,12 +190,25 @@ describe('criterion 1 — the document is injected as current state', () => {
 
     await app.request('/process-document', authed(EDITOR, write(V2, 'reversed the merge model')));
 
-    // Nothing was announced — added to a counter just shown to work.
-    expect(announced).toHaveLength(beforeEdit);
+    // Exactly ONE announcement — the instructions-edited fanout, with
+    // the payload a runner keys its restart on. Not a per-member loop.
+    expect(announced).toHaveLength(beforeEdit + 1);
+    const [payload] = announced[beforeEdit] ?? [];
+    expect(payload?.data).toMatchObject({
+      kind: 'instructions',
+      event: 'edited',
+      changed: ['process_document'],
+    });
 
-    // And the member, who saw nothing, has the new text with the
-    // version moved so they can tell it changed.
-    const after = (await (await app.request('/briefing', authed(BOUND))).json()) as {
+    // An edit that stores the SAME text moves no composition and
+    // announces nothing — the fanout is driven by the hash diff, not
+    // by the write.
+    await app.request('/process-document', authed(EDITOR, write(V2, 'unchanged text, new note')));
+    expect(announced).toHaveLength(beforeEdit + 1);
+
+    // And the member has the new text with the version moved so they
+    // can tell it changed.
+    const after = (await (await app.request('/instructions', authed(BOUND))).json()) as {
       processDocument: ProcessDocument;
     };
     expect(after.processDocument.text).toBe(V2);
@@ -227,7 +245,7 @@ describe('history over the wire', () => {
     for (let i = 1; i <= 4; i++) {
       await app.request('/process-document', authed(EDITOR, write(`revision ${i}`)));
     }
-    const brief = (await (await app.request('/briefing', authed(BOUND))).json()) as {
+    const brief = (await (await app.request('/instructions', authed(BOUND))).json()) as {
       processDocument: ProcessDocument;
     };
     expect(brief.processDocument.text).toBe('revision 4');

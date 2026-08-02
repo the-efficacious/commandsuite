@@ -14,8 +14,8 @@
  * separates them, and that line is what these tests pin.
  */
 
-import { BriefingResponseSchema } from 'csuite-sdk/schemas';
-import type { BriefingResponse, ProcessDocument } from 'csuite-sdk/types';
+import { InstructionsResponseSchema } from 'csuite-sdk/schemas';
+import type { InstructionsResponse, ProcessDocument } from 'csuite-sdk/types';
 import { describe, expect, it } from 'vitest';
 import {
   composeFixedContext,
@@ -31,7 +31,7 @@ const DOC: ProcessDocument = {
   updatedAt: 1_700_000_100_000,
 };
 
-function briefing(over: Partial<BriefingResponse> = {}): BriefingResponse {
+function briefing(over: Partial<InstructionsResponse> = {}): InstructionsResponse {
   return {
     name: 'cora',
     role: { title: 'engineer', description: '' },
@@ -116,7 +116,7 @@ describe('a briefing with no authored instructions', () => {
 // ─── three states must survive PARSING, not just rendering ───────────
 //
 // Found by Rune. The renderer distinguishes absent from null, but
-// `BriefingResponseSchema` used `.default(null)` — so an older broker
+// `InstructionsResponseSchema` used `.default(null)` — so an older broker
 // that omits the field had it turned into `null` before the renderer
 // ever saw it, and a new runner confidently told its member "this team
 // has no process document" when the truth was "this broker has no
@@ -138,10 +138,10 @@ describe('the three states survive the parse', () => {
 
   it('keeps an OMITTED field distinguishable from an explicit null', () => {
     // Exactly what an older broker sends: the key is not there.
-    const parsed = BriefingResponseSchema.parse({ ...base });
+    const parsed = InstructionsResponseSchema.parse({ ...base });
     expect(parsed.processDocument).toBeUndefined();
 
-    const rendered = composeFixedContext(parsed as BriefingResponse);
+    const rendered = composeFixedContext(parsed as InstructionsResponse);
     expect(rendered).toMatch(/unavailable/i);
     expect(rendered).toMatch(/does not report a process document/i);
     // And crucially NOT the healthy empty state.
@@ -149,16 +149,16 @@ describe('the three states survive the parse', () => {
   });
 
   it('renders an explicit null as "none has been set"', () => {
-    const parsed = BriefingResponseSchema.parse({ ...base, processDocument: null });
+    const parsed = InstructionsResponseSchema.parse({ ...base, processDocument: null });
     expect(parsed.processDocument).toBeNull();
-    const rendered = composeFixedContext(parsed as BriefingResponse);
+    const rendered = composeFixedContext(parsed as InstructionsResponse);
     expect(rendered).toMatch(/no process document has been set/i);
     expect(rendered).not.toMatch(/unavailable/i);
   });
 
   it('renders a document when one is present', () => {
-    const parsed = BriefingResponseSchema.parse({ ...base, processDocument: DOC });
-    const rendered = composeFixedContext(parsed as BriefingResponse);
+    const parsed = InstructionsResponseSchema.parse({ ...base, processDocument: DOC });
+    const rendered = composeFixedContext(parsed as InstructionsResponse);
     expect(rendered).toContain('Squash-merge to main.');
     expect(rendered).not.toMatch(/unavailable/i);
     expect(rendered).not.toMatch(/no process document has been set/i);
@@ -166,7 +166,7 @@ describe('the three states survive the parse', () => {
 
   it('gives all three states different renderings', () => {
     const render = (o: object) =>
-      composeFixedContext(BriefingResponseSchema.parse(o) as BriefingResponse);
+      composeFixedContext(InstructionsResponseSchema.parse(o) as InstructionsResponse);
     const absent = render({ ...base });
     const empty = render({ ...base, processDocument: null });
     const present = render({ ...base, processDocument: DOC });

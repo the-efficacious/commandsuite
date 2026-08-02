@@ -14,7 +14,7 @@
 
 import type { Client as BrokerClient } from 'csuite-sdk/client';
 import type {
-  BriefingResponse,
+  InstructionsResponse,
   ChannelSummary,
   GetChannelResponse,
   Message,
@@ -25,7 +25,7 @@ import type {
 import { describe, expect, it, vi } from 'vitest';
 import { defineTools, handleToolCall } from '../../src/runtime/tools.js';
 
-const BRIEFING: BriefingResponse = {
+const BRIEFING: InstructionsResponse = {
   name: 'scout',
   role: { title: 'engineer', description: '' },
   permissions: [],
@@ -48,7 +48,7 @@ const BRIEFING: BriefingResponse = {
   processDocument: null,
 };
 
-const ADMIN_BRIEFING: BriefingResponse = {
+const ADMIN_BRIEFING: InstructionsResponse = {
   ...BRIEFING,
   permissions: ['team.manage', 'members.manage'],
 };
@@ -711,7 +711,7 @@ const NOTIFICATION_ADMIN_NAMES = [
   'notifications_profile_set_secret',
 ];
 
-const NOTIF_ADMIN_BRIEFING: BriefingResponse = {
+const NOTIF_ADMIN_BRIEFING: InstructionsResponse = {
   ...BRIEFING,
   permissions: ['notifications.manage'],
 };
