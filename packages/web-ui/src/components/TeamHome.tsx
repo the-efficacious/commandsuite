@@ -14,8 +14,9 @@
  */
 
 import { signal } from '@preact/signals';
-import type { Presence } from 'csuite-sdk/types';
+import type { Presence, ProcessDocument } from 'csuite-sdk/types';
 import { hasPermission } from 'csuite-sdk/types';
+import { useState } from 'preact/hooks';
 import { briefing, loadBriefing } from '../lib/briefing.js';
 import { getClient } from '../lib/client.js';
 import { objectives } from '../lib/objectives.js';
@@ -49,9 +50,25 @@ export function TeamHome({ viewer }: TeamHomeProps) {
     >
       <PageHeader eyebrow="Team" title={b.team.name} />
 
+      {(r.restartPending?.length ?? 0) > 0 && (
+        <div
+          class="card"
+          style="padding:10px 12px;margin-bottom:16px;font-family:var(--f-mono);font-size:11.5px;line-height:1.5;color:var(--muted);border-left:3px solid var(--warn)"
+        >
+          <span style="color:var(--ember)">Restart pending:</span>{' '}
+          {(r.restartPending ?? []).join(', ')} — running superseded instructions until their next
+          session.
+        </div>
+      )}
+
       <TeamContextSection
         context={b.team.context}
         canManage={hasPermission(b.permissions, 'team.manage')}
+      />
+
+      <TeamProcessSection
+        doc={b.processDocument}
+        canManage={hasPermission(b.permissions, 'process.manage')}
       />
 
       <div
@@ -120,6 +137,15 @@ export function TeamHome({ viewer }: TeamHomeProps) {
                         <span class={`badge ${roleBadgeVariant(summary)}`}>
                           {t.role.title.toUpperCase()}
                         </span>
+                        {r.restartPending?.includes(t.name) === true && (
+                          <span
+                            class="badge warn"
+                            style="font-size:9.5px;letter-spacing:.06em"
+                            title="This member's live session runs superseded instructions. The current text applies from their next session."
+                          >
+                            RESTART PENDING
+                          </span>
+                        )}
                         {captureWarning === 'gap' && (
                           <span
                             class="badge warn"
@@ -188,6 +214,45 @@ export function TeamHome({ viewer }: TeamHomeProps) {
           })}
         </ul>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Standing prose collapses to a few lines unless the reader opens it.
+ * Team context and the process document both run to thousands of
+ * characters; rendered whole they push the roster off-screen, and the
+ * reading case for the full text is rare next to the scanning case.
+ * The full text stays in the DOM (CSS clamp), so search-in-page still
+ * finds it.
+ */
+const CLAMP_LINES = 4;
+const CLAMP_CHARS = 320;
+
+function ClampedProse({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const clampable = text.length > CLAMP_CHARS || text.split('\n').length > CLAMP_LINES;
+  const clamp =
+    clampable && !expanded
+      ? `display:-webkit-box;-webkit-line-clamp:${CLAMP_LINES};-webkit-box-orient:vertical;overflow:hidden;`
+      : '';
+  return (
+    <div>
+      <div
+        style={`font-family:var(--f-sans);font-size:13.5px;color:var(--muted);line-height:1.55;white-space:pre-wrap;${clamp}`}
+      >
+        {text}
+      </div>
+      {clampable && (
+        <button
+          type="button"
+          class="btn btn-ghost btn-sm"
+          style="margin-top:4px"
+          onClick={() => setExpanded(!expanded)}
+        >
+          {expanded ? 'Collapse' : `Show all (${text.length.toLocaleString()} chars)`}
+        </button>
+      )}
     </div>
   );
 }
@@ -284,9 +349,7 @@ function TeamContextSection({ context, canManage }: { context: string; canManage
 
   return (
     <div style="margin-bottom:24px">
-      <div style="font-family:var(--f-sans);font-size:13.5px;color:var(--muted);line-height:1.55;white-space:pre-wrap">
-        {context}
-      </div>
+      <ClampedProse text={context} />
       {canManage && (
         <button
           type="button"
@@ -301,11 +364,191 @@ function TeamContextSection({ context, canManage }: { context: string; canManage
   );
 }
 
+const prcEditing = signal(false);
+const prcDraft = signal('');
+const prcReason = signal('');
+const prcDisposition = signal<'scope_change' | 'correction'>('scope_change');
+const prcBusy = signal(false);
+const prcError = signal<string | null>(null);
+
+/**
+ * The team's process document, with in-place editing for
+ * `process.manage` holders. Edits require a reason and disposition —
+ * they land in the document's append-only history and fan out as an
+ * instruction event, so every member's runner learns a restart is
+ * owed.
+ *
+ * `doc` keeps the wire's three states: a document, `null` (no
+ * document set — a real state), and `undefined` (this broker does not
+ * report the field). Collapsing the last two would tell a member the
+ * team has no process when the truth is the broker has no opinion.
+ */
+function TeamProcessSection({
+  doc,
+  canManage,
+}: {
+  doc: ProcessDocument | null | undefined;
+  canManage: boolean;
+}) {
+  const busy = prcBusy.value;
+
+  async function onSave(e: Event): Promise<void> {
+    e.preventDefault();
+    prcBusy.value = true;
+    prcError.value = null;
+    try {
+      await getClient().writeProcessDocument({
+        text: prcDraft.value,
+        reason: prcReason.value.trim(),
+        disposition: prcDisposition.value,
+      });
+      await loadBriefing();
+      prcEditing.value = false;
+    } catch (err) {
+      prcError.value = err instanceof Error ? err.message : String(err);
+    } finally {
+      prcBusy.value = false;
+    }
+  }
+
+  if (prcEditing.value) {
+    return (
+      <form class="panel" onSubmit={(e) => void onSave(e)} style="padding:16px;margin-bottom:24px">
+        <div class="eyebrow" style="margin-bottom:8px">
+          Team process
+        </div>
+        {prcError.value !== null && (
+          <ErrorCallout message={prcError.value} style="margin-bottom:10px" />
+        )}
+        <textarea
+          class="input w-full"
+          rows={10}
+          value={prcDraft.value}
+          onInput={(e) => {
+            prcDraft.value = (e.currentTarget as HTMLTextAreaElement).value;
+          }}
+          placeholder="How this team works — the process every member executes against."
+          disabled={busy}
+        />
+        <TextMetrics text={prcDraft.value} />
+        <label style="display:flex;flex-direction:column;gap:4px;margin-top:10px;font-family:var(--f-mono);font-size:11px;letter-spacing:.04em;color:var(--muted);text-transform:uppercase">
+          <span>reason — recorded in the document's history</span>
+          <input
+            class="input w-full"
+            style="font-size:13px;font-family:var(--f-sans);text-transform:none;letter-spacing:normal;color:var(--ink)"
+            value={prcReason.value}
+            onInput={(e) => {
+              prcReason.value = (e.currentTarget as HTMLInputElement).value;
+            }}
+            placeholder="Why this edit"
+            disabled={busy}
+            required
+          />
+        </label>
+        <label style="display:flex;flex-direction:column;gap:4px;margin-top:10px;font-family:var(--f-mono);font-size:11px;letter-spacing:.04em;color:var(--muted);text-transform:uppercase">
+          <span>disposition</span>
+          <select
+            class="input"
+            style="font-size:13px;font-family:var(--f-sans);text-transform:none;letter-spacing:normal;color:var(--ink)"
+            value={prcDisposition.value}
+            onInput={(e) => {
+              prcDisposition.value = (e.currentTarget as HTMLSelectElement).value as
+                | 'scope_change'
+                | 'correction';
+            }}
+            disabled={busy}
+          >
+            <option value="scope_change">scope change — the process itself moved</option>
+            <option value="correction">correction — the text was wrong about the process</option>
+          </select>
+        </label>
+        <div class="flex items-center gap-2" style="margin-top:12px">
+          <button
+            type="submit"
+            class="btn btn-primary btn-sm"
+            disabled={busy || prcReason.value.trim().length === 0}
+          >
+            {busy ? 'Saving…' : 'Save'}
+          </button>
+          <button
+            type="button"
+            class="btn btn-ghost btn-sm"
+            onClick={() => {
+              prcEditing.value = false;
+              prcError.value = null;
+            }}
+            disabled={busy}
+          >
+            Cancel
+          </button>
+        </div>
+      </form>
+    );
+  }
+
+  const startEdit = () => {
+    prcDraft.value = doc?.text ?? '';
+    prcReason.value = '';
+    prcDisposition.value = 'scope_change';
+    prcError.value = null;
+    prcEditing.value = true;
+  };
+
+  if (doc === undefined) {
+    return (
+      <div style="margin-bottom:24px;font-family:var(--f-sans);font-size:11.5px;color:var(--muted);font-style:italic">
+        Team process: unavailable — this broker does not report a process document.
+      </div>
+    );
+  }
+
+  if (doc === null) {
+    if (!canManage) return null;
+    return (
+      <div style="margin-bottom:24px">
+        <button type="button" class="btn btn-ghost btn-sm" onClick={startEdit}>
+          + Add team process
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div style="margin-bottom:24px">
+      <div class="flex items-center gap-2" style="margin-bottom:6px">
+        <div class="eyebrow" style="margin:0">
+          Team process
+        </div>
+        <span style="font-family:var(--f-mono);font-size:10.5px;letter-spacing:.06em;color:var(--muted)">
+          v{doc.version} · last edited by {doc.updatedBy}
+        </span>
+      </div>
+      <ClampedProse text={doc.text} />
+      {canManage && (
+        <button
+          type="button"
+          class="btn btn-ghost btn-sm"
+          style="margin-top:8px"
+          onClick={startEdit}
+        >
+          Edit process
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function __resetTeamHomeForTests(): void {
   ctxEditing.value = false;
   ctxDraft.value = '';
   ctxBusy.value = false;
   ctxError.value = null;
+  prcEditing.value = false;
+  prcDraft.value = '';
+  prcReason.value = '';
+  prcDisposition.value = 'scope_change';
+  prcBusy.value = false;
+  prcError.value = null;
 }
 
 function StatCard({ label, value, accent }: { label: string; value: number; accent?: 'ember' }) {

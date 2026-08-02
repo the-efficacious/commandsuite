@@ -18,7 +18,7 @@ import type { Member, Permission, PermissionPresets } from 'csuite-sdk/types';
 import { useState } from 'preact/hooks';
 import { loadBriefing } from '../../lib/briefing.js';
 import { getClient } from '../../lib/client.js';
-import { loadRoster } from '../../lib/roster.js';
+import { loadRoster, roster } from '../../lib/roster.js';
 import { TextMetrics } from '../ui/index.js';
 import { MemberTokenList } from './MemberTokenList.js';
 import { PermissionsEditor } from './PermissionsEditor.js';
@@ -257,21 +257,29 @@ export function MemberAdminForm({
           <TextMetrics text={instructions} />
         </label>
 
-        {/* Role title, role description, and personal instructions are
-            snapshotted into the runner's system prompt (claude's
-            --append-system-prompt) at the moment `csuite claude-code`
-            starts. Editing them here updates the team record
-            immediately, but the running agent won't see the change
-            until it's rerun. The MemberProfile header already shows
-            the member's online/offline state via the presence dot —
-            admins can use that to tell whether a rerun is pending. */}
-        <div
-          class="card"
-          style="padding:8px 10px;font-family:var(--f-mono);font-size:11px;line-height:1.4;color:var(--muted);border-left:3px solid var(--warn)"
-        >
-          Role and instructions are pinned into the agent's system prompt at runner startup. Restart
-          any running agents for changes to take effect.
-        </div>
+        {/* Role, description, and personal instructions are pinned
+            into the agent's system prompt at session start. The broker
+            versions the composed text and reports restart-pending on
+            the roster, so this card shows the LIVE state for this
+            member rather than a standing warning an admin has to
+            evaluate themselves. */}
+        {roster.value?.restartPending?.includes(member.name) === true ? (
+          <div
+            class="card"
+            style="padding:8px 10px;font-family:var(--f-mono);font-size:11px;line-height:1.4;color:var(--muted);border-left:3px solid var(--warn)"
+          >
+            <span style="color:var(--ember)">Restart pending</span> — this member's live session
+            runs superseded instructions. The current text applies from their next session.
+          </div>
+        ) : (
+          <div
+            class="card"
+            style="padding:8px 10px;font-family:var(--f-mono);font-size:11px;line-height:1.4;color:var(--muted)"
+          >
+            Instructions apply from the member's next session. If a live session falls behind an
+            edit, the broker lists the member restart-pending here and on the roster.
+          </div>
+        )}
 
         <div style="display:flex;flex-direction:column;gap:6px">
           <span style="font-family:var(--f-mono);font-size:11px;letter-spacing:.04em;color:var(--muted);text-transform:uppercase">
