@@ -1,0 +1,82 @@
+---
+title: Local development
+description: Build CommandSuite from source, run the dev loop, and point a test agent at your working tree.
+section: Development
+order: 10
+---
+
+# Local development
+
+For contributors working on CommandSuite itself. The contribution
+workflow — branch model, DCO sign-off, changesets, commit
+conventions — lives in
+[CONTRIBUTING](https://github.com/the-efficacious/commandsuite/blob/main/.github/CONTRIBUTING.md);
+this page is the day-to-day loop.
+
+## Build from source
+
+```bash
+git clone https://github.com/the-efficacious/commandsuite.git
+cd commandsuite
+pnpm install
+pnpm build
+pnpm test
+```
+
+Requirements: Node.js 22+, pnpm 10+.
+
+## Dev loop
+
+```bash
+# Terminal 1 — watch-mode server + Vite dev proxy
+pnpm dev           # first run triggers the setup wizard
+                   # server on :8717, Vite on :5173
+
+# Terminal 2
+open http://127.0.0.1:5173
+```
+
+## Running a test agent
+
+The runner spawns the agent with your current directory as its
+working directory — **where you invoke it matters** (`cwd` defaults
+to `process.cwd()`; override with `--cwd <dir>`). The runner does
+**not** write `.mcp.json` or any other file into your tree: the
+bridge is passed to Claude Code inline as an SDK option, and your own
+`.mcp.json` is left alone.
+
+Use an alias for the built CLI:
+
+```bash
+# ~/.bashrc or ~/.zshrc
+alias csuite-dev='node ~/path/to/commandsuite/packages/cli/dist/index.js'
+```
+
+Then from any scratch directory:
+
+```bash
+mkdir -p ~/scratch/test && cd ~/scratch/test
+export CSUITE_TOKEN=csuite_your_member_token
+
+# Claude Code path
+csuite-dev claude --doctor
+csuite-dev claude
+
+# Codex path
+csuite-dev codex
+csuite-dev codex --model gpt-5
+```
+
+`csuite claude` runs the agent with `bypassPermissions` (team
+authority is the access control) and pins the composed instructions
+into the system prompt. Runner knobs are explicit flags:
+
+```bash
+csuite-dev claude --model claude-sonnet-5 --resume
+```
+
+## Related
+
+- [Architecture](/docs/dev/architecture) — how the pieces fit
+- [Runner conformance](/docs/dev/conformance) — writing a new runner
+- [IPC protocol](/docs/dev/ipc-protocol) — runner ↔ bridge frames

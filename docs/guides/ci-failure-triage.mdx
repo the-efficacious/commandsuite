@@ -1,0 +1,174 @@
+---
+title: Turn CI failures into agent work
+description: Route CI webhook alerts to an agent that reads the log, investigates the failure, and reports back in a channel or an objective.
+section: Guides
+order: 20
+---
+
+# Turn CI failures into agent work
+
+By the end of this guide, a red CI run will land in front of an agent
+within seconds — framed as an outside event, not a teammate's message
+— and the agent will investigate and report before a human has
+context-switched. The pieces: one inbound
+[external notification endpoint](/docs/concepts/external-notifications),
+one webhook configured at your CI provider, and standing instructions
+that tell the agent what the alert means.
+
+## 1. Pick the member who owns triage
+
+Triage needs a member whose working directory is a checkout of the
+code that's failing — an agent can't read a stack trace against a
+repo it doesn't have. An [always-on agent](/docs/guides/always-on-agent)
+is the natural fit; this guide assumes a member named `builder`.
+
+## 2. Create the endpoint
+
+An endpoint is a slug-addressed URL on your broker that verifies,
+filters, and routes inbound requests. Creating one requires
+`notifications.manage`:
+
+```bash
+csuite notifications add ci-alerts \
+  --target @builder \
+  --auth hmac-sha256 \
+  --level warning \
+  --template 'CI {{payload.state}} on {{payload.branches.0}} — {{payload.target_url}}' \
+  --if-offline queue \
+  --debounce-ms 120000 \
+  --dedupe-header x-github-delivery
+
+csuite notifications set-secret ci-alerts    # hidden prompt, or pipe it in
+```
+
+What each choice buys you:
+
+- `--auth hmac-sha256` — the sender signs each request body; the
+  defaults are GitHub-compatible out of the box.
+- `--if-offline queue` — a failure that fires while the agent's
+  runner is down waits (up to 24 hours by default) and is delivered
+  when it reattaches, instead of vanishing.
+- `--debounce-ms 120000` — a burst of failures within two minutes
+  coalesces into one message, newest first, so a broken main doesn't
+  become forty separate wake-ups.
+- `--dedupe-header x-github-delivery` — provider retries of the same
+  delivery are dropped as duplicates.
+
+## 3. Point your CI at it
+
+In GitHub: repository settings → webhooks → add a webhook with payload
+URL `https://<broker>/hooks/ci-alerts`, content type
+`application/json`, and the same secret you just set. Subscribe it to
+the events you care about (workflow runs, statuses).
+
+If your broker sits on a private network, the `/hooks/*` path is
+exactly the surface designed to be exposed publicly (through a tunnel
+or funnel) — every endpoint verifies its own secret, and unverified
+requests get a bare 401.
+
+**Driving it from your own CI script instead?** Skip signing — HMAC
+buys nothing against a sender you wrote. Create the endpoint with
+`--auth header-secret` and post directly from the failure branch of
+your pipeline:
+
+```bash
+curl -sf -X POST "https://<broker>/hooks/ci-alerts?level=critical&if_busy=now" \
+  -H "x-hook-secret: $HOOK_SECRET" \
+  -H "content-type: application/json" \
+  -d '{"state":"failure","branch":"main","run":"'"$RUN_URL"'"}'
+```
+
+The query string is the sender's per-event knob: `level=critical`
+punches through debounce and busy-wait unconditionally, so the
+page-worthy path can use it while routine failures take the defaults.
+
+## 4. Tell the agent what the alert means
+
+Deliveries arrive from the sender `hook:ci-alerts`, wrapped in a frame
+that marks the content as originating outside the team — the agent is
+briefed to treat it as data to act on per its standing instructions,
+never as instructions itself. So give it standing instructions:
+
+```bash
+csuite member update --name builder --instructions \
+'When a ci-alerts notification arrives: fetch the failing run log,
+find the first real error, and check whether a recent commit
+plausibly caused it. Post your findings to the #ci channel. If the
+failure is real and needs more than a revert, open an objective for
+the fix with the run URL in the body. Never push a fix without an
+objective.'
+```
+
+The edit reaches a live agent too: it finishes its current turn,
+restarts, and resumes the same conversation with the new
+instructions in place.
+
+## 5. Choose where reports land
+
+Two good shapes, matching what your agent may do:
+
+- **Report in a channel.** Target the report at a `#ci` channel the
+  team watches; the agent posts findings there with its `channels_post`
+  tool. You can also target the *endpoint* at a channel
+  (`--target '#ci'`) so the raw alert is visible to everyone, with the
+  agent as one reader among several.
+- **Escalate to an objective.** If `builder` holds
+  `objectives.create`, it can open an objective for a real failure —
+  title, a verifiable outcome ("main is green at a commit containing
+  the fix"), the run URL in the body — and assign it to itself or a
+  teammate. The failure now has a lifecycle, watchers, and a trace,
+  instead of scrolling away in chat.
+
+Grant the permission only if you want the escalation path:
+
+```bash
+csuite member update --name builder --permissions objectives.create
+```
+
+## 6. Verify the pipe end to end
+
+Trigger a failure (or re-run a webhook delivery from your provider's
+UI) and watch the receipts:
+
+```bash
+csuite notifications deliveries ci-alerts
+```
+
+Every request that clears the rate limit gets a receipt —
+`delivered`, `rejected`, `filtered`, `duplicate`, `coalesced`,
+`pending`, `expired` — with the reason attached. The wire deliberately says only
+`401` on a verification failure; the receipt is where the actual
+reason lives (missing header, prefix mismatch, signature mismatch).
+Fix the configuration, then re-run the stored delivery without
+touching your CI:
+
+```bash
+csuite notifications replay <deliveryId>
+```
+
+{/* media: screenshot ci-delivery-receipts — the web UI delivery receipts list for ci-alerts showing one rejected receipt (signature mismatch reason expanded) above a delivered one with its resulting message id */}
+
+## Where this breaks
+
+- **A provider that blasts one URL with everything.** If you can't
+  scope the webhook at the sender, add drop filters on the endpoint —
+  rules over the payload that receipt non-matching deliveries as
+  `filtered` before they reach anyone. See
+  [external notifications](/docs/concepts/external-notifications)
+  for the filter model; filters are configured on the endpoint from
+  the web UI or by an agent holding `notifications.manage`.
+- **Flaky-test storms.** Debounce keeps a storm to one coalesced
+  message, but the agent still spends a turn on it. If a specific
+  suite is known-flaky, filter it out at the sender or endpoint —
+  an agent repeatedly told about noise learns to treat alerts as
+  noise.
+- **The agent can't see your CI system.** Delivery gets the *alert*
+  to the agent; investigating needs the *log*. If fetching run logs
+  requires credentials, put them on the agent's machine or wire a
+  [tool source](/docs/concepts/tool-sources) — the notification
+  pipeline itself never carries credentials to the agent.
+- **Don't invert it into polling.** An agent that stays awake
+  checking CI in a loop burns tokens around the clock, reads as
+  perpetually `working` in presence, and holds up deliveries from
+  every other source that waits for idle. The push shape above costs
+  nothing between events — that's the point.

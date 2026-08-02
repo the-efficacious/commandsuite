@@ -1,11 +1,15 @@
 ---
 title: IPC protocol
 description: Wire-level reference for the runner ↔ MCP bridge protocol — frame types, encoding, correlation, error handling.
-section: Reference
-order: 40
+section: Development
+order: 60
 ---
 
 # IPC protocol
+
+This page is for contributors working on the runner, the bridge, or
+a new agent adapter — it documents an internal wire protocol, not a
+public API.
 
 The csuite runner and the MCP bridge talk over a Unix domain socket
 using newline-delimited JSON frames. This page is the wire-level
@@ -27,12 +31,15 @@ reference for that protocol.
                 └──────────────────┘
 ```
 
-The bridge process is spawned by the agent (not by the runner) via
-the agent's MCP server registration — `.mcp.json` for claude,
-`config.toml`'s `[mcp_servers.csuite]` block for codex. The bridge
-reads `$CSUITE_RUNNER_SOCKET` from its environment to locate the
-runner's socket and connects on startup. A bridge started without
-that env var exits immediately with a clear error.
+The bridge process is spawned by the agent's MCP client (not by the
+runner directly) via its MCP server registration. For claude the
+runner never writes `.mcp.json` — the bridge command rides the
+Agent SDK's in-process `mcpServers` option; for codex it is the
+`[mcp_servers.csuite]` block in the `config.toml` the adapter
+writes into the ephemeral `CODEX_HOME`. Either way the bridge reads
+`$CSUITE_RUNNER_SOCKET` from its environment to locate the runner's
+socket and connects on startup. A bridge started without that env
+var exits immediately with a clear error.
 
 ## Socket binding
 
@@ -42,12 +49,16 @@ mostly), but the env var the runner writes into the agent's
 environment is always `CSUITE_RUNNER_SOCKET`.
 
 The runner is **single-bridge**. If a second bridge connects while
-one is already attached:
+one is already attached, the adapter-declared `onSecondBridge`
+policy decides:
 
-- Default policy (`displace-old`): the older connection is closed
-  with a `shutdown` frame and the newer connection takes over.
-- Test policy (`reject-new`): the newer connection is rejected with
-  an `error` frame and closed.
+- `displace-old` (default — claude): the older connection is closed
+  with a `shutdown` frame (`reason: 'displaced-by-new-bridge'`) and
+  the newer connection takes over.
+- `reject-new` (codex): the newer connection is rejected with an
+  `error` frame and closed. Codex spawns one bridge per subagent
+  thread; this keeps the root thread's bridge pinned instead of
+  letting each subagent displace it.
 
 There's no keepalive at this layer. If the runner dies, the bridge
 dies with it (the agent sees its MCP server disappear, which is
@@ -164,9 +175,10 @@ registry event changes the member's resolved external-tools set.
 Descriptions of builtin tools are static per session; state
 freshness never rides tool metadata.
 
-The bridge converts these into real MCP notifications on its
-stdio transport. For the codex runner the channel sink converts
-them differently (turn/start vs turn/steer) — see
+The bridge converts these into real MCP notifications on its stdio
+transport. The channel-sink path (which never crosses the bridge)
+is per-framework: streaming input for claude, `turn/start` /
+`turn/steer` dispatches for codex — see
 [runners/codex](/docs/runners/codex).
 
 ### `shutdown` — either direction
@@ -182,13 +194,17 @@ this frame is informational.
 }
 ```
 
-The runner sends `shutdown` when:
-- The agent process exits (claude/codex returned)
-- A SIGINT or SIGTERM reaches the runner
+In practice only the runner emits `shutdown` today:
+- The agent process exits (claude/codex returned) or a SIGINT /
+  SIGTERM reaches the runner — the runner's graceful shutdown
+  closes the active bridge with a `shutdown` frame
 - A new bridge connection displaces the existing one
+  (`reason: 'displaced-by-new-bridge'`)
 
-The bridge sends `shutdown` when:
-- The agent's stdio MCP transport closes (parent went away)
+The bridge never sends one: when its stdio MCP transport closes
+(parent went away) it simply destroys the socket and exits, which
+the runner observes as a disconnect — an equally valid teardown
+under this protocol.
 
 ### `error` — either direction
 

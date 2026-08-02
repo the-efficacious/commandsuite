@@ -1,0 +1,167 @@
+---
+title: Give an agent a job
+description: The general method for putting an agent on any workflow — identity, provisioned access, inbound events, and a definition of done. Worked example — a bookkeeping clerk.
+section: Guides
+order: 5
+---
+
+# Give an agent a job
+
+The dev workflows in the other guides are the familiar ones, but
+nothing about CommandSuite is specific to code. An agent under a
+runner has a computer, not a code editor — anything a careful person
+can do at a prepared workstation is a candidate job: filing,
+reconciling, triaging, publishing, monitoring, dispatching.
+
+Every job reduces to the same four-step setup. This guide walks the
+method once, using a concrete non-dev example — a **bookkeeping
+clerk** that files incoming invoices, keeps a plain-text ledger, and
+reports in a finance channel.
+
+## 1. Create the identity
+
+An agent doing a job needs what a new hire needs first: a name and a
+job description.
+
+```bash
+csuite member create --name ledger \
+  --title "Bookkeeping clerk" \
+  --description "Keeps the books current and the receipts filed." \
+  --instructions "You keep the company books in ~/books using hledger.
+Every invoice that reaches you gets: extracted, categorized against
+the chart of accounts in ~/books/accounts.md, entered in the ledger,
+and the source document filed under the objective. Post a one-line
+summary to #finance for every entry. Never delete a ledger line —
+append corrections. When categorization is ambiguous, ask in
+#finance instead of guessing."
+```
+
+The instructions are the durable job description; they ride with
+every session. For the parts that change week to week — this
+quarter's categorization edge cases, the current approval threshold —
+use the [process document](/docs/concepts/process-document), which
+anyone with `process.manage` can edit while the agent runs.
+
+## 2. Provision access, not keys
+
+Equip the member the way IT equips a hire: by granting access, not
+by handing out passwords.
+
+**Tools through the gateway.** A [tool source](/docs/concepts/tool-sources)
+is registered once on the broker; the broker holds the credential and
+executes every call itself, so the key never exists on the agent's
+machine. Wrap the bank's read-only transactions API as two
+purpose-built tools:
+
+```bash
+csuite tools add bank --kind custom
+csuite tools def bank list_transactions --file list-transactions.json
+csuite tools def bank get_statement --file get-statement.json
+csuite tools cred bank --header X-Api-Key=<read-only key>   # write-only
+csuite tools bind bank ledger
+```
+
+To the agent these are ordinary tools (`bank__list_transactions`),
+but every call is checked against the binding, executed broker-side
+with the stored credential, and written to the member's activity
+stream — the agent process can't evade the record. Scope the key at
+its source (read-only, one account): that scope is the real limit on
+what the job can do.
+
+You don't have to build connectors by hand, either — the common
+split is *AI builds the connector, human drops the key*: an agent
+with `tools.manage` reads the API docs, registers the source, and
+writes the tool definitions; you paste the credential through the
+web UI so it never enters any agent's context.
+
+**Secrets for local tooling.** Where the agent's own command-line
+tools need a credential (a `gh` token, an SFTP password), use a
+[secret](/docs/concepts/secrets): broker-held, injected into the
+runner's environment, and redacted from captured traces.
+
+**The workstation is self-service.** Beyond access, don't
+over-prepare the machine. Unless you tell it otherwise, the agent
+can install what the job needs — told "keep the books with hledger,"
+it will get hledger onto the box itself. Say so (or say the
+opposite) in the instructions; the useful control is the boundary,
+not the package list. Size the workstation to the damage you can
+tolerate — a dedicated user account or VM, with only this job's
+files on it — because under a runner, the machine's boundaries are
+the agent's boundaries. The
+[always-on agent](/docs/guides/always-on-agent) guide covers keeping
+it running.
+
+## 3. Route the world at them
+
+A job isn't a job until work arrives without you relaying it.
+[External notifications](/docs/concepts/external-notifications) turn
+anything that can POST into the agent's inbox. For invoices, point
+an email-forwarding bridge (any provider that turns inbound mail
+into a webhook) at an endpoint:
+
+```bash
+csuite notifications add invoices \
+  --target @ledger \
+  --auth hmac-sha256 \
+  --template 'Invoice received from {{payload.from}}: {{payload.subject}}'
+```
+
+The event lands in the agent's session as ambient input, mid-task,
+the way a teammate gets a ping — no polling, no prompt from you. Two
+patterns extend this:
+
+- **Self-provisioned polling.** For sources that can't push, the
+  agent sets up its own cron on the workstation — a script that
+  checks the bank feed each morning and POSTs anything new to its
+  own endpoint. The agent builds its own inbox.
+- **Humans in the same channels.** Approval gates are just messages:
+  "anything over $500, post the entry in #finance and wait for a 👍
+  before committing it" is a line in the instructions, not a
+  feature you configure.
+
+{/* media: gif invoice-to-ledger — an email invoice arriving as a webhook, the ledger agent's terminal reacting, and the one-line entry summary appearing in #finance */}
+
+## 4. Define done, and read the receipts
+
+Recurring duties live in the instructions. Discrete work gets an
+[objective](/docs/concepts/objectives) with an outcome — the
+definition of done the agent works against:
+
+```bash
+csuite objectives create \
+  --assignee ledger \
+  --title "Close the July books" \
+  --outcome "Every July transaction categorized and entered; ledger balances against the bank statement; discrepancies listed in the objective thread"
+```
+
+Add a watcher if someone should supervise without owning it. When
+the agent completes the objective, open its captured
+[trace](/docs/tracing): every LLM exchange and every tool call it
+took, gateway calls included, with your secrets already redacted.
+For work that touches money, this is the part that makes delegation
+tolerable — you don't trust the summary, you read the record.
+
+{/* media: screenshot ledger-objective-trace — the completed close-the-books objective with its trace open: a bank__list_transactions call, an hledger entry, and the completion result */}
+
+## The method, reusable
+
+Identity, access, inbound events, definition of done. Swap the
+specifics and the same four steps cover a support-inbox dispatcher,
+a backup verifier, a research analyst, a data janitor — the
+[jobs gallery](/docs/guides/jobs-gallery) sketches those and more at
+blueprint depth.
+
+## Where this breaks
+
+Honest boundaries, same as everywhere else in these docs:
+
+- **API- and CLI-shaped work is the sweet spot.** Workflows that
+  live behind a browser with no API are where agents are weakest —
+  budget for that, or bridge it with a tool source in front of a
+  scriptable service.
+- **The workstation is the blast radius.** `bypassPermissions` means
+  team authority is the access control; give the job a machine whose
+  worst day you can accept.
+- **Ambiguity needs a human channel.** The instruction "ask instead
+  of guessing" only works if someone answers. A job with no
+  supervising channel drifts.

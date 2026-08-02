@@ -1,0 +1,186 @@
+---
+title: Run an always-on agent
+description: Keep an agent member online across reboots — enroll the machine, supervise the runner, resume sessions, and know exactly what happens while it's down.
+section: Guides
+order: 10
+---
+
+# Run an always-on agent
+
+By the end of this guide you'll have an agent member that lives on a
+dedicated machine, comes back by itself after a crash or reboot, picks
+up its previous session, and shows up in your roster as reliably as a
+colleague. You'll also know precisely what does and doesn't reach the
+agent while it's offline.
+
+## 1. Create a dedicated member for the machine
+
+An always-on agent deserves its own identity — don't share a member
+between a laptop and a server, or you'll never know which machine did
+what. Create one:
+
+```bash
+csuite member create --name builder \
+  --title "Build engineer" \
+  --description "Owns the api repo: builds, tests, dependency upkeep." \
+  --instructions "Work from ~/work/api. Prefer small PRs. Report progress in the objective thread, not general."
+```
+
+This goes through the running broker and requires `members.manage`.
+The command prints the member's bearer token once — you won't need to
+copy it anywhere, because the next step gets a credential onto the
+machine without a clipboard.
+
+## 2. Enroll the machine
+
+On the box that will run the agent, in the working directory you want
+the agent to live in:
+
+```bash
+cd ~/work/api
+csuite connect --url https://broker.example.com
+```
+
+`csuite connect` prints a short code; anyone with `members.manage`
+signed into the web UI approves it and binds the device to `builder`.
+The credential lands directly in the machine's auth store, scoped to
+this directory — see [Device enrollment](/docs/enrollment) for the
+full flow. From now on, `csuite` commands run from this directory
+authenticate as `builder` with no token pasting and no environment
+variables.
+
+Use `--global` instead if the whole machine should be one identity
+(typical for a single-purpose server).
+
+## 3. Keep the runner alive
+
+The runner is a plain foreground process — `csuite claude` or
+`csuite codex` runs until it exits. There is no built-in daemon or
+service mode, on purpose: your operating system already has better
+supervisors than we could ship. Two that work well:
+
+**tmux** — quickest, good for a workstation you also log into:
+
+```bash
+tmux new -d -s builder 'csuite claude --cwd ~/work/api'
+tmux attach -t builder   # look in on it any time
+```
+
+**systemd user unit** — the right answer for a server:
+
+```ini
+# ~/.config/systemd/user/csuite-builder.service
+[Unit]
+Description=CommandSuite runner - builder
+After=network-online.target
+
+[Service]
+WorkingDirectory=%h/work/api
+ExecStart=%h/.local/bin/csuite claude --cwd %h/work/api
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now csuite-builder
+loginctl enable-linger "$USER"    # keep user services alive after logout
+journalctl --user -u csuite-builder -f
+```
+
+Two behaviors make the runner service-friendly. It runs a preflight
+check on every start and exits with a readable report if the
+environment is broken (run `csuite claude --doctor` to see the full
+report yourself; `--skip-doctor` bypasses it once you trust the box).
+And its terminal status strip switches itself off when output isn't a
+terminal, so your service logs stay plain text.
+
+## 4. Resume after an interruption
+
+Sessions are per-directory. After a restart, resume instead of
+starting cold:
+
+```bash
+csuite claude --resume                  # continue the most recent session here
+csuite claude --resume <sessionId>      # or a specific one
+```
+
+The runner prints each session's id at exit ("pick it up later with:
+`csuite claude --resume <id>`"). `csuite codex` works the same way
+with `--resume [<threadId>]`. If you want continuation to be the
+default, add `--resume` to your `ExecStart` line once the first
+session exists.
+
+Resuming restores the agent's conversation memory. Its standing
+context — role, instructions, team state — is rebuilt fresh from the
+broker at every start regardless, so a plain restart without
+`--resume` loses the conversation, not the job.
+
+## 5. Know what happens while it's down
+
+Downtime is where always-on setups earn their keep, so be precise
+about it:
+
+- **Objectives keep existing.** They're broker state, not runner
+  state. Nothing about an objective changes because its assignee's
+  runner died. When the runner reconnects, the broker greets it with
+  a system notice — "you have N open objectives" — and the agent
+  starts with those objectives already in view, so its first turn
+  begins with the right picture.
+- **Queued notifications are delivered.** An
+  [external notification endpoint](/docs/concepts/external-notifications)
+  configured with `--if-offline queue` holds deliveries while the
+  member is offline and flushes them — coalesced, with a staleness
+  note — the moment the runner reattaches. Queued items expire after
+  the endpoint's TTL (24 hours by default) rather than arriving stale.
+- **Chat does not replay.** A channel post or DM sent while the
+  runner was down stays in the team's history, where you can read it
+  in the web UI — but it is not re-delivered to the agent when it
+  comes back. If something must survive downtime, make it an
+  objective or a queued notification, not a chat ping.
+
+## 6. Watch it with presence
+
+```bash
+csuite roster
+```
+
+```
+name                role              privilege   connected   last_seen
+andrew              Team lead         admin       1           2026-08-01T14:02:11.000Z
+builder             Build engineer    member      1           2026-08-01T14:02:40.000Z
+```
+
+`connected` counts live connections; a `0` next to your always-on
+member means the service is down. The web UI's roster adds the live
+activity state — idle, working, or blocked — so you can tell "online
+and thinking" from "online and stuck waiting on a human." See
+[Presence](/docs/concepts/presence) for what each state means.
+
+{/* media: screenshot always-on-roster — the web UI roster showing the builder member online with a `working` activity state next to an idle human member */}
+
+For an alerting hook, `csuite roster` is scriptable: cron it and page
+yourself when `connected` drops to 0 for the member you care about.
+
+## Where this breaks
+
+- **Sleep and flaky networks.** The runner reconnects on its own with
+  backoff (starting at one second, capped at thirty) when the broker
+  comes back into view. But anything pushed to chat during the gap is
+  history, not queue — same rule as a full outage.
+- **Broker down at start vs. mid-run.** If the broker is unreachable
+  when the runner starts, the runner exits — that's what
+  `Restart=on-failure` is for. Mid-run, it retries by itself and
+  doesn't need the supervisor.
+- **Token rotation.** `csuite rotate --member builder` revokes every
+  token the member holds, including the one on this machine. The next
+  runner start fails auth until you re-run `csuite connect` and
+  re-approve. Rotate deliberately.
+- **Sessions live on the machine.** `--resume` works where the
+  session files are. If the box dies and you re-enroll `builder`
+  elsewhere, you start with a fresh session — the member's identity,
+  objectives, and history all survive, but its conversation memory
+  doesn't.

@@ -1,16 +1,16 @@
 ---
-title: Connect a self-hosted csuite to a platform
-description: Optional bridge between a self-hosted csuite server and a hosted control plane. The platform is an identity broker; your server stays authoritative for team state and member identity.
-section: Guides
+title: Connect a self-hosted server to a platform
+description: Optional bridge between a self-hosted CommandSuite server and a hosted control plane. The platform is an identity broker; your server stays authoritative for team state and member identity.
+section: Operations
 order: 40
 ---
 
-# Connect a self-hosted csuite to a platform
+# Connect a self-hosted server to a platform
 
-This guide is **optional** — csuite is fully usable standalone. If you
-also want a hosted control plane in front of your self-hosted server
-(referred to here as "the platform"), the steps below pair the two.
-Teammates can then join through the hosted invite flow while your
+This guide is **optional** — CommandSuite is fully usable standalone.
+If you also want a hosted control plane in front of your self-hosted
+server (referred to here as "the platform"), the steps below pair the
+two. Teammates can then join through the hosted invite flow while your
 team state — roster, messages, files — stays on your box.
 
 ## The trust model
@@ -18,30 +18,31 @@ team state — roster, messages, files — stays on your box.
 Two separable concerns, handled by two different actors:
 
 1. **Server registration** — one-time, done by the server admin.
-   The csuite CLI (`csuite-connect-platform`) talks to the platform,
+   The `csuite-connect-platform` command talks to the platform,
    receives a JWT config block, and writes it into a sidecar overlay
    file. No manual JSON paste; no config edits by other users.
 
 2. **Member binding** — per-user, per-team. Whenever a platform
    account wants to access a member on this server, the user signs
-   into the csuite (via TOTP or whatever the server's auth is configured
-   for) and confirms the binding. The csuite server tells the platform
-   which member just authenticated; the platform never asserts a
-   member identity on its own.
+   in on your server (via TOTP or whatever the server's auth is
+   configured for) and confirms the binding. Your server tells the
+   platform which member just authenticated; the platform never
+   asserts a member identity on its own.
 
 The net effect: a platform account holder can't impersonate any
 member they don't have real credentials for on your server.
 
 ## Prerequisites
 
-- A csuite server with the `/platform-connect/*` endpoints and the
-  `csuite-connect-platform` binary (shipped in the standard build).
+- A CommandSuite server with the `/platform-connect/*` endpoints and
+  the `csuite-connect-platform` binary (shipped in the standard
+  build).
 - The server is publicly reachable over HTTPS. Most platforms won't
   proxy to private-range or loopback origins in production.
-- A member entry already in your `config.json` for the admin
-  running the registration.
+- An admin member already on your server — the registration runs as
+  an existing member (`--member-name`).
 
-## Step 1 — Register your csuite with the platform
+## Step 1 — Register your server with the platform
 
 On the server, run:
 
@@ -88,7 +89,7 @@ it to `<config-path>.platform.json` (e.g. `./csuite.platform.json`).
     https://app.example.com/t/2eebcdaf-8aaa-4417-b0b2-010c56324ea5
 ```
 
-Restart the server. Your `config.json` stays untouched — the JWT
+Restart the server. Your `csuite.json` stays untouched — the JWT
 config lives in the sidecar file that the loader merges at startup.
 
 ## Step 2 — Teammates join via invite
@@ -97,11 +98,11 @@ Owners mint invites in the platform and share the invite link.
 
 When an invitee clicks the link, the platform detects their team is
 self-hosted and renders an embedded iframe pointing at your server's
-`/setup/connect-platform` page. The invitee signs in on the csuite
-(through the iframe — your csuite's auth, your csuite's session cookie)
-and clicks Authorize. The csuite attests the member identity back to
-the platform via a cross-origin `postMessage`; the platform creates
-the membership row with the attested name.
+`/setup/connect-platform` page. The invitee signs in on your server
+(through the iframe — your server's auth, your server's session
+cookie) and clicks Authorize. Your server attests the member identity
+back to the platform via a cross-origin `postMessage`; the platform
+creates the membership row with the attested name.
 
 The invitee never sees a "type your member name" form, and there's
 no way for them to claim a member they can't actually authenticate
@@ -117,7 +118,7 @@ Browser → platform:
    `role`, and (optionally) `tier: self-hosted`. Default lifetime: 60 seconds.
 4. `fetch(<your URL>/<path>)` with the JWT on `Authorization: Bearer …`.
 
-Your csuite then:
+Your server then:
 
 1. Verifies the signature against the cached JWKS (or refetches if
    the `kid` is new).
@@ -133,14 +134,14 @@ Two options:
 
 - **Platform side:** on the team's settings page, **Disconnect team**
   removes the platform-side rows (memberships, invites, the team
-  registry entry). Your csuite keeps running untouched.
+  registry entry). Your server keeps running untouched.
 - **Server side:** delete the sidecar overlay:
   ```sh
   rm ./csuite.platform.json
   systemctl restart csuite-server   # or however you run it
   ```
-  Your csuite falls back to bearer-token + TOTP auth — the JWT path is
-  config-gated and deactivates when no `jwt` block is loaded.
+  Your server falls back to bearer-token + TOTP auth — the JWT path
+  is config-gated and deactivates when no `jwt` block is loaded.
 
 The two are independent. Disconnecting on the platform side doesn't
 remove the overlay; remove the overlay to fully disable the
@@ -148,10 +149,10 @@ connection on your server side.
 
 ## Key rotation
 
-The platform may rotate its signing keypair periodically. Your csuite
+The platform may rotate its signing keypair periodically. Your server
 handles this transparently: the JWT's `kid` header identifies which
-key signed it; if your cached JWKS doesn't contain that `kid`,
-`jose` refetches the JWKS. During a rotation, well-behaved platforms
+key signed it; if the cached JWKS doesn't contain that `kid`, the
+server refetches the JWKS. During a rotation, well-behaved platforms
 publish both old and new public keys for the overlap window so no
 request mid-flight fails verification. Nothing to configure.
 
@@ -177,11 +178,11 @@ the platform side.
   expired (10-min lifetime) or was already consumed from a
   different tab. Re-run the CLI.
 - **After Authorize, the server still sees `jwt verify failed`
-  with `unexpected aud claim value`.** You didn't restart csuite after
-  the overlay was written. The overlay loads at startup; send
-  SIGHUP to the server or restart it.
-- **Invitees' iframe shows `Sign in first` but your csuite is
-  accessible in other tabs.** The iframe is on your csuite's origin,
+  with `unexpected aud claim value`.** You didn't restart the server
+  after the overlay was written. The overlay loads at startup;
+  restart the server.
+- **Invitees' iframe shows `Sign in first` but your server is
+  accessible in other tabs.** The iframe is on your server's origin,
   cookies are scoped there — but some browsers apply tighter rules
   to third-party iframes. Ask the invitee to open the confirm URL
   directly in a new tab instead (shown in the platform fallback

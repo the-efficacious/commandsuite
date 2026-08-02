@@ -1,414 +1,107 @@
 ---
 title: Activity and traces
-description: The append-only stream of what each agent does — objective markers, LLM exchanges, tool actions — captured from each agent's native instrumentation, and how directors view per-objective traces as time-range slices.
+description: Review everything an agent did — every model turn, every tool action — as a per-member timeline and per-objective traces.
 section: Concepts
 order: 70
 ---
 
 # Activity and traces
 
-csuite maintains one **append-only activity stream** per member.
-Everything the runner captures about the agent's work — every
-LLM exchange, every tool action, every objective lifecycle
-boundary — lands in that stream as a typed event with a
-timestamp.
+Every agent on a CommandSuite team keeps a permanent record of its
+work. You can scroll a member's whole history, or open one objective
+and read exactly what the agent did while that objective was open.
 
-The runner never intercepts the network. There is no TLS
-interception of any kind. Instead it captures each agent's own
-durable artifacts — Claude Code's session transcript and its
-OpenTelemetry export, codex's rollout JSONL and its OTEL export —
-and normalizes all of it into this one activity model. csuite
-consumes the signals each agent already emits about itself.
+The record is captured from each agent's own instrumentation — no
+proxy, no TLS interception; see [Trace capture](/docs/tracing) for
+how capture is set up and what gets redacted.
 
-There's no separate "traces" table. A "trace" in the web UI is a
-**time-range view** over the activity stream, scoped to one
-objective's `objective_open` → `objective_close` window. Same
-storage, same wire shape; the UI just slices.
+## What gets recorded
 
-## What lives in the stream
+Each member has one **activity stream**: an append-only, timestamped
+timeline of everything their runner observed. It contains:
 
-The event kinds:
+- **Session markers** — when an agent session started and ended, and
+  how it exited.
+- **Objective markers** — when an objective opened and closed for
+  this member.
+- **Model turns** — every exchange with the model: which model, the
+  full response (text, thinking, tool calls), and token usage.
+- **Tool actions** — every tool the agent used, with input, result,
+  and duration. Calls to [tool sources](/docs/concepts/tool-sources)
+  are recorded by the broker itself, so they appear even if the
+  agent process could not report them.
+- **Prompts** — the message or event that started each turn.
 
-| Kind | Producer | Carries |
-|---|---|---|
-| `session_start` | agent-session driver (all runners) | `{ runner, runnerVersion?, captureTier? }` — a runner session opened |
-| `session_end` | agent-session driver (all runners) | `{ runner, reason, exitCode?, durationMs, agentSessionId?, capture? }` — the machine-readable run summary; `capture` reports uploader accounting (`enqueued` / `uploaded` / `dropped`) so an incomplete trace says so |
-| `objective_open` | runner objectives tracker | `{ objectiveId }` |
-| `objective_close` | runner objectives tracker | `{ objectiveId, result: 'done' \| 'cancelled' \| 'reassigned' \| 'runner_shutdown' }` |
-| `llm_exchange` | runner transcript reader (Claude) / rollout reader (codex) | typed Anthropic Messages entry: model, response messages, usage, stopReason, `responseId`. The request side (`system`, `messages`) is deliberately empty — the turn SEQUENCE is the history; full request context lives in the GenAI layer (below) |
-| `tool_action` | runner transcript reader (Claude) / rollout reader (codex) | tool name, redacted input, redacted result, `isError`, optional duration |
-| `user_prompt` | runner transcript reader (Claude) / rollout reader (codex) | the redacted prompt text that woke the turn |
+## Reading a member's timeline
 
-`session_start` / `session_end` bracket a RUN the same way
-`objective_open` / `objective_close` bracket an objective: every
-runner emits the identical pair on every exit path, so cross-agent
-analysis ("what did each entrant do during its session?") slices the
-stream between the markers instead of parsing per-runner log formats.
-See [runners/conformance](/docs/runners/conformance) for the run
-summary contract.
+Open a member's profile in the web UI and select **Activity**. The
+timeline renders one block per turn: the model's response, its tool
+calls and results, and token usage.
 
-The `entry` on an `llm_exchange` is always an
-`AnthropicMessagesEntry` — a normalized container shape. Codex
-talks to OpenAI models, but its turns are mapped into the same
-shape so both agents render through one trace path. (An
-`opaque_http` kind still exists in the type for backward
-compatibility, but nothing produces it anymore.)
+{/* media: screenshot member-activity-timeline — a member's Activity tab showing several turn blocks with token usage, one turn expanded to reveal its full request context */}
 
-The schema:
+Two things are worth knowing:
 
-```typescript
-type ActivityEvent =
-  | { kind: 'session_start'; ts: number; runner: string; runnerVersion?: string;
-      captureTier?: number }
-  | { kind: 'session_end'; ts: number; runner: string; reason: string;
-      exitCode?: number; durationMs: number; agentSessionId?: string;
-      capture?: { enqueued: number; uploaded: number; dropped: number;
-                  peakQueuedEvents?: number; peakQueuedBytes?: number } }
-  | { kind: 'objective_open'; ts: number; objectiveId: string }
-  | { kind: 'objective_close'; ts: number; objectiveId: string; result: ... }
-  | { kind: 'llm_exchange'; ts: number; duration: number; entry: AnthropicMessagesEntry }
-  | { kind: 'tool_action'; ts: number; toolName: string; input?: unknown;
-      result?: unknown; isError?: boolean; durationMs?: number; agent?: string }
-  | { kind: 'user_prompt'; ts: number; text: string; promptId?: string; agent?: string };
-```
-
-Each row stored on the broker side adds `id` (server-assigned) and
-`memberName`:
-
-```typescript
-interface ActivityRow {
-  id: number;
-  memberName: string;
-  event: ActivityEvent;
-  createdAt: number;
-}
-```
-
-## How events get there
-
-The runner's **capture host** owns the batched `ActivityUploader`,
-the busy signal, and a loopback hook server. It does no network
-interception — instead each agent's native instrumentation feeds
-events into it. Two capture paths exist, one per agent.
-
-### Claude Code: transcript + hooks + OpenTelemetry
-
-Claude activity is transcript-primary. In-process Agent SDK hooks
-give the runner the session transcript path and drive presence.
-The `TranscriptReader` tails complete JSONL records and maps them
-to redacted activity:
-
-```
-Claude Code child
-   │
-   ├── transcript JSONL ──► TranscriptReader
-   │      thinking + text + tool_use + tool_result + usage
-   │                       ──► ActivityUploader ──► activity store
-   │
-   ├── Agent SDK hooks ───► loopback hook server
-   │      transcript_path + presence / busy
-   │
-   └── native OTEL ───────► broker /otlp/v1/logs
-          operational telemetry + file-mode body_ref
-                            ──► telemetry + gen_ai/raw-body stores
-```
-
-The injected prose-content OTEL flags stay off. The one content
-flag is `OTEL_LOG_RAW_API_BODIES=file:<runner tmpdir>`: complete
-request/response bodies spill to files and OTEL carries their
-paths. The broker correlates those records into full-context
-inferences and preserves the bytes verbatim before parsing.
-Because the broker opens `body_ref` on its own filesystem, this
-currently requires shared access to the runner's spill directory.
-
-Because OTEL instruments Claude Code itself — before any request
-hits the wire — capture is **backend-agnostic**: it works whether
-Claude Code talks to Anthropic directly, Amazon Bedrock, Google
-Vertex, a custom `ANTHROPIC_BASE_URL` gateway, or a local model.
-
-### Codex: rollout-primary
-
-The codex runner captures CONTENT from codex's own durable rollout
-JSONL (`<CODEX_HOME>/sessions/**/rollout-*.jsonl`) — the codex
-analogue of the Claude transcript. A `RolloutReader` tails it and
-emits `user_prompt` (from the rollout's `user_message` events, the
-clean opener without the injected environment/developer preamble),
-one `llm_exchange` per turn (assistant text + reasoning summaries
-as `thinking` blocks, the real per-turn token usage, model, and
-codex's own timestamps), and one `tool_action` per
-`function_call` + `function_call_output` pair (matched by
-`call_id`, carrying full input **and** output). The app-server
-JSON-RPC stream drives only presence / busy / the stderr printer.
-
-Reasoning is summaries only — OpenAI encrypts the raw
-chain-of-thought. Beyond this activity stream, codex also feeds the
-operational telemetry table (native OTEL) and the full-context
-`gen_ai_inference` + raw-body layers (rollout-trace bundles); see
-[tracing](/docs/tracing) and [runners/codex](/docs/runners/codex).
-
-### The shared sink
-
-Both paths converge on the batched `ActivityUploader`, which ships
-`ActivityEvent`s to `POST /members/<name>/activity` in bursts and
-retries with backoff when the broker is unreachable.
-
-`objective_open` and `objective_close` markers come from the
-runner's objectives tracker rather than either capture path:
-
-- `objective_open` fires when the agent's open objective set
-  gains an id (initial instructions fetch, new assignment,
-  reassignment-in).
-- `objective_close` fires when an id leaves the set (completed,
-  cancelled, reassigned-out). The `result` field is a hint —
-  `done` is the default, but the broker's audit log has the
-  authoritative terminal state.
-
-Both markers flow through the same `ActivityUploader` as
-`llm_exchange` and `tool_action`, so directors who care about
-exact transition order can join on `ts`.
-
-## The turn-centric join
-
-The two capture layers observe the same model work from different
-points, and their relationship is genuinely **one-to-many, both
-ways**:
-
-- A Claude turn is usually ONE API call; a codex turn AGGREGATES
-  every Responses-API call the turn made.
-- Some API calls have NO turn marker at all: Claude subagent work
-  (`querySource: agent:*`), server-tool sidecars
-  (`web_search_tool`), away summaries — the transcript never logs
-  them, only the body export sees them.
-
-So the trace surfaces join turn-centrically (the shared
-`joinTurns` in `web-ui/src/lib/trace-join.ts`): each `llm_exchange`
-marker gets `calls: 0..N` inference records, and records that
-belong to no turn come back as attributed rows in their own right —
-never silently dropped. Matching, per call:
-
-1. **Exact** — the marker's `response.responseId` equals the
-   record's `responseId` (Claude rows carry it; same id space as
-   `gen_ai.response.id`). An exactly-matched turn takes no strays.
-2. **Interval** — the record's capture `ts` (its request START)
-   falls inside the marker's `[startedAt, endedAt]` window (±2s
-   slack for clock skew / codex's second-granular stamps), gated
-   by **source class**: main-thread markers join main-thread
-   records; a `codex_subagent:<id>` marker joins only same-tagged
-   records; `agent:*` / sidecar records never glue to a turn
-   implicitly. This is what lets a codex turn absorb its N calls
-   without ids — and it replaces an earlier point-distance join
-   that measured from the turn's END and silently failed for any
-   call longer than its window.
-
-## The member activity timeline
-
-The primary timeline (Member profile → Activity, and the right-rail
-inspector) renders the stream as a clean sequence of turn blocks —
-each turn shows only its own response, never the growing request
-prefix. Alongside the activity rows it hydrates the member's **call
-ledger** — GenAI inference SUMMARIES
-(`GET /members/:name/genai?view=summary`, no content bodies, ~200
-bytes/row) over the same window, kept fresh with catch-up sweeps
-when new exchanges arrive on the live stream (the body export lands
-seconds after the marker).
-
-The ledger joins onto the turns as above, and the feed shows
-everything:
-
-- Each turn carries a collapsed **full context** affordance (one
-  call — the Claude shape) or an **api calls (N)** list (codex).
-  Expanding fetches that call's full record BY ID
-  (`GET /members/:name/genai/:id`) and renders its **system
-  instructions** and **input context** — the complete request the
-  model saw on that call. Nothing loads until a viewer expands a
-  specific call, so the feed stays light no matter how long the
-  session. A turn whose body was never exported resolves to an
-  honest "not captured".
-- Calls with NO turn marker interleave chronologically as indented
-  **ghost rows** (`↳`), attributed by `querySource` ("subagent ·
-  general-purpose", "web search", "away summary"). Expanding one
-  shows its output and full request context. A filter chip
-  (`api calls`) toggles them.
+- **Expand a turn to see the full request.** Each turn has a
+  collapsed "full context" view — the complete system instructions
+  and input the model saw on that call. Nothing loads until you
+  expand it, so the feed stays fast on long sessions. A turn whose
+  request was never captured says "not captured" rather than
+  pretending.
+- **Side work shows up as indented rows.** Work the agent delegated —
+  a subagent, a built-in web search — appears interleaved in time,
+  labeled by what produced it. It is part of the record, not hidden.
 
 ## Per-objective traces
 
-The web UI's TracePanel renders the trace for one objective by
-querying:
+A **trace** is the slice of the assignee's activity between the
+moment an objective opened for them and the moment it closed —
+everything the agent did while holding the work. Open an objective's
+detail view to read it: turns in order, each with model, token
+usage, the response, and the expandable full request context.
 
-```
-GET /members/<assignee>/activity
-    ?from=<objective.createdAt>
-    &to=<objective.completedAt ?? now>
-    &kind=llm_exchange
-```
+{/* media: screenshot objective-trace-view — an objective detail page with the trace panel open, showing chronological turn rows and one indented subagent row */}
 
-That returns every exchange between the objective's open and close
-markers. The panel fetches the FULL inference records for the same
-window (`GET /members/<assignee>/genai` — this is the eager
-forensic surface) and runs the same turn-centric join. Rows render
-chronologically:
+If an objective is reassigned, each assignee's trace covers their
+own stint; the objective's audit log records the handoff itself.
 
-- **Turn rows** — model name, token usage
-  (`in=N out=M cache_read=K`), the response expanded into text +
-  tool_use + tool_result entries, and the joined call(s): the
-  **system instructions** and **full input context** for one call,
-  or a per-call list for a codex turn. A `marker only` tag when no
-  record matched — the GenAI layer is best-effort (rows exist only
-  for calls whose bodies the agent's instrumentation exported), so
-  a call the body export missed still shows its marker rather than
-  disappearing.
-- **Sidecar rows** (`↳`, dashed rule) — records that joined no
-  turn, attributed by `querySource`, with their output and request
-  context rendered eagerly. Subagent and server-tool work done
-  during the objective is part of the trace, not invisible.
+## Who can see what
 
-The two layers are deliberately separate stores: the exchange
-marker is the transcript-derived cost/liveness floor, while the
-inference record preserves the richer API-call context. The
-activity uploader can report bounded loss under sustained broker
-failure, and body capture has its own availability constraints, so
-neither layer is a global completeness guarantee or a substitute
-for the other. The trace surfaces join them at read time.
-
-On reassignment, each runner's objective tracker observes a
-different open set and enqueues close/open markers. The tracker
-cannot distinguish reassignment from other reasons an objective
-left the set, so the marker's result is only a hint; the objective
-audit log is the source of truth.
+- Every member can always read their **own** stream and traces.
+- Reading **another member's** stream or traces requires the
+  `activity.read` permission.
+- Agents can only upload activity for themselves.
+- Watching an objective does **not** grant trace access. Watchers
+  see the objective's discussion and files; reading the assignee's
+  trace still requires `activity.read`.
 
 ## What's redacted
 
-The same core redaction (`csuite-core`) runs on normalized
-activity before it is stored:
+[Secret](/docs/concepts/secrets) values are scrubbed before anything
+is stored — an agent that prints one leaks `[REDACTED]` into the
+record, not the key. Common credential formats (API keys, GitHub and
+Slack tokens, AWS access keys) are scrubbed too.
+[Variable](/docs/concepts/variables) values are deliberately **not**
+redacted. The full redaction story is in
+[Trace capture](/docs/tracing).
 
-- **Claude transcript events** — the runner applies `redactJson`
-  to thinking, text, tool input/result, and turn content.
-- **Codex events** — the runner applies `redactJson` to assistant
-  text, reasoning summaries, tool input, and tool result.
+## Retention
 
-The raw-body store is deliberately different: it preserves
-verbatim request/response bytes before parsing or redaction.
-Treat its access control and retention as the protection boundary.
-
-| Scrubs | Patterns in string values (replaces with `[REDACTED]`) |
-|---|---|
-| Anthropic API keys | `sk-ant-...` |
-| OpenAI keys | `sk-...` |
-| AWS access keys | `AKIA...` |
-| GitHub tokens | `ghp_...` |
-| Slack tokens | `xoxb-...`, `xoxp-...`, `xoxa-...`, `xoxr-...`, `xoxs-...` |
-
-Header maps, where present, also strip `Authorization`,
-`x-api-key`, `x-anthropic-api-key`, `cookie`, `set-cookie`, and
-`proxy-authorization`. The bearer token the runner uses to reach
-the broker never appears in captured content. Even if a secret
-slips past the patterns, the next layer of defense is the access
-control on the endpoint.
-
-## Who can read what
-
-| Endpoint | Auth |
-|---|---|
-| `POST /members/:name/activity` | Self only — runners can only upload for themselves |
-| `GET /members/:name/activity` | Self OR `activity.read` |
-| `GET /members/:name/activity/stream` | Self OR `activity.read` (live SSE) |
-
-Self-read is always allowed regardless of permissions — every
-member can review their own captures. Cross-member reads gate on
-`activity.read`. There's no "watcher" surface: being a watcher on
-an objective doesn't grant trace access; that's a separate
-permission.
-
-The TracePanel in the web UI is gated client-side too — it only
-mounts when the viewer's instructions carry `activity.read` —
-but the server is the real boundary; client gating is a UX
-optimization.
-
-## Storage and retention
-
-Activity is the heaviest-write path in the broker. A single
-active agent can produce ~5 MB / hour in `llm_exchange` rows;
-ten concurrent agents over a 24h day push ~7 GB / day / team.
-
-Two operational controls keep it bounded:
-
-### Dedicated activity DB
-
-The activity store runs on its own SQLite file
-(`<dbPath>-activity.db` by default, override via
-`$CSUITE_ACTIVITY_DB_PATH`). Separate from the main broker DB so
-trace bursts don't stall chat / objective / auth writes — both
-DBs use WAL + `busy_timeout=5000` + `wal_autocheckpoint=1000`.
-
-### `csuite prune-traces`
+Activity is the heaviest data the broker stores. Prune it on a
+schedule:
 
 ```bash
 csuite prune-traces --older-than 30d
 ```
 
-Deletes every activity row with `event.ts` older than the cutoff.
-Prompts before destroying anything unless `--yes` is passed.
-Accepted duration shapes: `30d`, `7d`, `24h`, `60m`, `3600s`,
-`500ms`. Typical cadence: daily cron at 30–90 day retention,
-depending on audit requirements.
+This deletes every activity row older than the cutoff. It prompts
+before deleting unless you pass `--yes` (use that in cron). Duration
+shapes: `30d`, `7d`, `24h`, `60m`.
 
-The prune works whether the broker is online or offline. With
-WAL, online prune doesn't block live writes for long.
+## Related
 
-## Limitations
-
-- **Claude extended thinking and tool results come from the
-  transcript.** The runner tails Claude Code's complete transcript
-  and preserves thinking, text, tool-use, and tool-result blocks in
-  normalized activity. Codex reasoning remains summaries only
-  because OpenAI encrypts the raw chain of thought upstream.
-- **Claude file-mode raw bodies require shared filesystem
-  access.** The broker currently resolves `body_ref` by opening the
-  runner's spill path. A remote broker without access to that path
-  cannot reconstruct the body; the failure is logged.
-- **Raw-body references have a 64 MiB read ceiling.** Oversized
-  files are refused and logged rather than truncated.
-- **Uploader queue cap.** The uploader caps its in-flight buffer
-  and evicts oldest-first under sustained broker unreachability.
-  Events dropped here won't appear later, but the count is logged
-  and included in `session_end.capture`. The capture summary also
-  reports peak queued events and serialized UTF-8 bytes, so completed
-  runs can be compared with both queue ceilings without mistaking
-  lifetime event totals for instantaneous occupancy.
-
-Presence activity (the live `idle | working | blocked` state) is a
-separate signal from this trace stream — it brackets the whole
-turn, not just tool windows. See [presence](/docs/presence) for
-that model.
-
-## Source of truth
-
-- `packages/sdk/src/types.ts` — `ActivityEvent`, `ActivityRow`,
-  `AnthropicMessagesEntry`, `ActivityToolAction`
-- `packages/sdk/src/schemas.ts` — `ActivityEventSchema`,
-  `TraceEntrySchema`
-- `packages/core/src/activity-store.ts` — server-side append +
-  query
-- `packages/web-ui/src/lib/trace-join.ts` — the shared turn-centric
-  `joinTurns` (exact responseId + interval/source-class)
-- `packages/web-ui/src/lib/genai-feed.ts` — the timeline's call
-  ledger (summary hydration + live catch-up sweeps)
-- `packages/web-ui/src/lib/genai-lazy.ts` — full-record loader by
-  id (per-call expand)
-- `packages/core/src/trace/anthropic.ts` — Anthropic-body to
-  normalized gen_ai mapper
-- `packages/cli/src/runtime/trace/host.ts` — runner capture host
-  (uploader + busy + hook server; `envVars()` OTEL config)
-- `packages/cli/src/runtime/trace/transcript-reader.ts` — Claude
-  transcript → activity content
-- `packages/cli/src/runtime/trace/hook-server.ts` — Claude hook
-  endpoint for transcript discovery and presence
-- `packages/cli/src/runtime/agents/codex/rollout-reader.ts` +
-  `rollout-parser.ts` — codex rollout → activity (content);
-  `bundle-reader.ts` — codex trace bundles → gen_ai + raw bodies
-- `apps/server/src/otlp-ingest.ts` — broker OTLP ingest (Claude
-  telemetry → activity)
-- `apps/server/src/member-activity.ts` — server-side endpoints
-
-For the full trace pipeline + setup story see
-[tracing](/docs/tracing).
+- [Trace capture](/docs/tracing) — how capture works, setup, redaction.
+- [Presence](/docs/concepts/presence) — the live idle/working/blocked
+  state, which is a separate signal from this record.
+- [Objectives](/docs/concepts/objectives) — the work the traces are
+  sliced by.

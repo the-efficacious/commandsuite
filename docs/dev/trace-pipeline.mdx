@@ -1,0 +1,321 @@
+---
+title: Trace pipeline
+description: How the runner captures each agent's native instrumentation and the broker normalizes it — transcript and rollout readers, the loopback OTLP relay, raw-body ingest, correlation, and redaction boundaries.
+section: Development
+order: 30
+---
+
+# Trace pipeline
+
+This page is the deep reference for trace capture. The user-facing
+story — what gets captured, who can see it, retention, `--no-trace` —
+lives at [tracing](/docs/tracing).
+
+The design premise: the runner **consumes each agent's own native
+instrumentation** and normalizes it into one per-member activity
+model. There is no network interception, no TLS decryption, and no CA
+on disk. Claude Code's session transcript, hooks, and OpenTelemetry
+export, and codex's rollout JSONL, OTEL export, and trace bundles are
+the sources; the runner and broker map them into the same activity +
+telemetry + gen_ai stores.
+
+## The activity model
+
+There are no per-objective spans. The runner maintains one
+**activity stream** per member — an append-only timeline of
+`ActivityEvent`s (authoritative kinds in `packages/sdk/src/types.ts`):
+
+- `session_start` / `session_end` — one runner session's bracket,
+  emitted on every exit path. `session_end` carries the
+  machine-readable run summary: exit code, reason, duration,
+  agent-native session id, and capture accounting
+  (`enqueued` / `uploaded` / `dropped`) so an incomplete trace is
+  visible instead of silently short.
+- `llm_exchange` — one model request/response, shaped as a typed
+  `AnthropicMessagesEntry` (model, messages, stop reason, usage).
+- `tool_action` — one tool invocation with redacted input and, where
+  the source carries it, the result.
+- `user_prompt` — the redacted prompt text that woke a turn.
+- `objective_open` / `objective_close` — the member took / released
+  an objective (`done` / `cancelled` / `reassigned` /
+  `runner_shutdown`).
+
+Per-objective "traces" are a **time-range view** over this stream:
+the web UI pages the member's activity and gen_ai records over the
+objective's lifetime window and joins them client-side. No
+per-objective blobs are stored.
+
+## The capture host
+
+The runner-owned handle every adapter feeds is the **CaptureHost**
+(`packages/cli/src/runtime/trace/host.ts`). It owns the capture sink:
+
+- the batched **`ActivityUploader`** (ships `ActivityEvent`s to
+  `POST /members/:name/activity` in near-real-time);
+- the **busy signal**, driven by native instrumentation (Claude Code
+  hooks, codex app-server items);
+- the loopback **hook server** Claude Code POSTs hook events to
+  (presence-only — it drives busy state and surfaces the
+  `transcript_path`; it emits no content);
+- the **`TranscriptReader`** (Claude content source, below);
+- the loopback **OTLP relay** (raw-body resolution, below).
+
+Adapters push events through `enqueue(event)`. The host also exposes
+`noteObjectiveOpen` / `noteObjectiveClose`, `envVars()` (the Claude
+child's OTEL delta), `otelLogsTarget()` (the codex `[otel]` target),
+`uploadGenai()` (codex bundle upload), `stats()`, and `close()`. On
+`close()` the reader stops first, the uploader drains best-effort,
+and the hook server and relay tear down. The raw-body spool directory
+is deliberately **left in place** at close: a `.csuite-capture-complete`
+marker is written only when no unshipped body remains, and the next
+host start sweeps only marked, empty spools whose owning pid is dead.
+
+## Claude Code: transcript-primary
+
+Claude content capture is **transcript-primary**. In-process Agent
+SDK hook callbacks forward each hook payload to the loopback hook
+server; every payload carries the session `transcript_path`. The
+`TranscriptReader` tails that JSONL (fs.watch plus a ~300ms poll,
+byte-offset resumable, uuid-deduped) and maps complete lines via the
+pure `parseTranscriptLine` in `csuite-core`:
+
+- `assistant` line → `llm_exchange` (thinking + text + tool_use
+  blocks, model, usage, stopReason);
+- `user` line with tool_result blocks → one `tool_action` per result,
+  tool names resolved from a tool_use id→name map;
+- `user` text line → `user_prompt`;
+- `isMeta` lines are skipped; sidechain (subagent) lines are kept.
+
+All free text is scrubbed with the core `redactJson` before it leaves
+the runner. Note that current Claude Code persists thinking blocks as
+an opaque signature with no readable text — the structure survives,
+the reasoning content never leaves the agent.
+
+The runner also injects a lean OTEL configuration into the child
+(`CaptureHost.envVars()`):
+
+```
+CLAUDE_CODE_ENABLE_TELEMETRY=1
+OTEL_METRICS_EXPORTER=otlp
+OTEL_LOGS_EXPORTER=otlp
+OTEL_EXPORTER_OTLP_PROTOCOL=http/json
+OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:<relay-port>/otlp
+OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer <member-token>
+OTEL_LOG_RAW_API_BODIES=file:<tmpdir>/csuite-otel-bodies-<member>-<pid>
+```
+
+Two details are load-bearing:
+
+- **The endpoint is the runner's loopback OTLP relay**, not the
+  broker. The relay forwards to `<brokerUrl>/otlp/...` after
+  resolving raw-body references (next section).
+- **The `Authorization` header value uses a literal space** after
+  `Bearer`. The OTEL JS exporter does not url-decode header values,
+  so an encoded `%20` would fail the broker's `Bearer ` prefix check.
+
+The prose content-logging flags (`OTEL_LOG_USER_PROMPTS`,
+`OTEL_LOG_ASSISTANT_RESPONSES`, `OTEL_LOG_TOOL_DETAILS`,
+`OTEL_LOG_TOOL_CONTENT`) are **deliberately not set** — content comes
+from the transcript, so duplicating it in the operational signal
+would be redundant. `OTEL_LOG_RAW_API_BODIES` is the one content flag
+that is set, in **`file:<dir>` mode**: Claude Code writes complete,
+untruncated Anthropic request/response bodies into the per-runner
+spool directory and emits a `body_ref` file path on each OTEL log
+record instead of a ~60KB-truncated inline body.
+
+```
+     Claude Code child                          runner                broker
+            │
+            ├── transcript JSONL ────────► TranscriptReader
+            │     turns + tool results      → redacted ActivityEvents
+            │                               → ActivityUploader ────► /members/:name/activity
+            │
+            ├── Agent SDK hooks ──────────► loopback hook server
+            │     transcript_path            → busy / presence
+            │
+            └── OTLP http/json ───────────► loopback OTLP relay ───► /otlp/v1/{logs,metrics}
+                  operational records         body_ref → inline       → telemetry store
+                  file-mode body_ref          bytes, then forward     → GenAiCorrelator
+                                                                       → gen_ai + raw-body stores
+```
+
+## The OTLP relay and file-mode raw bodies
+
+`packages/cli/src/runtime/trace/otlp-relay.ts`. Claude's file-mode
+`body_ref` attributes are absolute paths that only mean something on
+the runner's filesystem, so the relay — not the broker — resolves
+them:
+
+- Binds `127.0.0.1:<ephemeral>` and accepts only
+  `POST /otlp/v1/logs|metrics`. Loopback is a reachability boundary,
+  not an authority boundary: the relay requires the member bearer on
+  every request before proxying with that credential.
+- Batches are forwarded **in arrival order** (the broker correlator
+  holds FIFO state across batches, so reordering would cross wires).
+- For each log record with a `body_ref` inside the spool, the relay
+  opens the file defensively (`O_NOFOLLOW`, regular-file and
+  owner checks, identity re-check between stat and open), enforces a
+  **64 MiB per-body ceiling** (and a 256 MiB ceiling per OTLP
+  payload), verifies the bytes are exact UTF-8, and replaces the
+  attribute with the inline byte-exact body — leaving exactly one
+  `body` attribute per record.
+- A broker 2xx alone is not acknowledgement: the broker's OTLP
+  response carries `csuite.rawBodiesCaptured`, and spool files are
+  unlinked only when that count equals the number of bodies resolved
+  in the batch. Otherwise the exporter gets a 503 and retries.
+- Unresolvable bodies (oversized, unreadable, invalid UTF-8) are
+  never truncated or silently dropped: the record is forwarded for
+  the broker's per-record skip, and after acknowledgement the file is
+  moved into a reason-bearing `<spool>.quarantine` sibling for
+  explicit recovery.
+
+Because the relay inlines bodies before forwarding, the broker does
+**not** need filesystem access to the runner's spool. (The broker's
+correlator retains a size-guarded `body_ref` file reader as a
+fallback for co-located deployments, but the relay path is the normal
+one.)
+
+## Broker ingest and correlation
+
+`POST /otlp/v1/logs` (`apps/server/src/app.ts`) parses records with
+`parseOtlpLogs`, which applies **attribute redaction at ingest** —
+registered secret values are scrubbed, with broker-issued
+instruction blocks exempt so the presence checks stay byte-exact.
+The batch is then split: the four Claude api-body record kinds
+(`api_request_body`, `api_request`, `api_response_body`, `api_error`)
+go to the per-member **`GenAiCorrelator`**; `api_request` and
+`api_error` also stay in the telemetry store because they carry
+operational accounting (tokens, cost, duration, errors).
+
+The correlator (`apps/server/src/genai-correlator.ts`) exists because
+`api_request_body` carries **no request id**. Correlation is
+positional-by-model, then id-keyed:
+
+1. `api_request_body` pushes onto a per-model FIFO of unclaimed
+   request bodies (model-aware, because a turn interleaves background
+   calls on other models with the main turn).
+2. `api_request` — the first record carrying `request_id` — claims
+   the oldest unclaimed body of its model; the exchange is keyed by
+   `request_id` from then on.
+3. `api_response_body` pairs by `request_id`; the completed exchange
+   is emitted as a `gen_ai_inference`.
+
+The correlator is stateful across batches (the runner's exporter
+routinely splits an exchange across POSTs). A TTL sweep plus a hard
+per-member cap evict stale, never-completed entries. There is **no
+request-only flush**: an inference needs both bodies, so an
+incomplete exchange evicts silently rather than emitting a partial
+record.
+
+**Capture-before-parse:** each body's verbatim bytes are
+content-addressed into the raw store (`raw_blob` / `raw_exchange`,
+gzip at rest, deduped by sha256) *before* any `JSON.parse`, so a body
+whose JSON fails to parse is still preserved. The parsed copy is
+mapped to a typed `gen_ai_inference` (with `redactJson` applied to
+parsed content) that points back at its source bytes by hash.
+
+One fidelity caveat: for Claude's OTLP path, attribute redaction runs
+*before* the correlator, so the Claude raw store holds the broker's
+post-redaction bytes — byte-exact for broker-issued instruction
+blocks (exempt), but not a provider-wire-verbatim claim. Codex's bundle
+ingest content-addresses its request/response bytes before any parse
+or redaction, so its raw layer is verbatim as uploaded.
+
+## Codex: rollout-primary, layered
+
+The codex runner mirrors the Claude split with three parallel layers:
+
+- **Content — `RolloutReader`**
+  (`packages/cli/src/runtime/agents/codex/rollout-reader.ts`): tails
+  codex's own durable rollout JSONL
+  (`<CODEX_HOME>/sessions/**/rollout-*.jsonl`), ignoring files that
+  predate this run and tailing a resumed thread from its current end,
+  so each turn is captured exactly once. It emits `user_prompt` (the
+  clean opener, without the injected environment preamble),
+  `llm_exchange` (assistant text + reasoning summaries as `thinking`
+  blocks, per-turn token usage, model, codex's own timestamps, shaped
+  as an `AnthropicMessagesEntry` container so it renders through the
+  same trace view), and `tool_action` (`function_call` +
+  `function_call_output` paired by `call_id`, full input and output).
+  The app-server JSON-RPC stream drives only presence, busy, and the
+  stderr printer — the codex analogue of Claude's presence-only
+  hooks.
+- **Operational telemetry — native OTEL**: the ephemeral
+  `config.toml`'s `[otel]` block points codex's export at the
+  broker's logs endpoint. Codex POSTs to the configured URL
+  *verbatim* (it does not append `/v1/logs`), so
+  `CaptureHost.otelLogsTarget()` hands it the full
+  `<broker>/otlp/v1/logs` path. Records land losslessly in the
+  telemetry store; operator identity attributes (`user.email`,
+  `user.account_id`) are stripped at ingest (`otlp-parse.ts`).
+- **Full-context inferences + raw bodies — `BundleReader`**
+  (`packages/cli/src/runtime/agents/codex/bundle-reader.ts`): with
+  `CODEX_ROLLOUT_TRACE_ROOT` set, codex writes per-inference
+  rollout-trace bundles carrying the complete Responses API request
+  and response. The reader uploads the verbatim payload bytes to
+  `POST /members/:name/genai`; the broker content-addresses them,
+  then maps a parsed copy via the pure `openaiResponsesToGenAi`
+  mapper (the OpenAI-Responses sibling of `anthropicToGenAi`).
+
+Reasoning is **summaries only** — OpenAI encrypts the raw chain of
+thought, so it never reaches the runner.
+
+## The activity uploader
+
+`packages/cli/src/runtime/trace/activity-uploader.ts`. Batches are
+bounded by count and serialized size and flushed on a size / count /
+time threshold. The queue is capped at **1,000 events / 64 MiB**;
+under sustained broker unreachability it evicts oldest-first, and a
+failed final flush can leave events unwritten. Every drop is counted,
+logged, and reported in `session_end.capture`, alongside peak queued
+events and peak serialized bytes — reported loss, never silent
+truncation.
+
+## Redaction boundaries
+
+| Layer | Redaction |
+|---|---|
+| Normalized activity (transcript mapper, codex adapter) | `redactJson` at the runner, before upload |
+| Parsed `gen_ai_inference` content | `redactJson` in the core Anthropic / OpenAI mappers |
+| Claude OTLP attributes | Redacted at broker ingest, instruction blocks exempt |
+| Raw-body stores | **Not** a redaction surface: codex bytes verbatim; Claude bytes post-attribute-redaction. Access control (`activity.read` / self) and retention are the protection boundary |
+
+Secret values therefore do not belong in instruction blocks or
+variables; register them as secrets and reference the slug.
+
+## Instruction-block presence checks
+
+For each completed captured inference, the broker's context watchdog
+(`apps/server/src/context-watchdog.ts`) checks every current
+instruction block for literal presence anywhere in the captured
+request — the structured system-instructions projection or the sent
+conversation (a re-sent block lands as a channel message, so on
+later turns it lives in `inputMessages`, often inside a tool
+result). Each check emits a `csuite.context_block.presence`
+telemetry row (state `current` / `stale` / `missing` /
+`unobservable`).
+
+Only `missing` triggers recovery: the block fell out of context
+entirely, and the current text is re-sent as a next-turn notice with
+a five-minute per-block cooldown (bypassed when a prior send is
+provably unconfirmed). `stale` — a known prior version of the block
+is present — never re-sends: that session is restart-pending, the
+runner's drain-and-restart is the remediation, and injecting the new
+text beside the superseded copy would put two versions in one
+context. Issued-version memory is in-process only, so after a broker
+restart an old block reads as `missing`, not `stale`.
+
+Each ingest adapter declares whether its system projection is
+observable — Claude declares it observable; codex chained turns
+without `instructions` are unobservable, and a conversation miss
+proves nothing there, so absence is never asserted and nothing is
+re-sent (a conversation hit still counts as present).
+
+## Storage
+
+Activity, telemetry, gen_ai, and raw-body tables live on a dedicated
+SQLite file (`<dbPath>-activity.db`, override
+`CSUITE_ACTIVITY_DB_PATH`) so bursty trace writes never contend with
+the main broker DB's writer lock. Both databases run WAL with
+`busy_timeout=5000`. Retention is operator-owned via
+`csuite prune-traces` — see [tracing](/docs/tracing).
