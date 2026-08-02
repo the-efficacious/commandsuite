@@ -1,0 +1,76 @@
+name: Docs
+
+# Builds and deploys docs.commandsuite.io from docs/site, which renders the
+# docs/ tree in this same repo.
+#
+# This replaces a */30 cron in the old commandsuite-docs sidecar. That poll
+# existed only because the site could not see this repo's commits: it compared
+# timestamps to guess whether docs/ had changed, which cost a runner every 30
+# minutes and left docs up to 30 minutes stale after a merge. Same repo, so the
+# push event is the signal.
+#
+# Pull requests build but do not deploy. That is the other half of the merge:
+# a PR touching docs/ never had its MDX compiled before, so broken frontmatter
+# or a bad link merged green and surfaced later in an unrelated repo's cron run.
+#
+# Secret required: CLOUDFLARE_API_TOKEN (Workers Scripts: Edit).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - '.github/workflows/docs-deploy.yml'
+  pull_request:
+    paths:
+      - 'docs/**'
+      - '.github/workflows/docs-deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: docs/site
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+
+      # docs/site is its own pnpm workspace root (see docs/site/pnpm-workspace.yaml)
+      # and pins its own pnpm. Point the setup at that package.json, not the
+      # monorepo's, so the two toolchains stay independent.
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+        with:
+          package_json_file: docs/site/package.json
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: docs/site/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      # Deploy only from main. Fork PRs get no secrets from GitHub, so the
+      # build above is the whole job for them.
+      #
+      # `-c dist/client/wrangler.json` is required, not cosmetic: the Cloudflare
+      # Vite plugin emits a resolved config into the build output, and only that
+      # copy has `assets.directory` pointing at the built client dir. Deploying
+      # with the source wrangler.jsonc would upload the wrong directory.
+      - uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3
+        if: github.event_name != 'pull_request'
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: 02abc51d1248dbb8db863f5b8e70af04
+          workingDirectory: docs/site
+          command: deploy -c dist/client/wrangler.json

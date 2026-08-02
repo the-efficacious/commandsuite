@@ -1,0 +1,10 @@
+# deps / build
+node_modules/
+dist/
+.astro/
+.wrangler/
+
+# env / editor
+.env
+.env.*
+.DS_Store

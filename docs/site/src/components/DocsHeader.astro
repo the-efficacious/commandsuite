@@ -1,0 +1,124 @@
+---
+import {
+  CSUITE_HEPTAGON_POINTS,
+  CSUITE_HEPTAGON_VERTICES,
+  CSUITE_LOGO_VIEWBOX,
+  brand,
+} from '../brand/brand.ts';
+---
+
+<header class="docs-header">
+  <div class="docs-header-inner">
+    <a href="/" class="logo" aria-label={brand.name}>
+      <svg
+        width="24"
+        height="24"
+        viewBox={CSUITE_LOGO_VIEWBOX}
+        fill="none"
+        stroke="var(--ink)"
+        stroke-width="3"
+        stroke-linejoin="round"
+        class="logo-mark"
+        aria-hidden="true"
+      >
+        <polygon points={CSUITE_HEPTAGON_POINTS} />
+        {
+          CSUITE_HEPTAGON_VERTICES.map((v, i) => (
+            <circle
+              cx={v.x}
+              cy={v.y}
+              r="10"
+              fill={i === 0 ? 'var(--steel)' : 'var(--ink)'}
+              stroke="none"
+            />
+          ))
+        }
+      </svg>
+      <span class="logo-name">csuite</span>
+      <span class="logo-divider"></span>
+      <span class="logo-section">docs</span>
+    </a>
+    <nav class="nav">
+      <a href="https://commandsuite.io">Home</a>
+      <a href="/">Docs</a>
+      <a href={brand.ossRepo}>GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<style>
+  .docs-header {
+    position: sticky;
+    top: 0;
+    z-index: 40;
+    background: rgba(14, 28, 43, 0.82);
+    backdrop-filter: blur(12px) saturate(1.05);
+    -webkit-backdrop-filter: blur(12px) saturate(1.05);
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .docs-header-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 60px;
+    padding: 0 var(--edge);
+    max-width: 1600px;
+    margin: 0 auto;
+  }
+
+  .logo {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-family: var(--f-mono);
+    font-weight: 500;
+    font-size: 15px;
+    letter-spacing: -0.005em;
+    color: var(--ink);
+  }
+
+  .logo-mark {
+    flex-shrink: 0;
+  }
+
+  .logo-divider {
+    width: 1px;
+    height: 16px;
+    background: var(--rule-strong);
+  }
+
+  .logo-section {
+    color: var(--muted);
+    font-size: 13px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .nav {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    font-family: var(--f-sans);
+    font-size: 14px;
+    font-weight: 700;
+  }
+
+  .nav a {
+    color: var(--graphite);
+    transition: color 0.15s var(--ease);
+  }
+
+  .nav a:hover {
+    color: var(--ink);
+  }
+
+  @media (max-width: 560px) {
+    .docs-header-inner {
+      padding: 0 24px;
+    }
+    .logo-section {
+      display: none;
+    }
+  }
+</style>
