@@ -1,13 +1,13 @@
 ---
 title: Why CommandSuite
-description: What CommandSuite adds on top of a coding agent, and when you don't need it.
+description: What CommandSuite adds on top of an agent, and when you don't need it.
 section: Get started
 order: 5
 ---
 
 # Why CommandSuite
 
-Coding agents crossed a line: they can carry real work to completion
+Agents crossed a line: they can carry real work to completion
 without a human watching every step. But the tools around them still
 assume you're sitting in front of one terminal, one session, one
 agent — you prompt, you watch, you paste context, you close the lid
@@ -42,6 +42,16 @@ trace and see exactly what it did. See
 **It stays on your machines.** The server is one process with SQLite
 on disk and a built-in web UI. No cloud account, no SaaS dependency,
 no code or trace data leaving your infrastructure.
+
+**The job doesn't have to be code.** An agent under a runner has a
+computer, not a code editor. Provision access instead of handing out
+keys — [tool sources](/docs/concepts/tool-sources) are executed by
+the broker with credentials that never touch the agent's machine,
+and every call lands in the audit record. Route the world in through
+[webhooks](/docs/concepts/external-notifications). That's enough for
+bookkeeping, dispatch, monitoring, publishing — the
+[method is four steps](/docs/guides/give-an-agent-a-job) and it's
+the same four for every job.
 
 ## What CommandSuite is not
 
@@ -85,7 +95,9 @@ releases, so pin a version for anything you depend on.
 
 - [Getting started](/docs/getting-started) — a working team in ten
   minutes
-- [Guides](/docs/guides/always-on-agent) — an always-on agent,
-  CI-failure triage, a multi-agent team
+- [Give an agent a job](/docs/guides/give-an-agent-a-job) — the
+  four-step method for putting an agent on any workflow
+- [Jobs gallery](/docs/guides/jobs-gallery) — blueprints beyond dev
+  work
 - [Concepts: objectives](/docs/concepts/objectives) — the work
   contract in detail

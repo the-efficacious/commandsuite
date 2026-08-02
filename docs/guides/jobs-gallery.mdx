@@ -1,0 +1,149 @@
+---
+title: Jobs gallery
+description: Blueprint-depth sketches of jobs an agent can hold — the kit, the inbox, the standing instructions, and what the trace shows.
+section: Guides
+order: 50
+---
+
+# Jobs gallery
+
+Blueprints, not tutorials. Each entry is the
+[four-step method](/docs/guides/give-an-agent-a-job) compressed to
+its choices: what access to provision, what events to route in, the
+spine of the standing instructions, and a first objective. Pattern-
+match your own workflow onto the closest one.
+
+Every blueprint assumes the basics from
+[give an agent a job](/docs/guides/give-an-agent-a-job): a dedicated
+member, a workstation sized to the blast radius, and a channel where
+a human answers questions.
+
+## The backup verifier
+
+The agent that doesn't check that backups ran — it restores one and
+proves it.
+
+- **Kit**: read access to the backup store (tool source or a
+  read-only mount); a scratch volume to restore into; the backup
+  tool's CLI (it will install it).
+- **Inbox**: its own cron — a weekly self-provisioned trigger, plus
+  the backup system's failure webhook if one exists.
+- **Instructions spine**: "Each week, pick one backup set at random,
+  restore it fully to scratch, verify integrity (row counts,
+  checksums, a sample query), then destroy the scratch copy. Post
+  the result in #ops with numbers, not adjectives."
+- **First objective**: "Restore last night's primary-DB backup to
+  scratch and report row counts against production" — outcome:
+  numbers in the thread.
+- **The trace shows**: the restore commands, the verification
+  queries, and exactly what was destroyed after.
+
+## The dispatch clerk
+
+A support inbox that triages itself, with a human veto.
+
+- **Kit**: a tool source wrapping the helpdesk or CRM API
+  (read/write, scoped to tickets); the team filesystem for canned
+  responses.
+- **Inbox**: contact-form / support-mail webhook via an
+  email-to-webhook bridge.
+- **Instructions spine**: "Classify each incoming message. Answer
+  the routine ones from the canned-response library, draft-first:
+  post the draft in #support and send only after a 👍. Open an
+  objective for anything that needs real work, assigned to the
+  on-call member."
+- **First objective**: "Clear the current backlog of 14 unanswered
+  messages" — outcome: every message answered or escalated with a
+  reason.
+- **The trace shows**: every classification decision and every
+  draft, before a single customer saw anything.
+
+## The research analyst
+
+A daily brief that reads everything so the team doesn't.
+
+- **Kit**: tool sources for the paid APIs you already have (search,
+  market data); the team filesystem for a running notes file.
+- **Inbox**: RSS/alert webhooks, plus a self-provisioned morning
+  cron.
+- **Instructions spine**: "Maintain ~/notes/watchlist.md. Each
+  morning, post a five-bullet brief to #intel: what changed, why it
+  matters, one-line sources. No bullet without a link. Flag anything
+  that contradicts a position in the watchlist."
+- **First objective**: "Build the initial watchlist from the last
+  quarter's #intel history" — outcome: watchlist file reviewed by a
+  named member.
+- **The trace shows**: which sources it actually read, so "why did
+  the brief miss X" has an answer.
+
+## The data janitor
+
+Nightly exports land; clean data comes out; anomalies get flagged.
+
+- **Kit**: wherever the exports land (mount or tool source); the
+  warehouse CLI or a loading tool source; a schema notes file.
+- **Inbox**: the export system's completion webhook, or a
+  self-provisioned watcher cron.
+- **Instructions spine**: "For each export: validate against
+  ~/schemas, clean known defect patterns (they're listed in the
+  process document — read it fresh each run), load, then reconcile
+  row counts end to end. Post the reconciliation line to #data.
+  Anything outside tolerance is a blocked objective, not a Slack
+  message."
+- **First objective**: "Backfill and reconcile last week's five
+  exports" — outcome: counts match or discrepancies are itemized.
+- **The trace shows**: every transform applied to data that feeds
+  decisions — the lineage question answered by receipt rather than
+  memory.
+
+## The publisher
+
+Content moves from approved draft to live everywhere, without a
+human re-pasting it.
+
+- **Kit**: tool sources for the CMS and each social/API surface —
+  every credential broker-held, every one scoped to publish-only.
+- **Inbox**: the CMS "approved" webhook.
+- **Instructions spine**: "On approval: check links, images, and
+  metadata; schedule per the calendar in the process document;
+  adapt the excerpt per channel — no reworded titles; post the
+  publish record to #content."
+- **First objective**: "Publish the Q3 announcement across all four
+  surfaces at Tuesday 09:00" — outcome: four live URLs in the
+  thread.
+- **The trace shows**: what went out, where, and when — per surface,
+  with the exact API calls.
+
+## The office IT concierge
+
+The small-company job nobody holds: renewals, expiries, and the
+question "is anything about to bite us?"
+
+- **Kit**: read-only tool sources for the domain registrar, cert
+  monitoring, and license/SaaS admin APIs; a renewals calendar file.
+- **Inbox**: expiry webhooks where they exist; a self-provisioned
+  daily sweep cron for everything else.
+- **Instructions spine**: "Maintain ~/renewals.md with every domain,
+  cert, and license and its date. Thirty days out: post a warning in
+  #ops. Seven days out: open an objective assigned to the owner.
+  Never renew anything yourself — your job is that nothing expires
+  unnoticed, not that everything renews unreviewed."
+- **First objective**: "Build the initial inventory from the
+  registrar, cert monitor, and SaaS admin panels" — outcome:
+  renewals file with dates, reviewed in #ops.
+- **The trace shows**: the sweep that produced each warning — so a
+  missed expiry is a diagnosable failure, not a mystery.
+
+## Reading the pattern
+
+Six jobs, one shape. The kit is always *provisioned access* — tool
+sources with broker-held, narrowly-scoped credentials — plus a
+workstation the agent finishes equipping itself. The inbox is
+webhooks where the world can push and self-provisioned crons where
+it can't. The instructions always name a channel where a human
+answers, and the risky verbs are always draft-first or forbidden
+outright. And every job ends the same way: not with trust in a
+summary, but with a [trace](/docs/tracing) you can read.
+
+If the job you're imagining isn't here, it probably still reduces to
+the same four steps — [start there](/docs/guides/give-an-agent-a-job).

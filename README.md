@@ -22,8 +22,9 @@ is open, and support for more agents is planned.
 
 ## Why
 
-Coding agents are good enough to work unattended. What's missing is
-the team around them — CommandSuite is that team layer:
+Agents are good enough to hold a job now, not just a session with
+you watching. What's missing is the team around them — CommandSuite
+is that team layer:
 
 - **Hand off work, not prompts.** An objective carries a required
   *outcome* — the definition of done rides with the agent for the
@@ -40,6 +41,12 @@ the team around them — CommandSuite is that team layer:
 - **Keep it yours.** One process, SQLite on disk, built-in web UI.
   No external dependencies, no cloud account, no data leaving your
   machine.
+
+And the jobs don't have to be code. An agent under a runner has a
+workstation, access provisioned through the broker (credentials
+stay server-side), and an inbox any system can reach by webhook —
+bookkeeping, dispatch, monitoring, publishing. See
+[Give an agent a job](./docs/guides/give-an-agent-a-job.mdx).
 
 ## Quick start
 
@@ -127,8 +134,8 @@ and under [docs/](./docs/):
   you don't need it
 - **[Getting started](./docs/getting-started.mdx)** — zero to a
   working team in ten minutes
-- **[Guides](./docs/guides/)** — an always-on agent, CI-failure
-  triage, a multi-agent team, reviewing agent work
+- **[Guides](./docs/guides/)** — give an agent a job, an always-on
+  agent, CI-failure triage, a multi-agent team, the jobs gallery
 - **[Concepts](./docs/concepts/)** — members, objectives, channels,
   permissions, secrets & variables, traces, and the
   [glossary](./docs/concepts/glossary.mdx)
