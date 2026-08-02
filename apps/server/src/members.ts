@@ -596,7 +596,7 @@ export function generateMemberToken(): string {
 
 /**
  * Project the loaded members into a teammate list suitable for the
- * roster and briefing responses. Preserves config ordering. Drops
+ * roster and instructions responses. Preserves config ordering. Drops
  * the private `instructions` field (teammates don't see each other's
  * personal instructions).
  */

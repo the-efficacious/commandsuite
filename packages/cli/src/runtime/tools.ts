@@ -5,7 +5,7 @@
  * interpolation is boot-stable and functional — the member's fs home
  * path and permission-scoped wording — never live state and never
  * identity/roster prose (who-you-are and the teammate list live in the
- * system-prompt briefing; repeating them per-tool wastes context).
+ * system-prompt instructions; repeating them per-tool wastes context).
  * Live state (open objectives, presence) reaches the agent as message
  * traffic: channel events plus the runner's `context_refresh`
  * re-briefs. `tools/list_changed` is reserved for genuine capability
@@ -85,21 +85,21 @@ const MAX_RECENT_LIMIT = 500;
  * Build the tool set. Descriptions are static per session — the only
  * interpolation is boot-stable and functional (fs home path,
  * permission-scoped wording). Identity and the teammate roster live in
- * the system-prompt briefing; live objective state is delivered via
+ * the system-prompt instructions; live objective state is delivered via
  * channel notifications and `context_refresh` re-briefs, never baked
  * into tool metadata (see the file header for the doctrine).
  *
  * `externalTools` is the resolved tool-source snapshot — platform-
  * defined tools the broker executes on the agent's behalf. It
- * defaults to the briefing's boot-time set; the runner passes its
+ * defaults to the packet's boot-time set; the runner passes its
  * LIVE snapshot instead, which changes only on genuine registry
  * events (each one followed by a `tools/list_changed`).
  */
 export function defineTools(
-  briefing: InstructionsResponse,
-  externalTools: ResolvedToolSource[] = briefing.toolSources,
+  instructions: InstructionsResponse,
+  externalTools: ResolvedToolSource[] = instructions.toolSources,
 ): Tool[] {
-  const { name } = briefing;
+  const { name } = instructions;
 
   return [
     {
@@ -442,40 +442,40 @@ export function defineTools(
     // `watchers` descriptions call out the "only objectives you
     // originated" rule so the agent doesn't try to touch someone
     // else's objective and eat a 403.
-    ...buildAuthorityTools(briefing),
+    ...buildAuthorityTools(instructions),
     // The team's process document. Reading it is not how an agent
     // learns what binds it — the document is already in its fixed
     // context. These cover the edit history, which injection
     // deliberately leaves out, and the write path.
-    ...buildProcessDocumentTools(briefing),
+    ...buildProcessDocumentTools(instructions),
     // Admin tools for live team/member/preset management. Each gated
     // on the corresponding `team.manage` or `members.manage`
     // permission so non-admin agents don't see them in their toolbox.
     // The broker enforces the same gates independently — these tools
     // exist for UX (don't offer what you can't do) and as a first line
     // of defense, not as the security boundary.
-    ...buildAdminTools(briefing),
+    ...buildAdminTools(instructions),
     // Tool-source registry administration, gated on `tools.manage`.
     // This is the agent-authorship surface: an admin agent can read an
     // API's docs, register a source, define its tools, bind members,
     // and iterate on failures — the whole connector lifecycle without
     // leaving its toolbox. Credentials are WRITE-ONLY end to end; no
     // endpoint returns a secret to anyone, agent or human.
-    ...buildToolAdminTools(briefing),
+    ...buildToolAdminTools(instructions),
     // Secrets administration, gated on `secrets.manage`. Registry
     // metadata management from the agent toolbox; values are
     // WRITE-ONLY end to end (an agent-set value passes through the
     // session transcript — the tool description teaches the human-
     // drops-the-key alternative).
-    ...buildSecretsAdminTools(briefing),
-    ...buildVariablesAdminTools(briefing),
+    ...buildSecretsAdminTools(instructions),
+    ...buildVariablesAdminTools(instructions),
     // External Notifications administration, gated on
     // `notifications.manage`. The agent-self-provisioning surface for
     // inbound webhooks: an admin agent can register an endpoint,
     // wire it to itself, set the signing secret, inspect delivery
     // receipts, and replay one while debugging a filter or template.
     // Signing secrets are WRITE-ONLY end to end.
-    ...buildNotificationsAdminTools(briefing),
+    ...buildNotificationsAdminTools(instructions),
     // ── External tools (tool sources) ──────────────────────────────
     //
     // Platform-defined tools resolved for this member from the
@@ -544,8 +544,8 @@ async function handleExternalToolCall(
   return result as CallToolResult;
 }
 
-function buildAdminTools(briefing: InstructionsResponse): Tool[] {
-  const { permissions } = briefing;
+function buildAdminTools(instructions: InstructionsResponse): Tool[] {
+  const { permissions } = instructions;
   const canManageTeam = permissions.includes('team.manage');
   const canManageMembers = permissions.includes('members.manage');
   if (!canManageTeam && !canManageMembers) return [];
@@ -556,7 +556,7 @@ function buildAdminTools(briefing: InstructionsResponse): Tool[] {
   // Read is allowed for anyone — same as `/team` on the HTTP API —
   // but we only surface the tool to admins so the toolbox stays
   // narrow for non-admin members. Any agent that needs team data can pull it from
-  // the briefing on session start.
+  // the instructions on session start.
   if (canManageTeam) {
     tools.push({
       name: 'team_get',
@@ -569,10 +569,11 @@ function buildAdminTools(briefing: InstructionsResponse): Tool[] {
     tools.push({
       name: 'team_update',
       description:
-        'Update one or more team-level fields. `context` changes the ' +
-        'briefing every member is shown on subsequent MCP sessions; live sessions ' +
-        'still reflect the OLD strings until the runner restarts (the MCP ' +
-        '`instructions` field is frozen for the lifetime of a session by protocol). ' +
+        'Update one or more team-level fields. `context` changes the team ' +
+        'instruction block composed into every member\'s fixed context; the broker ' +
+        'fans the edit out and each affected runner restarts its agent at the next ' +
+        'idle boundary, resuming the same conversation under the new text. Until ' +
+        'then the roster lists those members restart-pending. ' +
         'Pass at least one of `name`, `context`. Returns the updated team ' +
         'config (same shape as `team_get`).',
       inputSchema: {
@@ -670,9 +671,10 @@ function buildAdminTools(briefing: InstructionsResponse): Tool[] {
     tools.push({
       name: 'members_update',
       description:
-        "Update an existing member's role, instructions, or permissions. Changes to " +
-        "`instructions` apply to that member's NEXT MCP session — the current session " +
-        'continues to reflect the old briefing until the runner restarts. Returns the ' +
+        "Update an existing member's role, instructions, or permissions. Role and " +
+        'instructions edits fan out as an instructions event: each affected runner ' +
+        'restarts its agent at the next idle boundary with the new composed text ' +
+        '(a role edit also reaches teammates whose roster line changed). Returns the ' +
         'updated member record (no token, no totp secret — those are not re-emitted).',
       inputSchema: {
         type: 'object',
@@ -719,8 +721,8 @@ function buildAdminTools(briefing: InstructionsResponse): Tool[] {
  * independently (403), and every save-time validation failure comes
  * back with a message naming the exact problem.
  */
-function buildToolAdminTools(briefing: InstructionsResponse): Tool[] {
-  if (!briefing.permissions.includes('tools.manage')) return [];
+function buildToolAdminTools(instructions: InstructionsResponse): Tool[] {
+  if (!instructions.permissions.includes('tools.manage')) return [];
 
   return [
     {
@@ -945,8 +947,8 @@ function buildToolAdminTools(briefing: InstructionsResponse): Tool[] {
  * a secret: its value is readable, and it is never registered with the
  * trace redactor, so it appears verbatim in captured traces.
  */
-function buildVariablesAdminTools(briefing: InstructionsResponse): Tool[] {
-  if (!briefing.permissions.includes('secrets.manage')) return [];
+function buildVariablesAdminTools(instructions: InstructionsResponse): Tool[] {
+  if (!instructions.permissions.includes('secrets.manage')) return [];
 
   return [
     {
@@ -1075,8 +1077,8 @@ function buildVariablesAdminTools(briefing: InstructionsResponse): Tool[] {
   ];
 }
 
-function buildSecretsAdminTools(briefing: InstructionsResponse): Tool[] {
-  if (!briefing.permissions.includes('secrets.manage')) return [];
+function buildSecretsAdminTools(instructions: InstructionsResponse): Tool[] {
+  if (!instructions.permissions.includes('secrets.manage')) return [];
 
   return [
     {
@@ -1227,8 +1229,8 @@ function buildSecretsAdminTools(briefing: InstructionsResponse): Tool[] {
  * the sender at the hook URL, then debug with delivery receipts and
  * replay. The broker enforces the same permission independently.
  */
-function buildNotificationsAdminTools(briefing: InstructionsResponse): Tool[] {
-  if (!briefing.permissions.includes('notifications.manage')) return [];
+function buildNotificationsAdminTools(instructions: InstructionsResponse): Tool[] {
+  if (!instructions.permissions.includes('notifications.manage')) return [];
 
   const targetsSchema = {
     type: 'array',
@@ -1699,7 +1701,7 @@ function buildFilesystemTools(name: string): Tool[] {
  * the authority — whoever holds it can rewrite what binds the team —
  * and "can create an objective" is not a comparable power.
  */
-function buildProcessDocumentTools(briefing: InstructionsResponse): Tool[] {
+function buildProcessDocumentTools(instructions: InstructionsResponse): Tool[] {
   const tools: Tool[] = [
     {
       name: 'process_document_get',
@@ -1729,7 +1731,7 @@ function buildProcessDocumentTools(briefing: InstructionsResponse): Tool[] {
     },
   ];
 
-  if (!briefing.permissions.includes('process.manage')) return tools;
+  if (!instructions.permissions.includes('process.manage')) return tools;
 
   tools.push({
     name: 'process_document_write',
@@ -1779,8 +1781,8 @@ function buildProcessDocumentTools(briefing: InstructionsResponse): Tool[] {
   return tools;
 }
 
-function buildAuthorityTools(briefing: InstructionsResponse): Tool[] {
-  const { permissions } = briefing;
+function buildAuthorityTools(instructions: InstructionsResponse): Tool[] {
+  const { permissions } = instructions;
   const canCreate = permissions.includes('objectives.create');
   const canCancel = permissions.includes('objectives.cancel');
   const canWatch = permissions.includes('objectives.watch');
@@ -2001,26 +2003,26 @@ export async function handleToolCall(
   name: string,
   rawArgs: Record<string, unknown> | undefined,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
-  externalTools: ResolvedToolSource[] = briefing.toolSources,
+  instructions: InstructionsResponse,
+  externalTools: ResolvedToolSource[] = instructions.toolSources,
 ): Promise<CallToolResult> {
   const args = rawArgs ?? {};
   try {
     switch (name) {
       case 'roster':
-        return await handleRoster(brokerClient, briefing);
+        return await handleRoster(brokerClient, instructions);
       case 'broadcast':
         return await handleBroadcast(args, brokerClient);
       case 'send':
         return await handleSend(args, brokerClient);
       case 'channels_list':
-        return await handleChannelsList(brokerClient, briefing);
+        return await handleChannelsList(brokerClient, instructions);
       case 'channels_post':
         return await handleChannelsPost(args, brokerClient);
       case 'recent':
-        return await handleRecent(args, brokerClient, briefing);
+        return await handleRecent(args, brokerClient, instructions);
       case 'objectives_list':
-        return await handleObjectivesList(args, brokerClient, briefing);
+        return await handleObjectivesList(args, brokerClient, instructions);
       case 'objectives_view':
         return await handleObjectivesView(args, brokerClient);
       case 'objectives_update':
@@ -2030,7 +2032,7 @@ export async function handleToolCall(
       case 'objectives_complete':
         return await handleObjectivesComplete(args, brokerClient);
       case 'objectives_create':
-        return await handleObjectivesCreate(args, brokerClient, briefing);
+        return await handleObjectivesCreate(args, brokerClient, instructions);
       case 'process_document_get':
         return await handleProcessDocumentGet(brokerClient);
       case 'process_document_history':
@@ -2042,13 +2044,13 @@ export async function handleToolCall(
       case 'objectives_correct_event':
         return await handleObjectivesCorrectEvent(args, brokerClient);
       case 'objectives_cancel':
-        return await handleObjectivesCancel(args, brokerClient, briefing);
+        return await handleObjectivesCancel(args, brokerClient, instructions);
       case 'objectives_watchers':
-        return await handleObjectivesWatchers(args, brokerClient, briefing);
+        return await handleObjectivesWatchers(args, brokerClient, instructions);
       case 'objectives_reassign':
-        return await handleObjectivesReassign(args, brokerClient, briefing);
+        return await handleObjectivesReassign(args, brokerClient, instructions);
       case 'fs_ls':
-        return await handleFsLs(args, brokerClient, briefing);
+        return await handleFsLs(args, brokerClient, instructions);
       case 'fs_stat':
         return await handleFsStat(args, brokerClient);
       case 'fs_read':
@@ -2080,85 +2082,85 @@ export async function handleToolCall(
       case 'members_remove':
         return await handleMembersRemove(args, brokerClient);
       case 'tool_sources_list':
-        return await handleToolSourcesList(brokerClient, briefing);
+        return await handleToolSourcesList(brokerClient, instructions);
       case 'tool_sources_view':
-        return await handleToolSourcesView(args, brokerClient, briefing);
+        return await handleToolSourcesView(args, brokerClient, instructions);
       case 'tool_sources_create':
-        return await handleToolSourcesCreate(args, brokerClient, briefing);
+        return await handleToolSourcesCreate(args, brokerClient, instructions);
       case 'tool_sources_update':
-        return await handleToolSourcesUpdate(args, brokerClient, briefing);
+        return await handleToolSourcesUpdate(args, brokerClient, instructions);
       case 'tool_sources_delete':
-        return await handleToolSourcesDelete(args, brokerClient, briefing);
+        return await handleToolSourcesDelete(args, brokerClient, instructions);
       case 'tool_sources_define_tool':
-        return await handleToolSourcesDefineTool(args, brokerClient, briefing);
+        return await handleToolSourcesDefineTool(args, brokerClient, instructions);
       case 'tool_sources_delete_tool':
-        return await handleToolSourcesDeleteTool(args, brokerClient, briefing);
+        return await handleToolSourcesDeleteTool(args, brokerClient, instructions);
       case 'tool_sources_bindings':
-        return await handleToolSourcesBindings(args, brokerClient, briefing);
+        return await handleToolSourcesBindings(args, brokerClient, instructions);
       case 'tool_sources_set_credential':
-        return await handleToolSourcesSetCredential(args, brokerClient, briefing);
+        return await handleToolSourcesSetCredential(args, brokerClient, instructions);
       case 'tool_sources_delete_credential':
-        return await handleToolSourcesDeleteCredential(args, brokerClient, briefing);
+        return await handleToolSourcesDeleteCredential(args, brokerClient, instructions);
       case 'tool_sources_refresh':
-        return await handleToolSourcesRefresh(args, brokerClient, briefing);
+        return await handleToolSourcesRefresh(args, brokerClient, instructions);
       case 'secrets_list':
-        return await handleSecretsList(brokerClient, briefing);
+        return await handleSecretsList(brokerClient, instructions);
       case 'secrets_view':
-        return await handleSecretsView(args, brokerClient, briefing);
+        return await handleSecretsView(args, brokerClient, instructions);
       case 'secrets_create':
-        return await handleSecretsCreate(args, brokerClient, briefing);
+        return await handleSecretsCreate(args, brokerClient, instructions);
       case 'secrets_update':
-        return await handleSecretsUpdate(args, brokerClient, briefing);
+        return await handleSecretsUpdate(args, brokerClient, instructions);
       case 'secrets_delete':
-        return await handleSecretsDelete(args, brokerClient, briefing);
+        return await handleSecretsDelete(args, brokerClient, instructions);
       case 'secrets_set_value':
-        return await handleSecretsSetValue(args, brokerClient, briefing);
+        return await handleSecretsSetValue(args, brokerClient, instructions);
       case 'secrets_delete_value':
-        return await handleSecretsDeleteValue(args, brokerClient, briefing);
+        return await handleSecretsDeleteValue(args, brokerClient, instructions);
       case 'secrets_bindings':
-        return await handleSecretsBindings(args, brokerClient, briefing);
+        return await handleSecretsBindings(args, brokerClient, instructions);
       case 'variables_list':
-        return await handleVariablesList(brokerClient, briefing);
+        return await handleVariablesList(brokerClient, instructions);
       case 'variables_view':
-        return await handleVariablesView(args, brokerClient, briefing);
+        return await handleVariablesView(args, brokerClient, instructions);
       case 'variables_create':
-        return await handleVariablesCreate(args, brokerClient, briefing);
+        return await handleVariablesCreate(args, brokerClient, instructions);
       case 'variables_update':
-        return await handleVariablesUpdate(args, brokerClient, briefing);
+        return await handleVariablesUpdate(args, brokerClient, instructions);
       case 'variables_delete':
-        return await handleVariablesDelete(args, brokerClient, briefing);
+        return await handleVariablesDelete(args, brokerClient, instructions);
       case 'variables_set_value':
-        return await handleVariablesSetValue(args, brokerClient, briefing);
+        return await handleVariablesSetValue(args, brokerClient, instructions);
       case 'variables_delete_value':
-        return await handleVariablesDeleteValue(args, brokerClient, briefing);
+        return await handleVariablesDeleteValue(args, brokerClient, instructions);
       case 'variables_bindings':
-        return await handleVariablesBindings(args, brokerClient, briefing);
+        return await handleVariablesBindings(args, brokerClient, instructions);
       case 'notifications_list':
-        return await handleNotificationsList(brokerClient, briefing);
+        return await handleNotificationsList(brokerClient, instructions);
       case 'notifications_view':
-        return await handleNotificationsView(args, brokerClient, briefing);
+        return await handleNotificationsView(args, brokerClient, instructions);
       case 'notifications_create':
-        return await handleNotificationsCreate(args, brokerClient, briefing);
+        return await handleNotificationsCreate(args, brokerClient, instructions);
       case 'notifications_update':
-        return await handleNotificationsUpdate(args, brokerClient, briefing);
+        return await handleNotificationsUpdate(args, brokerClient, instructions);
       case 'notifications_delete':
-        return await handleNotificationsDelete(args, brokerClient, briefing);
+        return await handleNotificationsDelete(args, brokerClient, instructions);
       case 'notifications_set_secret':
-        return await handleNotificationsSetSecret(args, brokerClient, briefing);
+        return await handleNotificationsSetSecret(args, brokerClient, instructions);
       case 'notifications_delete_secret':
-        return await handleNotificationsDeleteSecret(args, brokerClient, briefing);
+        return await handleNotificationsDeleteSecret(args, brokerClient, instructions);
       case 'notifications_deliveries':
-        return await handleNotificationsDeliveries(args, brokerClient, briefing);
+        return await handleNotificationsDeliveries(args, brokerClient, instructions);
       case 'notifications_replay':
-        return await handleNotificationsReplay(args, brokerClient, briefing);
+        return await handleNotificationsReplay(args, brokerClient, instructions);
       case 'notifications_profiles':
-        return await handleNotificationsProfiles(brokerClient, briefing);
+        return await handleNotificationsProfiles(brokerClient, instructions);
       case 'notifications_profile_create':
-        return await handleNotificationsProfileCreate(args, brokerClient, briefing);
+        return await handleNotificationsProfileCreate(args, brokerClient, instructions);
       case 'notifications_profile_delete':
-        return await handleNotificationsProfileDelete(args, brokerClient, briefing);
+        return await handleNotificationsProfileDelete(args, brokerClient, instructions);
       case 'notifications_profile_set_secret':
-        return await handleNotificationsProfileSetSecret(args, brokerClient, briefing);
+        return await handleNotificationsProfileSetSecret(args, brokerClient, instructions);
       default: {
         // Namespaced external tool (`<source>__<name>`)? Dispatch to
         // the broker's invoke endpoint — the result is already an
@@ -2179,7 +2181,7 @@ export async function handleToolCall(
 
 async function handleRoster(
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
   const roster = await brokerClient.roster();
   const presenceByName = new Map(roster.connected.map((presence) => [presence.name, presence]));
@@ -2193,7 +2195,7 @@ async function handleRoster(
   const lines = roster.teammates.map((t) => {
     const presence = presenceByName.get(t.name);
     const conn = presence?.connected ?? 0;
-    const self = t.name === briefing.name ? ' (you)' : '';
+    const self = t.name === instructions.name ? ' (you)' : '';
     const state = conn > 0 ? `connected=${conn}` : 'offline';
     const activity =
       presence?.activity === 'working' || presence?.activity === 'blocked'
@@ -2206,7 +2208,7 @@ async function handleRoster(
         : '';
     return `- ${t.name}${self} [${t.role.title}]${auth} ${state}; activity=${activity}`;
   });
-  return textResult(`team ${briefing.team.name} roster:\n${lines.join('\n')}`);
+  return textResult(`team ${instructions.team.name} roster:\n${lines.join('\n')}`);
 }
 
 async function handleBroadcast(
@@ -2298,7 +2300,7 @@ async function resolveAttachmentPaths(
 async function handleRecent(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
   const withOther = typeof args.with === 'string' ? args.with : undefined;
   const channelSlug = typeof args.channel === 'string' ? args.channel : undefined;
@@ -2338,7 +2340,7 @@ async function handleRecent(
       ? `DM with ${withOther}`
       : channelSlug
         ? `channel #${channelSlug}`
-        : `${briefing.team.name} team channel`;
+        : `${instructions.team.name} team channel`;
     return textResult(`recent: no messages in ${scope}`);
   }
 
@@ -2346,18 +2348,18 @@ async function handleRecent(
     ? `recent DMs with ${withOther} (${messages.length}):`
     : channelSlug
       ? `recent #${channelSlug} (${messages.length}):`
-      : `recent ${briefing.team.name} team chat (${messages.length}):`;
+      : `recent ${instructions.team.name} team chat (${messages.length}):`;
   const lines = messages.map((m) => formatRecentLine(m));
   return textResult(`${header}\n${lines.join('\n')}`);
 }
 
 async function handleChannelsList(
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
   const channels = await brokerClient.listChannels();
   if (channels.length === 0) {
-    return textResult(`team ${briefing.team.name}: no channels defined.`);
+    return textResult(`team ${instructions.team.name}: no channels defined.`);
   }
   // Show joined channels first, then any visible non-joined ones, so
   // the agent's "what can I post into right now" is at the top.
@@ -2438,7 +2440,7 @@ async function handleChannelsPost(
 async function handleObjectivesList(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
   const filter = typeof args.status === 'string' ? args.status : undefined;
   if (filter !== undefined && !OBJECTIVE_LIST_FILTERS.includes(filter)) {
@@ -2458,7 +2460,7 @@ async function handleObjectivesList(
   // is applied here over the unfiltered relationship set.
   const serverStatus = filter && filter !== 'open' ? (filter as ObjectiveStatus) : undefined;
   const list = await brokerClient.listObjectives({
-    related: briefing.name,
+    related: instructions.name,
     ...(serverStatus ? { status: serverStatus } : {}),
   });
 
@@ -2486,10 +2488,10 @@ async function handleObjectivesList(
   // phrase should say only the narrower one.
   const subject =
     assignee === undefined
-      ? `objectives for ${briefing.name}`
-      : assignee === briefing.name
-        ? `objectives assigned to ${briefing.name}`
-        : `objectives for ${briefing.name} assigned to ${assignee}`;
+      ? `objectives for ${instructions.name}`
+      : assignee === instructions.name
+        ? `objectives assigned to ${instructions.name}`
+        : `objectives for ${instructions.name} assigned to ${assignee}`;
   const statusWord = filter === 'open' ? 'open' : filter;
   const phrase = statusWord ? `${statusWord} ${subject}` : subject;
   if (rows.length === 0) {
@@ -2499,7 +2501,7 @@ async function handleObjectivesList(
     // `(you)` mirrors the web UI's own row treatment. Without it an agent
     // cannot tell work it owns from work it merely watches, which is the
     // whole reason assignee is rendered.
-    const own = o.assignee === briefing.name ? ' (you)' : '';
+    const own = o.assignee === instructions.name ? ' (you)' : '';
     // The contract version belongs HERE, not only on `objectives_view`.
     // For an agent recovering from a cleared context this list IS the
     // record it sees — `objectives_list status=open` is the documented
@@ -2822,12 +2824,12 @@ async function handleObjectivesComplete(
 async function handleObjectivesCreate(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
   if (
-    !briefing.permissions.includes('members.manage') &&
-    !briefing.permissions.includes('objectives.create') &&
-    !briefing.permissions.includes('objectives.create')
+    !instructions.permissions.includes('members.manage') &&
+    !instructions.permissions.includes('objectives.create') &&
+    !instructions.permissions.includes('objectives.create')
   ) {
     return errorResult('objectives_create: you do not have the required permission on this team');
   }
@@ -2871,12 +2873,12 @@ async function handleObjectivesCreate(
 async function handleObjectivesCancel(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
   if (
-    !briefing.permissions.includes('members.manage') &&
-    !briefing.permissions.includes('objectives.create') &&
-    !briefing.permissions.includes('objectives.create')
+    !instructions.permissions.includes('members.manage') &&
+    !instructions.permissions.includes('objectives.create') &&
+    !instructions.permissions.includes('objectives.create')
   ) {
     return errorResult('objectives_cancel: you do not have the required permission on this team');
   }
@@ -2890,12 +2892,12 @@ async function handleObjectivesCancel(
 async function handleObjectivesWatchers(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
   if (
-    !briefing.permissions.includes('members.manage') &&
-    !briefing.permissions.includes('objectives.create') &&
-    !briefing.permissions.includes('objectives.create')
+    !instructions.permissions.includes('members.manage') &&
+    !instructions.permissions.includes('objectives.create') &&
+    !instructions.permissions.includes('objectives.create')
   ) {
     return errorResult('objectives_watchers: you do not have the required permission on this team');
   }
@@ -2924,9 +2926,9 @@ async function handleObjectivesWatchers(
 async function handleObjectivesReassign(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  if (!briefing.permissions.includes('members.manage')) {
+  if (!instructions.permissions.includes('members.manage')) {
     return errorResult('objectives_reassign: you do not have the required permission on this team');
   }
   const id = typeof args.id === 'string' ? args.id : '';
@@ -2968,7 +2970,7 @@ async function handleTeamUpdate(
   return textResult(
     `team_update applied: fields=${Object.keys(patch).join(',')} name='${team.name}'\n` +
       (patch.context !== undefined ? `context size: ${formatTextMetrics(team.context)}\n` : '') +
-      `note: live MCP sessions still see the OLD briefing until the runner restarts.`,
+      `note: affected runners restart their agents at the next idle boundary to apply this; the roster lists them restart-pending until then.`,
   );
 }
 
@@ -3072,7 +3074,7 @@ async function handleMembersUpdate(
       (patch.instructions !== undefined
         ? `personal instructions: ${formatTextMetrics(member.instructions)}\n`
         : '') +
-      `note: instruction changes apply to that member's NEXT MCP session, not the live one.`,
+      `note: the member's runner restarts their agent at the next idle boundary to apply this; the roster lists them restart-pending until then.`,
   );
 }
 
@@ -3091,8 +3093,8 @@ async function handleMembersRemove(
 // authoritative (403s independently); the local re-check just gives a
 // faster, clearer error when a stale client name-calls a hidden tool.
 
-function requireToolsManage(briefing: InstructionsResponse, tool: string): CallToolResult | null {
-  if (!briefing.permissions.includes('tools.manage')) {
+function requireToolsManage(instructions: InstructionsResponse, tool: string): CallToolResult | null {
+  if (!instructions.permissions.includes('tools.manage')) {
     return errorResult(`${tool}: you do not have the tools.manage permission on this team`);
   }
   return null;
@@ -3112,9 +3114,9 @@ function formatSourceLine(s: ToolSourceSummary): string {
 
 async function handleToolSourcesList(
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireToolsManage(briefing, 'tool_sources_list');
+  const denied = requireToolsManage(instructions, 'tool_sources_list');
   if (denied) return denied;
   const sources = await brokerClient.listToolSources();
   if (sources.length === 0) {
@@ -3128,9 +3130,9 @@ async function handleToolSourcesList(
 async function handleToolSourcesView(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireToolsManage(briefing, 'tool_sources_view');
+  const denied = requireToolsManage(instructions, 'tool_sources_view');
   if (denied) return denied;
   const slug = typeof args.slug === 'string' ? args.slug : '';
   if (!slug) return errorResult('tool_sources_view: `slug` is required');
@@ -3162,9 +3164,9 @@ async function handleToolSourcesView(
 async function handleToolSourcesCreate(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireToolsManage(briefing, 'tool_sources_create');
+  const denied = requireToolsManage(instructions, 'tool_sources_create');
   if (denied) return denied;
   const slug = typeof args.slug === 'string' ? args.slug : '';
   const kind = args.kind === 'mcp' ? 'mcp' : args.kind === 'custom' ? 'custom' : null;
@@ -3193,9 +3195,9 @@ async function handleToolSourcesCreate(
 async function handleToolSourcesUpdate(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireToolsManage(briefing, 'tool_sources_update');
+  const denied = requireToolsManage(instructions, 'tool_sources_update');
   if (denied) return denied;
   const slug = typeof args.slug === 'string' ? args.slug : '';
   if (!slug) return errorResult('tool_sources_update: `slug` is required');
@@ -3214,9 +3216,9 @@ async function handleToolSourcesUpdate(
 async function handleToolSourcesDelete(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireToolsManage(briefing, 'tool_sources_delete');
+  const denied = requireToolsManage(instructions, 'tool_sources_delete');
   if (denied) return denied;
   const slug = typeof args.slug === 'string' ? args.slug : '';
   if (!slug) return errorResult('tool_sources_delete: `slug` is required');
@@ -3229,9 +3231,9 @@ async function handleToolSourcesDelete(
 async function handleToolSourcesDefineTool(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireToolsManage(briefing, 'tool_sources_define_tool');
+  const denied = requireToolsManage(instructions, 'tool_sources_define_tool');
   if (denied) return denied;
   const slug = typeof args.slug === 'string' ? args.slug : '';
   const name = typeof args.name === 'string' ? args.name : '';
@@ -3264,9 +3266,9 @@ async function handleToolSourcesDefineTool(
 async function handleToolSourcesDeleteTool(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireToolsManage(briefing, 'tool_sources_delete_tool');
+  const denied = requireToolsManage(instructions, 'tool_sources_delete_tool');
   if (denied) return denied;
   const slug = typeof args.slug === 'string' ? args.slug : '';
   const name = typeof args.name === 'string' ? args.name : '';
@@ -3280,9 +3282,9 @@ async function handleToolSourcesDeleteTool(
 async function handleToolSourcesBindings(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireToolsManage(briefing, 'tool_sources_bindings');
+  const denied = requireToolsManage(instructions, 'tool_sources_bindings');
   if (denied) return denied;
   const slug = typeof args.slug === 'string' ? args.slug : '';
   if (!slug) return errorResult('tool_sources_bindings: `slug` is required');
@@ -3311,9 +3313,9 @@ async function handleToolSourcesBindings(
 async function handleToolSourcesSetCredential(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireToolsManage(briefing, 'tool_sources_set_credential');
+  const denied = requireToolsManage(instructions, 'tool_sources_set_credential');
   if (denied) return denied;
   const slug = typeof args.slug === 'string' ? args.slug : '';
   const kind = args.kind === 'header' ? 'header' : args.kind === 'bearer' ? 'bearer' : null;
@@ -3341,9 +3343,9 @@ async function handleToolSourcesSetCredential(
 async function handleToolSourcesDeleteCredential(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireToolsManage(briefing, 'tool_sources_delete_credential');
+  const denied = requireToolsManage(instructions, 'tool_sources_delete_credential');
   if (denied) return denied;
   const slug = typeof args.slug === 'string' ? args.slug : '';
   if (!slug) return errorResult('tool_sources_delete_credential: `slug` is required');
@@ -3354,9 +3356,9 @@ async function handleToolSourcesDeleteCredential(
 async function handleToolSourcesRefresh(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireToolsManage(briefing, 'tool_sources_refresh');
+  const denied = requireToolsManage(instructions, 'tool_sources_refresh');
   if (denied) return denied;
   const slug = typeof args.slug === 'string' ? args.slug : '';
   if (!slug) return errorResult('tool_sources_refresh: `slug` is required');
@@ -3373,8 +3375,8 @@ async function handleToolSourcesRefresh(
 // authoritative (403s independently); the local re-check just gives a
 // faster, clearer error. Values NEVER appear in any result text.
 
-function requireSecretsManage(briefing: InstructionsResponse, tool: string): CallToolResult | null {
-  if (!briefing.permissions.includes('secrets.manage')) {
+function requireSecretsManage(instructions: InstructionsResponse, tool: string): CallToolResult | null {
+  if (!instructions.permissions.includes('secrets.manage')) {
     return errorResult(`${tool}: you do not have the secrets.manage permission on this team`);
   }
   return null;
@@ -3394,9 +3396,9 @@ function formatSecretLine(s: SecretSummary): string {
 
 async function handleSecretsList(
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireSecretsManage(briefing, 'secrets_list');
+  const denied = requireSecretsManage(instructions, 'secrets_list');
   if (denied) return denied;
   const secrets = await brokerClient.listSecrets();
   if (secrets.length === 0) {
@@ -3408,9 +3410,9 @@ async function handleSecretsList(
 async function handleSecretsView(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireSecretsManage(briefing, 'secrets_view');
+  const denied = requireSecretsManage(instructions, 'secrets_view');
   if (denied) return denied;
   const slug = typeof args.slug === 'string' ? args.slug : '';
   if (!slug) return errorResult('secrets_view: `slug` is required');
@@ -3427,9 +3429,9 @@ async function handleSecretsView(
 async function handleSecretsCreate(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireSecretsManage(briefing, 'secrets_create');
+  const denied = requireSecretsManage(instructions, 'secrets_create');
   if (denied) return denied;
   const slug = typeof args.slug === 'string' ? args.slug : '';
   const envName = typeof args.envName === 'string' ? args.envName : '';
@@ -3451,9 +3453,9 @@ async function handleSecretsCreate(
 async function handleSecretsUpdate(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireSecretsManage(briefing, 'secrets_update');
+  const denied = requireSecretsManage(instructions, 'secrets_update');
   if (denied) return denied;
   const slug = typeof args.slug === 'string' ? args.slug : '';
   if (!slug) return errorResult('secrets_update: `slug` is required');
@@ -3472,9 +3474,9 @@ async function handleSecretsUpdate(
 async function handleSecretsDelete(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireSecretsManage(briefing, 'secrets_delete');
+  const denied = requireSecretsManage(instructions, 'secrets_delete');
   if (denied) return denied;
   const slug = typeof args.slug === 'string' ? args.slug : '';
   if (!slug) return errorResult('secrets_delete: `slug` is required');
@@ -3485,9 +3487,9 @@ async function handleSecretsDelete(
 async function handleSecretsSetValue(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireSecretsManage(briefing, 'secrets_set_value');
+  const denied = requireSecretsManage(instructions, 'secrets_set_value');
   if (denied) return denied;
   const slug = typeof args.slug === 'string' ? args.slug : '';
   const value = typeof args.value === 'string' ? args.value : '';
@@ -3503,9 +3505,9 @@ async function handleSecretsSetValue(
 async function handleSecretsDeleteValue(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireSecretsManage(briefing, 'secrets_delete_value');
+  const denied = requireSecretsManage(instructions, 'secrets_delete_value');
   if (denied) return denied;
   const slug = typeof args.slug === 'string' ? args.slug : '';
   if (!slug) return errorResult('secrets_delete_value: `slug` is required');
@@ -3533,9 +3535,9 @@ function formatVariableLine(v: VariableSummary): string {
 
 async function handleVariablesList(
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireSecretsManage(briefing, 'variables_list');
+  const denied = requireSecretsManage(instructions, 'variables_list');
   if (denied) return denied;
   const variables = await brokerClient.listVariables();
   if (variables.length === 0) {
@@ -3551,9 +3553,9 @@ async function handleVariablesList(
 async function handleVariablesView(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireSecretsManage(briefing, 'variables_view');
+  const denied = requireSecretsManage(instructions, 'variables_view');
   if (denied) return denied;
   const slug = typeof args.slug === 'string' ? args.slug : '';
   if (!slug) return errorResult('variables_view: `slug` is required');
@@ -3570,9 +3572,9 @@ async function handleVariablesView(
 async function handleVariablesCreate(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireSecretsManage(briefing, 'variables_create');
+  const denied = requireSecretsManage(instructions, 'variables_create');
   if (denied) return denied;
   const slug = typeof args.slug === 'string' ? args.slug : '';
   const envName = typeof args.envName === 'string' ? args.envName : '';
@@ -3593,9 +3595,9 @@ async function handleVariablesCreate(
 async function handleVariablesUpdate(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireSecretsManage(briefing, 'variables_update');
+  const denied = requireSecretsManage(instructions, 'variables_update');
   if (denied) return denied;
   const slug = typeof args.slug === 'string' ? args.slug : '';
   if (!slug) return errorResult('variables_update: `slug` is required');
@@ -3614,9 +3616,9 @@ async function handleVariablesUpdate(
 async function handleVariablesDelete(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireSecretsManage(briefing, 'variables_delete');
+  const denied = requireSecretsManage(instructions, 'variables_delete');
   if (denied) return denied;
   const slug = typeof args.slug === 'string' ? args.slug : '';
   if (!slug) return errorResult('variables_delete: `slug` is required');
@@ -3627,9 +3629,9 @@ async function handleVariablesDelete(
 async function handleVariablesSetValue(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireSecretsManage(briefing, 'variables_set_value');
+  const denied = requireSecretsManage(instructions, 'variables_set_value');
   if (denied) return denied;
   const slug = typeof args.slug === 'string' ? args.slug : '';
   const value = typeof args.value === 'string' ? args.value : '';
@@ -3645,9 +3647,9 @@ async function handleVariablesSetValue(
 async function handleVariablesDeleteValue(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireSecretsManage(briefing, 'variables_delete_value');
+  const denied = requireSecretsManage(instructions, 'variables_delete_value');
   if (denied) return denied;
   const slug = typeof args.slug === 'string' ? args.slug : '';
   if (!slug) return errorResult('variables_delete_value: `slug` is required');
@@ -3658,9 +3660,9 @@ async function handleVariablesDeleteValue(
 async function handleVariablesBindings(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireSecretsManage(briefing, 'variables_bindings');
+  const denied = requireSecretsManage(instructions, 'variables_bindings');
   if (denied) return denied;
   const slug = typeof args.slug === 'string' ? args.slug : '';
   if (!slug) return errorResult('variables_bindings: `slug` is required');
@@ -3690,9 +3692,9 @@ async function handleVariablesBindings(
 async function handleSecretsBindings(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireSecretsManage(briefing, 'secrets_bindings');
+  const denied = requireSecretsManage(instructions, 'secrets_bindings');
   if (denied) return denied;
   const slug = typeof args.slug === 'string' ? args.slug : '';
   if (!slug) return errorResult('secrets_bindings: `slug` is required');
@@ -3726,10 +3728,10 @@ async function handleSecretsBindings(
 // in any result text.
 
 function requireNotificationsManage(
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
   tool: string,
 ): CallToolResult | null {
-  if (!briefing.permissions.includes('notifications.manage')) {
+  if (!instructions.permissions.includes('notifications.manage')) {
     return errorResult(`${tool}: you do not have the notifications.manage permission on this team`);
   }
   return null;
@@ -3820,9 +3822,9 @@ function parseNotificationPolicy(
 
 async function handleNotificationsList(
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireNotificationsManage(briefing, 'notifications_list');
+  const denied = requireNotificationsManage(instructions, 'notifications_list');
   if (denied) return denied;
   const endpoints = await brokerClient.listNotificationEndpoints();
   if (endpoints.length === 0) {
@@ -3838,9 +3840,9 @@ async function handleNotificationsList(
 async function handleNotificationsView(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireNotificationsManage(briefing, 'notifications_view');
+  const denied = requireNotificationsManage(instructions, 'notifications_view');
   if (denied) return denied;
   const slug = typeof args.slug === 'string' ? args.slug : '';
   if (!slug) return errorResult('notifications_view: `slug` is required');
@@ -3873,9 +3875,9 @@ async function handleNotificationsView(
 async function handleNotificationsCreate(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireNotificationsManage(briefing, 'notifications_create');
+  const denied = requireNotificationsManage(instructions, 'notifications_create');
   if (denied) return denied;
   const slug = typeof args.slug === 'string' ? args.slug : '';
   if (!slug) return errorResult('notifications_create: `slug` is required');
@@ -3918,9 +3920,9 @@ async function handleNotificationsCreate(
 async function handleNotificationsUpdate(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireNotificationsManage(briefing, 'notifications_update');
+  const denied = requireNotificationsManage(instructions, 'notifications_update');
   if (denied) return denied;
   const slug = typeof args.slug === 'string' ? args.slug : '';
   if (!slug) return errorResult('notifications_update: `slug` is required');
@@ -3957,9 +3959,9 @@ async function handleNotificationsUpdate(
 async function handleNotificationsDelete(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireNotificationsManage(briefing, 'notifications_delete');
+  const denied = requireNotificationsManage(instructions, 'notifications_delete');
   if (denied) return denied;
   const slug = typeof args.slug === 'string' ? args.slug : '';
   if (!slug) return errorResult('notifications_delete: `slug` is required');
@@ -3973,9 +3975,9 @@ async function handleNotificationsDelete(
 async function handleNotificationsSetSecret(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireNotificationsManage(briefing, 'notifications_set_secret');
+  const denied = requireNotificationsManage(instructions, 'notifications_set_secret');
   if (denied) return denied;
   const slug = typeof args.slug === 'string' ? args.slug : '';
   const secret = typeof args.secret === 'string' ? args.secret : '';
@@ -3991,9 +3993,9 @@ async function handleNotificationsSetSecret(
 async function handleNotificationsDeleteSecret(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireNotificationsManage(briefing, 'notifications_delete_secret');
+  const denied = requireNotificationsManage(instructions, 'notifications_delete_secret');
   if (denied) return denied;
   const slug = typeof args.slug === 'string' ? args.slug : '';
   if (!slug) return errorResult('notifications_delete_secret: `slug` is required');
@@ -4004,9 +4006,9 @@ async function handleNotificationsDeleteSecret(
 async function handleNotificationsDeliveries(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireNotificationsManage(briefing, 'notifications_deliveries');
+  const denied = requireNotificationsManage(instructions, 'notifications_deliveries');
   if (denied) return denied;
   const slug = typeof args.slug === 'string' ? args.slug : '';
   if (!slug) return errorResult('notifications_deliveries: `slug` is required');
@@ -4026,9 +4028,9 @@ async function handleNotificationsDeliveries(
 async function handleNotificationsReplay(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireNotificationsManage(briefing, 'notifications_replay');
+  const denied = requireNotificationsManage(instructions, 'notifications_replay');
   if (denied) return denied;
   const deliveryId = typeof args.deliveryId === 'string' ? args.deliveryId : '';
   if (!deliveryId) return errorResult('notifications_replay: `deliveryId` is required');
@@ -4044,9 +4046,9 @@ function formatProfileLine(p: NotificationProfileSummary): string {
 
 async function handleNotificationsProfiles(
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireNotificationsManage(briefing, 'notifications_profiles');
+  const denied = requireNotificationsManage(instructions, 'notifications_profiles');
   if (denied) return denied;
   const profiles = await brokerClient.listNotificationProfiles();
   if (profiles.length === 0) {
@@ -4062,9 +4064,9 @@ async function handleNotificationsProfiles(
 async function handleNotificationsProfileCreate(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireNotificationsManage(briefing, 'notifications_profile_create');
+  const denied = requireNotificationsManage(instructions, 'notifications_profile_create');
   if (denied) return denied;
   const slug = typeof args.slug === 'string' ? args.slug : '';
   if (!slug) return errorResult('notifications_profile_create: `slug` is required');
@@ -4086,9 +4088,9 @@ async function handleNotificationsProfileCreate(
 async function handleNotificationsProfileDelete(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireNotificationsManage(briefing, 'notifications_profile_delete');
+  const denied = requireNotificationsManage(instructions, 'notifications_profile_delete');
   if (denied) return denied;
   const slug = typeof args.slug === 'string' ? args.slug : '';
   if (!slug) return errorResult('notifications_profile_delete: `slug` is required');
@@ -4099,9 +4101,9 @@ async function handleNotificationsProfileDelete(
 async function handleNotificationsProfileSetSecret(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const denied = requireNotificationsManage(briefing, 'notifications_profile_set_secret');
+  const denied = requireNotificationsManage(instructions, 'notifications_profile_set_secret');
   if (denied) return denied;
   const slug = typeof args.slug === 'string' ? args.slug : '';
   const secret = typeof args.secret === 'string' ? args.secret : '';
@@ -4129,9 +4131,9 @@ function formatFsEntry(entry: FsEntry): string {
 async function handleFsLs(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  const raw = typeof args.path === 'string' ? args.path : `/${briefing.name}`;
+  const raw = typeof args.path === 'string' ? args.path : `/${instructions.name}`;
   const entries = await brokerClient.fsList(raw);
   if (entries.length === 0) {
     return textResult(`${raw}: (empty)`);

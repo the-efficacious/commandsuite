@@ -1,7 +1,5 @@
 /**
- * Instruction composition. (Renamed from "briefing", wire included —
- * `GET /instructions` replaced `GET /briefing` with no alias, because
- * there were zero deployed consumers at the time of the rename.)
+ * Instruction composition.
  *
  * Turns the raw team config + a specific member into a
  * `InstructionsResponse` with a pre-composed `instructions` string. The

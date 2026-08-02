@@ -182,9 +182,10 @@ Web Push notifications.
                 csuite broker
 ```
 
-The **runner** is the operator's entry point — it fetches the team
-briefing, starts the capture host, wires the MCP bridge, spawns the
-agent, forwards events, and cleans up on every exit path. Both
+The **runner** is the operator's entry point — it fetches the
+member's instructions, starts the capture host, wires the MCP
+bridge, spawns the agent, forwards events, and cleans up on every
+exit path. Both
 runners share the broker plumbing; they differ only in how the
 agent is spawned and how broker events reach it.
 
@@ -398,8 +399,8 @@ csuite-dev codex --model gpt-5
 ```
 
 `csuite claude` runs the agent with `bypassPermissions` (team
-authority is the access control) and pins the team briefing into the
-system prompt. Runner knobs are explicit flags:
+authority is the access control) and pins the composed instructions
+into the system prompt. Runner knobs are explicit flags:
 
 ```bash
 csuite-dev claude --model claude-sonnet-5 --resume

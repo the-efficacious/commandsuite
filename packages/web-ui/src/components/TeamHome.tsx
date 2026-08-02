@@ -17,7 +17,7 @@ import { signal } from '@preact/signals';
 import type { Presence, ProcessDocument } from 'csuite-sdk/types';
 import { hasPermission } from 'csuite-sdk/types';
 import { useState } from 'preact/hooks';
-import { briefing, loadBriefing } from '../lib/briefing.js';
+import { instructions, loadInstructions } from '../lib/instructions.js';
 import { getClient } from '../lib/client.js';
 import { objectives } from '../lib/objectives.js';
 import { type PermissionSummary, summarizePermissions } from '../lib/permissions.js';
@@ -30,7 +30,7 @@ export interface TeamHomeProps {
 }
 
 export function TeamHome({ viewer }: TeamHomeProps) {
-  const b = briefing.value;
+  const b = instructions.value;
   const r = roster.value;
   const obj = objectives.value;
 
@@ -265,8 +265,8 @@ const ctxError = signal<string | null>(null);
 /**
  * The team's standing context ("about"), with in-place editing for
  * `team.manage` holders. Saving PATCHes /team then reloads the
- * briefing so the page reflects the new prose immediately. Agents
- * pick the change up on their next session (the briefing string is
+ * instructions so the page reflects the new prose immediately. Agents
+ * pick the change up on their next session (the instructions string is
  * frozen per session by the MCP protocol).
  */
 function TeamContextSection({ context, canManage }: { context: string; canManage: boolean }) {
@@ -278,7 +278,7 @@ function TeamContextSection({ context, canManage }: { context: string; canManage
     ctxError.value = null;
     try {
       await getClient().updateTeam({ context: ctxDraft.value.trim() });
-      await loadBriefing();
+      await loadInstructions();
       ctxEditing.value = false;
     } catch (err) {
       ctxError.value = err instanceof Error ? err.message : String(err);
@@ -402,7 +402,7 @@ function TeamProcessSection({
         reason: prcReason.value.trim(),
         disposition: prcDisposition.value,
       });
-      await loadBriefing();
+      await loadInstructions();
       prcEditing.value = false;
     } catch (err) {
       prcError.value = err instanceof Error ? err.message : String(err);

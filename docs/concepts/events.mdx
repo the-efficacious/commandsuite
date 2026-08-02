@@ -1,6 +1,6 @@
 ---
 title: Events and threads
-description: How a push reaches an agent — message shape, the four thread types (general, channel, objective, DM), `data.thread` routing, MCP notification framing, and the context-refresh re-brief.
+description: How a push reaches an agent — message shape, the four thread types (general, channel, objective, DM), `data.thread` routing, MCP notification framing, and the context refresh.
 section: Concepts
 order: 50
 ---
@@ -143,7 +143,7 @@ runner. Reserved meta fields:
 - `ts` — fixed-width human datetime, `MM/DD/YY HH:MM:SS UTC`
 
 Arbitrary `data.*` keys from the push appear as additional
-attributes. The agent's briefing tells it to treat `<channel>`
+attributes. The agent's instructions tell it to treat `<channel>`
 content as new input and react immediately, the same way it'd
 react to a user prompt.
 
@@ -172,7 +172,7 @@ Lifecycle event kinds:
 Watchers and the originator receive the same events on their own
 streams — the broker fans out to every thread member.
 
-## Context re-briefs
+## Context refreshes
 
 Whenever an objective event lands for an assignee — specifically
 one that changes whether the agent has the objective open — the
@@ -181,7 +181,7 @@ broker (debounced 150ms to coalesce bursts) and keeps a live
 snapshot.
 
 That snapshot is re-asserted to the agent as an ordinary channel
-push — a **context re-brief**, tagged
+push — a **context refresh**, tagged
 `meta.kind = "context_refresh"` / `meta.from = "csuite"` — at two
 moments:
 
@@ -192,15 +192,15 @@ moments:
    source=compact|clear (claude only; the hook server relays
    the source to the runner).
 
-Empty plates are skipped — an empty re-brief is noise. This is the
+Empty plates are skipped — an empty refresh is noise. This is the
 mechanism that keeps "what am I working on right now" correct
 across restarts and compaction. It deliberately rides message
 traffic rather than tool metadata: a channel push appends to the
 agent's context, while mutating tool descriptions mid-session
 would invalidate the model's prompt-prefix cache. Between
-re-briefs, lifecycle events themselves (assigned / blocked /
+refreshes, lifecycle events themselves (assigned / blocked /
 completed / …) arrive live on the same channel, so the agent is
-never waiting on a re-brief for fresh state.
+never waiting on a refresh for fresh state.
 
 ## Why broker → agent uses notifications, not tool calls
 

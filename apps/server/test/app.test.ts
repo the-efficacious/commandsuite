@@ -115,7 +115,7 @@ describe('app GET /instructions', () => {
     expect(body.permissions).toEqual([]);
   });
 
-  it('distinguishes an absent runner report from a rejected one without withholding briefing', async () => {
+  it('distinguishes an absent runner report from a rejected one without withholding packet', async () => {
     const { app, logger } = makeApp();
     const absent = await app.request('/instructions', authed(BOT_TOKEN));
     expect(absent.status).toBe(200);

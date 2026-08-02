@@ -16,9 +16,7 @@ export const PATHS = {
   /**
    * The member's composed instruction packet plus its named blocks
    * and the composed-content hash the broker tracks restart-pending
-   * against. Replaced `/briefing` in the briefing→instructions rename
-   * — removed outright rather than aliased (protocol v2): there were
-   * zero deployed consumers of the old path at the time.
+   * against.
    */
   instructions: '/instructions',
   roster: '/roster',

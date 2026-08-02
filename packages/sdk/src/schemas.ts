@@ -81,7 +81,7 @@ export const TeamSchema = z.object({
 
 /**
  * Public projection of a team member — what teammates see in the
- * roster and briefing. Omits `instructions` (private to the member).
+ * roster and instruction packet. Omits `instructions` (private to the member).
  */
 export const TeammateSchema = z.object({
   name: NameSchema,
@@ -91,7 +91,7 @@ export const TeammateSchema = z.object({
 
 /**
  * Full member record — includes the private `instructions` field.
- * Returned from self-scope briefing and admin-scope member listings.
+ * Returned from self-scope instructions and admin-scope member listings.
  */
 export const MemberSchema = TeammateSchema.extend({
   instructions: z.string().default(''),
@@ -791,7 +791,7 @@ export const ResolveSecretsResponseSchema = z.object({
  * That is precisely why this ceiling has to stand on its own terms
  * rather than by analogy to a number that no longer exists.
  *
- * And the document rides in its own briefing field for a reason that
+ * And the document rides in its own response field for a reason that
  * never depended on any cap: a member authors their own
  * `instructions`, this is authored by whoever holds `process.manage`,
  * and one string would collapse two authorities into one field.

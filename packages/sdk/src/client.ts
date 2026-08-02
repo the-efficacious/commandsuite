@@ -441,9 +441,7 @@ export class Client {
    * — the named `blocks` descriptors plus the `composedSha256`
    * instruction-version identifier.
    *
-   * Replaced `briefing()` in the briefing→instructions rename
-   * (protocol v2) — removed rather than deprecated: there were zero
-   * deployed consumers of the old method at the time.
+   * Requires a broker serving `GET /instructions` (protocol v2).
    */
   async instructions(options: { runnerVersion?: string } = {}): Promise<InstructionsResponse> {
     const headers = new Headers();
@@ -594,7 +592,7 @@ export class Client {
   }
 
   // ─── Team process document ──────────────────────────────────────
-  // The document reaches a member by injection on the briefing. These
+  // The document reaches a member by injection on the instruction packet. These
   // are for what injection deliberately does not carry: the edit
   // history, and the write path.
 

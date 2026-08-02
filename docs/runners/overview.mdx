@@ -1,6 +1,6 @@
 ---
 title: Runners overview
-description: A runner is the parent process that owns a csuite session — broker connection, briefing, IPC server, MCP tool dispatch, trace capture. claude and codex are two runners that share the same plumbing and differ only in how they talk to the agent.
+description: A runner is the parent process that owns a csuite session — broker connection, instructions, IPC server, MCP tool dispatch, trace capture. claude and codex are two runners that share the same plumbing and differ only in how they talk to the agent.
 section: Docs
 order: 20
 ---
@@ -8,10 +8,10 @@ order: 20
 # Runners overview
 
 A **runner** is the parent process that owns a single csuite session.
-It connects to the broker, fetches the briefing, binds an IPC socket,
-runs the SSE forwarder, dispatches MCP tools, and captures the
-agent's activity from its native instrumentation. The agent itself
-runs as a child of the runner.
+It connects to the broker, fetches the member's instructions, binds
+an IPC socket, runs the SSE forwarder, dispatches MCP tools, and
+captures the agent's activity from its native instrumentation. The
+agent itself runs as a child of the runner.
 
 csuite ships with two runners today:
 
@@ -23,7 +23,7 @@ csuite ships with two runners today:
 The runner abstraction is designed so adding a third (Cursor,
 Gemini CLI, your own) is mostly a matter of writing a spawn adapter
 and a channel sink. Everything the runner does on the broker
-side — auth, briefing, tools, trace, presence — is shared.
+side — auth, instructions, tools, trace, presence — is shared.
 
 ## What every runner does
 
@@ -32,7 +32,7 @@ side — auth, briefing, tools, trace, presence — is shared.
    broker  ──────── HTTP+SSE ───┤  csuite runner             │
                                 │                         │
                                 │  • broker Client        │
-                                │  • briefing (cached)    │
+                                │  • instructions cached  │
                                 │  • SSE forwarder        │
                                 │  • objectives tracker   │
                                 │  • IPC server (UDS)     │
@@ -60,7 +60,7 @@ Concretely, on every runner startup:
 
 1. **Authenticate** with `--token` / `$CSUITE_TOKEN` /
    `~/.config/csuite/auth.json`.
-2. **Fetch the briefing** — the member's name, role, permissions,
+2. **Fetch the instructions** — the member's name, role, permissions,
    teammates, team context, and currently-open objectives.
 3. **Bind the IPC socket** at
    `$TMPDIR/.csuite-runner-<pid>.sock` (overridable). The agent's MCP
@@ -127,9 +127,9 @@ are unconditional, some depend on the member's permissions:
 | `objectives_reassign` | `members.manage` |
 
 Tool descriptions are **static** for the lifetime of a session —
-identity and the roster live in the system-prompt briefing, and
+identity and the roster live in the system-prompt instructions, and
 live objective state arrives as message traffic: channel events
-plus a `context_refresh` re-brief the runner pushes at session
+plus a `context_refresh` push the runner sends at session
 attach (first `tools/list` on a fresh bridge connection) and after
 context compaction (SessionStart hook with source=compact|clear).
 `notifications/tools/list_changed` fires only for genuine
@@ -151,7 +151,7 @@ events reach the agent:
 | **Stdio owner** | The runner | The runner |
 | **MCP bridge** | `csuite mcp-bridge` spawned by claude via the SDK's inline `--mcp-config` | `csuite mcp-bridge` spawned by codex via ephemeral `CODEX_HOME/config.toml` |
 | **Push event delivery** | SDK streaming-input user messages (Claude Code queues mid-turn input natively) | `turn/start` if thread is idle, `turn/steer` if active (JSON-RPC v2) |
-| **Session posture** | `permissionMode: bypassPermissions`, briefing appended to the `claude_code` system-prompt preset | `developerInstructions: <briefing>`, `approvalPolicy: never`, `sandbox: danger-full-access` |
+| **Session posture** | `permissionMode: bypassPermissions`, composed instructions appended to the `claude_code` system-prompt preset | `developerInstructions: <composed instructions>`, `approvalPolicy: never`, `sandbox: danger-full-access` |
 | **`.mcp.json` rewrite** | No (inline SDK config; the working tree is never touched) | No (ephemeral CODEX_HOME) |
 | **Capture source** | Session transcript (reader) + in-process hooks (busy signal) + native OpenTelemetry export (operational + raw bodies) | `codex app-server` notification stream (assistant text, reasoning summaries, token usage, tool items) |
 | **Runner-injected env** | OTEL OTLP export vars (`CLAUDE_CODE_ENABLE_TELEMETRY`, `OTEL_*`) | `CODEX_HOME` (no telemetry env) |
@@ -177,8 +177,8 @@ implement the **`AgentAdapter` interface**
 (`packages/cli/src/runtime/agents/adapter.ts`) and hand it to the
 shared session driver (`runAgentSession` in
 `packages/cli/src/runtime/agent-session.ts`). The driver owns the
-lifecycle — auth, briefing, IPC, forwarder, capture, secrets, signal
-handling, idempotent teardown on every exit path, and the
+lifecycle — auth, instructions, IPC, forwarder, capture, secrets,
+signal handling, idempotent teardown on every exit path, and the
 `session_start`/`session_end` run bracket + run summary — so a new
 adapter implements only what is genuinely framework-specific:
 
@@ -210,7 +210,8 @@ standard — contract, tiers, run summary, doctor, fixtures — lives at
 - **Schedule the agent.** A runner is one agent for the duration
   of one process. Multi-agent fleets are multi-process.
 - **Persist agent state.** The runner is stateless across restarts.
-  Briefing, objectives, history, and traces all live on the broker.
+  Instructions, objectives, history, and traces all live on the
+  broker.
 - **Validate authorization.** Permissions are enforced server-side
   on every mutating endpoint. The runner's tool-list filtering is
   a UX optimization that hides tools the member couldn't use anyway.

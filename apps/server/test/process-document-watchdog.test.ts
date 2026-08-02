@@ -286,11 +286,11 @@ describe('resend behaviour for the process document', () => {
 //
 // This is where an omission surfaces, and it surfaces as a permanent
 // loop rather than a miss. A live runner keeps uploading without
-// refetching `/briefing`, so after a restart the broker rebuilds the
+// refetching `/packet`, so after a restart the broker rebuilds the
 // exemption set from storage — via `exemptionsFor`, which constructs
 // its own input by hand.
 //
-// The test never calls `/briefing`. That is the point: it exercises
+// The test never calls `/packet`. That is the point: it exercises
 // the path a warm broker would hide.
 
 describe('the cold-broker rebuild carries the document', () => {
@@ -393,7 +393,7 @@ describe('the cold-broker rebuild carries the document', () => {
 
   /**
    * The document text must be exempt from capture redaction on a
-   * broker that has never served this member a briefing.
+   * broker that has never served this member a packet.
    *
    * THE REGISTERED LITERAL IS THE WHOLE TEST. Redaction only rewrites
    * values that are registered, so a document containing none would
@@ -402,7 +402,7 @@ describe('the cold-broker rebuild carries the document', () => {
    * occurs precisely when the document contains a registered literal,
    * so the document here contains one.
    */
-  it('exempts the document on a broker that has served no briefing', async () => {
+  it('exempts the document on a broker that has served no packet', async () => {
     const { app, rawBodyStore } = coldApp(true, SECRET_IN_DOC);
     registerSecretValues([SECRET_IN_DOC]);
     // A captured body containing the document verbatim. If the
@@ -417,7 +417,7 @@ describe('the cold-broker rebuild carries the document', () => {
 
     // The assertion that matters: the document text survived capture
     // VERBATIM, including the registered literal inside it, on a
-    // broker that never composed a briefing for this member.
+    // broker that never composed a packet for this member.
     const stored = rawBodyStore.count() > 0 ? readAllStoredText(rawBodyStore) : '';
     expect(stored).toContain(SECRET_IN_DOC);
     expect(stored).not.toContain('[REDACTED]');
@@ -444,7 +444,7 @@ describe('the cold-broker rebuild carries the document', () => {
     expect(stored).not.toContain(unrelated);
   });
 
-  it('has a document to rebuild from, independent of any briefing fetch', () => {
+  it('has a document to rebuild from, independent of any packet fetch', () => {
     const { processDocument } = coldApp(true);
     // The store is the authority the cold path reads. If this were
     // empty the rebuild would have nothing to carry and the test
@@ -525,10 +525,10 @@ describe('a session holding superseded text', () => {
 // actually commits, because `null` is the easy thing to write when you
 // do not have the value to hand.
 //
-// This test fetches no briefing, because `:679` exists precisely to
+// This test fetches no packet, because `:679` exists precisely to
 // serve runners that never refetch.
 
-describe('the watchdog resends through the real app, with no briefing fetch', () => {
+describe('the watchdog resends through the real app, with no packet fetch', () => {
   const RUNNER = 'csuite_test_watchdog_runner_token';
   const DOCUMENT = 'Keep a conversation running before action.\nSquash-merge to main.';
 

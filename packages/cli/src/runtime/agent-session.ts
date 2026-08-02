@@ -10,7 +10,7 @@
  *   1. Session log routing (TTY-safe structured logs)
  *   2. Auth resolution (`--token` / `$CSUITE_TOKEN`) → UsageError
  *   3. Fail-fast binary location BEFORE any side effects
- *   4. `startRunner` (briefing, IPC socket, forwarder, capture host,
+ *   4. `startRunner` (instructions, IPC socket, forwarder, capture host,
  *      secrets) with the adapter's sink + bridge policy
  *   5. `prepare` → `spawn` ordering, with runner shutdown on failure
  *      at either step
@@ -155,9 +155,9 @@ export async function runAgentSession(
   }
   log(`${meta.id}: runner started`, {
     socketPath: runner.socketPath,
-    name: runner.briefing.name,
-    role: runner.briefing.role.title,
-    team: runner.briefing.team.name,
+    name: runner.instructions.name,
+    role: runner.instructions.role.title,
+    team: runner.instructions.team.name,
   });
 
   // 3. Bridge auto-detection: the same node binary + CLI entry script
@@ -196,7 +196,7 @@ export async function runAgentSession(
   //    whatever the adapter wants to disclose (config paths, posture).
   const bannerLines = [
     `csuite ${meta.id}: runner cwd = ${resolve(cwd)}`,
-    `csuite ${meta.id}: agent = ${runner.briefing.name} (${runner.briefing.role.title}) on team ${runner.briefing.team.name}`,
+    `csuite ${meta.id}: agent = ${runner.instructions.name} (${runner.instructions.role.title}) on team ${runner.instructions.team.name}`,
     ...(ctx.sessionLogPath ? [`csuite ${meta.id}: session log = ${ctx.sessionLogPath}`] : []),
     ...(prepared.bannerLines ?? []),
   ];
@@ -465,7 +465,7 @@ function finishRun(args: {
   const capture = args.runner.captureHost?.stats() ?? null;
   const summary: RunSummary = {
     runner: args.meta.id,
-    member: args.runner.briefing.name,
+    member: args.runner.instructions.name,
     reason: args.reason,
     exitCode: args.exitCode,
     durationMs,

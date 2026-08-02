@@ -3,7 +3,7 @@
  * and the retrieval seam.
  *
  * Criterion 1 is "one document, injected, always current", so the
- * assertion that matters is on `GET /briefing`: a member who was told
+ * assertion that matters is on `GET /packet`: a member who was told
  * nothing gets the current text because it is state, not an
  * announcement.
  *
@@ -144,7 +144,7 @@ describe('a team with no document', () => {
     expect((await res.json()) as { edits: [] }).toEqual({ edits: [] });
   });
 
-  it('carries null on the briefing, so the field is present and explicit', async () => {
+  it('carries null on the packet, so the field is present and explicit', async () => {
     const { app } = makeApp();
     const res = await app.request('/instructions', authed(BOUND));
     const body = (await res.json()) as { processDocument: unknown };

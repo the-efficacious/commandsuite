@@ -20,7 +20,7 @@
  *
  * We deliberately DON'T register a runtime caching strategy for API
  * calls. The csuite broker is the source of truth for everything
- * in the SPA, and serving stale /briefing or /history responses from
+ * in the SPA, and serving stale /instructions or /history responses from
  * a Workbox cache would confuse users during outages. The offline
  * story is "the shell loads offline; real data requires the server."
  */

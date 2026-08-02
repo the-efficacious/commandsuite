@@ -105,7 +105,7 @@ const APP_IN_SCOPE = [
  * 2026-08-01, +1 = 54. `instructions runner version rejected` is
  * OPERATIONAL, not a completeness claim: the broker substitutes a
  * bounded `unknown` in complimentary context and still returns the
- * complete briefing. The warning distinguishes a rejected report
+ * complete packet. The warning distinguishes a rejected report
  * from an older client that sent no report at all.
  *
  * 2026-08-01, +1 = 55. `instructions exceed legacy runner cap` is

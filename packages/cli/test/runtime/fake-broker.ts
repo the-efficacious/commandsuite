@@ -35,15 +35,15 @@ export interface FakeBroker {
 }
 
 const TOKEN = 'fake-broker-token';
-// Name the fake broker returns from /briefing. The link calls
-// /briefing at startup to self-derive its name; this is what it
+// Name the fake broker returns from /instructions. The link calls
+// /instructions at startup to self-derive its name; this is what it
 // gets back, and what it will then subscribe under.
 export const FAKE_BROKER_NAME = 'link-test-agent';
 export const FAKE_BROKER_TEAM_NAME = 'fake-team';
 export const FAKE_BROKER_MISSION = 'Exercise the link in isolation.';
 
 /**
- * Objectives the fake broker will return from /briefing + /objectives.
+ * Objectives the fake broker will return from /instructions + /objectives.
  * Tests can push onto or read from this to verify the runner's
  * open-plate handling (e.g. the `context_refresh` re-brief).
  */
@@ -58,14 +58,14 @@ export const fakeBrokerObjectives: Array<Record<string, unknown>> = [];
  */
 export const fakeBrokerObjectiveQueries: string[] = [];
 
-/** Runner-version headers observed on briefing fetches, including refreshes. */
-export const fakeBrokerBriefingRunnerVersions: Array<string | undefined> = [];
+/** Runner-version headers observed on instructions fetches, including refreshes. */
+export const fakeBrokerInstructionsRunnerVersions: Array<string | undefined> = [];
 
-/** Personal instructions returned by /briefing; mutable for compatibility tests. */
+/** Personal instructions returned by /instructions; mutable for compatibility tests. */
 export const fakeBrokerInstructions: { value: string } = { value: '' };
 
 /**
- * Resolved tool sources the fake broker returns on /briefing
+ * Resolved tool sources the fake broker returns on /instructions
  * (`toolSources` field). Tests mutate this then push a
  * `data.kind='tool_source'` message to exercise the runner's
  * external-tools refresh → tools/list_changed path.
@@ -184,7 +184,7 @@ export async function startFakeBroker(): Promise<FakeBroker> {
 
     if (url.pathname === '/instructions' && req.method === 'GET') {
       const reported = req.headers['x-csuite-runner-version'];
-      fakeBrokerBriefingRunnerVersions.push(typeof reported === 'string' ? reported : undefined);
+      fakeBrokerInstructionsRunnerVersions.push(typeof reported === 'string' ? reported : undefined);
       res.writeHead(200, jsonHeaders);
       res.end(
         JSON.stringify({

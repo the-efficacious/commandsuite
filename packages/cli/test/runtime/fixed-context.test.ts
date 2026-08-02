@@ -31,7 +31,7 @@ const DOC: ProcessDocument = {
   updatedAt: 1_700_000_100_000,
 };
 
-function briefing(over: Partial<InstructionsResponse> = {}): InstructionsResponse {
+function instructions(over: Partial<InstructionsResponse> = {}): InstructionsResponse {
   return {
     name: 'cora',
     role: { title: 'engineer', description: '' },
@@ -54,7 +54,7 @@ describe('no document is rendered as a state, not as silence', () => {
   });
 
   it('reaches the agent, so absence is distinguishable from a field it cannot read', () => {
-    const composed = composeFixedContext(briefing());
+    const composed = composeFixedContext(instructions());
     expect(composed).toContain('your standing instructions');
     expect(composed).toMatch(/no process document has been set/i);
   });
@@ -85,7 +85,7 @@ describe('a document is rendered as current state', () => {
   });
 
   it('appends to the instructions rather than replacing them', () => {
-    const composed = composeFixedContext(briefing({ processDocument: DOC }));
+    const composed = composeFixedContext(instructions({ processDocument: DOC }));
     expect(composed.startsWith('your standing instructions')).toBe(true);
     expect(composed).toContain('Squash-merge to main.');
   });
@@ -100,14 +100,14 @@ describe('a document is rendered as current state', () => {
    * being the durable one.
    */
   it('keeps the document out of the instructions string itself', () => {
-    const b = briefing({ processDocument: DOC });
+    const b = instructions({ processDocument: DOC });
     expect(b.instructions).not.toContain('Squash-merge');
   });
 });
 
-describe('a briefing with no authored instructions', () => {
+describe('a instructions with no authored instructions', () => {
   it('still renders the process block, without leading blank lines', () => {
-    const composed = composeFixedContext(briefing({ instructions: '', processDocument: DOC }));
+    const composed = composeFixedContext(instructions({ instructions: '', processDocument: DOC }));
     expect(composed.startsWith('Team process')).toBe(true);
     expect(composed).toContain('Squash-merge to main.');
   });

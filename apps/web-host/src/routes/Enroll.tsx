@@ -103,13 +103,13 @@ function consumeCodeParam(): string | null {
  */
 async function loadTeamContext(): Promise<void> {
   try {
-    const [briefing, roster] = await Promise.all([getClient().instructions(), getClient().roster()]);
+    const [instructions, roster] = await Promise.all([getClient().instructions(), getClient().roster()]);
     teammates.value = roster.teammates;
-    permissionPresets.value = briefing.team.permissionPresets;
+    permissionPresets.value = instructions.team.permissionPresets;
     // Default the bind dropdown to the first non-self teammate so
     // the form is approve-ready without an extra click.
     if (formState.value.bindMember === '') {
-      const self = briefing.name;
+      const self = instructions.name;
       const candidate = roster.teammates.find((t) => t.name !== self);
       if (candidate) {
         formState.value = { ...formState.value, bindMember: candidate.name };

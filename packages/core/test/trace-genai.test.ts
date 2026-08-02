@@ -212,7 +212,7 @@ describe('anthropicToGenAi', () => {
     expect(call).toMatchObject({ type: 'tool_call', arguments: { token: REDACTED } });
   });
 
-  it('preserves an exact briefing block while redacting the same secret in a tool result', () => {
+  it('preserves an exact packet block while redacting the same secret in a tool result', () => {
     const secret = 'registered-value-claude';
     const block = `Context: use the reference ${secret}.`;
     registerSecretValues([secret]);

@@ -260,7 +260,7 @@ describe('delivery confirmation reads the conversation', () => {
   });
 
   it('matches the redacted form a conversation copy is captured in', () => {
-    // Conversation content is redacted WITHOUT the briefing exemptions
+    // Conversation content is redacted WITHOUT the packet exemptions
     // (those are deliberately scoped to `system`), so a block carrying
     // secret-shaped text arrives in capture with that span rewritten.
     const secretBlock = {

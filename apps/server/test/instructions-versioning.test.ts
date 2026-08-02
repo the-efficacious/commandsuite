@@ -101,18 +101,18 @@ const sha256 = (text: string) => createHash('sha256').update(text).digest('hex')
 const instructionEvents = (pushed: Array<{ data: Record<string, unknown> }>) =>
   pushed.filter((p) => p.data?.kind === 'instructions');
 
-// ─── the rename is a clean break, not an alias ───────────────────────
+// ─── one canonical path, no aliases ──────────────────────────────────
 
-describe('GET /instructions replaced GET /briefing outright', () => {
-  it('serves the packet on the new path and nothing on the old one', async () => {
+describe('GET /instructions is the only path that serves the packet', () => {
+  it('answers on /instructions and nothing else', async () => {
     const { app } = makeApp();
-    // Positive control first: the new path answers…
+    // Positive control first: the canonical path answers…
     const canonical = await app.request('/instructions', authed(CORA));
     expect(canonical.status).toBe(200);
-    // …and the old path is GONE, not aliased. Removed with zero
-    // deployed consumers; a 404 here is a stale client that must
-    // upgrade, and it should fail loudly rather than quietly read an
-    // alias that would then have to live forever.
+    // …and no alias exists. `/briefing` is the alias someone would
+    // most plausibly add; a 404 keeps a stale client failing loudly
+    // instead of quietly reading a shadow path that would then have to
+    // live forever.
     const removed = await app.request('/briefing', authed(CORA));
     expect(removed.status).toBe(404);
   });

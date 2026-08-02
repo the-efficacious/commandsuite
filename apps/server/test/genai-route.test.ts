@@ -221,7 +221,7 @@ describe('POST /members/:name/genai', () => {
     expect(rec?.inputMessages?.length).toBeGreaterThan(0);
   });
 
-  it('uses this member briefing to preserve its block and redact the same-request tool result', async () => {
+  it('uses this member packet to preserve its block and redact the same-request tool result', async () => {
     const secret = 'registered-route-value';
     const context = `The exact team context contains ${secret}.`;
     registerSecretValues([secret]);
@@ -230,13 +230,13 @@ describe('POST /members/:name/genai', () => {
     const briefingRes = await app.request('/instructions', {
       headers: { Authorization: `Bearer ${TOKEN}` },
     });
-    const briefing = (await briefingRes.json()) as { instructions: string };
-    expect(briefing.instructions).toContain(context);
+    const packet = (await briefingRes.json()) as { instructions: string };
+    expect(packet.instructions).toContain(context);
 
     const item = inference();
     item.requestBase64 = b64({
       model: 'gpt-5.5',
-      instructions: `adapter prefix\n${briefing.instructions}\nadapter suffix`,
+      instructions: `adapter prefix\n${packet.instructions}\nadapter suffix`,
       input: [{ type: 'function_call_output', call_id: 'c', output: `stdout: ${secret}` }],
     });
     const res = await post(app, 'engineer-1', { inferences: [item] });
@@ -481,14 +481,14 @@ describe('POST /otlp/v1/logs runner-relay acknowledgement', () => {
     });
   });
 
-  it('rebuilds Claude briefing exemptions after a cold broker start and still redacts a tool result', async () => {
+  it('rebuilds Claude packet exemptions after a cold broker start and still redacts a tool result', async () => {
     const secret = 'registered-claude-route';
     const context = secret;
     registerSecretValues([secret]);
     const { app, genaiStore, rawBodyStore } = makeApp({ ...TEAM, context });
     const request = {
       model: 'claude-opus-4-6',
-      // Deliberately do not call /briefing first: this is the broker-restarted
+      // Deliberately do not call /packet first: this is the broker-restarted
       // while the runner session remained live shape.
       system: [{ type: 'text', text: `harness prefix\n${context}` }],
       messages: [

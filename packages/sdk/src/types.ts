@@ -128,7 +128,7 @@ export interface Team {
  * role model, there's no instructions template here — instructions
  * are personal to each member. The role is shared public context:
  * what this member does on the team, visible to every teammate in
- * the roster and briefing.
+ * the roster and instruction packet.
  */
 export interface Role {
   /** Short freeform label ("director", "engineer", "qa-lead"). */
@@ -139,7 +139,7 @@ export interface Role {
 
 /**
  * Public projection of a team member — the subset visible to other
- * members in the roster and briefing. Omits personal fields
+ * members in the roster and instruction packet. Omits personal fields
  * (`instructions`) that belong only to the member themselves and to
  * admins managing membership.
  */
@@ -152,14 +152,14 @@ export interface Teammate {
 
 /**
  * Full member record — the shape an admin sees in the members admin
- * panel and the shape a member sees of themself in their briefing.
+ * panel and the shape a member sees of themself in their instruction packet.
  * Adds `instructions` to the public `Teammate` projection.
  */
 export interface Member extends Teammate {
   /**
    * Personal working directives + context for this member. Composed
    * into the member's own system prompt (for agents) or surfaced in
-   * their briefing (for humans). Not visible to teammates — this is
+   * their instruction packet (for humans). Not visible to teammates — this is
    * private to the member and to admins.
    */
   instructions: string;
@@ -316,8 +316,8 @@ export interface HealthResponse {
  * The named kinds of operator-authored instruction blocks composed
  * into a member's fixed context. The strings are a wire and telemetry
  * contract (`persistent_context kind="…"` re-sends, the context
- * watchdog's `context.block.kind` attribute) — the TypeScript names
- * were renamed briefing→instructions; these values must not be.
+ * watchdog's `context.block.kind` attribute) — pinned independently
+ * of any TypeScript identifier; renaming code must never move them.
  */
 export type InstructionBlockKind =
   | 'team_context'
@@ -356,7 +356,7 @@ export interface InstructionsResponse extends Member {
    * open to all members). The runner merges these into the agent's
    * MCP toolbox as `<source>__<name>` and dispatches invocations back
    * to the broker. Structured field only — never rendered into the
-   * briefing prose (same staleness rule as `openObjectives`).
+   * composed instructions (same staleness rule as `openObjectives`).
    */
   toolSources: ResolvedToolSource[];
   /**
@@ -490,7 +490,7 @@ export interface AddChannelMemberRequest {
 
 /**
  * A tool source is a platform-registered provider of external tools,
- * distributed to bound members via the briefing and invoked through
+ * distributed to bound members via the instruction packet and invoked through
  * the broker (the broker holds the third-party credential; the agent
  * never sees it).
  *
@@ -582,7 +582,7 @@ export interface CustomToolDef {
 }
 
 /**
- * One tool as resolved for a member's briefing — the projection the
+ * One tool as resolved for a member's instruction packet — the projection the
  * runner turns into an MCP tool named `<source>__<name>`.
  */
 export interface ResolvedTool {
@@ -591,7 +591,7 @@ export interface ResolvedTool {
   inputSchema: Record<string, unknown>;
 }
 
-/** A source and its resolved tools, as carried on the briefing. */
+/** A source and its resolved tools, as carried on the instruction packet. */
 export interface ResolvedToolSource {
   source: string;
   kind: ToolSourceKind;
@@ -672,7 +672,7 @@ export interface RefreshToolSourceResponse {
 // wire (set, never read back by any admin surface) and KEK-encrypted
 // at rest. A runner resolves the secrets bound to its member right
 // before spawning the agent and injects them as environment
-// variables on the agent child — they never appear in briefing
+// variables on the agent child — they never appear in instruction packet
 // prose, prompts, or MCP traffic. Delivery = enabled && (allMembers
 // || bound), the same rule as tool sources.
 

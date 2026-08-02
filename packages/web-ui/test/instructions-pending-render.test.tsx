@@ -14,7 +14,7 @@ import { Client } from 'csuite-sdk/client';
 import type { InstructionsResponse, ProcessDocument, RosterResponse } from 'csuite-sdk/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { __resetTeamHomeForTests, TeamHome } from '../src/components/TeamHome.js';
-import { briefing } from '../src/lib/briefing.js';
+import { instructions } from '../src/lib/instructions.js';
 import { __resetClientForTests, setClient } from '../src/lib/client.js';
 import { objectives as objectivesSignal } from '../src/lib/objectives.js';
 import { roster } from '../src/lib/roster.js';
@@ -28,7 +28,7 @@ const DOC: ProcessDocument = {
   updatedAt: 2,
 };
 
-function briefingWith(
+function packetWith(
   overrides: Partial<InstructionsResponse> = {},
 ): InstructionsResponse {
   return {
@@ -53,7 +53,7 @@ function briefingWith(
 }
 
 function rosterWith(restartPending?: string[]): RosterResponse {
-  const base = briefingWith();
+  const base = packetWith();
   return {
     teammates: base.teammates,
     connected: [],
@@ -71,14 +71,14 @@ beforeEach(() => {
         headers: { 'Content-Type': 'application/json' },
       }),
     )) as typeof fetch;
-  briefing.value = briefingWith();
+  instructions.value = packetWith();
   roster.value = rosterWith();
   objectivesSignal.value = [];
 });
 
 afterEach(() => {
   cleanup();
-  briefing.value = null;
+  instructions.value = null;
   roster.value = null;
   objectivesSignal.value = [];
 });
@@ -123,14 +123,14 @@ describe('the team process panel', () => {
   });
 
   it('offers creation to a process.manage holder when no document is set', () => {
-    briefing.value = briefingWith({ processDocument: null });
+    instructions.value = packetWith({ processDocument: null });
     render(<TeamHome viewer="director-1" />);
 
     expect(screen.getByText('+ Add team process')).toBeTruthy();
   });
 
   it('renders nothing for a non-manager when no document is set', () => {
-    briefing.value = briefingWith({
+    instructions.value = packetWith({
       processDocument: null,
       permissions: [],
     });
@@ -144,9 +144,9 @@ describe('the team process panel', () => {
     // The three-state contract from the wire, kept through to the
     // screen: absent is an older broker, and claiming "no process"
     // for it would be the UI answering a question nobody evaluated.
-    const b = briefingWith();
+    const b = packetWith();
     delete (b as { processDocument?: unknown }).processDocument;
-    briefing.value = b;
+    instructions.value = b;
     render(<TeamHome viewer="director-1" />);
 
     expect(
@@ -177,7 +177,7 @@ describe('the team process panel', () => {
         );
       }
       if (url.includes('/instructions')) {
-        return new Response(JSON.stringify(briefingWith()), {
+        return new Response(JSON.stringify(packetWith()), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
         });
@@ -225,7 +225,7 @@ describe('standing prose clamps until opened', () => {
   );
 
   it('clamps long team context and expands on demand', () => {
-    briefing.value = briefingWith({
+    instructions.value = packetWith({
       team: { name: 'demo-team', context: LONG, permissionPresets: {} },
     });
     render(<TeamHome viewer="director-1" />);

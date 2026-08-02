@@ -21,7 +21,7 @@ import { signal } from '@preact/signals';
 import type { Message, Objective, ObjectiveEvent } from 'csuite-sdk/types';
 import type { JSX } from 'preact';
 import { useEffect, useRef } from 'preact/hooks';
-import { briefing } from '../lib/briefing.js';
+import { instructions } from '../lib/instructions.js';
 import { messagesByThread, objectiveThreadKey, threadMessages } from '../lib/messages.js';
 import {
   cancelObjective,
@@ -114,7 +114,7 @@ function resetDetailState(): void {
 }
 
 export function ObjectiveDetail({ id, viewer }: ObjectiveDetailProps) {
-  const b = briefing.value;
+  const b = instructions.value;
   const current = detailObjective.value;
   const events = detailEvents.value;
   const loading = detailLoading.value;

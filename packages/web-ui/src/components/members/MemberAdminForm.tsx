@@ -7,7 +7,7 @@
  * member."
  *
  * Mutations call the SDK directly; parents pass `onChanged` to refresh
- * their local state (list, briefing, roster) after a successful write.
+ * their local state (list, instructions, roster) after a successful write.
  * Reveal state for tokens/TOTP is owned by the parent so the banner
  * can render wherever the parent prefers (inline next to the card, at
  * the top of the page, etc.).
@@ -16,7 +16,7 @@
 import { signal } from '@preact/signals';
 import type { Member, Permission, PermissionPresets } from 'csuite-sdk/types';
 import { useState } from 'preact/hooks';
-import { loadBriefing } from '../../lib/briefing.js';
+import { loadInstructions } from '../../lib/instructions.js';
 import { getClient } from '../../lib/client.js';
 import { loadRoster, roster } from '../../lib/roster.js';
 import { TextMetrics } from '../ui/index.js';
@@ -28,12 +28,12 @@ import type { Reveal } from './Reveal.js';
 // don't bite:
 //   - the parent's onChanged() (typically the /members list)
 //   - roster  (presence + Teammate[] everywhere in the sidebar)
-//   - briefing (teammates + the viewer's own permissions)
-// briefing especially — it was booted once at Shell mount and used
+//   - instructions (teammates + the viewer's own permissions)
+// instructions especially — it was booted once at Shell mount and used
 // to be stale after every mutation, which broke isLastAdmin and any
-// other caller that read `briefing.value.teammates`.
+// other caller that read `instructions.value.teammates`.
 async function refreshSharedStores(): Promise<void> {
-  await Promise.allSettled([loadRoster(), loadBriefing()]);
+  await Promise.allSettled([loadRoster(), loadInstructions()]);
 }
 
 export interface MemberAdminFormProps {

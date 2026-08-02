@@ -5,7 +5,7 @@
  *
  * A runner (`csuite claude`, `csuite codex`, ...) is the parent
  * process that owns one csuite session. Everything broker-side is
- * SHARED and lives in the driver + `startRunner`: auth, briefing, IPC
+ * SHARED and lives in the driver + `startRunner`: auth, instructions, IPC
  * socket, SSE forwarder, objectives tracker, capture host, secrets,
  * presence, signal handling, teardown ordering, and the end-of-run
  * summary. An adapter implements ONLY what is specific to one agent
@@ -247,7 +247,7 @@ export interface AgentAdapter {
   detachForRestart?(): void;
   /**
    * Spawn a successor agent process with CURRENT instructions (read
-   * from `ctx.runner.briefing`, which the driver refreshes first),
+   * from `ctx.runner.instructions`, which the driver refreshes first),
    * resuming the prior conversation where the framework supports it.
    * Called only after the previous process has fully shut down —
    * resume integrity depends on the predecessor having flushed its

@@ -30,7 +30,7 @@
  * processes.
  *
  * Lifecycle:
- *   startRunner()      → fetches briefing, binds the IPC socket,
+ *   startRunner()      → fetches instructions, binds the IPC socket,
  *                        starts the forwarder, returns a handle
  *   handle.waitClosed  → resolves when the runner has fully torn down
  *   handle.shutdown()  → graceful shutdown (abort forwarder, drop
@@ -177,7 +177,7 @@ export interface RunnerHandle {
    * frozen per session; refreshing this is what makes the restart able
    * to un-freeze it.)
    */
-  readonly briefing: InstructionsResponse;
+  readonly instructions: InstructionsResponse;
   /**
    * Refetch the instruction packet, swap the live snapshot (including
    * the external-tools surface, with a `tools/list_changed` push when
@@ -198,7 +198,7 @@ export interface RunnerHandle {
    * env var name. Each runner command merges this into the agent
    * child's environment before the capture host's delta (runner-managed
    * vars always win). Values exist only here and in the child env —
-   * never in briefing prose, prompts, or MCP traffic — and are
+   * never in instructions prose, prompts, or MCP traffic — and are
    * registered with the core redactor so an echoed value is scrubbed
    * from captured traces. Empty when `noSecrets` is set, the broker
    * predates `/secrets/resolve`, or resolution failed (non-fatal).
@@ -223,11 +223,11 @@ function defaultLog(msg: string, ctx: Record<string, unknown> = {}): void {
 }
 
 /**
- * Start the runner: fetch briefing, bind the IPC socket, start the
+ * Start the runner: fetch instructions, bind the IPC socket, start the
  * SSE forwarder. Returns a handle the caller can use to wait for
  * completion or trigger a graceful shutdown. Throws
  * `RunnerStartupError` if required inputs are missing or the broker
- * briefing call fails.
+ * instructions call fails.
  */
 export async function startRunner(options: RunnerOptions): Promise<RunnerHandle> {
   const log = options.log ?? defaultLog;
@@ -240,9 +240,9 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
 
   const brokerClient = new BrokerClient({ url: options.url, token: options.token });
 
-  let briefing: InstructionsResponse;
+  let instructions: InstructionsResponse;
   try {
-    briefing = await brokerClient.instructions({ runnerVersion: CLI_VERSION });
+    instructions = await brokerClient.instructions({ runnerVersion: CLI_VERSION });
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
     // When the failure looks like a connection problem (broker unreachable)
@@ -258,22 +258,22 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
       ? `\n  hint: is \`csuite serve\` running at ${options.url}? ` +
         `(start it, or pass --url to point elsewhere)`
       : '';
-    throw new RunnerStartupError(`briefing failed against ${options.url}: ${errMsg}${hint}`);
+    throw new RunnerStartupError(`instructions failed against ${options.url}: ${errMsg}${hint}`);
   }
 
   // Live open-objectives snapshot — mutated as the objectives tracker
   // refreshes from SSE events. Tool descriptions deliberately do NOT
   // read it (static descriptions keep the model's prompt-prefix cache
   // intact); it seeds the context re-brief pushed as message traffic.
-  let openObjectives: Objective[] = briefing.openObjectives;
+  let openObjectives: Objective[] = instructions.openObjectives;
 
   // Live external-tools snapshot from the broker's tool-source
   // registry. Unlike objective STATE, this is a CAPABILITY surface:
   // when it changes (a `tool_source` channel event), the runner
-  // refetches the briefing, swaps the snapshot, and emits a genuine
+  // refetches the instructions, swaps the snapshot, and emits a genuine
   // `tools/list_changed` — the one event class that earns a
   // prompt-prefix cache break.
-  let externalTools: ResolvedToolSource[] = briefing.toolSources;
+  let externalTools: ResolvedToolSource[] = instructions.toolSources;
 
   // ── Context re-brief ─────────────────────────────────────────────
   // Static surfaces (system prompt, tool descriptions) are frozen per
@@ -390,7 +390,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
     try {
       captureHost = await startCaptureHost({
         brokerClient,
-        name: briefing.name,
+        name: instructions.name,
         brokerUrl: options.url,
         token: options.token,
         log,
@@ -450,7 +450,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
     let rebriefedThisConnection = false;
     const conn = createBridgeConnection(socket, {
       handleRequest: async (frame) => {
-        const response = await handleMcpRequest(frame, briefing, brokerClient, externalTools);
+        const response = await handleMcpRequest(frame, instructions, brokerClient, externalTools);
         // First `tools/list` on a fresh bridge connection = the
         // agent's MCP session just came up (new session, or an agent
         // restart against a live runner). Re-assert the open plate as
@@ -489,9 +489,9 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
 
   log('runner: IPC socket bound', {
     socketPath,
-    name: briefing.name,
-    role: briefing.role.title,
-    openObjectives: briefing.openObjectives.length,
+    name: instructions.name,
+    role: instructions.role.title,
+    openObjectives: instructions.openObjectives.length,
     version: CLI_VERSION,
   });
 
@@ -504,7 +504,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
   // cache survives; state freshness is message traffic.
   const tracker = createObjectivesTracker({
     brokerClient,
-    name: briefing.name,
+    name: instructions.name,
     log,
     onRefresh: (next) => {
       if (captureHost !== null) {
@@ -538,7 +538,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
   // startup, so in-flight objectives get bracketed in the activity
   // stream from the first uploaded event.
   if (captureHost !== null) {
-    for (const obj of briefing.openObjectives) {
+    for (const obj of instructions.openObjectives) {
       captureHost.noteObjectiveOpen(obj.id);
     }
     // Activity reporter — subscribes to the capture host's activity
@@ -604,7 +604,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
 
   // External-tools refresher: a `tool_source` channel event means the
   // registry changed for this member. Debounced refetch of the
-  // briefing (the resolved-tools source of truth), then — only when
+  // instructions (the resolved-tools source of truth), then — only when
   // the snapshot actually differs — swap it and push a genuine
   // `tools/list_changed` to the bridge so the agent re-lists.
   const TOOLS_REFRESH_DEBOUNCE_MS = 150;
@@ -648,14 +648,14 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
   // `refreshExternalTools` (which deliberately discards everything but
   // the tool surface — nothing else can change mid-session for a
   // frozen prompt), this swaps the WHOLE live snapshot: the respawned
-  // agent's fixed context is composed from `briefing`, so the swap is
+  // agent's fixed context is composed from `instructions`, so the swap is
   // the mechanism by which an instruction edit reaches the successor
   // session. The MCP dispatch reads the same variable per-call, so the
   // toolbox follows without further wiring.
   const refreshInstructions = async (): Promise<InstructionsResponse> => {
     const fresh = await brokerClient.instructions({ runnerVersion: CLI_VERSION });
     const toolsChanged = JSON.stringify(fresh.toolSources) !== JSON.stringify(externalTools);
-    briefing = fresh;
+    instructions = fresh;
     externalTools = fresh.toolSources;
     log('runner: instructions refreshed', {
       composedSha256: fresh.composedSha256 ?? null,
@@ -674,7 +674,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
   const forwarderPromise = runForwarder({
     sink,
     brokerClient,
-    name: briefing.name,
+    name: instructions.name,
     signal: abortController.signal,
     log,
     presence,
@@ -741,8 +741,8 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
     // A getter, not a snapshot: `refreshInstructions` reassigns the
     // closure variable and every consumer — adapter respawns, the MCP
     // dispatch, the re-brief composer — must see the current packet.
-    get briefing() {
-      return briefing;
+    get instructions() {
+      return instructions;
     },
     refreshInstructions,
     captureHost,
@@ -782,13 +782,13 @@ function composeRebrief(open: Objective[]): string {
  */
 async function handleMcpRequest(
   frame: { id: number; method: string; params: Record<string, unknown> | undefined },
-  briefing: InstructionsResponse,
+  instructions: InstructionsResponse,
   brokerClient: BrokerClient,
   externalTools: ResolvedToolSource[],
 ): Promise<IpcMcpResponse> {
   try {
     if (frame.method === 'tools/list') {
-      const tools = defineTools(briefing, externalTools);
+      const tools = defineTools(instructions, externalTools);
       return { kind: 'mcp_response', id: frame.id, result: { tools } };
     }
     if (frame.method === 'tools/call') {
@@ -798,7 +798,7 @@ async function handleMcpRequest(
         params?.arguments && typeof params.arguments === 'object'
           ? (params.arguments as Record<string, unknown>)
           : undefined;
-      const result = await handleToolCall(name, args, brokerClient, briefing, externalTools);
+      const result = await handleToolCall(name, args, brokerClient, instructions, externalTools);
       return { kind: 'mcp_response', id: frame.id, result };
     }
     return {

@@ -5,7 +5,7 @@
  *
  *   1. Boot a fake csuite broker on a random localhost port
  *   2. Start a runner **in-process** (not as a subprocess), pointing
- *      at the fake broker — the runner fetches /briefing, binds its
+ *      at the fake broker — the runner fetches /instructions, binds its
  *      IPC socket, starts the SSE forwarder
  *   3. Spawn `csuite mcp-bridge` as a subprocess with `CSUITE_RUNNER_SOCKET`
  *      pointing at the runner's socket
@@ -213,7 +213,7 @@ describeIfBuilt('runner + bridge end-to-end', () => {
     ]);
 
     // Descriptions are static: identity, team name, and the teammate
-    // roster live in the system-prompt briefing, never in tool
+    // roster live in the system-prompt instructions, never in tool
     // metadata (repeating them per-tool wastes context and the roster
     // would go stale mid-session). The only interpolation allowed is
     // functional — the member's fs home path.

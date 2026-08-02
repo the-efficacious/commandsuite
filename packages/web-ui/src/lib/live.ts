@@ -22,7 +22,7 @@
 
 import { signal } from '@preact/signals';
 import { MessageSchema } from 'csuite-sdk/schemas';
-import { loadBriefing } from './briefing.js';
+import { loadInstructions } from './instructions.js';
 import { getClient } from './client.js';
 import { appendMessages } from './messages.js';
 import { loadRoster } from './roster.js';
@@ -147,7 +147,7 @@ export function startSubscribe(options: StartSubscribeOptions): () => void {
           // restart-pending list are stale; the 10s roster poll would
           // catch up, but the badge appearing the moment the edit
           // fans out is the point of the event.
-          void loadBriefing().catch(() => {
+          void loadInstructions().catch(() => {
             /* next instructions event retries */
           });
           void loadRoster().catch(() => {

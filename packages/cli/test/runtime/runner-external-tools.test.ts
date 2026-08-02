@@ -4,12 +4,12 @@
  * Proves the three runner-side behaviors end-to-end against the fake
  * broker with a fake bridge (raw UDS socket):
  *
- *   1. Tools resolved on the briefing surface in `tools/list` as
+ *   1. Tools resolved on the instructions surface in `tools/list` as
  *      `<source>__<name>` alongside the builtin set.
  *   2. Calling one dispatches POST /tool-sources/:slug/tools/:name/
  *      invoke on the broker and relays the CallToolResult verbatim.
  *   3. A `data.kind='tool_source'` channel event triggers a debounced
- *      briefing refetch and — when the resolved set actually changed —
+ *      instructions refetch and — when the resolved set actually changed —
  *      a genuine `notifications/tools/list_changed` push to the
  *      bridge. This is the capability-change path the doctrine
  *      reserves list_changed for.
@@ -25,7 +25,7 @@ import {
   FAKE_BROKER_NAME,
   FAKE_BROKER_TOKEN,
   type FakeBroker,
-  fakeBrokerBriefingRunnerVersions,
+  fakeBrokerInstructionsRunnerVersions,
   fakeBrokerToolInvocations,
   fakeBrokerToolSources,
   startFakeBroker,
@@ -103,10 +103,10 @@ describe('runner external tools', () => {
     broker = null;
     fakeBrokerToolSources.length = 0;
     fakeBrokerToolInvocations.length = 0;
-    fakeBrokerBriefingRunnerVersions.length = 0;
+    fakeBrokerInstructionsRunnerVersions.length = 0;
   });
 
-  it('lists briefing tools as <source>__<name> and dispatches calls to the broker', async () => {
+  it('lists instructions tools as <source>__<name> and dispatches calls to the broker', async () => {
     fakeBrokerToolSources.push(JIRA_SOURCE);
     broker = await startFakeBroker();
     runner = await startRunner({
@@ -183,7 +183,7 @@ describe('runner external tools', () => {
     const before = received.find((f) => f.kind === 'mcp_response' && f.id === 1);
     expect((before?.result?.tools ?? []).map((t) => t.name)).not.toContain('jira__get_issue');
 
-    // Admin registers the source: the fake broker's briefing changes,
+    // Admin registers the source: the fake broker's instructions changes,
     // and the registry event lands on the live stream.
     fakeBrokerToolSources.push(JIRA_SOURCE);
     const sub = await broker.waitForSubscriber(FAKE_BROKER_NAME);
@@ -209,7 +209,7 @@ describe('runner external tools', () => {
     await waitFor(() => received.some((f) => f.kind === 'mcp_response' && f.id === 2));
     const after = received.find((f) => f.kind === 'mcp_response' && f.id === 2);
     expect((after?.result?.tools ?? []).map((t) => t.name)).toContain('jira__get_issue');
-    expect(fakeBrokerBriefingRunnerVersions).toEqual([CLI_VERSION, CLI_VERSION]);
+    expect(fakeBrokerInstructionsRunnerVersions).toEqual([CLI_VERSION, CLI_VERSION]);
   });
 
   it('does not emit list_changed when the refetched set is unchanged', async () => {
@@ -225,7 +225,7 @@ describe('runner external tools', () => {
     socket = bridge.socket;
     const { received } = bridge;
 
-    // Event fires but the briefing's resolved set is identical (e.g.
+    // Event fires but the instructions's resolved set is identical (e.g.
     // a binding change for a different member leaked through fanout).
     const sub = await broker.waitForSubscriber(FAKE_BROKER_NAME);
     sub.write({

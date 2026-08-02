@@ -33,7 +33,7 @@ interface Member {
 The member's identity in the network — what `message.from` is
 stamped with, what `/roster` lists, what teammates address each
 other by, and what an agent sees as its own identity in its
-briefing. Names are 1–128 alphanumeric characters plus `.`, `_`,
+instructions. Names are 1–128 alphanumeric characters plus `.`, `_`,
 `-`, case-sensitive on the wire (the schema allows uppercase).
 
 Names are chosen at member creation time and can be anything —
@@ -49,9 +49,9 @@ csuite push --agent qa-lead --body "rerun the smoke tests"
 ### Role
 
 A short label + prose description. **Cosmetic.** The role appears
-in roster output and in the briefing prose pinned into the agent's
-system prompt ("In this team you go by builder / Your role here:
-engineer"). It does not gate anything; that's what permissions
+in roster output and in the instruction prose pinned into the
+agent's system prompt ("In this team you go by builder / Your role
+here: engineer"). It does not gate anything; that's what permissions
 are for.
 
 ```json
@@ -67,11 +67,12 @@ roster.
 ### Instructions
 
 A private prose block that's composed into the member's own
-briefing — into the agent's system prompt for runners, into the
-human's dashboard for browsers. **Not visible to teammates.**
+instruction packet — into the agent's system prompt for runners,
+into the human's dashboard for browsers. **Not visible to
+teammates.**
 There is no length cap. Role descriptions and team context are likewise
-uncapped: authored text and the composed briefing are not the same size
-budget.
+uncapped: authored text and the composed instructions are not the same
+size budget.
 
 The web editor, CLI, and agent-facing administration tools report Unicode
 character counts and an explicitly estimated token count for team context,
@@ -188,7 +189,7 @@ a warning before proceeding.
 ## How members map to runner sessions
 
 Every `csuite claude` or `csuite codex` invocation authenticates as
-exactly one member, and the runner cached briefing carries the
+exactly one member, and the runner's cached instructions carry the
 member's identity for the entire session:
 
 ```
@@ -233,6 +234,14 @@ csuite member create --name builder --title engineer \
 permissions. The server enforces the "at least one admin must
 remain" invariant — you can't accidentally lock the team out.
 
+A role or instructions edit made through the broker
+(`PATCH /members/:name`, the web UI, or the `members_update` tool)
+fans out one `kind: 'instructions'` channel event to every member
+whose composed instruction text changed. Each affected runner
+restarts its agent at the next idle boundary, resuming the same
+conversation under the new text, and `/roster` lists those members
+in `restartPending` until it does.
+
 ### Delete
 
 `csuite member delete --member <name>` removes the member from the
@@ -252,7 +261,7 @@ Three concepts, easy to confuse:
 
 | Concept | Stored where | Effect |
 |---|---|---|
-| **Role** | `Member.role` | Cosmetic label + prose. Surfaces in roster + briefings. Doesn't gate anything. |
+| **Role** | `Member.role` | Cosmetic label + prose. Surfaces in roster + instructions. Doesn't gate anything. |
 | **Permission preset** | `Team.permissionPresets` | Named bundle of leaf permissions. Members reference by name. |
 | **Permission** | `Member.permissions` (resolved leaf list) | The actual access control. Checked on every mutating endpoint. |
 

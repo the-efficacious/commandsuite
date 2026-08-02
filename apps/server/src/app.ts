@@ -216,7 +216,7 @@ export interface AppOptions {
   /**
    * DB-backed team config + permission preset store. Replaces the
    * static `team: Team` snapshot — handlers that need fresh team data
-   * (briefing, role/preset resolution, permission-preset CRUD) call
+   * (instruction packet, role/preset resolution, permission-preset CRUD) call
    * `teamStore.getTeam()` so a `PATCH /team` from another caller is
    * reflected on the next read.
    */
@@ -246,7 +246,7 @@ export interface AppOptions {
   /**
    * Tool-source registry — platform-defined external tools (custom
    * HTTP bindings + proxied remote MCP servers). The `/tool-sources*`
-   * endpoints are registered iff this is provided, and the briefing
+   * endpoints are registered iff this is provided, and the instruction packet
    * gains per-member resolved tools. Same opt-out pattern as
    * `objectives`.
    */
@@ -274,7 +274,7 @@ export interface AppOptions {
   variables?: VariablesStore;
   /**
    * The team's process document. The `/process-document*` endpoints
-   * are registered iff this is provided, and `GET /briefing` carries
+   * are registered iff this is provided, and `GET /instructions` carries
    * the current document in its own field.
    */
   processDocument?: ProcessDocumentStore;
@@ -313,7 +313,7 @@ export interface AppOptions {
    * BEFORE parsing, link
    * the derived gen_ai rows to the raw bytes by hash, and unlink the
    * consumed body_ref spill files. Inline OTLP attributes have already
-   * passed attribute redaction; broker-issued briefing blocks are exempt.
+   * passed attribute redaction; broker-issued instruction blocks are exempt.
    * Omit to skip raw capture (bodies are
    * then only parsed into the derived view, and spill files are left on
    * disk).
@@ -614,7 +614,7 @@ export function createApp(options: AppOptions): CreatedApp {
   // lazily created on first api-body record. Only used when `genaiStore`
   // is wired; otherwise the map stays empty.
   const genaiCorrelators = new Map<string, GenAiCorrelator>();
-  // Every entry is an exact block from a briefing actually issued to
+  // Every entry is an exact block from an instruction packet actually issued to
   // this member. Keep prior session values too: a runner's prompt is
   // frozen, while an operator may edit the live team/member record.
   const instructionExemptions = new Map<string, Set<string>>();
@@ -625,7 +625,7 @@ export function createApp(options: AppOptions): CreatedApp {
   const contextLastResentAt = new Map<string, number>();
   const contextAwaitingConfirmation = new Set<string>();
   // Per member, the canonical composed hash served on their last
-  // /instructions (or /briefing) fetch — the proxy for "what their
+  // /instructions fetch — the proxy for "what their
   // live session runs", since a runner fetches immediately before
   // starting a session. In-memory deliberately: a broker restart
   // forgets what was issued, and unknown is reported as unknown (the
@@ -638,7 +638,7 @@ export function createApp(options: AppOptions): CreatedApp {
     const current = members.findByName(memberName);
     if (current) {
       // Cold-broker/restart path: a live runner may continue uploading
-      // without refetching /briefing. Rebuild the current authored blocks
+      // without refetching /instructions. Rebuild the current authored blocks
       // from authoritative storage rather than depending on process memory.
       for (const block of instructionCaptureExemptions({
         self: current,
@@ -647,7 +647,7 @@ export function createApp(options: AppOptions): CreatedApp {
         openObjectives: [],
         // Read from storage, not from process memory. This is the
         // cold-broker path: a live runner keeps uploading without
-        // refetching /briefing, so omitting the document here means
+        // refetching /instructions, so omitting the document here means
         // the captured copy is redacted, never matches the sent text,
         // and resends every turn forever.
         processDocument: processDocument ? processDocument.get() : null,
@@ -725,9 +725,9 @@ export function createApp(options: AppOptions): CreatedApp {
     }
     const unobservable = observations.filter((item) => !item.observable);
     if (unobservable.length > 0) {
-      diagnostics?.emit.contextBriefingCheckUnavailable(memberName, unobservable.length);
+      diagnostics?.emit.contextInstructionsCheckUnavailable(memberName, unobservable.length);
     } else {
-      diagnostics?.emit.contextBriefingCheckSucceeded(memberName);
+      diagnostics?.emit.contextInstructionsCheckSucceeded(memberName);
     }
     if (observations.some((item) => item.deliveryUnconfirmed)) {
       diagnostics?.emit.contextBlockResendUnconfirmed(
@@ -1167,9 +1167,6 @@ export function createApp(options: AppOptions): CreatedApp {
 
   // ─── Team endpoints (tri-auth) ────────────────────────────────
 
-  // Replaced GET /briefing in the briefing→instructions rename —
-  // removed outright rather than aliased (protocol v2): there were
-  // zero deployed consumers of the old path at the time.
   app.get(PATHS.instructions, auth, (c) => {
     const member = c.get('member');
     const reportedRunnerVersion = c.req.header(RUNNER_VERSION_HEADER);
@@ -1181,7 +1178,7 @@ export function createApp(options: AppOptions): CreatedApp {
         runnerVersion = reportedRunnerVersion;
       }
     }
-    // Live open objectives for this member — included in the briefing
+    // Live open objectives for this member — included in the instruction packet
     // so the runner can seed its open-plate snapshot (the source for
     // `context_refresh` re-briefs) and the web UI can render the plate.
     // Active + blocked are both "on the plate"; done/cancelled drop off.
@@ -1193,7 +1190,7 @@ export function createApp(options: AppOptions): CreatedApp {
       : [];
     // External-notification doctrine: when any enabled endpoint can
     // reach this member (direct DM target, or a channel target on a
-    // channel they belong to), the briefing prose gains the standing
+    // channel they belong to), the composed instructions gains the standing
     // contract for `<external_content>` blocks — defined once in the
     // system prompt so each delivery's wrapper stays compact.
     const externalNotificationEndpoints: string[] = [];
@@ -1228,7 +1225,7 @@ export function createApp(options: AppOptions): CreatedApp {
       processDocument: processDocument ? processDocument.get() : null,
       externalNotificationEndpoints,
     };
-    const briefing = composeInstructions(composeInput);
+    const packet = composeInstructions(composeInput);
     let remembered = instructionExemptions.get(member.name);
     if (!remembered) {
       remembered = new Set<string>();
@@ -1240,7 +1237,7 @@ export function createApp(options: AppOptions): CreatedApp {
       versions = new Map();
       instructionBlockVersions.set(member.name, versions);
     }
-    for (const block of instructionBlocks(composeInput, briefing.instructions)) {
+    for (const block of instructionBlocks(composeInput, packet.instructions)) {
       let values = versions.get(block.kind);
       if (!values) {
         values = new Set();
@@ -1255,8 +1252,8 @@ export function createApp(options: AppOptions): CreatedApp {
     const composedSha256 = composedHashFor(member);
     instructionsIssued.set(member.name, composedSha256);
     return c.json({
-      ...briefing,
-      blocks: instructionBlocks(composeInput, briefing.instructions).map((block) => ({
+      ...packet,
+      blocks: instructionBlocks(composeInput, packet.instructions).map((block) => ({
         kind: block.kind,
         sha256: sha256Hex(block.text),
       })),
@@ -2050,7 +2047,7 @@ export function createApp(options: AppOptions): CreatedApp {
             requestBody = JSON.parse(reqBytes.toString('utf8'));
             requestParsed = true;
           } catch {
-            diagnostics?.emit.contextBriefingCheckUnavailable(member.name, 1);
+            diagnostics?.emit.contextInstructionsCheckUnavailable(member.name, 1);
           }
           try {
             responseBody = JSON.parse(respBytes.toString('utf8'));

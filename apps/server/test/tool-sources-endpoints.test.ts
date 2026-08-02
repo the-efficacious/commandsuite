@@ -3,7 +3,7 @@
  * write-only redaction, binding-gated invoke, the custom executor
  * end-to-end against a local HTTP fixture (credential injection,
  * templating, truncation), audit append, change-event fanout, and
- * briefing resolution.
+ * packet resolution.
  */
 
 import { createServer, type Server } from 'node:http';
@@ -436,7 +436,7 @@ describe('change events', () => {
   });
 });
 
-describe('briefing integration', () => {
+describe('packet integration', () => {
   it('resolves tools only for visible sources', async () => {
     const { app } = makeApp();
     await app.request('/tool-sources', authed(ADMIN, { slug: 'jira', kind: 'custom' }));
@@ -473,9 +473,9 @@ describe('briefing integration', () => {
       '/tool-sources',
       authed(ADMIN, { slug: 'shared', kind: 'custom', allMembers: true }),
     );
-    const briefing = (await (
+    const packet = (await (
       await app.request('/instructions', authed(OUTSIDER))
     ).json()) as InstructionsResponse;
-    expect(briefing.toolSources).toHaveLength(1);
+    expect(packet.toolSources).toHaveLength(1);
   });
 });

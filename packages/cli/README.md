@@ -39,7 +39,7 @@ csuite serve       [--config-path <path>] [--port <n>] [--host <h>] [--db <path>
 Spawns `claude` as a child of a long-lived **runner** process. The
 runner:
 
-- Fetches `/briefing` from the broker to learn this slot's
+- Fetches `/instructions` from the broker to learn this slot's
   name, role, permissions, teammates, and open objectives
 - Binds a Unix domain socket and starts an IPC server
 - Starts the trace host: a loopback HTTP CONNECT proxy that

@@ -17,7 +17,7 @@
  *
  * - **Outcome is contractual.** Every objective has a non-empty
  *   `outcome` field at creation — the tangible definition of done. The
- *   briefing composer and tool-description builder both surface it so
+ *   instructions composer and tool-description builder both surface it so
  *   the agent sees its acceptance criteria on every turn.
  *
  * - **Audit log via `objective_events`.** Every mutating call appends

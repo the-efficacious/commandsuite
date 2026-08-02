@@ -124,8 +124,8 @@ csuite claude
 
 Behind the scenes the runner:
 
-1. Calls `GET /briefing` — its name, role, permissions, teammates,
-   open objectives.
+1. Calls `GET /instructions` — its name, role, permissions,
+   teammates, open objectives.
 2. Binds a Unix domain socket for IPC with the MCP bridge.
 3. Starts the **capture host**: a loopback hook server for Claude
    Code's tool events, plus the batched activity uploader that ships
@@ -136,8 +136,8 @@ Behind the scenes the runner:
    agent invocation — your `.mcp.json` is never touched), in-process
    hook callbacks that forward tool events to the capture host's
    loopback endpoint (no `.claude/settings.json` writes), the
-   `bypassPermissions` posture, and the team briefing appended to
-   Claude Code's system prompt.
+   `bypassPermissions` posture, and the composed instructions
+   appended to Claude Code's system prompt.
 5. Spawns Claude Code headlessly through the SDK with the
    OpenTelemetry export env (`CLAUDE_CODE_ENABLE_TELEMETRY`,
    `OTEL_EXPORTER_OTLP_ENDPOINT` pointed at `<brokerUrl>/otlp`,

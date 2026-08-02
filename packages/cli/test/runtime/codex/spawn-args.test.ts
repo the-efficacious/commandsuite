@@ -69,7 +69,7 @@ function makeFakeChild() {
   return child;
 }
 
-const MINIMAL_BRIEFING: InstructionsResponse = {
+const MINIMAL_PACKET: InstructionsResponse = {
   name: 'test-agent',
   role: { title: 'tester', description: '' },
   team: { name: 'test-team', context: '', permissionPresets: {} },
@@ -85,7 +85,7 @@ const MINIMAL_BRIEFING: InstructionsResponse = {
 // to `CodexSpawnOptions` — `as const` would freeze `bridgeArgs` to a
 // readonly tuple and break the mutable `string[]` parameter shape.
 const BASE_OPTS = {
-  briefing: MINIMAL_BRIEFING,
+  instructions: MINIMAL_PACKET,
   runnerSocketPath: '/tmp/sock',
   bridgeCommand: '/usr/bin/node',
   bridgeArgs: ['/path/to/cli', 'mcp-bridge'],

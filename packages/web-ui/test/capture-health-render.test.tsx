@@ -19,16 +19,16 @@
  */
 
 import { cleanup, render, screen } from '@testing-library/preact';
-import type { BriefingResponse, Presence, RosterResponse } from 'csuite-sdk/types';
+import type { InstructionsResponse, Presence, RosterResponse } from 'csuite-sdk/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MemberProfile } from '../src/components/MemberProfile.js';
 import { TeamHome } from '../src/components/TeamHome.js';
-import { briefing } from '../src/lib/briefing.js';
+import { instructions } from '../src/lib/instructions.js';
 import { __resetClientForTests } from '../src/lib/client.js';
 import { objectives as objectivesSignal } from '../src/lib/objectives.js';
 import { roster } from '../src/lib/roster.js';
 
-const BRIEFING: BriefingResponse = {
+const PACKET: InstructionsResponse = {
   name: 'director-1',
   role: { title: 'director', description: '' },
   permissions: ['members.manage'],
@@ -69,7 +69,7 @@ function presenceFor(captureHealth?: Presence['captureHealth']): Presence {
 }
 
 function rosterWith(captureHealth?: Presence['captureHealth']): RosterResponse {
-  return { teammates: BRIEFING.teammates, connected: [presenceFor(captureHealth)] };
+  return { teammates: PACKET.teammates, connected: [presenceFor(captureHealth)] };
 }
 
 beforeEach(() => {
@@ -81,13 +81,13 @@ beforeEach(() => {
         headers: { 'Content-Type': 'application/json' },
       }),
     )) as typeof fetch;
-  briefing.value = BRIEFING;
+  instructions.value = PACKET;
   objectivesSignal.value = [];
 });
 
 afterEach(() => {
   cleanup();
-  briefing.value = null;
+  instructions.value = null;
   roster.value = null;
   objectivesSignal.value = [];
 });

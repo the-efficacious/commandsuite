@@ -14,7 +14,7 @@ import { SecretEnvNameSchema } from 'csuite-sdk/schemas';
 import type { SecretSummary } from 'csuite-sdk/types';
 import { hasPermission } from 'csuite-sdk/types';
 import { useEffect } from 'preact/hooks';
-import { briefing } from '../lib/briefing.js';
+import { instructions } from '../lib/instructions.js';
 import { createSecret, loadSecrets, secrets, secretsError } from '../lib/secrets.js';
 import { selectSecretDetail } from '../lib/view.js';
 import { ArrowRight } from './icons/index.js';
@@ -29,7 +29,7 @@ const formError = signal<string | null>(null);
 const formBusy = signal(false);
 
 export function SecretsPanel() {
-  const b = briefing.value;
+  const b = instructions.value;
 
   useEffect(() => {
     void loadSecrets();

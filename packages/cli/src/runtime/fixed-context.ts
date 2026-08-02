@@ -1,6 +1,6 @@
 /**
  * Fixed context — what the runner hands the agent as its standing
- * instructions: the broker's composed briefing plus the team's process
+ * instructions: the broker's composed instructions plus the team's process
  * document.
  *
  * WHY THE DOCUMENT ARRIVES IN ITS OWN FIELD: a member authors their
@@ -87,14 +87,13 @@ export function renderProcessDocumentBlock(doc: ProcessDocument | null | undefin
 /**
  * Everything the agent receives as standing instructions.
  *
- * Both adapters previously read `briefing.instructions` directly; this
- * is the one place that knows the briefing is more than that string,
- * so a future block does not have to be added to each adapter
- * separately.
+ * This is the one place that knows the packet is more than its
+ * composed `instructions` string, so a future block does not have to
+ * be added to each adapter separately.
  */
-export function composeFixedContext(briefing: InstructionsResponse): string {
+export function composeFixedContext(packet: InstructionsResponse): string {
   // No `?? null` — that would re-collapse absent into null here after
   // the schema went to the trouble of keeping them apart.
-  const block = renderProcessDocumentBlock(briefing.processDocument);
-  return briefing.instructions.length > 0 ? `${briefing.instructions}\n\n${block}` : block;
+  const block = renderProcessDocumentBlock(packet.processDocument);
+  return packet.instructions.length > 0 ? `${packet.instructions}\n\n${block}` : block;
 }

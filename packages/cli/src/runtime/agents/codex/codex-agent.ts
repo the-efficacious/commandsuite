@@ -130,7 +130,7 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
     async spawn(ctx: AgentSessionContext): Promise<AgentProcess> {
       const { runner, log } = ctx;
       const spawned = await spawnCodex({
-        briefing: runner.briefing,
+        instructions: runner.instructions,
         runnerSocketPath: runner.socketPath,
         bridgeCommand: ctx.bridgeCommand,
         bridgeArgs: [...ctx.bridgeArgs],
@@ -174,7 +174,7 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
           ? `csuite codex: thread ${threadId}${effectiveResume ? ' (resumed)' : ''} — pick it up later with: csuite codex --resume ${threadId}\n`
           : '') +
           `csuite codex: agent connected — Ctrl-C to stop. Direct it via the broker:\n` +
-          `    csuite push --agent ${runner.briefing.name} --body "your instructions"\n\n`,
+          `    csuite push --agent ${runner.instructions.name} --body "your instructions"\n\n`,
       );
 
       // HUD strip — same chrome as `csuite claude` (2-row footer
@@ -197,7 +197,7 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
       // A no-op when stdout isn't a TTY.
       const hud: HudHandle = startHud({
         presence: ctx.presence,
-        label: `csuite codex · ${runner.briefing.name}`,
+        label: `csuite codex · ${runner.instructions.name}`,
         reserveBottomSpace: true,
         log,
       });

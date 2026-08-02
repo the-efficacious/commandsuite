@@ -65,7 +65,7 @@ describeIfBuilt('csuite claude end-to-end', () => {
     rmSync(sandbox, { recursive: true, force: true });
   });
 
-  it('starts when the briefing exceeds the former 8192-character client cap', async () => {
+  it('starts when the instructions exceeds the former 8192-character client cap', async () => {
     fakeBrokerInstructions.value = 'oversized instruction '.repeat(500);
     expect(fakeBrokerInstructions.value.length).toBeGreaterThan(8_192);
 

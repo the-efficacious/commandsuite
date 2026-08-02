@@ -2,7 +2,7 @@
  * Team — derived identity + scoping helpers.
  *
  * Today the app is single-team: the server returns one team via
- * /briefing and that's what `currentTeam` tracks. The signal is
+ * /instructions and that's what `currentTeam` tracks. The signal is
  * shaped to accommodate multi-team without a data-model change:
  * when a host needs to expose N teams per user, the session payload
  * grows a `teams: Team[]` field and `activeTeamId` becomes a signal
@@ -10,7 +10,7 @@
  */
 
 import { computed } from '@preact/signals';
-import { briefing } from './briefing.js';
+import { instructions } from './instructions.js';
 
 export interface TeamIdentity {
   /** Stable slug derived from the team name. Used for URL prefixes. */
@@ -22,7 +22,7 @@ export interface TeamIdentity {
 }
 
 export const currentTeam = computed<TeamIdentity | null>(() => {
-  const b = briefing.value;
+  const b = instructions.value;
   if (!b) return null;
   return {
     slug: slugify(b.team.name),

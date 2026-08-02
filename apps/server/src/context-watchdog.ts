@@ -40,7 +40,7 @@ export function inspectInstructionContext(input: {
   // every resend unconfirmable, and the unconfirmed bypass below then
   // re-fires on every captured request for the rest of the session.
   const conversation = conversationText(input.inference.inputMessages);
-  // Redaction exemptions that keep briefing text verbatim in capture
+  // Redaction exemptions that keep instruction-block text verbatim in capture
   // are deliberately scoped to `system` (see otlp-parse / genai
   // mapping), so a conversation copy of a block containing
   // secret-shaped text is captured in its REDACTED form. Match either;

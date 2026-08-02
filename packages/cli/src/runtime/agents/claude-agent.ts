@@ -9,7 +9,7 @@
  *     (`resolveClaudeExecutable`: `CLAUDE_PATH` override or the SDK's
  *     bundled per-platform CLI)
  *   - composing the SDK `Options`: the csuite MCP bridge entry, the
- *     briefing pinned into the Claude Code system-prompt preset, the
+ *     instructions pinned into the Claude Code system-prompt preset, the
  *     `bypassPermissions` posture, model/resume knobs, and the child
  *     env (broker secrets + the capture host's OTEL delta)
  *   - the channel sink (broker events → SDK streaming input) and the
@@ -20,7 +20,7 @@
  *
  * Nothing is written to the member's working tree: the MCP config
  * travels inline on the CLI invocation the SDK composes, hooks are
- * in-process callbacks, and the briefing rides an SDK option — so
+ * in-process callbacks, and the instructions rides an SDK option — so
  * `prepare()` has no cleanup to speak of. The member's own Claude
  * config (`~/.claude`, project `.claude/`, CLAUDE.md) still loads
  * exactly as it would under a plain `claude` invocation; csuite adds
@@ -268,7 +268,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
         });
       }
 
-      const briefing = composeFixedContext(runner.briefing);
+      const instructions = composeFixedContext(runner.instructions);
       sdkOptions = {
         cwd,
         env,
@@ -285,11 +285,11 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
           },
         },
         // Claude Code's own system prompt with the composed team
-        // briefing pinned on top — the SDK-native form of the old
+        // instructions pinned on top — the SDK-native form of the old
         // `--append-system-prompt` injection.
         systemPrompt:
-          briefing.length > 0
-            ? { type: 'preset', preset: 'claude_code', append: briefing }
+          instructions.length > 0
+            ? { type: 'preset', preset: 'claude_code', append: instructions }
             : { type: 'preset', preset: 'claude_code' },
         // Team authority is the access control; the agent runs
         // unleashed, same posture as the CLI wrapper injected via
@@ -315,9 +315,9 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
         }`,
         'csuite claude: posture = bypassPermissions (team authority is the access control)',
       );
-      if (briefing.length > 0) {
+      if (instructions.length > 0) {
         bannerLines.push(
-          `csuite claude: briefing pinned to system prompt (${briefing.length} chars)`,
+          `csuite claude: instructions pinned to system prompt (${instructions.length} chars)`,
         );
       }
       if (typeof effectiveResume === 'string') {
@@ -449,7 +449,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
           ? `csuite claude: session ${sessionId} — pick it up later with: csuite claude --resume ${sessionId}\n`
           : '') +
           `csuite claude: agent running headless — Ctrl-C to stop. Direct it via the broker:\n` +
-          `    csuite push --agent ${runner.briefing.name} --body "your instructions"\n\n`,
+          `    csuite push --agent ${runner.instructions.name} --body "your instructions"\n\n`,
       );
 
       // HUD strip — same chrome as `csuite codex`: a 2-row footer
@@ -459,7 +459,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
       // `redraw()` because there is no PTY relay driving repaints.
       const hud: HudHandle = startHud({
         presence: ctx.presence,
-        label: `csuite claude · ${runner.briefing.name}`,
+        label: `csuite claude · ${runner.instructions.name}`,
         reserveBottomSpace: true,
         log,
       });
@@ -518,7 +518,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
       ctx: AgentSessionContext,
       prior: { sessionId: string | null },
     ): Promise<AgentProcess> {
-      const fresh = composeFixedContext(ctx.runner.briefing);
+      const fresh = composeFixedContext(ctx.runner.instructions);
       // The three mutable spawn inputs, recomputed: system prompt from
       // the runner's CURRENT packet, resume posture from the
       // predecessor, and no minted session id (the SDK forbids
@@ -541,7 +541,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
         sdkOptions.continue = true;
       }
       ctx.log('claude: respawning with refreshed instructions', {
-        briefingChars: fresh.length,
+        instructionChars: fresh.length,
         resume: effectiveResume,
       });
       return adapter.spawn(ctx);

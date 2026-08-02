@@ -25,7 +25,7 @@ import type {
 import { describe, expect, it, vi } from 'vitest';
 import { defineTools, handleToolCall } from '../../src/runtime/tools.js';
 
-const BRIEFING: InstructionsResponse = {
+const PACKET: InstructionsResponse = {
   name: 'scout',
   role: { title: 'engineer', description: '' },
   permissions: [],
@@ -48,14 +48,14 @@ const BRIEFING: InstructionsResponse = {
   processDocument: null,
 };
 
-const ADMIN_BRIEFING: InstructionsResponse = {
-  ...BRIEFING,
+const ADMIN_PACKET: InstructionsResponse = {
+  ...PACKET,
   permissions: ['team.manage', 'members.manage'],
 };
 
 describe('instruction authoring tools report text cost', () => {
   it('removes the old caps from the agent-facing schemas', () => {
-    const tools = defineTools(ADMIN_BRIEFING);
+    const tools = defineTools(ADMIN_PACKET);
     const json = JSON.stringify(
       tools.filter((tool) => ['team_update', 'members_add', 'members_update'].includes(tool.name)),
     );
@@ -64,9 +64,9 @@ describe('instruction authoring tools report text cost', () => {
   });
 
   it('reports team context metrics and labels the estimate method', async () => {
-    const broker = makeBroker({ getTeam: vi.fn(async () => ADMIN_BRIEFING.team) } as never);
+    const broker = makeBroker({ getTeam: vi.fn(async () => ADMIN_PACKET.team) } as never);
     const text = getCallText(
-      (await handleToolCall('team_get', {}, broker, ADMIN_BRIEFING)) as never,
+      (await handleToolCall('team_get', {}, broker, ADMIN_PACKET)) as never,
     );
     expect(text).toContain('context size: 0 characters · ≈0 estimated tokens (characters ÷ 4)');
   });
@@ -88,7 +88,7 @@ describe('instruction authoring tools report text cost', () => {
         'members_add',
         { name: 'newbie', title: 'engineer', description: '12345', instructions: '12345678' },
         broker,
-        ADMIN_BRIEFING,
+        ADMIN_PACKET,
       )) as never,
     );
     expect(text).toContain('role description: 5 characters · ≈2 estimated tokens');
@@ -126,20 +126,20 @@ function getCallText(result: { content: Array<{ type: string; text?: string }> }
 
 describe('defineTools — chat surface includes channel tools', () => {
   it('includes channels_list and channels_post', () => {
-    const names = defineTools(BRIEFING).map((t) => t.name);
+    const names = defineTools(PACKET).map((t) => t.name);
     expect(names).toContain('channels_list');
     expect(names).toContain('channels_post');
   });
 
   it('broadcast description mentions channels_post for non-general channels', () => {
-    const broadcast = defineTools(BRIEFING).find((t) => t.name === 'broadcast');
+    const broadcast = defineTools(PACKET).find((t) => t.name === 'broadcast');
     expect(broadcast).toBeDefined();
     expect(broadcast?.description).toMatch(/channels_post/);
     expect(broadcast?.description).toMatch(/general/i);
   });
 
   it('recent description and schema mention the channel arg', () => {
-    const recent = defineTools(BRIEFING).find((t) => t.name === 'recent');
+    const recent = defineTools(PACKET).find((t) => t.name === 'recent');
     expect(recent).toBeDefined();
     expect(recent?.description).toMatch(/channel/i);
     const props = recent?.inputSchema.properties as Record<string, unknown>;
@@ -148,7 +148,7 @@ describe('defineTools — chat surface includes channel tools', () => {
   });
 
   it('channels_post requires channel + body', () => {
-    const post = defineTools(BRIEFING).find((t) => t.name === 'channels_post');
+    const post = defineTools(PACKET).find((t) => t.name === 'channels_post');
     expect(post?.inputSchema.required).toEqual(['channel', 'body']);
   });
 });
@@ -158,7 +158,7 @@ describe('roster — recent activity without liveness claims', () => {
     const broker = makeBroker({
       roster: vi.fn().mockResolvedValue({
         teammates: [
-          ...BRIEFING.teammates,
+          ...PACKET.teammates,
           { name: 'reviewer', role: { title: 'reviewer', description: '' }, permissions: [] },
         ],
         connected: [
@@ -167,7 +167,7 @@ describe('roster — recent activity without liveness claims', () => {
             connected: 1,
             createdAt: 1,
             lastSeen: 2,
-            role: BRIEFING.teammates[0]?.role ?? null,
+            role: PACKET.teammates[0]?.role ?? null,
             activity: 'working',
             busy: true,
           },
@@ -176,7 +176,7 @@ describe('roster — recent activity without liveness claims', () => {
             connected: 1,
             createdAt: 1,
             lastSeen: 2,
-            role: BRIEFING.teammates[1]?.role ?? null,
+            role: PACKET.teammates[1]?.role ?? null,
             activity: 'blocked',
             busy: false,
           },
@@ -185,7 +185,7 @@ describe('roster — recent activity without liveness claims', () => {
       }),
     });
 
-    const text = getCallText(await handleToolCall('roster', {}, broker, BRIEFING));
+    const text = getCallText(await handleToolCall('roster', {}, broker, PACKET));
 
     expect(text).toMatch(
       /scout \(you\) \[engineer\] connected=1; activity=reported working within last 45s/,
@@ -200,7 +200,7 @@ describe('roster — recent activity without liveness claims', () => {
   });
 
   it('describes the activity window and disclaims liveness in the tool metadata', () => {
-    const roster = defineTools(BRIEFING).find((tool) => tool.name === 'roster');
+    const roster = defineTools(PACKET).find((tool) => tool.name === 'roster');
     expect(roster?.description).toContain("broker's reporting window when supplied");
     expect(roster?.description).toContain('window is unknown');
     expect(roster?.description).toContain('not executor liveness');
@@ -209,21 +209,21 @@ describe('roster — recent activity without liveness claims', () => {
   it('renders an unknown window instead of inventing one for an older broker', async () => {
     const broker = makeBroker({
       roster: vi.fn().mockResolvedValue({
-        teammates: BRIEFING.teammates,
+        teammates: PACKET.teammates,
         connected: [
           {
             name: 'scout',
             connected: 1,
             createdAt: 1,
             lastSeen: 2,
-            role: BRIEFING.teammates[0]?.role ?? null,
+            role: PACKET.teammates[0]?.role ?? null,
             activity: 'working',
           },
         ],
       }),
     });
 
-    const text = getCallText(await handleToolCall('roster', {}, broker, BRIEFING));
+    const text = getCallText(await handleToolCall('roster', {}, broker, PACKET));
     expect(text).toContain('activity=reported working within an unknown window');
     expect(text).toContain(
       'director [director] [admin] offline; activity=no report within an unknown window (idle, lapsed, or never reported)',
@@ -250,7 +250,7 @@ const EXTERNAL_SOURCES = [
 
 describe('defineTools — external tools', () => {
   it('namespaces resolved tools as <source>__<name>', () => {
-    const tools = defineTools(BRIEFING, EXTERNAL_SOURCES);
+    const tools = defineTools(PACKET, EXTERNAL_SOURCES);
     const jira = tools.find((t) => t.name === 'jira__get_issue');
     expect(jira).toBeDefined();
     expect(jira?.description).toBe('Fetch a Jira issue.');
@@ -258,7 +258,7 @@ describe('defineTools — external tools', () => {
   });
 
   it('defaults a non-object inputSchema to an empty object schema', () => {
-    const tools = defineTools(BRIEFING, [
+    const tools = defineTools(PACKET, [
       {
         source: 'x',
         kind: 'custom',
@@ -271,8 +271,8 @@ describe('defineTools — external tools', () => {
     });
   });
 
-  it('defaults to the briefing snapshot when no live set is passed', () => {
-    const briefingWithTools = { ...BRIEFING, toolSources: EXTERNAL_SOURCES };
+  it('defaults to the instructions snapshot when no live set is passed', () => {
+    const briefingWithTools = { ...PACKET, toolSources: EXTERNAL_SOURCES };
     const names = defineTools(briefingWithTools).map((t) => t.name);
     expect(names).toContain('jira__get_issue');
   });
@@ -296,18 +296,18 @@ const TOOL_ADMIN_NAMES = [
 
 describe('defineTools — tool-source admin gating', () => {
   it('hides the admin group without tools.manage', () => {
-    const names = defineTools(BRIEFING).map((t) => t.name);
+    const names = defineTools(PACKET).map((t) => t.name);
     for (const name of TOOL_ADMIN_NAMES) expect(names).not.toContain(name);
   });
 
   it('shows the full admin group with tools.manage', () => {
-    const admin = { ...BRIEFING, permissions: ['tools.manage' as const] };
+    const admin = { ...PACKET, permissions: ['tools.manage' as const] };
     const names = defineTools(admin).map((t) => t.name);
     for (const name of TOOL_ADMIN_NAMES) expect(names).toContain(name);
   });
 
   it('define_tool teaches the binding grammar inline', () => {
-    const admin = { ...BRIEFING, permissions: ['tools.manage' as const] };
+    const admin = { ...PACKET, permissions: ['tools.manage' as const] };
     const define = defineTools(admin).find((t) => t.name === 'tool_sources_define_tool');
     expect(define?.description).toContain('{{args.<name>}}');
     expect(define?.description).toContain('origin must be static');
@@ -316,11 +316,11 @@ describe('defineTools — tool-source admin gating', () => {
 });
 
 describe('handleToolCall — tool-source admin handlers', () => {
-  const ADMIN_BRIEFING = { ...BRIEFING, permissions: ['tools.manage' as const] };
+  const ADMIN_PACKET = { ...PACKET, permissions: ['tools.manage' as const] };
 
   it('rechecks the permission defensively', async () => {
     const broker = makeBroker({});
-    const result = await handleToolCall('tool_sources_list', {}, broker, BRIEFING);
+    const result = await handleToolCall('tool_sources_list', {}, broker, PACKET);
     expect(getCallText(result as never)).toContain('tools.manage');
   });
 
@@ -341,7 +341,7 @@ describe('handleToolCall — tool-source admin handlers', () => {
         binding,
       },
       broker,
-      ADMIN_BRIEFING,
+      ADMIN_PACKET,
     );
     expect(setCustomTool).toHaveBeenCalledWith('jira', 'get_issue', {
       description: 'Fetch an issue.',
@@ -358,7 +358,7 @@ describe('handleToolCall — tool-source admin handlers', () => {
       'tool_sources_create',
       { slug: 'up', kind: 'mcp' },
       broker,
-      ADMIN_BRIEFING,
+      ADMIN_PACKET,
     );
     expect(createToolSource).not.toHaveBeenCalled();
     expect(getCallText(result as never)).toContain('require `url`');
@@ -391,7 +391,7 @@ describe('handleToolCall — tool-source admin handlers', () => {
       'tool_sources_bindings',
       { slug: 'jira', add: ['scout'], remove: ['old-agent'] },
       broker,
-      ADMIN_BRIEFING,
+      ADMIN_PACKET,
     );
     expect(bindToolSource).toHaveBeenCalledWith('jira', { member: 'scout' });
     expect(unbindToolSource).toHaveBeenCalledWith('jira', 'old-agent');
@@ -406,7 +406,7 @@ describe('handleToolCall — tool-source admin handlers', () => {
       'tool_sources_set_credential',
       { slug: 'jira', kind: 'header', secret: 's' },
       broker,
-      ADMIN_BRIEFING,
+      ADMIN_PACKET,
     );
     expect(getCallText(missing as never)).toContain('headerName');
     expect(setToolCredential).not.toHaveBeenCalled();
@@ -415,7 +415,7 @@ describe('handleToolCall — tool-source admin handlers', () => {
       'tool_sources_set_credential',
       { slug: 'jira', kind: 'bearer', secret: 'the-pat' },
       broker,
-      ADMIN_BRIEFING,
+      ADMIN_PACKET,
     );
     expect(setToolCredential).toHaveBeenCalledWith('jira', {
       kind: 'bearer',
@@ -436,7 +436,7 @@ describe('handleToolCall — external dispatch', () => {
       'jira__get_issue',
       { key: 'PROJ-1' },
       broker,
-      BRIEFING,
+      PACKET,
       EXTERNAL_SOURCES,
     );
     expect(invokeTool).toHaveBeenCalledWith('jira', 'get_issue', { key: 'PROJ-1' });
@@ -453,7 +453,7 @@ describe('handleToolCall — external dispatch', () => {
       'jira__get_issue',
       {},
       broker,
-      BRIEFING,
+      PACKET,
       EXTERNAL_SOURCES,
     )) as { isError?: boolean };
     expect(result.isError).toBe(true);
@@ -462,7 +462,7 @@ describe('handleToolCall — external dispatch', () => {
   it('falls through to unknown-tool when the name matches no source', async () => {
     const invokeTool = vi.fn();
     const broker = makeBroker({ invokeTool } as never);
-    const result = await handleToolCall('ghost__tool', {}, broker, BRIEFING, EXTERNAL_SOURCES);
+    const result = await handleToolCall('ghost__tool', {}, broker, PACKET, EXTERNAL_SOURCES);
     expect(invokeTool).not.toHaveBeenCalled();
     expect(getCallText(result as never)).toContain('unknown tool');
   });
@@ -481,7 +481,7 @@ describe('handleToolCall — external dispatch', () => {
       'jira__get_issue',
       {},
       broker,
-      BRIEFING,
+      PACKET,
       EXTERNAL_SOURCES,
     )) as { isError?: boolean };
     expect(result.isError).toBe(true);
@@ -512,7 +512,7 @@ describe('channels_list handler', () => {
         }),
       ]),
     });
-    const result = await handleToolCall('channels_list', {}, broker, BRIEFING);
+    const result = await handleToolCall('channels_list', {}, broker, PACKET);
     const text = getCallText(
       result as unknown as { content: Array<{ type: string; text?: string }> },
     );
@@ -531,7 +531,7 @@ describe('channels_list handler', () => {
     const broker = makeBroker({
       listChannels: vi.fn(async () => []),
     });
-    const result = await handleToolCall('channels_list', {}, broker, BRIEFING);
+    const result = await handleToolCall('channels_list', {}, broker, PACKET);
     const text = getCallText(
       result as unknown as { content: Array<{ type: string; text?: string }> },
     );
@@ -574,7 +574,7 @@ describe('channels_post handler', () => {
       'channels_post',
       { channel: 'engineering', body: 'hi team' },
       broker,
-      BRIEFING,
+      PACKET,
     );
     expect(getCallText(result as never)).toMatch(/posted to #engineering/);
     expect(push).toHaveBeenCalledTimes(1);
@@ -597,7 +597,7 @@ describe('channels_post handler', () => {
       'channels_post',
       { channel: 'ghost', body: 'hi' },
       broker,
-      BRIEFING,
+      PACKET,
     );
     const text = getCallText(result as never);
     expect(text).toMatch(/no channel/);
@@ -617,20 +617,20 @@ describe('channels_post handler', () => {
       'channels_post',
       { channel: 'private', body: 'hi' },
       broker,
-      BRIEFING,
+      PACKET,
     );
     expect(getCallText(result as never)).toMatch(/not a member/);
   });
 
   it('rejects missing required args', async () => {
     const broker = makeBroker({});
-    const noChannel = await handleToolCall('channels_post', { body: 'x' }, broker, BRIEFING);
+    const noChannel = await handleToolCall('channels_post', { body: 'x' }, broker, PACKET);
     expect(getCallText(noChannel as never)).toMatch(/channel/);
     const noBody = await handleToolCall(
       'channels_post',
       { channel: 'engineering' },
       broker,
-      BRIEFING,
+      PACKET,
     );
     expect(getCallText(noBody as never)).toMatch(/body/);
   });
@@ -650,7 +650,7 @@ describe('recent handler — channel arg', () => {
       ),
       history,
     });
-    await handleToolCall('recent', { channel: 'engineering' }, broker, BRIEFING);
+    await handleToolCall('recent', { channel: 'engineering' }, broker, PACKET);
     expect(history).toHaveBeenCalledWith(expect.objectContaining({ channel: 'eng-id-123' }));
     // `with` should NOT be set — channel + with are mutually exclusive.
     expect(history).toHaveBeenCalledWith(expect.not.objectContaining({ with: expect.anything() }));
@@ -662,7 +662,7 @@ describe('recent handler — channel arg', () => {
       'recent',
       { with: 'director', channel: 'engineering' },
       broker,
-      BRIEFING,
+      PACKET,
     );
     expect(getCallText(result as never)).toMatch(/with.*channel/i);
   });
@@ -677,7 +677,7 @@ describe('recent handler — channel arg', () => {
       ),
       history: vi.fn(async () => [] as Message[]),
     });
-    const result = await handleToolCall('recent', { channel: 'engineering' }, broker, BRIEFING);
+    const result = await handleToolCall('recent', { channel: 'engineering' }, broker, PACKET);
     expect(getCallText(result as never)).toMatch(/#engineering/);
   });
 
@@ -688,7 +688,7 @@ describe('recent handler — channel arg', () => {
         throw err;
       }),
     });
-    const result = await handleToolCall('recent', { channel: 'ghost' }, broker, BRIEFING);
+    const result = await handleToolCall('recent', { channel: 'ghost' }, broker, PACKET);
     expect(getCallText(result as never)).toMatch(/no channel/);
   });
 });
@@ -711,8 +711,8 @@ const NOTIFICATION_ADMIN_NAMES = [
   'notifications_profile_set_secret',
 ];
 
-const NOTIF_ADMIN_BRIEFING: InstructionsResponse = {
-  ...BRIEFING,
+const NOTIF_ADMIN_PACKET: InstructionsResponse = {
+  ...PACKET,
   permissions: ['notifications.manage'],
 };
 
@@ -749,14 +749,14 @@ function makeEndpointSummary(overrides: Record<string, unknown> = {}) {
 
 describe('defineTools — notifications admin gating', () => {
   it('hides the family without notifications.manage', () => {
-    const names = defineTools(BRIEFING).map((t) => t.name);
+    const names = defineTools(PACKET).map((t) => t.name);
     for (const name of NOTIFICATION_ADMIN_NAMES) {
       expect(names).not.toContain(name);
     }
   });
 
   it('shows the whole family with notifications.manage', () => {
-    const names = defineTools(NOTIF_ADMIN_BRIEFING).map((t) => t.name);
+    const names = defineTools(NOTIF_ADMIN_PACKET).map((t) => t.name);
     for (const name of NOTIFICATION_ADMIN_NAMES) {
       expect(names).toContain(name);
     }
@@ -765,14 +765,14 @@ describe('defineTools — notifications admin gating', () => {
 
 describe('handleToolCall — notifications admin handlers', () => {
   it('re-checks the permission defensively', async () => {
-    const result = await handleToolCall('notifications_list', {}, makeBroker(), BRIEFING);
+    const result = await handleToolCall('notifications_list', {}, makeBroker(), PACKET);
     expect(getCallText(result as never)).toContain('notifications.manage');
   });
 
   it('lists endpoints with targets, policy flags, and secret state', async () => {
     const listNotificationEndpoints = vi.fn(async () => [makeEndpointSummary()]);
     const broker = makeBroker({ listNotificationEndpoints } as never);
-    const result = await handleToolCall('notifications_list', {}, broker, NOTIF_ADMIN_BRIEFING);
+    const result = await handleToolCall('notifications_list', {}, broker, NOTIF_ADMIN_PACKET);
     const text = getCallText(result as never);
     expect(text).toContain('ci-alerts');
     expect(text).toContain('@scout');
@@ -795,7 +795,7 @@ describe('handleToolCall — notifications admin handlers', () => {
         level: 'warning',
       },
       broker,
-      NOTIF_ADMIN_BRIEFING,
+      NOTIF_ADMIN_PACKET,
     );
     expect(createNotificationEndpoint).toHaveBeenCalledWith({
       slug: 'ci-alerts',
@@ -812,7 +812,7 @@ describe('handleToolCall — notifications admin handlers', () => {
       'notifications_create',
       { slug: 'x', targets: [] },
       makeBroker(),
-      NOTIF_ADMIN_BRIEFING,
+      NOTIF_ADMIN_PACKET,
     );
     expect(getCallText(result as never)).toMatch(/targets/);
   });
@@ -824,7 +824,7 @@ describe('handleToolCall — notifications admin handlers', () => {
       'notifications_set_secret',
       { slug: 'ci-alerts', secret: 'super-secret-value' },
       broker,
-      NOTIF_ADMIN_BRIEFING,
+      NOTIF_ADMIN_PACKET,
     );
     expect(setNotificationEndpointSecret).toHaveBeenCalledWith('ci-alerts', {
       secret: 'super-secret-value',
@@ -854,7 +854,7 @@ describe('handleToolCall — notifications admin handlers', () => {
       'notifications_deliveries',
       { slug: 'ci-alerts', limit: 5 },
       broker,
-      NOTIF_ADMIN_BRIEFING,
+      NOTIF_ADMIN_PACKET,
     );
     expect(listNotificationDeliveries).toHaveBeenCalledWith('ci-alerts', { limit: 5 });
     const text = getCallText(result as never);
@@ -882,7 +882,7 @@ describe('handleToolCall — notifications admin handlers', () => {
       'notifications_replay',
       { deliveryId: 'd-1' },
       broker,
-      NOTIF_ADMIN_BRIEFING,
+      NOTIF_ADMIN_PACKET,
     );
     expect(getCallText(result as never)).toContain('d-2');
     expect(getCallText(result as never)).toContain('delivered');
@@ -947,7 +947,7 @@ describe('handleToolCall — objectives_list', () => {
 
   it('renders assignee and originator on every row', async () => {
     const { broker } = brokerFor(PLATE);
-    const text = getCallText(await handleToolCall('objectives_list', {}, broker, BRIEFING));
+    const text = getCallText(await handleToolCall('objectives_list', {}, broker, PACKET));
 
     // Every rendered row carries both fields — not just the first.
     const rows = text.split('\n- ').slice(1);
@@ -960,7 +960,7 @@ describe('handleToolCall — objectives_list', () => {
 
   it('marks the caller’s own rows so ownership is readable without a second call', async () => {
     const { broker } = brokerFor(PLATE);
-    const text = getCallText(await handleToolCall('objectives_list', {}, broker, BRIEFING));
+    const text = getCallText(await handleToolCall('objectives_list', {}, broker, PACKET));
 
     // scout is assignee here, so the row says so...
     expect(text).toMatch(/obj-active-mine[\s\S]*?assignee: scout \(you\)/);
@@ -972,7 +972,7 @@ describe('handleToolCall — objectives_list', () => {
   it('status=open returns active AND blocked, and no terminal rows', async () => {
     const { broker, listObjectives } = brokerFor(PLATE);
     const text = getCallText(
-      await handleToolCall('objectives_list', { status: 'open' }, broker, BRIEFING),
+      await handleToolCall('objectives_list', { status: 'open' }, broker, PACKET),
     );
 
     // Both open states present — a filter that refused either would leave
@@ -992,7 +992,7 @@ describe('handleToolCall — objectives_list', () => {
   it('assignee narrows the emitted set and is never sent to the server', async () => {
     const { broker, listObjectives } = brokerFor(PLATE);
     const text = getCallText(
-      await handleToolCall('objectives_list', { assignee: 'scout' }, broker, BRIEFING),
+      await handleToolCall('objectives_list', { assignee: 'scout' }, broker, PACKET),
     );
 
     expect(text).toContain('obj-active-mine');
@@ -1016,7 +1016,7 @@ describe('handleToolCall — objectives_list', () => {
         'objectives_list',
         { status: 'open', assignee: 'scout' },
         broker,
-        BRIEFING,
+        PACKET,
       ),
     );
 
@@ -1029,7 +1029,7 @@ describe('handleToolCall — objectives_list', () => {
   it('names the scope when a filtered list is empty', async () => {
     const { broker } = brokerFor([makeObjective({ id: 'obj-done', status: 'done' })]);
     const text = getCallText(
-      await handleToolCall('objectives_list', { status: 'open' }, broker, BRIEFING),
+      await handleToolCall('objectives_list', { status: 'open' }, broker, PACKET),
     );
     // "no objectives for scout" would read as an empty plate rather than
     // an empty OPEN plate.
@@ -1052,7 +1052,7 @@ describe('handleToolCall — objectives_list', () => {
     const { broker } = brokerFor([
       makeObjective({ id: 'obj-x', status: 'blocked', assignee: 'nobody' }),
     ]);
-    const text = getCallText(await handleToolCall('objectives_list', args, broker, BRIEFING));
+    const text = getCallText(await handleToolCall('objectives_list', args, broker, PACKET));
     expect(text).toBe(expected);
   });
 
@@ -1065,7 +1065,7 @@ describe('handleToolCall — objectives_list', () => {
       makeObjective({ id: 'obj-mine', status: 'active', assignee: 'scout' }),
       makeObjective({ id: 'obj-theirs', status: 'active', assignee: 'director' }),
     ]);
-    const text = getCallText(await handleToolCall('objectives_list', args, broker, BRIEFING));
+    const text = getCallText(await handleToolCall('objectives_list', args, broker, PACKET));
     expect(text.split('\n')[0]).toBe(expected);
   });
 
@@ -1075,7 +1075,7 @@ describe('handleToolCall — objectives_list', () => {
     // only one being asked.
     const { broker } = brokerFor([makeObjective({ id: 'obj-mine', assignee: 'scout' })]);
     const text = getCallText(
-      await handleToolCall('objectives_list', { assignee: 'scout' }, broker, BRIEFING),
+      await handleToolCall('objectives_list', { assignee: 'scout' }, broker, PACKET),
     );
     expect(text).not.toContain('for scout assigned to scout');
   });
@@ -1083,7 +1083,7 @@ describe('handleToolCall — objectives_list', () => {
   it('rejects an unknown status and names open as accepted', async () => {
     const { broker } = brokerFor(PLATE);
     const text = getCallText(
-      await handleToolCall('objectives_list', { status: 'garbage' }, broker, BRIEFING),
+      await handleToolCall('objectives_list', { status: 'garbage' }, broker, PACKET),
     );
     expect(text).toContain('open');
     expect(text).toContain('active');
@@ -1093,7 +1093,7 @@ describe('handleToolCall — objectives_list', () => {
     // The description is the only spec an agent has for a tool it cannot
     // read. Four consumers made the unfiltered call because this text told
     // them to; it must now point at the one that fits.
-    const tool = defineTools(BRIEFING).find((t) => t.name === 'objectives_list');
+    const tool = defineTools(PACKET).find((t) => t.name === 'objectives_list');
     expect(tool?.description).toMatch(/status: "open"/);
     expect(tool?.description).toMatch(/restart or context compaction/);
     // And it must still promise exactly what the renderer emits.
@@ -1103,18 +1103,18 @@ describe('handleToolCall — objectives_list', () => {
 });
 
 describe('variables admin tools — the agent-facing half of the runner environment', () => {
-  const ADMIN_BRIEFING = { ...BRIEFING, permissions: ['secrets.manage' as const] };
+  const ADMIN_PACKET = { ...PACKET, permissions: ['secrets.manage' as const] };
 
   it('are gated on secrets.manage, like secrets', () => {
-    expect(defineTools(BRIEFING).map((t) => t.name)).not.toContain('variables_list');
-    expect(defineTools(ADMIN_BRIEFING).map((t) => t.name)).toContain('variables_list');
+    expect(defineTools(PACKET).map((t) => t.name)).not.toContain('variables_list');
+    expect(defineTools(ADMIN_PACKET).map((t) => t.name)).toContain('variables_list');
   });
 
   it('exposes the same verbs as the secrets surface', () => {
     // After the split, identity leaves `secrets_list` and has to arrive
     // somewhere an agent can reach. A partial surface is how a
     // capability becomes an accident of where it was built.
-    const names = defineTools(ADMIN_BRIEFING).map((t) => t.name);
+    const names = defineTools(ADMIN_PACKET).map((t) => t.name);
     for (const verb of [
       'list',
       'view',
@@ -1131,7 +1131,7 @@ describe('variables admin tools — the agent-facing half of the runner environm
   });
 
   it('states the classification rule in the descriptions, since that is the only spec an agent gets', () => {
-    const tools = defineTools(ADMIN_BRIEFING);
+    const tools = defineTools(ADMIN_PACKET);
     const list = tools.find((t) => t.name === 'variables_list');
     // An agent that cannot tell which store holds git identity will
     // look in the wrong one and conclude it is unconfigured.
@@ -1145,7 +1145,7 @@ describe('variables admin tools — the agent-facing half of the runner environm
 
   it('rechecks the permission defensively even though the broker also enforces it', async () => {
     const broker = makeBroker({});
-    const result = await handleToolCall('variables_list', {}, broker, BRIEFING);
+    const result = await handleToolCall('variables_list', {}, broker, PACKET);
     expect(getCallText(result as never)).toContain('secrets.manage');
   });
 
@@ -1195,7 +1195,7 @@ describe('variables admin tools — the agent-facing half of the runner environm
     ]);
     const broker = makeBroker({ listVariables } as never);
     const text = getCallText(
-      (await handleToolCall('variables_list', {}, broker, ADMIN_BRIEFING)) as never,
+      (await handleToolCall('variables_list', {}, broker, ADMIN_PACKET)) as never,
     );
 
     // The value itself — the capability that distinguishes this surface.
@@ -1279,7 +1279,7 @@ describe('objectives_view renders amendments WITH the record', () => {
       getObjective: vi.fn(async () => ({ objective: AMENDED_OBJECTIVE, events: EVENTS })),
     } as never);
     const text = getCallText(
-      (await handleToolCall('objectives_view', { id: 'obj-1' }, broker, BRIEFING)) as never,
+      (await handleToolCall('objectives_view', { id: 'obj-1' }, broker, PACKET)) as never,
     );
 
     // Current contract, read directly.
@@ -1301,7 +1301,7 @@ describe('objectives_view renders amendments WITH the record', () => {
       getObjective: vi.fn(async () => ({ objective: AMENDED_OBJECTIVE, events: EVENTS })),
     } as never);
     const text = getCallText(
-      (await handleToolCall('objectives_view', { id: 'obj-1' }, broker, BRIEFING)) as never,
+      (await handleToolCall('objectives_view', { id: 'obj-1' }, broker, PACKET)) as never,
     );
     expect(text).toContain('event corrections:');
     expect(text).toContain('c8f0d18');
@@ -1323,7 +1323,7 @@ describe('objectives_view renders amendments WITH the record', () => {
       getObjective: vi.fn(async () => ({ objective: clean, events: EVENTS })),
     } as never);
     const text = getCallText(
-      (await handleToolCall('objectives_view', { id: 'obj-1' }, broker, BRIEFING)) as never,
+      (await handleToolCall('objectives_view', { id: 'obj-1' }, broker, PACKET)) as never,
     );
     expect(text).not.toContain('contract version');
     expect(text).not.toContain('amendments:');
@@ -1361,7 +1361,7 @@ describe('objectives_list marks an amended contract', () => {
       listObjectives: vi.fn(async () => [row({ outcomeVersion: 3 })]),
     } as never);
     const text = getCallText(
-      (await handleToolCall('objectives_list', {}, broker, BRIEFING)) as never,
+      (await handleToolCall('objectives_list', {}, broker, PACKET)) as never,
     );
     expect(text).toContain('contract v3');
     expect(text).toContain('amended');
@@ -1370,7 +1370,7 @@ describe('objectives_list marks an amended contract', () => {
   it('stays quiet for a contract that has never been amended', async () => {
     const broker = makeBroker({ listObjectives: vi.fn(async () => [row({})]) } as never);
     const text = getCallText(
-      (await handleToolCall('objectives_list', {}, broker, BRIEFING)) as never,
+      (await handleToolCall('objectives_list', {}, broker, PACKET)) as never,
     );
     expect(text).not.toContain('contract v');
     expect(text).not.toContain('amended');

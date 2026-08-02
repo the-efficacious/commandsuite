@@ -11,7 +11,7 @@ import { signal } from '@preact/signals';
 import type { Member, Permission, PermissionPresets } from 'csuite-sdk/types';
 import { hasPermission } from 'csuite-sdk/types';
 import { useEffect } from 'preact/hooks';
-import { briefing } from '../lib/briefing.js';
+import { instructions } from '../lib/instructions.js';
 import { getClient } from '../lib/client.js';
 import { summarizePermissions as summarize } from '../lib/permissions.js';
 import { loadRoster } from '../lib/roster.js';
@@ -44,7 +44,7 @@ async function refresh(): Promise<void> {
 }
 
 export function MembersPanel() {
-  const b = briefing.value;
+  const b = instructions.value;
 
   useEffect(() => {
     void refresh();

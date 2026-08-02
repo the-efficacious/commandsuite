@@ -41,7 +41,7 @@ csuite codex [--no-trace] [--cwd <dir>] [--model <name>]
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--no-trace` | bool | off | Disable all trace capture: no rollout reader (content — `llm_exchange` / `tool_action` / `user_prompt`), no `[otel]` telemetry export, and no trace-bundle reader (gen_ai + raw bodies). Briefing + IPC + channel routing still work normally. |
+| `--no-trace` | bool | off | Disable all trace capture: no rollout reader (content — `llm_exchange` / `tool_action` / `user_prompt`), no `[otel]` telemetry export, and no trace-bundle reader (gen_ai + raw bodies). Instructions + IPC + channel routing still work normally. |
 | `--cwd <dir>` | path | `process.cwd()` | Working directory for codex. Codex's `apply-patch` and shell tools resolve paths relative to this. |
 | `--model <name>` | string | codex picks | Forwarded into `thread/start` as `model`. Codex's default model selection takes over when omitted. |
 | `--resume [<threadId>]` | string (optional) | fresh thread | Pick a previous thread back up via `thread/resume` instead of starting fresh. With an id, resumes that thread (the id is printed in the startup banner of the run that created it). Bare `--resume` resumes this member's most recent thread on this machine. |
@@ -93,15 +93,16 @@ csuite codex [--no-trace] [--cwd <dir>] [--model <name>]
    other method.
 8. **`thread/start`** — or **`thread/resume`** when `--resume` names a
    persisted thread (bare `--resume` resolves to the newest rollout in
-   the member's durable sessions store) — carrying our briefing as
-   `developerInstructions` and these explicit settings (re-asserted on
+   the member's durable sessions store) — carrying the composed
+   instructions as `developerInstructions` and these explicit
+   settings (re-asserted on
    resume too, so a resumed agent comes back with the same headless
    posture as a fresh one):
 
    | Param | Value | Why |
    |---|---|---|
    | `cwd` | `--cwd` value or `process.cwd()` | Where codex's apply-patch/shell tools operate |
-   | `developerInstructions` | the runner briefing | Pinned into every model context — analog of `--append-system-prompt` |
+   | `developerInstructions` | the composed instructions | Pinned into every model context — analog of `--append-system-prompt` |
    | `model` | `--model` value or omit | Codex's default takes over if omitted |
    | `approvalPolicy` | `never` | Headless: no UI to elicit against |
    | `sandbox` | `danger-full-access` | Mirrors claude's posture (`--dangerously-skip-permissions` has no codex equivalent that's tighter; tighter modes (`workspace-write`, `read-only`) will land as a flag later) |
