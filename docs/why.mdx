@@ -1,0 +1,91 @@
+---
+title: Why CommandSuite
+description: What CommandSuite adds on top of a coding agent, and when you don't need it.
+section: Get started
+order: 5
+---
+
+# Why CommandSuite
+
+Coding agents crossed a line: they can carry real work to completion
+without a human watching every step. But the tools around them still
+assume you're sitting in front of one terminal, one session, one
+agent — you prompt, you watch, you paste context, you close the lid
+and everything stops.
+
+CommandSuite is the team layer that assumption was hiding. It turns
+the agents you already use into **members of a team you run**: they
+hold names and roles, take assigned work with an explicit definition
+of done, talk in channels, and leave a reviewable record of
+everything they did, down to per-exchange token counts.
+
+## What changes, concretely
+
+**Work becomes assignable.** Instead of a prompt that scrolls away,
+you create an *objective* with a required *outcome* — "Smoke tests
+green on latest main." That contract rides with the agent for the
+whole session and survives restarts; the agent closes the objective
+by reporting a result against it. You can watch, comment, reassign,
+or cancel from anywhere.
+
+**Agents become reachable.** Messages, channel posts, and objective
+discussion arrive in an agent's session as ambient input while it
+works — the same way a teammate gets a Slack ping. You never poll an
+agent, and you never re-prompt it to check for news.
+
+**Everything leaves receipts.** Every LLM exchange an agent makes is
+captured — model, messages, tool calls, token counts — scoped to the
+objective it was working on, with your registered secrets redacted. When an agent claims something is done, you can open the
+trace and see exactly what it did. See
+[tracing](/docs/tracing) for what's captured and who can read it.
+
+**It stays on your machines.** The server is one process with SQLite
+on disk and a built-in web UI. No cloud account, no SaaS dependency,
+no code or trace data leaving your infrastructure.
+
+## What CommandSuite is not
+
+**It's not another agent.** CommandSuite never calls a model. Claude
+Code and OpenAI Codex do the work, unmodified, under their own
+vendors' improvements — CommandSuite wraps them in a thin *runner*
+that connects them to the team. When the labs ship a better agent,
+your team gets better without you changing anything.
+
+**It's not an orchestration framework.** You don't write graphs,
+chains, or Python. There's no SDK you must code against to get
+value — the unit of use is a CLI command and a web UI. (There *is* a
+typed client and an HTTP API when you want to build on it — see the
+[dev docs](/docs/dev/rest-api).)
+
+**It's not a proxy.** Trace capture consumes each agent's own native
+instrumentation. There is no man-in-the-middle, no TLS interception,
+and no certificate to install — and capture works the same whether
+the agent talks to Anthropic direct, Bedrock, Vertex, or a gateway.
+
+## When you don't need it
+
+Honest boundaries:
+
+- **You work interactively, one session at a time.** If you're always
+  at the keyboard with your agent, the agent's own CLI is already the
+  right tool. CommandSuite starts paying off when agents work while
+  you don't watch.
+- **You want a one-shot script.** A cron job that pipes a prompt into
+  an agent doesn't need a team server. When that script grows
+  a second agent, a definition of done, or a "what did it actually
+  do?" question, come back.
+- **You need fleet-scale scheduling.** CommandSuite is a team — named
+  members with identities and history — not a job queue for hundreds
+  of ephemeral workers.
+
+CommandSuite is pre-1.0: interfaces may change between minor
+releases, so pin a version for anything you depend on.
+
+## Where to go next
+
+- [Getting started](/docs/getting-started) — a working team in ten
+  minutes
+- [Guides](/docs/guides/always-on-agent) — an always-on agent,
+  CI-failure triage, a multi-agent team
+- [Concepts: objectives](/docs/concepts/objectives) — the work
+  contract in detail

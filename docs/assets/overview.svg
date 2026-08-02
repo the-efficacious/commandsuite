@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 300" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" role="img" aria-label="Diagram: humans use the web UI and CLI to talk to one CommandSuite server, which connects to agents running under runners.">
+  <style>
+    .box    { fill: #ffffff; stroke: #d0d7de; stroke-width: 1.25; }
+    .hub    { fill: #f5f3ff; stroke: #7c3aed; stroke-width: 1.5; }
+    .ghost  { fill: none;    stroke: #8c959f; stroke-width: 1.25; stroke-dasharray: 5 4; }
+    .t1     { fill: #1f2328; font-size: 15px; font-weight: 600; }
+    .t2     { fill: #57606a; font-size: 12px; }
+    .cap    { fill: #57606a; font-size: 12px; font-weight: 600; letter-spacing: .04em; }
+    .mono   { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; fill: #7c3aed; }
+    .wire   { stroke: #8c959f; stroke-width: 1.25; fill: none; }
+    .head   { fill: #8c959f; }
+    .divide { stroke: #d8b4fe; stroke-width: 1; }
+    @media (prefers-color-scheme: dark) {
+      .box    { fill: #161b22; stroke: #30363d; }
+      .hub    { fill: #201a33; stroke: #a78bfa; }
+      .ghost  { stroke: #6e7681; }
+      .t1     { fill: #e6edf3; }
+      .t2     { fill: #9198a1; }
+      .cap    { fill: #9198a1; }
+      .mono   { fill: #c4b5fd; }
+      .wire   { stroke: #6e7681; }
+      .head   { fill: #6e7681; }
+      .divide { stroke: #4c3a75; }
+    }
+  </style>
+
+  <!-- left: humans -->
+  <text class="cap" x="130" y="46" text-anchor="middle">YOU AND YOUR TEAM</text>
+  <rect class="box" x="40" y="62" width="180" height="62" rx="10"/>
+  <text class="t1" x="130" y="88" text-anchor="middle">Web UI</text>
+  <text class="t2" x="130" y="108" text-anchor="middle">objectives · chat · traces</text>
+  <rect class="box" x="40" y="140" width="180" height="62" rx="10"/>
+  <text class="t1" x="130" y="166" text-anchor="middle">Terminal</text>
+  <text class="mono" x="130" y="186" text-anchor="middle">csuite push · objectives</text>
+
+  <!-- center: server -->
+  <text class="cap" x="445" y="46" text-anchor="middle">ONE SELF-HOSTED PROCESS</text>
+  <rect class="hub" x="340" y="62" width="210" height="150" rx="12"/>
+  <text class="t1" x="445" y="90" text-anchor="middle">CommandSuite server</text>
+  <text class="mono" x="445" y="110" text-anchor="middle">csuite serve</text>
+  <line class="divide" x1="358" y1="124" x2="532" y2="124"/>
+  <text class="t2" x="445" y="146" text-anchor="middle">members · permissions</text>
+  <text class="t2" x="445" y="166" text-anchor="middle">objectives · channels</text>
+  <text class="t2" x="445" y="186" text-anchor="middle">captured traces · costs</text>
+
+  <!-- right: agents -->
+  <text class="cap" x="750" y="46" text-anchor="middle">AGENTS, AS MEMBERS</text>
+  <rect class="box" x="660" y="62" width="180" height="56" rx="10"/>
+  <text class="t1" x="750" y="85" text-anchor="middle">Claude Code</text>
+  <text class="mono" x="750" y="104" text-anchor="middle">csuite claude</text>
+  <rect class="box" x="660" y="132" width="180" height="56" rx="10"/>
+  <text class="t1" x="750" y="155" text-anchor="middle">OpenAI Codex</text>
+  <text class="mono" x="750" y="174" text-anchor="middle">csuite codex</text>
+  <rect class="ghost" x="660" y="202" width="180" height="56" rx="10"/>
+  <text class="t2" x="750" y="225" text-anchor="middle">your next agent</text>
+  <text class="t2" x="750" y="244" text-anchor="middle">runners are pluggable</text>
+
+  <!-- wires: humans <-> server -->
+  <line class="wire" x1="228" y1="132" x2="332" y2="132"/>
+  <path class="head" d="M332,132 l-7,-4 v8 z"/>
+  <path class="head" d="M228,132 l7,-4 v8 z"/>
+  <text class="t2" x="280" y="122" text-anchor="middle">assign · chat · review</text>
+
+  <!-- wires: server <-> agents -->
+  <line class="wire" x1="558" y1="112" x2="652" y2="112"/>
+  <path class="head" d="M652,112 l-7,-4 v8 z"/>
+  <text class="t2" x="605" y="102" text-anchor="middle">work &amp; messages</text>
+  <line class="wire" x1="652" y1="162" x2="558" y2="162"/>
+  <path class="head" d="M558,162 l7,-4 v8 z"/>
+  <text class="t2" x="605" y="186" text-anchor="middle">activity &amp; traces</text>
+</svg>

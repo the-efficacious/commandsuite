@@ -1,162 +1,81 @@
 ---
 title: Process document
-description: The team's process as one authored document, injected into every member's fixed context, edited by whoever holds process.manage, with an append-only record of who changed it, why, and the prior text.
+description: Write down how your team works once — every agent carries the current version in its standing context.
 section: Concepts
 order: 32
 ---
 
 # Process document
 
-The process document is what the team has decided about **how it
-works** — the merge model, what counts as verification, who ratifies
-what. [Objectives](/concepts/objectives) carry the contract for one
-piece of work. This carries the contract for all of it.
+Write down how your team works — the merge model, what counts as
+verification, who signs off — once, in one document that every agent
+carries in its standing context.
+[Objectives](/docs/concepts/objectives) carry the contract for one
+piece of work; the process document carries the contract for all of
+it.
 
 There is at most one per team, and it is authored: a person or agent
-writes it and edits it, the way they would a README.
+writes and edits it the way they would a README.
 
-## The problem it solves
+## Why a document and not an announcement
 
-A rule announced in chat is not a rule anyone can be held to.
+A rule announced in chat is not a rule anyone can be held to. Chat
+history is the first thing an agent's context loses over a long
+session, and a member who joins later never saw it. The process
+document closes that gap by living in every agent's **standing
+context**, delivered at session start:
 
-Broadcast is the first thing an agent's context loses to compaction,
-and a member who joins later never saw it. So the durable surface holds
-the stale version, the correction lives in a message, and the gap
-between them is invisible to everyone except whoever read the thread.
+- What a member has is always the current version.
+- A member who never saw the announcement still has the rule.
+- No agent has to remember to check.
 
-The document closes that the same way objectives closed it for
-contracts: the process is **state**, not an event. What a member
-receives is always what applies now.
-
-## Injected, not fetched
-
-The current document is served on `GET /briefing` and rendered by the
-runner into the agent's **fixed context** — the standing instructions
-handed to the agent at start. That placement is the mechanism:
-
-- fixed context survives compaction; chat history does not
-- a member who never saw an announcement still has the current text
-- an agent does not need to remember to check
-
-So an agent never calls a tool to find out what binds it.
-[`process_document_get`](/reference/mcp-tools) exists for the version
-number and the author, not for the text.
-
-## Why one document rather than a list of rules
-
-An earlier design held N discrete rules with per-rule anchors,
-provenance and status. It was replaced, and the reasons are worth
-keeping because they generalise.
-
-**A list of rulings is a changelog wearing the costume of a
-specification.** Four bullets tell a reader what four decisions were
-made and leave them to compose "how we work" from the pieces. A team's
-merge model changing twice reads as history rather than as current
-practice.
-
-**A list only accumulates.** Nothing removes a rule, so the injected
-block grows without bound and nothing reports it. A document gets
-*edited* — superseded content leaves rather than piling up — and its
-size is bounded by whoever maintains it.
-
-**Authority replaced attribution.** The old design carried per-rule
-provenance so that "the director said this" could not be laundered from
-"the lead proposed it and nobody objected". That was a real protection,
-but a store can only ever check such a field is non-null, never that
-anyone said anything. Under one document the authority is the edit
-permission, and the record says who edited it and why.
+A team that has never written one isn't silent about it — agents see
+an explicit *"no process document has been set for this team"* line,
+so a missing document is never mistaken for a broken delivery.
 
 ## Editing
 
-Editing requires **`process.manage`**, a dedicated permission that
-ships granted to nobody.
+Editing requires the `process.manage` permission, which ships
+granted to nobody. Whoever holds it can rewrite what binds every
+member, so who holds it is a deliberate decision. Edit it in the web
+UI, over the [REST API](/docs/dev/rest-api), or — for agents holding
+the permission — with the `process_document_write` tool.
 
-Under this design the permission **is** the authority. Whoever holds it
-can rewrite what binds every member. It is deliberately not
-`objectives.create` — "can create an objective" and "can rewrite the
-team's process" were comparable powers under the old design and are not
-under this one.
+Two things to know before you edit:
 
-There is no separate creation step. The first authorised write produces
-version 1 with a real author and a real reason; every later write
-increments the version. That is why history begins at a real edit
-rather than at a migration that would have had to invent the text.
+- **A write replaces the whole document.** Read it first and send
+  the complete new text — sending just a paragraph deletes
+  everything you didn't retype.
+- **Every edit records who, why, and what it replaced.** The reason
+  is required: it's what a reader six weeks from now has instead of
+  the conversation you were in. The full prior text is kept.
 
-**A write replaces the whole document.** Read it first and send the
-full new text — this is not a patch API, and sending a paragraph
-deletes everything you did not retype.
+Each edit also declares whether work already underway finishes under
+the old process:
 
-Every write records:
+- `correction` — retroactive. The prior text was wrong and was never
+  validly binding.
+- `scope_change` — forward-only. Work already started finishes under
+  the prior text.
 
-- **author** — who
-- **reason** — required. What a reader six weeks from now has instead
-  of the conversation you were in.
-- **prior text** — the whole of it, retained rather than reconstructed
-- **`disposition`** — the same field with the same meaning as an
-  objective contract amendment, so *does work started under the old
-  process finish under it* has one answer across both:
-  - `correction` — retroactive. The prior text was never validly
-    binding.
-  - `scope_change` — forward-only. Work already underway finishes under
-    the prior text.
+This is the same distinction objective amendments use, so "does
+in-flight work follow the old rules?" has one answer everywhere.
 
-The **diff is derived** from the prior and current text, never stored.
-A cached diff is a second copy that can drift from the text it
-describes, which is the defect this whole feature treats.
+## Size and history
 
-## No document is a state, not silence
+The document is capped at 16,384 characters — it rides in every
+member's context in every session, so its length is a cost everyone
+pays. Keep it tight; superseded content should leave, not pile up.
 
-A team that has never written one renders an explicit line — *no
-process document has been set for this team* — rather than nothing.
-
-That costs a sentence of context and buys a real distinction. Rendering
-nothing collapses three cases a member cannot then tell apart:
-
-```
-no document has been written        member sees nothing
-runner too old to read the field    member sees nothing
-broker without the feature          member sees nothing
-```
-
-The middle one is the silent-degradation case. Rendering nothing makes
-the healthy state wear the costume of the broken one.
-
-## History: retrievable, not resident
-
-Editing changes what is injected. It does **not** grow what is
-injected.
-
-The block carries current text only; every superseded version lives
-behind `GET /process-document/history`. Editing fifty times costs
+Agents carry only the current text. Every prior version is kept in
+the edit history — in the web UI, over the API, or via the
+`process_document_history` tool — so editing fifty times costs
 exactly what editing once costs.
 
-**The ceiling is 16384 characters**, and that number has a basis: the
-document is resident in every member's context in every session, so its
-length is a recurring cost paid by everyone rather than a one-off. The
-predecessor design had no ceiling at all — it held N rules with nothing
-capping N.
+## When edits take effect
 
-## Why it is not part of `instructions`
-
-The document is carried in its own briefing field, never folded into
-the composed `instructions` string.
-
-The durable reason is **authority separation**. A member authors their
-own `instructions`; the process document is authored by whoever holds
-`process.manage`. One string collapses two authorities into one field.
-
-An 8192-character cap on `instructions` also motivated this
-historically, and that argument has since expired — the cap was removed
-in #122. The decision is unchanged, because the cap was never the
-load-bearing part.
-
-## What this does not do
-
-- **A runner predating the field drops it silently.** The member
-  operates without the process document and is not told.
-- **Codex members get no in-flight recovery.** Their system projection
-  is unobservable, so absence cannot be asserted and nothing is
-  re-sent. Delivery for them is at the next runner start only.
-- **Recovery is not instant.** It fires on an observable turn and is
-  rate-limited, so a document lost mid-session returns on a later turn
-  rather than immediately.
+A member picks up the new text at its next session start. If the
+document drops out of a running Claude Code session (long sessions
+compact their context), the broker notices and re-delivers it on a
+later turn. Codex sessions can't be checked mid-flight, so Codex
+members pick up changes only when their runner restarts.

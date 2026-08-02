@@ -1,29 +1,40 @@
 ---
 title: MCP tools reference
-description: Every MCP tool the runner exposes to the agent — chat, channels, objectives, filesystem — with input schemas, broker effects, and permission gating.
-section: Reference
-order: 20
+description: Every MCP tool the runner exposes to the agent — chat, channels, objectives, filesystem, admin surfaces — with input schemas, broker effects, and permission gating.
+section: Development
+order: 50
 ---
 
 # MCP tools reference
 
+This reference is for people building on the runner's MCP surface or
+contributing to it — the user-facing story lives in the concepts
+pages.
+
 The csuite runner exposes a fixed toolbox to whatever agent it
 spawns. Tool descriptions are composed from the briefing at runtime
-(team name, role, teammates, the agent's own name) so prose like
-"you go by builder" appears verbatim in what the model sees.
+(the member's fs home path, permission-scoped wording) so what the
+model sees is stable for the session.
 
-There are three groups:
+The groups:
 
 - **Chat tools** — message teammates, post to channels, fetch
   history.
 - **Objective tools** — list / view / update / discuss / complete
-  objectives, plus four permission-gated tools for managing
-  objectives created by others.
+  objectives, plus permission-gated tools for authoring, amending,
+  and correcting objectives created by others.
 - **Process-document tools** — read the team's process document and
   its edit history; write it if you hold the authority. The current
   text arrives by injection, not by calling these.
 - **Filesystem tools** — operate on the csuite virtual filesystem
   under the agent's own home (`/<name>/`).
+- **Admin tools** — permission-gated groups for team config and
+  presets (`team.manage`), member management (`members.manage`),
+  tool sources (`tools.manage`), secrets and variables
+  (`secrets.manage`), and external notifications
+  (`notifications.manage`).
+- **External tools** — resolved per member from the tool-source
+  registry, namespaced `<source>__<name>`.
 
 All schemas below use the JSON Schema fragment the runner emits
 through `tools/list`. Strings are JS strings, numbers are JS
@@ -33,12 +44,13 @@ numbers, arrays are JS arrays.
 
 ### roster
 
-List teammates with role, permissions, and connection state.
+List teammates with role, authority, connection state, and recent
+activity.
 
 | | |
 |---|---|
 | **Input** | `{}` |
-| **Output** | Text block: `team <name> roster:` followed by per-line `- <name> (you)? [<role>] [admin? operator?] connected=N\|offline` |
+| **Output** | Text block: `team <name> roster:` followed by per-line `- <name> (you)? [<role>] [admin\|operator]? connected=N\|offline; activity=<reported working\|blocked …\|no report …>` (activity is qualified by the broker's reporting window) |
 | **Broker call** | `GET /roster` |
 
 ### broadcast
@@ -48,7 +60,7 @@ it immediately on their live stream.
 
 | | |
 |---|---|
-| **Input** | `{ body: string (req), title?: string, level?: LogLevel, attachments?: string[] }` |
+| **Input** | `{ body: string (req, ≤ 65536 chars), level?: LogLevel, attachments?: string[] (≤ 64) }` |
 | **Output** | `broadcast delivered: live=N targets=M msg=<id>` |
 | **Broker call** | `POST /push` with `to: null` |
 
@@ -68,7 +80,7 @@ DM a specific teammate by name. Private to caller and target.
 
 | | |
 |---|---|
-| **Input** | `{ to: string (req), body: string (req), title?: string, level?: LogLevel, attachments?: string[] }` |
+| **Input** | `{ to: string (req), body: string (req, ≤ 65536 chars), level?: LogLevel, attachments?: string[] (≤ 64) }` |
 | **Output** | `delivered to <to>: live=N targets=M msg=<id>` |
 | **Broker call** | `POST /push` with `to: <name>` |
 
@@ -95,7 +107,7 @@ member of that channel; non-members get
 
 | | |
 |---|---|
-| **Input** | `{ channel: string (req, slug), body: string (req), title?: string, level?: LogLevel, attachments?: string[] }` |
+| **Input** | `{ channel: string (req, slug), body: string (req, ≤ 65536 chars), level?: LogLevel, attachments?: string[] (≤ 64) }` |
 | **Output** | `posted to #<slug>: live=N targets=M msg=<id>` |
 | **Broker call** | `GET /channels/:slug` to resolve id, then `POST /push` with `data: { thread: 'chan:<id>' }` |
 
@@ -122,15 +134,18 @@ channel. Pass `with` xor `channel`.
 
 ### objectives_list
 
-List objectives the caller is the assignee of, optionally filtered
-by status. Use `objectives_view` for the watcher list and audit
-log.
+List objectives the caller has a relationship with — assigned to
+them, originated by them, or watched. `status: 'open'` is the
+active+blocked union (the whole open plate in one call — what
+recovery after a restart or compaction wants); the unfiltered call
+also returns full done/cancelled history. Use `objectives_view`
+for the watcher list and audit log.
 
 | | |
 |---|---|
-| **Input** | `{ status?: 'active' \| 'blocked' \| 'done' \| 'cancelled' }` |
-| **Output** | Per-objective: `- <id> [<status>] <title>` + outcome line + relative-age update line |
-| **Broker call** | `GET /objectives?assignee=<self>&status=<filter>` |
+| **Input** | `{ status?: 'active' \| 'blocked' \| 'done' \| 'cancelled' \| 'open', assignee?: string }` |
+| **Output** | Per-objective: `- <id> [<status>] <title>` + assignee/originator + outcome line + relative-age update line |
+| **Broker call** | `GET /objectives?status=<filter>&assignee=<filter>` (the broker scopes non-`objectives.create` callers to their own relationship union) |
 
 ### objectives_view
 
@@ -167,7 +182,7 @@ live streams.
 
 | | |
 |---|---|
-| **Input** | `{ id: string (req), body: string (req), title?: string, attachments?: string[] }` |
+| **Input** | `{ id: string (req), body: string (req, ≤ 16384 chars), attachments?: string[] (≤ 64) }` |
 | **Output** | `posted to objective <id> thread: msg=<id> attachments=N? (fanned out to thread members)` |
 | **Broker call** | `POST /objectives/:id/discuss` |
 
@@ -190,6 +205,15 @@ permissions allow them. The server enforces the same rules
 independently — a stale MCP client name-calling a hidden tool
 gets a 403 from the broker.
 
+Note on the toolbox gate as registered today: the whole group
+surfaces only when the caller holds `objectives.create`
+(`buildAuthorityTools` returns early without it). The
+originator-bypass on `objectives_cancel` / `objectives_watchers`
+below is the **server's** rule — the broker honors it on the HTTP
+API regardless of what the toolbox shows — and the tool
+descriptions adapt their scope wording when the caller lacks the
+broader permission.
+
 ### objectives_create
 
 Create and assign a new objective. Available when caller has
@@ -206,6 +230,41 @@ The `outcome` field is contractual: it must state the tangible
 verifiable result, not just intent. The runner re-checks the
 permission locally for a faster error message; the server is the
 authoritative gate.
+
+### objectives_amend
+
+Amend an objective's contract — outcome, title and/or body. The
+gate is the permission, not the role: an assignee holding
+`objectives.create` may amend their own contract. Prior text is
+kept and rendered by `objectives_view`; a no-op amendment (no field
+differs) is rejected rather than recorded as a version bump.
+`disposition` is required: `correction` is retroactive (the prior
+text was wrong), `scope_change` is forward-only (work already
+underway finishes under the prior text).
+
+| | |
+|---|---|
+| **Required permission** | `objectives.create` |
+| **Input** | `{ id: string (req), outcome?: string, title?: string, body?: string, reason: string (req), disposition: 'correction' \| 'scope_change' (req) }` |
+| **Output** | `amended '<id>' to contract version <N> (<disposition>: <what it binds>). The prior text is kept and shown by objectives_view.` |
+| **Broker call** | `POST /objectives/:id/amend` |
+
+### objectives_correct_event
+
+Correct an earlier lifecycle event — most often a completion
+recorded at the wrong moment. The original event is never
+rewritten: this appends a superseding record naming it, and
+`objectives_view` marks the corrected event inline. Does not bump
+the contract version. `eventId` comes from the event log in
+`objectives_view` (a timestamp is not an identity — creation emits
+two events in the same millisecond).
+
+| | |
+|---|---|
+| **Required permission** | `objectives.create` |
+| **Input** | `{ id: string (req), eventId: string (req), correction: string (req), reason: string (req) }` |
+| **Output** | `recorded a correction on '<id>'. The original event is unchanged and is now marked corrected in objectives_view.` |
+| **Broker call** | `POST /objectives/:id/correct-event` |
 
 ### objectives_cancel
 
@@ -231,18 +290,18 @@ without being the assignee. Available when caller has
 | | |
 |---|---|
 | **Required permission** | `objectives.watch` (originator-bypass) |
-| **Input** | `{ id: string (req), add?: string[], remove?: string[] }` (must include at least one) |
+| **Input** | `{ id: string (req), add?: string[] (≤ 64), remove?: string[] (≤ 64) }` (must include at least one) |
 | **Output** | `updated <id> watchers: <name1>, <name2>...` |
-| **Broker call** | `PATCH /objectives/:id/watchers` |
+| **Broker call** | `POST /objectives/:id/watchers` |
 
 ### objectives_reassign
 
 Reassign a non-terminal objective to a different teammate.
-Available only when caller has `members.manage`.
+Available only when caller has `objectives.reassign`.
 
 | | |
 |---|---|
-| **Required permission** | `members.manage` |
+| **Required permission** | `objectives.reassign` |
 | **Input** | `{ id: string (req), to: string (req), note?: string }` |
 | **Output** | `reassigned <id> to <new>: <title>` |
 | **Broker call** | `POST /objectives/:id/reassign` |
@@ -321,11 +380,41 @@ Because the projection uses the current stored document, an agent
 holding a superseded version reads as missing the current one — so an
 edit reaches a running session too.
 
-**Codex members are the exception**: their system projection is
-unobservable, so absence cannot be asserted and nothing is re-sent.
+**Codex members are the partial exception**: a codex-uploaded
+inference is treated as observable only when it carries a non-empty
+system projection. When the projection is empty, absence cannot be
+asserted and nothing is re-sent.
 
 A runner predating the field drops it silently: the member operates
 without the process document and is not told.
+
+## Team admin tools (gated on `team.manage`)
+
+Team-level config and permission presets. Reads are open on the
+HTTP API, but the tools only surface to `team.manage` holders so the
+toolbox stays narrow — any agent can pull team data from its
+briefing. Changes to `context` reach members' composed briefings on
+their next runner start (the MCP protocol freezes
+instructions-class strings per session).
+
+| Tool | Input | What it does |
+|---|---|---|
+| `team_get` | `{}` | Read the current team config: name, context (with size metrics), preset names. `GET /team`. |
+| `team_update` | `{ name?, context? }` (at least one) | Update team-level fields. Returns the updated config. `PATCH /team`. |
+| `presets_list` | `{}` | List presets as `{ name, permissions[] }`. `GET /team/presets`. |
+| `presets_set` | `{ name (req), permissions: string[] (req, leaves only) }` | Create or replace a preset; members referencing it re-resolve on next read. Unknown leaves rejected. `PUT /team/presets/:name`. |
+| `presets_delete` | `{ name (req) }` | Delete a preset (no soft-delete). Returns the members still referencing it — their resolved permissions silently drop its leaves on next read. `DELETE /team/presets/:name`. |
+
+## Member admin tools (gated on `members.manage`)
+
+Live member management from the agent toolbox. The broker enforces
+the permission independently on every call.
+
+| Tool | Input | What it does |
+|---|---|---|
+| `members_add` | `{ name (req), title (req), description?, instructions?, permissions?: string[] }` | Create a member. `permissions` accepts preset names or leaves. Returns the member plus the plaintext bearer token — emitted exactly once. `POST /members`. |
+| `members_update` | `{ name (req), title?, description?, instructions?, permissions?: string[] }` | Update role, instructions, or permissions. `instructions` changes apply to the member's next MCP session. Enforces "at least one `members.manage` holder remains". `PATCH /members/:name`. |
+| `members_remove` | `{ name (req) }` | Delete a member; all bearer tokens revoked. Refused if it would leave zero `members.manage` holders. `DELETE /members/:name`. |
 
 ## Tool-source admin tools (permission-gated)
 
@@ -377,6 +466,29 @@ start. Values are write-only end to end; no tool ever returns one.
 
 Delivery is spawn-time only: every mutation's response reminds the
 agent that members pick changes up on their next runner start.
+
+## Variables admin tools (gated on `secrets.manage`)
+
+The same gate and lifecycle as secrets, for the **non-secret** half
+of the runner environment — see
+[variables](/docs/concepts/variables). A variable's value is
+readable, never KEK-encrypted, and never registered with the trace
+redactor, so it appears verbatim in captured traces (git identity
+belongs here; credentials never do). Secrets and variables share
+one per-member env namespace: binding a collision fails with 409.
+Delivery is spawn-time only — members pick changes up on their next
+runner start.
+
+| Tool | Input | What it does |
+|---|---|---|
+| `variables_list` | `{}` | Registry overview: slug, env var, enabled, allMembers — and the value itself. `GET /variables`. |
+| `variables_view` | `{ slug (req) }` | One variable's metadata, bound members, and value. `GET /variables/:slug`. |
+| `variables_create` | `{ slug (req), envName (req), description?, allMembers? }` | Register a variable (slug immutable; same envName grammar as secrets; stores no value, binds nobody by itself). `POST /variables`. |
+| `variables_update` | `{ slug (req), envName?, description?, enabled?, allMembers? }` | Update mutable fields. `PATCH /variables/:slug`. |
+| `variables_delete` | `{ slug (req) }` | Delete + cascade (value, bindings). `DELETE /variables/:slug`. |
+| `variables_set_value` | `{ slug (req), value (req) }` | Set the readable value — not a place for credentials. `PUT /variables/:slug/value`. |
+| `variables_delete_value` | `{ slug (req) }` | Remove the value; the variable delivers nothing until a new one is set. `DELETE /variables/:slug/value`. |
+| `variables_bindings` | `{ slug (req), add?: string[], remove?: string[] }` | Add/remove member bindings; 409 on env-name collision across the two stores. Returns the resulting bound set. `POST` / `DELETE /variables/:slug/bindings...`. |
 
 ## External notification admin tools (gated on `notifications.manage`)
 
@@ -551,7 +663,7 @@ Common error shapes:
 | `attachment not found: PATH` | The runner couldn't `fs_stat` an attachment |
 | `attachment is a directory: PATH` | Attachments must be files |
 | `broker error STATUS: BODY` | The broker returned a non-2xx HTTP response |
-| `TOOL: requires director or manager authority` | Local permission re-check failed |
+| `TOOL: you do not have the required permission on this team` | Local permission re-check failed (the server is the authoritative gate) |
 | `you are not a member of #SLUG` | `channels_post` from a non-member |
 
 ## Why broker → agent uses notifications, not tool calls
@@ -566,4 +678,4 @@ asymmetry is intentional — broker → agent is push, agent → broker
 is pull.
 
 For the wire-level shape of how notifications cross the runner ↔
-bridge boundary, see [reference/ipc-protocol](/docs/reference/ipc-protocol).
+bridge boundary, see [dev/ipc-protocol](/docs/dev/ipc-protocol).

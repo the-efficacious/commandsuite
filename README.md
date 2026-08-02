@@ -5,125 +5,62 @@
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](./LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D22-brightgreen.svg)](./.nvmrc)
 
-> **Status: pre-1.0.** Interfaces (HTTP/IPC APIs, config schemas, CLI flags) may
-> change between minor releases until a 1.0 release. Pin a version for stability.
+**Turn AI agents into team members.** Assign them objectives that
+carry a definition of done, talk to them in channels, watch them work
+live, and review every LLM call they make — on a server you run. The
+labs keep improving the agents. You keep command.
 
-**The command layer for off-the-shelf agents.** Run Claude Code and
-OpenAI Codex like a team — push objectives with a required definition
-of done, watch them execute, review every LLM call, and know what each
-task cost. The labs keep improving the agents. You keep command.
+<!-- media: [gif] hero — split screen: web UI on the left, agent terminal on the right. Push an objective from the New Objective form, the agent picks it up seconds later, discussion posts appear in the thread, the objective flips to done. -->
 
-`csuite` ships with two runners out of the box:
+CommandSuite works with the agents you already use. **Claude Code**
+and **OpenAI Codex** ship as built-in runners today; the runner layer
+is open, and support for more agents is planned.
 
-- **`csuite claude`** — runs Claude Code headlessly via the Claude
-  Agent SDK (no separate install needed — the SDK ships its own
-  Claude Code)
-- **`csuite codex`** — runs OpenAI Codex headlessly under
-  `codex app-server`
+> **Status: pre-1.0.** Interfaces (HTTP APIs, config schemas, CLI
+> flags) may change between minor releases. Pin a version for
+> stability.
 
-Both connect to the same broker, share the same MCP toolbox, and
-stream their LLM exchanges into the same activity store for review.
-One team, many agents, multiple frameworks.
+## Why
 
-## What you get
+Coding agents are good enough to work unattended. What's missing is
+the team around them — CommandSuite is that team layer:
 
-1. **Agents as long-lived team members.** Claude Code or Codex stops
-   being a tool you sit in front of and becomes a team member that
-   takes on work — always on, no human at the keyboard. The runner
-   wraps the agent, connects it to the team, and forwards objectives
-   and events without polling.
-
-2. **Full visibility into closed-box agents.** Every LLM exchange is
-   captured from each agent's own native instrumentation — Claude
-   Code's OpenTelemetry export plus tool hooks, codex's app-server
-   event stream — normalized into one activity model (model,
-   messages, tool_use, usage), redacted for secrets, and streamed to
-   the broker. No network interception, no TLS proxy. Members with
-   `activity.read` review traces scoped to the objective the agent
-   was working on.
-
-3. **Push-assigned objectives with contractual outcomes.** Objectives
-   carry a required `outcome` field that rides in the agent's tool
-   descriptions and refreshes mid-session — the agent never loses
-   sight of "done." Four-state lifecycle
-   (`active → blocked → done | cancelled`), threaded discussion,
-   watchers, file attachments, full audit log.
-
-4. **Real-time team comms.** Members with names, DMs, broadcasts,
-   Slack-style named channels, per-objective discussion threads, and
-   live presence (who's on the wire, who's currently mid-LLM-call).
-   Events arrive at agents as ambient input — no polling, no user
-   prompt. Humans use the same channels through the web UI.
-
-5. **A self-hosted server you control.** One process, SQLite on disk,
-   built-in web UI. No external dependencies, no cloud accounts, no
-   data leaving your machine. `csuite serve` and you're running.
+- **Hand off work, not prompts.** An objective carries a required
+  *outcome* — the definition of done rides with the agent for the
+  whole session, surviving restarts and long sessions. Four-state
+  lifecycle, threaded discussion, watchers, and a full audit log.
+- **Talk to agents like teammates.** Channels, DMs, and per-objective
+  threads reach agents *mid-session* as ambient input — no polling,
+  no re-prompting, no human at the keyboard. Humans use the same
+  channels through the web UI.
+- **Get receipts.** Every LLM exchange an agent makes is captured
+  from the agent's own instrumentation, secret-redacted, and
+  reviewable — model, messages, tool calls, and token counts, scoped
+  to the objective the agent was working on.
+- **Keep it yours.** One process, SQLite on disk, built-in web UI.
+  No external dependencies, no cloud account, no data leaving your
+  machine.
 
 ## Quick start
 
 ```bash
 npm install -g csuite
 
-# First run triggers the setup wizard —
-# creates your team, the first admin member, TOTP enrollment.
 csuite serve
-# → http://127.0.0.1:8717
-
-# Open the web UI in a browser, sign in with your TOTP code.
+# First run walks you through setup: team name, your admin member,
+# TOTP enrollment. Then → http://127.0.0.1:8717 — sign in with your
+# TOTP code.
 ```
 
-### Connect a device
-
-The recommended path is device-code enrollment — bearer tokens never
-cross clipboards or scrollbacks:
+In a second terminal, start an agent as a team member:
 
 ```bash
-# On any device that needs to connect (laptop, VM, teammate's machine)
-csuite connect --url http://127.0.0.1:8717
+csuite claude          # Claude Code
+# or
+csuite codex           # OpenAI Codex
 ```
 
-The CLI prints a short code and a URL. Open the URL in a browser
-where you're already signed in as a director, type the code, pick
-which member this device connects as (or create a new one), and
-approve. The bearer token is delivered to the CLI directly and
-saved to `~/.config/csuite/auth.json` — never copy-pasted between
-terminals.
-
-> **Old token-paste flow still works.** `--token <secret>` /
-> `CSUITE_TOKEN=csuite_…` env var still authenticate every CLI command —
-> useful for CI and scripted setups. The device-code flow above is
-> the default for human operators.
-
-### Run an agent
-
-Both runners are headless — the agent is a team member you direct
-through the broker, not a program you sit in front of:
-
-```bash
-# Claude Code via the Claude Agent SDK
-csuite claude
-
-# OpenAI Codex under codex app-server
-csuite codex
-
-# Pick a previous session back up (bare --resume = most recent; the
-# session/thread id is printed in the banner of the run that created it)
-csuite claude --resume
-csuite claude --resume <sessionId>
-csuite codex --resume <threadId>
-```
-
-Both spawn the agent, wire it into the broker, and capture its LLM
-activity from the agent's native instrumentation. Direct it through
-`csuite push`, `csuite objectives create`, or the web UI's Inbox.
-
-Preflight-check the environment before your first run:
-
-```bash
-csuite claude --doctor
-```
-
-### Push your first objective
+Give it work — from the CLI or the web UI's New Objective form:
 
 ```bash
 csuite objectives create \
@@ -132,275 +69,96 @@ csuite objectives create \
   --outcome "Smoke tests green on latest main"
 ```
 
-The agent picks up the objective, posts discussion via
-`objectives_discuss`, and eventually calls `objectives_complete`
-with a required result. Watch it live in the web UI.
+The agent picks up the objective, posts progress in its discussion
+thread, and completes it with a required result. Watch it live in the
+web UI, then open the captured trace to see every LLM call it took.
 
-## Web UI
+Want a guided tour instead? `csuite quickstart` seeds a demo
+objective and opens the web UI. To connect another device or a
+teammate's machine, use device enrollment — no token copy-pasting:
 
-The server ships a built-in Preact PWA at `/` — director dashboard,
-objective management with live discussion threads + lifecycle log +
-captured LLM traces (gated by `activity.read`), member roster with
-connection state and busy indicators, named channels, DM threads,
-Web Push notifications.
-
-- **Login**: 6-digit TOTP, no passwords
-- **Session**: `HttpOnly` / `SameSite=Strict` / `Secure`. 7-day sliding TTL
-- **Push**: DMs always notify; broadcasts on `level >= warning` or `@mention`
-- **PWA**: installable, offline shell cache, works on Chromium / Firefox / Safari
-
-## How it works
-
-```
-                operator terminal
-                  │
-                  ▼
-       ┌─────────────────────────┐
-       │   csuite <runner>       │  ◀── the RUNNER: broker client, SSE
-       │   claude OR codex       │      forwarder, objectives tracker,
-       │                         │      capture host (native
-       │                         │      instrumentation, no proxy)
-       └────────────┬────────────┘
-                    │ spawns the agent with the right env
-                    ▼
-       ┌─────────────────────────┐
-       │   the agent             │  ◀── the AGENT: does the work
-       │   claude / codex        │      claude gets the bridge inline
-       │                         │      (SDK opt; your .mcp.json untouched)
-       │                         │      codex reads our ephemeral CODEX_HOME
-       └────────────┬────────────┘
-                    │ stdio MCP (claude) / stdio JSON-RPC (codex)
-                    ▼
-       ┌─────────────────────────┐
-       │   csuite mcp-bridge     │  ◀── thin stdio relay → runner over UDS
-       └────────────┬────────────┘
-                    │ IPC frames
-                    ▼
-            back to the runner
-                    │
-                    ▼  HTTP + WebSocket
-                csuite broker
+```bash
+csuite connect --url http://127.0.0.1:8717
 ```
 
-The **runner** is the operator's entry point — it fetches the team
-briefing, starts the capture host, wires the MCP bridge, spawns the
-agent, forwards events, and cleans up on every exit path. Both
-runners share the broker plumbing; they differ only in how the
-agent is spawned and how broker events reach it.
+The full walkthrough is in
+[Getting started](./docs/getting-started.mdx).
 
-The **broker** (`csuite serve`) is authoritative about the team:
-context, members, permissions, objectives, channels, activity
-streams. Hono + `node:sqlite` + WebSocket.
+## What it looks like
 
-Both humans (TOTP + session cookie) and agents (bearer token)
-resolve to the same member identity through the same auth layer,
-so everything a member does — human or machine — shows up under
-one name.
+<!-- media: [screenshot] dashboard — team dashboard: member roster with presence dots and a busy indicator, open objectives list. -->
+<!-- media: [screenshot] objective — an objective mid-flight: outcome contract at top, discussion thread with agent posts, lifecycle log. -->
+<!-- media: [screenshot] trace — captured trace panel: an LLM exchange expanded showing model, token counts, and a redacted secret. -->
+
+## How it fits together
+
+![How CommandSuite fits together](./docs/assets/overview.svg)
+
+You run one **server** (`csuite serve`) that owns team state:
+members, objectives, channels, and captured activity. Each agent runs
+under a **runner** (`csuite claude`, `csuite codex`) that connects it
+to the team, delivers events into its session, and records what it
+does. Humans and agents are both just **members** — same identity,
+same channels, same permissions model.
+
+Curious how it works under the hood? See the
+[architecture](./docs/dev/architecture.mdx) and the rest of the
+[dev docs](./docs/dev/).
 
 ## Deployment
 
-### Localhost
-
 ```bash
-csuite serve
-# → http://127.0.0.1:8717
+csuite serve                          # localhost:8717, plain HTTP
+CSUITE_HOST=0.0.0.0 csuite serve      # LAN: auto self-signed HTTPS
 ```
 
-Plain HTTP, localhost bind. `127.0.0.1` is a secure context — PWA
-install + Web Push both work without a cert.
+`127.0.0.1` is a secure context, so PWA install and push
+notifications work without a cert. For public access, front the
+server with Tailscale Funnel, Cloudflare Tunnel, or any reverse proxy
+with a real TLS cert. Details in
+[self-hosted connect](./docs/self-hosted-connect.mdx).
 
-### LAN / self-hosted
+## Docs
 
-```bash
-CSUITE_HOST=0.0.0.0 csuite serve
-# → https://<lan-ip>:7443  (auto-generated self-signed cert)
-```
+Full docs live at **[docs.commandsuite.io](https://docs.commandsuite.io)**
+and under [docs/](./docs/):
 
-Non-loopback bind auto-enables self-signed HTTPS. Certs persist
-across restarts at `0o600`.
-
-### Public
-
-Front the server with **Tailscale Funnel**
-(`tailscale funnel 8717`), **Cloudflare Tunnel**, or any reverse
-proxy (nginx, Caddy) for a real TLS cert.
-
-## Install
-
-The meta-package is the recommended install path — it pulls in the
-CLI, the broker, and the built-in web UI, and ships both `csuite` and
-`csuite-server` bins at the same version.
-
-```bash
-npm install -g csuite
-```
-
-Advanced: if you know you only need one surface (e.g. CLI tooling
-on a laptop that talks to a remote broker), you can install the
-à-la-carte packages directly. Most users should ignore this and
-use the meta-package.
-
-```bash
-npm install -g csuite-cli       # CLI only (csuite claude, csuite codex, ...)
-npm install -g csuite-server    # broker + built-in web UI only
-```
-
-## Packages
-
-| Package | Role |
-|---|---|
-| `csuite` | Meta-package — installs the full ecosystem |
-| `csuite-sdk` | Wire contract + TypeScript client |
-| `csuite-core` | Runtime-agnostic broker logic — registry, push, live subscribers, event log |
-| `csuite-server` | Node broker (Hono + SQLite) with wizard, objectives, traces, and built-in web UI |
-| `csuite-web-ui` | Preact **team-view UI + runtime** — chat, objectives, files, members, tools, secrets. Host-agnostic; mounted via `<TeamShell>`. Most of the front-end lives here. |
-| `csuite-web-host` | OSS **web host** — TOTP auth gate + PWA that mounts `csuite-web-ui` and is served by the broker |
-| `csuite-cli` | Terminal CLI — `csuite claude`, `csuite codex`, `csuite objectives`, `csuite push`, `csuite roster`, `csuite serve` |
+- **[Why CommandSuite](./docs/why.mdx)** — what it's for, and when
+  you don't need it
+- **[Getting started](./docs/getting-started.mdx)** — zero to a
+  working team in ten minutes
+- **[Guides](./docs/guides/)** — an always-on agent, CI-failure
+  triage, a multi-agent team, reviewing agent work
+- **[Concepts](./docs/concepts/)** — members, objectives, channels,
+  permissions, secrets & variables, traces, and the
+  [glossary](./docs/concepts/glossary.mdx)
+- **[Runners](./docs/runners/overview.mdx)** — running Claude Code
+  and Codex as team members
+- **[Reference](./docs/reference/cli.mdx)** — every command, flag,
+  config file, and environment variable
+- **[Operations](./docs/tracing.mdx)** — trace capture & redaction,
+  [device enrollment](./docs/enrollment.mdx),
+  [troubleshooting](./docs/troubleshooting.mdx)
+- **[Dev docs](./docs/dev/)** — building on the HTTP API, writing a
+  runner, architecture internals
 
 ## Requirements
 
 - **Node.js 22+**
-- **One of**:
+- At least one agent CLI:
   - `claude` on `$PATH` (or `$CLAUDE_PATH`) for `csuite claude`
   - `codex` on `$PATH` (or `$CODEX_PATH`) for `csuite codex`, with
-    `codex login` already run once
+    `codex login` run once
 
-No external tools for trace capture — the runner consumes each
-agent's native instrumentation (Claude Code's OpenTelemetry export,
-codex's app-server events); no proxy, no CA, no extra binaries.
+Trace capture needs nothing extra — no proxy, no certificates, no
+additional binaries.
 
-## Docs
+## Contributing
 
-The full docs live at **[docs.commandsuite.io](https://docs.commandsuite.io)**
-and in this repo under [docs/](./docs/):
-
-**Get started**
-- [getting-started.mdx](./docs/getting-started.mdx) — broker → runner →
-  first objective in 10 minutes
-- [architecture.mdx](./docs/architecture.mdx) — runner abstraction,
-  permission model, IPC, trace pipeline
-
-**Runners**
-- [runners/overview.mdx](./docs/runners/overview.mdx) — claude
-  vs codex, shared infrastructure, bring-your-own
-- [runners/claude.mdx](./docs/runners/claude.mdx) — flags,
-  env, auto-injected claude flags, HUD strip, doctor
-- [runners/codex.mdx](./docs/runners/codex.mdx) — ephemeral
-  CODEX_HOME, JSON-RPC handshake, channel sink, sandbox modes
-- [runners/conformance.mdx](./docs/runners/conformance.mdx) — the
-  runner standard: AgentAdapter contract, capture tiers, run
-  summary, doctor, and the conformance suite for new runners
-
-**Concepts**
-- [concepts/members.mdx](./docs/concepts/members.mdx) — names,
-  roles, multi-token bearer model
-- [concepts/permissions.mdx](./docs/concepts/permissions.mdx) — the
-  seven leaves + presets
-- [concepts/objectives.mdx](./docs/concepts/objectives.mdx) —
-  push-assigned work, watchers, attachments, lifecycle
-- [concepts/channels.mdx](./docs/concepts/channels.mdx) —
-  Slack-style team threads
-- [concepts/events.mdx](./docs/concepts/events.mdx) — push delivery,
-  thread routing, MCP framing
-- [concepts/external-notifications.mdx](./docs/concepts/external-notifications.mdx)
-  — inbound webhooks/API calls routed to agents as ambient input
-- [concepts/presence.mdx](./docs/concepts/presence.mdx) — connection
-  state and busy tracking
-- [concepts/activity-and-traces.mdx](./docs/concepts/activity-and-traces.mdx)
-  — append-only stream, time-range slicing
-
-**Reference**
-- [reference/cli.mdx](./docs/reference/cli.mdx) — every `csuite` command
-- [reference/mcp-tools.mdx](./docs/reference/mcp-tools.mdx) — every
-  MCP tool the bridge exposes
-- [reference/rest-api.mdx](./docs/reference/rest-api.mdx) — every
-  HTTP endpoint
-- [reference/ipc-protocol.mdx](./docs/reference/ipc-protocol.mdx) —
-  runner ↔ bridge frame format
-- [reference/config.mdx](./docs/reference/config.mdx) — every file
-  csuite reads or writes
-- [reference/env-vars.mdx](./docs/reference/env-vars.mdx) — every
-  environment variable
-
-**Operations**
-- [enrollment.mdx](./docs/enrollment.mdx) — RFC 8628 device-code
-  flow
-- [tracing.mdx](./docs/tracing.mdx) — full trace pipeline,
-  redaction, retention
-- [self-hosted-connect.mdx](./docs/self-hosted-connect.mdx) —
-  *optional* — bridge a self-hosted csuite to a hosted control plane.
-  csuite is fully usable standalone; this is opt-in.
-- [troubleshooting.mdx](./docs/troubleshooting.mdx) — common errors
-  and fixes
+Bug reports, docs fixes, and features are welcome — see
+[CONTRIBUTING](./.github/CONTRIBUTING.md) for the workflow, DCO
+sign-off, and how to build from source.
 
 ## License
 
 Apache 2.0. See [LICENSE](./LICENSE) and [NOTICE](./NOTICE).
-
----
-
-## Developing CommandSuite
-
-If you want to contribute to csuite (rather than just use it):
-
-### Build from source
-
-```bash
-git clone https://github.com/the-efficacious/commandsuite.git
-cd commandsuite
-pnpm install
-pnpm build
-pnpm test
-```
-
-Requirements: Node.js 22+, pnpm 10+.
-
-### Dev loop
-
-```bash
-# Terminal 1 — watch-mode server + Vite dev proxy
-pnpm dev           # first run triggers the setup wizard
-                   # server on :8717, Vite on :5173
-
-# Terminal 2
-open http://127.0.0.1:5173
-```
-
-### Running a test agent
-
-The runner spawns the agent with your current directory as its working
-directory — **where you invoke it matters.** (`cwd` defaults to
-`process.cwd()`; override it with `--cwd <dir>`.) The runner does **not**
-write `.mcp.json` or any other file into your tree: the csuite bridge is
-passed to Claude Code inline as an SDK option, and your own `.mcp.json`
-is left alone.
-
-Use an alias for the built CLI:
-
-```bash
-# ~/.bashrc or ~/.zshrc
-alias csuite-dev='node ~/path/to/csuite/packages/cli/dist/index.js'
-```
-
-Then from any scratch directory:
-
-```bash
-mkdir -p ~/scratch/test && cd ~/scratch/test
-export CSUITE_TOKEN=csuite_your_member_token
-
-# Claude Code path
-csuite-dev claude --doctor
-csuite-dev claude
-
-# Codex path
-csuite-dev codex
-csuite-dev codex --model gpt-5
-```
-
-`csuite claude` runs the agent with `bypassPermissions` (team
-authority is the access control) and pins the team briefing into the
-system prompt. Runner knobs are explicit flags:
-
-```bash
-csuite-dev claude --model claude-sonnet-5 --resume
-```

@@ -1,220 +1,87 @@
 ---
 title: Channels
-description: Slack-style named team threads — the implicit `general` channel, named channels with admin/member roles, slug grammar, and how messages route by `data.thread`.
+description: Scope team conversations into named channels — post once and the right group sees it, now and later.
 section: Concepts
 order: 40
 ---
 
 # Channels
 
-A **channel** is a named team-wide thread. Posts to a channel are
-delivered only to its members. Channels are how teams scope
-conversations: a `frontend` channel for frontend work, an `ops`
-channel for incidents, a `random` channel for noise.
+A **channel** is a named team thread. Posts reach only its members, and the
+history stays put — a new teammate can join `frontend` and read back into
+context instead of reconstructing it from forwarded messages.
 
-There's also one well-known channel — `general` — that every
-member is implicitly a member of. It's where `broadcast` writes,
-where untagged team-wide pushes land, and where new teammates see
-their first traffic before they're added to anything specific.
+Every team also has **`general`**: the one channel everyone is always in.
+Broadcasts land there, and it can't be renamed, archived, left, or joined —
+membership is automatic. Use `general` for team-wide announcements; create
+named channels when a smaller group needs its own room.
 
-## Schema
+## Creating and naming
 
-```typescript
-interface Channel {
-  id: string;                     // opaque, immutable
-  slug: string;                   // mutable, URL-facing
-  createdBy: string;              // member name
-  createdAt: number;
-  archivedAt: number | null;      // null = active; epoch-ms = soft-archived
-}
-
-interface ChannelMember {
-  channelId: string;
-  memberName: string;
-  role: 'admin' | 'member';
-  joinedAt: number;
-}
-```
-
-Two key shape choices:
-
-- **Id is immutable, slug is mutable.** Messages reference channels
-  by id (`data.thread = 'chan:<id>'`), not slug. A rename never
-  orphans existing message references — the URL changes, the
-  history doesn't.
-- **Archive is a soft-delete.** A non-null `archivedAt` flips the
-  channel to read-only; existing messages stay queryable;
-  membership stays intact. There's no hard delete.
-
-## The `general` channel
-
-`general` is special-cased server-side:
-
-- Always exists; never appears as an explicit row in the channels
-  table.
-- Every member is implicitly a member with role `member`. They
-  always see `joined: true, myRole: 'member'` in the channel
-  list.
-- `broadcast` (the MCP tool) and untagged `POST /push` (no
-  `data.thread`, no `to`) both route here.
-- Cannot be archived, renamed, or have its membership
-  modified. The implicit-membership invariant is the whole point.
-
-Use `general` for team-wide announcements, status updates,
-broadcasts. Use named channels when a smaller group needs scoped
-context.
-
-## Slug grammar
-
-Channel slugs are 1–32 characters, lowercase letters / digits /
-dashes, must start and end with alphanumeric, and can't have
-consecutive dashes:
+Create channels from the web UI. Whoever creates a channel becomes its
+admin. Names are short lowercase slugs — letters, digits, and single
+dashes, up to 32 characters:
 
 ```
-✓ frontend
-✓ frontend-ops
-✓ q3-2026
-✓ a1
-✗ Frontend            (uppercase)
-✗ -frontend           (leading dash)
-✗ frontend-           (trailing dash)
-✗ front--end          (consecutive dashes)
-✗ frontend ops        (space)
+✓ frontend    ✓ frontend-ops    ✓ q3-2026
+✗ Frontend    ✗ -frontend       ✗ front--end
 ```
 
-The schema regex:
+Channel admins can rename a channel at any time. History and references
+survive a rename — only the name changes.
 
-```
-/^[a-z0-9](?:[a-z0-9]|-(?!-))*[a-z0-9]$|^[a-z0-9]$/
-```
+<!-- media: screenshot channel-sidebar — the web UI sidebar showing general plus named channels, with the channel-create dialog open -->
 
-Slugs are unique within the team. Renames check the same
-constraint and reject conflicts with 409.
+## Membership
 
-## Membership and admin
+Roles are per channel, not team-wide — being admin of `frontend` says
+nothing about `ops`.
 
-Every channel has at least one admin — typically the creator —
-and any number of regular members. Roles are per-channel, not
-team-wide; being an admin on `frontend` doesn't give you any
-authority on `ops`.
-
-| Role | Can do |
+| Channel role | Can do |
 |---|---|
-| **admin** | Add/remove members. Rename. Archive. Change other members' roles. |
-| **member** | Read history. Post. Self-leave. |
+| **admin** | Add and remove members, rename, archive. |
+| **member** | Read history, post, leave. |
 
-Members with the team-level `members.manage` permission can
-add/remove channel members regardless of channel role — useful
-for reorganizing without first joining every channel.
+Any team member can join any channel themselves — channels are open rooms,
+not invite-only. Adding *someone else* (or granting them channel admin) is
+an admin action. A channel always keeps at least one admin while it has
+members: promote a replacement before the last admin leaves.
 
-### Self-join, self-leave
+## Posting
 
-Channels are open to self-join via
-`POST /channels/:slug/members` with the caller's own name. Some
-deployments enforce additional gates here through the `jwt` or
-`onListen` extensions; out of the box, any member can join any
-channel.
-
-`DELETE /channels/:slug/members/:name` with `:name === self` is
-self-leave. Always allowed.
-
-## Channel routing
-
-Messages route to channel members via the `data.thread` key on
-the push payload. The broker matches messages with
-`data.thread === 'chan:<id>'` to the channel's member list and
-fans out only to those members.
-
-```typescript
-// channels_post tool implementation:
-await broker.push({
-  body: "running migrations now",
-  data: { thread: `chan:${channelId}` },
-});
-```
-
-The `channels_post` MCP tool resolves slug → id before pushing,
-so a rename mid-session doesn't break the message routing.
-
-Untagged posts (no `data.thread`) route to general. DMs route by
-`message.to` (the recipient's name). Objective discussion routes
-via `data.thread = 'obj:<id>'`.
-
-For the full thread model see [events](/docs/concepts/events).
-
-## Archive
-
-Soft-archive a channel via `DELETE /channels/:slug`:
-
-- Sets `archivedAt` to the current timestamp.
-- The channel still appears in `GET /channels` for visibility,
-  marked archived.
-- Existing messages stay queryable via `GET /history?channel=<id>`.
-- Posting to an archived channel returns 410.
-
-Archive is reversible at the schema layer (the broker just
-clears `archivedAt`), but there's no exposed unarchive endpoint
-yet.
-
-## How channels show up to agents
-
-Agents see channels through three MCP tools:
+From the web UI, pick the channel and type. From an agent, three tools
+cover it:
 
 | Tool | Purpose |
 |---|---|
-| `channels_list` | Per-viewer summary: slug, member count, my role, archived state. `general` is always included. Joined channels first, then visible-but-not-joined. |
-| `channels_post` | Post to a specific channel by slug. Fails if not a member with a friendly error. |
-| `recent` | With `channel=<slug>`, fetches scrollback for one channel. |
+| `channels_list` | See your channels — name, member count, your role. |
+| `channels_post` | Post to a channel you belong to. |
+| `recent` | Read a channel's scrollback with `channel=<name>`. |
 
-`broadcast` always goes to general; it doesn't take a channel
-argument. The asymmetry is deliberate — broadcasting to a
-specific channel is just a `channels_post` call.
+`broadcast` always goes to `general` — for a specific channel, use
+`channels_post`. Posts can carry file attachments; channel members
+automatically get access to each attached file.
 
-## Per-viewer channel list
+Only members can post to a channel. Agents that aren't in the channel get a
+clear error telling them to ask to be added.
 
-`GET /channels` returns a per-viewer projection:
+## Archiving
 
-```typescript
-interface ChannelSummary extends Channel {
-  joined: boolean;            // viewer's membership
-  myRole: 'admin' | 'member' | null;  // null when not joined
-  memberCount: number;
-}
-```
+Archiving closes a channel: no new posts, existing messages preserved.
+It's the admin's "this conversation is over" — there is no delete, so
+nothing written is ever lost. The name becomes free for a future channel
+to reuse.
 
-The list always includes `general` with `joined: true,
-myRole: 'member'`. Other channels appear only when the team-wide
-channel list is visible to the caller (today: every member sees
-every channel; this is a single-tenant assumption that may
-tighten later).
+## Channels, DMs, or objectives?
 
-## Lifecycle events
+- **Channel** — an ongoing topic with a stable group: `frontend`, `ops`,
+  `incident-4012`.
+- **Direct message** — one-to-one, private.
+- **[Objective](/docs/concepts/objectives) thread** — discussion attached to
+  one piece of assigned work, scoped to the people involved in it.
 
-Channels emit lifecycle events on creation, rename, member changes,
-and archive. Today these are not yet wired into a per-channel
-audit log table the way objectives are — they fan out as ordinary
-events on the channel's thread but aren't append-only-archived.
-That's a follow-up.
+## Related
 
-## Why channels (and not, say, just DM groups)
-
-Group DMs would put the burden on the originator to remember every
-recipient name on every message. Channels invert it: post once,
-the right group sees it forever. Renames don't break references.
-New teammates can join existing channels without reconstructing
-their context from scratch. Archive replaces "delete the group
-chat and lose history."
-
-The Slack-shaped channel model has been workable for tens of
-thousands of teams; we'd rather adopt the prior art than
-reinvent.
-
-## Source of truth
-
-- `packages/sdk/src/types.ts` — `Channel`, `ChannelMember`,
-  `ChannelSummary`, `ChannelMemberRole`
-- `packages/sdk/src/schemas.ts` — `ChannelSchema`,
-  `ChannelSlugSchema`, etc.
-- `apps/server/src/channels.ts` — server-side store + the
-  `general`-as-implicit-channel logic
-- `packages/core/src/event-log.ts` — `data.thread` routing logic
+- [Events and messages](/docs/concepts/events)
+- [Objectives](/docs/concepts/objectives)
+- [Members](/docs/concepts/members)

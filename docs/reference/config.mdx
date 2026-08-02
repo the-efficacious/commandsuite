@@ -1,142 +1,88 @@
 ---
 title: Config files
-description: Every file csuite reads or writes — team config, auth cache, MCP backup, KEK, and the ephemeral codex home — with their shapes, paths, and lifecycles.
+description: The files csuite creates and reads — the broker directory, the device auth store, and the working files each runner keeps.
 section: Reference
 order: 50
 ---
 
 # Config files
 
-This page lists every file csuite reads or writes, in order of where
-operators encounter them. All csuite-owned files are written at
-`0o600` in directories created at `0o700`.
+Everything csuite writes lands in one of three places: the broker's
+directory, your user config directory, and your user cache/data
+directories. All csuite-owned files are written at `0o600` in
+directories created at `0o700`.
 
-## csuite.json — team config
+## The broker directory
 
-The authoritative source of team state that doesn't live in the
-broker's SQLite.
+`csuite setup` (or a first `csuite serve` at an interactive terminal)
+creates a `./csuite/` directory — or uses `./csuite.json` in the
+current directory if one already exists there:
 
-| | |
-|---|---|
-| **Created by** | `csuite setup` (interactive wizard) or `csuite serve` (drops into the wizard if missing on a TTY) |
-| **Read by** | `csuite serve`, `csuite setup`, `csuite member`, `csuite enroll`, `csuite rotate`, `csuite quickstart` |
-| **Written by** | `csuite setup`, `csuite member`, `csuite enroll`, `csuite rotate`, broker on every member mutation through `/members/*` |
-| **Default path** | `./csuite.json` if present, else `./csuite/csuite.json` (fresh bootstraps create the `./csuite/` dir at `0o700`) |
-| **Override** | `--config-path` flag, `$CSUITE_CONFIG_PATH` |
-| **Mode** | `0o600` |
+```
+csuite/
+├── csuite.json           server config
+├── csuite.db             team state — members, tokens, messages, objectives
+├── csuite-activity.db    captured traces
+└── csuite-kek.bin        encryption key (unless $CSUITE_KEK is set)
+```
 
-### Shape
+Override the config location with `--config-path` or
+`$CSUITE_CONFIG_PATH`; relative paths inside the config resolve
+against the config file's directory, so the whole directory can be
+moved as a unit.
+
+### csuite.json
+
+A small infrastructure config — where the database lives and which
+optional server features are on:
 
 ```json
 {
-  "team": {
-    "name": "platform-eng",
-    "context": "Multi-paragraph team context...",
-    "permissionPresets": {
-      "admin": ["team.manage", "members.manage", "objectives.create",
-                "objectives.cancel", "objectives.reassign",
-                "objectives.watch", "activity.read"],
-      "operator": ["objectives.create", "objectives.cancel"]
-    }
-  },
-  "store": {
-    "members": [
-      {
-        "name": "alice",
-        "role": { "title": "director", "description": "..." },
-        "instructions": "Personal instructions prose...",
-        "rawPermissions": ["admin"],
-        "permissions": ["team.manage", "members.manage", "..."],
-        "tokenHash": "sha256:<hex>",
-        "totpSecret": { "v": 1, "ct": "<base64>", "iv": "..." }
-      }
-    ]
-  },
-  "https": {
-    "port": 8718,
-    "cert": "/path/to/fullchain.pem",
-    "key": "/path/to/privkey.pem"
-  },
-  "webPush": {
-    "vapidPublicKey": "<base64url>",
-    "vapidPrivateKey": { "v": 1, "ct": "<base64>", "iv": "..." }
-  },
-  "jwt": {
-    "issuer": "https://app.example.com",
-    "audience": "team:<uuid>",
-    "jwksUrl": "https://app.example.com/.well-known/jwks.json"
-  },
-  "files": {
-    "root": "/var/lib/csuite-files",
-    "maxFileSize": 26843545
-  }
+  "dbPath": "./csuite.db",
+  "activityDbPath": null,
+  "https": { "mode": "off", "...": "..." },
+  "webPush": null,
+  "jwt": null,
+  "files": null
 }
 ```
 
-Notes:
+- `dbPath` / `activityDbPath` — database locations. `null` for the
+  activity path means the standard derivation from `dbPath`.
+- `https` — TLS settings for serving beyond localhost.
+- `webPush` — browser push notification keys, generated on first use.
+- `jwt` — set by the [platform connect](/docs/self-hosted-connect)
+  flow, via its own sidecar overlay file.
+- `files` — shared file storage root and size limit.
 
-- `permissionPresets` are reusable bundles members can reference
-  by name. The server resolves preset names → leaf permissions at
-  load time; what reaches `permissions` is always the flat leaf
-  list. Member entries store both `rawPermissions` (what the user
-  typed) and `permissions` (resolved).
-- `tokenHash` is `sha256:<hex>` of the bearer plaintext. The
-  plaintext itself is never persisted. Multi-token mode (added by
-  `csuite connect`) stores additional rows in the broker's SQLite,
-  not in this file.
-- `totpSecret` and `webPush.vapidPrivateKey` are AES-256-GCM
-  encrypted under the team's KEK. Schema-versioned via the `v`
-  field for future rotation.
-- `https`, `webPush`, `jwt`, `files` are all optional. Absent
-  blocks silently disable the corresponding feature.
-- The first-run wizard auto-migrates plaintext fields it finds to
-  hashed/encrypted form on first boot (the migration count is
-  reported on startup).
+**Team data does not live here.** Members, permissions, tokens, and
+authenticator enrollments are rows in `csuite.db`, managed through
+`csuite member`, `csuite team`, the web UI, or the API — never by
+editing files.
 
-### Default path resolution
+### csuite-kek.bin
 
-When `--config-path` and `$CSUITE_CONFIG_PATH` are both unset, the
-default depends on platform-specific helpers in `csuite-server`.
-Always run with an explicit `--config-path` in production
-deployments to avoid surprises.
+The key that encrypts secret values at rest (broker-held secrets,
+authenticator secrets, push keys). Auto-generated on first boot unless
+`$CSUITE_KEK` provides the key directly.
 
-## csuite.json.kek — KEK file
+Losing it doesn't lose the team: bearer tokens are stored as hashes
+and survive, but stored secret values and authenticator enrollments
+become undecryptable — you'd re-enter secrets and re-run
+`csuite enroll` per member. In production, back it up or inject
+`$CSUITE_KEK` from a secrets manager.
 
-The Key Encryption Key that wraps secrets in `csuite.json`.
+### The databases
 
-| | |
-|---|---|
-| **Created by** | server module (`resolveKek`) on first boot if missing |
-| **Read by** | every command that loads `csuite.json` (setup, serve, member, enroll, rotate, quickstart) |
-| **Default path** | `<config>.kek` (alongside `csuite.json`) |
-| **Override** | `$CSUITE_KEK` env var (32-byte base64 of the key) |
-| **Mode** | `0o600` |
+`csuite.db` holds everything the team is; `csuite-activity.db` holds
+what the agents did (traces), kept separate so heavy trace writes
+never stall the team. `csuite prune-traces` is the retention tool for
+the activity side. Back up both files together.
 
-The KEK is 32 raw bytes encoded base64 at rest (or injected via
-env var). It encrypts:
+## auth.json — the device auth store
 
-- Each member's `totpSecret`
-- The team's `webPush.vapidPrivateKey`
-- The `pending_enrollments` row's bearer plaintext (between
-  approval and the device-side poll)
-
-If you lose the KEK, those fields can't be decrypted; you have to
-re-enroll TOTP for every member and regenerate the VAPID keypair.
-The bearer token hashes survive (they're already SHA-256). For
-production deployments where this matters, inject `$CSUITE_KEK` from
-a secrets manager rather than relying on the auto-generated file.
-
-## auth.json — client-side bearer cache
-
-Where `csuite connect` stashes the bearer token after a successful
-device-code enrollment.
-
-| | |
-|---|---|
-| **Created by** | `csuite connect` on approval |
-| **Read by** | every CLI command's auth resolver (after `--token` and `$CSUITE_TOKEN`) |
-| **Override** | `$CSUITE_AUTH_CONFIG_PATH` |
-| **Mode** | `0o600` |
+Where `csuite connect` saves bearer tokens, and where every command
+looks after `--token` and `$CSUITE_TOKEN`.
 
 | OS | Path |
 |---|---|
@@ -144,222 +90,67 @@ device-code enrollment.
 | macOS | `~/Library/Application Support/csuite/auth.json` |
 | Windows | `%APPDATA%\csuite\auth.json` |
 
-### Shape
-
 ```json
 {
   "schema": 2,
   "entries": [
-    {
-      "url": "https://broker.example.com",
-      "workspace": "/home/you/projects/agent-a",
-      "token": "csuite_...",
-      "savedAt": 1714255200000
-    },
-    {
-      "url": "https://broker.example.com",
-      "workspace": "/home/you/projects/agent-b",
-      "token": "csuite_...",
-      "savedAt": 1714250000000
-    },
-    {
-      "url": "http://127.0.0.1:8717",
-      "workspace": null,
-      "token": "csuite_...",
-      "savedAt": 1714240000000
-    }
+    { "url": "https://broker.example.com", "workspace": "/home/you/projects/agent-a",
+      "token": "csuite_...", "savedAt": 1754000000000 },
+    { "url": "http://127.0.0.1:8717", "workspace": null,
+      "token": "csuite_...", "savedAt": 1753900000000 }
   ]
 }
 ```
 
-One entry per `(url, workspace)` pair; the most recent write for a
-given pair wins. Lookup is exact-match on URL — no trailing-slash
-normalization, no scheme upgrade. If you ran `csuite connect` against
-`https://broker.example.com` and then ran `csuite push --url https://broker.example.com/`,
-the trailing slash means we won't find the saved entry. Use the
-URL form you connected with.
+The store deliberately keeps nothing else — no member names, no
+labels. That metadata lives on the broker
+(`csuite roster`, the web UI's token list).
+
+Broker URL lookup is exact-match — no trailing-slash normalization.
+Use the URL form you connected with.
 
 ### Workspace scoping
 
-The store is **user-global**, but each entry records the directory it
-belongs to, so one machine holds a distinct member identity per
-workspace. `csuite connect` scopes the new entry to the current
-directory by default; `--workspace <dir>` sets it explicitly and
-`--global` records an unscoped entry (`workspace: null`).
+Each entry records the directory it serves (`workspace`), so one
+machine can hold a distinct member identity per project. For a given
+broker URL:
 
-Resolution, for a given broker URL:
+1. Among entries whose workspace contains the current directory, the
+   **longest** workspace path wins — enrolling in a project root
+   covers its subdirectories, and a nested enrollment overrides its
+   parent.
+2. Otherwise the unscoped entry (`workspace: null`), if any.
+3. Otherwise a legacy project-local store (below).
 
-1. Among entries whose `workspace` contains the current directory,
-   the one with the **longest** workspace path wins — so enrolling in
-   a project root serves every subdirectory of it, and a nested
-   enrollment overrides its parent.
-2. Otherwise the unscoped (`workspace: null`) entry, if any.
-3. Otherwise a legacy project-scoped store (see below).
+Containment is by path segment, not string prefix, and symlinks are
+resolved. `csuite auth list` shows every entry and marks the one that
+resolves from where you are.
 
-Directory containment is compared by path segments, not string
-prefix, so `/home/you/proj` does not match `/home/you/project-other`.
-Symlinks are resolved on both sides.
+### Legacy project-local stores
 
-`csuite auth list` shows every entry with its scope and marks the one
-that resolves from your current directory. It never prints tokens.
+Older versions wrote `.csuite/auth.json` inside the project directory.
+Those files are still read as a last-resort fallback, so upgrading
+never locks you out — but the location put a bearer token inside what
+is usually a git repository.
 
-### Legacy project-scoped stores
+`csuite auth migrate` folds a legacy store into the global one
+(scoping its entries to the directory that held it) without deleting
+the old file or displacing newer entries. If the legacy file sat in a
+git working tree, treat the token as potentially published and rotate
+it: `csuite rotate --member <name>`.
 
-Before the store went global, `csuite connect` wrote
-`<cwd>/.csuite/auth.json` and commands found it by walking up from
-the current directory. Those files are **still read** as a fallback,
-so an upgrade never locks you out — but the location put a bearer
-token inside project trees, which usually means inside a git
-repository.
+## Runner working files
 
-`csuite auth migrate` folds a legacy store into the global one,
-scoping its entries to the directory that held it (which is exactly
-what the file's location meant). `csuite connect` does the same in
-passing, after saving the token it just minted — a legacy entry never
-displaces a newer one for the same `(url, workspace)` pair, so the
-fresh credential survives the migration. Neither deletes the old file.
+`csuite claude` and `csuite codex` keep their working state out of
+your project — nothing in your working tree is created, rewritten, or
+backed up.
 
-If a legacy store was inside a git working tree, treat the token as
-potentially published and **rotate it** —
-`csuite rotate --member <name>` — rather than only deleting the file.
-A csuite bearer resolves every [secret](/docs/concepts/secrets) bound
-to its member, so the blast radius is larger than one credential.
-
-The CLI does NOT persist `tokenId`, `label`, or `member name` here
-— less metadata on disk = less to leak if the file is
-exfiltrated. The corresponding metadata lives server-side and can
-be queried via `GET /members/:name/tokens`.
-
-## .mcp.json — claude's MCP server registry
-
-The file claude reads to discover its MCP servers. The runner
-backs it up and rewrites it on every `csuite claude` invocation.
-
-| | |
-|---|---|
-| **Path** | `<cwd>/.mcp.json` (where you invoke `csuite claude`) |
-| **Read by** | claude itself |
-| **Backed up by** | the runner — saves a copy to `$TMPDIR/<pid>-mcp-<nonce>.json` before rewriting |
-| **Restored by** | the runner — on every exit path (normal, SIGINT, SIGTERM, uncaughtException) |
-
-### What the runner writes
-
-The runner adds (or replaces) a `csuite` entry under `mcpServers`,
-preserving everything else:
-
-```json
-{
-  "mcpServers": {
-    "your-other-server": { ... },
-    "csuite": {
-      "command": "/path/to/node",
-      "args": ["/path/to/cli/dist/index.js", "mcp-bridge"],
-      "env": {
-        "CSUITE_RUNNER_SOCKET": "/tmp/.csuite-runner-12345.sock"
-      }
-    }
-  }
-}
-```
-
-`command` is auto-detected from `process.execPath` (the node
-binary running the cli); `args` is auto-detected from
-`process.argv[1]` (the cli's own entry script). This means claude
-spawns the same cli that spawned it — no `$PATH` lookup, works
-identically for global npm install, pnpm script, or development
-checkout.
-
-### Restore lifecycle
-
-The pre-run `.mcp.json` (if any) is backed up byte-for-byte. On
-exit, the runner restores the backup atomically. If no `.mcp.json`
-existed before the run, the runner deletes the one it created.
-Both paths are idempotent — double-firing on SIGINT →
-process.exit() is safe.
-
-The `uncaughtException` and `unhandledRejection` handlers also
-trigger a restore as a last-ditch safety net for crashes.
-
-## CODEX_HOME — ephemeral codex config
-
-A temporary directory the codex runner creates per invocation to
-contain codex's view of the world.
-
-| | |
-|---|---|
-| **Path** | `~/.cache/commandsuite/codex/csuite-codex-<random>/` (XDG-aware) |
-| **Created by** | `csuite codex` on startup |
-| **Removed by** | `csuite codex` on every exit path |
-| **Override parent** | `$XDG_CACHE_HOME` |
-
-### Layout
-
-```
-~/.cache/commandsuite/codex/csuite-codex-<random>/
-├── auth.json        ← symlink to ~/.codex/auth.json
-└── config.toml      ← runner-written
-```
-
-The `auth.json` symlink ensures OAuth refreshes from the real
-codex login persist; the symlink is removed on cleanup but the
-real file isn't.
-
-The `config.toml` we generate:
-
-```toml
-# Auto-generated by csuite codex runner — do not edit.
-# Lifetime: this entire CODEX_HOME directory is ephemeral.
-
-[mcp_servers.csuite]
-command = "/path/to/node"
-args = ["/path/to/cli/dist/index.js", "mcp-bridge"]
-enabled = true
-default_tools_approval_mode = "approve"
-
-[mcp_servers.csuite.env]
-CSUITE_RUNNER_SOCKET = "/tmp/.csuite-runner-12345.sock"
-```
-
-Why `~/.cache/commandsuite/codex/` and not `$TMPDIR`: codex refuses to
-install helper binaries (apply-patch, etc.) under tmpfs and emits
-a warning that disables them. Cache directories don't trigger
-that.
-
-## Session logs
-
-Not config exactly, but it's where to look for runner diagnostics.
-
-`csuite claude` and `csuite codex` each write a structured-JSON log
-under:
-
-```
-~/.cache/commandsuite/session-<pid>.log
-~/.cache/commandsuite/session-codex-<pid>.log
-```
-
-Path is printed on startup so you can `tail -f` it for live
-diagnostics. Each line is one event — runner state changes, IPC
-frames, MCP requests / tool calls, trace uploads, broker errors.
-
-The log path moves out of the way when you provide your own
-`log` callback (embedders / tests). The default behavior is
-chosen so claude's TUI can own stderr without runner output
-corrupting its frame.
-
-## SQLite databases (server)
-
-For completeness — not config files, but the broker's persistent
-state lives here.
-
-| File | Contents |
-|---|---|
-| `csuite.db` | tokens (multi-token), messages (event log), sessions, channels, members extra state, file metadata |
-| `csuite-activity.db` | activity stream — `objective_open` / `objective_close` markers, `llm_exchange` typed entries, `opaque_http` records |
-
-Both default to `:memory:` for ergonomics; set `$CSUITE_DB_PATH` (and
-optionally `$CSUITE_ACTIVITY_DB_PATH`) for real deployments. Both use
-WAL mode + `busy_timeout=5000` + `wal_autocheckpoint=1000` — see
-`apps/server/src/db.ts`.
-
-`csuite prune-traces --older-than <duration>` is the maintenance
-command for the activity DB.
+- **Session logs** — `~/.cache/commandsuite/session-<pid>.log`, one
+  JSON line per event. The path is printed at startup; `tail -f` it
+  for live diagnostics.
+- **Codex working config** — an ephemeral directory under
+  `~/.cache/commandsuite/codex/`, created per run and removed on exit.
+  It reuses your real `codex login` credentials without copying them.
+- **Codex resume history** —
+  `~/.local/share/commandsuite/codex/sessions/<member>/`, the durable
+  thread history that makes `csuite codex --resume` work across runs.

@@ -1,0 +1,175 @@
+---
+title: Review an agent's work
+description: Read an objective's discussion and lifecycle log, open the trace behind it, understand the token numbers, and correct the record when it's wrong.
+section: Guides
+order: 40
+---
+
+# Review an agent's work
+
+By the end of this guide you'll be able to take any completed
+objective and answer, with evidence: what was the agent told, what
+did it actually do, what did it cost, and is the record accurate?
+That loop — assign, execute, review, correct — is the accountability
+story the rest of the product exists to support.
+
+## 1. Start with the objective record
+
+Every objective carries its own audit trail. From the terminal:
+
+```bash
+csuite objectives view obj-7f2k
+```
+
+You get the contract (title, outcome, body), the current state,
+the result the assignee claimed at completion, and the full event
+log — every assignment, block, discussion post, and state change,
+each stamped with a timestamp and the member who did it. The web UI
+shows the same record with the discussion thread inline.
+
+<!-- media: screenshot review-objective-detail — an objective detail view showing the outcome, a completion result, and the lifecycle log with discussion posts interleaved -->
+
+Read the result against the outcome first. The outcome was the
+contract; the result is the claim. Everything below is how you check
+the claim.
+
+## 2. Open the trace
+
+Open the objective and expand its trace. What you're looking at is a
+time slice of the assignee's activity — every model call and tool
+action captured between the moment the agent took the objective and
+the moment it closed it. The capture comes from each agent's own
+instrumentation, with no proxy or traffic interception — see
+[Trace capture](/docs/tracing) for how, and
+[Activity and traces](/docs/concepts/activity-and-traces) for what
+each row means.
+
+Reading someone else's trace requires the `activity.read`
+permission; every member can always read their own. Being a watcher
+on the objective is *not* enough — thread visibility and trace
+visibility are separate grants.
+
+Each turn row shows the model used, the token counts, the agent's
+response — its reasoning, the text it produced, the tools it called
+and what they returned — and the full input context that produced
+the call. That last part is the piece chat logs never give you: not
+just what the agent said, but exactly what it was looking at when it
+said it.
+
+<!-- media: screenshot review-trace-panel — an objective's trace expanded to one turn row: token usage line, a tool call with its result, and the input context unfolded -->
+
+## 3. Understand the numbers
+
+Turn rows carry usage like:
+
+```
+in=48210 out=612 cache_hit=45876
+```
+
+- `in` — tokens the model read for this call. This grows with the
+  conversation: a long session pays for its history on every turn,
+  which is why input dwarfs output on mature sessions.
+- `out` — tokens the model generated.
+- `cache_hit` — the portion of the input served from the provider's
+  prompt cache. Providers bill cached reads at a steep discount, so
+  a high `cache_hit` relative to `in` is the healthy shape.
+
+CommandSuite reports counts; it does not convert them to money.
+Multiply by your provider's current per-token pricing — and when
+comparing objectives, compare total tokens across the trace, not
+turn counts. Ten cheap turns can cost less than one turn dragging a
+bloated context.
+
+## 4. Know what redaction did — and didn't do
+
+Traces are redacted before they leave the agent's machine:
+
+- **Broker-held secrets never appear.** The values injected from the
+  [secrets](/docs/concepts/secrets) store are known to the runner,
+  and any occurrence in captured content is replaced — an agent that
+  echoes a secret leaks `[REDACTED]` into the trace, not the value.
+- **Recognizable credentials are scrubbed** — well-known API key and
+  token formats are pattern-matched and replaced, and authorization
+  headers are stripped. The credential the runner itself uses never
+  appears in captured content.
+
+What a redacted trace still contains: everything else. Full prompts,
+file contents the agent read, tool output — the trace is useful
+*because* it's complete. Which is also the honest limit of redaction:
+
+- **Variables are not redacted**, by design — they exist precisely
+  for config values that are safe to read in a trace. If a value
+  shouldn't appear in one, it belongs in secrets, not
+  [variables](/docs/concepts/variables).
+- **An unrecognized secret is not caught.** A password pasted into
+  chat, in no known format and not held by the broker, flows through
+  verbatim. Redaction is a seatbelt; `activity.read` is the lock.
+  Grant trace access as deliberately as you'd grant access to the
+  underlying systems.
+
+## 5. Correct the record, don't rewrite it
+
+Review sometimes finds the record wrong: an outcome that was amended
+verbally but never in writing, or a completion recorded at the wrong
+moment. Two operations exist for exactly this, both append-only, both
+available to members holding `objectives.create` (an assignee holding
+it may amend its own objective — the contract is otherwise not the
+executor's to rewrite):
+
+**Amend the contract** — `objectives_amend` changes the outcome,
+title, or body. The prior text is kept and rendered in the objective
+view, the contract's version number increments, and a `reason` is
+required. So is a `disposition`, and it's a real decision:
+`correction` means the prior text was wrong and work was never
+validly held to it; `scope_change` means a new demand — work already
+underway finishes under the old text. If you can't say which, you
+haven't finished thinking about the amendment.
+
+**Correct an event** — `objectives_correct_event` supersedes one
+lifecycle event, named by the event id shown in the log. The classic
+case: a completion recorded at a PR head instead of the merge commit.
+The original event is never rewritten — a superseding record is
+appended, and the log marks the corrected event inline so nobody
+reads the stale version innocently. The contract version doesn't
+change; correcting what *happened* is not a change to what was
+*required*.
+
+Both live in the agent toolbox, so the usual flow is asking an agent
+with the permission to record the amendment — the change lands
+attributed to whoever made it, with the reason attached, visible to
+the whole objective thread.
+
+## 6. Prune what you no longer need
+
+Activity is the heaviest data the broker stores — a busy agent
+produces megabytes of trace per hour. Retention is yours to choose:
+
+```bash
+csuite prune-traces --older-than 30d
+```
+
+It shows the cutoff and row counts and asks before deleting; pass
+`--yes` in scripts. Pruning removes captured activity older than the
+cutoff — objectives, their event logs, discussions, amendments, and
+corrections are separate records and are untouched. The accountability
+trail outlives the raw trace.
+
+## Where this breaks
+
+- **A trace can be incomplete — but it says so.** Capture is
+  accounted end to end: each session's run summary records what was
+  captured versus dropped, so a gap shows up as a reported gap, not
+  a silently shorter trace. Treat "complete-looking" and "verified
+  complete" as different things and check the session summary when
+  it matters.
+- **Deletion is by age only.** `prune-traces` takes a cutoff, not a
+  row. If a value slipped past redaction into a trace, there is no
+  built-in single-row expunge — your options are rotating the exposed
+  credential and pruning by age. Prefer keeping real secrets in the
+  secrets store, where redaction is guaranteed by knowledge rather
+  than pattern-matching.
+- **The record resists cleanup by design.** Amendments and
+  corrections add to the log; nothing edits it. If what you want is
+  for an embarrassing entry to not have happened, the product is
+  built to disappoint you — that's the accountability loop holding
+  under pressure from its own operators.

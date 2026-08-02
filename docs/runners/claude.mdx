@@ -1,34 +1,34 @@
 ---
 title: csuite claude
-description: Full reference for the Claude runner — the Agent SDK embedding, flags, streaming-input channel events, in-process hooks, session resume, --doctor preflight, and trace mode.
-section: Docs
+description: Run Claude Code as a team member — requirements, flags, resuming sessions, and the preflight doctor.
+section: Runners
 order: 30
 ---
 
 # csuite claude
 
-`csuite claude` runs [Claude Code](https://claude.com/code) headlessly
-— via the [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview)
-— as an agent member of a csuite team. The runner is the parent; the
-agent is a stream-json subprocess under SDK control. There is no
-interactive TUI: you direct the agent through the broker (chat / DMs /
-objectives / `csuite push`), and the terminal shows the runner's
-activity feed + HUD strip.
+`csuite claude` runs [Claude Code](https://claude.com/code)
+headlessly as a member of your team. There is no interactive prompt
+in the terminal: you direct the agent through the broker — chat,
+DMs, objectives, `csuite push` — and the terminal shows a live feed
+of what the agent is doing.
 
 ```bash
 csuite claude
 ```
 
-If `--token` / `$CSUITE_TOKEN` aren't set, the runner falls back to a
-saved `~/.config/csuite/auth.json` entry for the resolved broker URL.
-Run `csuite connect` first if you haven't.
+## Requirements
 
-Authentication with Anthropic is the agent's own: the SDK uses the
-Claude Code credentials already on the machine (`claude login` — a
-Claude subscription works) or `ANTHROPIC_API_KEY`. csuite adds no auth
-layer of its own here.
+- **Broker credentials** — `--token`, `$CSUITE_TOKEN`, or the entry
+  saved by `csuite connect` for the broker URL in use.
+- **Claude Code credentials** — the agent's own auth: `claude login`
+  (a Claude subscription works) or `ANTHROPIC_API_KEY`. CommandSuite
+  adds no auth layer of its own here.
 
-## Synopsis
+No system `claude` install is needed: the runner uses the CLI that
+ships with the Claude Agent SDK (`$CLAUDE_PATH` overrides it).
+
+## Flags
 
 ```
 csuite claude [--no-trace] [--no-secrets] [--doctor] [--skip-doctor]
@@ -36,167 +36,51 @@ csuite claude [--no-trace] [--no-secrets] [--doctor] [--skip-doctor]
               [--url <url>] [--token <secret>]
 ```
 
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--no-trace` | bool | off | Disable activity capture: no capture host (activity uploader, busy signal, hook server), no OpenTelemetry export env, no hook forwarders. The runner still does briefing + IPC + objectives normally. |
-| `--no-secrets` | bool | off | Skip resolving/injecting broker-held secrets into the agent's environment. |
-| `--doctor` | bool | off | Run the preflight checks, print the full report, exit. Doesn't spawn the agent. Exit code is 1 if any check FAILed. |
-| `--skip-doctor` | bool | off | Skip the silent preflight that runs by default before spawning. Useful in CI / scripted reruns where you've already validated the environment. |
-| `--cwd <dir>` | string | `process.cwd()` | Directory the agent runs in. |
-| `--model <name>` | string | Claude Code default | Model override, forwarded as the SDK `model` option (e.g. `claude-sonnet-5`). |
-| `--resume [<sessionId>]` | string? | — | Resume a previous session. With a session id, resumes that session; bare `--resume` continues the member's most recent session in the cwd. |
-| `--url <url>` | string | `http://127.0.0.1:8717` | Broker base URL. Falls back to `$CSUITE_URL` then the default. |
-| `--token <secret>` | string | — | Bearer token. Falls back to `$CSUITE_TOKEN` then `auth.json`. |
-
-There is no pass-through arg tail: the agent invocation is composed by
-the SDK from typed options, so unrecognized args are an error rather
-than silently forwarded.
-
-## What it does on startup
-
-1. **Resolve the Claude Code executable.** `$CLAUDE_PATH` if set,
-   otherwise the CLI the Agent SDK ships in its per-platform package
-   (`@anthropic-ai/claude-agent-sdk-<platform>-<arch>`). No system
-   `claude` install is required. Fails fast — nothing bound, nothing
-   written — if neither resolves.
-2. **Run preflight.** Unless `--skip-doctor` is set, runs the doctor
-   checks silently. WARN states proceed; any FAIL aborts and dumps the
-   full report to stderr.
-3. **Start the runner.** `startRunner()` fetches the briefing, binds
-   the IPC socket, starts the SSE forwarder. Failures surface as a
-   `RunnerStartupError` with an actionable hint.
-4. **Start the capture host** (unless `--no-trace`). Binds the
-   loopback hook server on a random ephemeral port, starts the batched
-   activity uploader, and computes the OpenTelemetry export env
-   (below). No CA, no proxy, no network interception.
-5. **Compose the SDK options.** The csuite MCP bridge entry, the team
-   briefing appended to Claude Code's system-prompt preset, the
-   `bypassPermissions` posture, model/resume knobs, in-process hook
-   forwarders, and the child environment (broker secrets + the capture
-   host's OTEL delta). **Nothing is written to the working tree** —
-   the MCP config travels inline on the invocation the SDK composes,
-   and hooks are in-process callbacks. There is no `.mcp.json` or
-   `.claude/settings.json` surgery, and nothing to restore afterwards.
-6. **Start the SDK session.** The runner mints the session id for
-   fresh sessions (so the run summary can name the session even if it
-   never runs a turn), spawns the agent subprocess, and begins
-   consuming the SDK message stream into the activity printer.
-7. **Wait / teardown.** The runner owns the terminal
-   (`signals: 'teardown'`): Ctrl-C ends the session gracefully —
-   interrupt the active turn, close the input stream, stop the
-   subprocess, drain capture, emit the run summary.
-
-## The session posture
-
-What the CLI wrapper used to deliver as auto-injected `claude` flags
-now travels as SDK options. The posture is unchanged and the banner
-still prints it on startup:
-
-| SDK option | Replaces | Why |
+| Flag | Default | What it does |
 |---|---|---|
-| `permissionMode: 'bypassPermissions'` | `--dangerously-skip-permissions` | The intended trust posture, applied session-wide: an autonomous teammate never stops for per-tool yes/no prompts. Controls live at the csuite layer (permissions, broker 403s, credential scoping) and at the workstation boundary — see [permissions → trust posture](/docs/concepts/permissions). |
-| `systemPrompt: { preset: 'claude_code', append: <briefing> }` | `--append-system-prompt` | Pins the team briefing (team name + context, role, personal instructions, teammates) on top of Claude Code's own system prompt. Survives compaction. Live objective state is deliberately NOT in the prose — it arrives as message traffic plus `context_refresh` re-briefs. |
-| streaming input (below) | `--dangerously-load-development-channels server:csuite` | Broker events used to ride an experimental MCP notification surface that required a development flag. They are now ordinary SDK streaming-input messages — the unstable dependency is gone. |
+| `--no-trace` | off | Disable trace capture entirely — see [tracing](/docs/tracing). Everything else works normally. |
+| `--no-secrets` | off | Don't inject broker-held secrets into the agent's environment. |
+| `--doctor` | off | Run the preflight checks, print the report, exit (exit code 1 if any check fails). Doesn't start the agent. |
+| `--skip-doctor` | off | Skip the silent preflight that normally runs before starting. For CI or scripted reruns in a known-good environment. |
+| `--cwd <dir>` | current directory | Directory the agent works in. |
+| `--model <name>` | Claude Code default | Model override (e.g. `claude-sonnet-5`). |
+| `--resume [<sessionId>]` | — | Resume a previous session. With an id, that session; bare `--resume`, the member's most recent session in this directory. |
+| `--url <url>` | `http://127.0.0.1:8717` | Broker URL. Falls back to `$CSUITE_URL`. |
+| `--token <secret>` | — | Bearer token. Falls back to `$CSUITE_TOKEN`, then the saved login. |
 
-The member's own Claude config still loads exactly as it would under a
-plain `claude` invocation: `~/.claude` settings, project `.claude/`,
-CLAUDE.md, the member's own `.mcp.json` servers. csuite adds its
-surface on top rather than displacing anything.
+There is no pass-through argument tail: unrecognized arguments are
+an error, not silently forwarded to Claude Code.
 
-## How broker events reach the agent
+## What it changes — and what it leaves alone
 
-The runner's forwarder receives broker SSE events and hands them to
-the claude channel sink, which renders each as a `<channel>` tagged
-text block (same format the codex runner uses):
+The agent runs with Claude Code's permission prompts bypassed: an
+autonomous teammate cannot stop for yes/no dialogs. Control lives in
+the team's permission model and at the workstation boundary — see
+[permissions](/docs/concepts/permissions).
 
-```
-<channel kind="chat" from="director" thread="primary" ts="...">
-...body...
-</channel>
-```
+Your own Claude Code configuration still loads exactly as it would
+under a plain `claude` run: `~/.claude` settings, the project's
+`.claude/` directory and CLAUDE.md, your own MCP servers. Nothing is
+written to your working tree, and there is nothing to restore
+afterwards. The team briefing (team context, role, teammates) rides
+on top of Claude Code's own system prompt and survives compaction.
+How the runner wires all this is a contributor topic:
+[architecture](/docs/dev/architecture).
 
-Bursts bundle within a 200ms window into a single message, then land
-on the SDK's **streaming input** — the async message stream the agent
-reads user input from. Claude Code's own input queue handles the turn
-mechanics natively: a message arriving while the agent is idle starts
-a turn; one arriving mid-turn is queued and folded into the
-conversation. Events that arrive during the subprocess's cold start
-simply wait in the stream — nothing is dropped.
+## Directing the agent
 
-`context_refresh` re-briefs (pushed by the runner when the agent's MCP
-session comes up, or after a compact/clear) arrive through the same
-path. Capability updates (`tools/list_changed`) reach the agent
-through the bridge's stdio MCP transport, not the sink.
-
-## Capture: how the activity stream is fed
-
-Capture is tier 3 and mechanically identical to the CLI-wrapper era —
-the SDK runs the same Claude Code underneath:
-
-- **Content (transcript-primary).** Every hook payload carries the
-  session `transcript_path`; the capture host tails that JSONL and
-  emits `llm_exchange` / `tool_action` / `user_prompt` events,
-  redacted, untruncated (including thinking).
-- **Presence (hooks).** PreToolUse / PostToolUse / PostToolUseFailure
-  (tool windows), UserPromptSubmit / Stop (the turn bracket),
-  Notification (human-blocking), SubagentStop, SessionStart (re-brief
-  trigger on compact/clear). These used to be `type: "http"` hook
-  entries written into the member's `.claude/settings.json`; they are
-  now **in-process SDK hook callbacks** that forward each payload to
-  the same loopback endpoint — same payloads, same routing, no
-  settings-file writes, no crash residue.
-- **Operational telemetry + raw bodies (OTEL).** The capture host's
-  env delta is merged into the subprocess environment:
-
-```
-CLAUDE_CODE_ENABLE_TELEMETRY=1
-OTEL_METRICS_EXPORTER=otlp
-OTEL_LOGS_EXPORTER=otlp
-OTEL_EXPORTER_OTLP_PROTOCOL=http/json
-OTEL_EXPORTER_OTLP_ENDPOINT=<brokerUrl>/otlp
-OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer <member-token>
-OTEL_LOG_RAW_API_BODIES=file:<tmpdir>/csuite-otel-bodies-<member>-<pid>
-```
-
-  The prose content flags (`OTEL_LOG_USER_PROMPTS` /
-  `_ASSISTANT_RESPONSES` / `_TOOL_DETAILS` / `_TOOL_CONTENT`) stay
-  OFF — that content comes from the transcript. FILE-mode raw bodies
-  feed the gen_ai full-context layer; the broker owns per-file
-  deletion.
-
-When `--no-trace` is set, none of this happens: no OTEL vars, no hook
-forwarders, no presence reporting.
-
-## The MCP bridge wiring
-
-The runner detects the bridge command from its own process
-(`process.execPath` + this CLI's entry script + `mcp-bridge`), so the
-agent spawns the SAME cli that spawned it — no `$PATH` assumptions.
-The `csuite` server entry travels inline on the agent invocation the
-SDK composes (`--mcp-config '<json>'`):
-
-```json
-{
-  "mcpServers": {
-    "csuite": {
-      "type": "stdio",
-      "command": "/path/to/node",
-      "args": ["/path/to/cli/dist/index.js", "mcp-bridge"],
-      "env": { "CSUITE_RUNNER_SOCKET": "/tmp/.csuite-runner-12345.sock" }
-    }
-  }
-}
-```
-
-It is additive — the member's own MCP servers still load alongside
-`csuite`. The bridge subprocess reads `$CSUITE_RUNNER_SOCKET` to find
-the runner's IPC socket.
+Anything addressed to the member — a DM, a channel post, an
+objective assignment — is delivered into the agent's session as it
+happens. A message arriving while the agent is idle starts a turn;
+one arriving mid-turn is queued and folded into the conversation.
+Events that arrive while the agent is still starting up simply wait;
+nothing is dropped.
 
 ## Sessions and resume
 
-Claude Code persists every session (`~/.claude/projects/...`). The
-runner surfaces the session id in the startup banner and the run
-summary, and `--resume` picks a session back up with full context:
+Claude Code persists every session. The runner prints the session id
+in its startup banner, and `--resume` picks one back up with full
+context:
 
 ```bash
 # startup banner
@@ -209,32 +93,25 @@ csuite claude --resume 042e23ac-df08-4748-a6fe-1ccd7d9f7f29
 csuite claude --resume
 ```
 
-This is what makes an unattended box workable: a supervisor restarting
-the runner with `--resume` gives the member continuity across restarts.
+This is what makes an unattended box workable: a supervisor
+restarting the runner with `--resume` gives the member continuity
+across restarts.
 
-## --doctor checks
+## Preflight and --doctor
 
 `csuite claude --doctor` prints a PASS / WARN / FAIL line per check:
+the Claude Code executable resolves, its version is in the tested
+range (WARN outside, never FAIL), scratch space is writable, and the
+runner's local endpoints can bind. Exit code 0 if nothing failed.
+Without any doctor flag, the same checks run silently before every
+start and print the report only on failure; `--skip-doctor` opts
+out.
 
-| Check | What it validates |
-|---|---|
-| `claude binary` | The executable resolves (`$CLAUDE_PATH` or the SDK's bundled CLI) |
-| `claude version` | Version probe of the resolved executable against the adapter's tested range (WARN outside, never FAIL) |
-| `$TMPDIR writable` | Runner scratch files can be written |
-| `loopback hook server bindable` | `listen()` succeeds on `127.0.0.1:0` |
-| `claude agent sdk` | The `@anthropic-ai/claude-agent-sdk` package version in use |
-| `claude executable` | Bundled-CLI version, or a WARN naming the `$CLAUDE_PATH` override in effect |
+## The terminal
 
-Exit code is `0` if all checks PASS / WARN, `1` if any FAIL. The
-default behavior (without `--doctor` or `--skip-doctor`) runs the
-checks silently before spawn (minus the version probe) and dumps the
-report only on FAIL.
-
-## The terminal: activity feed + HUD
-
-The agent is headless, so the runner renders the SDK message stream as
-an activity feed on stderr — turn markers, tool names, assistant prose
-head, and a per-turn summary line with duration and cost:
+The runner renders a live activity feed on stderr — turn markers,
+tool names, the head of each assistant reply, and a per-turn summary
+with duration and cost:
 
 ```
 ▸ turn
@@ -244,27 +121,18 @@ head, and a per-turn summary line with duration and cost:
    └─ done · 12.4s · 3 tools · $0.18
 ```
 
-Below it, the same 2-row HUD strip as `csuite codex`: presence
-(`connecting` → `online` → `offline`) plus the agent's identity. Both
-degrade to plain ASCII when stderr isn't a TTY.
+<!-- media: screenshot claude-runner-feed — csuite claude mid-session: activity feed with tool lines and a per-turn cost summary, status strip showing presence and member identity at the bottom -->
 
-## Session log
-
-Every run writes structured JSON to a session log under
-`~/.cache/commandsuite/`:
-
-```
-~/.cache/commandsuite/session-<pid>.log
-```
-
-The path is printed on startup so you can `tail -f` it for live
-diagnostics. Each line is one event: runner state changes, IPC frames,
-MCP requests, trace uploads, broker errors.
+Below the feed sits a two-row status strip — connection state plus
+the member's identity — shared with `csuite codex`. Both degrade to
+plain ASCII when stderr is not a TTY. Every run also writes a
+structured session log to `~/.cache/commandsuite/session-<pid>.log`
+(the path is printed on startup) for live diagnostics.
 
 ## Common patterns
 
 ```bash
-# First-time on a new device
+# First time on a new device
 csuite connect
 csuite claude
 
@@ -274,12 +142,9 @@ csuite claude --model claude-sonnet-5
 # Pick a session back up after a restart
 csuite claude --resume
 
-# Quick sanity check before spawning
+# Sanity-check the environment without starting
 csuite claude --doctor
 
-# Skip preflight in a known-good environment
-csuite claude --skip-doctor
-
-# Disable capture (debugging the runner/bridge plumbing)
+# Disable capture while debugging
 csuite claude --no-trace
 ```

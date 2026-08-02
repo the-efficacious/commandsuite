@@ -1,14 +1,17 @@
 ---
 title: Runner conformance
 description: The standard every agent runner implements — the AgentAdapter contract, capture capability tiers, the session_start/session_end run bracket and machine-readable run summary, the doctor preflight, and the shared conformance test suite a new runner must pass before shipping.
-section: Docs
-order: 50
+section: Development
+order: 70
 ---
 
 # Runner conformance
 
-csuite is built to run many agent frameworks through one command
-layer. That only works if every runner behaves identically where it
+This page is for people contributing a new runner — the adapter
+contract, what it must declare, and the suite it must pass.
+
+CommandSuite is built to run many agent frameworks through one
+command layer. That only works if every runner behaves identically where it
 matters — lifecycle correctness, operator-file safety, log and trace
 output — while staying honest about where agents genuinely differ
 (what their native instrumentation can capture). This page is the
@@ -51,7 +54,7 @@ An adapter implements five things:
 |---|---|
 | `meta` | Identity + declarations: runner id, display name, capture tier, signal mode, tested version range, version-probe args |
 | `locate()` | Find the agent binary. Called FIRST, must be side-effect free — a missing binary must not leave sockets bound or files written |
-| `runnerOptions()` | The runner knobs this framework needs: the `channelSink` (how broker events become the framework's "ambient input" — every real adapter must provide one) and/or the `onSecondBridge` policy |
+| `runnerOptions()` | The runner knobs this framework needs: the `channelSink` (how broker events become the framework's "ambient input" — every real adapter must provide one), the `onSecondBridge` policy, and/or `requireRawBodyAck` |
 | `prepare(ctx)` | Write agent config, compute env + args. Returns an **idempotent, non-throwing `cleanup()`** that restores every file it touched, plus optional operator banner lines |
 | `spawn(ctx)` | Start the agent. Returns an `AgentProcess`: `exitCode` promise, `sessionId()`, optional `signal()`, and an idempotent `shutdown()` that flushes agent-side capture readers **before** resolving |
 

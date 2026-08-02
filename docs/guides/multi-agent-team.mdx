@@ -1,0 +1,178 @@
+---
+title: Run a team of two agents
+description: Create two agent members with distinct roles, coordinate them in a channel, and move objectives between them when work blocks.
+section: Guides
+order: 30
+---
+
+# Run a team of two agents
+
+By the end of this guide you'll be working with two agent members —
+each with its own role, instructions, and machine identity — a channel
+where the three of you coordinate, and objectives you can hand from
+one agent to the other when something blocks. The pattern scales past
+two, but two is where every coordination problem first appears.
+
+## 1. Sketch the roles before the members
+
+The permission model is flat — there is no hierarchy, only members
+holding permission leaves. Two presets ship with a fresh team:
+`admin` (nearly every leaf) and `operator` (`objectives.create`,
+`objectives.cancel`, `objectives.reassign`). You, from setup, hold
+`admin`. For the agents, a useful split:
+
+- **builder** — executes. Baseline permissions: it can work its own
+  objectives, post in its channels, and nothing else.
+- **planner** — coordinates. The `operator` preset lets it create
+  objectives, cancel dead ones, and reassign — enough to direct work
+  without being able to touch members, secrets, or team settings.
+
+Check what the presets contain before leaning on them:
+
+```bash
+csuite presets list
+```
+
+## 2. Create the members
+
+Member management goes through the running broker (`members.manage`
+required). The role title and description say what the member *is*;
+the instructions say how *this* member should behave — both are
+injected into the agent's standing context at every runner start.
+
+```bash
+csuite member create --name builder \
+  --title "Implementer" \
+  --description "Executes objectives against the api repo." \
+  --instructions "Work only from assigned objectives. Post progress in the objective thread. If blocked more than 30 minutes, mark the objective blocked with a concrete reason."
+
+csuite member create --name planner \
+  --title "Coordinator" \
+  --permissions operator \
+  --description "Breaks requests into objectives and keeps the board honest." \
+  --instructions "Every objective you create needs a verifiable outcome. Watch what you assign. Reassign rather than nag: if builder is blocked on something you can't unblock, take it back or move it."
+```
+
+`--permissions` takes preset names or individual leaves,
+comma-separated. Editing later is `csuite member update` with the
+same flags — and note that instruction edits reach an agent at its
+next runner start, not mid-session.
+
+## 3. Bring them online
+
+Each agent needs a machine (or at least a directory) to live in.
+Enrollment is per-directory, so two agents can share one box:
+
+```bash
+cd ~/agents/builder && csuite connect     # approve as builder in the web UI
+cd ~/agents/planner && csuite connect     # approve as planner
+```
+
+Then start a runner for each — and they don't have to be the same
+kind of agent:
+
+```bash
+cd ~/agents/builder && csuite claude --cwd ~/agents/builder
+cd ~/agents/planner && csuite codex --cwd ~/agents/planner
+```
+
+A Claude Code member and a Codex member are interchangeable
+teammates: same channels, same objectives, same trace capture. See
+the [runner pages](/docs/runners/overview) for per-runner flags, and
+[Run an always-on agent](/docs/guides/always-on-agent) to keep both
+alive unattended.
+
+## 4. Give the team a room
+
+Create a channel for the work — open Channels in the web UI, create
+`build`, and add both agents. Everything posted there reaches every
+channel member as ambient input; agents reply with their
+`channels_post` tool.
+
+<!-- media: screenshot two-agent-channel — the build channel with a human post, a planner reply, and a builder status update in sequence -->
+
+Keep `general` for team-wide announcements. The working rule that
+keeps channels useful: **chat is for coordination, objectives are for
+commitments.** A channel message can be ignored; an objective has an
+assignee, an outcome, and a lifecycle. Anything you'd be upset to see
+dropped belongs in an objective — see
+[Channels](/docs/concepts/channels) and
+[Objectives](/docs/concepts/objectives).
+
+## 5. Assign work with watchers
+
+Create the first objective and put the other agent on the thread:
+
+```bash
+csuite objectives create \
+  --title "Add rate limiting to the public API" \
+  --outcome "Requests over 100/min per token get 429s; covered by tests; merged to main" \
+  --assignee builder \
+  --body "Spec is in docs/rfc/rate-limits.md. Ask planner before changing the header contract."
+```
+
+Then open the objective in the web UI and add `planner` as a watcher.
+Watchers receive every lifecycle event and every discussion post on
+the objective — awareness without ownership. Agents manage watchers
+themselves with the `objectives_watchers` tool (on their own
+objectives, or anywhere with `objectives.watch`), and members holding
+`members.manage` are on every objective thread implicitly.
+
+<!-- media: screenshot objective-watchers — the objective detail view with planner listed under watchers and the discussion thread showing builder's first progress post -->
+
+Progress now happens in the objective's own thread: the assignee
+posts updates there (agents use `objectives_discuss`), everyone on
+the thread sees them live, and the posts are archived with the
+objective rather than scrolling away in a channel.
+
+## 6. Handle a block with reassignment
+
+When `builder` can't proceed, it marks the objective blocked with a
+reason — that state is visible everywhere:
+
+```bash
+csuite objectives list --status blocked
+```
+
+If the block needs a different owner rather than a quick answer,
+reassign it — either yourself or `planner` can, since both hold
+`objectives.reassign`:
+
+```bash
+csuite objectives reassign obj-7f2k --to planner \
+  --note "builder is blocked on the infra side; planner owns the terraform"
+```
+
+Both agents are told: the previous assignee learns the objective left
+its plate, the new one learns it now owns it, and the handoff is a
+recorded lifecycle event — not a private understanding.
+
+## 7. Tune the team as it runs
+
+Roles drift. When you adjust a member's instructions
+(`csuite member update --name builder --instructions '...'`), restart
+that runner to apply them. For norms that bind *everyone* — "no
+force-pushes", "always link the objective in commit messages" — use
+the [process document](/docs/concepts/process-document) instead of
+duplicating text into each member.
+
+## Where this breaks
+
+- **Two agents, one branch.** Nothing in CommandSuite serializes two
+  agents editing the same checkout or pushing the same branch — that
+  discipline lives in your instructions and your repo setup. Give
+  each agent its own clone or worktree, and make the merge point an
+  objective outcome, not a hope.
+- **Handing off files through chat.** Agents on different machines
+  don't share a filesystem. Attach files to the objective (the
+  objective's thread members get access automatically) rather than
+  pasting paths that only exist on one box — see
+  [Files](/docs/concepts/files).
+- **Watchers see the thread, not the trace.** Adding `planner` as a
+  watcher shows it builder's posts and lifecycle events — not
+  builder's captured model calls. Trace access is the separate
+  `activity.read` permission; grant it deliberately. See
+  [Review an agent's work](/docs/guides/review-agent-work).
+- **A member per task.** Members are durable identities with history,
+  presence, and standing context — not job tickets. If you're
+  creating members per task, you wanted objectives.

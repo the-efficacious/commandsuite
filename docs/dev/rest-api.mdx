@@ -1,11 +1,14 @@
 ---
 title: REST API
 description: Every HTTP endpoint the broker exposes — auth model, paths, request and response shapes, permission gates.
-section: Reference
-order: 30
+section: Development
+order: 40
 ---
 
 # REST API
+
+This page is for people building on the broker's HTTP API directly —
+SDK consumers, integrations, and contributors to the server itself.
 
 The broker exposes a single HTTP API consumed by both the SDK
 client (machine plane, bearer auth) and the web UI (human plane,
@@ -15,7 +18,11 @@ session cookie). All paths and types are defined by
 
 Every request carries `X-CSUITE-Protocol: 1` and is validated
 against the schema. Schema mismatches return 400 with a JSON
-error body.
+error body. Long-lived runners additionally send
+`X-CSUITE-Runner-Version: <version>` (the
+`RUNNER_VERSION_HEADER` constant in `packages/sdk/src/protocol.ts`)
+so the broker knows which client version it is composing for — see
+`GET /briefing` below.
 
 ## Auth
 
@@ -48,9 +55,13 @@ In the tables below:
 |---|---|
 | **Auth** | none |
 | **Body** | — |
-| **Returns** | `200 { status: "ok", version: <semver> }` |
+| **Returns** | `200 { status: "ok", version: <semver>, capabilities: { rawBodyAck: true } }` |
 
 Liveness probe. Cheap; always responds 200 if the process is up.
+`capabilities` advertises optional server features to runners:
+`rawBodyAck: true` means the OTLP logs ingest supports the
+`X-CSuite-Raw-Bodies` capture acknowledgement (see
+[OTLP telemetry ingest](#otlp-telemetry-ingest)).
 
 ## Briefing
 
@@ -60,12 +71,27 @@ Liveness probe. Cheap; always responds 200 if the process is up.
 |---|---|
 | **Auth** | dual |
 | **Body** | — |
+| **Request headers** | `X-CSUITE-Runner-Version: <version>` (optional) |
 | **Returns** | `BriefingResponse` |
 
 The team-context packet. Returns the caller's full member record
 (name, role, instructions, permissions) plus the team
 (name, context, permissionPresets), the public projection
-of every teammate, and the caller's currently-open objectives.
+of every teammate, the caller's currently-open objectives, the
+external tools resolved for them (`toolSources`), and the team's
+process document (`processDocument` — `null` when none is set,
+absent on brokers that predate the field).
+
+`X-CSUITE-Runner-Version` is how a long-lived runner reports its
+loaded version. The value must match
+`^[0-9A-Za-z][0-9A-Za-z.+-]{0,63}$` (rejected values are logged and
+ignored). The broker folds both versions into the first line of the
+composed `instructions` prose —
+`<team> CommandSuite/csuite: broker=<v> runner=<v>` — so every
+captured trace records which broker and runner composed the
+session's context (values longer than 12 characters are shortened
+for display). The SDK sends it via
+`client.briefing({ runnerVersion })`.
 
 The runner caches this at startup and uses it for the entire
 session — the composed `instructions` prose is pinned into the
@@ -101,19 +127,30 @@ plus `data.thread = 'chan:<id>'` is a channel post; otherwise
 it's a broadcast to general. The broker stamps `from` from the
 authenticated member; payloads cannot override.
 
-### `GET /subscribe?name=<self>`
+### `GET /subscribe?name=<self>` (WebSocket)
 
 | | |
 |---|---|
 | **Auth** | dual |
-| **Returns** | SSE stream of `Message` events |
+| **Upgrade** | WebSocket — each broker push targeting the member arrives as one JSON text frame (`ws.send(JSON.stringify(message))`), shape `Message` |
 
 Subscribe to messages addressed to `self` (the authenticated
-caller's name). The broker enforces `name === caller.name`.
+caller's name). This is a WebSocket upgrade, not SSE — the SDK's
+`client.subscribe(name)` wraps the socket in an async iterable. A
+missing `name` or an identity mismatch is rejected by pre-upgrade
+middleware with a plain HTTP 400/403 (the broker enforces
+`name === caller.name`), so a bad request never half-upgrades.
 Multiple concurrent subscribers per member are supported (the
-`Presence.connected` count reflects that).
+`Presence.connected` count reflects that). On server shutdown every
+live socket is closed with code `1001`.
 
-### `GET /history?with=<name>&channel=<id>&limit=<N>&before=<ts>`
+Two side effects fire when the subscriber is a runner (opaque
+bearer auth, i.e. `tokenId !== null` — never web-UI sessions or
+federated JWTs): the broker DMs a session-online notice from
+`csuite` summarizing the member's open plate, and external
+notifications queued with `if_offline: queue` are flushed.
+
+### `GET /history?with=<name>&channel=<id-or-slug>&limit=<N>&before=<ts>`
 
 | | |
 |---|---|
@@ -121,9 +158,11 @@ Multiple concurrent subscribers per member are supported (the
 | **Returns** | `HistoryResponse` — `{ messages: Message[] }` |
 
 Newest-first message history. Pass exactly one of `with` (DM
-thread with the named teammate) or `channel` (channel id).
-Omitting both returns general channel scrollback. `limit` defaults
-to 50, max 500. `before` is an epoch-ms cursor for paging.
+thread with the named teammate) or `channel` (slug or id — the
+caller must be a member of the channel). Omitting both returns
+general channel scrollback. `limit` defaults to 100, max 1000
+(the MCP `recent` tool applies its own tighter 50/500 bounds
+client-side). `before` is an epoch-ms cursor for paging.
 
 ## Sessions and TOTP
 
@@ -169,8 +208,9 @@ Current session info. Useful for the web UI to bootstrap.
 | **Auth** | dual |
 | **Returns** | `ListMembersResponse` — `{ members: Member[] }` |
 
-Admin sees the full list including private `instructions`. Other
-callers see the public projection — same as `roster.teammates`.
+Callers with `members.manage` see the full list including private
+`instructions`. Other callers see the public projection — same as
+`roster.teammates`.
 
 ### `POST /members`
 
@@ -261,7 +301,7 @@ new authenticator before persisting).
 Runner-side activity upload. The server stamps each event with a
 row id and broadcasts to live `/activity/stream` subscribers.
 
-### `GET /members/:name/activity?from=<ts>&to=<ts>&kind=<k|k[]>&limit=<n>`
+### `GET /members/:name/activity?from=<ts>&to=<ts>&kind=<k|k[]>&limit=<n>&cursor_ts=<ts>&cursor_id=<id>`
 
 | | |
 |---|---|
@@ -269,22 +309,29 @@ row id and broadcasts to live `/activity/stream` subscribers.
 | **Returns** | `ListActivityResponse` — `{ activity: ActivityRow[] }` |
 
 Range query. Returns newest-first up to 1000 rows. `kind` filter
-accepts a single value or an array
-(`objective_open|objective_close|llm_exchange|opaque_http`).
+accepts a single value or repeated params, OR-combined
+(`session_start | session_end | objective_open | objective_close |
+llm_exchange | tool_action | user_prompt`). `cursor_ts` +
+`cursor_id` form a composite paging cursor (both or neither —
+"rows strictly before this (ts, id)"), which stays stable when many
+rows share a timestamp.
 
 The TracePanel uses
 `from=<objective.createdAt>&to=<objective.completedAt>&kind=llm_exchange`
 to render per-objective traces.
 
-### `GET /members/:name/activity/stream`
+### `GET /members/:name/activity/stream` (WebSocket)
 
 | | |
 |---|---|
 | **Auth** | read OR self |
-| **Returns** | SSE stream of `ActivityRow` events |
+| **Upgrade** | WebSocket — each row appended to the member's activity store arrives as one JSON text frame, shape `ActivityRow` |
 
-Live tail of the activity stream. Used by the TracePanel for
-in-flight objectives where new events keep arriving.
+Live tail of the activity stream — a WebSocket upgrade, not SSE.
+Name and permission are validated by pre-upgrade middleware so
+rejection is a proper HTTP 400/403 rather than a failed handshake;
+on server shutdown the socket closes with code `1001`. Used by the
+TracePanel for in-flight objectives where new events keep arriving.
 
 ### `GET /members/:name/genai?from=<ts>&to=<ts>&limit=<n>&view=summary`
 
@@ -328,17 +375,81 @@ of a `view=summary` row, fetched by the timeline when a viewer
 expands a call. An id that doesn't exist or belongs to a different
 member is a 404 (indistinguishable, so ids don't leak ownership).
 
+## Team
+
+Team-level config: name, context, and the named permission presets
+members reference in their raw permissions. Reads are open to every
+authenticated member; mutations require `team.manage`. Changes to
+`context` (like member `instructions`) reach a member's composed
+briefing on their next runner start — the MCP protocol freezes
+instructions-class strings per session.
+
+### `GET /team`
+
+| | |
+|---|---|
+| **Auth** | dual |
+| **Returns** | `{ team: Team }` — `{ name, context, permissionPresets }` |
+
+### `PATCH /team`
+
+| | |
+|---|---|
+| **Auth** | dual; `team.manage` |
+| **Body** | `{ name?, context? }` (at least one) |
+| **Returns** | `{ team: Team }` |
+
+If the new `context` contains a registered secret value the update
+still lands, but the response carries a `warning` field (mirrored
+in an `X-CSuite-Warning` header) — the string will appear verbatim
+in captured traces.
+
+### `GET /team/presets`
+
+| | |
+|---|---|
+| **Auth** | dual |
+| **Returns** | `{ presets: PermissionPreset[] }` |
+
+### `PUT /team/presets/:name`
+
+| | |
+|---|---|
+| **Auth** | dual; `team.manage` |
+| **Body** | `{ permissions: string[] }` — leaf permissions only (presets cannot reference presets) |
+| **Returns** | `{ preset: { name, permissions } }` |
+
+Create or replace a preset. Members referencing the preset by name
+re-resolve to the new leaf set on their next read — no per-member
+sweep. Unknown leaves are rejected with 400.
+
+### `DELETE /team/presets/:name`
+
+| | |
+|---|---|
+| **Auth** | dual; `team.manage` |
+| **Returns** | `{ deleted: <name>, referencedBy: string[] }` — 404 for an unknown preset |
+
+`referencedBy` names the members that still reference the deleted
+preset; their resolved permissions silently drop its leaves on the
+next read.
+
 ## Objectives
 
-### `GET /objectives?assignee=<name>&status=<s>`
+### `GET /objectives?assignee=<name>&related=<name>&status=<s>`
 
 | | |
 |---|---|
 | **Auth** | dual |
 | **Returns** | `ListObjectivesResponse` — `{ objectives: Objective[] }` |
 
-Per-member filter. The MCP `objectives_list` tool calls this with
-`assignee=<self>` to populate the agent's plate.
+Callers **without** `objectives.create` are scoped to their own
+relationship union — objectives they are assigned, originated, or
+watch — and may only pass their own name in `assignee` / `related`
+(403 otherwise). Callers **with** `objectives.create` get the
+team-wide list; `related=<name>` narrows it to one member's
+relationship union, `assignee=<name>` to one member's plate. The
+MCP `objectives_list` tool sits on top of this route.
 
 ### `POST /objectives`
 
@@ -358,7 +469,7 @@ caller has read access to each path.
 
 | | |
 |---|---|
-| **Auth** | dual |
+| **Auth** | dual; thread participant (assignee, originator, watcher) OR `objectives.create` |
 | **Returns** | `GetObjectiveResponse` — `{ objective: Objective, events: ObjectiveEvent[] }` |
 
 Full state plus the append-only event log.
@@ -367,7 +478,7 @@ Full state plus the append-only event log.
 
 | | |
 |---|---|
-| **Auth** | dual; assignee OR `members.manage` |
+| **Auth** | dual; assignee OR `objectives.cancel` |
 | **Body** | `UpdateObjectiveRequest` — `{ status?: 'active'\|'blocked', blockReason? }` |
 | **Returns** | `Objective` |
 
@@ -395,17 +506,52 @@ audit log and is the "what was actually delivered" summary.
 
 Terminal transition to `cancelled`.
 
+### `POST /objectives/:id/amend`
+
+| | |
+|---|---|
+| **Auth** | dual; `objectives.create` |
+| **Body** | `AmendObjectiveRequest` — `{ title?, outcome?, body?, reason: <required>, disposition: 'correction'\|'scope_change' }` (at least one contract field) |
+| **Returns** | `Objective` (with bumped `outcomeVersion`) |
+
+Amend the objective's contract — title, outcome and/or body. The
+gate is the permission, not the role: an assignee holding
+`objectives.create` may amend their own contract. Prior text is
+retained in the event log (rendered by `objectives_view`), so this
+corrects the record rather than silently replacing it. A no-op
+amendment (no field actually differs) is rejected rather than
+recorded as a version bump. `disposition` states whether the change
+is retroactive (`correction` — the prior text was wrong) or
+forward-only (`scope_change` — work already underway finishes under
+the prior text).
+
+### `POST /objectives/:id/correct-event`
+
+| | |
+|---|---|
+| **Auth** | dual; `objectives.create` |
+| **Body** | `CorrectObjectiveEventRequest` — `{ eventId, correction, reason }` |
+| **Returns** | `Objective` |
+
+Correct an earlier lifecycle event (e.g. a completion recorded at
+the wrong moment). The target event is never rewritten — this
+appends a superseding record naming it by `eventId` (a durable id;
+timestamps are not identities because creation emits two events in
+the same millisecond). Does not change the contract version.
+
 ### `POST /objectives/:id/reassign`
 
 | | |
 |---|---|
-| **Auth** | dual; `members.manage` |
+| **Auth** | dual; `objectives.reassign` |
 | **Body** | `ReassignObjectiveRequest` — `{ to: <name>, note? }` |
 | **Returns** | `Objective` |
 
 Moves to a new assignee. Both old and new assignees receive
 channel events. Activity stream gets `objective_close` (with
-`result: 'reassigned'`) for old, `objective_open` for new.
+`result: 'reassigned'`) for old, `objective_open` for new. The new
+assignee's attachment access follows from the objective-namespace
+ACL — no grant backfill.
 
 ### `POST /objectives/:id/discuss`
 
@@ -418,7 +564,7 @@ channel events. Activity stream gets `objective_close` (with
 Posts into the `obj:<id>` thread. Members include originator,
 assignee, watchers, plus members with `members.manage` (implicit).
 
-### `PATCH /objectives/:id/watchers`
+### `POST /objectives/:id/watchers`
 
 | | |
 |---|---|
@@ -426,8 +572,10 @@ assignee, watchers, plus members with `members.manage` (implicit).
 | **Body** | `UpdateWatchersRequest` — `{ add?: string[], remove?: string[] }` (must include at least one) |
 | **Returns** | `Objective` |
 
-Names must resolve to known members. Adding a watcher fires a
-`watcher_added` audit event; removing fires `watcher_removed`.
+POST, not PATCH. Names must resolve to known members. Adding a
+watcher fires a `watcher_added` audit event; removing fires
+`watcher_removed` (fanned out to the removed watcher too, so they
+get the exit notification).
 
 ## Process document
 
@@ -527,7 +675,7 @@ dual-auth. Mutations require `secrets.manage`; values are write-only
 |---|---|---|
 | `GET /secrets` | any member | Per-viewer summaries (`bound`, `hasValue`). |
 | `POST /secrets` | `secrets.manage` | Body: `CreateSecretRequest` (`slug`, `envName`, `description?`, `allMembers?`). 400 on malformed/reserved `envName`; 409 on taken slug or envName. 201 + `Secret`. |
-| `GET /secrets/resolve` | any member | The runner's read path: decrypted env map for the **calling member only**, keyed by envName. Skips valueless secrets; 503 without an active KEK. |
+| `GET /secrets/resolve` | any member | The runner's read path: `{ env, secretEnvNames }` for the **calling member only**, keyed by envName. `env` merges decrypted secrets with the member's [variables](#variables); `secretEnvNames` lists which keys came from the secrets store (only those are registered with the trace redactor — absent on older brokers, in which case treat every key as secret). Skips valueless secrets; 409 if the member resolves one env name from both stores; 503 without an active KEK. |
 | `GET /secrets/:slug` | any member | Detail; `boundMembers` only for `secrets.manage` viewers. |
 | `PATCH /secrets/:slug` | `secrets.manage` | `envName` / `description` / `enabled` / `allMembers`. Slug is immutable. |
 | `DELETE /secrets/:slug` | `secrets.manage` | Cascades bindings and the stored value. |
@@ -540,6 +688,36 @@ Registry changes fan out as `data.kind = 'secret'` channel events
 (thread `secret:<slug>`) to the delivery set plus `secrets.manage`
 holders. Events never carry the value. Delivery is spawn-time only —
 changes apply on each member's next runner start.
+
+## Variables
+
+Broker-held runner environment variables that are **not** secrets —
+see [variables](/docs/concepts/variables) for the model. Same
+lifecycle and route shapes as `/secrets/*`, and the same
+`secrets.manage` gate on mutations. The differences: a variable's
+value is **readable** by a `secrets.manage` holder (summaries carry
+`value`), it is never registered with the trace redactor, and it is
+never KEK-encrypted. Secrets and variables share one per-member
+environment namespace — creating or binding a collision fails with
+409 (`env_taken`), and `GET /secrets/resolve` merges both stores
+into the env map the runner injects.
+
+| Verb + path | Gate | Notes |
+|---|---|---|
+| `GET /variables` | any member | Per-viewer summaries; `value` included for `secrets.manage` viewers. |
+| `POST /variables` | `secrets.manage` | Body: `CreateVariableRequest` (`slug`, `envName`, `description?`, `allMembers?`, `enabled?`). Same slug/envName grammar as secrets. 201 + `{ variable }`. |
+| `GET /variables/:slug` | any member | Detail; `value` and `boundMembers` only for `secrets.manage` viewers. |
+| `PATCH /variables/:slug` | `secrets.manage` | `envName` / `description` / `enabled` / `allMembers`. Slug is immutable. Returns `{ variable }`. |
+| `DELETE /variables/:slug` | `secrets.manage` | Cascades the value and bindings. Returns `{ ok: true }`. |
+| `PUT /variables/:slug/value` | `secrets.manage` | `{ value }`. Stored readable; **never** registered with the trace redactor — not a place for credentials. Returns `{ ok: true }`. |
+| `DELETE /variables/:slug/value` | `secrets.manage` | Returns `{ ok: true }`. |
+| `POST /variables/:slug/bindings` | `secrets.manage` | `{ member }`. 409 `env_taken` when the member already resolves this envName from a secret or another variable. Returns `{ ok, boundMembers }`. |
+| `DELETE /variables/:slug/bindings/:name` | `secrets.manage` | Returns `{ ok, boundMembers }`. |
+
+Registry changes fan out as `data.kind = 'variable'` channel events
+(thread `variable:<slug>`) to the delivery set plus `secrets.manage`
+holders. Delivery is spawn-time only — changes apply on each
+member's next runner start.
 
 ## External Notifications
 
@@ -689,8 +867,8 @@ a home you own or that's been shared with you.
 
 Friendly URL — segments are URL-encoded individually so the path
 works directly in `<a href>` and `<img src>`. The server checks
-read access (own home, director, or grant from a message
-attachment).
+read access (own home, `members.manage`, objective-namespace
+membership, or a grant from a message attachment).
 
 ### `POST /fs/write`
 
@@ -742,6 +920,60 @@ v1.
 
 Files shared with the caller via message / objective attachments.
 Owner-private files from other members never appear.
+
+### `GET /fs/all`
+
+| | |
+|---|---|
+| **Auth** | dual; `members.manage` |
+| **Returns** | `FsListResponse` — every file in every home, flat, newest first |
+
+Admin-only enumeration across all homes. Non-admins use the
+per-home tree under `/<owner>/...` for their own files and
+`/fs/shared` for grants.
+
+## OTLP telemetry ingest
+
+Agents post their own OpenTelemetry export here — this is how
+Claude Code's OTLP logs and metrics reach the broker. Standard
+bearer auth (the OTEL exporter's `Bearer%20` header form is
+normalized by the auth middleware). Every record is persisted
+losslessly, known or unknown name — dashboards and analytics are
+downstream queries, not ingest-time allowlists.
+
+### `POST /otlp/v1/logs`
+
+| | |
+|---|---|
+| **Auth** | bearer |
+| **Body** | OTLP/HTTP-JSON `ExportLogsServiceRequest` |
+| **Request headers** | `X-CSuite-Raw-Bodies: <n>` (optional, runner relay only) |
+| **Returns** | `200 { partialSuccess: {} }` — plus `csuite: { rawBodiesCaptured }` when the header was sent |
+
+Log records land in the telemetry store. The four gen_ai api-body
+record names are additionally routed through the member's GenAI
+correlator into full-context inference records; the two raw-body
+records (`api_request_body` / `api_response_body`) go to the gen_ai
+layer only, while `api_request` / `api_error` stay in both sinks
+(they carry cost/token/duration accounting). Native exporters
+always receive the OTLP success shape — parse and storage failures
+are logged, never surfaced as retryable errors. The
+`X-CSuite-Raw-Bodies` extension is the capture acknowledgement the
+runner's local relay uses: the response reports how many raw-body
+ledger rows this ingest appended, so the runner deletes spool files
+only after durable capture (advertised by `GET /healthz` as
+`capabilities.rawBodyAck`).
+
+### `POST /otlp/v1/metrics`
+
+| | |
+|---|---|
+| **Auth** | bearer |
+| **Body** | OTLP/HTTP-JSON `ExportMetricsServiceRequest` |
+| **Returns** | `200 { partialSuccess: {} }` |
+
+Metrics land in the telemetry store, attributed to the posting
+member.
 
 ## Presence
 
@@ -826,7 +1058,7 @@ Error codes: `authorization_pending`, `slow_down`,
 | **Auth** | manage |
 | **Returns** | `ListPendingEnrollmentsResponse` |
 
-For the director's UI — pending requests with source IP / UA /
+For the admin approval UI — pending requests with source IP / UA /
 expiry.
 
 ### `POST /enroll/approve`
@@ -902,7 +1134,10 @@ list when applicable.
 ## Source of truth
 
 - `packages/sdk/src/protocol.ts` — `PATHS`, `OBJECTIVE_PATHS`,
-  `CHANNEL_PATHS`, `MEMBER_PATHS`, `FS_PATHS`
+  `CHANNEL_PATHS`, `MEMBER_PATHS`, `TOOL_SOURCE_PATHS`,
+  `SECRET_PATHS`, `VARIABLE_PATHS`, `NOTIFICATION_PATHS`,
+  `PROCESS_DOCUMENT_PATHS`, `FS_PATHS`, plus the
+  `X-CSUITE-Protocol` / `X-CSUITE-Runner-Version` header constants
 - `packages/sdk/src/schemas.ts` — every request / response shape
 - `apps/server/src/app.ts` — endpoint dispatch
 - `apps/server/src/auth.ts` — the auth middleware
