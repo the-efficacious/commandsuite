@@ -212,10 +212,7 @@ export function nodeVersionCheck(version: string): DoctorCheck {
  * `nodeVersionCheck`. WARN, never FAIL: not every session commits, but
  * a member whose commits do not attribute is invisible in the record.
  */
-export function gitIdentityCheck(
-  userName: string | null,
-  userEmail: string | null,
-): DoctorCheck {
+export function gitIdentityCheck(userName: string | null, userEmail: string | null): DoctorCheck {
   const name = 'git identity';
   if (userName !== null && userEmail !== null) {
     return { name, status: 'PASS', detail: `${userName} <${userEmail}>` };
