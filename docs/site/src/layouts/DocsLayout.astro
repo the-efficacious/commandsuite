@@ -1,0 +1,72 @@
+---
+import '../brand/fonts.css';
+import '../brand/theme.css';
+import '../styles/docs.css';
+import DocsHeader from '../components/DocsHeader.astro';
+import DocsSidebar from '../components/DocsSidebar.astro';
+import DocsTOC from '../components/DocsTOC.astro';
+import { findAdjacent, flattenNav, getDocsNav } from '../lib/nav.ts';
+
+interface Props {
+  title: string;
+  description?: string;
+  currentSlug?: string;
+  headings?: { depth: number; slug: string; text: string }[];
+}
+
+const { title, description, currentSlug, headings = [] } = Astro.props;
+const sections = await getDocsNav();
+const flat = flattenNav(sections);
+const adjacent = currentSlug ? findAdjacent(flat, currentSlug) : { prev: null, next: null };
+const faviconHref = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/favicon.svg`;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description ?? `${title} — CommandSuite docs`} />
+    <meta name="color-scheme" content="dark" />
+    <link rel="icon" type="image/svg+xml" href={faviconHref} />
+    <title>{title} — CommandSuite docs</title>
+  </head>
+  <body>
+    <DocsHeader />
+    <div class="docs-shell">
+      <aside class="docs-sidebar-wrap">
+        <DocsSidebar sections={sections} currentSlug={currentSlug} />
+      </aside>
+      <main class="docs-main">
+        <article class="docs-article">
+          <slot />
+          {
+            (adjacent.prev || adjacent.next) && (
+              <nav class="docs-pager">
+                {adjacent.prev ? (
+                  <a class="pager-link pager-prev" href={`/${adjacent.prev.slug}`}>
+                    <span class="pager-label">← Previous</span>
+                    <span class="pager-title">{adjacent.prev.title}</span>
+                  </a>
+                ) : (
+                  <span class="pager-spacer" />
+                )}
+                {adjacent.next ? (
+                  <a class="pager-link pager-next" href={`/${adjacent.next.slug}`}>
+                    <span class="pager-label">Next →</span>
+                    <span class="pager-title">{adjacent.next.title}</span>
+                  </a>
+                ) : (
+                  <span class="pager-spacer" />
+                )}
+              </nav>
+            )
+          }
+        </article>
+      </main>
+      <aside class="docs-toc-wrap">
+        <DocsTOC headings={headings} />
+      </aside>
+    </div>
+  </body>
+</html>

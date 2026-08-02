@@ -13,7 +13,8 @@
       "!**/node_modules",
       "!**/.turbo",
       "!**/coverage",
-      "!apps/server/public"
+      "!apps/server/public",
+      "!docs/site"
     ]
   },
   "formatter": {

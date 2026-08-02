@@ -1,0 +1,38 @@
+{
+  "name": "commandsuite-docs",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Docs site for CommandSuite — Astro app serving docs.commandsuite.io. Renders the sibling docs/ tree. Not a pnpm workspace member; install and build from this directory.",
+  "license": "Apache-2.0",
+  "author": "Andrew Jon Przybilla <andrewjon@efficacious.io>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/the-efficacious/commandsuite.git",
+    "directory": "docs/site"
+  },
+  "type": "module",
+  "packageManager": "pnpm@10.28.2",
+  "scripts": {
+    "dev": "astro dev --port 4322",
+    "build": "astro build",
+    "preview": "astro preview",
+    "deploy": "pnpm build && wrangler deploy -c dist/client/wrangler.json",
+    "typecheck": "astro check"
+  },
+  "dependencies": {
+    "@astrojs/cloudflare": "^14.1.7",
+    "@astrojs/markdown-remark": "^7.2.2",
+    "@astrojs/mdx": "^7.0.5",
+    "astro": "^7.1.6"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.10",
+    "typescript": "^6.0.3",
+    "wrangler": "^4.118.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "sharp": "^0.35.0"
+    }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Do not rename. This is the deployed Cloudflare Worker's identity, not a
+  // reference to the old sidecar repo — changing it creates a second Worker
+  // and strands the docs.commandsuite.io custom domain on the original.
+  "name": "commandsuite-docs",
+  "compatibility_date": "2026-04-14",
+  "compatibility_flags": ["nodejs_compat"],
+  // `directory` is intentionally absent: the Cloudflare Vite plugin resolves it
+  // against the build output and writes dist/client/wrangler.json, which is the
+  // config `wrangler deploy` must be pointed at.
+  "assets": {
+    "not_found_handling": "404-page"
+  },
+  "routes": [
+    {
+      "pattern": "docs.commandsuite.io",
+      "custom_domain": true
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

@@ -1,0 +1,120 @@
+---
+import DocsLayout from '../layouts/DocsLayout.astro';
+import { flattenNav, getDocsNav } from '../lib/nav.ts';
+
+const sections = await getDocsNav();
+const flat = flattenNav(sections);
+---
+
+<DocsLayout title="Documentation" description="CommandSuite docs — get started, concepts, reference.">
+  <h1>Documentation</h1>
+  <p>
+    CommandSuite is a control plane for AI agent operations — command and control
+    as runtime primitives. Pick a starting point: <code>getting-started</code>
+     if you're new, <code>concepts</code> for the identity and permissions model, or dive
+    straight into the reference.
+  </p>
+
+  {
+    sections.map((section) => (
+      <section class="landing-section">
+        <h2>§ {section.name}</h2>
+        <ul class="landing-grid">
+          {section.entries.map((entry) => (
+            <li>
+              <a href={`/${entry.slug}`} class="landing-card">
+                <span class="card-title">{entry.title}</span>
+                {entry.description && <span class="card-desc">{entry.description}</span>}
+              </a>
+            </li>
+          ))}
+        </ul>
+      </section>
+    ))
+  }
+
+  {
+    flat.length === 0 && (
+      <div class="empty-state">
+        <p>
+          No docs synced yet. Run <code>pnpm sync-docs</code> in this app.
+        </p>
+      </div>
+    )
+  }
+</DocsLayout>
+
+<style>
+  .landing-section {
+    margin-top: 40px;
+  }
+
+  .landing-section h2 {
+    font-family: var(--f-mono);
+    font-size: var(--s-tag);
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 16px;
+    padding-left: 0;
+  }
+
+  .landing-grid {
+    list-style: none;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 12px;
+    margin: 0;
+  }
+
+  .landing-grid li {
+    margin: 0;
+  }
+
+  .landing-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 18px 20px;
+    background: var(--paper);
+    border: 1px solid var(--rule-strong);
+    border-radius: var(--r-sm);
+    transition:
+      background 0.15s var(--ease),
+      border-color 0.15s var(--ease);
+    /* Override the global article-link border-bottom */
+    border-bottom: 1px solid var(--rule-strong) !important;
+  }
+
+  .landing-card:hover {
+    background: var(--ice);
+    border-color: var(--ink);
+  }
+
+  .card-title {
+    font-family: var(--f-display);
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--ink);
+  }
+
+  .card-desc {
+    color: var(--graphite);
+    font-size: 13.5px;
+    line-height: 1.5;
+    font-weight: 400;
+  }
+
+  .empty-state {
+    margin-top: 40px;
+    padding: 24px;
+    border: 1px dashed var(--rule-strong);
+    border-radius: var(--r-sm);
+    color: var(--muted);
+    text-align: center;
+    background: var(--ice);
+  }
+</style>

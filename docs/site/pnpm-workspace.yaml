@@ -1,0 +1,9 @@
+# This app is deliberately NOT part of the monorepo workspace: the
+# Astro/Cloudflare toolchain stays out of the root install, the turbo graph,
+# and the release pipeline. Only the docs/ content it renders is shared.
+#
+# This file is what enforces that. pnpm resolves a workspace by searching
+# UPWARD for the nearest pnpm-workspace.yaml — without one here it finds the
+# monorepo root, installs all 8 workspace projects, skips this package
+# entirely, and exits 0. Declaring an empty workspace stops that search here.
+packages: []
