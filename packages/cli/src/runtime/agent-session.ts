@@ -10,7 +10,7 @@
  *   1. Session log routing (TTY-safe structured logs)
  *   2. Auth resolution (`--token` / `$CSUITE_TOKEN`) → UsageError
  *   3. Fail-fast binary location BEFORE any side effects
- *   4. `startRunner` (briefing, IPC socket, forwarder, capture host,
+ *   4. `startRunner` (instructions, IPC socket, forwarder, capture host,
  *      secrets) with the adapter's sink + bridge policy
  *   5. `prepare` → `spawn` ordering, with runner shutdown on failure
  *      at either step
@@ -44,6 +44,7 @@ import type {
 } from './agents/adapter.js';
 import { AgentAdapterError } from './agents/adapter.js';
 import { createPresence } from './presence.js';
+import { createRestartCoordinator, type RestartCoordinator } from './restart.js';
 import { type RunnerHandle, RunnerStartupError, startRunner } from './runner.js';
 import { createSessionLog } from './session-log.js';
 import type { ActivityUploaderStats } from './trace/activity-uploader.js';
@@ -126,6 +127,12 @@ export async function runAgentSession(
   // 2. Start the runner with the adapter's framework-specific knobs.
   const presence = createPresence();
   const runnerOptions = adapter.runnerOptions?.() ?? {};
+  // The restart coordinator exists only once an agent process does;
+  // an instruction event in the startup window is remembered and
+  // replayed to it (rare, but an edit can land between the packet
+  // fetch and the first spawn).
+  let coordinator: RestartCoordinator | null = null;
+  let instructionsEventBeforeSpawn = false;
   let runner: RunnerHandle;
   try {
     runner = await startRunner({
@@ -135,6 +142,10 @@ export async function runAgentSession(
       presence,
       noTrace: input.noTrace,
       noSecrets: input.noSecrets,
+      onInstructionsEvent: () => {
+        if (coordinator !== null) coordinator.request();
+        else instructionsEventBeforeSpawn = true;
+      },
       ...runnerOptions,
     });
   } catch (err) {
@@ -144,9 +155,9 @@ export async function runAgentSession(
   }
   log(`${meta.id}: runner started`, {
     socketPath: runner.socketPath,
-    name: runner.briefing.name,
-    role: runner.briefing.role.title,
-    team: runner.briefing.team.name,
+    name: runner.instructions.name,
+    role: runner.instructions.role.title,
+    team: runner.instructions.team.name,
   });
 
   // 3. Bridge auto-detection: the same node binary + CLI entry script
@@ -185,7 +196,7 @@ export async function runAgentSession(
   //    whatever the adapter wants to disclose (config paths, posture).
   const bannerLines = [
     `csuite ${meta.id}: runner cwd = ${resolve(cwd)}`,
-    `csuite ${meta.id}: agent = ${runner.briefing.name} (${runner.briefing.role.title}) on team ${runner.briefing.team.name}`,
+    `csuite ${meta.id}: agent = ${runner.instructions.name} (${runner.instructions.role.title}) on team ${runner.instructions.team.name}`,
     ...(ctx.sessionLogPath ? [`csuite ${meta.id}: session log = ${ctx.sessionLogPath}`] : []),
     ...(prepared.bannerLines ?? []),
   ];
@@ -255,16 +266,35 @@ export async function runAgentSession(
     closeLogAndThrow(err);
   }
 
-  // 7. Idempotent teardown. Ordering: agent flush → file restore →
-  //    session_end → runner drain → summary. Double-calls await the
-  //    first invocation.
+  // The live agent process. A restart swaps it for a successor; every
+  // consumer below (teardown, signal handlers, exit watching) reads
+  // the CURRENT one rather than closing over the first.
+  let currentProc: AgentProcess = proc;
+  // Which process the restart coordinator is deliberately stopping —
+  // its exit is a phase of the swap, not the end of the session.
+  let expectedRestartExit: AgentProcess | null = null;
+  // Re-arms exit watching for each successor; assigned inside the
+  // wait loop below where the settle function lives.
+  let attachGenerationWatch: (p: AgentProcess) => void = () => {};
+  // Per-generation start time, so each session_end reports its own
+  // generation's duration.
+  let generationStartedAt = startedAt;
+
+  // 7. Idempotent teardown. Ordering: restart coordinator quiesced →
+  //    agent flush → file restore → session_end → runner drain →
+  //    summary. Double-calls await the first invocation.
   let teardownPromise: Promise<number> | null = null;
   const teardown = (reason: string): Promise<number> => {
     if (teardownPromise !== null) return teardownPromise;
     teardownPromise = (async (): Promise<number> => {
       log(`${meta.id}: tearing down`, { reason });
+      // A restart cycle past its drain point finishes before teardown
+      // proceeds — a half-swapped agent is worse than a completed
+      // swap, and settled() bounds the wait to the cycle in flight.
+      coordinator?.close();
+      await coordinator?.settled();
       try {
-        await proc.shutdown(reason);
+        await currentProc.shutdown(reason);
       } catch (err) {
         log(`${meta.id}: agent shutdown failed`, {
           error: err instanceof Error ? err.message : String(err),
@@ -272,7 +302,7 @@ export async function runAgentSession(
       }
       let exitCode: number;
       try {
-        exitCode = await proc.exitCode;
+        exitCode = await currentProc.exitCode;
       } catch {
         exitCode = 1;
       }
@@ -289,8 +319,8 @@ export async function runAgentSession(
         log,
         reason,
         exitCode,
-        startedAt,
-        agentSessionId: proc.sessionId(),
+        startedAt: generationStartedAt,
+        agentSessionId: currentProc.sessionId(),
       });
       await runner.shutdown(reason).catch((err) => {
         log(`${meta.id}: runner shutdown threw`, {
@@ -311,21 +341,86 @@ export async function runAgentSession(
     return teardownPromise;
   };
 
-  // 8. Wait for the session to end, per the adapter's signal mode.
+  // 8a. Restart support — only where the adapter can respawn and the
+  //     runner owns the terminal. An instruction edit drains the agent
+  //     at its next idle boundary, stops it gracefully, refetches the
+  //     packet, and respawns resuming the same conversation under the
+  //     new system prompt. Adapters without respawn stay on the old
+  //     contract: edits apply at the next manual start, and the broker
+  //     keeps listing the member restart-pending.
+  if (meta.signals === 'teardown' && adapter.respawn !== undefined) {
+    const respawn = adapter.respawn.bind(adapter);
+    coordinator = createRestartCoordinator(
+      {
+        activity: () => runner.captureHost?.busy ?? null,
+        detach: () => adapter.detachForRestart?.(),
+        stopCurrent: async (reason) => {
+          const prior = currentProc;
+          expectedRestartExit = prior;
+          await prior.shutdown(reason);
+          const code = await prior.exitCode.catch(() => 1);
+          finishRun({
+            meta,
+            runner,
+            log,
+            reason,
+            exitCode: code,
+            startedAt: generationStartedAt,
+            agentSessionId: prior.sessionId(),
+          });
+          return { sessionId: prior.sessionId() };
+        },
+        refreshInstructions: () => runner.refreshInstructions(),
+        respawn: async (prior) => {
+          generationStartedAt = Date.now();
+          runner.captureHost?.enqueue({
+            kind: 'session_start',
+            ts: generationStartedAt,
+            runner: meta.id,
+            runnerVersion: CLI_VERSION,
+            captureTier: meta.captureTier,
+          });
+          const next = await respawn(ctx, prior);
+          currentProc = next;
+          attachGenerationWatch(next);
+          process.stderr.write(
+            `csuite ${meta.id}: agent restarted to apply updated instructions\n`,
+          );
+        },
+        log,
+      },
+      {
+        onFailure: (err) => {
+          log(`${meta.id}: restart failed — ending session`, {
+            error: err instanceof Error ? err.message : String(err),
+          });
+          void teardown('restart-failed');
+        },
+      },
+    );
+    if (instructionsEventBeforeSpawn) coordinator.request();
+  } else if (instructionsEventBeforeSpawn) {
+    log(`${meta.id}: instructions changed before spawn — packet already current`);
+  }
+
+  // 8b. Wait for the session to end, per the adapter's signal mode.
   let exitCode: number;
   if (meta.signals === 'forward') {
     // The agent owns the terminal: forward signals, session ends when
-    // the agent exits.
-    const onSigint = (): void => proc.signal?.('SIGINT');
-    const onSigterm = (): void => proc.signal?.('SIGTERM');
+    // the agent exits. (No restart support here — the agent's TTY
+    // ownership makes a silent respawn wrong anyway.)
+    const onSigint = (): void => currentProc.signal?.('SIGINT');
+    const onSigterm = (): void => currentProc.signal?.('SIGTERM');
     process.on('SIGINT', onSigint);
     process.on('SIGTERM', onSigterm);
-    exitCode = await proc.exitCode;
+    exitCode = await currentProc.exitCode;
     await teardown(`agent-exited-${exitCode}`);
     removeProcessHandlers({ sigint: onSigint, sigterm: onSigterm });
   } else {
     // The runner owns the terminal: a signal ends the session; so does
-    // the agent exiting on its own (its code propagates).
+    // the agent exiting on its own (its code propagates). Exits the
+    // restart coordinator caused are a phase of the swap, not the end
+    // of the session — the successor re-arms the watch.
     let onSigint: () => void = () => {};
     let onSigterm: () => void = () => {};
     exitCode = await new Promise<number>((resolvePromise) => {
@@ -336,9 +431,15 @@ export async function runAgentSession(
       onSigterm = () => finish('SIGTERM');
       process.on('SIGINT', onSigint);
       process.on('SIGTERM', onSigterm);
-      void proc.exitCode.then((code) => {
-        void teardown(`agent-exited-${code}`).then(() => resolvePromise(code));
-      });
+      const watchExit = (p: AgentProcess): void => {
+        void p.exitCode.then((code) => {
+          if (expectedRestartExit === p) return;
+          if (currentProc !== p) return; // superseded generation
+          finish(`agent-exited-${code}`);
+        });
+      };
+      attachGenerationWatch = watchExit;
+      watchExit(currentProc);
     });
     removeProcessHandlers({ sigint: onSigint, sigterm: onSigterm });
   }
@@ -364,7 +465,7 @@ function finishRun(args: {
   const capture = args.runner.captureHost?.stats() ?? null;
   const summary: RunSummary = {
     runner: args.meta.id,
-    member: args.runner.briefing.name,
+    member: args.runner.instructions.name,
     reason: args.reason,
     exitCode: args.exitCode,
     durationMs,

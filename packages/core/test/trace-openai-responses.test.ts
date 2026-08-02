@@ -168,7 +168,7 @@ describe('openaiResponsesToGenAi', () => {
     expect(JSON.stringify(rec.inputMessages[0]?.parts[0])).toContain(REDACTED);
   });
 
-  it('preserves an exact briefing block while redacting the same secret in a tool result', () => {
+  it('preserves an exact packet block while redacting the same secret in a tool result', () => {
     const secret = 'registered-value-104';
     const block = `Personal instructions: refer to ${secret} only by name.`;
     registerSecretValues([secret]);

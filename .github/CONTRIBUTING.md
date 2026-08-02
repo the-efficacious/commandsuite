@@ -554,11 +554,20 @@ Signed-off-by: Your Name <you@example.com>
 to the end of the commit message. The name and email must match your
 `git config user.name` and `user.email`.
 
-To make `-s` automatic on every commit:
+To make the sign-off automatic, install a `commit-msg` hook (from the
+repo root):
 
 ```bash
-git config --global format.signOff true
+printf '%s\n' '#!/bin/sh' \
+  'grep -q "^Signed-off-by:" "$1" || printf "\nSigned-off-by: %s <%s>\n" "$(git config user.name)" "$(git config user.email)" >> "$1"' \
+  > .git/hooks/commit-msg && chmod +x .git/hooks/commit-msg
 ```
+
+> An earlier version of this section said `git config --global
+> format.signOff true` does this. It does not — that setting affects
+> only `git format-patch`, and a trailer-less commit in this repo's own
+> history is the measurement. No stock git config adds the trailer to
+> ordinary commits; the hook (or typing `-s`) is what works.
 
 ### Forgot to sign off?
 

@@ -1,6 +1,6 @@
 import type { Member, Team, Teammate } from 'csuite-sdk/types';
 import { describe, expect, it } from 'vitest';
-import { briefingCaptureExemptions, composeBriefing } from '../src/briefing.js';
+import { composeInstructions, instructionCaptureExemptions } from '../src/instructions.js';
 
 const TEAM: Team = {
   name: 'demo-team',
@@ -45,8 +45,8 @@ const TEAMMATES: Teammate[] = [
   },
 ];
 
-describe('composeBriefing', () => {
-  it('projects exact authored blocks from this member briefing without positional guesses', () => {
+describe('composeInstructions', () => {
+  it('projects exact authored blocks from this member packet without positional guesses', () => {
     const input = {
       self: ALPHA_1,
       team: TEAM,
@@ -54,14 +54,14 @@ describe('composeBriefing', () => {
       openObjectives: [],
       processDocument: null,
     };
-    const briefing = composeBriefing(input);
-    const exemptions = briefingCaptureExemptions(input);
+    const packet = composeInstructions(input);
+    const exemptions = instructionCaptureExemptions(input);
     expect(exemptions).toEqual([TEAM.context, ALPHA_1.role.description, ALPHA_1.instructions]);
-    for (const block of exemptions) expect(briefing.instructions).toContain(block);
+    for (const block of exemptions) expect(packet.instructions).toContain(block);
     expect(exemptions).not.toContain(DIRECTOR.role.description);
   });
 
-  it('does not exempt an authored block absent from the composed briefing', () => {
+  it('does not exempt an authored block absent from the composed packet', () => {
     const input = {
       self: ALPHA_1,
       team: TEAM,
@@ -70,44 +70,49 @@ describe('composeBriefing', () => {
       processDocument: null,
     };
     const personalBlock = ALPHA_1.instructions;
-    const composedWithoutPersonal = composeBriefing(input).instructions.replace(personalBlock, '');
+    const composedWithoutPersonal = composeInstructions(input).instructions.replace(
+      personalBlock,
+      '',
+    );
 
-    expect(briefingCaptureExemptions(input, composedWithoutPersonal)).not.toContain(personalBlock);
+    expect(instructionCaptureExemptions(input, composedWithoutPersonal)).not.toContain(
+      personalBlock,
+    );
   });
 
   it('includes name, role, permissions, team, and teammates', () => {
-    const briefing = composeBriefing({
+    const packet = composeInstructions({
       self: DIRECTOR,
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
       processDocument: null,
     });
-    expect(briefing.name).toBe('director-1');
-    expect(briefing.role.title).toBe('director');
-    expect(briefing.permissions).toContain('members.manage');
-    expect(briefing.team).toEqual(TEAM);
-    expect(briefing.teammates).toEqual(TEAMMATES);
-    expect(briefing.openObjectives).toEqual([]);
+    expect(packet.name).toBe('director-1');
+    expect(packet.role.title).toBe('director');
+    expect(packet.permissions).toContain('members.manage');
+    expect(packet.team).toEqual(TEAM);
+    expect(packet.teammates).toEqual(TEAMMATES);
+    expect(packet.openObjectives).toEqual([]);
   });
 
   it('renders complementary instructions that reference team context', () => {
-    const briefing = composeBriefing({
+    const packet = composeInstructions({
       self: ALPHA_1,
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
       processDocument: null,
     });
-    expect(briefing.instructions).toContain('You: engineer-1');
-    expect(briefing.instructions).toContain('Your role here: engineer');
-    expect(briefing.instructions).toContain(TEAM.name);
-    expect(briefing.instructions).toContain(TEAM.context);
-    expect(briefing.instructions).toContain(ALPHA_1.instructions);
+    expect(packet.instructions).toContain('You: engineer-1');
+    expect(packet.instructions).toContain('Your role here: engineer');
+    expect(packet.instructions).toContain(TEAM.name);
+    expect(packet.instructions).toContain(TEAM.context);
+    expect(packet.instructions).toContain(ALPHA_1.instructions);
   });
 
   it('names CommandSuite and csuite with separate broker and runner versions in one opening line', () => {
-    const briefing = composeBriefing({
+    const packet = composeInstructions({
       self: ALPHA_1,
       team: TEAM,
       teammates: TEAMMATES,
@@ -116,10 +121,10 @@ describe('composeBriefing', () => {
       brokerVersion: '0.4.0',
       runnerVersion: '0.3.4',
     });
-    const [opening, identity] = briefing.instructions.split('\n');
+    const [opening, identity] = packet.instructions.split('\n');
     expect(opening).toBe('demo-team CommandSuite/csuite: broker=0.4.0 runner=0.3.4');
     expect(identity).toBe('You: engineer-1');
-    expect(briefing.instructions).not.toContain('\nTeam: demo-team\n');
+    expect(packet.instructions).not.toContain('\nTeam: demo-team\n');
   });
 
   it('names unavailable versions as unknown without changing capture blocks', () => {
@@ -130,23 +135,23 @@ describe('composeBriefing', () => {
       openObjectives: [],
       processDocument: null,
     };
-    const briefing = composeBriefing(input);
-    expect(briefing.instructions).toContain('CommandSuite/csuite: broker=unknown runner=unknown');
-    expect(briefingCaptureExemptions(input)).toEqual([
+    const packet = composeInstructions(input);
+    expect(packet.instructions).toContain('CommandSuite/csuite: broker=unknown runner=unknown');
+    expect(instructionCaptureExemptions(input)).toEqual([
       TEAM.context,
       ALPHA_1.role.description,
       ALPHA_1.instructions,
     ]);
   });
 
-  it('never grows the composed briefing relative to the replaced opening', () => {
+  it('never grows the composed packet relative to the replaced opening', () => {
     const legacyChars =
       `You've connected to the csuite net. In this team you go by ${ALPHA_1.name}.`.length +
       1 +
       `Team: ${TEAM.name}`.length;
 
     for (const runnerVersion of ['x'.repeat(64), undefined]) {
-      const briefing = composeBriefing({
+      const packet = composeInstructions({
         self: ALPHA_1,
         team: TEAM,
         teammates: TEAMMATES,
@@ -155,13 +160,13 @@ describe('composeBriefing', () => {
         brokerVersion: 'x'.repeat(64),
         runnerVersion,
       });
-      const [opening = '', identity = ''] = briefing.instructions.split('\n');
+      const [opening = '', identity = ''] = packet.instructions.split('\n');
       expect(opening.length + 1 + identity.length).toBeLessThanOrEqual(legacyChars);
     }
   });
 
   it('bounds long versions while retaining both ends', () => {
-    const briefing = composeBriefing({
+    const packet = composeInstructions({
       self: ALPHA_1,
       team: TEAM,
       teammates: TEAMMATES,
@@ -170,23 +175,23 @@ describe('composeBriefing', () => {
       brokerVersion: '0.5.0-alpha.20260801+broker',
       runnerVersion: '0.5.0-alpha.20260731+runner',
     });
-    const [opening] = briefing.instructions.split('\n');
+    const [opening] = packet.instructions.split('\n');
     expect(opening).toContain('broker=0.5.0-al…ker');
     expect(opening).toContain('runner=0.5.0-al…ner');
   });
 
   it('lists other teammates and filters self out of the rendered list', () => {
-    const briefing = composeBriefing({
+    const packet = composeInstructions({
       self: ALPHA_1,
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
       processDocument: null,
     });
-    expect(briefing.teammates.some((t) => t.name === 'engineer-1')).toBe(true);
-    const linesAfterHeader = briefing.instructions
+    expect(packet.teammates.some((t) => t.name === 'engineer-1')).toBe(true);
+    const linesAfterHeader = packet.instructions
       .split('\n')
-      .slice(briefing.instructions.split('\n').indexOf('Teammates on the net:'))
+      .slice(packet.instructions.split('\n').indexOf('Teammates on the net:'))
       .join('\n');
     expect(linesAfterHeader).toContain('director-1');
     expect(linesAfterHeader).toContain('engineer-2');
@@ -195,37 +200,37 @@ describe('composeBriefing', () => {
 
   it('omits the context line when team.context is empty', () => {
     const teamNoContext: Team = { ...TEAM, context: '' };
-    const briefing = composeBriefing({
+    const packet = composeInstructions({
       self: DIRECTOR,
       team: teamNoContext,
       teammates: TEAMMATES,
       openObjectives: [],
       processDocument: null,
     });
-    expect(briefing.instructions).not.toContain('Context:');
-    expect(briefing.instructions).toContain(`${teamNoContext.name} CommandSuite/csuite`);
+    expect(packet.instructions).not.toContain('Context:');
+    expect(packet.instructions).toContain(`${teamNoContext.name} CommandSuite/csuite`);
   });
 
   it('omits the personal-instructions block when the member has none', () => {
-    const briefing = composeBriefing({
+    const packet = composeInstructions({
       self: ENGINEER_2,
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
       processDocument: null,
     });
-    expect(briefing.instructions).not.toContain('Personal instructions:');
+    expect(packet.instructions).not.toContain('Personal instructions:');
   });
 
   it('notes that the link suppresses self-echoes on the live stream', () => {
-    const briefing = composeBriefing({
+    const packet = composeInstructions({
       self: ENGINEER_2,
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
       processDocument: null,
     });
-    expect(briefing.instructions).toContain('Your own sends are suppressed by the link');
+    expect(packet.instructions).toContain('Your own sends are suppressed by the link');
   });
 
   it('returns open objectives on the response but does NOT render them into instructions', () => {
@@ -234,7 +239,7 @@ describe('composeBriefing', () => {
     // new objective was assigned mid-session. Live state reaches the
     // agent as message traffic (channel events + the runner's
     // `context_refresh` re-briefs) instead.
-    const briefing = composeBriefing({
+    const packet = composeInstructions({
       self: ALPHA_1,
       team: TEAM,
       teammates: TEAMMATES,
@@ -260,53 +265,53 @@ describe('composeBriefing', () => {
       ],
       processDocument: null,
     });
-    // openObjectives surfaces on the response body for non-briefing callers.
-    expect(briefing.openObjectives).toHaveLength(1);
-    expect(briefing.openObjectives[0]?.id).toBe('obj-1');
+    // openObjectives surfaces on the response body for non-packet callers.
+    expect(packet.openObjectives).toHaveLength(1);
+    expect(packet.openObjectives[0]?.id).toBe('obj-1');
     // But the ID / title / outcome never land in the prose.
-    expect(briefing.instructions).not.toContain('obj-1');
-    expect(briefing.instructions).not.toContain('Fix the login redirect bug');
-    expect(briefing.instructions).not.toContain('Objectives on your plate');
+    expect(packet.instructions).not.toContain('obj-1');
+    expect(packet.instructions).not.toContain('Fix the login redirect bug');
+    expect(packet.instructions).not.toContain('Objectives on your plate');
   });
 
   it('teaches the objective mechanism in instructions regardless of current plate', () => {
-    const briefing = composeBriefing({
+    const packet = composeInstructions({
       self: ALPHA_1,
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
       processDocument: null,
     });
-    expect(briefing.instructions).toContain('── Objectives ──');
-    expect(briefing.instructions).toContain('kind="objective"');
-    expect(briefing.instructions).toContain('objectives_list');
-    expect(briefing.instructions).toContain('objectives_discuss');
-    expect(briefing.instructions).toContain('objectives_update');
-    expect(briefing.instructions).toContain('objectives_complete');
-    expect(briefing.instructions).toContain('required `outcome`');
+    expect(packet.instructions).toContain('── Objectives ──');
+    expect(packet.instructions).toContain('kind="objective"');
+    expect(packet.instructions).toContain('objectives_list');
+    expect(packet.instructions).toContain('objectives_discuss');
+    expect(packet.instructions).toContain('objectives_update');
+    expect(packet.instructions).toContain('objectives_complete');
+    expect(packet.instructions).toContain('required `outcome`');
     // objectives_update is state-transitions only — the prose must not
     // teach a `note=` parameter the tool rejects (regression: it used
     // to, and the first progress report of every session burned a
     // failed call).
-    expect(briefing.instructions).not.toContain('note=');
+    expect(packet.instructions).not.toContain('note=');
     // No stale promise of live tool descriptions — state freshness
     // comes from message traffic, not tool metadata.
-    expect(briefing.instructions).not.toContain('tool description refreshes');
+    expect(packet.instructions).not.toContain('tool description refreshes');
   });
 
   it('teaches all three channel thread types and the context_refresh re-brief', () => {
-    const briefing = composeBriefing({
+    const packet = composeInstructions({
       self: ALPHA_1,
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
       processDocument: null,
     });
-    expect(briefing.instructions).toContain('thread="primary"');
-    expect(briefing.instructions).toContain('thread="dm"');
-    expect(briefing.instructions).toContain('thread="channel"');
-    expect(briefing.instructions).toContain('channel_slug');
-    expect(briefing.instructions).toContain('channels_post');
-    expect(briefing.instructions).toContain('context_refresh');
+    expect(packet.instructions).toContain('thread="primary"');
+    expect(packet.instructions).toContain('thread="dm"');
+    expect(packet.instructions).toContain('thread="channel"');
+    expect(packet.instructions).toContain('channel_slug');
+    expect(packet.instructions).toContain('channels_post');
+    expect(packet.instructions).toContain('context_refresh');
   });
 });

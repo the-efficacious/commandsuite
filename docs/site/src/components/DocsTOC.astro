@@ -1,0 +1,75 @@
+---
+interface Heading {
+  depth: number;
+  slug: string;
+  text: string;
+}
+
+interface Props {
+  headings: Heading[];
+}
+
+const { headings } = Astro.props;
+const toc = headings.filter((h) => h.depth >= 2 && h.depth <= 3);
+---
+
+{
+  toc.length > 0 && (
+    <nav class="docs-toc" aria-label="On this page">
+      <p class="toc-title">§ On this page</p>
+      <ul>
+        {toc.map((h) => (
+          <li class:list={[`depth-${h.depth}`]}>
+            <a href={`#${h.slug}`}>{h.text}</a>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  )
+}
+
+<style>
+  .docs-toc {
+    position: sticky;
+    top: calc(60px + 24px);
+    max-height: calc(100vh - 60px - 24px);
+    overflow-y: auto;
+    padding: 28px 0 28px 16px;
+  }
+
+  .toc-title {
+    font-family: var(--f-mono);
+    font-size: var(--s-tag);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 12px;
+  }
+
+  ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  li {
+    padding: 4px 0;
+  }
+
+  li.depth-3 {
+    padding-left: 14px;
+  }
+
+  a {
+    font-family: var(--f-sans);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--graphite);
+    transition: color 0.15s var(--ease);
+    line-height: 1.4;
+  }
+
+  a:hover {
+    color: var(--steel);
+  }
+</style>

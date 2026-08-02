@@ -5,13 +5,13 @@
  * is projected but its text is not exempt from capture redaction, the
  * captured copy is redacted, never matches the unredacted sent text,
  * and resends every turn forever. On this codebase that cannot happen
- * through `briefingCaptureExemptions` — it is a `.map()` of the
+ * through `instructionCaptureExemptions` — it is a `.map()` of the
  * projection, so there is no second list to forget — but criterion 4
  * asks for that to be verified for this block rather than assumed,
  * and it is verified below.
  *
  * WHERE IT CAN STILL HAPPEN is a call site. Three places build a
- * `ComposeBriefingInput`; one passes the canonical object and two
+ * `ComposeInstructionsInput`; one passes the canonical object and two
  * construct a literal by hand. An optional field is carried by the
  * first and silently dropped by the other two. `processDocument` is
  * therefore REQUIRED on the input, so the partial literal does not
@@ -30,17 +30,17 @@ import type { Member, ProcessDocument, Team, Teammate } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import {
-  briefingCaptureBlocks,
-  briefingCaptureExemptions,
-  composeBriefing,
-} from '../src/briefing.js';
-import {
   CONTEXT_PRESENCE_EVENT,
   contextResendBody,
-  inspectBriefingContext,
+  inspectInstructionContext,
 } from '../src/context-watchdog.js';
 import { openDatabase } from '../src/db.js';
 import { createGenAiStore } from '../src/genai-store.js';
+import {
+  composeInstructions,
+  instructionBlocks,
+  instructionCaptureExemptions,
+} from '../src/instructions.js';
 import { createMemberStore } from '../src/members.js';
 import { createSqliteProcessDocumentStore } from '../src/process-document.js';
 import { createRawBodyStore } from '../src/raw-body-store.js';
@@ -89,23 +89,23 @@ afterEach(() => clearRegisteredSecretValues());
 
 describe('membership is what was sent, not a substring of the prose', () => {
   it('projects the document even though it is not in the composed instructions', () => {
-    const composed = composeBriefing(input(DOC)).instructions;
+    const composed = composeInstructions(input(DOC)).instructions;
     // The premise. If this ever became false the substring test would
     // work and this whole mechanism would be unnecessary — so assert
     // it rather than rely on it.
     expect(composed).not.toContain(DOC.text);
 
-    const kinds = briefingCaptureBlocks(input(DOC)).map((b) => b.kind);
+    const kinds = instructionBlocks(input(DOC)).map((b) => b.kind);
     expect(kinds).toContain('process_document');
   });
 
   it('projects the exact text the runner renders, not a summary of it', () => {
-    const block = briefingCaptureBlocks(input(DOC)).find((b) => b.kind === 'process_document');
+    const block = instructionBlocks(input(DOC)).find((b) => b.kind === 'process_document');
     expect(block?.text).toBe(DOC.text);
   });
 
   it('projects nothing when the team has no document', () => {
-    expect(briefingCaptureBlocks(input(null)).map((b) => b.kind)).not.toContain('process_document');
+    expect(instructionBlocks(input(null)).map((b) => b.kind)).not.toContain('process_document');
   });
 
   /**
@@ -122,7 +122,7 @@ describe('membership is what was sent, not a substring of the prose', () => {
    */
   it('projects the sent bytes, including leading and trailing whitespace', () => {
     const padded = { ...DOC, text: '  Squash-merge to main.\n' };
-    const block = briefingCaptureBlocks(input(padded)).find((b) => b.kind === 'process_document');
+    const block = instructionBlocks(input(padded)).find((b) => b.kind === 'process_document');
     expect(block?.text).toBe('  Squash-merge to main.\n');
     // Not the normalised form.
     expect(block?.text).not.toBe('Squash-merge to main.');
@@ -130,14 +130,12 @@ describe('membership is what was sent, not a substring of the prose', () => {
 
   it('carries the same bytes into the derived exemption', () => {
     const padded = { ...DOC, text: '  Squash-merge to main.\n' };
-    expect(briefingCaptureExemptions(input(padded))).toContain('  Squash-merge to main.\n');
+    expect(instructionCaptureExemptions(input(padded))).toContain('  Squash-merge to main.\n');
   });
 
   it('carries the same bytes into the resend body', () => {
     const padded = { ...DOC, text: '  Squash-merge to main.\n' };
-    const [block] = briefingCaptureBlocks(input(padded)).filter(
-      (b) => b.kind === 'process_document',
-    );
+    const [block] = instructionBlocks(input(padded)).filter((b) => b.kind === 'process_document');
     const body = contextResendBody([{ block, present: false, resendFired: true } as never]);
     // The recovery must hand back what the runner received, byte for
     // byte, or the agent re-anchors on a different block.
@@ -146,15 +144,13 @@ describe('membership is what was sent, not a substring of the prose', () => {
 
   it('projects nothing for a document that is only whitespace', () => {
     const blank = { ...DOC, text: '   \n  ' };
-    expect(briefingCaptureBlocks(input(blank)).map((b) => b.kind)).not.toContain(
-      'process_document',
-    );
+    expect(instructionBlocks(input(blank)).map((b) => b.kind)).not.toContain('process_document');
   });
 
   it('still projects the three authored blocks by their own test', () => {
     // The document must not displace the substring-based membership
     // that the composed blocks depend on.
-    const kinds = briefingCaptureBlocks(input(DOC)).map((b) => b.kind);
+    const kinds = instructionBlocks(input(DOC)).map((b) => b.kind);
     expect(kinds).toEqual([
       'team_context',
       'role_description',
@@ -168,7 +164,7 @@ describe('membership is what was sent, not a substring of the prose', () => {
 
 describe('the exemption is derived, and carries this block', () => {
   it('contains exactly the document text', () => {
-    expect(briefingCaptureExemptions(input(DOC))).toContain(DOC.text);
+    expect(instructionCaptureExemptions(input(DOC))).toContain(DOC.text);
   });
 
   /**
@@ -177,16 +173,16 @@ describe('the exemption is derived, and carries this block', () => {
    * being exempt. Asserted rather than assumed — criterion 4.
    */
   it('is exactly the projection, block for block', () => {
-    expect(briefingCaptureExemptions(input(DOC))).toEqual(
-      briefingCaptureBlocks(input(DOC)).map((b) => b.text),
+    expect(instructionCaptureExemptions(input(DOC))).toEqual(
+      instructionBlocks(input(DOC)).map((b) => b.text),
     );
   });
 
   it('omits the document when there is none, in both lists together', () => {
-    expect(briefingCaptureExemptions(input(null))).toEqual(
-      briefingCaptureBlocks(input(null)).map((b) => b.text),
+    expect(instructionCaptureExemptions(input(null))).toEqual(
+      instructionBlocks(input(null)).map((b) => b.text),
     );
-    expect(briefingCaptureExemptions(input(null))).not.toContain(DOC.text);
+    expect(instructionCaptureExemptions(input(null))).not.toContain(DOC.text);
   });
 });
 
@@ -195,6 +191,7 @@ describe('the exemption is derived, and carries this block', () => {
 describe('resend behaviour for the process document', () => {
   const inference = (system: string) => ({
     systemInstructions: [{ type: 'text' as const, content: system }],
+    inputMessages: [],
   });
   const block = { kind: 'process_document' as const, text: DOC.text };
 
@@ -204,7 +201,7 @@ describe('resend behaviour for the process document', () => {
    * a recovery.
    */
   it('never re-sends a document that is present in the turn', () => {
-    const [observation] = inspectBriefingContext({
+    const [observation] = inspectInstructionContext({
       memberName: 'cora',
       inference: inference(`some preamble\n${DOC.text}\nsome suffix`),
       blocks: [block],
@@ -217,7 +214,7 @@ describe('resend behaviour for the process document', () => {
   });
 
   it('re-sends a document that is absent from an observable turn', () => {
-    const [observation] = inspectBriefingContext({
+    const [observation] = inspectInstructionContext({
       memberName: 'cora',
       inference: inference('nothing relevant here'),
       blocks: [block],
@@ -236,7 +233,7 @@ describe('resend behaviour for the process document', () => {
    * would resend forever.
    */
   it('never claims a Codex turn is missing the document', () => {
-    const [observation] = inspectBriefingContext({
+    const [observation] = inspectInstructionContext({
       memberName: 'seamus',
       inference: inference(''),
       blocks: [block],
@@ -285,11 +282,11 @@ describe('resend behaviour for the process document', () => {
 //
 // This is where an omission surfaces, and it surfaces as a permanent
 // loop rather than a miss. A live runner keeps uploading without
-// refetching `/briefing`, so after a restart the broker rebuilds the
+// refetching `/packet`, so after a restart the broker rebuilds the
 // exemption set from storage — via `exemptionsFor`, which constructs
 // its own input by hand.
 //
-// The test never calls `/briefing`. That is the point: it exercises
+// The test never calls `/packet`. That is the point: it exercises
 // the path a warm broker would hide.
 
 describe('the cold-broker rebuild carries the document', () => {
@@ -392,7 +389,7 @@ describe('the cold-broker rebuild carries the document', () => {
 
   /**
    * The document text must be exempt from capture redaction on a
-   * broker that has never served this member a briefing.
+   * broker that has never served this member a packet.
    *
    * THE REGISTERED LITERAL IS THE WHOLE TEST. Redaction only rewrites
    * values that are registered, so a document containing none would
@@ -401,7 +398,7 @@ describe('the cold-broker rebuild carries the document', () => {
    * occurs precisely when the document contains a registered literal,
    * so the document here contains one.
    */
-  it('exempts the document on a broker that has served no briefing', async () => {
+  it('exempts the document on a broker that has served no packet', async () => {
     const { app, rawBodyStore } = coldApp(true, SECRET_IN_DOC);
     registerSecretValues([SECRET_IN_DOC]);
     // A captured body containing the document verbatim. If the
@@ -416,7 +413,7 @@ describe('the cold-broker rebuild carries the document', () => {
 
     // The assertion that matters: the document text survived capture
     // VERBATIM, including the registered literal inside it, on a
-    // broker that never composed a briefing for this member.
+    // broker that never composed a packet for this member.
     const stored = rawBodyStore.count() > 0 ? readAllStoredText(rawBodyStore) : '';
     expect(stored).toContain(SECRET_IN_DOC);
     expect(stored).not.toContain('[REDACTED]');
@@ -443,7 +440,7 @@ describe('the cold-broker rebuild carries the document', () => {
     expect(stored).not.toContain(unrelated);
   });
 
-  it('has a document to rebuild from, independent of any briefing fetch', () => {
+  it('has a document to rebuild from, independent of any packet fetch', () => {
     const { processDocument } = coldApp(true);
     // The store is the authority the cold path reads. If this were
     // empty the rebuild would have nothing to carry and the test
@@ -457,23 +454,28 @@ describe('the cold-broker rebuild carries the document', () => {
   });
 });
 
-// ─── a stale document is absent, so an edit reaches a live session ───
+// ─── stale is restart-pending, missing is resent ─────────────────────
 //
 // The projection is built from the CURRENT stored document, so an
-// agent still carrying yesterday's text does not contain today's — the
-// watchdog sees the current text as absent and re-sends it. That means
-// an edit now reaches a running session on an observable turn, which
-// the docs previously said it could not. Tested rather than asserted.
+// agent still carrying yesterday's text does not contain today's.
+// When the WATCHDOG KNOWS the prior version (it issued it), the state
+// is `stale` and nothing is re-sent: the runner's drain-and-restart is
+// the remediation, the roster reports restart-pending meanwhile, and
+// re-injecting the new text would put two versions in one frozen
+// context and re-fire every cooldown. When the prior text is NOT
+// recognisable, the block has genuinely fallen out — that is `missing`
+// and the resend is recovery, not delivery.
 
-describe('an edited document reaches a session still holding the old one', () => {
+describe('a session holding superseded text', () => {
   const inference = (system: string) => ({
     systemInstructions: [{ type: 'text' as const, content: system }],
+    inputMessages: [],
   });
 
   it('treats the previous version as absence of the current one', () => {
     const previous = 'Squash-merge to main.';
     const current = 'Merge commits to main.';
-    const [observation] = inspectBriefingContext({
+    const [observation] = inspectInstructionContext({
       memberName: 'cora',
       // The agent's context still holds the superseded text.
       inference: inference(`preamble\n${previous}\nsuffix`),
@@ -489,7 +491,7 @@ describe('an edited document reaches a session still holding the old one', () =>
   it('classifies it as stale rather than merely missing, when the prior text is known', () => {
     const previous = 'Squash-merge to main.';
     const current = 'Merge commits to main.';
-    const [observation] = inspectBriefingContext({
+    const [observation] = inspectInstructionContext({
       memberName: 'cora',
       inference: inference(`preamble\n${previous}\nsuffix`),
       blocks: [{ kind: 'process_document', text: current }],
@@ -498,9 +500,10 @@ describe('an edited document reaches a session still holding the old one', () =>
       systemProjectionObservable: true,
       knownPriorVersions: new Map([['process_document', new Set([previous])]]),
     });
-    // Distinguishes "you lost it" from "yours is out of date".
+    // Distinguishes "you lost it" from "yours is out of date" — and
+    // out-of-date is the restart protocol's job, not the resend's.
     expect(observation?.priorVersionPresent).toBe(true);
-    expect(observation?.resendFired).toBe(true);
+    expect(observation?.resendFired).toBe(false);
   });
 });
 
@@ -508,7 +511,7 @@ describe('an edited document reaches a session still holding the old one', () =>
 //
 // Found by Rune: mutating `app.ts:679` — the hand-built input inside
 // `inspectCapturedBriefing` — to a valid `null` left all 22 tests in
-// this file green. The tests above exercise `briefingCaptureBlocks`
+// this file green. The tests above exercise `instructionBlocks`
 // with an input I construct, and the cold-redaction test exercises
 // `exemptionsFor` at `:636`. Neither drives the site that decides
 // which blocks are examined at all.
@@ -518,10 +521,10 @@ describe('an edited document reaches a session still holding the old one', () =>
 // actually commits, because `null` is the easy thing to write when you
 // do not have the value to hand.
 //
-// This test fetches no briefing, because `:679` exists precisely to
+// This test fetches no packet, because `:679` exists precisely to
 // serve runners that never refetch.
 
-describe('the watchdog resends through the real app, with no briefing fetch', () => {
+describe('the watchdog resends through the real app, with no packet fetch', () => {
   const RUNNER = 'csuite_test_watchdog_runner_token';
   const DOCUMENT = 'Keep a conversation running before action.\nSquash-merge to main.';
 

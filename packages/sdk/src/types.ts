@@ -128,7 +128,7 @@ export interface Team {
  * role model, there's no instructions template here — instructions
  * are personal to each member. The role is shared public context:
  * what this member does on the team, visible to every teammate in
- * the roster and briefing.
+ * the roster and instruction packet.
  */
 export interface Role {
   /** Short freeform label ("director", "engineer", "qa-lead"). */
@@ -139,7 +139,7 @@ export interface Role {
 
 /**
  * Public projection of a team member — the subset visible to other
- * members in the roster and briefing. Omits personal fields
+ * members in the roster and instruction packet. Omits personal fields
  * (`instructions`) that belong only to the member themselves and to
  * admins managing membership.
  */
@@ -152,14 +152,14 @@ export interface Teammate {
 
 /**
  * Full member record — the shape an admin sees in the members admin
- * panel and the shape a member sees of themself in their briefing.
+ * panel and the shape a member sees of themself in their instruction packet.
  * Adds `instructions` to the public `Teammate` projection.
  */
 export interface Member extends Teammate {
   /**
    * Personal working directives + context for this member. Composed
    * into the member's own system prompt (for agents) or surfaced in
-   * their briefing (for humans). Not visible to teammates — this is
+   * their instruction packet (for humans). Not visible to teammates — this is
    * private to the member and to admins.
    */
   instructions: string;
@@ -310,17 +310,42 @@ export interface HealthResponse {
   };
 }
 
-// ─────────────────────────── Briefing / Session ───────────────────────
+// ────────────────────────── Instructions / Session ────────────────────
 
 /**
- * Full team-context packet returned from `GET /briefing`. Used by
+ * The named kinds of operator-authored instruction blocks composed
+ * into a member's fixed context. The strings are a wire and telemetry
+ * contract (`persistent_context kind="…"` re-sends, the context
+ * watchdog's `context.block.kind` attribute) — pinned independently
+ * of any TypeScript identifier; renaming code must never move them.
+ */
+export type InstructionBlockKind =
+  | 'team_context'
+  | 'role_description'
+  | 'personal_instructions'
+  | 'process_document';
+
+/**
+ * One instruction block as issued to a member, identified by content
+ * hash. The text itself rides in the composed `instructions` string
+ * (or `processDocument`); the descriptor names what was composed so a
+ * runner or UI can compare versions without re-deriving composition.
+ */
+export interface InstructionBlockDescriptor {
+  kind: InstructionBlockKind;
+  /** sha256 (hex) of the exact block text as composed. */
+  sha256: string;
+}
+
+/**
+ * Full instruction packet returned from `GET /instructions`. Used by
  * the runner and the web UI to initialize themselves with team/
  * role/permissions/objectives context. Extends `Member` so the
  * caller's own name/role/permissions/instructions are flat at the
- * top level — teammates appear in the `teammates` list as the
- * public `Teammate` projection.
+ * top level — teammates appear in the `teammates` list as the public
+ * `Teammate` projection.
  */
-export interface BriefingResponse extends Member {
+export interface InstructionsResponse extends Member {
   team: Team;
   teammates: Teammate[];
   /** Objectives currently assigned to this member with status === 'active' or 'blocked'. */
@@ -331,7 +356,7 @@ export interface BriefingResponse extends Member {
    * open to all members). The runner merges these into the agent's
    * MCP toolbox as `<source>__<name>` and dispatches invocations back
    * to the broker. Structured field only — never rendered into the
-   * briefing prose (same staleness rule as `openObjectives`).
+   * composed instructions (same staleness rule as `openObjectives`).
    */
   toolSources: ResolvedToolSource[];
   /**
@@ -339,21 +364,43 @@ export interface BriefingResponse extends Member {
    * none has been set. Carried separately from `instructions` because
    * that field is authored by the member and this is authored by
    * whoever holds `process.manage` — one string would collapse two
-   * authorities into one field. (An 8192 cap on that field also
-   * motivated this historically; #122 removed it in #129 and the
-   * decision is unchanged.)
+   * authorities into one field.
    *
    * `undefined` when the broker did not send the field at all — an
    * older broker without the feature. Distinct from `null`, which is a
    * broker saying the team has no document.
    */
   processDocument?: ProcessDocument | null;
+  /**
+   * The named blocks composed into this packet, by content hash.
+   * Absent from brokers that predate the instruction-block model.
+   */
+  blocks?: InstructionBlockDescriptor[];
+  /**
+   * sha256 (hex) of the CANONICAL composition — the composed
+   * instructions with the transient broker/runner version line
+   * normalized out, plus the process-document text. This is the
+   * session's instruction-version identifier: the broker records it as
+   * "issued" on each fetch and compares it against the current
+   * composition to decide restart-pending. Two fetches that differ
+   * only in reported runner version share a hash by construction.
+   */
+  composedSha256?: string;
 }
 
 /** Response from `GET /roster`. */
 export interface RosterResponse {
   teammates: Teammate[];
   connected: Presence[];
+  /**
+   * Members whose current composed instructions differ from what
+   * their live session was issued — a restart at the next safe
+   * boundary picks up the edit. Absent from brokers that predate
+   * instruction versioning; empty when nothing is pending. A member
+   * whose issued version is unknown (broker restarted since their
+   * fetch) is NOT listed — unknown is not pending.
+   */
+  restartPending?: string[];
   /**
    * Window the broker applied when deciding whether an activity report
    * is recent. Optional for compatibility with older brokers.
@@ -443,7 +490,7 @@ export interface AddChannelMemberRequest {
 
 /**
  * A tool source is a platform-registered provider of external tools,
- * distributed to bound members via the briefing and invoked through
+ * distributed to bound members via the instruction packet and invoked through
  * the broker (the broker holds the third-party credential; the agent
  * never sees it).
  *
@@ -535,7 +582,7 @@ export interface CustomToolDef {
 }
 
 /**
- * One tool as resolved for a member's briefing — the projection the
+ * One tool as resolved for a member's instruction packet — the projection the
  * runner turns into an MCP tool named `<source>__<name>`.
  */
 export interface ResolvedTool {
@@ -544,7 +591,7 @@ export interface ResolvedTool {
   inputSchema: Record<string, unknown>;
 }
 
-/** A source and its resolved tools, as carried on the briefing. */
+/** A source and its resolved tools, as carried on the instruction packet. */
 export interface ResolvedToolSource {
   source: string;
   kind: ToolSourceKind;
@@ -625,7 +672,7 @@ export interface RefreshToolSourceResponse {
 // wire (set, never read back by any admin surface) and KEK-encrypted
 // at rest. A runner resolves the secrets bound to its member right
 // before spawning the agent and injects them as environment
-// variables on the agent child — they never appear in briefing
+// variables on the agent child — they never appear in instruction packet
 // prose, prompts, or MCP traffic. Delivery = enabled && (allMembers
 // || bound), the same rule as tool sources.
 

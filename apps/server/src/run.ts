@@ -69,7 +69,6 @@ import { createMcpClientManager, createSqliteToolSourceStore } from './tool-sour
 import { createSqliteVariablesStore, migrateIdentityToVariables } from './variables.js';
 import { SERVER_VERSION } from './version.js';
 
-export { briefingCaptureExemptions, composeBriefing } from './briefing.js';
 export { type DatabaseSyncInstance, openDatabase } from './db.js';
 export {
   DEFAULT_POLL_INTERVAL_S,
@@ -92,6 +91,11 @@ export {
   type GenAiStore,
 } from './genai-store.js';
 export { HttpsConfigError, type LoadedCert } from './https/store.js';
+export {
+  composedInstructionsSha256,
+  composeInstructions,
+  instructionCaptureExemptions,
+} from './instructions.js';
 export {
   createJwtVerifier,
   type JwtConfig,

@@ -9,7 +9,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { Client } from 'csuite-sdk/client';
 import type {
-  BriefingResponse,
+  InstructionsResponse,
   NotificationDelivery,
   NotificationEndpointSummary,
 } from 'csuite-sdk/types';
@@ -23,13 +23,13 @@ import {
   NotificationsPanel,
   parseTargetsInput,
 } from '../src/components/NotificationsPanel.js';
-import { __resetBriefingForTests, briefing } from '../src/lib/briefing.js';
 import { __resetClientForTests, setClient } from '../src/lib/client.js';
+import { __resetInstructionsForTests, instructions } from '../src/lib/instructions.js';
 import { __resetNotificationsForTests } from '../src/lib/notifications.js';
 
 const originalFetch = globalThis.fetch;
 
-function mkBriefing(permissions: BriefingResponse['permissions']): BriefingResponse {
+function mkPacket(permissions: InstructionsResponse['permissions']): InstructionsResponse {
   return {
     name: 'director-1',
     role: { title: 'director', description: '' },
@@ -126,7 +126,7 @@ function stubFetch(
 }
 
 beforeEach(() => {
-  __resetBriefingForTests();
+  __resetInstructionsForTests();
   __resetClientForTests();
   __resetNotificationsForTests();
   __resetNotificationsPanelForTests();
@@ -151,7 +151,7 @@ describe('parseTargetsInput', () => {
 
 describe('NotificationsPanel', () => {
   it('shows a restricted callout without notifications.manage', () => {
-    briefing.value = mkBriefing(['members.manage']);
+    instructions.value = mkPacket(['members.manage']);
     stubFetch([
       ['GET', '/notifications/endpoints', { endpoints: [] }],
       ['GET', '/notifications/profiles', { profiles: [] }],
@@ -161,7 +161,7 @@ describe('NotificationsPanel', () => {
   });
 
   it('lists endpoints with targets, badges, and a no-secret warning', async () => {
-    briefing.value = mkBriefing(['notifications.manage']);
+    instructions.value = mkPacket(['notifications.manage']);
     stubFetch([
       [
         'GET',
@@ -199,7 +199,7 @@ describe('NotificationsPanel', () => {
   });
 
   it('creates an endpoint from the form, parsing targets', async () => {
-    briefing.value = mkBriefing(['notifications.manage']);
+    instructions.value = mkPacket(['notifications.manage']);
     const captured: Captured[] = [];
     stubFetch(
       [
@@ -232,7 +232,7 @@ describe('NotificationsPanel', () => {
 
 describe('NotificationDetail', () => {
   it('sets the write-only secret and clears the input', async () => {
-    briefing.value = mkBriefing(['notifications.manage']);
+    instructions.value = mkPacket(['notifications.manage']);
     const captured: Captured[] = [];
     stubFetch(
       [
@@ -261,7 +261,7 @@ describe('NotificationDetail', () => {
   });
 
   it('renders delivery receipts and replays one', async () => {
-    briefing.value = mkBriefing(['notifications.manage']);
+    instructions.value = mkPacket(['notifications.manage']);
     const captured: Captured[] = [];
     stubFetch(
       [

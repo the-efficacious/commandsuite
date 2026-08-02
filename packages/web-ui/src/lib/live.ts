@@ -23,10 +23,12 @@
 import { signal } from '@preact/signals';
 import { MessageSchema } from 'csuite-sdk/schemas';
 import { getClient } from './client.js';
+import { loadInstructions } from './instructions.js';
 import { appendMessages } from './messages.js';
 import { loadNotificationEndpoints } from './notifications.js';
 import { notifyNewMessage } from './notify.js';
 import { loadObjectives } from './objectives.js';
+import { loadRoster } from './roster.js';
 import { loadSecrets } from './secrets.js';
 import { loadToolSources } from './tool-sources.js';
 
@@ -137,6 +139,19 @@ export function startSubscribe(options: StartSubscribeOptions): () => void {
         if (data && data.kind === 'objective') {
           void loadObjectives().catch(() => {
             /* swallow — next event will retry */
+          });
+        }
+        if (data && data.kind === 'instructions') {
+          // An instruction-bearing edit landed. Both the packet (team
+          // context / process document prose) and the roster's
+          // restart-pending list are stale; the 10s roster poll would
+          // catch up, but the badge appearing the moment the edit
+          // fans out is the point of the event.
+          void loadInstructions().catch(() => {
+            /* next instructions event retries */
+          });
+          void loadRoster().catch(() => {
+            /* next instructions event retries */
           });
         }
       } catch (err) {

@@ -1,7 +1,7 @@
 /**
  * Team-scoped store — structural extension point for multi-team hosts.
  *
- * Today the app uses module-level singletons (`briefing`, `roster`,
+ * Today the app uses module-level singletons (`instructions`, `roster`,
  * `messagesByThread`, `objectives`, `lastReadByThread`) because each
  * shell instance serves one team. That works fine for N=1 but leaks
  * state if a host ever mounts two teams in the same tab.
@@ -9,7 +9,7 @@
  * The intended swap when a host wants N teams per user is:
  *
  *   const store = useTeamStore(activeTeamId);
- *   const b = store.briefing.value;
+ *   const b = store.instructions.value;
  *
  * Each `createTeamStore(teamId)` returns a fresh bundle of signals
  * and a dispose() that tears down subscriptions / clears caches. A
@@ -20,7 +20,7 @@
  * singletons are the live store; wiring a factory is a separate
  * migration that lands alongside server-side team scoping.
  *
- * When you touch this file: update `lib/briefing.ts`, `lib/roster.ts`,
+ * When you touch this file: update `lib/instructions.ts`, `lib/roster.ts`,
  * `lib/messages.ts`, `lib/objectives.ts`, and `lib/unread.ts` to
  * accept a teamId and return scoped instances. The live stream URL
  * also gains a team segment so reconnects don't cross-subscribe.

@@ -127,3 +127,7 @@ jspm_packages/
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 exports/
+
+# Station VM image build products — multi-GB rootfs/kernel artifacts,
+# never repo content. `git add .` once tried to pack 5.2G of this.
+stations/*/out/

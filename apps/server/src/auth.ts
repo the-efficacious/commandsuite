@@ -24,7 +24,7 @@
  * auth error, not an "unknown opaque token".
  *
  * All three paths attach the same `LoadedMember` to `c.var.member`.
- * Downstream handlers (/briefing, /push, /subscribe, /history) don't
+ * Downstream handlers (/instructions, /push, /subscribe, /history) don't
  * care which plane authenticated the request — the identity surface
  * is the member.
  */

@@ -12,7 +12,7 @@ import { signal } from '@preact/signals';
 import type { ToolSourceKind, ToolSourceSummary } from 'csuite-sdk/types';
 import { hasPermission } from 'csuite-sdk/types';
 import { useEffect } from 'preact/hooks';
-import { briefing } from '../lib/briefing.js';
+import { instructions } from '../lib/instructions.js';
 import {
   createToolSource,
   loadToolSources,
@@ -33,7 +33,7 @@ const formError = signal<string | null>(null);
 const formBusy = signal(false);
 
 export function ToolSourcesPanel() {
-  const b = briefing.value;
+  const b = instructions.value;
 
   useEffect(() => {
     void loadToolSources();

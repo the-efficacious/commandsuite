@@ -9,7 +9,7 @@
  *     (`resolveClaudeExecutable`: `CLAUDE_PATH` override or the SDK's
  *     bundled per-platform CLI)
  *   - composing the SDK `Options`: the csuite MCP bridge entry, the
- *     briefing pinned into the Claude Code system-prompt preset, the
+ *     instructions pinned into the Claude Code system-prompt preset, the
  *     `bypassPermissions` posture, model/resume knobs, and the child
  *     env (broker secrets + the capture host's OTEL delta)
  *   - the channel sink (broker events → SDK streaming input) and the
@@ -20,7 +20,7 @@
  *
  * Nothing is written to the member's working tree: the MCP config
  * travels inline on the CLI invocation the SDK composes, hooks are
- * in-process callbacks, and the briefing rides an SDK option — so
+ * in-process callbacks, and the instructions rides an SDK option — so
  * `prepare()` has no cleanup to speak of. The member's own Claude
  * config (`~/.claude`, project `.claude/`, CLAUDE.md) still loads
  * exactly as it would under a plain `claude` invocation; csuite adds
@@ -195,18 +195,77 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   });
 }
 
+/**
+ * uid-0 posture. Claude refuses `--dangerously-skip-permissions` as
+ * root, so a root session is a hard preflight FAIL — unless the
+ * environment DECLARES a root container via IS_SANDBOX, which the
+ * vendor reads for presence (not truth): the refusal is skipped, the
+ * session runs, and nothing constrains what it writes — the whole
+ * filesystem is root-writable. That earns a WARN, not silence.
+ */
+function claudeRootCheck(): AgentDoctorCheck {
+  const name = 'not running as root';
+  const uid = typeof process.getuid === 'function' ? process.getuid() : null;
+  if (uid === null) {
+    return {
+      name,
+      status: 'WARN',
+      detail:
+        'no effective uid on this platform — cannot verify the session user; a ' +
+        'root session would surface at spawn instead',
+    };
+  }
+  if (uid !== 0) {
+    return { name, status: 'PASS', detail: `uid ${uid}` };
+  }
+  const sudoUser = process.env.SUDO_USER;
+  const sudoPart =
+    sudoUser !== undefined && sudoUser !== '' && sudoUser !== 'root'
+      ? ` Drop the sudo to run as ${sudoUser}.`
+      : '';
+  const sandbox = process.env.IS_SANDBOX;
+  if (sandbox !== undefined && sandbox !== '') {
+    return {
+      name,
+      status: 'WARN',
+      detail:
+        'uid 0 with IS_SANDBOX set — claude skips its root refusal in declared ' +
+        'containers, so the session runs; nothing constrains what it writes, and ' +
+        `the whole filesystem is root-writable.${sudoPart}`,
+    };
+  }
+  return {
+    name,
+    status: 'FAIL',
+    detail:
+      'uid 0 — claude refuses --dangerously-skip-permissions as root, and the ' +
+      'runner depends on that flag. Run csuite claude from an ordinary user ' +
+      `account.${sudoPart}`,
+  };
+}
+
 export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter {
   let executable: ClaudeExecutable | null = null;
-  // Populated by prepare(), consumed by spawn().
+  // Populated by prepare(), consumed by spawn(); the mutable parts
+  // (systemPrompt, resume/sessionId) are refreshed by respawn().
   let sdkOptions: SdkOptions = {};
 
   // Streaming-input queue + channel sink, live from construction: the
   // runner needs a sink before the agent spawns, and events arriving
   // during the SDK subprocess's cold start simply wait in the stream.
-  const queue = new ClaudeMessageQueue();
+  // A REF, not a const queue: the sink reads it at flush time, so a
+  // restart re-points it at a fresh queue (detachForRestart) and the
+  // swap window buffers for the successor instead of dropping.
+  const queueRef = { current: new ClaudeMessageQueue() };
   let sink: ClaudeChannelSink | null = null;
 
-  return {
+  // What resume posture the NEXT spawn uses. Starts as the operator's
+  // choice; respawn() overrides it with the predecessor's session id
+  // so the successor continues the same conversation under the new
+  // system prompt.
+  let effectiveResume: string | true | undefined = options.resume;
+
+  const adapter: AgentAdapter = {
     meta: CLAUDE_META,
 
     locate(): void {
@@ -219,7 +278,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
 
     runnerOptions() {
       sink = createClaudeChannelSink({
-        queue,
+        getQueue: () => queueRef.current,
         log: (msg, ctx) => {
           // The session log isn't created yet when runnerOptions() is
           // called; route through stderr-JSON like other pre-session
@@ -258,7 +317,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
         });
       }
 
-      const briefing = composeFixedContext(runner.briefing);
+      const instructions = composeFixedContext(runner.instructions);
       sdkOptions = {
         cwd,
         env,
@@ -275,11 +334,11 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
           },
         },
         // Claude Code's own system prompt with the composed team
-        // briefing pinned on top — the SDK-native form of the old
+        // instructions pinned on top — the SDK-native form of the old
         // `--append-system-prompt` injection.
         systemPrompt:
-          briefing.length > 0
-            ? { type: 'preset', preset: 'claude_code', append: briefing }
+          instructions.length > 0
+            ? { type: 'preset', preset: 'claude_code', append: instructions }
             : { type: 'preset', preset: 'claude_code' },
         // Team authority is the access control; the agent runs
         // unleashed, same posture as the CLI wrapper injected via
@@ -287,9 +346,9 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
         permissionMode: 'bypassPermissions',
         allowDangerouslySkipPermissions: true,
         ...(options.model !== undefined ? { model: options.model } : {}),
-        ...(typeof options.resume === 'string'
-          ? { resume: options.resume }
-          : options.resume === true
+        ...(typeof effectiveResume === 'string'
+          ? { resume: effectiveResume }
+          : effectiveResume === true
             ? { continue: true }
             : {}),
         ...(runner.captureHost !== null
@@ -305,14 +364,14 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
         }`,
         'csuite claude: posture = bypassPermissions (team authority is the access control)',
       );
-      if (briefing.length > 0) {
+      if (instructions.length > 0) {
         bannerLines.push(
-          `csuite claude: briefing pinned to system prompt (${briefing.length} chars)`,
+          `csuite claude: instructions pinned to system prompt (${instructions.length} chars)`,
         );
       }
-      if (typeof options.resume === 'string') {
-        bannerLines.push(`csuite claude: resuming session ${options.resume}`);
-      } else if (options.resume === true) {
+      if (typeof effectiveResume === 'string') {
+        bannerLines.push(`csuite claude: resuming session ${effectiveResume}`);
+      } else if (effectiveResume === true) {
         bannerLines.push('csuite claude: continuing most recent session in this directory');
       }
 
@@ -322,6 +381,10 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
 
     async spawn(ctx: AgentSessionContext): Promise<AgentProcess> {
       const { runner, log } = ctx;
+      // Captured per spawn: a respawn re-points `queueRef` first, so
+      // this generation's stream, depth checks, and shutdown all act
+      // on ITS queue while the successor's fills behind it.
+      const queue = queueRef.current;
 
       let child: ChildProcess | null = null;
       let resolveExit!: (code: number) => void;
@@ -371,7 +434,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
       // the session. Resume/continue sessions take their id from `init`
       // instead (the SDK forbids combining `sessionId` with them).
       let sessionId: string | null = null;
-      if (options.resume === undefined) {
+      if (effectiveResume === undefined) {
         sessionId = randomUUID();
         sdkOptions.sessionId = sessionId;
       }
@@ -379,7 +442,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
       log('claude: starting agent sdk session', {
         executable: executable?.path,
         model: options.model ?? null,
-        resume: options.resume ?? null,
+        resume: effectiveResume ?? null,
         sessionId,
         cwd: ctx.cwd,
       });
@@ -435,7 +498,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
           ? `csuite claude: session ${sessionId} — pick it up later with: csuite claude --resume ${sessionId}\n`
           : '') +
           `csuite claude: agent running headless — Ctrl-C to stop. Direct it via the broker:\n` +
-          `    csuite push --agent ${runner.briefing.name} --body "your instructions"\n\n`,
+          `    csuite push --agent ${runner.instructions.name} --body "your instructions"\n\n`,
       );
 
       // HUD strip — same chrome as `csuite codex`: a 2-row footer
@@ -445,7 +508,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
       // `redraw()` because there is no PTY relay driving repaints.
       const hud: HudHandle = startHud({
         presence: ctx.presence,
-        label: `csuite claude · ${runner.briefing.name}`,
+        label: `csuite claude · ${runner.instructions.name}`,
         reserveBottomSpace: true,
         log,
       });
@@ -492,29 +555,55 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
       };
     },
 
-    async doctor(): Promise<AgentDoctorCheck[]> {
-      const resolved = executable ?? resolveClaudeExecutable();
-      const checks: AgentDoctorCheck[] = [
-        {
-          name: 'claude agent sdk',
-          status: 'PASS',
-          detail: `@anthropic-ai/claude-agent-sdk ${resolved.sdkVersion ?? 'unknown version'}`,
-        },
-      ];
-      if (resolved.source === 'env') {
-        checks.push({
-          name: 'claude executable',
-          status: 'WARN',
-          detail: `CLAUDE_PATH override in effect: ${resolved.path} (the SDK's bundled Claude Code is bypassed)`,
-        });
+    detachForRestart(): void {
+      // Ambient input re-points to the successor's queue. The old
+      // queue keeps whatever the dying generation has not consumed;
+      // its shutdown logs and drops those (the broker replays unread
+      // messages on the next subscribe anyway).
+      queueRef.current = new ClaudeMessageQueue();
+    },
+
+    async respawn(
+      ctx: AgentSessionContext,
+      prior: { sessionId: string | null },
+    ): Promise<AgentProcess> {
+      const fresh = composeFixedContext(ctx.runner.instructions);
+      // The three mutable spawn inputs, recomputed: system prompt from
+      // the runner's CURRENT packet, resume posture from the
+      // predecessor, and no minted session id (the SDK forbids
+      // combining `sessionId` with resume/continue).
+      sdkOptions.systemPrompt =
+        fresh.length > 0
+          ? { type: 'preset', preset: 'claude_code', append: fresh }
+          : { type: 'preset', preset: 'claude_code' };
+      delete sdkOptions.sessionId;
+      delete sdkOptions.continue;
+      if (prior.sessionId !== null) {
+        effectiveResume = prior.sessionId;
+        sdkOptions.resume = prior.sessionId;
       } else {
-        checks.push({
-          name: 'claude executable',
-          status: 'PASS',
-          detail: `bundled Claude Code ${resolved.bundledCliVersion ?? 'unknown version'} at ${resolved.path}`,
-        });
+        // Predecessor never revealed an id (it may never have run a
+        // turn). Continue the most recent session in this cwd rather
+        // than starting cold.
+        effectiveResume = true;
+        delete sdkOptions.resume;
+        sdkOptions.continue = true;
       }
-      return checks;
+      ctx.log('claude: respawning with refreshed instructions', {
+        instructionChars: fresh.length,
+        resume: effectiveResume,
+      });
+      return adapter.spawn(ctx);
+    },
+
+    async doctor(): Promise<AgentDoctorCheck[]> {
+      // Binary/SDK facts are the shared `<id> binary` host check and
+      // the prepare() banner; the adapter's own preflight is the one
+      // property only this framework cares about this hard: claude
+      // refuses `--dangerously-skip-permissions` as root, and the
+      // runner depends on that flag.
+      return [claudeRootCheck()];
     },
   };
+  return adapter;
 }

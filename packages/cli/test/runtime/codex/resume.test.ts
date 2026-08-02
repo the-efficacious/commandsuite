@@ -53,7 +53,7 @@ vi.mock('../../../src/runtime/agents/codex/channel-sink.js', () => ({
   })),
 }));
 
-import type { BriefingResponse } from 'csuite-sdk/types';
+import type { InstructionsResponse } from 'csuite-sdk/types';
 import {
   CodexAdapterError,
   findLatestThreadId,
@@ -79,11 +79,11 @@ function makeFakeChild() {
   return child;
 }
 
-const MINIMAL_BRIEFING: BriefingResponse = {
+const MINIMAL_PACKET: InstructionsResponse = {
   name: 'test-agent',
   role: { title: 'tester', description: '' },
   team: { name: 'test-team', context: '', permissionPresets: {} },
-  instructions: 'briefing prose',
+  instructions: 'instructions prose',
   permissions: [],
   teammates: [],
   openObjectives: [],
@@ -95,7 +95,7 @@ const THREAD_A = '019f0000-0000-7000-8000-00000000000a';
 const THREAD_B = '019f0000-0000-7000-8000-00000000000b';
 
 const BASE_OPTS = {
-  briefing: MINIMAL_BRIEFING,
+  instructions: MINIMAL_PACKET,
   runnerSocketPath: '/tmp/sock',
   bridgeCommand: '/usr/bin/node',
   bridgeArgs: ['/path/to/cli', 'mcp-bridge'],
@@ -163,12 +163,12 @@ describe('spawnCodex — resume', () => {
     expect(resumeCall?.[1]).toMatchObject({
       threadId: THREAD_B,
       cwd: '/tmp',
-      // Composed, not the raw briefing string: the runner hands the
+      // Composed, not the raw instructions string: the runner hands the
       // agent `instructions` PLUS the process-document block. With no
       // document set that block is an explicit line rather than
       // nothing, so a member can tell "the team has no process" apart
       // from "my runner cannot read that field".
-      developerInstructions: composeFixedContext(MINIMAL_BRIEFING),
+      developerInstructions: composeFixedContext(MINIMAL_PACKET),
       approvalPolicy: 'never',
       sandbox: 'danger-full-access',
     });

@@ -80,7 +80,7 @@ export interface InitializeResponse {
 
 /**
  * `thread/start` — open a fresh codex thread. Carries our composed
- * briefing as `developerInstructions`, pins the cwd, and forces
+ * instructions as `developerInstructions`, pins the cwd, and forces
  * `approvalPolicy: "never"` + `sandbox: "workspace-write"` so headless
  * runs never block on a UI elicitation. See `protocol/v2.rs`
  * `ThreadStartParams`.

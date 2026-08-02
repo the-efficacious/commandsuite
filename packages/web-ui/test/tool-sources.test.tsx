@@ -7,20 +7,20 @@
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { Client } from 'csuite-sdk/client';
-import type { BriefingResponse, ToolSourceSummary } from 'csuite-sdk/types';
+import type { InstructionsResponse, ToolSourceSummary } from 'csuite-sdk/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ToolSourceDetail } from '../src/components/ToolSourceDetail.js';
 import {
   __resetToolSourcesPanelForTests,
   ToolSourcesPanel,
 } from '../src/components/ToolSourcesPanel.js';
-import { __resetBriefingForTests, briefing } from '../src/lib/briefing.js';
 import { __resetClientForTests, setClient } from '../src/lib/client.js';
+import { __resetInstructionsForTests, instructions } from '../src/lib/instructions.js';
 import { __resetToolSourcesForTests, toolSources } from '../src/lib/tool-sources.js';
 
 const originalFetch = globalThis.fetch;
 
-function mkBriefing(permissions: BriefingResponse['permissions']): BriefingResponse {
+function mkPacket(permissions: InstructionsResponse['permissions']): InstructionsResponse {
   return {
     name: 'director-1',
     role: { title: 'director', description: '' },
@@ -85,7 +85,7 @@ function stubFetch(
 }
 
 beforeEach(() => {
-  __resetBriefingForTests();
+  __resetInstructionsForTests();
   __resetClientForTests();
   __resetToolSourcesForTests();
   __resetToolSourcesPanelForTests();
@@ -98,14 +98,14 @@ afterEach(() => {
 
 describe('ToolSourcesPanel', () => {
   it('shows a restricted callout without tools.manage', () => {
-    briefing.value = mkBriefing(['members.manage']);
+    instructions.value = mkPacket(['members.manage']);
     stubFetch([['GET', '/tool-sources', { sources: [] }]]);
     render(<ToolSourcesPanel />);
     expect(screen.getByText(/requires the tools\.manage permission/i)).toBeTruthy();
   });
 
   it('lists sources with kind + credential state and links to detail', async () => {
-    briefing.value = mkBriefing(['tools.manage']);
+    instructions.value = mkPacket(['tools.manage']);
     stubFetch([
       [
         'GET',
@@ -136,7 +136,7 @@ describe('ToolSourcesPanel', () => {
   });
 
   it('shows the empty state when the registry is empty', async () => {
-    briefing.value = mkBriefing(['tools.manage']);
+    instructions.value = mkPacket(['tools.manage']);
     stubFetch([['GET', '/tool-sources', { sources: [] }]]);
     render(<ToolSourcesPanel />);
     await waitFor(() => {
@@ -145,7 +145,7 @@ describe('ToolSourcesPanel', () => {
   });
 
   it('creates a source via the inline form (POST /tool-sources)', async () => {
-    briefing.value = mkBriefing(['tools.manage']);
+    instructions.value = mkPacket(['tools.manage']);
     const captured: Captured[] = [];
     stubFetch(
       [
@@ -176,7 +176,7 @@ describe('ToolSourcesPanel', () => {
 
 describe('ToolSourceDetail', () => {
   it('renders sections and binds a member', async () => {
-    briefing.value = mkBriefing(['tools.manage']);
+    instructions.value = mkPacket(['tools.manage']);
     toolSources.value = [mkSource()];
     const captured: Captured[] = [];
     stubFetch(
@@ -221,7 +221,7 @@ describe('ToolSourceDetail', () => {
   });
 
   it('sets a credential write-only (PUT /credential)', async () => {
-    briefing.value = mkBriefing(['tools.manage']);
+    instructions.value = mkPacket(['tools.manage']);
     toolSources.value = [mkSource({ hasCredential: false })];
     const captured: Captured[] = [];
     stubFetch(
@@ -246,7 +246,7 @@ describe('ToolSourceDetail', () => {
   });
 
   it('requires a second click to delete', async () => {
-    briefing.value = mkBriefing(['tools.manage']);
+    instructions.value = mkPacket(['tools.manage']);
     toolSources.value = [mkSource()];
     const captured: Captured[] = [];
     stubFetch(

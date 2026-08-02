@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
+  <style>
+    :root { --mark: #3E5C76; }
+    @media (prefers-color-scheme: dark) { :root { --mark: #E6EEF5; } }
+  </style>
+  <polygon fill="none" stroke="var(--mark)" stroke-width="3" stroke-linejoin="round"
+    points="60,15 95.18,31.94 103.87,70.01 79.52,100.54 40.48,100.54 16.13,70.01 24.82,31.94"/>
+  <circle cx="60"     cy="15"     r="10" fill="var(--mark)"/>
+  <circle cx="95.18"  cy="31.94"  r="10" fill="var(--mark)"/>
+  <circle cx="103.87" cy="70.01"  r="10" fill="var(--mark)"/>
+  <circle cx="79.52"  cy="100.54" r="10" fill="var(--mark)"/>
+  <circle cx="40.48"  cy="100.54" r="10" fill="var(--mark)"/>
+  <circle cx="16.13"  cy="70.01"  r="10" fill="var(--mark)"/>
+  <circle cx="24.82"  cy="31.94"  r="10" fill="var(--mark)"/>
+</svg>

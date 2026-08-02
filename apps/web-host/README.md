@@ -29,7 +29,7 @@ cd apps/server && node dist/index.js
 cd apps/web-host && pnpm dev
 ```
 
-Open <http://localhost:5173/>. Vite proxies every API path (`/briefing`, `/roster`, `/push`, `/subscribe`, `/history`, `/session/*`, `/push/*`) through to the Hono broker on `:8717`, with `ws: true` on the proxies so WebSocket upgrades, cookies, and push all work through the dev server.
+Open <http://localhost:5173/>. Vite proxies every API path (`/instructions`, `/roster`, `/push`, `/subscribe`, `/history`, `/session/*`, `/push/*`) through to the Hono broker on `:8717`, with `ws: true` on the proxies so WebSocket upgrades, cookies, and push all work through the dev server.
 
 Production builds output directly into `apps/server/public/` so the next `csuite-server` build picks up the new bundle without a copy step.
 

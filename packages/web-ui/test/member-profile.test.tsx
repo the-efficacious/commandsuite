@@ -15,7 +15,12 @@
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { Client } from 'csuite-sdk/client';
-import type { ActivityRow, BriefingResponse, Objective, RosterResponse } from 'csuite-sdk/types';
+import type {
+  ActivityRow,
+  InstructionsResponse,
+  Objective,
+  RosterResponse,
+} from 'csuite-sdk/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   __resetAgentTimelineForTests,
@@ -26,8 +31,8 @@ import {
   simplifyToolResult,
 } from '../src/components/AgentTimeline.js';
 import { MemberProfile } from '../src/components/MemberProfile.js';
-import { briefing } from '../src/lib/briefing.js';
 import { __resetClientForTests, setClient } from '../src/lib/client.js';
+import { instructions } from '../src/lib/instructions.js';
 import {
   __resetMemberActivityForTests,
   memberActivityLoading,
@@ -39,7 +44,7 @@ import { roster } from '../src/lib/roster.js';
 
 const originalFetch = globalThis.fetch;
 
-const COMMANDER_BRIEFING: BriefingResponse = {
+const COMMANDER_PACKET: InstructionsResponse = {
   name: 'director-1',
   role: { title: 'director', description: '' },
   permissions: ['members.manage'],
@@ -58,8 +63,8 @@ const COMMANDER_BRIEFING: BriefingResponse = {
   instructions: 'Lead the team.',
 };
 
-const OPERATOR_BRIEFING: BriefingResponse = {
-  ...COMMANDER_BRIEFING,
+const OPERATOR_PACKET: InstructionsResponse = {
+  ...COMMANDER_PACKET,
   name: 'engineer-1',
   role: { title: 'engineer', description: '' },
   permissions: [],
@@ -231,7 +236,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
-  briefing.value = null;
+  instructions.value = null;
   roster.value = null;
   objectivesSignal.value = [];
   __resetMemberActivityForTests();
@@ -246,7 +251,7 @@ afterEach(() => {
 
 describe('MemberProfile', () => {
   it('non-admins see the profile but not the Activity or Manage tabs', () => {
-    briefing.value = OPERATOR_BRIEFING;
+    instructions.value = OPERATOR_PACKET;
     render(<MemberProfile name="engineer-1" tab="overview" viewer="engineer-1" />);
     expect(screen.getByRole('heading', { name: /engineer-1/ })).toBeTruthy();
     expect(screen.queryByRole('tab', { name: /activity/i })).toBeNull();
@@ -257,7 +262,7 @@ describe('MemberProfile', () => {
   });
 
   it('shows the member header and metadata for admins', () => {
-    briefing.value = COMMANDER_BRIEFING;
+    instructions.value = COMMANDER_PACKET;
     memberActivityName.value = 'engineer-1';
     render(<MemberProfile name="engineer-1" tab="overview" viewer="director-1" />);
     expect(screen.getByRole('heading', { name: /engineer-1/ })).toBeTruthy();
@@ -268,19 +273,19 @@ describe('MemberProfile', () => {
   });
 
   it('shows the "DM" shortcut when viewer is not the target member', () => {
-    briefing.value = COMMANDER_BRIEFING;
+    instructions.value = COMMANDER_PACKET;
     render(<MemberProfile name="engineer-1" tab="overview" viewer="director-1" />);
     expect(screen.getByText(/DM engineer-1/)).toBeTruthy();
   });
 
   it('does NOT show the DM shortcut when viewing your own profile', () => {
-    briefing.value = COMMANDER_BRIEFING;
+    instructions.value = COMMANDER_PACKET;
     render(<MemberProfile name="director-1" tab="overview" viewer="director-1" />);
     expect(screen.queryByText(/DM director-1/)).toBeNull();
   });
 
   it('switches to the objectives tab when that tab is active', () => {
-    briefing.value = COMMANDER_BRIEFING;
+    instructions.value = COMMANDER_PACKET;
     render(<MemberProfile name="engineer-1" tab="objectives" viewer="director-1" />);
     expect(screen.getByText(/Ship the feature/)).toBeTruthy();
   });
@@ -288,7 +293,7 @@ describe('MemberProfile', () => {
 
 describe('AgentTimeline', () => {
   it('renders each event kind with distinct affordances', () => {
-    briefing.value = COMMANDER_BRIEFING;
+    instructions.value = COMMANDER_PACKET;
     memberActivityRows.value = [CLOSE_ROW, OPEN_ROW, TOOL_ROW, LLM_ROW];
     memberActivityLoading.value = false;
     const { container } = render(<AgentTimeline />);
@@ -309,7 +314,7 @@ describe('AgentTimeline', () => {
   });
 
   it('folds a tool result into its call card and renders MCP names as server · tool', () => {
-    briefing.value = COMMANDER_BRIEFING;
+    instructions.value = COMMANDER_PACKET;
     memberActivityRows.value = [
       mcpTurnRow(1, 1_700_000_000_000, 'tu_send', 'mcp__csuite__send', {
         to: 'AndrewJon',
@@ -333,7 +338,7 @@ describe('AgentTimeline', () => {
   });
 
   it('shows the empty placeholder when no rows are loaded', () => {
-    briefing.value = COMMANDER_BRIEFING;
+    instructions.value = COMMANDER_PACKET;
     memberActivityRows.value = [];
     memberActivityLoading.value = false;
     render(<AgentTimeline />);
@@ -341,7 +346,7 @@ describe('AgentTimeline', () => {
   });
 
   it('filter toggle hides and shows the matching event kind', () => {
-    briefing.value = COMMANDER_BRIEFING;
+    instructions.value = COMMANDER_PACKET;
     memberActivityRows.value = [LLM_ROW, TOOL_ROW];
     memberActivityLoading.value = false;
     render(<AgentTimeline />);
@@ -367,7 +372,7 @@ describe('AgentTimeline', () => {
   });
 
   it('renders a codex turn (thinking then text) with no false response-only banner', () => {
-    briefing.value = COMMANDER_BRIEFING;
+    instructions.value = COMMANDER_PACKET;
     memberActivityRows.value = [codexRow(1, 1_700_000_000_000, 'reasoning here', 'codex answer')];
     memberActivityLoading.value = false;
     const { container } = render(<AgentTimeline />);
@@ -383,7 +388,7 @@ describe('AgentTimeline', () => {
   });
 
   it('renders a thinking block as distinct muted reasoning, labeled apart from the answer', () => {
-    briefing.value = COMMANDER_BRIEFING;
+    instructions.value = COMMANDER_PACKET;
     memberActivityRows.value = [
       codexRow(1, 1_700_000_000_000, 'let me reason', 'the final answer'),
     ];
@@ -407,7 +412,7 @@ describe('AgentTimeline', () => {
   });
 
   it('renders a user_prompt as a muted opener block', () => {
-    briefing.value = COMMANDER_BRIEFING;
+    instructions.value = COMMANDER_PACKET;
     memberActivityRows.value = [promptRow(1, 1_700_000_000_000, 'wake up and ship it')];
     memberActivityLoading.value = false;
     const { container } = render(<AgentTimeline />);
@@ -801,7 +806,7 @@ describe('AgentTimeline — turn spine rendering', () => {
   });
 
   it('renders the clean stream with a collapsed "full context" affordance, then lazy-loads the body by id', async () => {
-    briefing.value = COMMANDER_BRIEFING;
+    instructions.value = COMMANDER_PACKET;
     memberActivityName.value = 'engineer-1';
     const urls = routeGenaiRecord(GENAI_RECORD);
     memberActivityRows.value = [LLM_ROW];
@@ -837,7 +842,7 @@ describe('AgentTimeline — turn spine rendering', () => {
   });
 
   it('shows an honest "not captured" when the hydrated ledger has no call for the turn', async () => {
-    briefing.value = COMMANDER_BRIEFING;
+    instructions.value = COMMANDER_PACKET;
     memberActivityName.value = 'engineer-1';
     routeGenaiRecord(null);
     memberActivityRows.value = [LLM_ROW];
@@ -858,7 +863,7 @@ describe('AgentTimeline — turn spine rendering', () => {
   });
 
   it('distinguishes a failed exact identity from an id-less marker-only turn', async () => {
-    briefing.value = COMMANDER_BRIEFING;
+    instructions.value = COMMANDER_PACKET;
     memberActivityName.value = 'engineer-1';
     routeGenaiRecord(null);
     const event = LLM_ROW.event;
@@ -902,7 +907,7 @@ describe('AgentTimeline — turn spine rendering', () => {
 
   it('renders turnless calls as attributed ghost rows, toggleable via the api-calls chip', async () => {
     __resetAgentTimelineForTests();
-    briefing.value = COMMANDER_BRIEFING;
+    instructions.value = COMMANDER_PACKET;
     memberActivityName.value = 'engineer-1';
     routeGenaiRecord(null);
     const sidecar: GenAiInferenceSummary = {

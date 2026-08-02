@@ -14,7 +14,6 @@ import { signal } from '@preact/signals';
 import type { ChannelMember, ChannelSummary, Teammate } from 'csuite-sdk/types';
 import type { JSX } from 'preact';
 import { useEffect } from 'preact/hooks';
-import { briefing } from '../lib/briefing.js';
 import {
   addChannelMember,
   archiveChannel,
@@ -23,6 +22,7 @@ import {
   renameChannel,
 } from '../lib/channels.js';
 import { getClient } from '../lib/client.js';
+import { instructions } from '../lib/instructions.js';
 import { roster } from '../lib/roster.js';
 import { selectChannelsBrowse } from '../lib/view.js';
 import { AlertCircle, X } from './icons/index.js';
@@ -51,7 +51,7 @@ const detailError = signal<string | null>(null);
 export function ChannelSettings({ channel, viewer, onClose }: ChannelSettingsProps) {
   const isAdmin = channel.myRole === 'admin';
   const members = detailMembers.value;
-  const teammates: Teammate[] = roster.value?.teammates ?? briefing.value?.teammates ?? [];
+  const teammates: Teammate[] = roster.value?.teammates ?? instructions.value?.teammates ?? [];
 
   // Refresh on channel change so opening settings shows current
   // members. The signal lifetime spans the panel; we don't reset

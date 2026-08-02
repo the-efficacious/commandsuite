@@ -183,11 +183,11 @@ describe('mcp tool sources', () => {
     const second = await app.request('/tool-sources/up/refresh', authed(ADMIN, undefined, 'POST'));
     expect(((await second.json()) as { changed: boolean }).changed).toBe(false);
 
-    // The briefing now resolves the discovered tool for bound members.
-    const briefing = (await (await app.request('/briefing', authed(BOUND))).json()) as {
+    // The packet now resolves the discovered tool for bound members.
+    const packet = (await (await app.request('/instructions', authed(BOUND))).json()) as {
       toolSources: Array<{ source: string; tools: Array<{ name: string }> }>;
     };
-    expect(briefing.toolSources[0]?.tools[0]?.name).toBe('echo');
+    expect(packet.toolSources[0]?.tools[0]?.name).toBe('echo');
   });
 
   it('relays tools/call through the credentialed upstream connection', async () => {

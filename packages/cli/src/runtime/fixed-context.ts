@@ -1,25 +1,16 @@
 /**
  * Fixed context — what the runner hands the agent as its standing
- * instructions: the broker's composed briefing plus the team's process
+ * instructions: the broker's composed instructions plus the team's process
  * document.
  *
- * WHY THE DOCUMENT ARRIVES IN ITS OWN FIELD. Three reasons, and only
- * the last one is durable:
- *
- *   1. `BriefingResponse.instructions` inherited `MemberSchema`'s
- *      8192 cap, which made an oversized document fatal rather than
- *      truncating. DEAD — #122 landed in #129 and no cap remains in
- *      source.
- *   2. A deployed runner keeps validating that cap locally whatever
- *      the broker does. STILL TRUE: the deployed 0.3.4 rejects >8192
- *      and does not start. Expires when every runner upgrades.
- *   3. A member authors their own `instructions`; the process document
- *      is authored by whoever holds `process.manage`. One string
- *      collapses two authorities into one field. Never expires.
- *
- * Reason 1 has already expired and this field is still right. Build to
- * reason 3, and do not merge them on the grounds that the cap is gone
- * — that was never the load-bearing argument.
+ * WHY THE DOCUMENT ARRIVES IN ITS OWN FIELD: a member authors their
+ * own `instructions`; the process document is authored by whoever
+ * holds `process.manage`. One string collapses two authorities into
+ * one field. (A wire cap once also motivated the split; every cap-era
+ * reason is dead — the cap in #129, the legacy-runner accommodation
+ * with the last pre-rename deployment — and the split stands on
+ * authority separation alone. Do not merge them on the grounds that
+ * the cap is gone; it was never the load-bearing argument.)
  *
  * WHY ABSENCE RENDERS AS A LINE RATHER THAN AS NOTHING. Three states
  * collapse into one if a missing document renders nothing:
@@ -57,7 +48,7 @@
  * so absence cannot be asserted and nothing is re-sent (`#118`).
  */
 
-import type { BriefingResponse, ProcessDocument } from 'csuite-sdk/types';
+import type { InstructionsResponse, ProcessDocument } from 'csuite-sdk/types';
 
 const HEADING = 'Team process. This is current state, edited in place — what you see here is';
 const SUBHEAD = 'what applies now. Ask the broker for its history rather than assuming the text';
@@ -96,14 +87,13 @@ export function renderProcessDocumentBlock(doc: ProcessDocument | null | undefin
 /**
  * Everything the agent receives as standing instructions.
  *
- * Both adapters previously read `briefing.instructions` directly; this
- * is the one place that knows the briefing is more than that string,
- * so a future block does not have to be added to each adapter
- * separately.
+ * This is the one place that knows the packet is more than its
+ * composed `instructions` string, so a future block does not have to
+ * be added to each adapter separately.
  */
-export function composeFixedContext(briefing: BriefingResponse): string {
+export function composeFixedContext(packet: InstructionsResponse): string {
   // No `?? null` — that would re-collapse absent into null here after
   // the schema went to the trouble of keeping them apart.
-  const block = renderProcessDocumentBlock(briefing.processDocument);
-  return briefing.instructions.length > 0 ? `${briefing.instructions}\n\n${block}` : block;
+  const block = renderProcessDocumentBlock(packet.processDocument);
+  return packet.instructions.length > 0 ? `${packet.instructions}\n\n${block}` : block;
 }

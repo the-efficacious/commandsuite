@@ -8,8 +8,8 @@
 
 import { computed, signal } from '@preact/signals';
 import type { Objective, Teammate } from 'csuite-sdk/types';
-import { briefing } from './briefing.js';
 import { joinedChannels } from './channels.js';
+import { instructions } from './instructions.js';
 import { objectives as objectivesSignal } from './objectives.js';
 import { roster } from './roster.js';
 
@@ -50,7 +50,7 @@ export function togglePalette(): void {
  */
 export const paletteSource = computed<PaletteItem[]>(() => {
   const items: PaletteItem[] = [];
-  const b = briefing.value;
+  const b = instructions.value;
   const r = roster.value;
   const teammates: Teammate[] = r?.teammates ?? b?.teammates ?? [];
 

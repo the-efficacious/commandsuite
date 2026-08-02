@@ -112,7 +112,7 @@ monotonically per outbound request.
 The runner currently handles two MCP methods:
 
 - `tools/list` — returns the runner's tool definitions composed
-  from the briefing
+  from the instructions
 - `tools/call` — dispatches to the appropriate tool handler with
   the supplied arguments
 
@@ -165,7 +165,7 @@ One method is emitted today:
 - `notifications/tools/list_changed` — the tool-source registry
   changed for this member (a genuine capability change; never state
   freshness). Broker push events and the runner's `context_refresh`
-  re-briefs do NOT cross the bridge — they reach the agent through
+  pushes do NOT cross the bridge — they reach the agent through
   the runner's channel sink (streaming input for claude, turn
   dispatches for codex).
 

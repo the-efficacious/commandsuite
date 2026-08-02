@@ -1,0 +1,97 @@
+---
+import type { NavSection } from '../lib/nav.ts';
+
+interface Props {
+  sections: NavSection[];
+  currentSlug?: string;
+}
+
+const { sections, currentSlug } = Astro.props;
+---
+
+<nav class="docs-sidebar" aria-label="Documentation sections">
+  {
+    sections.map((section) => (
+      <div class="section">
+        <h3 class="section-title">§ {section.name}</h3>
+        <ul class="section-list">
+          {section.entries.map((entry) => {
+            const isActive = entry.slug === currentSlug;
+            return (
+              <li>
+                <a
+                  href={`/${entry.slug}`}
+                  class:list={['entry-link', { active: isActive }]}
+                  aria-current={isActive ? 'page' : undefined}
+                >
+                  {entry.title}
+                </a>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+    ))
+  }
+</nav>
+
+<style>
+  .docs-sidebar {
+    position: sticky;
+    top: calc(60px + 24px);
+    max-height: calc(100vh - 60px - 24px);
+    overflow-y: auto;
+    padding: 28px 16px 28px 0;
+  }
+
+  .section {
+    margin-bottom: 28px;
+  }
+
+  .section-title {
+    font-family: var(--f-mono);
+    font-size: var(--s-tag);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 12px;
+    padding-left: 14px;
+  }
+
+  .section-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    border-left: 1px solid var(--rule);
+  }
+
+  .section-list li {
+    position: relative;
+  }
+
+  .entry-link {
+    display: block;
+    padding: 6px 14px;
+    margin-left: -1px;
+    font-family: var(--f-sans);
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--graphite);
+    border-left: 1px solid transparent;
+    transition:
+      color 0.15s var(--ease),
+      border-color 0.15s var(--ease),
+      background 0.15s var(--ease);
+  }
+
+  .entry-link:hover {
+    color: var(--ink);
+    border-left-color: var(--glacier);
+  }
+
+  .entry-link.active {
+    color: var(--ink);
+    border-left-color: var(--steel);
+    background: rgba(99, 137, 166, 0.08);
+  }
+</style>

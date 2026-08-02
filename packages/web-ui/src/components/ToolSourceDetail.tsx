@@ -22,7 +22,7 @@ import type {
 } from 'csuite-sdk/types';
 import { hasPermission } from 'csuite-sdk/types';
 import { useEffect } from 'preact/hooks';
-import { briefing } from '../lib/briefing.js';
+import { instructions } from '../lib/instructions.js';
 import {
   bindToolSource,
   deleteCustomTool,
@@ -72,7 +72,7 @@ async function run(label: string, fn: () => Promise<unknown>): Promise<void> {
 }
 
 export function ToolSourceDetail({ slug }: { slug: string }) {
-  const b = briefing.value;
+  const b = instructions.value;
 
   useEffect(() => {
     detailError.value = null;
@@ -391,7 +391,7 @@ function AccessSection({
   source: ToolSourceSummary;
   boundMembers: string[];
 }) {
-  const b = briefing.value;
+  const b = instructions.value;
   const busy = sectionBusy.value;
   const candidates = (b?.teammates ?? [])
     .map((t) => t.name)

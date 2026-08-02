@@ -6,7 +6,7 @@
  *   POST /session/totp    — unauthed, exchange TOTP code for a session cookie
  *   POST /session/logout  — session-auth, clear the session
  *   GET  /session         — session-auth, return current session info
- *   GET  /briefing        — tri-auth, team-context packet for the user
+ *   GET  /instructions    — tri-auth, composed instruction packet
  *   GET  /roster          — tri-auth, full teammate list + live connection state
  *   POST /push            — tri-auth, deliver a message to one teammate or broadcast
  *   GET  /subscribe       — tri-auth, WebSocket of live messages for a name
@@ -101,6 +101,8 @@ import type {
   ActivityKind,
   Attachment,
   ChannelSummary,
+  InstructionBlockKind,
+  Member,
   Message,
   NotificationEndpoint,
   NotificationEndpointSummary,
@@ -128,10 +130,13 @@ import {
   createActivityTracker,
 } from './activity-tracker.js';
 import { type AuthBindings, createAuthMiddleware } from './auth.js';
-import { briefingCaptureBlocks, briefingCaptureExemptions, composeBriefing } from './briefing.js';
 import type { CaptureHealthStore } from './capture-health.js';
 import { type ChannelStore, ChannelsError, GENERAL_CHANNEL_ID, validateSlug } from './channels.js';
-import { contextResendBody, contextResendKey, inspectBriefingContext } from './context-watchdog.js';
+import {
+  contextResendBody,
+  contextResendKey,
+  inspectInstructionContext,
+} from './context-watchdog.js';
 import type { DiagnosticStore } from './diagnostics.js';
 import { type EnrollmentStore, formatUserCode, normalizeUserCode } from './enrollments.js';
 import {
@@ -147,6 +152,13 @@ import {
   isGenAiLogRecord,
 } from './genai-correlator.js';
 import type { GenAiStore } from './genai-store.js';
+import {
+  composedInstructionsSha256,
+  composeInstructions,
+  instructionBlocks,
+  instructionCaptureExemptions,
+  sha256Hex,
+} from './instructions.js';
 import type { JwtVerifier } from './jwt.js';
 import type { Logger } from './logger.js';
 import type { ActivityStore } from './member-activity.js';
@@ -208,7 +220,7 @@ export interface AppOptions {
   /**
    * DB-backed team config + permission preset store. Replaces the
    * static `team: Team` snapshot — handlers that need fresh team data
-   * (briefing, role/preset resolution, permission-preset CRUD) call
+   * (instruction packet, role/preset resolution, permission-preset CRUD) call
    * `teamStore.getTeam()` so a `PATCH /team` from another caller is
    * reflected on the next read.
    */
@@ -238,7 +250,7 @@ export interface AppOptions {
   /**
    * Tool-source registry — platform-defined external tools (custom
    * HTTP bindings + proxied remote MCP servers). The `/tool-sources*`
-   * endpoints are registered iff this is provided, and the briefing
+   * endpoints are registered iff this is provided, and the instruction packet
    * gains per-member resolved tools. Same opt-out pattern as
    * `objectives`.
    */
@@ -266,7 +278,7 @@ export interface AppOptions {
   variables?: VariablesStore;
   /**
    * The team's process document. The `/process-document*` endpoints
-   * are registered iff this is provided, and `GET /briefing` carries
+   * are registered iff this is provided, and `GET /instructions` carries
    * the current document in its own field.
    */
   processDocument?: ProcessDocumentStore;
@@ -305,7 +317,7 @@ export interface AppOptions {
    * BEFORE parsing, link
    * the derived gen_ai rows to the raw bytes by hash, and unlink the
    * consumed body_ref spill files. Inline OTLP attributes have already
-   * passed attribute redaction; broker-issued briefing blocks are exempt.
+   * passed attribute redaction; broker-issued instruction blocks are exempt.
    * Omit to skip raw capture (bodies are
    * then only parsed into the derived view, and spill files are left on
    * disk).
@@ -446,7 +458,7 @@ const CODELESS_LOCKOUT_KEY = '__codeless__';
  */
 const API_PATH_PREFIXES = [
   PATHS.health,
-  PATHS.briefing,
+  PATHS.instructions,
   PATHS.roster,
   PATHS.push,
   PATHS.subscribe,
@@ -606,31 +618,40 @@ export function createApp(options: AppOptions): CreatedApp {
   // lazily created on first api-body record. Only used when `genaiStore`
   // is wired; otherwise the map stays empty.
   const genaiCorrelators = new Map<string, GenAiCorrelator>();
-  // Every entry is an exact block from a briefing actually issued to
+  // Every entry is an exact block from an instruction packet actually issued to
   // this member. Keep prior session values too: a runner's prompt is
   // frozen, while an operator may edit the live team/member record.
-  const briefingExemptions = new Map<string, Set<string>>();
-  const briefingBlockVersions = new Map<
+  const instructionExemptions = new Map<string, Set<string>>();
+  const instructionBlockVersions = new Map<
     string,
-    Map<ReturnType<typeof briefingCaptureBlocks>[number]['kind'], Set<string>>
+    Map<ReturnType<typeof instructionBlocks>[number]['kind'], Set<string>>
   >();
   const contextLastResentAt = new Map<string, number>();
   const contextAwaitingConfirmation = new Set<string>();
+  // Per member, the canonical composed hash served on their last
+  // /instructions fetch — the proxy for "what their
+  // live session runs", since a runner fetches immediately before
+  // starting a session. In-memory deliberately: a broker restart
+  // forgets what was issued, and unknown is reported as unknown (the
+  // member is NOT listed restart-pending), never guessed. The capture
+  // watchdog's `stale` observation is the independent capture-verified
+  // signal that survives broker restarts.
+  const instructionsIssued = new Map<string, string>();
   const exemptionsFor = (memberName: string): readonly string[] => {
-    const exemptions = new Set(briefingExemptions.get(memberName) ?? []);
+    const exemptions = new Set(instructionExemptions.get(memberName) ?? []);
     const current = members.findByName(memberName);
     if (current) {
       // Cold-broker/restart path: a live runner may continue uploading
-      // without refetching /briefing. Rebuild the current authored blocks
+      // without refetching /instructions. Rebuild the current authored blocks
       // from authoritative storage rather than depending on process memory.
-      for (const block of briefingCaptureExemptions({
+      for (const block of instructionCaptureExemptions({
         self: current,
         team: teamStore.getTeam(),
         teammates: teammatesFromMembers(members),
         openObjectives: [],
         // Read from storage, not from process memory. This is the
         // cold-broker path: a live runner keeps uploading without
-        // refetching /briefing, so omitting the document here means
+        // refetching /instructions, so omitting the document here means
         // the captured copy is redacted, never matches the sent text,
         // and resends every turn forever.
         processDocument: processDocument ? processDocument.get() : null,
@@ -661,9 +682,9 @@ export function createApp(options: AppOptions): CreatedApp {
     }
     return corr;
   };
-  const inspectCapturedBriefing = (
+  const inspectCapturedInstructions = (
     memberName: string,
-    inference: Parameters<typeof inspectBriefingContext>[0]['inference'],
+    inference: Parameters<typeof inspectInstructionContext>[0]['inference'],
     systemProjectionObservable: boolean,
   ): void => {
     const current = members.findByName(memberName);
@@ -678,9 +699,9 @@ export function createApp(options: AppOptions): CreatedApp {
       // decides which blocks are looked for at all.
       processDocument: processDocument ? processDocument.get() : null,
     };
-    const blocks = briefingCaptureBlocks(composeInput);
+    const blocks = instructionBlocks(composeInput);
     const observedAt = now();
-    const observations = inspectBriefingContext({
+    const observations = inspectInstructionContext({
       memberName,
       inference,
       systemProjectionObservable,
@@ -688,7 +709,7 @@ export function createApp(options: AppOptions): CreatedApp {
       now: observedAt,
       lastResentAt: contextLastResentAt,
       awaitingConfirmation: contextAwaitingConfirmation,
-      knownPriorVersions: briefingBlockVersions.get(memberName),
+      knownPriorVersions: instructionBlockVersions.get(memberName),
     });
     if (telemetryStore !== undefined && observations.length > 0) {
       try {
@@ -708,9 +729,9 @@ export function createApp(options: AppOptions): CreatedApp {
     }
     const unobservable = observations.filter((item) => !item.observable);
     if (unobservable.length > 0) {
-      diagnostics?.emit.contextBriefingCheckUnavailable(memberName, unobservable.length);
+      diagnostics?.emit.contextInstructionsCheckUnavailable(memberName, unobservable.length);
     } else {
-      diagnostics?.emit.contextBriefingCheckSucceeded(memberName);
+      diagnostics?.emit.contextInstructionsCheckSucceeded(memberName);
     }
     if (observations.some((item) => item.deliveryUnconfirmed)) {
       diagnostics?.emit.contextBlockResendUnconfirmed(
@@ -749,10 +770,106 @@ export function createApp(options: AppOptions): CreatedApp {
           error: err instanceof Error ? err.message : String(err),
         });
       });
-    logger.info('context watchdog re-sent missing briefing blocks', {
+    logger.info('context watchdog re-sent missing instruction blocks', {
       member: memberName,
       blocks: firing.map((item) => item.block.kind),
     });
+  };
+
+  // ─── Instruction versioning: restart-pending + edit fanout ─────────
+
+  // Enabled external-notification endpoints that can reach a member —
+  // rendered into the composed prose (doctrine section), so it is part
+  // of the canonical composition and must feed the hash.
+  const externalEndpointsFor = (memberName: string): string[] => {
+    const slugs: string[] = [];
+    if (notifications !== undefined) {
+      for (const endpoint of notifications.list()) {
+        if (!endpoint.enabled) continue;
+        const reaches = endpoint.targets.some((t) => {
+          if (t.member !== undefined) return t.member === memberName;
+          if (t.channel !== undefined && channels) {
+            return t.channel === GENERAL_CHANNEL_ID || channels.isMember(t.channel, memberName);
+          }
+          return false;
+        });
+        if (reaches) slugs.push(endpoint.slug);
+      }
+    }
+    return slugs;
+  };
+
+  const composedHashFor = (self: Member): string =>
+    composedInstructionsSha256({
+      self,
+      team: teamStore.getTeam(),
+      teammates: teammatesFromMembers(members),
+      // Structured fields only — never rendered into the prose, so
+      // they cannot move the hash. See instructions.ts.
+      openObjectives: [],
+      processDocument: processDocument ? processDocument.get() : null,
+      externalNotificationEndpoints: externalEndpointsFor(self.name),
+    });
+
+  const allComposedHashes = (): Map<string, string> => {
+    const hashes = new Map<string, string>();
+    for (const m of members.members()) hashes.set(m.name, composedHashFor(m));
+    return hashes;
+  };
+
+  // A member is restart-pending iff we KNOW what their session was
+  // issued and it differs from the current composition. Unknown issued
+  // (broker restarted since their fetch) is not pending — unknown is
+  // not a claim.
+  const restartPendingMembers = (): string[] => {
+    const pending: string[] = [];
+    for (const [name, issued] of instructionsIssued) {
+      const current = members.findByName(name);
+      if (!current) continue;
+      if (issued !== composedHashFor(current)) pending.push(name);
+    }
+    return pending.sort();
+  };
+
+  // Fanout after an instruction-bearing edit. `before` is the full
+  // member→hash map snapshotted before the mutation; affected is
+  // whoever's canonical composition actually changed. That diff is
+  // what makes the strict ripple work with no per-block bookkeeping —
+  // a role edit reaches every teammate whose roster line moved, and an
+  // edit that rewrites a block to its existing text reaches no one.
+  // One multi-recipient push, same rationale as publishObjectiveEvent.
+  const publishInstructionsEvent = async (
+    changed: readonly InstructionBlockKind[],
+    actor: string,
+    before: ReadonlyMap<string, string>,
+  ): Promise<void> => {
+    const after = allComposedHashes();
+    const affected = [...after.keys()]
+      .filter((name) => before.get(name) !== after.get(name))
+      .sort();
+    if (affected.length === 0) return;
+    try {
+      await broker.push(
+        {
+          body: `Instruction blocks edited by ${actor}${changed.length > 0 ? ` (${changed.join(', ')})` : ''}. Your composed instructions changed; the new text applies from your next agent session, and your broker lists you restart-pending until then. Treat this notice as authoritative over conflicting standing text.`,
+          level: 'notice',
+          data: {
+            kind: 'instructions',
+            event: 'edited',
+            changed: [...changed],
+            actor,
+            affected,
+          },
+        },
+        { from: 'csuite', recipients: affected },
+      );
+    } catch (err) {
+      logger.warn('failed to fanout instructions event', {
+        changed: [...changed],
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    logger.info('instruction edit fanout', { changed: [...changed], actor, affected });
   };
 
   const app = new Hono<AppBindings>();
@@ -1054,18 +1171,18 @@ export function createApp(options: AppOptions): CreatedApp {
 
   // ─── Team endpoints (tri-auth) ────────────────────────────────
 
-  app.get(PATHS.briefing, auth, (c) => {
+  app.get(PATHS.instructions, auth, (c) => {
     const member = c.get('member');
     const reportedRunnerVersion = c.req.header(RUNNER_VERSION_HEADER);
     let runnerVersion: string | undefined;
     if (reportedRunnerVersion !== undefined) {
       if (!/^[0-9A-Za-z][0-9A-Za-z.+-]{0,63}$/.test(reportedRunnerVersion)) {
-        logger.warn('briefing runner version rejected', { member: member.name });
+        logger.warn('instructions runner version rejected', { member: member.name });
       } else {
         runnerVersion = reportedRunnerVersion;
       }
     }
-    // Live open objectives for this member — included in the briefing
+    // Live open objectives for this member — included in the instruction packet
     // so the runner can seed its open-plate snapshot (the source for
     // `context_refresh` re-briefs) and the web UI can render the plate.
     // Active + blocked are both "on the plate"; done/cancelled drop off.
@@ -1077,7 +1194,7 @@ export function createApp(options: AppOptions): CreatedApp {
       : [];
     // External-notification doctrine: when any enabled endpoint can
     // reach this member (direct DM target, or a channel target on a
-    // channel they belong to), the briefing prose gains the standing
+    // channel they belong to), the composed instructions gains the standing
     // contract for `<external_content>` blocks — defined once in the
     // system prompt so each delivery's wrapper stays compact.
     const externalNotificationEndpoints: string[] = [];
@@ -1112,31 +1229,19 @@ export function createApp(options: AppOptions): CreatedApp {
       processDocument: processDocument ? processDocument.get() : null,
       externalNotificationEndpoints,
     };
-    const briefing = composeBriefing(composeInput);
-    const isBearerRequest = c.req.header('Authorization')?.startsWith('Bearer ') === true;
-    if (
-      isBearerRequest &&
-      briefing.instructions.length > 8_192 &&
-      runnerMayEnforceLegacyBriefingCap(runnerVersion)
-    ) {
-      logger.warn('briefing exceeds legacy runner instruction limit', {
-        member: member.name,
-        characters: briefing.instructions.length,
-        runnerVersion: runnerVersion ?? 'unknown',
-      });
-    }
-    let remembered = briefingExemptions.get(member.name);
+    const packet = composeInstructions(composeInput);
+    let remembered = instructionExemptions.get(member.name);
     if (!remembered) {
       remembered = new Set<string>();
-      briefingExemptions.set(member.name, remembered);
+      instructionExemptions.set(member.name, remembered);
     }
-    for (const block of briefingCaptureExemptions(composeInput)) remembered.add(block);
-    let versions = briefingBlockVersions.get(member.name);
+    for (const block of instructionCaptureExemptions(composeInput)) remembered.add(block);
+    let versions = instructionBlockVersions.get(member.name);
     if (!versions) {
       versions = new Map();
-      briefingBlockVersions.set(member.name, versions);
+      instructionBlockVersions.set(member.name, versions);
     }
-    for (const block of briefingCaptureBlocks(composeInput, briefing.instructions)) {
+    for (const block of instructionBlocks(composeInput, packet.instructions)) {
       let values = versions.get(block.kind);
       if (!values) {
         values = new Set();
@@ -1144,7 +1249,20 @@ export function createApp(options: AppOptions): CreatedApp {
       }
       values.add(block.text);
     }
-    return c.json(briefing);
+    // The canonical hash is computed WITHOUT the transient version
+    // line (composedInstructionsSha256 strips it), so two fetches that
+    // differ only in reported runner version share a hash — a runner
+    // upgrade must not read as an instruction edit.
+    const composedSha256 = composedHashFor(member);
+    instructionsIssued.set(member.name, composedSha256);
+    return c.json({
+      ...packet,
+      blocks: instructionBlocks(composeInput, packet.instructions).map((block) => ({
+        kind: block.kind,
+        sha256: sha256Hex(block.text),
+      })),
+      composedSha256,
+    });
   });
 
   app.get(PATHS.roster, auth, (c) => {
@@ -1214,6 +1332,7 @@ export function createApp(options: AppOptions): CreatedApp {
       teammates: teammatesFromMembers(members),
       connected: presences,
       activityWindowMs: ACTIVITY_TTL_MS,
+      restartPending: restartPendingMembers(),
     });
   });
 
@@ -1672,7 +1791,7 @@ export function createApp(options: AppOptions): CreatedApp {
             genaiStore.append(member.name, inf);
             // Claude declares the structured system projection conformant:
             // empty means genuinely absent, not unavailable capture.
-            inspectCapturedBriefing(member.name, inf, true);
+            inspectCapturedInstructions(member.name, inf, true);
           }
           // ONLY when an append actually happened. A body-only or
           // correlation-pending batch yields zero inferences and
@@ -1932,7 +2051,7 @@ export function createApp(options: AppOptions): CreatedApp {
             requestBody = JSON.parse(reqBytes.toString('utf8'));
             requestParsed = true;
           } catch {
-            diagnostics?.emit.contextBriefingCheckUnavailable(member.name, 1);
+            diagnostics?.emit.contextInstructionsCheckUnavailable(member.name, 1);
           }
           try {
             responseBody = JSON.parse(respBytes.toString('utf8'));
@@ -1954,7 +2073,7 @@ export function createApp(options: AppOptions): CreatedApp {
             // #118: Codex does not yet populate instructions on chained
             // Responses turns. Declare that projection unavailable instead
             // of letting a provider name decide observability forever.
-            inspectCapturedBriefing(member.name, rec, rec.systemInstructions.length > 0);
+            inspectCapturedInstructions(member.name, rec, rec.systemInstructions.length > 0);
           }
           accepted++;
           diagnostics?.emit.codexGenaiIngestEntrySucceeded(member.name);
@@ -2914,7 +3033,12 @@ export function createApp(options: AppOptions): CreatedApp {
       }
       try {
         const existed = processDocument.get() !== null;
+        // Snapshot before the write; an edit that stores the same text
+        // (version bumps, text identical) moves no hashes and fans out
+        // to no one.
+        const before = allComposedHashes();
         const { document, edit } = processDocument.write(parsed.data, c.get('member').name);
+        await publishInstructionsEvent(['process_document'], c.get('member').name, before);
         return c.json({ document, edit }, existed ? 200 : 201);
       } catch (err) {
         if (err instanceof ProcessDocumentError) {
@@ -4864,8 +4988,18 @@ export function createApp(options: AppOptions): CreatedApp {
         patch.context !== undefined && containsRegisteredSecretValue(patch.context)
           ? 'Team context contains a registered secret value. It was stored intact and will appear verbatim in captured traces; use a secret reference instead of a secret value.'
           : null;
+      // Snapshot before the mutation: the fanout's affected set is
+      // whoever's composed hash this edit moves. A name-only patch
+      // also moves every composition (the team line), so the snapshot
+      // is unconditional; `changed` names only authored block kinds.
+      const before = allComposedHashes();
       const updated = teamStore.updateTeam(patch, member.name);
       logger.info('team updated', { fields: Object.keys(patch), updatedBy: member.name });
+      await publishInstructionsEvent(
+        patch.context !== undefined ? ['team_context'] : [],
+        member.name,
+        before,
+      );
       if (warning) c.header('X-CSuite-Warning', warning);
       return c.json({ team: updated, ...(warning ? { warning } : {}) });
     } catch (err) {
@@ -5075,6 +5209,14 @@ export function createApp(options: AppOptions): CreatedApp {
       warningText !== undefined
         ? 'The member role description or personal instructions contain a registered secret value. The block was stored intact and will appear verbatim in captured traces; use a secret reference instead of a secret value.'
         : null;
+    // Role and personal-instructions edits are instruction-bearing;
+    // permission-only patches never touch the prose, so skip the
+    // snapshot (it composes every member) rather than diffing to an
+    // empty set the long way.
+    const changedKinds: InstructionBlockKind[] = [];
+    if (parsed.data.role !== undefined) changedKinds.push('role_description');
+    if (parsed.data.instructions !== undefined) changedKinds.push('personal_instructions');
+    const before = changedKinds.length > 0 ? allComposedHashes() : null;
     try {
       members.updateMember(parsedName.data, patch);
     } catch (err) {
@@ -5087,6 +5229,9 @@ export function createApp(options: AppOptions): CreatedApp {
       return c.json({ error: `member vanished after update: ${parsedName.data}` }, 500);
     }
     logger.info('member updated', { name: updated.name, patch, updatedBy: member.name });
+    // A role edit ripples: the strict affected-set diff reaches every
+    // teammate whose roster line moved, not just the edited member.
+    if (before !== null) await publishInstructionsEvent(changedKinds, member.name, before);
     if (warning) c.header('X-CSuite-Warning', warning);
     return c.json({ ...loadedToMember(updated), ...(warning ? { warning } : {}) });
   });
@@ -5914,20 +6059,6 @@ export function createApp(options: AppOptions): CreatedApp {
 }
 
 /**
- * Runners before 0.4.0 parse briefings with `max(8192)` locally. An
- * absent report is also legacy: runners only began reporting their
- * version in the same release that removes the cap.
- */
-function runnerMayEnforceLegacyBriefingCap(version: string | undefined): boolean {
-  if (version === undefined) return true;
-  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version);
-  if (!match) return true;
-  const major = Number(match[1]);
-  const minor = Number(match[2]);
-  return major === 0 && minor < 4;
-}
-
-/**
  * Objective context watchdog — scans uploaded LLM exchanges for
  * active objective IDs. If an objective is active for this user but
  * its ID doesn't appear anywhere in the exchange's system prompt or
@@ -5950,7 +6081,7 @@ function checkObjectiveContext(
 ): void {
   // Only inspect the most recent llm_exchange in this batch.
   const llmEvent = events.findLast((e) => e.kind === 'llm_exchange');
-  if (!llmEvent || llmEvent.kind !== 'llm_exchange') return;
+  if (llmEvent?.kind !== 'llm_exchange') return;
 
   const active = [
     ...objectivesStore.list({ assignee: name, status: 'active' }),

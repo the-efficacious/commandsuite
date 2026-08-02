@@ -5,15 +5,20 @@
  * lives here. Bump PROTOCOL_VERSION on any breaking wire change.
  */
 
-export const PROTOCOL_VERSION = 1 as const;
+export const PROTOCOL_VERSION = 2 as const;
 export const PROTOCOL_HEADER = 'X-CSUITE-Protocol' as const;
 export const AUTH_HEADER = 'Authorization' as const;
-/** Loaded version of the long-lived runner requesting its briefing. */
+/** Loaded version of the long-lived runner requesting its instructions. */
 export const RUNNER_VERSION_HEADER = 'X-CSUITE-Runner-Version' as const;
 
 export const PATHS = {
   health: '/healthz',
-  briefing: '/briefing',
+  /**
+   * The member's composed instruction packet plus its named blocks
+   * and the composed-content hash the broker tracks restart-pending
+   * against.
+   */
+  instructions: '/instructions',
   roster: '/roster',
   push: '/push',
   subscribe: '/subscribe',
@@ -42,9 +47,10 @@ export const PATHS = {
   // tri-auth (every authenticated member sees the team they're on).
   // `PATCH /team` requires `team.manage`. Permission-preset CRUD lives
   // under `/team/presets` (same gate). Mutations apply immediately to
-  // the DB; live MCP sessions still need a runner restart for changes
-  // to `instructions`-class strings (the MCP protocol freezes those
-  // per session).
+  // the DB; instruction-bearing edits also fan out a
+  // `kind: 'instructions'` event to every member whose composed text
+  // changed, and the roster lists them restart-pending until their
+  // runner picks the change up in a fresh session.
   team: '/team',
   teamPresets: '/team/presets',
   // Filesystem — per-member home directories with content-addressed

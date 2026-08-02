@@ -3,13 +3,13 @@
  * write-only redaction, binding-gated invoke, the custom executor
  * end-to-end against a local HTTP fixture (credential injection,
  * templating, truncation), audit append, change-event fanout, and
- * briefing resolution.
+ * packet resolution.
  */
 
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { Broker, InMemoryEventLog } from 'csuite-core';
-import type { BriefingResponse, ToolSourceSummary } from 'csuite-sdk/types';
+import type { InstructionsResponse, ToolSourceSummary } from 'csuite-sdk/types';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
@@ -436,7 +436,7 @@ describe('change events', () => {
   });
 });
 
-describe('briefing integration', () => {
+describe('packet integration', () => {
   it('resolves tools only for visible sources', async () => {
     const { app } = makeApp();
     await app.request('/tool-sources', authed(ADMIN, { slug: 'jira', kind: 'custom' }));
@@ -455,15 +455,15 @@ describe('briefing integration', () => {
     );
 
     const boundBriefing = (await (
-      await app.request('/briefing', authed(BOUND))
-    ).json()) as BriefingResponse;
+      await app.request('/instructions', authed(BOUND))
+    ).json()) as InstructionsResponse;
     expect(boundBriefing.toolSources).toHaveLength(1);
     expect(boundBriefing.toolSources[0]?.source).toBe('jira');
     expect(boundBriefing.toolSources[0]?.tools[0]?.name).toBe('get_issue');
 
     const outsiderBriefing = (await (
-      await app.request('/briefing', authed(OUTSIDER))
-    ).json()) as BriefingResponse;
+      await app.request('/instructions', authed(OUTSIDER))
+    ).json()) as InstructionsResponse;
     expect(outsiderBriefing.toolSources).toHaveLength(0);
   });
 
@@ -473,9 +473,9 @@ describe('briefing integration', () => {
       '/tool-sources',
       authed(ADMIN, { slug: 'shared', kind: 'custom', allMembers: true }),
     );
-    const briefing = (await (
-      await app.request('/briefing', authed(OUTSIDER))
-    ).json()) as BriefingResponse;
-    expect(briefing.toolSources).toHaveLength(1);
+    const packet = (await (
+      await app.request('/instructions', authed(OUTSIDER))
+    ).json()) as InstructionsResponse;
+    expect(packet.toolSources).toHaveLength(1);
   });
 });

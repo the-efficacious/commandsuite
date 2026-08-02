@@ -19,7 +19,7 @@ import { SecretEnvNameSchema } from 'csuite-sdk/schemas';
 import type { SecretSummary } from 'csuite-sdk/types';
 import { hasPermission } from 'csuite-sdk/types';
 import { useEffect } from 'preact/hooks';
-import { briefing } from '../lib/briefing.js';
+import { instructions } from '../lib/instructions.js';
 import {
   bindSecret,
   deleteSecret,
@@ -66,7 +66,7 @@ async function run(label: string, fn: () => Promise<unknown>): Promise<void> {
 }
 
 export function SecretDetail({ slug }: { slug: string }) {
-  const b = briefing.value;
+  const b = instructions.value;
   const secret = secretBySlug(slug);
 
   useEffect(() => {
@@ -257,7 +257,7 @@ function AccessSection({
   secret: SecretSummary;
   boundMembers: string[];
 }) {
-  const b = briefing.value;
+  const b = instructions.value;
   const busy = sectionBusy.value;
   const candidates = (b?.teammates ?? [])
     .map((t) => t.name)

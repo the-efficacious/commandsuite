@@ -61,7 +61,11 @@ describe('ClaudeMessageQueue', () => {
 describe('createClaudeChannelSink', () => {
   it('bundles a burst into one user message', async () => {
     const queue = new ClaudeMessageQueue();
-    const sink = createClaudeChannelSink({ queue, log: noopLog, bundleWindowMs: 20 });
+    const sink = createClaudeChannelSink({
+      getQueue: () => queue,
+      log: noopLog,
+      bundleWindowMs: 20,
+    });
     await sink.deliver(channelEvent('first event'));
     await sink.deliver(channelEvent('second event'));
     expect(queue.depth).toBe(0); // still inside the bundle window
@@ -81,7 +85,11 @@ describe('createClaudeChannelSink', () => {
 
   it('flushNow drains the buffer without waiting for the window', async () => {
     const queue = new ClaudeMessageQueue();
-    const sink = createClaudeChannelSink({ queue, log: noopLog, bundleWindowMs: 5_000 });
+    const sink = createClaudeChannelSink({
+      getQueue: () => queue,
+      log: noopLog,
+      bundleWindowMs: 5_000,
+    });
     await sink.deliver(channelEvent('urgent'));
     expect(queue.depth).toBe(0);
     sink.flushNow();

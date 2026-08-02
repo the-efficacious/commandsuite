@@ -16,11 +16,11 @@
  */
 
 import type { Client as BrokerClient } from 'csuite-sdk/client';
-import type { BriefingResponse, ProcessDocument, ProcessDocumentEdit } from 'csuite-sdk/types';
+import type { InstructionsResponse, ProcessDocument, ProcessDocumentEdit } from 'csuite-sdk/types';
 import { describe, expect, it } from 'vitest';
 import { defineTools, handleToolCall } from '../../src/runtime/tools.js';
 
-const BRIEFING: BriefingResponse = {
+const PACKET: InstructionsResponse = {
   name: 'scout',
   role: { title: 'engineer', description: '' },
   permissions: [],
@@ -33,7 +33,7 @@ const BRIEFING: BriefingResponse = {
 };
 
 /** The same member, holding the edit authority. */
-const AUTHORITY: BriefingResponse = { ...BRIEFING, permissions: ['process.manage'] };
+const AUTHORITY: InstructionsResponse = { ...PACKET, permissions: ['process.manage'] };
 
 function makeBroker(overrides: Partial<BrokerClient> = {}): BrokerClient {
   return overrides as BrokerClient;
@@ -60,13 +60,13 @@ const DOC: ProcessDocument = {
 
 describe('the write tool is gated on process.manage', () => {
   it('offers the read tools to a member with no permissions at all', () => {
-    const names = defineTools(BRIEFING).map((t) => t.name);
+    const names = defineTools(PACKET).map((t) => t.name);
     expect(names).toContain('process_document_get');
     expect(names).toContain('process_document_history');
   });
 
   it('withholds the write tool from a member without the leaf', () => {
-    expect(defineTools(BRIEFING).map((t) => t.name)).not.toContain('process_document_write');
+    expect(defineTools(PACKET).map((t) => t.name)).not.toContain('process_document_write');
   });
 
   /**
@@ -74,8 +74,8 @@ describe('the write tool is gated on process.manage', () => {
    * predecessor's gate; holding it must not carry this authority.
    */
   it('withholds it from a holder of objectives.create', () => {
-    const other: BriefingResponse = {
-      ...BRIEFING,
+    const other: InstructionsResponse = {
+      ...PACKET,
       permissions: ['objectives.create', 'members.manage', 'team.manage'],
     };
     expect(defineTools(other).map((t) => t.name)).not.toContain('process_document_write');
@@ -114,7 +114,7 @@ describe('the write description carries the two things an agent will otherwise g
   });
 
   it('tells the reader that get is not how they learn what binds them', () => {
-    const get = defineTools(BRIEFING).find((t) => t.name === 'process_document_get');
+    const get = defineTools(PACKET).find((t) => t.name === 'process_document_get');
     expect(get?.description).toMatch(/already in your fixed context/i);
     // And that null is a state rather than a permission problem.
     expect(get?.description).toMatch(/not that you cannot see it/i);
@@ -126,14 +126,14 @@ describe('the write description carries the two things an agent will otherwise g
 describe('process_document_get', () => {
   it('distinguishes "nobody has written one" from an error', async () => {
     const broker = makeBroker({ getProcessDocument: async () => null });
-    const text = getCallText(await handleToolCall('process_document_get', {}, broker, BRIEFING));
+    const text = getCallText(await handleToolCall('process_document_get', {}, broker, PACKET));
     expect(text).toMatch(/no process document has been set/i);
     expect(text).toMatch(/real state, not an error/i);
   });
 
   it('reports the version and both authors alongside the text', async () => {
     const broker = makeBroker({ getProcessDocument: async () => DOC });
-    const text = getCallText(await handleToolCall('process_document_get', {}, broker, BRIEFING));
+    const text = getCallText(await handleToolCall('process_document_get', {}, broker, PACKET));
     expect(text).toMatch(/v2/);
     expect(text).toMatch(/last edited by Lea/);
     expect(text).toMatch(/Created by AndrewJon/);
@@ -160,9 +160,7 @@ describe('process_document_history', () => {
         edit(),
       ],
     });
-    const text = getCallText(
-      await handleToolCall('process_document_history', {}, broker, BRIEFING),
-    );
+    const text = getCallText(await handleToolCall('process_document_history', {}, broker, PACKET));
     expect(text).toMatch(/created — no prior text/);
     expect(text).toMatch(/v2 by Lea/);
     expect(text).toMatch(/work already underway finished under the prior text/);
@@ -183,9 +181,7 @@ describe('process_document_history', () => {
     const broker = makeBroker({
       processDocumentHistory: async () => [edit({ version: 2, previous: { text: priorText } })],
     });
-    const text = getCallText(
-      await handleToolCall('process_document_history', {}, broker, BRIEFING),
-    );
+    const text = getCallText(await handleToolCall('process_document_history', {}, broker, PACKET));
     // Every line of the superseded document, verbatim.
     for (const line of priorText.split('\n')) {
       expect(text).toContain(line);
@@ -197,9 +193,7 @@ describe('process_document_history', () => {
 
   it('says there is no history when no document has been set', async () => {
     const broker = makeBroker({ processDocumentHistory: async () => [] });
-    const text = getCallText(
-      await handleToolCall('process_document_history', {}, broker, BRIEFING),
-    );
+    const text = getCallText(await handleToolCall('process_document_history', {}, broker, PACKET));
     expect(text).toMatch(/no process document has been set/i);
   });
 });

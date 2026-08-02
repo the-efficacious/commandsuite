@@ -2,7 +2,7 @@
  * `csuite tools` — manage the tool-source registry.
  *
  * Tool sources are platform-defined external tools distributed to
- * bound members via the briefing: `custom` sources carry declarative
+ * bound members via the instructions: `custom` sources carry declarative
  * HTTP-bound tool definitions the broker executes with a stored
  * credential; `mcp` sources proxy a remote MCP server. Registry
  * mutations require `tools.manage`; credentials are write-only.
