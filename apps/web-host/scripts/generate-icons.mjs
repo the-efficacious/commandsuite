@@ -1,180 +1,212 @@
 #!/usr/bin/env node
 /**
- * Heptagon-mark PNG icon generator for the csuite web app.
+ * Icon sync for the csuite web app — canonical artwork only.
  *
- * Writes `public/icons/icon-192.png` and `public/icons/icon-512.png`
- * with the Classic-Mesh heptagon mark (steel on paper) for PWA installs.
- * Encodes PNG from scratch using `node:zlib` + a hand-rolled CRC32 — no
- * `sharp` or native deps, so `pnpm install` in CI doesn't need a prebuild
- * cache or build toolchain.
+ * Copies the CommandSuite app icon from `@the-efficacious/brand`'s
+ * logo pack into `public/`, and resamples the one size the pack does
+ * not ship (192, required by PWA installability checks) from the
+ * 512px original. No artwork is drawn here — the brand package is the
+ * single source of the mark, and this script only moves pixels.
  *
- * The mark is drawn at 80% scale to satisfy the `purpose: "any maskable"`
- * declaration in manifest.webmanifest — PWA installers may crop down to
- * a circle of radius 0.4·size, and this keeps every node inside that zone.
+ * PNG handling is `node:zlib` + a hand-rolled chunk reader/writer (no
+ * sharp or native deps, so `pnpm install` in CI doesn't need a build
+ * toolchain). The pack's PNGs are 8-bit RGBA non-interlaced, which is
+ * the only layout the decoder accepts — it fails loudly otherwise.
  *
- * Run once after brand changes, commit the resulting PNGs:
+ * Run after bumping the brand package, commit the results:
  *
  *   node apps/web-host/scripts/generate-icons.mjs
  */
 
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { deflateSync } from 'node:zlib';
+import { deflateSync, inflateSync } from 'node:zlib';
 
-/* ──────────────────────────── brand ──────────────────────────── */
+const here = dirname(fileURLToPath(import.meta.url));
+const publicDir = resolve(here, '..', 'public');
+const require = createRequire(import.meta.url);
+const brandRoot = dirname(require.resolve('@the-efficacious/brand/package.json'));
+const pack = (rel) => join(brandRoot, 'logo-pack', rel);
 
-// Steel (#3E5C76) on paper (#F6F3EC). Matches theme.css tokens and the
-// Classic-Mesh winner from logo-workshop-classic-mesh.html.
-const FG = [0x3e, 0x5c, 0x76];
-const BG = [0xf6, 0xf3, 0xec];
+/* ─────────────────────────── PNG codec ─────────────────────────── */
 
-// Heptagon in a 120×120 logical space (center at 60,60, radius 45).
-// Shrunk to 80% around the center so maskable crops don't clip nodes.
-const CENTER = 60;
-const MASK_SCALE = 0.8;
-const STROKE_HALF = (3 / 2) * MASK_SCALE; // polygon stroke width / 2
-const NODE_R = 10 * MASK_SCALE;
-
-const RAW_VERTS = [
-  [60, 15],
-  [95.18, 31.94],
-  [103.87, 70.01],
-  [79.52, 100.54],
-  [40.48, 100.54],
-  [16.13, 70.01],
-  [24.82, 31.94],
-];
-const VERTS = RAW_VERTS.map(([x, y]) => [
-  CENTER + (x - CENTER) * MASK_SCALE,
-  CENTER + (y - CENTER) * MASK_SCALE,
-]);
-
-/* ──────────────────────────── SDF ──────────────────────────── */
-
-// Signed distance from point (px,py) to segment (ax,ay)-(bx,by).
-function segDist(px, py, ax, ay, bx, by) {
-  const dx = bx - ax;
-  const dy = by - ay;
-  const len2 = dx * dx + dy * dy;
-  const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2));
-  const cx = ax + t * dx;
-  const cy = ay + t * dy;
-  return Math.hypot(px - cx, py - cy);
-}
-
-// Returns true if (px,py) is inside the mark (polygon stroke OR any node circle).
-function inside(px, py) {
-  for (const [cx, cy] of VERTS) {
-    if (Math.hypot(px - cx, py - cy) <= NODE_R) return true;
-  }
-  for (let i = 0; i < VERTS.length; i++) {
-    const [ax, ay] = VERTS[i];
-    const [bx, by] = VERTS[(i + 1) % VERTS.length];
-    if (segDist(px, py, ax, ay, bx, by) <= STROKE_HALF) return true;
-  }
-  return false;
-}
-
-/* ──────────────────────────── PNG ──────────────────────────── */
-
-// CRC32 lookup table (standard PNG polynomial 0xedb88320).
-const CRC_TABLE = (() => {
-  const table = new Uint32Array(256);
-  for (let n = 0; n < 256; n++) {
-    let c = n;
-    for (let k = 0; k < 8; k++) {
-      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    }
-    table[n] = c >>> 0;
-  }
-  return table;
-})();
+const CRC_TABLE = new Int32Array(256).map((_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c;
+});
 
 function crc32(buf) {
   let c = 0xffffffff;
-  for (let i = 0; i < buf.length; i++) {
-    c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
-  }
+  for (const byte of buf) c = CRC_TABLE[(c ^ byte) & 0xff] ^ (c >>> 8);
   return (c ^ 0xffffffff) >>> 0;
 }
 
 function chunk(type, data) {
   const len = Buffer.alloc(4);
-  len.writeUInt32BE(data.length, 0);
-  const typeBuf = Buffer.from(type, 'ascii');
-  const crcSrc = Buffer.concat([typeBuf, data]);
+  len.writeUInt32BE(data.length);
+  const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
   const crc = Buffer.alloc(4);
-  crc.writeUInt32BE(crc32(crcSrc), 0);
-  return Buffer.concat([len, typeBuf, data, crc]);
+  crc.writeUInt32BE(crc32(body));
+  return Buffer.concat([len, body, crc]);
 }
 
-/**
- * Rasterize the heptagon mark to an RGBA PNG at the given size. Uses 4×4
- * supersampling (16 coverage samples per output pixel) for soft edges —
- * the polygon stroke stays crisp even at 192 px because the mark sits in
- * a 120-unit logical space scaled up.
- */
-function makeMarkPng(size) {
-  const width = size;
-  const height = size;
-  const rowLen = 1 + width * 4; // filter byte + RGBA
-  const raw = Buffer.alloc(rowLen * height);
-  const scale = size / 120;
-  const sub = 4; // supersample grid side
-  const subStep = 1 / scale / sub;
-  const subOffsets = [];
-  for (let i = 0; i < sub; i++) subOffsets.push((i - (sub - 1) / 2) * subStep);
-  const subCount = sub * sub;
-
-  for (let y = 0; y < height; y++) {
-    const rowStart = y * rowLen;
-    raw[rowStart] = 0; // filter: None
-    const py = (y + 0.5) / scale;
-    for (let x = 0; x < width; x++) {
-      const px = (x + 0.5) / scale;
-      let hits = 0;
-      for (const dy of subOffsets) {
-        for (const dx of subOffsets) {
-          if (inside(px + dx, py + dy)) hits++;
-        }
+/** Decode an 8-bit RGBA non-interlaced PNG into { width, height, rgba }. */
+function decodePng(buf) {
+  if (buf.readUInt32BE(0) !== 0x89504e47) throw new Error('not a PNG');
+  let pos = 8;
+  let width = 0;
+  let height = 0;
+  const idat = [];
+  while (pos < buf.length) {
+    const len = buf.readUInt32BE(pos);
+    const type = buf.toString('ascii', pos + 4, pos + 8);
+    const data = buf.subarray(pos + 8, pos + 8 + len);
+    if (type === 'IHDR') {
+      width = data.readUInt32BE(0);
+      height = data.readUInt32BE(4);
+      const depth = data[8];
+      const color = data[9];
+      const interlace = data[12];
+      if (depth !== 8 || color !== 6 || interlace !== 0) {
+        throw new Error(
+          `unsupported PNG layout (depth=${depth} color=${color} interlace=${interlace}) — expected 8-bit RGBA non-interlaced`,
+        );
       }
-      const cov = hits / subCount;
-      const p = rowStart + 1 + x * 4;
-      raw[p] = Math.round(BG[0] * (1 - cov) + FG[0] * cov);
-      raw[p + 1] = Math.round(BG[1] * (1 - cov) + FG[1] * cov);
-      raw[p + 2] = Math.round(BG[2] * (1 - cov) + FG[2] * cov);
-      raw[p + 3] = 0xff;
+    } else if (type === 'IDAT') {
+      idat.push(data);
+    }
+    pos += 12 + len;
+  }
+  const raw = inflateSync(Buffer.concat(idat));
+  const stride = width * 4;
+  const rgba = Buffer.alloc(stride * height);
+  const paeth = (a, b, c) => {
+    const p = a + b - c;
+    const pa = Math.abs(p - a);
+    const pb = Math.abs(p - b);
+    const pc = Math.abs(p - c);
+    return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+  };
+  for (let y = 0; y < height; y++) {
+    const filter = raw[y * (stride + 1)];
+    const rowIn = raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1));
+    const out = y * stride;
+    const prev = (y - 1) * stride;
+    for (let x = 0; x < stride; x++) {
+      const a = x >= 4 ? rgba[out + x - 4] : 0;
+      const b = y > 0 ? rgba[prev + x] : 0;
+      const c = y > 0 && x >= 4 ? rgba[prev + x - 4] : 0;
+      let v = rowIn[x];
+      if (filter === 1) v += a;
+      else if (filter === 2) v += b;
+      else if (filter === 3) v += (a + b) >> 1;
+      else if (filter === 4) v += paeth(a, b, c);
+      rgba[out + x] = v & 0xff;
     }
   }
-  const idat = deflateSync(raw, { level: 9 });
+  return { width, height, rgba };
+}
 
-  // IHDR: width(4) height(4) bit-depth(1=8) color-type(1=6 RGBA) compression(1=0) filter(1=0) interlace(1=0)
+/** Encode 8-bit RGBA pixels as a PNG (filter 0 rows). */
+function encodePng(width, height, rgba) {
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(width, 0);
   ihdr.writeUInt32BE(height, 4);
-  ihdr[8] = 8;
-  ihdr[9] = 6;
-  ihdr[10] = 0;
-  ihdr[11] = 0;
-  ihdr[12] = 0;
-
-  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 6; // RGBA
+  const stride = width * 4;
+  const raw = Buffer.alloc((stride + 1) * height);
+  for (let y = 0; y < height; y++) {
+    rgba.copy(raw, y * (stride + 1) + 1, y * stride, (y + 1) * stride);
+  }
   return Buffer.concat([
-    signature,
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
     chunk('IHDR', ihdr),
-    chunk('IDAT', idat),
+    chunk('IDAT', deflateSync(raw, { level: 9 })),
     chunk('IEND', Buffer.alloc(0)),
   ]);
 }
 
-const here = dirname(fileURLToPath(import.meta.url));
-const outDir = resolve(here, '..', 'public', 'icons');
-mkdirSync(outDir, { recursive: true });
-
-for (const size of [192, 512]) {
-  const png = makeMarkPng(size);
-  const out = join(outDir, `icon-${size}.png`);
-  writeFileSync(out, png);
-  console.log(`wrote ${out} (${size}x${size}, ${png.length} bytes)`);
+/** Box-filter resample (area averaging) — fine for downscales. */
+function resample(src, dstW, dstH) {
+  const dst = Buffer.alloc(dstW * dstH * 4);
+  const xr = src.width / dstW;
+  const yr = src.height / dstH;
+  for (let y = 0; y < dstH; y++) {
+    const y0 = Math.floor(y * yr);
+    const y1 = Math.min(Math.ceil((y + 1) * yr), src.height);
+    for (let x = 0; x < dstW; x++) {
+      const x0 = Math.floor(x * xr);
+      const x1 = Math.min(Math.ceil((x + 1) * xr), src.width);
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      let a = 0;
+      let n = 0;
+      for (let sy = y0; sy < y1; sy++) {
+        for (let sx = x0; sx < x1; sx++) {
+          const i = (sy * src.width + sx) * 4;
+          r += src.rgba[i];
+          g += src.rgba[i + 1];
+          b += src.rgba[i + 2];
+          a += src.rgba[i + 3];
+          n++;
+        }
+      }
+      const o = (y * dstW + x) * 4;
+      dst[o] = Math.round(r / n);
+      dst[o + 1] = Math.round(g / n);
+      dst[o + 2] = Math.round(b / n);
+      dst[o + 3] = Math.round(a / n);
+    }
+  }
+  return dst;
 }
+
+/* ─────────────────────────── sync ─────────────────────────── */
+
+mkdirSync(join(publicDir, 'icons'), { recursive: true });
+
+// Straight copies — canonical renders from the pack.
+copyFileSync(
+  pack('png/commandsuite/commandsuite-appicon-dark-512.png'),
+  join(publicDir, 'icons', 'icon-512.png'),
+);
+copyFileSync(
+  pack('png/commandsuite/commandsuite-appicon-dark-180.png'),
+  join(publicDir, 'apple-touch-icon.png'),
+);
+// Favicon: the pack's square appicon insets the symbol to 67% of the
+// tile, and the symbol file itself only inks 80×57 of its 100-unit
+// viewBox — at 16px that leaves a ~9px mark. Recompose the same two
+// canonical pieces with the inner placement rewritten: crop the
+// symbol's viewBox to its ink (10..90 × 21.5..78.5) and fit it to 86%
+// of the tile width, vertically centered. Artwork bytes are untouched;
+// only the nesting <svg> geometry changes.
+{
+  const square = readFileSync(
+    pack('svg/commandsuite/commandsuite-appicon-dark-square.svg'),
+    'utf8',
+  );
+  const tight = square.replace(
+    /<svg x="[\d.]+" y="[\d.]+" width="[\d.]+" height="[\d.]+" viewBox="0 0 100 100">/,
+    '<svg x="7" y="19.36" width="86" height="61.28" viewBox="10 21.5 80 57">',
+  );
+  if (tight === square)
+    throw new Error('favicon recompose: inner <svg> placement not found — pack layout changed?');
+  writeFileSync(join(publicDir, 'favicon.svg'), tight);
+}
+copyFileSync(pack('svg/commandsuite/commandsuite-symbol-dark.svg'), join(publicDir, 'logo.svg'));
+
+// 192 — the one PWA-required size the pack doesn't ship; resampled
+// from the 512 original.
+const src512 = decodePng(readFileSync(pack('png/commandsuite/commandsuite-appicon-dark-512.png')));
+writeFileSync(
+  join(publicDir, 'icons', 'icon-192.png'),
+  encodePng(192, 192, resample(src512, 192, 192)),
+);
+
+console.log('icons synced from @the-efficacious/brand logo pack');

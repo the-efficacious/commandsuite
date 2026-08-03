@@ -63,7 +63,7 @@ export function Login() {
       <div
         aria-hidden="true"
         class="absolute inset-0 pointer-events-none"
-        style="background-image: linear-gradient(to right, rgba(14,28,43,0.06) 1px, transparent 1px), linear-gradient(to bottom, rgba(14,28,43,0.06) 1px, transparent 1px); background-size: 64px 64px; mask-image: radial-gradient(ellipse at center, black 20%, transparent 65%);"
+        style="background-image: linear-gradient(to right, var(--ef-border-subtle) 1px, transparent 1px), linear-gradient(to bottom, var(--ef-border-subtle) 1px, transparent 1px); background-size: 64px 64px; mask-image: radial-gradient(ellipse at center, black 20%, transparent 65%);"
       />
       <form
         onSubmit={handleSubmit}
@@ -71,23 +71,16 @@ export function Login() {
         style="display:flex;flex-direction:column;gap:20px"
       >
         <div style="text-align:center">
-          {/* Heptagon mark — matches the dashboard top-bar mark
-              (uses `var(--ink)`: dark navy in light mode, warm cream
-              in dusk). */}
-          <BrandMark
-            size={48}
-            stroke="var(--ink)"
-            strokeWidth={3}
-            class="mx-auto"
-            style="margin-bottom:14px"
-          />
+          {/* CommandSuite symbol — canonical tri-gold mark, matching
+              the dashboard top-bar. */}
+          <BrandMark size={48} class="mx-auto" style="margin-bottom:14px" />
           <div
             class="font-display"
-            style="font-size:28px;font-weight:700;letter-spacing:-0.02em;color:var(--ink);line-height:1.05"
+            style="font-size:28px;font-weight:700;letter-spacing:-0.02em;color:var(--ef-text);line-height:1.05"
           >
             CommandSuite
           </div>
-          <div style="font-family:var(--f-mono);font-size:11.5px;letter-spacing:.14em;color:var(--muted);text-transform:uppercase;margin-top:8px">
+          <div style="font-family:var(--ef-font-mono);font-size:11.5px;letter-spacing:.14em;color:var(--ef-text-muted);text-transform:uppercase;margin-top:8px">
             Enter your authenticator code
           </div>
         </div>
@@ -130,7 +123,7 @@ export function Login() {
             // biome-ignore lint/a11y/noAutofocus: login is a single-field single-purpose page — users land here specifically to type a 6-digit code
             autoFocus
             class="input"
-            style="text-align:center;font-family:var(--f-mono);font-size:26px;letter-spacing:0.3em;font-weight:600"
+            style="text-align:center;font-family:var(--ef-font-mono);font-size:26px;letter-spacing:0.3em;font-weight:600"
           />
         </div>
 

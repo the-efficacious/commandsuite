@@ -1,10 +1,14 @@
 /*
  * Shell styles — import this once from the host (OSS entry, SaaS
- * entry). Brings in the brand design tokens and component utilities
- * the shell's JSX relies on. The host is expected to separately
- * install UnoCSS or equivalent for atomic utility classes (flex,
- * gap-3, px-4, sm:flex-row) referenced throughout component markup.
+ * entry). Brings in the Efficacious brand tokens + fonts and the
+ * component vocabulary the shell's JSX relies on. The host is expected
+ * to separately install UnoCSS with the `@the-efficacious/brand/uno`
+ * preset (composed after presetWind4) for atomic utility classes
+ * (flex, gap-3, px-4, sm:flex-row) referenced throughout component
+ * markup.
  */
 
+@import "@the-efficacious/brand/tokens.css";
+@import "@the-efficacious/brand/fonts.css";
 @import "./brand.css";
 @import "./theme.css";

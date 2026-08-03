@@ -15,8 +15,9 @@
 import { signal } from '@preact/signals';
 import type { ComponentChildren } from 'preact';
 import { useId } from 'preact/hooks';
+import { initials } from '../../lib/initials.js';
 import { instructions } from '../../lib/instructions.js';
-import { roster } from '../../lib/roster.js';
+import { memberKind, roster } from '../../lib/roster.js';
 import { selectAgentDetail, selectDmWith } from '../../lib/view.js';
 import { ArrowRight } from '../icons/index.js';
 
@@ -53,7 +54,7 @@ export function Mention({
     if (openCardId.value === cardId) openCardId.value = null;
   };
 
-  const classes = [variant === 'link' ? 'text-link-steel' : '', klass ?? '']
+  const classes = [variant === 'link' ? 'text-link-action' : '', klass ?? '']
     .filter(Boolean)
     .join(' ');
 
@@ -102,20 +103,25 @@ function MemberHoverCard({ id, name }: { id: string; name: string }) {
       id={id}
       role="tooltip"
       class="absolute z-40 mt-1"
-      style="background:var(--paper);border:1px solid var(--rule);border-radius:8px;box-shadow:0 8px 24px rgba(14,28,43,0.12);padding:10px 12px;min-width:220px;left:0;top:100%;font-family:var(--f-sans)"
+      style="background:var(--ef-surface);border:1px solid var(--ef-border);border-radius:8px;box-shadow:var(--ef-shadow-overlay);padding:10px 12px;min-width:220px;left:0;top:100%;font-family:var(--ef-font-body)"
     >
       <div class="flex items-center gap-2">
-        <span class="avatar" aria-hidden="true">
+        <span
+          class="avatar"
+          data-kind={memberKind(name) ?? 'agent'}
+          data-size="34"
+          aria-hidden="true"
+        >
           {initials(name)}
         </span>
         <div class="min-w-0 flex-1">
           <div
             class="font-display truncate"
-            style="font-weight:700;letter-spacing:-0.01em;color:var(--ink);font-size:14px"
+            style="font-weight:700;letter-spacing:-0.01em;color:var(--ef-text);font-size:14px"
           >
             {name}
             {isSelf && (
-              <span style="font-family:var(--f-mono);font-size:10px;letter-spacing:.14em;color:var(--muted);text-transform:uppercase;margin-left:6px">
+              <span style="font-family:var(--ef-font-mono);font-size:10px;letter-spacing:.14em;color:var(--ef-text-muted);text-transform:uppercase;margin-left:6px">
                 (you)
               </span>
             )}
@@ -123,11 +129,11 @@ function MemberHoverCard({ id, name }: { id: string; name: string }) {
           {teammate && (
             <div
               class="truncate"
-              style="font-family:var(--f-mono);font-size:10.5px;letter-spacing:.06em;color:var(--muted);text-transform:uppercase;margin-top:2px"
+              style="font-family:var(--ef-font-mono);font-size:10.5px;letter-spacing:.06em;color:var(--ef-text-muted);text-transform:uppercase;margin-top:2px"
             >
               {teammate.role.title}
-              <span style="color:var(--rule-strong)"> · </span>
-              <span style={`color:var(--${online ? 'ok' : 'muted'})`}>
+              <span style="color:var(--ef-border-strong)"> · </span>
+              <span style={`color:var(${online ? '--ef-lamp-nominal' : '--ef-lamp-stood-down'})`}>
                 {online ? '●' : '◇'} {online ? 'online' : 'offline'}
               </span>
             </div>
@@ -137,7 +143,7 @@ function MemberHoverCard({ id, name }: { id: string; name: string }) {
       {teammate?.role.description && (
         <div
           class="truncate"
-          style="font-size:12px;color:var(--graphite);margin-top:8px;line-height:1.4"
+          style="font-size:12px;color:var(--ef-text-faint);margin-top:8px;line-height:1.4"
         >
           {teammate.role.description}
         </div>
@@ -172,12 +178,4 @@ function MemberHoverCard({ id, name }: { id: string; name: string }) {
       </div>
     </div>
   );
-}
-
-function initials(name: string): string {
-  const parts = name.split(/[\s_-]+/).filter(Boolean);
-  if (parts.length >= 2) {
-    return `${parts[0]?.[0] ?? ''}${parts[1]?.[0] ?? ''}`.toUpperCase();
-  }
-  return name.slice(0, 2).toUpperCase();
 }

@@ -11,8 +11,9 @@
  * is always fresh when this runs.
  */
 
-import { cpSync, existsSync, rmSync } from 'node:fs';
-import { basename, resolve } from 'node:path';
+import { copyFileSync, cpSync, existsSync, mkdirSync, rmSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = resolve(fileURLToPath(import.meta.url), '..', '..');
@@ -36,4 +37,14 @@ cpSync(src, dest, {
   recursive: true,
   filter: (source) => !basename(source).startsWith('.build-stamp'),
 });
-console.log(`sync-public: copied web-host dist -> ${dest}`);
+
+// Brand tokens + fonts for server-rendered pages (the platform-connect
+// page links /brand/*.css instead of carrying its own token block, so
+// its palette tracks the brand package like everything else).
+const require = createRequire(import.meta.url);
+const brandDist = join(dirname(require.resolve('@the-efficacious/brand/package.json')), 'dist');
+mkdirSync(join(dest, 'brand'), { recursive: true });
+copyFileSync(join(brandDist, 'tokens.css'), join(dest, 'brand', 'tokens.css'));
+copyFileSync(join(brandDist, 'fonts.css'), join(dest, 'brand', 'fonts.css'));
+
+console.log(`sync-public: copied web-host dist + brand css -> ${dest}`);

@@ -146,7 +146,7 @@ describe('<MessageLine /> rendering modes', () => {
     expect(container.textContent).not.toMatch(/przy-1/);
     // Top margin applied after an earlier one (inline style, not class).
     const styleAttr = container.firstElementChild?.getAttribute('style') ?? '';
-    expect(styleAttr).toMatch(/margin-top:\s*12px/);
+    expect(styleAttr).toMatch(/margin-top:\s*14px/);
   });
 
   it('renders a new header when the time gap is too large even with same sender', () => {

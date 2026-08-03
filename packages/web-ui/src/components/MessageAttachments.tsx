@@ -51,13 +51,13 @@ function ImageAttachment({ att }: { att: Attachment }) {
       type="button"
       onClick={() => openPreview(att)}
       title={`${att.name} · ${formatSize(att.size)} · click to preview`}
-      style="display:inline-block;max-width:min(420px,100%);margin-top:6px;padding:0;border:1px solid var(--rule);border-radius:6px;overflow:hidden;line-height:0;background:transparent;cursor:pointer"
+      style="display:inline-block;max-width:min(420px,100%);margin-top:6px;padding:0;border:1px solid var(--ef-border);border-radius:6px;overflow:hidden;line-height:0;background:transparent;cursor:pointer"
     >
       <img
         src={FS_PATHS.read(att.path)}
         alt={att.name}
         loading="lazy"
-        style="display:block;max-width:100%;max-height:320px;width:auto;height:auto;object-fit:contain;background:var(--bg-alt)"
+        style="display:block;max-width:100%;max-height:320px;width:auto;height:auto;object-fit:contain;background:var(--ef-surface-sunken)"
       />
     </button>
   );
@@ -70,17 +70,17 @@ function FileChip({ att }: { att: Attachment }) {
         type="button"
         onClick={() => openPreview(att)}
         title={`Preview ${att.name}`}
-        style="display:inline-flex;gap:8px;align-items:center;padding:8px 10px;background:var(--bg-alt);border:1px solid var(--rule);border-radius:6px;color:var(--ink);font-size:13px;flex:1;min-width:0;text-align:left;cursor:pointer"
+        style="display:inline-flex;gap:8px;align-items:center;padding:8px 10px;background:var(--ef-surface-sunken);border:1px solid var(--ef-border);border-radius:6px;color:var(--ef-text);font-size:13px;flex:1;min-width:0;text-align:left;cursor:pointer"
       >
         <span
           aria-hidden="true"
-          style="font-size:18px;line-height:1;flex-shrink:0;color:var(--steel)"
+          style="font-size:18px;line-height:1;flex-shrink:0;color:var(--ef-icon-inline)"
         >
           {fileGlyph(att.mimeType)}
         </span>
         <span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
           <span style="font-weight:600;word-break:break-word">{att.name}</span>
-          <span style="color:var(--muted);font-size:11px">{formatSize(att.size)}</span>
+          <span style="color:var(--ef-text-muted);font-size:11px">{formatSize(att.size)}</span>
         </span>
       </button>
       <a
@@ -88,7 +88,7 @@ function FileChip({ att }: { att: Attachment }) {
         download={att.name}
         title={`Download ${att.name}`}
         aria-label={`Download ${att.name}`}
-        style="display:inline-flex;align-items:center;justify-content:center;width:32px;background:var(--bg-alt);border:1px solid var(--rule);border-radius:6px;color:var(--graphite);text-decoration:none;flex-shrink:0"
+        style="display:inline-flex;align-items:center;justify-content:center;width:32px;background:var(--ef-surface-sunken);border:1px solid var(--ef-border);border-radius:6px;color:var(--ef-text-faint);text-decoration:none;flex-shrink:0"
       >
         <Download size={13} aria-hidden="true" />
       </a>

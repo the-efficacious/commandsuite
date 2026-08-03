@@ -1,30 +1,23 @@
 /*
  * CommandSuite web — brand stylesheet entry.
  * --------------------------------------------------------------------
- * The heavy lifting lives in `theme.css` — that file is the canonical
- * brand system, shared with the marketing HTML and the component
- * reference at the repo root. Importing it here gives the SPA the full
- * vocabulary (.btn, .card, .panel, .badge, .tabs, .callout, etc.) with
- * the same token values (ink, steel, glacier, frost, ice, paper,
- * graphite, ember).
+ * Tokens and fonts come from `@the-efficacious/brand` (imported by
+ * `index.css` ahead of this file). The component vocabulary (.btn,
+ * .card, .panel, .badge, .tabs, .callout, etc.) lives in `theme.css`,
+ * also imported by `index.css`. Everything here resolves to `--ef-*`
+ * roles, so a theme swap (`data-ef-theme`) cascades automatically.
  *
  * This file layers SPA-only additions on top:
- *   - Font loading (theme.css sets the family vars, we fetch the files)
  *   - Scrollbar theming (theme.css doesn't style scrollbars)
  *   - The channel-tag syntax highlighting (SPA-specific — transcript
  *     rendering of <channel> XML tags with colored brackets + body)
+ *   - JSON + highlight.js code coloring
  *   - A couple of utility classes kept for SPA layouts
  */
 
-/* ─── Fonts — Manrope display + Atkinson Hyperlegible body + JetBrains Mono ─ */
-@import url("https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400;1,700&family=JetBrains+Mono:wght@300;400;500;600&family=Manrope:wght@400;500;600;700;800&display=swap");
-
-/* ─── Canonical brand system (theme.css from the repo root) ───────── */
-@import "./theme.css";
-
-/* ─── Scrollbars — match the surface palette so overflow blends in ── */
+/* ─── Scrollbars — quiet at rest, gold only under the hand ────────── */
 :root {
-  scrollbar-color: var(--rule-strong) transparent;
+  scrollbar-color: var(--ef-scroll-thumb) var(--ef-scroll-track);
   scrollbar-width: thin;
 }
 
@@ -33,16 +26,21 @@
   height: 10px;
 }
 ::-webkit-scrollbar-track {
-  background: transparent;
+  background: var(--ef-scroll-track);
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--rule-strong);
+  background: var(--ef-scroll-thumb);
   border-radius: 6px;
   border: 2px solid transparent;
   background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--steel);
+  background: var(--ef-scroll-thumb-hover);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+}
+::-webkit-scrollbar-thumb:active {
+  background: var(--ef-scroll-thumb-drag);
   background-clip: padding-box;
   border: 2px solid transparent;
 }
@@ -58,27 +56,27 @@
 .channel-tag {
   display: inline;
   font-size: 0.92em;
-  font-family: var(--f-mono);
+  font-family: var(--ef-font-mono);
 }
 .ch-bracket {
-  color: var(--muted);
-  font-weight: 600;
+  color: var(--ef-code-punctuation);
+  font-weight: var(--ef-weight-medium);
 }
 .ch-name {
-  color: var(--steel);
-  font-weight: 600;
+  color: var(--ef-code-keyword);
+  font-weight: var(--ef-weight-medium);
 }
 .ch-attr {
-  color: var(--ember);
-  font-weight: 500;
+  color: var(--ef-code-number);
+  font-weight: var(--ef-weight-medium);
 }
 .ch-val {
-  color: #9f5f37;
-  font-weight: 500;
+  color: var(--ef-code-string);
+  font-weight: var(--ef-weight-medium);
 }
 .ch-body {
-  color: var(--ink);
-  font-family: var(--f-sans);
+  color: var(--ef-text);
+  font-family: var(--ef-font-body);
   display: block;
   padding-left: 1.5em;
 }
@@ -89,31 +87,68 @@
  * inputs/results read as structured data instead of a monospace wall.
  * Colors resolve to brand tokens, so both themes track automatically. */
 .jk {
-  color: var(--steel);
-  font-weight: 600;
+  color: var(--ef-code-keyword);
+  font-weight: var(--ef-weight-medium);
 } /* object keys */
 .js {
-  color: var(--ember);
+  color: var(--ef-code-string);
 } /* string values */
 .jn {
-  color: var(--glacier);
+  color: var(--ef-code-number);
 } /* numbers */
 .jb {
-  color: var(--brick);
-  font-weight: 600;
+  color: var(--ef-code-keyword);
+  font-weight: var(--ef-weight-medium);
 } /* true · false · null */
 .jp {
-  color: var(--muted);
+  color: var(--ef-code-punctuation);
 } /* braces · commas · colons */
+
+/* ─── highlight.js — fenced code in rendered markdown ──────────────
+ * CodePreview emits `.hljs-*` spans; map them onto the code roles so
+ * highlighted source reads in the same register as the JSON viewer. */
+.hljs-keyword,
+.hljs-built_in,
+.hljs-type,
+.hljs-selector-tag,
+.hljs-section {
+  color: var(--ef-code-keyword);
+}
+.hljs-string,
+.hljs-regexp,
+.hljs-attr,
+.hljs-attribute,
+.hljs-symbol {
+  color: var(--ef-code-string);
+}
+.hljs-number,
+.hljs-literal {
+  color: var(--ef-code-number);
+}
+.hljs-comment,
+.hljs-quote,
+.hljs-meta {
+  color: var(--ef-code-comment);
+}
+.hljs-punctuation,
+.hljs-operator {
+  color: var(--ef-code-punctuation);
+}
+.hljs-title,
+.hljs-name,
+.hljs-variable,
+.hljs-template-variable {
+  color: var(--ef-text);
+}
 
 /* ─── SPA-specific utility classes ─────────────────────────────────
  * Names chosen to not collide with theme.css components. */
 
 /*
  * Pulsing dot — used inside status labels and eyebrows for "live /
- * active" states. theme.css ships a `.dot.pulse` with box-shadow
- * animation; this is the inline text-color variant the SPA uses
- * inside Boot and connection indicators.
+ * active" states. theme.css ships a `.dot.pulse` opacity animation;
+ * this is the inline text-color variant the SPA uses inside Boot and
+ * connection indicators.
  */
 .pulse-dot {
   display: inline-block;
@@ -143,99 +178,107 @@
 
 /* Interactive row in a list — bg lightens on pointer or keyboard focus. */
 .hover-row {
-  transition: background 0.15s var(--ease);
+  transition: background 0.15s var(--ef-motion-ease);
 }
 .hover-row:hover,
 .hover-row:focus-visible {
-  background: rgba(99, 137, 166, 0.06);
+  background: var(--ef-surface-sunken);
 }
 
 /* Card-style button — border + shadow lift on hover or focus. */
 .hover-card {
   transition:
-    border-color 0.15s var(--ease),
-    box-shadow 0.15s var(--ease);
+    border-color 0.15s var(--ef-motion-ease),
+    box-shadow 0.15s var(--ef-motion-ease);
 }
 .hover-card:hover,
 .hover-card:focus-visible {
-  border-color: var(--ink);
-  box-shadow: 0 4px 14px -8px rgba(14, 28, 43, 0.12);
+  border-color: var(--ef-border-strong);
+  box-shadow: var(--ef-shadow-overlay);
 }
 
-/* Inline text link — muted by default, shifts to ink on hover/focus. */
+/* Inline text link — muted by default, shifts to primary on hover/focus. */
 .text-link {
   background: transparent;
-  color: var(--muted);
-  transition: color 0.12s var(--ease);
+  color: var(--ef-text-muted);
+  transition: color 0.12s var(--ef-motion-ease);
 }
 .text-link:hover,
 .text-link:focus-visible {
-  color: var(--ink);
+  color: var(--ef-text);
 }
 
-/* Steel link — for "open agent" / "open DM" inline actions. */
-.text-link-steel {
+/* Action link — "open agent" / "open DM" inline actions. Link roles:
+ * warm white at rest, gold under attention (transient, budget-free). */
+.text-link-action {
   background: transparent;
-  color: var(--steel);
-  transition: text-decoration 0.12s var(--ease);
+  color: var(--ef-link);
+  transition:
+    color 0.12s var(--ef-motion-ease),
+    text-decoration-color 0.12s var(--ef-motion-ease);
 }
-.text-link-steel:hover,
-.text-link-steel:focus-visible {
+.text-link-action:hover,
+.text-link-action:focus-visible {
+  color: var(--ef-link-hover);
   text-decoration: underline;
-  text-underline-offset: 2px;
+  text-decoration-color: var(--ef-link-hover);
+  text-underline-offset: 3px;
 }
 
 /* Director-only "→ AGENT" sub-action on roster rows. */
 .row-action {
   background: transparent;
-  color: var(--muted);
+  color: var(--ef-text-muted);
   transition:
-    color 0.12s var(--ease),
-    background 0.12s var(--ease);
+    color 0.12s var(--ef-motion-ease),
+    background 0.12s var(--ef-motion-ease);
 }
 .row-action:hover,
 .row-action:focus-visible {
-  color: var(--ink);
-  background: var(--ice);
+  color: var(--ef-text);
+  background: var(--ef-surface-raised);
 }
 
 /*
  * Prose block — markdown-rendered message bodies. theme.css doesn't
  * define prose typography; this keeps the SPA's rendered markdown
- * looking like body copy on paper.
+ * looking like body copy on the shell ground.
  */
 .prose {
-  color: var(--ink);
-  font-family: var(--f-sans);
+  color: var(--ef-text);
+  font-family: var(--ef-font-body);
   font-size: 14.5px;
   line-height: 1.65;
 }
 .prose a {
-  color: var(--steel);
-  border-bottom: 1px solid rgba(62, 92, 118, 0.35);
+  color: var(--ef-link);
+  border-bottom: 1px solid var(--ef-link-underline);
   text-decoration: none;
-  transition: border-color 150ms var(--ease);
+  transition:
+    color 150ms var(--ef-motion-ease),
+    border-color 150ms var(--ef-motion-ease);
 }
 .prose a:hover {
-  border-bottom-color: var(--steel);
+  color: var(--ef-link-hover);
+  border-bottom-color: var(--ef-link-hover);
 }
 .prose strong {
-  color: var(--ink);
+  color: var(--ef-text);
   font-weight: 700;
 }
 .prose blockquote {
-  border-left: 2px solid var(--steel);
+  border-left: 2px solid var(--ef-border-strong);
   padding-left: 1rem;
-  color: var(--graphite);
+  color: var(--ef-text-faint);
   margin-block: 1rem;
 }
 .prose code {
-  font-family: var(--f-mono);
+  font-family: var(--ef-font-mono);
   font-size: 0.92em;
-  font-weight: 500;
-  background: var(--ice);
-  border: 1px solid var(--rule);
+  font-weight: var(--ef-weight-medium);
+  background: var(--ef-surface-raised);
+  border: 1px solid var(--ef-border);
   border-radius: 3px;
   padding: 0.1em 0.35em;
-  color: var(--steel);
+  color: var(--ef-text);
 }

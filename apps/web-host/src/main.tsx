@@ -21,9 +21,10 @@ import { initTheme } from 'csuite-web-ui';
 import { render } from 'preact';
 import { App } from './App.js';
 
-// Set `<html data-theme>` from persisted preference + system prefs
+// Set `<html data-ef-theme>` from persisted preference + system prefs
 // before the first render, so styled content paints with the correct
-// palette on first frame.
+// palette on first frame. (index.html also applies it pre-module so
+// light-preferring viewers never flash the dark default.)
 initTheme();
 
 const root = document.getElementById('app');

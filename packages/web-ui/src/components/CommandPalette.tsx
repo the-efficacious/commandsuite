@@ -1,16 +1,22 @@
 /**
- * CommandPalette — ⌘K fuzzy launcher.
+ * CommandPalette — ⌘K fuzzy launcher, drawn as the Helm JUMP.
  *
  *   ┌─────────────────────────────────────┐
- *   │ ⌕ jump to…                          │
+ *   │ ⌕ jump to…                    [esc] │
  *   ├─────────────────────────────────────┤
- *   │ @alice                 profile       │
- *   │ DM @alice              direct message│
- *   │ Ship the feature       active · alice│
- *   │ + New objective        create        │
+ *   │ MEMBERS                             │
+ *   │ @alice                 profile      │
+ *   │ OBJECTIVES                          │
+ *   │ Ship the feature    active · alice  │
+ *   │ ACTIONS                             │
+ *   │ + New objective        create       │
+ *   ├─────────────────────────────────────┤
+ *   │ ↑↓ MOVE · ↵ OPEN · ESC CLOSE        │
  *   └─────────────────────────────────────┘
  *
- * Keyboard:
+ * Results group by item kind (mono headers); within a group the
+ * ranker's order is preserved, and groups appear in the order of
+ * their best-ranked item. Keyboard:
  *   - ⌘K / Ctrl-K       toggle
  *   - Esc               close
  *   - ↑ / ↓             move selection
@@ -28,6 +34,7 @@ import {
   paletteOpen,
   paletteQuery,
   paletteSource,
+  type RankedItem,
   rankItems,
 } from '../lib/palette.js';
 import {
@@ -38,6 +45,49 @@ import {
   selectObjectiveDetail,
 } from '../lib/view.js';
 import { AtSign, Hash, MessageCircle, Plus, Search, Target } from './icons/index.js';
+
+const KIND_GROUP_LABELS: Record<PaletteItem['kind'], string> = {
+  member: 'MEMBERS',
+  'thread-channel': 'CHANNELS',
+  'thread-dm': 'DIRECT MESSAGES',
+  objective: 'OBJECTIVES',
+  action: 'ACTIONS',
+};
+
+interface JumpGroup {
+  kind: PaletteItem['kind'];
+  label: string;
+  /** Rank-ordered items with their index into the flattened display list. */
+  items: Array<{ ranked: RankedItem; index: number }>;
+}
+
+/**
+ * Regroup the flat ranked list by kind for display. Group order is
+ * the order of each kind's best-ranked item; within a group the rank
+ * order is untouched. Each item carries its flattened display index
+ * so keyboard navigation walks exactly what's on screen.
+ */
+function groupRanked(ranked: RankedItem[]): JumpGroup[] {
+  const groups: JumpGroup[] = [];
+  const byKind = new Map<PaletteItem['kind'], JumpGroup>();
+  for (const r of ranked) {
+    let group = byKind.get(r.item.kind);
+    if (!group) {
+      group = { kind: r.item.kind, label: KIND_GROUP_LABELS[r.item.kind], items: [] };
+      byKind.set(r.item.kind, group);
+      groups.push(group);
+    }
+    group.items.push({ ranked: r, index: 0 });
+  }
+  let index = 0;
+  for (const group of groups) {
+    for (const entry of group.items) {
+      entry.index = index;
+      index += 1;
+    }
+  }
+  return groups;
+}
 
 export function CommandPalette() {
   const open = paletteOpen.value;
@@ -59,6 +109,8 @@ export function CommandPalette() {
     },
   ];
   const ranked = rankItems(query, [...paletteSource.value, ...actions]);
+  const groups = groupRanked(ranked);
+  const flat = groups.flatMap((g) => g.items.map((entry) => entry.ranked));
 
   useEffect(() => {
     if (open) {
@@ -81,7 +133,7 @@ export function CommandPalette() {
     }
     if (e.key === 'ArrowDown') {
       e.preventDefault();
-      setCursor((c) => Math.min(c + 1, ranked.length - 1));
+      setCursor((c) => Math.min(c + 1, flat.length - 1));
       return;
     }
     if (e.key === 'ArrowUp') {
@@ -91,7 +143,7 @@ export function CommandPalette() {
     }
     if (e.key === 'Enter') {
       e.preventDefault();
-      const pick = ranked[cursor];
+      const pick = flat[cursor];
       if (pick) activate(pick.item);
       return;
     }
@@ -102,7 +154,7 @@ export function CommandPalette() {
     // biome-ignore lint/a11y/useKeyWithClickEvents: escape via document listener + input onKeyDown
     <div
       class="fixed inset-0 z-50 flex items-start justify-center"
-      style="background:rgba(14,28,43,0.45);padding-top:12vh"
+      style="background:var(--ef-shade);padding-top:12vh"
       onClick={(e) => {
         if (e.target === e.currentTarget) closePalette();
       }}
@@ -110,20 +162,21 @@ export function CommandPalette() {
       <div
         role="dialog"
         aria-label="Command palette"
-        class="w-full max-w-xl"
-        style="background:var(--paper);border:1px solid var(--rule);border-radius:10px;box-shadow:0 20px 50px rgba(14,28,43,0.25);overflow:hidden;margin:0 16px"
+        class="jump w-full max-w-xl"
+        style="margin:0 16px"
       >
-        <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--rule)">
+        <div class="jump-field">
           <span
             aria-hidden="true"
             class="flex items-center justify-center flex-shrink-0"
-            style="color:var(--muted)"
+            style="color:var(--ef-text-muted)"
           >
             <Search size={16} />
           </span>
           <input
             ref={inputRef}
             type="text"
+            class="jump-input"
             placeholder="Jump to member, objective, thread…"
             value={query}
             onInput={(e) => {
@@ -132,56 +185,49 @@ export function CommandPalette() {
             }}
             onKeyDown={onKeyDown}
             aria-label="Command palette search"
-            style="flex:1;border:none;outline:none;background:transparent;font-family:var(--f-sans);font-size:15px;color:var(--ink);padding:4px 0"
           />
-          <span style="font-family:var(--f-mono);font-size:10px;letter-spacing:.08em;color:var(--muted);text-transform:uppercase">
-            esc
-          </span>
+          <span class="kbd">esc</span>
         </div>
-        <ul style="list-style:none;padding:6px;margin:0;max-height:50vh;overflow-y:auto">
-          {ranked.length === 0 && (
-            <li style="padding:18px;text-align:center;color:var(--muted);font-family:var(--f-sans);font-size:13px">
+        <div role="listbox" aria-label="Results" style="max-height:50vh;overflow-y:auto">
+          {flat.length === 0 && (
+            <div style="padding:18px;text-align:center;color:var(--ef-text-muted);font-family:var(--ef-font-body);font-size:var(--ef-text-small)">
               No matches.
-            </li>
+            </div>
           )}
-          {ranked.map((r, idx) => (
-            <li
-              key={r.item.id}
-              style={`border-radius:6px;background:${idx === cursor ? 'var(--bg-alt, var(--ice))' : 'transparent'}`}
-            >
-              <button
-                type="button"
-                aria-current={idx === cursor ? 'true' : undefined}
-                onMouseEnter={() => setCursor(idx)}
-                onClick={() => activate(r.item)}
-                class="w-full flex items-center justify-between gap-3"
-                style="padding:8px 10px;background:transparent;border:none;text-align:left;cursor:pointer"
-              >
-                <span class="flex items-center gap-2 min-w-0">
-                  <span
-                    aria-hidden="true"
-                    class="flex items-center justify-center flex-shrink-0"
-                    style="color:var(--muted);width:18px;height:18px"
-                  >
-                    {kindIcon(r.item.kind)}
-                  </span>
-                  <span
-                    class="truncate"
-                    style="font-family:var(--f-sans);font-size:14px;color:var(--ink);font-weight:500"
-                  >
-                    {r.item.label}
-                  </span>
-                </span>
-                <span
-                  class="flex-shrink-0 truncate"
-                  style="font-family:var(--f-mono);font-size:11px;color:var(--muted);letter-spacing:.04em;max-width:50%"
+          {groups.map((group) => (
+            <div key={group.kind}>
+              <div class="jump-group">{group.label}</div>
+              {group.items.map(({ ranked: r, index }) => (
+                <button
+                  key={r.item.id}
+                  type="button"
+                  role="option"
+                  class="jump-item"
+                  aria-selected={index === cursor}
+                  onMouseEnter={() => setCursor(index)}
+                  onClick={() => activate(r.item)}
                 >
-                  {r.item.sub}
-                </span>
-              </button>
-            </li>
+                  <span class="flex items-center gap-2 min-w-0">
+                    <span
+                      aria-hidden="true"
+                      class="flex items-center justify-center flex-shrink-0"
+                      style="color:var(--ef-text-muted)"
+                    >
+                      {kindIcon(r.item.kind)}
+                    </span>
+                    <span class="truncate">{r.item.label}</span>
+                  </span>
+                  <span class="jump-meta flex-shrink-0 truncate" style="max-width:50%">
+                    {r.item.sub}
+                  </span>
+                </button>
+              ))}
+            </div>
           ))}
-        </ul>
+        </div>
+        <div class="jump-foot">
+          <span>↑↓ MOVE · ↵ OPEN · ESC CLOSE</span>
+        </div>
       </div>
     </div>
   );

@@ -87,6 +87,10 @@ export const TeammateSchema = z.object({
   name: NameSchema,
   role: RoleSchema,
   permissions: z.array(PermissionSchema),
+  // Person vs agent for identity rendering. Optional — older servers
+  // omit it, and consumers render the absent case as the neutral
+  // (agent) treatment. Must stay in the schema or zod strips it.
+  kind: z.enum(['person', 'agent']).optional(),
 });
 
 /**

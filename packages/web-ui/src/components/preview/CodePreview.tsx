@@ -97,11 +97,11 @@ export function CodePreview({ file, language }: CodePreviewProps) {
   };
 
   if (state.status === 'loading') {
-    return <p style="color:var(--muted);font-size:13px;padding:16px">Loading…</p>;
+    return <p style="color:var(--ef-text-muted);font-size:13px;padding:16px">Loading…</p>;
   }
   if (state.status === 'error') {
     return (
-      <p role="alert" style="color:var(--err);font-size:13px;padding:16px">
+      <p role="alert" style="color:var(--ef-lamp-alarm);font-size:13px;padding:16px">
         Couldn't render code: {state.error}
       </p>
     );
@@ -116,12 +116,12 @@ export function CodePreview({ file, language }: CodePreviewProps) {
   return (
     <div
       class="code-preview"
-      style="display:flex;flex-direction:column;height:100%;background:var(--paper)"
+      style="display:flex;flex-direction:column;height:100%;background:var(--ef-surface)"
     >
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 14px;border-bottom:1px solid var(--rule);background:var(--ice);flex-shrink:0">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 14px;border-bottom:1px solid var(--ef-border);background:var(--ef-surface-raised);flex-shrink:0">
         <span
           class="eyebrow"
-          style="font-family:var(--f-mono);font-size:11px;letter-spacing:.06em;color:var(--muted);text-transform:uppercase"
+          style="font-family:var(--ef-font-mono);font-size:11px;letter-spacing:.06em;color:var(--ef-text-muted);text-transform:uppercase"
         >
           {language}
         </span>
@@ -130,22 +130,22 @@ export function CodePreview({ file, language }: CodePreviewProps) {
           onClick={() => void onCopy()}
           aria-label={copied ? 'Copied' : 'Copy to clipboard'}
           title={copied ? 'Copied' : 'Copy'}
-          style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:transparent;border:1px solid var(--rule);border-radius:var(--r-xs);color:var(--graphite);font-family:var(--f-sans);font-size:11.5px;cursor:pointer"
+          style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:transparent;border:1px solid var(--ef-border);border-radius:var(--ef-radius-xs);color:var(--ef-text-faint);font-family:var(--ef-font-body);font-size:11.5px;cursor:pointer"
         >
           <Copy size={11} aria-hidden="true" />
           {copied ? 'Copied' : 'Copy'}
         </button>
       </div>
-      <div style="flex:1;display:flex;overflow:auto;font-family:var(--f-mono);font-size:12.5px;line-height:1.5">
+      <div style="flex:1;display:flex;overflow:auto;font-family:var(--ef-font-mono);font-size:12.5px;line-height:1.5">
         <pre
           aria-hidden="true"
-          style="flex-shrink:0;margin:0;padding:14px 10px 14px 14px;color:var(--muted);text-align:right;user-select:none;background:var(--ice);border-right:1px solid var(--rule);white-space:pre"
+          style="flex-shrink:0;margin:0;padding:14px 10px 14px 14px;color:var(--ef-text-muted);text-align:right;user-select:none;background:var(--ef-surface-raised);border-right:1px solid var(--ef-border);white-space:pre"
         >
           {lineNumbers}
         </pre>
         <pre
           class="hljs"
-          style="flex:1;margin:0;padding:14px;color:var(--ink);background:var(--paper);overflow-x:auto;white-space:pre"
+          style="flex:1;margin:0;padding:14px;color:var(--ef-text);background:var(--ef-surface);overflow-x:auto;white-space:pre"
         >
           {/* Safe innerHTML: highlight.js produces escaped HTML — every token
               is wrapped in <span class="hljs-…"> with text nodes inside, no

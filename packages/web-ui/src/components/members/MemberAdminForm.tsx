@@ -17,6 +17,7 @@ import { signal } from '@preact/signals';
 import type { Member, Permission, PermissionPresets } from 'csuite-sdk/types';
 import { useState } from 'preact/hooks';
 import { getClient } from '../../lib/client.js';
+import { confirmDialog } from '../../lib/confirm.js';
 import { loadInstructions } from '../../lib/instructions.js';
 import { loadRoster, roster } from '../../lib/roster.js';
 import { TextMetrics } from '../ui/index.js';
@@ -143,9 +144,11 @@ export function MemberAdminForm({
 
   async function onRotate(): Promise<void> {
     if (
-      !confirm(
-        `Rotate bearer token for '${member.name}'?\n\nThe existing token will be invalidated immediately.`,
-      )
+      !(await confirmDialog({
+        title: `Rotate bearer token for '${member.name}'?`,
+        body: 'The existing token will be invalidated immediately.',
+        verb: 'Rotate',
+      }))
     )
       return;
     await withBusy(`rotate:${rowKey}`, async () => {
@@ -160,9 +163,11 @@ export function MemberAdminForm({
 
   async function onEnrollTotp(): Promise<void> {
     if (
-      !confirm(
-        `(Re-)enroll TOTP for '${member.name}'?\n\nAny authenticator app currently bound to this member will stop working.`,
-      )
+      !(await confirmDialog({
+        title: `(Re-)enroll TOTP for '${member.name}'?`,
+        body: 'Any authenticator app currently bound to this member will stop working.',
+        verb: 'Re-enroll',
+      }))
     )
       return;
     await withBusy(`totp:${rowKey}`, async () => {
@@ -181,12 +186,20 @@ export function MemberAdminForm({
       return;
     }
     if (isSelf) {
-      if (!confirm(`Delete YOURSELF ('${member.name}')?\n\nYou will be signed out immediately.`))
+      if (
+        !(await confirmDialog({
+          title: `Delete YOURSELF ('${member.name}')?`,
+          body: 'You will be signed out immediately.',
+          verb: 'Delete',
+        }))
+      )
         return;
     } else if (
-      !confirm(
-        `Delete member '${member.name}'?\n\nTheir bearer token and TOTP secret will be invalidated; their files and message history remain.`,
-      )
+      !(await confirmDialog({
+        title: `Delete member '${member.name}'?`,
+        body: 'Their bearer token and TOTP secret will be invalidated; their files and message history remain.',
+        verb: 'Delete',
+      }))
     ) {
       return;
     }
@@ -209,7 +222,7 @@ export function MemberAdminForm({
       <div style="display:flex;flex-direction:column;gap:12px">
         <label
           class="flex items-center gap-2"
-          style="font-family:var(--f-mono);font-size:11px;letter-spacing:.04em;color:var(--muted);text-transform:uppercase"
+          style="font-family:var(--ef-font-mono);font-size:11px;letter-spacing:.04em;color:var(--ef-text-muted);text-transform:uppercase"
         >
           <span>role</span>
           <input
@@ -224,12 +237,12 @@ export function MemberAdminForm({
           />
         </label>
 
-        <label style="display:flex;flex-direction:column;gap:4px;font-family:var(--f-mono);font-size:11px;letter-spacing:.04em;color:var(--muted);text-transform:uppercase">
+        <label style="display:flex;flex-direction:column;gap:4px;font-family:var(--ef-font-mono);font-size:11px;letter-spacing:.04em;color:var(--ef-text-muted);text-transform:uppercase">
           <span>role description</span>
           <textarea
             class="input"
             rows={2}
-            style="font-size:13px;font-family:var(--f-sans);text-transform:none;letter-spacing:normal;color:var(--ink)"
+            style="font-size:13px;font-family:var(--ef-font-body);text-transform:none;letter-spacing:normal;color:var(--ef-text)"
             value={roleDescription}
             disabled={disabled}
             onInput={(e) => setRoleDescription((e.currentTarget as HTMLTextAreaElement).value)}
@@ -240,13 +253,13 @@ export function MemberAdminForm({
           <TextMetrics text={roleDescription} />
         </label>
 
-        <label style="display:flex;flex-direction:column;gap:4px;font-family:var(--f-mono);font-size:11px;letter-spacing:.04em;color:var(--muted);text-transform:uppercase">
+        <label style="display:flex;flex-direction:column;gap:4px;font-family:var(--ef-font-mono);font-size:11px;letter-spacing:.04em;color:var(--ef-text-muted);text-transform:uppercase">
           <span>personal instructions</span>
           <textarea
             class="input"
             rows={6}
             placeholder="Standing instructions for this member. Pinned into the agent's system prompt at runner startup."
-            style="font-size:13px;font-family:var(--f-sans);text-transform:none;letter-spacing:normal;color:var(--ink);white-space:pre-wrap"
+            style="font-size:13px;font-family:var(--ef-font-body);text-transform:none;letter-spacing:normal;color:var(--ef-text);white-space:pre-wrap"
             value={instructions}
             disabled={disabled}
             onInput={(e) => setInstructions((e.currentTarget as HTMLTextAreaElement).value)}
@@ -266,15 +279,15 @@ export function MemberAdminForm({
         {roster.value?.restartPending?.includes(member.name) === true ? (
           <div
             class="card"
-            style="padding:8px 10px;font-family:var(--f-mono);font-size:11px;line-height:1.4;color:var(--muted);border-left:3px solid var(--warn)"
+            style="padding:8px 10px;font-family:var(--ef-font-mono);font-size:11px;line-height:1.4;color:var(--ef-text-muted);border-left:3px solid var(--ef-lamp-caution)"
           >
-            <span style="color:var(--ember)">Restart pending</span> — this member's live session
-            runs superseded instructions. The current text applies from their next session.
+            <span style="color:var(--ef-lamp-caution)">Restart pending</span> — this member's live
+            session runs superseded instructions. The current text applies from their next session.
           </div>
         ) : (
           <div
             class="card"
-            style="padding:8px 10px;font-family:var(--f-mono);font-size:11px;line-height:1.4;color:var(--muted)"
+            style="padding:8px 10px;font-family:var(--ef-font-mono);font-size:11px;line-height:1.4;color:var(--ef-text-muted)"
           >
             Instructions apply from the member's next session. If a live session falls behind an
             edit, the broker lists the member restart-pending here and on the roster.
@@ -282,7 +295,7 @@ export function MemberAdminForm({
         )}
 
         <div style="display:flex;flex-direction:column;gap:6px">
-          <span style="font-family:var(--f-mono);font-size:11px;letter-spacing:.04em;color:var(--muted);text-transform:uppercase">
+          <span style="font-family:var(--ef-font-mono);font-size:11px;letter-spacing:.04em;color:var(--ef-text-muted);text-transform:uppercase">
             Permissions
           </span>
           <PermissionsEditor
@@ -319,7 +332,7 @@ export function MemberAdminForm({
             class="btn btn-ghost btn-sm"
             onClick={() => void onDelete()}
             disabled={disabled || isLastAdmin}
-            style="color:var(--err, #b42b2b)"
+            style="color:var(--ef-lamp-alarm)"
             title={isLastAdmin ? 'Cannot delete the last admin' : 'Delete this member'}
           >
             {busy === `delete:${rowKey}` ? '…' : 'Delete'}

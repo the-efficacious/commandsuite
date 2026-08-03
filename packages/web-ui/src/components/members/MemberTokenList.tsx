@@ -15,6 +15,7 @@ import { signal } from '@preact/signals';
 import type { TokenInfo, TokenOrigin } from 'csuite-sdk/types';
 import { useEffect } from 'preact/hooks';
 import { getClient } from '../../lib/client.js';
+import { confirmDialog } from '../../lib/confirm.js';
 
 export interface MemberTokenListProps {
   memberName: string;
@@ -50,13 +51,13 @@ async function loadTokens(memberName: string): Promise<void> {
 
 async function revokeRow(memberName: string, token: TokenInfo): Promise<void> {
   if (
-    !confirm(
-      `Revoke this token for '${memberName}'?\n\n` +
-        `  label:  ${token.label || '(none)'}\n` +
-        `  origin: ${token.origin}\n` +
-        `  created: ${formatTime(token.createdAt)}\n\n` +
-        `Any device currently using this token will get 401 on its next request.`,
-    )
+    !(await confirmDialog({
+      title: `Revoke this token for '${memberName}'?`,
+      body:
+        `${token.label || '(no label)'} · ${token.origin} · created ${formatTime(token.createdAt)}. ` +
+        'Any device currently using this token will get 401 on its next request.',
+      verb: 'Revoke',
+    }))
   ) {
     return;
   }
@@ -102,15 +103,15 @@ function originLabel(origin: TokenOrigin): string {
 function originAccent(origin: TokenOrigin): string {
   // Subtle color accents to make device-code tokens visually
   // distinct from the bootstrap/rotated ones — the device-code
-  // path is the new-and-recommended one, so it gets a steel
+  // path is the new-and-recommended one, so it gets a nominal
   // (positive) accent. bootstrap/rotated stay neutral.
   switch (origin) {
     case 'enroll':
-      return 'var(--steel)';
+      return 'var(--ef-lamp-nominal)';
     case 'rotate':
-      return 'var(--muted)';
+      return 'var(--ef-text-muted)';
     case 'bootstrap':
-      return 'var(--muted)';
+      return 'var(--ef-text-muted)';
   }
 }
 
@@ -143,18 +144,20 @@ export function MemberTokenList({ memberName, style }: MemberTokenListProps) {
       {error !== null && (
         <div
           role="alert"
-          style="font-family:var(--f-sans);font-size:12.5px;color:var(--err);background:rgba(211,47,47,0.08);border:1px solid var(--err);border-radius:var(--r-sm);padding:8px 10px;margin-bottom:10px"
+          style="font-family:var(--ef-font-body);font-size:12.5px;color:var(--ef-lamp-alarm);background:var(--ef-lamp-alarm-ground);border:1px solid var(--ef-lamp-alarm);border-radius:var(--ef-radius-sm);padding:8px 10px;margin-bottom:10px"
         >
           {error}
         </div>
       )}
 
       {tokens === undefined && !error && (
-        <div style="font-family:var(--f-mono);font-size:12px;color:var(--muted)">Loading…</div>
+        <div style="font-family:var(--ef-font-mono);font-size:12px;color:var(--ef-text-muted)">
+          Loading…
+        </div>
       )}
 
       {tokens !== undefined && tokens.length === 0 && (
-        <div style="font-family:var(--f-mono);font-size:12px;color:var(--muted)">
+        <div style="font-family:var(--ef-font-mono);font-size:12px;color:var(--ef-text-muted)">
           No active tokens. Run <code>csuite connect</code> on a device to enroll one.
         </div>
       )}
@@ -164,18 +167,18 @@ export function MemberTokenList({ memberName, style }: MemberTokenListProps) {
           {tokens.map((t) => (
             <li
               key={t.id}
-              style="display:grid;grid-template-columns:1fr auto;gap:6px 16px;padding:10px 12px;background:var(--bg-alt);border-radius:var(--r-sm);border:1px solid var(--rule)"
+              style="display:grid;grid-template-columns:1fr auto;gap:6px 16px;padding:10px 12px;background:var(--ef-surface-sunken);border-radius:var(--ef-radius-sm);border:1px solid var(--ef-border)"
             >
               <div>
-                <div style="display:flex;align-items:center;gap:8px;font-family:var(--f-sans);font-size:13px;color:var(--ink)">
+                <div style="display:flex;align-items:center;gap:8px;font-family:var(--ef-font-body);font-size:13px;color:var(--ef-text)">
                   <span style="font-weight:600">{t.label || '(unlabeled)'}</span>
                   <span
-                    style={`font-family:var(--f-mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;padding:2px 6px;border:1px solid ${originAccent(t.origin)};color:${originAccent(t.origin)};border-radius:3px`}
+                    style={`font-family:var(--ef-font-mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;padding:2px 6px;border:1px solid ${originAccent(t.origin)};color:${originAccent(t.origin)};border-radius:3px`}
                   >
                     {originLabel(t.origin)}
                   </span>
                 </div>
-                <div style="font-family:var(--f-mono);font-size:11px;color:var(--muted);margin-top:4px;display:flex;flex-wrap:wrap;gap:12px">
+                <div style="font-family:var(--ef-font-mono);font-size:11px;color:var(--ef-text-muted);margin-top:4px;display:flex;flex-wrap:wrap;gap:12px">
                   <span>created {formatTime(t.createdAt)}</span>
                   <span>last used {formatTime(t.lastUsedAt)}</span>
                   {t.expiresAt !== null && <span>expires {formatTime(t.expiresAt)}</span>}
@@ -187,7 +190,7 @@ export function MemberTokenList({ memberName, style }: MemberTokenListProps) {
                 class="btn btn-ghost btn-sm"
                 onClick={() => void revokeRow(memberName, t)}
                 disabled={busyId.value !== null}
-                style="color:var(--err);align-self:start"
+                style="color:var(--ef-lamp-alarm);align-self:start"
                 title="Revoke this token"
               >
                 {busyId.value === t.id ? '…' : 'Revoke'}

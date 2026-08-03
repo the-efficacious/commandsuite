@@ -35,7 +35,19 @@ import {
 } from '../lib/notifications.js';
 import { selectNotificationDetail } from '../lib/view.js';
 import { ArrowRight } from './icons/index.js';
-import { EmptyState, ErrorCallout, Loading, PageHeader } from './ui/index.js';
+import { EmptyState, ErrorCallout, PageHeader } from './ui/index.js';
+
+/** Four row-height shimmer bars standing in for the list while it loads. */
+function ListSkeleton() {
+  return (
+    <div role="status" aria-label="Loading">
+      <div class="ef-skeleton" style="height:44px;margin-bottom:8px" />
+      <div class="ef-skeleton" style="height:44px;margin-bottom:8px" />
+      <div class="ef-skeleton" style="height:44px;margin-bottom:8px" />
+      <div class="ef-skeleton" style="height:44px;margin-bottom:8px" />
+    </div>
+  );
+}
 
 const formOpen = signal(false);
 const formSlug = signal('');
@@ -78,7 +90,16 @@ export function NotificationsPanel() {
     });
   }, []);
 
-  if (!b) return <Loading label="Loading notifications…" />;
+  if (!b) {
+    return (
+      <div
+        class="flex-1 overflow-y-auto"
+        style="padding:24px max(1rem,env(safe-area-inset-right)) 32px max(1rem,env(safe-area-inset-left))"
+      >
+        <ListSkeleton />
+      </div>
+    );
+  }
 
   if (!hasPermission(b.permissions, 'notifications.manage')) {
     return (
@@ -131,7 +152,7 @@ export function NotificationsPanel() {
 
       {formOpen.value && <CreateEndpointForm />}
 
-      {list === null && err === null && <Loading label="Loading…" />}
+      {list === null && err === null && <ListSkeleton />}
 
       {list !== null && list.length === 0 && (
         <EmptyState
@@ -162,7 +183,7 @@ function EndpointListRow({
   endpoint: NotificationEndpointSummary;
   isLast: boolean;
 }) {
-  const border = isLast ? '' : 'border-bottom:1px solid var(--rule);';
+  const border = isLast ? '' : 'border-bottom:1px solid var(--ef-border);';
   const verifiable = endpoint.hasSecret || endpoint.authProfile !== null;
   return (
     <li>
@@ -176,11 +197,11 @@ function EndpointListRow({
         <div class="min-w-0 flex items-center gap-3 flex-wrap">
           <span
             class="font-display"
-            style="font-weight:700;letter-spacing:-0.01em;font-size:15px;color:var(--ink)"
+            style="font-weight:700;letter-spacing:-0.01em;font-size:15px;color:var(--ef-text)"
           >
             {endpoint.slug}
           </span>
-          <span style="font-family:var(--f-mono);font-size:11.5px;color:var(--muted);letter-spacing:.04em">
+          <span style="font-family:var(--ef-font-mono);font-size:11.5px;color:var(--ef-text-muted);letter-spacing:.04em">
             {endpoint.targets.map(describeTarget).join(' ')}
           </span>
           {!endpoint.enabled && <span class="badge muted">Disabled</span>}
@@ -189,14 +210,14 @@ function EndpointListRow({
           )}
           {endpoint.policy.ifOffline === 'queue' && <span class="badge soft">Queue offline</span>}
           {endpoint.policy.debounceMs > 0 && <span class="badge soft">Debounce</span>}
-          {!verifiable && <span class="badge ember solid">No secret</span>}
+          {!verifiable && <span class="badge caution solid">No secret</span>}
         </div>
         <div class="flex items-center gap-3 flex-shrink-0">
           <span
             class={`dot ${verifiable ? 'ok' : 'muted'}`}
             title={verifiable ? 'Verifiable' : 'No secret — rejects everything'}
           />
-          <span style="display:inline-flex;align-items:center;gap:4px;font-family:var(--f-mono);font-size:11px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase">
+          <span style="display:inline-flex;align-items:center;gap:4px;font-family:var(--ef-font-mono);font-size:11px;color:var(--ef-text-muted);letter-spacing:.08em;text-transform:uppercase">
             <ArrowRight size={12} aria-hidden="true" />
             Manage
           </span>
@@ -356,7 +377,7 @@ function ProfilesSection() {
           {profileFormOpen.value ? 'Cancel' : '+ New profile'}
         </button>
       </div>
-      <div style="font-family:var(--f-sans);font-size:12.5px;color:var(--muted);margin-bottom:12px">
+      <div style="font-family:var(--ef-font-body);font-size:12.5px;color:var(--ef-text-muted);margin-bottom:12px">
         A profile holds one verification scheme + secret shared by several endpoints — rotating the
         sender's secret is a single write. Deleting a profile still referenced by an endpoint is
         refused.
@@ -432,7 +453,7 @@ function ProfilesSection() {
       )}
 
       {profiles !== null && profiles.length === 0 && (
-        <div style="font-family:var(--f-sans);font-size:13px;color:var(--muted)">
+        <div style="font-family:var(--ef-font-body);font-size:13px;color:var(--ef-text-muted)">
           No profiles yet.
         </div>
       )}
@@ -462,14 +483,14 @@ function ProfileRow({
   return (
     <li
       class="flex flex-col gap-2"
-      style="border:1px solid var(--rule);border-radius:var(--r-xs);padding:10px 12px"
+      style="border:1px solid var(--ef-border);border-radius:var(--ef-radius-xs);padding:10px 12px"
     >
       <div class="flex items-center justify-between gap-3 flex-wrap">
         <div class="flex items-center gap-3 flex-wrap">
-          <span class="font-display" style="font-weight:700;font-size:14px;color:var(--ink)">
+          <span class="font-display" style="font-weight:700;font-size:14px;color:var(--ef-text)">
             {profile.slug}
           </span>
-          <span style="font-family:var(--f-mono);font-size:11px;color:var(--muted)">
+          <span style="font-family:var(--ef-font-mono);font-size:11px;color:var(--ef-text-muted)">
             {profile.auth.kind} · {refs}
           </span>
           <span
@@ -552,7 +573,7 @@ function Labeled({
     <label style="display:flex;flex-direction:column;gap:4px">
       <div class="eyebrow">{label}</div>
       {children}
-      <div style="font-family:var(--f-sans);font-size:11.5px;color:var(--muted);font-style:italic">
+      <div style="font-family:var(--ef-font-body);font-size:11.5px;color:var(--ef-text-muted);font-style:italic">
         {hint}
       </div>
     </label>

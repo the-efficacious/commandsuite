@@ -47,11 +47,11 @@ export function ChannelBrowse() {
           <div>
             <h1
               class="font-display"
-              style="font-size:22px;font-weight:700;letter-spacing:-0.01em;color:var(--ink);margin:0"
+              style="font-size:22px;font-weight:700;letter-spacing:-0.01em;color:var(--ef-text);margin:0"
             >
               Channels
             </h1>
-            <p style="font-family:var(--f-sans);font-size:13.5px;color:var(--muted);margin:6px 0 0;line-height:1.5">
+            <p style="font-family:var(--ef-font-body);font-size:13.5px;color:var(--ef-text-muted);margin:6px 0 0;line-height:1.5">
               Every active channel on the team. Open one you're in, or join one you aren't.
             </p>
           </div>
@@ -63,13 +63,13 @@ export function ChannelBrowse() {
         {loadErr !== null && (
           <div
             role="alert"
-            style="font-family:var(--f-sans);font-size:13px;color:var(--err);background:rgba(211,47,47,0.08);border:1px solid var(--err);border-radius:var(--r-sm);padding:10px 12px"
+            style="font-family:var(--ef-font-body);font-size:13px;color:var(--ef-lamp-alarm);background:var(--ef-lamp-alarm-ground);border:1px solid var(--ef-lamp-alarm);border-radius:var(--ef-radius-sm);padding:10px 12px"
           >
             {loadErr}
             <button
               type="button"
               onClick={() => void loadChannels()}
-              style="margin-left:10px;background:transparent;border:0;color:var(--err);font-family:var(--f-mono);font-size:11.5px;cursor:pointer;text-decoration:underline"
+              style="margin-left:10px;background:transparent;border:0;color:var(--ef-lamp-alarm);font-family:var(--ef-font-mono);font-size:11.5px;cursor:pointer;text-decoration:underline"
             >
               retry
             </button>
@@ -79,14 +79,14 @@ export function ChannelBrowse() {
         {joinError.value !== null && (
           <div
             role="alert"
-            style="font-family:var(--f-sans);font-size:13px;color:var(--err);background:rgba(211,47,47,0.08);border:1px solid var(--err);border-radius:var(--r-sm);padding:10px 12px"
+            style="font-family:var(--ef-font-body);font-size:13px;color:var(--ef-lamp-alarm);background:var(--ef-lamp-alarm-ground);border:1px solid var(--ef-lamp-alarm);border-radius:var(--ef-radius-sm);padding:10px 12px"
           >
             {joinError.value}
           </div>
         )}
 
         {list === null && loading && (
-          <div class="eyebrow" style="color:var(--muted);font-style:italic">
+          <div class="eyebrow" style="color:var(--ef-text-muted);font-style:italic">
             loading channels…
           </div>
         )}
@@ -99,22 +99,22 @@ export function ChannelBrowse() {
                 <li
                   key={c.id}
                   class="flex items-center"
-                  style="gap:10px;padding:12px 14px;border:1px solid var(--rule);border-radius:var(--r-sm);background:var(--paper)"
+                  style="gap:10px;padding:12px 14px;border:1px solid var(--ef-border);border-radius:var(--ef-radius-sm);background:var(--ef-surface)"
                 >
                   <span
                     aria-hidden="true"
-                    style="color:var(--muted);font-family:var(--f-mono);font-size:13px;width:14px;text-align:center;flex:0 0 auto"
+                    style="color:var(--ef-text-muted);font-family:var(--ef-font-mono);font-size:13px;width:14px;text-align:center;flex:0 0 auto"
                   >
                     #
                   </span>
                   <div class="flex-1 min-w-0">
                     <div
                       class="font-display"
-                      style="font-size:14.5px;font-weight:600;color:var(--ink);letter-spacing:-0.005em;line-height:1.2"
+                      style="font-size:14.5px;font-weight:600;color:var(--ef-text);letter-spacing:-0.005em;line-height:1.2"
                     >
                       {c.slug}
                     </div>
-                    <div style="font-family:var(--f-sans);font-size:11.5px;color:var(--muted);margin-top:2px">
+                    <div style="font-family:var(--ef-font-body);font-size:11.5px;color:var(--ef-text-muted);margin-top:2px">
                       {c.id === 'general'
                         ? 'team channel · everyone'
                         : `${c.memberCount} member${c.memberCount === 1 ? '' : 's'}`}

@@ -605,5 +605,10 @@ export function teammatesFromMembers(store: MemberStore): Teammate[] {
     name: m.name,
     role: m.role,
     permissions: m.permissions,
+    // The auth plane is the only person/agent signal we have: humans
+    // enroll TOTP for the web UI, agents authenticate by bearer token
+    // alone. No TOTP ⇒ unknown, and the field is omitted so the UI
+    // renders the neutral treatment instead of guessing.
+    ...(m.totpSecret ? { kind: 'person' as const } : {}),
   }));
 }

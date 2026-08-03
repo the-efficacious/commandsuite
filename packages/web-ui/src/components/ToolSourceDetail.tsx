@@ -133,18 +133,18 @@ export function ToolSourceDetail({ slug }: { slug: string }) {
             <div class="flex items-center gap-3 flex-wrap">
               <h2
                 class="font-display"
-                style="margin:0;font-size:26px;font-weight:800;letter-spacing:-0.02em;color:var(--ink)"
+                style="margin:0;font-size:26px;font-weight:800;letter-spacing:-0.02em;color:var(--ef-text)"
               >
                 {source.slug}
               </h2>
-              <span class={`badge ${source.kind === 'mcp' ? 'glacier solid' : 'ember solid'}`}>
+              <span class={`badge ${source.kind === 'mcp' ? 'info solid' : 'caution solid'}`}>
                 {source.kind === 'mcp' ? 'MCP' : 'Custom'}
               </span>
               <span class={`badge ${source.enabled ? 'soft' : 'muted'}`}>
                 {source.enabled ? 'Enabled' : 'Disabled'}
               </span>
             </div>
-            <div style="margin-top:6px;font-family:var(--f-mono);font-size:11.5px;color:var(--muted);letter-spacing:.04em">
+            <div style="margin-top:6px;font-family:var(--ef-font-mono);font-size:11.5px;color:var(--ef-text-muted);letter-spacing:.04em">
               {source.displayName.length > 0 ? `${source.displayName} · ` : ''}
               registered by {source.createdBy}
               {source.kind === 'mcp' && source.config.url ? ` · ${source.config.url}` : ''}
@@ -234,7 +234,7 @@ function ToolsSection({
       {isCustom && toolFormOpen.value && <DefineToolForm slug={source.slug} />}
       {tools === null && <Loading label="Loading tools…" />}
       {tools !== null && tools.length === 0 && (
-        <div style="font-family:var(--f-sans);font-size:13px;color:var(--muted)">
+        <div style="font-family:var(--ef-font-body);font-size:13px;color:var(--ef-text-muted)">
           {isCustom
             ? 'No tools defined yet. Agents see nothing from this source until a tool is defined.'
             : 'No tools discovered yet. Set the credential, then refresh from upstream.'}
@@ -246,14 +246,14 @@ function ToolsSection({
             <li
               key={t.name}
               class="flex items-start justify-between gap-3"
-              style={`padding:10px 2px;${idx === tools.length - 1 ? '' : 'border-bottom:1px solid var(--rule);'}`}
+              style={`padding:10px 2px;${idx === tools.length - 1 ? '' : 'border-bottom:1px solid var(--ef-border);'}`}
             >
               <div class="min-w-0">
-                <div style="font-family:var(--f-mono);font-size:13px;font-weight:600;color:var(--ink)">
+                <div style="font-family:var(--ef-font-mono);font-size:13px;font-weight:600;color:var(--ef-text)">
                   {source.slug}__{t.name}
                 </div>
                 {t.description.length > 0 && (
-                  <div style="font-family:var(--f-sans);font-size:12.5px;color:var(--muted);margin-top:2px">
+                  <div style="font-family:var(--ef-font-body);font-size:12.5px;color:var(--ef-text-muted);margin-top:2px">
                     {t.description}
                   </div>
                 )}
@@ -329,7 +329,7 @@ function DefineToolForm({ slug }: { slug: string }) {
   return (
     <form
       onSubmit={(e) => void onSubmit(e)}
-      style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--rule)"
+      style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--ef-border)"
     >
       <div class="field">
         <label class="field-label" for="tool-name">
@@ -354,7 +354,7 @@ function DefineToolForm({ slug }: { slug: string }) {
           id="tool-json"
           class="textarea"
           rows={12}
-          style="font-family:var(--f-mono);font-size:12px"
+          style="font-family:var(--ef-font-mono);font-size:12px"
           value={toolFormJson.value}
           onInput={(e) => {
             toolFormJson.value = (e.currentTarget as HTMLTextAreaElement).value;
@@ -410,7 +410,7 @@ function AccessSection({
             void run('all-members', () => updateToolSource(source.slug, { allMembers: next }));
           }}
         />
-        <span style="font-family:var(--f-sans);font-size:13px;color:var(--ink)">
+        <span style="font-family:var(--ef-font-body);font-size:13px;color:var(--ef-text)">
           Open to all members (including future ones)
         </span>
       </label>
@@ -418,14 +418,14 @@ function AccessSection({
       {!source.allMembers && (
         <>
           {boundMembers.length === 0 && (
-            <div style="font-family:var(--f-sans);font-size:13px;color:var(--muted);margin-bottom:10px">
+            <div style="font-family:var(--ef-font-body);font-size:13px;color:var(--ef-text-muted);margin-bottom:10px">
               No members bound — no agent sees these tools yet.
             </div>
           )}
           {boundMembers.length > 0 && (
             <ul class="flex flex-wrap gap-2" style="list-style:none;padding:0;margin:0 0 12px">
               {boundMembers.map((name) => (
-                <li key={name} class="chip">
+                <li key={name} class="token">
                   {name}
                   <button
                     type="button"
@@ -499,8 +499,8 @@ function CredentialSection({ source }: { source: ToolSourceSummary }) {
       }
     >
       <div class="flex items-center gap-2" style="margin-bottom:12px">
-        <KeyRound size={14} aria-hidden="true" style="color:var(--muted)" />
-        <span style="font-family:var(--f-sans);font-size:13px;color:var(--ink)">
+        <KeyRound size={14} aria-hidden="true" style="color:var(--ef-text-muted)" />
+        <span style="font-family:var(--ef-font-body);font-size:13px;color:var(--ef-text)">
           {source.hasCredential
             ? 'A credential is set. It is write-only — replace it below if it rotated.'
             : 'No credential set. Requests go out unauthenticated until one is added.'}
@@ -633,7 +633,7 @@ function LifecycleSection({ source }: { source: ToolSourceSummary }) {
           </button>
         )}
       </div>
-      <div style="font-family:var(--f-sans);font-size:11.5px;color:var(--muted);font-style:italic;margin-top:8px">
+      <div style="font-family:var(--ef-font-body);font-size:11.5px;color:var(--ef-text-muted);font-style:italic;margin-top:8px">
         Disabling hides the tools from bound agents immediately (they're notified live). Deleting
         also removes bindings, the credential, and tool definitions.
       </div>

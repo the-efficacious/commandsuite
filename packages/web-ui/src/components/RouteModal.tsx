@@ -52,7 +52,7 @@ export function RouteModal({ onClose, ariaLabel, size = 'lg', children }: RouteM
     // biome-ignore lint/a11y/useKeyWithClickEvents: keyboard dismissal is the global Escape handler bound in useEffect — onClick here is the click-outside convenience only
     <div
       class="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style="background:rgba(0,0,0,0.55);backdrop-filter:blur(2px)"
+      style="background:var(--ef-shade);backdrop-filter:blur(2px)"
       role="dialog"
       aria-modal="true"
       aria-label={ariaLabel}
@@ -61,8 +61,8 @@ export function RouteModal({ onClose, ariaLabel, size = 'lg', children }: RouteM
       }}
     >
       <div
-        class={`relative w-full ${SIZE_CLASS[size]} rounded-2xl border shadow-2xl flex flex-col`}
-        style="background:var(--paper);border-color:var(--rule);color:var(--ink);max-height:calc(100vh - 2rem)"
+        class={`relative w-full ${SIZE_CLASS[size]} flex flex-col`}
+        style="background:var(--ef-surface-panel);border:1px solid var(--ef-border-strong);border-radius:var(--ef-radius-sm);box-shadow:var(--ef-shadow-modal);color:var(--ef-text);max-height:calc(100vh - 2rem)"
       >
         <button
           type="button"
@@ -70,7 +70,7 @@ export function RouteModal({ onClose, ariaLabel, size = 'lg', children }: RouteM
           aria-label="Close"
           title="Close (Esc)"
           class="absolute flex items-center justify-center"
-          style="top:14px;right:14px;width:32px;height:32px;background:transparent;border:0;color:var(--muted);cursor:pointer;font-size:18px;line-height:1;border-radius:var(--r-xs);z-index:10"
+          style="top:14px;right:14px;width:32px;height:32px;background:transparent;border:0;color:var(--ef-text-muted);cursor:pointer;font-size:18px;line-height:1;border-radius:var(--ef-radius-xs);z-index:10"
         >
           <X size={14} aria-hidden="true" />
         </button>

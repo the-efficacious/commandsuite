@@ -349,7 +349,7 @@ export function Composer({ viewer }: ComposerProps) {
     // biome-ignore lint/a11y/noStaticElementInteractions: drop zone wraps composer; keyboard users use the "Browse files" button
     <div
       class="flex-shrink-0"
-      style={`background:${dragging.value ? 'var(--bg-alt)' : 'var(--paper)'};border-top:1px solid var(--rule);padding:14px max(0.75rem,env(safe-area-inset-right)) max(18px,env(safe-area-inset-bottom)) max(0.75rem,env(safe-area-inset-left));-webkit-overflow-scrolling:touch;overscroll-behavior:none;touch-action:manipulation;transition:background 120ms`}
+      style={`background:${dragging.value ? 'var(--ef-surface-sunken)' : 'var(--ef-surface)'};border-top:1px solid var(--ef-border);padding:14px max(0.75rem,env(safe-area-inset-right)) max(18px,env(safe-area-inset-bottom)) max(0.75rem,env(safe-area-inset-left));-webkit-overflow-scrolling:touch;overscroll-behavior:none;touch-action:manipulation;transition:background 120ms`}
       onDrop={onDrop}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
@@ -370,17 +370,17 @@ export function Composer({ viewer }: ComposerProps) {
           {pendingList.map((p) => (
             <span
               key={p.localId}
-              style={`display:inline-flex;gap:6px;align-items:center;padding:4px 8px;border-radius:4px;font-size:11.5px;background:${p.status === 'error' ? 'rgba(211,47,47,0.1)' : 'var(--bg-alt)'};border:1px solid ${p.status === 'error' ? 'var(--err, #d32f2f)' : 'var(--rule)'}`}
+              style={`display:inline-flex;gap:6px;align-items:center;padding:4px 8px;border-radius:4px;font-size:11.5px;background:${p.status === 'error' ? 'var(--ef-lamp-alarm-ground)' : 'var(--ef-surface-sunken)'};border:1px solid ${p.status === 'error' ? 'var(--ef-lamp-alarm)' : 'var(--ef-border)'}`}
               title={p.error ?? `${p.file.name} · ${formatSize(p.file.size)}`}
             >
               <span
                 aria-hidden="true"
                 style={`color:${
                   p.status === 'ready'
-                    ? 'var(--ok, #2e7d32)'
+                    ? 'var(--ef-lamp-nominal)'
                     : p.status === 'error'
-                      ? 'var(--err, #d32f2f)'
-                      : 'var(--muted)'
+                      ? 'var(--ef-lamp-alarm)'
+                      : 'var(--ef-text-muted)'
                 };font-weight:700`}
               >
                 {p.status === 'uploading' ? '…' : p.status === 'ready' ? '✓' : '!'}
@@ -388,12 +388,12 @@ export function Composer({ viewer }: ComposerProps) {
               <span style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
                 {p.file.name}
               </span>
-              <span style="color:var(--muted)">{formatSize(p.file.size)}</span>
+              <span style="color:var(--ef-text-muted)">{formatSize(p.file.size)}</span>
               <button
                 type="button"
                 onClick={() => dismissUpload(p.localId)}
                 aria-label={`Remove ${p.file.name}`}
-                style="background:none;border:none;padding:0 0 0 4px;cursor:pointer;color:var(--muted);font-size:14px;line-height:1"
+                style="background:none;border:none;padding:0 0 0 4px;cursor:pointer;color:var(--ef-text-muted);font-size:14px;line-height:1"
               >
                 ×
               </button>

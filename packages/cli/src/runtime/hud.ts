@@ -31,6 +31,7 @@
  * output see exactly the behavior they did before we added it.
  */
 
+import { helm } from '@the-efficacious/brand';
 import type { Presence, PresenceState } from './presence.js';
 
 /** Number of rows reserved for the HUD (separator + status). */
@@ -45,9 +46,11 @@ const RESET_SGR = `${CSI}0m`;
 const DIM = `${CSI}2m`;
 const BOLD = `${CSI}1m`;
 
-/** Foreground color via truecolor SGR. */
-function fg(r: number, g: number, b: number): string {
-  return `${CSI}38;2;${r};${g};${b}m`;
+/** Foreground color via truecolor SGR, from a '#rrggbb' brand value. */
+function fg(hex: string | undefined): string {
+  if (!hex) throw new Error('missing brand role — check the @the-efficacious/brand version');
+  const n = Number.parseInt(hex.slice(1), 16);
+  return `${CSI}38;2;${(n >> 16) & 0xff};${(n >> 8) & 0xff};${n & 0xff}m`;
 }
 
 /** Move cursor to (row, col), both 1-indexed. */
@@ -71,16 +74,19 @@ function decstbm(top: number, bottom: number): string {
 /** Reset the scroll region to full screen. */
 const DECSTBM_RESET = `${CSI}r`;
 
-// Palette — same hex values as apps/web-host/src/theme.css so the
-// terminal HUD reads visually like a sibling of the web UI chrome.
-// The separator stays as muted chrome; the status text itself pops
-// in saturated palette tones so "online / offline" reads at a glance.
-const ONLINE = fg(0x63, 0x89, 0xa6); // glacier — bright, calm, trusted
-const OFFLINE = fg(0xc8, 0x7c, 0x4e); // ember — alert weight
-const CONNECTING = fg(0x89, 0xa0, 0xb8); // pale glacier — transient
-const BRAND = fg(0x3e, 0x5c, 0x76); // steel — load-bearing "csuite" word
-const AGENT_NAME = fg(0xa4, 0xbd, 0xd1); // frost — airy right-side label
-const SEPARATOR = fg(0x7b, 0x85, 0x91); // slate — chrome
+// Palette — Helm roles from @the-efficacious/brand (tsup inlines the
+// values at build time), so the terminal HUD reads as a sibling of the
+// web UI chrome. Connection state uses the lamp grammar: nominal when
+// the link is up, working while it's being raised, alarm when it's
+// down — the HUD's whole job is that link, so losing it is a fault,
+// not a stand-down. The "csuite" word carries the gold mark — the
+// strip's single assertion.
+const ONLINE = fg(helm.color.lampNominal);
+const OFFLINE = fg(helm.color.lampAlarm);
+const CONNECTING = fg(helm.color.lampWorking);
+const BRAND = fg(helm.color.mark);
+const AGENT_NAME = fg(helm.color.textSecondary);
+const SEPARATOR = fg(helm.color.textMuted);
 
 export interface StartHudOptions {
   presence: Presence;

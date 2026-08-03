@@ -87,7 +87,7 @@ describe('restart-pending on TeamHome', () => {
     render(<TeamHome viewer="director-1" />);
 
     expect(screen.getByText('RESTART PENDING')).toBeTruthy();
-    expect(screen.getByText('Restart pending:')).toBeTruthy();
+    expect(screen.getByText('Restart pending')).toBeTruthy();
   });
 
   it('stays quiet when nothing is pending', () => {
@@ -95,7 +95,7 @@ describe('restart-pending on TeamHome', () => {
     render(<TeamHome viewer="director-1" />);
 
     expect(screen.queryByText('RESTART PENDING')).toBeNull();
-    expect(screen.queryByText('Restart pending:')).toBeNull();
+    expect(screen.queryByText('Restart pending')).toBeNull();
   });
 
   it('stays quiet when the broker has no opinion (field absent)', () => {
@@ -103,7 +103,7 @@ describe('restart-pending on TeamHome', () => {
     render(<TeamHome viewer="director-1" />);
 
     expect(screen.queryByText('RESTART PENDING')).toBeNull();
-    expect(screen.queryByText('Restart pending:')).toBeNull();
+    expect(screen.queryByText('Restart pending')).toBeNull();
   });
 });
 

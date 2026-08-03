@@ -31,6 +31,7 @@ import { channels, joinedChannels } from '../../lib/channels.js';
 import { embeddedShell, teamSettingsHandler } from '../../lib/embedded.js';
 import { handleSignOut, hasSignOutHandler } from '../../lib/handlers.js';
 import { inboxCount } from '../../lib/inbox.js';
+import { initials } from '../../lib/initials.js';
 import { instructions } from '../../lib/instructions.js';
 import {
   channelThreadKey,
@@ -40,7 +41,7 @@ import {
   messagesByThread,
 } from '../../lib/messages.js';
 import { objectives } from '../../lib/objectives.js';
-import { presenceActivity, roster } from '../../lib/roster.js';
+import { memberKind, presenceActivity, roster } from '../../lib/roster.js';
 import { currentTeam } from '../../lib/team.js';
 import { lastReadByThread, unreadCount } from '../../lib/unread.js';
 import {
@@ -61,7 +62,6 @@ import {
   view,
 } from '../../lib/view.js';
 import {
-  BrandMark,
   Folder,
   Hash,
   Home,
@@ -135,12 +135,12 @@ export function NavColumn({ viewer }: NavColumnProps) {
           md:static md:flex md:w-56 md:translate-x-0 md:shadow-none md:z-0
           fixed top-0 left-0 z-50 w-[85vw] max-w-72 transition-transform duration-200
           ${drawerOpen ? 'is-open translate-x-0 flex shadow-2xl' : '-translate-x-full hidden md:flex md:-translate-x-0'}`}
-      style="background:var(--paper);border-right:1px solid var(--rule);padding-left:env(safe-area-inset-left);padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom);bottom:0"
+      style="background:var(--ef-surface);border-right:1px solid var(--ef-border);padding-left:env(safe-area-inset-left);padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom);bottom:0"
     >
       <TeamHeader viewer={viewer} />
 
       {/* ── Work section ─────────────────────────────────────────── */}
-      <div style="padding:8px 0;border-bottom:1px solid var(--rule)">
+      <div style="padding:8px 0;border-bottom:1px solid var(--ef-border)">
         <NavItem
           label="Home"
           glyph={<Home size={15} aria-hidden="true" />}
@@ -228,7 +228,7 @@ export function NavColumn({ viewer }: NavColumnProps) {
             onClick={selectChannelsBrowse}
             aria-label="Browse all channels"
             class="eyebrow"
-            style={`margin:0;background:transparent;border:0;padding:0;cursor:pointer;letter-spacing:.16em;text-transform:uppercase;color:${browseActive ? 'var(--ink)' : 'var(--muted)'}`}
+            style={`margin:0;background:transparent;border:0;padding:0;cursor:pointer;letter-spacing:.16em;text-transform:uppercase;color:${browseActive ? 'var(--ef-text)' : 'var(--ef-text-muted)'}`}
           >
             Channels
           </button>
@@ -238,13 +238,13 @@ export function NavColumn({ viewer }: NavColumnProps) {
             aria-label="Create a channel"
             title="Create a channel"
             class="flex items-center justify-center"
-            style="background:transparent;border:none;color:var(--muted);line-height:1;cursor:pointer;padding:2px 4px;border-radius:var(--r-xs)"
+            style="background:transparent;border:none;color:var(--ef-text-muted);line-height:1;cursor:pointer;padding:2px 4px;border-radius:var(--ef-radius-xs)"
           >
             <Plus size={14} aria-hidden="true" />
           </button>
         </li>
         {!channelsLoaded && (
-          <li class="eyebrow" style="padding:4px 12px;font-style:italic;color:var(--muted)">
+          <li class="eyebrow" style="padding:4px 12px;font-style:italic;color:var(--ef-text-muted)">
             loading…
           </li>
         )}
@@ -260,7 +260,11 @@ export function NavColumn({ viewer }: NavColumnProps) {
           </li>
         ))}
         {createActive && (
-          <li class="eyebrow" style="padding:4px 12px;color:var(--steel)" aria-hidden="true">
+          <li
+            class="eyebrow"
+            style="padding:4px 12px;color:var(--ef-text-secondary)"
+            aria-hidden="true"
+          >
             + new channel
           </li>
         )}
@@ -328,7 +332,7 @@ export function NavColumn({ viewer }: NavColumnProps) {
                   // amber attention badge, visually separate from both the
                   // working spinner and the plain idle dot.
                   <span
-                    class="badge ember solid"
+                    class="badge caution solid"
                     aria-label="needs input"
                     role="status"
                     style="flex-shrink:0;font-size:8.5px;padding:1px 5px;letter-spacing:.06em"
@@ -352,7 +356,7 @@ function TeamSettingsButton() {
   const handler = teamSettingsHandler.value;
   if (handler === null) return null;
   return (
-    <div style="padding:10px 12px;border-top:1px solid var(--rule);flex-shrink:0">
+    <div style="padding:10px 12px;border-top:1px solid var(--ef-border);flex-shrink:0">
       <button
         type="button"
         onClick={handler}
@@ -371,7 +375,7 @@ function TeamHeader({ viewer }: { viewer: string }) {
   const team = currentTeam.value;
   if (!team) {
     return (
-      <div style="padding:14px 14px 12px;border-bottom:1px solid var(--rule);min-height:58px" />
+      <div style="padding:14px 14px 12px;border-bottom:1px solid var(--ef-border);min-height:58px" />
     );
   }
   return (
@@ -380,26 +384,28 @@ function TeamHeader({ viewer }: { viewer: string }) {
       onClick={selectOverview}
       aria-label={`${team.name} home`}
       class="w-full flex items-center gap-2"
-      style="padding:12px 14px;border-bottom:1px solid var(--rule);background:transparent;border:none;border-bottom:1px solid var(--rule);text-align:left;cursor:pointer"
+      style="padding:12px 14px;border-bottom:1px solid var(--ef-border);background:transparent;border:none;border-bottom:1px solid var(--ef-border);text-align:left;cursor:pointer"
     >
-      <BrandMark
-        size={20}
-        stroke="var(--steel)"
-        strokeWidth={5}
-        filledVertices={false}
-        class="flex-shrink-0"
+      {/* The viewer's own tile, not the product mark — identity
+          belongs to tiles; the brand mark lives in the topbar. */}
+      <span
+        class="avatar"
+        data-kind={memberKind(viewer) ?? 'agent'}
+        data-size="26"
         aria-hidden="true"
-      />
+      >
+        {initials(viewer)}
+      </span>
       <div class="min-w-0">
         <div
           class="font-display truncate"
-          style="font-size:14.5px;font-weight:700;letter-spacing:-0.01em;color:var(--ink);line-height:1.1"
+          style="font-size:14.5px;font-weight:700;letter-spacing:-0.01em;color:var(--ef-text);line-height:1.1"
         >
           {team.name}
         </div>
         <div
           class="truncate"
-          style="font-family:var(--f-sans);font-size:11px;color:var(--muted);line-height:1.2;margin-top:2px"
+          style="font-family:var(--ef-font-body);font-size:11px;color:var(--ef-text-muted);line-height:1.2;margin-top:2px"
         >
           {viewer}
         </div>
@@ -422,7 +428,7 @@ function AccountSettingsButton() {
   return (
     <div
       class="flex items-center gap-2"
-      style="padding:10px 12px;border-top:1px solid var(--rule);flex-shrink:0"
+      style="padding:10px 12px;border-top:1px solid var(--ef-border);flex-shrink:0"
     >
       <button
         type="button"
@@ -443,7 +449,7 @@ function AccountSettingsButton() {
           aria-label="Sign out"
           title="Sign out"
           class="flex-shrink-0 flex items-center justify-center"
-          style="width:28px;height:28px;background:transparent;border:none;color:var(--muted);cursor:pointer;border-radius:6px"
+          style="width:28px;height:28px;background:transparent;border:none;color:var(--ef-text-muted);cursor:pointer;border-radius:6px"
         >
           <LogOut size={16} aria-hidden="true" />
         </button>
@@ -452,15 +458,11 @@ function AccountSettingsButton() {
   );
 }
 
-/** Pill-shape unread counter. Caps at "99+". */
+/** Pill-shape unread counter. Caps at "99+"; a zero count draws quiet grey. */
 function UnreadBadge({ count }: { count: number }) {
   const label = count > 99 ? '99+' : String(count);
   return (
-    <span
-      class="badge solid"
-      style="font-size:9.5px;padding:2px 6px;min-width:20px;justify-content:center"
-      aria-hidden="true"
-    >
+    <span class="count-badge" data-state={count === 0 ? 'quiet' : undefined} aria-hidden="true">
       {label}
     </span>
   );
@@ -491,14 +493,14 @@ function NavItem({
       aria-disabled={disabled ? 'true' : undefined}
       title={label}
       class={`navitem w-full${active ? ' active' : ''}${disabled ? ' is-disabled' : ''}`}
-      style={`text-align:left${disabled ? ';color:var(--muted);cursor:default' : ''}`}
+      style={`text-align:left${disabled ? ';color:var(--ef-text-muted);cursor:default' : ''}`}
       tabIndex={disabled ? -1 : 0}
     >
       {glyph !== undefined && (
         <span
           aria-hidden="true"
           class="flex items-center justify-center flex-shrink-0"
-          style={`color:${active ? 'var(--ink)' : 'var(--muted)'};width:18px;height:18px`}
+          style={`color:${active ? 'var(--ef-text)' : 'var(--ef-text-muted)'};width:18px;height:18px`}
         >
           {glyph}
         </span>
@@ -543,7 +545,7 @@ function ChannelRow({
       <span
         aria-hidden="true"
         class="flex items-center justify-center flex-shrink-0"
-        style="color:var(--muted);width:18px;height:18px"
+        style="color:var(--ef-text-muted);width:18px;height:18px"
       >
         <Hash size={14} />
       </span>

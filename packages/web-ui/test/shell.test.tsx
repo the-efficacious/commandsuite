@@ -359,12 +359,12 @@ describe('<Sidebar />', () => {
     const blockedBtn = screen.getByLabelText(/Message build-bot \(needs input\)/i);
     expect(blockedBtn).toBeTruthy();
     expect(blockedBtn.querySelector('.spinner')).toBeNull();
-    expect(blockedBtn.querySelector('.badge.ember')).toBeTruthy();
+    expect(blockedBtn.querySelector('.badge.caution')).toBeTruthy();
     expect(blockedBtn.querySelector('[aria-label="needs input"]')).toBeTruthy();
     // Working teammate keeps the spinner and shows no needs-input badge.
     const workingBtn = screen.getByLabelText(/Message test-agent-1 \(working\)/i);
     expect(workingBtn.querySelector('.spinner')).toBeTruthy();
-    expect(workingBtn.querySelector('.badge.ember')).toBeNull();
+    expect(workingBtn.querySelector('.badge.caution')).toBeNull();
   });
 
   it('prefers the 3-state activity field over the back-compat busy boolean', () => {
@@ -418,7 +418,7 @@ describe('<Sidebar />', () => {
     render(<Sidebar viewer="director-1" />);
     const idleBtn = screen.getByLabelText(/Message build-bot \(online\)/i);
     expect(idleBtn.querySelector('.spinner')).toBeNull();
-    expect(idleBtn.querySelector('.badge.ember')).toBeNull();
+    expect(idleBtn.querySelector('.badge.caution')).toBeNull();
     expect(idleBtn.querySelector('.dot.ok')).toBeTruthy();
   });
 
@@ -559,9 +559,13 @@ describe('<TeamHome />', () => {
       ],
     };
     render(<TeamHome viewer="director-1" />);
+    // The ONLINE meter tile shares the word with the roster state
+    // column, so read the state from each row's `.state-word`.
     await waitFor(() => {
-      expect(screen.getByText(/ONLINE/)).toBeTruthy();
-      expect(screen.getByText(/OFFLINE/)).toBeTruthy();
+      const onlineRow = screen.getByRole('button', { name: /open profile for build-bot/i });
+      expect(onlineRow.querySelector('.state-word')?.textContent).toContain('ONLINE');
+      const offlineRow = screen.getByRole('button', { name: /open profile for director-1/i });
+      expect(offlineRow.querySelector('.state-word')?.textContent).toContain('OFFLINE');
     });
   });
 
@@ -607,8 +611,11 @@ describe('<TeamHome />', () => {
     await waitFor(() => {
       expect(screen.getByText('WORKING')).toBeTruthy();
       expect(screen.getByText('NEEDS INPUT')).toBeTruthy();
-      // Idle-but-connected still reads ONLINE via the connection dimension.
-      expect(screen.getByText('ONLINE')).toBeTruthy();
+      // Idle-but-connected still reads ONLINE via the connection
+      // dimension — scoped to the row's state word because the ONLINE
+      // meter tile carries the same text.
+      const idleStateRow = screen.getByRole('button', { name: /open profile for idle-bot/i });
+      expect(idleStateRow.querySelector('.state-word')?.textContent).toContain('ONLINE');
     });
 
     const workingRow = screen.getByRole('button', { name: /open profile for worker-bot/i });

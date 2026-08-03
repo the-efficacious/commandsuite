@@ -18,7 +18,19 @@ import { instructions } from '../lib/instructions.js';
 import { createSecret, loadSecrets, secrets, secretsError } from '../lib/secrets.js';
 import { selectSecretDetail } from '../lib/view.js';
 import { ArrowRight } from './icons/index.js';
-import { EmptyState, ErrorCallout, Loading, PageHeader } from './ui/index.js';
+import { EmptyState, ErrorCallout, PageHeader } from './ui/index.js';
+
+/** Four row-height shimmer bars standing in for the list while it loads. */
+function ListSkeleton() {
+  return (
+    <div role="status" aria-label="Loading">
+      <div class="ef-skeleton" style="height:44px;margin-bottom:8px" />
+      <div class="ef-skeleton" style="height:44px;margin-bottom:8px" />
+      <div class="ef-skeleton" style="height:44px;margin-bottom:8px" />
+      <div class="ef-skeleton" style="height:44px;margin-bottom:8px" />
+    </div>
+  );
+}
 
 const formOpen = signal(false);
 const formSlug = signal('');
@@ -35,7 +47,16 @@ export function SecretsPanel() {
     void loadSecrets();
   }, []);
 
-  if (!b) return <Loading label="Loading secrets…" />;
+  if (!b) {
+    return (
+      <div
+        class="flex-1 overflow-y-auto"
+        style="padding:24px max(1rem,env(safe-area-inset-right)) 32px max(1rem,env(safe-area-inset-left))"
+      >
+        <ListSkeleton />
+      </div>
+    );
+  }
 
   if (!hasPermission(b.permissions, 'secrets.manage')) {
     return (
@@ -88,7 +109,7 @@ export function SecretsPanel() {
 
       {formOpen.value && <CreateSecretForm />}
 
-      {list === null && err === null && <Loading label="Loading…" />}
+      {list === null && err === null && <ListSkeleton />}
 
       {list !== null && list.length === 0 && (
         <EmptyState
@@ -111,7 +132,7 @@ export function SecretsPanel() {
 }
 
 function SecretListRow({ secret, isLast }: { secret: SecretSummary; isLast: boolean }) {
-  const border = isLast ? '' : 'border-bottom:1px solid var(--rule);';
+  const border = isLast ? '' : 'border-bottom:1px solid var(--ef-border);';
   return (
     <li>
       <button
@@ -124,17 +145,17 @@ function SecretListRow({ secret, isLast }: { secret: SecretSummary; isLast: bool
         <div class="min-w-0 flex items-center gap-3 flex-wrap">
           <span
             class="font-display"
-            style="font-weight:700;letter-spacing:-0.01em;font-size:15px;color:var(--ink)"
+            style="font-weight:700;letter-spacing:-0.01em;font-size:15px;color:var(--ef-text)"
           >
             {secret.slug}
           </span>
-          <span style="font-family:var(--f-mono);font-size:11.5px;color:var(--muted);letter-spacing:.04em">
+          <span style="font-family:var(--ef-font-mono);font-size:11.5px;color:var(--ef-text-muted);letter-spacing:.04em">
             ${secret.envName}
           </span>
           {!secret.enabled && <span class="badge muted">Disabled</span>}
           {secret.allMembers && <span class="badge soft">All members</span>}
           {secret.description.length > 0 && (
-            <span style="font-family:var(--f-sans);font-size:12.5px;color:var(--muted)">
+            <span style="font-family:var(--ef-font-body);font-size:12.5px;color:var(--ef-text-muted)">
               {secret.description}
             </span>
           )}
@@ -144,7 +165,7 @@ function SecretListRow({ secret, isLast }: { secret: SecretSummary; isLast: bool
             class={`dot ${secret.hasValue ? 'ok' : 'muted'}`}
             title={secret.hasValue ? 'Value set' : 'No value'}
           />
-          <span style="display:inline-flex;align-items:center;gap:4px;font-family:var(--f-mono);font-size:11px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase">
+          <span style="display:inline-flex;align-items:center;gap:4px;font-family:var(--ef-font-mono);font-size:11px;color:var(--ef-text-muted);letter-spacing:.08em;text-transform:uppercase">
             <ArrowRight size={12} aria-hidden="true" />
             Manage
           </span>
@@ -240,7 +261,7 @@ function CreateSecretForm() {
               formAllMembers.value = (e.currentTarget as HTMLInputElement).checked;
             }}
           />
-          <span style="font-family:var(--f-sans);font-size:13px;color:var(--ink)">
+          <span style="font-family:var(--ef-font-body);font-size:13px;color:var(--ef-text)">
             Deliver to all members (skip per-member bindings)
           </span>
         </label>
@@ -277,11 +298,9 @@ function Labeled({
   return (
     // biome-ignore lint/a11y/noLabelWithoutControl: the input/select/textarea is passed in as a child
     <label style="display:flex;flex-direction:column;gap:4px">
-      <div class="eyebrow">{label}</div>
+      <div class="field-label">{label}</div>
       {children}
-      <div style="font-family:var(--f-sans);font-size:11.5px;color:var(--muted);font-style:italic">
-        {hint}
-      </div>
+      <div class="field-help">{hint}</div>
     </label>
   );
 }

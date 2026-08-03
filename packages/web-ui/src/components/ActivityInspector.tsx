@@ -162,18 +162,18 @@ export function ActivityInspector({ agentName }: ActivityInspectorProps) {
         aria-valuemin={RESIZE_MIN_PX}
         aria-valuemax={maxResolved}
       />
-      <header style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 14px;border-bottom:1px solid var(--rule);flex-shrink:0">
+      <header style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 14px;border-bottom:1px solid var(--ef-border);flex-shrink:0">
         <div style="min-width:0">
-          <div style="font-family:var(--f-mono);font-weight:600;font-size:13px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+          <div style="font-family:var(--ef-font-mono);font-weight:600;font-size:13px;color:var(--ef-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
             {agentName}
           </div>
-          <div style="font-family:var(--f-sans);font-size:11px;color:var(--muted)">
+          <div style="font-family:var(--ef-font-body);font-size:11px;color:var(--ef-text-muted)">
             activity stream
           </div>
         </div>
         <span
           title={connected ? 'Activity stream connected' : 'Activity stream offline'}
-          style={`font-family:var(--f-mono);font-size:11px;letter-spacing:.04em;color:${connected ? 'var(--steel)' : 'var(--muted)'};white-space:nowrap`}
+          style={`font-family:var(--ef-font-mono);font-size:11px;letter-spacing:.04em;color:${connected ? 'var(--ef-lamp-nominal)' : 'var(--ef-lamp-stood-down)'};white-space:nowrap`}
         >
           ● {connected ? 'live' : 'offline'}
         </span>
@@ -183,7 +183,7 @@ export function ActivityInspector({ agentName }: ActivityInspectorProps) {
           class="inspector-close items-center justify-center"
           aria-label="Close activity panel"
           title="Close (Esc)"
-          style="width:28px;height:28px;background:var(--ice);border:1px solid var(--rule);color:var(--graphite);border-radius:var(--r-xs);cursor:pointer;flex-shrink:0;margin-left:4px"
+          style="width:28px;height:28px;background:var(--ef-surface-raised);border:1px solid var(--ef-border);color:var(--ef-text-faint);border-radius:var(--ef-radius-xs);cursor:pointer;flex-shrink:0;margin-left:4px"
         >
           <X size={12} aria-hidden="true" />
         </button>
@@ -205,11 +205,11 @@ export function ActivityInspector({ agentName }: ActivityInspectorProps) {
           <ChevronDown
             size={14}
             aria-hidden="true"
-            style={`transform:rotate(${filtersOpen ? 0 : -90}deg);transition:transform 0.15s var(--ease)`}
+            style={`transform:rotate(${filtersOpen ? 0 : -90}deg);transition:transform 0.15s var(--ef-motion-ease)`}
           />
           <span style="flex:1;text-align:left">Filters</span>
           {filterSummary !== null && (
-            <span style="color:var(--steel);font-size:11px;font-family:var(--f-mono)">
+            <span style="color:var(--ef-text-secondary);font-size:11px;font-family:var(--ef-font-mono)">
               {filterSummary}
             </span>
           )}
@@ -226,7 +226,7 @@ export function ActivityInspector({ agentName }: ActivityInspectorProps) {
           ref={containerRef}
           onScroll={onScroll}
           data-scroll-anchor="activity"
-          class="activity-inspector-scroll"
+          class="activity-inspector-scroll scroller--hair"
           style="position:absolute;inset:0;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:10px"
         >
           <TimelineBody />
@@ -237,7 +237,7 @@ export function ActivityInspector({ agentName }: ActivityInspectorProps) {
             onClick={jumpToBottom}
             aria-label="Jump to newest activity"
             title="Jump to newest"
-            style="position:absolute;right:14px;bottom:14px;width:36px;height:36px;border-radius:9999px;background:var(--paper);border:1px solid var(--rule);color:var(--ink);box-shadow:0 4px 12px rgba(0,0,0,0.12);cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:2"
+            style="position:absolute;right:14px;bottom:14px;width:36px;height:36px;border-radius:9999px;background:var(--ef-surface);border:1px solid var(--ef-border);color:var(--ef-text);box-shadow:var(--ef-shadow-overlay);cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:2"
           >
             <ChevronsDown size={18} aria-hidden="true" />
           </button>

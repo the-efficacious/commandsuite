@@ -53,17 +53,17 @@ export function TextPreview({ file }: TextPreviewProps) {
   }, [file.path]);
 
   if (state.status === 'loading') {
-    return <p style="color:var(--muted);font-size:13px;padding:16px">Loading…</p>;
+    return <p style="color:var(--ef-text-muted);font-size:13px;padding:16px">Loading…</p>;
   }
   if (state.status === 'error') {
     return (
-      <p role="alert" style="color:var(--err);font-size:13px;padding:16px">
+      <p role="alert" style="color:var(--ef-lamp-alarm);font-size:13px;padding:16px">
         Couldn't load preview: {state.error}
       </p>
     );
   }
   return (
-    <pre style="margin:0;padding:16px;font-family:var(--f-mono);font-size:12.5px;line-height:1.55;white-space:pre-wrap;word-break:break-word;color:var(--ink);background:var(--paper)">
+    <pre style="margin:0;padding:16px;font-family:var(--ef-font-mono);font-size:12.5px;line-height:1.55;white-space:pre-wrap;word-break:break-word;color:var(--ef-text);background:var(--ef-surface)">
       {state.text}
     </pre>
   );

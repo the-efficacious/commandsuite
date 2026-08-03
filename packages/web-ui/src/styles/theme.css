@@ -1,8 +1,10 @@
 /* ═══════════════════════════════════════════════════════════════════════
-   CommandSuite — Theme
+   CommandSuite — component vocabulary on the Helm design system
    ─────────────────────────────────────────────────────────────────────
-   Variant F · HCI-Apex
-   Manrope (display) · Atkinson Hyperlegible (body) · JetBrains Mono (mono)
+   Tokens + fonts come from @the-efficacious/brand (helm dark is the
+   :root default; helm-light via data-ef-theme). Everything here
+   references --ef-* roles only — a theme swap re-resolves the file.
+   Rajdhani (display) · Outfit (body) · JetBrains Mono (mono)
    ═══════════════════════════════════════════════════════════════════════ */
 
 *,
@@ -35,62 +37,21 @@ a {
   text-decoration: none;
 }
 
-/* ─────────────────────────── TOKENS ─────────────────────────── */
+/* ─────────────────────────── MARK ─────────────────────────── */
+/* BrandMark diamond fills. The pack ships two symbol drawings: on the
+   dark ground all three pairs are gold (deep → base → bright); on the
+   light ground the outer pairs go neutral (granite → brand-ink) and
+   only the center diamond keeps gold — the light surface spends less.
+   Values match logo-pack svg/commandsuite/commandsuite-symbol-{dark,light}. */
 :root {
-  /* Palette */
-  --ink: #0e1c2b;
-  --steel: #3e5c76;
-  --glacier: #6389a6;
-  --frost: #a4bdd1;
-  --ice: #e6eef5;
-  --paper: #f6f3ec;
-  --graphite: #4b5560;
-  --ember: #c87c4e;
-  --brick: #b04a34;
-
-  /* Functional */
-  --bg: var(--paper);
-  --fg: var(--ink);
-  --muted: var(--graphite);
-  --rule: rgba(14, 28, 43, 0.14);
-  --rule-strong: rgba(14, 28, 43, 0.42);
-  --ring: rgba(62, 92, 118, 0.32);
-  --ok: var(--steel);
-  --warn: var(--ember);
-  --err: var(--brick);
-  --err-bg: #fff6f6;
-  /* Cross-team rail (Discord-style team switcher in the platform).
-     Light mode uses `--ice` for a subtle "alt surface" feel; dark mode
-     drops deeper than `--paper` to give the rail more weight. */
-  --rail-bg: var(--ice);
-
-  /* Type */
-  --f-display: "Manrope", "Helvetica Neue", "Arial", sans-serif;
-  --f-sans: "Atkinson Hyperlegible", system-ui, sans-serif;
-  --f-mono: "JetBrains Mono", ui-monospace, monospace;
-
-  /* Scale */
-  --s-tag: 10.5px;
-  --s-micro: 11.5px;
-  --s-small: 13px;
-  --s-body: 15px;
-  --s-lead: 18px;
-  --s-h4: 22px;
-  --s-h3: 30px;
-  --s-h2: 48px;
-  --s-h1: 96px;
-
-  /* Radii */
-  --r-xs: 2px;
-  --r-sm: 4px;
-  --r-md: 6px;
-
-  /* Motion */
-  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
-
-  /* Grid */
-  --edge: 48px;
-  --max: 1360px;
+  --mark-outer: var(--ef-gold-deep);
+  --mark-mid: var(--ef-gold-base);
+  --mark-core: var(--ef-gold-bright);
+}
+:root[data-ef-theme="helm-light"] {
+  --mark-outer: var(--ef-granite);
+  --mark-mid: var(--ef-brand-ink);
+  --mark-core: var(--ef-gold-base);
 }
 
 /* ─────────────────────────── BASE ─────────────────────────── */
@@ -99,13 +60,10 @@ html {
   height: 100%;
 }
 body {
-  background:
-    radial-gradient(ellipse at top, rgba(99, 137, 166, 0.08), transparent 55%),
-    linear-gradient(180deg, var(--paper) 0%, #f2eee5 100%);
-  background-attachment: fixed;
-  color: var(--fg);
-  font-family: var(--f-sans);
-  font-size: var(--s-body);
+  background: var(--ef-surface);
+  color: var(--ef-text);
+  font-family: var(--ef-font-body);
+  font-size: var(--ef-text-body);
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
@@ -126,17 +84,6 @@ body {
   position: relative;
 }
 
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 100;
-  opacity: 0.22;
-  mix-blend-mode: multiply;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.05  0 0 0 0 0.1  0 0 0 0 0.17  0 0 0 0.35 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
-}
-
 /* Corner tick marks */
 .tick {
   position: fixed;
@@ -149,7 +96,7 @@ body::before {
 .tick::after {
   content: "";
   position: absolute;
-  background: var(--ink);
+  background: var(--ef-text);
 }
 .tick::before {
   width: 22px;
@@ -198,9 +145,9 @@ body::before {
 
 /* ─────────────────────────── LAYOUT ─────────────────────────── */
 .wrap {
-  max-width: var(--max);
+  max-width: var(--ef-layout-max);
   margin: 0 auto;
-  padding: 0 var(--edge);
+  padding: 0 var(--ef-layout-edge);
 }
 
 .topbar {
@@ -209,25 +156,25 @@ body::before {
   z-index: 40;
   backdrop-filter: blur(10px) saturate(1.05);
   -webkit-backdrop-filter: blur(10px) saturate(1.05);
-  background: rgba(246, 243, 236, 0.72);
-  border-bottom: 1px solid var(--rule);
+  background: color-mix(in srgb, var(--ef-surface) 72%, transparent);
+  border-bottom: 1px solid var(--ef-border);
 }
 .topbar-inner {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  padding: 14px var(--edge);
-  max-width: var(--max);
+  padding: 14px var(--ef-layout-edge);
+  max-width: var(--ef-layout-max);
   margin: 0 auto;
-  font-family: var(--f-mono);
-  font-size: var(--s-tag);
+  font-family: var(--ef-font-mono);
+  font-size: var(--ef-text-tag);
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--muted);
+  color: var(--ef-text-muted);
 }
 .topbar-mid {
   justify-self: center;
-  color: var(--ink);
+  color: var(--ef-text);
 }
 .topbar-right {
   justify-self: end;
@@ -241,7 +188,7 @@ body::before {
   padding-bottom: 2px;
 }
 .topbar-right a:hover {
-  color: var(--ink);
+  color: var(--ef-text);
 }
 .topbar-right a::after {
   content: "";
@@ -253,7 +200,7 @@ body::before {
   background: currentColor;
   transform: scaleX(0);
   transform-origin: left;
-  transition: transform 0.35s var(--ease);
+  transition: transform 0.35s var(--ef-motion-ease);
 }
 .topbar-right a:hover::after {
   transform: scaleX(1);
@@ -261,17 +208,17 @@ body::before {
 
 /* Utility */
 .eyebrow {
-  font-family: var(--f-mono);
-  font-size: var(--s-tag);
+  font-family: var(--ef-font-mono);
+  font-size: var(--ef-text-tag);
   letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: var(--muted);
+  color: var(--ef-text-muted);
 }
 .label-micro {
-  font-family: var(--f-mono);
-  font-size: var(--s-micro);
+  font-family: var(--ef-font-mono);
+  font-size: var(--ef-text-tag-lg);
   letter-spacing: 0.08em;
-  color: var(--muted);
+  color: var(--ef-text-muted);
 }
 
 /* ─────────────────────────── BUTTONS ─────────────────────────── */
@@ -280,59 +227,54 @@ body::before {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  font-family: var(--f-sans);
+  font-family: var(--ef-font-body);
   font-size: 14px;
   font-weight: 700;
   line-height: 1;
   padding: 11px 18px;
-  border-radius: var(--r-sm);
+  border-radius: var(--ef-radius-sm);
   border: 1px solid transparent;
   cursor: pointer;
-  transition: all 0.2s var(--ease);
+  transition: all 0.2s var(--ef-motion-ease);
   letter-spacing: -0.005em;
   white-space: nowrap;
 }
 .btn:focus-visible {
   outline: 0;
-  box-shadow: 0 0 0 3px var(--ring);
+  border-color: var(--ef-field-border-focus);
 }
 .btn-primary {
-  background: var(--steel);
-  color: var(--paper);
+  background: var(--ef-commit-bg);
+  color: var(--ef-commit-fg);
 }
 .btn-primary:hover {
-  background: var(--ink);
+  background: var(--ef-commit-bg-hover);
 }
 .btn-secondary {
-  background: var(--paper);
-  color: var(--ink);
-  border-color: var(--ink);
+  background: transparent;
+  color: var(--ef-propose-fg);
+  border-color: var(--ef-propose-border);
 }
 .btn-secondary:hover {
-  background: var(--ice);
+  border-color: var(--ef-propose-border-hover);
+  background: var(--ef-surface-raised);
 }
 .btn-ghost {
   background: transparent;
-  color: var(--ink);
+  color: var(--ef-defer-fg);
 }
 .btn-ghost:hover {
-  background: var(--ice);
-}
-.btn-accent {
-  background: var(--ember);
-  color: var(--paper);
-}
-.btn-accent:hover {
-  background: #b16a3f;
+  color: var(--ef-defer-fg-hover);
+  background: var(--ef-surface-raised);
 }
 .btn-destructive {
   background: transparent;
-  color: var(--err);
-  border-color: var(--err);
+  color: var(--ef-stop-fg);
+  border-color: var(--ef-stop-border);
 }
 .btn-destructive:hover {
-  background: var(--err);
-  color: var(--paper);
+  background: var(--ef-stop-bg-hover);
+  color: var(--ef-stop-fg-hover);
 }
 .btn.is-disabled,
 .btn:disabled {
@@ -359,12 +301,12 @@ body::before {
   width: 36px;
   height: 36px;
   padding: 0;
-  background: var(--paper);
-  color: var(--ink);
-  border: 1px solid var(--rule-strong);
+  background: var(--ef-surface);
+  color: var(--ef-text);
+  border: 1px solid var(--ef-border-strong);
 }
 .btn-icon:hover {
-  background: var(--ice);
+  background: var(--ef-surface-raised);
 }
 .btn-icon.sm {
   width: 28px;
@@ -384,72 +326,68 @@ body::before {
   gap: 6px;
 }
 .field-label {
-  font-family: var(--f-mono);
-  font-size: var(--s-tag);
+  font-family: var(--ef-font-mono);
+  font-size: var(--ef-text-tag);
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--muted);
+  color: var(--ef-text-muted);
 }
 .field-label .req {
-  color: var(--ember);
+  color: var(--ef-lamp-caution);
   margin-left: 4px;
 }
 .field-help {
-  font-family: var(--f-sans);
+  font-family: var(--ef-font-body);
   font-size: 12px;
-  color: var(--muted);
+  color: var(--ef-text-muted);
 }
 .field-help.err {
-  color: var(--err);
+  color: var(--ef-lamp-alarm);
 }
 .field-help.ok {
-  color: var(--steel);
+  color: var(--ef-lamp-nominal);
 }
 
 .input,
 .textarea,
 .select {
-  font-family: var(--f-sans);
+  font-family: var(--ef-font-body);
   font-size: 14px;
   line-height: 1.4;
   padding: 10px 12px;
-  background: var(--paper);
-  color: var(--ink);
-  border: 1px solid var(--rule-strong);
-  border-radius: var(--r-sm);
+  background: var(--ef-field);
+  color: var(--ef-text);
+  border: 1px solid var(--ef-field-border);
+  border-radius: var(--ef-radius-sm);
   width: 100%;
-  transition:
-    border-color 0.15s var(--ease),
-    box-shadow 0.15s var(--ease);
+  transition: border-color 0.15s var(--ef-motion-ease);
 }
 .input::placeholder,
 .textarea::placeholder {
-  color: var(--muted);
-  opacity: 0.6;
+  color: var(--ef-field-placeholder);
 }
 .input:hover,
 .textarea:hover,
 .select:hover {
-  border-color: var(--ink);
+  border-color: var(--ef-border-strong);
 }
+/* Focus per FIELD SPEC: border → warm white, no glow. */
 .input:focus,
 .textarea:focus,
 .select:focus,
 .input.is-focused,
 .textarea.is-focused {
   outline: 0;
-  border-color: var(--steel);
-  box-shadow: 0 0 0 3px var(--ring);
+  border-color: var(--ef-field-border-focus);
 }
 .input.is-error,
 .textarea.is-error {
-  border-color: var(--err);
-  box-shadow: 0 0 0 3px rgba(176, 74, 52, 0.2);
+  border-color: var(--ef-lamp-alarm);
 }
 .input:disabled,
 .input.is-disabled {
-  background: var(--ice);
-  color: var(--muted);
+  background: var(--ef-field-disabled);
+  color: var(--ef-text-disabled);
   cursor: not-allowed;
 }
 .textarea {
@@ -458,39 +396,39 @@ body::before {
 }
 .select {
   appearance: none;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path d='M1 1l5 5 5-5' fill='none' stroke='%230E1C2B' stroke-width='1.5'/></svg>");
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path d='M1 1l5 5 5-5' fill='none' stroke='%23F4F1E9' stroke-width='1.5'/></svg>");
   background-repeat: no-repeat;
   background-position: right 12px center;
   padding-right: 36px;
 }
+:root[data-ef-theme="helm-light"] .select {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path d='M1 1l5 5 5-5' fill='none' stroke='%230E1C2B' stroke-width='1.5'/></svg>");
+}
 .input-group {
   display: flex;
   align-items: stretch;
-  border: 1px solid var(--rule-strong);
-  border-radius: var(--r-sm);
-  background: var(--paper);
+  border: 1px solid var(--ef-field-border);
+  border-radius: var(--ef-radius-sm);
+  background: var(--ef-field);
   overflow: hidden;
-  transition:
-    border-color 0.15s var(--ease),
-    box-shadow 0.15s var(--ease);
+  transition: border-color 0.15s var(--ef-motion-ease);
 }
 .input-group:focus-within {
-  border-color: var(--steel);
-  box-shadow: 0 0 0 3px var(--ring);
+  border-color: var(--ef-field-border-focus);
 }
 .input-group .addon {
   display: flex;
   align-items: center;
   padding: 0 12px;
-  background: var(--ice);
-  font-family: var(--f-mono);
+  background: var(--ef-surface-raised);
+  font-family: var(--ef-font-mono);
   font-size: 12px;
-  color: var(--graphite);
-  border-right: 1px solid var(--rule);
+  color: var(--ef-text-faint);
+  border-right: 1px solid var(--ef-border);
 }
 .input-group .addon.right {
   border-right: 0;
-  border-left: 1px solid var(--rule);
+  border-left: 1px solid var(--ef-border);
 }
 .input-group .input {
   border: 0;
@@ -519,29 +457,29 @@ body::before {
   width: 18px;
   height: 18px;
   flex: 0 0 auto;
-  border: 1.5px solid var(--ink);
-  border-radius: var(--r-xs);
-  background: var(--paper);
+  border: 1.5px solid var(--ef-text);
+  border-radius: var(--ef-radius-xs);
+  background: var(--ef-field);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   margin-top: 1px;
-  transition: all 0.15s var(--ease);
+  transition: all 0.15s var(--ef-motion-ease);
 }
 .check .box::after {
   content: "";
   width: 10px;
   height: 5px;
-  border-left: 2px solid var(--paper);
-  border-bottom: 2px solid var(--paper);
+  border-left: 2px solid var(--ef-commit-fg);
+  border-bottom: 2px solid var(--ef-commit-fg);
   transform: rotate(-45deg) scale(0);
-  transition: transform 0.2s var(--ease);
+  transition: transform 0.2s var(--ef-motion-ease);
   margin-top: -2px;
 }
 .check input:checked ~ .box,
 .check.is-checked .box {
-  background: var(--ink);
-  border-color: var(--ink);
+  background: var(--ef-commit-bg);
+  border-color: var(--ef-commit-bg);
 }
 .check input:checked ~ .box::after,
 .check.is-checked .box::after {
@@ -565,9 +503,9 @@ body::before {
   width: 18px;
   height: 18px;
   flex: 0 0 auto;
-  border: 1.5px solid var(--ink);
+  border: 1.5px solid var(--ef-text);
   border-radius: 50%;
-  background: var(--paper);
+  background: var(--ef-field);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -577,10 +515,10 @@ body::before {
   content: "";
   width: 8px;
   height: 8px;
-  background: var(--ink);
+  background: var(--ef-commit-bg);
   border-radius: 50%;
   transform: scale(0);
-  transition: transform 0.2s var(--ease);
+  transition: transform 0.2s var(--ef-motion-ease);
 }
 .radio input:checked ~ .circle::after,
 .radio.is-checked .circle::after {
@@ -601,33 +539,38 @@ body::before {
   pointer-events: none;
 }
 .toggle .track {
-  width: 36px;
-  height: 20px;
-  background: var(--frost);
+  width: 40px;
+  height: 24px;
+  background: var(--ef-dial-track);
   border-radius: 999px;
   position: relative;
-  transition: background 0.2s var(--ease);
+  transition: background 0.2s var(--ef-motion-ease);
   flex: 0 0 auto;
 }
 .toggle .track::after {
   content: "";
   position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 16px;
-  height: 16px;
-  background: var(--paper);
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  box-sizing: border-box;
+  background: var(--ef-dial-thumb);
+  border: 1px solid var(--ef-dial-thumb-edge);
   border-radius: 50%;
-  box-shadow: 0 1px 2px rgba(14, 28, 43, 0.2);
-  transition: transform 0.2s var(--ease);
+  transition: transform 0.2s var(--ef-motion-ease);
 }
 .toggle input:checked ~ .track,
 .toggle.is-on .track {
-  background: var(--steel);
+  background: var(--ef-blue500);
 }
 .toggle input:checked ~ .track::after,
 .toggle.is-on .track::after {
   transform: translateX(16px);
+}
+/* DIAL SPEC: the thumb takes the fill color while held. */
+.toggle:active .track::after {
+  background: var(--ef-blue500);
 }
 
 /* ─────────────────────────── COMPOSER ─────────────────────────── */
@@ -639,27 +582,23 @@ body::before {
  */
 .composer-box {
   position: relative;
-  border: 1px solid var(--rule-strong);
-  border-radius: var(--r-sm);
-  background: var(--ice);
+  border: 1px solid var(--ef-field-border);
+  border-radius: var(--ef-radius-sm);
+  background: var(--ef-field);
   padding: 10px 12px;
-  transition:
-    border-color 0.15s var(--ease),
-    background 0.15s var(--ease),
-    box-shadow 0.15s var(--ease);
+  transition: border-color 0.15s var(--ef-motion-ease);
 }
+/* Focus per FIELD SPEC: border → warm white, no glow. */
 .composer-box:focus-within {
-  border-color: var(--steel);
-  background: var(--paper);
-  box-shadow: 0 0 0 3px var(--ring);
+  border-color: var(--ef-field-border-focus);
 }
 .composer-box textarea {
   width: 100%;
   background: transparent;
   border: 0;
   outline: 0;
-  color: var(--ink);
-  font-family: var(--f-sans);
+  color: var(--ef-text);
+  font-family: var(--ef-font-body);
   font-size: 14px;
   line-height: 1.5;
   resize: none;
@@ -670,8 +609,7 @@ body::before {
   padding-right: 28px;
 }
 .composer-box textarea::placeholder {
-  color: var(--muted);
-  opacity: 0.6;
+  color: var(--ef-field-placeholder);
 }
 /*
  * Expand/collapse toggle. Sits at the top-right of the box so the
@@ -690,31 +628,31 @@ body::before {
   justify-content: center;
   background: transparent;
   border: 0;
-  border-radius: var(--r-xs);
-  color: var(--muted);
+  border-radius: var(--ef-radius-xs);
+  color: var(--ef-text-muted);
   cursor: pointer;
   opacity: 0.55;
   transition:
-    background 0.15s var(--ease),
-    color 0.15s var(--ease),
-    opacity 0.15s var(--ease);
+    background 0.15s var(--ef-motion-ease),
+    color 0.15s var(--ef-motion-ease),
+    opacity 0.15s var(--ef-motion-ease);
 }
 .composer-box:hover .composer-expand,
 .composer-box:focus-within .composer-expand {
   opacity: 1;
 }
 .composer-expand:hover {
-  background: var(--rule);
-  color: var(--ink);
+  background: var(--ef-border);
+  color: var(--ef-text);
 }
 .composer-toolbar {
   margin-top: 10px;
   display: flex;
   align-items: center;
   gap: 8px;
-  font-family: var(--f-mono);
+  font-family: var(--ef-font-mono);
   font-size: 10.5px;
-  color: var(--muted);
+  color: var(--ef-text-muted);
 }
 .composer-toolbar .iconbtn {
   width: 26px;
@@ -722,18 +660,18 @@ body::before {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: var(--muted);
+  color: var(--ef-text-muted);
   background: transparent;
   border: 0;
-  border-radius: var(--r-xs);
+  border-radius: var(--ef-radius-xs);
   cursor: pointer;
   transition:
-    background 0.15s var(--ease),
-    color 0.15s var(--ease);
+    background 0.15s var(--ef-motion-ease),
+    color 0.15s var(--ef-motion-ease);
 }
 .composer-toolbar .iconbtn:hover {
-  background: var(--ice);
-  color: var(--ink);
+  background: var(--ef-surface-raised);
+  color: var(--ef-text);
 }
 .composer-hint {
   letter-spacing: 0.04em;
@@ -756,21 +694,21 @@ body::before {
    * lost the spacer and let Send drift left next to the icon buttons.
    * `margin-left: auto` makes Send self-anchor right in either layout. */
   margin-left: auto;
-  background: var(--steel);
-  color: #0e1c2b;
-  font-family: var(--f-sans);
+  background: var(--ef-commit-bg);
+  color: var(--ef-commit-fg);
+  font-family: var(--ef-font-body);
   font-size: 12px;
   font-weight: 700;
   letter-spacing: -0.005em;
   border: 0;
-  border-radius: var(--r-xs);
+  border-radius: var(--ef-radius-xs);
   cursor: pointer;
   transition:
-    background 0.15s var(--ease),
-    opacity 0.15s var(--ease);
+    background 0.15s var(--ef-motion-ease),
+    opacity 0.15s var(--ef-motion-ease);
 }
 .composer-send:hover:not(:disabled) {
-  background: var(--glacier);
+  background: var(--ef-commit-bg-hover);
 }
 .composer-send:disabled {
   opacity: 0.5;
@@ -779,7 +717,7 @@ body::before {
 /* Hide hint on narrow viewports where the toolbar gets cramped — the
  * keyboard hint is helpful but not essential, and the Send button
  * must always have room. */
-@media (max-width: 540px) {
+@media (max-width: 699px) {
   .composer-hint {
     display: none;
   }
@@ -787,19 +725,17 @@ body::before {
 
 /* ─────────────────────────── SURFACES ─────────────────────────── */
 .card {
-  background: var(--paper);
-  border: 1px solid var(--rule-strong);
-  border-radius: var(--r-sm);
+  background: var(--ef-surface);
+  border: 1px solid var(--ef-border-strong);
+  border-radius: var(--ef-radius-sm);
   padding: 22px;
 }
 .card.elev {
-  box-shadow:
-    0 8px 32px -16px rgba(14, 28, 43, 0.12),
-    0 2px 6px -2px rgba(14, 28, 43, 0.06);
+  box-shadow: var(--ef-shadow-overlay);
 }
 .card h3,
 .card .h {
-  font-family: var(--f-display);
+  font-family: var(--ef-font-display);
   font-weight: 700;
   font-size: 20px;
   letter-spacing: -0.02em;
@@ -807,65 +743,75 @@ body::before {
 }
 .card p {
   font-size: 14px;
-  color: var(--graphite);
+  color: var(--ef-text-faint);
   line-height: 1.5;
 }
 
+/* Readout tile per the bench METER spec: raised ground, chamfered
+   bottom-right corner, mono label over a display readout. A caution
+   variant exists for warning tiles (blocked > 0); the gold assert
+   composite is reserved — one per view, and only when the number IS
+   the view's assertion. */
 .stat {
-  background: var(--paper);
-  border: 1px solid var(--rule-strong);
-  padding: 20px 22px;
-  border-radius: var(--r-sm);
+  background: var(--ef-surface-raised);
+  border: 1px solid var(--ef-border);
+  padding: 22px 24px;
+  border-radius: var(--ef-radius-cap-br);
   display: grid;
-  gap: 6px;
+  gap: 12px;
 }
 .stat .stat-label {
-  font-family: var(--f-mono);
-  font-size: var(--s-tag);
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--muted);
+  font-family: var(--ef-font-mono);
+  font-size: var(--ef-text-tag);
+  letter-spacing: var(--ef-track-tag);
+  color: var(--ef-text-muted);
+  white-space: nowrap;
 }
 .stat .stat-value {
-  font-family: var(--f-display);
-  font-weight: 700;
-  font-size: 36px;
-  letter-spacing: -0.03em;
+  font-family: var(--ef-font-display);
+  font-weight: var(--ef-weight-bold);
+  font-size: var(--ef-text-readout);
   line-height: 1;
-  color: var(--ink);
+  color: var(--ef-text);
+}
+.stat.caution {
+  border-color: var(--ef-lamp-caution-edge);
+}
+.stat.caution .stat-value {
+  color: var(--ef-lamp-caution);
 }
 .stat .stat-delta {
-  font-family: var(--f-mono);
-  font-size: 12px;
-  color: var(--steel);
+  font-family: var(--ef-font-mono);
+  font-size: var(--ef-text-data);
+  color: var(--ef-text-faint);
   display: inline-flex;
   align-items: center;
   gap: 4px;
 }
 .stat .stat-delta.down {
-  color: var(--ember);
+  color: var(--ef-text-muted);
 }
 
 .panel {
-  border: 1px solid var(--rule-strong);
-  background: var(--paper);
+  border: 1px solid var(--ef-border-strong);
+  background: var(--ef-surface);
   overflow: hidden;
-  border-radius: var(--r-sm);
+  border-radius: var(--ef-radius-sm);
   display: flex;
   flex-direction: column;
 }
 .panel-head {
   padding: 10px 14px;
-  background: var(--ice);
-  border-bottom: 1px solid var(--rule);
+  background: var(--ef-surface-raised);
+  border-bottom: 1px solid var(--ef-border);
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-family: var(--f-mono);
-  font-size: var(--s-tag);
+  font-family: var(--ef-font-mono);
+  font-size: var(--ef-text-tag);
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--muted);
+  color: var(--ef-text-muted);
 }
 .panel-head .dots {
   display: flex;
@@ -876,7 +822,7 @@ body::before {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--frost);
+  background: var(--ef-border-strong);
 }
 .panel-body {
   padding: 20px 22px;
@@ -887,74 +833,122 @@ body::before {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-family: var(--f-mono);
+  font-family: var(--ef-font-mono);
   font-size: 10.5px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   padding: 3px 8px;
-  border-radius: var(--r-xs);
+  border-radius: var(--ef-radius-xs);
   border: 1px solid currentColor;
-  color: var(--steel);
+  color: var(--ef-text-secondary);
   background: transparent;
   white-space: nowrap;
 }
 .badge.solid {
-  color: var(--paper);
-  background: var(--steel);
-  border-color: var(--steel);
+  color: var(--ef-text);
+  background: var(--ef-surface-sunken);
+  border-color: var(--ef-border-strong);
 }
-.badge.ember {
-  color: var(--ember);
+/* Lamp badges — plate 15 tone/ground/edge triads. */
+.badge.caution {
+  color: var(--ef-lamp-caution);
 }
-.badge.ember.solid {
-  color: var(--paper);
-  background: var(--ember);
-  border-color: var(--ember);
+.badge.caution.solid {
+  color: var(--ef-lamp-caution);
+  background: var(--ef-lamp-caution-ground);
+  border-color: var(--ef-lamp-caution-edge);
 }
 .badge.muted {
-  color: var(--muted);
+  color: var(--ef-text-muted);
 }
 .badge.ink {
-  color: var(--ink);
+  color: var(--ef-text);
 }
 .badge.ink.solid {
-  color: var(--paper);
-  background: var(--ink);
-  border-color: var(--ink);
+  color: var(--ef-text-inverse);
+  background: var(--ef-text);
+  border-color: var(--ef-text);
 }
-.badge.glacier {
-  color: var(--glacier);
+.badge.info {
+  color: var(--ef-lamp-working);
+}
+.badge.info.solid {
+  color: var(--ef-lamp-working);
+  background: var(--ef-lamp-working-ground);
+  border-color: var(--ef-lamp-working-edge);
 }
 .badge.soft {
   border: 0;
-  background: var(--ice);
-  color: var(--steel);
+  background: var(--ef-surface-raised);
+  color: var(--ef-text-secondary);
 }
-.badge.soft.ember {
-  background: rgba(200, 124, 78, 0.14);
-  color: var(--ember);
+.badge.soft.caution {
+  background: var(--ef-lamp-caution-ground);
+  color: var(--ef-lamp-caution);
 }
 
+/* Chip — a FILTER pill (bench spec): quiet at rest, warm border when
+   pressed. State is carried by border/color, never a fake lamp glyph. */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 .chip {
+  font-family: var(--ef-font-mono);
+  font-size: var(--ef-text-tag);
+  letter-spacing: var(--ef-track-tag-tight);
+  color: var(--ef-text-muted);
+  background: transparent;
+  border: 1px solid var(--ef-border-subtle);
+  border-radius: var(--ef-radius-pill);
+  padding: 6px 14px;
+  cursor: pointer;
+  transition:
+    border-color var(--ef-motion-fast),
+    color var(--ef-motion-fast);
+}
+.chip:hover {
+  border-color: var(--ef-border-strong);
+  color: var(--ef-text);
+}
+.chip[aria-pressed="true"] {
+  color: var(--ef-text);
+  border-color: var(--ef-text);
+}
+
+/* Token — a removable multi-select entry; .tokens is the field-ground
+   container it lives in (44px min, matches the input scale). */
+.tokens {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  background: var(--ef-field);
+  border: 1px solid var(--ef-field-border);
+  border-radius: var(--ef-radius-sm);
+  padding: 8px;
+  min-height: 44px;
+}
+.token {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  font-family: var(--f-sans);
-  font-size: 13px;
-  font-weight: 700;
-  padding: 6px 12px 6px 10px;
-  border-radius: 999px;
-  background: var(--ice);
-  color: var(--ink);
+  gap: 7px;
+  font-family: var(--ef-font-mono);
+  font-size: var(--ef-text-tag);
+  letter-spacing: var(--ef-track-data);
+  color: var(--ef-text-secondary);
+  background: var(--ef-surface-raised);
+  border: 1px solid var(--ef-border);
+  border-radius: var(--ef-radius-xs);
+  padding: 5px 9px;
 }
-.chip .x {
+.token .x {
+  color: var(--ef-text-faint);
   cursor: pointer;
-  opacity: 0.5;
-  transition: opacity 0.15s;
   display: inline-flex;
 }
-.chip .x:hover {
-  opacity: 1;
+.token .x:hover {
+  color: var(--ef-text);
 }
 
 .dot {
@@ -962,61 +956,51 @@ body::before {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--steel);
+  background: var(--ef-lamp-working);
   vertical-align: middle;
 }
 .dot.ok {
-  background: var(--ok);
+  background: var(--ef-lamp-nominal);
 }
 .dot.warn {
-  background: var(--warn);
+  background: var(--ef-lamp-caution);
 }
 .dot.err {
-  background: var(--err);
+  background: var(--ef-lamp-alarm);
 }
 .dot.muted {
-  background: var(--frost);
+  background: var(--ef-lamp-stood-down);
 }
+/* Working lamp breathes by opacity — no glow (glow is on the refused
+   list). `ef-lamp` keyframes ship with the brand tokens.css. */
 .dot.pulse {
-  box-shadow: 0 0 0 0 rgba(62, 92, 118, 0.6);
-  animation: pulse 2s infinite;
-}
-@keyframes pulse {
-  0% {
-    box-shadow: 0 0 0 0 rgba(62, 92, 118, 0.5);
-  }
-  70% {
-    box-shadow: 0 0 0 10px rgba(62, 92, 118, 0);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(62, 92, 118, 0);
-  }
+  animation: ef-lamp var(--ef-motion-lamp-working) ease-in-out infinite;
 }
 
 /* Progress */
 .progress {
   width: 100%;
   height: 4px;
-  background: var(--rule);
+  background: var(--ef-border);
   border-radius: 999px;
   overflow: hidden;
 }
 .progress .bar {
   height: 100%;
-  background: var(--steel);
+  background: var(--ef-lamp-working);
   border-radius: 999px;
-  transition: width 0.4s var(--ease);
+  transition: width 0.4s var(--ef-motion-ease);
 }
-.progress.ember .bar {
-  background: var(--ember);
+.progress.caution .bar {
+  background: var(--ef-lamp-caution);
 }
 
 /* Spinner */
 .spinner {
   width: 20px;
   height: 20px;
-  border: 2px solid var(--rule);
-  border-top-color: var(--steel);
+  border: 2px solid var(--ef-border);
+  border-top-color: var(--ef-lamp-working);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
   display: inline-block;
@@ -1054,109 +1038,168 @@ body::before {
   width: 26px;
   height: 26px;
   border-radius: 50%;
-  border: 1.5px solid var(--rule-strong);
-  font-family: var(--f-mono);
+  border: 1.5px solid var(--ef-border-strong);
+  font-family: var(--ef-font-mono);
   font-size: 11px;
   font-weight: 500;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: var(--paper);
-  color: var(--muted);
+  background: var(--ef-surface);
+  color: var(--ef-text-muted);
   flex: 0 0 auto;
 }
 .steps .step.done .n {
-  background: var(--ink);
-  border-color: var(--ink);
-  color: var(--paper);
+  background: var(--ef-text);
+  border-color: var(--ef-text);
+  color: var(--ef-text-inverse);
 }
+/* Active per FIELD SPEC: border → warm white, no glow. */
 .steps .step.active .n {
-  background: var(--paper);
-  border-color: var(--ink);
-  color: var(--ink);
-  box-shadow: 0 0 0 3px var(--ring);
+  background: var(--ef-surface);
+  border-color: var(--ef-field-border-focus);
+  color: var(--ef-text);
 }
 .steps .step .lbl {
-  font-family: var(--f-sans);
+  font-family: var(--ef-font-body);
   font-size: 13px;
   font-weight: 700;
-  color: var(--ink);
+  color: var(--ef-text);
 }
 .steps .step:not(.done):not(.active) .lbl {
-  color: var(--muted);
+  color: var(--ef-text-muted);
   font-weight: 400;
 }
 .steps .sep {
   flex: 1;
   height: 1px;
-  background: var(--rule-strong);
+  background: var(--ef-border-strong);
   margin: 0 16px;
 }
 .steps .step.done + .sep {
-  background: var(--ink);
+  background: var(--ef-text);
 }
 
-/* Avatar */
+/* Identity tiles — plate 14 MARK SPEC. Square, radius-xs, initials in
+   the display face, never gold, no photos. The tile ground/edge carries
+   the person-vs-agent distinction; the glyph color never does. */
 .avatar {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: var(--ice);
-  color: var(--steel);
-  font-family: var(--f-mono);
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.02em;
-  flex: 0 0 auto;
-  border: 1px solid var(--rule);
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  border-radius: var(--ef-radius-xs);
+  font-family: var(--ef-font-display);
+  font-weight: var(--ef-weight-bold);
+  color: var(--ef-identity-glyph);
+  background: var(--ef-identity-person-tile);
+  border: 1px solid var(--ef-identity-person-tile-edge);
 }
-.avatar.sm {
-  width: 22px;
-  height: 22px;
-  font-size: 9px;
+.avatar[data-kind="agent"] {
+  background: var(--ef-identity-agent-tile);
+  border-color: var(--ef-identity-agent-tile-edge);
 }
-.avatar.lg {
-  width: 44px;
-  height: 44px;
-  font-size: 14px;
+/* Five sizes, and no others. Glyph is 40% of the tile. 34 is the
+   default for tiles that don't declare a size. */
+.avatar[data-size="20"] {
+  width: 20px;
+  height: 20px;
+  font-size: 8px;
 }
-.avatar.xl {
-  width: 60px;
-  height: 60px;
-  font-size: 18px;
+.avatar[data-size="26"] {
+  width: 26px;
+  height: 26px;
+  font-size: 10.4px;
 }
-.avatar.dark {
-  background: var(--ink);
-  color: var(--paper);
-  border-color: var(--ink);
+.avatar,
+.avatar[data-size="34"] {
+  width: 34px;
+  height: 34px;
+  font-size: 13.6px;
 }
-.avatar.ember {
-  background: var(--ember);
-  color: var(--paper);
-  border-color: var(--ember);
+.avatar[data-size="48"] {
+  width: 48px;
+  height: 48px;
+  font-size: 19.2px;
 }
+.avatar[data-size="64"] {
+  width: 64px;
+  height: 64px;
+  font-size: 25.6px;
+}
+
+/* The dot sits bottom-right with a gap ring of the surface under it,
+   so it reads as separate from the tile rather than drawn on it. */
+.avatar-dot {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  border-radius: var(--ef-radius-pill);
+  border: 3px solid var(--ef-surface-raised);
+  box-sizing: content-box;
+}
+.avatar[data-size="26"] .avatar-dot {
+  width: 7px;
+  height: 7px;
+}
+.avatar[data-size="34"] .avatar-dot {
+  width: 10px;
+  height: 10px;
+}
+.avatar[data-size="48"] .avatar-dot,
+.avatar[data-size="64"] .avatar-dot {
+  width: 14px;
+  height: 14px;
+}
+/* At 20px there is no dot — presence goes in the text instead. */
+.avatar[data-size="20"] .avatar-dot {
+  display: none;
+}
+.avatar-dot[data-presence="working"] {
+  background: var(--ef-lamp-working);
+  animation: ef-lamp var(--ef-motion-lamp-working) ease-in-out infinite;
+}
+.avatar-dot[data-presence="watch"] {
+  background: var(--ef-lamp-nominal);
+}
+.avatar-dot[data-presence="idle"] {
+  background: var(--ef-lamp-stood-down);
+}
+/* Absence is drawn: a hollow ring, never a missing dot. */
+.avatar-dot[data-presence="off"] {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--ef-presence-off-watch-ring);
+}
+.avatar-dot[data-presence="fault"] {
+  background: var(--ef-lamp-alarm);
+}
+@media (prefers-reduced-motion: reduce) {
+  .avatar-dot[data-presence] {
+    animation: none;
+  }
+}
+
 .avatar-stack {
   display: inline-flex;
+  align-items: center;
 }
 .avatar-stack .avatar + .avatar {
-  margin-left: -8px;
+  margin-left: -9px;
+  box-shadow: 0 0 0 3px var(--ef-surface-raised);
 }
 
 /* ─────────────────────────── NAV ─────────────────────────── */
 .tabs {
   display: flex;
-  border-bottom: 1px solid var(--rule);
+  border-bottom: 1px solid var(--ef-border);
   gap: 0;
 }
 .tabs .tab {
   padding: 12px 18px;
-  font-family: var(--f-sans);
+  font-family: var(--ef-font-body);
   font-size: 14px;
   font-weight: 700;
-  color: var(--muted);
+  color: var(--ef-text-muted);
   cursor: pointer;
   border-bottom: 2px solid transparent;
   margin-bottom: -1px;
@@ -1168,25 +1211,33 @@ body::before {
   gap: 8px;
 }
 .tabs .tab:hover {
-  color: var(--ink);
+  color: var(--ef-text);
 }
 .tabs .tab.active {
-  color: var(--ink);
-  border-bottom-color: var(--ink);
+  color: var(--ef-text);
+  border-bottom-color: var(--ef-text);
 }
 
+/* Breadcrumbs per the bench TRAIL spec: mono tag, tracked, `/`
+   separators in disabled ink, leaf in warm white. The middle folds,
+   never the ends. */
 .crumbs {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  font-family: var(--f-mono);
-  font-size: 12px;
+  font-family: var(--ef-font-mono);
+  font-size: var(--ef-text-tag);
+  letter-spacing: var(--ef-track-tag-tight);
+  color: var(--ef-text-muted);
 }
 .crumbs a {
-  color: var(--muted);
+  color: var(--ef-text-muted);
+  border-bottom: 1px solid transparent;
 }
 .crumbs a:hover {
-  color: var(--ink);
+  color: var(--ef-text);
+  border-bottom-color: var(--ef-border-strong);
 }
 /* Crumb buttons carry a leading back icon — keep glyph and label on a
    shared centre line instead of the text baseline. */
@@ -1196,7 +1247,7 @@ body::before {
   gap: 5px;
 }
 .crumbs span.sep {
-  color: var(--rule-strong);
+  color: var(--ef-text-disabled);
   display: inline-flex;
   align-items: center;
 }
@@ -1204,23 +1255,23 @@ body::before {
   flex: 0 0 auto;
 }
 .crumbs .current {
-  color: var(--ink);
+  color: var(--ef-text);
 }
 
 .pager {
   display: inline-flex;
-  border: 1px solid var(--rule-strong);
-  border-radius: var(--r-sm);
+  border: 1px solid var(--ef-border-strong);
+  border-radius: var(--ef-radius-sm);
   overflow: hidden;
 }
 .pager a,
 .pager button {
   padding: 8px 14px;
-  font-family: var(--f-mono);
+  font-family: var(--ef-font-mono);
   font-size: 12px;
-  color: var(--ink);
-  background: var(--paper);
-  border-right: 1px solid var(--rule);
+  color: var(--ef-text);
+  background: var(--ef-surface);
+  border-right: 1px solid var(--ef-border);
   transition: background 0.15s;
   cursor: pointer;
   min-width: 36px;
@@ -1234,44 +1285,47 @@ body::before {
 }
 .pager a:hover,
 .pager button:hover {
-  background: var(--ice);
+  background: var(--ef-surface-raised);
 }
 .pager .active {
-  background: var(--ink);
-  color: var(--paper);
+  background: var(--ef-text);
+  color: var(--ef-text-inverse);
 }
 
 .navitem {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-height: 44px;
   padding: 8px 12px;
   font-size: 14px;
   font-weight: 700;
-  color: var(--ink);
+  color: var(--ef-text);
   cursor: pointer;
   transition: background 0.15s;
 }
 .navitem:hover {
-  background: var(--ice);
+  background: var(--ef-surface-raised);
 }
-/* Selected: quiet background wash + thick steel "you are here" edge
-   flush against the sidebar's left side. Inset box-shadow instead of
-   border-left so the bar doesn't shift the item's text baseline. */
+/* Selected: panel fill + a 3px gold assert bar flush against the
+   edge — the ledger's pinned-row treatment (inset 3px 0 0 assert).
+   One mark, once per view, so it sits inside the Tier 1 gold budget
+   rather than spending it. Inset box-shadow instead of border-left
+   so the bar doesn't shift the item's text baseline. */
 .navitem.active {
-  background: var(--ice);
-  color: var(--ink);
-  box-shadow: inset 6px 0 0 var(--steel);
+  background: var(--ef-surface-sunken);
+  color: var(--ef-text);
+  box-shadow: inset 3px 0 0 var(--ef-assert);
 }
 .navitem .num {
-  font-family: var(--f-mono);
+  font-family: var(--ef-font-mono);
   font-size: 11px;
-  color: var(--muted);
+  color: var(--ef-text-muted);
   letter-spacing: 0.1em;
   margin-left: auto;
 }
 .navitem.active .num {
-  color: var(--steel);
+  color: var(--ef-text);
 }
 
 /* ─────────────────────────── FEEDBACK ─────────────────────────── */
@@ -1280,10 +1334,10 @@ body::before {
   grid-template-columns: 32px 1fr auto;
   gap: 14px;
   padding: 16px 18px;
-  background: var(--paper);
-  border: 1px solid var(--rule);
-  border-left: 3px solid var(--steel);
-  border-radius: var(--r-sm);
+  background: var(--ef-surface);
+  border: 1px solid var(--ef-border);
+  border-left: 3px solid var(--ef-lamp-working-edge);
+  border-radius: var(--ef-radius-sm);
   align-items: start;
 }
 .callout .icon {
@@ -1293,12 +1347,12 @@ body::before {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: var(--ice);
-  color: var(--steel);
+  background: var(--ef-lamp-working-ground);
+  color: var(--ef-lamp-working);
   flex: 0 0 auto;
 }
 .callout .body .title {
-  font-family: var(--f-display);
+  font-family: var(--ef-font-display);
   font-weight: 700;
   font-size: 14px;
   letter-spacing: -0.01em;
@@ -1306,36 +1360,40 @@ body::before {
 }
 .callout .body .msg {
   font-size: 13.5px;
-  color: var(--graphite);
+  color: var(--ef-text-faint);
   line-height: 1.5;
 }
 .callout .close {
-  color: var(--muted);
+  color: var(--ef-text-muted);
   cursor: pointer;
   padding: 2px;
-  border-radius: var(--r-xs);
+  border-radius: var(--ef-radius-xs);
 }
 .callout .close:hover {
-  background: var(--ice);
-  color: var(--ink);
+  background: var(--ef-surface-raised);
+  color: var(--ef-text);
 }
 .callout.success {
-  border-left-color: var(--steel);
+  border-left-color: var(--ef-lamp-nominal-edge);
+}
+.callout.success .icon {
+  background: var(--ef-lamp-nominal-ground);
+  color: var(--ef-lamp-nominal);
 }
 .callout.warn {
-  border-left-color: var(--ember);
+  border-left-color: var(--ef-lamp-caution-edge);
 }
 .callout.warn .icon {
-  background: rgba(200, 124, 78, 0.15);
-  color: var(--ember);
+  background: var(--ef-lamp-caution-ground);
+  color: var(--ef-lamp-caution);
 }
 .callout.err {
-  border-left-color: var(--err);
-  background: rgba(176, 74, 52, 0.04);
+  border-left-color: var(--ef-lamp-alarm-edge);
+  background: var(--ef-lamp-alarm-ground);
 }
 .callout.err .icon {
-  background: rgba(176, 74, 52, 0.14);
-  color: var(--err);
+  background: var(--ef-lamp-alarm-ground);
+  color: var(--ef-lamp-alarm);
 }
 
 /*
@@ -1354,7 +1412,7 @@ body::before {
   width: 18px;
   height: 18px;
   background: transparent;
-  color: var(--steel);
+  color: var(--ef-lamp-working);
   border-radius: 0;
 }
 .callout--compact .body .title {
@@ -1366,11 +1424,11 @@ body::before {
 }
 .callout--compact.warn .icon {
   background: transparent;
-  color: var(--warn);
+  color: var(--ef-lamp-caution);
 }
 .callout--compact.err .icon {
   background: transparent;
-  color: var(--err);
+  color: var(--ef-lamp-alarm);
 }
 
 /*
@@ -1387,10 +1445,10 @@ body::before {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-family: var(--f-sans);
+  font-family: var(--ef-font-body);
   font-size: 12.5px;
   line-height: 1.4;
-  color: var(--muted);
+  color: var(--ef-text-muted);
 }
 .hint .hint-icon {
   display: inline-flex;
@@ -1399,13 +1457,13 @@ body::before {
   flex: 0 0 auto;
 }
 .hint.success {
-  color: var(--ok);
+  color: var(--ef-lamp-nominal);
 }
 .hint.warn {
-  color: var(--warn);
+  color: var(--ef-lamp-caution);
 }
 .hint.err {
-  color: var(--err);
+  color: var(--ef-lamp-alarm);
 }
 
 /*
@@ -1420,8 +1478,8 @@ body::before {
  */
 .toast-stack {
   position: fixed;
-  bottom: 16px;
-  right: 16px;
+  bottom: 24px;
+  right: 24px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -1432,7 +1490,7 @@ body::before {
   padding-bottom: env(safe-area-inset-bottom);
   padding-right: env(safe-area-inset-right);
 }
-@media (max-width: 640px) {
+@media (max-width: 699px) {
   .toast-stack {
     left: 50%;
     right: auto;
@@ -1441,32 +1499,28 @@ body::before {
 }
 
 /*
- * Toast surface — theme-aware. Light mode uses paper + ink (the same
- * tokens as the rest of the chrome); dark mode flips automatically via
- * the existing `:root[data-theme="dark"]` token redefinitions. The
- * border-left accent stripe is the kind indicator.
+ * Toast surface — theme-aware: every value is an `--ef-*` role, so a
+ * `data-ef-theme` swap re-resolves the whole surface. The border-left
+ * accent stripe is the kind indicator (plate 15 edge tone).
  */
 .toast {
   position: relative;
   display: grid;
-  grid-template-columns: 20px 1fr auto;
+  grid-template-columns: 12px 1fr auto;
   gap: 12px;
-  padding: 12px 14px;
-  background: var(--paper);
-  color: var(--ink);
-  border: 1px solid var(--rule);
-  border-left: 3px solid var(--steel);
-  border-radius: var(--r-sm);
-  box-shadow:
-    0 1px 2px rgba(14, 28, 43, 0.05),
-    0 12px 32px -12px rgba(14, 28, 43, 0.18);
+  padding: 14px 16px;
+  background: var(--ef-menu);
+  color: var(--ef-text);
+  border: 1px solid var(--ef-menu-border);
+  border-radius: var(--ef-radius-sm);
+  box-shadow: var(--ef-shadow-overlay);
   align-items: start;
   min-width: 280px;
-  max-width: 420px;
+  max-width: 400px;
   pointer-events: auto;
   overflow: hidden;
   /* Enter motion — slide in from bottom-right, settle. */
-  animation: toast-enter 0.22s cubic-bezier(0.2, 0.7, 0.2, 1);
+  animation: toast-enter 0.22s var(--ef-motion-ease);
 }
 
 @keyframes toast-enter {
@@ -1480,65 +1534,62 @@ body::before {
   }
 }
 
-.toast .icon {
-  color: var(--steel);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  flex: 0 0 auto;
-  /* Nudge optical-center: lucide stroke icons render slightly
-     low-of-baseline relative to the title text. */
-  margin-top: 1px;
+/* Column 1 is a lamp dot, not an icon chip — the kind reads from the
+   lamp grammar alone. */
+.toast > .dot {
+  margin-top: 5px;
 }
 .toast .body .title {
-  font-family: var(--f-display);
-  font-weight: 700;
-  font-size: 13px;
-  letter-spacing: -0.01em;
+  font-size: var(--ef-text-small);
+  font-weight: var(--ef-weight-semibold);
   margin-bottom: 2px;
-  color: var(--ink);
+  color: var(--ef-text);
+}
+.toast .meta {
+  font-family: var(--ef-font-mono);
+  font-size: var(--ef-text-tag-xs);
+  letter-spacing: var(--ef-track-data);
+  color: var(--ef-text-faint);
 }
 /* biome-ignore lint/style/noDescendingSpecificity: .toast .msg and .callout .body .msg never match the same element (a .msg can't be nested in both), so the cascade-order warning is a false positive */
 .toast .msg {
-  font-size: 13px;
+  font-size: var(--ef-text-small);
   line-height: 1.45;
-  color: var(--graphite);
+  color: var(--ef-text-tertiary);
 }
 .toast .action {
-  font-family: var(--f-sans);
+  font-family: var(--ef-font-body);
   font-size: 12.5px;
   font-weight: 600;
-  color: var(--steel);
+  color: var(--ef-link);
   background: transparent;
   border: 0;
   padding: 4px 0;
   margin-top: 4px;
   cursor: pointer;
   text-decoration: underline;
-  text-underline-offset: 2px;
-  text-decoration-color: var(--rule);
+  text-underline-offset: 3px;
+  text-decoration-color: var(--ef-link-underline);
 }
 .toast .action:hover {
-  color: var(--ink);
-  text-decoration-color: var(--ink);
+  color: var(--ef-link-hover);
+  text-decoration-color: var(--ef-link-hover);
 }
 .toast .x {
-  color: var(--muted);
+  color: var(--ef-text-muted);
   cursor: pointer;
   background: transparent;
   border: none;
   line-height: 1;
   padding: 2px 4px;
-  border-radius: var(--r-xs);
+  border-radius: var(--ef-radius-xs);
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
 .toast .x:hover {
-  color: var(--ink);
-  background: var(--ice);
+  color: var(--ef-text);
+  background: var(--ef-surface-raised);
 }
 
 /*
@@ -1553,7 +1604,7 @@ body::before {
   right: 0;
   bottom: 0;
   height: 2px;
-  background: var(--rule);
+  color: var(--ef-lamp-working);
   overflow: hidden;
 }
 .toast .progress::after {
@@ -1561,9 +1612,9 @@ body::before {
   display: block;
   width: 100%;
   height: 100%;
-  background: var(--steel);
-  transform-origin: right center;
-  animation: toast-progress var(--toast-duration, 5000ms) linear forwards;
+  background: currentColor;
+  transform-origin: left center;
+  animation: toast-progress var(--toast-duration, 6000ms) linear forwards;
 }
 .toast:hover .progress::after {
   animation-play-state: paused;
@@ -1577,44 +1628,37 @@ body::before {
   }
 }
 
-/* Variants — kind indicator is the border-left + icon color + the
-   matching progress fill. Backgrounds stay neutral so the surface
-   stays readable in both palettes; severity reads from the stripe. */
-.toast.success {
-  border-left-color: var(--ok);
+/* Variants — the kind reads from the lamp dot, the dwell bar, and the
+   action color. Ground stays neutral (menu surface) in every kind. */
+.toast > .dot {
+  background: var(--ef-lamp-working);
 }
-.toast.success .icon {
-  color: var(--ok);
+.toast.success > .dot {
+  background: var(--ef-lamp-nominal);
 }
-.toast.success .progress::after {
-  background: var(--ok);
+.toast.success .progress {
+  color: var(--ef-lamp-nominal);
 }
 .toast.success .action {
-  color: var(--ok);
+  color: var(--ef-lamp-nominal);
 }
-.toast.warn {
-  border-left-color: var(--warn);
+.toast.warn > .dot {
+  background: var(--ef-lamp-caution);
 }
-.toast.warn .icon {
-  color: var(--warn);
-}
-.toast.warn .progress::after {
-  background: var(--warn);
+.toast.warn .progress {
+  color: var(--ef-lamp-caution);
 }
 .toast.warn .action {
-  color: var(--warn);
+  color: var(--ef-lamp-caution);
 }
-.toast.err {
-  border-left-color: var(--err);
+.toast.err > .dot {
+  background: var(--ef-lamp-alarm);
 }
-.toast.err .icon {
-  color: var(--err);
-}
-.toast.err .progress::after {
-  background: var(--err);
+.toast.err .progress {
+  color: var(--ef-lamp-alarm);
 }
 .toast.err .action {
-  color: var(--err);
+  color: var(--ef-lamp-alarm);
 }
 
 /* ─────────────────────────── DATA DISPLAY ─────────────────────────── */
@@ -1625,40 +1669,40 @@ body::before {
 }
 .tbl th {
   text-align: left;
-  font-family: var(--f-mono);
-  font-size: var(--s-tag);
+  font-family: var(--ef-font-mono);
+  font-size: var(--ef-text-tag);
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--muted);
+  color: var(--ef-text-muted);
   font-weight: 400;
   padding: 12px 14px;
-  border-bottom: 1px solid var(--rule-strong);
+  border-bottom: 1px solid var(--ef-border-strong);
 }
 .tbl td {
   padding: 12px 14px;
-  border-bottom: 1px solid var(--rule);
-  color: var(--ink);
+  border-bottom: 1px solid var(--ef-surface-hairline);
+  color: var(--ef-text);
   vertical-align: middle;
 }
 .tbl tbody tr:hover {
-  background: rgba(99, 137, 166, 0.05);
+  background: var(--ef-surface-sunken);
 }
 .tbl tbody tr:last-child td {
   border-bottom: 0;
 }
 .tbl td.mono {
-  font-family: var(--f-mono);
+  font-family: var(--ef-font-mono);
   font-size: 12.5px;
-  color: var(--graphite);
+  color: var(--ef-text-faint);
 }
 .tbl td.num {
-  font-family: var(--f-mono);
+  font-family: var(--ef-font-mono);
   text-align: right;
 }
 .tbl .rowid {
-  font-family: var(--f-mono);
+  font-family: var(--ef-font-mono);
   font-size: 11px;
-  color: var(--muted);
+  color: var(--ef-text-muted);
   letter-spacing: 0.06em;
 }
 
@@ -1670,41 +1714,41 @@ body::before {
 .dl dt,
 .dl dd {
   padding: 10px 0;
-  border-bottom: 1px solid var(--rule);
+  border-bottom: 1px solid var(--ef-border);
 }
 .dl dt {
-  font-family: var(--f-mono);
-  font-size: var(--s-tag);
+  font-family: var(--ef-font-mono);
+  font-size: var(--ef-text-tag);
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--muted);
+  color: var(--ef-text-muted);
 }
 .dl dd {
   font-size: 14px;
-  color: var(--ink);
+  color: var(--ef-text);
 }
 .dl dd.mono {
-  font-family: var(--f-mono);
+  font-family: var(--ef-font-mono);
   font-size: 13px;
-  color: var(--graphite);
+  color: var(--ef-text-faint);
 }
 .dl > :nth-last-child(-n + 2) {
   border-bottom: 0;
 }
 
 .codeblock {
-  font-family: var(--f-mono);
+  font-family: var(--ef-font-mono);
   font-size: 13px;
   line-height: 1.7;
-  background: var(--ink);
-  color: var(--ice);
+  background: var(--ef-surface-deep);
+  color: var(--ef-text);
   padding: 18px 22px;
-  border-radius: var(--r-sm);
+  border-radius: var(--ef-radius-sm);
   overflow-x: auto;
   position: relative;
 }
 .codeblock .ln {
-  color: rgba(230, 238, 245, 0.35);
+  color: var(--ef-text-faint);
   user-select: none;
   margin-right: 14px;
   display: inline-block;
@@ -1712,45 +1756,45 @@ body::before {
   text-align: right;
 }
 .codeblock .key {
-  color: var(--frost);
+  color: var(--ef-code-keyword);
 }
 .codeblock .str {
-  color: #e8c39a;
+  color: var(--ef-code-string);
 }
 .codeblock .num {
-  color: var(--frost);
+  color: var(--ef-code-number);
 }
 .codeblock .com {
-  color: rgba(230, 238, 245, 0.45);
+  color: var(--ef-code-comment);
   font-style: italic;
 }
 .codeblock .copy {
   position: absolute;
   top: 12px;
   right: 12px;
-  font-family: var(--f-mono);
+  font-family: var(--ef-font-mono);
   font-size: 10px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--frost);
+  color: var(--ef-text-faint);
   cursor: pointer;
   padding: 4px 8px;
-  border: 1px solid rgba(230, 238, 245, 0.3);
-  border-radius: var(--r-xs);
+  border: 1px solid var(--ef-border-strong);
+  border-radius: var(--ef-radius-xs);
   transition: all 0.15s;
   background: transparent;
 }
 .codeblock .copy:hover {
-  color: var(--paper);
-  border-color: var(--ice);
+  color: var(--ef-text);
+  border-color: var(--ef-text);
 }
 
 .diff {
-  font-family: var(--f-mono);
+  font-family: var(--ef-font-mono);
   font-size: 13px;
   line-height: 1.7;
-  border: 1px solid var(--rule);
-  border-radius: var(--r-sm);
+  border: 1px solid var(--ef-border);
+  border-radius: var(--ef-radius-sm);
   overflow: hidden;
 }
 .diff .row {
@@ -1760,26 +1804,26 @@ body::before {
   gap: 8px;
 }
 .diff .add {
-  background: rgba(62, 92, 118, 0.08);
+  background: var(--ef-lamp-nominal-ground);
 }
 .diff .del {
-  background: rgba(200, 124, 78, 0.08);
+  background: var(--ef-lamp-alarm-ground);
 }
 .diff .marker {
-  color: var(--muted);
+  color: var(--ef-text-muted);
 }
 .diff .add .marker {
-  color: var(--steel);
+  color: var(--ef-lamp-nominal);
 }
 .diff .del .marker {
-  color: var(--ember);
+  color: var(--ef-lamp-alarm);
 }
 
 /* ─────────────────────────── AGENT PRIMITIVES ─────────────────────────── */
 .agent-card {
-  background: var(--paper);
-  border: 1px solid var(--rule-strong);
-  border-radius: var(--r-sm);
+  background: var(--ef-surface);
+  border: 1px solid var(--ef-border-strong);
+  border-radius: var(--ef-radius-sm);
   padding: 18px;
   display: grid;
   grid-template-columns: 56px 1fr;
@@ -1791,16 +1835,16 @@ body::before {
   height: 56px;
 }
 .agent-card .meta .n {
-  font-family: var(--f-display);
+  font-family: var(--ef-font-display);
   font-weight: 700;
   font-size: 17px;
   letter-spacing: -0.01em;
-  color: var(--ink);
+  color: var(--ef-text);
 }
 .agent-card .meta .id {
-  font-family: var(--f-mono);
+  font-family: var(--ef-font-mono);
   font-size: 11px;
-  color: var(--muted);
+  color: var(--ef-text-muted);
   letter-spacing: 0.08em;
 }
 .agent-card .meta .st {
@@ -1808,9 +1852,9 @@ body::before {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-family: var(--f-mono);
+  font-family: var(--ef-font-mono);
   font-size: 11px;
-  color: var(--steel);
+  color: var(--ef-text-secondary);
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -1822,30 +1866,30 @@ body::before {
   gap: 14px;
   align-items: center;
   padding: 14px 16px;
-  border: 1px solid var(--rule);
-  background: var(--paper);
-  border-radius: var(--r-sm);
+  border: 1px solid var(--ef-border);
+  background: var(--ef-surface);
+  border-radius: var(--ef-radius-sm);
 }
 .policy .tag-c {
-  font-family: var(--f-mono);
+  font-family: var(--ef-font-mono);
   font-size: 11px;
   letter-spacing: 0.08em;
-  color: var(--steel);
+  color: var(--ef-text-secondary);
   padding: 3px 6px;
-  border: 1px solid var(--steel);
-  border-radius: var(--r-xs);
+  border: 1px solid var(--ef-border-strong);
+  border-radius: var(--ef-radius-xs);
   text-align: center;
 }
 .policy .descr .n {
-  font-family: var(--f-display);
+  font-family: var(--ef-font-display);
   font-weight: 700;
   font-size: 14px;
-  color: var(--ink);
+  color: var(--ef-text);
   letter-spacing: -0.005em;
 }
 .policy .descr .d {
   font-size: 13px;
-  color: var(--graphite);
+  color: var(--ef-text-faint);
   margin-top: 2px;
 }
 
@@ -1855,143 +1899,233 @@ body::before {
   align-items: center;
   gap: 8px;
   padding: 6px 10px 6px 8px;
-  border: 1px solid var(--rule-strong);
-  background: var(--paper);
-  border-radius: var(--r-sm);
-  font-family: var(--f-mono);
+  border: 1px solid var(--ef-border-strong);
+  background: var(--ef-surface);
+  border-radius: var(--ef-radius-sm);
+  font-family: var(--ef-font-mono);
   font-size: 12px;
-  color: var(--ink);
+  color: var(--ef-text);
 }
 .perm .check-icon {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: var(--steel);
-  color: var(--paper);
+  background: var(--ef-lamp-nominal);
+  color: var(--ef-surface);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
 }
+/* Denied is deliberately off — stood-down, not an error. */
 .perm.denied .check-icon {
-  background: var(--ember);
+  background: var(--ef-lamp-stood-down);
 }
 .perm.denied {
-  color: var(--muted);
+  color: var(--ef-text-muted);
   text-decoration: line-through;
-  text-decoration-color: var(--ember);
+  text-decoration-color: var(--ef-lamp-stood-down);
 }
 
 /* CLI line */
 .cli-line {
-  font-family: var(--f-mono);
+  font-family: var(--ef-font-mono);
   font-size: 13px;
   padding: 10px 14px;
-  background: var(--ink);
-  color: var(--ice);
-  border-radius: var(--r-sm);
+  background: var(--ef-surface-deep);
+  color: var(--ef-text);
+  border-radius: var(--ef-radius-sm);
   display: flex;
   align-items: center;
   gap: 10px;
 }
 .cli-line .p {
-  color: var(--steel);
+  color: var(--ef-code-keyword);
 }
 .cli-line .cmd {
-  color: var(--paper);
+  color: var(--ef-text);
 }
 .cli-line .flag {
-  color: var(--ember);
+  color: var(--ef-code-string);
 }
 
 /* ─────────────────────────── OVERLAYS ─────────────────────────── */
-.tooltip {
-  display: inline-block;
-  background: var(--ink);
-  color: var(--paper);
-  font-family: var(--f-sans);
-  font-size: 12px;
-  padding: 7px 10px;
-  border-radius: var(--r-xs);
-  line-height: 1.3;
-  white-space: nowrap;
+/* Tip — hover/focus hint per the bench GUIDANCE SPEC: menu ground,
+   mono tag, never inverse. Words only. */
+.tip-host {
   position: relative;
-  font-weight: 400;
-  letter-spacing: 0;
-  text-transform: none;
+  display: inline-block;
+}
+.tip {
+  position: absolute;
+  z-index: 10;
+  background: var(--ef-menu);
+  border: 1px solid var(--ef-menu-border);
+  border-radius: var(--ef-radius-sm);
+  padding: 8px 11px;
+  white-space: nowrap;
+  font-family: var(--ef-font-mono);
+  font-size: var(--ef-text-tag);
+  letter-spacing: var(--ef-track-tag-tight);
+  color: var(--ef-text-secondary);
+  box-shadow: var(--ef-shadow-overlay);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--ef-motion-fast);
+}
+.tip-host:hover .tip,
+.tip-host:focus-within .tip {
+  opacity: 1;
+}
+.tip[data-place="top"] {
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+}
+.tip[data-place="bottom"] {
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+}
+.tip[data-place="left"] {
+  right: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+}
+.tip[data-place="right"] {
+  left: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+}
+.tip-key {
+  color: var(--ef-text-faint);
+  margin-left: 8px;
+}
+
+/* Popover — definition, confirm-in-place, or status detail. */
+.popover {
+  background: var(--ef-menu);
+  border: 1px solid var(--ef-menu-border);
+  border-radius: var(--ef-radius-sm);
+  padding: 18px;
+  max-width: 340px;
+  box-shadow: var(--ef-shadow-modal);
+}
+.popover-title {
+  font-family: var(--ef-font-mono);
+  font-size: var(--ef-text-tag);
+  letter-spacing: var(--ef-track-tag);
+  color: var(--ef-text-muted);
+  margin-bottom: 8px;
+}
+.popover-body {
+  font-size: var(--ef-text-small);
+  color: var(--ef-text-secondary);
+  margin-bottom: 14px;
+}
+/* A defined term — dashed underline, help cursor, popover on demand. */
+.term-def {
+  border-bottom: 1px dashed var(--ef-border-strong);
+  cursor: help;
+  color: var(--ef-text);
 }
 .menu {
-  background: var(--paper);
-  border: 1px solid var(--rule-strong);
-  border-radius: var(--r-sm);
+  background: var(--ef-menu);
+  border: 1px solid var(--ef-menu-border);
+  border-radius: var(--ef-radius-sm);
   padding: 6px;
-  box-shadow: 0 12px 40px -16px rgba(14, 28, 43, 0.18);
+  box-shadow: var(--ef-shadow-overlay);
   min-width: 220px;
 }
-.menu .item {
+.menu-item {
   display: flex;
+  justify-content: space-between;
   align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  font-size: 13.5px;
-  border-radius: var(--r-xs);
+  gap: 16px;
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  font-size: var(--ef-text-small);
+  border-radius: var(--ef-radius-xs);
   cursor: pointer;
-  color: var(--ink);
+  background: transparent;
+  color: var(--ef-text-secondary);
 }
-.menu .item:hover {
-  background: var(--ice);
+.menu-item:hover {
+  background: var(--ef-menu-item-hover);
+  color: var(--ef-text);
 }
-.menu .item .kbd {
+.menu-item[aria-selected="true"] {
+  color: var(--ef-text);
+}
+.menu-key {
   margin-left: auto;
-  font-family: var(--f-mono);
-  font-size: 10.5px;
-  color: var(--muted);
-  letter-spacing: 0.08em;
+  font-family: var(--ef-font-mono);
+  font-size: var(--ef-text-tag-xs);
+  color: var(--ef-text-faint);
 }
 .menu .item.destructive {
-  color: var(--err);
+  color: var(--ef-lamp-alarm);
 }
-.menu .sep {
+.menu-sep {
   height: 1px;
-  background: var(--rule);
+  background: var(--ef-border);
   margin: 6px 0;
 }
-.menu .item.head {
-  font-family: var(--f-mono);
-  font-size: var(--s-tag);
+.menu-head {
+  font-family: var(--ef-font-mono);
+  font-size: var(--ef-text-tag);
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--muted);
+  color: var(--ef-text-muted);
   cursor: default;
   padding: 8px 12px 4px;
 }
-.menu .item.head:hover {
+.menu-head:hover {
   background: transparent;
 }
 
 /* Empty state */
+/* State panel — empty/waiting/failed states (bench STATE SPEC): sunken
+   ground, centered, a mono state tag, one title, one why, one action.
+   Dashed borders are not in the vocabulary. */
 .empty {
+  display: grid;
+  place-items: center;
+  gap: 10px;
   text-align: center;
-  padding: 48px 24px;
-  border: 1px dashed var(--rule-strong);
-  border-radius: var(--r-sm);
-  background: var(--paper);
+  min-height: 190px;
+  padding: 28px;
+  border: 1px solid var(--ef-border-subtle);
+  border-radius: var(--ef-radius-sm);
+  background: var(--ef-surface-sunken);
+}
+.state-tag {
+  font-family: var(--ef-font-mono);
+  font-size: var(--ef-text-tag);
+  letter-spacing: var(--ef-track-tag);
+  color: var(--ef-text-muted);
+}
+.state-why {
+  font-size: var(--ef-text-small);
+  color: var(--ef-text-tertiary);
+  max-width: 300px;
 }
 .empty svg {
-  margin: 0 auto 18px;
+  margin: 0 auto;
 }
 .empty h4 {
-  font-family: var(--f-display);
-  font-weight: 700;
-  font-size: 18px;
+  font-family: var(--ef-font-display);
+  font-weight: var(--ef-weight-semibold);
+  font-size: var(--ef-text-h4);
   letter-spacing: -0.015em;
-  margin-bottom: 6px;
+  margin: 0;
 }
 .empty p {
-  font-size: 13.5px;
-  color: var(--muted);
-  max-width: 44ch;
-  margin: 0 auto 18px;
+  font-size: var(--ef-text-small);
+  color: var(--ef-text-tertiary);
+  max-width: 300px;
+  margin: 0 auto;
 }
 
 /* ─────────────────────────── RESPONSIVE ─────────────────────────── */
@@ -2007,9 +2141,9 @@ body::before {
  *   ≤699   Rail also drawers; main fills viewport; chrome compresses
  */
 
-@media (max-width: 980px) {
+@media (max-width: 1099px) {
   :root {
-    --edge: 24px;
+    --ef-layout-edge: 24px;
   }
 }
 
@@ -2033,8 +2167,8 @@ body::before {
   position: relative;
   width: var(--activity-inspector-width, 380px);
   height: 100%;
-  background: var(--paper);
-  border-left: 1px solid var(--rule);
+  background: var(--ef-surface);
+  border-left: 1px solid var(--ef-border);
 }
 
 @media (max-width: 1279px) {
@@ -2052,15 +2186,15 @@ body::before {
     width: 380px;
     transform: translateX(100%);
     transition:
-      transform 0.25s var(--ease),
-      box-shadow 0.25s var(--ease);
+      transform 0.25s var(--ef-motion-ease),
+      box-shadow 0.25s var(--ef-motion-ease);
     z-index: 50;
-    border-left-color: var(--rule-strong);
+    border-left-color: var(--ef-border-strong);
     box-shadow: none;
   }
   .activity-inspector[data-inspector-open="true"] {
     transform: translateX(0);
-    box-shadow: -8px 0 40px -12px rgba(11, 20, 32, 0.45);
+    box-shadow: var(--ef-shadow-modal);
   }
 }
 
@@ -2087,7 +2221,7 @@ body::before {
 }
 .activity-resize-handle:hover,
 .activity-resize-handle[data-resizing="true"] {
-  background: var(--rule-strong);
+  background: var(--ef-border-strong);
 }
 @media (max-width: 1099px) {
   .activity-resize-handle {
@@ -2100,8 +2234,8 @@ body::before {
  * expanding reveals the kind chips + objective scope picker. */
 .activity-filter-tray {
   flex-shrink: 0;
-  border-bottom: 1px solid var(--rule);
-  background: var(--paper);
+  border-bottom: 1px solid var(--ef-border);
+  background: var(--ef-surface);
 }
 .activity-filter-tray-toggle {
   display: flex;
@@ -2111,26 +2245,26 @@ body::before {
   padding: 8px 14px;
   background: transparent;
   border: none;
-  font-family: var(--f-sans);
+  font-family: var(--ef-font-body);
   font-size: 12px;
-  color: var(--graphite);
+  color: var(--ef-text-faint);
   cursor: pointer;
 }
 .activity-filter-tray-toggle:hover {
-  background: var(--ice);
-  color: var(--ink);
+  background: var(--ef-surface-raised);
+  color: var(--ef-text);
 }
 .activity-filter-tray-toggle:focus-visible {
-  outline: 2px solid var(--steel);
+  outline: 2px solid var(--ef-field-border-focus);
   outline-offset: -2px;
 }
 .activity-filter-tray[data-open="true"] .activity-filter-tray-toggle {
-  background: var(--ice);
-  color: var(--ink);
+  background: var(--ef-surface-raised);
+  color: var(--ef-text);
 }
 .activity-filter-tray-body {
   padding: 8px 14px 12px;
-  border-top: 1px solid var(--rule);
+  border-top: 1px solid var(--ef-border);
 }
 
 /* Wrap long unbroken tokens (URLs, hashes, base64, JSON keys) inside
@@ -2196,36 +2330,6 @@ body::before {
   }
 }
 
-/* ─── Outer rail drawer (Platform only, narrow widths) ───────────── */
-/*
- * Wide state (≥700): the rail is a flex member of the AppShell row.
- * Lifted above the shared backdrop with `z-index: 45` so it stays
- * visible (and tappable) when a navcol or inspector overlay is open.
- *
- * Narrow state (≤699): the rail collapses into a drawer behind the
- * navcol. Driven by the same `is-open` state as the navcol so the
- * hamburger opens both — the navcol slides in to its drawer position
- * (left:64), and the rail slides in alongside it (left:0).
- */
-.outer-rail {
-  position: relative;
-  z-index: 45;
-}
-@media (max-width: 699px) {
-  .outer-rail {
-    position: fixed;
-    top: 0;
-    left: 0;
-    bottom: 0;
-    transform: translateX(-100%);
-    transition: transform 0.25s var(--ease);
-    z-index: 60;
-  }
-  .outer-rail.is-open {
-    transform: translateX(0);
-  }
-}
-
 /* ─── Shared drawer backdrop ─────────────────────────────────────── */
 /*
  * Single backdrop layer that shows whenever any overlay (navcol
@@ -2237,11 +2341,11 @@ body::before {
 .drawer-backdrop {
   position: absolute;
   inset: 0;
-  background: rgba(11, 20, 32, 0.55);
+  background: var(--ef-shade);
   z-index: 40;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.2s var(--ease);
+  transition: opacity 0.2s var(--ef-motion-ease);
 }
 .drawer-backdrop.is-active {
   opacity: 1;
@@ -2255,8 +2359,8 @@ body::before {
  * brand mark.
  */
 .topbar {
-  background: var(--paper);
-  border-bottom: 1px solid var(--rule);
+  background: var(--ef-surface);
+  border-bottom: 1px solid var(--ef-border);
   padding: 10px max(0.75rem, env(safe-area-inset-right)) 10px
     max(0.75rem, env(safe-area-inset-left));
   padding-top: max(10px, env(safe-area-inset-top));
@@ -2296,154 +2400,345 @@ body::before {
   }
 }
 
-/* ═══════════════════════════════════════════════════════════════════════
-   DUSK MODE — `<html data-theme="dark">`
-   ─────────────────────────────────────────────────────────────────────
-   Token remap cascades through every component that references
-   `var(--*)` — no per-component rewrites needed except the small
-   deltas below whose *logic* (not just color) depends on ground tone.
-   ═══════════════════════════════════════════════════════════════════════ */
+/* ─────────────────────────── HELM VOCABULARY ─────────────────────────── *
+ * Classes ported verbatim from the kit's componentization layer
+ * (bench/components.css). Names and values match the bench so the
+ * product and the kit stay diff-able. */
 
-/* Dark theme — applied when `<html data-theme="dark">`. The token
-   redefinitions cascade to every descendant; component rules below
-   key off the same `[data-theme="dark"]` selector for the small
-   handful of cases where token-flipping alone isn't sufficient. */
-:root[data-theme="dark"] {
-  /* Surfaces */
-  --paper: #182232;
-  --ice: #243347;
-  /* Text */
-  --ink: #e8e2d4;
-  --graphite: #a4b0bd;
-  /* Blue family — brightened for contrast on dark */
-  --frost: #4e6278;
-  --glacier: #88a8c4;
-  --steel: #8ab0d0;
-  /* Warm accents */
-  --ember: #dda080;
-  --brick: #d37058;
-
-  --rule: rgba(232, 226, 212, 0.09);
-  --rule-strong: rgba(232, 226, 212, 0.22);
-  --ring: rgba(138, 176, 208, 0.32);
-
-  --bg: var(--paper);
-  --fg: var(--ink);
-  --muted: var(--graphite);
-  --ok: var(--steel);
-  --warn: var(--ember);
-  --err: var(--brick);
-  --err-bg: rgba(211, 112, 88, 0.08);
-  --rail-bg: #0b1420;
+/* Key hint. */
+.kbd {
+  font-family: var(--ef-font-mono);
+  font-size: var(--ef-text-tag-xs);
+  color: var(--ef-text-faint);
+  border: 1px solid var(--ef-border);
+  border-radius: var(--ef-radius-xs);
+  padding: 2px 6px;
 }
 
-[data-theme="dark"] body {
-  background: #182232;
+/* Count pill — unread and actionable only; zero is drawn grey, not
+   hidden. (The label badge keeps the `.badge` name above.) */
+.count-badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--ef-radius-pill);
+  background: var(--ef-lamp-working);
+  color: var(--ef-text-inverse);
+  font-family: var(--ef-font-mono);
+  font-size: var(--ef-text-tag-xs);
+  font-weight: var(--ef-weight-medium);
 }
-[data-theme="dark"] body::before {
-  display: none;
+.count-badge[data-state="quiet"] {
+  background: var(--ef-surface-disabled);
+  color: var(--ef-text-faint);
 }
 
-/* Component deltas — rules whose semantics don't survive a blind token flip. */
+/* Notification row — dot column, title, mono meta. Read sinks, never
+   disappears; unread takes the notify ground. */
+.notif {
+  display: grid;
+  grid-template-columns: 8px 1fr auto;
+  gap: 12px;
+  align-items: start;
+  width: 100%;
+  text-align: left;
+  padding: 12px 14px;
+  border-radius: var(--ef-radius-sm);
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+.notif--unread {
+  background: var(--ef-notify-unread);
+  border-color: var(--ef-border-subtle);
+}
+.notif-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--ef-radius-pill);
+  margin-top: 5px;
+  background: var(--ef-notify-read-dot);
+}
+.notif--unread .notif-dot {
+  background: var(--ef-lamp-working);
+}
+.notif-title {
+  font-size: var(--ef-text-small);
+  color: var(--ef-text-tertiary);
+}
+.notif--unread .notif-title {
+  color: var(--ef-text);
+  font-weight: var(--ef-weight-semibold);
+}
+.notif-meta {
+  font-family: var(--ef-font-mono);
+  font-size: var(--ef-text-tag-xs);
+  letter-spacing: var(--ef-track-data);
+  color: var(--ef-text-faint);
+}
 
-[data-theme="dark"] .btn-primary {
-  background: var(--steel);
-  color: #0e1c2b;
+/* Segmented control — few options, all worth showing. */
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--ef-field-border);
+  border-radius: var(--ef-radius-sm);
+  overflow: hidden;
 }
-[data-theme="dark"] .btn-primary:hover {
-  background: #a6c4df;
+.segmented button {
+  padding: 11px 20px;
+  font-family: var(--ef-font-display);
+  font-size: var(--ef-text-small);
+  font-weight: var(--ef-weight-semibold);
+  color: var(--ef-text-muted);
+  background: var(--ef-field);
+  cursor: pointer;
+  border-right: 1px solid var(--ef-field-border);
+  transition:
+    background var(--ef-motion-fast),
+    color var(--ef-motion-fast);
 }
-[data-theme="dark"] .btn-secondary {
+.segmented button:last-child {
+  border-right: 0;
+}
+.segmented button:hover {
+  color: var(--ef-text);
+}
+.segmented button[aria-pressed="true"] {
+  background: var(--ef-surface-raised);
+  color: var(--ef-text);
+}
+
+/* Fact grid — mono key over mono value, auto-fit. */
+.fact-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 12px;
+}
+.fact-k {
+  font-family: var(--ef-font-mono);
+  font-size: var(--ef-text-tag-xs);
+  letter-spacing: var(--ef-track-data);
+  color: var(--ef-text-faint);
+}
+.fact-v {
+  font-family: var(--ef-font-mono);
+  font-size: var(--ef-text-data);
+  color: var(--ef-text);
+}
+
+/* Banner — states a condition and leaves when the condition does. */
+.banner {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 16px;
+  align-items: start;
+  padding: 16px 18px;
+  border-radius: var(--ef-radius-sm);
+  border: 1px solid;
+  margin-bottom: 10px;
+}
+.banner[data-state="nominal"] {
+  background: var(--ef-lamp-nominal-ground);
+  border-color: var(--ef-lamp-nominal-edge);
+}
+.banner[data-state="working"] {
+  background: var(--ef-lamp-working-ground);
+  border-color: var(--ef-lamp-working-edge);
+}
+.banner[data-state="caution"] {
+  background: var(--ef-lamp-caution-ground);
+  border-color: var(--ef-lamp-caution-edge);
+}
+.banner[data-state="alarm"] {
+  background: var(--ef-lamp-alarm-ground);
+  border-color: var(--ef-lamp-alarm-edge);
+}
+.banner-title {
+  font-family: var(--ef-font-display);
+  font-size: var(--ef-text-control);
+  font-weight: var(--ef-weight-semibold);
+  margin-bottom: 3px;
+}
+.banner[data-state="nominal"] .banner-title {
+  color: var(--ef-lamp-nominal);
+}
+.banner[data-state="working"] .banner-title {
+  color: var(--ef-lamp-working);
+}
+.banner[data-state="caution"] .banner-title {
+  color: var(--ef-lamp-caution);
+}
+.banner[data-state="alarm"] .banner-title {
+  color: var(--ef-lamp-alarm);
+}
+.banner-body {
+  font-size: var(--ef-text-small);
+  color: var(--ef-text-secondary);
+}
+.banner-stamp {
+  font-family: var(--ef-font-mono);
+  font-size: var(--ef-text-tag-xs);
+  letter-spacing: var(--ef-track-data);
+  color: var(--ef-text-faint);
+}
+
+/* Dialog — the one modal on the ship is the one that stops the fleet.
+   Reversible work gets an undo bar instead. */
+.dialog {
+  background: var(--ef-surface-panel);
+  border: 1px solid var(--ef-lamp-alarm-edge);
+  border-radius: var(--ef-radius-cap-tl);
+  padding: 26px;
+  max-width: 420px;
+  box-shadow: var(--ef-shadow-modal);
+}
+.dialog-title {
+  font-family: var(--ef-font-display);
+  font-size: var(--ef-text-h3);
+  font-weight: var(--ef-weight-bold);
+  margin-bottom: 8px;
+}
+.dialog-body {
+  font-size: var(--ef-text-small);
+  color: var(--ef-text-tertiary);
+  margin-bottom: 20px;
+}
+.undo-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  border-radius: var(--ef-radius-sm);
+  background: var(--ef-surface-sunken);
+  border: 1px solid var(--ef-border-subtle);
+  font-family: var(--ef-font-mono);
+  font-size: var(--ef-text-tag);
+  letter-spacing: var(--ef-track-tag-tight);
+  color: var(--ef-text-muted);
+}
+
+/* Region-scoped scrollbar variants. */
+.scroller--hair {
+  scrollbar-width: thin;
+}
+.scroller--hair::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.scroller--hair::-webkit-scrollbar-track {
   background: transparent;
-  color: var(--ink);
-  border-color: var(--ink);
+  border: 0;
 }
-[data-theme="dark"] .btn-secondary:hover {
-  background: var(--ice);
+.scroller--hair::-webkit-scrollbar-thumb {
+  border-width: 1px;
 }
-[data-theme="dark"] .btn-ghost:hover {
-  background: var(--ice);
+.scroller--ghost::-webkit-scrollbar-thumb {
+  background: transparent;
+  transition: background var(--ef-motion-slow);
 }
-[data-theme="dark"] .btn-accent {
-  background: var(--ember);
-  color: #1a1208;
-}
-[data-theme="dark"] .btn-accent:hover {
-  background: #e8b18d;
-}
-[data-theme="dark"] .btn-icon {
-  background: var(--paper);
-  color: var(--ink);
-  border-color: var(--rule-strong);
-}
-[data-theme="dark"] .btn-icon:hover {
-  background: var(--ice);
+.scroller--ghost:hover::-webkit-scrollbar-thumb {
+  background: var(--ef-scroll-thumb);
 }
 
-[data-theme="dark"] .codeblock {
-  background: #0b1420;
-  color: var(--ink);
+/* Skeleton — shimmers while loading, holds the final row height so
+   arrival doesn't reflow. Stilled under reduced-motion (the ef-shim
+   keyframes ship with the brand tokens). */
+.ef-skeleton {
+  background: var(--ef-surface-raised);
+  border-radius: var(--ef-radius-xs);
+  animation: ef-shim var(--ef-motion-shim) ease-in-out infinite;
 }
-[data-theme="dark"] .codeblock .com {
-  color: rgba(232, 226, 212, 0.45);
-}
-
-[data-theme="dark"] .avatar {
-  background: var(--ice);
-  color: var(--steel);
-  border-color: var(--rule);
-}
-[data-theme="dark"] .avatar.dark {
-  background: #0b1420;
-  color: var(--ink);
-  border-color: #0b1420;
+@media (prefers-reduced-motion: reduce) {
+  .ef-skeleton {
+    animation: none;
+  }
 }
 
-[data-theme="dark"] .select {
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path d='M1 1l5 5 5-5' fill='none' stroke='%23E8E2D4' stroke-width='1.5'/></svg>");
+/* Lamp dot + mono word — the ledger's state column. */
+.state-word {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--ef-font-mono);
+  font-size: var(--ef-text-tag);
+  letter-spacing: var(--ef-track-tag-tight);
 }
 
-[data-theme="dark"] .check .box {
-  border-color: var(--ink);
-  background: var(--paper);
-}
-[data-theme="dark"] .check input:checked ~ .box,
-[data-theme="dark"] .check.is-checked .box {
-  background: var(--steel);
-  border-color: var(--steel);
-}
-[data-theme="dark"] .check .box::after {
-  border-left-color: #0e1c2b;
-  border-bottom-color: #0e1c2b;
+/* Superseded entries strike through; they never disappear. */
+.struck {
+  text-decoration: line-through;
+  text-decoration-color: var(--ef-text-faint);
+  color: var(--ef-text-faint);
 }
 
-[data-theme="dark"] .radio .circle {
-  border-color: var(--ink);
-  background: var(--paper);
+/* Jump — one field that reaches anything on the ship. */
+.jump {
+  background: var(--ef-menu);
+  border: 1px solid var(--ef-menu-border);
+  border-radius: var(--ef-radius-sm);
+  overflow: hidden;
+  box-shadow: var(--ef-shadow-modal);
 }
-[data-theme="dark"] .radio .circle::after {
-  background: var(--steel);
+.jump-field {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--ef-surface-sunken);
 }
-
-[data-theme="dark"] .toggle .track {
-  background: var(--frost);
+.jump-input {
+  flex: 1;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  color: var(--ef-text);
+  font-family: var(--ef-font-body);
+  font-size: var(--ef-text-lead);
 }
-[data-theme="dark"] .toggle input:checked ~ .track,
-[data-theme="dark"] .toggle.is-on .track {
-  background: var(--steel);
+.jump-input::placeholder {
+  color: var(--ef-field-placeholder);
 }
-[data-theme="dark"] .toggle .track::after {
-  background: var(--ink);
+.jump-group {
+  font-family: var(--ef-font-mono);
+  font-size: var(--ef-text-tag);
+  letter-spacing: var(--ef-track-tag);
+  color: var(--ef-text-muted);
+  padding: 12px 18px 6px;
 }
-
-[data-theme="dark"] .callout.err {
-  background: rgba(211, 112, 88, 0.08);
+.jump-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  text-align: left;
+  padding: 10px 18px;
+  background: transparent;
+  cursor: pointer;
+  font-size: var(--ef-text-small);
+  color: var(--ef-text-secondary);
 }
-[data-theme="dark"] .tbl tbody tr:hover {
-  background: rgba(138, 176, 208, 0.06);
+.jump-item:hover,
+.jump-item[aria-selected="true"] {
+  background: var(--ef-menu-item-hover);
+  color: var(--ef-text);
 }
-[data-theme="dark"] .stat .stat-value {
-  color: var(--ink);
+.jump-meta {
+  font-family: var(--ef-font-mono);
+  font-size: var(--ef-text-tag-xs);
+  color: var(--ef-text-faint);
+}
+.jump-foot {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 18px;
+  border-top: 1px solid var(--ef-surface-sunken);
+  font-family: var(--ef-font-mono);
+  font-size: var(--ef-text-tag-xs);
+  letter-spacing: var(--ef-track-data);
+  color: var(--ef-text-faint);
 }
 
 /* ─────────────── iOS auto-zoom suppression ──────────────── *
@@ -2459,7 +2754,7 @@ body::before {
  * that hard-set 14px above. Without naming those, the cascade keeps
  * the 14px and the zoom still fires.
  */
-@media (max-width: 640px), (pointer: coarse) {
+@media (max-width: 699px), (pointer: coarse) {
   input,
   textarea,
   select,

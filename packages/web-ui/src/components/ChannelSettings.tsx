@@ -22,6 +22,7 @@ import {
   renameChannel,
 } from '../lib/channels.js';
 import { getClient } from '../lib/client.js';
+import { confirmDialog } from '../lib/confirm.js';
 import { instructions } from '../lib/instructions.js';
 import { roster } from '../lib/roster.js';
 import { selectChannelsBrowse } from '../lib/view.js';
@@ -136,7 +137,13 @@ export function ChannelSettings({ channel, viewer, onClose }: ChannelSettingsPro
   };
 
   const onArchive = async () => {
-    if (!confirm(`Archive #${channel.slug}? Messages stay visible to people who were in it.`)) {
+    if (
+      !(await confirmDialog({
+        title: `Archive #${channel.slug}?`,
+        body: 'Messages stay visible to people who were in it.',
+        verb: 'Archive',
+      }))
+    ) {
       return;
     }
     archiveBusy.value = true;
@@ -152,7 +159,7 @@ export function ChannelSettings({ channel, viewer, onClose }: ChannelSettingsPro
   };
 
   const onLeave = async () => {
-    if (!confirm(`Leave #${channel.slug}?`)) return;
+    if (!(await confirmDialog({ title: `Leave #${channel.slug}?`, verb: 'Leave' }))) return;
     leaveBusy.value = true;
     try {
       await leaveChannel(channel.slug, viewer);
@@ -172,7 +179,7 @@ export function ChannelSettings({ channel, viewer, onClose }: ChannelSettingsPro
   return (
     <div
       class="flex-shrink-0"
-      style="background:var(--paper);border-bottom:1px solid var(--rule);padding:14px max(0.75rem,env(safe-area-inset-right)) 16px max(0.75rem,env(safe-area-inset-left));display:flex;flex-direction:column;gap:14px"
+      style="background:var(--ef-surface);border-bottom:1px solid var(--ef-border);padding:14px max(0.75rem,env(safe-area-inset-right)) 16px max(0.75rem,env(safe-area-inset-left));display:flex;flex-direction:column;gap:14px"
     >
       <div class="flex items-center justify-between">
         <div class="eyebrow">Channel settings</div>
@@ -200,7 +207,7 @@ export function ChannelSettings({ channel, viewer, onClose }: ChannelSettingsPro
 
       {isAdmin && (
         <form onSubmit={onRename} style="display:flex;flex-direction:column;gap:6px">
-          <span class="eyebrow" style="color:var(--graphite)">
+          <span class="eyebrow" style="color:var(--ef-text-faint)">
             Rename
           </span>
           <div class="flex items-center" style="gap:6px">
@@ -215,7 +222,7 @@ export function ChannelSettings({ channel, viewer, onClose }: ChannelSettingsPro
               maxLength={32}
               autoComplete="off"
               spellcheck={false}
-              style="flex:1;background:var(--ice);border:1px solid var(--rule);border-radius:var(--r-sm);padding:6px 10px;color:var(--ink);font-family:var(--f-mono);font-size:13px;outline:0"
+              style="flex:1;background:var(--ef-surface-raised);border:1px solid var(--ef-border);border-radius:var(--ef-radius-sm);padding:6px 10px;color:var(--ef-text);font-family:var(--ef-font-mono);font-size:13px;outline:0"
             />
             <button
               type="submit"
@@ -226,7 +233,7 @@ export function ChannelSettings({ channel, viewer, onClose }: ChannelSettingsPro
             </button>
           </div>
           {renameError.value !== null && (
-            <span style="font-family:var(--f-sans);font-size:12px;color:var(--err)">
+            <span style="font-family:var(--ef-font-body);font-size:12px;color:var(--ef-lamp-alarm)">
               {renameError.value}
             </span>
           )}
@@ -234,16 +241,16 @@ export function ChannelSettings({ channel, viewer, onClose }: ChannelSettingsPro
       )}
 
       <div style="display:flex;flex-direction:column;gap:6px">
-        <span class="eyebrow" style="color:var(--graphite)">
+        <span class="eyebrow" style="color:var(--ef-text-faint)">
           Members ({members.length})
         </span>
         {detailLoading.value && (
-          <span style="font-family:var(--f-sans);font-size:12px;color:var(--muted);font-style:italic">
+          <span style="font-family:var(--ef-font-body);font-size:12px;color:var(--ef-text-muted);font-style:italic">
             loading…
           </span>
         )}
         {detailError.value !== null && (
-          <span style="font-family:var(--f-sans);font-size:12px;color:var(--err)">
+          <span style="font-family:var(--ef-font-body);font-size:12px;color:var(--ef-lamp-alarm)">
             {detailError.value}
           </span>
         )}
@@ -252,11 +259,11 @@ export function ChannelSettings({ channel, viewer, onClose }: ChannelSettingsPro
             <li key={m.memberName} class="flex items-center" style="gap:8px;padding:4px 0">
               <span
                 class="font-display flex-1 truncate"
-                style="font-size:13.5px;font-weight:600;color:var(--ink)"
+                style="font-size:13.5px;font-weight:600;color:var(--ef-text)"
               >
                 {m.memberName}
               </span>
-              <span style="font-family:var(--f-mono);font-size:10px;letter-spacing:.06em;color:var(--muted);text-transform:uppercase">
+              <span style="font-family:var(--ef-font-mono);font-size:10px;letter-spacing:.06em;color:var(--ef-text-muted);text-transform:uppercase">
                 {m.role}
               </span>
               {(isAdmin || m.memberName === viewer) && (
@@ -285,7 +292,7 @@ export function ChannelSettings({ channel, viewer, onClose }: ChannelSettingsPro
               onChange={(e) => {
                 addInput.value = (e.currentTarget as HTMLSelectElement).value;
               }}
-              style="flex:1;background:var(--ice);border:1px solid var(--rule);border-radius:var(--r-sm);padding:6px 8px;color:var(--ink);font-family:var(--f-sans);font-size:13px;outline:0"
+              style="flex:1;background:var(--ef-surface-raised);border:1px solid var(--ef-border);border-radius:var(--ef-radius-sm);padding:6px 8px;color:var(--ef-text);font-family:var(--ef-font-body);font-size:13px;outline:0"
             >
               <option value="">add a teammate…</option>
               {addableTeammates.map((t) => (
@@ -307,7 +314,7 @@ export function ChannelSettings({ channel, viewer, onClose }: ChannelSettingsPro
 
       <div
         class="flex items-center"
-        style="gap:8px;border-top:1px solid var(--rule);padding-top:12px"
+        style="gap:8px;border-top:1px solid var(--ef-border);padding-top:12px"
       >
         {channel.joined && channel.id !== 'general' && (
           <button
@@ -325,7 +332,7 @@ export function ChannelSettings({ channel, viewer, onClose }: ChannelSettingsPro
             onClick={() => void onArchive()}
             disabled={archiveBusy.value}
             class="btn btn-ghost btn-sm"
-            style="color:var(--err)"
+            style="color:var(--ef-lamp-alarm)"
           >
             {archiveBusy.value ? 'Archiving…' : 'Archive channel'}
           </button>

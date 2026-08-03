@@ -69,6 +69,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@the-efficacious/brand": "^0.2.0",
     "csuite-web-host": "workspace:*",
     "@types/node": "^26.1.1",
     "@types/qrcode-terminal": "^0.12.2",

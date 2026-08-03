@@ -6544,19 +6544,14 @@ function renderConnectPlatformPage(
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Connect to platform</title>
+  <link rel="stylesheet" href="/brand/tokens.css">
+  <link rel="stylesheet" href="/brand/fonts.css">
   <style>
-    :root {
-      --ink: #0e1c2b;
-      --paper: #f6f3ec;
-      --rule: rgba(14, 28, 43, 0.14);
-      --muted: #4b5560;
-      --err: #b04a34;
-    }
     body {
       margin: 0;
-      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-      background: var(--paper);
-      color: var(--ink);
+      font-family: var(--ef-font-body);
+      background: var(--ef-surface);
+      color: var(--ef-text);
       min-height: 100vh;
       display: flex;
       align-items: center;
@@ -6566,35 +6561,34 @@ function renderConnectPlatformPage(
     .card {
       max-width: 440px;
       width: 100%;
-      background: white;
-      border: 1px solid var(--rule);
-      border-radius: 12px;
+      background: var(--ef-surface-panel);
+      border: 1px solid var(--ef-border);
+      border-radius: var(--ef-radius-sm);
       padding: 28px;
-      box-shadow: 0 1px 2px rgba(0,0,0,0.04);
     }
-    h1 { margin: 0 0 8px; font-size: 20px; font-weight: 600; }
-    p { margin: 0 0 12px; color: var(--muted); line-height: 1.5; }
-    code { font-family: ui-monospace, "SF Mono", monospace; font-size: 14px; background: #eee; padding: 2px 6px; border-radius: 4px; }
+    h1 { margin: 0 0 8px; font-family: var(--ef-font-display); font-size: 20px; font-weight: 700; }
+    p { margin: 0 0 12px; color: var(--ef-text-muted); line-height: 1.5; }
+    code { font-family: var(--ef-font-mono); font-size: 14px; background: var(--ef-surface-raised); padding: 2px 6px; border-radius: var(--ef-radius-xs); }
     .row { margin-top: 20px; display: flex; gap: 8px; }
     button, a.btn {
       display: inline-block;
       font: inherit;
       padding: 10px 16px;
-      border-radius: 8px;
-      border: 1px solid var(--rule);
-      background: var(--paper);
-      color: var(--ink);
+      border-radius: var(--ef-radius-sm);
+      border: 1px solid var(--ef-propose-border);
+      background: transparent;
+      color: var(--ef-propose-fg);
       cursor: pointer;
       text-decoration: none;
     }
     button.primary {
-      background: var(--ink);
-      color: var(--paper);
-      border-color: var(--ink);
+      background: var(--ef-commit-bg);
+      color: var(--ef-commit-fg);
+      border-color: var(--ef-commit-bg);
     }
     button:disabled { opacity: 0.5; cursor: default; }
-    .err { color: var(--err); margin-top: 12px; font-size: 14px; }
-    .muted { color: var(--muted); font-size: 13px; }
+    .err { color: var(--ef-lamp-alarm); margin-top: 12px; font-size: 14px; }
+    .muted { color: var(--ef-text-muted); font-size: 13px; }
   </style>
 </head>
 <body>

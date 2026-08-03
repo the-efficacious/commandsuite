@@ -299,11 +299,11 @@ export function Enroll(): JSX.Element {
           <section class="card elev" style="max-width:480px;padding:32px;text-align:center">
             <div
               class="font-display"
-              style="font-size:22px;font-weight:700;color:var(--ink);margin-bottom:8px"
+              style="font-size:22px;font-weight:700;color:var(--ef-text);margin-bottom:8px"
             >
               Approval requires admin
             </div>
-            <p style="color:var(--muted);font-size:14px;margin-bottom:20px">
+            <p style="color:var(--ef-text-muted);font-size:14px;margin-bottom:20px">
               Your account doesn't have <code>members.manage</code>. Ask an admin to approve the
               enrollment, or sign in as an admin.
             </p>
@@ -329,17 +329,17 @@ export function Enroll(): JSX.Element {
         <header style="max-width:720px;margin:0 auto 24px">
           <div
             class="eyebrow"
-            style="font-family:var(--f-mono);font-size:11px;letter-spacing:.14em;color:var(--muted);text-transform:uppercase;margin-bottom:6px"
+            style="font-family:var(--ef-font-mono);font-size:11px;letter-spacing:.14em;color:var(--ef-text-muted);text-transform:uppercase;margin-bottom:6px"
           >
             Device enrollment
           </div>
           <h1
             class="font-display"
-            style="font-size:28px;font-weight:700;letter-spacing:-0.02em;color:var(--ink);margin:0 0 6px"
+            style="font-size:28px;font-weight:700;letter-spacing:-0.02em;color:var(--ef-text);margin:0 0 6px"
           >
             Approve a connecting device
           </h1>
-          <p style="color:var(--muted);font-size:14px;margin:0">
+          <p style="color:var(--ef-text-muted);font-size:14px;margin:0">
             An operator running <code>csuite connect</code> on a VM gets a short code. Enter it
             here, pick who they're connecting as, and approve. The bearer token never leaves the
             broker — it goes straight to the device on its next poll.
@@ -349,13 +349,14 @@ export function Enroll(): JSX.Element {
         {successInfo.value && (
           <div
             class="card elev"
-            style="max-width:720px;margin:0 auto 16px;padding:16px;border-left:3px solid var(--steel);background:rgba(56,178,116,0.06)"
+            style="max-width:720px;margin:0 auto 16px;padding:16px;border-left:3px solid var(--ef-lamp-nominal-edge);background:var(--ef-lamp-nominal-ground)"
           >
-            <div style="font-family:var(--f-mono);font-size:11px;letter-spacing:.08em;color:var(--steel);text-transform:uppercase;margin-bottom:4px">
+            <div style="font-family:var(--ef-font-mono);font-size:11px;letter-spacing:.08em;color:var(--ef-lamp-nominal);text-transform:uppercase;margin-bottom:4px">
               Approved
             </div>
-            <div style="font-size:14px;color:var(--ink)">
-              Code <strong style="font-family:var(--f-mono)">{successInfo.value.userCode}</strong>{' '}
+            <div style="font-size:14px;color:var(--ef-text)">
+              Code{' '}
+              <strong style="font-family:var(--ef-font-mono)">{successInfo.value.userCode}</strong>{' '}
               bound to <strong>{successInfo.value.memberName}</strong>. The device's CLI will
               receive its bearer token on the next poll.
             </div>
@@ -382,7 +383,7 @@ function CodeEntryCard({ onLookup }: { onLookup: (code: string) => void }): JSX.
     <section class="card elev" style="max-width:720px;margin:0 auto 16px;padding:24px">
       <form onSubmit={onSubmit} style="display:flex;flex-direction:column;gap:14px">
         <label style="display:flex;flex-direction:column;gap:6px">
-          <span style="font-family:var(--f-mono);font-size:11px;letter-spacing:.08em;color:var(--muted);text-transform:uppercase">
+          <span style="font-family:var(--ef-font-mono);font-size:11px;letter-spacing:.08em;color:var(--ef-text-muted);text-transform:uppercase">
             User code
           </span>
           <input
@@ -397,7 +398,7 @@ function CodeEntryCard({ onLookup }: { onLookup: (code: string) => void }): JSX.
             placeholder="XXXX-XXXX"
             autoComplete="off"
             spellcheck={false}
-            style="font-family:var(--f-mono);font-size:22px;letter-spacing:.18em;text-align:center;padding:12px"
+            style="font-family:var(--ef-font-mono);font-size:22px;letter-spacing:.18em;text-align:center;padding:12px"
           />
         </label>
         <button
@@ -467,31 +468,33 @@ function ApprovalCard({
     <section class="card elev" style="max-width:720px;margin:0 auto;padding:24px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
         <div>
-          <div style="font-family:var(--f-mono);font-size:11px;letter-spacing:.08em;color:var(--muted);text-transform:uppercase">
+          <div style="font-family:var(--ef-font-mono);font-size:11px;letter-spacing:.08em;color:var(--ef-text-muted);text-transform:uppercase">
             Pending enrollment
           </div>
-          <div style="font-family:var(--f-mono);font-size:22px;letter-spacing:.18em;color:var(--ink);margin-top:2px">
+          <div style="font-family:var(--ef-font-mono);font-size:22px;letter-spacing:.18em;color:var(--ef-text);margin-top:2px">
             {pending.userCode}
           </div>
         </div>
-        <div style="font-family:var(--f-mono);font-size:12px;color:var(--muted);text-align:right">
+        <div style="font-family:var(--ef-font-mono);font-size:12px;color:var(--ef-text-muted);text-align:right">
           <div>expires in {fmtCountdown(pending.expiresAt)}</div>
         </div>
       </div>
 
-      <dl style="display:grid;grid-template-columns:max-content 1fr;gap:6px 14px;font-size:13px;color:var(--muted);margin-bottom:18px">
+      <dl style="display:grid;grid-template-columns:max-content 1fr;gap:6px 14px;font-size:13px;color:var(--ef-text-muted);margin-bottom:18px">
         <dt>source ip</dt>
-        <dd style="color:var(--ink);font-family:var(--f-mono)">{pending.sourceIp ?? '—'}</dd>
+        <dd style="color:var(--ef-text);font-family:var(--ef-font-mono)">
+          {pending.sourceIp ?? '—'}
+        </dd>
         <dt>user-agent</dt>
-        <dd style="color:var(--ink);font-family:var(--f-mono);overflow-wrap:anywhere">
+        <dd style="color:var(--ef-text);font-family:var(--ef-font-mono);overflow-wrap:anywhere">
           {pending.sourceUa ?? '—'}
         </dd>
         <dt>label hint</dt>
-        <dd style="color:var(--ink)">{pending.labelHint || '(none)'}</dd>
+        <dd style="color:var(--ef-text)">{pending.labelHint || '(none)'}</dd>
       </dl>
 
       <fieldset style="border:none;padding:0;margin:0 0 14px;display:flex;flex-direction:column;gap:8px">
-        <legend style="font-family:var(--f-mono);font-size:11px;letter-spacing:.08em;color:var(--muted);text-transform:uppercase;margin-bottom:4px">
+        <legend style="font-family:var(--ef-font-mono);font-size:11px;letter-spacing:.08em;color:var(--ef-text-muted);text-transform:uppercase;margin-bottom:4px">
           Bind to
         </legend>
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
@@ -532,7 +535,7 @@ function ApprovalCard({
         {f.mode === 'create' && (
           <div style="margin-left:24px;display:flex;flex-direction:column;gap:10px;padding:10px 0">
             <label style="display:flex;flex-direction:column;gap:4px">
-              <span style="font-family:var(--f-mono);font-size:11px;letter-spacing:.04em;color:var(--muted);text-transform:uppercase">
+              <span style="font-family:var(--ef-font-mono);font-size:11px;letter-spacing:.04em;color:var(--ef-text-muted);text-transform:uppercase">
                 name
               </span>
               <input
@@ -544,7 +547,7 @@ function ApprovalCard({
               />
             </label>
             <label style="display:flex;flex-direction:column;gap:4px">
-              <span style="font-family:var(--f-mono);font-size:11px;letter-spacing:.04em;color:var(--muted);text-transform:uppercase">
+              <span style="font-family:var(--ef-font-mono);font-size:11px;letter-spacing:.04em;color:var(--ef-text-muted);text-transform:uppercase">
                 role title
               </span>
               <input
@@ -557,7 +560,7 @@ function ApprovalCard({
               />
             </label>
             <label style="display:flex;flex-direction:column;gap:4px">
-              <span style="font-family:var(--f-mono);font-size:11px;letter-spacing:.04em;color:var(--muted);text-transform:uppercase">
+              <span style="font-family:var(--ef-font-mono);font-size:11px;letter-spacing:.04em;color:var(--ef-text-muted);text-transform:uppercase">
                 role description
               </span>
               <input
@@ -572,7 +575,7 @@ function ApprovalCard({
               <TextMetrics text={f.createDescription} />
             </label>
             <label style="display:flex;flex-direction:column;gap:4px">
-              <span style="font-family:var(--f-mono);font-size:11px;letter-spacing:.04em;color:var(--muted);text-transform:uppercase">
+              <span style="font-family:var(--ef-font-mono);font-size:11px;letter-spacing:.04em;color:var(--ef-text-muted);text-transform:uppercase">
                 instructions
               </span>
               <textarea
@@ -588,14 +591,14 @@ function ApprovalCard({
               <TextMetrics text={f.createInstructions} />
             </label>
             <fieldset style="border:none;padding:0;margin:0;display:flex;flex-direction:column;gap:6px">
-              <legend style="font-family:var(--f-mono);font-size:11px;letter-spacing:.04em;color:var(--muted);text-transform:uppercase;margin-bottom:4px">
+              <legend style="font-family:var(--ef-font-mono);font-size:11px;letter-spacing:.04em;color:var(--ef-text-muted);text-transform:uppercase;margin-bottom:4px">
                 permissions
               </legend>
-              <div style="display:flex;flex-wrap:wrap;gap:6px;font-family:var(--f-mono);font-size:12px">
+              <div style="display:flex;flex-wrap:wrap;gap:6px;font-family:var(--ef-font-mono);font-size:12px">
                 {permissionOptions().map((p) => (
                   <label
                     key={p}
-                    style="display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border:1px solid var(--rule);border-radius:var(--r-sm);cursor:pointer"
+                    style="display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border:1px solid var(--ef-border);border-radius:var(--ef-radius-sm);cursor:pointer"
                   >
                     <input
                       type="checkbox"
@@ -612,7 +615,7 @@ function ApprovalCard({
       </fieldset>
 
       <label style="display:flex;flex-direction:column;gap:4px;margin-bottom:18px">
-        <span style="font-family:var(--f-mono);font-size:11px;letter-spacing:.04em;color:var(--muted);text-transform:uppercase">
+        <span style="font-family:var(--ef-font-mono);font-size:11px;letter-spacing:.04em;color:var(--ef-text-muted);text-transform:uppercase">
           token label (optional)
         </span>
         <input
@@ -630,7 +633,7 @@ function ApprovalCard({
           class="btn btn-ghost"
           onClick={() => onReject()}
           disabled={isSubmitting}
-          style="color:var(--err)"
+          style="color:var(--ef-lamp-alarm)"
         >
           {submitting.value === 'reject' ? 'Rejecting…' : 'Reject'}
         </button>

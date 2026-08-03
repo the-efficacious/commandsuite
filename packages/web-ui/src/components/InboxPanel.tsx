@@ -39,12 +39,9 @@ export function InboxPanel() {
           message="Nothing is waiting on you. Unread threads and objectives assigned to you will land here."
         />
       ) : (
-        <ul
-          class="panel"
-          style="display:flex;flex-direction:column;list-style:none;padding:0;margin:0"
-        >
-          {items.map((item, idx) => (
-            <InboxRow key={item.id} item={item} isLast={idx === items.length - 1} />
+        <ul style="display:flex;flex-direction:column;gap:4px;list-style:none;padding:0;margin:0">
+          {items.map((item) => (
+            <InboxRow key={item.id} item={item} />
           ))}
         </ul>
       )}
@@ -52,72 +49,42 @@ export function InboxPanel() {
   );
 }
 
-function InboxRow({ item, isLast }: { item: InboxItem; isLast: boolean }) {
-  const border = isLast ? '' : 'border-bottom:1px solid var(--rule);';
+function InboxRow({ item }: { item: InboxItem }) {
+  // Every inbox item is, by construction, unhandled — handled items
+  // leave the feed — so each row takes the unread treatment.
   return (
     <li>
       <button
         type="button"
         onClick={() => openItem(item)}
-        class="hover-row w-full flex items-start gap-3"
-        style={`padding:14px 16px;${border};background:transparent;text-align:left;cursor:pointer`}
+        class="notif notif--unread"
         aria-label={ariaFor(item)}
       >
-        <div class="flex-1 min-w-0">
-          <div class="flex items-center gap-2 flex-wrap">
-            {item.kind === 'thread-unread' && (
-              <>
-                <span
-                  class="font-display truncate"
-                  style="font-weight:700;letter-spacing:-0.01em;color:var(--ink);font-size:14.5px"
-                >
-                  {item.title}
-                </span>
-                <span
-                  class="badge solid"
-                  style="font-size:10px;padding:2px 6px"
-                  title={`${item.unread} unread`}
-                >
-                  {item.unread}
-                </span>
-              </>
-            )}
+        <span class="notif-dot" />
+        <div class="min-w-0">
+          <div class="notif-title truncate">
+            {item.kind === 'thread-unread' && item.title}
             {item.kind === 'objective-assigned' && (
               <>
-                <span class={statusBadgeClass(item.objective.status)}>{item.objective.status}</span>
-                <span
-                  class="font-display truncate"
-                  style="font-weight:700;letter-spacing:-0.01em;color:var(--ink);font-size:14.5px"
-                >
-                  {item.objective.title}
-                </span>
+                <span class={statusBadgeClass(item.objective.status)}>{item.objective.status}</span>{' '}
+                {item.objective.title}
               </>
             )}
             {item.kind === 'objective-watched-blocked' && (
               <>
-                <span class="badge ember solid">blocked</span>
-                <span
-                  class="font-display truncate"
-                  style="font-weight:700;letter-spacing:-0.01em;color:var(--ink);font-size:14.5px"
-                >
-                  {item.objective.title}
-                </span>
+                <span class="badge caution solid">blocked</span> {item.objective.title}
               </>
             )}
           </div>
-          <div
-            class="truncate"
-            style="margin-top:4px;font-family:var(--f-sans);font-size:13px;color:var(--graphite);line-height:1.4"
-          >
-            {previewFor(item)}
+          <div class="notif-meta truncate">
+            {previewFor(item)} · {relativeTime(item.ts)}
           </div>
         </div>
-        <span
-          class="flex-shrink-0"
-          style="font-family:var(--f-mono);font-size:10.5px;letter-spacing:.08em;color:var(--muted);text-transform:uppercase;margin-top:2px"
-        >
-          {relativeTime(item.ts)}
-        </span>
+        {item.kind === 'thread-unread' && (
+          <span class="count-badge" title={`${item.unread} unread`}>
+            {item.unread}
+          </span>
+        )}
       </button>
     </li>
   );
@@ -161,7 +128,7 @@ function previewFor(item: InboxItem): string {
 }
 
 function statusBadgeClass(status: string): string {
-  if (status === 'blocked') return 'badge ember solid';
+  if (status === 'blocked') return 'badge caution solid';
   if (status === 'done' || status === 'cancelled') return 'badge soft';
   return 'badge solid';
 }

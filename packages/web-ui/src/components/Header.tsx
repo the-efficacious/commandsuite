@@ -17,7 +17,7 @@ import { embeddedShell } from '../lib/embedded.js';
 import { identity } from '../lib/identity.js';
 import { openPalette } from '../lib/palette.js';
 import { isSidebarOpen, openSidebar } from '../lib/view.js';
-import { BrandMark as BrandHeptagon, Menu, Search } from './icons/index.js';
+import { BrandMark as BrandSymbol, Menu, Search } from './icons/index.js';
 
 export function Header() {
   // Header renders only after identity is set so the rest of the
@@ -46,8 +46,8 @@ export function Header() {
           class="md:hidden flex-shrink-0"
           style={
             embedded
-              ? 'color:var(--graphite);padding:10px'
-              : 'color:var(--graphite);padding:10px;margin:-10px -6px -10px -10px'
+              ? 'color:var(--ef-text-faint);padding:10px'
+              : 'color:var(--ef-text-faint);padding:10px;margin:-10px -6px -10px -10px'
           }
         >
           <Menu size={20} aria-hidden="true" />
@@ -76,7 +76,7 @@ export function Header() {
  * it's a smaller inline mark with no alignment column.
  */
 function BrandMark({ embedded }: { embedded: boolean }) {
-  const mark = <BrandHeptagon size={26} class="flex-shrink-0" style="color:var(--ink)" />;
+  const mark = <BrandSymbol size={26} class="flex-shrink-0" />;
 
   if (!embedded) return mark;
 
@@ -101,7 +101,7 @@ function SearchButton() {
       aria-label="Open command palette"
       title="Search and jump (⌘K)"
       class="flex items-center w-full"
-      style="background:var(--ice);border:1px solid var(--rule);border-radius:var(--r-sm);padding:7px 12px;gap:10px;color:var(--muted);cursor:pointer;font-family:var(--f-sans);font-size:13px;max-width:100%;transition:border-color .15s var(--ease,ease)"
+      style="background:var(--ef-surface-raised);border:1px solid var(--ef-border);border-radius:var(--ef-radius-sm);padding:7px 12px;gap:10px;color:var(--ef-text-muted);cursor:pointer;font-family:var(--ef-font-body);font-size:13px;max-width:100%;transition:border-color .15s var(--ef-motion-ease)"
     >
       <Search size={14} aria-hidden="true" class="flex-shrink-0" />
       <span
@@ -113,12 +113,7 @@ function SearchButton() {
       <span class="sm:hidden flex-1" style="text-align:left">
         Search…
       </span>
-      <span
-        class="hidden sm:inline flex-shrink-0"
-        style="font-family:var(--f-mono);font-size:10.5px;letter-spacing:.06em;color:var(--muted);background:var(--paper);border:1px solid var(--rule);border-radius:var(--r-xs);padding:1px 6px"
-      >
-        ⌘K
-      </span>
+      <span class="kbd hidden sm:inline flex-shrink-0">⌘K</span>
     </button>
   );
 }

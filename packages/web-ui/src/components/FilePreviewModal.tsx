@@ -63,15 +63,15 @@ function PreviewModalInner({ file }: { file: PreviewableFile }) {
   return (
     <RouteModal onClose={closePreview} ariaLabel={`Preview ${file.name}`} size="xl">
       <div style="display:flex;flex-direction:column;height:calc(100vh - 4rem)">
-        <header style="display:flex;align-items:flex-start;gap:12px;padding:14px 50px 14px 18px;border-bottom:1px solid var(--rule);flex-shrink:0">
+        <header style="display:flex;align-items:flex-start;gap:12px;padding:14px 50px 14px 18px;border-bottom:1px solid var(--ef-border);flex-shrink:0">
           <div style="flex:1;min-width:0">
             <h2
               class="font-display"
-              style="margin:0;font-size:15px;font-weight:700;letter-spacing:-0.01em;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+              style="margin:0;font-size:15px;font-weight:700;letter-spacing:-0.01em;color:var(--ef-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
             >
               {file.name}
             </h2>
-            <p style="margin:2px 0 0;font-family:var(--f-mono);font-size:11px;color:var(--muted)">
+            <p style="margin:2px 0 0;font-family:var(--ef-font-mono);font-size:11px;color:var(--ef-text-muted)">
               {file.mimeType || 'unknown'} · {formatSize(file.size)}
             </p>
           </div>
@@ -98,11 +98,11 @@ function PreviewBody({ file, selection }: { file: PreviewableFile; selection: Re
   switch (selection.kind) {
     case 'image':
       return (
-        <div style="display:flex;align-items:center;justify-content:center;padding:16px;background:var(--ice);min-height:100%">
+        <div style="display:flex;align-items:center;justify-content:center;padding:16px;background:var(--ef-surface-raised);min-height:100%">
           <img
             src={FS_PATHS.read(file.path)}
             alt={file.name}
-            style="max-width:100%;max-height:calc(100vh - 12rem);object-fit:contain;border:1px solid var(--rule);background:var(--paper)"
+            style="max-width:100%;max-height:calc(100vh - 12rem);object-fit:contain;border:1px solid var(--ef-border);background:var(--ef-surface)"
           />
         </div>
       );
@@ -111,7 +111,7 @@ function PreviewBody({ file, selection }: { file: PreviewableFile; selection: Re
         <iframe
           src={FS_PATHS.read(file.path)}
           title={file.name}
-          style="display:block;width:100%;height:100%;border:0;background:var(--paper)"
+          style="display:block;width:100%;height:100%;border:0;background:var(--ef-surface)"
         />
       );
     case 'audio':
@@ -124,7 +124,7 @@ function PreviewBody({ file, selection }: { file: PreviewableFile; selection: Re
       );
     case 'video':
       return (
-        <div style="display:flex;align-items:center;justify-content:center;padding:16px;background:#000;min-height:100%">
+        <div style="display:flex;align-items:center;justify-content:center;padding:16px;background:var(--ef-n1000);min-height:100%">
           {/* biome-ignore lint/a11y/useMediaCaption: same as audio — uploads have no captions. */}
           <video
             controls
@@ -137,13 +137,17 @@ function PreviewBody({ file, selection }: { file: PreviewableFile; selection: Re
       return <TextPreview file={file} />;
     case 'markdown':
       return (
-        <Suspense fallback={<p style="color:var(--muted);font-size:13px;padding:16px">Loading…</p>}>
+        <Suspense
+          fallback={<p style="color:var(--ef-text-muted);font-size:13px;padding:16px">Loading…</p>}
+        >
           <MarkdownPreviewLazy file={file} />
         </Suspense>
       );
     case 'code':
       return (
-        <Suspense fallback={<p style="color:var(--muted);font-size:13px;padding:16px">Loading…</p>}>
+        <Suspense
+          fallback={<p style="color:var(--ef-text-muted);font-size:13px;padding:16px">Loading…</p>}
+        >
           <CodePreviewLazy file={file} language={selection.language ?? 'plaintext'} />
         </Suspense>
       );
@@ -167,9 +171,9 @@ function PreviewBody({ file, selection }: { file: PreviewableFile; selection: Re
 
 function FallbackCard({ file, message }: { file: PreviewableFile; message: string }) {
   return (
-    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:48px 24px;gap:12px;text-align:center;color:var(--muted);font-size:13px;line-height:1.5">
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:48px 24px;gap:12px;text-align:center;color:var(--ef-text-muted);font-size:13px;line-height:1.5">
       <p style="margin:0">{message}</p>
-      <p style="margin:0;font-family:var(--f-mono);font-size:11px;color:var(--muted)">
+      <p style="margin:0;font-family:var(--ef-font-mono);font-size:11px;color:var(--ef-text-muted)">
         {file.mimeType || 'unknown type'} · {formatSize(file.size)}
       </p>
     </div>

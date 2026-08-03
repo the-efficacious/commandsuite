@@ -148,6 +148,14 @@ export interface Teammate {
   role: Role;
   /** Resolved leaf permissions (presets expanded). */
   permissions: Permission[];
+  /**
+   * Person vs agent, for identity rendering (Helm plate 14 draws the
+   * two differently). Derived server-side from the auth plane: a
+   * member with TOTP enrollment is a person. Optional — older servers
+   * omit it, and consumers must render the absent case as the neutral
+   * (agent) treatment rather than guessing person.
+   */
+  kind?: 'person' | 'agent';
 }
 
 /**

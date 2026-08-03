@@ -31,7 +31,7 @@ function JsonPre({ text, style }: { text: string; style: string }): JSX.Element 
 
 export function GenAiMessageBlock({ message }: { message: GenAiMessage }): JSX.Element {
   return (
-    <div style="border-left:1px solid var(--rule);padding-left:10px;font-size:12px">
+    <div style="border-left:1px solid var(--ef-border);padding-left:10px;font-size:12px">
       <div class="eyebrow">{message.role}</div>
       {message.parts.map((part, i) => (
         <GenAiPartBlock key={i} part={part} />
@@ -47,13 +47,13 @@ export function GenAiPartBlock({ part }: { part: GenAiPart }): JSX.Element {
     if (highlighted !== null) {
       return (
         <pre
-          style="font-family:var(--f-mono);font-size:12px;color:var(--ink);white-space:pre-wrap"
+          style="font-family:var(--ef-font-mono);font-size:12px;color:var(--ef-text);white-space:pre-wrap"
           dangerouslySetInnerHTML={{ __html: highlighted }}
         />
       );
     }
     return (
-      <pre style="font-family:var(--f-mono);font-size:12px;color:var(--ink);white-space:pre-wrap">
+      <pre style="font-family:var(--ef-font-mono);font-size:12px;color:var(--ef-text);white-space:pre-wrap">
         {part.content}
       </pre>
     );
@@ -62,13 +62,13 @@ export function GenAiPartBlock({ part }: { part: GenAiPart }): JSX.Element {
     const { server, tool } = parseToolName(part.name ?? '?');
     return (
       <div style="font-size:12px">
-        <span style="color:var(--steel)">tool_call</span>{' '}
-        {server && <span style="color:var(--muted)">{server} · </span>}
-        <span style="color:var(--ink);font-weight:600">{tool}</span>{' '}
-        <span style="color:var(--muted)">({part.id ?? '?'})</span>
+        <span style="color:var(--ef-text-secondary)">tool_call</span>{' '}
+        {server && <span style="color:var(--ef-text-muted)">{server} · </span>}
+        <span style="color:var(--ef-text);font-weight:600">{tool}</span>{' '}
+        <span style="color:var(--ef-text-muted)">({part.id ?? '?'})</span>
         <JsonPre
           text={JSON.stringify(part.arguments, null, 2)}
-          style="font-family:var(--f-mono);font-size:11.5px;color:var(--graphite);white-space:pre-wrap;margin-top:2px"
+          style="font-family:var(--ef-font-mono);font-size:11.5px;color:var(--ef-text-faint);white-space:pre-wrap;margin-top:2px"
         />
       </div>
     );
@@ -76,24 +76,26 @@ export function GenAiPartBlock({ part }: { part: GenAiPart }): JSX.Element {
   if (part.type === 'tool_call_response') {
     return (
       <div style="font-size:12px">
-        <span style={`color:var(${part.is_error ? '--err' : '--steel'})`}>tool_result</span>{' '}
-        <span style="color:var(--muted)">({part.id ?? '?'})</span>
+        <span style={`color:var(${part.is_error ? '--ef-lamp-alarm' : '--ef-text-data'})`}>
+          tool_result
+        </span>{' '}
+        <span style="color:var(--ef-text-muted)">({part.id ?? '?'})</span>
         <JsonPre
           text={
             typeof part.response === 'string'
               ? part.response
               : JSON.stringify(part.response, null, 2)
           }
-          style="font-family:var(--f-mono);font-size:11.5px;color:var(--graphite);white-space:pre-wrap;margin-top:2px"
+          style="font-family:var(--ef-font-mono);font-size:11.5px;color:var(--ef-text-faint);white-space:pre-wrap;margin-top:2px"
         />
       </div>
     );
   }
   if (part.type === 'reasoning') {
     return (
-      <div style="font-size:12px;color:var(--muted);font-style:italic">
+      <div style="font-size:12px;color:var(--ef-text-muted);font-style:italic">
         thinking:{' '}
-        <pre style="white-space:pre-wrap;font-family:var(--f-mono);display:inline">
+        <pre style="white-space:pre-wrap;font-family:var(--ef-font-mono);display:inline">
           {part.content}
         </pre>
       </div>
@@ -101,14 +103,14 @@ export function GenAiPartBlock({ part }: { part: GenAiPart }): JSX.Element {
   }
   if (part.type === 'blob' || part.type === 'file') {
     return (
-      <div style="font-size:12px;color:var(--muted);font-style:italic">
+      <div style="font-size:12px;color:var(--ef-text-muted);font-style:italic">
         [{part.type}
         {part.mime_type ? ` ${part.mime_type}` : ''}]
       </div>
     );
   }
   return (
-    <div style="font-size:12px;color:var(--muted);font-style:italic">
+    <div style="font-size:12px;color:var(--ef-text-muted);font-style:italic">
       [{part.type}: {JSON.stringify('content' in part ? part.content : part).slice(0, 60)}…]
     </div>
   );
@@ -147,7 +149,7 @@ export function GenAiRequestDetails({
     <>
       {sysBlocks.length > 0 && (
         <details style="margin-top:4px" open={defaultOpen}>
-          <summary style="font-family:var(--f-mono);font-size:11.5px;color:var(--muted);cursor:pointer">
+          <summary style="font-family:var(--ef-font-mono);font-size:11.5px;color:var(--ef-text-muted);cursor:pointer">
             system instructions ({sysBlocks.length} {sysBlocks.length === 1 ? 'block' : 'blocks'})
           </summary>
           <div style="margin-top:4px;display:flex;flex-direction:column;gap:4px">
@@ -159,7 +161,7 @@ export function GenAiRequestDetails({
       )}
       {inputMessages.length > 0 && (
         <details style="margin-top:4px" open={defaultOpen}>
-          <summary style="font-family:var(--f-mono);font-size:11.5px;color:var(--muted);cursor:pointer">
+          <summary style="font-family:var(--ef-font-mono);font-size:11.5px;color:var(--ef-text-muted);cursor:pointer">
             input context ({inputMessages.length}{' '}
             {inputMessages.length === 1 ? 'message' : 'messages'})
           </summary>

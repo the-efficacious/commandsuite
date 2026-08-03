@@ -209,7 +209,7 @@ export function TracePanel({ objective }: TracePanelProps): JSX.Element {
         {enrichedCount > 0 ? ` · ${enrichedCount} with full request` : ''}
         {sidecarCount > 0 ? ` · ${sidecarCount} sidecar` : ''})
       </span>
-      <span style="font-family:var(--f-mono);font-size:14px;color:var(--muted)">
+      <span style="font-family:var(--ef-font-mono);font-size:14px;color:var(--ef-text-muted)">
         {isOpen ? '−' : '+'}
       </span>
     </button>
@@ -244,7 +244,7 @@ export function TracePanel({ objective }: TracePanelProps): JSX.Element {
             </div>
           )}
           {!isLoading && err === null && list.length === 0 && (
-            <div style="font-family:var(--f-sans);font-size:13px;color:var(--muted);font-style:italic">
+            <div style="font-family:var(--ef-font-body);font-size:13px;color:var(--ef-text-muted);font-style:italic">
               No LLM exchanges captured during this objective
             </div>
           )}
@@ -280,7 +280,7 @@ function TurnRow({
     <div class="card" style="padding:12px">
       <div
         class="flex items-center justify-between"
-        style="font-family:var(--f-mono);font-size:11.5px;color:var(--muted)"
+        style="font-family:var(--ef-font-mono);font-size:11.5px;color:var(--ef-text-muted)"
       >
         <span>
           {new Date(exchange.ts).toISOString().replace('T', ' ').slice(0, 19)} · {exchange.duration}
@@ -304,22 +304,22 @@ function TurnRow({
 function SidecarRow({ record }: { record: GenAiInferenceRecord }): JSX.Element {
   const u = record.usage;
   return (
-    <div class="card" style="padding:12px;border-left:2px dashed var(--rule-strong)">
+    <div class="card" style="padding:12px;border-left:2px dashed var(--ef-border-strong)">
       <div
         class="flex items-center justify-between"
-        style="font-family:var(--f-mono);font-size:11.5px;color:var(--muted)"
+        style="font-family:var(--ef-font-mono);font-size:11.5px;color:var(--ef-text-muted)"
       >
         <span>
           ↳ {new Date(record.ts).toISOString().replace('T', ' ').slice(0, 19)} ·{' '}
-          <span style="color:var(--steel)">
+          <span style="color:var(--ef-text-secondary)">
             {describeQuerySource(record.querySource, record.agentName)}
           </span>
         </span>
         {record.querySource !== null && <span>{record.querySource}</span>}
       </div>
-      <div style="margin-top:8px;border-left:2px solid var(--steel);padding-left:8px">
-        <div style="font-family:var(--f-mono);font-size:11.5px;color:var(--muted)">
-          <span style="color:var(--ink);font-weight:600">
+      <div style="margin-top:8px;border-left:2px solid var(--ef-border-strong);padding-left:8px">
+        <div style="font-family:var(--ef-font-mono);font-size:11.5px;color:var(--ef-text-muted)">
+          <span style="color:var(--ef-text);font-weight:600">
             {record.model !== null ? prettyModel(record.model) : '?'}
           </span>
           {u && (
@@ -336,7 +336,7 @@ function SidecarRow({ record }: { record: GenAiInferenceRecord }): JSX.Element {
         </div>
         {record.outputMessages.length > 0 && (
           <details style="margin-top:4px" open>
-            <summary style="font-family:var(--f-mono);font-size:11.5px;color:var(--muted);cursor:pointer">
+            <summary style="font-family:var(--ef-font-mono);font-size:11.5px;color:var(--ef-text-muted);cursor:pointer">
               output ({record.outputMessages.length})
             </summary>
             <div style="margin-top:4px;display:flex;flex-direction:column;gap:4px">
@@ -366,9 +366,9 @@ function AnthropicEntryView({
 }): JSX.Element {
   const usage = entry.response?.usage;
   return (
-    <div style="border-left:2px solid var(--steel);padding-left:8px">
-      <div style="font-family:var(--f-mono);font-size:11.5px;color:var(--muted)">
-        <span style="color:var(--ink);font-weight:600">
+    <div style="border-left:2px solid var(--ef-border-strong);padding-left:8px">
+      <div style="font-family:var(--ef-font-mono);font-size:11.5px;color:var(--ef-text-muted)">
+        <span style="color:var(--ef-text);font-weight:600">
           {entry.request.model ? prettyModel(entry.request.model) : '?'}
         </span>
         {usage && (
@@ -384,7 +384,7 @@ function AnthropicEntryView({
         )}
         {match === 'unmatched-exact' ? (
           <span
-            style="margin-left:8px;font-style:italic;color:var(--ember)"
+            style="margin-left:8px;font-style:italic;color:var(--ef-lamp-alarm)"
             title="This turn asserted a response identity, but that exact captured record never arrived"
           >
             capture unmatched
@@ -409,17 +409,17 @@ function AnthropicEntryView({
       )}
       {calls.length > 1 && (
         <details style="margin-top:4px">
-          <summary style="font-family:var(--f-mono);font-size:11.5px;color:var(--muted);cursor:pointer">
+          <summary style="font-family:var(--ef-font-mono);font-size:11.5px;color:var(--ef-text-muted);cursor:pointer">
             api calls ({calls.length})
           </summary>
           <div style="margin-top:4px;display:flex;flex-direction:column;gap:4px">
             {calls.map((call) => (
-              <div key={call.id} style="border-left:1px solid var(--rule);padding-left:10px">
-                <div style="font-family:var(--f-mono);font-size:11px;color:var(--muted)">
+              <div key={call.id} style="border-left:1px solid var(--ef-border);padding-left:10px">
+                <div style="font-family:var(--ef-font-mono);font-size:11px;color:var(--ef-text-muted)">
                   <span style="font-variant-numeric:tabular-nums">
                     {new Date(call.ts).toISOString().replace('T', ' ').slice(11, 19)}
                   </span>{' '}
-                  <span style="color:var(--ink);font-weight:600">
+                  <span style="color:var(--ef-text);font-weight:600">
                     {call.model !== null ? prettyModel(call.model) : '?'}
                   </span>
                   {call.usage && (
@@ -440,16 +440,16 @@ function AnthropicEntryView({
       {/* Legacy inline system string — only ever present on old rows. */}
       {entry.request.system && (
         <details style="margin-top:4px">
-          <summary style="font-family:var(--f-mono);font-size:11.5px;color:var(--muted);cursor:pointer">
+          <summary style="font-family:var(--ef-font-mono);font-size:11.5px;color:var(--ef-text-muted);cursor:pointer">
             system prompt
           </summary>
-          <pre style="font-family:var(--f-mono);font-size:11.5px;color:var(--ink);white-space:pre-wrap;margin-top:4px">
+          <pre style="font-family:var(--ef-font-mono);font-size:11.5px;color:var(--ef-text);white-space:pre-wrap;margin-top:4px">
             {entry.request.system}
           </pre>
         </details>
       )}
       <details style="margin-top:4px" open>
-        <summary style="font-family:var(--f-mono);font-size:11.5px;color:var(--muted);cursor:pointer">
+        <summary style="font-family:var(--ef-font-mono);font-size:11.5px;color:var(--ef-text-muted);cursor:pointer">
           messages ({entry.request.messages.length + (entry.response?.messages.length ?? 0)})
         </summary>
         <div style="margin-top:4px;display:flex;flex-direction:column;gap:4px">
@@ -473,7 +473,7 @@ function MessageBlock({
   content: AnthropicContentBlock[];
 }): JSX.Element {
   return (
-    <div style="border-left:1px solid var(--rule);padding-left:10px;font-size:12px">
+    <div style="border-left:1px solid var(--ef-border);padding-left:10px;font-size:12px">
       <div class="eyebrow">{role}</div>
       {content.map((block, i) => (
         <ContentBlock key={i} block={block} />
@@ -501,13 +501,13 @@ function ContentBlock({ block }: { block: AnthropicContentBlock }): JSX.Element 
     if (highlighted !== null) {
       return (
         <pre
-          style="font-family:var(--f-mono);font-size:12px;color:var(--ink);white-space:pre-wrap"
+          style="font-family:var(--ef-font-mono);font-size:12px;color:var(--ef-text);white-space:pre-wrap"
           dangerouslySetInnerHTML={{ __html: highlighted }}
         />
       );
     }
     return (
-      <pre style="font-family:var(--f-mono);font-size:12px;color:var(--ink);white-space:pre-wrap">
+      <pre style="font-family:var(--ef-font-mono);font-size:12px;color:var(--ef-text);white-space:pre-wrap">
         {block.text}
       </pre>
     );
@@ -516,13 +516,13 @@ function ContentBlock({ block }: { block: AnthropicContentBlock }): JSX.Element 
     const { server, tool } = parseToolName(block.name);
     return (
       <div style="font-size:12px">
-        <span style="color:var(--steel)">tool_use</span>{' '}
-        {server && <span style="color:var(--muted)">{server} · </span>}
-        <span style="color:var(--ink);font-weight:600">{tool}</span>{' '}
-        <span style="color:var(--muted)">({block.id})</span>
+        <span style="color:var(--ef-text-secondary)">tool_use</span>{' '}
+        {server && <span style="color:var(--ef-text-muted)">{server} · </span>}
+        <span style="color:var(--ef-text);font-weight:600">{tool}</span>{' '}
+        <span style="color:var(--ef-text-muted)">({block.id})</span>
         <JsonPre
           text={JSON.stringify(block.input, null, 2)}
-          style="font-family:var(--f-mono);font-size:11.5px;color:var(--graphite);white-space:pre-wrap;margin-top:2px"
+          style="font-family:var(--ef-font-mono);font-size:11.5px;color:var(--ef-text-faint);white-space:pre-wrap;margin-top:2px"
         />
       </div>
     );
@@ -530,24 +530,26 @@ function ContentBlock({ block }: { block: AnthropicContentBlock }): JSX.Element 
   if (block.type === 'tool_result') {
     return (
       <div style="font-size:12px">
-        <span style={`color:var(${block.isError ? '--err' : '--steel'})`}>tool_result</span>{' '}
-        <span style="color:var(--muted)">({block.toolUseId})</span>
+        <span style={`color:var(${block.isError ? '--ef-lamp-alarm' : '--ef-text-data'})`}>
+          tool_result
+        </span>{' '}
+        <span style="color:var(--ef-text-muted)">({block.toolUseId})</span>
         <JsonPre
           text={
             typeof block.content === 'string'
               ? block.content
               : JSON.stringify(block.content, null, 2)
           }
-          style="font-family:var(--f-mono);font-size:11.5px;color:var(--graphite);white-space:pre-wrap;margin-top:2px"
+          style="font-family:var(--ef-font-mono);font-size:11.5px;color:var(--ef-text-faint);white-space:pre-wrap;margin-top:2px"
         />
       </div>
     );
   }
   if (block.type === 'thinking') {
     return (
-      <div style="font-size:12px;color:var(--muted);font-style:italic">
+      <div style="font-size:12px;color:var(--ef-text-muted);font-style:italic">
         thinking:{' '}
-        <pre style="white-space:pre-wrap;font-family:var(--f-mono);display:inline">
+        <pre style="white-space:pre-wrap;font-family:var(--ef-font-mono);display:inline">
           {block.text}
         </pre>
       </div>
@@ -555,13 +557,13 @@ function ContentBlock({ block }: { block: AnthropicContentBlock }): JSX.Element 
   }
   if (block.type === 'image') {
     return (
-      <div style="font-size:12px;color:var(--muted);font-style:italic">
+      <div style="font-size:12px;color:var(--ef-text-muted);font-style:italic">
         [image{block.mediaType ? ` ${block.mediaType}` : ''}]
       </div>
     );
   }
   return (
-    <div style="font-size:12px;color:var(--muted);font-style:italic">
+    <div style="font-size:12px;color:var(--ef-text-muted);font-style:italic">
       [unknown block: {JSON.stringify(block.raw).slice(0, 60)}…]
     </div>
   );

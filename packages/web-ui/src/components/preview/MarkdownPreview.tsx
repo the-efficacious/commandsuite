@@ -61,11 +61,11 @@ export function MarkdownPreview({ file }: MarkdownPreviewProps) {
   }, [file.path]);
 
   if (state.status === 'loading') {
-    return <p style="color:var(--muted);font-size:13px;padding:16px">Loading…</p>;
+    return <p style="color:var(--ef-text-muted);font-size:13px;padding:16px">Loading…</p>;
   }
   if (state.status === 'error') {
     return (
-      <p role="alert" style="color:var(--err);font-size:13px;padding:16px">
+      <p role="alert" style="color:var(--ef-lamp-alarm);font-size:13px;padding:16px">
         Couldn't render markdown: {state.error}
       </p>
     );
@@ -73,7 +73,7 @@ export function MarkdownPreview({ file }: MarkdownPreviewProps) {
   return (
     <div
       class="md-preview"
-      style="padding:20px 24px;font-family:var(--f-sans);font-size:14px;line-height:1.65;color:var(--ink)"
+      style="padding:20px 24px;font-family:var(--ef-font-body);font-size:14px;line-height:1.65;color:var(--ef-text)"
       dangerouslySetInnerHTML={{ __html: state.html ?? '' }}
     />
   );

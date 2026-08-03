@@ -174,7 +174,7 @@ export function NotificationDetail({ slug }: { slug: string }) {
             <div class="flex items-center gap-3 flex-wrap">
               <h2
                 class="font-display"
-                style="margin:0;font-size:26px;font-weight:800;letter-spacing:-0.02em;color:var(--ink)"
+                style="margin:0;font-size:26px;font-weight:800;letter-spacing:-0.02em;color:var(--ef-text)"
               >
                 {endpoint.slug}
               </h2>
@@ -182,7 +182,7 @@ export function NotificationDetail({ slug }: { slug: string }) {
                 {endpoint.enabled ? 'Enabled' : 'Disabled'}
               </span>
             </div>
-            <div style="margin-top:6px;font-family:var(--f-mono);font-size:11.5px;color:var(--muted);letter-spacing:.04em">
+            <div style="margin-top:6px;font-family:var(--ef-font-mono);font-size:11.5px;color:var(--ef-text-muted);letter-spacing:.04em">
               POST /hooks/{endpoint.slug} · registered by {endpoint.createdBy}
               {endpoint.description.length > 0 ? ` · ${endpoint.description}` : ''}
             </div>
@@ -254,7 +254,7 @@ function TargetsSection({ endpoint }: { endpoint: NotificationEndpointSummary })
           <input
             id="endpoint-targets"
             class="input"
-            style="font-family:var(--f-mono)"
+            style="font-family:var(--ef-font-mono)"
             value={targetsInput.value}
             onInput={(e) => {
               targetsInput.value = (e.currentTarget as HTMLInputElement).value;
@@ -345,7 +345,7 @@ function VerificationSection({ endpoint }: { endpoint: NotificationEndpointSumma
                 <input
                   id="endpoint-auth-header"
                   class="input"
-                  style="font-family:var(--f-mono);max-width:220px"
+                  style="font-family:var(--ef-font-mono);max-width:220px"
                   value={authHeader.value}
                   onInput={(e) => {
                     authHeader.value = (e.currentTarget as HTMLInputElement).value;
@@ -363,7 +363,7 @@ function VerificationSection({ endpoint }: { endpoint: NotificationEndpointSumma
                   <input
                     id="endpoint-auth-prefix"
                     class="input"
-                    style="font-family:var(--f-mono);max-width:130px"
+                    style="font-family:var(--ef-font-mono);max-width:130px"
                     value={authPrefix.value}
                     onInput={(e) => {
                       authPrefix.value = (e.currentTarget as HTMLInputElement).value;
@@ -387,8 +387,8 @@ function VerificationSection({ endpoint }: { endpoint: NotificationEndpointSumma
       {!usingProfile && (
         <>
           <div class="flex items-center gap-2" style="margin-bottom:10px">
-            <KeyRound size={14} aria-hidden="true" style="color:var(--muted)" />
-            <span style="font-family:var(--f-sans);font-size:13px;color:var(--ink)">
+            <KeyRound size={14} aria-hidden="true" style="color:var(--ef-text-muted)" />
+            <span style="font-family:var(--ef-font-body);font-size:13px;color:var(--ef-text)">
               {endpoint.hasSecret
                 ? 'A signing secret is set. It is write-only — replace it below if the sender rotated.'
                 : 'No signing secret set. The endpoint rejects everything until one is added.'}
@@ -514,7 +514,7 @@ function PolicySection({ endpoint }: { endpoint: NotificationEndpointSummary }) 
           <input
             id="policy-debounce-ms"
             class="input"
-            style="max-width:110px;font-family:var(--f-mono)"
+            style="max-width:110px;font-family:var(--ef-font-mono)"
             inputMode="numeric"
             value={policyDebounceMs.value}
             onInput={(e) => {
@@ -529,7 +529,7 @@ function PolicySection({ endpoint }: { endpoint: NotificationEndpointSummary }) 
           <input
             id="policy-debounce-max"
             class="input"
-            style="max-width:90px;font-family:var(--f-mono)"
+            style="max-width:90px;font-family:var(--ef-font-mono)"
             inputMode="numeric"
             value={policyDebounceMax.value}
             onInput={(e) => {
@@ -541,7 +541,7 @@ function PolicySection({ endpoint }: { endpoint: NotificationEndpointSummary }) 
           {busy === 'policy-save' ? 'Saving…' : 'Save policy'}
         </button>
       </form>
-      <div style="font-family:var(--f-sans);font-size:11.5px;color:var(--muted);font-style:italic;margin-top:8px">
+      <div style="font-family:var(--ef-font-body);font-size:11.5px;color:var(--ef-text-muted);font-style:italic;margin-top:8px">
         Senders can override per delivery with ?if_offline= / ?if_busy= / ?level= on the hook URL;
         level=critical always punches through debounce and busy-wait. Queued deliveries expire after{' '}
         {Math.round(endpoint.policy.queueTtlMs / 3_600_000)}h; busy-waits force-deliver after{' '}
@@ -614,7 +614,7 @@ function MetadataSection({ endpoint }: { endpoint: NotificationEndpointSummary }
             <input
               id="endpoint-dedupe"
               class="input"
-              style="font-family:var(--f-mono);max-width:220px"
+              style="font-family:var(--ef-font-mono);max-width:220px"
               value={metaDedupeHeader.value}
               onInput={(e) => {
                 metaDedupeHeader.value = (e.currentTarget as HTMLInputElement).value;
@@ -643,7 +643,7 @@ function MetadataSection({ endpoint }: { endpoint: NotificationEndpointSummary }
           <textarea
             id="endpoint-template"
             class="textarea"
-            style="font-family:var(--f-mono);min-height:64px"
+            style="font-family:var(--ef-font-mono);min-height:64px"
             value={metaTemplate.value}
             onInput={(e) => {
               metaTemplate.value = (e.currentTarget as HTMLTextAreaElement).value;
@@ -671,11 +671,11 @@ const STATUS_BADGE: Record<NotificationDeliveryStatus, string> = {
   pending: 'badge muted',
   expired: 'badge muted',
   dropped: 'badge muted',
-  rejected: 'badge ember solid',
+  rejected: 'badge caution solid',
   filtered: 'badge muted',
   duplicate: 'badge muted',
   coalesced: 'badge soft',
-  failed: 'badge ember solid',
+  failed: 'badge caution solid',
 };
 
 function DeliveriesSection({ endpoint }: { endpoint: NotificationEndpointSummary }) {
@@ -699,10 +699,12 @@ function DeliveriesSection({ endpoint }: { endpoint: NotificationEndpointSummary
       }
     >
       {deliveries === null && (
-        <div style="font-family:var(--f-sans);font-size:13px;color:var(--muted)">Loading…</div>
+        <div style="font-family:var(--ef-font-body);font-size:13px;color:var(--ef-text-muted)">
+          Loading…
+        </div>
       )}
       {deliveries !== null && deliveries.length === 0 && (
-        <div style="font-family:var(--f-sans);font-size:13px;color:var(--muted)">
+        <div style="font-family:var(--ef-font-body);font-size:13px;color:var(--ef-text-muted)">
           No deliveries yet. Point the sender at POST /hooks/{endpoint.slug} — every request lands a
           receipt here, including rejected ones.
         </div>
@@ -730,15 +732,17 @@ function DeliveryRow({
   return (
     <li
       class="flex flex-col gap-1"
-      style="border:1px solid var(--rule);border-radius:var(--r-xs);padding:10px 12px"
+      style="border:1px solid var(--ef-border);border-radius:var(--ef-radius-xs);padding:10px 12px"
     >
       <div class="flex items-center justify-between gap-3 flex-wrap">
         <div class="flex items-center gap-2 flex-wrap">
           <span class={STATUS_BADGE[delivery.status]}>{delivery.status}</span>
-          <span style="font-family:var(--f-mono);font-size:11.5px;color:var(--muted)">{when}</span>
+          <span style="font-family:var(--ef-font-mono);font-size:11.5px;color:var(--ef-text-muted)">
+            {when}
+          </span>
           {delivery.replayOf !== null && <span class="badge muted">replay</span>}
           {delivery.messageIds.length > 0 && (
-            <span style="font-family:var(--f-mono);font-size:11px;color:var(--muted)">
+            <span style="font-family:var(--ef-font-mono);font-size:11px;color:var(--ef-text-muted)">
               → {delivery.messageIds.length} message{delivery.messageIds.length === 1 ? '' : 's'}
             </span>
           )}
@@ -757,12 +761,12 @@ function DeliveryRow({
         </button>
       </div>
       {delivery.statusReason !== null && (
-        <div style="font-family:var(--f-sans);font-size:12px;color:var(--muted)">
+        <div style="font-family:var(--ef-font-body);font-size:12px;color:var(--ef-text-muted)">
           {delivery.statusReason}
         </div>
       )}
       {delivery.bodyPreview.length > 0 && (
-        <pre style="margin:0;font-family:var(--f-mono);font-size:11px;color:var(--muted);white-space:pre-wrap;word-break:break-all;max-height:72px;overflow:hidden">
+        <pre style="margin:0;font-family:var(--ef-font-mono);font-size:11px;color:var(--ef-text-muted);white-space:pre-wrap;word-break:break-all;max-height:72px;overflow:hidden">
           {delivery.bodyPreview.slice(0, 400)}
         </pre>
       )}
@@ -818,7 +822,7 @@ function LifecycleSection({ endpoint }: { endpoint: NotificationEndpointSummary 
           </button>
         )}
       </div>
-      <div style="font-family:var(--f-sans);font-size:11.5px;color:var(--muted);font-style:italic;margin-top:8px">
+      <div style="font-family:var(--ef-font-body);font-size:11.5px;color:var(--ef-text-muted);font-style:italic;margin-top:8px">
         Disabling makes the hook URL return 409 (senders back off but the config survives). Deleting
         removes the endpoint, its receipts, and any queued deliveries — the URL then 404s.
       </div>

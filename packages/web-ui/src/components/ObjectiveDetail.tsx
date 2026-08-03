@@ -133,7 +133,7 @@ export function ObjectiveDetail({ id, viewer }: ObjectiveDetailProps) {
     return (
       <div
         class="flex-1 flex items-center justify-center"
-        style="color:var(--muted);font-size:14px"
+        style="color:var(--ef-text-muted);font-size:14px"
       >
         loading objective…
       </div>
@@ -217,13 +217,13 @@ export function ObjectiveDetail({ id, viewer }: ObjectiveDetailProps) {
       {/* Header — non-scrolling, breadcrumb + title + status + meta */}
       <div
         class="flex-shrink-0"
-        style="padding:18px max(1rem,env(safe-area-inset-right)) 16px max(1rem,env(safe-area-inset-left));border-bottom:1px solid var(--rule)"
+        style="padding:18px max(1rem,env(safe-area-inset-right)) 16px max(1rem,env(safe-area-inset-left));border-bottom:1px solid var(--ef-border)"
       >
         <Breadcrumb id={current.id} />
         <div class="flex items-start gap-3 flex-wrap" style="margin-top:8px">
           <h1
             class="font-display flex-1 min-w-0"
-            style="font-size:30px;font-weight:700;letter-spacing:-0.02em;color:var(--ink);line-height:1.15"
+            style="font-size:30px;font-weight:700;letter-spacing:-0.02em;color:var(--ef-text);line-height:1.15"
           >
             {current.title}
           </h1>
@@ -231,12 +231,12 @@ export function ObjectiveDetail({ id, viewer }: ObjectiveDetailProps) {
         </div>
         <div
           class="flex flex-wrap"
-          style="gap:4px 14px;margin-top:10px;font-family:var(--f-sans);font-size:13.5px;color:var(--graphite)"
+          style="gap:4px 14px;margin-top:10px;font-family:var(--ef-font-body);font-size:13.5px;color:var(--ef-text-faint)"
         >
           <span>
             assignee: <Mention name={current.assignee} plain />
           </span>
-          <span class="hidden sm:inline" style="color:var(--rule-strong)">
+          <span class="hidden sm:inline" style="color:var(--ef-border-strong)">
             ·
           </span>
           <span>
@@ -248,9 +248,9 @@ export function ObjectiveDetail({ id, viewer }: ObjectiveDetailProps) {
       {/* Tabs row */}
       <div
         class="flex-shrink-0 overflow-x-auto"
-        style="padding:0 max(0.5rem,env(safe-area-inset-right)) 0 max(0.5rem,env(safe-area-inset-left));background:var(--paper)"
+        style="padding:0 max(0.5rem,env(safe-area-inset-right)) 0 max(0.5rem,env(safe-area-inset-left));background:var(--ef-surface)"
       >
-        <div class="tabs" style="border-bottom:1px solid var(--rule);min-width:fit-content">
+        <div class="tabs" style="border-bottom:1px solid var(--ef-border);min-width:fit-content">
           <Tabs
             active={tab}
             onChange={(t) => {
@@ -364,12 +364,12 @@ function OverviewTab({
         <div class="eyebrow" style="margin-bottom:10px">
           Outcome
           {objective.outcomeVersion > 1 && (
-            <span style="margin-left:8px;color:var(--muted);font-weight:400">
+            <span style="margin-left:8px;color:var(--ef-text-muted);font-weight:400">
               contract v{objective.outcomeVersion} — amended
             </span>
           )}
         </div>
-        <div style="font-family:var(--f-sans);font-size:14.5px;color:var(--ink);white-space:pre-wrap;line-height:1.55">
+        <div style="font-family:var(--ef-font-body);font-size:14.5px;color:var(--ef-text);white-space:pre-wrap;line-height:1.55">
           {objective.outcome}
         </div>
       </section>
@@ -390,24 +390,24 @@ function OverviewTab({
           {objective.amendments.map((a) => (
             <div
               key={`${a.target}-${a.ts}`}
-              style="margin-bottom:14px;padding-left:10px;border-left:2px solid var(--line)"
+              style="margin-bottom:14px;padding-left:10px;border-left:2px solid var(--ef-border-subtle)"
             >
               {a.target === 'contract' ? (
                 <>
-                  <div style="font-size:12.5px;color:var(--muted)">
+                  <div style="font-size:12.5px;color:var(--ef-text-muted)">
                     v{a.version} · {a.actor} · changed {a.fields.join(', ')} ·{' '}
-                    <strong style="color:var(--ink)">{a.disposition}</strong>{' '}
+                    <strong style="color:var(--ef-text)">{a.disposition}</strong>{' '}
                     {a.disposition === 'correction'
                       ? '(retroactive — work was never validly held to the prior text)'
                       : '(forward-only — work already underway finishes under the prior text)'}
                   </div>
-                  <div style="font-size:13.5px;color:var(--ink);margin-top:4px">{a.reason}</div>
+                  <div style="font-size:13.5px;color:var(--ef-text);margin-top:4px">{a.reason}</div>
                   {Object.entries(a.previous).map(([field, prev]) => (
                     <details key={field} style="margin-top:6px">
-                      <summary style="font-size:12.5px;color:var(--muted);cursor:pointer">
+                      <summary style="font-size:12.5px;color:var(--ef-text-muted);cursor:pointer">
                         superseded {field}
                       </summary>
-                      <div style="font-family:var(--f-sans);font-size:13px;color:var(--muted);white-space:pre-wrap;line-height:1.5;margin-top:4px">
+                      <div style="font-family:var(--ef-font-body);font-size:13px;color:var(--ef-text-muted);white-space:pre-wrap;line-height:1.5;margin-top:4px">
                         {prev}
                       </div>
                     </details>
@@ -415,12 +415,16 @@ function OverviewTab({
                 </>
               ) : (
                 <>
-                  <div style="font-size:12.5px;color:var(--muted)">
-                    {a.actor} · corrects the <strong style="color:var(--ink)">{a.eventKind}</strong>{' '}
-                    event
+                  <div style="font-size:12.5px;color:var(--ef-text-muted)">
+                    {a.actor} · corrects the{' '}
+                    <strong style="color:var(--ef-text)">{a.eventKind}</strong> event
                   </div>
-                  <div style="font-size:13.5px;color:var(--ink);margin-top:4px">{a.correction}</div>
-                  <div style="font-size:12.5px;color:var(--muted);margin-top:4px">{a.reason}</div>
+                  <div style="font-size:13.5px;color:var(--ef-text);margin-top:4px">
+                    {a.correction}
+                  </div>
+                  <div style="font-size:12.5px;color:var(--ef-text-muted);margin-top:4px">
+                    {a.reason}
+                  </div>
                 </>
               )}
             </div>
@@ -433,7 +437,7 @@ function OverviewTab({
           <div class="eyebrow" style="margin-bottom:10px">
             Body
           </div>
-          <div style="font-family:var(--f-sans);font-size:14.5px;color:var(--ink);white-space:pre-wrap;line-height:1.55">
+          <div style="font-family:var(--ef-font-body);font-size:14.5px;color:var(--ef-text);white-space:pre-wrap;line-height:1.55">
             {objective.body}
           </div>
         </section>
@@ -543,7 +547,7 @@ function ActionsTab({
                   }),
                 )
               }
-              class="btn btn-accent flex-shrink-0 flex items-center"
+              class="btn btn-destructive flex-shrink-0 flex items-center"
               style="gap:6px"
             >
               <AlertTriangle size={14} aria-hidden="true" />
@@ -631,8 +635,8 @@ function ActionsTab({
       )}
 
       {canCancel && (
-        <div class="card" style="border-color:rgba(176,74,52,0.25)">
-          <div class="eyebrow" style="margin-bottom:10px;color:var(--err)">
+        <div class="card" style="border-color:var(--ef-lamp-alarm-edge)">
+          <div class="eyebrow" style="margin-bottom:10px;color:var(--ef-lamp-alarm)">
             Cancel objective
           </div>
           <div class="flex flex-col sm:flex-row gap-2 sm:items-center">
@@ -752,7 +756,7 @@ function DiscussionTab({
           aria-live="polite"
           aria-atomic="false"
           class="panel-body overflow-y-auto"
-          style="background:var(--ice);padding:12px 14px;flex:1;min-height:0"
+          style="background:var(--ef-surface-raised);padding:12px 14px;flex:1;min-height:0"
         >
           {messages.length === 0 ? (
             <div class="min-h-full flex items-center justify-center" style="padding:24px 0">
@@ -812,7 +816,7 @@ function DiscussionTab({
         </div>
       )}
       {canPost && terminal && (
-        <div style="font-family:var(--f-mono);font-size:11.5px;letter-spacing:.14em;color:var(--muted);text-transform:uppercase">
+        <div style="font-family:var(--ef-font-mono);font-size:11.5px;letter-spacing:.14em;color:var(--ef-text-muted);text-transform:uppercase">
           ◇ Discussion closed — objective is {detailObjective.value?.status}
         </div>
       )}
@@ -829,7 +833,7 @@ function AuditTab({ events }: { events: ObjectiveEvent[] }) {
     <section style="display:flex;flex-direction:column;gap:12px">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <div class="eyebrow">Lifecycle log</div>
-        <div style="font-family:var(--f-mono);font-size:11px;letter-spacing:.08em;color:var(--muted);text-transform:uppercase">
+        <div style="font-family:var(--ef-font-mono);font-size:11px;letter-spacing:.08em;color:var(--ef-text-muted);text-transform:uppercase">
           {summary}
         </div>
       </div>
@@ -840,7 +844,7 @@ function AuditTab({ events }: { events: ObjectiveEvent[] }) {
       ) : (
         <>
           {!expanded && events.length > 5 && (
-            <div style="font-family:var(--f-sans);font-size:13px;color:var(--muted);font-style:italic">
+            <div style="font-family:var(--ef-font-body);font-size:13px;color:var(--ef-text-muted);font-style:italic">
               showing last 5 of {events.length} — click expand to see all
             </div>
           )}
@@ -851,15 +855,15 @@ function AuditTab({ events }: { events: ObjectiveEvent[] }) {
             {visibleEvents.map((ev, i) => (
               <li
                 key={`${ev.ts}-${i}`}
-                style="font-family:var(--f-mono);font-size:12px;color:var(--graphite);border-left:2px solid var(--rule);padding:6px 12px;word-break:break-word;transition:border-color .15s var(--ease)"
+                style="font-family:var(--ef-font-mono);font-size:12px;color:var(--ef-text-faint);border-left:2px solid var(--ef-border);padding:6px 12px;word-break:break-word;transition:border-color .15s var(--ef-motion-ease)"
               >
-                <span style="color:var(--muted)">
+                <span style="color:var(--ef-text-muted)">
                   {new Date(ev.ts).toISOString().replace('T', ' ').slice(0, 19)}
                 </span>{' '}
-                <span style="color:var(--steel);font-weight:600">{ev.actor}</span>{' '}
-                <span style="color:var(--ink)">{ev.kind}</span>{' '}
+                <span style="color:var(--ef-text-secondary);font-weight:600">{ev.actor}</span>{' '}
+                <span style="color:var(--ef-text)">{ev.kind}</span>{' '}
                 {Object.keys(ev.payload).length > 0 && (
-                  <span style="color:var(--muted)">{JSON.stringify(ev.payload)}</span>
+                  <span style="color:var(--ef-text-muted)">{JSON.stringify(ev.payload)}</span>
                 )}
               </li>
             ))}
@@ -920,16 +924,14 @@ function WatchersSection({
         Watchers
       </div>
       {watchers.length === 0 ? (
-        <div style="font-family:var(--f-sans);font-size:13px;color:var(--muted)">
+        <div style="font-family:var(--ef-font-body);font-size:13px;color:var(--ef-text-muted)">
           No explicit watchers{' '}
-          <span style="color:var(--frost);color:var(--rule-strong)">
-            (admins see everything automatically)
-          </span>
+          <span style="color:var(--ef-border-strong)">(admins see everything automatically)</span>
         </div>
       ) : (
         <div style="display:flex;flex-wrap:wrap;gap:6px">
           {watchers.map((w) => (
-            <span key={w} class="chip">
+            <span key={w} class="token">
               <span>{w}</span>
               {canManage && (
                 <button
@@ -937,7 +939,6 @@ function WatchersSection({
                   class="x"
                   aria-label={`Remove watcher ${w}`}
                   title={`Remove ${w}`}
-                  style="background:transparent;border:0;padding:0;cursor:pointer"
                   onClick={() =>
                     void run(() => updateObjectiveWatchers(objectiveId, { remove: [w] }))
                   }
@@ -994,7 +995,7 @@ function WatchersSection({
 function StatusBadge({ status }: { status: Objective['status'] }) {
   const variant: Record<Objective['status'], string> = {
     active: 'badge solid',
-    blocked: 'badge ember solid',
+    blocked: 'badge caution solid',
     done: 'badge soft',
     cancelled: 'badge muted',
   };

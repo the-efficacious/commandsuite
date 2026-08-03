@@ -134,7 +134,7 @@ export function SecretDetail({ slug }: { slug: string }) {
             <div class="flex items-center gap-3 flex-wrap">
               <h2
                 class="font-display"
-                style="margin:0;font-size:26px;font-weight:800;letter-spacing:-0.02em;color:var(--ink)"
+                style="margin:0;font-size:26px;font-weight:800;letter-spacing:-0.02em;color:var(--ef-text)"
               >
                 {secret.slug}
               </h2>
@@ -142,10 +142,21 @@ export function SecretDetail({ slug }: { slug: string }) {
                 {secret.enabled ? 'Enabled' : 'Disabled'}
               </span>
             </div>
-            <div style="margin-top:6px;font-family:var(--f-mono);font-size:11.5px;color:var(--muted);letter-spacing:.04em">
-              ${secret.envName} · registered by {secret.createdBy}
-              {secret.description.length > 0 ? ` · ${secret.description}` : ''}
+            <div class="fact-grid" style="margin-top:10px">
+              <div>
+                <div class="fact-k">ENV VAR</div>
+                <div class="fact-v">${secret.envName}</div>
+              </div>
+              <div>
+                <div class="fact-k">REGISTERED BY</div>
+                <div class="fact-v">{secret.createdBy}</div>
+              </div>
             </div>
+            {secret.description.length > 0 && (
+              <div style="margin-top:8px;font-family:var(--ef-font-body);font-size:12.5px;color:var(--ef-text-muted)">
+                {secret.description}
+              </div>
+            )}
           </header>
 
           {sectionError.value !== null && (
@@ -214,7 +225,7 @@ function MetadataSection({ secret }: { secret: SecretSummary }) {
           <input
             id="secret-env-name"
             class="input"
-            style="font-family:var(--f-mono)"
+            style="font-family:var(--ef-font-mono)"
             value={metaEnvName.value}
             onInput={(e) => {
               metaEnvName.value = (e.currentTarget as HTMLInputElement).value;
@@ -276,7 +287,7 @@ function AccessSection({
             void run('all-members', () => updateSecret(secret.slug, { allMembers: next }));
           }}
         />
-        <span style="font-family:var(--f-sans);font-size:13px;color:var(--ink)">
+        <span style="font-family:var(--ef-font-body);font-size:13px;color:var(--ef-text)">
           Deliver to all members (including future ones)
         </span>
       </label>
@@ -284,14 +295,14 @@ function AccessSection({
       {!secret.allMembers && (
         <>
           {boundMembers.length === 0 && (
-            <div style="font-family:var(--f-sans);font-size:13px;color:var(--muted);margin-bottom:10px">
+            <div style="font-family:var(--ef-font-body);font-size:13px;color:var(--ef-text-muted);margin-bottom:10px">
               No members bound — no agent receives this secret yet.
             </div>
           )}
           {boundMembers.length > 0 && (
             <ul class="flex flex-wrap gap-2" style="list-style:none;padding:0;margin:0 0 12px">
               {boundMembers.map((name) => (
-                <li key={name} class="chip">
+                <li key={name} class="token">
                   {name}
                   <button
                     type="button"
@@ -365,8 +376,8 @@ function ValueSection({ secret }: { secret: SecretSummary }) {
       }
     >
       <div class="flex items-center gap-2" style="margin-bottom:12px">
-        <KeyRound size={14} aria-hidden="true" style="color:var(--muted)" />
-        <span style="font-family:var(--f-sans);font-size:13px;color:var(--ink)">
+        <KeyRound size={14} aria-hidden="true" style="color:var(--ef-text-muted)" />
+        <span style="font-family:var(--ef-font-body);font-size:13px;color:var(--ef-text)">
           {secret.hasValue
             ? 'A value is set. It is write-only — replace it below if it rotated.'
             : 'No value set. Nothing is injected until one is added.'}
@@ -406,7 +417,7 @@ function ValueSection({ secret }: { secret: SecretSummary }) {
           {busy === 'value-set' ? 'Saving…' : secret.hasValue ? 'Replace' : 'Set value'}
         </button>
       </form>
-      <div style="font-family:var(--f-sans);font-size:11.5px;color:var(--muted);font-style:italic;margin-top:8px">
+      <div style="font-family:var(--ef-font-body);font-size:11.5px;color:var(--ef-text-muted);font-style:italic;margin-top:8px">
         Delivered as ${secret.envName} on the member's next runner start.
       </div>
     </SectionPanel>
@@ -461,7 +472,7 @@ function LifecycleSection({ secret }: { secret: SecretSummary }) {
           </button>
         )}
       </div>
-      <div style="font-family:var(--f-sans);font-size:11.5px;color:var(--muted);font-style:italic;margin-top:8px">
+      <div style="font-family:var(--ef-font-body);font-size:11.5px;color:var(--ef-text-muted);font-style:italic;margin-top:8px">
         Disabling stops delivery on each member's next runner start — already-running agents keep
         their environment. Deleting also removes bindings and the encrypted value.
       </div>
