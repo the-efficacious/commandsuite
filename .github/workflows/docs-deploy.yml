@@ -67,7 +67,7 @@ jobs:
       # Vite plugin emits a resolved config into the build output, and only that
       # copy has `assets.directory` pointing at the built client dir. Deploying
       # with the source wrangler.jsonc would upload the wrong directory.
-      - uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3
+      - uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
         if: github.event_name != 'pull_request'
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
