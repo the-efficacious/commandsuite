@@ -114,8 +114,8 @@ export interface CodexSpawnOptions {
    * adapter will normalize the app-server item stream into
    * `ActivityEvent`s and push them through `captureHost.enqueue`. For
    * now it's threaded through but only its `busy` signal is consumed
-   * (via the separate `busy` option below). There is no proxy/CA env
-   * translation anymore — codex gets its own native capture in Phase B.
+   * (via the separate `busy` option below). The runner sets no proxy
+   * or CA env vars — codex gets its own native capture in Phase B.
    */
   captureHost: CaptureHost | null;
   /**
@@ -280,11 +280,11 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
   }
 
   // 2. Build the codex subprocess env. CODEX_HOME points at our
-  //    ephemeral dir. There is no proxy/CA translation anymore — the
-  //    MITM is gone. Codex's native capture (a subscriber on the
-  //    app-server item stream feeding `captureHost.enqueue`) lands in
-  //    Phase B; until then codex runs with an untouched network env and
-  //    only its busy signal is observed (via the `busy` option and the
+  //    ephemeral dir. The runner sets no proxy or CA vars — codex runs
+  //    with an untouched network env. Codex's native capture (a
+  //    subscriber on the app-server item stream feeding
+  //    `captureHost.enqueue`) lands in Phase B; until then only its
+  //    busy signal is observed (via the `busy` option and the
   //    app-server notification sniff below).
   const childEnv: NodeJS.ProcessEnv = { ...process.env };
   if (opts.secretsEnv) {

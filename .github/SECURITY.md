@@ -42,7 +42,7 @@ supported-version window.
 |---|---|
 | Bearer tokens | Stored SHA-256 hashed in the database `tokens` table — plaintext is shown once at issuance and never persisted. Resolution is constant-time (`timingSafeEqual`). A member may hold multiple tokens; rotation issues a fresh one and revokes the rest. A bootstrap token hand-written into `csuite.json` is migrated into the token store on first boot. |
 | TOTP secrets | Encrypted at rest with AES-256-GCM (random IV per field, authenticated). Replay-guarded per member (monotonic counter). Per-member + global codeless-login rate limits (5 / 15 min per member, 10 / 15 min global). Legacy plaintext values are auto-migrated on first boot under an active KEK. |
-| Trace payloads | Normalized inside the runner process from the agent's native instrumentation; no TLS interception. Redaction runs before upload and strips `Authorization`, `Cookie`, `x-api-key`, `x-anthropic-api-key`, `proxy-authorization`, and scrubs common API-key patterns (`sk-ant-…`, `sk-…`, `AKIA…`, `ghp_…`, `xox[baprs]-…`). Claude Code's OTEL export lands on the authenticated, bearer-attributed `/otlp` endpoint; the manual activity path (`POST /members/:name/activity`) is authenticated and self-only. Read is gated to self or a member with `activity.read` (`GET /members/:name/activity`). |
+| Trace payloads | Normalized inside the runner process from the agent's native instrumentation; no TLS interception. The runner never sets proxy or CA environment variables and never touches the agent's TLS trust store; the agent's outbound TLS is never decrypted. Redaction runs before upload and strips `Authorization`, `Cookie`, `x-api-key`, `x-anthropic-api-key`, `proxy-authorization`, and scrubs common API-key patterns (`sk-ant-…`, `sk-…`, `AKIA…`, `ghp_…`, `xox[baprs]-…`). Claude Code's OTEL export lands on the authenticated, bearer-attributed `/otlp` endpoint; the manual activity path (`POST /members/:name/activity`) is authenticated and self-only. Read is gated to self or a member with `activity.read` (`GET /members/:name/activity`). |
 | Session cookies | `HttpOnly` + `SameSite=Strict`. `Secure` set when the broker is listening over HTTPS. 7-day sliding TTL. |
 | Permission enforcement | Each member's flat, unranked permission set (e.g. `team.manage`, `members.manage`, `objectives.create`) is checked **server-side on every mutating endpoint**. No client-side gating relied upon. |
 | Identity binding | `agentId === member.name` is enforced in the broker core (`packages/core/src/broker.ts`) and pre-stream in the HTTP handler. A member cannot subscribe to another member's activity. |
@@ -58,34 +58,6 @@ These are documented rather than hidden. Each is tracked as a roadmap item; the 
 - **The `/otlp` ingest trusts the exporting member's own bearer.** Claude Code's OpenTelemetry export authenticates with the member's token and is attributed to that member; a compromised token could POST fabricated activity for its own member (the same trust already held by the manual activity-upload path). The ingest is fully defensive against malformed payloads (a bad batch yields no rows rather than an error).
 
 ## Changes in this release
-
-### Trace capture no longer intercepts TLS — the MITM proxy is removed
-
-Earlier versions captured agent traffic with a loopback MITM TLS proxy: a
-per-session CA whose cert was injected into the agent child via
-`NODE_EXTRA_CA_CERTS` (or `CODEX_CA_CERTIFICATE` for codex), an
-`HTTPS_PROXY`/`ALL_PROXY` redirect, and an SSL keylog path. The whole
-mechanism decrypted the agent's HTTPS to reconstruct LLM exchanges, which
-carried real security cost: a private CA the agent trusted, a keylog file on
-disk, and an `--unsafe-tls` escape hatch that disabled TLS validation
-entirely for packaged binaries.
-
-Starting with this release:
-
-- The MITM proxy, per-session CA, HTTP/1.1 reassembler, host allowlist, and
-  the `--unsafe-tls` / `NODE_TLS_REJECT_UNAUTHORIZED=0` escape hatch are all
-  **deleted**. The runner never injects proxy or CA environment variables and
-  never touches the agent's TLS trust store.
-- Capture is now sourced from each agent's own native instrumentation: Claude
-  Code exports its work over OpenTelemetry to the broker's authenticated
-  `/otlp` endpoint (bearer-token attributed to the exporting member), and the
-  codex adapter reads the app-server item stream the runner already consumes.
-  The agent's outbound TLS is never decrypted.
-- Redaction still runs runner-side before any captured content leaves the
-  member's machine.
-
-This removes both the private-CA trust boundary and the `--unsafe-tls`
-footgun that were flagged in the 2026-04-16 internal audit.
 
 ### `csuite rotate --member <name>` — atomic bearer-token rotation
 

@@ -10,7 +10,6 @@
  * The raw-bodies dir lifecycle is covered too: close() must LEAVE an
  * unshipped spool in place, and host start sweeps only dead-pid dirs
  * carrying an explicit completed-capture marker.
- * There is no MITM proxy / CA anymore — those checks are gone.
  */
 
 import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -105,7 +104,7 @@ describe('CaptureHost', () => {
     expect(env.OTEL_LOG_ASSISTANT_RESPONSES).toBeUndefined();
     expect(env.OTEL_LOG_TOOL_DETAILS).toBeUndefined();
     expect(env.OTEL_LOG_TOOL_CONTENT).toBeUndefined();
-    // No proxy / CA vars — the MITM is gone.
+    // The runner must not inject proxy or CA vars into the agent child.
     expect(env.HTTPS_PROXY).toBeUndefined();
     expect(env.NODE_EXTRA_CA_CERTS).toBeUndefined();
     expect(env.NODE_TLS_REJECT_UNAUTHORIZED).toBeUndefined();
