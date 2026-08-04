@@ -1,8 +1,10 @@
 import type { Permission, PermissionPresets } from 'csuite-sdk/types';
+import { PERMISSIONS } from 'csuite-sdk/types';
 import { describe, expect, it } from 'vitest';
 import {
   findExactPreset,
   matchesPreset,
+  PERMISSION_META,
   privilegeTag,
   sortLeaves,
   summarizePermissions,
@@ -102,5 +104,30 @@ describe('sortLeaves', () => {
       'objectives.create',
       'activity.read',
     ]);
+  });
+});
+
+/**
+ * PermissionsEditor builds its checkbox grid from PERMISSION_META, so a
+ * leaf missing from the list is silently ungrantable from the UI — no
+ * error, no checkbox, nothing. That happened: `process.manage` shipped
+ * in the SDK vocabulary (#130) with no META entry, and for a month the
+ * only grant path was the CLI. Parity in both directions, leaf-by-leaf
+ * so a failure names the leaf.
+ */
+describe('PERMISSION_META parity with the server vocabulary', () => {
+  it('carries an entry for every leaf in PERMISSIONS', () => {
+    const covered = new Set(PERMISSION_META.map((m) => m.key));
+    expect(PERMISSIONS.filter((p) => !covered.has(p))).toEqual([]);
+  });
+
+  it('carries no entry the server vocabulary does not know', () => {
+    const known = new Set<string>(PERMISSIONS);
+    expect(PERMISSION_META.filter((m) => !known.has(m.key)).map((m) => m.key)).toEqual([]);
+  });
+
+  it('lists no leaf twice', () => {
+    const keys = PERMISSION_META.map((m) => m.key);
+    expect(new Set(keys).size).toBe(keys.length);
   });
 });

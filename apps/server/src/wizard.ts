@@ -54,28 +54,23 @@ export const DEFAULT_ADMIN_ROLE_TITLE = 'director';
  *
  * `admin` is derived from `PERMISSIONS` on purpose, so a new leaf is
  * granted to the bootstrap admin without anyone remembering to add it.
- * That default is right for almost everything and wrong for a leaf
- * whose whole point is that holding it is a decision.
+ * Empty today; kept as the extension point for a leaf whose whole
+ * point is that holding it is a decision. Adding here is genesis
+ * behaviour — it is not a migration, so searching migrations would
+ * not find it — and should be rare and say why.
  *
- * `process.manage` rewrites the document that binds every member. It
- * ships held by nobody — including the bootstrap admin, who is created
- * by a wizard rather than chosen — and a director grants it
- * deliberately. Withholding it here is genesis behaviour: it is not a
- * migration, so searching migrations would not find it.
- *
- * Adding to this list should be rare and should say why.
+ * `process.manage` sat here from its introduction (#130) until
+ * 2026-08-03, when Andrew reversed it: a leaf held by nobody made the
+ * process document invisible on every fresh install, and the control
+ * was judged not worth the discoverability loss. Existing teams are
+ * untouched — presets seed once, at genesis.
  *
  * RESIDUAL, stated because the next person to hit it should find a
  * note rather than a surprise: THIS LIST IS A CONVENTION. A new
  * sensitive leaf auto-grants to the bootstrap admin unless someone
- * remembers to add it here. That is the correct trade — most
- * permissions should be admin-default, and inverting the polarity
- * would mean every ordinary leaf needed a manual grant — but the
- * class is not closed by this list, only this instance. If you are
- * adding a permission whose point is that holding it is a decision,
- * nothing will remind you.
+ * remembers to add it here, and nothing will remind you.
  */
-const WITHHELD_FROM_SEEDED_ADMIN: readonly Permission[] = ['process.manage'];
+const WITHHELD_FROM_SEEDED_ADMIN: readonly Permission[] = [];
 
 /**
  * Default permission presets seeded with every new team. The operator

@@ -73,9 +73,6 @@ export const PERMISSIONS = [
    * reuse of `objectives.create`: under this design the permission is
    * the entire authority — whoever holds it can rewrite what binds the
    * team — and "can create an objective" is not a comparable power.
-   *
-   * Ships granted to nobody. Who holds it is a deliberate decision,
-   * not an inheritance from an existing preset.
    */
   'process.manage',
 ] as const;
