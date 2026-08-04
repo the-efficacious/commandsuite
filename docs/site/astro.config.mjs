@@ -33,6 +33,15 @@ export default defineConfig({
   site: 'https://docs.commandsuite.io',
   output: 'static',
   adapter: cloudflare(),
+  // The 2026-08 restructure moved the contributor-facing pages under dev/.
+  // Old URLs stay alive.
+  redirects: {
+    '/architecture': '/dev/architecture',
+    '/reference/rest-api': '/dev/rest-api',
+    '/reference/mcp-tools': '/dev/mcp-tools',
+    '/reference/ipc-protocol': '/dev/ipc-protocol',
+    '/runners/conformance': '/dev/conformance',
+  },
   integrations: [mdx()],
   markdown: {
     // Astro 7 defaults to the Sätteri processor and deprecates top-level

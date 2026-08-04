@@ -1,7 +1,7 @@
 ---
 title: Troubleshooting
-description: Common errors when running csuite — broker connection problems, missing binaries, doctor failures, port conflicts, .mcp.json restoration, empty traces, KEK trouble, and how to recover.
-section: Guides
+description: Common errors when running csuite — broker connection problems, missing binaries, doctor failures, port conflicts, empty traces, encryption-key trouble, and how to recover.
+section: Operations
 order: 60
 ---
 
@@ -52,22 +52,27 @@ you connected with versus what URL you're using now.
 
 ## --doctor failures
 
-### `[FAIL] claude binary — failed to locate claude binary`
+### `[FAIL] claude binary`
 
-Either Claude Code isn't installed, or it's not on `$PATH`. Set
-`$CLAUDE_PATH` to the absolute path:
+Claude Code ships bundled with the CLI, so this usually means a
+broken or partial install — reinstall csuite on this platform. If
+`$CLAUDE_PATH` is set, it must point at a real executable; a stale
+override fails rather than falling back:
 
 ```bash
-export CLAUDE_PATH=/path/to/claude
+unset CLAUDE_PATH   # to use the bundled Claude Code
 ```
 
-For codex, set `$CODEX_PATH` instead. Both runners check the env
-var first, then fall back to `which`.
+### `[FAIL] codex binary`
+
+Codex is not bundled: the runner checks `$CODEX_PATH` first, then
+`which codex`. Install it (`npm i -g @openai/codex`) or set
+`$CODEX_PATH` to the absolute path.
 
 ### `[FAIL] $TMPDIR writable`
 
-The runner writes scratch files (such as the `.mcp.json` backup) to
-`$TMPDIR` at `0o600`. Common causes:
+The runner writes scratch files to `$TMPDIR` at `0o600`. Common
+causes:
 
 - `$TMPDIR` is set to a path that doesn't exist
 - Filesystem mounted read-only
@@ -85,10 +90,9 @@ point it at a writable location.
 
 ### `[FAIL] loopback hook server bindable`
 
-The runner couldn't `listen()` on `127.0.0.1:0`. The capture host's
-hook server needs a loopback port; sandboxed environments without
-loopback networking trigger this — uncommon, some restrictive CI
-runners.
+The runner couldn't `listen()` on `127.0.0.1:0`. Trace capture needs
+a loopback port; sandboxed environments without loopback networking
+trigger this — uncommon, some restrictive CI runners.
 
 If you can't get loopback bind to work, you can run with
 `--no-trace` to skip the hook server entirely. You lose trace capture
@@ -96,7 +100,7 @@ but everything else works.
 
 ## Port conflicts
 
-### `EADDRINUSE: address already in use 0.0.0.0:8717`
+### `EADDRINUSE: address already in use 127.0.0.1:8717`
 
 Something else is already on port 8717. Either find and kill it,
 or change ports:
@@ -115,69 +119,34 @@ csuite claude --url http://127.0.0.1:8718
 export CSUITE_URL=http://127.0.0.1:8718
 ```
 
-## `.mcp.json` problems
+## `.mcp.json` has a stale `csuite` entry
 
-### `.mcp.json` not restored after a crash
-
-The runner restores on every exit path including
-`uncaughtException` / `unhandledRejection`. If you find an
-unrestored copy after a hard crash (kill -9, OOM, system reboot
-mid-session), check the backup directory:
-
-```bash
-ls $TMPDIR/*-mcp-*.json
-```
-
-Each backup is named `<pid>-mcp-<nonce>.json`. Pick the right
-one (timestamp + cwd matching) and copy it back manually. If
-multiple exist from different runs, the most recent is usually
-the one you want.
-
-### `.mcp.json` has a stale `csuite` entry
-
-Same scenario — a previous runner died without cleaning up.
-Either replace it with the runner's restore (see above), or
-edit by hand to remove the `csuite` server entry. Other entries
-should be untouched.
+Current runners never touch `.mcp.json` (or anything else in your
+working tree) — the agent's configuration travels in memory. If you
+find a `csuite` entry in a project's `.mcp.json`, it was left by an
+old version of csuite that rewrote the file and crashed before
+restoring it. Delete the `csuite` server entry by hand; leave other
+entries alone.
 
 ## Empty traces
 
-### `Captured traces` panel is empty for a completed claude objective
+### `Captured traces` panel is empty for a completed objective
 
-Claude Code capture is native OpenTelemetry: the runner points Claude
-Code's telemetry at the broker's OTLP endpoint and the broker ingests
-and normalizes it. Common causes for an empty panel:
+Traces are captured from each agent's own instrumentation and
+uploaded to the broker — see [trace capture](/docs/tracing). Common
+causes for an empty panel:
 
-1. **The session ran with `--no-trace`.** No OTEL env is injected and
-   no hook config is written, so nothing is captured. Re-run without
-   the flag.
+1. **The session ran with `--no-trace`.** Nothing is captured.
+   Re-run without the flag.
 
-2. **The telemetry env didn't reach the agent.** Some wrapper scripts
-   strip environment variables. Verify by checking the runner's
-   session log — captured exchanges show up as
-   `trace: llm_exchange queued` lines. If they're absent, the
-   `CLAUDE_CODE_ENABLE_TELEMETRY` / `OTEL_*` vars probably didn't make
-   it into the child.
+2. **The broker was unreachable or the token was wrong during the
+   session.** Uploads were dropped. Check the runner's session log
+   (`~/.cache/commandsuite/session-<pid>.log`) for upload errors, and
+   the server log for rejected requests.
 
-3. **The broker's OTLP endpoint was unreachable.** Claude Code exports
-   to `<brokerUrl>/otlp/v1/logs` with the member's bearer token; if
-   the broker was down or the token was wrong the records are dropped.
-   Check the server log for OTLP ingest errors.
-
-Extended-thinking content is never captured — the telemetry producer
-redacts it before export — so a trace that's present but missing
-thinking blocks is expected, not a failure.
-
-### Codex traces are empty for a completed objective
-
-Codex content capture is rollout-primary — the runner tails codex's
-own rollout JSONL under its ephemeral `<CODEX_HOME>/sessions/`. If a
-codex objective has no captured exchanges, the usual cause is
-`--no-trace` (which disables the rollout reader, OTEL, and the trace
-bundles) or a session that produced no completed turns. Note the
-rollout lives under the runner's ephemeral `CODEX_HOME`, not the
-user's `~/.codex`, and is drained at teardown before that dir is
-removed.
+3. **The session produced no completed turns.** A session that
+   started and exited without the agent doing anything has nothing
+   to show.
 
 ## Activity DB grows unbounded
 
@@ -203,28 +172,30 @@ sqlite3 ./csuite-activity.db 'VACUUM;'
 WAL mode means online deletes don't shrink the file; vacuum
 does, but it takes an exclusive lock.
 
-## KEK and encrypted fields
+## Encryption key trouble
 
 ### `KekResolutionError: cannot decrypt totpSecret`
 
-The KEK file (`<config>.kek`) is missing or wrong, OR
-`$CSUITE_KEK` is set to the wrong key. Two recovery options:
+The key file (`csuite-kek.bin`, next to the server config) is
+missing or wrong, OR `$CSUITE_KEK` is set to the wrong key. Two
+recovery options:
 
-- **Restore the original KEK file** from backup if you have one.
+- **Restore the original key file** from backup if you have one.
   Without it, encrypted fields can't be recovered.
-- **Reset the encrypted fields**: regenerate the VAPID keypair
-  (web push will need re-subscribing); re-enroll TOTP for every
-  member (`csuite enroll --member <name>` for each).
+- **Reset the encrypted state**: re-enter every stored secret value,
+  re-enroll TOTP for every member (`csuite enroll --member <name>`
+  for each), and let web push regenerate its keys (browsers will
+  need to re-subscribe).
 
 To avoid this in production, inject `$CSUITE_KEK` from a real
 secrets manager rather than relying on the auto-generated file.
 
-### Lost the team config but still have the KEK
+### Lost the database but still have the key
 
-You can reconstruct the team from scratch (`csuite setup`), but
-you'll need to re-issue every bearer token (the hashes are gone
-with the config) and re-enroll every TOTP. The KEK on its own
-isn't useful without the encrypted ciphertexts.
+The team lives in the database, so this is a start-over:
+`csuite setup` builds a fresh team, then re-issue every credential
+and re-enroll every authenticator. The key on its own isn't useful
+without the encrypted data it wrapped.
 
 ## TOTP rate limits
 
@@ -240,9 +211,9 @@ Wait the window out. If you're locked out and need to bypass:
 csuite enroll --member <name>
 ```
 
-re-enrolls the member with a fresh secret. The bearer token in
-the team config is the recovery capability — whoever can read the
-config can re-enroll.
+re-enrolls the member with a fresh secret. Any member holding
+`members.manage` can run it, so an admin can always recover a
+locked-out teammate.
 
 ## Token rotation
 
@@ -290,8 +261,8 @@ Codex isn't logged in. Run:
 codex login
 ```
 
-The runner symlinks `~/.codex/auth.json` into the ephemeral
-CODEX_HOME — it needs the real file to exist.
+The runner reuses your real codex login, so `~/.codex/auth.json`
+must exist before the first `csuite codex` run.
 
 ### `Refusing to create helper binaries under temporary dir`
 
@@ -300,13 +271,13 @@ were under `$TMPDIR`. We use `~/.cache/commandsuite/codex/` instead
 specifically to avoid this — if you're seeing it anyway, check
 `$XDG_CACHE_HOME` and make sure it doesn't point at a tmpfs.
 
-## Runner / IPC
+## Runner problems
 
 ### `csuite mcp-bridge: CSUITE_RUNNER_SOCKET is required`
 
 You ran `csuite mcp-bridge` directly. It's not meant to be invoked
-manually — the runner pre-fills it into the agent's MCP config
-(`.mcp.json` or `CODEX_HOME/config.toml`) with the right env.
+manually — the runner injects it into the agent's configuration
+automatically, with the right environment.
 
 ### Multiple runners stepping on each other
 

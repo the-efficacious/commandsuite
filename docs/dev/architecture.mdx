@@ -1,8 +1,8 @@
 ---
 title: Architecture
 description: How csuite is put together — the broker, the runner abstraction, the MCP bridge, the trace pipeline, the permission model, and how a push reaches an agent end-to-end.
-section: Docs
-order: 50
+section: Development
+order: 20
 ---
 
 # Architecture
@@ -23,13 +23,13 @@ runner.
    │   csuite <runner verb>     │
    │                         │
    │   ── runner, long-lived ──
-   │   • broker Client       │   <── HTTP + SSE
+   │   • broker Client       │   <── HTTP + WebSocket
    │   • instructions cached │
    │   • IPC server (UDS)    │
    │   • capture host (native)
    │   • objectives tracker  │
    │   • busy reporter       │
-   │   • SSE forwarder       │
+   │   • event forwarder     │
    │                         │
    │   spawns ↓              │
    └────────┬────────────────┘
@@ -90,9 +90,11 @@ TOTP rotation) see [device enrollment](/docs/enrollment).
 ## The runner abstraction
 
 csuite ships with two runners and is designed for more. Both share
-all the broker-facing plumbing — auth, instructions, IPC server, SSE
-forwarder, MCP tool dispatch, capture host, busy reporter — and
-their principal adapter-specific differences are:
+all the broker-facing plumbing — auth, instructions, IPC server,
+event forwarder, MCP tool dispatch, capture host, busy reporter, and
+the drain-and-restart coordinator that applies instruction edits by
+restarting the agent at its next idle boundary — and their principal
+adapter-specific differences are:
 
 1. **How the agent is spawned.** Claude Code runs headlessly under
    the Claude Agent SDK; codex is headless under `codex app-server`.
@@ -136,6 +138,7 @@ bypass such as self or objective originator:
 | `tools.manage` | Administer the tool-source registry (external tools) |
 | `secrets.manage` | Administer the secrets registry (env secrets for agents) |
 | `notifications.manage` | Administer inbound notification endpoints and delivery policy |
+| `process.manage` | Edit the team's process document (a dedicated leaf; ships granted to nobody) |
 
 The team config defines named **presets** (e.g. `admin`,
 `operator`) that members reference instead of listing every leaf.
@@ -152,18 +155,18 @@ For the full breakdown see [permissions](/docs/concepts/permissions).
    │                                  │
    │   ── runner (parent) ──          │
    │   • instructions + objectives    │
-   │   • SSE forwarder                │
-   │   • CaptureHost (OTLP ingest is  │
-   │     broker-side; hook server +   │
+   │   • event forwarder              │
+   │   • CaptureHost (hook server,    │
+   │     loopback OTLP relay, and     │
    │     activity uploader live here) │
    │   • IPC server on UDS            │
    │                                  │
    └──────────────┬───────────────────┘
                   │ exec claude with
                   │   CLAUDE_CODE_ENABLE_TELEMETRY=1
-                  │   OTEL_EXPORTER_OTLP_ENDPOINT=<brokerUrl>/otlp
+                  │   OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:<relay>/otlp
                   │   OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer …
-                  │   OTEL_LOG_RAW_API_BODIES=file:<runner spill dir>
+                  │   OTEL_LOG_RAW_API_BODIES=file:<runner spool dir>
                   │   prose telemetry disabled
                   │   CSUITE_RUNNER_SOCKET=/tmp/.csuite-runner-$PID.sock
                   ▼
@@ -173,7 +176,8 @@ For the full breakdown see [permissions](/docs/concepts/permissions).
    │ receives bridge config inline    │
    │ from the Agent SDK options       │
    │ (the user's .mcp.json is intact) │
-   │ exports OTLP logs → broker /otlp │
+   │ exports OTLP → runner relay,     │
+   │   which forwards to broker /otlp │
    │ POSTs hook events → hook server  │
    └──────────────┬───────────────────┘
                   │ stdio JSON-RPC (MCP)
@@ -201,18 +205,18 @@ sink dispatches `turn/start`/`turn/steer` JSON-RPC instead of
 streaming-input messages.
 
 For the wire format of those IPC frames, see
-[reference/ipc-protocol](/docs/reference/ipc-protocol).
+[ipc-protocol](/docs/dev/ipc-protocol).
 
 ## Concepts at a glance
 
 | Concept | One-line summary | Doc |
 |---|---|---|
 | **Member** | A named seat on a team. Identity = name + role + permissions + bearer token(s). | [members](/docs/concepts/members) |
-| **Permissions** | Ten leaf permissions; preset bundles; originator + self bypass rules. | [permissions](/docs/concepts/permissions) |
+| **Permissions** | Eleven leaf permissions; preset bundles; originator + self bypass rules. | [permissions](/docs/concepts/permissions) |
 | **Objective** | Push-assigned, single-assignee, outcome-required, four-state work primitive with audit log + threaded discussion + attachments. | [objectives](/docs/concepts/objectives) |
 | **Channel** | Slack-style named team thread. Implicit `general` + named channels with admin/member roles. | [channels](/docs/concepts/channels) |
 | **Event / message** | Push-not-poll delivery. Routes by `data.thread`. Wraps as `<channel>` for the agent. | [events](/docs/concepts/events) |
-| **Presence** | "On the wire" via SSE registry; "currently working" via runner heartbeats with TTL. | [presence](/docs/concepts/presence) |
+| **Presence** | "On the wire" via the WebSocket subscriber registry; "currently working" via runner heartbeats with TTL. | [presence](/docs/concepts/presence) |
 | **Activity / traces** | Append-oriented timeline per member with explicit pruning; per-objective trace = time-range slice. | [activity-and-traces](/docs/concepts/activity-and-traces) |
 
 ## How a chat push flows end-to-end
@@ -221,11 +225,12 @@ For the wire format of those IPC frames, see
    `POST /push` directly, or clicks send in the web UI).
 2. Broker validates against `csuite-sdk/schemas`, writes to the
    event log, and fans out to every recipient based on
-   `data.thread`. For a DM, `to: 'scout'` resolves to scout's SSE
+   `data.thread`. For a DM, `to: 'scout'` resolves to scout's
    subscribers.
-3. Scout's runner is subscribed on `/subscribe?name=scout`. The
-   forwarder receives the SSE frame, suppresses self-echoes, and
-   delivers a typed channel event to the adapter's channel sink.
+3. Scout's runner holds a WebSocket subscription on
+   `/subscribe?name=scout`. The forwarder receives the frame,
+   suppresses self-echoes, and delivers a typed channel event to the
+   adapter's channel sink.
 4. **claude path:** sink renders the `<channel>`-tagged prose and
    injects it as an Agent SDK streaming-input user message (queued
    natively if the agent is mid-turn).
@@ -235,7 +240,7 @@ For the wire format of those IPC frames, see
    the same `<channel>`-tagged prose.
 6. The model wakes and reacts. No human prompt, no polling.
 
-The machine delivery plane is HTTP → broker → SSE → runner →
+The machine delivery plane is HTTP → broker → WebSocket → runner →
 the adapter's native input channel (Claude Agent SDK streaming
 input or codex app-server JSON-RPC) → model. The MCP bridge is
 the tool-call path for Claude, not the channel-delivery path.
@@ -251,8 +256,8 @@ HTTP → broker → web-push library → push service → service worker
    in the same transaction, and the app layer publishes an
    objective channel event to the thread members (originator,
    assignee, watchers).
-3. The assignee's runner sees the event on SSE; the objectives
-   tracker refreshes its open-plate snapshot — the seed for the
+3. The assignee's runner sees the event on its subscription; the
+   objectives tracker refreshes its open-plate snapshot — the seed for the
    `context_refresh` push the runner sends at session attach
    and after context compaction. (Tool descriptions stay static so
    the model's prompt-prefix cache survives; state freshness is
@@ -300,7 +305,7 @@ HTTP → broker → web-push library → push service → service worker
          └─────────────────┴───────┬───────┴─────────────────┘
                                    │
                                    │  HTTP(S)
-                                   │  csuite-sdk · protocol v1
+                                   │  csuite-sdk · protocol v2
                                    ▼
                      ╔═══════════════════════════════════════╗
                      ║               BROKER                  ║
@@ -343,7 +348,7 @@ HTTP → broker → web-push library → push service → service worker
                  │  first-run wizard for setup      │
                  └────────────┬─────────────────────┘
                               │
-                              │ SSE (/subscribe)
+                              │ WebSocket (/subscribe)
                               ▼
               ┌───────────────────────────────────┐
               │     csuite claude / codex       │
@@ -351,10 +356,11 @@ HTTP → broker → web-push library → push service → service worker
               │                                   │
               │  • instructions + member identity │
               │  • objectives tracker (open set)  │
-              │  • SSE forwarder → notification   │
+              │  • event forwarder → notification │
               │    sink (per-runner)              │
               │  • CaptureHost:                   │
               │     - loopback hook server (claude)
+              │     - loopback OTLP relay (claude) │
               │     - busy signal (native events)  │
               │     - streaming ActivityUploader   │
               │  • spawns the agent with env      │
@@ -384,96 +390,26 @@ missing. The CLI itself also depends on `csuite-core`,
 ## Trace capture
 
 The runner maintains one append-oriented **activity stream** per
-member, fed by each agent's **native instrumentation** plus
+member, fed by each agent's **native instrumentation** — Claude
+Code's session transcript, hooks, and OTEL export (through a
+runner-local loopback relay that inlines file-mode raw bodies);
+codex's rollout JSONL, OTEL export, and trace bundles — plus
 runner-observed objective-open/close markers. There is no network
-interception, no TLS decryption, and no CA on disk. The runner
-normalizes those inputs into one `ActivityEvent` model
-(`objective_open`, `objective_close`, `llm_exchange`,
-`tool_action`, `user_prompt`).
+interception, no TLS decryption, and no CA on disk. Per-objective
+"traces" are a time-range view over the stream; no per-objective
+blobs are stored anywhere.
 
-**Claude Code content is transcript-primary.** In-process Agent SDK
-hooks expose the session transcript path and drive presence/busy.
-A `TranscriptReader` tails that JSONL and maps complete turns
-(including thinking, text, tool use, tool results, usage, and model)
-to normalized activity. The runner also injects a lean native OTEL
-configuration for operational telemetry and raw API-body references;
-the prose logging flags stay off because the transcript is the
-activity-content source:
-
-```
-claude child
-    │
-    ├── session transcript JSONL ──► runner TranscriptReader
-    │        thinking + text + tool_use + tool_result + usage
-    │            │
-    │            ▼  redactJson in the transcript mapper
-    │        activity events ──► ActivityUploader
-    │                          ──► POST /members/:name/activity
-    │
-    ├── Agent SDK hooks ──► runner loopback hook server
-    │        transcript path + presence / busy windows
-    │
-    └── OpenTelemetry ──► broker POST /otlp/v1/logs
-             operational telemetry + file-mode body_ref records
-             ──► telemetry and gen_ai/raw-body stores
-```
-
-**Codex** is captured **rollout-primary**: a `RolloutReader` tails
-codex's own durable rollout JSONL under `<CODEX_HOME>/sessions/`
-and maps each turn to `user_prompt` (the clean opener),
-`llm_exchange` (assistant text + reasoning summaries, real
-per-turn token usage, model), and `tool_action` (`function_call` +
-`function_call_output` paired by `call_id`, full input and
-output). The `codex app-server` JSON-RPC stream drives only
-presence / busy. Two further layers run in parallel: codex's
-native OTEL export ships operational telemetry to
-`/otlp/v1/logs`, and a `BundleReader` uploads per-inference
-rollout-trace bundles (full Responses request + response, verbatim
-bytes) to `POST /members/:name/genai` for the gen_ai + raw-body
-layer. Reasoning is summaries only — OpenAI encrypts the raw
-chain-of-thought.
-
-Both activity paths funnel into the same `ActivityUploader`, which
-batches `ActivityEvent`s and streams them to
-`POST /members/:name/activity`. Normalized activity text is scrubbed
-with the core `redactJson` before upload. Claude transcript capture
-includes extended-thinking blocks; codex exposes reasoning summaries
-because its raw chain of thought is encrypted upstream.
-The uploader queue is bounded at 1,000 events and 64 MiB: under
-sustained broker failure it evicts the oldest queued events, and a
-failed final flush can leave events unwritten. Both paths increment the
-reported `dropped` count.
-
-The typed `gen_ai_inference` mapper redacts registered secret
-patterns in parsed content. The separate raw-body stores
-deliberately preserve verbatim request and response bytes before
-that parsing or redaction, so they must not be described as
-scrubbed activity. Claude uses
-`OTEL_LOG_RAW_API_BODIES=file:<runner tmpdir>` to avoid the producer's
-inline truncation. The current broker resolves `body_ref` paths from
-its own filesystem, so this full-body path requires the broker to
-share access to the runner's spill directory; an unreadable, missing,
-or over-limit reference is logged and cannot be reconstructed.
-Codex uploads its rollout-trace bundle bytes directly.
-
-The capture attaches to artifacts Claude Code produces before or
-independently of provider transport. It does not introduce a
-provider-specific proxy or inspect the provider network path.
-
-Per-objective "traces" are a **time-range view** over this stream:
-the web UI pages both the member activity and GenAI inference APIs
-over an objective's lifetime, then joins the current-state records.
-No per-objective blobs are stored anywhere.
-
-For the full pipeline + security posture see
-[tracing](/docs/tracing) and
+The full pipeline — the capture host, transcript and rollout
+readers, the OTLP relay, broker-side correlation, redaction
+boundaries, and uploader queue accounting — lives at
+[trace-pipeline](/docs/dev/trace-pipeline). For the data model see
 [activity-and-traces](/docs/concepts/activity-and-traces).
 
 ## Transport
 
 - **HTTP/2** when HTTPS is active. Removes the browser
-  6-connection-per-origin cap on SSE so multi-tab users don't
-  deadlock.
+  6-connection-per-origin cap on long-lived HTTP/1.1 requests so
+  multi-tab users don't deadlock.
 - **HTTP/1.1** fallback via ALPN for legacy clients. Same
   listener, same cert.
 - **Self-signed certs** auto-generated on first boot when binding
@@ -483,8 +419,10 @@ For the full pipeline + security posture see
 
 ## Protocol versioning
 
-The SDK adds `X-CSUITE-Protocol: 1` to its HTTP and subscription
-requests. The broker allows clients that omit it, but rejects a
+The SDK adds `X-CSUITE-Protocol: 2` to its HTTP and subscription
+requests (v2 renamed the composed-context surface to
+`GET /instructions` and added instruction-block versioning). The
+broker allows clients that omit it, but rejects a
 present incompatible version with 400. Request and response shapes
 are validated at typed SDK/server boundaries with the zod schemas
 in `csuite-sdk/schemas`. Breaking wire changes require a protocol
