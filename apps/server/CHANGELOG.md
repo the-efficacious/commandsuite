@@ -1,5 +1,62 @@
 # csuite-server
 
+## 0.5.0
+
+### Minor Changes
+
+- [#145](https://github.com/the-efficacious/commandsuite/pull/145) [`6c35f83`](https://github.com/the-efficacious/commandsuite/commit/6c35f8346605bd9d0c939b5e93606dc3c1147ffa) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - Adopt the Helm design system from `@the-efficacious/brand`.
+
+  The web shell's entire visual layer now resolves through the brand
+  package's `--ef-*` role tokens — the legacy token vocabulary (`--ink`,
+  `--paper`, `--steel`, `--ember`, …) is gone, along with the local token
+  block and the dusk-mode remap in `theme.css`. Breaking contract changes
+  for hosts and integrators:
+
+  - **Theme attribute**: the shell now drives `data-ef-theme` on `<html>`
+    (`helm` dark is the `:root` default; `helm-light` is the light theme).
+    `data-theme` is no longer set. The `csuite:theme` localStorage
+    contract is unchanged, but `auto` is now stored explicitly and the
+    unset default is **dark** — Helm is dark-native.
+  - **Utilities**: hosts compiling atomic utilities must compose
+    `@the-efficacious/brand/uno`'s `efficacious()` preset after
+    `presetWind4()`. The hand-rolled `brand-*` colors and breakpoint
+    overrides are gone; breakpoints come from the shared scale
+    (700/900/1100/1280).
+  - **Sender colors**: `senderTextClass(kind)` replaces
+    `senderTextClass(sender, viewer)` — the axis is person vs agent
+    (Helm plate 14), resolved from the roster. `Teammate.kind?: 'person'
+| 'agent'` is new in the SDK; servers derive it from TOTP enrollment
+    and omit it when unknown.
+  - **Identity tiles**: `.avatar` is now the plate-14 square tile
+    (`data-kind`, `data-size` 20/26/34/48/64, optional `.avatar-dot`
+    presence lamp). The `sm/lg/xl/dark/ember` modifiers are gone.
+  - **Badges**: `.badge.ember` → `.badge.caution`, `.badge.glacier` →
+    `.badge.info`; `.btn-accent` is removed (use `.btn-destructive` for
+    stop actions). Lamp components pick up the five-state grammar,
+    including `working` and `stood-down`.
+  - **CLI**: activity printers and the HUD paint Helm roles (lamp grammar
+    for connection state; the gold mark on the `csuite` word).
+
+  Brand tokens and fonts ship transitively via `csuite-web-ui/styles.css`;
+  the served UI (`csuite-server`'s `public/`) also exposes them at
+  `/brand/*.css` for server-rendered pages.
+
+- [#136](https://github.com/the-efficacious/commandsuite/pull/136) [`294d857`](https://github.com/the-efficacious/commandsuite/commit/294d857242d3e3cd47d4cef594c5193c30d1c773) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - feat!: rename briefing to instruction blocks as a clean wire break (protocol v2) — GET /instructions replaces GET /briefing outright, `Client.instructions()` replaces `Client.briefing()`, responses carry named block descriptors plus a canonical composed-content hash, instruction edits fan out a `kind: 'instructions'` event to every member whose composed text changed, and the roster lists restart-pending members
+
+- [#146](https://github.com/the-efficacious/commandsuite/pull/146) [`9593188`](https://github.com/the-efficacious/commandsuite/commit/959318883f411d42ef98bd5adcc9249807ded94e) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - feat: grant `process.manage` to the seeded admin and surface it in the permissions editor. The leaf shipped held by nobody — a deliberate control — which left the team-process section invisible on every fresh install; compounding it, the web UI's permission grid had no `PERMISSION_META` entry for the leaf, so it could not be granted from the UI at all. The wizard's withheld list is now empty (new teams seed the bootstrap admin with every leaf; existing teams are untouched — presets seed once, at genesis) and the permissions editor lists `process.manage`, with a parity test so a future leaf cannot ship checkbox-less again.
+
+- [#136](https://github.com/the-efficacious/commandsuite/pull/136) [`294d857`](https://github.com/the-efficacious/commandsuite/commit/294d857242d3e3cd47d4cef594c5193c30d1c773) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - feat(cli): drain-and-restart — on a `kind: 'instructions'` event the runner waits for the agent's next idle boundary, re-points ambient input at a buffer for the successor, gracefully stops the agent, refetches instructions, and respawns resuming the same conversation under the new system prompt (Claude session resume / codex thread resume). The watchdog's `stale` state no longer re-sends content — restart is the remediation; the resend is reserved for blocks that fell out entirely.
+
+### Patch Changes
+
+- [#136](https://github.com/the-efficacious/commandsuite/pull/136) [`294d857`](https://github.com/the-efficacious/commandsuite/commit/294d857242d3e3cd47d4cef594c5193c30d1c773) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - fix(server): confirm context-block presence from the captured conversation, not only the system projection — a block edited mid-session no longer re-sends on every captured request
+
+- [#136](https://github.com/the-efficacious/commandsuite/pull/136) [`294d857`](https://github.com/the-efficacious/commandsuite/commit/294d857242d3e3cd47d4cef594c5193c30d1c773) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - chore: complete the instructions vocabulary across every surface — code identifiers, MCP tool descriptions (which now state the real edit mechanics: fanout + restart at next idle), web-ui store, READMEs, and docs. Persisted diagnostic cause ids and changelog history keep their original spellings.
+
+- Updated dependencies [[`6c35f83`](https://github.com/the-efficacious/commandsuite/commit/6c35f8346605bd9d0c939b5e93606dc3c1147ffa), [`294d857`](https://github.com/the-efficacious/commandsuite/commit/294d857242d3e3cd47d4cef594c5193c30d1c773), [`294d857`](https://github.com/the-efficacious/commandsuite/commit/294d857242d3e3cd47d4cef594c5193c30d1c773), [`9593188`](https://github.com/the-efficacious/commandsuite/commit/959318883f411d42ef98bd5adcc9249807ded94e)]:
+  - csuite-sdk@0.5.0
+  - csuite-core@0.5.0
+
 ## 0.4.1
 
 ### Patch Changes
