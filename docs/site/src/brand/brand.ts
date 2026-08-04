@@ -1,44 +1,41 @@
+/**
+ * Site identity — resolved from `@the-efficacious/brand` so the docs
+ * carry the same name, tagline, and mark geometry as every other
+ * surface. Only the site-specific link targets are authored here.
+ */
+import { brands } from '@the-efficacious/brand';
+
 export const brand = {
-  name: 'CommandSuite',
-  shortName: 'csuite',
-  tagline: 'Infrastructure for agentic systems.',
-  domain: 'agentc7.com',
+  ...brands.commandsuite,
+  homeUrl: 'https://commandsuite.io',
   ossRepo: 'https://github.com/the-efficacious/commandsuite',
   ossRepoSlug: 'the-efficacious/commandsuite',
   docsRef: 'main',
-  colors: {
-    ink: '#0E1C2B',
-    steel: '#3E5C76',
-    glacier: '#6389A6',
-    frost: '#A4BDD1',
-    ice: '#E6EEF5',
-    paper: '#F6F3EC',
-    graphite: '#4B5560',
-    ember: '#C87C4E',
-  },
 } as const;
 
 export type Brand = typeof brand;
 
 /**
- * CommandSuite mark — a heptagon with seven filled vertex nodes.
- * Identical geometry to the mark shipped in the OSS SPA at
- * csuite/packages/web/public/logo.svg.
- *
- * viewBox is `0 0 120 120`. Vertices are placed on a heptagon circumscribed
- * about center (60, 60) with radius 45.
+ * The pack draws the Echelon inside a 100×100 box but only inks
+ * x 10–90 · y 21.5–78.5 — a 1.4:1 mark with phantom margins that
+ * renders small in square slots. Crop to the ink plus a 2-unit optical
+ * pad and keep the true aspect, mirroring the product's BrandMark.
  */
-export const CSUITE_LOGO_VIEWBOX = '0 0 120 120';
+export const MARK_VIEWBOX = '8 19.5 84 61';
+export const MARK_ASPECT = 61 / 84;
 
-export const CSUITE_HEPTAGON_POINTS =
-  '60,15 95.18,31.94 103.87,70.01 79.52,100.54 40.48,100.54 16.13,70.01 24.82,31.94';
+/**
+ * Gold-primitive fill names → the `--mark-*` indirection defined in
+ * docs.css. Helm renders the tri-gold drawing; helm-light re-resolves
+ * the outer pair to neutrals — the light surface spends less gold.
+ * Fallbacks keep the mark drawable if the stylesheet is absent.
+ */
+const MARK_FILLS = {
+  bright: 'var(--mark-core, var(--ef-gold-bright))',
+  base: 'var(--mark-mid, var(--ef-gold-base))',
+  deep: 'var(--mark-outer, var(--ef-gold-deep))',
+} as const;
 
-export const CSUITE_HEPTAGON_VERTICES = [
-  { x: 60, y: 15 },
-  { x: 95.18, y: 31.94 },
-  { x: 103.87, y: 70.01 },
-  { x: 79.52, y: 100.54 },
-  { x: 40.48, y: 100.54 },
-  { x: 16.13, y: 70.01 },
-  { x: 24.82, y: 31.94 },
-] as const;
+export function markFill(name: string): string {
+  return MARK_FILLS[name as keyof typeof MARK_FILLS] ?? 'currentColor';
+}

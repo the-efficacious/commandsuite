@@ -11,16 +11,15 @@ const flat = flattenNav(sections);
   <p>
     CommandSuite turns AI agents into team members: assign them objectives
     with a definition of done, talk to them in channels, and review every
-    LLM call they make — on a server you run. New here? Start with
-    <a href="/why">why CommandSuite</a> and
-    <a href="/getting-started">getting started</a>. Building on the API or
-    writing a runner? The Development section is yours.
+    LLM call they make — on a server you run. New here? Start
+    with <a href="/why">why CommandSuite</a> and <a href="/getting-started">getting started</a>.
+    Building on the API or writing a runner? The Development section is yours.
   </p>
 
   {
     sections.map((section) => (
       <section class="landing-section">
-        <h2>§ {section.name}</h2>
+        <h2>{section.name}</h2>
         <ul class="landing-grid">
           {section.entries.map((entry) => (
             <li>
@@ -53,14 +52,15 @@ const flat = flattenNav(sections);
   }
 
   .landing-section h2 {
-    font-family: var(--f-mono);
-    font-size: var(--s-tag);
-    font-weight: 500;
-    letter-spacing: 0.14em;
+    font-family: var(--ef-font-mono);
+    font-size: var(--ef-text-tag);
+    font-weight: var(--ef-weight-medium);
+    letter-spacing: var(--ef-track-tag);
     text-transform: uppercase;
-    color: var(--muted);
+    color: var(--ef-text-muted);
+    margin-top: 0;
     margin-bottom: 16px;
-    padding-left: 0;
+    padding-top: 0;
   }
 
   .landing-grid {
@@ -80,44 +80,53 @@ const flat = flattenNav(sections);
     display: flex;
     flex-direction: column;
     gap: 8px;
+    height: 100%;
     padding: 18px 20px;
-    background: var(--paper);
-    border: 1px solid var(--rule-strong);
-    border-radius: var(--r-sm);
+    background: var(--ef-surface-raised);
+    border: 1px solid var(--ef-border);
+    text-decoration: none;
+    color: inherit;
     transition:
-      background 0.15s var(--ease),
-      border-color 0.15s var(--ease);
-    /* Override the global article-link border-bottom */
-    border-bottom: 1px solid var(--rule-strong) !important;
+      background var(--ef-motion-base) var(--ef-motion-ease),
+      border-color var(--ef-motion-base) var(--ef-motion-ease);
+  }
+
+  /* The chamfer rotates between neighbouring panels so the grid
+     doesn't read uniform. Hover brightens; nothing ever glows. */
+  .landing-grid li:nth-child(odd) .landing-card {
+    border-radius: var(--ef-radius-cap-tl);
+  }
+
+  .landing-grid li:nth-child(even) .landing-card {
+    border-radius: var(--ef-radius-cap-tr);
   }
 
   .landing-card:hover {
-    background: var(--ice);
-    border-color: var(--ink);
+    background: var(--ef-surface-hairline);
+    border-color: var(--ef-border-strong);
   }
 
   .card-title {
-    font-family: var(--f-display);
-    font-size: 17px;
-    font-weight: 700;
-    letter-spacing: -0.01em;
-    color: var(--ink);
+    font-family: var(--ef-font-display);
+    font-size: var(--ef-text-lead);
+    font-weight: var(--ef-weight-semibold);
+    color: var(--ef-text);
   }
 
   .card-desc {
-    color: var(--graphite);
-    font-size: 13.5px;
+    color: var(--ef-text-tertiary);
+    font-size: var(--ef-text-small);
     line-height: 1.5;
-    font-weight: 400;
+    font-weight: var(--ef-weight-regular);
   }
 
   .empty-state {
     margin-top: 40px;
     padding: 24px;
-    border: 1px dashed var(--rule-strong);
-    border-radius: var(--r-sm);
-    color: var(--muted);
+    border: 1px dashed var(--ef-border-strong);
+    border-radius: var(--ef-radius-sm);
+    color: var(--ef-text-muted);
     text-align: center;
-    background: var(--ice);
+    background: var(--ef-surface-panel);
   }
 </style>

@@ -1,15 +1,124 @@
-/* Docs-specific chrome. theme.css owns the base tokens; this file only
-   covers the shell layout + MDX content styling. */
+/* ═══════════════════════════════════════════════════════════════════════
+   CommandSuite docs — Helm
+   ─────────────────────────────────────────────────────────────────────
+   Tokens and fonts come from @the-efficacious/brand (imported by the
+   layout); this file owns the reset, the docs shell, and the MDX
+   article styling. Every value resolves through an --ef-* role, so a
+   theme swap (`data-ef-theme`) re-resolves the whole surface.
+   ═══════════════════════════════════════════════════════════════════════ */
 
+/* ─────────────────────────── RESET ─────────────────────────── */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+img,
+svg {
+  display: block;
+  max-width: 100%;
+}
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* ─────────────────────────── MARK ───────────────────────────
+   Fill indirection for the Echelon lockup, mirroring the product
+   shell: helm draws tri-gold; helm-light re-resolves the outer pair to
+   neutrals so the light surface spends less gold. Values match
+   logo-pack svg/commandsuite/commandsuite-symbol-{dark,light}. */
+:root {
+  --mark-outer: var(--ef-gold-deep);
+  --mark-mid: var(--ef-gold-base);
+  --mark-core: var(--ef-gold-bright);
+  /* The wordmark is two-tone: "Command" in warm white, "Suite" in
+     gold. Artwork, not chrome — Tier 0's carve-out, like the mark.
+     Values match logo-pack svg/commandsuite/commandsuite-wordmark-dark. */
+  --wordmark-lead: var(--ef-n0);
+  --wordmark-accent: var(--ef-gold-bright);
+}
+:root[data-ef-theme='helm-light'] {
+  --mark-outer: var(--ef-granite);
+  --mark-mid: var(--ef-brand-ink);
+  --mark-core: var(--ef-gold-base);
+  /* commandsuite-wordmark-light: ink lead, deep-gold accent. */
+  --wordmark-lead: var(--ef-brand-ink);
+  --wordmark-accent: var(--ef-gold-deep);
+}
+
+/* ─────────────────────────── BASE ─────────────────────────── */
+html {
+  scroll-behavior: smooth;
+  /* The scrollbar is a readout: it states how much there is and where
+     you are in it. Always visible on overflow; the thumb takes the one
+     gold only while dragged — the single transient Tier 1 use, spending
+     no per-view budget. */
+  scrollbar-color: var(--ef-scroll-thumb) var(--ef-scroll-track);
+}
+html::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+html::-webkit-scrollbar-track {
+  background: var(--ef-scroll-track);
+  border-left: 1px solid var(--ef-scroll-track-edge);
+}
+html::-webkit-scrollbar-thumb {
+  background: var(--ef-scroll-thumb);
+  background-clip: padding-box;
+  border-radius: var(--ef-radius-pill);
+  border: 3px solid transparent;
+  min-height: 44px;
+}
+html::-webkit-scrollbar-thumb:hover {
+  background: var(--ef-scroll-thumb-hover);
+  background-clip: padding-box;
+}
+html::-webkit-scrollbar-thumb:active {
+  background: var(--ef-scroll-thumb-drag);
+}
+
+body {
+  background: var(--ef-surface);
+  color: var(--ef-text);
+  font-family: var(--ef-font-body);
+  font-size: var(--ef-text-body);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Keyboard focus is a border, never a glow — a crisp 1px parchment
+   line drawn just off the element. No blur, no shadow. */
+:focus-visible {
+  outline: 1px solid var(--ef-ring);
+  outline-offset: 3px;
+}
+
+/* ─────────────────────────── SHELL ─────────────────────────── */
 .docs-shell {
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr) 220px;
-  gap: 40px;
-  max-width: 1600px;
+  gap: var(--ef-space-xl);
+  max-width: var(--ef-layout-max);
   margin: 0 auto;
-  padding: 0 var(--edge);
-  position: relative;
-  z-index: 1;
+  padding: 0 var(--ef-layout-edge);
 }
 
 .docs-sidebar-wrap {
@@ -30,32 +139,32 @@
   max-width: 70ch;
 }
 
-/* ─── MDX content styling — scoped to articles ─── */
+/* ─── MDX content — scoped to articles ─── */
 .docs-article h1 {
-  font-family: var(--f-display);
-  font-size: clamp(36px, 5vw, 56px);
-  font-weight: 700;
-  letter-spacing: -0.03em;
-  line-height: 0.98;
+  font-family: var(--ef-font-display);
+  font-size: var(--ef-text-readout);
+  font-weight: var(--ef-weight-bold);
+  letter-spacing: var(--ef-track-display);
+  line-height: 1.05;
   margin-bottom: 16px;
-  color: var(--ink);
+  color: var(--ef-text);
 }
 
 .docs-article > p:first-of-type {
-  color: var(--graphite);
-  font-size: var(--s-lead);
+  color: var(--ef-text-secondary);
+  font-size: var(--ef-text-lead);
   line-height: 1.55;
   margin-bottom: 32px;
   padding-bottom: 24px;
-  border-bottom: 1px solid var(--rule);
+  border-bottom: 1px solid var(--ef-border-subtle);
 }
 
 .docs-article h2 {
-  font-family: var(--f-display);
-  font-size: var(--s-h3);
-  font-weight: 700;
-  letter-spacing: -0.025em;
-  color: var(--ink);
+  font-family: var(--ef-font-display);
+  font-size: var(--ef-text-h2);
+  font-weight: var(--ef-weight-bold);
+  letter-spacing: var(--ef-track-display);
+  color: var(--ef-text);
   margin-top: 48px;
   margin-bottom: 14px;
   padding-top: 8px;
@@ -63,13 +172,22 @@
 }
 
 .docs-article h3 {
-  font-family: var(--f-display);
-  font-size: var(--s-h4);
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  color: var(--steel);
+  font-family: var(--ef-font-display);
+  font-size: var(--ef-text-h3);
+  font-weight: var(--ef-weight-semibold);
+  color: var(--ef-text-secondary);
   margin-top: 32px;
   margin-bottom: 10px;
+  scroll-margin-top: calc(60px + 16px);
+}
+
+.docs-article h4 {
+  font-family: var(--ef-font-display);
+  font-size: var(--ef-text-h4);
+  font-weight: var(--ef-weight-semibold);
+  color: var(--ef-text-secondary);
+  margin-top: 24px;
+  margin-bottom: 8px;
   scroll-margin-top: calc(60px + 16px);
 }
 
@@ -78,8 +196,8 @@
 .docs-article ol {
   margin-block: 16px;
   line-height: 1.65;
-  color: var(--ink);
-  font-size: var(--s-body);
+  color: var(--ef-text);
+  font-size: var(--ef-text-body);
 }
 
 .docs-article ul,
@@ -92,52 +210,73 @@
 }
 
 .docs-article li::marker {
-  color: var(--steel);
+  color: var(--ef-text-muted);
 }
 
+/* Body links: warm white on a muted underline, 3px offset. On hover,
+   text and underline take gold — transient under attention, like the
+   scrollbar's drag-gold, so it spends no per-view budget. */
 .docs-article a {
-  color: var(--steel);
-  border-bottom: 1px solid rgba(62, 92, 118, 0.3);
+  color: var(--ef-link);
+  text-decoration: underline;
+  text-decoration-color: var(--ef-link-underline);
+  text-underline-offset: 3px;
   transition:
-    border-color 0.15s var(--ease),
-    color 0.15s var(--ease);
+    color var(--ef-motion-base) var(--ef-motion-ease),
+    text-decoration-color var(--ef-motion-base) var(--ef-motion-ease);
 }
 
 .docs-article a:hover {
-  color: var(--ink);
-  border-bottom-color: var(--steel);
+  color: var(--ef-link-hover);
+  text-decoration-color: var(--ef-link-hover);
 }
 
 .docs-article code:not(pre code) {
-  font-family: var(--f-mono);
-  background: var(--ice);
-  border: 1px solid var(--rule);
-  border-radius: var(--r-xs);
+  font-family: var(--ef-font-mono);
+  background: var(--ef-surface-raised);
+  border: 1px solid var(--ef-border-subtle);
+  border-radius: var(--ef-radius-xs);
   padding: 0.1em 0.35em;
-  color: var(--ink);
+  color: var(--ef-text);
   font-size: 0.9em;
 }
 
+/* Fences sit on the deep surface — inset wells under the article, not
+   raised panels. The highlight colours are the kit's --ef-code-* roles,
+   baked in at build time by the Shiki theme in astro.config.mjs. */
 .docs-article pre {
-  /* biome-ignore lint/complexity/noImportantStyles: overrides Shiki's
-     inline `background-color` attribute which is injected at build
-     time on every code fence and outranks our selector otherwise.
-     Deeper than the page surface (#0e1c2b) so fences read as inset
-     wells rather than raised panels; github-dark token colors sit
-     comfortably on it. */
-  background: #0a1520 !important;
-  color: var(--frost);
-  border: 1px solid var(--rule);
-  border-radius: var(--r-sm);
+  background: var(--ef-surface-deep);
+  border: 1px solid var(--ef-border-subtle);
+  border-radius: var(--ef-radius-sm);
   padding: 18px 22px;
   overflow-x: auto;
   margin-block: 20px;
-  font-size: 13px;
+  font-size: var(--ef-text-code);
   line-height: 1.7;
+  /* Hair scrollbar — 6px, no track. Code and dense lists. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--ef-scroll-thumb) transparent;
+}
+
+.docs-article pre::-webkit-scrollbar {
+  height: 6px;
+}
+
+.docs-article pre::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.docs-article pre::-webkit-scrollbar-thumb {
+  background: var(--ef-scroll-thumb);
+  border-radius: var(--ef-radius-pill);
+}
+
+.docs-article pre::-webkit-scrollbar-thumb:active {
+  background: var(--ef-scroll-thumb-drag);
 }
 
 .docs-article pre code {
-  font-family: var(--f-mono);
+  font-family: var(--ef-font-mono);
   background: transparent;
   border: none;
   padding: 0;
@@ -145,40 +284,45 @@
 }
 
 .docs-article blockquote {
-  border-left: 2px solid var(--steel);
+  border-left: 2px solid var(--ef-border-strong);
   padding: 4px 0 4px 18px;
-  color: var(--graphite);
+  color: var(--ef-text-secondary);
   margin-block: 20px;
-  font-style: italic;
 }
 
 .docs-article table {
   width: 100%;
   border-collapse: collapse;
   margin-block: 20px;
-  font-size: 14px;
+  font-size: var(--ef-text-small);
 }
 
 .docs-article th,
 .docs-article td {
   padding: 12px 14px;
   text-align: left;
-  border-bottom: 1px solid var(--rule);
+  border-bottom: 1px solid var(--ef-border-subtle);
 }
 
+/* Column heads are the monospace's job — every uppercase setting is. */
 .docs-article th {
-  font-family: var(--f-mono);
-  font-size: var(--s-tag);
-  letter-spacing: 0.14em;
+  font-family: var(--ef-font-mono);
+  font-size: var(--ef-text-tag);
+  letter-spacing: var(--ef-track-tag-mid);
   text-transform: uppercase;
-  color: var(--muted);
-  font-weight: 400;
-  border-bottom-color: var(--rule-strong);
+  color: var(--ef-text-muted);
+  font-weight: var(--ef-weight-regular);
+  border-bottom-color: var(--ef-border-strong);
+}
+
+/* Pointing at a row lights the whole band — the ledger treatment. */
+.docs-article tbody tr:hover {
+  background: var(--ef-surface-panel);
 }
 
 .docs-article hr {
   border: none;
-  border-top: 1px solid var(--rule);
+  border-top: 1px solid var(--ef-border-subtle);
   margin-block: 32px;
 }
 
@@ -189,7 +333,7 @@
   gap: 16px;
   margin-top: 64px;
   padding-top: 28px;
-  border-top: 1px solid var(--rule);
+  border-top: 1px solid var(--ef-border-subtle);
 }
 
 .pager-link {
@@ -197,47 +341,51 @@
   flex-direction: column;
   gap: 4px;
   padding: 16px 18px;
-  border: 1px solid var(--rule-strong);
-  background: var(--paper);
-  border-radius: var(--r-sm);
+  border: 1px solid var(--ef-border);
+  background: var(--ef-surface-raised);
+  text-decoration: none;
   transition:
-    background 0.15s var(--ease),
-    border-color 0.15s var(--ease);
+    background var(--ef-motion-base) var(--ef-motion-ease),
+    border-color var(--ef-motion-base) var(--ef-motion-ease);
 }
 
-.pager-link:hover {
-  background: var(--ice);
-  border-color: var(--ink);
+/* The chamfer rotates — each card's cap points the way it leads. */
+.pager-prev {
+  border-radius: var(--ef-radius-cap-bl);
 }
 
 .pager-next {
+  border-radius: var(--ef-radius-cap-br);
   align-items: flex-end;
   text-align: right;
 }
 
+.pager-link:hover {
+  background: var(--ef-surface-hairline);
+  border-color: var(--ef-border-strong);
+}
+
 .pager-label {
-  font-family: var(--f-mono);
-  font-size: var(--s-tag);
-  font-weight: 500;
-  letter-spacing: 0.14em;
+  font-family: var(--ef-font-mono);
+  font-size: var(--ef-text-tag);
+  letter-spacing: var(--ef-track-tag-mid);
   text-transform: uppercase;
-  color: var(--muted);
+  color: var(--ef-text-muted);
 }
 
 .pager-title {
-  color: var(--ink);
-  font-family: var(--f-display);
-  font-weight: 700;
-  font-size: 15px;
-  letter-spacing: -0.01em;
+  color: var(--ef-text);
+  font-family: var(--ef-font-display);
+  font-weight: var(--ef-weight-semibold);
+  font-size: var(--ef-text-control);
 }
 
 .pager-spacer {
   display: block;
 }
 
-/* ─── Responsive ─── */
-@media (max-width: 1100px) {
+/* ─── Responsive — the shared breakpoint scale ─── */
+@media (max-width: 1099px) {
   .docs-shell {
     grid-template-columns: 240px minmax(0, 1fr);
     gap: 32px;
@@ -247,12 +395,10 @@
   }
 }
 
-@media (max-width: 720px) {
-  :root {
-    --edge: 24px;
-  }
+@media (max-width: 899px) {
   .docs-shell {
     grid-template-columns: 1fr;
+    padding: 0 var(--ef-space-lg);
   }
   .docs-sidebar-wrap {
     display: none;
@@ -260,33 +406,7 @@
   .docs-main {
     padding: 32px 0 64px;
   }
-}
-
-/* ─── Dark mode — the docs are dark-only ──────────────────────────
-   Loaded after brand/theme.css, so these :root overrides win. The
-   component primitives all derive from the palette + functional
-   tokens, so remapping here flips the whole surface. Values stay in
-   the brand family: ink becomes the surface, ice/frost carry text,
-   glacier takes over steel's accent role for contrast on dark. */
-:root {
-  /* Palette, remapped for dark */
-  --ink: #e6eef5;               /* strong text (was the dark ink) */
-  --paper: #0e1c2b;             /* the surface (was cream)        */
-  --ice: #16283a;               /* raised surfaces: panel heads   */
-  --frost: #a4bdd1;             /* secondary text — unchanged     */
-  --glacier: #7ea3c0;           /* slightly brightened            */
-  --steel: #6389a6;             /* accent, lifted for contrast    */
-  --graphite: #9dafc0;          /* muted text, lightened          */
-  --ember: #d8925f;             /* warm accent, lifted            */
-
-  /* Functional */
-  --bg: var(--paper);
-  --fg: var(--ink);
-  --muted: var(--graphite);
-  --rule: rgba(230, 238, 245, 0.12);
-  --rule-strong: rgba(230, 238, 245, 0.34);
-  --ring: rgba(126, 163, 192, 0.4);
-  --ok: #7ea3c0;
-  --warn: #d8925f;
-  --err: #d06a51;
+  .docs-article h1 {
+    font-size: var(--ef-text-h1);
+  }
 }

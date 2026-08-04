@@ -1,46 +1,39 @@
 ---
-import {
-  CSUITE_HEPTAGON_POINTS,
-  CSUITE_HEPTAGON_VERTICES,
-  CSUITE_LOGO_VIEWBOX,
-  brand,
-} from '../brand/brand.ts';
+import { MARK_ASPECT, MARK_VIEWBOX, brand, markFill } from '../brand/brand.ts';
+
+const markWidth = 24;
+const markHeight = Math.round(markWidth * MARK_ASPECT);
+
+// The wordmark is two-tone, split at the internal capital —
+// Command|Suite — per the pack's drawing (wordmark-dark/-light).
+const splitAt = brand.name.search(/(?<=.)[A-Z]/);
+const wordLead = splitAt > 0 ? brand.name.slice(0, splitAt) : brand.name;
+const wordAccent = splitAt > 0 ? brand.name.slice(splitAt) : '';
 ---
 
 <header class="docs-header">
   <div class="docs-header-inner">
-    <a href="/" class="logo" aria-label={brand.name}>
+    <a href="/" class="lockup" aria-label={`${brand.name} docs`}>
       <svg
-        width="24"
-        height="24"
-        viewBox={CSUITE_LOGO_VIEWBOX}
+        width={markWidth}
+        height={markHeight}
+        viewBox={MARK_VIEWBOX}
         fill="none"
-        stroke="var(--ink)"
-        stroke-width="3"
-        stroke-linejoin="round"
-        class="logo-mark"
+        class="lockup-mark"
         aria-hidden="true"
       >
-        <polygon points={CSUITE_HEPTAGON_POINTS} />
         {
-          CSUITE_HEPTAGON_VERTICES.map((v, i) => (
-            <circle
-              cx={v.x}
-              cy={v.y}
-              r="10"
-              fill={i === 0 ? 'var(--steel)' : 'var(--ink)'}
-              stroke="none"
-            />
-          ))
+          brand.mark.shapes.map((s) =>
+            s.kind === 'path' ? <path d={s.d} fill={markFill(s.fill)} /> : null
+          )
         }
       </svg>
-      <span class="logo-name">csuite</span>
-      <span class="logo-divider"></span>
-      <span class="logo-section">docs</span>
+      <span class="lockup-name">{wordLead}<span class="lockup-name-accent">{wordAccent}</span></span>
+      <span class="lockup-divider"></span>
+      <span class="lockup-section">Docs</span>
     </a>
     <nav class="nav">
-      <a href="https://commandsuite.io">Home</a>
-      <a href="/">Docs</a>
+      <a href={brand.homeUrl}>Home</a>
       <a href={brand.ossRepo}>GitHub</a>
     </nav>
   </div>
@@ -51,10 +44,10 @@ import {
     position: sticky;
     top: 0;
     z-index: 40;
-    background: rgba(14, 28, 43, 0.82);
-    backdrop-filter: blur(12px) saturate(1.05);
-    -webkit-backdrop-filter: blur(12px) saturate(1.05);
-    border-bottom: 1px solid var(--rule);
+    background: color-mix(in srgb, var(--ef-surface) 84%, transparent);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--ef-border-subtle);
   }
 
   .docs-header-inner {
@@ -62,62 +55,79 @@ import {
     align-items: center;
     justify-content: space-between;
     height: 60px;
-    padding: 0 var(--edge);
-    max-width: 1600px;
+    padding: 0 var(--ef-layout-edge);
+    max-width: var(--ef-layout-max);
     margin: 0 auto;
   }
 
-  .logo {
+  .lockup {
     display: inline-flex;
     align-items: center;
     gap: 10px;
-    font-family: var(--f-mono);
-    font-weight: 500;
-    font-size: 15px;
-    letter-spacing: -0.005em;
-    color: var(--ink);
+    font-size: var(--ef-text-lead);
   }
 
-  .logo-mark {
+  .lockup-mark {
     flex-shrink: 0;
+    /* Center the mark on the logotype's cap height, not its line box —
+       Rajdhani reserves descender depth the word never uses (GUIDE §03). */
+    transform: translateY(-0.055em);
   }
 
-  .logo-divider {
+  /* The logotype is Rajdhani 700, mixed case — never uppercase.
+     Two-tone per the pack's wordmark: lead warm white, "Suite" gold.
+     Artwork, not chrome, so it sits outside the Tier 1 budget. */
+  .lockup-name {
+    font-family: var(--ef-font-display);
+    font-weight: var(--ef-weight-bold);
+    letter-spacing: var(--ef-track-logotype);
+    color: var(--wordmark-lead, var(--ef-text));
+  }
+
+  .lockup-name-accent {
+    color: var(--wordmark-accent);
+  }
+
+  .lockup-divider {
     width: 1px;
     height: 16px;
-    background: var(--rule-strong);
+    background: var(--ef-border);
   }
 
-  .logo-section {
-    color: var(--muted);
-    font-size: 13px;
-    letter-spacing: 0.08em;
+  .lockup-section {
+    font-family: var(--ef-font-mono);
+    font-size: var(--ef-text-tag-lg);
+    letter-spacing: var(--ef-track-tag-mid);
     text-transform: uppercase;
+    color: var(--ef-text-muted);
   }
 
+  /* Bare text defers: muted, brightening to text on hover. Never gold. */
   .nav {
     display: flex;
     align-items: center;
-    gap: 24px;
-    font-family: var(--f-sans);
-    font-size: 14px;
-    font-weight: 700;
+    gap: var(--ef-space-lg);
+    font-family: var(--ef-font-mono);
+    font-size: var(--ef-text-tag-lg);
+    letter-spacing: var(--ef-track-tag-tight);
+    text-transform: uppercase;
   }
 
   .nav a {
-    color: var(--graphite);
-    transition: color 0.15s var(--ease);
+    color: var(--ef-text-muted);
+    transition: color var(--ef-motion-base) var(--ef-motion-ease);
   }
 
   .nav a:hover {
-    color: var(--ink);
+    color: var(--ef-text);
   }
 
-  @media (max-width: 560px) {
+  @media (max-width: 699px) {
     .docs-header-inner {
-      padding: 0 24px;
+      padding: 0 var(--ef-space-lg);
     }
-    .logo-section {
+    .lockup-divider,
+    .lockup-section {
       display: none;
     }
   }
