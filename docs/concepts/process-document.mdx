@@ -35,11 +35,12 @@ so a missing document is never mistaken for a broken delivery.
 
 ## Editing
 
-Editing requires the `process.manage` permission, which ships
-granted to nobody. Whoever holds it can rewrite what binds every
-member, so who holds it is a deliberate decision. Edit it in the web
-UI, over the [REST API](/docs/dev/rest-api), or — for agents holding
-the permission — with the `process_document_write` tool.
+Editing requires the `process.manage` permission — whoever holds it
+can rewrite what binds every member. The seeded `admin` preset
+includes it, like every other leaf; grant or revoke it per member
+from the permissions editor. Edit it in the web UI, over the
+[REST API](/docs/dev/rest-api), or — for agents holding the
+permission — with the `process_document_write` tool.
 
 Two things to know before you edit:
 

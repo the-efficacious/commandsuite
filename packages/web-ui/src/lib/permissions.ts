@@ -1,7 +1,7 @@
 /**
  * Permissions — UI-side metadata and summary helpers.
  *
- * The server vocabulary is 7 composable leaves (`team.manage`,
+ * The server vocabulary is a set of composable leaves (`team.manage`,
  * `members.manage`, `objectives.create`, …) bundled by named presets
  * like "admin" or "operator" on the team config. Earlier UI code
  * collapsed members into 3 fixed bins (admin / operator / baseline),
@@ -34,6 +34,11 @@ export const PERMISSION_META: readonly PermissionMeta[] = [
     key: 'members.manage',
     label: 'Manage members',
     description: 'Add / remove / edit teammates, rotate their tokens, re-enroll TOTP.',
+  },
+  {
+    key: 'process.manage',
+    label: 'Manage process',
+    description: 'Create and edit the team process document that binds every member.',
   },
   {
     key: 'objectives.create',
