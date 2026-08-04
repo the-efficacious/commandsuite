@@ -1,15 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
-  <style>
-    :root { --mark: #3E5C76; }
-    @media (prefers-color-scheme: dark) { :root { --mark: #E6EEF5; } }
-  </style>
-  <polygon fill="none" stroke="var(--mark)" stroke-width="3" stroke-linejoin="round"
-    points="60,15 95.18,31.94 103.87,70.01 79.52,100.54 40.48,100.54 16.13,70.01 24.82,31.94"/>
-  <circle cx="60"     cy="15"     r="10" fill="var(--mark)"/>
-  <circle cx="95.18"  cy="31.94"  r="10" fill="var(--mark)"/>
-  <circle cx="103.87" cy="70.01"  r="10" fill="var(--mark)"/>
-  <circle cx="79.52"  cy="100.54" r="10" fill="var(--mark)"/>
-  <circle cx="40.48"  cy="100.54" r="10" fill="var(--mark)"/>
-  <circle cx="16.13"  cy="70.01"  r="10" fill="var(--mark)"/>
-  <circle cx="24.82"  cy="31.94"  r="10" fill="var(--mark)"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 100 100" fill="none">
+<title>commandsuite app icon — dark, square</title>
+<rect width="100" height="100" fill="#1E1E1E"></rect>
+<svg x="7" y="19.36" width="86" height="61.28" viewBox="10 21.5 80 57"><path d="M16.22 21.5 L22.44 29.16 L16.22 36.83 L10 29.16 Z" fill="#B8962E"></path><path d="M83.78 21.5 L90 29.16 L83.78 36.83 L77.56 29.16 Z" fill="#B8962E"></path><path d="M30.61 29.93 L40.6 42.25 L30.61 54.57 L20.61 42.25 Z" fill="#CFB055"></path><path d="M69.39 29.93 L79.39 42.25 L69.39 54.57 L59.4 42.25 Z" fill="#CFB055"></path><path d="M50 41.7 L64.91 60.1 L50 78.5 L35.09 60.1 Z" fill="#F5DB7B"></path></svg>
 </svg>

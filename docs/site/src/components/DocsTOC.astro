@@ -16,7 +16,7 @@ const toc = headings.filter((h) => h.depth >= 2 && h.depth <= 3);
 {
   toc.length > 0 && (
     <nav class="docs-toc" aria-label="On this page">
-      <p class="toc-title">§ On this page</p>
+      <p class="toc-title">On this page</p>
       <ul>
         {toc.map((h) => (
           <li class:list={[`depth-${h.depth}`]}>
@@ -35,14 +35,32 @@ const toc = headings.filter((h) => h.depth >= 2 && h.depth <= 3);
     max-height: calc(100vh - 60px - 24px);
     overflow-y: auto;
     padding: 28px 0 28px 16px;
+    /* Ghost scrollbar — marginalia, never primary. */
+    scrollbar-width: thin;
+    scrollbar-color: var(--ef-scroll-thumb) transparent;
+  }
+  .docs-toc::-webkit-scrollbar {
+    width: 6px;
+  }
+  .docs-toc::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .docs-toc::-webkit-scrollbar-thumb {
+    background: transparent;
+    border-radius: var(--ef-radius-pill);
+    transition: background var(--ef-motion-slow);
+  }
+  .docs-toc:hover::-webkit-scrollbar-thumb {
+    background: var(--ef-scroll-thumb);
   }
 
   .toc-title {
-    font-family: var(--f-mono);
-    font-size: var(--s-tag);
-    letter-spacing: 0.14em;
+    font-family: var(--ef-font-mono);
+    font-size: var(--ef-text-tag);
+    font-weight: var(--ef-weight-medium);
+    letter-spacing: var(--ef-track-tag);
     text-transform: uppercase;
-    color: var(--muted);
+    color: var(--ef-text-muted);
     margin-bottom: 12px;
   }
 
@@ -61,15 +79,14 @@ const toc = headings.filter((h) => h.depth >= 2 && h.depth <= 3);
   }
 
   a {
-    font-family: var(--f-sans);
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--graphite);
-    transition: color 0.15s var(--ease);
+    font-family: var(--ef-font-body);
+    font-size: var(--ef-text-small);
+    color: var(--ef-text-muted);
+    transition: color var(--ef-motion-fast) var(--ef-motion-ease);
     line-height: 1.4;
   }
 
   a:hover {
-    color: var(--steel);
+    color: var(--ef-text);
   }
 </style>

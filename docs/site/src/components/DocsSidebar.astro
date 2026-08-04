@@ -13,7 +13,7 @@ const { sections, currentSlug } = Astro.props;
   {
     sections.map((section) => (
       <div class="section">
-        <h3 class="section-title">§ {section.name}</h3>
+        <h3 class="section-title">{section.name}</h3>
         <ul class="section-list">
           {section.entries.map((entry) => {
             const isActive = entry.slug === currentSlug;
@@ -42,18 +42,37 @@ const { sections, currentSlug } = Astro.props;
     max-height: calc(100vh - 60px - 24px);
     overflow-y: auto;
     padding: 28px 16px 28px 0;
+    /* Ghost scrollbar — marginalia, never primary. */
+    scrollbar-width: thin;
+    scrollbar-color: var(--ef-scroll-thumb) transparent;
+  }
+  .docs-sidebar::-webkit-scrollbar {
+    width: 6px;
+  }
+  .docs-sidebar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .docs-sidebar::-webkit-scrollbar-thumb {
+    background: transparent;
+    border-radius: var(--ef-radius-pill);
+    transition: background var(--ef-motion-slow);
+  }
+  .docs-sidebar:hover::-webkit-scrollbar-thumb {
+    background: var(--ef-scroll-thumb);
   }
 
   .section {
     margin-bottom: 28px;
   }
 
+  /* Uppercase is the monospace's job. */
   .section-title {
-    font-family: var(--f-mono);
-    font-size: var(--s-tag);
-    letter-spacing: 0.14em;
+    font-family: var(--ef-font-mono);
+    font-size: var(--ef-text-tag);
+    font-weight: var(--ef-weight-medium);
+    letter-spacing: var(--ef-track-tag);
     text-transform: uppercase;
-    color: var(--muted);
+    color: var(--ef-text-muted);
     margin-bottom: 12px;
     padding-left: 14px;
   }
@@ -62,36 +81,32 @@ const { sections, currentSlug } = Astro.props;
     list-style: none;
     padding: 0;
     margin: 0;
-    border-left: 1px solid var(--rule);
-  }
-
-  .section-list li {
-    position: relative;
   }
 
   .entry-link {
     display: block;
-    padding: 6px 14px;
-    margin-left: -1px;
-    font-family: var(--f-sans);
+    padding: 7px 14px;
+    font-family: var(--ef-font-body);
     font-size: 14px;
-    font-weight: 700;
-    color: var(--graphite);
-    border-left: 1px solid transparent;
+    color: var(--ef-text-tertiary);
     transition:
-      color 0.15s var(--ease),
-      border-color 0.15s var(--ease),
-      background 0.15s var(--ease);
+      color var(--ef-motion-fast) var(--ef-motion-ease),
+      background var(--ef-motion-fast) var(--ef-motion-ease);
   }
 
   .entry-link:hover {
-    color: var(--ink);
-    border-left-color: var(--glacier);
+    color: var(--ef-text);
+    background: var(--ef-surface-panel);
   }
 
+  /* Selected: sunken fill + a 3px gold assert bar flush against the
+     edge — the ledger's pinned-row treatment, same as the product nav.
+     One mark, once per view, inside the Tier 1 budget. Inset shadow
+     rather than border-left so the bar doesn't shift the baseline. */
   .entry-link.active {
-    color: var(--ink);
-    border-left-color: var(--steel);
-    background: rgba(99, 137, 166, 0.08);
+    color: var(--ef-text);
+    font-weight: var(--ef-weight-semibold);
+    background: var(--ef-surface-sunken);
+    box-shadow: inset 3px 0 0 var(--ef-assert);
   }
 </style>

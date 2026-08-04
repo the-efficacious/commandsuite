@@ -1,7 +1,77 @@
 import cloudflare from '@astrojs/cloudflare';
 import { unified } from '@astrojs/markdown-remark';
 import mdx from '@astrojs/mdx';
+import { helm } from '@the-efficacious/brand';
 import { defineConfig } from 'astro/config';
+
+/**
+ * Shiki theme derived from the kit's code roles: the five --ef-code-*
+ * colours plus the text tiers, resolved through the brand package so no
+ * colour literal lives in this repo. Fences land on the deep surface —
+ * inset wells under the article (docs.css draws the matching frame).
+ *
+ * Static builds bake these as hexes, so a `data-ef-theme` swap does not
+ * re-resolve fences; the docs ship helm dark and that is fine. If the
+ * site ever grows a theme toggle, this is the one place that needs work.
+ */
+function helmCodeTheme() {
+  const c = helm.color;
+  return {
+    name: 'helm',
+    type: 'dark',
+    colors: {
+      'editor.background': c.surfaceDeep,
+      'editor.foreground': c.text,
+    },
+    tokenColors: [
+      {
+        scope: ['comment', 'punctuation.definition.comment'],
+        settings: { foreground: c.codeComment, fontStyle: 'italic' },
+      },
+      {
+        scope: ['string', 'string.quoted', 'punctuation.definition.string'],
+        settings: { foreground: c.codeString },
+      },
+      {
+        scope: ['constant.numeric', 'constant.language', 'constant.character', 'constant.other'],
+        settings: { foreground: c.codeNumber },
+      },
+      {
+        scope: ['keyword', 'storage.type', 'storage.modifier'],
+        settings: { foreground: c.codeKeyword },
+      },
+      {
+        scope: ['keyword.operator', 'punctuation', 'meta.brace'],
+        settings: { foreground: c.codePunctuation },
+      },
+      {
+        scope: ['entity.name.function', 'support.function'],
+        settings: { foreground: c.text },
+      },
+      {
+        scope: [
+          'entity.name.type',
+          'entity.name.class',
+          'support.type',
+          'support.class',
+          'entity.name.tag',
+        ],
+        settings: { foreground: c.codeKeyword },
+      },
+      {
+        scope: ['variable', 'variable.other', 'variable.parameter'],
+        settings: { foreground: c.textSecondary },
+      },
+      {
+        scope: ['entity.other.attribute-name'],
+        settings: { foreground: c.textSecondary },
+      },
+      { scope: ['markup.heading'], settings: { foreground: c.text } },
+      { scope: ['markup.bold'], settings: { fontStyle: 'bold' } },
+      { scope: ['markup.italic'], settings: { fontStyle: 'italic' } },
+    ],
+  };
+}
 
 /**
  * The synced OSS docs still carry legacy `/docs/...` internal links from the
@@ -51,7 +121,7 @@ export default defineConfig({
     // links and its semantics should not shift underneath it.
     processor: unified({ rehypePlugins: [rehypeStripDocsPrefix] }),
     shikiConfig: {
-      theme: 'github-dark',
+      theme: helmCodeTheme(),
       wrap: true,
     },
   },
