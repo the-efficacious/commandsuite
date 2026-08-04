@@ -1,17 +1,14 @@
 /**
  * Secret redaction for captured activity.
  *
- * NOTHING HERE SEES DECRYPTED NETWORK TRAFFIC. The MITM proxy this
- * module was written for is gone (see `cli/runtime/trace/host.ts`):
- * capture is now fed by each agent's own instrumentation — Claude
- * Code's session transcript, codex's rollout JSONL — so what passes
- * through is already-parsed content, not intercepted HTTP.
+ * NOTHING HERE SEES NETWORK TRAFFIC. Capture is fed by each agent's
+ * own instrumentation — Claude Code's session transcript, codex's
+ * rollout JSONL — so what passes through is already-parsed content,
+ * never intercepted HTTP (see `cli/runtime/trace/host.ts`).
  *
- * The threat model changed with it. It is no longer "an operator's
- * bearer token rides in an `Authorization` header we happen to be
- * decrypting". It is that secrets surface inside CONTENT: an agent
- * runs `env`, echoes a token into a tool result, or pastes a key into
- * a request body. Before any of that leaves the runner (uploaded to
+ * The threat model: secrets surface inside CONTENT. An agent runs
+ * `env`, echoes a token into a tool result, or pastes a key into a
+ * request body. Before any of that leaves the runner (uploaded to
  * the csuite server, shown in a web UI, or written to disk), we scrub
  * known-bad patterns in place.
  *
@@ -29,7 +26,7 @@
  *     analysis still works.
  *     NOTE: `redactHeaders` is a published export of `csuite-core` with
  *     NO in-tree caller. It exists for consumers that do hold raw
- *     headers; nothing in this repo captures them any more. Kept rather
+ *     headers; nothing in this repo captures raw headers. Kept rather
  *     than removed because it is public API — but do not read its
  *     presence as evidence that csuite inspects HTTP headers.
  *   - Body-level: pattern-match common key shapes (Anthropic `sk-ant-…`,

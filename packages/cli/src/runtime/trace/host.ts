@@ -2,14 +2,13 @@
  * CaptureHost — the runner-owned handle that turns each agent's NATIVE
  * instrumentation into one normalized activity stream.
  *
- * There is NO network interception here anymore. The old MITM TLS
- * proxy + per-session CA + HTTP/1.1 reassembler is gone. What remains
- * is the capture SINK the runner wires every adapter into:
+ * There is NO network interception here — the CaptureHost is the
+ * capture SINK the runner wires every adapter into:
  *
  *   - the batched `ActivityUploader` (ships `ActivityEvent`s to the
  *     broker in real time),
  *   - the `busy` signal (driven by Claude Code hooks and the codex
- *     app-server item stream, not by proxied traffic),
+ *     app-server item stream),
  *   - the loopback hook server (Claude Code POSTs PreToolUse /
  *     PostToolUse / UserPromptSubmit / Stop / Notification here — it
  *     drives `busy` and surfaces the `transcript_path`; PRESENCE-ONLY,

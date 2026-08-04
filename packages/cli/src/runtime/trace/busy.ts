@@ -23,8 +23,7 @@
  *     UserPromptSubmit → Stop hooks bracket it; codex's
  *     turn/started → turn/completed notifications bracket it. Lights up
  *     `working` for model generation AND tool execution, not just tool
- *     windows. (Formerly `llm_inflight`, which only the old MITM proxy
- *     lit while a model request was on the wire.)
+ *     windows.
  *   - `tool_inflight` — bumped by per-runner integrations watching tool
  *     lifecycle events (claude Pre/PostToolUse hooks, codex
  *     `item/started`/`item/completed`). Lights up during bash, file-edit,
