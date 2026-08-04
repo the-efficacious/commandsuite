@@ -20,7 +20,7 @@
 
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { dismissToast, type Toast, type ToastKind, toasts } from '../../lib/toast.js';
-import { AlertCircle, AlertTriangle, CheckCircle2, Info, X } from '../icons/index.js';
+import { X } from '../icons/index.js';
 
 export function ToastContainer() {
   const queue = toasts.value;
@@ -74,9 +74,7 @@ function ToastItem({ toast }: { toast: Toast }) {
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
     >
-      <span class="icon" aria-hidden="true">
-        <KindIcon kind={toast.kind} />
-      </span>
+      <span class="dot" aria-hidden="true" />
       <div class="body">
         {toast.title !== undefined && <div class="title">{toast.title}</div>}
         <div class="msg">{toast.body}</div>
@@ -111,18 +109,5 @@ function variantClassFor(kind: ToastKind): string {
       return 'err';
     default:
       return '';
-  }
-}
-
-function KindIcon({ kind }: { kind: ToastKind }) {
-  switch (kind) {
-    case 'success':
-      return <CheckCircle2 size={16} />;
-    case 'warn':
-      return <AlertTriangle size={16} />;
-    case 'error':
-      return <AlertCircle size={16} />;
-    default:
-      return <Info size={16} />;
   }
 }

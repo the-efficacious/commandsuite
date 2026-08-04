@@ -62,7 +62,7 @@ export function NotificationToggle() {
         onClick={() => {
           void enablePush();
         }}
-        class="badge ember flex items-center"
+        class="badge caution flex items-center"
         style="cursor:pointer;gap:4px"
         title={state.message}
       >

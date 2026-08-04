@@ -120,7 +120,7 @@ export function ToolSourcesPanel() {
 }
 
 function SourceListRow({ source, isLast }: { source: ToolSourceSummary; isLast: boolean }) {
-  const border = isLast ? '' : 'border-bottom:1px solid var(--rule);';
+  const border = isLast ? '' : 'border-bottom:1px solid var(--ef-border);';
   return (
     <li>
       <button
@@ -133,30 +133,30 @@ function SourceListRow({ source, isLast }: { source: ToolSourceSummary; isLast: 
         <div class="min-w-0 flex items-center gap-3 flex-wrap">
           <span
             class="font-display"
-            style="font-weight:700;letter-spacing:-0.01em;font-size:15px;color:var(--ink)"
+            style="font-weight:700;letter-spacing:-0.01em;font-size:15px;color:var(--ef-text)"
           >
             {source.slug}
           </span>
-          <span class={`badge ${source.kind === 'mcp' ? 'glacier solid' : 'ember solid'}`}>
+          <span class={`badge ${source.kind === 'mcp' ? 'info solid' : 'caution solid'}`}>
             {source.kind === 'mcp' ? 'MCP' : 'Custom'}
           </span>
           {!source.enabled && <span class="badge muted">Disabled</span>}
           {source.allMembers && <span class="badge soft">All members</span>}
           {source.displayName.length > 0 && (
-            <span style="font-family:var(--f-mono);font-size:11.5px;color:var(--muted);letter-spacing:.04em">
+            <span style="font-family:var(--ef-font-mono);font-size:11.5px;color:var(--ef-text-muted);letter-spacing:.04em">
               {source.displayName}
             </span>
           )}
         </div>
         <div class="flex items-center gap-3 flex-shrink-0">
-          <span style="font-family:var(--f-mono);font-size:11px;color:var(--muted);letter-spacing:.06em">
+          <span style="font-family:var(--ef-font-mono);font-size:11px;color:var(--ef-text-muted);letter-spacing:.06em">
             {source.toolCount} tool{source.toolCount === 1 ? '' : 's'}
           </span>
           <span
             class={`dot ${source.hasCredential ? 'ok' : 'muted'}`}
             title={source.hasCredential ? 'Credential set' : 'No credential'}
           />
-          <span style="display:inline-flex;align-items:center;gap:4px;font-family:var(--f-mono);font-size:11px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase">
+          <span style="display:inline-flex;align-items:center;gap:4px;font-family:var(--ef-font-mono);font-size:11px;color:var(--ef-text-muted);letter-spacing:.08em;text-transform:uppercase">
             <ArrowRight size={12} aria-hidden="true" />
             Manage
           </span>
@@ -269,7 +269,7 @@ function CreateSourceForm() {
               formAllMembers.value = (e.currentTarget as HTMLInputElement).checked;
             }}
           />
-          <span style="font-family:var(--f-sans);font-size:13px;color:var(--ink)">
+          <span style="font-family:var(--ef-font-body);font-size:13px;color:var(--ef-text)">
             Open to all members (skip per-member bindings)
           </span>
         </label>
@@ -308,7 +308,7 @@ function Labeled({
     <label style="display:flex;flex-direction:column;gap:4px">
       <div class="eyebrow">{label}</div>
       {children}
-      <div style="font-family:var(--f-sans);font-size:11.5px;color:var(--muted);font-style:italic">
+      <div style="font-family:var(--ef-font-body);font-size:11.5px;color:var(--ef-text-muted);font-style:italic">
         {hint}
       </div>
     </label>

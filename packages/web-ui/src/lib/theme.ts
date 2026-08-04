@@ -1,20 +1,22 @@
 /**
  * Theme — light / dark / auto preference, persisted in localStorage.
  *
- * The shell defines two palettes in `styles/theme.css`:
- *   - `:root`                       → light (default)
- *   - `:root[data-theme="dark"]`    → dusk dark
+ * Palettes come from `@the-efficacious/brand/tokens.css`:
+ *   - `:root`                              → helm (dark, the default)
+ *   - `:root[data-ef-theme="helm-light"]`  → helm-light
  *
- * This module owns the `data-theme` attribute on `<html>`. The viewer
- * picks one of three modes:
+ * This module owns the `data-ef-theme` attribute on `<html>`. The
+ * viewer picks one of three modes:
  *
- *   "light"   force light palette regardless of OS preference
- *   "dark"    force dark palette regardless of OS preference
+ *   "light"   force helm-light regardless of OS preference
+ *   "dark"    force helm regardless of OS preference
  *   "auto"    follow `prefers-color-scheme` and update live as the OS
  *             setting flips
  *
  * `themeMode` is the persisted user choice; `effectiveTheme` is the
  * resolved palette currently in effect (always `'light' | 'dark'`).
+ * Helm is dark-native, so the unset default is `dark`, not `auto` —
+ * a first visit gets the brand's flagship theme.
  *
  * Hosts call `initTheme()` once at startup BEFORE the first paint so
  * the attribute is set on `<html>` ahead of any styled render —
@@ -47,11 +49,9 @@ export const effectiveTheme = computed<EffectiveTheme>(() => {
 export function setThemeMode(mode: ThemeMode): void {
   themeMode.value = mode;
   try {
-    if (mode === 'auto') {
-      localStorage.removeItem(STORAGE_KEY);
-    } else {
-      localStorage.setItem(STORAGE_KEY, mode);
-    }
+    // `auto` is stored explicitly: an absent key means "never chose",
+    // which resolves to the dark default — not to auto.
+    localStorage.setItem(STORAGE_KEY, mode);
   } catch {
     // localStorage may be disabled (private mode, sandboxed iframe).
     // The signal still drives the in-memory state for this session.
@@ -96,7 +96,7 @@ export function initTheme(): () => void {
 
 /** Test-only: reset to defaults + clear persistence. */
 export function __resetThemeForTests(): void {
-  themeMode.value = 'auto';
+  themeMode.value = 'dark';
   systemPrefersDark.value = false;
   try {
     localStorage.removeItem(STORAGE_KEY);
@@ -108,11 +108,11 @@ export function __resetThemeForTests(): void {
 function readPersisted(): ThemeMode {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw === 'light' || raw === 'dark') return raw;
+    if (raw === 'light' || raw === 'dark' || raw === 'auto') return raw;
   } catch {
     /* ignore */
   }
-  return 'auto';
+  return 'dark';
 }
 
 function readSystemPref(): boolean {
@@ -126,9 +126,10 @@ function readSystemPref(): boolean {
 function applyAttribute(t: EffectiveTheme): void {
   if (typeof document === 'undefined') return;
   const root = document.documentElement;
-  if (t === 'dark') {
-    root.setAttribute('data-theme', 'dark');
+  if (t === 'light') {
+    root.setAttribute('data-ef-theme', 'helm-light');
   } else {
-    root.removeAttribute('data-theme');
+    // helm (dark) is the `:root` default — no attribute needed.
+    root.removeAttribute('data-ef-theme');
   }
 }

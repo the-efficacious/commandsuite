@@ -16,7 +16,7 @@ import { instructions } from '../lib/instructions.js';
 import { loadObjectives, objectives, objectivesLoaded } from '../lib/objectives.js';
 import { selectObjectiveCreate, selectObjectiveDetail } from '../lib/view.js';
 import { AlertTriangle } from './icons/index.js';
-import { EmptyState, ErrorCallout, Loading, PageHeader } from './ui/index.js';
+import { EmptyState, ErrorCallout, PageHeader } from './ui/index.js';
 
 export interface ObjectivesPanelProps {
   viewer: string;
@@ -24,7 +24,7 @@ export interface ObjectivesPanelProps {
 
 const STATUS_BADGE: Record<ObjectiveStatus, string> = {
   active: 'badge solid',
-  blocked: 'badge ember solid',
+  blocked: 'badge caution solid',
   done: 'badge soft',
   cancelled: 'badge muted',
 };
@@ -49,7 +49,18 @@ export function ObjectivesPanel({ viewer }: ObjectivesPanelProps) {
   const canCreate = b?.permissions.includes('objectives.create') ?? false;
 
   if (!loaded && err === null) {
-    return <Loading label="Loading objectives…" />;
+    // Skeleton rows hold the final row height so arrival doesn't reflow.
+    return (
+      <div
+        class="flex-1 overflow-y-auto"
+        style="padding:24px max(1rem,env(safe-area-inset-right)) 24px max(1rem,env(safe-area-inset-left))"
+        aria-busy="true"
+      >
+        {[0, 1, 2, 3].map((i) => (
+          <div key={i} class="ef-skeleton" style="height:44px;margin-bottom:8px" />
+        ))}
+      </div>
+    );
   }
 
   const retry = () => {
@@ -119,8 +130,8 @@ function ObjectiveRow({ objective, viewer }: { objective: Objective; viewer: str
           <div class="flex items-center gap-3 min-w-0 flex-wrap">
             <span class={STATUS_BADGE[objective.status]}>{objective.status}</span>
             <span
-              class="truncate"
-              style={`font-family:var(--f-display);font-weight:700;letter-spacing:-0.01em;color:var(--ink);font-size:15px;${objective.status === 'cancelled' ? 'text-decoration:line-through;color:var(--muted)' : ''}`}
+              class={`truncate${objective.status === 'cancelled' ? ' struck' : ''}`}
+              style="font-family:var(--ef-font-display);font-weight:700;letter-spacing:-0.01em;font-size:15px"
             >
               {objective.title}
             </span>
@@ -128,27 +139,27 @@ function ObjectiveRow({ objective, viewer }: { objective: Objective; viewer: str
           {/* Assignee — hidden on narrow viewports; secondary line below on small. */}
           <span
             class="hidden sm:inline flex-shrink-0"
-            style="font-family:var(--f-mono);font-size:11px;letter-spacing:.08em;color:var(--muted);text-transform:uppercase;margin-top:2px"
+            style="font-family:var(--ef-font-mono);font-size:11px;letter-spacing:.08em;color:var(--ef-text-muted);text-transform:uppercase;margin-top:2px"
           >
             {isMine ? '(you)' : `→ ${objective.assignee}`}
           </span>
         </div>
         <div
           class="truncate"
-          style="font-family:var(--f-sans);font-size:13px;color:var(--graphite);margin-top:8px;line-height:1.4"
+          style="font-family:var(--ef-font-body);font-size:13px;color:var(--ef-text-faint);margin-top:8px;line-height:1.4"
         >
           outcome: {objective.outcome}
         </div>
         <div
           class="sm:hidden"
-          style="font-family:var(--f-mono);font-size:11px;letter-spacing:.08em;color:var(--muted);text-transform:uppercase;margin-top:6px"
+          style="font-family:var(--ef-font-mono);font-size:11px;letter-spacing:.08em;color:var(--ef-text-muted);text-transform:uppercase;margin-top:6px"
         >
           {isMine ? '(you)' : `→ ${objective.assignee}`}
         </div>
         {objective.blockReason && (
           <div
             class="flex items-center"
-            style="font-family:var(--f-sans);font-size:13px;color:var(--ember);margin-top:6px;font-weight:500;gap:6px"
+            style="font-family:var(--ef-font-body);font-size:13px;color:var(--ef-lamp-caution);margin-top:6px;font-weight:500;gap:6px"
           >
             <AlertTriangle size={13} aria-hidden="true" class="flex-shrink-0" />
             <span>blocked: {objective.blockReason}</span>

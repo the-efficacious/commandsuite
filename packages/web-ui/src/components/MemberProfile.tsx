@@ -23,11 +23,12 @@ import type { Member, Objective, Teammate } from 'csuite-sdk/types';
 import { hasPermission } from 'csuite-sdk/types';
 import { useEffect } from 'preact/hooks';
 import { getClient } from '../lib/client.js';
+import { initials } from '../lib/initials.js';
 import { instructions } from '../lib/instructions.js';
 import { memberActivityError, startMemberActivitySubscribe } from '../lib/member-activity.js';
 import { objectives as objectivesSignal } from '../lib/objectives.js';
 import { PERMISSION_META, sortLeaves, summarizePermissions } from '../lib/permissions.js';
-import { presenceCaptureWarning, roster as rosterSignal } from '../lib/roster.js';
+import { memberKind, presenceCaptureWarning, roster as rosterSignal } from '../lib/roster.js';
 import type { ProfileTab } from '../lib/routes.js';
 import {
   selectDmWith,
@@ -37,7 +38,7 @@ import {
   selectOverview,
 } from '../lib/view.js';
 import { AgentTimeline } from './AgentTimeline.js';
-import { ArrowLeft, ArrowRight, ChevronRight } from './icons/index.js';
+import { ArrowLeft, ArrowRight } from './icons/index.js';
 import { MemberAdminForm } from './members/MemberAdminForm.js';
 import { type Reveal, RevealBanner } from './members/Reveal.js';
 import { EmptyState, ErrorCallout, Loading, Mention } from './ui/index.js';
@@ -135,21 +136,26 @@ export function MemberProfile({ name, tab, viewer }: MemberProfileProps) {
     <div class="flex-1 flex flex-col min-h-0">
       <div
         class="flex-shrink-0"
-        style="padding:18px max(1rem,env(safe-area-inset-right)) 0 max(1rem,env(safe-area-inset-left));border-bottom:1px solid var(--rule)"
+        style="padding:18px max(1rem,env(safe-area-inset-right)) 0 max(1rem,env(safe-area-inset-left));border-bottom:1px solid var(--ef-border)"
       >
         <Crumbs name={name} />
 
         <div class="flex items-center gap-3 flex-wrap" style="margin-top:10px">
-          <span class="avatar" aria-hidden="true" style="width:42px;height:42px;font-size:16px">
+          <span
+            class="avatar"
+            data-kind={memberKind(name) ?? 'agent'}
+            data-size="48"
+            aria-hidden="true"
+          >
             {initials(name)}
           </span>
           <h1
             class="font-display"
-            style="font-size:26px;font-weight:700;letter-spacing:-0.02em;color:var(--ink);line-height:1.15;margin:0"
+            style="font-size:26px;font-weight:700;letter-spacing:-0.02em;color:var(--ef-text);line-height:1.15;margin:0"
           >
             {name}
             {isSelf && (
-              <span style="font-family:var(--f-mono);font-size:11px;letter-spacing:.14em;color:var(--muted);text-transform:uppercase;margin-left:8px">
+              <span style="font-family:var(--ef-font-mono);font-size:11px;letter-spacing:.14em;color:var(--ef-text-muted);text-transform:uppercase;margin-left:8px">
                 (you)
               </span>
             )}
@@ -179,7 +185,7 @@ export function MemberProfile({ name, tab, viewer }: MemberProfileProps) {
         </div>
 
         {displayRole.description.length > 0 && (
-          <div style="margin-top:8px;font-family:var(--f-sans);font-size:14px;color:var(--graphite);line-height:1.45;font-style:italic">
+          <div style="margin-top:8px;font-family:var(--ef-font-body);font-size:14px;color:var(--ef-text-faint);line-height:1.45;font-style:italic">
             {displayRole.description}
           </div>
         )}
@@ -188,11 +194,11 @@ export function MemberProfile({ name, tab, viewer }: MemberProfileProps) {
           <span class="eyebrow" style="margin:0" title={`Permission preset: ${permSummary.label}`}>
             {permSummary.label}
           </span>
-          <span style="color:var(--rule-strong)" aria-hidden="true">
+          <span style="color:var(--ef-border-strong)" aria-hidden="true">
             ·
           </span>
           {displayPerms.length === 0 ? (
-            <span style="font-family:var(--f-mono);font-size:11px;color:var(--muted);letter-spacing:.04em;font-style:italic">
+            <span style="font-family:var(--ef-font-mono);font-size:11px;color:var(--ef-text-muted);letter-spacing:.04em;font-style:italic">
               no elevated permissions
             </span>
           ) : (
@@ -201,7 +207,7 @@ export function MemberProfile({ name, tab, viewer }: MemberProfileProps) {
                 <span
                   key={p}
                   class="badge soft"
-                  style="font-family:var(--f-mono);font-size:10px;letter-spacing:.04em;padding:2px 6px"
+                  style="font-family:var(--ef-font-mono);font-size:10px;letter-spacing:.04em;padding:2px 6px"
                   title={labelFor(p)}
                 >
                   {p}
@@ -279,7 +285,7 @@ function Crumbs({ name }: { name: string }) {
         Home
       </button>
       <span class="sep" aria-hidden="true">
-        <ChevronRight size={13} />
+        /
       </span>
       <span class="current">@{name}</span>
     </nav>
@@ -312,7 +318,7 @@ function TabBar({
             aria-selected={isActive}
             onClick={() => selectMemberProfile(name, t)}
             class="flex-shrink-0"
-            style={`padding:8px 14px;background:transparent;border:none;border-bottom:2px solid ${isActive ? 'var(--ink)' : 'transparent'};font-family:var(--f-mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:${isActive ? 'var(--ink)' : 'var(--muted)'};font-weight:${isActive ? 700 : 500};cursor:pointer`}
+            style={`padding:8px 14px;background:transparent;border:none;border-bottom:2px solid ${isActive ? 'var(--ef-text)' : 'transparent'};font-family:var(--ef-font-mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:${isActive ? 'var(--ef-text)' : 'var(--ef-text-muted)'};font-weight:${isActive ? 700 : 500};cursor:pointer`}
           >
             {TAB_LABELS[t]}
           </button>
@@ -354,20 +360,20 @@ function OverviewTab({
       <div class="eyebrow" style="margin-bottom:12px">
         Summary
       </div>
-      <dl style="display:grid;grid-template-columns:max-content 1fr;gap:8px 16px;font-family:var(--f-sans);font-size:13.5px">
-        <dt style="color:var(--muted);font-family:var(--f-mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase">
-          Permissions
-        </dt>
-        <dd style="color:var(--ink);margin:0">{permsLabel}</dd>
-        <dt style="color:var(--muted);font-family:var(--f-mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase">
-          Active objectives
-        </dt>
-        <dd style="color:var(--ink);margin:0">{assignedCount}</dd>
-        <dt style="color:var(--muted);font-family:var(--f-mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase">
-          Watching
-        </dt>
-        <dd style="color:var(--ink);margin:0">{watchingCount}</dd>
-      </dl>
+      <div class="fact-grid">
+        <div>
+          <div class="fact-k">PERMISSIONS</div>
+          <div class="fact-v">{permsLabel}</div>
+        </div>
+        <div>
+          <div class="fact-k">ACTIVE OBJECTIVES</div>
+          <div class="fact-v">{assignedCount}</div>
+        </div>
+        <div>
+          <div class="fact-k">WATCHING</div>
+          <div class="fact-v">{watchingCount}</div>
+        </div>
+      </div>
     </section>
   );
 }
@@ -418,7 +424,7 @@ function ObjectiveList({
         {title} ({objectives.length})
       </div>
       {objectives.length === 0 ? (
-        <div style="font-family:var(--f-sans);font-size:13px;color:var(--muted);font-style:italic">
+        <div style="font-family:var(--ef-font-body);font-size:13px;color:var(--ef-text-muted);font-style:italic">
           {emptyLabel}
         </div>
       ) : (
@@ -428,11 +434,11 @@ function ObjectiveList({
               <button
                 type="button"
                 onClick={() => selectObjectiveDetail(o.id)}
-                class="text-link-steel"
-                style="font-family:var(--f-sans);font-size:14px;text-align:left;padding:0;background:none;border:none;cursor:pointer"
+                class="text-link-action"
+                style="font-family:var(--ef-font-body);font-size:14px;text-align:left;padding:0;background:none;border:none;cursor:pointer"
               >
                 <span style={`color:${statusColor(o.status)};font-weight:600`}>[{o.status}]</span>{' '}
-                {o.title} <span style="color:var(--muted)">— assigned to </span>
+                {o.title} <span style="color:var(--ef-text-muted)">— assigned to </span>
                 <Mention name={o.assignee} plain variant="text" />
               </button>
             </li>
@@ -561,17 +567,9 @@ function tabsFor({ isAdmin, isSelf }: { isAdmin: boolean; isSelf: boolean }): Pr
   return tabs;
 }
 
-function initials(name: string): string {
-  const parts = name.split(/[\s_-]+/).filter(Boolean);
-  if (parts.length >= 2) {
-    return `${parts[0]?.[0] ?? ''}${parts[1]?.[0] ?? ''}`.toUpperCase();
-  }
-  return name.slice(0, 2).toUpperCase();
-}
-
 function badgeClassFor(summary: import('../lib/permissions.js').PermissionSummary): string {
   if (summary.isAdmin) return 'solid';
-  if (summary.kind === 'preset' || summary.kind === 'custom') return 'ember';
+  if (summary.kind === 'preset' || summary.kind === 'custom') return 'caution';
   return 'soft';
 }
 
@@ -583,12 +581,12 @@ function labelFor(leaf: string): string {
 function statusColor(status: Objective['status']): string {
   switch (status) {
     case 'active':
-      return 'var(--ok, #2e7d32)';
+      return 'var(--ef-lamp-nominal)';
     case 'blocked':
-      return 'var(--ember)';
+      return 'var(--ef-lamp-caution)';
     case 'done':
-      return 'var(--muted)';
+      return 'var(--ef-lamp-stood-down)';
     case 'cancelled':
-      return 'var(--muted)';
+      return 'var(--ef-lamp-stood-down)';
   }
 }

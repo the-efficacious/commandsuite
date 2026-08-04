@@ -37,24 +37,24 @@ export function ChannelHeader({ channel, viewer }: ChannelHeaderProps) {
     <>
       <div
         class="flex items-center flex-shrink-0"
-        style="background:var(--ice);border-bottom:1px solid var(--rule);padding:10px max(0.75rem,env(safe-area-inset-right)) 10px max(0.75rem,env(safe-area-inset-left));gap:10px"
+        style="background:var(--ef-surface-raised);border-bottom:1px solid var(--ef-border);padding:10px max(0.75rem,env(safe-area-inset-right)) 10px max(0.75rem,env(safe-area-inset-left));gap:10px"
       >
         <span
           aria-hidden="true"
-          style="color:var(--muted);font-family:var(--f-mono);font-size:14px"
+          style="color:var(--ef-text-muted);font-family:var(--ef-font-mono);font-size:14px"
         >
           #
         </span>
         <div class="flex-1 min-w-0">
           <div
             class="font-display truncate"
-            style="font-size:14.5px;font-weight:700;letter-spacing:-0.01em;color:var(--ink);line-height:1.15"
+            style="font-size:var(--ef-text-h4);font-weight:var(--ef-weight-semibold);color:var(--ef-text);line-height:1.15"
           >
             {channel.slug}
           </div>
           <div
             class="truncate"
-            style="font-family:var(--f-mono);font-size:10.5px;letter-spacing:.04em;color:var(--muted);margin-top:1px"
+            style="font-family:var(--ef-font-mono);font-size:10.5px;letter-spacing:.04em;color:var(--ef-text-muted);margin-top:1px"
           >
             {channel.id === 'general'
               ? 'team channel · everyone'

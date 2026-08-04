@@ -76,26 +76,26 @@ export function ChannelCreate() {
         <header>
           <h1
             class="font-display"
-            style="font-size:22px;font-weight:700;letter-spacing:-0.01em;color:var(--ink);margin:0"
+            style="font-size:22px;font-weight:700;letter-spacing:-0.01em;color:var(--ef-text);margin:0"
           >
             Create a channel
           </h1>
-          <p style="font-family:var(--f-sans);font-size:13.5px;color:var(--muted);margin:6px 0 0;line-height:1.5">
+          <p style="font-family:var(--ef-font-body);font-size:13.5px;color:var(--ef-text-muted);margin:6px 0 0;line-height:1.5">
             Channels are how your team — including its agents — collaborate around a shared focus.
           </p>
         </header>
 
         <label class="flex flex-col" style="gap:6px">
-          <span class="eyebrow" style="color:var(--graphite)">
+          <span class="eyebrow" style="color:var(--ef-text-faint)">
             Name
           </span>
           <div
             class="flex items-center"
-            style="border:1px solid var(--rule-strong);border-radius:var(--r-sm);background:var(--ice);padding:8px 12px;gap:6px"
+            style="border:1px solid var(--ef-border-strong);border-radius:var(--ef-radius-sm);background:var(--ef-surface-raised);padding:8px 12px;gap:6px"
           >
             <span
               aria-hidden="true"
-              style="color:var(--muted);font-family:var(--f-mono);font-size:14px"
+              style="color:var(--ef-text-muted);font-family:var(--ef-font-mono);font-size:14px"
             >
               #
             </span>
@@ -110,13 +110,13 @@ export function ChannelCreate() {
               autoCorrect="off"
               spellcheck={false}
               required
-              style="flex:1;background:transparent;border:0;outline:0;color:var(--ink);font-family:var(--f-mono);font-size:14px;min-width:0"
+              style="flex:1;background:transparent;border:0;outline:0;color:var(--ef-text);font-family:var(--ef-font-mono);font-size:14px;min-width:0"
               aria-describedby="channel-slug-hint"
             />
           </div>
           <span
             id="channel-slug-hint"
-            style="font-family:var(--f-sans);font-size:12px;color:var(--muted);line-height:1.4"
+            style="font-family:var(--ef-font-body);font-size:12px;color:var(--ef-text-muted);line-height:1.4"
           >
             Make it self-descriptive — agents on this team use the channel name to understand its
             context. Lowercase letters, digits, and dashes only.
@@ -126,7 +126,7 @@ export function ChannelCreate() {
         {submitError.value !== null && (
           <div
             role="alert"
-            style="font-family:var(--f-sans);font-size:13px;color:var(--err);background:rgba(211,47,47,0.08);border:1px solid var(--err);border-radius:var(--r-sm);padding:10px 12px"
+            style="font-family:var(--ef-font-body);font-size:13px;color:var(--ef-lamp-alarm);background:var(--ef-lamp-alarm-ground);border:1px solid var(--ef-lamp-alarm);border-radius:var(--ef-radius-sm);padding:10px 12px"
           >
             {submitError.value}
           </div>

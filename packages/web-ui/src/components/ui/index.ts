@@ -1,3 +1,4 @@
+export { ConfirmDialog } from './ConfirmDialog.js';
 export { EmptyState, type EmptyStateProps } from './EmptyState.js';
 export { ErrorCallout, type ErrorCalloutProps } from './ErrorCallout.js';
 export { Loading, type LoadingProps } from './Loading.js';

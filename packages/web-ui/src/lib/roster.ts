@@ -66,6 +66,16 @@ export function presenceCaptureWarning(p: Presence | undefined): 'gap' | 'uneval
   return null;
 }
 
+/**
+ * Person-vs-agent lookup for identity rendering (name colors, tiles).
+ * Reads the roster signal; returns `undefined` when the member is
+ * unknown or the server predates `Teammate.kind`. Callers must treat
+ * `undefined` as the neutral (agent) treatment.
+ */
+export function memberKind(name: string): 'person' | 'agent' | undefined {
+  return roster.value?.teammates.find((t) => t.name === name)?.kind;
+}
+
 const REFRESH_MS = 10_000;
 
 export async function loadRoster(): Promise<RosterResponse> {

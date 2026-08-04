@@ -66,7 +66,7 @@ export function PermissionsEditor({ value, presets, onChange, disabled }: Permis
             class="btn btn-ghost btn-sm"
             onClick={clearAll}
             disabled={disabled}
-            style="color:var(--muted)"
+            style="color:var(--ef-text-muted)"
             title="Clear all permissions"
           >
             baseline
@@ -74,14 +74,14 @@ export function PermissionsEditor({ value, presets, onChange, disabled }: Permis
         </div>
       )}
 
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:2px 14px;border:1px solid var(--rule);border-radius:8px;padding:8px;background:var(--ice)">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:2px 14px;border:1px solid var(--ef-border);border-radius:8px;padding:8px;background:var(--ef-surface-raised)">
         {PERMISSION_META.map((meta) => {
           const checked = set.has(meta.key);
           return (
             <label
               key={meta.key}
               class="flex items-start gap-2"
-              style={`padding:6px 8px;cursor:${disabled ? 'default' : 'pointer'};border-radius:6px;background:${checked ? 'var(--paper)' : 'transparent'};border:1px solid ${checked ? 'var(--rule)' : 'transparent'}`}
+              style={`padding:6px 8px;cursor:${disabled ? 'default' : 'pointer'};border-radius:6px;background:${checked ? 'var(--ef-surface)' : 'transparent'};border:1px solid ${checked ? 'var(--ef-border)' : 'transparent'}`}
               title={meta.description}
             >
               <input
@@ -94,16 +94,16 @@ export function PermissionsEditor({ value, presets, onChange, disabled }: Permis
               />
               <span class="min-w-0 flex-1">
                 <span class="flex items-baseline gap-2 flex-wrap">
-                  <span style="font-family:var(--f-sans);font-weight:600;color:var(--ink);font-size:13px">
+                  <span style="font-family:var(--ef-font-body);font-weight:600;color:var(--ef-text);font-size:13px">
                     {meta.label}
                   </span>
-                  <span style="font-family:var(--f-mono);font-size:10.5px;color:var(--muted);letter-spacing:.04em">
+                  <span style="font-family:var(--ef-font-mono);font-size:10.5px;color:var(--ef-text-muted);letter-spacing:.04em">
                     {meta.key}
                   </span>
                 </span>
                 <span
                   id={`perm-${meta.key}`}
-                  style="display:block;font-family:var(--f-sans);font-size:11.5px;color:var(--muted);line-height:1.45;margin-top:2px"
+                  style="display:block;font-family:var(--ef-font-body);font-size:11.5px;color:var(--ef-text-muted);line-height:1.45;margin-top:2px"
                 >
                   {meta.description}
                 </span>

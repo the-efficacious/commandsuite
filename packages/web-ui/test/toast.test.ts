@@ -31,16 +31,27 @@ describe('toast queue', () => {
     expect(toasts.value[0]?.kind).toBe('info');
   });
 
-  it('default duration is longer for warn/error than info/success', () => {
+  it('dwell doctrine — non-error kinds default to 6s', () => {
     toast.info({ body: 'i' });
     toast.success({ body: 's' });
     toast.warn({ body: 'w' });
-    toast.error({ body: 'e' });
-    const [i, s, w, e] = toasts.value;
-    expect(i?.duration).toBe(5000);
-    expect(s?.duration).toBe(5000);
-    expect(w?.duration).toBe(7000);
-    expect(e?.duration).toBe(7000);
+    const [i, s, w] = toasts.value;
+    expect(i?.duration).toBe(6000);
+    expect(s?.duration).toBe(6000);
+    expect(w?.duration).toBe(6000);
+  });
+
+  it('dwell doctrine — a toast carrying an action gets 8s to decide', () => {
+    toast.info({ body: 'undoable', action: { label: 'Undo', onClick: vi.fn() } });
+    expect(toasts.value[0]?.duration).toBe(8000);
+  });
+
+  it('dwell doctrine — errors are sticky (never time out), action or not', () => {
+    toast.error({ body: 'plain failure' });
+    toast.error({ body: 'retryable failure', action: { label: 'Retry', onClick: vi.fn() } });
+    const [plain, retryable] = toasts.value;
+    expect(plain?.duration).toBeNull();
+    expect(retryable?.duration).toBeNull();
   });
 
   it('respects an explicit duration override and sticky (null)', () => {
@@ -75,11 +86,11 @@ describe('toast queue', () => {
     expect(replaced).toHaveBeenCalledOnce();
   });
 
-  it('bounds the queue at MAX_TOASTS (5) — oldest drops', () => {
+  it('bounds the queue at MAX_TOASTS (3) — oldest drops', () => {
     for (let i = 0; i < 7; i++) toast.info({ body: `msg-${i}` });
-    expect(toasts.value).toHaveLength(5);
-    expect(toasts.value[0]?.body).toBe('msg-2');
-    expect(toasts.value[4]?.body).toBe('msg-6');
+    expect(toasts.value).toHaveLength(3);
+    expect(toasts.value[0]?.body).toBe('msg-4');
+    expect(toasts.value[2]?.body).toBe('msg-6');
   });
 
   it('clearAllToasts empties the queue and fires each onDismiss', () => {

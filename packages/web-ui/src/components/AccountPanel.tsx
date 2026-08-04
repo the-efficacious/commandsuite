@@ -28,6 +28,7 @@
 
 import { signal } from '@preact/signals';
 import { getClient } from '../lib/client.js';
+import { confirmDialog } from '../lib/confirm.js';
 import { selectMemberProfile } from '../lib/view.js';
 import { AppearancePanel } from './AppearancePanel.js';
 import { ArrowRight } from './icons/index.js';
@@ -48,9 +49,11 @@ export function AccountPanel({ viewer }: AccountPanelProps) {
 
   async function onRotate(): Promise<void> {
     if (
-      !confirm(
-        'Rotate your bearer token?\n\nThe existing token will be invalidated immediately — any CLI or integration using it will stop working until updated.',
-      )
+      !(await confirmDialog({
+        title: 'Rotate your bearer token?',
+        body: 'The existing token will be invalidated immediately — any CLI or integration using it will stop working until updated.',
+        verb: 'Rotate',
+      }))
     )
       return;
     busy.value = 'rotate';
@@ -66,9 +69,11 @@ export function AccountPanel({ viewer }: AccountPanelProps) {
 
   async function onEnrollTotp(): Promise<void> {
     if (
-      !confirm(
-        'Re-enroll TOTP for your account?\n\nAny authenticator app currently bound will stop working. Scan the new secret with your authenticator app before dismissing the banner.',
-      )
+      !(await confirmDialog({
+        title: 'Re-enroll TOTP for your account?',
+        body: 'Any authenticator app currently bound will stop working. Scan the new secret with your authenticator app before dismissing the banner.',
+        verb: 'Re-enroll',
+      }))
     )
       return;
     busy.value = 'totp';
@@ -193,11 +198,11 @@ function Row({
       <div class="min-w-0 flex-1">
         <div
           class="font-display"
-          style="font-weight:700;font-size:14px;letter-spacing:-0.01em;color:var(--ink);line-height:1.2"
+          style="font-weight:700;font-size:14px;letter-spacing:-0.01em;color:var(--ef-text);line-height:1.2"
         >
           {title}
         </div>
-        <div style="font-family:var(--f-sans);font-size:12.5px;color:var(--muted);line-height:1.45;margin-top:3px">
+        <div style="font-family:var(--ef-font-body);font-size:12.5px;color:var(--ef-text-muted);line-height:1.45;margin-top:3px">
           {description}
         </div>
       </div>

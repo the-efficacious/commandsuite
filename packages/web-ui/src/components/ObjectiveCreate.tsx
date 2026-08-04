@@ -153,7 +153,7 @@ export function ObjectiveCreate() {
       <div class="eyebrow">New objective</div>
       <h1
         class="font-display"
-        style="font-size:30px;font-weight:700;letter-spacing:-0.02em;color:var(--ink);line-height:1.1;margin-top:6px;margin-bottom:24px"
+        style="font-size:30px;font-weight:700;letter-spacing:-0.02em;color:var(--ef-text);line-height:1.1;margin-top:6px;margin-bottom:24px"
       >
         Create + assign
       </h1>
@@ -243,15 +243,14 @@ export function ObjectiveCreate() {
             automatically; don't add them here.
           </div>
           {watchers.value.length > 0 && (
-            <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">
+            <div class="tokens" style="margin-top:6px">
               {watchers.value.map((w) => (
-                <span key={w} class="chip">
+                <span key={w} class="token">
                   <span>{w}</span>
                   <button
                     type="button"
                     class="x"
                     aria-label={`Remove watcher ${w}`}
-                    style="background:transparent;border:0;padding:0;cursor:pointer"
                     onClick={() => {
                       watchers.value = watchers.value.filter((x) => x !== w);
                     }}
@@ -298,17 +297,17 @@ export function ObjectiveCreate() {
               {uploads.map((u) => (
                 <span
                   key={u.localId}
-                  style={`display:inline-flex;gap:6px;align-items:center;padding:4px 8px;border-radius:4px;font-size:11.5px;background:${u.status === 'error' ? 'rgba(211,47,47,0.1)' : 'var(--bg-alt)'};border:1px solid ${u.status === 'error' ? 'var(--err, #d32f2f)' : 'var(--rule)'}`}
+                  style={`display:inline-flex;gap:6px;align-items:center;padding:4px 8px;border-radius:4px;font-size:11.5px;background:${u.status === 'error' ? 'var(--ef-lamp-alarm-ground)' : 'var(--ef-surface-sunken)'};border:1px solid ${u.status === 'error' ? 'var(--ef-lamp-alarm)' : 'var(--ef-border)'}`}
                   title={u.error ?? `${u.file.name} · ${formatSize(u.file.size)}`}
                 >
                   <span
                     aria-hidden="true"
                     style={`color:${
                       u.status === 'ready'
-                        ? 'var(--ok, #2e7d32)'
+                        ? 'var(--ef-lamp-nominal)'
                         : u.status === 'error'
-                          ? 'var(--err, #d32f2f)'
-                          : 'var(--muted)'
+                          ? 'var(--ef-lamp-alarm)'
+                          : 'var(--ef-text-muted)'
                     };font-weight:700`}
                   >
                     {u.status === 'uploading' ? '…' : u.status === 'ready' ? '✓' : '!'}
@@ -316,12 +315,12 @@ export function ObjectiveCreate() {
                   <span style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
                     {u.file.name}
                   </span>
-                  <span style="color:var(--muted)">{formatSize(u.file.size)}</span>
+                  <span style="color:var(--ef-text-muted)">{formatSize(u.file.size)}</span>
                   <button
                     type="button"
                     onClick={() => dismissUpload(u.localId)}
                     aria-label={`Remove ${u.file.name}`}
-                    style="background:none;border:none;padding:0 0 0 4px;cursor:pointer;color:var(--muted);display:inline-flex;align-items:center"
+                    style="background:none;border:none;padding:0 0 0 4px;cursor:pointer;color:var(--ef-text-muted);display:inline-flex;align-items:center"
                   >
                     <X size={12} aria-hidden="true" />
                   </button>

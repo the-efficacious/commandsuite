@@ -30,20 +30,26 @@
  */
 
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import { helm } from '@the-efficacious/brand';
 
-// ── Palette (matches runtime/hud.ts; same hexes as web theme) ────────
+// ── Palette — Helm roles from @the-efficacious/brand ────────────────
 
 const CSI = '\x1b[';
 const RESET = `${CSI}0m`;
-function rgb(r: number, g: number, b: number): string {
-  return `${CSI}38;2;${r};${g};${b}m`;
+/** '#rrggbb' → truecolor foreground escape. */
+function fg(hex: string | undefined): string {
+  if (!hex) throw new Error('missing brand role — check the @the-efficacious/brand version');
+  const n = Number.parseInt(hex.slice(1), 16);
+  return `${CSI}38;2;${(n >> 16) & 0xff};${(n >> 8) & 0xff};${n & 0xff}m`;
 }
+// Helm roles resolved to concrete RGB at build time (tsup inlines the
+// brand package). Dark-terminal palette — helm is dark-native.
 const PALETTE = {
-  glacier: rgb(0x63, 0x89, 0xa6), // accent
-  frost: rgb(0xa4, 0xbd, 0xd1), // agent / assistant prefix
-  muted: rgb(0x7b, 0x85, 0x91), // chrome glyphs
-  ember: rgb(0xc8, 0x7c, 0x4e), // error / alert
-  ink: rgb(0xe3, 0xeb, 0xf2), // body text
+  accent: fg(helm.color.lampWorking), // live-activity blue
+  agent: fg(helm.color.textSecondary), // assistant prefix
+  muted: fg(helm.color.textMuted), // chrome glyphs
+  alarm: fg(helm.color.lampAlarm), // error / alert
+  body: fg(helm.color.text), // body text
 };
 
 const INDENT = '   ';
@@ -87,7 +93,7 @@ export function createClaudeActivityPrinter(
   const openTurn = (): TurnState => {
     if (turn === null) {
       turn = { startedAtMs: Date.now(), toolCount: 0 };
-      write(`\n${paint(PALETTE.glacier, '▸')} ${paint(PALETTE.muted, 'turn')}\n`);
+      write(`\n${paint(PALETTE.accent, '▸')} ${paint(PALETTE.muted, 'turn')}\n`);
     }
     return turn;
   };
@@ -104,12 +110,12 @@ export function createClaudeActivityPrinter(
             if (block.type === 'tool_use') {
               state.toolCount++;
               if (!isSubagent) {
-                write(`${INDENT}${paint(PALETTE.muted, '⚒')} ${paint(PALETTE.ink, block.name)}\n`);
+                write(`${INDENT}${paint(PALETTE.muted, '⚒')} ${paint(PALETTE.body, block.name)}\n`);
               }
             } else if (block.type === 'text' && !isSubagent && block.text.trim().length > 0) {
               const text = firstLines(block.text.trim(), 6);
               write(
-                `${INDENT}${paint(PALETTE.frost, 'assistant:')} ${paint(PALETTE.ink, text.replaceAll('\n', `\n${INDENT}`))}\n`,
+                `${INDENT}${paint(PALETTE.agent, 'assistant:')} ${paint(PALETTE.body, text.replaceAll('\n', `\n${INDENT}`))}\n`,
               );
             } else if (block.type === 'thinking' && !isSubagent) {
               write(`${INDENT}${paint(PALETTE.muted, '∴ thinking…')}\n`);
@@ -130,7 +136,7 @@ export function createClaudeActivityPrinter(
             write(`${INDENT}${paint(PALETTE.muted, `└─ done · ${seconds}s${tools}${cost}`)}\n`);
           } else {
             write(
-              `${INDENT}${paint(PALETTE.ember, `└─ ${message.subtype} · ${seconds}s${tools}${cost}`)}\n`,
+              `${INDENT}${paint(PALETTE.alarm, `└─ ${message.subtype} · ${seconds}s${tools}${cost}`)}\n`,
             );
           }
           break;

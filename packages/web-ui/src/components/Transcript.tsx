@@ -119,10 +119,13 @@ export function Transcript({ viewer }: TranscriptProps) {
       {showDmHeader && dmCounterpart && (
         <div
           class="flex items-center justify-between flex-shrink-0"
-          style="background:var(--ice);border-bottom:1px solid var(--rule);padding:10px max(0.75rem,env(safe-area-inset-right)) 10px max(0.75rem,env(safe-area-inset-left));gap:10px"
+          style="background:var(--ef-surface-raised);border-bottom:1px solid var(--ef-border);padding:10px max(0.75rem,env(safe-area-inset-right)) 10px max(0.75rem,env(safe-area-inset-left));gap:10px"
         >
-          <div class="eyebrow flex-1 min-w-0 truncate">
-            DM with <span style="color:var(--ink)">{dmCounterpart}</span>
+          <div
+            class="font-display flex-1 min-w-0 truncate"
+            style="font-size:var(--ef-text-h4);font-weight:var(--ef-weight-semibold);color:var(--ef-text-muted);line-height:1.15"
+          >
+            DM with <span style="color:var(--ef-text)">{dmCounterpart}</span>
           </div>
           {isDirector && (
             <button
@@ -146,7 +149,7 @@ export function Transcript({ viewer }: TranscriptProps) {
             }
             aria-pressed={isInspectorOpen.value}
             title="Activity inspector"
-            style={`width:32px;height:32px;background:${isInspectorOpen.value ? 'var(--paper)' : 'transparent'};border:1px solid ${isInspectorOpen.value ? 'var(--rule)' : 'transparent'};color:${isInspectorOpen.value ? 'var(--steel)' : 'var(--graphite)'};border-radius:var(--r-sm);cursor:pointer;flex-shrink:0`}
+            style={`width:32px;height:32px;background:${isInspectorOpen.value ? 'var(--ef-surface)' : 'transparent'};border:1px solid ${isInspectorOpen.value ? 'var(--ef-border)' : 'transparent'};color:${isInspectorOpen.value ? 'var(--ef-text)' : 'var(--ef-text-faint)'};border-radius:var(--ef-radius-sm);cursor:pointer;flex-shrink:0`}
           >
             <PanelRight size={16} aria-hidden="true" />
           </button>
@@ -158,8 +161,8 @@ export function Transcript({ viewer }: TranscriptProps) {
           onScroll={onScroll}
           aria-live="polite"
           aria-atomic="false"
-          class="overflow-y-auto"
-          style="position:absolute;inset:0;background:var(--paper);padding:18px max(0.75rem,env(safe-area-inset-right)) 18px max(0.75rem,env(safe-area-inset-left));-webkit-overflow-scrolling:touch;overscroll-behavior:none;touch-action:manipulation"
+          class="overflow-y-auto scroller--hair"
+          style="position:absolute;inset:0;background:var(--ef-surface);padding:18px max(0.75rem,env(safe-area-inset-right)) 18px max(0.75rem,env(safe-area-inset-left));-webkit-overflow-scrolling:touch;overscroll-behavior:none;touch-action:manipulation"
         >
           {messages.length === 0 ? (
             <EmptyState threadKey={threadKey} />
@@ -198,7 +201,7 @@ export function Transcript({ viewer }: TranscriptProps) {
             onClick={jumpToBottom}
             aria-label="Jump to latest message"
             title="Jump to latest"
-            style="position:absolute;right:14px;bottom:14px;width:36px;height:36px;border-radius:9999px;background:var(--paper);border:1px solid var(--rule);color:var(--ink);box-shadow:0 4px 12px rgba(0,0,0,0.12);cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:2"
+            style="position:absolute;right:14px;bottom:14px;width:36px;height:36px;border-radius:9999px;background:var(--ef-surface);border:1px solid var(--ef-border);color:var(--ef-text);box-shadow:var(--ef-shadow-overlay);cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:2"
           >
             <ChevronsDown size={18} aria-hidden="true" />
           </button>
@@ -231,8 +234,9 @@ function EmptyState({ threadKey }: { threadKey: string }) {
       <div class="min-h-full flex items-center justify-center" style="padding:0 16px">
         <div class="empty" style="border:none;background:transparent;padding:24px">
           <p>
-            ◇ No messages yet with <span style="color:var(--steel);font-weight:600">@{other}</span>{' '}
-            — send one below to start
+            ◇ No messages yet with{' '}
+            <span style="color:var(--ef-text-secondary);font-weight:600">@{other}</span> — send one
+            below to start
           </p>
         </div>
       </div>

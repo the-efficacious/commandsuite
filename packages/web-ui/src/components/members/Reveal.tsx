@@ -44,27 +44,27 @@ export function RevealBanner({ reveal: r, onDismiss }: RevealBannerProps) {
   }
 
   return (
-    <div
-      class="callout"
-      role="alert"
-      style="margin-bottom:18px;background:var(--paper);border:1px solid var(--ink);padding:14px 16px;display:flex;gap:12px;align-items:flex-start"
-    >
-      <div class="icon" aria-hidden="true">
-        ✓
-      </div>
-      <div class="body" style="flex:1;min-width:0">
-        <div class="title">{title}</div>
-        <div style="display:flex;flex-direction:column;gap:10px;margin-top:10px">
-          {fields.map((f) => (
-            <SecretField key={f.label} label={f.label} value={f.value} />
-          ))}
-        </div>
-        <div style="margin-top:12px;font-family:var(--f-sans);font-size:12px;color:var(--muted);font-style:italic">
-          Save these now — they are not persisted anywhere else. Dismissing this banner hides them
-          forever.
+    <div class="banner" data-state="caution" role="alert" style="margin-bottom:18px">
+      <div style="min-width:0">
+        <div class="banner-title">{title}</div>
+        <div class="banner-body">
+          <div style="display:flex;flex-direction:column;gap:10px;margin-top:6px">
+            {fields.map((f) => (
+              <SecretField key={f.label} label={f.label} value={f.value} />
+            ))}
+          </div>
+          <div style="margin-top:12px;font-style:italic;color:var(--ef-text-muted)">
+            Save these now — they are not persisted anywhere else. Dismissing this banner hides them
+            forever.
+          </div>
         </div>
       </div>
-      <button type="button" onClick={onDismiss} aria-label="Dismiss" class="close">
+      <button
+        type="button"
+        onClick={onDismiss}
+        aria-label="Dismiss"
+        style="color:var(--ef-text-muted);padding:2px;border-radius:var(--ef-radius-xs);line-height:1"
+      >
         ×
       </button>
     </div>
@@ -87,14 +87,14 @@ function SecretField({ label, value }: { label: string; value: string }) {
 
   const display = shown ? value : '•'.repeat(32);
   const btnBase =
-    'font-family:var(--f-sans);font-size:11.5px;background:var(--paper);border:none;border-left:1px solid var(--rule);padding:0 14px;cursor:pointer;letter-spacing:.04em;text-transform:uppercase;font-weight:600;white-space:nowrap';
+    'font-family:var(--ef-font-body);font-size:11.5px;background:var(--ef-surface);border:none;border-left:1px solid var(--ef-border);padding:0 14px;cursor:pointer;letter-spacing:.04em;text-transform:uppercase;font-weight:600;white-space:nowrap';
 
   return (
     <div>
-      <div style="font-family:var(--f-sans);font-size:11px;color:var(--muted);letter-spacing:.04em;text-transform:uppercase;margin-bottom:4px">
+      <div style="font-family:var(--ef-font-body);font-size:11px;color:var(--ef-text-muted);letter-spacing:.04em;text-transform:uppercase;margin-bottom:4px">
         {label}
       </div>
-      <div style="display:flex;align-items:stretch;border:1px solid var(--rule);border-radius:var(--r-sm);overflow:hidden;background:var(--ice)">
+      <div style="display:flex;align-items:stretch;border:1px solid var(--ef-border);border-radius:var(--ef-radius-sm);overflow:hidden;background:var(--ef-surface-raised)">
         <input
           type="text"
           readOnly
@@ -103,13 +103,13 @@ function SecretField({ label, value }: { label: string; value: string }) {
           onFocus={(e) => {
             if (shown) (e.currentTarget as HTMLInputElement).select();
           }}
-          style={`flex:1;font-family:var(--f-mono);font-size:12.5px;padding:8px 10px;background:transparent;color:var(--ink);border:none;outline:none;min-width:0;letter-spacing:${shown ? 'normal' : '1px'}`}
+          style={`flex:1;font-family:var(--ef-font-mono);font-size:12.5px;padding:8px 10px;background:transparent;color:var(--ef-text);border:none;outline:none;min-width:0;letter-spacing:${shown ? 'normal' : '1px'}`}
         />
         <button
           type="button"
           onClick={() => setShown((s) => !s)}
           aria-label={shown ? `Hide ${label}` : `Show ${label}`}
-          style={`${btnBase};color:var(--ink);min-width:68px`}
+          style={`${btnBase};color:var(--ef-text);min-width:68px`}
         >
           {shown ? 'Hide' : 'Show'}
         </button>
@@ -117,7 +117,7 @@ function SecretField({ label, value }: { label: string; value: string }) {
           type="button"
           onClick={() => void copy()}
           aria-label={`Copy ${label}`}
-          style={`${btnBase};color:${copied ? 'var(--ok,#2d6a4f)' : 'var(--ink)'};min-width:82px`}
+          style={`${btnBase};color:${copied ? 'var(--ef-lamp-nominal)' : 'var(--ef-text)'};min-width:82px`}
         >
           {copied ? '✓ Copied' : 'Copy'}
         </button>

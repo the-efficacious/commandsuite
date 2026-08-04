@@ -26,19 +26,19 @@ export function ContextDrawer({ open, title, onClose, children }: ContextDrawerP
   return (
     <aside
       class="flex flex-col flex-shrink-0 md:static md:w-96 fixed inset-y-0 right-0 z-40 w-[85vw] max-w-96"
-      style="background:var(--paper);border-left:1px solid var(--rule);padding-right:env(safe-area-inset-right);padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)"
+      style="background:var(--ef-surface);border-left:1px solid var(--ef-border);padding-right:env(safe-area-inset-right);padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)"
       aria-label="Context details"
     >
       <header
         class="flex items-center justify-between flex-shrink-0"
-        style="padding:12px 16px;border-bottom:1px solid var(--rule)"
+        style="padding:12px 16px;border-bottom:1px solid var(--ef-border)"
       >
         <div class="min-w-0 eyebrow">{title ?? 'Details'}</div>
         <button
           type="button"
           onClick={onClose}
           aria-label="Close details"
-          style="background:none;border:none;font-size:20px;line-height:1;color:var(--muted);cursor:pointer;padding:4px"
+          style="background:none;border:none;font-size:20px;line-height:1;color:var(--ef-text-muted);cursor:pointer;padding:4px"
         >
           ×
         </button>

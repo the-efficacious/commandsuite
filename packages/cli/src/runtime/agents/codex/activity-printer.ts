@@ -41,6 +41,7 @@
  *   - Plain ASCII when not a TTY — CI logs stay grep-friendly.
  */
 
+import { helm } from '@the-efficacious/brand';
 import type { JsonRpcClient } from './json-rpc.js';
 import {
   type AgentMessageDeltaNotification,
@@ -53,20 +54,24 @@ import {
   type TurnStartedNotification,
 } from './protocol.js';
 
-// ── Palette (matches runtime/hud.ts; same hexes as web theme) ────────
+// ── Palette — Helm roles from @the-efficacious/brand ────────────────
 
 const CSI = '\x1b[';
 const RESET = `${CSI}0m`;
-function rgb(r: number, g: number, b: number): string {
-  return `${CSI}38;2;${r};${g};${b}m`;
+/** '#rrggbb' → truecolor foreground escape. */
+function fg(hex: string | undefined): string {
+  if (!hex) throw new Error('missing brand role — check the @the-efficacious/brand version');
+  const n = Number.parseInt(hex.slice(1), 16);
+  return `${CSI}38;2;${(n >> 16) & 0xff};${(n >> 8) & 0xff};${n & 0xff}m`;
 }
+// Helm roles resolved to concrete RGB at build time (tsup inlines the
+// brand package). Dark-terminal palette — helm is dark-native.
 const PALETTE = {
-  steel: rgb(0x3e, 0x5c, 0x76), // brand-load-bearing
-  glacier: rgb(0x63, 0x89, 0xa6), // accent
-  frost: rgb(0xa4, 0xbd, 0xd1), // agent / assistant prefix
-  muted: rgb(0x7b, 0x85, 0x91), // chrome glyphs
-  ember: rgb(0xc8, 0x7c, 0x4e), // error / alert
-  ink: rgb(0xe3, 0xeb, 0xf2), // body text
+  accent: fg(helm.color.lampWorking), // live-activity blue
+  agent: fg(helm.color.textSecondary), // assistant prefix
+  muted: fg(helm.color.textMuted), // chrome glyphs
+  alarm: fg(helm.color.lampAlarm), // error / alert
+  body: fg(helm.color.text), // body text
 };
 
 // Indent used under a turn block — three spaces lines up with the
@@ -135,7 +140,7 @@ export function attachCodexActivityPrinter(options: ActivityPrinterOptions): Act
       write('\n');
     }
     openDeltaItemId = itemId;
-    write(`${INDENT}${paint(PALETTE.frost, 'assistant:')} `);
+    write(`${INDENT}${paint(PALETTE.agent, 'assistant:')} `);
   };
   const closeDeltaLine = (): void => {
     if (openDeltaItemId === null) return;
@@ -158,7 +163,7 @@ export function attachCodexActivityPrinter(options: ActivityPrinterOptions): Act
   options.rpc.onNotification(NOTIFICATIONS.threadStarted, (params) => {
     const p = params as ThreadStartedNotification;
     const id = p?.thread?.id ?? '';
-    write(`${paint(PALETTE.muted, '↻')} thread ${paint(PALETTE.glacier, shortId(id))} started\n\n`);
+    write(`${paint(PALETTE.muted, '↻')} thread ${paint(PALETTE.accent, shortId(id))} started\n\n`);
   });
 
   options.rpc.onNotification(NOTIFICATIONS.turnStarted, (params) => {
@@ -166,7 +171,7 @@ export function attachCodexActivityPrinter(options: ActivityPrinterOptions): Act
     const id = p?.turn?.id ?? '';
     turns.set(id, { startedAtMs: Date.now(), toolCount: 0 });
     closeDeltaLine();
-    write(`${paint(PALETTE.steel, '▸')} turn ${paint(PALETTE.glacier, shortId(id))}\n`);
+    write(`${paint(PALETTE.accent, '▸')} turn ${paint(PALETTE.accent, shortId(id))}\n`);
   });
 
   options.rpc.onNotification(NOTIFICATIONS.turnCompleted, (params) => {
@@ -245,7 +250,7 @@ export function attachCodexActivityPrinter(options: ActivityPrinterOptions): Act
     // builds inlined a top-level `message`. Prefer the nested one.
     const msg = strField(p.error, 'message') ?? strField(p, 'message') ?? '(no message)';
     closeDeltaLine();
-    write(`${paint(PALETTE.ember, '! error:')} ${msg}\n`);
+    write(`${paint(PALETTE.alarm, '! error:')} ${msg}\n`);
     log('codex-activity-printer: error notification surfaced', { message: msg });
   });
 
@@ -273,7 +278,7 @@ export function attachCodexActivityPrinter(options: ActivityPrinterOptions): Act
     switch (item.type) {
       case 'commandExecution': {
         const cmd = strField(item, 'command') ?? '(command)';
-        return `${paint(PALETTE.muted, '$')} ${paint(PALETTE.ink, oneLine(cmd))}`;
+        return `${paint(PALETTE.muted, '$')} ${paint(PALETTE.body, oneLine(cmd))}`;
       }
       case 'fileChange': {
         const changes = arrField(item, 'changes');
@@ -288,22 +293,22 @@ export function attachCodexActivityPrinter(options: ActivityPrinterOptions): Act
             : paths.length === 1
               ? (paths[0] as string)
               : `${paths.length} files`;
-        return `${paint(PALETTE.muted, '±')} ${paint(PALETTE.ink, body)}`;
+        return `${paint(PALETTE.muted, '±')} ${paint(PALETTE.body, body)}`;
       }
       case 'mcpToolCall': {
         const server = strField(item, 'server') ?? '?';
         const tool = strField(item, 'tool') ?? '?';
-        return `${paint(PALETTE.muted, '→')} mcp: ${paint(PALETTE.ink, `${server}.${tool}`)}`;
+        return `${paint(PALETTE.muted, '→')} mcp: ${paint(PALETTE.body, `${server}.${tool}`)}`;
       }
       case 'dynamicToolCall': {
         const ns = strField(item, 'namespace');
         const tool = strField(item, 'tool') ?? '?';
         const name = ns ? `${ns}.${tool}` : tool;
-        return `${paint(PALETTE.muted, '→')} tool: ${paint(PALETTE.ink, name)}`;
+        return `${paint(PALETTE.muted, '→')} tool: ${paint(PALETTE.body, name)}`;
       }
       case 'webSearch': {
         const q = strField(item, 'query') ?? '';
-        return `${paint(PALETTE.muted, '?')} search: ${paint(PALETTE.ink, oneLine(q))}`;
+        return `${paint(PALETTE.muted, '?')} search: ${paint(PALETTE.body, oneLine(q))}`;
       }
       case 'agentMessage':
         // Deltas open the line themselves on first text; nothing to
@@ -332,7 +337,7 @@ export function attachCodexActivityPrinter(options: ActivityPrinterOptions): Act
       if (exit !== null && exit !== 0) {
         const dur = numField(item, 'durationMs');
         const suffix = dur !== null ? ` · ${formatElapsed(dur)}` : '';
-        return paint(PALETTE.ember, `  ↳ exit ${exit}${suffix}`);
+        return paint(PALETTE.alarm, `  ↳ exit ${exit}${suffix}`);
       }
     }
     if (item.type === 'mcpToolCall' || item.type === 'dynamicToolCall') {
@@ -341,7 +346,7 @@ export function attachCodexActivityPrinter(options: ActivityPrinterOptions): Act
       const error = (item as Record<string, unknown>).error;
       if (error) {
         const msg = strField(error, 'message') ?? 'tool error';
-        return paint(PALETTE.ember, `  ↳ ${oneLine(msg)}`);
+        return paint(PALETTE.alarm, `  ↳ ${oneLine(msg)}`);
       }
     }
     return null;

@@ -20,7 +20,19 @@ import { ArrowRight } from './icons/index.js';
 import { PendingEnrollments } from './members/PendingEnrollments.js';
 import { PermissionsEditor } from './members/PermissionsEditor.js';
 import { type Reveal, RevealBanner, revealTargetName } from './members/Reveal.js';
-import { EmptyState, ErrorCallout, Loading, PageHeader, TextMetrics } from './ui/index.js';
+import { EmptyState, ErrorCallout, PageHeader, TextMetrics } from './ui/index.js';
+
+/** Four row-height shimmer bars standing in for the list while it loads. */
+function ListSkeleton() {
+  return (
+    <div role="status" aria-label="Loading">
+      <div class="ef-skeleton" style="height:44px;margin-bottom:8px" />
+      <div class="ef-skeleton" style="height:44px;margin-bottom:8px" />
+      <div class="ef-skeleton" style="height:44px;margin-bottom:8px" />
+      <div class="ef-skeleton" style="height:44px;margin-bottom:8px" />
+    </div>
+  );
+}
 
 const members = signal<Member[] | null>(null);
 const loadError = signal<string | null>(null);
@@ -50,7 +62,16 @@ export function MembersPanel() {
     void refresh();
   }, []);
 
-  if (!b) return <Loading label="Loading members…" />;
+  if (!b) {
+    return (
+      <div
+        class="flex-1 overflow-y-auto"
+        style="padding:24px max(1rem,env(safe-area-inset-right)) 32px max(1rem,env(safe-area-inset-left))"
+      >
+        <ListSkeleton />
+      </div>
+    );
+  }
 
   if (!hasPermission(b.permissions, 'members.manage')) {
     return (
@@ -116,7 +137,7 @@ export function MembersPanel() {
 
       <PendingEnrollments style="margin-bottom:18px" />
 
-      {list === null && err === null && <Loading label="Loading…" />}
+      {list === null && err === null && <ListSkeleton />}
 
       {list !== null && list.length === 0 && (
         <EmptyState title="No members yet" message="Click + New member to add one." />
@@ -152,7 +173,7 @@ function MemberListRow({
   isLast: boolean;
   presets: PermissionPresets;
 }) {
-  const border = isLast ? '' : 'border-bottom:1px solid var(--rule);';
+  const border = isLast ? '' : 'border-bottom:1px solid var(--ef-border);';
   const summary = summarize(member.permissions, presets);
   return (
     <li>
@@ -166,21 +187,21 @@ function MemberListRow({
         <div class="min-w-0 flex items-center gap-3 flex-wrap">
           <span
             class="font-display"
-            style="font-weight:700;letter-spacing:-0.01em;font-size:15px;color:var(--ink)"
+            style="font-weight:700;letter-spacing:-0.01em;font-size:15px;color:var(--ef-text)"
           >
             {member.name}
           </span>
           {isSelf && (
-            <span style="font-family:var(--f-mono);font-size:10px;letter-spacing:.14em;color:var(--muted);text-transform:uppercase">
+            <span style="font-family:var(--ef-font-mono);font-size:10px;letter-spacing:.14em;color:var(--ef-text-muted);text-transform:uppercase">
               (you)
             </span>
           )}
           <span class={`badge ${badgeVariantFor(summary)}`}>{summary.label}</span>
-          <span style="font-family:var(--f-mono);font-size:11.5px;color:var(--muted);letter-spacing:.04em">
+          <span style="font-family:var(--ef-font-mono);font-size:11.5px;color:var(--ef-text-muted);letter-spacing:.04em">
             {member.role.title}
           </span>
         </div>
-        <span style="display:inline-flex;align-items:center;gap:4px;font-family:var(--f-mono);font-size:11px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;flex-shrink-0">
+        <span style="display:inline-flex;align-items:center;gap:4px;font-family:var(--ef-font-mono);font-size:11px;color:var(--ef-text-muted);letter-spacing:.08em;text-transform:uppercase;flex-shrink-0">
           <ArrowRight size={12} aria-hidden="true" />
           Manage
         </span>
@@ -194,7 +215,7 @@ function badgeVariantFor(summary: {
   isAdmin: boolean;
 }): string {
   if (summary.isAdmin) return 'solid';
-  if (summary.kind === 'custom' || summary.kind === 'preset') return 'ember solid';
+  if (summary.kind === 'custom' || summary.kind === 'preset') return 'caution solid';
   return 'soft';
 }
 
@@ -293,7 +314,7 @@ function CreateMemberForm({ presets }: { presets: PermissionPresets }) {
             }}
             disabled={busy}
           />
-          <div style="font-family:var(--f-sans);font-size:11.5px;color:var(--muted);font-style:italic;margin-top:2px">
+          <div style="font-family:var(--ef-font-body);font-size:11.5px;color:var(--ef-text-muted);font-style:italic;margin-top:2px">
             Tick individual leaves or click a quick-apply preset above.
           </div>
         </div>
@@ -330,11 +351,9 @@ function Labeled({
   return (
     // biome-ignore lint/a11y/noLabelWithoutControl: the input/select/textarea is passed in as a child
     <label style="display:flex;flex-direction:column;gap:4px">
-      <div class="eyebrow">{label}</div>
+      <div class="field-label">{label}</div>
       {children}
-      <div style="font-family:var(--f-sans);font-size:11.5px;color:var(--muted);font-style:italic">
-        {hint}
-      </div>
+      <div class="field-help">{hint}</div>
     </label>
   );
 }

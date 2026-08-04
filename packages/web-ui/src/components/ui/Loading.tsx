@@ -11,7 +11,7 @@ export function Loading({ label = 'Loading…' }: LoadingProps) {
   return (
     <div
       class="flex-1 flex items-center justify-center"
-      style="color:var(--muted);font-family:var(--f-mono);font-size:11.5px;letter-spacing:.14em;text-transform:uppercase"
+      style="color:var(--ef-text-muted);font-family:var(--ef-font-mono);font-size:11.5px;letter-spacing:.14em;text-transform:uppercase"
     >
       ━━ {label}
     </div>

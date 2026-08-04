@@ -64,6 +64,7 @@ import { TeamHome } from './components/TeamHome.js';
 import { ToolSourceDetail } from './components/ToolSourceDetail.js';
 import { ToolSourcesPanel } from './components/ToolSourcesPanel.js';
 import { Transcript } from './components/Transcript.js';
+import { ConfirmDialog } from './components/ui/ConfirmDialog.js';
 import { channelBySlug, loadChannels } from './lib/channels.js';
 import { setClient } from './lib/client.js';
 import { setEmbeddedShell, setTeamSettingsHandler } from './lib/embedded.js';
@@ -374,6 +375,7 @@ export function TeamShell(props: TeamShellProps): JSX.Element {
       )}
       <FilePreviewModal />
       <CommandPalette />
+      <ConfirmDialog />
     </>
   );
 }

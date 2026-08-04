@@ -12,12 +12,17 @@
  *
  * Queue semantics:
  *   - Signal-backed, so Preact re-renders the container on every change.
- *   - Bounded to MAX_TOASTS; oldest drops when full so a misbehaving
+ *   - Bounded to MAX_TOASTS (3); oldest drops when full so a misbehaving
  *     producer can't flood the viewport.
  *   - `tag` dedupes: a new toast with the same tag replaces any
  *     pending one (useful for stream-status style repeating signals).
  *   - `duration === null` means sticky — the user must close it or
  *     the producer must call `dismissToast(id)`.
+ *
+ * Dwell doctrine: 6s default · 8s when the toast carries an action
+ * (the viewer needs time to decide, not just to read) · sticky (∞)
+ * for errors — a failure never times out from under the person it
+ * failed for. At most 3 on screen.
  *
  * Intentionally tiny. If we need richer states (progress, inline
  * input, grouped diagnostics) the toasts API stays the low-level
@@ -40,7 +45,7 @@ export interface Toast {
   title?: string;
   /** Main message. Plain text — keep it short. */
   body: string;
-  /** Auto-dismiss after N ms. `null` = sticky. Default 5000 (info/success) / 7000 (warn/error). */
+  /** Auto-dismiss after N ms. `null` = sticky. Default 6000, 8000 with an `action`, `null` for errors. */
   duration: number | null;
   /** Inline button; fires and dismisses. */
   action?: ToastAction;
@@ -62,7 +67,7 @@ export interface ToastOptions {
   onDismiss?: () => void;
 }
 
-const MAX_TOASTS = 5;
+const MAX_TOASTS = 3;
 
 export const toasts = signal<readonly Toast[]>([]);
 
@@ -72,8 +77,10 @@ function nextId(): string {
   return `t${counter}-${Date.now().toString(36)}`;
 }
 
-function defaultDuration(kind: ToastKind): number {
-  return kind === 'warn' || kind === 'error' ? 7000 : 5000;
+/** Dwell doctrine: 6s · 8s with an action · ∞ (sticky) for errors. */
+function defaultDuration(kind: ToastKind, hasAction: boolean): number | null {
+  if (kind === 'error') return null;
+  return hasAction ? 8000 : 6000;
 }
 
 function enqueue(kind: ToastKind, opts: ToastOptions): string {
@@ -82,7 +89,10 @@ function enqueue(kind: ToastKind, opts: ToastOptions): string {
     id,
     kind,
     body: opts.body,
-    duration: opts.duration === undefined ? defaultDuration(kind) : opts.duration,
+    duration:
+      opts.duration === undefined
+        ? defaultDuration(kind, opts.action !== undefined)
+        : opts.duration,
   };
   if (opts.title !== undefined) entry.title = opts.title;
   if (opts.action !== undefined) entry.action = opts.action;
@@ -142,13 +152,13 @@ export function clearAllToasts(): void {
 }
 
 export const toast = {
-  /** Neutral/informational toast (role=status, 5s default). */
+  /** Neutral/informational toast (role=status, 6s default / 8s with an action). */
   info: (opts: ToastOptions) => enqueue('info', opts),
-  /** Success confirmation (role=status, 5s default). */
+  /** Success confirmation (role=status, 6s default / 8s with an action). */
   success: (opts: ToastOptions) => enqueue('success', opts),
-  /** Soft warning (role=alert, 7s default). */
+  /** Soft warning (role=alert, 6s default / 8s with an action). */
   warn: (opts: ToastOptions) => enqueue('warn', opts),
-  /** Hard error (role=alert, 7s default). */
+  /** Hard error (role=alert, sticky — never times out). */
   error: (opts: ToastOptions) => enqueue('error', opts),
 };
 

@@ -444,7 +444,7 @@ export function AgentTimeline() {
       <div class="eyebrow" style="display:flex;align-items:center;gap:10px">
         <span>Activity ({filteredCount})</span>
         {!connected && (
-          <span class="badge ember" style="font-size:10px">
+          <span class="badge caution" style="font-size:10px">
             ◆ OFFLINE
           </span>
         )}
@@ -564,7 +564,7 @@ export function TimelineBody() {
     <>
       {rows.length === 0 && loading && <div class="eyebrow">Loading activity…</div>}
       {rows.length === 0 && !loading && (
-        <div style="font-family:var(--f-sans);font-size:13px;color:var(--muted);font-style:italic">
+        <div style="font-family:var(--ef-font-body);font-size:13px;color:var(--ef-text-muted);font-style:italic">
           No activity yet — the runner hasn't observed any traffic for this slot.
         </div>
       )}
@@ -610,7 +610,7 @@ function ObjectiveSelect({
         const v = (e.currentTarget as HTMLSelectElement).value;
         objectiveFilter.value = v === '' ? null : v;
       }}
-      style="font-family:var(--f-mono);font-size:12px;padding:2px 6px;border:1px solid var(--rule);background:var(--ice);color:var(--ink);border-radius:var(--r-sm)"
+      style="font-family:var(--ef-font-mono);font-size:12px;padding:2px 6px;border:1px solid var(--ef-border);background:var(--ef-surface-raised);color:var(--ef-text);border-radius:var(--ef-radius-sm)"
     >
       <option value="">all activity</option>
       {objectives.map((o) => (
@@ -632,33 +632,33 @@ function FilterBar({ filters }: { filters: KindFilter }) {
   ];
   const callsOn = showApiCalls.value;
   return (
-    <div class="flex items-center gap-2 flex-wrap">
+    <div class="chips">
       {kinds.map(({ key, label }) => {
         const on = filters[key];
         return (
           <button
             key={key}
             type="button"
+            class="chip"
+            aria-pressed={on}
             onClick={() => {
               kindFilters.value = { ...filters, [key]: !on };
             }}
-            class={`badge ${on ? 'solid' : 'soft'}`}
-            style="cursor:pointer"
           >
-            {on ? '●' : '○'} {label}
+            {label}
           </button>
         );
       })}
       <button
         type="button"
+        class="chip"
+        aria-pressed={callsOn}
         onClick={() => {
           showApiCalls.value = !callsOn;
         }}
-        class={`badge ${callsOn ? 'solid' : 'soft'}`}
-        style="cursor:pointer"
         title="Model calls with no turn marker — subagents, web search, away summaries"
       >
-        {callsOn ? '●' : '○'} api calls
+        api calls
       </button>
     </div>
   );
@@ -670,32 +670,32 @@ function ThreadItemView({ item }: { item: ThreadItem }) {
       return (
         <div
           class="flex items-center gap-3"
-          style="font-family:var(--f-mono);font-size:12px;color:var(--steel);border-left:2px solid var(--steel);padding:6px 12px"
+          style="font-family:var(--ef-font-mono);font-size:12px;color:var(--ef-text-secondary);border-left:2px solid var(--ef-border-strong);padding:6px 12px"
         >
           <span>{formatTs(item.ts)}</span>
           <ChevronDown size={13} aria-hidden="true" class="flex-shrink-0" />
           <button
             type="button"
             onClick={() => selectObjectiveDetail(item.objectiveId)}
-            style="background:transparent;color:var(--steel);font-family:inherit;font-size:inherit;padding:0"
+            style="background:transparent;color:var(--ef-text-secondary);font-family:inherit;font-size:inherit;padding:0"
           >
             {item.objectiveId}
           </button>
-          <span style="color:var(--muted)">opened</span>
+          <span style="color:var(--ef-text-muted)">opened</span>
         </div>
       );
     case 'objective-close':
       return (
         <div
           class="flex items-center gap-3"
-          style="font-family:var(--f-mono);font-size:12px;color:var(--muted);border-left:2px solid var(--rule);padding:6px 12px"
+          style="font-family:var(--ef-font-mono);font-size:12px;color:var(--ef-text-muted);border-left:2px solid var(--ef-border);padding:6px 12px"
         >
           <span>{formatTs(item.ts)}</span>
           <ChevronUp size={13} aria-hidden="true" class="flex-shrink-0" />
           <button
             type="button"
             onClick={() => selectObjectiveDetail(item.objectiveId)}
-            style="background:transparent;color:var(--ink);font-family:inherit;font-size:inherit;padding:0"
+            style="background:transparent;color:var(--ef-text);font-family:inherit;font-size:inherit;padding:0"
           >
             {item.objectiveId}
           </button>
@@ -724,17 +724,17 @@ function PromptBlock({ item }: { item: Extract<ThreadItem, { variant: 'prompt' }
   // the transcript uses so it reads as structured markup, not raw XML.
   const highlighted = highlightXmlTags(item.text);
   return (
-    <div style="border-left:2px solid var(--rule-strong);background:color-mix(in srgb, var(--steel) 5%, transparent);padding:7px 10px;border-radius:0 5px 5px 0">
+    <div style="border-left:2px solid var(--ef-border-strong);background:var(--ef-lamp-working-ground);padding:7px 10px;border-radius:0 5px 5px 0">
       <div class="eyebrow" style="margin-bottom:4px">
         prompt · {formatTs(item.ts)}
       </div>
       {highlighted !== null ? (
         <pre
-          style="margin:0;font-family:var(--f-mono);font-size:11.5px;color:var(--ink);white-space:pre-wrap;line-height:1.5"
+          style="margin:0;font-family:var(--ef-font-mono);font-size:11.5px;color:var(--ef-text);white-space:pre-wrap;line-height:1.5"
           dangerouslySetInnerHTML={{ __html: highlighted }}
         />
       ) : (
-        <pre style="margin:0;font-family:var(--f-mono);font-size:11.5px;color:var(--muted);white-space:pre-wrap;line-height:1.5">
+        <pre style="margin:0;font-family:var(--ef-font-mono);font-size:11.5px;color:var(--ef-text-muted);white-space:pre-wrap;line-height:1.5">
           {item.text}
         </pre>
       )}
@@ -756,7 +756,7 @@ function TurnBlock({ item }: { item: Extract<ThreadItem, { variant: 'turn' }> })
       else body.push(b);
     }
   }
-  const accent = toolUses.length > 0 ? 'var(--steel)' : 'var(--ember)';
+  const accent = toolUses.length > 0 ? 'var(--ef-text-secondary)' : 'var(--ef-text-muted)';
 
   // Header segments after the model — omit any that are null/zero.
   const segments: string[] = [`${(item.duration / 1000).toFixed(1)}s`];
@@ -773,9 +773,9 @@ function TurnBlock({ item }: { item: Extract<ThreadItem, { variant: 'turn' }> })
 
   return (
     <div style={`border-left:2px solid ${accent};padding:7px 10px;border-radius:0 5px 5px 0`}>
-      <div style="font-family:var(--f-mono);font-size:11px;color:var(--muted);display:flex;gap:8px;flex-wrap:wrap;align-items:baseline">
+      <div style="font-family:var(--ef-font-mono);font-size:11px;color:var(--ef-text-muted);display:flex;gap:8px;flex-wrap:wrap;align-items:baseline">
         <span style="font-variant-numeric:tabular-nums">{formatTs(item.ts)}</span>
-        <span style="color:var(--ink);font-weight:700">{prettyModel(item.model ?? '?')}</span>
+        <span style="color:var(--ef-text);font-weight:700">{prettyModel(item.model ?? '?')}</span>
         {segments.map((s, i) => (
           <span key={i} style="font-variant-numeric:tabular-nums">
             · {s}
@@ -806,8 +806,8 @@ function TurnBlock({ item }: { item: Extract<ThreadItem, { variant: 'turn' }> })
  */
 const CONTEXT_SCROLL_BOX =
   'margin-top:4px;max-height:340px;overflow-y:auto;overscroll-behavior:contain;' +
-  'border:1px solid var(--rule);border-radius:5px;padding:8px 10px;' +
-  'background:color-mix(in srgb, var(--steel) 4%, transparent)';
+  'border:1px solid var(--ef-border);border-radius:5px;padding:8px 10px;' +
+  'background:var(--ef-lamp-working-ground)';
 
 /**
  * The per-turn API-call affordance.
@@ -834,19 +834,21 @@ function TurnCalls({
   if (calls.length === 0) {
     return (
       <details style="margin-top:6px">
-        <summary style="font-family:var(--f-mono);font-size:11px;color:var(--muted);cursor:pointer">
+        <summary style="font-family:var(--ef-font-mono);font-size:11px;color:var(--ef-text-muted);cursor:pointer">
           full context{' '}
           <ChevronDown size={11} aria-hidden="true" style="display:inline;vertical-align:-1px" />
         </summary>
         <div style="margin-top:4px">
           {ready ? (
-            <div style="font-family:var(--f-sans);font-size:12px;color:var(--muted);font-style:italic">
+            <div style="font-family:var(--ef-font-body);font-size:12px;color:var(--ef-text-muted);font-style:italic">
               {match === 'unmatched-exact'
                 ? 'Capture unmatched — this turn’s exact request record never arrived.'
                 : "The request body for this call wasn't captured — no full context available."}
             </div>
           ) : (
-            <div style="font-family:var(--f-mono);font-size:11px;color:var(--muted)">loading…</div>
+            <div style="font-family:var(--ef-font-mono);font-size:11px;color:var(--ef-text-muted)">
+              loading…
+            </div>
           )}
         </div>
       </details>
@@ -863,7 +865,7 @@ function TurnCalls({
           }
         }}
       >
-        <summary style="font-family:var(--f-mono);font-size:11px;color:var(--muted);cursor:pointer">
+        <summary style="font-family:var(--ef-font-mono);font-size:11px;color:var(--ef-text-muted);cursor:pointer">
           full context{' '}
           <ChevronDown size={11} aria-hidden="true" style="display:inline;vertical-align:-1px" />
         </summary>
@@ -875,7 +877,7 @@ function TurnCalls({
   }
   return (
     <details style="margin-top:6px">
-      <summary style="font-family:var(--f-mono);font-size:11px;color:var(--muted);cursor:pointer">
+      <summary style="font-family:var(--ef-font-mono);font-size:11px;color:var(--ef-text-muted);cursor:pointer">
         api calls ({calls.length}){' '}
         <ChevronDown size={11} aria-hidden="true" style="display:inline;vertical-align:-1px" />
       </summary>
@@ -893,7 +895,7 @@ function CallSubRow({ call }: { call: GenAiInferenceSummary }) {
   const u = call.usage;
   return (
     <details
-      style="border-left:1px solid var(--rule);padding-left:10px"
+      style="border-left:1px solid var(--ef-border);padding-left:10px"
       onToggle={(e) => {
         if ((e.currentTarget as HTMLDetailsElement).open) {
           void loadGenAiRecord(call.id);
@@ -902,10 +904,10 @@ function CallSubRow({ call }: { call: GenAiInferenceSummary }) {
     >
       <summary
         class="flex items-center gap-2 flex-wrap"
-        style="font-family:var(--f-mono);font-size:11px;color:var(--muted);cursor:pointer;padding:2px 0"
+        style="font-family:var(--ef-font-mono);font-size:11px;color:var(--ef-text-muted);cursor:pointer;padding:2px 0"
       >
         <span style="font-variant-numeric:tabular-nums">{formatTs(call.ts)}</span>
-        <span style="color:var(--ink);font-weight:600">
+        <span style="color:var(--ef-text);font-weight:600">
           {call.model !== null ? prettyModel(call.model) : '?'}
         </span>
         {u && ((u.inputTokens ?? 0) > 0 || (u.outputTokens ?? 0) > 0) && (
@@ -939,11 +941,15 @@ function LazyRecordBody({
 }) {
   const state = genAiRecordState(recordId);
   if (state.status === 'idle' || state.status === 'loading') {
-    return <div style="font-family:var(--f-mono);font-size:11px;color:var(--muted)">loading…</div>;
+    return (
+      <div style="font-family:var(--ef-font-mono);font-size:11px;color:var(--ef-text-muted)">
+        loading…
+      </div>
+    );
   }
   if (state.status === 'error') {
     return (
-      <div style="font-family:var(--f-sans);font-size:12px;color:var(--err)">
+      <div style="font-family:var(--ef-font-body);font-size:12px;color:var(--ef-lamp-alarm)">
         Failed to load context: {state.message}
       </div>
     );
@@ -952,7 +958,7 @@ function LazyRecordBody({
     <>
       {showOutput && state.record.outputMessages.length > 0 && (
         <details style="margin-top:4px" open>
-          <summary style="font-family:var(--f-mono);font-size:11.5px;color:var(--muted);cursor:pointer">
+          <summary style="font-family:var(--ef-font-mono);font-size:11.5px;color:var(--ef-text-muted);cursor:pointer">
             output ({state.record.outputMessages.length}{' '}
             {state.record.outputMessages.length === 1 ? 'message' : 'messages'})
           </summary>
@@ -983,7 +989,7 @@ function ModelCallRow({ item }: { item: Extract<ThreadItem, { variant: 'model-ca
   const u = item.usage;
   return (
     <details
-      style="margin:2px 0 2px 18px;border-left:2px dashed var(--rule-strong);padding:2px 12px"
+      style="margin:2px 0 2px 18px;border-left:2px dashed var(--ef-border-strong);padding:2px 12px"
       onToggle={(e) => {
         if ((e.currentTarget as HTMLDetailsElement).open) {
           void loadGenAiRecord(item.recordId);
@@ -992,14 +998,14 @@ function ModelCallRow({ item }: { item: Extract<ThreadItem, { variant: 'model-ca
     >
       <summary
         class="flex items-center gap-2 flex-wrap"
-        style="font-family:var(--f-mono);font-size:11.5px;color:var(--muted);cursor:pointer;padding:3px 0"
+        style="font-family:var(--ef-font-mono);font-size:11.5px;color:var(--ef-text-muted);cursor:pointer;padding:3px 0"
       >
         <span aria-hidden="true">↳</span>
         <span style="font-variant-numeric:tabular-nums">{formatTs(item.ts)}</span>
-        <span style="color:var(--steel)">
+        <span style="color:var(--ef-text-secondary)">
           {describeQuerySource(item.querySource, item.agentName)}
         </span>
-        <span style="color:var(--ink);font-weight:600">
+        <span style="color:var(--ef-text);font-weight:600">
           {item.model !== null ? prettyModel(item.model) : '?'}
         </span>
         {u && ((u.inputTokens ?? 0) > 0 || (u.outputTokens ?? 0) > 0) && (
@@ -1025,30 +1031,32 @@ function CallCard({
 }) {
   const { server, tool } = parseToolName(block.name);
   return (
-    <div style="margin-top:6px;border:1px solid var(--rule);border-radius:5px;overflow:hidden">
-      <div style="display:flex;align-items:center;gap:7px;padding:4px 8px;background:color-mix(in srgb, var(--steel) 8%, transparent);font-family:var(--f-mono);font-size:11.5px">
-        <span style="color:var(--steel)">◆</span>
+    <div style="margin-top:6px;border:1px solid var(--ef-border);border-radius:5px;overflow:hidden">
+      <div style="display:flex;align-items:center;gap:7px;padding:4px 8px;background:var(--ef-lamp-working-ground);font-family:var(--ef-font-mono);font-size:11.5px">
+        <span style="color:var(--ef-text-secondary)">◆</span>
         {server && (
           <>
-            <span style="color:var(--muted)">{server}</span>
-            <span style="color:var(--rule-strong)">·</span>
+            <span style="color:var(--ef-text-muted)">{server}</span>
+            <span style="color:var(--ef-border-strong)">·</span>
           </>
         )}
-        <span style="color:var(--ink);font-weight:700">{tool}</span>
+        <span style="color:var(--ef-text);font-weight:700">{tool}</span>
       </div>
       <JsonPre
         text={stringifyToolPayload(block.input)}
-        style="margin:0;padding:5px 8px;white-space:pre-wrap;font-family:var(--f-mono);font-size:11px;color:var(--graphite);line-height:1.45;border-top:1px solid var(--rule)"
+        style="margin:0;padding:5px 8px;white-space:pre-wrap;font-family:var(--ef-font-mono);font-size:11px;color:var(--ef-text-faint);line-height:1.45;border-top:1px solid var(--ef-border)"
       />
       {fold && (
-        <div style="display:flex;gap:7px;align-items:flex-start;padding:4px 8px;font-family:var(--f-mono);font-size:11px;border-top:1px solid var(--rule);color:var(--ink)">
-          <span style={`color:${fold.isError ? 'var(--err)' : 'var(--steel)'};font-weight:700`}>
+        <div style="display:flex;gap:7px;align-items:flex-start;padding:4px 8px;font-family:var(--ef-font-mono);font-size:11px;border-top:1px solid var(--ef-border);color:var(--ef-text)">
+          <span
+            style={`color:${fold.isError ? 'var(--ef-lamp-alarm)' : 'var(--ef-text-secondary)'};font-weight:700`}
+          >
             {fold.isError ? '✗' : '✓'}
           </span>
           {fold.result !== undefined && fold.result !== null && (
             <JsonPre
               text={stringifyToolPayload(simplifyToolResult(fold.result))}
-              style="margin:0;flex:1;min-width:0;white-space:pre-wrap;font-family:var(--f-mono);font-size:11px;color:var(--ink);line-height:1.45"
+              style="margin:0;flex:1;min-width:0;white-space:pre-wrap;font-family:var(--ef-font-mono);font-size:11px;color:var(--ef-text);line-height:1.45"
             />
           )}
         </div>
@@ -1064,13 +1072,13 @@ function TurnContentBlock({ block }: { block: AnthropicContentBlock }) {
     if (highlighted !== null) {
       return (
         <pre
-          style="font-family:var(--f-mono);font-size:12px;color:var(--ink);white-space:pre-wrap;margin-top:5px"
+          style="font-family:var(--ef-font-mono);font-size:12px;color:var(--ef-text);white-space:pre-wrap;margin-top:5px"
           dangerouslySetInnerHTML={{ __html: highlighted }}
         />
       );
     }
     return (
-      <pre style="font-family:var(--f-mono);font-size:12px;color:var(--ink);white-space:pre-wrap;margin-top:5px">
+      <pre style="font-family:var(--ef-font-mono);font-size:12px;color:var(--ef-text);white-space:pre-wrap;margin-top:5px">
         {block.text}
       </pre>
     );
@@ -1084,13 +1092,13 @@ function TurnContentBlock({ block }: { block: AnthropicContentBlock }) {
     // Reasoning, not the answer. Kept deliberately quiet — a small muted
     // `thinking` eyebrow over a subtle left rule, the text itself muted +
     // italic — so a reader can tell the model's private reasoning apart
-    // from its spoken text (rendered in `--ink`) without it dominating.
+    // from its spoken text (rendered in `--ef-text`) without it dominating.
     return (
-      <div style="margin-top:5px;border-left:2px solid var(--rule);padding-left:9px">
+      <div style="margin-top:5px;border-left:2px solid var(--ef-border);padding-left:9px">
         <div class="eyebrow" style="margin-bottom:2px;opacity:0.75">
           thinking
         </div>
-        <pre style="font-family:var(--f-mono);font-size:11.5px;color:var(--muted);font-style:italic;white-space:pre-wrap;margin:0">
+        <pre style="font-family:var(--ef-font-mono);font-size:11.5px;color:var(--ef-text-muted);font-style:italic;white-space:pre-wrap;margin:0">
           {block.text}
         </pre>
       </div>
@@ -1099,29 +1107,31 @@ function TurnContentBlock({ block }: { block: AnthropicContentBlock }) {
   if (block.type === 'tool_result') {
     return (
       <div style="font-size:12px;margin-top:5px">
-        <span style={`color:var(${block.isError ? '--err' : '--steel'})`}>tool_result</span>{' '}
-        <span style="color:var(--muted)">({block.toolUseId})</span>
+        <span style={`color:var(${block.isError ? '--ef-lamp-alarm' : '--ef-text-data'})`}>
+          tool_result
+        </span>{' '}
+        <span style="color:var(--ef-text-muted)">({block.toolUseId})</span>
         <JsonPre
           text={
             typeof block.content === 'string'
               ? block.content
               : JSON.stringify(block.content, null, 2)
           }
-          style="font-family:var(--f-mono);font-size:11.5px;color:var(--graphite);white-space:pre-wrap;margin-top:2px"
+          style="font-family:var(--ef-font-mono);font-size:11.5px;color:var(--ef-text-faint);white-space:pre-wrap;margin-top:2px"
         />
       </div>
     );
   }
   if (block.type === 'image') {
     return (
-      <div style="font-size:12px;color:var(--muted);font-style:italic;margin-top:5px">
+      <div style="font-size:12px;color:var(--ef-text-muted);font-style:italic;margin-top:5px">
         [image{block.mediaType ? ` ${block.mediaType}` : ''}]
       </div>
     );
   }
   if (block.type === 'unknown') {
     return (
-      <div style="font-size:12px;color:var(--muted);font-style:italic;margin-top:5px">
+      <div style="font-size:12px;color:var(--ef-text-muted);font-style:italic;margin-top:5px">
         [unknown block: {JSON.stringify(block.raw).slice(0, 60)}…]
       </div>
     );
@@ -1138,7 +1148,7 @@ function TurnContentBlock({ block }: { block: AnthropicContentBlock }) {
  * card by `buildThread` and never reach here.
  */
 function ToolActionMarker({ item }: { item: Extract<ThreadItem, { variant: 'tool-action' }> }) {
-  const accent = item.isError ? 'var(--err)' : 'var(--steel)';
+  const accent = item.isError ? 'var(--ef-lamp-alarm)' : 'var(--ef-border-strong)';
   const { server, tool } = parseToolName(item.toolName);
   const hasInput = item.input !== undefined && item.input !== null;
   const hasResult = item.result !== undefined && item.result !== null;
@@ -1146,19 +1156,21 @@ function ToolActionMarker({ item }: { item: Extract<ThreadItem, { variant: 'tool
     <details style={`margin:2px 0;border-left:2px solid ${accent};padding:2px 12px`}>
       <summary
         class="flex items-center gap-3 flex-wrap"
-        style="font-family:var(--f-mono);font-size:12px;color:var(--muted);cursor:pointer;padding:4px 0"
+        style="font-family:var(--ef-font-mono);font-size:12px;color:var(--ef-text-muted);cursor:pointer;padding:4px 0"
       >
         <span>{formatTs(item.ts)}</span>
-        <span style="color:var(--steel)">tool</span>
+        <span style="color:var(--ef-text-secondary)">tool</span>
         <span>
-          {server && <span style="color:var(--muted)">{server} · </span>}
-          <span style={`color:${item.isError ? 'var(--err)' : 'var(--ink)'};font-weight:600`}>
+          {server && <span style="color:var(--ef-text-muted)">{server} · </span>}
+          <span
+            style={`color:${item.isError ? 'var(--ef-lamp-alarm)' : 'var(--ef-text)'};font-weight:600`}
+          >
             {tool}
           </span>
         </span>
         {item.agent && <span>{item.agent}</span>}
         {item.durationMs !== null && <span>{item.durationMs}ms</span>}
-        {item.isError && <span style="color:var(--err)">error</span>}
+        {item.isError && <span style="color:var(--ef-lamp-alarm)">error</span>}
       </summary>
       <div style="margin-top:4px;padding:4px 0;display:flex;flex-direction:column;gap:4px">
         {hasInput && (
@@ -1168,7 +1180,7 @@ function ToolActionMarker({ item }: { item: Extract<ThreadItem, { variant: 'tool
             </div>
             <JsonPre
               text={stringifyToolPayload(item.input)}
-              style="font-family:var(--f-mono);font-size:11.5px;color:var(--graphite);white-space:pre-wrap"
+              style="font-family:var(--ef-font-mono);font-size:11.5px;color:var(--ef-text-faint);white-space:pre-wrap"
             />
           </div>
         )}
@@ -1179,7 +1191,7 @@ function ToolActionMarker({ item }: { item: Extract<ThreadItem, { variant: 'tool
             </div>
             <JsonPre
               text={stringifyToolPayload(simplifyToolResult(item.result))}
-              style="font-family:var(--f-mono);font-size:11.5px;color:var(--graphite);white-space:pre-wrap"
+              style="font-family:var(--ef-font-mono);font-size:11.5px;color:var(--ef-text-faint);white-space:pre-wrap"
             />
           </div>
         )}

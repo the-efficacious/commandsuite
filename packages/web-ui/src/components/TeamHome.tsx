@@ -18,6 +18,7 @@ import type { Presence, ProcessDocument } from 'csuite-sdk/types';
 import { hasPermission } from 'csuite-sdk/types';
 import { useState } from 'preact/hooks';
 import { getClient } from '../lib/client.js';
+import { initials } from '../lib/initials.js';
 import { instructions, loadInstructions } from '../lib/instructions.js';
 import { objectives } from '../lib/objectives.js';
 import { type PermissionSummary, summarizePermissions } from '../lib/permissions.js';
@@ -51,13 +52,14 @@ export function TeamHome({ viewer }: TeamHomeProps) {
       <PageHeader eyebrow="Team" title={b.team.name} />
 
       {(r.restartPending?.length ?? 0) > 0 && (
-        <div
-          class="card"
-          style="padding:10px 12px;margin-bottom:16px;font-family:var(--f-mono);font-size:11.5px;line-height:1.5;color:var(--muted);border-left:3px solid var(--warn)"
-        >
-          <span style="color:var(--ember)">Restart pending:</span>{' '}
-          {(r.restartPending ?? []).join(', ')} — running superseded instructions until their next
-          session.
+        <div class="banner" data-state="caution" style="margin-bottom:16px">
+          <div>
+            <div class="banner-title">Restart pending</div>
+            <div class="banner-body">
+              {(r.restartPending ?? []).join(', ')} — running superseded instructions until their
+              next session.
+            </div>
+          </div>
         </div>
       )}
 
@@ -75,14 +77,22 @@ export function TeamHome({ viewer }: TeamHomeProps) {
         class="grid"
         style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:24px"
       >
-        <StatCard label="Members" value={r.teammates.length} />
-        <StatCard label="Online" value={onlineCount} />
-        <StatCard label="Active objectives" value={activeObjectives} />
-        <StatCard
-          label="Blocked"
-          value={blockedObjectives}
-          {...(blockedObjectives > 0 ? { accent: 'ember' as const } : {})}
-        />
+        <div class="stat">
+          <div class="stat-label">MEMBERS</div>
+          <div class="stat-value">{r.teammates.length}</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">ONLINE</div>
+          <div class="stat-value">{onlineCount}</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">ACTIVE OBJECTIVES</div>
+          <div class="stat-value">{activeObjectives}</div>
+        </div>
+        <div class={`stat${blockedObjectives > 0 ? ' caution' : ''}`}>
+          <div class="stat-label">BLOCKED</div>
+          <div class="stat-value">{blockedObjectives}</div>
+        </div>
       </div>
 
       <div class="eyebrow" style="margin-bottom:10px">
@@ -105,7 +115,7 @@ export function TeamHome({ viewer }: TeamHomeProps) {
             const blocked = activity === 'blocked';
             const isSelf = t.name === viewer;
             const isLast = idx === r.teammates.length - 1;
-            const rowBorder = isLast ? '' : 'border-bottom:1px solid var(--rule);';
+            const rowBorder = isLast ? '' : 'border-bottom:1px solid var(--ef-surface-hairline);';
             const summary = summarizePermissions(t.permissions, b.team.permissionPresets);
 
             return (
@@ -118,19 +128,24 @@ export function TeamHome({ viewer }: TeamHomeProps) {
                   aria-label={`Open profile for ${t.name}`}
                 >
                   <div class="flex items-center gap-3 min-w-0 flex-wrap">
-                    <span class="avatar" aria-hidden="true">
+                    <span
+                      class="avatar"
+                      data-kind={t.kind ?? 'agent'}
+                      data-size="34"
+                      aria-hidden="true"
+                    >
                       {initials(t.name)}
                     </span>
                     <div class="min-w-0 flex flex-col gap-0.5">
                       <div class="flex items-center gap-2 flex-wrap">
                         <span
                           class="font-display"
-                          style="font-weight:700;letter-spacing:-0.01em;font-size:15px;line-height:1.1;color:var(--ink)"
+                          style="font-weight:700;letter-spacing:-0.01em;font-size:15px;line-height:1.1;color:var(--ef-text)"
                         >
                           {t.name}
                         </span>
                         {isSelf && (
-                          <span style="font-family:var(--f-mono);font-size:10px;letter-spacing:.14em;color:var(--muted);text-transform:uppercase">
+                          <span style="font-family:var(--ef-font-mono);font-size:10px;letter-spacing:.14em;color:var(--ef-text-muted);text-transform:uppercase">
                             (you)
                           </span>
                         )}
@@ -175,16 +190,13 @@ export function TeamHome({ viewer }: TeamHomeProps) {
                         )}
                       </div>
                       {t.role.description.length > 0 && (
-                        <div style="font-family:var(--f-sans);font-size:11.5px;color:var(--muted);line-height:1.4">
+                        <div style="font-family:var(--ef-font-body);font-size:11.5px;color:var(--ef-text-muted);line-height:1.4">
                           {t.role.description}
                         </div>
                       )}
                     </div>
                   </div>
-                  <span
-                    class="flex items-center gap-2 flex-shrink-0"
-                    style="font-family:var(--f-mono);font-size:11.5px;letter-spacing:.08em;text-transform:uppercase"
-                  >
+                  <span class="state-word flex-shrink-0">
                     {working ? (
                       // Actively processing a turn.
                       <span class="spinner sm" aria-hidden="true" />
@@ -197,7 +209,7 @@ export function TeamHome({ viewer }: TeamHomeProps) {
                       <span class={`dot${online ? ' ok' : ' muted'}`} aria-hidden="true" />
                     )}
                     <span
-                      style={`color:var(--${blocked ? 'ember' : working || online ? 'steel' : 'muted'})`}
+                      style={`color:${blocked ? 'var(--ef-lamp-caution)' : working ? 'var(--ef-lamp-working)' : online ? 'var(--ef-lamp-nominal)' : 'var(--ef-lamp-stood-down)'}`}
                     >
                       {working
                         ? 'WORKING'
@@ -239,7 +251,7 @@ function ClampedProse({ text }: { text: string }) {
   return (
     <div>
       <div
-        style={`font-family:var(--f-sans);font-size:13.5px;color:var(--muted);line-height:1.55;white-space:pre-wrap;${clamp}`}
+        style={`font-family:var(--ef-font-body);font-size:13.5px;color:var(--ef-text-muted);line-height:1.55;white-space:pre-wrap;${clamp}`}
       >
         {text}
       </div>
@@ -306,7 +318,7 @@ function TeamContextSection({ context, canManage }: { context: string; canManage
           placeholder="What is this team here to do, and what should every member know?"
           disabled={busy}
         />
-        <div style="font-family:var(--f-sans);font-size:11.5px;color:var(--muted);font-style:italic;margin-top:6px">
+        <div style="font-family:var(--ef-font-body);font-size:11.5px;color:var(--ef-text-muted);font-style:italic;margin-top:6px">
           Standing context every member inherits. Agents see edits on their next session.
         </div>
         <TextMetrics text={ctxDraft.value} />
@@ -431,11 +443,11 @@ function TeamProcessSection({
           disabled={busy}
         />
         <TextMetrics text={prcDraft.value} />
-        <label style="display:flex;flex-direction:column;gap:4px;margin-top:10px;font-family:var(--f-mono);font-size:11px;letter-spacing:.04em;color:var(--muted);text-transform:uppercase">
+        <label style="display:flex;flex-direction:column;gap:4px;margin-top:10px;font-family:var(--ef-font-mono);font-size:11px;letter-spacing:.04em;color:var(--ef-text-muted);text-transform:uppercase">
           <span>reason — recorded in the document's history</span>
           <input
             class="input w-full"
-            style="font-size:13px;font-family:var(--f-sans);text-transform:none;letter-spacing:normal;color:var(--ink)"
+            style="font-size:13px;font-family:var(--ef-font-body);text-transform:none;letter-spacing:normal;color:var(--ef-text)"
             value={prcReason.value}
             onInput={(e) => {
               prcReason.value = (e.currentTarget as HTMLInputElement).value;
@@ -445,11 +457,11 @@ function TeamProcessSection({
             required
           />
         </label>
-        <label style="display:flex;flex-direction:column;gap:4px;margin-top:10px;font-family:var(--f-mono);font-size:11px;letter-spacing:.04em;color:var(--muted);text-transform:uppercase">
+        <label style="display:flex;flex-direction:column;gap:4px;margin-top:10px;font-family:var(--ef-font-mono);font-size:11px;letter-spacing:.04em;color:var(--ef-text-muted);text-transform:uppercase">
           <span>disposition</span>
           <select
             class="input"
-            style="font-size:13px;font-family:var(--f-sans);text-transform:none;letter-spacing:normal;color:var(--ink)"
+            style="font-size:13px;font-family:var(--ef-font-body);text-transform:none;letter-spacing:normal;color:var(--ef-text)"
             value={prcDisposition.value}
             onInput={(e) => {
               prcDisposition.value = (e.currentTarget as HTMLSelectElement).value as
@@ -496,7 +508,7 @@ function TeamProcessSection({
 
   if (doc === undefined) {
     return (
-      <div style="margin-bottom:24px;font-family:var(--f-sans);font-size:11.5px;color:var(--muted);font-style:italic">
+      <div style="margin-bottom:24px;font-family:var(--ef-font-body);font-size:11.5px;color:var(--ef-text-muted);font-style:italic">
         Team process: unavailable — this broker does not report a process document.
       </div>
     );
@@ -519,7 +531,7 @@ function TeamProcessSection({
         <div class="eyebrow" style="margin:0">
           Team process
         </div>
-        <span style="font-family:var(--f-mono);font-size:10.5px;letter-spacing:.06em;color:var(--muted)">
+        <span style="font-family:var(--ef-font-mono);font-size:10.5px;letter-spacing:.06em;color:var(--ef-text-muted)">
           v{doc.version} · last edited by {doc.updatedBy}
         </span>
       </div>
@@ -551,33 +563,8 @@ export function __resetTeamHomeForTests(): void {
   prcError.value = null;
 }
 
-function StatCard({ label, value, accent }: { label: string; value: number; accent?: 'ember' }) {
-  const color = accent === 'ember' ? 'var(--ember)' : 'var(--ink)';
-  return (
-    <div class="card" style="padding:14px 16px">
-      <div class="eyebrow" style="margin:0">
-        {label}
-      </div>
-      <div
-        class="font-display"
-        style={`font-size:28px;font-weight:700;letter-spacing:-0.02em;color:${color};line-height:1.1;margin-top:4px`}
-      >
-        {value}
-      </div>
-    </div>
-  );
-}
-
-function initials(name: string): string {
-  const parts = name.split(/[\s_-]+/).filter(Boolean);
-  if (parts.length >= 2) {
-    return `${parts[0]?.[0] ?? ''}${parts[1]?.[0] ?? ''}`.toUpperCase();
-  }
-  return name.slice(0, 2).toUpperCase();
-}
-
 function roleBadgeVariant(summary: PermissionSummary): string {
   if (summary.isAdmin) return 'solid';
-  if (summary.kind === 'preset' || summary.kind === 'custom') return 'ember solid';
+  if (summary.kind === 'preset' || summary.kind === 'custom') return 'caution solid';
   return 'soft';
 }

@@ -4,7 +4,7 @@
  * Layout:
  *
  *   ┌─────────────────────────────────────────┐
- *   │  Breadcrumb: / > alice > uploads        │
+ *   │  Breadcrumb: / alice / uploads          │
  *   │  [ Upload ] [ New folder ] [ Shared ]   │
  *   ├─────────────────────────────────────────┤
  *   │  📁 reports                              │
@@ -22,11 +22,13 @@
 import { signal } from '@preact/signals';
 import { FS_PATHS } from 'csuite-sdk/protocol';
 import type { FsEntry } from 'csuite-sdk/types';
+import { Fragment } from 'preact';
 import { getClient } from '../lib/client.js';
+import { confirmDialog } from '../lib/confirm.js';
 import { openPreview } from '../lib/file-preview.js';
 import { instructions } from '../lib/instructions.js';
 import { selectFiles } from '../lib/view.js';
-import { AlertCircle, ChevronRight, X } from './icons/index.js';
+import { AlertCircle, X } from './icons/index.js';
 
 interface PanelState {
   mode: 'tree' | 'shared' | 'all';
@@ -138,7 +140,14 @@ async function handleUpload(files: FileList | null, currentPath: string): Promis
 }
 
 async function handleDelete(entry: FsEntry): Promise<void> {
-  if (!confirm(`Delete ${entry.path}?`)) return;
+  if (
+    !(await confirmDialog({
+      title: `Delete ${entry.path}?`,
+      ...(entry.kind === 'directory' ? { body: 'The directory and everything in it goes.' } : {}),
+      verb: 'Delete',
+    }))
+  )
+    return;
   try {
     await getClient().fsRm(entry.path, entry.kind === 'directory');
     if (panelState.value.mode === 'shared') {
@@ -156,37 +165,58 @@ async function handleDelete(entry: FsEntry): Promise<void> {
   }
 }
 
+interface CrumbSeg {
+  name: string;
+  subpath: string;
+  isLast: boolean;
+}
+
 function Breadcrumb({ path }: { path: string }) {
   const segments = path === '/' ? [] : path.slice(1).split('/');
+  const segs: CrumbSeg[] = segments.map((seg, i) => ({
+    name: seg,
+    subpath: `/${segments.slice(0, i + 1).join('/')}`,
+    isLast: i === segments.length - 1,
+  }));
+  // Per the trail spec the middle folds, never the ends: past four
+  // deep, keep the first segment and the last two with a single `…`
+  // standing in for the rest (full path in its title).
+  const first = segs[0];
+  const shown: Array<CrumbSeg | 'fold'> =
+    first !== undefined && segs.length > 4 ? [first, 'fold', ...segs.slice(-2)] : segs;
   return (
-    <nav aria-label="path" style="font-family:var(--f-mono);font-size:12.5px">
-      <button
-        type="button"
-        onClick={() => void refreshTree('/')}
-        style="background:none;border:none;padding:4px 6px;cursor:pointer;color:var(--link);font-family:inherit;font-size:inherit"
-      >
+    <nav aria-label="path" class="crumbs">
+      <button type="button" class="text-link" onClick={() => void refreshTree('/')}>
         /
       </button>
-      {segments.map((seg, i) => {
-        const subpath = `/${segments.slice(0, i + 1).join('/')}`;
-        const isLast = i === segments.length - 1;
-        return (
-          <span key={subpath}>
-            <span
-              aria-hidden="true"
-              style="display:inline-flex;align-items:center;vertical-align:middle;color:var(--muted);margin:0 2px"
-            >
-              <ChevronRight size={12} />
+      {shown.map((c, i) => {
+        // The root button's `/` doubles as the leading separator, so
+        // the first segment carries none.
+        const sep =
+          i > 0 ? (
+            <span class="sep" aria-hidden="true">
+              /
             </span>
-            <button
-              type="button"
-              onClick={() => void refreshTree(subpath)}
-              disabled={isLast}
-              style={`background:none;border:none;padding:4px 6px;cursor:${isLast ? 'default' : 'pointer'};color:${isLast ? 'var(--ink)' : 'var(--link)'};font-family:inherit;font-size:inherit;font-weight:${isLast ? 700 : 500}`}
-            >
-              {seg}
-            </button>
-          </span>
+          ) : null;
+        if (c === 'fold') {
+          return (
+            <Fragment key="fold">
+              {sep}
+              <span title={path}>…</span>
+            </Fragment>
+          );
+        }
+        return (
+          <Fragment key={c.subpath}>
+            {sep}
+            {c.isLast ? (
+              <span class="current">{c.name}</span>
+            ) : (
+              <button type="button" class="text-link" onClick={() => void refreshTree(c.subpath)}>
+                {c.name}
+              </button>
+            )}
+          </Fragment>
         );
       })}
     </nav>
@@ -220,13 +250,13 @@ export function FilesPanel({ viewer, path }: FilesPanelProps) {
 
   return (
     <div class="flex-1 flex flex-col min-h-0" style="padding:16px;overflow-y:auto">
-      <header style="display:flex;flex-direction:column;gap:10px;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--rule)">
-        <h2 style="margin:0;font-family:var(--f-display);letter-spacing:-.01em">Files</h2>
+      <header style="display:flex;flex-direction:column;gap:10px;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--ef-border)">
+        <h2 style="margin:0;font-family:var(--ef-font-display);letter-spacing:-.01em">Files</h2>
         <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
           {current.mode === 'tree' ? (
             <Breadcrumb path={current.path} />
           ) : (
-            <span style="font-family:var(--f-mono);font-size:12.5px;color:var(--muted)">
+            <span style="font-family:var(--ef-font-mono);font-size:12.5px;color:var(--ef-text-muted)">
               {current.mode === 'all' ? 'All files (admin)' : 'Shared with you'}
             </span>
           )}
@@ -308,10 +338,10 @@ export function FilesPanel({ viewer, path }: FilesPanelProps) {
         </div>
       )}
 
-      {current.loading && <p style="color:var(--muted);font-size:13px">Loading…</p>}
+      {current.loading && <p style="color:var(--ef-text-muted);font-size:13px">Loading…</p>}
 
       {!current.loading && entries.length === 0 && !current.error && (
-        <p style="color:var(--muted);font-size:13px">
+        <p style="color:var(--ef-text-muted);font-size:13px">
           {current.mode === 'shared'
             ? 'Nothing has been shared with you yet.'
             : current.mode === 'all'
@@ -324,11 +354,11 @@ export function FilesPanel({ viewer, path }: FilesPanelProps) {
         {entries.map((entry) => (
           <li
             key={entry.path}
-            style="display:flex;gap:10px;align-items:center;padding:8px 10px;background:var(--bg-alt);border-radius:4px;font-size:13px"
+            style="display:flex;gap:10px;align-items:center;padding:8px 10px;background:var(--ef-surface-sunken);border-radius:4px;font-size:13px"
           >
             <span
               aria-hidden="true"
-              style="color:var(--steel);font-size:16px;line-height:1;width:18px;text-align:center"
+              style="color:var(--ef-icon-inline);font-size:16px;line-height:1;width:18px;text-align:center"
             >
               {kindGlyph(entry)}
             </span>
@@ -342,7 +372,7 @@ export function FilesPanel({ viewer, path }: FilesPanelProps) {
                   selectFiles(entry.path);
                   void refreshTree(entry.path);
                 }}
-                style="background:none;border:none;padding:0;cursor:pointer;color:var(--link);font-weight:600;text-align:left;flex:1;min-width:0;word-break:break-word"
+                style="background:none;border:none;padding:0;cursor:pointer;color:var(--ef-link);font-weight:600;text-align:left;flex:1;min-width:0;word-break:break-word"
               >
                 {entry.name}/
               </button>
@@ -358,7 +388,7 @@ export function FilesPanel({ viewer, path }: FilesPanelProps) {
                   })
                 }
                 title={`Preview ${entry.name}`}
-                style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;background:transparent;border:0;padding:0;text-align:left;cursor:pointer;color:var(--ink)"
+                style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;background:transparent;border:0;padding:0;text-align:left;cursor:pointer;color:var(--ef-text)"
               >
                 {/* In the flat all-files view two files can share a name across
                     different homes, so the absolute path is the disambiguator;
@@ -367,7 +397,7 @@ export function FilesPanel({ viewer, path }: FilesPanelProps) {
                 <span style="font-weight:500;word-break:break-word">
                   {current.mode === 'all' ? entry.path : entry.name}
                 </span>
-                <span style="color:var(--muted);font-size:11px">
+                <span style="color:var(--ef-text-muted);font-size:11px">
                   {formatSize(entry.size)} · {entry.mimeType ?? 'unknown'}
                   {entry.owner !== viewer && ` · owned by ${entry.owner}`}
                 </span>
@@ -398,7 +428,7 @@ export function FilesPanel({ viewer, path }: FilesPanelProps) {
               <button
                 type="button"
                 class="btn"
-                style="font-size:11px;padding:4px 8px;color:var(--err)"
+                style="font-size:11px;padding:4px 8px;color:var(--ef-lamp-alarm)"
                 onClick={() => void handleDelete(entry)}
                 aria-label={`Delete ${entry.name}`}
               >

@@ -23,10 +23,22 @@
 
 import { resolve } from 'node:path';
 import preact from '@preact/preset-vite';
+import tokens from '@the-efficacious/brand/tokens.json' with { type: 'json' };
 import { PATHS } from 'csuite-sdk/protocol';
 import unocss from 'unocss/vite';
 import { defineConfig, type PluginOption } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
+
+// Helm surface — the manifest and <meta theme-color> can't read CSS
+// custom properties, so the value comes from the brand's tokens.json
+// at build time instead of a hex pinned here.
+const HELM_SURFACE = tokens.themes.helm.color.surface;
+
+/** Fills %HELM_SURFACE% in index.html (dev and build). */
+const helmThemeColor = (): PluginOption => ({
+  name: 'helm-theme-color',
+  transformIndexHtml: (html) => html.replaceAll('%HELM_SURFACE%', HELM_SURFACE),
+});
 
 // Dev-mode proxy target: the broker's default bind port. Matches
 // `DEFAULT_PORT` (8717) from the SDK so `pnpm dev` at the repo root
@@ -85,6 +97,7 @@ function deriveProxyRules(): Record<string, { target: string; changeOrigin: fals
 const plugins: PluginOption[] = [
   preact(),
   unocss(),
+  helmThemeColor(),
   VitePWA({
     // `injectManifest` = we own the service worker; the plugin just
     // stamps the precache list into `self.__WB_MANIFEST`. Required
@@ -110,8 +123,8 @@ const plugins: PluginOption[] = [
       name: 'CommandSuite',
       short_name: 'csuite',
       description: 'Self-hosted agent control plane.',
-      theme_color: '#3E5C76',
-      background_color: '#F6F3EC',
+      theme_color: HELM_SURFACE,
+      background_color: HELM_SURFACE,
       display: 'standalone',
       orientation: 'any',
       start_url: '/',

@@ -40,6 +40,7 @@
     "clean": "rm -rf .turbo"
   },
   "dependencies": {
+    "@the-efficacious/brand": "^0.2.0",
     "csuite-sdk": "workspace:*",
     "@preact/signals": "^2.9.4",
     "dompurify": "^3.4.12",

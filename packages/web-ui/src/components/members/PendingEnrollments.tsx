@@ -18,6 +18,7 @@ import { signal } from '@preact/signals';
 import type { PendingEnrollment } from 'csuite-sdk/types';
 import { useEffect } from 'preact/hooks';
 import { getClient } from '../../lib/client.js';
+import { confirmDialog } from '../../lib/confirm.js';
 
 const enrollments = signal<PendingEnrollment[] | null>(null);
 const error = signal<string | null>(null);
@@ -35,7 +36,8 @@ async function refresh(): Promise<void> {
 }
 
 async function reject(userCode: string): Promise<void> {
-  if (!confirm(`Reject pending enrollment ${userCode}?`)) return;
+  if (!(await confirmDialog({ title: `Reject pending enrollment ${userCode}?`, verb: 'Reject' })))
+    return;
   busyCode.value = userCode;
   try {
     await getClient().rejectEnrollment({ userCode, reason: 'rejected from members panel' });
@@ -90,7 +92,7 @@ export function PendingEnrollments({ style }: { style?: string }) {
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
         <div>
           <div class="eyebrow">Pending enrollments</div>
-          <div style="font-family:var(--f-sans);font-size:13px;color:var(--muted);margin-top:4px">
+          <div style="font-family:var(--ef-font-body);font-size:13px;color:var(--ef-text-muted);margin-top:4px">
             Operators running <code>csuite connect</code> are waiting for your approval.
           </div>
         </div>
@@ -107,7 +109,7 @@ export function PendingEnrollments({ style }: { style?: string }) {
       {err !== null && (
         <div
           role="alert"
-          style="font-family:var(--f-sans);font-size:12.5px;color:var(--err);background:rgba(211,47,47,0.08);border:1px solid var(--err);border-radius:var(--r-sm);padding:8px 10px;margin-bottom:10px"
+          style="font-family:var(--ef-font-body);font-size:12.5px;color:var(--ef-lamp-alarm);background:var(--ef-lamp-alarm-ground);border:1px solid var(--ef-lamp-alarm);border-radius:var(--ef-radius-sm);padding:8px 10px;margin-bottom:10px"
         >
           {err}
         </div>
@@ -118,22 +120,22 @@ export function PendingEnrollments({ style }: { style?: string }) {
           {list.map((e) => (
             <li
               key={e.userCode}
-              style="display:grid;grid-template-columns:1fr auto;gap:8px 16px;padding:10px 12px;background:var(--bg-alt);border:1px solid var(--rule);border-radius:var(--r-sm)"
+              style="display:grid;grid-template-columns:1fr auto;gap:8px 16px;padding:10px 12px;background:var(--ef-surface-sunken);border:1px solid var(--ef-border);border-radius:var(--ef-radius-sm)"
             >
               <div>
-                <div style="display:flex;align-items:center;gap:10px;font-family:var(--f-mono);font-size:14px;letter-spacing:.12em;color:var(--ink)">
+                <div style="display:flex;align-items:center;gap:10px;font-family:var(--ef-font-mono);font-size:14px;letter-spacing:.12em;color:var(--ef-text)">
                   {e.userCode}
-                  <span style="font-family:var(--f-mono);font-size:10px;letter-spacing:.06em;color:var(--muted);text-transform:uppercase;padding:2px 6px;border:1px solid var(--rule);border-radius:3px">
+                  <span style="font-family:var(--ef-font-mono);font-size:10px;letter-spacing:.06em;color:var(--ef-text-muted);text-transform:uppercase;padding:2px 6px;border:1px solid var(--ef-border);border-radius:3px">
                     expires in {fmtCountdown(e.expiresAt)}
                   </span>
                 </div>
-                <div style="font-family:var(--f-mono);font-size:11px;color:var(--muted);margin-top:6px;display:flex;flex-wrap:wrap;gap:14px">
+                <div style="font-family:var(--ef-font-mono);font-size:11px;color:var(--ef-text-muted);margin-top:6px;display:flex;flex-wrap:wrap;gap:14px">
                   <span>requested {fmtAge(e.createdAt)}</span>
                   {e.sourceIp && <span>ip {e.sourceIp}</span>}
                   {e.labelHint && <span>label: {e.labelHint}</span>}
                 </div>
                 {e.sourceUa !== null && (
-                  <div style="font-family:var(--f-mono);font-size:11px;color:var(--muted);margin-top:4px;overflow-wrap:anywhere">
+                  <div style="font-family:var(--ef-font-mono);font-size:11px;color:var(--ef-text-muted);margin-top:4px;overflow-wrap:anywhere">
                     {e.sourceUa}
                   </div>
                 )}
@@ -150,7 +152,7 @@ export function PendingEnrollments({ style }: { style?: string }) {
                   class="btn btn-ghost btn-sm"
                   onClick={() => void reject(e.userCode)}
                   disabled={busyCode.value !== null}
-                  style="color:var(--err)"
+                  style="color:var(--ef-lamp-alarm)"
                 >
                   {busyCode.value === e.userCode ? '…' : 'Reject'}
                 </button>
