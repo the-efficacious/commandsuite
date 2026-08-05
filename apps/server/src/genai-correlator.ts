@@ -137,9 +137,14 @@ export interface GenAiCorrelatorOptions {
   maxBodyBytes?: number;
   /**
    * Content-addressed raw-body store. When set, every resolved body is
-   * captured VERBATIM (sha256 + gzip) the moment its record arrives —
-   * before parse, before redaction, unconditionally — and the emitted
-   * inference carries both body hashes. Omit to skip raw capture.
+   * captured (sha256 + gzip) the moment its record arrives — before THIS
+   * layer parses it, unconditionally — and the emitted inference carries
+   * both body hashes. Omit to skip raw capture.
+   *
+   * "Before redaction" is NOT among the guarantees: the OTLP records this
+   * correlator consumes have already passed `parseOtlpLogs` attribute
+   * redaction. Verbatim here means with respect to the record's `body`
+   * attribute as received, not to what the provider sent.
    */
   rawStore?: RawBodyStore;
   /**

@@ -2,13 +2,28 @@
  * Content-addressed raw API body store.
  *
  * The fidelity layer UNDER the gen_ai view: the complete request and
- * response BYTES handed to this store by the correlator. For Claude
- * inline-body OTLP, attribute redaction runs before the correlator (with
- * exact instruction-block exemptions); this store cannot claim provider-wire
- * identity for those inputs. It does preserve its input before this layer
- * parses or reshapes it. The `gen_ai_inference` table is the queryable
- * derived view; each of its rows points back at its source bytes here
- * by sha256 (`request_sha256` / `response_sha256`).
+ * response BYTES handed to this store. It preserves its input before
+ * this layer parses or reshapes it. The `gen_ai_inference` table is the
+ * queryable derived view; each of its rows points back at its source
+ * bytes here by sha256 (`request_sha256` / `response_sha256`).
+ *
+ * ── WHAT THE BYTES ARE, WHICH DEPENDS ON WHO WROTE THEM ────────────────
+ * Two ingest routes reach `appendBody`, and they hand it different
+ * things. Neither is a provider wire — CommandSuite never sees one; each
+ * agent's own instrumentation is the source (`core/trace/redact.ts`).
+ *
+ *   codex   `POST /members/:name/genai` (app.ts) content-addresses the
+ *           rollout-bundle payload BEFORE any parse or redaction. The
+ *           subject is THE BYTES THE RUNNER UPLOADED.
+ *   claude  OTLP attributes via the correlator. Attribute redaction runs
+ *           in `parseOtlpLogs` first (with exact instruction-block
+ *           exemptions, scoped to `api_request_body`'s `system` field),
+ *           so the subject is THE ATTRIBUTE VALUE THE BROKER RECEIVED.
+ *           This store cannot claim provider identity for those inputs,
+ *           in EITHER direction — responses carry no exemption at all.
+ *
+ * Nothing in `raw_exchange` or `raw_blob` records which route a body
+ * took, so the subject is not recoverable from the row. That is #89.
  *
  * ── INVARIANT (the point of this store) ────────────────────────────────
  * Input bytes are stored VERBATIM: un-parsed and un-reshaped in this layer.
@@ -91,7 +106,17 @@ export interface RawBodyEnvelope {
 export interface AppendBodyInput {
   memberName: string;
   kind: 'request' | 'response';
-  /** The ORIGINAL wire bytes, verbatim. Hashed and gzipped here. */
+  /**
+   * The bytes the caller hands this store, verbatim — hashed and gzipped
+   * here, never rewritten.
+   *
+   * NOT necessarily the provider's wire bytes, and the caller decides
+   * which: codex bundle uploads arrive pre-parse and pre-redaction, while
+   * claude OTLP bodies have already passed attribute redaction upstream.
+   * This field is the subject of the store's byte-exactness claim, so
+   * naming it "wire bytes" here would assert something only one of the two
+   * callers can supply. See the file header.
+   */
   bytes: Buffer;
   envelope?: RawBodyEnvelope;
 }

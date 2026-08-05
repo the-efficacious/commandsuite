@@ -12,12 +12,43 @@
  * the csuite server, shown in a web UI, or written to disk), we scrub
  * known-bad patterns in place.
  *
- * WHAT IS NOT REDACTED, and it matters: the raw request/response body
- * store keeps bytes VERBATIM, deliberately, captured before anything
- * parses or redacts them — that is what makes byte-exact
- * reconstruction possible. See `server/src/raw-body-store.ts`. This
- * module protects the normalized activity stream and the parsed
- * `gen_ai_inference` records, not the raw blobs.
+ * WHAT THIS MODULE DOES NOT REACH: it protects the normalized activity
+ * stream and the parsed `gen_ai_inference` records. It never rewrites a
+ * stored raw blob.
+ *
+ * That is NOT the same as saying the raw body store holds provider-wire
+ * bytes, and it does not, uniformly. **Fidelity is a property of the
+ * ingest route, and the two producers differ:**
+ *
+ *   codex   uploads rollout-bundle payloads to `POST /members/:name/genai`,
+ *           which content-addresses them BEFORE any parse or redaction
+ *           (`server/src/app.ts`). Verbatim with respect to THE BYTES
+ *           THE RUNNER UPLOADED.
+ *   claude  emits bodies as OTLP attributes, and attribute redaction runs
+ *           in `parseOtlpLogs` BEFORE the correlator captures them
+ *           (`server/src/otlp-parse.ts`). Verbatim with respect to THE
+ *           ATTRIBUTE VALUE THE BROKER RECEIVED — a redacted derivative
+ *           of what claude sent, not what claude sent.
+ *
+ * Both DIRECTIONS are affected on the claude path. Responses in fact
+ * carry no exemption at all: the instruction-block exemption is scoped
+ * to `api_request_body`'s `system` field, so a registered literal in a
+ * response body is replaced unconditionally. Measured on stored bodies
+ * from before identity values left the secrets store: 1,161 of 1,162
+ * claude request bodies and 7 of 1,158 claude responses already carried
+ * `[REDACTED]` in place of a registered literal, with zero unredacted;
+ * 16 of 840 codex requests carried the same literals intact.
+ *
+ * So the store's guarantee is byte-exactness WITH RESPECT TO THE BYTES
+ * IT WAS HANDED, which is the only subject it ever had. See
+ * `server/src/raw-body-store.ts` and `docs/dev/trace-pipeline.mdx`,
+ * which state the same boundary.
+ *
+ * WHAT A READER STILL CANNOT DO: tell a scrubbed body from an unscrubbed
+ * one by looking at the record. Nothing in `raw_exchange` or `raw_blob`
+ * marks that redaction was applied or which values were registered, so
+ * two bodies with the same provenance claim can have different subjects.
+ * That gap is tracked as #89 and is deliberately not decided here.
  *
  * Redaction philosophy:
  *   - Header-level: strip Authorization, x-api-key, cookie, set-cookie,
