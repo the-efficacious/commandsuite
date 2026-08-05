@@ -64,10 +64,37 @@ md.use({
 });
 
 /**
- * Private Use Area sentinel. Cannot appear in real message text, is
- * inert to markdown, and survives `DOMPurify` because it is plain text.
+ * Base for the placeholder that stands in for a lifted channel
+ * envelope. U+E000 is Private Use Area: inert to markdown, and it
+ * survives `DOMPurify` because it is plain text.
+ *
+ * It is NOT a character that cannot occur in a message body. An
+ * earlier version of this file asserted that it was, and the assertion
+ * was false — a body containing the literal placeholder text has that
+ * text replaced by envelope markup on restore, so a captured message
+ * quoting one is silently rewritten. Any *fixed* sentinel has that
+ * defect; the sentinel must be chosen against the input.
  */
-const SENTINEL = '';
+const SENTINEL_BASE = '';
+
+/**
+ * Return a sentinel that does not occur in `body`, by repeating the
+ * base until it is absent. Terminates because `body` is finite: each
+ * repetition is strictly longer, and no string contains a substring
+ * longer than itself.
+ *
+ * Checking the *original* body is what makes the guarantee hold. The
+ * text that reaches `marked` is the body minus the envelopes plus the
+ * placeholders, and the restored envelope markup is built from escaped
+ * pieces of that same body — so if the sentinel is absent from the
+ * original, it is absent from every intermediate form, and no token
+ * can be forged by input.
+ */
+function sentinelFor(body: string): string {
+  let sentinel = SENTINEL_BASE;
+  while (body.includes(sentinel)) sentinel += SENTINEL_BASE;
+  return sentinel;
+}
 
 /** `<tag attrs>body</tag>` on RAW input, before any escaping. */
 const CHANNEL_TAG = /<([a-zA-Z][\w.-]*)(\s[\s\S]*?)>([\s\S]*?)<\/\1>/g;
@@ -101,12 +128,13 @@ export function renderMessageMarkdown(body: string): string {
   // Lift channel envelopes out before parsing. Markdown inside one is
   // not markdown — it is payload — and a fenced block or table marker
   // in a captured message must not restructure the envelope around it.
+  const sentinel = sentinelFor(body);
   const envelopes: string[] = [];
   const withPlaceholders = body.replace(
     CHANNEL_TAG,
     (_match, tag: string, attrs: string, inner: string) => {
       envelopes.push(renderChannelTag(tag, attrs, inner));
-      return `\n\n${SENTINEL}${envelopes.length - 1}${SENTINEL}\n\n`;
+      return `\n\n${sentinel}${envelopes.length - 1}${sentinel}\n\n`;
     },
   );
 
@@ -118,7 +146,7 @@ export function renderMessageMarkdown(body: string): string {
   // `<p>` is invalid nesting that browsers silently restructure.
   let restored = safe;
   envelopes.forEach((html, i) => {
-    const token = `${SENTINEL}${i}${SENTINEL}`;
+    const token = `${sentinel}${i}${sentinel}`;
     restored = restored.split(`<p>${token}</p>`).join(html).split(token).join(html);
   });
   return restored;

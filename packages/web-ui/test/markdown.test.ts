@@ -30,6 +30,14 @@
 import { describe, expect, it } from 'vitest';
 import { renderMessageMarkdown } from '../src/lib/markdown.js';
 
+/**
+ * The base character the renderer builds its envelope placeholder
+ * from. Written literally here rather than imported, so these tests
+ * fail if the renderer quietly changes it — the point is the property,
+ * not agreement with the implementation.
+ */
+const SENTINEL = '';
+
 describe('renderMessageMarkdown — contracts kept from the previous renderer', () => {
   it('escapes HTML metacharacters', () => {
     expect(renderMessageMarkdown('<script>alert(1)</script>')).not.toContain('<script>');
@@ -166,6 +174,39 @@ describe('renderMessageMarkdown — sanitization', () => {
       }
     }
     expect(offenders).toEqual([]);
+  });
+
+  it('does not let message text forge an envelope placeholder', () => {
+    // Reported by Rune against fea80e0. The envelope placeholder was a
+    // FIXED U+E000 sentinel, and the source claimed U+E000 "cannot
+    // appear in real message text". That is not true — it is a
+    // perfectly legal character in a JS string and in captured
+    // traffic. A body containing the literal placeholder had that text
+    // replaced by envelope markup on restore: the envelope was emitted
+    // twice and the author's own characters were destroyed. Captured
+    // traffic being silently rewritten is the severe half.
+    const forged = `${SENTINEL}0${SENTINEL}`;
+    const out = renderMessageMarkdown(`${forged}\n<channel from="x">payload</channel>`);
+    expect(out.split('class="channel-tag"').length - 1).toBe(1);
+    expect(out).toContain(SENTINEL);
+  });
+
+  it('escalates the sentinel past a body that also contains the doubled form', () => {
+    // A fix that repeats the base only once would still collide here.
+    // The sentinel is chosen against the input, so it escalates until
+    // absent however many forms the body carries.
+    const body =
+      `${SENTINEL}0${SENTINEL} and ${SENTINEL.repeat(2)}0${SENTINEL.repeat(2)}\n` +
+      '<channel from="x">payload</channel>';
+    const out = renderMessageMarkdown(body);
+    expect(out.split('class="channel-tag"').length - 1).toBe(1);
+  });
+
+  it('leaves sentinel characters intact in a body with no envelope at all', () => {
+    // Nothing is lifted, so nothing may be substituted.
+    const out = renderMessageMarkdown(`before ${SENTINEL}0${SENTINEL} after`);
+    expect(out).toContain(`before ${SENTINEL}0${SENTINEL} after`);
+    expect(out).not.toContain('channel-tag');
   });
 
   it('keeps markdown inside a channel envelope as payload, not markup', () => {
