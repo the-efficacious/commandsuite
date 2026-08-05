@@ -21,15 +21,43 @@
  *      from the block-level name.
  *
  *   2. **`<channel …>` blocks get syntax colouring, not markdown.**
- *      These are inbound traffic envelopes, not prose. They are lifted
- *      out before parsing and restored afterwards, so no markdown rule
- *      can reach inside one and the parser cannot restructure the tag.
+ *      These are inbound traffic envelopes, not prose. They are how we
+ *      read our own inbound traffic, so no markdown rule may reach
+ *      inside one and the parser may not restructure the tag.
  *
- * SANITIZATION ORDER. `marked` runs first, `DOMPurify` second, and the
- * channel spans are injected *after* sanitization. That last step is
- * safe for the same reason it always was: the span HTML is constructed
- * here from HTML-escaped pieces, carries a fixed set of classes, and
- * has no attributes, URLs or event handlers that could execute.
+ * HOW THE TWO ARE INTERLEAVED — AND WHY NOT WITH PLACEHOLDERS. The body
+ * is cut into alternating prose segments and envelopes in one pass.
+ * Each prose segment is parsed and sanitized on its own; each envelope
+ * is rendered directly from escaped pieces; the results are
+ * concatenated. Envelope text never enters the parser at all, which is
+ * the property we need, and it is now structural rather than enforced.
+ *
+ * The obvious alternative — substitute a placeholder for each envelope,
+ * parse the whole body, then swap the renderings back in — was tried
+ * across three revisions of this file and is why the comments below are
+ * emphatic. It failed twice on collision (any placeholder a reader can
+ * also type is a placeholder that rewrites their message) and once on
+ * cost. Measured at the last placeholder revision, a body of 1,000
+ * U+E000 characters and 100 envelopes — 3,901 characters, a message a
+ * person could paste — took 1,187.7 ms; 7,801 took 18,902 ms; 11,701
+ * took 95,406 ms. Roughly O(n^4): the placeholder had to grow with the
+ * longest run in the input, was inserted twice per envelope, and the
+ * restore pass rescanned the whole document once per envelope.
+ *
+ * Segmenting has none of those terms. There is no token to collide
+ * with, nothing to grow, and one pass over the input.
+ *
+ * SANITIZATION. Each prose segment goes through `marked` then
+ * `DOMPurify`. Envelope markup bypasses `DOMPurify` deliberately: it is
+ * built here from HTML-escaped pieces, carries a fixed set of classes,
+ * and has no attributes, URLs or event handlers that could execute.
+ *
+ * ONE KNOWN BEHAVIOUR CHANGE. Prose segments are separate markdown
+ * documents, so document-level state does not cross an envelope — a
+ * reference-link definition on one side of an envelope will not resolve
+ * on the other. Block constructs were already unable to span an
+ * envelope under the placeholder scheme, so this is narrower than it
+ * sounds, and it is the price of the property above being structural.
  */
 
 import DOMPurify from 'dompurify';
@@ -63,56 +91,6 @@ md.use({
   },
 });
 
-/**
- * Base for the placeholder that stands in for a lifted channel
- * envelope. U+E000 is Private Use Area: inert to markdown, and it
- * survives `DOMPurify` because it is plain text.
- *
- * It is NOT a character that cannot occur in a message body. An
- * earlier version of this file asserted that it was, and the assertion
- * was false — a body containing the literal placeholder text has that
- * text replaced by envelope markup on restore, so a captured message
- * quoting one is silently rewritten. Any *fixed* sentinel has that
- * defect; the sentinel must be chosen against the input.
- */
-const SENTINEL_BASE = '';
-
-/**
- * Return a sentinel that does not occur in `body`: one repetition
- * longer than the longest run of consecutive base characters in it.
- *
- * Correct because any occurrence of `base.repeat(k)` in the body would
- * itself be a run of `k` consecutive base characters, and no run that
- * long exists by construction.
- *
- * ONE LINEAR PASS, DELIBERATELY. The obvious version — grow the
- * candidate and re-test `body.includes(sentinel)` until it misses —
- * has the same absence proof and the same termination argument, and is
- * still wrong: it rescans the whole body once per repetition, so an
- * adversarial body of repeated base characters drives superlinear
- * work. Measured under jsdom before this was replaced: 20k chars
- * 136 ms, 50k 782 ms, 100k 6,133 ms, 200k 29,945 ms — a frozen chat
- * surface, which is the app's landing surface. Termination is not a
- * sufficient bound when the input is attacker-supplied, and a captured
- * message body is exactly that.
- *
- * Checking the *original* body is what makes the guarantee hold. The
- * text that reaches `marked` is the body minus the envelopes plus the
- * placeholders, and the restored envelope markup is built from escaped
- * pieces of that same body — so if the sentinel is absent from the
- * original, it is absent from every intermediate form, and no token
- * can be forged by input.
- */
-function sentinelFor(body: string): string {
-  let longestRun = 0;
-  let currentRun = 0;
-  for (const char of body) {
-    currentRun = char === SENTINEL_BASE ? currentRun + 1 : 0;
-    if (currentRun > longestRun) longestRun = currentRun;
-  }
-  return SENTINEL_BASE.repeat(longestRun + 1);
-}
-
 /** `<tag attrs>body</tag>` on RAW input, before any escaping. */
 const CHANNEL_TAG = /<([a-zA-Z][\w.-]*)(\s[\s\S]*?)>([\s\S]*?)<\/\1>/g;
 
@@ -141,30 +119,30 @@ function renderChannelTag(tagName: string, attrs: string, body: string): string 
   );
 }
 
+/**
+ * Render one prose segment. Empty and whitespace-only segments produce
+ * nothing rather than an empty paragraph — they are the gaps either
+ * side of an envelope, not content.
+ */
+function renderProse(segment: string): string {
+  if (segment.trim() === '') return '';
+  return DOMPurify.sanitize(md.parse(segment, { async: false }));
+}
+
 export function renderMessageMarkdown(body: string): string {
-  // Lift channel envelopes out before parsing. Markdown inside one is
-  // not markdown — it is payload — and a fenced block or table marker
-  // in a captured message must not restructure the envelope around it.
-  const sentinel = sentinelFor(body);
-  const envelopes: string[] = [];
-  const withPlaceholders = body.replace(
-    CHANNEL_TAG,
-    (_match, tag: string, attrs: string, inner: string) => {
-      envelopes.push(renderChannelTag(tag, attrs, inner));
-      return `\n\n${sentinel}${envelopes.length - 1}${sentinel}\n\n`;
-    },
-  );
+  // `matchAll` requires the `g` flag and reads `lastIndex` to start
+  // from. `CHANNEL_TAG` is module-level, so reset it rather than rely
+  // on no other call site having left it advanced.
+  CHANNEL_TAG.lastIndex = 0;
 
-  const parsed = md.parse(withPlaceholders, { async: false });
-  const safe = DOMPurify.sanitize(parsed);
-
-  // Restore. The `<p>`-wrapped form goes first: an envelope on its own
-  // line becomes a paragraph, and a `<div class="ch-body">` inside a
-  // `<p>` is invalid nesting that browsers silently restructure.
-  let restored = safe;
-  envelopes.forEach((html, i) => {
-    const token = `${sentinel}${i}${sentinel}`;
-    restored = restored.split(`<p>${token}</p>`).join(html).split(token).join(html);
-  });
-  return restored;
+  let html = '';
+  let cursor = 0;
+  for (const match of body.matchAll(CHANNEL_TAG)) {
+    const [raw, tag, attrs, inner] = match;
+    html += renderProse(body.slice(cursor, match.index));
+    html += renderChannelTag(tag as string, attrs as string, inner as string);
+    cursor = match.index + raw.length;
+  }
+  html += renderProse(body.slice(cursor));
+  return html;
 }

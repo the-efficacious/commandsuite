@@ -31,12 +31,14 @@ import { describe, expect, it } from 'vitest';
 import { renderMessageMarkdown } from '../src/lib/markdown.js';
 
 /**
- * The base character the renderer builds its envelope placeholder
- * from. Written literally here rather than imported, so these tests
- * fail if the renderer quietly changes it — the point is the property,
- * not agreement with the implementation.
+ * U+E000. Not part of the renderer's contract any more — it is simply
+ * a character a message may contain, and three rejected revisions of
+ * this file gave it special meaning. Written by codepoint rather than
+ * as a literal: a bare PUA character does not survive every editor,
+ * shell heredoc or copy-paste, and a fixture that silently loses it
+ * passes while testing nothing.
  */
-const SENTINEL = '';
+const SENTINEL = String.fromCharCode(0xe000);
 
 describe('renderMessageMarkdown — contracts kept from the previous renderer', () => {
   it('escapes HTML metacharacters', () => {
@@ -176,25 +178,34 @@ describe('renderMessageMarkdown — sanitization', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('does not let message text forge an envelope placeholder', () => {
-    // Reported by Rune against fea80e0. The envelope placeholder was a
-    // FIXED U+E000 sentinel, and the source claimed U+E000 "cannot
-    // appear in real message text". That is not true — it is a
-    // perfectly legal character in a JS string and in captured
-    // traffic. A body containing the literal placeholder had that text
-    // replaced by envelope markup on restore: the envelope was emitted
-    // twice and the author's own characters were destroyed. Captured
-    // traffic being silently rewritten is the severe half.
+  // ── Message text must not be able to influence document structure ──
+  //
+  // Three revisions of this file substituted a placeholder for each
+  // envelope, parsed the whole body, then swapped the renderings back
+  // in. Rune rejected all three: twice for collision (any placeholder a
+  // reader can also type is one that rewrites their message) and once
+  // for cost. The renderer no longer uses placeholders — prose segments
+  // and envelopes are spliced — so these now hold structurally rather
+  // than by a chosen-token argument.
+  //
+  // They are kept, and kept named after the property rather than the
+  // machinery, because the placeholder approach is the obvious one and
+  // someone will reach for it again.
+
+  it('does not rewrite message text that resembles internal markup', () => {
+    // Rune's repro against fea80e0. U+E000 was the fixed placeholder,
+    // and the source claimed it "cannot appear in real message text" —
+    // false; it is legal in a JS string and in captured traffic. The
+    // envelope was emitted twice and the author's own characters were
+    // destroyed. Traffic silently rewritten is the severe half.
     const forged = `${SENTINEL}0${SENTINEL}`;
     const out = renderMessageMarkdown(`${forged}\n<channel from="x">payload</channel>`);
     expect(out.split('class="channel-tag"').length - 1).toBe(1);
     expect(out).toContain(SENTINEL);
   });
 
-  it('escalates the sentinel past a body that also contains the doubled form', () => {
-    // A fix that repeats the base only once would still collide here.
-    // The sentinel is chosen against the input, so it escalates until
-    // absent however many forms the body carries.
+  it('is unaffected by how many repetitions of the marker a body contains', () => {
+    // Killed the second placeholder revision, which escalated only once.
     const body =
       `${SENTINEL}0${SENTINEL} and ${SENTINEL.repeat(2)}0${SENTINEL.repeat(2)}\n` +
       '<channel from="x">payload</channel>';
@@ -202,28 +213,43 @@ describe('renderMessageMarkdown — sanitization', () => {
     expect(out.split('class="channel-tag"').length - 1).toBe(1);
   });
 
-  it('picks the sentinel in one pass, not by rescanning per repetition', () => {
-    // Reported by Rune against 74f5416. The first fix for the
-    // collision above chose the sentinel by growing a candidate and
-    // re-testing `body.includes(...)`. That has a correct absence
-    // proof and terminates — and still froze the chat surface, which
-    // is where the app lands, on a body of repeated sentinel
-    // characters. Termination is not a sufficient bound when the input
-    // is attacker-supplied, and a captured message body is exactly
-    // that.
+  it('renders a long run of marker characters in linear time', () => {
+    // Rune against 74f5416. That revision chose the marker by growing a
+    // candidate and re-testing `body.includes(...)` — a correct absence
+    // proof that terminated, and still froze the chat surface. It took
+    // 29,945 ms here; splicing takes ~50 ms.
     //
-    // Sized so the two implementations are not close. Measured under
-    // jsdom: the rescanning version took 29,945 ms at this input and
-    // blows the default 5s timeout ~6x; the single-pass version takes
-    // ~53 ms, a ~90x margin under it. Both scale with machine speed,
-    // so the gap survives a slow CI runner.
+    // Sized, not timed: the bad implementation blows the 5s default ~6x
+    // and the good one sits ~90x under it, so the gap survives a slow
+    // runner rather than being tuned to one machine.
     const body = `${SENTINEL.repeat(200_000)}\n<channel from="x">payload</channel>`;
     const out = renderMessageMarkdown(body);
     expect(out.split('class="channel-tag"').length - 1).toBe(1);
   });
 
-  it('leaves sentinel characters intact in a body with no envelope at all', () => {
-    // Nothing is lifted, so nothing may be substituted.
+  it('does not amplify across marker length and envelope count together', () => {
+    // Rune against 1c05367, and the reason placeholders are gone. The
+    // single-pass selector still produced a marker that GREW with the
+    // longest run in the input, inserted it twice per envelope, and
+    // rescanned the whole document once per envelope — roughly O(n^4)
+    // across the two dimensions at once. Measured on that revision:
+    //
+    //     3,901 chars ->   1,187.7 ms
+    //     7,801 chars ->  18,902.0 ms
+    //    11,701 chars ->  95,405.8 ms
+    //
+    // The all-marker test above holds only one dimension and passed
+    // that revision cleanly. This one moves both. Splicing renders this
+    // input in ~2 ms; the last placeholder revision needs ~95s and dies
+    // on the 5s timeout.
+    const body = `${SENTINEL.repeat(3000)}\n${'<channel from="x">x</channel>'.repeat(300)}`;
+    const out = renderMessageMarkdown(body);
+    expect(out.split('class="channel-tag"').length - 1).toBe(300);
+  });
+
+  it('leaves marker characters intact in a body with no envelope at all', () => {
+    // Regression guard, and honestly labelled as one: with nothing to
+    // splice this passed every rejected revision too.
     const out = renderMessageMarkdown(`before ${SENTINEL}0${SENTINEL} after`);
     expect(out).toContain(`before ${SENTINEL}0${SENTINEL} after`);
     expect(out).not.toContain('channel-tag');
@@ -237,5 +263,53 @@ describe('renderMessageMarkdown — sanitization', () => {
     expect(out).not.toContain('<h2>');
     expect(out).not.toContain('<ul>');
     expect(out).toContain('## not a heading');
+  });
+
+  it('renders prose either side of an envelope as its own markdown', () => {
+    const out = renderMessageMarkdown(
+      '## Before\n\n<channel from="x">p</channel>\n\n- after one\n- after two',
+    );
+    expect(out).toContain('<h2>Before</h2>');
+    expect(out).toContain('class="channel-tag"');
+    expect(out).toContain('<li>after one</li>');
+    expect(out.indexOf('<h2>')).toBeLessThan(out.indexOf('channel-tag'));
+    expect(out.indexOf('channel-tag')).toBeLessThan(out.indexOf('<li>'));
+  });
+});
+
+describe('renderMessageMarkdown — known limits, asserted so they stay deliberate', () => {
+  it('does not resolve a reference link across an envelope', () => {
+    // The one behaviour change from splicing rather than substituting.
+    // Prose segments are separate markdown documents, so document-level
+    // state does not cross an envelope. Block constructs already could
+    // not span one, so this is narrow — but it is a real change and is
+    // recorded here rather than left to be discovered.
+    const across = renderMessageMarkdown(
+      '[docs]\n\n<channel from="x">p</channel>\n\n[docs]: https://example.com/d',
+    );
+    expect(across).toContain('[docs]');
+    expect(across).not.toContain('href="https://example.com/d"');
+
+    // Within one segment it resolves, which is what makes the above a
+    // property of the segment boundary and not of link handling.
+    const within = renderMessageMarkdown('[docs]\n\n[docs]: https://example.com/d');
+    expect(within).toContain('href="https://example.com/d"');
+  });
+
+  it('treats an attribute-free <channel> as text, not as an envelope', () => {
+    // Pre-existing and unchanged by this PR: the lift pattern requires
+    // whitespace-then-attributes, so a bare `<channel>` is escaped
+    // prose. Real envelopes always carry attributes. Noted by Rune
+    // while probing; asserted so a future regex change has to decide
+    // about it on purpose.
+    const out = renderMessageMarkdown('<channel>x</channel>');
+    expect(out).toContain('&lt;channel&gt;');
+    expect(out).not.toContain('channel-tag');
+  });
+
+  it('treats an unclosed envelope as text', () => {
+    const out = renderMessageMarkdown('<channel from="a">never closed');
+    expect(out).toContain('&lt;channel');
+    expect(out).not.toContain('channel-tag');
   });
 });
