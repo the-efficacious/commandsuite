@@ -25,14 +25,15 @@
  *   - no `title` on either message (titled messages are distinct)
  *   - the gap between `ts` values is ≤ 5 minutes
  *
- * The body runs through `renderInlineMarkdown`, which escapes HTML
- * before applying any formatting — safe for `dangerouslySetInnerHTML`.
+ * The body runs through `renderMessageMarkdown` — full GFM via
+ * `marked`, sanitized with `DOMPurify`, raw HTML left escaped — so the
+ * result is safe for `dangerouslySetInnerHTML`.
  */
 
 import type { Message } from 'csuite-sdk/types';
 import { useEffect, useRef } from 'preact/hooks';
 import { initials } from '../lib/initials.js';
-import { renderInlineMarkdown } from '../lib/markdown.js';
+import { renderMessageMarkdown } from '../lib/markdown.js';
 import { selectedThreadMessageId } from '../lib/messages.js';
 import { memberKind } from '../lib/roster.js';
 import { senderTextClass } from '../lib/sender-color.js';
@@ -81,7 +82,7 @@ export function MessageLine({ message, previousMessage }: MessageLineProps) {
   const sender = message.from ?? '?';
   const kind = memberKind(sender);
   const colorClass = senderTextClass(kind);
-  const body = renderInlineMarkdown(message.body);
+  const body = renderMessageMarkdown(message.body);
 
   const isContinuation =
     previousMessage !== undefined && isContinuationOf(message, previousMessage);
