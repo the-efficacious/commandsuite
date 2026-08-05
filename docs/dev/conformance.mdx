@@ -94,7 +94,7 @@ data to expect, and a tier-0 runner is still a legitimate runner.
 | 0 | Operable | Spawns, serves the MCP toolbox, receives ambient events, presence transitions, clean teardown |
 | 1 | Observable | + live activity signal (`idle` / `working` / `blocked`) from native instrumentation |
 | 2 | Traceable | + normalized content capture: `llm_exchange` / `tool_action` / `user_prompt`, redacted, in the activity stream |
-| 3 | Full fidelity | + verbatim request/response bodies into the gen_ai / raw-body layer |
+| 3 | Full fidelity | + request/response bodies into the gen_ai / raw-body layer, kept byte-exact against what the runner's ingest route hands the broker — see [the trace pipeline](/dev/trace-pipeline) for which route redacts first |
 
 Current matrix:
 
