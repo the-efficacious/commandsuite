@@ -186,6 +186,37 @@ people to regenerate the golden without reading it. And where the type system ca
 make the wrong thing unrepresentable, that is better than either: tests are the
 backstop, types are the fix.
 
+### Check whether the property is already covered before building an instrument
+
+**Before designing a measurement, establish whether the property is already
+asserted.** If it is, say what the new measurement adds that the existing one
+cannot. *"We measured it in the field"* is weaker than *"a fixture proves it on
+every run"* whenever the property is deterministic and local.
+
+The cost of skipping this, measured: establishing in the field that a
+spool-directory sweep gates on a captured marker rather than a liveness probe
+consumed **four daemon versions, four reviewers and about fifty minutes**, and
+produced seven instrument defects — including a design with a false-VALID
+ordering hole and a timestamp bracket that truncated to whole seconds,
+recreating the defect it was written to catch.
+
+`packages/cli/test/runtime/trace-host.test.ts` had covered it the entire time —
+five constructed states driven through the real `startCaptureHost`,
+mutation-proven on both load-bearing guards, and covering a branch the one-shot
+field observation could not reliably produce. **The fixture was stronger on
+every axis that mattered**, and one `grep` over the test directory was cheaper
+than any single review round it went through.
+
+Two causes worth naming separately, because each recurs on its own:
+
+- **A locally testable property written into a field-validation contract.**
+  Separate criteria by the kind of evidence they require, not by what prompted
+  them.
+- **Nobody asked, because the instrument work was immediately productive.**
+  Each round found a real defect, so the loop felt like it was converging rather
+  than like it should not have started. **Local yield is not evidence that the
+  work is necessary.**
+
 ### Name the string the deliverable must produce, then grep the tests for it
 
 **A test that proves a helper does not prove its callers exist.**
@@ -293,6 +324,40 @@ So when a check's *frame* is the thing in question, no amount of author-side
 discipline reaches it. That is what *author proposes, partner verifies* is for,
 and it is the only one of these that fires **before** publication rather than
 after.
+
+### Mutate the surface your fix added, for the defect you were fixing
+
+The table above is the general discipline. This is it pointed at one moment:
+**the code you write to fix a defect is the least-audited place that defect can
+hide.** The old surface gets scrutinised; the new surface gets written by
+someone who "obviously" would not make that mistake — and holding a defect in
+mind is not the same as checking for it. Thinking about the disease produces
+confidence rather than scrutiny.
+
+**Probes and renderers are the sites.** Both take structured data and produce
+something a person or an agent reads, and both make a default-value decision at
+every field — exactly where one fact becomes indistinguishable from another.
+
+After the fix compiles:
+
+1. **Name the defect class in one sentence** — "two different facts print
+   identically", "a returned field is dropped", "an error renders as empty".
+2. **List the surfaces the fix added or touched.**
+3. **Mutate each against that sentence and confirm a named test fails.**
+
+Step 3 is the whole thing. Three instances found in a single day all passed
+review; two were caught by mutation and one by a verifier driving the
+combination by hand. A fourth shipped: a guard test added alongside a cap
+removal, whose own comment called it *"the guard against either quietly
+returning"*, **passed with the cap restored** — it built its fixture directly
+and never validated against the schema it claimed to guard.
+
+**A check that cannot pass is as broken as one that cannot fail.** It can look
+correct when exercised only on inputs expected to fail — the tell is that the
+pass case and the fail case fail *identically*, which points at the harness
+rather than the logic. A CI gate written and tested only against the failing
+payload survives that way until the day it should have been the one green
+thing. Run the positive control before trusting the negative one.
 
 ### Make “this must not compile” executable
 
@@ -478,6 +543,57 @@ exactly when to spend sixty seconds measuring it instead.
 The related discipline: **when two careful measurements of the same thing
 disagree, stop arguing about the thing and check whether you measured the same
 thing.** Same path, different machines, different contents.
+
+## Use a command that cannot see your working tree
+
+**Intending to cite a commit is not the same as running a command that reaches
+one**, and the gap is invisible in the output. A `file:line` is a coordinate in
+a specific tree; it looks identical whether or not it resolves for the reader.
+
+```bash
+git show <sha>:path/to/file | grep -n thing     # cannot see your checkout
+git rev-parse <sha>:path/to/file                # cannot see your checkout
+
+sed -n '3241p' path/to/file                     # always can, and reads the same
+grep -n thing path/to/file                      # always can, and reads the same
+```
+
+Two instances in one evening, both from people being careful, and **they fail
+differently — which is why the rule has to be about the command rather than the
+intent:**
+
+- **Wrong tree, no commit named.** A contributor documented *"`rust-toolchain.toml`
+  pins the compiler to 1.95.0"* as a present fact. True in their working tree —
+  they had branched from a verification checkout carrying someone else's
+  unmerged commits — and **false on `main`**, where there is no pin at all. The
+  corrected statement turned out to be more useful than the original: the gate
+  job and the jobs building the shipped artifact install *different compilers*.
+- **Right commit named, command never reached it.** A reviewer fetched the
+  exact commit, then ran `sed` against the working-tree copy and reported those
+  lines as commit-scoped. They were off by about seven hundred lines, resolved
+  cleanly against a tree four days old, and so looked entirely plausible.
+
+**A rule phrased as "cite against a named commit" would not have caught the
+second — that reviewer did name the commit.**
+
+### When two readings disagree, compare objects rather than coordinates
+
+```bash
+git rev-parse <sha>:path/to/file
+```
+
+**Same blob, someone miscounted. Different blob, someone is not where they
+think they are.**
+
+An exchange of line numbers settled nothing: two people each read carefully,
+got different answers, and there was no way to adjudicate without believing
+one of them. One command settled it in a direction neither could argue with.
+**That is the property a check should have — it resolves a dispute without
+either party having to be trusted.**
+
+It is the same rule this repository already applies to review — **name the
+commit you verified; a branch name is not an object** — pointed at citations
+instead of approvals.
 
 ## Changesets & releases
 
