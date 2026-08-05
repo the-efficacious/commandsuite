@@ -544,31 +544,45 @@ The related discipline: **when two careful measurements of the same thing
 disagree, stop arguing about the thing and check whether you measured the same
 thing.** Same path, different machines, different contents.
 
-## Say which citations you opened and which you carried
+## Cite against a named commit, not your working tree
 
-**Before handing over work that cites evidence, mark which citations you opened
-yourself and which you carried** — from a contract, a colleague's message, an
-earlier document — then go and open the carried ones.
+**A `file:line` is a coordinate in a specific tree.** It looks identical
+whether or not it resolves for the person reading it, which is what makes this
+failure invisible: nothing about a wrong line number looks wrong.
 
-A citation you opened brings its context. One you carried arrives as a sentence
-with the context stripped, and a claim from whoever set the standard feels
-load-bearing *because* of where it came from, which is what stops you testing
-it.
+Read the object, not the checkout:
 
-Worked case: a design rested on eight citations, seven read during the work and
-one taken from another document's requirements list. Opening that one before
-handing over confirmed it — **and surfaced a failure mode running opposite to
-the caveat already written**, which nothing else would have found. The same
-design carried a claim taken verbatim from its own contract and never tested;
-the claim named a mechanism that could not do the work attributed to it, and
-the verifier returned the document for it.
+```bash
+git show <sha>:path/to/file | grep -n thing    # not: sed -n '3241p' path/to/file
+```
 
-**If a contract asserts a mechanism, verify the mechanism can do what is
-claimed, or hand it back as undecided.**
+Two instances in one evening, both from people being careful and neither from
+carelessness:
 
-The check is cheap and nobody will ask you for it. That is why it is written
-down rather than remembered — an expensive check gets scheduled, a cheap one
-gets skipped, and neither gets done because someone felt like it.
+- A contributor documented *"`rust-toolchain.toml` pins the compiler to
+  1.95.0"* as a present fact. True in their working tree — they had branched
+  from a verification checkout carrying someone else's unmerged commits — and
+  **false on `main`**, where there is no pin at all. The corrected statement
+  turned out to be the more useful one: the gate job and the jobs building the
+  shipped artifact install *different compilers*.
+- A reviewer fetched the right commit, then ran `sed` against the working-tree
+  copy of the file and reported those line numbers as commit-scoped. They were
+  off by about seven hundred lines and resolved cleanly against a tree four
+  days old — so they looked entirely plausible and sent a reader into an
+  unrelated handler.
+
+**When two people disagree about what is at a line, compare the objects rather
+than the coordinates:**
+
+```bash
+git rev-parse <sha>:path/to/file    # same blob → someone miscounted
+                                    # different blob → someone is not where they think
+```
+
+That settled the second instance in one command, after an exchange of line
+numbers had settled nothing. It is the same rule this repository already
+applies to review — **name the commit you verified; a branch name is not an
+object** — pointed at citations instead of approvals.
 
 ## Changesets & releases
 
