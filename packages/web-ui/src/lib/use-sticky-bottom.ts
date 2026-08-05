@@ -36,6 +36,26 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preac
 export interface UseStickyBottomOptions {
   /** Treat a gap-from-bottom less than this many px as "pinned." */
   threshold?: number;
+  /**
+   * Opaque value identifying the list being scrolled. When it changes,
+   * follow re-engages and the viewport snaps to the bottom of the new
+   * content.
+   *
+   * WHY THIS IS NOT OPTIONAL IN PRACTICE. Consumers switch lists
+   * without unmounting — `Transcript` re-renders with a new
+   * `threadKey`, it does not remount — so every ref in this hook
+   * survives the switch, including `pinnedRef`. A viewer who scrolled
+   * up to read history in thread A leaves `pinnedRef` false; thread B
+   * then renders with follow disengaged and the container keeps A's
+   * `scrollTop` across the children swap, so B opens partway up, at an
+   * offset bounded by A's content height.
+   *
+   * "The user chose to read history" is a fact about the list they
+   * were reading. It must not outlive that list.
+   *
+   * Pass the same value you pass to `useWindowedList`'s `resetKey`.
+   */
+  resetKey?: unknown;
 }
 
 export interface StickyBottomHandle {
@@ -90,6 +110,21 @@ export function useStickyBottom(options: UseStickyBottomOptions = {}): StickyBot
     if (programmaticRef.current) return;
     setPinned(computePinned());
   }, [computePinned, setPinned]);
+
+  // Re-engage follow when the consumer switches lists. Evaluated
+  // during render, before the layout effect below reads `pinnedRef`,
+  // so the switch renders pinned rather than pinned-one-frame-late.
+  // Mirrors `useWindowedList`'s reset-during-render for the same
+  // reason: no frame of the previous context's state.
+  // `setPinned` rather than assigning `pinnedRef` directly: it updates
+  // the ref AND the state, and the state drives the jump-to-bottom
+  // affordance. Setting only the ref would re-engage follow while
+  // leaving the button rendered on a thread that is at its bottom.
+  const lastResetKey = useRef<unknown>(options.resetKey);
+  if (options.resetKey !== lastResetKey.current) {
+    lastResetKey.current = options.resetKey;
+    setPinned(true);
+  }
 
   // Pre-paint scroll-pin: runs on every render of the consumer.
   // Setting `scrollTop` to the current bottom is a no-op when the
