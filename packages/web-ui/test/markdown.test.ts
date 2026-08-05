@@ -202,6 +202,26 @@ describe('renderMessageMarkdown — sanitization', () => {
     expect(out.split('class="channel-tag"').length - 1).toBe(1);
   });
 
+  it('picks the sentinel in one pass, not by rescanning per repetition', () => {
+    // Reported by Rune against 74f5416. The first fix for the
+    // collision above chose the sentinel by growing a candidate and
+    // re-testing `body.includes(...)`. That has a correct absence
+    // proof and terminates — and still froze the chat surface, which
+    // is where the app lands, on a body of repeated sentinel
+    // characters. Termination is not a sufficient bound when the input
+    // is attacker-supplied, and a captured message body is exactly
+    // that.
+    //
+    // Sized so the two implementations are not close. Measured under
+    // jsdom: the rescanning version took 29,945 ms at this input and
+    // blows the default 5s timeout ~6x; the single-pass version takes
+    // ~53 ms, a ~90x margin under it. Both scale with machine speed,
+    // so the gap survives a slow CI runner.
+    const body = `${SENTINEL.repeat(200_000)}\n<channel from="x">payload</channel>`;
+    const out = renderMessageMarkdown(body);
+    expect(out.split('class="channel-tag"').length - 1).toBe(1);
+  });
+
   it('leaves sentinel characters intact in a body with no envelope at all', () => {
     // Nothing is lifted, so nothing may be substituted.
     const out = renderMessageMarkdown(`before ${SENTINEL}0${SENTINEL} after`);
