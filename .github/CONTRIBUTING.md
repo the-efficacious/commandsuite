@@ -544,45 +544,56 @@ The related discipline: **when two careful measurements of the same thing
 disagree, stop arguing about the thing and check whether you measured the same
 thing.** Same path, different machines, different contents.
 
-## Cite against a named commit, not your working tree
+## Use a command that cannot see your working tree
 
-**A `file:line` is a coordinate in a specific tree.** It looks identical
-whether or not it resolves for the person reading it, which is what makes this
-failure invisible: nothing about a wrong line number looks wrong.
-
-Read the object, not the checkout:
+**Intending to cite a commit is not the same as running a command that reaches
+one**, and the gap is invisible in the output. A `file:line` is a coordinate in
+a specific tree; it looks identical whether or not it resolves for the reader.
 
 ```bash
-git show <sha>:path/to/file | grep -n thing    # not: sed -n '3241p' path/to/file
+git show <sha>:path/to/file | grep -n thing     # cannot see your checkout
+git rev-parse <sha>:path/to/file                # cannot see your checkout
+
+sed -n '3241p' path/to/file                     # always can, and reads the same
+grep -n thing path/to/file                      # always can, and reads the same
 ```
 
-Two instances in one evening, both from people being careful and neither from
-carelessness:
+Two instances in one evening, both from people being careful, and **they fail
+differently — which is why the rule has to be about the command rather than the
+intent:**
 
-- A contributor documented *"`rust-toolchain.toml` pins the compiler to
-  1.95.0"* as a present fact. True in their working tree — they had branched
-  from a verification checkout carrying someone else's unmerged commits — and
-  **false on `main`**, where there is no pin at all. The corrected statement
-  turned out to be the more useful one: the gate job and the jobs building the
-  shipped artifact install *different compilers*.
-- A reviewer fetched the right commit, then ran `sed` against the working-tree
-  copy of the file and reported those line numbers as commit-scoped. They were
-  off by about seven hundred lines and resolved cleanly against a tree four
-  days old — so they looked entirely plausible and sent a reader into an
-  unrelated handler.
+- **Wrong tree, no commit named.** A contributor documented *"`rust-toolchain.toml`
+  pins the compiler to 1.95.0"* as a present fact. True in their working tree —
+  they had branched from a verification checkout carrying someone else's
+  unmerged commits — and **false on `main`**, where there is no pin at all. The
+  corrected statement turned out to be more useful than the original: the gate
+  job and the jobs building the shipped artifact install *different compilers*.
+- **Right commit named, command never reached it.** A reviewer fetched the
+  exact commit, then ran `sed` against the working-tree copy and reported those
+  lines as commit-scoped. They were off by about seven hundred lines, resolved
+  cleanly against a tree four days old, and so looked entirely plausible.
 
-**When two people disagree about what is at a line, compare the objects rather
-than the coordinates:**
+**A rule phrased as "cite against a named commit" would not have caught the
+second — that reviewer did name the commit.**
+
+### When two readings disagree, compare objects rather than coordinates
 
 ```bash
-git rev-parse <sha>:path/to/file    # same blob → someone miscounted
-                                    # different blob → someone is not where they think
+git rev-parse <sha>:path/to/file
 ```
 
-That settled the second instance in one command, after an exchange of line
-numbers had settled nothing. It is the same rule this repository already
-applies to review — **name the commit you verified; a branch name is not an
-object** — pointed at citations instead of approvals.
+**Same blob, someone miscounted. Different blob, someone is not where they
+think they are.**
+
+An exchange of line numbers settled nothing: two people each read carefully,
+got different answers, and there was no way to adjudicate without believing
+one of them. One command settled it in a direction neither could argue with.
+**That is the property a check should have — it resolves a dispute without
+either party having to be trusted.**
+
+It is the same rule this repository already applies to review — **name the
+commit you verified; a branch name is not an object** — pointed at citations
+instead of approvals.
 
 ## Changesets & releases
 
