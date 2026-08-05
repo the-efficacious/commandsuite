@@ -88,6 +88,55 @@ const BRAND = fg(helm.color.mark);
 const AGENT_NAME = fg(helm.color.textSecondary);
 const SEPARATOR = fg(helm.color.textMuted);
 
+/** Blank columns held at each end of the status strip. */
+const PAD_LEFT = 2;
+const PAD_RIGHT = 1;
+/** Smallest blank run kept between the state chunk and the label. */
+const MIN_GAP = 1;
+
+/**
+ * A run of text and the SGR prefix it's painted with. Keeping the two
+ * apart is the point: widths are measured on `text` alone, so escape
+ * bytes can never be mistaken for columns.
+ *
+ * Widths count UTF-16 units, which is the display width for the ASCII
+ * and single-width box glyphs this strip is built from.
+ */
+type Piece = [sgr: string, text: string];
+
+const width = (pieces: Piece[]): number => pieces.reduce((n, [, text]) => n + text.length, 0);
+
+/**
+ * Trim `text` to at most `max` columns, marking the cut with an
+ * ellipsis so a clipped agent name reads as clipped. Returns '' when
+ * there's no room for a name plus its marker.
+ */
+function ellipsize(text: string, max: number): string {
+  if (max >= text.length) return text;
+  if (max < 2) return '';
+  return `${text.slice(0, max - 1)}…`;
+}
+
+/**
+ * Concatenate pieces, stopping at `max` visible columns.
+ *
+ * This clip is the strip's backstop, not its layout: `render` already
+ * sizes the gap so everything fits. It exists because overflowing by
+ * even one column is not a cosmetic error here — see the wrap note in
+ * `render`.
+ */
+function paint(pieces: Piece[], max: number): string {
+  let out = '';
+  let used = 0;
+  for (const [sgr, text] of pieces) {
+    if (used >= max) break;
+    const shown = text.slice(0, max - used);
+    used += shown.length;
+    out += sgr ? `${sgr}${shown}${RESET_SGR}` : shown;
+  }
+  return out;
+}
+
 export interface StartHudOptions {
   presence: Presence;
   /** Display label rendered on the right side of the strip. */
@@ -184,20 +233,39 @@ export function startHud(options: StartHudOptions): HudHandle {
     const dot = dotColor(currentState);
     const stateWord = capitalize(currentState);
     const stateColor = stateColorFor(currentState);
-    const leftChunk =
-      `${BOLD}${BRAND}csuite${RESET_SGR} ${SEPARATOR}·${RESET_SGR} ` +
-      `${dot}●${RESET_SGR} ${stateColor}${stateWord}${RESET_SGR}`;
-    // Visible width: '  ' (2) + 'csuite' (3) + ' · ' (3) + '●' (1) + ' ' (1) + stateWord (n)
-    const leftVisible = 2 + 3 + 3 + 1 + 1 + stateWord.length;
+    const leftPieces: Piece[] = [
+      [`${BOLD}${BRAND}`, 'csuite'],
+      ['', ' '],
+      [SEPARATOR, '·'],
+      ['', ' '],
+      [dot, '●'],
+      ['', ' '],
+      [stateColor, stateWord],
+    ];
 
-    // Right: agent name in frost. Padded with two trailing spaces
-    // so the label isn't jammed against the terminal edge.
-    const rightPlain = label;
-    const rightChunk = `${AGENT_NAME}${rightPlain}${RESET_SGR}`;
-    const rightVisible = rightPlain.length;
+    // The strip must land inside `cols`. Overflow doesn't merely clip:
+    // the status row sits *below* the DECSTBM region set above, so the
+    // implicit linefeed of an autowrap at the bottom row has nowhere to
+    // scroll to — the tail wraps back onto column 1 of this same row and
+    // overwrites the left padding, printing the end of the agent name in
+    // the bottom-left corner. Widths are therefore derived from the
+    // strings themselves rather than tallied by hand, and the label is
+    // what yields when the terminal is too narrow to hold everything.
+    const inner = Math.max(0, cols - PAD_LEFT - PAD_RIGHT);
+    const leftWidth = width(leftPieces);
+    const rightText = ellipsize(label, inner - leftWidth - MIN_GAP);
+    const gap = Math.max(MIN_GAP, inner - leftWidth - rightText.length);
 
-    const gap = Math.max(1, cols - leftVisible - rightVisible - 2);
-    const statusText = `  ${leftChunk}${' '.repeat(gap)}${rightChunk} `;
+    const statusText = paint(
+      [
+        ['', ' '.repeat(PAD_LEFT)],
+        ...leftPieces,
+        ['', ' '.repeat(gap)],
+        [AGENT_NAME, rightText],
+        ['', ' '.repeat(PAD_RIGHT)],
+      ],
+      cols,
+    );
 
     // Pin scroll region to claude's reported viewport so its newlines
     // stay in rows 1..(claudeBottom) and our HUD rows don't get pulled
