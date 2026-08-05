@@ -1,35 +1,43 @@
 /**
- * Tiny inline-markdown renderer for message bodies.
+ * Markdown renderer for message bodies.
  *
- * Supports three inline formats commonly used in agent chatter:
- *   - `**bold**` → <strong>
- *   - `*italic*` → <em>
- *   - `` `code` `` → <code>
+ * Agents emit Markdown natively — headings, lists, tables, fenced code
+ * — so chat renders full GFM through `marked`, sanitized with
+ * `DOMPurify`. This is the same pair the file-preview surface already
+ * uses (`components/preview/MarkdownPreview.tsx`); chat previously had
+ * a separate three-construct renderer, which meant the same document
+ * rendered differently depending on which surface you opened it in.
  *
- * Everything else is rendered as plain text with HTML escaped. Line
- * breaks in the source string become `<br>` so multi-line messages
- * render naturally.
+ * TWO PROPERTIES OF THE OLD RENDERER ARE DELIBERATELY KEPT. Both are
+ * behavioural contracts rather than incidental, and `marked`'s defaults
+ * break both:
  *
- * We return a sanitized HTML string for use with Preact's
- * `dangerouslySetInnerHTML`. The sanitization is "escape all HTML
- * metacharacters *before* injecting the formatting markers," which
- * is safe because the formatting markers themselves only produce
- * known-safe tags (no attributes, no URLs).
+ *   1. **Raw HTML stays escaped.** `marked` passes HTML through by
+ *      default, so `<div>x</div>` in a message would become a real div.
+ *      In a product whose traffic is full of XML-shaped payloads, the
+ *      author's literal text is what a reader needs to see. The `html`
+ *      renderer override escapes every HTML token — it covers inline
+ *      and block alike, verified against marked 18 rather than assumed
+ *      from the block-level name.
  *
- * Deliberately does NOT support:
- *   - links (URLs need their own safe-URL check)
- *   - code blocks (multi-line fenced — v1 ships inline only)
- *   - lists / headings / blockquotes
- *   - HTML passthrough
+ *   2. **`<channel …>` blocks get syntax colouring, not markdown.**
+ *      These are inbound traffic envelopes, not prose. They are lifted
+ *      out before parsing and restored afterwards, so no markdown rule
+ *      can reach inside one and the parser cannot restructure the tag.
  *
- * Phase 5 is a skeleton; full markdown can come later without
- * changing the render interface.
+ * SANITIZATION ORDER. `marked` runs first, `DOMPurify` second, and the
+ * channel spans are injected *after* sanitization. That last step is
+ * safe for the same reason it always was: the span HTML is constructed
+ * here from HTML-escaped pieces, carries a fixed set of classes, and
+ * has no attributes, URLs or event handlers that could execute.
  */
 
+import DOMPurify from 'dompurify';
+import { Marked } from 'marked';
+
 /**
- * Escape HTML metacharacters. Has to run BEFORE any formatting
- * markers are inserted so we don't double-escape the generated
- * `<strong>`/`<em>`/`<code>` tags.
+ * Escape HTML metacharacters. Used for the escaped-HTML contract above
+ * and for every piece of a channel tag before it is placed into markup.
  */
 function escapeHtml(input: string): string {
   return input
@@ -40,75 +48,78 @@ function escapeHtml(input: string): string {
     .replace(/'/g, '&#39;');
 }
 
-export function renderInlineMarkdown(body: string): string {
-  const escaped = escapeHtml(body);
-
-  // Pull out code spans before doing bold/italic, or `**x**` inside
-  // backticks would get formatted. We swap them for non-markdown
-  // placeholders, run the other passes, then restore the literal
-  // contents wrapped in <code>. Placeholder uses a Private Use Area
-  // codepoint (U+E000) as a sentinel that can't appear in escaped
-  // HTML and doesn't trigger the control-char lint rule.
-  const SENTINEL = '\uE000';
-  const codeSpans: string[] = [];
-  const withPlaceholders = escaped.replace(/`([^`]+?)`/g, (_match, inner: string) => {
-    codeSpans.push(inner);
-    return `${SENTINEL}${codeSpans.length - 1}${SENTINEL}`;
-  });
-
-  // Bold before italic so `***bold italic***` degrades to bold (users
-  // rarely nest the two, and nesting would need a real AST).
-  const boldReplaced = withPlaceholders.replace(/\*\*([^*]+?)\*\*/g, '<strong>$1</strong>');
-
-  const italicReplaced = boldReplaced.replace(/(^|[^*])\*([^*\s][^*]*?)\*(?!\*)/g, '$1<em>$2</em>');
-
-  // Restore code spans as literal <code> wrappers — contents are
-  // already HTML-escaped so they render verbatim.
-  const restorePattern = new RegExp(`${SENTINEL}(\\d+)${SENTINEL}`, 'g');
-  const codeRestored = italicReplaced.replace(restorePattern, (_match, idx: string) => {
-    const contents = codeSpans[Number(idx)] ?? '';
-    return `<code>${contents}</code>`;
-  });
-
-  // XML tags — render escaped <tag ...>body</tag> pairs with syntax
-  // coloring (brackets, tag name, attributes, body).
-  const channelRendered = renderXmlTags(codeRestored);
-
-  // Newlines → <br>. We do this last so inline markers across lines
-  // still match (rare but possible).
-  return channelRendered.replace(/\n/g, '<br>');
-}
+/**
+ * A dedicated instance rather than the module-level `marked`, so this
+ * renderer override cannot leak into any other consumer of the library
+ * in this app — notably the file preview, which deliberately *does*
+ * let HTML through and relies on DOMPurify to make that safe.
+ */
+const md = new Marked({ gfm: true, breaks: true });
+md.use({
+  renderer: {
+    html(token) {
+      return escapeHtml(token.raw);
+    },
+  },
+});
 
 /**
- * Detect escaped XML tags and render them as styled blocks.
- * Input is already HTML-escaped, so we match `&lt;tag ...&gt;`.
+ * Private Use Area sentinel. Cannot appear in real message text, is
+ * inert to markdown, and survives `DOMPurify` because it is plain text.
  */
-function renderXmlTags(html: string): string {
-  return html.replace(
-    /&lt;([a-zA-Z][\w.-]*)(\s[\s\S]*?)&gt;([\s\S]*?)&lt;\/\1&gt;/g,
-    (_match, tagName: string, attrs: string, body: string) => {
-      const coloredAttrs = attrs.replace(
-        /([\w.-]+)=(&quot;[\s\S]*?&quot;|&amp;quot;[\s\S]*?&amp;quot;|&#39;[\s\S]*?&#39;|\S+)/g,
-        '<span class="ch-attr">$1</span>=<span class="ch-val">$2</span>',
-      );
-      return (
-        '<span class="channel-tag">' +
-        '<span class="ch-bracket">&lt;</span>' +
-        '<span class="ch-name">' +
-        tagName +
-        '</span>' +
-        coloredAttrs +
-        '<span class="ch-bracket">&gt;</span>' +
-        '<div class="ch-body">' +
-        body +
-        '</div>' +
-        '<span class="ch-bracket">&lt;/</span>' +
-        '<span class="ch-name">' +
-        tagName +
-        '</span>' +
-        '<span class="ch-bracket">&gt;</span>' +
-        '</span>'
-      );
+const SENTINEL = '';
+
+/** `<tag attrs>body</tag>` on RAW input, before any escaping. */
+const CHANNEL_TAG = /<([a-zA-Z][\w.-]*)(\s[\s\S]*?)>([\s\S]*?)<\/\1>/g;
+
+/**
+ * Render one `<tag …>body</tag>` as a coloured envelope. Every
+ * interpolated piece is escaped here, which is what lets the result be
+ * injected after sanitization.
+ */
+function renderChannelTag(tagName: string, attrs: string, body: string): string {
+  const coloredAttrs = escapeHtml(attrs).replace(
+    /([\w.-]+)=(&quot;[\s\S]*?&quot;|&#39;[\s\S]*?&#39;|\S+)/g,
+    '<span class="ch-attr">$1</span>=<span class="ch-val">$2</span>',
+  );
+  const name = escapeHtml(tagName);
+  return (
+    '<span class="channel-tag">' +
+    '<span class="ch-bracket">&lt;</span>' +
+    `<span class="ch-name">${name}</span>` +
+    coloredAttrs +
+    '<span class="ch-bracket">&gt;</span>' +
+    `<div class="ch-body">${escapeHtml(body)}</div>` +
+    '<span class="ch-bracket">&lt;/</span>' +
+    `<span class="ch-name">${name}</span>` +
+    '<span class="ch-bracket">&gt;</span>' +
+    '</span>'
+  );
+}
+
+export function renderMessageMarkdown(body: string): string {
+  // Lift channel envelopes out before parsing. Markdown inside one is
+  // not markdown — it is payload — and a fenced block or table marker
+  // in a captured message must not restructure the envelope around it.
+  const envelopes: string[] = [];
+  const withPlaceholders = body.replace(
+    CHANNEL_TAG,
+    (_match, tag: string, attrs: string, inner: string) => {
+      envelopes.push(renderChannelTag(tag, attrs, inner));
+      return `\n\n${SENTINEL}${envelopes.length - 1}${SENTINEL}\n\n`;
     },
   );
+
+  const parsed = md.parse(withPlaceholders, { async: false });
+  const safe = DOMPurify.sanitize(parsed);
+
+  // Restore. The `<p>`-wrapped form goes first: an envelope on its own
+  // line becomes a paragraph, and a `<div class="ch-body">` inside a
+  // `<p>` is invalid nesting that browsers silently restructure.
+  let restored = safe;
+  envelopes.forEach((html, i) => {
+    const token = `${SENTINEL}${i}${SENTINEL}`;
+    restored = restored.split(`<p>${token}</p>`).join(html).split(token).join(html);
+  });
+  return restored;
 }

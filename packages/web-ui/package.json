@@ -40,9 +40,9 @@
     "clean": "rm -rf .turbo"
   },
   "dependencies": {
+    "@preact/signals": "^2.9.4",
     "@the-efficacious/brand": "^0.2.0",
     "csuite-sdk": "workspace:*",
-    "@preact/signals": "^2.9.4",
     "dompurify": "^3.4.12",
     "highlight.js": "^11.11.1",
     "lucide-preact": "^1.26.0",
@@ -54,6 +54,7 @@
     "@testing-library/preact": "^3.2.4",
     "@types/node": "^26.1.1",
     "happy-dom": "^20.11.1",
+    "jsdom": "^30.0.1",
     "typescript": "^6.0.3",
     "vite": "^8.1.5",
     "vitest": "^4.1.10"
