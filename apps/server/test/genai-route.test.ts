@@ -1,6 +1,6 @@
 /**
  * `POST /members/:name/genai` route tests — the codex gen_ai + raw-body
- * ingest. A bearer-authed self upload of one inference's verbatim
+ * ingest. A bearer-authed self upload of one inference's complete
  * request/response payload bytes must: content-address the raw bytes into
  * the raw-body store, map a parsed copy into a `GenAiInference` (provider
  * `openai`) linked by sha256, and gate on self (403) + auth (401).
@@ -201,10 +201,13 @@ describe('POST /members/:name/genai', () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ accepted: 1 });
 
-    // Raw bytes captured verbatim: one request + one response exchange.
+    // A payload with nothing to redact remains byte-exact.
     expect(rawBodyStore.count()).toBe(2);
     const reqExchange = rawBodyStore.list({ memberName: 'engineer-1', kind: 'request' })[0];
     expect(reqExchange).toBeDefined();
+    expect(rawBodyStore.getBlob(reqExchange?.hash ?? '')?.toString('base64')).toBe(
+      inference().requestBase64,
+    );
 
     // Derived record: provider openai, linked to the raw bytes by sha256.
     expect(genaiStore.count()).toBe(1);
@@ -260,12 +263,36 @@ describe('POST /members/:name/genai', () => {
       rawSystem.indexOf(context) + context.length,
     );
     expect(sha(capturedBlock)).toBe(sha(context));
+    expect(JSON.stringify(rawBody.input)).toContain(`stdout: ${REDACTED}`);
+    expect(JSON.stringify(rawBody.input)).not.toContain(`stdout: ${secret}`);
+  });
+
+  it('redacts a registered literal from both codex raw bodies before content-addressing', async () => {
+    const secret = 'registered-codex-raw-value';
+    registerSecretValues([secret]);
+    const { app, rawBodyStore } = makeApp();
+    const item = inference();
+    item.requestBase64 = b64({ input: [{ text: `request ${secret}` }] });
+    item.responseBase64 = b64({ output_items: [{ text: `response ${secret}` }] });
+
+    const res = await post(app, 'engineer-1', { inferences: [item] });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ accepted: 1 });
+
+    for (const kind of ['request', 'response'] as const) {
+      const exchange = rawBodyStore.list({ memberName: 'engineer-1', kind })[0];
+      const stored = rawBodyStore.getBlob(exchange?.hash ?? '')?.toString('utf8') ?? '';
+      expect(stored, `${kind} raw body`).toContain(REDACTED);
+      expect(stored, `${kind} raw body`).not.toContain(secret);
+    }
   });
 
   it('captures raw bytes even when a body is not valid JSON (model-only record)', async () => {
+    const secret = 'registered-malformed-body';
+    registerSecretValues([secret]);
     const { app, genaiStore, rawBodyStore } = makeApp();
     const bad = {
-      requestBase64: Buffer.from('not json', 'utf8').toString('base64'),
+      requestBase64: Buffer.from(`not json ${secret}`, 'utf8').toString('base64'),
       responseBase64: Buffer.from('also not json', 'utf8').toString('base64'),
       model: 'gpt-5.5',
       responseId: 'resp_x',
@@ -275,6 +302,10 @@ describe('POST /members/:name/genai', () => {
     expect(await res.json()).toEqual({ accepted: 1 });
     // Raw bytes landed; the derived record is model-only (no messages).
     expect(rawBodyStore.count()).toBe(2);
+    const request = rawBodyStore.list({ memberName: 'engineer-1', kind: 'request' })[0];
+    expect(rawBodyStore.getBlob(request?.hash ?? '')?.toString('utf8')).toBe(
+      `not json ${REDACTED}`,
+    );
     const [rec] = genaiStore.list({ memberName: 'engineer-1' });
     expect(rec?.model).toBe('gpt-5.5');
     expect(rec?.inputMessages).toEqual([]);

@@ -12,9 +12,9 @@
  * things. Neither is a provider wire — CommandSuite never sees one; each
  * agent's own instrumentation is the source (`core/trace/redact.ts`).
  *
- *   codex   `POST /members/:name/genai` (app.ts) content-addresses the
- *           rollout-bundle payload BEFORE any parse or redaction. The
- *           subject is THE BYTES THE RUNNER UPLOADED.
+ *   codex   `POST /members/:name/genai` (app.ts) applies member-scoped
+ *           redaction before content-addressing. The subject is THE
+ *           REDACTED PAYLOAD THE BROKER HANDS THIS STORE.
  *   claude  OTLP attributes via the correlator. Attribute redaction runs
  *           in `parseOtlpLogs` first (with exact instruction-block
  *           exemptions, scoped to `api_request_body`'s `system` field),
@@ -111,8 +111,8 @@ export interface AppendBodyInput {
    * here, never rewritten.
    *
    * NOT necessarily the provider's wire bytes, and the caller decides
-   * which: codex bundle uploads arrive pre-parse and pre-redaction, while
-   * claude OTLP bodies have already passed attribute redaction upstream.
+   * which: codex bundle uploads pass member-scoped redaction in app.ts,
+   * while claude OTLP bodies pass attribute redaction in otlp-parse.ts.
    * This field is the subject of the store's byte-exactness claim, so
    * naming it "wire bytes" here would assert something only one of the two
    * callers can supply. See the file header.

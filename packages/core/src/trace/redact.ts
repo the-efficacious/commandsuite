@@ -12,32 +12,33 @@
  * the csuite server, shown in a web UI, or written to disk), we scrub
  * known-bad patterns in place.
  *
- * WHAT THIS MODULE DOES NOT REACH: it protects the normalized activity
- * stream and the parsed `gen_ai_inference` records. It never rewrites a
- * stored raw blob.
+ * This protects the normalized activity stream, parsed
+ * `gen_ai_inference` records, and raw bodies before either ingest route
+ * content-addresses them. The raw store itself never rewrites its input.
  *
  * That is NOT the same as saying the raw body store holds provider-wire
  * bytes, and it does not, uniformly. **Fidelity is a property of the
- * ingest route, and the two producers differ:**
+ * ingest route:**
  *
  *   codex   uploads rollout-bundle payloads to `POST /members/:name/genai`,
- *           which content-addresses them BEFORE any parse or redaction
- *           (`server/src/app.ts`). Verbatim with respect to THE BYTES
- *           THE RUNNER UPLOADED.
+ *           which applies member-scoped redaction before content-addressing
+ *           (`server/src/app.ts`). Verbatim with respect to THE REDACTED
+ *           PAYLOAD THE BROKER HANDS THE STORE.
  *   claude  emits bodies as OTLP attributes, and attribute redaction runs
  *           in `parseOtlpLogs` BEFORE the correlator captures them
  *           (`server/src/otlp-parse.ts`). Verbatim with respect to THE
  *           ATTRIBUTE VALUE THE BROKER RECEIVED — a redacted derivative
  *           of what claude sent, not what claude sent.
  *
- * Both DIRECTIONS are affected on the claude path. Responses in fact
+ * Both DIRECTIONS are affected on both paths. Claude responses in fact
  * carry no exemption at all: the instruction-block exemption is scoped
  * to `api_request_body`'s `system` field, so a registered literal in a
  * response body is replaced unconditionally. Measured on stored bodies
  * from before identity values left the secrets store: 1,161 of 1,162
  * claude request bodies and 7 of 1,158 claude responses already carried
- * `[REDACTED]` in place of a registered literal, with zero unredacted;
- * 16 of 840 codex requests carried the same literals intact.
+ * `[REDACTED]` in place of a registered literal, with zero unredacted.
+ * Before codex raw-body redaction was added, 16 of 840 codex requests
+ * carried the same literals intact; those existing rows are not rewritten.
  *
  * So the store's guarantee is byte-exactness WITH RESPECT TO THE BYTES
  * IT WAS HANDED, which is the only subject it ever had. See

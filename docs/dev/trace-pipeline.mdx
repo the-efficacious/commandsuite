@@ -207,19 +207,19 @@ request-only flush**: an inference needs both bodies, so an
 incomplete exchange evicts silently rather than emitting a partial
 record.
 
-**Capture-before-parse:** each body's verbatim bytes are
+**Capture-before-reshape:** each complete body is redacted, then
 content-addressed into the raw store (`raw_blob` / `raw_exchange`,
-gzip at rest, deduped by sha256) *before* any `JSON.parse`, so a body
-whose JSON fails to parse is still preserved. The parsed copy is
-mapped to a typed `gen_ai_inference` (with `redactJson` applied to
-parsed content) that points back at its source bytes by hash.
+gzip at rest, deduped by sha256) before mapping. Malformed JSON is
+still preserved after string-level redaction. The parsed copy is mapped
+to a typed `gen_ai_inference` that points back at its source bytes by hash.
 
 One fidelity caveat: for Claude's OTLP path, attribute redaction runs
 *before* the correlator, so the Claude raw store holds the broker's
 post-redaction bytes — byte-exact for broker-issued instruction
 blocks (exempt), but not a provider-wire-verbatim claim. Codex's bundle
-ingest content-addresses its request/response bytes before any parse
-or redaction, so its raw layer is verbatim as uploaded.
+ingest applies the same member-scoped registered-value exemptions and
+redaction before content-addressing. In both cases the raw layer is
+verbatim with respect to the redacted payload handed to the store.
 
 ## Codex: rollout-primary, layered
 
@@ -252,8 +252,9 @@ The codex runner mirrors the Claude split with three parallel layers:
   (`packages/cli/src/runtime/agents/codex/bundle-reader.ts`): with
   `CODEX_ROLLOUT_TRACE_ROOT` set, codex writes per-inference
   rollout-trace bundles carrying the complete Responses API request
-  and response. The reader uploads the verbatim payload bytes to
-  `POST /members/:name/genai`; the broker content-addresses them,
+  and response. The reader uploads the payload bytes to
+  `POST /members/:name/genai`; the broker redacts registered values,
+  content-addresses the result,
   then maps a parsed copy via the pure `openaiResponsesToGenAi`
   mapper (the OpenAI-Responses sibling of `anthropicToGenAi`).
 
@@ -278,7 +279,7 @@ truncation.
 | Normalized activity (transcript mapper, codex adapter) | `redactJson` at the runner, before upload |
 | Parsed `gen_ai_inference` content | `redactJson` in the core Anthropic / OpenAI mappers |
 | Claude OTLP attributes | Redacted at broker ingest, instruction blocks exempt |
-| Raw-body stores | **Not** a redaction surface: codex bytes verbatim; Claude bytes post-attribute-redaction. Access control (`activity.read` / self) and retention are the protection boundary |
+| Raw-body stores | Both routes redact before storage: Codex in the bundle-upload handler, Claude at OTLP attribute ingest. The store is byte-exact with respect to each redacted input. |
 
 Secret values therefore do not belong in instruction blocks or
 variables; register them as secrets and reference the slug.
