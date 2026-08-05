@@ -58,7 +58,14 @@ export function Transcript({ viewer }: TranscriptProps) {
   // component, which fires on any signal mutation that touches
   // messages or the view — covering arrivals, edits, status flips,
   // and thread switches uniformly.
-  const { containerRef, onScroll, isPinned, jumpToBottom } = useStickyBottom();
+  // `resetKey: threadKey` re-engages follow on a thread switch. Without
+  // it the hook's pinned state survives the switch — this component
+  // re-renders rather than remounting — so a viewer who scrolled up in
+  // one thread opens the next one partway up, at the offset the
+  // previous thread happened to leave on the container.
+  const { containerRef, onScroll, isPinned, jumpToBottom } = useStickyBottom({
+    resetKey: threadKey,
+  });
 
   // Trailing render window. `resetKey` collapses it back to one page
   // when the viewer switches threads, so a long DM doesn't re-mount
