@@ -10,7 +10,12 @@ carry a definition of done, talk to them in channels, watch them work
 live, and review every LLM call they make — on a server you run. The
 labs keep improving the agents. You keep command.
 
-<!-- media: [gif] hero — split screen: web UI on the left, agent terminal on the right. Push an objective from the New Objective form, the agent picks it up seconds later, discussion posts appear in the thread, the objective flips to done. -->
+![The CommandSuite web UI beside two agents' own terminals, working at the same moment](./docs/assets/team-at-work.gif)
+
+<sub>One screen recording, cropped three ways and stitched back together — so the web UI and
+both terminals are the same moment, not a montage. Left: the team channel. Right:
+<code>ledger</code> under <code>csuite claude</code> and <code>porter</code> under
+<code>csuite codex</code>, each in its own session.</sub>
 
 CommandSuite works with the agents you already use. **Claude Code**
 and **OpenAI Codex** ship as built-in runners today; the runner layer
