@@ -186,6 +186,37 @@ people to regenerate the golden without reading it. And where the type system ca
 make the wrong thing unrepresentable, that is better than either: tests are the
 backstop, types are the fix.
 
+### Check whether the property is already covered before building an instrument
+
+**Before designing a measurement, establish whether the property is already
+asserted.** If it is, say what the new measurement adds that the existing one
+cannot. *"We measured it in the field"* is weaker than *"a fixture proves it on
+every run"* whenever the property is deterministic and local.
+
+The cost of skipping this, measured: establishing in the field that a
+spool-directory sweep gates on a captured marker rather than a liveness probe
+consumed **four daemon versions, four reviewers and about fifty minutes**, and
+produced seven instrument defects — including a design with a false-VALID
+ordering hole and a timestamp bracket that truncated to whole seconds,
+recreating the defect it was written to catch.
+
+`packages/cli/test/runtime/trace-host.test.ts` had covered it the entire time —
+five constructed states driven through the real `startCaptureHost`,
+mutation-proven on both load-bearing guards, and covering a branch the one-shot
+field observation could not reliably produce. **The fixture was stronger on
+every axis that mattered**, and one `grep` over the test directory was cheaper
+than any single review round it went through.
+
+Two causes worth naming separately, because each recurs on its own:
+
+- **A locally testable property written into a field-validation contract.**
+  Separate criteria by the kind of evidence they require, not by what prompted
+  them.
+- **Nobody asked, because the instrument work was immediately productive.**
+  Each round found a real defect, so the loop felt like it was converging rather
+  than like it should not have started. **Local yield is not evidence that the
+  work is necessary.**
+
 ### Name the string the deliverable must produce, then grep the tests for it
 
 **A test that proves a helper does not prove its callers exist.**
@@ -293,6 +324,40 @@ So when a check's *frame* is the thing in question, no amount of author-side
 discipline reaches it. That is what *author proposes, partner verifies* is for,
 and it is the only one of these that fires **before** publication rather than
 after.
+
+### Mutate the surface your fix added, for the defect you were fixing
+
+The table above is the general discipline. This is it pointed at one moment:
+**the code you write to fix a defect is the least-audited place that defect can
+hide.** The old surface gets scrutinised; the new surface gets written by
+someone who "obviously" would not make that mistake — and holding a defect in
+mind is not the same as checking for it. Thinking about the disease produces
+confidence rather than scrutiny.
+
+**Probes and renderers are the sites.** Both take structured data and produce
+something a person or an agent reads, and both make a default-value decision at
+every field — exactly where one fact becomes indistinguishable from another.
+
+After the fix compiles:
+
+1. **Name the defect class in one sentence** — "two different facts print
+   identically", "a returned field is dropped", "an error renders as empty".
+2. **List the surfaces the fix added or touched.**
+3. **Mutate each against that sentence and confirm a named test fails.**
+
+Step 3 is the whole thing. Three instances found in a single day all passed
+review; two were caught by mutation and one by a verifier driving the
+combination by hand. A fourth shipped: a guard test added alongside a cap
+removal, whose own comment called it *"the guard against either quietly
+returning"*, **passed with the cap restored** — it built its fixture directly
+and never validated against the schema it claimed to guard.
+
+**A check that cannot pass is as broken as one that cannot fail.** It can look
+correct when exercised only on inputs expected to fail — the tell is that the
+pass case and the fail case fail *identically*, which points at the harness
+rather than the logic. A CI gate written and tested only against the failing
+payload survives that way until the day it should have been the one green
+thing. Run the positive control before trusting the negative one.
 
 ### Make “this must not compile” executable
 
@@ -478,6 +543,32 @@ exactly when to spend sixty seconds measuring it instead.
 The related discipline: **when two careful measurements of the same thing
 disagree, stop arguing about the thing and check whether you measured the same
 thing.** Same path, different machines, different contents.
+
+## Say which citations you opened and which you carried
+
+**Before handing over work that cites evidence, mark which citations you opened
+yourself and which you carried** — from a contract, a colleague's message, an
+earlier document — then go and open the carried ones.
+
+A citation you opened brings its context. One you carried arrives as a sentence
+with the context stripped, and a claim from whoever set the standard feels
+load-bearing *because* of where it came from, which is what stops you testing
+it.
+
+Worked case: a design rested on eight citations, seven read during the work and
+one taken from another document's requirements list. Opening that one before
+handing over confirmed it — **and surfaced a failure mode running opposite to
+the caveat already written**, which nothing else would have found. The same
+design carried a claim taken verbatim from its own contract and never tested;
+the claim named a mechanism that could not do the work attributed to it, and
+the verifier returned the document for it.
+
+**If a contract asserts a mechanism, verify the mechanism can do what is
+claimed, or hand it back as undecided.**
+
+The check is cheap and nobody will ask you for it. That is why it is written
+down rather than remembered — an expensive check gets scheduled, a cheap one
+gets skipped, and neither gets done because someone felt like it.
 
 ## Changesets & releases
 
