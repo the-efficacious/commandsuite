@@ -15,8 +15,9 @@
  *
  * This reader pairs each started+completed by `inference_call_id`, reads
  * the two referenced payload files' bytes VERBATIM, and uploads them to the
- * broker's gen_ai ingest (`uploadGenaiInference`), which content-addresses
- * the bytes and maps a parsed copy into a `GenAiInference`. This is the
+ * broker's gen_ai ingest (`uploadGenaiInference`), which redacts registered
+ * values, content-addresses the result, and maps a parsed copy into a
+ * `GenAiInference`. This is the
  * codex analogue of Claude's raw-body → gen_ai layer; the bundle already
  * pairs request and response, so there is no correlation to do.
  *

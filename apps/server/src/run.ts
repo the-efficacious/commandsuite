@@ -492,9 +492,8 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
 
   // Content-addressed raw-body store: the request/response bytes UNDER
   // the gen_ai derived view, kept verbatim with respect to what each
-  // ingest route hands it. Captured before THAT ROUTE parses them —
-  // "before redaction" holds only for the codex bundle upload; claude
-  // OTLP bodies are redacted upstream in `parseOtlpLogs`.
+  // ingest route hands it. Both routes redact first: codex in its upload
+  // handler, claude upstream in `parseOtlpLogs`.
   // Same activity-DB handle; the per-member correlators in app.ts do the
   // capture (and unlink the consumed spill files — the default).
   const rawBodyStore: RawBodyStore = createRawBodyStore(activityDb, {

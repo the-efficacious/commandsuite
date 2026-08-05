@@ -32,6 +32,8 @@ import {
   clampQueryLimit,
   containsRegisteredSecretValue,
   openaiResponsesToGenAi,
+  redactJson,
+  redactSecrets,
   registerSecretValues,
 } from 'csuite-core';
 import {
@@ -671,9 +673,9 @@ export function createApp(options: AppOptions): CreatedApp {
         ...(diagnostics !== undefined ? { diagnostics: diagnostics.emit } : {}),
         memberName,
         getRedactionExemptions: () => exemptionsFor(memberName),
-        // Raw capture-before-parse: when the raw-body store is wired,
-        // the correlator content-addresses every body verbatim before
-        // parsing and unlinks the consumed spill file (its default).
+        // Claude raw capture: OTLP attribute redaction has already run;
+        // the correlator content-addresses that value before mapping and
+        // unlinks the consumed spill file (its default).
         // memberName is set unconditionally above: the correlator needs
         // it to attribute diagnostics even when raw capture is unwired.
         ...(rawBodyStore !== undefined ? { rawStore: rawBodyStore } : {}),
@@ -1985,18 +1987,30 @@ export function createApp(options: AppOptions): CreatedApp {
 
   // Codex gen_ai ingest — the codex analogue of Claude's OTLP body_ref →
   // correlator path. Codex has no OTLP body channel; its runner tails the
-  // rollout-TRACE bundle and uploads each completed inference's VERBATIM
+  // rollout-TRACE bundle and uploads each completed inference's complete
   // request+response payload bytes here. The bundle already pairs request
   // and response per call, so there's no correlation to do: we
-  // content-address the raw bytes FIRST (before any reshape), then map a
+  // redact registered values before content-addressing, then map a
   // parsed copy into a GenAiInference via the pure core mapper. Self-only,
-  // and defensive — a malformed entry is skipped, its raw bytes still land.
+  // and defensive — malformed JSON still lands after string-level redaction.
   if (genaiStore !== undefined && rawBodyStore !== undefined) {
     const gStore = genaiStore;
     const rStore = rawBodyStore;
     const strOrNull = (v: unknown): string | null => (typeof v === 'string' ? v : null);
     const numOrNull = (v: unknown): number | null =>
       typeof v === 'number' && Number.isFinite(v) ? v : null;
+    const redactBodyBytes = (bytes: Buffer, exemptions: readonly string[]): Buffer => {
+      const text = bytes.toString('utf8');
+      try {
+        const parsed = JSON.parse(text) as unknown;
+        const redacted = redactJson(parsed, { exemptions });
+        if (JSON.stringify(redacted) === JSON.stringify(parsed)) return bytes;
+        return Buffer.from(JSON.stringify(redacted), 'utf8');
+      } catch {
+        const redacted = redactSecrets(text, { exemptions });
+        return redacted === text ? bytes : Buffer.from(redacted, 'utf8');
+      }
+    };
     app.post('/members/:name/genai', auth, async (c) => {
       const member = c.get('member');
       const parsedName = NameSchema.safeParse(c.req.param('name'));
@@ -2019,8 +2033,9 @@ export function createApp(options: AppOptions): CreatedApp {
           const reqB64 = strOrNull(inf?.requestBase64);
           const respB64 = strOrNull(inf?.responseBase64);
           if (reqB64 === null || respB64 === null) continue;
-          const reqBytes = Buffer.from(reqB64, 'base64');
-          const respBytes = Buffer.from(respB64, 'base64');
+          const exemptions = exemptionsFor(member.name);
+          const reqBytes = redactBodyBytes(Buffer.from(reqB64, 'base64'), exemptions);
+          const respBytes = redactBodyBytes(Buffer.from(respB64, 'base64'), exemptions);
           const envelope = {
             requestId: strOrNull(inf.upstreamRequestId),
             sessionId: strOrNull(inf.threadId),
@@ -2029,7 +2044,7 @@ export function createApp(options: AppOptions): CreatedApp {
             model: strOrNull(inf.model),
             eventTs: numOrNull(inf.ts),
           };
-          // Verbatim bytes first — content-addressed before any parse.
+          // Redacted bytes first — content-addressed before any reshape.
           const { hash: requestSha256 } = rStore.appendBody({
             memberName: name,
             kind: 'request',
@@ -2061,7 +2076,7 @@ export function createApp(options: AppOptions): CreatedApp {
           const rec = openaiResponsesToGenAi({
             requestBody,
             responseBody,
-            redactionExemptions: exemptionsFor(member.name),
+            redactionExemptions: exemptions,
             model: envelope.model,
             responseId: strOrNull(inf.responseId),
             querySource: envelope.querySource,
