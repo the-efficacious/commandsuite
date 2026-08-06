@@ -1,5 +1,15 @@
 # csuite-cli
 
+## 0.5.1
+
+### Patch Changes
+
+- [#149](https://github.com/the-efficacious/commandsuite/pull/149) [`ec60084`](https://github.com/the-efficacious/commandsuite/commit/ec6008472498d5259d8262400943826e993b1aea) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - Fix the `csuite claude` / `csuite codex` status strip wrapping its agent name into the bottom-left corner. The strip's width was tallied by hand and undercounted by two columns at every terminal size, so the tail of the label wrapped back onto column 1 of the same row. Widths are now measured from the rendered text, and a long name is ellipsized on a narrow terminal instead of overflowing.
+
+- Updated dependencies [[`b086b93`](https://github.com/the-efficacious/commandsuite/commit/b086b9390aa0991c082c7e1876eba01e103fc770)]:
+  - csuite-core@0.5.1
+  - csuite-sdk@0.5.1
+
 ## 0.5.0
 
 ### Minor Changes

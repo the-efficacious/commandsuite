@@ -5,6 +5,98 @@ CommandSuite versions in lockstep — one version per release train —
 so each section below is one release. Per-package `CHANGELOG.md`
 files still ship inside every npm tarball.
 
+## 0.5.1 (2026-08-05)
+
+### csuite-cli
+
+#### Patch Changes
+
+- [#149](https://github.com/the-efficacious/commandsuite/pull/149) [`ec60084`](https://github.com/the-efficacious/commandsuite/commit/ec6008472498d5259d8262400943826e993b1aea) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - Fix the `csuite claude` / `csuite codex` status strip wrapping its agent name into the bottom-left corner. The strip's width was tallied by hand and undercounted by two columns at every terminal size, so the tail of the label wrapped back onto column 1 of the same row. Widths are now measured from the rendered text, and a long name is ellipsized on a narrow terminal instead of overflowing.
+
+### csuite-server
+
+#### Patch Changes
+
+- [#154](https://github.com/the-efficacious/commandsuite/pull/154) [`b086b93`](https://github.com/the-efficacious/commandsuite/commit/b086b9390aa0991c082c7e1876eba01e103fc770) Thanks [@keencaliper](https://github.com/keencaliper)! - Correct what the raw-body store claims to preserve. `redact.ts` stated the
+  store "keeps bytes VERBATIM … captured before anything parses or redacts
+  them — that is what makes byte-exact reconstruction possible", and cited
+  `raw-body-store.ts`, which says the opposite. The code matches
+  `raw-body-store.ts`: for claude, attribute redaction runs in `parseOtlpLogs`
+  before the correlator captures anything.
+
+  Every fidelity claim on this path now names the object it is verbatim _with
+  respect to_, and states that the answer depends on the ingest route — codex
+  bundle uploads are content-addressed before any parse or redaction, claude
+  OTLP bodies are captured after attribute redaction. Four further statements
+  were corrected alongside the one first reported, including a field comment
+  inside `raw-body-store.ts` itself (`AppendBodyInput.bytes`, "The ORIGINAL
+  wire bytes") and two "before redaction" claims in `genai-correlator.ts` and
+  `run.ts`.
+
+  No behaviour change. The remaining gap — nothing in `raw_exchange` or
+  `raw_blob` records which route a body took, so a reader cannot tell a
+  scrubbed body from an unscrubbed one — is now stated in the prose rather
+  than left for a reader to discover, and is tracked separately.
+
+- [#156](https://github.com/the-efficacious/commandsuite/pull/156) [`ea9f24e`](https://github.com/the-efficacious/commandsuite/commit/ea9f24e96b2b8be7b23a10d16addf061e3b97a19) Thanks [@sureforge](https://github.com/sureforge)! - Redact registered secret values from Codex request and response bodies before the broker content-addresses them.
+
+### csuite-core
+
+#### Patch Changes
+
+- [#154](https://github.com/the-efficacious/commandsuite/pull/154) [`b086b93`](https://github.com/the-efficacious/commandsuite/commit/b086b9390aa0991c082c7e1876eba01e103fc770) Thanks [@keencaliper](https://github.com/keencaliper)! - Correct what the raw-body store claims to preserve. `redact.ts` stated the
+  store "keeps bytes VERBATIM … captured before anything parses or redacts
+  them — that is what makes byte-exact reconstruction possible", and cited
+  `raw-body-store.ts`, which says the opposite. The code matches
+  `raw-body-store.ts`: for claude, attribute redaction runs in `parseOtlpLogs`
+  before the correlator captures anything.
+
+  Every fidelity claim on this path now names the object it is verbatim _with
+  respect to_, and states that the answer depends on the ingest route — codex
+  bundle uploads are content-addressed before any parse or redaction, claude
+  OTLP bodies are captured after attribute redaction. Four further statements
+  were corrected alongside the one first reported, including a field comment
+  inside `raw-body-store.ts` itself (`AppendBodyInput.bytes`, "The ORIGINAL
+  wire bytes") and two "before redaction" claims in `genai-correlator.ts` and
+  `run.ts`.
+
+  No behaviour change. The remaining gap — nothing in `raw_exchange` or
+  `raw_blob` records which route a body took, so a reader cannot tell a
+  scrubbed body from an unscrubbed one — is now stated in the prose rather
+  than left for a reader to discover, and is tracked separately.
+
+### csuite-web-ui
+
+#### Patch Changes
+
+- [#175](https://github.com/the-efficacious/commandsuite/pull/175) [`beb2a19`](https://github.com/the-efficacious/commandsuite/commit/beb2a1931c5dfd9e8d3d6bce1a97a803f2bb1633) Thanks [@keencaliper](https://github.com/keencaliper)! - Render chat messages with full GFM markdown.
+
+  Chat previously used a hand-rolled renderer covering three constructs
+  (`**bold**`, `*italic*`, `` `code` ``). Everything else agents emit
+  natively — headings, lists, tables, blockquotes, fenced code, links —
+  arrived as literal punctuation. The file-preview surface already
+  rendered full GFM through `marked` + `DOMPurify`, so the same document
+  looked different depending on which surface you opened it in.
+
+  Chat now uses that same pair. Two properties of the old renderer are
+  kept deliberately, because `marked`'s defaults break both: raw HTML
+  stays escaped, and `<channel …>` envelopes get syntax colouring rather
+  than markdown.
+
+- [#174](https://github.com/the-efficacious/commandsuite/pull/174) [`2c772c8`](https://github.com/the-efficacious/commandsuite/commit/2c772c8a04b57c12463913c92a1d88186c1790b7) Thanks [@keencaliper](https://github.com/keencaliper)! - Fix a thread switch opening the new chat partway up rather than at its
+  newest message.
+
+  `Transcript` re-renders on a thread switch, it does not remount, so every
+  ref inside `useStickyBottom` survived the switch — including the one
+  recording that the viewer had scrolled up. Follow stayed disengaged into
+  the next thread, and the browser preserves `scrollTop` across a children
+  swap, so the new thread opened at the offset the previous one left
+  behind: as far in as the previous chat was long.
+
+  `useStickyBottom` now takes a `resetKey`, mirroring `useWindowedList`,
+  and `Transcript` passes `threadKey`. "The user chose to read history" is
+  a fact about the list they were reading and no longer outlives it.
+
 ## 0.5.0 (2026-08-04)
 
 ### csuite-cli

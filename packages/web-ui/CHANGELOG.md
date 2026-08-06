@@ -1,5 +1,40 @@
 # csuite-web-ui
 
+## 0.5.1
+
+### Patch Changes
+
+- [#175](https://github.com/the-efficacious/commandsuite/pull/175) [`beb2a19`](https://github.com/the-efficacious/commandsuite/commit/beb2a1931c5dfd9e8d3d6bce1a97a803f2bb1633) Thanks [@keencaliper](https://github.com/keencaliper)! - Render chat messages with full GFM markdown.
+
+  Chat previously used a hand-rolled renderer covering three constructs
+  (`**bold**`, `*italic*`, `` `code` ``). Everything else agents emit
+  natively — headings, lists, tables, blockquotes, fenced code, links —
+  arrived as literal punctuation. The file-preview surface already
+  rendered full GFM through `marked` + `DOMPurify`, so the same document
+  looked different depending on which surface you opened it in.
+
+  Chat now uses that same pair. Two properties of the old renderer are
+  kept deliberately, because `marked`'s defaults break both: raw HTML
+  stays escaped, and `<channel …>` envelopes get syntax colouring rather
+  than markdown.
+
+- [#174](https://github.com/the-efficacious/commandsuite/pull/174) [`2c772c8`](https://github.com/the-efficacious/commandsuite/commit/2c772c8a04b57c12463913c92a1d88186c1790b7) Thanks [@keencaliper](https://github.com/keencaliper)! - Fix a thread switch opening the new chat partway up rather than at its
+  newest message.
+
+  `Transcript` re-renders on a thread switch, it does not remount, so every
+  ref inside `useStickyBottom` survived the switch — including the one
+  recording that the viewer had scrolled up. Follow stayed disengaged into
+  the next thread, and the browser preserves `scrollTop` across a children
+  swap, so the new thread opened at the offset the previous one left
+  behind: as far in as the previous chat was long.
+
+  `useStickyBottom` now takes a `resetKey`, mirroring `useWindowedList`,
+  and `Transcript` passes `threadKey`. "The user chose to read history" is
+  a fact about the list they were reading and no longer outlives it.
+
+- Updated dependencies []:
+  - csuite-sdk@0.5.1
+
 ## 0.5.0
 
 ### Minor Changes
