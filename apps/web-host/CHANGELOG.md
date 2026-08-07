@@ -1,5 +1,13 @@
 # csuite-web-host
 
+## 0.6.0
+
+### Patch Changes
+
+- Updated dependencies [[`1dd4d23`](https://github.com/the-efficacious/commandsuite/commit/1dd4d23eb112f703d04ffcd985246145ded50f6b), [`69c250a`](https://github.com/the-efficacious/commandsuite/commit/69c250adae48a280c6cc5f1c029e003f3155b1c6), [`69c250a`](https://github.com/the-efficacious/commandsuite/commit/69c250adae48a280c6cc5f1c029e003f3155b1c6)]:
+  - csuite-sdk@0.6.0
+  - csuite-web-ui@0.6.0
+
 ## 0.5.1
 
 ### Patch Changes
