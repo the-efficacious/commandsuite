@@ -19,6 +19,32 @@ export const METHODS = {
   turnStart: 'turn/start',
   turnSteer: 'turn/steer',
   turnInterrupt: 'turn/interrupt',
+  /**
+   * Ask codex to summarise the thread so far and continue from the
+   * summary. Takes `{ threadId }`; the RESPONSE IS AN EMPTY OBJECT and
+   * therefore says nothing about whether compaction happened — it
+   * acknowledges the request, not the effect. Completion arrives
+   * asynchronously as an `item/completed` carrying a
+   * `contextCompaction` item.
+   *
+   * (Confirmed against the codex 0.145.0 app-server schema:
+   * `codex app-server generate-json-schema` →
+   * `ClientRequest`/`ThreadCompactStartParams`. There is also a
+   * `context/compacted` notification, which that schema marks
+   * deprecated in favour of the item type.)
+   */
+  threadCompactStart: 'thread/compact/start',
+} as const;
+
+/**
+ * `item/completed` item types csuite reacts to. Codex carries a large
+ * item union; we name only what we act on.
+ */
+export const ITEM_TYPES = {
+  /** Emitted when a compaction finishes. Carries `{ id, type }` only —
+   * no token accounting, so a codex compaction acks as applied without
+   * the before/after numbers a claude one reports. */
+  contextCompaction: 'contextCompaction',
 } as const;
 
 export const NOTIFICATIONS = {

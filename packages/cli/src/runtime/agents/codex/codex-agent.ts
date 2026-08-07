@@ -24,6 +24,7 @@
 import { existsSync, promises as fs } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import type { CompactAttempt } from '../../context-control.js';
 import type { ChannelEvent, ChannelEventSink } from '../../forwarder.js';
 import { type HudHandle, startHud } from '../../hud.js';
 import type {
@@ -35,7 +36,7 @@ import type {
   AgentSessionContext,
   RespawnPosture,
 } from '../adapter.js';
-import { findCodexBinary, spawnCodex } from './adapter.js';
+import { type CodexCompactOutcome, findCodexBinary, spawnCodex } from './adapter.js';
 
 /**
  * uid-0 posture. Codex has no root refusal — it runs with sandbox
@@ -168,6 +169,9 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
   // including any DM addressed at it that arrived while it was
   // offline. The queue closes that gap.
   let liveSink: ChannelEventSink | null = null;
+  // The current generation's compaction actuator, or null before the
+  // first spawn / between a stop and its successor.
+  let liveCompact: ((timeoutMs?: number) => Promise<CodexCompactOutcome>) | null = null;
   const pendingEvents: ChannelEvent[] = [];
   const sinkWrapper: ChannelEventSink = {
     async deliver(event) {
@@ -233,6 +237,11 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
         busy: runner.captureHost?.busy,
         log,
       });
+
+      // The compaction actuator follows the live generation: a restart
+      // or clear swaps this so a control never reaches the process it
+      // replaced.
+      liveCompact = (timeoutMs) => spawned.compact(timeoutMs);
 
       // Attach the live sink and drain anything the forwarder queued
       // while codex was cold-starting.
@@ -306,6 +315,10 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
     },
 
     detachForRestart(): void {
+      // Drop the outgoing generation's compaction actuator with its
+      // sink. A control landing during the swap must not be answered
+      // by the process being replaced.
+      liveCompact = null;
       // Back to the pre-attach buffer: events queue until the
       // successor's spawn attaches its live sink — the same mechanism
       // that already covers codex's 5-15s cold start.
@@ -332,15 +345,28 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
       return adapter.spawn(ctx);
     },
 
-    // NO `compactContext`. The codex app-server protocol this adapter
-    // speaks exposes `thread/start`, `thread/resume`, `turn/start`,
-    // `turn/steer` and `turn/interrupt` — there is no compaction op,
-    // and injecting `/compact` as turn text would be a request with no
-    // reply channel to observe. The coordinator therefore reports
-    // `unsupported` for compact on codex, which is deliberately
-    // distinct from `declined`: the ask was never possible, so a
-    // caller learns to stop rather than to retry. `clear` is fully
-    // supported above, because it needs no cooperation from the agent.
+    // `reason` is accepted and deliberately unused — see below.
+    async compactContext(_reason: string | undefined): Promise<CompactAttempt> {
+      if (liveCompact === null) {
+        // Not `unsupported` — the runner CAN compact, there is just no
+        // live thread to compact right now. Conflating the two would
+        // tell a caller to stop asking forever over a transient state.
+        return {
+          supported: true,
+          applied: false,
+          detail: 'no codex thread is running yet',
+        };
+      }
+      // `reason` has nowhere to go: `thread/compact/start` takes only
+      // `{ threadId }`, with no field for custom summarisation
+      // instructions (claude's `/compact <reason>` accepts them). It
+      // still reaches the operator through the activity ack, so the
+      // request is explicable even though it did not steer the summary.
+      const outcome = await liveCompact();
+      return outcome.applied
+        ? { supported: true, applied: true }
+        : { supported: true, applied: false, detail: outcome.detail };
+    },
 
     async doctor(): Promise<AgentDoctorCheck[]> {
       return [codexRootCheck(), await codexCacheCheck()];

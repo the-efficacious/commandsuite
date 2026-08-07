@@ -119,6 +119,15 @@ describe.each(SUBJECTS)('$id adapter respawn posture', ({ id, make }) => {
     ).toMatchObject({ resume: 'sess-1' });
   });
 
+  it('declares a compaction capability', () => {
+    // The coordinator reports `unsupported` for any adapter without
+    // this method. Both shipped runners can compact — claude by
+    // injecting the slash command, codex via `thread/compact/start` —
+    // so an adapter that silently stopped declaring it would degrade
+    // to a permanent `unsupported` that no other test would notice.
+    expect(typeof make().compactContext).toBe('function');
+  });
+
   it('still resumes when the predecessor never revealed an id', async () => {
     // `{ resume: true, sessionId: null }` is NOT a clear. An agent that
     // never ran a turn has no id to name, and an instruction restart

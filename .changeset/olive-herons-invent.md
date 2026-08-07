@@ -30,12 +30,15 @@ takes the member off the net.
   longer expressible by accident.
 - **`compact` is cooperative and says so.** The agent does the
   summarising, so the request can be declined. Every request produces
-  exactly one `context_control` activity event: `applied` (with the
-  measured before/after token counts), `declined` (with the
-  framework's own reason, verbatim), `unsupported` (codex has no
-  compaction operation), or `failed`. A request that produces no
-  outcome stays visibly outstanding rather than aging into a success
-  nobody observed.
+  exactly one `context_control` activity event: `applied`, `declined`
+  (with the framework's own reason, verbatim), `unsupported`, or
+  `failed`. A request that produces no outcome stays visibly
+  outstanding rather than aging into a success nobody observed.
+  Both runners implement both verbs — claude by injecting the slash
+  command and reading the compaction status, codex via
+  `thread/compact/start` acked by its `contextCompaction` item. Only
+  claude reports token deltas; codex's completion item carries no
+  accounting, so those are omitted rather than invented.
 - **New `members.context` permission**, separate from
   `members.manage`: interrupting a teammate's live work is a
   different power from administering the roster. Controlling your own
