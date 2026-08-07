@@ -45,8 +45,9 @@ export type View =
   | { kind: 'members' }
   | { kind: 'tool-sources' }
   | { kind: 'tool-source-detail'; slug: string }
-  | { kind: 'secrets' }
+  | { kind: 'environment' }
   | { kind: 'secret-detail'; slug: string }
+  | { kind: 'variable-detail'; slug: string }
   | { kind: 'notifications' }
   | { kind: 'notification-detail'; slug: string };
 
@@ -156,10 +157,12 @@ function viewFromRoute(route: Route): View {
       return { kind: 'tool-sources' };
     case 'tool-source-detail':
       return { kind: 'tool-source-detail', slug: route.slug };
-    case 'secrets':
-      return { kind: 'secrets' };
+    case 'environment':
+      return { kind: 'environment' };
     case 'secret-detail':
       return { kind: 'secret-detail', slug: route.slug };
+    case 'variable-detail':
+      return { kind: 'variable-detail', slug: route.slug };
     case 'notifications':
       return { kind: 'notifications' };
     case 'notification-detail':
@@ -284,13 +287,18 @@ export function selectToolSourceDetail(slug: string): void {
   isSidebarOpen.value = false;
 }
 
-export function selectSecrets(): void {
-  navigate({ kind: 'secrets' });
+export function selectEnvironment(): void {
+  navigate({ kind: 'environment' });
   isSidebarOpen.value = false;
 }
 
 export function selectSecretDetail(slug: string): void {
   navigate({ kind: 'secret-detail', slug });
+  isSidebarOpen.value = false;
+}
+
+export function selectVariableDetail(slug: string): void {
+  navigate({ kind: 'variable-detail', slug });
   isSidebarOpen.value = false;
 }
 

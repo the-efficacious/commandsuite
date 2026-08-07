@@ -39,8 +39,12 @@ export type Route =
   | (RouteBase & { kind: 'member-profile'; name: string; tab: ProfileTab })
   | (RouteBase & { kind: 'tool-sources' })
   | (RouteBase & { kind: 'tool-source-detail'; slug: string })
-  | (RouteBase & { kind: 'secrets' })
+  | (RouteBase & { kind: 'environment' })
+  // Detail routes stay per-kind because `slug` is unique per STORE, not
+  // across the pair — a secret and a variable may both be `git-token`,
+  // so one `/environment/:slug` route could not name either of them.
   | (RouteBase & { kind: 'secret-detail'; slug: string })
+  | (RouteBase & { kind: 'variable-detail'; slug: string })
   | (RouteBase & { kind: 'notifications' })
   | (RouteBase & { kind: 'notification-detail'; slug: string })
   | (RouteBase & { kind: 'files'; path: string });
@@ -101,11 +105,22 @@ export function parseRoute(pathname: string): Route {
     }
   }
 
+  if (head === 'environment') {
+    if (rest.length === 0) return withTeam({ kind: 'environment' }, team);
+  }
+
   if (head === 'secrets') {
-    if (rest.length === 0) return withTeam({ kind: 'secrets' }, team);
+    // Bare `/secrets` predates the merged panel and is still linked
+    // from docs and bookmarks. It resolves to the panel that now shows
+    // secrets rather than 404ing on a route that used to work.
+    if (rest.length === 0) return withTeam({ kind: 'environment' }, team);
     if (rest.length === 1 && rest[0]) {
       return withTeam({ kind: 'secret-detail', slug: rest[0] }, team);
     }
+  }
+
+  if (head === 'variables' && rest.length === 1 && rest[0]) {
+    return withTeam({ kind: 'variable-detail', slug: rest[0] }, team);
   }
 
   if (head === 'notifications') {
@@ -172,10 +187,12 @@ function baseFor(route: Route): string {
       return '/tools';
     case 'tool-source-detail':
       return `/tools/${encodeURIComponent(route.slug)}`;
-    case 'secrets':
-      return '/secrets';
+    case 'environment':
+      return '/environment';
     case 'secret-detail':
       return `/secrets/${encodeURIComponent(route.slug)}`;
+    case 'variable-detail':
+      return `/variables/${encodeURIComponent(route.slug)}`;
     case 'notifications':
       return '/notifications';
     case 'notification-detail':

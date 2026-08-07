@@ -45,6 +45,7 @@ import { ChannelHeader } from './components/ChannelHeader.js';
 import { CommandPalette } from './components/CommandPalette.js';
 import { Composer } from './components/Composer.js';
 import { DisconnectedBanner } from './components/DisconnectedBanner.js';
+import { EnvironmentPanel } from './components/EnvironmentPanel.js';
 import { FilePreviewModal } from './components/FilePreviewModal.js';
 import { FilesPanel } from './components/FilesPanel.js';
 import { Header } from './components/Header.js';
@@ -58,13 +59,13 @@ import { ObjectiveDetail } from './components/ObjectiveDetail.js';
 import { ObjectivesPanel } from './components/ObjectivesPanel.js';
 import { RouteModal } from './components/RouteModal.js';
 import { SecretDetail } from './components/SecretDetail.js';
-import { SecretsPanel } from './components/SecretsPanel.js';
 import { AppShell, NavColumn } from './components/shell/index.js';
 import { TeamHome } from './components/TeamHome.js';
 import { ToolSourceDetail } from './components/ToolSourceDetail.js';
 import { ToolSourcesPanel } from './components/ToolSourcesPanel.js';
 import { Transcript } from './components/Transcript.js';
 import { ConfirmDialog } from './components/ui/ConfirmDialog.js';
+import { VariableDetail } from './components/VariableDetail.js';
 import { channelBySlug, loadChannels } from './lib/channels.js';
 import { setClient } from './lib/client.js';
 import { setEmbeddedShell, setTeamSettingsHandler } from './lib/embedded.js';
@@ -90,6 +91,7 @@ import { loadSecrets } from './lib/secrets.js';
 import { dismissToastsByTag, toast } from './lib/toast.js';
 import { loadToolSources } from './lib/tool-sources.js';
 import { initializeLastReadFromStore, markThreadRead } from './lib/unread.js';
+import { loadVariables } from './lib/variables.js';
 import {
   closeModalView,
   closeSidebar,
@@ -253,6 +255,15 @@ export function TeamShell(props: TeamShellProps): JSX.Element {
           return;
         }
         recordFailure('secrets', err);
+      }
+      try {
+        await loadVariables();
+      } catch (err) {
+        if (isUnauthorized(err)) {
+          handleUnauthorized('Your session expired — please sign in again.');
+          return;
+        }
+        recordFailure('variables', err);
       }
       try {
         await loadNotificationEndpoints();
@@ -431,10 +442,12 @@ function renderView(v: View, viewer: string) {
       return <ToolSourcesPanel />;
     case 'tool-source-detail':
       return <ToolSourceDetail slug={v.slug} />;
-    case 'secrets':
-      return <SecretsPanel />;
+    case 'environment':
+      return <EnvironmentPanel />;
     case 'secret-detail':
       return <SecretDetail slug={v.slug} />;
+    case 'variable-detail':
+      return <VariableDetail slug={v.slug} />;
     case 'notifications':
       return <NotificationsPanel />;
     case 'notification-detail':

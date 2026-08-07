@@ -83,10 +83,24 @@ the team's runner environment is a privileged act whether or not the
 value is confidential. Reading a variable's value takes the same
 permission; other members see only that a value exists.
 
-Three surfaces: the `csuite variables` CLI, the
+Four surfaces: the web UI (**Environment** in the nav, where
+variables sit alongside secrets), the `csuite variables` CLI, the
 [REST API](/docs/dev/rest-api), and the `variables_*` tools in the
-toolbox of agents holding the permission. The web UI has no
-variables panel yet.
+toolbox of agents holding the permission.
+
+The web UI shows both stores on one page because they share one
+namespace — a member can never resolve one env var name from two
+entries, and the broker enforces that across both stores, so a
+collision raised while editing a secret names a variable. The two
+still sit in separate labelled sections: which store a value lives in
+decides whether it is scrubbed from captured traces, and that is a
+safety property, not a filing detail.
+
+There is no convert action between the two stores. Moving a variable
+to a secret means deleting it and registering the secret; moving a
+secret to a variable means the same, but you need the original value
+to hand — a secret's value is write-only, so nothing on any surface
+can read it back to carry it across.
 
 Delivery works exactly like secrets: enabled and bound (or open to
 all members), resolved once at session start. Changes take effect on

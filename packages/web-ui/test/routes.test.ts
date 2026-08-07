@@ -16,6 +16,9 @@ describe('parseRoute / formatRoute', () => {
     ['/members', { kind: 'members' }],
     ['/tools', { kind: 'tool-sources' }],
     ['/tools/jira', { kind: 'tool-source-detail', slug: 'jira' }],
+    ['/environment', { kind: 'environment' }],
+    ['/secrets/github-token', { kind: 'secret-detail', slug: 'github-token' }],
+    ['/variables/git-author-name', { kind: 'variable-detail', slug: 'git-author-name' }],
     ['/notifications', { kind: 'notifications' }],
     ['/notifications/ci-alerts', { kind: 'notification-detail', slug: 'ci-alerts' }],
     ['/@alice', { kind: 'member-profile', name: 'alice', tab: 'overview' }],
@@ -125,6 +128,42 @@ describe('parseRoute / formatRoute', () => {
       const r = parseRoute('/inbox');
       expect(r.team).toBeUndefined();
       expect(r.kind).toBe('inbox');
+    });
+  });
+
+  describe('the runner-environment routes', () => {
+    it('keeps bare /secrets working, pointing at the merged panel', () => {
+      // The panel that used to live here now shows secrets AND
+      // variables. Existing links and docs say /secrets, so the URL
+      // resolves rather than 404ing on a path that used to work.
+      expect(parseRoute('/secrets')).toEqual({ kind: 'environment' });
+    });
+
+    it('canonicalises the merged panel to /environment', () => {
+      // Back-compat is one-way: /secrets parses, but nothing formats
+      // to it, so the address bar converges on the new name.
+      expect(formatRoute({ kind: 'environment' })).toBe('/environment');
+    });
+
+    it('routes a secret and a variable of the SAME slug to different views', () => {
+      // `slug` is unique per store, not across the pair — the schema
+      // has one unique index per table. A single /environment/:slug
+      // detail route could not name either of them, which is why the
+      // detail routes stay per-kind.
+      const secret = parseRoute('/secrets/shared-name');
+      const variable = parseRoute('/variables/shared-name');
+      expect(secret).toEqual({ kind: 'secret-detail', slug: 'shared-name' });
+      expect(variable).toEqual({ kind: 'variable-detail', slug: 'shared-name' });
+      expect(routesEqual(secret, variable)).toBe(false);
+    });
+
+    it('team-scopes both detail routes', () => {
+      expect(parseRoute('/t/alpha/variables/git-name')).toEqual({
+        kind: 'variable-detail',
+        slug: 'git-name',
+        team: 'alpha',
+      });
+      expect(formatRoute({ kind: 'environment', team: 'alpha' })).toBe('/t/alpha/environment');
     });
   });
 });
