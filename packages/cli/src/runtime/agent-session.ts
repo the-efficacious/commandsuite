@@ -43,6 +43,11 @@ import type {
   AgentSessionContext,
 } from './agents/adapter.js';
 import { AgentAdapterError } from './agents/adapter.js';
+import {
+  type ContextControlCoordinator,
+  createContextControlCoordinator,
+} from './context-control.js';
+import type { ContextControlEvent } from './forwarder.js';
 import { createPresence } from './presence.js';
 import { createRestartCoordinator, type RestartCoordinator } from './restart.js';
 import { type RunnerHandle, RunnerStartupError, startRunner } from './runner.js';
@@ -133,6 +138,28 @@ export async function runAgentSession(
   // fetch and the first spawn).
   let coordinator: RestartCoordinator | null = null;
   let instructionsEventBeforeSpawn = false;
+  // Same story for context controls: the coordinator needs a live agent
+  // process, so a control landing in the startup window is held and
+  // replayed once one exists. Held rather than dropped because the
+  // broker is waiting on an outcome event for it either way.
+  let contextControl: ContextControlCoordinator | null = null;
+  const contextControlsBeforeSpawn: ContextControlEvent[] = [];
+
+  /**
+   * The agent-lifecycle lock. Both the restart coordinator and a
+   * `clear` stop and respawn the SAME process, so they are serialized
+   * against each other here rather than each holding a private guard —
+   * two private guards is how you get a clear swapping a process a
+   * restart is midway through replacing.
+   */
+  let lifecycleLock: Promise<unknown> = Promise.resolve();
+  const withLifecycleLock = <T>(fn: () => Promise<T>): Promise<T> => {
+    const run = lifecycleLock.then(fn, fn);
+    // The chain must not inherit this call's rejection, or one failed
+    // swap would poison every later one.
+    lifecycleLock = run.catch(() => undefined);
+    return run;
+  };
   let runner: RunnerHandle;
   try {
     runner = await startRunner({
@@ -145,6 +172,10 @@ export async function runAgentSession(
       onInstructionsEvent: () => {
         if (coordinator !== null) coordinator.request();
         else instructionsEventBeforeSpawn = true;
+      },
+      onContextControlEvent: (control) => {
+        if (contextControl !== null) void contextControl.handle(control);
+        else contextControlsBeforeSpawn.push(control);
       },
       ...runnerOptions,
     });
@@ -293,6 +324,13 @@ export async function runAgentSession(
       // swap, and settled() bounds the wait to the cycle in flight.
       coordinator?.close();
       await coordinator?.settled();
+      // Same reasoning for a control in flight: a clear past its stop
+      // has an agent down and a successor to bring up, and tearing
+      // down through that leaves the run summary describing a process
+      // nobody is watching. `close()` also makes any control arriving
+      // from here on ack `failed` rather than vanish.
+      contextControl?.close();
+      await contextControl?.settled();
       try {
         await currentProc.shutdown(reason);
       } catch (err) {
@@ -387,6 +425,7 @@ export async function runAgentSession(
             `csuite ${meta.id}: agent restarted to apply updated instructions\n`,
           );
         },
+        gate: withLifecycleLock,
         log,
       },
       {
@@ -401,6 +440,91 @@ export async function runAgentSession(
     if (instructionsEventBeforeSpawn) coordinator.request();
   } else if (instructionsEventBeforeSpawn) {
     log(`${meta.id}: instructions changed before spawn — packet already current`);
+  }
+
+  // 8a-bis. Context control — the broker's compact/clear verbs.
+  //
+  //   `clear` needs the same machinery a restart does (drain, detach,
+  //     stop, refetch, respawn) and differs in exactly one input: the
+  //     successor does NOT resume. It is gated on `respawn` for that
+  //     reason.
+  //   `compact` needs no swap at all — it asks the running agent and
+  //     waits for the framework's verdict — so an adapter without
+  //     `compactContext` still answers, with `unsupported`.
+  //
+  // Registered even when the adapter can do NEITHER, because the
+  // broker is owed an outcome for every request it pushes. Silence is
+  // the one answer this feature must never give.
+  if (meta.signals === 'teardown') {
+    const respawnForClear = adapter.respawn?.bind(adapter) ?? null;
+    const compactForAdapter = adapter.compactContext?.bind(adapter) ?? null;
+    contextControl = createContextControlCoordinator({
+      activity: () => runner.captureHost?.busy ?? null,
+      gate: withLifecycleLock,
+      compact: async (reason) => {
+        if (compactForAdapter === null) {
+          return {
+            supported: false,
+            detail: `the ${meta.id} runner has no compaction operation`,
+          };
+        }
+        return compactForAdapter(reason);
+      },
+      clear: async (reason) => {
+        if (respawnForClear === null) {
+          throw new Error(`the ${meta.id} runner cannot restart its agent in place`);
+        }
+        adapter.detachForRestart?.();
+        const prior = currentProc;
+        expectedRestartExit = prior;
+        await prior.shutdown(reason);
+        const code = await prior.exitCode.catch(() => 1);
+        finishRun({
+          meta,
+          runner,
+          log,
+          reason,
+          exitCode: code,
+          startedAt: generationStartedAt,
+          agentSessionId: prior.sessionId(),
+        });
+        // Refetch on the way through. A clear re-delivers instruction
+        // blocks by definition, and delivering the STALE ones would
+        // make a clear the one operation that can move a member
+        // backwards. A failure here is not fatal — the cached packet
+        // still beats a dead session, and the broker keeps listing the
+        // member restart-pending if an edit was outstanding.
+        try {
+          await runner.refreshInstructions();
+        } catch (err) {
+          log(`${meta.id}: instructions refetch failed during clear — using cached packet`, {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        generationStartedAt = Date.now();
+        runner.captureHost?.enqueue({
+          kind: 'session_start',
+          ts: generationStartedAt,
+          runner: meta.id,
+          runnerVersion: CLI_VERSION,
+          captureTier: meta.captureTier,
+        });
+        const next = await respawnForClear(ctx, { resume: false });
+        currentProc = next;
+        attachGenerationWatch(next);
+        process.stderr.write(`csuite ${meta.id}: context cleared — agent restarted cold\n`);
+      },
+      report: (event) => {
+        // The ack rides the activity plane, so it lands in the member's
+        // trace next to the session_start a clear just produced and is
+        // readable through `listActivity` and the web UI without a
+        // second transport.
+        runner.captureHost?.enqueue(event);
+      },
+      log,
+    });
+    for (const pending of contextControlsBeforeSpawn) void contextControl.handle(pending);
+    contextControlsBeforeSpawn.length = 0;
   }
 
   // 8b. Wait for the session to end, per the adapter's signal mode.

@@ -46,7 +46,14 @@ contract and a conformance suite — see
    lets the agent finish its current turn, restarts it, and resumes
    the same conversation under the new text. The roster reports the
    member as restart-pending until that happens.
-8. **Tears down cleanly** on exit: finishes uploading traces and
+8. **Compacts or clears the agent's context on request.** A member
+   with `members.context` — or the member itself, which needs no
+   permission — can ask the runner to summarise the conversation
+   (`compact`) or drop it and re-deliver the instruction blocks
+   (`clear`). Neither ends the session: the broker subscription, the
+   MCP wiring and the open objectives survive, which is the whole
+   difference from a restart. See [context control](#context-control).
+9. **Tears down cleanly** on exit: finishes uploading traces and
    prints a run summary on every exit path.
 
 Run one runner per agent; a fleet is several runner processes,
@@ -89,11 +96,51 @@ permission on its own end regardless. Full input and output schemas:
 | **Resume** | `--resume [<sessionId>]` — bare resumes the most recent session in the directory | `--resume [<threadId>]` — bare resumes the most recent thread |
 | **Extra agent args** | None — unrecognized arguments are an error | Passed through to codex (`-c key=value`, or after `--`) |
 | **Reasoning in traces** | Extended thinking never leaves Claude Code | Summaries only — OpenAI encrypts the raw chain of thought |
+| **Context control** | `compact` and `clear` | `compact` and `clear` |
 
 Both runners deliver team events into the agent's session through
 its own native input mechanism; the differences are wiring, not
 behavior. The wiring lives in
 [architecture](/docs/dev/architecture).
+
+## Context control
+
+A long-running agent's context fills up. Until now the only levers
+were the agent deciding to compact on its own, or a full restart —
+and a restart drops the runner's MCP wiring and takes the member off
+the net while it comes back.
+
+`POST /members/<name>/context` asks the runner for one of two verbs,
+neither of which ends the session:
+
+| Verb | What happens | What survives |
+|---|---|---|
+| `compact` | The agent summarises the conversation and continues from the summary. | Everything — no process is replaced. |
+| `clear` | The runner waits for the current turn to finish, then restarts the agent **without resuming**, and re-delivers the instruction blocks and open objectives. | Session, MCP wiring, broker subscription, objective subscriptions. |
+
+**Who can ask.** Yourself, always — an agent compacting itself is
+doing what it could already do by typing the slash command. Anyone
+else needs `members.context`, which is deliberately not
+`members.manage`: interrupting a teammate's live work is a different
+power from administering the roster.
+
+**`compact` is a request, not an order.** The agent does the
+summarising, so it can decline — a conversation too short to
+summarise is a refusal, not an error. This is why the endpoint
+answers when the control has been *pushed*, and the real outcome
+arrives separately on the member's activity trace as a
+`context_control` event:
+
+| Outcome | Meaning |
+|---|---|
+| `applied` | The agent did it. A successful `compact` on claude carries the measured before/after token counts; codex reports the compaction without them, because its completion item carries no accounting. |
+| `declined` | The agent was asked and did not do it. Carries the framework's own reason, verbatim. |
+| `unsupported` | This runner has no such operation at all. Retrying cannot help. Both shipped runners support both verbs, so nothing produces this today; it exists so a future runner can say so rather than time out. |
+| `failed` | The runner tried and something broke. |
+
+A request that produces no outcome event stays visibly outstanding.
+That is on purpose: a control that reported success on delivery
+would be asserting something nobody observed.
 
 ## What the runner does NOT do
 

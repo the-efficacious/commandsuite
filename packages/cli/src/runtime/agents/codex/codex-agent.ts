@@ -24,6 +24,7 @@
 import { existsSync, promises as fs } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import type { CompactAttempt } from '../../context-control.js';
 import type { ChannelEvent, ChannelEventSink } from '../../forwarder.js';
 import { type HudHandle, startHud } from '../../hud.js';
 import type {
@@ -33,8 +34,9 @@ import type {
   AgentPrepared,
   AgentProcess,
   AgentSessionContext,
+  RespawnPosture,
 } from '../adapter.js';
-import { findCodexBinary, spawnCodex } from './adapter.js';
+import { type CodexCompactOutcome, findCodexBinary, spawnCodex } from './adapter.js';
 
 /**
  * uid-0 posture. Codex has no root refusal — it runs with sandbox
@@ -167,6 +169,9 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
   // including any DM addressed at it that arrived while it was
   // offline. The queue closes that gap.
   let liveSink: ChannelEventSink | null = null;
+  // The current generation's compaction actuator, or null before the
+  // first spawn / between a stop and its successor.
+  let liveCompact: ((timeoutMs?: number) => Promise<CodexCompactOutcome>) | null = null;
   const pendingEvents: ChannelEvent[] = [];
   const sinkWrapper: ChannelEventSink = {
     async deliver(event) {
@@ -232,6 +237,11 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
         busy: runner.captureHost?.busy,
         log,
       });
+
+      // The compaction actuator follows the live generation: a restart
+      // or clear swaps this so a control never reaches the process it
+      // replaced.
+      liveCompact = (timeoutMs) => spawned.compact(timeoutMs);
 
       // Attach the live sink and drain anything the forwarder queued
       // while codex was cold-starting.
@@ -305,16 +315,27 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
     },
 
     detachForRestart(): void {
+      // Drop the outgoing generation's compaction actuator with its
+      // sink. A control landing during the swap must not be answered
+      // by the process being replaced.
+      liveCompact = null;
       // Back to the pre-attach buffer: events queue until the
       // successor's spawn attaches its live sink — the same mechanism
       // that already covers codex's 5-15s cold start.
       liveSink = null;
     },
 
-    async respawn(
-      ctx: AgentSessionContext,
-      prior: { sessionId: string | null },
-    ): Promise<AgentProcess> {
+    async respawn(ctx: AgentSessionContext, prior: RespawnPosture): Promise<AgentProcess> {
+      if (!prior.resume) {
+        // A `clear`. `undefined` makes the next spawn open a NEW thread
+        // (`thread/start`) instead of resuming one — note that `true`
+        // here would mean "most recent thread on this machine", which
+        // is the opposite of what a clear wants and is exactly the trap
+        // the RespawnPosture union exists to close.
+        effectiveResume = undefined;
+        ctx.log('codex: respawning cold — conversation dropped by context clear');
+        return adapter.spawn(ctx);
+      }
       // `sessionId` is the codex thread id. `true` (most recent thread
       // on this machine) when the predecessor never revealed one.
       effectiveResume = prior.sessionId ?? true;
@@ -322,6 +343,29 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
         resume: effectiveResume,
       });
       return adapter.spawn(ctx);
+    },
+
+    // `reason` is accepted and deliberately unused — see below.
+    async compactContext(_reason: string | undefined): Promise<CompactAttempt> {
+      if (liveCompact === null) {
+        // Not `unsupported` — the runner CAN compact, there is just no
+        // live thread to compact right now. Conflating the two would
+        // tell a caller to stop asking forever over a transient state.
+        return {
+          supported: true,
+          applied: false,
+          detail: 'no codex thread is running yet',
+        };
+      }
+      // `reason` has nowhere to go: `thread/compact/start` takes only
+      // `{ threadId }`, with no field for custom summarisation
+      // instructions (claude's `/compact <reason>` accepts them). It
+      // still reaches the operator through the activity ack, so the
+      // request is explicable even though it did not steer the summary.
+      const outcome = await liveCompact();
+      return outcome.applied
+        ? { supported: true, applied: true }
+        : { supported: true, applied: false, detail: outcome.detail };
     },
 
     async doctor(): Promise<AgentDoctorCheck[]> {

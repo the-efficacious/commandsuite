@@ -60,6 +60,22 @@ export type CaptureHealthState = 'ok' | 'gap' | 'unevaluated';
 export const PERMISSIONS = [
   'team.manage',
   'members.manage',
+  /**
+   * Ask another member's runner to compact or clear its agent context.
+   *
+   * A DEDICATED leaf rather than a reuse of `members.manage`, which is
+   * the roster-and-credential authority (create a member, rotate a
+   * token, change a permission set). This is authority over a running
+   * member's conversation — a different power over a different object,
+   * and one that can interrupt work in progress.
+   *
+   * Triggering it on YOURSELF is not gated: an agent asking its own
+   * runner to compact is doing what it could already do by typing the
+   * slash command, and gating that would only make self-care a
+   * privilege. The permission is what makes it reachable for someone
+   * ELSE.
+   */
+  'members.context',
   'objectives.create',
   'objectives.cancel',
   'objectives.reassign',
@@ -2084,7 +2100,8 @@ export type ActivityEvent =
   | ActivityObjectiveClose
   | ActivityLlmExchange
   | ActivityToolAction
-  | ActivityUserPrompt;
+  | ActivityUserPrompt
+  | ActivityContextControl;
 
 export type ActivityKind = ActivityEvent['kind'];
 
@@ -2242,6 +2259,129 @@ export interface ActivityUserPrompt {
   readonly agent?: string;
   /** Thread attribution: `codex_main_thread` / `codex_subagent:<id8>`. */
   readonly querySource?: string;
+}
+
+// ───────────────────────── Context control ────────────────────────────
+
+/**
+ * What a broker-originated context control asks a runner to do.
+ *
+ *   `compact` — ask the agent to summarise the conversation so far and
+ *     continue from the summary. COOPERATIVE: the agent does the
+ *     summarising, so the request can be refused, and the refusal
+ *     carries a reason (see `ActivityContextControl.detail`).
+ *   `clear`   — drop the conversation and re-deliver the instruction
+ *     blocks. IMPOSED: the runner swaps the agent process without
+ *     resuming, so it does not depend on the agent's cooperation.
+ *
+ * NEITHER IS `shutdown`. The runner process — and with it the broker
+ * subscription, the IPC socket the MCP bridge reconnects to, the
+ * objectives tracker and the capture host — outlives both verbs. That
+ * is the whole point: a restart costs the member its place on the net,
+ * and these do not.
+ */
+export type ContextControlVerb = 'compact' | 'clear';
+
+/**
+ * How a context control ended. The broker records the request as
+ * `requested` and only ever moves it off that state on evidence from
+ * the runner — an outcome this member's agent actually produced.
+ *
+ *   `applied`     — the agent did it. For `compact` this means the
+ *     framework reported a successful compaction, not that the request
+ *     was delivered.
+ *   `declined`    — the agent was asked and did not do it, with a
+ *     reason. A short conversation refusing to compact lands here.
+ *   `unsupported` — this runner cannot perform this verb at all (no
+ *     compaction op on the framework). Distinct from `declined`: the
+ *     ask was never possible, so retrying cannot help.
+ *   `failed`      — the runner tried and something broke.
+ *
+ * `requested` is deliberately terminal-less: a request that never
+ * produces an outcome stays visibly outstanding rather than aging into
+ * a success nobody observed.
+ */
+export type ContextControlOutcome = 'applied' | 'declined' | 'unsupported' | 'failed';
+
+/**
+ * `POST /members/:name/context` body. Requires `members.context` when
+ * `:name` is someone else; always permitted on yourself.
+ */
+export interface ContextControlRequest {
+  readonly verb: ContextControlVerb;
+  /**
+   * Why the control was issued, carried through to the agent verbatim.
+   * Surfaces in the member's activity trace so a compaction that lands
+   * mid-task is explicable after the fact.
+   */
+  readonly reason?: string;
+}
+
+/**
+ * `POST /members/:name/context` response. The broker answers when the
+ * request has been PUSHED, not when it has been honoured — the outcome
+ * arrives later on the target's activity stream as an
+ * `ActivityContextControl` row carrying this same `requestId`.
+ *
+ * The two are separate on purpose. An endpoint that blocked until the
+ * agent finished would have to invent a timeout, and a timeout would
+ * have to guess whether a slow compaction had failed.
+ */
+export interface ContextControlResponse {
+  /** Correlation id, echoed by the outcome event. */
+  readonly requestId: string;
+  readonly verb: ContextControlVerb;
+  /** Member the control was addressed to. */
+  readonly target: string;
+  /**
+   * Whether the target had ANY live subscriber at push time — not
+   * whether a runner did. The broker's presence registry counts
+   * subscriptions, and a web client watching the member's thread is
+   * indistinguishable from the runner driving its agent.
+   *
+   * So `false` is a firm negative (nothing was listening; nothing will
+   * act on this) while `true` is only "something was". The
+   * `context_control` activity row remains the sole evidence that a
+   * runner heard it, which is why this field is named for delivery and
+   * not for acceptance.
+   */
+  readonly delivered: boolean;
+}
+
+/**
+ * A context control reached its conclusion on the runner. THE ACK.
+ *
+ * This is what makes the verb honest. A broker that pushes a
+ * compaction request and reports success has asserted something it did
+ * not observe; this event is the observation, and it is emitted for
+ * every terminal state including the ones nobody wants — `declined`
+ * with the framework's own reason, `unsupported` where the runner has
+ * no such op.
+ */
+export interface ActivityContextControl {
+  readonly kind: 'context_control';
+  readonly ts: number;
+  /** Correlation id from `ContextControlResponse`. */
+  readonly requestId: string;
+  readonly verb: ContextControlVerb;
+  readonly outcome: ContextControlOutcome;
+  /** Member that issued the control. */
+  readonly requestedBy: string;
+  /**
+   * Framework-supplied explanation, present on every non-`applied`
+   * outcome. Verbatim where the framework gives one ("Not enough
+   * messages to compact.").
+   */
+  readonly detail?: string;
+  /**
+   * Measured effect of a successful `compact`, straight from the
+   * framework's compaction boundary. Absent for `clear` (which drops
+   * everything by construction) and for every non-`applied` outcome.
+   */
+  readonly tokens?: {
+    readonly before: number;
+    readonly after: number;
+  };
 }
 
 /**

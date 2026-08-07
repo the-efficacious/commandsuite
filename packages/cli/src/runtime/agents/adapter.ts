@@ -33,6 +33,7 @@
  * docs/runners/conformance.mdx for the written standard.
  */
 
+import type { CompactAttempt } from '../context-control.js';
 import type { Presence } from '../presence.js';
 import type { RunnerHandle, RunnerOptions } from '../runner.js';
 
@@ -184,6 +185,25 @@ export interface AgentProcess {
   shutdown(reason: string): Promise<void>;
 }
 
+/**
+ * What a respawn should do with the predecessor's conversation.
+ *
+ * THIS IS A UNION AND NOT A NULLABLE ID FOR ONE REASON. Both adapters
+ * treat a null session id as "resume the most recent session anyway"
+ * (claude sets `continue: true`, codex passes `true` as the thread
+ * selector), because a predecessor that never ran a turn never revealed
+ * an id and abandoning its conversation would be the wrong default for
+ * an instruction restart. That makes `{ sessionId: null }` unusable as
+ * "start cold" — it already means the opposite.
+ *
+ *   `{ resume: true, sessionId }`  — carry the conversation across the
+ *     swap. An instruction edit uses this: the successor holds the same
+ *     conversation under the new system prompt, so continuity is ~free.
+ *   `{ resume: false }`            — start cold. A `clear` uses this,
+ *     and it is the whole difference between the two operations.
+ */
+export type RespawnPosture = { resume: true; sessionId: string | null } | { resume: false };
+
 /** One preflight check result — same shape the doctor renders. */
 export interface AgentDoctorCheck {
   name: string;
@@ -255,5 +275,20 @@ export interface AgentAdapter {
    * restart: edits apply at the next manual start, and the broker
    * keeps listing the member restart-pending.
    */
-  respawn?(ctx: AgentSessionContext, prior: { sessionId: string | null }): Promise<AgentProcess>;
+  respawn?(ctx: AgentSessionContext, prior: RespawnPosture): Promise<AgentProcess>;
+  /**
+   * Ask the running agent to compact its conversation, resolving with
+   * what the framework REPORTED — not with whether the ask was sent.
+   *
+   * Compaction is cooperative: the agent does the summarising, so it
+   * can refuse (a conversation too short to summarise is a refusal,
+   * not an error). An adapter that resolves before the framework has
+   * answered turns the broker's acknowledgement into a guess, so the
+   * contract is explicitly that this waits for the outcome.
+   *
+   * Omit on frameworks with no compaction op. The coordinator reports
+   * `unsupported` for those, which is deliberately distinct from a
+   * decline — the ask was never possible, so retrying cannot help.
+   */
+  compactContext?(reason: string | undefined): Promise<CompactAttempt>;
 }

@@ -44,6 +44,7 @@ import { attachCodexBusySniff, type CodexBusySniff } from './busy-sniff.js';
 import type { CodexChannelSink } from './channel-sink.js';
 import { createCodexChannelSink } from './channel-sink.js';
 import { setupCodexHome } from './codex-home.js';
+import { attachCodexCompactor, type CodexCompactOutcome } from './compaction.js';
 import { createJsonRpcClient, type JsonRpcClient } from './json-rpc.js';
 import {
   type ItemCompletedNotification,
@@ -191,9 +192,22 @@ export interface CodexSpawnResult {
    * resolves.
    */
   getThreadId(): string | null;
+  /**
+   * Ask codex to summarise the thread and continue from the summary,
+   * resolving with what it REPORTED rather than with whether the
+   * request was sent.
+   *
+   * `thread/compact/start` answers with an empty object, so its
+   * response acknowledges the ask and says nothing about the effect.
+   * The effect arrives asynchronously as an `item/completed` carrying
+   * a `contextCompaction` item, and that is what this waits for.
+   */
+  compact(timeoutMs?: number): Promise<CodexCompactOutcome>;
   /** Best-effort graceful shutdown. Idempotent. */
   shutdown(reason?: string): Promise<void>;
 }
+
+export type { CodexCompactOutcome } from './compaction.js';
 
 /** Trailing codex thread uuid in a rollout filename. */
 const ROLLOUT_THREAD_ID_RE =
@@ -483,6 +497,14 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
       opts.log('codex: item completed', { type: p.item.type, turnId: p.turnId });
     }
   });
+
+  // Compaction request/ack correlation. Subscribed here (not per
+  // request) so a completion cannot land before the listener does.
+  const compactor = attachCodexCompactor({
+    rpc,
+    getThreadId: () => threadId,
+    log: opts.log,
+  });
   // Tool-execution busy sniff (only when a busy signal is provided —
   // i.e., tracing is enabled). Subscribes to the same notifications
   // above; logging stays here, busy-counter ownership lives in the
@@ -571,6 +593,11 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
     // the activity signal returns to idle rather than waiting on the
     // watchdog.
     drainTurnActive();
+    // Settle any in-flight compaction before the transport goes away.
+    // Otherwise the request hangs to its full timeout against a codex
+    // that is already gone, and the broker's control sits outstanding
+    // for three minutes over a session that ended.
+    compactor.close();
     // Close the activity printer before rpc.close() so it can flush
     // any half-painted streaming assistant line with a final newline.
     activityPrinter?.close();
@@ -683,6 +710,7 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
     exitCode,
     channelSink,
     getThreadId: () => threadId,
+    compact: (timeoutMs) => compactor.request(timeoutMs),
     shutdown: teardown,
   };
 }

@@ -1429,6 +1429,7 @@ export const ActivityKindSchema = z.enum([
   'llm_exchange',
   'tool_action',
   'user_prompt',
+  'context_control',
 ]);
 
 export const ActivityEventSchema = z.discriminatedUnion('kind', [
@@ -1522,6 +1523,27 @@ export const ActivityEventSchema = z.discriminatedUnion('kind', [
     // set by the codex rollout reader; mirrors the gen_ai / raw layers.
     querySource: z.string().optional(),
   }),
+  // context_control — the outcome of a broker-originated compact/clear.
+  // This is the ACK half of the control: the broker records a request
+  // as outstanding and only resolves it against one of these rows, so
+  // `outcome` must stay narrow. A novel state is a validation failure
+  // rather than a silent extra value, because the whole point of the
+  // event is that the broker never infers what happened.
+  z.object({
+    kind: z.literal('context_control'),
+    ts: z.number().int().nonnegative(),
+    requestId: z.string().min(1),
+    verb: z.enum(['compact', 'clear']),
+    outcome: z.enum(['applied', 'declined', 'unsupported', 'failed']),
+    requestedBy: NameSchema,
+    detail: z.string().optional(),
+    tokens: z
+      .object({
+        before: z.number().int().nonnegative(),
+        after: z.number().int().nonnegative(),
+      })
+      .optional(),
+  }),
 ]);
 
 export const ActivityRowSchema = z.object({
@@ -1600,6 +1622,25 @@ export const RotateTokenResponseSchema = z.object({
 export const EnrollTotpResponseSchema = z.object({
   totpSecret: z.string(),
   totpUri: z.string(),
+});
+
+// ───────────────────────── Context control ─────────────────────
+
+export const ContextControlVerbSchema = z.enum(['compact', 'clear']);
+
+export const ContextControlRequestSchema = z.object({
+  verb: ContextControlVerbSchema,
+  // Bounded because it rides into the agent's context as prose, and an
+  // unbounded reason on a control whose PURPOSE is to reduce context
+  // would be self-defeating.
+  reason: z.string().max(500).optional(),
+});
+
+export const ContextControlResponseSchema = z.object({
+  requestId: z.string().min(1),
+  verb: ContextControlVerbSchema,
+  target: NameSchema,
+  delivered: z.boolean(),
 });
 
 // ───────────────────────── Tokens (multi-token) ────────────────

@@ -40,6 +40,59 @@ const BACKOFF_START_MS = 1_000;
 const BACKOFF_MAX_MS = 30_000;
 
 /**
+ * A broker-originated context control, parsed off the member stream.
+ * Mirrors the `data` block the broker stamps in
+ * `POST /members/:name/context`.
+ */
+export interface ContextControlEvent {
+  requestId: string;
+  verb: 'compact' | 'clear';
+  /**
+   * Member this control is FOR.
+   *
+   * The broker fans a control out on a recipient list, which leaves
+   * the envelope's `to` null — so without this the runner would be
+   * executing a lifecycle control on the strength of "it arrived on
+   * my stream" alone. Today that is in fact sufficient, but it is an
+   * emergent property of the fanout rather than a stated one, and
+   * compacting the wrong member's agent is not a failure worth
+   * leaving to an invariant nobody wrote down.
+   */
+  target: string;
+  /** Member that issued the control, for the activity ack. */
+  requestedBy: string;
+  reason?: string;
+}
+
+/**
+ * Read a context control out of a message's `data`, or null if the
+ * payload is not one.
+ *
+ * Strict on every field the ack depends on. A control with no
+ * `requestId` could be executed but never correlated, which would
+ * interrupt a member's work and leave the broker's request outstanding
+ * forever — worse than dropping it, because the drop is at least
+ * visible as a request that produced no outcome.
+ */
+export function parseContextControl(data: unknown): ContextControlEvent | null {
+  if (typeof data !== 'object' || data === null) return null;
+  const d = data as Record<string, unknown>;
+  if (d.kind !== 'context_control') return null;
+  const { requestId, verb, target, requestedBy, reason } = d;
+  if (typeof requestId !== 'string' || requestId.length === 0) return null;
+  if (verb !== 'compact' && verb !== 'clear') return null;
+  if (typeof target !== 'string' || target.length === 0) return null;
+  if (typeof requestedBy !== 'string' || requestedBy.length === 0) return null;
+  return {
+    requestId,
+    verb,
+    target,
+    requestedBy,
+    ...(typeof reason === 'string' && reason.length > 0 ? { reason } : {}),
+  };
+}
+
+/**
  * How an incoming message was routed, from the agent's point of view:
  *
  *   `primary` — broadcast to the team channel (`general`).
@@ -94,6 +147,22 @@ export interface ForwarderOptions {
    */
   onInstructionsEvent?: (message: Message) => void;
   /**
+   * Invoked for every message whose `data.kind` is `'context_control'`
+   * — the broker is asking this member's runner to compact or clear
+   * its agent context.
+   *
+   * Handed the PARSED control rather than the raw message: a malformed
+   * payload is dropped here with a log line, because a control the
+   * runner cannot read is not a control it should half-execute.
+   *
+   * Unlike the three above this is NOT self-echo exempt in spirit —
+   * but it arrives as a targeted push from `csuite`, never from the
+   * member itself, so the `message.from === name` guard below never
+   * applies to it. Self-issued controls still route through the
+   * broker and come back stamped `from: 'csuite'`.
+   */
+  onContextControlEvent?: (control: ContextControlEvent) => void;
+  /**
    * Optional presence signal. Flipped to `connecting` before each
    * subscribe attempt, `online` on first successful message, and
    * `offline` when the stream errors or ends. The HUD uses this to
@@ -112,6 +181,7 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
     onObjectiveEvent,
     onToolSourceEvent,
     onInstructionsEvent,
+    onContextControlEvent,
     presence,
   } = opts;
   let backoff = BACKOFF_START_MS;
@@ -209,6 +279,47 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
               error: err instanceof Error ? err.message : String(err),
             });
           }
+        }
+
+        // Context control — a broker request to compact or clear this
+        // member's agent context.
+        //
+        // This one CONSUMES the message instead of falling through to
+        // the channel sink. The other three data kinds annotate chat
+        // traffic the agent should also read; a control is an
+        // instruction to the RUNNER, and forwarding it as ambient text
+        // would put "compact your context" in the very context it is
+        // about to act on — visible to the agent as a teammate's
+        // request it might separately try to honour, racing the
+        // runner's own execution of it.
+        if (dataKind === 'context_control') {
+          const control = parseContextControl(message.data);
+          if (control === null) {
+            log('dropped malformed context control', { msgId: message.id });
+          } else if (control.target !== name) {
+            // Addressed to a teammate. The broker does not currently
+            // send us those, which is exactly why this is worth
+            // keeping cheap and explicit rather than assumed: the cost
+            // of being wrong is compacting somebody else's agent.
+            log('ignored context control addressed to another member', {
+              target: control.target,
+              requestId: control.requestId,
+            });
+          } else if (onContextControlEvent) {
+            try {
+              onContextControlEvent(control);
+            } catch (err) {
+              log('onContextControlEvent handler threw', {
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
+          } else {
+            log('context control received but this runner has no handler', {
+              verb: control.verb,
+              requestId: control.requestId,
+            });
+          }
+          continue;
         }
 
         // Self-echo suppression (chat plane): the broker fans out every

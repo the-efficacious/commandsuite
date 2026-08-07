@@ -41,6 +41,12 @@ export const PERMISSION_META: readonly PermissionMeta[] = [
     description: 'Create and edit the team process document that binds every member.',
   },
   {
+    key: 'members.context',
+    label: "Control members' context",
+    description:
+      "Ask another member's runner to compact or clear its agent context. Interrupts live work; controlling your own needs no permission.",
+  },
+  {
     key: 'objectives.create',
     label: 'Create objectives',
     description: 'Post new objectives and assign them to teammates.',

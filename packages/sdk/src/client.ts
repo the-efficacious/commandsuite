@@ -37,6 +37,7 @@ import {
   BindToolSourceRequestSchema,
   BindVariableRequestSchema,
   ChannelSchema,
+  ContextControlResponseSchema,
   CorrectObjectiveEventRequestSchema,
   CreateChannelRequestSchema,
   CreateMemberResponseSchema,
@@ -130,6 +131,8 @@ import type {
   CancelObjectiveRequest,
   Channel,
   ChannelSummary,
+  ContextControlRequest,
+  ContextControlResponse,
   CorrectObjectiveEventRequest,
   CreateChannelRequest,
   CreateMemberRequest,
@@ -949,6 +952,30 @@ export class Client {
   async enrollTotp(name: string): Promise<EnrollTotpResponse> {
     const resp = await this.request(MEMBER_PATHS.enrollTotp(name), { method: 'POST' });
     return EnrollTotpResponseSchema.parse(await this.json(resp));
+  }
+
+  /**
+   * Ask `name`'s runner to compact or clear its agent context.
+   * Requires `members.context` when `name` is someone else; always
+   * permitted on yourself.
+   *
+   * RESOLVES ON PUSH, NOT ON EFFECT. The returned `delivered` says
+   * whether a live runner was subscribed to receive it — nothing more.
+   * Whether the agent actually compacted arrives afterwards on the
+   * target's activity stream as a `context_control` row carrying the
+   * same `requestId`. Callers that need the outcome must read for it;
+   * a caller that treats this response as success has asserted
+   * something the broker did not observe.
+   */
+  async controlContext(
+    name: string,
+    payload: ContextControlRequest,
+  ): Promise<ContextControlResponse> {
+    const resp = await this.request(MEMBER_PATHS.context(name), {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    return ContextControlResponseSchema.parse(await this.json(resp));
   }
 
   // ─────────────────────── Tokens (multi-token) ──────────────────
