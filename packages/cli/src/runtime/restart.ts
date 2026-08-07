@@ -61,8 +61,24 @@ export interface RestartHooks {
   stopCurrent(reason: string): Promise<{ sessionId: string | null }>;
   /** Refetch instructions. A rejection aborts nothing — see run(). */
   refreshInstructions(): Promise<unknown>;
-  /** Spawn the successor, resuming `sessionId` where supported. */
-  respawn(prior: { sessionId: string | null }): Promise<void>;
+  /**
+   * Spawn the successor. An instruction restart ALWAYS resumes — the
+   * whole point is that the successor holds the same conversation under
+   * the new system prompt, so continuity costs ~nothing. Dropping the
+   * conversation is `clear`'s job, not this one's.
+   */
+  respawn(prior: { resume: true; sessionId: string | null }): Promise<void>;
+  /**
+   * Run the stop→refetch→respawn cycle under the shared
+   * agent-lifecycle lock. A `clear` swaps the same process this does,
+   * so the two must never interleave — and the unit that has to be
+   * atomic is the WHOLE cycle, not its individual steps, which is why
+   * this wraps rather than being three guarded hooks.
+   *
+   * Optional: callers with no second swapper (tests, single-purpose
+   * drivers) omit it and get pass-through.
+   */
+  gate?<T>(fn: () => Promise<T>): Promise<T>;
   log: AgentLog;
 }
 
@@ -141,9 +157,22 @@ export function createRestartCoordinator(
     // covered by this cycle — the fetch reads current broker state.
     covered = true;
     hooks.log('restart: instruction edit observed — draining at next idle');
+    // The idle wait sits OUTSIDE the lock deliberately: it can block
+    // for the length of a turn, and holding the lifecycle lock while
+    // merely waiting would stall a `clear` that is itself about to
+    // wait for the same boundary.
     await waitForIdle();
     if (closed) {
       hooks.log('restart: session ending — drained cycle abandoned before stop');
+      return;
+    }
+    const gate = hooks.gate ?? (<T>(fn: () => Promise<T>): Promise<T> => fn());
+    return gate(() => swap());
+  };
+
+  const swap = async (): Promise<void> => {
+    if (closed) {
+      hooks.log('restart: session ending — cycle abandoned at the lock');
       return;
     }
     hooks.detach();
@@ -165,7 +194,7 @@ export function createRestartCoordinator(
     }
     // Edits landing after this point missed the fetch; they re-arm.
     covered = false;
-    await hooks.respawn(prior);
+    await hooks.respawn({ resume: true, sessionId: prior.sessionId });
     hooks.log('restart: agent respawned with current instructions', {
       resumedSession: prior.sessionId,
     });

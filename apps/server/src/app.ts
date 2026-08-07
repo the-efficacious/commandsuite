@@ -23,6 +23,7 @@
  * the header is present.
  */
 
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { Readable } from 'node:stream';
 import { serveStatic } from '@hono/node-server/serve-static';
@@ -54,6 +55,7 @@ import {
   BindVariableRequestSchema,
   CancelObjectiveRequestSchema,
   CompleteObjectiveRequestSchema,
+  ContextControlRequestSchema,
   CorrectObjectiveEventRequestSchema,
   CreateChannelRequestSchema,
   CreateMemberRequestSchema,
@@ -5340,6 +5342,115 @@ export function createApp(options: AppOptions): CreatedApp {
     // schema's `TokenInfoSchema` doesn't include it).
     const { hash: _hash, ...publicTokenInfo } = newRow;
     return c.json({ token, tokenInfo: publicTokenInfo });
+  });
+
+  // ─── Context control ─────────────────────────────────────────
+  //
+  // POST /members/:name/context — ask a member's runner to compact or
+  // clear its agent context. Delivered the way every other broker→
+  // member signal is: a typed push on the member stream, which the
+  // runner's forwarder routes on `data.kind`.
+  //
+  // The broker is authoritative about a team and can already observe
+  // context drift (see context-watchdog) — but every mechanism it had
+  // was additive. It could make a member's context LARGER and could
+  // measure that it had drifted; it had no verb for making it smaller,
+  // and the only reset available was a full restart that drops the
+  // runner's MCP wiring and takes the member off the net.
+  //
+  // This endpoint answers on PUSH, never on effect. Whether the agent
+  // honoured it arrives later as a `context_control` activity row on
+  // the target, carrying this `requestId`. That split is deliberate:
+  // compaction is cooperative (the agent does the summarising, so it
+  // can refuse), and a broker that reported success on delivery would
+  // be asserting something it never observed.
+  app.post(`${PATHS.members}/:name/context`, auth, async (c) => {
+    const member = c.get('member');
+    const parsedName = NameSchema.safeParse(c.req.param('name'));
+    if (!parsedName.success) return c.json({ error: 'invalid member name' }, 400);
+    const target = members.findByName(parsedName.data);
+    if (!target) return c.json({ error: `no such member: ${parsedName.data}` }, 404);
+
+    // Self is baseline, someone else needs the leaf. An agent asking
+    // its own runner to compact is doing what it could already do by
+    // typing the slash command; gating that would make self-care a
+    // privilege. Reaching into a TEAMMATE's running conversation is
+    // the elevated act.
+    const isSelf = member.name === target.name;
+    if (!isSelf && !hasPermission(member.permissions, 'members.context')) {
+      return c.json({ error: 'context control requires members.context, or self' }, 403);
+    }
+
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const parsed = ContextControlRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: `invalid context control: ${parsed.error.issues[0]?.message}` }, 400);
+    }
+
+    const requestId = randomUUID();
+    // `connected` counts SUBSCRIBERS, not runners — a web client
+    // watching this member is indistinguishable here. False is a firm
+    // "nothing was listening"; true is only "something was". The
+    // activity ack is what proves a runner acted.
+    const presence = broker.listPresences().find((p) => p.name === target.name);
+    const delivered = (presence?.connected ?? 0) > 0;
+
+    try {
+      await broker.push(
+        {
+          body:
+            parsed.data.verb === 'compact'
+              ? `${member.name} asked your runner to compact your context${parsed.data.reason ? `: ${parsed.data.reason}` : ''}.`
+              : `${member.name} asked your runner to clear your context${parsed.data.reason ? `: ${parsed.data.reason}` : ''}. Your instruction blocks and open objectives are re-delivered afterwards.`,
+          level: 'notice',
+          data: {
+            kind: 'context_control',
+            requestId,
+            verb: parsed.data.verb,
+            // WHO THIS IS FOR, stated in the payload rather than left
+            // to the envelope.
+            //
+            // A recipient-list push leaves `to` null on every copy, so
+            // the envelope does not carry the target at all — the
+            // runner would be executing a lifecycle control on the
+            // strength of "it arrived on my stream". That holds today
+            // (the fanout below reaches only this member: the sender
+            // copy the recipient path adds is keyed on `from`, which
+            // is the synthetic `csuite` identity and never a
+            // subscriber). It is not a property worth depending on
+            // silently. Naming the target makes the control
+            // self-describing, and the runner drops any whose target
+            // is not itself — so a later change to this fanout cannot
+            // quietly redirect a compaction onto the wrong agent.
+            target: target.name,
+            requestedBy: member.name,
+            ...(parsed.data.reason !== undefined ? { reason: parsed.data.reason } : {}),
+          },
+        },
+        { from: 'csuite', recipients: [target.name] },
+      );
+    } catch (err) {
+      logger.warn('failed to push context control', {
+        target: target.name,
+        verb: parsed.data.verb,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return c.json({ error: 'failed to deliver context control' }, 502);
+    }
+
+    logger.info('context control issued', {
+      target: target.name,
+      verb: parsed.data.verb,
+      requestedBy: member.name,
+      requestId,
+      delivered,
+    });
+    return c.json({ requestId, verb: parsed.data.verb, target: target.name, delivered });
   });
 
   // ─── Multi-token management ──────────────────────────────────

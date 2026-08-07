@@ -59,7 +59,7 @@ import type {
 } from 'csuite-sdk/types';
 import { CLI_VERSION } from '../version.js';
 import { startActivityReporter } from './busy-reporter.js';
-import type { ChannelEventSink } from './forwarder.js';
+import type { ChannelEventSink, ContextControlEvent } from './forwarder.js';
 import { runForwarder } from './forwarder.js';
 import {
   defaultSocketPath,
@@ -169,6 +169,19 @@ export interface RunnerOptions {
    * message; nothing restarts.
    */
   onInstructionsEvent?: (message: Message) => void;
+  /**
+   * Invoked for every `data.kind === 'context_control'` event — the
+   * broker is asking this runner to compact or clear its agent's
+   * context. The driver wires this to its context-control coordinator.
+   *
+   * When absent the control is DROPPED with a log line rather than
+   * falling through to the agent as chat: a runner that cannot act on
+   * it should not put "compact your context" into the context instead.
+   * The broker's request then produces no outcome event, which is the
+   * correct observable — visibly outstanding rather than silently
+   * assumed done.
+   */
+  onContextControlEvent?: (control: ContextControlEvent) => void;
 }
 
 export interface RunnerHandle {
@@ -691,6 +704,9 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
     },
     ...(options.onInstructionsEvent !== undefined
       ? { onInstructionsEvent: options.onInstructionsEvent }
+      : {}),
+    ...(options.onContextControlEvent !== undefined
+      ? { onContextControlEvent: options.onContextControlEvent }
       : {}),
   });
   // Forwarder never throws outward — it catches its own errors and

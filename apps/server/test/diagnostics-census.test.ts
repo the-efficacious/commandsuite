@@ -123,8 +123,17 @@ const APP_IN_SCOPE = [
  * removed along with the legacy-cap machinery it served: it warned
  * about pre-0.4.0 runners rejecting oversized packets locally, and
  * zero deployed runners remained when the wire renamed (protocol v2).
+ *
+ * 2026-08-07, +1 = 56. `failed to push context control` is
+ * OPERATIONAL, not a completeness claim. It fires when the fanout of a
+ * broker-issued compact/clear throws, and nothing captured is lost —
+ * the caller is told synchronously (502) rather than being left to
+ * infer it. The endpoint's own completeness property is carried by the
+ * `context_control` activity ACK, not by this log: a request that
+ * produces no outcome event stays visibly outstanding, which is the
+ * observable the feature is built around.
  */
-const TOTAL_SITES = 55;
+const TOTAL_SITES = 56;
 
 function messagesIn(file: string): string[] {
   const src = readFileSync(join(SRC, file), 'utf8');

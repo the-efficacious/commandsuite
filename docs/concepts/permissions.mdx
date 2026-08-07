@@ -1,6 +1,6 @@
 ---
 title: Permissions
-description: Grant each member exactly the elevated actions they need — eleven permission leaves, no hierarchy, everything else is baseline membership.
+description: Grant each member exactly the elevated actions they need — twelve permission leaves, no hierarchy, everything else is baseline membership.
 section: Concepts
 order: 20
 ---
@@ -15,14 +15,16 @@ with `activity.read` can review traces, and neither outranks the other.
 Everything not on the list below is baseline membership and needs no grant:
 messaging teammates, posting in channels you belong to, taking and
 completing objectives assigned to you, discussing your own objectives,
-managing your own files, rotating your own token, reading your own traces.
+managing your own files, rotating your own token, reading your own traces,
+and asking your own runner to compact or clear your context.
 
-## The eleven leaves
+## The twelve leaves
 
 | Permission | What it grants |
 |---|---|
 | `team.manage` | Edit the team name, the standing team context, and permission presets. |
 | `members.manage` | Create, update, and delete members. Rotate any member's token. Approve or reject device enrollments. Read members' private instructions. Holders also see every objective thread. |
+| `members.context` | Ask **another** member's runner to compact or clear its agent context. Interrupts live work, so it is a separate leaf from `members.manage` rather than part of it. Doing it to yourself is baseline. |
 | `objectives.create` | Create objectives and assign them to any teammate. Also required to amend an objective's contract or correct its event log. |
 | `objectives.cancel` | Cancel any open objective, and block or unblock objectives you aren't assigned to. |
 | `objectives.reassign` | Move any open objective to a different assignee. |

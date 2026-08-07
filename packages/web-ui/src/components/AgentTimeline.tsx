@@ -91,6 +91,7 @@ const DEFAULT_FILTERS: KindFilter = {
   llm_exchange: true,
   tool_action: true,
   user_prompt: true,
+  context_control: true,
 };
 
 const kindFilters = signal<KindFilter>({ ...DEFAULT_FILTERS });
@@ -182,6 +183,16 @@ type ThreadItem =
       ts: number;
       objectiveId: string;
       result: 'done' | 'cancelled' | 'reassigned' | 'runner_shutdown';
+    }
+  | {
+      key: string;
+      variant: 'context-control';
+      ts: number;
+      verb: 'compact' | 'clear';
+      outcome: 'applied' | 'declined' | 'unsupported' | 'failed';
+      requestedBy: string;
+      detail: string | null;
+      tokens: { before: number; after: number } | null;
     }
   | {
       key: string;
@@ -282,6 +293,18 @@ export function buildThread(
           ts: ev.ts,
           objectiveId: ev.objectiveId,
           result: ev.result,
+        });
+        break;
+      case 'context_control':
+        thread.push({
+          key: `r${row.id}-ctx`,
+          variant: 'context-control',
+          ts: ev.ts,
+          verb: ev.verb,
+          outcome: ev.outcome,
+          requestedBy: ev.requestedBy,
+          detail: ev.detail ?? null,
+          tokens: ev.tokens ?? null,
         });
         break;
       case 'tool_action': {
@@ -629,6 +652,7 @@ function FilterBar({ filters }: { filters: KindFilter }) {
     { key: 'tool_action', label: 'tools' },
     { key: 'objective_open', label: 'obj open' },
     { key: 'objective_close', label: 'obj close' },
+    { key: 'context_control', label: 'context' },
   ];
   const callsOn = showApiCalls.value;
   return (
@@ -702,6 +726,8 @@ function ThreadItemView({ item }: { item: ThreadItem }) {
           <span>closed ({item.result})</span>
         </div>
       );
+    case 'context-control':
+      return <ContextControlMarker item={item} />;
     case 'prompt':
       return <PromptBlock item={item} />;
     case 'turn':
@@ -711,6 +737,46 @@ function ThreadItemView({ item }: { item: ThreadItem }) {
     case 'model-call':
       return <ModelCallRow item={item} />;
   }
+}
+
+/**
+ * A broker-issued compact/clear and what came of it.
+ *
+ * The outcome is the whole reason this row exists, so it is rendered
+ * as text and never as colour alone — `declined` and `applied` must
+ * not be distinguishable only to someone who can see the difference
+ * between two greys. The framework's own reason is shown verbatim
+ * where there is one ("Not enough messages to compact."), because a
+ * decline without its reason is the thing this feature was built to
+ * stop reporting.
+ */
+function ContextControlMarker({
+  item,
+}: {
+  item: Extract<ThreadItem, { variant: 'context-control' }>;
+}) {
+  const applied = item.outcome === 'applied';
+  return (
+    <div
+      class="flex items-center gap-3 flex-wrap"
+      style={`font-family:var(--ef-font-mono);font-size:12px;color:var(--ef-text-secondary);border-left:2px solid ${
+        applied ? 'var(--ef-border-strong)' : 'var(--ef-border)'
+      };padding:6px 12px`}
+    >
+      <span>{formatTs(item.ts)}</span>
+      <span style="color:var(--ef-text)">context {item.verb}</span>
+      <span style={applied ? 'color:var(--ef-text)' : 'color:var(--ef-text-muted)'}>
+        {item.outcome}
+      </span>
+      <span style="color:var(--ef-text-muted)">by {item.requestedBy}</span>
+      {item.tokens !== null && (
+        <span style="color:var(--ef-text-muted)">
+          {item.tokens.before.toLocaleString()} → {item.tokens.after.toLocaleString()} tokens
+        </span>
+      )}
+      {item.detail !== null && <span style="color:var(--ef-text-muted)">{item.detail}</span>}
+    </div>
+  );
 }
 
 /**

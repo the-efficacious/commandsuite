@@ -40,9 +40,11 @@ import {
   type HookEvent,
   type Query,
   query,
+  type SDKMessage,
   type Options as SdkOptions,
   type SpawnedProcess,
 } from '@anthropic-ai/claude-agent-sdk';
+import type { CompactAttempt } from '../context-control.js';
 import { composeFixedContext } from '../fixed-context.js';
 import { type HudHandle, startHud } from '../hud.js';
 import type {
@@ -53,6 +55,7 @@ import type {
   AgentPrepared,
   AgentProcess,
   AgentSessionContext,
+  RespawnPosture,
 } from './adapter.js';
 import { type ClaudeExecutable, resolveClaudeExecutable } from './claude.js';
 import { createClaudeActivityPrinter } from './claude-activity-printer.js';
@@ -265,6 +268,95 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
   // system prompt.
   let effectiveResume: string | true | undefined = options.resume;
 
+  // ── Compaction request/ack correlation ───────────────────────────
+  //
+  // `/compact` goes in as ordinary streaming user input — the exact
+  // path a channel event takes — because the Agent SDK's `Query`
+  // exposes no compaction control method. What makes that honest
+  // rather than fire-and-forget is that the CLI ANSWERS: a
+  // `system/status` message carries `compact_result: 'success' |
+  // 'failed'` (with `compact_error` on failure), and a successful
+  // compaction is followed by a `compact_boundary` carrying the
+  // measured `pre_tokens` / `post_tokens`.
+  //
+  // So the outcome the broker acks is the framework's own report, not
+  // an assumption that the message was delivered.
+  interface PendingCompact {
+    settle(attempt: CompactAttempt): void;
+    /** Set once `compact_result: 'success'` lands, awaiting tokens. */
+    succeeded: boolean;
+    timer: NodeJS.Timeout | null;
+  }
+  let pendingCompact: PendingCompact | null = null;
+
+  /**
+   * How long to wait for the `compact_boundary` after a success is
+   * reported. The boundary carries the token deltas and follows the
+   * status message closely; if it does not arrive we still ack
+   * `applied` without the measurement, because a compaction that
+   * happened is not made un-happened by a missing statistic.
+   */
+  const COMPACT_BOUNDARY_GRACE_MS = 3_000;
+  /**
+   * Upper bound on the whole request. Summarising a large conversation
+   * is genuinely slow (21s measured on a 26k-token context), so this is
+   * generous — but it must exist, or an agent that died mid-compaction
+   * leaves the broker's request outstanding forever.
+   */
+  const COMPACT_TIMEOUT_MS = 180_000;
+
+  const finishCompact = (attempt: CompactAttempt): void => {
+    const pending = pendingCompact;
+    if (pending === null) return;
+    if (pending.timer !== null) clearTimeout(pending.timer);
+    pendingCompact = null;
+    pending.settle(attempt);
+  };
+
+  /**
+   * Route a framework message into a waiting compaction request.
+   * Called for every SDK message so the correlation lives in one place
+   * rather than being scattered through the consume loop.
+   */
+  const observeCompactionMessage = (message: SDKMessage): void => {
+    const pending = pendingCompact;
+    if (pending === null) return;
+    if (message.type === 'system' && message.subtype === 'status') {
+      if (message.compact_result === 'failed') {
+        // A refusal, not an error — "Not enough messages to compact."
+        // is the framework declining, and the reason is what makes the
+        // decline actionable rather than mysterious.
+        finishCompact({
+          supported: true,
+          applied: false,
+          detail: message.compact_error ?? 'the agent reported the compaction failed',
+        });
+        return;
+      }
+      if (message.compact_result === 'success') {
+        // Hold briefly for the boundary's token measurement.
+        pending.succeeded = true;
+        if (pending.timer !== null) clearTimeout(pending.timer);
+        const t = setTimeout(() => {
+          finishCompact({ supported: true, applied: true });
+        }, COMPACT_BOUNDARY_GRACE_MS);
+        t.unref?.();
+        pending.timer = t;
+      }
+      return;
+    }
+    if (message.type === 'system' && message.subtype === 'compact_boundary' && pending.succeeded) {
+      const meta = message.compact_metadata;
+      finishCompact({
+        supported: true,
+        applied: true,
+        ...(typeof meta?.pre_tokens === 'number' && typeof meta?.post_tokens === 'number'
+          ? { tokensBefore: meta.pre_tokens, tokensAfter: meta.post_tokens }
+          : {}),
+      });
+    }
+  };
+
   const adapter: AgentAdapter = {
     meta: CLAUDE_META,
 
@@ -471,6 +563,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
                 );
               }
             }
+            observeCompactionMessage(message);
             printer.handle(message);
           }
           log('claude: message stream ended');
@@ -563,10 +656,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
       queueRef.current = new ClaudeMessageQueue();
     },
 
-    async respawn(
-      ctx: AgentSessionContext,
-      prior: { sessionId: string | null },
-    ): Promise<AgentProcess> {
+    async respawn(ctx: AgentSessionContext, prior: RespawnPosture): Promise<AgentProcess> {
       const fresh = composeFixedContext(ctx.runner.instructions);
       // The three mutable spawn inputs, recomputed: system prompt from
       // the runner's CURRENT packet, resume posture from the
@@ -578,6 +668,20 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
           : { type: 'preset', preset: 'claude_code' };
       delete sdkOptions.sessionId;
       delete sdkOptions.continue;
+      if (!prior.resume) {
+        // A `clear`. Drop BOTH resume levers — leaving `continue` set
+        // would silently reattach the conversation this exists to
+        // discard, which is the failure the RespawnPosture union was
+        // introduced to make unrepresentable. spawn() mints a fresh
+        // session id when `effectiveResume` is undefined, so the
+        // successor is identifiable from t0.
+        effectiveResume = undefined;
+        delete sdkOptions.resume;
+        ctx.log('claude: respawning cold — conversation dropped by context clear', {
+          instructionChars: fresh.length,
+        });
+        return adapter.spawn(ctx);
+      }
       if (prior.sessionId !== null) {
         effectiveResume = prior.sessionId;
         sdkOptions.resume = prior.sessionId;
@@ -594,6 +698,45 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
         resume: effectiveResume,
       });
       return adapter.spawn(ctx);
+    },
+
+    async compactContext(reason: string | undefined): Promise<CompactAttempt> {
+      if (pendingCompact !== null) {
+        return {
+          supported: true,
+          applied: false,
+          detail: 'a compaction request is already in flight for this agent',
+        };
+      }
+      // The slash command goes in as ordinary user input. Claude
+      // Code's own input queue handles the turn mechanics: arriving
+      // mid-turn it is queued and runs at the boundary, so the runner
+      // does not need to drain first the way `clear` does.
+      const body = reason !== undefined ? `/compact ${reason}` : '/compact';
+      const accepted = queueRef.current.push({
+        type: 'user',
+        message: { role: 'user', content: body },
+        parent_tool_use_id: null,
+      });
+      if (!accepted) {
+        return {
+          supported: true,
+          applied: false,
+          detail: 'the agent input stream is closed — the session is shutting down',
+        };
+      }
+      return new Promise<CompactAttempt>((resolve) => {
+        const timer = setTimeout(() => {
+          pendingCompact = null;
+          resolve({
+            supported: true,
+            applied: false,
+            detail: `the agent did not report a compaction outcome within ${Math.round(COMPACT_TIMEOUT_MS / 1000)}s`,
+          });
+        }, COMPACT_TIMEOUT_MS);
+        timer.unref?.();
+        pendingCompact = { settle: resolve, succeeded: false, timer };
+      });
     },
 
     async doctor(): Promise<AgentDoctorCheck[]> {

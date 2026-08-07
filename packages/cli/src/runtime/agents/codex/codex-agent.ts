@@ -33,6 +33,7 @@ import type {
   AgentPrepared,
   AgentProcess,
   AgentSessionContext,
+  RespawnPosture,
 } from '../adapter.js';
 import { findCodexBinary, spawnCodex } from './adapter.js';
 
@@ -311,10 +312,17 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
       liveSink = null;
     },
 
-    async respawn(
-      ctx: AgentSessionContext,
-      prior: { sessionId: string | null },
-    ): Promise<AgentProcess> {
+    async respawn(ctx: AgentSessionContext, prior: RespawnPosture): Promise<AgentProcess> {
+      if (!prior.resume) {
+        // A `clear`. `undefined` makes the next spawn open a NEW thread
+        // (`thread/start`) instead of resuming one — note that `true`
+        // here would mean "most recent thread on this machine", which
+        // is the opposite of what a clear wants and is exactly the trap
+        // the RespawnPosture union exists to close.
+        effectiveResume = undefined;
+        ctx.log('codex: respawning cold — conversation dropped by context clear');
+        return adapter.spawn(ctx);
+      }
       // `sessionId` is the codex thread id. `true` (most recent thread
       // on this machine) when the predecessor never revealed one.
       effectiveResume = prior.sessionId ?? true;
@@ -323,6 +331,16 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
       });
       return adapter.spawn(ctx);
     },
+
+    // NO `compactContext`. The codex app-server protocol this adapter
+    // speaks exposes `thread/start`, `thread/resume`, `turn/start`,
+    // `turn/steer` and `turn/interrupt` — there is no compaction op,
+    // and injecting `/compact` as turn text would be a request with no
+    // reply channel to observe. The coordinator therefore reports
+    // `unsupported` for compact on codex, which is deliberately
+    // distinct from `declined`: the ask was never possible, so a
+    // caller learns to stop rather than to retry. `clear` is fully
+    // supported above, because it needs no cooperation from the agent.
 
     async doctor(): Promise<AgentDoctorCheck[]> {
       return [codexRootCheck(), await codexCacheCheck()];

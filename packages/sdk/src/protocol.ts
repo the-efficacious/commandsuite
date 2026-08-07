@@ -184,6 +184,8 @@ export const MEMBER_PATHS = {
   /** DELETE — revoke a specific token row by id (members.manage or self). */
   token: (name: string, tokenId: string) =>
     `/members/${encodeURIComponent(name)}/tokens/${encodeURIComponent(tokenId)}`,
+  /** POST — ask this member's runner to compact or clear its context (members.context or self). */
+  context: (name: string) => `/members/${encodeURIComponent(name)}/context`,
 } as const;
 
 /**
