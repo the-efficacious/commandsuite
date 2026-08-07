@@ -23,6 +23,7 @@
     "verify-pack": "node scripts/verify-pack-contents.mjs",
     "release:prepare": "node scripts/publish-gate.mjs prepare",
     "release": "pnpm release:prepare && changeset publish",
+    "release:status": "node scripts/release-status.mjs",
     "wizard": "node packages/cli/dist/index.js setup",
     "csuite": "node packages/cli/dist/index.js"
   },

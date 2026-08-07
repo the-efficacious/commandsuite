@@ -622,6 +622,48 @@ publishes to npm with provenance and cuts a single `v<version>` GitHub
 release for the suite. Maintainers cut releases — contributors just add the
 changeset.
 
+### "Approve and run" — the release PR's manual gate
+
+**The Version Packages PR's checks do not start on their own.** Every
+workflow run on `changeset-release/main` is created in `action_required`
+and parks there until a maintainer clicks **Approve and run** on the
+Actions tab. Until someone does, the PR carries **zero check-runs**.
+
+This step has always been required. It was performed as part of merging,
+by the one person who merges, and until now was written down nowhere —
+so a contributor who was not that person could not have known it existed.
+
+**Why it matters more than it sounds.** A release PR with zero check-runs
+reports `mergeStateStatus: BLOCKED`. So does a release PR whose checks ran
+and failed. `gh pr view`, the merge box, and the project board render the
+two identically, and the remedies are opposite: *click* versus *debug*. In
+the measured instance (#110) the PR sat ~2h being read three different
+wrong ways — "not merged yet", "waiting on a decision", "blocked" — with
+three finished pieces of work queued behind it.
+
+Ask the question that discriminates:
+
+```bash
+pnpm release:status          # HELD / FAILING / RUNNING / PASSING / NO RUNS
+pnpm release:status --json   # same, machine-readable
+```
+
+Exit codes are distinct on purpose: `2` = held or never created (click),
+`1` = a real failure (debug), `0` = ready or in flight. A caller that only
+tested for non-zero would be back to the conflation this replaces.
+
+**What the gate actually constrains — the actor, not the branch.** A run
+on `changeset-release/main` enters `action_required` when its triggering
+actor is `github-actions[bot]`. A run triggered by a human collaborator
+does not. So anyone who can push to that branch can make its workflows run
+without the approval step, simply by pushing.
+
+That is the honest description of the control's reach, recorded here
+because a control whose actual boundary is undocumented gets relied on for
+a property it does not have. **It is not a suggested workaround.** The
+gate is a deliberate security control; routing around it because it is
+inconvenient is what makes such controls worthless. Click approve.
+
 For a manual release, run `pnpm release` from a clean repository root. Its
 preparation step refuses uncommitted source, builds through Turbo, verifies
 the packed payloads, and binds each package's publishable bytes to `HEAD`.
