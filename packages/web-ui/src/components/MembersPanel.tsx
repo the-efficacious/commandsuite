@@ -65,7 +65,7 @@ export function MembersPanel() {
   if (!b) {
     return (
       <div
-        class="flex-1 overflow-y-auto"
+        class="flex-1 overflow-y-auto measured"
         style="padding:24px max(1rem,env(safe-area-inset-right)) 32px max(1rem,env(safe-area-inset-left))"
       >
         <ListSkeleton />
@@ -76,7 +76,7 @@ export function MembersPanel() {
   if (!hasPermission(b.permissions, 'members.manage')) {
     return (
       <div
-        class="flex-1 overflow-y-auto"
+        class="flex-1 overflow-y-auto measured"
         style="padding:24px max(1rem,env(safe-area-inset-right)) 24px max(1rem,env(safe-area-inset-left))"
       >
         <ErrorCallout
@@ -93,7 +93,7 @@ export function MembersPanel() {
 
   return (
     <div
-      class="flex-1 overflow-y-auto"
+      class="flex-1 overflow-y-auto measured"
       style="padding:24px max(1rem,env(safe-area-inset-right)) 32px max(1rem,env(safe-area-inset-left))"
     >
       <PageHeader

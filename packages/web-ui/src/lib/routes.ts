@@ -39,8 +39,12 @@ export type Route =
   | (RouteBase & { kind: 'member-profile'; name: string; tab: ProfileTab })
   | (RouteBase & { kind: 'tool-sources' })
   | (RouteBase & { kind: 'tool-source-detail'; slug: string })
-  | (RouteBase & { kind: 'secrets' })
+  | (RouteBase & { kind: 'environment' })
+  // Detail routes stay per-kind because `slug` is unique per STORE, not
+  // across the pair — a secret and a variable may both be `git-token`,
+  // so one `/environment/:slug` route could not name either of them.
   | (RouteBase & { kind: 'secret-detail'; slug: string })
+  | (RouteBase & { kind: 'variable-detail'; slug: string })
   | (RouteBase & { kind: 'notifications' })
   | (RouteBase & { kind: 'notification-detail'; slug: string })
   | (RouteBase & { kind: 'files'; path: string });
@@ -101,10 +105,23 @@ export function parseRoute(pathname: string): Route {
     }
   }
 
-  if (head === 'secrets') {
-    if (rest.length === 0) return withTeam({ kind: 'secrets' }, team);
-    if (rest.length === 1 && rest[0]) {
-      return withTeam({ kind: 'secret-detail', slug: rest[0] }, team);
+  // Every runner-environment view lives under `/environment`, and the
+  // reason is the broker, not taste. API routes register BEFORE the
+  // SPA fallback, so any client path that also names a REST route is
+  // answered by the API: `/secrets/:slug` and `/variables/:slug` both
+  // return 401 JSON on a hard load instead of the app. `/tools` is the
+  // existing precedent — the client route differs from its `/tool-sources`
+  // API path for exactly this reason. `/environment` has no REST
+  // counterpart, so these deep-link and reload correctly.
+  if (head === 'environment') {
+    if (rest.length === 0) return withTeam({ kind: 'environment' }, team);
+    if (rest.length === 2 && rest[1]) {
+      if (rest[0] === 'secrets') {
+        return withTeam({ kind: 'secret-detail', slug: rest[1] }, team);
+      }
+      if (rest[0] === 'variables') {
+        return withTeam({ kind: 'variable-detail', slug: rest[1] }, team);
+      }
     }
   }
 
@@ -172,10 +189,12 @@ function baseFor(route: Route): string {
       return '/tools';
     case 'tool-source-detail':
       return `/tools/${encodeURIComponent(route.slug)}`;
-    case 'secrets':
-      return '/secrets';
+    case 'environment':
+      return '/environment';
     case 'secret-detail':
-      return `/secrets/${encodeURIComponent(route.slug)}`;
+      return `/environment/secrets/${encodeURIComponent(route.slug)}`;
+    case 'variable-detail':
+      return `/environment/variables/${encodeURIComponent(route.slug)}`;
     case 'notifications':
       return '/notifications';
     case 'notification-detail':

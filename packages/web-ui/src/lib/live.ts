@@ -31,6 +31,7 @@ import { loadObjectives } from './objectives.js';
 import { loadRoster } from './roster.js';
 import { loadSecrets } from './secrets.js';
 import { loadToolSources } from './tool-sources.js';
+import { loadVariables } from './variables.js';
 
 export const streamConnected = signal(false);
 export const streamEverConnected = signal(false);
@@ -128,6 +129,15 @@ export function startSubscribe(options: StartSubscribeOptions): () => void {
           // re-list without polling.
           void loadSecrets().catch(() => {
             /* next secret event retries */
+          });
+        }
+        if (data && data.kind === 'variable') {
+          // Variables fan out on the same channel as secrets, so the
+          // Environment panel's other half stays current too. Without
+          // this a variable edited from the CLI or by an agent leaves
+          // the panel showing the pre-edit value until a reload.
+          void loadVariables().catch(() => {
+            /* next variable event retries */
           });
         }
         if (data && data.kind === 'notification_endpoint') {

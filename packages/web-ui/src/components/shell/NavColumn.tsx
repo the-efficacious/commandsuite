@@ -51,13 +51,13 @@ import {
   selectChannelCreate,
   selectChannelsBrowse,
   selectDmWith,
+  selectEnvironment,
   selectFiles,
   selectInbox,
   selectMembers,
   selectNotifications,
   selectObjectivesList,
   selectOverview,
-  selectSecrets,
   selectToolSources,
   view,
 } from '../../lib/view.js';
@@ -109,7 +109,8 @@ export function NavColumn({ viewer }: NavColumnProps) {
   const filesActive = v.kind === 'files';
   const membersActive = v.kind === 'members';
   const toolsActive = v.kind === 'tool-sources' || v.kind === 'tool-source-detail';
-  const secretsActive = v.kind === 'secrets' || v.kind === 'secret-detail';
+  const environmentActive =
+    v.kind === 'environment' || v.kind === 'secret-detail' || v.kind === 'variable-detail';
   const notificationsActive = v.kind === 'notifications' || v.kind === 'notification-detail';
   const inbox = inboxCount.value;
   const drawerOpen = isSidebarOpen.value;
@@ -199,11 +200,11 @@ export function NavColumn({ viewer }: NavColumnProps) {
         )}
         {canManageSecrets && (
           <NavItem
-            label="Secrets"
+            label="Environment"
             glyph={<Lock size={15} aria-hidden="true" />}
-            active={secretsActive}
-            onClick={selectSecrets}
-            ariaLabel="Manage secrets"
+            active={environmentActive}
+            onClick={selectEnvironment}
+            ariaLabel="Manage the runner environment"
           />
         )}
         {canManageNotifications && (

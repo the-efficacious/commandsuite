@@ -46,7 +46,7 @@ export function TeamHome({ viewer }: TeamHomeProps) {
 
   return (
     <div
-      class="flex-1 overflow-y-auto"
+      class="flex-1 overflow-y-auto measured"
       style="padding:24px max(1rem,env(safe-area-inset-right)) 32px max(1rem,env(safe-area-inset-left))"
     >
       <PageHeader eyebrow="Team" title={b.team.name} />

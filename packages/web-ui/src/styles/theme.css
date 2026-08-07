@@ -2741,6 +2741,377 @@ body {
   color: var(--ef-text-faint);
 }
 
+/* ─────────────────────── PANEL MEASURE ─────────────────────── *
+ *
+ * Panel content was unconstrained, so on a wide display every row,
+ * field and help line stretched to the window — a help line ran past
+ * 1600px and an input holding a short name was as wide as the screen.
+ *
+ * The scroll container itself has to stay full-width: it owns the
+ * scrollbar and the page background, and centring it would strand both.
+ * So the measure lands on its children instead.
+ *
+ * Opt-in per panel rather than applied to every `.flex-1.overflow-y-auto`,
+ * because the nav rail uses that same scroller and its items are meant
+ * to fill it.
+ *
+ * Two widths, and the distinction is what the view IS. An INDEX earns
+ * its width from rows that carry data out to the right edge. A RECORD
+ * is one entity's fields, where the widest control is a name —
+ * stretching it to the index measure leaves half of every panel empty.
+ */
+
+:root {
+  --ef-page-measure: 1080px;
+  --ef-page-measure-record: 780px;
+}
+
+/*
+ * REQUIRES CHILDREN THAT FILL. `margin-inline: auto` centres a child
+ * within the FULL width, so it only reads as a measure column when the
+ * child actually grows to it — panels, headers and grids do. A child
+ * narrower than the measure (a fit-content card) gets centred in the
+ * window instead of aligned to the column, which looks worse than no
+ * constraint at all. `MemberProfile` is the known case: its header sits
+ * outside this scroller and its tab content is a fit-content card, so
+ * it is deliberately NOT `.measured` and needs a real wrapper element
+ * instead.
+ */
+.measured > * {
+  max-width: var(--ef-page-measure);
+  margin-inline: auto;
+}
+.measured.record > * {
+  max-width: var(--ef-page-measure-record);
+}
+
+/* ─────────────────────── RUNNER ENVIRONMENT ─────────────────────── *
+ *
+ * The Environment views — secrets and variables on one surface. Two
+ * ideas carry it, and both come from the design system rather than
+ * from this file.
+ *
+ * MEASURE. Panel content is otherwise unconstrained, so on a wide
+ * display a help line runs past 1600px and an input sized to hold a
+ * POSIX name is as wide as the window. Prose is held to a readable
+ * measure; every control is sized to the data it actually holds.
+ *
+ * LAMP. Which store an entry lives in decides whether its value
+ * survives in a captured trace, which is a signal — and the system
+ * already has a signal vocabulary. A secret reads NOMINAL: contained,
+ * it never leaves the broker except into the agent. A variable reads
+ * CAUTION: not an error, but recorded verbatim, and worth knowing
+ * before you paste. One lamp per group, never per row — the grouping
+ * IS the classification, and repeating it on every row would turn a
+ * signal into scenery.
+ */
+
+.env-page {
+  max-width: var(--ef-page-measure);
+  margin-inline: auto;
+}
+
+/* A record is narrower than an index. The list earns its width from
+   rows that carry a value on the right; a detail view is a short form
+   whose widest control is a POSIX name, and stretching its panels to
+   the list measure leaves half of each one empty. */
+.env-page.detail {
+  max-width: var(--ef-page-measure-record);
+}
+
+/* Prose measure — help text, blurbs, notes. Long lines are the single
+   biggest legibility cost on this surface. */
+.env-prose {
+  max-width: 68ch;
+}
+
+/* Controls sized to their content, not to the viewport. */
+.env-w-key {
+  max-width: 34ch;
+}
+.env-w-prose {
+  max-width: 56ch;
+}
+
+/* ─── Section grouping ─── */
+
+.env-section {
+  margin-bottom: var(--ef-space-xl);
+}
+.env-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--ef-space-sm);
+  padding-left: var(--ef-space-md);
+  border-left: 2px solid var(--ef-border);
+  margin-bottom: var(--ef-space-md);
+}
+.env-section.nominal .env-section-head {
+  border-left-color: var(--ef-lamp-nominal-edge);
+}
+.env-section.caution .env-section-head {
+  border-left-color: var(--ef-lamp-caution-edge);
+}
+.env-section-title {
+  font-family: var(--ef-font-display);
+  font-size: var(--ef-text-h4);
+  font-weight: var(--ef-weight-bold);
+  letter-spacing: var(--ef-track-display);
+  color: var(--ef-text);
+  margin: 0;
+}
+.env-section-tag {
+  font-family: var(--ef-font-mono);
+  font-size: var(--ef-text-tag);
+  letter-spacing: var(--ef-track-tag);
+  text-transform: uppercase;
+}
+.env-section.nominal .env-section-tag {
+  color: var(--ef-lamp-nominal);
+}
+.env-section.caution .env-section-tag {
+  color: var(--ef-lamp-caution);
+}
+.env-section-blurb {
+  margin-top: var(--ef-space-xs);
+  padding-left: var(--ef-space-md);
+  font-family: var(--ef-font-body);
+  font-size: var(--ef-text-small);
+  line-height: 1.5;
+  color: var(--ef-text-muted);
+  margin-bottom: 14px;
+}
+
+/* Section-scale empty. `.empty` is the page-level bench state and
+   carries a 190px floor — correct when it is the only thing on screen,
+   380px of void when both sections are empty at once. The section
+   heading already names what is missing, so this only has to invite
+   the action. */
+.env-empty {
+  padding: 13px var(--ef-space-md);
+  border: 1px dashed var(--ef-border);
+  border-radius: var(--ef-radius-sm);
+  font-family: var(--ef-font-body);
+  font-size: var(--ef-text-small);
+  line-height: 1.5;
+  color: var(--ef-text-muted);
+  max-width: 68ch;
+}
+
+/* ─── Rows ─── */
+
+.env-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ef-space-md);
+  width: 100%;
+  padding: 12px var(--ef-space-md);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.env-row + .env-row {
+  border-top: 1px solid var(--ef-border-subtle);
+}
+.env-row-main {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.env-row-slug {
+  font-family: var(--ef-font-display);
+  font-size: 15px;
+  font-weight: var(--ef-weight-bold);
+  letter-spacing: var(--ef-track-display);
+  color: var(--ef-text);
+}
+.env-row-env {
+  font-family: var(--ef-font-mono);
+  font-size: var(--ef-text-data);
+  letter-spacing: var(--ef-track-data);
+  color: var(--ef-text-muted);
+}
+.env-row-desc {
+  font-family: var(--ef-font-body);
+  font-size: var(--ef-text-small);
+  color: var(--ef-text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 34ch;
+}
+.env-row-side {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+/* A variable's value, shown inline. Mono because it is data, and
+   truncated because a row is an index, not the record. */
+.env-row-value {
+  font-family: var(--ef-font-mono);
+  font-size: 12px;
+  color: var(--ef-text);
+  max-width: 26ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Set, but this session cannot read it. Distinct from unset by
+   construction — never render both as blank. */
+.env-row-value.withheld {
+  font-family: var(--ef-font-body);
+  font-size: 12px;
+  font-style: italic;
+  color: var(--ef-text-muted);
+}
+.env-row-unset {
+  font-family: var(--ef-font-body);
+  font-size: 12px;
+  color: var(--ef-text-faint);
+}
+
+/* ─── Classification note ─── */
+
+.env-note {
+  display: flex;
+  gap: 10px;
+  padding: 10px 14px;
+  margin-bottom: var(--ef-space-md);
+  border-left: 2px solid var(--ef-border);
+  border-radius: 0 var(--ef-radius-sm) var(--ef-radius-sm) 0;
+  font-family: var(--ef-font-body);
+  font-size: var(--ef-text-small);
+  line-height: 1.55;
+  color: var(--ef-text-muted);
+  max-width: 76ch;
+}
+.env-note.nominal {
+  border-left-color: var(--ef-lamp-nominal-edge);
+  background: var(--ef-lamp-nominal-ground);
+}
+.env-note.caution {
+  border-left-color: var(--ef-lamp-caution-edge);
+  background: var(--ef-lamp-caution-ground);
+}
+.env-note strong {
+  color: var(--ef-text);
+  font-weight: var(--ef-weight-semibold);
+}
+.env-note.nominal .env-note-lead {
+  color: var(--ef-lamp-nominal);
+}
+.env-note.caution .env-note-lead {
+  color: var(--ef-lamp-caution);
+}
+
+/* ─── Create form ─── */
+
+/* Entering a record is the same job as editing one, so the form takes
+   the record measure rather than the index's. */
+.env-form {
+  max-width: 780px;
+}
+
+/* ─── Kind chooser ─── */
+
+.env-kind {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--ef-border);
+  border-left-width: 2px;
+  border-radius: var(--ef-radius-sm);
+  cursor: pointer;
+  transition: border-color var(--ef-motion-fast) var(--ef-motion-ease);
+}
+.env-kind:hover {
+  border-color: var(--ef-border-strong);
+}
+.env-kind.nominal {
+  border-left-color: var(--ef-lamp-nominal-edge);
+}
+.env-kind.caution {
+  border-left-color: var(--ef-lamp-caution-edge);
+}
+.env-kind.selected.nominal {
+  border-color: var(--ef-lamp-nominal-edge);
+  background: var(--ef-lamp-nominal-ground);
+}
+.env-kind.selected.caution {
+  border-color: var(--ef-lamp-caution-edge);
+  background: var(--ef-lamp-caution-ground);
+}
+.env-kind-title {
+  display: block;
+  font-family: var(--ef-font-body);
+  font-size: 13px;
+  font-weight: var(--ef-weight-semibold);
+  color: var(--ef-text);
+}
+.env-kind-why {
+  display: block;
+  margin-top: 2px;
+  font-family: var(--ef-font-body);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ef-text-muted);
+  max-width: 60ch;
+}
+
+/* ─── Detail header + value readout ─── */
+
+/* Two or three facts sit adjacent, not spread across the measure —
+   `.fact-grid`'s auto-fit columns stretch them apart on a wide view. */
+.env-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ef-space-xl);
+  margin-top: 10px;
+}
+
+.env-readout {
+  font-family: var(--ef-font-mono);
+  font-size: 13px;
+  color: var(--ef-text);
+  background: var(--ef-surface-deep);
+  border: 1px solid var(--ef-border);
+  border-radius: var(--ef-radius-sm);
+  padding: 9px 12px;
+  max-width: 56ch;
+  overflow-wrap: anywhere;
+}
+
+.env-hint {
+  font-family: var(--ef-font-body);
+  font-size: 11.5px;
+  color: var(--ef-text-muted);
+  margin-top: var(--ef-space-sm);
+  max-width: 68ch;
+}
+.env-hint.rule {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--ef-border-subtle);
+}
+
+@media (max-width: 899px) {
+  .env-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: var(--ef-space-sm);
+  }
+  .env-row-desc,
+  .env-row-value {
+    max-width: 100%;
+  }
+}
+
 /* ─────────────── iOS auto-zoom suppression ──────────────── *
  * iOS Safari (and other touch browsers) auto-zoom into an input,
  * textarea, or select when the computed font-size at focus time is
