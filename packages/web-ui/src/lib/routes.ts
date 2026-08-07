@@ -105,22 +105,24 @@ export function parseRoute(pathname: string): Route {
     }
   }
 
+  // Every runner-environment view lives under `/environment`, and the
+  // reason is the broker, not taste. API routes register BEFORE the
+  // SPA fallback, so any client path that also names a REST route is
+  // answered by the API: `/secrets/:slug` and `/variables/:slug` both
+  // return 401 JSON on a hard load instead of the app. `/tools` is the
+  // existing precedent — the client route differs from its `/tool-sources`
+  // API path for exactly this reason. `/environment` has no REST
+  // counterpart, so these deep-link and reload correctly.
   if (head === 'environment') {
     if (rest.length === 0) return withTeam({ kind: 'environment' }, team);
-  }
-
-  if (head === 'secrets') {
-    // Bare `/secrets` predates the merged panel and is still linked
-    // from docs and bookmarks. It resolves to the panel that now shows
-    // secrets rather than 404ing on a route that used to work.
-    if (rest.length === 0) return withTeam({ kind: 'environment' }, team);
-    if (rest.length === 1 && rest[0]) {
-      return withTeam({ kind: 'secret-detail', slug: rest[0] }, team);
+    if (rest.length === 2 && rest[1]) {
+      if (rest[0] === 'secrets') {
+        return withTeam({ kind: 'secret-detail', slug: rest[1] }, team);
+      }
+      if (rest[0] === 'variables') {
+        return withTeam({ kind: 'variable-detail', slug: rest[1] }, team);
+      }
     }
-  }
-
-  if (head === 'variables' && rest.length === 1 && rest[0]) {
-    return withTeam({ kind: 'variable-detail', slug: rest[0] }, team);
   }
 
   if (head === 'notifications') {
@@ -190,9 +192,9 @@ function baseFor(route: Route): string {
     case 'environment':
       return '/environment';
     case 'secret-detail':
-      return `/secrets/${encodeURIComponent(route.slug)}`;
+      return `/environment/secrets/${encodeURIComponent(route.slug)}`;
     case 'variable-detail':
-      return `/variables/${encodeURIComponent(route.slug)}`;
+      return `/environment/variables/${encodeURIComponent(route.slug)}`;
     case 'notifications':
       return '/notifications';
     case 'notification-detail':

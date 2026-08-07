@@ -22,9 +22,20 @@ the panel saw a shorter list with nothing to say where the rest went.
 - A variable's value is shown; a secret's is still write-only. "Set but
   not shown" renders differently from "not set", so a configured
   variable can never read as missing.
-- `/secrets` still resolves, now to the merged panel. Detail routes stay
-  per-kind (`/secrets/:slug`, `/variables/:slug`) because a slug is
-  unique per store, not across the pair.
+- Every view lives under `/environment`, including the per-kind detail
+  routes (`/environment/secrets/:slug`, `/environment/variables/:slug`).
+  They stay per-kind because a slug is unique per store, not across the
+  pair. The prefix is not cosmetic: the broker registers its REST routes
+  before the SPA fallback, so the obvious `/secrets/:slug` is answered by
+  the API and returns 401 JSON on a reload or a shared link. That was
+  already true of the old secret detail route; it is fixed here.
+
+Classification is carried by the design system's lamp signals rather
+than by a badge — a secret reads `nominal` (contained), a variable reads
+`caution` (recorded verbatim) — on the section heading, the create form's
+kind choice, and the detail banner. Content is held to a readable
+measure, and controls are sized to the data they hold rather than to the
+window.
 
 There is no convert action between the stores, and the secret detail
 view says so: a secret's value is write-only, so a delete-and-recreate

@@ -17,8 +17,11 @@ describe('parseRoute / formatRoute', () => {
     ['/tools', { kind: 'tool-sources' }],
     ['/tools/jira', { kind: 'tool-source-detail', slug: 'jira' }],
     ['/environment', { kind: 'environment' }],
-    ['/secrets/github-token', { kind: 'secret-detail', slug: 'github-token' }],
-    ['/variables/git-author-name', { kind: 'variable-detail', slug: 'git-author-name' }],
+    ['/environment/secrets/github-token', { kind: 'secret-detail', slug: 'github-token' }],
+    [
+      '/environment/variables/git-author-name',
+      { kind: 'variable-detail', slug: 'git-author-name' },
+    ],
     ['/notifications', { kind: 'notifications' }],
     ['/notifications/ci-alerts', { kind: 'notification-detail', slug: 'ci-alerts' }],
     ['/@alice', { kind: 'member-profile', name: 'alice', tab: 'overview' }],
@@ -132,38 +135,60 @@ describe('parseRoute / formatRoute', () => {
   });
 
   describe('the runner-environment routes', () => {
-    it('keeps bare /secrets working, pointing at the merged panel', () => {
-      // The panel that used to live here now shows secrets AND
-      // variables. Existing links and docs say /secrets, so the URL
-      // resolves rather than 404ing on a path that used to work.
-      expect(parseRoute('/secrets')).toEqual({ kind: 'environment' });
+    it('keeps every environment view under /environment', () => {
+      // Not cosmetic. The broker registers its REST routes BEFORE the
+      // SPA fallback, so a client path that also names an API route is
+      // answered by the API — `/secrets/:slug` returns 401 JSON on a
+      // hard load rather than the app. `/environment` has no REST
+      // counterpart, which is what makes these deep-linkable.
+      expect(formatRoute({ kind: 'environment' })).toBe('/environment');
+      expect(formatRoute({ kind: 'secret-detail', slug: 'github-token' })).toBe(
+        '/environment/secrets/github-token',
+      );
+      expect(formatRoute({ kind: 'variable-detail', slug: 'git-name' })).toBe(
+        '/environment/variables/git-name',
+      );
     });
 
-    it('canonicalises the merged panel to /environment', () => {
-      // Back-compat is one-way: /secrets parses, but nothing formats
-      // to it, so the address bar converges on the new name.
-      expect(formatRoute({ kind: 'environment' })).toBe('/environment');
+    it('never formats a route onto a path the broker answers', () => {
+      // The API prefixes that shadow the SPA. A regression here is
+      // invisible in-app — pushState never touches the server — and
+      // only shows up when someone reloads or shares a link.
+      const shadowed = [/^\/secrets(\/|$)/, /^\/variables(\/|$)/];
+      const routes: Route[] = [
+        { kind: 'environment' },
+        { kind: 'secret-detail', slug: 'github-token' },
+        { kind: 'variable-detail', slug: 'git-name' },
+      ];
+      for (const r of routes) {
+        const path = formatRoute(r);
+        for (const shadow of shadowed) expect(path).not.toMatch(shadow);
+      }
     });
 
     it('routes a secret and a variable of the SAME slug to different views', () => {
       // `slug` is unique per store, not across the pair — the schema
-      // has one unique index per table. A single /environment/:slug
+      // has one unique index per table. A single `/environment/:slug`
       // detail route could not name either of them, which is why the
       // detail routes stay per-kind.
-      const secret = parseRoute('/secrets/shared-name');
-      const variable = parseRoute('/variables/shared-name');
+      const secret = parseRoute('/environment/secrets/shared-name');
+      const variable = parseRoute('/environment/variables/shared-name');
       expect(secret).toEqual({ kind: 'secret-detail', slug: 'shared-name' });
       expect(variable).toEqual({ kind: 'variable-detail', slug: 'shared-name' });
       expect(routesEqual(secret, variable)).toBe(false);
     });
 
-    it('team-scopes both detail routes', () => {
-      expect(parseRoute('/t/alpha/variables/git-name')).toEqual({
+    it('team-scopes the environment routes', () => {
+      expect(parseRoute('/t/alpha/environment/variables/git-name')).toEqual({
         kind: 'variable-detail',
         slug: 'git-name',
         team: 'alpha',
       });
       expect(formatRoute({ kind: 'environment', team: 'alpha' })).toBe('/t/alpha/environment');
+    });
+
+    it('sends an unknown environment path home rather than stranding it', () => {
+      expect(parseRoute('/environment/nonsense/x').kind).toBe('home');
     });
   });
 });

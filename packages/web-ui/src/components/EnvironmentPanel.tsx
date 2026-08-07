@@ -33,7 +33,17 @@ import { createVariable, loadVariables, variables, variablesError } from '../lib
 import { selectSecretDetail, selectVariableDetail } from '../lib/view.js';
 import type { EnvKind } from './env/shared.js';
 import { ArrowRight } from './icons/index.js';
-import { EmptyState, ErrorCallout, PageHeader } from './ui/index.js';
+import { ErrorCallout, PageHeader } from './ui/index.js';
+
+/**
+ * The lamp each kind reads as. A secret is NOMINAL — contained, it
+ * never leaves the broker except into the agent. A variable is
+ * CAUTION — not wrong, but recorded verbatim in captured traces, and
+ * that is the thing worth knowing before you paste a value in.
+ */
+export function lampOf(kind: EnvKind): 'nominal' | 'caution' {
+  return kind === 'secret' ? 'nominal' : 'caution';
+}
 
 /** Four row-height shimmer bars standing in for a list while it loads. */
 function ListSkeleton() {
@@ -76,7 +86,9 @@ export function EnvironmentPanel() {
         class="flex-1 overflow-y-auto"
         style="padding:24px max(1rem,env(safe-area-inset-right)) 32px max(1rem,env(safe-area-inset-left))"
       >
-        <ListSkeleton />
+        <div class="env-page">
+          <ListSkeleton />
+        </div>
       </div>
     );
   }
@@ -87,10 +99,12 @@ export function EnvironmentPanel() {
         class="flex-1 overflow-y-auto"
         style="padding:24px max(1rem,env(safe-area-inset-right)) 24px max(1rem,env(safe-area-inset-left))"
       >
-        <ErrorCallout
-          title="Restricted"
-          message="Managing the runner environment requires the secrets.manage permission."
-        />
+        <div class="env-page">
+          <ErrorCallout
+            title="Restricted"
+            message="Managing the runner environment requires the secrets.manage permission."
+          />
+        </div>
       </div>
     );
   }
@@ -105,73 +119,73 @@ export function EnvironmentPanel() {
       class="flex-1 overflow-y-auto"
       style="padding:24px max(1rem,env(safe-area-inset-right)) 32px max(1rem,env(safe-area-inset-left))"
     >
-      <PageHeader
-        eyebrow="Team"
-        title="Environment"
-        subtitle="Everything the runner injects into an agent at spawn. Secrets are scrubbed from captured traces; variables are not."
-        actions={
-          <button
-            type="button"
-            class="btn btn-primary btn-sm"
-            onClick={() => {
-              formOpen.value = true;
-              formError.value = null;
-              formKind.value = null;
-              formSlug.value = '';
-              formEnvName.value = '';
-              formDescription.value = '';
-              formAllMembers.value = false;
-            }}
-            disabled={formBusy.value}
-          >
-            + New entry
-          </button>
-        }
-      />
+      <div class="env-page">
+        <PageHeader
+          eyebrow="Team"
+          title="Environment"
+          subtitle="Everything the runner injects into an agent at spawn. Secrets are scrubbed from captured traces; variables are not."
+          actions={
+            <button
+              type="button"
+              class="btn btn-primary btn-sm"
+              onClick={() => {
+                formOpen.value = true;
+                formError.value = null;
+                formKind.value = null;
+                formSlug.value = '';
+                formEnvName.value = '';
+                formDescription.value = '';
+                formAllMembers.value = false;
+              }}
+              disabled={formBusy.value}
+            >
+              + New entry
+            </button>
+          }
+        />
 
-      {formOpen.value && <CreateEntryForm />}
+        {formOpen.value && <CreateEntryForm />}
 
-      <EnvSection
-        kind="secret"
-        heading="Secrets"
-        blurb="Write-only. The value leaves the broker only into the agent's environment and is scrubbed from captured traces."
-        error={secretErr}
-        errorTitle="Failed to load secrets"
-        emptyTitle="No secrets yet"
-        emptyMessage="Register a value that must never appear in a trace with + New entry."
-        loaded={secretList !== null}
-        rows={
-          secretList?.map((s) => (
-            <EnvListRow
-              key={`secret:${s.slug}`}
-              entry={s}
-              kind="secret"
-              onSelect={() => selectSecretDetail(s.slug)}
-            />
-          )) ?? []
-        }
-      />
+        <EnvSection
+          kind="secret"
+          heading="Secrets"
+          blurb="Write-only. The value leaves the broker only into the agent's environment and is scrubbed from captured traces."
+          error={secretErr}
+          errorTitle="Failed to load secrets"
+          emptyMessage="No secrets yet. Add one with + New entry — a token, a key, anything that must not reach a trace."
+          loaded={secretList !== null}
+          rows={
+            secretList?.map((s) => (
+              <EnvListRow
+                key={`secret:${s.slug}`}
+                entry={s}
+                kind="secret"
+                onSelect={() => selectSecretDetail(s.slug)}
+              />
+            )) ?? []
+          }
+        />
 
-      <EnvSection
-        kind="variable"
-        heading="Variables"
-        blurb="Readable, and left intact in captured traces. Git identity lives here — a value the team publishes should not be scrubbed from the team's own record."
-        error={variableErr}
-        errorTitle="Failed to load variables"
-        emptyTitle="No variables yet"
-        emptyMessage="Register a non-secret value — a git author name, a feature flag — with + New entry."
-        loaded={variableList !== null}
-        rows={
-          variableList?.map((v) => (
-            <EnvListRow
-              key={`variable:${v.slug}`}
-              entry={v}
-              kind="variable"
-              onSelect={() => selectVariableDetail(v.slug)}
-            />
-          )) ?? []
-        }
-      />
+        <EnvSection
+          kind="variable"
+          heading="Variables"
+          blurb="Readable, and left intact in captured traces. Git identity lives here — a value the team publishes should not be scrubbed from the team's own record."
+          error={variableErr}
+          errorTitle="Failed to load variables"
+          emptyMessage="No variables yet. Add one with + New entry — a git author name, a feature flag, anything the team publishes anyway."
+          loaded={variableList !== null}
+          rows={
+            variableList?.map((v) => (
+              <EnvListRow
+                key={`variable:${v.slug}`}
+                entry={v}
+                kind="variable"
+                onSelect={() => selectVariableDetail(v.slug)}
+              />
+            )) ?? []
+          }
+        />
+      </div>
     </div>
   );
 }
@@ -182,7 +196,6 @@ function EnvSection({
   blurb,
   error,
   errorTitle,
-  emptyTitle,
   emptyMessage,
   loaded,
   rows,
@@ -192,24 +205,18 @@ function EnvSection({
   blurb: string;
   error: string | null;
   errorTitle: string;
-  emptyTitle: string;
   emptyMessage: string;
   loaded: boolean;
   rows: preact.ComponentChildren[];
 }) {
+  const lamp = lampOf(kind);
   return (
-    <section style="margin-bottom:28px" aria-label={heading}>
-      <div style="margin-bottom:10px">
-        <h3
-          class="font-display"
-          style="margin:0;font-size:17px;font-weight:700;letter-spacing:-0.01em;color:var(--ef-text)"
-        >
-          {heading}
-        </h3>
-        <div style="margin-top:3px;font-family:var(--ef-font-body);font-size:12.5px;line-height:1.5;color:var(--ef-text-muted)">
-          {blurb}
-        </div>
+    <section class={`env-section ${lamp}`} aria-label={heading}>
+      <div class="env-section-head">
+        <h3 class="env-section-title">{heading}</h3>
+        <span class="env-section-tag">{lamp === 'nominal' ? 'contained' : 'recorded'}</span>
       </div>
+      <div class="env-section-blurb env-prose">{blurb}</div>
 
       {error !== null && (
         <ErrorCallout title={errorTitle} message={error} style="margin-bottom:12px" />
@@ -217,7 +224,7 @@ function EnvSection({
 
       {!loaded && error === null && <ListSkeleton />}
 
-      {loaded && rows.length === 0 && <EmptyState title={emptyTitle} message={emptyMessage} />}
+      {loaded && rows.length === 0 && <div class="env-empty">{emptyMessage}</div>}
 
       {loaded && rows.length > 0 && (
         <div class="panel">
@@ -254,57 +261,47 @@ function EnvListRow({
       <button
         type="button"
         onClick={onSelect}
-        class="hover-row w-full flex items-center justify-between gap-3"
-        style="padding:14px 16px;border-bottom:1px solid var(--ef-border);background:transparent;text-align:left;cursor:pointer"
+        class="hover-row env-row"
         aria-label={`Manage ${kind} ${entry.slug}`}
       >
-        <div class="min-w-0 flex items-center gap-3 flex-wrap">
-          <span
-            class="font-display"
-            style="font-weight:700;letter-spacing:-0.01em;font-size:15px;color:var(--ef-text)"
-          >
-            {entry.slug}
-          </span>
-          <span style="font-family:var(--ef-font-mono);font-size:11.5px;color:var(--ef-text-muted);letter-spacing:.04em">
-            ${entry.envName}
-          </span>
+        <span class="env-row-main">
+          <span class="env-row-slug">{entry.slug}</span>
+          <span class="env-row-env">${entry.envName}</span>
           {!entry.enabled && <span class="badge muted">Disabled</span>}
           {entry.allMembers && <span class="badge soft">All members</span>}
           {entry.description.length > 0 && (
-            <span style="font-family:var(--ef-font-body);font-size:12.5px;color:var(--ef-text-muted)">
+            <span class="env-row-desc" title={entry.description}>
               {entry.description}
             </span>
           )}
-        </div>
-        <div class="flex items-center gap-3 flex-shrink-0">
+        </span>
+        <span class="env-row-side">
           {kind === 'variable' && entry.hasValue && value !== undefined && (
             <span
               data-testid={`variable-row-value-${entry.slug}`}
-              style="font-family:var(--ef-font-mono);font-size:12px;color:var(--ef-text);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+              class="env-row-value"
               title={value}
             >
               {value}
             </span>
           )}
           {kind === 'variable' && entry.hasValue && value === undefined && (
-            <span
-              data-testid={`variable-row-value-${entry.slug}`}
-              style="font-family:var(--ef-font-body);font-size:11.5px;color:var(--ef-text-muted);font-style:italic"
-            >
+            <span data-testid={`variable-row-value-${entry.slug}`} class="env-row-value withheld">
               Set, not shown
             </span>
           )}
-          {(kind === 'secret' || !entry.hasValue) && (
+          {kind === 'secret' && (
             <span
               class={`dot ${entry.hasValue ? 'ok' : 'muted'}`}
               title={entry.hasValue ? 'Value set' : 'No value'}
             />
           )}
+          {kind === 'variable' && !entry.hasValue && <span class="env-row-unset">No value</span>}
           <span style="display:inline-flex;align-items:center;gap:4px;font-family:var(--ef-font-mono);font-size:11px;color:var(--ef-text-muted);letter-spacing:.08em;text-transform:uppercase">
             <ArrowRight size={12} aria-hidden="true" />
             Manage
           </span>
-        </div>
+        </span>
       </button>
     </li>
   );
@@ -320,13 +317,9 @@ function KindChoice({
   consequence: string;
 }) {
   const selected = formKind.value === kind;
+  const lamp = lampOf(kind);
   return (
-    <label
-      class="flex items-start gap-2"
-      style={`cursor:pointer;padding:10px 12px;border-radius:var(--ef-radius-sm);border:1px solid ${
-        selected ? 'var(--ef-accent,var(--ef-text))' : 'var(--ef-border)'
-      }`}
-    >
+    <label class={`env-kind ${lamp}${selected ? ' selected' : ''}`}>
       <input
         type="radio"
         name="env-kind"
@@ -339,12 +332,8 @@ function KindChoice({
         }}
       />
       <span>
-        <span style="display:block;font-family:var(--ef-font-body);font-size:13px;font-weight:600;color:var(--ef-text)">
-          {title}
-        </span>
-        <span style="display:block;font-family:var(--ef-font-body);font-size:12px;line-height:1.45;color:var(--ef-text-muted);margin-top:2px">
-          {consequence}
-        </span>
+        <span class="env-kind-title">{title}</span>
+        <span class="env-kind-why">{consequence}</span>
       </span>
     </label>
   );
@@ -397,7 +386,11 @@ function CreateEntryForm() {
   }
 
   return (
-    <form class="panel" onSubmit={(e) => void onSubmit(e)} style="padding:16px;margin-bottom:22px">
+    <form
+      class="panel env-form"
+      onSubmit={(e) => void onSubmit(e)}
+      style="padding:16px;margin-bottom:22px"
+    >
       <div class="eyebrow" style="margin-bottom:10px">
         New environment entry
       </div>
@@ -425,7 +418,8 @@ function CreateEntryForm() {
           hint="Lowercase letters/digits/dashes. Immutable — it names the entry."
         >
           <input
-            class="input"
+            class="input env-w-key"
+            style="font-family:var(--ef-font-mono)"
             value={formSlug.value}
             onInput={(e) => {
               formSlug.value = (e.currentTarget as HTMLInputElement).value;
@@ -438,7 +432,8 @@ function CreateEntryForm() {
           hint="Uppercase POSIX name ([A-Z][A-Z0-9_]*) the runner sets on the agent. Reserved names are rejected, and the name must not already reach a bound member from either store."
         >
           <input
-            class="input"
+            class="input env-w-key"
+            style="font-family:var(--ef-font-mono)"
             value={formEnvName.value}
             onInput={(e) => {
               formEnvName.value = (e.currentTarget as HTMLInputElement).value;
@@ -448,7 +443,7 @@ function CreateEntryForm() {
         </Labeled>
         <Labeled label="Description" hint="Optional purpose note shown alongside the slug">
           <input
-            class="input"
+            class="input env-w-prose"
             value={formDescription.value}
             onInput={(e) => {
               formDescription.value = (e.currentTarget as HTMLInputElement).value;
@@ -506,7 +501,7 @@ function Labeled({
     <label style="display:flex;flex-direction:column;gap:4px">
       <div class="field-label">{label}</div>
       {children}
-      <div class="field-help">{hint}</div>
+      <div class="field-help env-prose">{hint}</div>
     </label>
   );
 }

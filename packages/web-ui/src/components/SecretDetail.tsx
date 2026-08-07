@@ -82,10 +82,12 @@ export function SecretDetail({ slug }: { slug: string }) {
         class="flex-1 overflow-y-auto"
         style="padding:24px max(1rem,env(safe-area-inset-right)) 24px max(1rem,env(safe-area-inset-left))"
       >
-        <ErrorCallout
-          title="Restricted"
-          message="Managing the runner environment requires the secrets.manage permission."
-        />
+        <div class="env-page detail">
+          <ErrorCallout
+            title="Restricted"
+            message="Managing the runner environment requires the secrets.manage permission."
+          />
+        </div>
       </div>
     );
   }
@@ -97,79 +99,89 @@ export function SecretDetail({ slug }: { slug: string }) {
       class="flex-1 overflow-y-auto"
       style="padding:24px max(1rem,env(safe-area-inset-right)) 32px max(1rem,env(safe-area-inset-left))"
     >
-      <nav class="crumbs" style="margin-bottom:14px">
-        <button type="button" class="text-link" onClick={selectEnvironment}>
-          <ArrowLeft size={13} aria-hidden="true" />
-          Environment
-        </button>
-        <span class="sep">/</span>
-        <span class="current">{slug}</span>
-      </nav>
+      <div class="env-page detail">
+        <nav class="crumbs" style="margin-bottom:14px">
+          <button type="button" class="text-link" onClick={selectEnvironment}>
+            <ArrowLeft size={13} aria-hidden="true" />
+            Environment
+          </button>
+          <span class="sep">/</span>
+          <span class="current">{slug}</span>
+        </nav>
 
-      <DetailLoadError kind="secret" />
+        <DetailLoadError kind="secret" />
 
-      {secret === null && detailError.value === null && <Loading label="Loading secret…" />}
+        {secret === null && detailError.value === null && <Loading label="Loading secret…" />}
 
-      {secret !== null && (
-        <>
-          <header style="margin-bottom:20px">
-            <div class="flex items-center gap-3 flex-wrap">
-              <h2
-                class="font-display"
-                style="margin:0;font-size:26px;font-weight:800;letter-spacing:-0.02em;color:var(--ef-text)"
-              >
-                {secret.slug}
-              </h2>
-              <span class="badge">Secret</span>
-              <span class={`badge ${secret.enabled ? 'soft' : 'muted'}`}>
-                {secret.enabled ? 'Enabled' : 'Disabled'}
-              </span>
-            </div>
-            <div class="fact-grid" style="margin-top:10px">
-              <div>
-                <div class="fact-k">ENV VAR</div>
-                <div class="fact-v">${secret.envName}</div>
+        {secret !== null && (
+          <>
+            <header style="margin-bottom:20px">
+              <div class="flex items-center gap-3 flex-wrap">
+                <h2
+                  class="font-display"
+                  style="margin:0;font-size:26px;font-weight:800;letter-spacing:-0.02em;color:var(--ef-text)"
+                >
+                  {secret.slug}
+                </h2>
+                <span class="badge">Secret</span>
+                <span class={`badge ${secret.enabled ? 'soft' : 'muted'}`}>
+                  {secret.enabled ? 'Enabled' : 'Disabled'}
+                </span>
               </div>
-              <div>
-                <div class="fact-k">REGISTERED BY</div>
-                <div class="fact-v">{secret.createdBy}</div>
+              <div class="env-facts">
+                <div>
+                  <div class="fact-k">ENV VAR</div>
+                  <div class="fact-v">${secret.envName}</div>
+                </div>
+                <div>
+                  <div class="fact-k">REGISTERED BY</div>
+                  <div class="fact-v">{secret.createdBy}</div>
+                </div>
               </div>
-            </div>
-            {secret.description.length > 0 && (
-              <div style="margin-top:8px;font-family:var(--ef-font-body);font-size:12.5px;color:var(--ef-text-muted)">
-                {secret.description}
-              </div>
+              {secret.description.length > 0 && (
+                <div
+                  class="env-prose"
+                  style="margin-top:8px;font-family:var(--ef-font-body);font-size:12.5px;color:var(--ef-text-muted)"
+                >
+                  {secret.description}
+                </div>
+              )}
+            </header>
+
+            <ClassificationNote kind="secret" />
+
+            {sectionError.value !== null && (
+              <ErrorCallout
+                message={sectionError.value}
+                style="margin-bottom:16px"
+                onDismiss={() => {
+                  sectionError.value = null;
+                }}
+              />
             )}
-          </header>
 
-          <ClassificationNote kind="secret" />
-
-          {sectionError.value !== null && (
-            <ErrorCallout
-              message={sectionError.value}
-              style="margin-bottom:16px"
-              onDismiss={() => {
-                sectionError.value = null;
-              }}
+            <MetadataSection
+              entry={secret}
+              kind="secret"
+              ops={ops}
+              validateEnvName={validateEnvName}
             />
-          )}
-
-          <MetadataSection
-            entry={secret}
-            kind="secret"
-            ops={ops}
-            validateEnvName={validateEnvName}
-          />
-          <AccessSection
-            entry={secret}
-            kind="secret"
-            ops={ops}
-            boundMembers={detail?.boundMembers ?? []}
-          />
-          <ValueSection secret={secret} />
-          <LifecycleSection entry={secret} kind="secret" ops={ops} onDeleted={selectEnvironment} />
-        </>
-      )}
+            <AccessSection
+              entry={secret}
+              kind="secret"
+              ops={ops}
+              boundMembers={detail?.boundMembers ?? []}
+            />
+            <ValueSection secret={secret} />
+            <LifecycleSection
+              entry={secret}
+              kind="secret"
+              ops={ops}
+              onDeleted={selectEnvironment}
+            />
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -215,7 +227,7 @@ function ValueSection({ secret }: { secret: SecretSummary }) {
           });
         }}
       >
-        <div class="field flex-1" style="margin:0;min-width:200px">
+        <div class="field" style="margin:0;min-width:200px;flex:1;max-width:44ch">
           <label class="field-label" for="secret-value">
             Value
           </label>
@@ -235,9 +247,7 @@ function ValueSection({ secret }: { secret: SecretSummary }) {
           {busy === 'value-set' ? 'Saving…' : secret.hasValue ? 'Replace' : 'Set value'}
         </button>
       </form>
-      <div style="font-family:var(--ef-font-body);font-size:11.5px;color:var(--ef-text-muted);font-style:italic;margin-top:8px">
-        Delivered as ${secret.envName} on the member's next runner start.
-      </div>
+      <div class="env-hint">Delivered as ${secret.envName} on the member's next runner start.</div>
       {/*
         There is no convert-to-variable action, and the reason is this
         section: the value is write-only, so nothing in this UI — or on
@@ -245,7 +255,7 @@ function ValueSection({ secret }: { secret: SecretSummary }) {
         is the difference between an operator who plans for it and one
         who deletes a secret expecting to paste it back.
       */}
-      <div style="font-family:var(--ef-font-body);font-size:11.5px;color:var(--ef-text-muted);margin-top:10px;padding-top:10px;border-top:1px solid var(--ef-border)">
+      <div class="env-hint rule">
         Moving this to a variable means deleting it and registering a new one. The value cannot be
         carried over — it is write-only, so you will need the original to hand.
       </div>

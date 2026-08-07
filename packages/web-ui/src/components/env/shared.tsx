@@ -136,25 +136,18 @@ export function SectionPanel({
 export function ClassificationNote({ kind }: { kind: EnvKind }) {
   const secret = kind === 'secret';
   return (
-    <div
-      class="flex items-start gap-2"
-      style={`padding:10px 12px;border-radius:var(--ef-radius-sm);margin-bottom:16px;border:1px solid ${
-        secret ? 'var(--ef-border)' : 'var(--ef-warn-border,var(--ef-border))'
-      };background:var(--ef-surface-sunken,transparent)`}
-    >
-      <span style="font-family:var(--ef-font-body);font-size:12.5px;line-height:1.5;color:var(--ef-text-muted)">
+    <div class={`env-note ${secret ? 'nominal' : 'caution'}`}>
+      <span>
         {secret ? (
           <>
-            <strong style="color:var(--ef-text)">Secret.</strong> The value is write-only — it
-            leaves the broker only into the agent's environment, and it is scrubbed from captured
-            traces.
+            <strong class="env-note-lead">Secret.</strong> The value is write-only — it leaves the
+            broker only into the agent's environment, and it is scrubbed from captured traces.
           </>
         ) : (
           <>
-            <strong style="color:var(--ef-text)">Variable — not a secret.</strong> The value is
-            readable here and{' '}
-            <strong style="color:var(--ef-text)">appears verbatim in captured traces</strong>. Use a
-            secret for anything that must not be recorded.
+            <strong class="env-note-lead">Variable — not a secret.</strong> The value is readable
+            here and <strong>appears verbatim in captured traces</strong>. Use a secret for anything
+            that must not be recorded.
           </>
         )}
       </span>
@@ -197,7 +190,7 @@ export function MetadataSection({
           </label>
           <input
             id="env-name"
-            class="input"
+            class="input env-w-key"
             style="font-family:var(--ef-font-mono)"
             value={metaEnvName.value}
             onInput={(e) => {
@@ -205,7 +198,7 @@ export function MetadataSection({
             }}
             placeholder={kind === 'secret' ? 'GITHUB_TOKEN' : 'GIT_AUTHOR_NAME'}
           />
-          <div class="field-help">
+          <div class="field-help env-prose">
             Uppercase POSIX name ([A-Z][A-Z0-9_]*). Renaming takes effect on each member's next
             runner start. A member can never resolve one name from two entries — secrets and
             variables share the namespace.
@@ -217,7 +210,7 @@ export function MetadataSection({
           </label>
           <input
             id="env-description"
-            class="input"
+            class="input env-w-prose"
             value={metaDescription.value}
             onInput={(e) => {
               metaDescription.value = (e.currentTarget as HTMLInputElement).value;
@@ -275,7 +268,10 @@ export function AccessSection({
       {!entry.allMembers && (
         <>
           {boundMembers.length === 0 && (
-            <div style="font-family:var(--ef-font-body);font-size:13px;color:var(--ef-text-muted);margin-bottom:10px">
+            <div
+              class="env-prose"
+              style="font-family:var(--ef-font-body);font-size:13px;color:var(--ef-text-muted);margin-bottom:10px"
+            >
               No members bound — no agent receives this {kind} yet.
             </div>
           )}
@@ -390,7 +386,7 @@ export function LifecycleSection({
           </button>
         )}
       </div>
-      <div style="font-family:var(--ef-font-body);font-size:11.5px;color:var(--ef-text-muted);font-style:italic;margin-top:8px">
+      <div class="env-hint">
         Disabling stops delivery on each member's next runner start — already-running agents keep
         their environment. Deleting also removes bindings and the{' '}
         {kind === 'secret' ? 'encrypted' : 'stored'} value.

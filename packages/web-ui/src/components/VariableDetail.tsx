@@ -91,10 +91,12 @@ export function VariableDetail({ slug }: { slug: string }) {
         class="flex-1 overflow-y-auto"
         style="padding:24px max(1rem,env(safe-area-inset-right)) 24px max(1rem,env(safe-area-inset-left))"
       >
-        <ErrorCallout
-          title="Restricted"
-          message="Managing the runner environment requires the secrets.manage permission."
-        />
+        <div class="env-page detail">
+          <ErrorCallout
+            title="Restricted"
+            message="Managing the runner environment requires the secrets.manage permission."
+          />
+        </div>
       </div>
     );
   }
@@ -106,84 +108,89 @@ export function VariableDetail({ slug }: { slug: string }) {
       class="flex-1 overflow-y-auto"
       style="padding:24px max(1rem,env(safe-area-inset-right)) 32px max(1rem,env(safe-area-inset-left))"
     >
-      <nav class="crumbs" style="margin-bottom:14px">
-        <button type="button" class="text-link" onClick={selectEnvironment}>
-          <ArrowLeft size={13} aria-hidden="true" />
-          Environment
-        </button>
-        <span class="sep">/</span>
-        <span class="current">{slug}</span>
-      </nav>
+      <div class="env-page detail">
+        <nav class="crumbs" style="margin-bottom:14px">
+          <button type="button" class="text-link" onClick={selectEnvironment}>
+            <ArrowLeft size={13} aria-hidden="true" />
+            Environment
+          </button>
+          <span class="sep">/</span>
+          <span class="current">{slug}</span>
+        </nav>
 
-      <DetailLoadError kind="variable" />
+        <DetailLoadError kind="variable" />
 
-      {variable === null && detailError.value === null && <Loading label="Loading variable…" />}
+        {variable === null && detailError.value === null && <Loading label="Loading variable…" />}
 
-      {variable !== null && (
-        <>
-          <header style="margin-bottom:20px">
-            <div class="flex items-center gap-3 flex-wrap">
-              <h2
-                class="font-display"
-                style="margin:0;font-size:26px;font-weight:800;letter-spacing:-0.02em;color:var(--ef-text)"
-              >
-                {variable.slug}
-              </h2>
-              <span class="badge">Variable</span>
-              <span class={`badge ${variable.enabled ? 'soft' : 'muted'}`}>
-                {variable.enabled ? 'Enabled' : 'Disabled'}
-              </span>
-            </div>
-            <div class="fact-grid" style="margin-top:10px">
-              <div>
-                <div class="fact-k">ENV VAR</div>
-                <div class="fact-v">${variable.envName}</div>
+        {variable !== null && (
+          <>
+            <header style="margin-bottom:20px">
+              <div class="flex items-center gap-3 flex-wrap">
+                <h2
+                  class="font-display"
+                  style="margin:0;font-size:26px;font-weight:800;letter-spacing:-0.02em;color:var(--ef-text)"
+                >
+                  {variable.slug}
+                </h2>
+                <span class="badge">Variable</span>
+                <span class={`badge ${variable.enabled ? 'soft' : 'muted'}`}>
+                  {variable.enabled ? 'Enabled' : 'Disabled'}
+                </span>
               </div>
-              <div>
-                <div class="fact-k">REGISTERED BY</div>
-                <div class="fact-v">{variable.createdBy}</div>
+              <div class="env-facts">
+                <div>
+                  <div class="fact-k">ENV VAR</div>
+                  <div class="fact-v">${variable.envName}</div>
+                </div>
+                <div>
+                  <div class="fact-k">REGISTERED BY</div>
+                  <div class="fact-v">{variable.createdBy}</div>
+                </div>
               </div>
-            </div>
-            {variable.description.length > 0 && (
-              <div style="margin-top:8px;font-family:var(--ef-font-body);font-size:12.5px;color:var(--ef-text-muted)">
-                {variable.description}
-              </div>
+              {variable.description.length > 0 && (
+                <div
+                  class="env-prose"
+                  style="margin-top:8px;font-family:var(--ef-font-body);font-size:12.5px;color:var(--ef-text-muted)"
+                >
+                  {variable.description}
+                </div>
+              )}
+            </header>
+
+            <ClassificationNote kind="variable" />
+
+            {sectionError.value !== null && (
+              <ErrorCallout
+                message={sectionError.value}
+                style="margin-bottom:16px"
+                onDismiss={() => {
+                  sectionError.value = null;
+                }}
+              />
             )}
-          </header>
 
-          <ClassificationNote kind="variable" />
-
-          {sectionError.value !== null && (
-            <ErrorCallout
-              message={sectionError.value}
-              style="margin-bottom:16px"
-              onDismiss={() => {
-                sectionError.value = null;
-              }}
+            <MetadataSection
+              entry={variable}
+              kind="variable"
+              ops={ops}
+              validateEnvName={validateEnvName}
             />
-          )}
-
-          <MetadataSection
-            entry={variable}
-            kind="variable"
-            ops={ops}
-            validateEnvName={validateEnvName}
-          />
-          <AccessSection
-            entry={variable}
-            kind="variable"
-            ops={ops}
-            boundMembers={detail?.boundMembers ?? []}
-          />
-          <ValueSection variable={variable} />
-          <LifecycleSection
-            entry={variable}
-            kind="variable"
-            ops={ops}
-            onDeleted={selectEnvironment}
-          />
-        </>
-      )}
+            <AccessSection
+              entry={variable}
+              kind="variable"
+              ops={ops}
+              boundMembers={detail?.boundMembers ?? []}
+            />
+            <ValueSection variable={variable} />
+            <LifecycleSection
+              entry={variable}
+              kind="variable"
+              ops={ops}
+              onDeleted={selectEnvironment}
+            />
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -222,10 +229,7 @@ function ValueSection({ variable }: { variable: VariableSummary }) {
           <div class="field-label" style="margin-bottom:4px">
             Current value
           </div>
-          <div
-            data-testid="variable-value"
-            style="font-family:var(--ef-font-mono);font-size:13px;color:var(--ef-text);background:var(--ef-surface-sunken,transparent);border:1px solid var(--ef-border);border-radius:var(--ef-radius-sm);padding:8px 10px;overflow-wrap:anywhere"
-          >
+          <div data-testid="variable-value" class="env-readout">
             {variable.value}
           </div>
         </div>
@@ -234,7 +238,10 @@ function ValueSection({ variable }: { variable: VariableSummary }) {
       {variable.hasValue && !readable && (
         <div class="flex items-center gap-2" style="margin-bottom:12px">
           <Eye size={14} aria-hidden="true" style="color:var(--ef-text-muted)" />
-          <span style="font-family:var(--ef-font-body);font-size:13px;color:var(--ef-text)">
+          <span
+            class="env-prose"
+            style="font-family:var(--ef-font-body);font-size:13px;color:var(--ef-text)"
+          >
             A value is set, but it was not returned to this session. It is configured — this is not
             the same as unset.
           </span>
@@ -255,7 +262,7 @@ function ValueSection({ variable }: { variable: VariableSummary }) {
           });
         }}
       >
-        <div class="field flex-1" style="margin:0;min-width:200px">
+        <div class="field" style="margin:0;min-width:200px;flex:1;max-width:56ch">
           <label class="field-label" for="variable-value">
             {variable.hasValue ? 'Replace value' : 'Value'}
           </label>
@@ -276,7 +283,7 @@ function ValueSection({ variable }: { variable: VariableSummary }) {
           {busy === 'value-set' ? 'Saving…' : variable.hasValue ? 'Replace' : 'Set value'}
         </button>
       </form>
-      <div style="font-family:var(--ef-font-body);font-size:11.5px;color:var(--ef-text-muted);font-style:italic;margin-top:8px">
+      <div class="env-hint">
         Delivered as ${variable.envName} on the member's next runner start, and left intact in
         captured traces.
       </div>
