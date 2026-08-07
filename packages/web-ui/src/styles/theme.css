@@ -2741,6 +2741,50 @@ body {
   color: var(--ef-text-faint);
 }
 
+/* ─────────────────────── PANEL MEASURE ─────────────────────── *
+ *
+ * Panel content was unconstrained, so on a wide display every row,
+ * field and help line stretched to the window — a help line ran past
+ * 1600px and an input holding a short name was as wide as the screen.
+ *
+ * The scroll container itself has to stay full-width: it owns the
+ * scrollbar and the page background, and centring it would strand both.
+ * So the measure lands on its children instead.
+ *
+ * Opt-in per panel rather than applied to every `.flex-1.overflow-y-auto`,
+ * because the nav rail uses that same scroller and its items are meant
+ * to fill it.
+ *
+ * Two widths, and the distinction is what the view IS. An INDEX earns
+ * its width from rows that carry data out to the right edge. A RECORD
+ * is one entity's fields, where the widest control is a name —
+ * stretching it to the index measure leaves half of every panel empty.
+ */
+
+:root {
+  --ef-page-measure: 1080px;
+  --ef-page-measure-record: 780px;
+}
+
+/*
+ * REQUIRES CHILDREN THAT FILL. `margin-inline: auto` centres a child
+ * within the FULL width, so it only reads as a measure column when the
+ * child actually grows to it — panels, headers and grids do. A child
+ * narrower than the measure (a fit-content card) gets centred in the
+ * window instead of aligned to the column, which looks worse than no
+ * constraint at all. `MemberProfile` is the known case: its header sits
+ * outside this scroller and its tab content is a fit-content card, so
+ * it is deliberately NOT `.measured` and needs a real wrapper element
+ * instead.
+ */
+.measured > * {
+  max-width: var(--ef-page-measure);
+  margin-inline: auto;
+}
+.measured.record > * {
+  max-width: var(--ef-page-measure-record);
+}
+
 /* ─────────────────────── RUNNER ENVIRONMENT ─────────────────────── *
  *
  * The Environment views — secrets and variables on one surface. Two
@@ -2763,7 +2807,7 @@ body {
  */
 
 .env-page {
-  max-width: 1080px;
+  max-width: var(--ef-page-measure);
   margin-inline: auto;
 }
 
@@ -2772,7 +2816,7 @@ body {
    whose widest control is a POSIX name, and stretching its panels to
    the list measure leaves half of each one empty. */
 .env-page.detail {
-  max-width: 780px;
+  max-width: var(--ef-page-measure-record);
 }
 
 /* Prose measure — help text, blurbs, notes. Long lines are the single

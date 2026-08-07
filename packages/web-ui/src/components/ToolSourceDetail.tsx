@@ -88,7 +88,7 @@ export function ToolSourceDetail({ slug }: { slug: string }) {
   if (!hasPermission(b.permissions, 'tools.manage')) {
     return (
       <div
-        class="flex-1 overflow-y-auto"
+        class="flex-1 overflow-y-auto measured record"
         style="padding:24px max(1rem,env(safe-area-inset-right)) 24px max(1rem,env(safe-area-inset-left))"
       >
         <ErrorCallout
@@ -105,7 +105,7 @@ export function ToolSourceDetail({ slug }: { slug: string }) {
 
   return (
     <div
-      class="flex-1 overflow-y-auto"
+      class="flex-1 overflow-y-auto measured record"
       style="padding:24px max(1rem,env(safe-area-inset-right)) 32px max(1rem,env(safe-area-inset-left))"
     >
       <nav class="crumbs" style="margin-bottom:14px">
