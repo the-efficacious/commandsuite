@@ -207,7 +207,10 @@ function FocusView({ contracts }: { contracts: SpineContract[] }) {
     );
   }
   return (
-    <Lane label={canCurate ? 'Lit for travel — the whole team' : 'Mine, in focus'} count={rows.length}>
+    <Lane
+      label={canCurate ? 'Lit for travel — the whole team' : 'Mine, in focus'}
+      count={rows.length}
+    >
       {rows.map((c) => (
         <ContractRow key={c.id} contract={c} />
       ))}

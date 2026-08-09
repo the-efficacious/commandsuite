@@ -102,7 +102,8 @@ describe('the focus set running dry', () => {
     // The phone buzzed: `focus` is on andrewjon's default whitelist, and
     // this is the only class-1 kind in this test that is.
     expect(phone).toHaveBeenCalledTimes(1);
-    expect((phone.mock.calls[0]?.[0] as { to: string }).to).toBe('andrewjon');
+    const buzzed = phone.mock.calls[0]?.[0] as { to: string } | undefined;
+    expect(buzzed?.to).toBe('andrewjon');
   });
 
   it('says nothing while the set is still non-empty — it fires on the emptying, not every shrink', async () => {

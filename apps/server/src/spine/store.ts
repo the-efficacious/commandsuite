@@ -1375,9 +1375,9 @@ class SqliteAnnexStore implements AnnexWriter {
         'invalid_transition',
         body.lit
           ? `contract ${contract.id} is already in the focus set. Lighting it again would ` +
-            'change nothing — the focus set is a set. Unlight it with `lit: false` to take it out.'
+              'change nothing — the focus set is a set. Unlight it with `lit: false` to take it out.'
           : `contract ${contract.id} is not in the focus set, so there is nothing to unlight. ` +
-            'Light it with `lit: true` to add it.',
+              'Light it with `lit: true` to add it.',
       );
     }
   }

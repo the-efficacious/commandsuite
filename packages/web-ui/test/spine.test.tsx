@@ -421,7 +421,12 @@ describe('SpineBoardPanel — the focus set (D9), finding 8', () => {
     stubSpine({
       contracts: [mkContract({ id: 'ct_mine', title: 'My own thing', inFocus: false })],
       focusSet: [
-        mkContract({ id: 'ct_x', title: 'Someone elses lit work', assignee: 'scout', inFocus: true }),
+        mkContract({
+          id: 'ct_x',
+          title: 'Someone elses lit work',
+          assignee: 'scout',
+          inFocus: true,
+        }),
         mkContract({ id: 'ct_y', title: 'Another lit one', assignee: 'cora', inFocus: true }),
       ],
     });

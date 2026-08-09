@@ -98,7 +98,10 @@ describe('class 2 is gated by focus, class 1 is not — the pinned line', () => 
     const b = await authorContract('op-b');
     // cora subscribes to B at `all` — she would hear every authoritative
     // event on it, if focus let her.
-    await app.request('/spine/curator', authed(CORA, { subscription: { contract: b, level: 'all' } }, 'PUT'));
+    await app.request(
+      '/spine/curator',
+      authed(CORA, { subscription: { contract: b, level: 'all' } }, 'PUT'),
+    );
 
     // Light A. The focus set is now {A}, so B is OUT OF FOCUS.
     await light(a, 1, 'op-light-a');
@@ -141,7 +144,10 @@ describe('class 2 is gated by focus, class 1 is not — the pinned line', () => 
     const b = await authorContract('op-b');
     // cora subscribes to A — the contract we are about to push out of
     // focus. She is the class-2 control: she must hear NOTHING.
-    await app.request('/spine/curator', authed(CORA, { subscription: { contract: a, level: 'all' } }, 'PUT'));
+    await app.request(
+      '/spine/curator',
+      authed(CORA, { subscription: { contract: a, level: 'all' } }, 'PUT'),
+    );
 
     // Light B, so A is out of focus.
     await light(b, 1, 'op-light-b');
