@@ -233,6 +233,24 @@ describe('class 1 — addressed, and it never yields', () => {
     expect(sinks.rune?.injections).toHaveLength(1);
   });
 
+  it('serves class 0 to a member who set every contract to `none`', async () => {
+    // Class 0 does not consult a level either, and the reason is
+    // structural rather than a policy choice: the pack reaches an album
+    // because the member ASKED for it. A subscription that could
+    // suppress `orient` would be a member able to switch off their own
+    // recovery.
+    const contract = await authorContract();
+    await app.request(
+      '/spine/curator',
+      authed(RUNE, { subscription: { contract, level: 'none' } }, 'PUT'),
+    );
+    const pack = (await get(app, '/spine/orient', RUNE)) as { contracts: unknown[] };
+    expect(pack.contracts).toHaveLength(1);
+    const rows = await ledger(RUNE);
+    expect(rows.map((r) => r.kind)).toEqual(['recovery_pack']);
+    expect(harness.curatorStore.leases('rune').map((l) => l.ref)).toEqual([contract]);
+  });
+
   it('spends nothing twice on an idempotent retry', async () => {
     const contract = await authorContract();
     const verdict = {
