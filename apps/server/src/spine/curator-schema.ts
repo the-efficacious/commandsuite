@@ -89,11 +89,18 @@ export const SPINE_CURATOR_SCHEMA = `
   -- one query over this table, which is the only reason that question
   -- is answerable at all.
   --
-  -- NO BODY COLUMN, on purpose. The ledger accounts for spend; keeping
-  -- the text would make the audit trail a second copy of the member's
-  -- traffic and therefore a second place it can leak from. Bytes and
-  -- refs are enough to answer both questions anyone asks of it — how
-  -- much, and about what.
+  -- NO BODY COLUMN, and the reason is NOT confidentiality. Every
+  -- injection is a broker push, so its text is already durable in the
+  -- broker's event log and readable at GET /history — a copy here
+  -- would leak nothing that is not already retrievable.
+  --
+  -- The reason is that this is an ACCOUNT, not an archive. It answers
+  -- two questions — how much of this member's album was spent, and
+  -- about what — and both are answered by bytes and refs. A second
+  -- copy of the text would be a copy that can drift from the log it
+  -- duplicates, that has to be retained and redacted on its own
+  -- schedule, and that grows the ledger by the size of the traffic it
+  -- is supposed to summarise.
   CREATE TABLE IF NOT EXISTS spine_injections (
     id INTEGER PRIMARY KEY,
     member TEXT NOT NULL,

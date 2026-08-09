@@ -3335,12 +3335,25 @@ export function createApp(options: AppOptions): CreatedApp {
     app.get(`${SPINE_PATHS.events}/:id`, auth, (c) => {
       const event = spine.event(c.req.param('id'));
       if (event === null) return c.json({ error: 'no such event' }, 404);
-      // Reading ONE event proves the member saw that event and says
-      // nothing about the ones around it, so the receipt only moves if
-      // this is genuinely further than they had got. `advanceReceipt`
-      // is monotonic, which is what makes reading an old event by id
-      // harmless rather than a receipt going backwards.
-      curator?.onRead(c.get('member').name, event.seq, 'event_read');
+      // A BY-ID READ ADVANCES NOTHING, and this is the one place that
+      // rule has to be written down because the opposite is so
+      // tempting: the member demonstrably read an event at seq N, so
+      // why not move their watermark to N?
+      //
+      // Because a receipt is a WATERMARK — "everything up to here has
+      // been read" — and reading one event proves nothing whatever
+      // about the events below it. Moving it here silently discharges
+      // every unread event underneath, and the path is not exotic: a
+      // class-1 line hands the member an event id, so fetching that id
+      // is the most likely next call in the system. Measured before the
+      // fix: one by-id read of seq 4 took the watermark from 1 to 4 and
+      // the two never-read authoritative events at 2 and 3 stopped
+      // being owed.
+      //
+      // Only `orient` (composed at a cursor) and a PAGE read (through
+      // its last returned seq) establish a watermark, so only they move
+      // one. `ReceiptVia` has no `event_read` member, so this is not a
+      // decision a future caller can re-make by accident.
       return c.json({ event });
     });
 
@@ -3488,7 +3501,7 @@ export function createApp(options: AppOptions): CreatedApp {
         const parsed = ListSpineInjectionsQuerySchema.safeParse({
           member: c.req.query('member'),
           limit: c.req.query('limit'),
-          since_id: c.req.query('since_id'),
+          before_id: c.req.query('before_id'),
         });
         if (!parsed.success) {
           return c.json({ error: 'invalid query', details: parsed.error.issues }, 400);

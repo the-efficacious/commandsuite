@@ -26,16 +26,33 @@
  * clock would have taken anyway. Neither can make the spine wrong,
  * which is exactly why a spike is allowed to land here at all.
  *
- * TWO SHAPES, and they are different events:
+ * THREE SHAPES, and only one of them is ever reported:
  *
- *   RESET     the running total went DOWN. Totals only ever grow
- *             within one continuous context, so a decrease means the
- *             accounting restarted under us — the strongest evidence
- *             available that the thread's context is not what it was.
- *   SATURATED the last request's tokens reached the declared context
- *             window. Nothing has been discarded YET, but this is the
- *             state a discard happens from, and it is worth a line
- *             because it is the only forewarning codex gives.
+ *   RESET     the running total went DOWN. REPORTED under the flag.
+ *   SHRANK    the LAST request's tokens fell sharply while the running
+ *             total kept growing. Log-only.
+ *   SATURATED the last request reached the declared window. Log-only —
+ *             by this file's own account nothing has been discarded
+ *             YET, so reporting it as `dump_declared` would be
+ *             reporting a forecast as an event.
+ *
+ * WHICH SHAPE IS ACTUALLY THE COMPACTION IS AN OPEN QUESTION, and
+ * writing that down is the most useful thing this spike does. `total`
+ * reads like a CUMULATIVE BILLING COUNTER for the thread: if it is,
+ * it does not reset when context is compacted — it resets when a
+ * THREAD RESTARTS, which is a different event that happens to look
+ * identical here. The shape that should track a compaction is
+ * `last` collapsing (the next request carries a summarised prefix
+ * instead of the full history) while `total` continues upward. That is
+ * why SHRANK is measured even though nothing acts on it: the point of
+ * a spike is to come back with data about which signal to trust, and
+ * a spike that only records the shape it already believed in returns
+ * its own assumption.
+ *
+ * EDGE-TRIGGERED. A saturated window stays saturated across every
+ * notification of a long turn, and a level-triggered watcher would log
+ * the same line ten times — a stream of identical lines is how an
+ * operator learns to stop reading a channel.
  */
 
 import type { SpineDumpSource } from 'csuite-sdk/types';
@@ -48,7 +65,21 @@ export const CODEX_DUMP_SIGNAL_ENV = 'CSUITE_SPINE_CODEX_DUMP_SIGNAL';
 /** The exact log line the spike must produce. Named so tests can grep for it. */
 export const CODEX_DUMP_LOG_LINE = 'spine: possible codex dump detected';
 
-export type TokenDiscontinuity = 'total_reset' | 'window_saturated';
+export type TokenDiscontinuity = 'total_reset' | 'last_shrank' | 'window_saturated';
+
+/**
+ * The only shape that is ever REPORTED as a dump, and then only under
+ * the env flag. The other two are measurements.
+ */
+const REPORTABLE: ReadonlySet<TokenDiscontinuity> = new Set<TokenDiscontinuity>(['total_reset']);
+
+/**
+ * How far `last` must fall, as a fraction of its previous value,
+ * before it counts as a collapse rather than a short turn. Turns vary
+ * enormously in size, so a small drop is the normal texture of a
+ * session; losing three quarters of the prompt in one step is not.
+ */
+const LAST_COLLAPSE_RATIO = 0.25;
 
 export interface TokenUsageObservation {
   /** Running thread total, when the payload carried one. */
@@ -77,6 +108,22 @@ export function classifyTokenUsage(
     // a turn that consumed nothing, and calling either a discard would
     // make an idle thread look like it was losing its memory.
     if (next.total < previous.total) return 'total_reset';
+  }
+  // `last` collapsing while `total` keeps climbing: the shape a real
+  // compaction should leave, and the one worth coming back with
+  // numbers about. The `total` guard is what separates it from a
+  // restart, which the first branch already claimed.
+  if (
+    previous !== null &&
+    previous.last !== null &&
+    next.last !== null &&
+    previous.last > 0 &&
+    next.last < previous.last * LAST_COLLAPSE_RATIO &&
+    previous.total !== null &&
+    next.total !== null &&
+    next.total >= previous.total
+  ) {
+    return 'last_shrank';
   }
   if (next.last !== null && next.window !== null && next.window > 0) {
     if (next.last >= next.window) return 'window_saturated';
@@ -118,6 +165,7 @@ export function attachCodexTokenUsageWatch(
   const env = options.env ?? process.env;
   const reporting = env[CODEX_DUMP_SIGNAL_ENV] === '1';
   let previous: TokenUsageObservation | null = null;
+  let lastReported: TokenDiscontinuity | null = null;
   let seen = 0;
   const detected: TokenDiscontinuity[] = [];
 
@@ -132,7 +180,14 @@ export function attachCodexTokenUsageWatch(
     seen++;
     const discontinuity = classifyTokenUsage(previous, next);
     previous = next;
-    if (discontinuity === null) return;
+    if (discontinuity === null) {
+      lastReported = null;
+      return;
+    }
+    // EDGE, not level. A saturated window is still saturated on the
+    // next notification, and the next, and the next.
+    if (discontinuity === lastReported) return;
+    lastReported = discontinuity;
     detected.push(discontinuity);
     // Structured, with both operands, because an operator reading this
     // has to be able to tell a real compaction from a codex build that
@@ -144,9 +199,14 @@ export function attachCodexTokenUsageWatch(
       modelContextWindow: next.window,
       threadId: payload?.threadId ?? null,
       turnId: payload?.turnId ?? null,
-      reported: reporting,
+      // Whether this line became a signal, on the line itself, so an
+      // operator reading stderr never has to work out which of the
+      // three shapes the flag covers.
+      reported: reporting && REPORTABLE.has(discontinuity),
     });
-    if (reporting && options.reportDump) options.reportDump('token_discontinuity');
+    if (reporting && REPORTABLE.has(discontinuity) && options.reportDump) {
+      options.reportDump('token_discontinuity');
+    }
   });
 
   return {

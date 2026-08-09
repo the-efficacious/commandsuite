@@ -171,6 +171,12 @@ export interface RunnerOptions {
    * message; nothing restarts.
    */
   onInstructionsEvent?: (message: Message) => void;
+  /**
+   * Clock for the spine-recovery cooldown. Defaults to `Date.now`.
+   * Tests advance it to prove the cooldown OPENS again, which no
+   * amount of sleeping can establish.
+   */
+  now?: () => number;
 }
 
 export interface RunnerHandle {
@@ -253,6 +259,12 @@ function defaultLog(msg: string, ctx: Record<string, unknown> = {}): void {
  */
 export async function startRunner(options: RunnerOptions): Promise<RunnerHandle> {
   const log = options.log ?? defaultLog;
+  // Injected so the spine-recovery cooldown is drivable. The old
+  // re-brief's cooldown reads the wall clock and is left alone; a test
+  // for a 10-second window that has to wait 10 seconds is a test
+  // nobody runs, and one that sleeps 150ms and asserts absence can
+  // only ever prove the negative half.
+  const clock = options.now ?? Date.now;
   if (!options.url || options.url.length === 0) {
     throw new RunnerStartupError('url is required');
   }
@@ -324,7 +336,27 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
   // a re-brief suppress a recovery, and recovery is the guarantee.
   const SPINE_RECOVERY_COOLDOWN_MS = 10_000;
   let lastSpineRecoveryMs = 0;
-  let spineAvailable = true;
+  /**
+   * TWO FLAGS, NOT ONE, and the bug that forced them apart is the
+   * floor rule failing in the one place it was supposed to be safest.
+   *
+   * These two paths reach two different endpoints with two different
+   * standings. `POST /members/:name/spine-signals` is pure CEILING —
+   * an accelerant, absent on any broker without a curator. `GET
+   * /spine/orient` is the recovery call, and it is the guarantee.
+   * Sharing one flag meant a 404 from the ceiling endpoint
+   * permanently disabled the floor one: a broker with an annex and no
+   * curator — a configuration this repo's own test suite constructs —
+   * answers signals with 404 and orient with 200, and the runner
+   * would stop recovering after the first bridge attach. It was also
+   * a race, since which of the two 404s landed first decided whether
+   * recovery worked at all that session.
+   *
+   * Each path now disables only itself, and only on evidence about
+   * itself.
+   */
+  let signalsAvailable = true;
+  let recoveryAvailable = true;
   let sendSpineRecovery: (reason: 'session-start' | 'context-compaction') => void = () => {};
 
   /**
@@ -340,7 +372,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
     signal: SpineFloorSignal,
     extras: Omit<ReportSpineSignalRequest, 'signal'> = {},
   ): void => {
-    if (!spineAvailable) return;
+    if (!signalsAvailable) return;
     void brokerClient
       .reportSpineSignal(instructions.name, { signal, ...extras })
       .then((result) => {
@@ -351,7 +383,9 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
       })
       .catch((err: unknown) => {
         if (err instanceof ClientError && err.status === 404) {
-          spineAvailable = false;
+          // ONLY the signal path. A broker with an annex and no curator
+          // is a real deployment, and recovery still works on it.
+          signalsAvailable = false;
           log('runner: broker has no spine signals endpoint — not reporting again');
           return;
         }
@@ -709,8 +743,8 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
    * is indistinguishable from a broken runner.
    */
   sendSpineRecovery = (reason) => {
-    if (!spineAvailable) return;
-    const now = Date.now();
+    if (!recoveryAvailable) return;
+    const now = clock();
     if (now - lastSpineRecoveryMs < SPINE_RECOVERY_COOLDOWN_MS) return;
     lastSpineRecoveryMs = now;
     void (async () => {
@@ -735,7 +769,10 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
       });
     })().catch((err: unknown) => {
       if (err instanceof ClientError && err.status === 404) {
-        spineAvailable = false;
+        // Gated on an ORIENT 404 and nothing else. A broker that has no
+        // annex has nothing to recover from; a broker that merely has
+        // no curator has everything to recover from.
+        recoveryAvailable = false;
         log('runner: broker has no spine — skipping spine recovery from now on');
         return;
       }

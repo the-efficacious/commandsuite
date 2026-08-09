@@ -9,19 +9,32 @@
  * `curator-store.ts`, and what is written below is only the machinery
  * that reads them.
  *
- * THE PROPERTY THIS FILE EXISTS TO HOLD, above every other:
+ * THE PROPERTY THIS FILE EXISTS TO HOLD, above every other, and stated
+ * precisely rather than slogan-wise:
  *
- *   Kill every floor signal and the curator stays CORRECT — only
- *   slower to re-orient.
+ *   NO CORRECTNESS PROPERTY DEPENDS ON A SIGNAL. A signal may spend at
+ *   most one additional nudge. The owed end state is identical.
  *
- * Nothing here branches on a declared capability, and nothing here
- * waits for a signal before it will act. `onSignal` moves leases from
- * `live` to `invalidated`, which is the same place the clock moves
- * them to (`expired`) a while later, and both buy exactly one cheap
- * nudge. That is the whole of what a signal does. `spine-curator.test.ts`
- * drives the entire class/lease/receipt suite with ZERO signals
- * reported; `spine-curator-signals.test.ts` replays the same scenarios
- * with signals and asserts the end states are identical.
+ * The middle clause is a real divergence and it is accepted rather
+ * than explained away. A member who is going to read on their own in
+ * five minutes, and whose runner declares a dump at one minute, gets a
+ * nudge they would otherwise never have got: the signal moved the
+ * lease before the read moved the receipt. That costs one line, it is
+ * bounded at one however many signals arrive, and it cannot cost a
+ * missed obligation — nothing a signal touches is an input to what a
+ * member is OWED, only to when the curator stops assuming they still
+ * hold it.
+ *
+ * An earlier draft of this header said "the end states are identical,
+ * only the timing moves". That was overstated in exactly the direction
+ * that makes a design sound better than it is, and the ledger can tell
+ * the difference. `spine-curator.test.ts` drives the entire
+ * class/lease/receipt suite with ZERO signals reported — enforced
+ * behaviourally, by asserting after every test that no lease was ever
+ * invalidated, not by a name check a rename can defeat.
+ * `spine-curator-signals.test.ts` replays the same scenarios with
+ * signals, asserts the owed end state is identical, and names the
+ * extra-nudge arm as an accepted divergence.
  *
  * FOUR CLASSES, and the third is the interesting one:
  *
@@ -77,6 +90,34 @@ import type { AnnexStore, AppendResult } from './store.js';
  */
 const SILENT_STATES: ReadonlySet<SpineContractState> = new Set(['parked', 'waiting_for']);
 
+/**
+ * The lifecycle transitions that ADDRESS the people carrying the work,
+ * rather than merely being available to whoever subscribed.
+ *
+ * Four states, two recipients — the assignee and the named verifier —
+ * and the reason is that these are the transitions that CHANGE WHAT
+ * SOMEBODY OWES rather than report on it. `done`, `cancelled` and
+ * `superseded` end an obligation; `parked` suspends one. In every case
+ * the person holding it must stop, and finding out at their next
+ * `orient` means work done against a contract that no longer wanted
+ * it.
+ *
+ * This is what makes `none` genuinely safe for an assignee rather than
+ * nearly safe. Without it, the argument for defaulting assignees to
+ * silence — everything that binds you arrives as class 1 — had a hole
+ * exactly the size of "your contract was cancelled underneath you".
+ *
+ * `active` and the `waiting_*` states are deliberately absent: they
+ * are reports on progress, they recur, and they are what class 2's
+ * `lifecycle` level is for.
+ */
+const CLASS1_LIFECYCLE_STATES: ReadonlySet<SpineContractState> = new Set([
+  'done',
+  'cancelled',
+  'superseded',
+  'parked',
+]);
+
 /** How many pages the sweep will walk in one tick before deferring the rest. */
 const SWEEP_MAX_PAGES = 20;
 const SWEEP_PAGE_SIZE = 500;
@@ -104,6 +145,17 @@ export interface Curator {
    * Post-commit on the single append path: renew the actor's lease
    * (their own write proves they hold what it names) and deliver
    * class 1 to whoever the event addressed.
+   *
+   * ONE CALL SITE, and it is an invariant rather than a coincidence.
+   * `POST /spine/events` is the only place in the server that calls
+   * `AnnexStore.append`, and this hook hangs off it; a second caller
+   * would be a write whose addressees are never told, which is a
+   * silence nobody would notice because the annex would look correct.
+   * Phase 4's probe engine writes `observation` events and MUST route
+   * through here rather than reaching the store directly — a probe
+   * that discharges a `waiting_for` contract without telling its
+   * assignee is the exact failure this class exists to prevent.
+   * `spine-append-callers.test.ts` holds the invariant from outside.
    */
   onAppend(result: AppendResult): Promise<void>;
   /** A floor signal. Accelerant only — see the header. */
@@ -135,6 +187,17 @@ export interface OrientLike {
   contracts: readonly { contract: string }[];
   asksForMe: readonly { id: string }[];
   myOpenAsks: readonly { id: string }[];
+}
+
+/**
+ * One class-1 recipient, and why. `detail` is the one extra clause a
+ * kind may carry when an id and a title do not locate the act — a
+ * deliberate hole in "no full re-sends", sized to one required field.
+ */
+interface AddressedTarget {
+  member: string;
+  why: string;
+  detail?: string;
 }
 
 /** One member's share of a sweep tick's class-2 traffic. */
@@ -200,6 +263,7 @@ class SpineCurator implements Curator {
     // could never stop being a nudge candidate.
     this.store.grantLeases(member, refs, pack.cursor, 'orient', now);
     this.store.advanceReceipt(member, pack.cursor, 'orient', now);
+    this.provenLive(member);
     this.store.logInjection({
       member,
       class: 0,
@@ -216,6 +280,27 @@ class SpineCurator implements Curator {
 
   onRead(member: string, seq: number, via: ReceiptVia): void {
     this.store.advanceReceipt(member, seq, via, this.now());
+    this.provenLive(member);
+  }
+
+  /**
+   * The member is demonstrably there: they read, they wrote, or their
+   * runner bracketed a session. That starts a NEW LEASE EPOCH, so the
+   * one nudge a stale lease buys is available again.
+   *
+   * Without it, a nudge attempted at an offline member was spent
+   * forever. `nudged_at` is cleared only by a lease grant, and a grant
+   * requires a CONFIRMED delivery — so the member who could not be
+   * reached is precisely the member who is never reached again. The
+   * population that fails that way is the opaque runner the whole
+   * design is for: no signals, offline between sessions, and after one
+   * missed push, permanently dark.
+   *
+   * §6 grants one nudge per lease epoch. A member's return is a new
+   * epoch; it is not the same silence continuing.
+   */
+  private provenLive(member: string): void {
+    this.store.rearmNudges(member);
   }
 
   // ─── Class 1 — addressed ────────────────────────────────────────
@@ -235,22 +320,25 @@ class SpineCurator implements Curator {
     if (event.contract !== null) {
       this.store.grantLeases(event.actor, [event.contract], event.seq, 'act', now);
     }
+    // A write proves liveness even when it names no contract: whoever
+    // sent it is there, holding a session, able to be reached.
+    this.provenLive(event.actor);
 
     for (const target of addressedMembers(event, result.contract, this.annex)) {
       if (target.member === event.actor) continue;
-      await this.deliverAddressed(target.member, event, result.contract, target.why, now);
+      await this.deliverAddressed(target, event, result.contract, now);
     }
   }
 
   private async deliverAddressed(
-    member: string,
+    target: AddressedTarget,
     event: SpineEvent,
     contract: SpineContract | null,
-    why: string,
     now: number,
   ): Promise<void> {
+    const member = target.member;
     const cursor = this.store.receipt(member)?.seq ?? 0;
-    const body = renderAddressed(event, contract, why, cursor);
+    const body = renderAddressed(event, contract, target, cursor);
     const delivered = await this.push(member, body, 1, event.id);
     // The ref is the contract when there is one — a lease is a claim
     // about a thing that goes stale, and an event never does.
@@ -294,6 +382,11 @@ class SpineCurator implements Curator {
     // lease model exists to refuse.
     const ttlMs = this.store.policy(member).leaseTtlMs;
     const invalidated = this.store.invalidateLeases(member, signal, now, ttlMs);
+    // A signal is a runner saying "I am here" about a context that has
+    // changed. That is liveness, so it opens a new epoch — which is
+    // also what makes a returning member who was nudged into the void
+    // reachable again.
+    this.provenLive(member);
     this.logger.info('spine: floor signal', { member, signal, leasesInvalidated: invalidated });
     return invalidated;
   }
@@ -439,7 +532,11 @@ class SpineCurator implements Curator {
       if (stale.length === 0) continue;
 
       const cursor = this.store.receipt(member)?.seq ?? 0;
-      const body = renderNudge(stale.length, cursor);
+      const body = renderNudge(
+        stale.map((lease) => this.annex.contract(lease.ref)),
+        stale.map((lease) => lease.ref),
+        cursor,
+      );
       const delivered = await this.push(member, body, 0, 'nudge');
       // Spent whether or not it landed. A nudge that failed to deliver
       // and is retried next tick is a nudge that repeats, and "at most
@@ -658,12 +755,25 @@ function addressedMembers(
   event: SpineEvent,
   contract: SpineContract | null,
   annex: AnnexStore,
-): { member: string; why: string }[] {
+): AddressedTarget[] {
   switch (event.kind) {
-    case 'ask':
+    case 'ask': {
+      const body = event.body as SpineAskBody;
+      // `unblocks` rides along and nothing else does. It is required on
+      // every ask precisely because an authority triaging a queue needs
+      // to know what is stopped, and an ask with no contract — the
+      // standing-authority shape — otherwise renders as "an ask, on no
+      // contract", which is not identifiable at all. The question, the
+      // context and the reasoning stay out: those are what `orient` is
+      // for.
       return [
-        { member: (event.body as SpineAskBody).authority, why: 'names you as the authority' },
+        {
+          member: body.authority,
+          why: 'names you as the authority',
+          detail: `unblocks: ${body.unblocks}`,
+        },
       ];
+    }
     case 'criterion_verdict':
       return contract === null
         ? []
@@ -677,6 +787,23 @@ function addressedMembers(
       return body.action === 'redirect' && body.redirectTo !== undefined
         ? [{ member: body.redirectTo, why: 'an ask was redirected to you' }]
         : [];
+    }
+    case 'lifecycle': {
+      const state = (event.body as SpineLifecycleBody).state;
+      if (!CLASS1_LIFECYCLE_STATES.has(state) || contract === null) return [];
+      const why =
+        state === 'parked'
+          ? 'this contract was parked — stop work on it'
+          : `this contract is ${state} — it wants no more work`;
+      const targets: AddressedTarget[] = [{ member: contract.assignee, why }];
+      // The verifier is addressed only when one is NAMED. A contract
+      // with no verifier has nobody holding that obligation, and
+      // inventing a recipient is how a queue fills with items nobody
+      // owns.
+      if (contract.verifier !== null && contract.verifier !== contract.assignee) {
+        targets.push({ member: contract.verifier, why });
+      }
+      return targets;
     }
     default:
       return [];
@@ -696,17 +823,24 @@ function addressedMembers(
 function renderAddressed(
   event: SpineEvent,
   contract: SpineContract | null,
-  why: string,
+  target: AddressedTarget,
   cursor: number,
 ): string {
+  // WHERE, and it must never be nothing. A contract when there is one;
+  // otherwise the subject, which is the only other thing that locates
+  // an act in the world. "On no contract" was a line a member could not
+  // act on and could not tell apart from any other such line.
   const where =
-    contract === null
-      ? event.contract === null
-        ? 'no contract'
-        : `contract ${event.contract}`
-      : `${contract.id} "${contract.title}" [${contract.state}, state_rev ${contract.stateRev}]`;
+    contract !== null
+      ? `${contract.id} "${contract.title}" [${contract.state}, state_rev ${contract.stateRev}]`
+      : event.contract !== null
+        ? `contract ${event.contract}`
+        : event.subject !== null
+          ? `subject ${event.subject}`
+          : 'no contract or subject named';
+  const detail = target.detail === undefined ? '' : ` ${target.detail}.`;
   return (
-    `spine: ${event.kind} ${event.id} by ${event.actor} — ${why}. On ${where}. ` +
+    `spine: ${event.kind} ${event.id} by ${event.actor} — ${target.why}. On ${where}.${detail} ` +
     `Since seq ${cursor}: run \`orient\` for the pack, or \`annex_read since_seq=${cursor}\`.`
   );
 }
@@ -736,9 +870,29 @@ function renderDeltaBatch(batch: DeltaBatch, annex: AnnexStore, cursor: number):
  * member who may not need it is the forced insertion §10 forbids, and
  * the member is the only one who knows whether they need it.
  */
-function renderNudge(leases: number, cursor: number): string {
+function renderNudge(
+  contracts: readonly (SpineContract | null)[],
+  refs: readonly string[],
+  cursor: number,
+): string {
+  // NAMES WHAT MOVED. A bare count — "2 things you were holding have
+  // moved" — is a line a member cannot triage: they cannot tell the
+  // contract they are mid-way through from one they parked last week,
+  // so the cheapest correct response to it is always to re-orient,
+  // which spends a whole pack answering a question one line could
+  // have. The refs are already in hand — they are what the ledger row
+  // records — so spending them on the ledger while telling the member
+  // a number was strictly worse than free.
+  //
+  // Ids and titles only. No outcome, no result, no criteria: the
+  // no-re-send rule stands, and this is still a POINTER.
+  const lines = refs.map((ref, i) => {
+    const contract = contracts[i] ?? null;
+    return contract === null ? `  ${ref}` : `  ${contract.id} "${contract.title}"`;
+  });
   return (
-    `spine: ${leases} thing(s) you were holding have moved since you last read. ` +
+    `spine: ${refs.length} thing(s) you were holding have moved since you last read:\n` +
+    `${lines.join('\n')}\n` +
     `Run \`orient\` when convenient — cursor ${cursor}.`
   );
 }

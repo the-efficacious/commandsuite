@@ -2697,7 +2697,10 @@ export const SetSpineCuratorConfigRequestSchema = z
 export const ListSpineInjectionsQuerySchema = z.object({
   member: NameSchema.optional(),
   limit: z.coerce.number().int().positive().max(500).optional(),
-  since_id: z.coerce.number().int().nonnegative().optional(),
+  // POSITIVE: id 0 exists in no ledger, so `before_id=0` could only
+  // mean "everything older than the first row", which is an empty page
+  // dressed up as a cursor.
+  before_id: z.coerce.number().int().positive().optional(),
 });
 
 export const SpineCuratorConfigQuerySchema = z.object({

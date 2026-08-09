@@ -82,6 +82,33 @@ describe('classifying a token series', () => {
     ).toBe('total_reset');
   });
 
+  it('calls a COLLAPSING `last` its own shape, while the total keeps climbing', () => {
+    // The shape a real compaction should leave, and the reason it is
+    // measured at all: `total` reads like a cumulative BILLING counter
+    // for the thread, so a reset there is a thread restart rather than
+    // a compaction. If that is right, this is the signal to trust —
+    // the next request carries a summarised prefix instead of the full
+    // history while the bill keeps growing.
+    expect(
+      classifyTokenUsage(
+        { total: 100_000, last: 90_000, window: 200_000 },
+        { total: 112_000, last: 9_000, window: 200_000 },
+      ),
+    ).toBe('last_shrank');
+  });
+
+  it('does not call an ordinary short turn a collapse', () => {
+    // Turns vary enormously. A small drop is the normal texture of a
+    // session, and a watcher that called every one of them a dump
+    // would report one on nearly every turn.
+    expect(
+      classifyTokenUsage(
+        { total: 100_000, last: 90_000, window: 200_000 },
+        { total: 150_000, last: 60_000, window: 200_000 },
+      ),
+    ).toBeNull();
+  });
+
   it('calls a saturated window what it is, and not a reset', () => {
     // Nothing has been discarded yet. Distinguishing the two matters:
     // one is evidence the context is already gone, the other is the
@@ -239,6 +266,75 @@ describe('the subscription codex has been emitting into nothing', () => {
     rpc.emit(NOTIFICATIONS.tokenUsageUpdated, usage(120_000, 9_000, 200_000));
     rpc.emit(NOTIFICATIONS.tokenUsageUpdated, usage(4_000, 4_000, 200_000));
     expect(reported).toEqual([]);
+  });
+
+  it('is EDGE-triggered: a window that stays saturated logs once', () => {
+    // A saturated window is still saturated on the next notification,
+    // and the next. A level-triggered watcher logs the same line ten
+    // times through one long turn, and a stream of identical lines is
+    // how an operator learns to stop reading a channel.
+    const rpc = makeFakeRpc();
+    const lines: string[] = [];
+    attachCodexTokenUsageWatch({ rpc, log: (msg) => lines.push(msg), env: {} });
+    for (let i = 0; i < 4; i++) {
+      rpc.emit(NOTIFICATIONS.tokenUsageUpdated, usage(100_000 + i * 1_000, 200_000, 200_000));
+    }
+    expect(lines).toHaveLength(1);
+
+    // The positive control on the edge: when the condition clears and
+    // returns, it logs again — otherwise "log once" would be
+    // indistinguishable from "log once, ever".
+    // An ordinary large-but-not-full turn clears the condition (not a
+    // collapse either — it is well inside the ratio), then the window
+    // fills again.
+    rpc.emit(NOTIFICATIONS.tokenUsageUpdated, usage(210_000, 120_000, 200_000));
+    expect(lines, 'the clearing observation is not itself an event').toHaveLength(1);
+    rpc.emit(NOTIFICATIONS.tokenUsageUpdated, usage(220_000, 200_000, 200_000));
+    expect(lines).toHaveLength(2);
+  });
+
+  it('LOGS a saturated window but never reports it, even with the flag on', () => {
+    // By this spike's own account nothing has been discarded yet when
+    // the window fills — it is the state a discard happens FROM.
+    // Reporting it as `dump_declared` would be reporting a forecast as
+    // an event, and the curator would invalidate a lease for a context
+    // that is still entirely intact.
+    const rpc = makeFakeRpc();
+    const lines: Array<Record<string, unknown> | undefined> = [];
+    const reported: string[] = [];
+    attachCodexTokenUsageWatch({
+      rpc,
+      log: (_msg, ctx) => lines.push(ctx),
+      reportDump: (source) => reported.push(source),
+      env: { [CODEX_DUMP_SIGNAL_ENV]: '1' },
+    });
+    rpc.emit(NOTIFICATIONS.tokenUsageUpdated, usage(100_000, 200_000, 200_000));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ discontinuity: 'window_saturated', reported: false });
+    expect(reported, 'a forecast is not an event').toEqual([]);
+
+    // The positive control, same watcher, same flag: a total reset IS
+    // reported. Without it this passes against a spike that reports
+    // nothing at all.
+    rpc.emit(NOTIFICATIONS.tokenUsageUpdated, usage(4_000, 4_000, 200_000));
+    expect(reported).toEqual(['token_discontinuity']);
+  });
+
+  it('logs but never reports a collapsing `last`, flag or no flag', () => {
+    const rpc = makeFakeRpc();
+    const lines: Array<Record<string, unknown> | undefined> = [];
+    const reported: string[] = [];
+    attachCodexTokenUsageWatch({
+      rpc,
+      log: (_msg, ctx) => lines.push(ctx),
+      reportDump: (source) => reported.push(source),
+      env: { [CODEX_DUMP_SIGNAL_ENV]: '1' },
+    });
+    rpc.emit(NOTIFICATIONS.tokenUsageUpdated, usage(100_000, 90_000, 200_000));
+    rpc.emit(NOTIFICATIONS.tokenUsageUpdated, usage(112_000, 9_000, 200_000));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ discontinuity: 'last_shrank', reported: false });
+    expect(reported, 'the shape being measured is not yet the shape being trusted').toEqual([]);
   });
 
   it('survives a payload with no tokenUsage at all', () => {

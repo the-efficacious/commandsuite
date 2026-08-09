@@ -2119,7 +2119,7 @@ export class Client {
     const params = new URLSearchParams();
     if (query.member !== undefined) params.set('member', query.member);
     if (query.limit !== undefined) params.set('limit', String(query.limit));
-    if (query.since_id !== undefined) params.set('since_id', String(query.since_id));
+    if (query.before_id !== undefined) params.set('before_id', String(query.before_id));
     const qs = params.toString();
     const resp = await this.request(`${SPINE_PATHS.injections}${qs ? `?${qs}` : ''}`);
     return ListSpineInjectionsResponseSchema.parse(await this.json(resp)).injections;

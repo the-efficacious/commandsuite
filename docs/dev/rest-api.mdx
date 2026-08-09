@@ -901,7 +901,7 @@ nothing can come to depend on.
 | | |
 |---|---|
 | **Auth** | dual; self, or `members.manage` for another member |
-| **Query** | `member`, `limit` (≤ 500), `since_id` |
+| **Query** | `member`, `limit` (≤ 500), `before_id` (page backward; feed back a page's last `id`) |
 | **Returns** | `{ injections }`, newest first |
 
 "What did the system spend of my album this week", answerable. Each row

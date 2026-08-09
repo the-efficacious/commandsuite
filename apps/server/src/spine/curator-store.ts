@@ -68,13 +68,29 @@ export interface ReceiptRecord {
 }
 
 /**
- * What can move a receipt. Every one of these is the member READING
- * something. There is deliberately no `push` member of this union —
- * the type is where "the curator's own pushes never advance a receipt"
- * is enforced, because a rule that lives only in a comment is a rule
- * the next caller will not know about.
+ * What can move a receipt, and it is a WATERMARK — "everything up to
+ * seq N has been read" — so only a read that establishes that claim
+ * may move it.
+ *
+ *   orient      composed at a cursor, and carries everything below it
+ *   annex_read  a page, through its LAST RETURNED seq (never headSeq:
+ *               a short page proves only as far as it got)
+ *   ack         an explicit "handled", the human seat's act
+ *
+ * There is deliberately no `push` — the type is where "the curator's
+ * own pushes never advance a receipt" is enforced, because a rule that
+ * lives only in a comment is a rule the next caller will not know
+ * about.
+ *
+ * And there is deliberately no `event_read`. A by-id read of one event
+ * proves that one event was seen and NOTHING about the events below
+ * it, so moving a watermark to its seq silently discharges every
+ * unread event underneath. That is not hypothetical: the by-id read is
+ * the natural response to a class-1 line, which hands the member an
+ * event id — so the path most likely to be taken was the one that
+ * marked a member caught up on things they had never seen.
  */
-export type ReceiptVia = 'orient' | 'annex_read' | 'event_read' | 'ack';
+export type ReceiptVia = 'orient' | 'annex_read' | 'ack';
 
 export interface LogInjectionInput {
   member: string;
@@ -109,6 +125,18 @@ export interface CuratorStore {
   markNudged(member: string, refs: readonly string[], now: number): void;
   /** The most recent nudge to this member across every lease, for the cadence floor. */
   lastNudgeAt(member: string): number | null;
+  /**
+   * Forget every spent nudge for this member — a new lease epoch.
+   *
+   * Called when the member's own LIVENESS is proven: they read, they
+   * wrote, or their runner bracketed a session. Without it, a nudge
+   * attempted at an offline member was spent forever — `nudged_at` is
+   * cleared only by a lease grant, and a grant requires a CONFIRMED
+   * delivery, so the member who could not be reached is precisely the
+   * member who is never reached again. That is permanent dark for the
+   * opaque-runner population this whole design is for.
+   */
+  rearmNudges(member: string): void;
 
   /** Monotonic. A read that proves less than the last one moves nothing. */
   advanceReceipt(member: string, seq: number, via: ReceiptVia, now: number): ReceiptRecord;
@@ -273,6 +301,14 @@ class SqliteCuratorStore implements CuratorStore {
     return row?.last ?? null;
   }
 
+  rearmNudges(member: string): void {
+    this.db
+      .prepare(
+        'UPDATE spine_leases SET nudged_at = NULL WHERE member = ? AND nudged_at IS NOT NULL',
+      )
+      .run(member);
+  }
+
   // ─── Receipts ───────────────────────────────────────────────────
 
   advanceReceipt(member: string, seq: number, via: ReceiptVia, now: number): ReceiptRecord {
@@ -328,15 +364,31 @@ class SqliteCuratorStore implements CuratorStore {
     };
   }
 
+  /**
+   * The ledger, NEWEST FIRST, paged BACKWARD.
+   *
+   * The cursor has to run the same direction as the ordering or it is
+   * not a cursor. This shipped as `id > since_id` under `ORDER BY id
+   * DESC`, which reads plausibly and cannot page: every request
+   * returns the newest rows above the cursor, so feeding back the last
+   * id of a page returns a page entirely NEWER than the one you just
+   * read, and the older rows are unreachable at any page size. The
+   * field is `before_id` now because a name that says "since" over a
+   * backward walk is how the defect got written in the first place.
+   */
   injections(query: ListSpineInjectionsQuery & { member: string }): SpineInjection[] {
     const limit = query.limit ?? 100;
-    const since = query.since_id ?? 0;
-    const rows = this.db
-      .prepare(
-        `SELECT * FROM spine_injections WHERE member = ? AND id > ?
-         ORDER BY id DESC LIMIT ?`,
-      )
-      .all(query.member, since, limit) as unknown as InjectionRow[];
+    const before = query.before_id;
+    const rows = (before === undefined
+      ? this.db
+          .prepare('SELECT * FROM spine_injections WHERE member = ? ORDER BY id DESC LIMIT ?')
+          .all(query.member, limit)
+      : this.db
+          .prepare(
+            `SELECT * FROM spine_injections WHERE member = ? AND id < ?
+               ORDER BY id DESC LIMIT ?`,
+          )
+          .all(query.member, before, limit)) as unknown as InjectionRow[];
     return rows.map(rowToInjection);
   }
 

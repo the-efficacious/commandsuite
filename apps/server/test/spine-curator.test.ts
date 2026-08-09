@@ -30,9 +30,11 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { SpineEvent, SpineInjection } from 'csuite-sdk/types';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { createCurator } from '../src/spine/index.js';
 import {
   ANDREWJON,
+  assertNoSignalsWereUsed,
   authed,
   CORA,
   type CuratorApp,
@@ -68,6 +70,18 @@ beforeEach(async () => {
     cora: harness.sinkFor('cora'),
   };
   await post(app, '/spine/subjects', LEA, { id: 'repo:acme', type: 'repo' });
+});
+
+// THE FLOOR PROPERTY, ON EVERY TEST IN THIS FILE, BEHAVIOURALLY.
+//
+// The marker check at the bottom reads this file's own source for the
+// signal vocabulary; this reads the SYSTEM. The source check shipped
+// first on its own and was defeated in review by routing an
+// invalidation through a harness helper — thirty tests green, guard
+// silent. A name check is a claim about spelling; this is a claim
+// about what happened.
+afterEach(() => {
+  assertNoSignalsWereUsed(harness);
 });
 
 /** lea authors; rune is assignee, lea verifier, andrewjon authority. */
@@ -269,6 +283,172 @@ describe('class 1 — addressed, and it never yields', () => {
   });
 });
 
+describe('class 1 — a terminal or parked lifecycle addresses the people carrying it', () => {
+  it('reaches the assignee on every one of the four states, even at `none`', async () => {
+    // The four transitions that CHANGE WHAT SOMEBODY OWES rather than
+    // report on it. Each driven separately: a loop asserting "some
+    // state reached them" would pass with three of the four wired.
+    for (const state of ['done', 'cancelled', 'superseded', 'parked']) {
+      const fresh = makeCuratorApp();
+      harness = fresh;
+      app = fresh.app;
+      sinks = {
+        lea: fresh.sinkFor('lea'),
+        rune: fresh.sinkFor('rune'),
+        andrewjon: fresh.sinkFor('andrewjon'),
+        cora: fresh.sinkFor('cora'),
+      };
+      await post(app, '/spine/subjects', LEA, { id: 'repo:acme', type: 'repo' });
+      const contract = await authorContract();
+      // A real successor for the supersession arm — the store refuses
+      // a contract superseding itself, and rightly.
+      const successor =
+        state === 'superseded' ? await authorContract('op-spec-successor') : contract;
+      // The strongest form: the assignee has explicitly asked for
+      // silence on this contract, and still hears that it ended.
+      await app.request(
+        '/spine/curator',
+        authed(RUNE, { subscription: { contract, level: 'none' } }, 'PUT'),
+      );
+      await harness.curator.sweep();
+
+      // `done` has to earn its way there: a named verifier means
+      // completion needs verdicts covering every criterion at one
+      // revision. Driving it through the real gate rather than around
+      // it is the point — this arm must be the SAME transition a
+      // member reaches in practice.
+      let stateRev = 1;
+      const cites: string[] = [];
+      if (state === 'done') {
+        const verdict = (
+          await post(app, '/spine/events', LEA, {
+            kind: 'criterion_verdict',
+            opId: 'op-verdict-for-done',
+            expectedStateRev: 1,
+            revision: observed('sha-a'),
+            body: { contract, criterion: 'c1', decision: 'met', evidence: 'green at sha-a' },
+          })
+        ).event as SpineEvent;
+        cites.push(verdict.id);
+        stateRev = 2;
+      }
+      const extra =
+        state === 'superseded'
+          ? { successor }
+          : state === 'parked'
+            ? { preemptedBy: 'the incident' }
+            : state === 'done'
+              ? { result: OUTCOME_TEXT }
+              : {};
+      // Count the DELTA. The `done` arm's prerequisite verdict is
+      // itself a class-1 line to the assignee, and a bare length
+      // assertion would silently be measuring that one instead.
+      const before = sinks.rune?.injections.length ?? 0;
+      await post(app, '/spine/events', ANDREWJON, {
+        kind: 'lifecycle',
+        opId: `op-${state}`,
+        expectedStateRev: stateRev,
+        ...(cites.length > 0 ? { cites, revision: observed('sha-a') } : {}),
+        body: { contract, state, reason: 'the team decided', ...extra },
+      });
+      expect(
+        (sinks.rune?.injections.length ?? 0) - before,
+        `${state} must reach the assignee`,
+      ).toBe(1);
+      const body = sinks.rune?.injections.at(-1)?.body ?? '';
+      expect(body).toContain(contract);
+      expect(body).toContain('Ship the endpoint');
+      // And the outcome text is still not in it — this is a new class-1
+      // arm, not a new exemption from the no-re-send rule.
+      expect(body).not.toContain(OUTCOME_TEXT);
+      expect(body).not.toContain(CRITERION_TEXT);
+    }
+  });
+
+  it('reaches the NAMED verifier too, and nobody who is merely watching', async () => {
+    const contract = await authorContract();
+    await harness.curator.sweep();
+    await post(app, '/spine/events', ANDREWJON, {
+      kind: 'lifecycle',
+      opId: 'op-cancel',
+      expectedStateRev: 1,
+      body: { contract, state: 'cancelled', reason: 'the team decided' },
+    });
+    expect(sinks.rune?.injections, 'assignee').toHaveLength(1);
+    expect(sinks.lea?.injections, 'named verifier').toHaveLength(1);
+    expect(sinks.cora?.injections).toHaveLength(0);
+    expect(sinks.lea?.injections[0]?.body).toContain(contract);
+  });
+
+  it('does not invent a verifier for a contract that named none', async () => {
+    const contract = (
+      (
+        await post(app, '/spine/events', LEA, {
+          kind: 'specification',
+          subject: 'repo:acme',
+          opId: 'op-spec-solo',
+          body: {
+            title: 'Ship the endpoint',
+            criteria: [{ id: 'c1', text: CRITERION_TEXT }],
+            assignee: 'rune',
+          },
+        })
+      ).event as SpineEvent
+    ).id;
+    await harness.curator.sweep();
+    await post(app, '/spine/events', ANDREWJON, {
+      kind: 'lifecycle',
+      opId: 'op-cancel-solo',
+      expectedStateRev: 1,
+      body: { contract, state: 'cancelled', reason: 'deprioritised' },
+    });
+    expect(sinks.rune?.injections).toHaveLength(1);
+    // A contract with no verifier has nobody holding that obligation,
+    // and inventing a recipient is how a queue fills with items nobody
+    // owns.
+    expect(sinks.lea?.injections).toHaveLength(0);
+    expect(sinks.cora?.injections).toHaveLength(0);
+  });
+
+  it('leaves active and waiting transitions to class 2', async () => {
+    // The amendment is four states, not "lifecycle events". `active`
+    // and the waiting states are progress reports: they recur, and
+    // they are exactly what a `lifecycle` subscription is for.
+    const contract = await authorContract();
+    await harness.curator.sweep();
+    await post(app, '/spine/events', ANDREWJON, {
+      kind: 'lifecycle',
+      opId: 'op-waiting',
+      expectedStateRev: 1,
+      body: { contract, state: 'waiting_on', member: 'cora', reason: 'needs a call' },
+    });
+    expect(sinks.rune?.injections, 'waiting_on is not a class-1 event').toHaveLength(0);
+    await harness.curator.sweep();
+    // The positive control, in the same test: lea hears it as class 2
+    // (originator default), so the event is reaching the curator and
+    // the silence above is the class boundary rather than a dead path.
+    expect(sinks.lea?.injections).toHaveLength(1);
+  });
+
+  it('does not address an actor for their own act', async () => {
+    // Reachable, and now obviously so: the assignee cancelling their
+    // own contract is the ordinary way a contract gets cancelled.
+    const contract = await authorContract();
+    await harness.curator.sweep();
+    await post(app, '/spine/events', RUNE, {
+      kind: 'lifecycle',
+      opId: 'op-self-cancel',
+      expectedStateRev: 1,
+      body: { contract, state: 'cancelled', reason: 'I am not going to get to this' },
+    });
+    expect(sinks.rune?.injections, 'nobody is told about their own act').toHaveLength(0);
+    // The positive control: the OTHER recipient still hears it, so the
+    // silence above is the actor rule and not a broken arm.
+    expect(sinks.lea?.injections).toHaveLength(1);
+    expect(sinks.lea?.injections[0]?.body).toContain(contract);
+  });
+});
+
 describe('no full re-sends — the line carries an id, a title, and what changed', () => {
   it('omits the criterion text, the question, the reasoning and the outcome', async () => {
     const contract = await authorContract();
@@ -320,6 +500,34 @@ describe('no full re-sends — the line carries an id, a title, and what changed
     expect(everything).toContain(contract);
     expect(everything).toContain('Ship the endpoint');
     expect(everything).toContain('orient');
+  });
+
+  it('locates a contract-less ask by its subject, and always says what it unblocks', async () => {
+    // The standing-authority ask is exactly this shape: no contract,
+    // just a question for whoever holds the decision. It rendered as
+    // "On no contract. Since seq 0" — a line indistinguishable from
+    // every other such line, which is the same failure as two facts
+    // printing identically.
+    await post(app, '/spine/events', RUNE, {
+      kind: 'ask',
+      subject: 'repo:acme',
+      opId: 'op-standing-ask',
+      body: {
+        authority: 'andrewjon',
+        question: ASK_QUESTION,
+        context: ASK_CONTEXT,
+        unblocks: 'the release cut',
+      },
+    });
+    const body = sinks.andrewjon?.injections[0]?.body ?? '';
+    expect(body).toContain('repo:acme');
+    // `unblocks` is required on every ask precisely so an authority
+    // triaging a queue knows what is stopped.
+    expect(body).toContain('unblocks: the release cut');
+    expect(body).not.toContain('no contract or subject named');
+    // And the rest of the ask still stays out.
+    expect(body).not.toContain(ASK_QUESTION);
+    expect(body).not.toContain(ASK_CONTEXT);
   });
 
   it('keeps the outcome out of a done-state delta', async () => {
@@ -384,6 +592,66 @@ describe('class 2 — reader-side levels, batched per tick', () => {
     expect(injections[0]?.body).toContain('3 event(s)');
     const rows = await ledger(CORA);
     expect(rows.filter((r) => r.class === 2)).toHaveLength(1);
+  });
+
+  it('SILENCES a `none` subscriber — the control the whole class exists for', async () => {
+    // #155 finding 1 is fanout with no reader control, and `none` is
+    // the answer to it. Everything else in this file asserts what
+    // still ARRIVES at `none` (class 0 and class 1 never yield), which
+    // is the finding's own polarity: a suite built entirely of "this
+    // still gets through" passes against a level that admits
+    // everything. This is the arm that fails if `none` does nothing.
+    const contract = await authorContract();
+    await harness.curator.sweep();
+    await app.request(
+      '/spine/curator',
+      authed(CORA, { subscription: { contract, level: 'none' } }, 'PUT'),
+    );
+    await post(app, '/spine/events', ANDREWJON, {
+      kind: 'lifecycle',
+      opId: 'op-waiting',
+      expectedStateRev: 1,
+      body: { contract, state: 'waiting_on', member: 'lea', reason: 'needs a call' },
+    });
+    await harness.curator.sweep();
+    expect(sinks.cora?.injections, '`none` must mean nothing').toHaveLength(0);
+    expect(await ledger(CORA)).toHaveLength(0);
+
+    // THE POSITIVE CONTROL, on the same subscriber and the same event
+    // class: flip to `all` and the very next lifecycle event arrives.
+    // Without it, this passes against a curator that pushes to nobody.
+    await app.request(
+      '/spine/curator',
+      authed(CORA, { subscription: { contract, level: 'all' } }, 'PUT'),
+    );
+    await post(app, '/spine/events', ANDREWJON, {
+      kind: 'lifecycle',
+      opId: 'op-active',
+      expectedStateRev: 2,
+      body: { contract, state: 'active', reason: 'call happened' },
+    });
+    await harness.curator.sweep();
+    expect(sinks.cora?.injections).toHaveLength(1);
+  });
+
+  it('silences `none` for an ORIGINATOR, overriding the default', async () => {
+    // The default is `lifecycle` for whoever authored the contract, so
+    // this is the arm where an explicit `none` has to beat a derived
+    // level rather than merely agree with an absent one.
+    const contract = await authorContract();
+    await harness.curator.sweep();
+    await app.request(
+      '/spine/curator',
+      authed(LEA, { subscription: { contract, level: 'none' } }, 'PUT'),
+    );
+    await post(app, '/spine/events', ANDREWJON, {
+      kind: 'lifecycle',
+      opId: 'op-waiting',
+      expectedStateRev: 1,
+      body: { contract, state: 'waiting_on', member: 'cora', reason: 'needs a call' },
+    });
+    await harness.curator.sweep();
+    expect(sinks.lea?.injections).toHaveLength(0);
   });
 
   it('gives a `lifecycle` subscriber lifecycle events and nothing else', async () => {
@@ -502,7 +770,12 @@ describe('class 3 — silence, and it is silence and not less', () => {
       '/spine/curator',
       authed(CORA, { subscription: { contract, level: 'all' } }, 'PUT'),
     );
-    await post(app, '/spine/events', LEA, {
+    // Parked by the AUTHORITY, not by the assignee or the verifier, so
+    // both class-1 recipients are somebody other than the actor — an
+    // actor is never addressed by their own act, and a fixture where
+    // the parker is also a recipient cannot tell that rule from a
+    // missing one.
+    await post(app, '/spine/events', ANDREWJON, {
       kind: 'lifecycle',
       opId: 'op-park',
       expectedStateRev: 1,
@@ -510,10 +783,20 @@ describe('class 3 — silence, and it is silence and not less', () => {
     });
     // The parking event itself IS delivered — it is the last thing
     // anybody needs to know about this contract, and silencing it
-    // would mean a subscriber never learns the work stopped.
+    // would mean a subscriber never learns the work stopped. It
+    // reaches cora as a class-2 delta (she subscribed) and rune and lea
+    // as class 1 (assignee and named verifier: `parked` means stop
+    // work, and finding that out at your next orient means work done
+    // against a contract that no longer wanted it).
     await harness.curator.sweep();
     expect(sinks.cora?.injections).toHaveLength(1);
-    const afterPark = sinks.cora?.injections.length ?? 0;
+    expect(sinks.rune?.injections).toHaveLength(1);
+    expect(sinks.lea?.injections).toHaveLength(1);
+    const afterPark = {
+      cora: sinks.cora?.injections.length ?? 0,
+      rune: sinks.rune?.injections.length ?? 0,
+      lea: sinks.lea?.injections.length ?? 0,
+    };
 
     // Now four hours. Events keep landing on the parked contract
     // (chatter, corrections, an observation) and every one of them
@@ -532,10 +815,12 @@ describe('class 3 — silence, and it is silence and not less', () => {
       });
       await harness.curator.sweep();
     }
-    expect(sinks.cora?.injections).toHaveLength(afterPark);
-    // And nobody else woke up either — silence is silence for every
-    // member, not only for the one the assertion names.
-    expect(sinks.rune?.injections).toHaveLength(0);
+    // NOTHING MORE, for anybody. Silence is about what a parked
+    // contract generates from here on, and it is silence for every
+    // member and not only for the one the assertion names.
+    expect(sinks.cora?.injections).toHaveLength(afterPark.cora);
+    expect(sinks.rune?.injections).toHaveLength(afterPark.rune);
+    expect(sinks.lea?.injections).toHaveLength(afterPark.lea);
     expect(sinks.andrewjon?.injections).toHaveLength(0);
   });
 
@@ -711,6 +996,78 @@ describe('receipts advance on reads and on nothing else', () => {
     expect(harness.curatorStore.receipt('cora')?.seq).toBe(afterPage?.seq);
   });
 
+  it('is NOT moved by a by-id read, so the events below it stay owed', async () => {
+    // The defect this replaces, measured: reading ONE event by id took
+    // the watermark from 1 to 4 and silently discharged the two
+    // never-read authoritative events at 2 and 3. And the path is the
+    // likely one — a class-1 line hands the member an event id, so
+    // fetching that id is the natural next call.
+    const contract = await authorContract();
+    await get(app, '/spine/orient', RUNE);
+    const readTo = harness.curatorStore.receipt('rune')?.seq as number;
+
+    for (const [i, decision] of ['unmet', 'unmet'].entries()) {
+      await post(app, '/spine/events', LEA, {
+        kind: 'criterion_verdict',
+        opId: `op-verdict-${i}`,
+        expectedStateRev: 1 + i,
+        revision: observed(`sha-${i}`),
+        body: { contract, criterion: 'c1', decision, evidence: `run ${i}` },
+      });
+    }
+    const events = (await get(app, `/spine/events?contract=${contract}`, ANDREWJON))
+      .events as SpineEvent[];
+    const newest = events.at(-1) as SpineEvent;
+    expect(newest.seq).toBeGreaterThan(readTo + 1);
+
+    const res = await app.request(`/spine/events/${newest.id}`, authed(RUNE));
+    expect(res.status, 'the by-id read must still WORK').toBe(200);
+    expect(harness.curatorStore.receipt('rune')?.seq, 'a by-id read moves no watermark').toBe(
+      readTo,
+    );
+
+    // And the consequence that makes it matter: the unread middle is
+    // still owed, so the nudge still fires.
+    harness.clock.ms = T0 + 2 * HOUR;
+    await harness.curator.sweep();
+    expect((await ledger(RUNE)).filter((r) => r.kind === 'recovery_nudge')).toHaveLength(1);
+  });
+
+  it('advances a page read only through its LAST RETURNED seq', async () => {
+    // A short page proves only as far as it got. Framing the receipt on
+    // `headSeq` would mark a member caught up on a page they were never
+    // sent.
+    const contract = await authorContract();
+    await get(app, '/spine/orient', RUNE);
+    for (const [i, decision] of ['unmet', 'unmet', 'met'].entries()) {
+      await post(app, '/spine/events', LEA, {
+        kind: 'criterion_verdict',
+        opId: `op-verdict-${i}`,
+        expectedStateRev: 1 + i,
+        revision: observed(`sha-${i}`),
+        body: { contract, criterion: 'c1', decision, evidence: `run ${i}` },
+      });
+    }
+    const page = (await get(app, '/spine/events?since_seq=1&limit=1', RUNE)) as {
+      events: SpineEvent[];
+      headSeq: number;
+      nextCursor: number | null;
+    };
+    // A page-FULL property, not an id-absence one: limit 1 must return
+    // exactly one, and there must be more behind it.
+    expect(page.events).toHaveLength(1);
+    expect(page.nextCursor).not.toBeNull();
+    expect(page.headSeq).toBeGreaterThan(page.events[0]?.seq as number);
+    expect(harness.curatorStore.receipt('rune')?.seq).toBe(page.events[0]?.seq);
+
+    harness.clock.ms = T0 + 2 * HOUR;
+    await harness.curator.sweep();
+    expect(
+      (await ledger(RUNE)).filter((r) => r.kind === 'recovery_nudge'),
+      'everything beyond the page read is still owed',
+    ).toHaveLength(1);
+  });
+
   it("is NOT advanced by the curator's own pushes", async () => {
     const contract = await authorContract();
     await get(app, '/spine/orient', RUNE);
@@ -734,6 +1091,170 @@ describe('receipts advance on reads and on nothing else', () => {
   });
 });
 
+describe('a nudge is per lease EPOCH, and a member returning starts a new one', () => {
+  it('re-arms for a member who was nudged into the void and came back', async () => {
+    // The failure this closes: `nudged_at` is cleared only by a lease
+    // grant, and a grant needs a CONFIRMED delivery — so the member who
+    // could not be reached was exactly the member never reached again.
+    // Permanently dark, for the offline floor population this design is
+    // entirely for.
+    const contract = await authorContract();
+    await get(app, '/spine/orient', RUNE);
+    await post(app, '/spine/events', LEA, {
+      kind: 'criterion_verdict',
+      opId: 'op-verdict',
+      expectedStateRev: 1,
+      revision: observed('sha-a'),
+      body: { contract, criterion: 'c1', decision: 'unmet', evidence: 'the ETag is missing' },
+    });
+
+    // rune goes offline: no sink, so nothing is confirmed to him.
+    sinks.rune?.close();
+    harness.clock.ms = T0 + 2 * HOUR;
+    await harness.curator.sweep();
+    const attempted = (await ledger(RUNE)).filter((r) => r.kind === 'recovery_nudge');
+    expect(attempted, 'the nudge was attempted').toHaveLength(1);
+    expect(attempted[0]?.delivered, 'and it did not land').toBe(false);
+
+    // He comes back and ACTS without reading — an append, which is the
+    // floor's own liveness proof and needs no signal, no runner
+    // cooperation and no cheap trick.
+    sinks.rune = harness.sinkFor('rune');
+    harness.clock.ms = T0 + 3 * HOUR;
+    await post(app, '/spine/events', RUNE, {
+      kind: 'discussion',
+      body: { contract, body: 'back at this' },
+    });
+    // His own append renews his lease on this contract, so age it out
+    // again before asking whether he is nudgeable.
+    harness.clock.ms = T0 + 6 * HOUR;
+    await harness.curator.sweep();
+    const after = (await ledger(RUNE)).filter((r) => r.kind === 'recovery_nudge');
+    expect(after, 'a return is a new epoch').toHaveLength(2);
+    expect(after[0]?.delivered, 'and this one landed').toBe(true);
+
+    // Then silence again: one per epoch, not one per sweep.
+    for (let hour = 7; hour <= 12; hour++) {
+      harness.clock.ms = T0 + hour * HOUR;
+      await harness.curator.sweep();
+    }
+    expect((await ledger(RUNE)).filter((r) => r.kind === 'recovery_nudge')).toHaveLength(2);
+  });
+
+  it('names what moved, with ids and titles and no outcome text', async () => {
+    const contract = await authorContract();
+    await get(app, '/spine/orient', RUNE);
+    await post(app, '/spine/events', LEA, {
+      kind: 'criterion_verdict',
+      opId: 'op-verdict',
+      expectedStateRev: 1,
+      revision: observed('sha-a'),
+      body: { contract, criterion: 'c1', decision: 'unmet', evidence: 'the ETag is missing' },
+    });
+    harness.clock.ms = T0 + 2 * HOUR;
+    await harness.curator.sweep();
+    const nudge = sinks.rune?.injections.at(-1)?.body ?? '';
+    // A bare count is a line a member cannot triage — they cannot tell
+    // the contract they are mid-way through from one they parked last
+    // week, so the cheapest correct response is always a whole pack.
+    expect(nudge).toContain(contract);
+    expect(nudge).toContain('Ship the endpoint');
+    // Still a POINTER, though.
+    expect(nudge).toContain('orient');
+    expect(nudge).not.toContain(CRITERION_TEXT);
+    expect(nudge).not.toContain(OUTCOME_TEXT);
+  });
+});
+
+describe('a lease is recorded on CONFIRMED delivery and on nothing less', () => {
+  it('logs the injection but grants no lease when nothing took it', async () => {
+    const contract = await authorContract();
+    // cora has no sink in this arm, so the push reaches no live
+    // subscriber. A lease granted here would be a claim that an offline
+    // member holds something nothing ever handed them.
+    sinks.cora?.close();
+    await post(app, '/spine/events', RUNE, {
+      kind: 'ask',
+      subject: 'repo:acme',
+      opId: 'op-ask',
+      expectedStateRev: 1,
+      body: {
+        authority: 'cora',
+        question: ASK_QUESTION,
+        context: ASK_CONTEXT,
+        unblocks: 'the release cut',
+        contract,
+      },
+    });
+    const rows = await ledger(CORA);
+    expect(rows, 'the spend is still accounted for').toHaveLength(1);
+    expect(rows[0]?.delivered).toBe(false);
+    expect(harness.curatorStore.leases('cora'), 'nothing confirmed, so nothing held').toEqual([]);
+
+    // The positive control: with a sink, the same act grants the lease.
+    sinks.cora = harness.sinkFor('cora');
+    await post(app, '/spine/events', RUNE, {
+      kind: 'ask',
+      subject: 'repo:acme',
+      opId: 'op-ask-2',
+      expectedStateRev: 2,
+      body: {
+        authority: 'cora',
+        question: ASK_QUESTION,
+        context: ASK_CONTEXT,
+        unblocks: 'the release cut',
+        contract,
+      },
+    });
+    expect(harness.curatorStore.leases('cora').map((l) => l.ref)).toEqual([contract]);
+    expect((await ledger(CORA))[0]?.delivered).toBe(true);
+  });
+});
+
+describe('a restarted curator does not replay the backlog', () => {
+  it('starts its sweep cursor at the annex head', async () => {
+    const contract = await authorContract();
+    await app.request(
+      '/spine/curator',
+      authed(CORA, { subscription: { contract, level: 'all' } }, 'PUT'),
+    );
+    for (const [i, decision] of ['unmet', 'met'].entries()) {
+      await post(app, '/spine/events', LEA, {
+        kind: 'criterion_verdict',
+        opId: `op-verdict-${i}`,
+        expectedStateRev: 1 + i,
+        revision: observed(`sha-${i}`),
+        body: { contract, criterion: 'c1', decision, evidence: `run ${i}` },
+      });
+    }
+    // A SECOND curator over the same stores — a process restart, with a
+    // full backlog sitting unswept in front of it.
+    const restarted = createCurator({
+      annex: harness.spine,
+      store: harness.curatorStore,
+      broker: harness.broker,
+      logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
+      now: () => harness.clock.ms,
+    });
+    await restarted.sweep();
+    expect(
+      sinks.cora?.injections,
+      'a restart must not deliver every delta since the team began',
+    ).toHaveLength(0);
+
+    // The positive control: it sweeps what happens AFTER it, so the
+    // silence above is a cursor and not a dead curator.
+    await post(app, '/spine/events', LEA, {
+      kind: 'lifecycle',
+      opId: 'op-wait',
+      expectedStateRev: 3,
+      body: { contract, state: 'waiting_on', member: 'andrewjon', reason: 'needs a call' },
+    });
+    await restarted.sweep();
+    expect(sinks.cora?.injections).toHaveLength(1);
+  });
+});
+
 describe('the ledger', () => {
   it('accounts for every class with member, refs, cursor and bytes', async () => {
     const contract = await authorContract();
@@ -754,6 +1275,47 @@ describe('the ledger', () => {
       expect(row.delivered).toBe(true);
     }
     expect(rows.find((r) => r.kind === 'addressed')?.refs).toEqual([contract]);
+  });
+
+  it('pages BACKWARD through a full ledger and reaches the oldest row', async () => {
+    // The defect this replaces: `WHERE id > ?` under `ORDER BY id
+    // DESC`. It reads plausibly and cannot page — feeding back a page's
+    // last id returns rows entirely NEWER than the page you just read,
+    // and the older rows are unreachable at any page size.
+    const contract = await authorContract();
+    await get(app, '/spine/orient', RUNE);
+    for (const [i, decision] of ['unmet', 'unmet', 'met', 'unmet'].entries()) {
+      await post(app, '/spine/events', LEA, {
+        kind: 'criterion_verdict',
+        opId: `op-verdict-${i}`,
+        expectedStateRev: 1 + i,
+        revision: observed(`sha-${i}`),
+        body: { contract, criterion: 'c1', decision, evidence: `run ${i}` },
+      });
+    }
+    const all = await ledger(RUNE);
+    expect(all.length, 'the fixture must be bigger than one page').toBe(5);
+    expect(all.map((r) => r.id)).toEqual([...all.map((r) => r.id)].sort((a, b) => b - a));
+
+    // Walk it two at a time and assert PAGE FULLNESS, not id-absence: a
+    // short page while rows remain is the failure a "the id I paged
+    // past is gone" assertion cannot see.
+    const walked: number[] = [];
+    let before: number | undefined;
+    for (let page = 0; page < 10; page++) {
+      const qs = before === undefined ? 'limit=2' : `limit=2&before_id=${before}`;
+      const rows = (await get(app, `/spine/injections?${qs}`, RUNE)).injections as SpineInjection[];
+      if (rows.length === 0) break;
+      const remaining = all.length - walked.length;
+      expect(rows.length, `page ${page} must be full while ${remaining} remain`).toBe(
+        Math.min(2, remaining),
+      );
+      walked.push(...rows.map((r) => r.id));
+      before = rows.at(-1)?.id;
+    }
+    // Every row, once, in order — including the oldest, which the
+    // broken cursor could never reach.
+    expect(walked).toEqual(all.map((r) => r.id));
   });
 
   it('is self-or-members.manage, and the ledger of a member you are not is refused', async () => {

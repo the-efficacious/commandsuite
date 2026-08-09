@@ -3428,6 +3428,11 @@ export interface ListSpineInjectionsQuery {
   /** Defaults to the caller. Naming somebody else requires `members.manage`. */
   member?: string;
   limit?: number;
-  /** Exclusive lower bound on the ledger id. */
-  since_id?: number;
+  /**
+   * Page BACKWARD from here: rows strictly older than this id.
+   *
+   * The ledger is newest-first, so the cursor runs the same direction
+   * or it is not a cursor. Feed back the `id` of a page's last row.
+   */
+  before_id?: number;
 }

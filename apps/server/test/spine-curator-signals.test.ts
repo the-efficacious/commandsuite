@@ -1,17 +1,24 @@
 /**
  * Floor signals — the other half of the floor property.
  *
- * `spine-curator.test.ts` proves the curator is correct with none of
- * these reported. This file proves what reporting them BUYS, and the
- * measurement is deliberately narrow: the same scenario, run twice on
- * the same wiring, ends in the same state, and the only difference is
- * WHEN.
+ * THE CLAIM, stated precisely rather than flatteringly:
  *
- * That is the shape the claim needs. "Signals help" is easy to
- * demonstrate and worthless; "signals change nothing except latency"
- * is the property the design stakes correctness on, and it is only
- * falsifiable by running both arms and comparing end states rather
- * than by inspecting either one.
+ *   NO CORRECTNESS PROPERTY DEPENDS ON A SIGNAL. A signal may spend at
+ *   most one additional nudge. The owed end state is identical.
+ *
+ * The middle clause is a real divergence, it is accepted, and it has
+ * its own named test below. An earlier draft of this header said the
+ * end states were identical and only the timing moved. That was
+ * overstated in exactly the direction that makes a design sound better
+ * than it is, and the ledger can tell the difference: a member who was
+ * going to read on their own in five minutes, whose runner declares a
+ * dump at one minute, gets a line they would otherwise never have got.
+ *
+ * What that costs is one nudge — a pointer at `orient`, the cheapest
+ * thing the curator can spend, and bounded at one however many signals
+ * arrive. What it cannot cost is a missed obligation, because nothing
+ * a signal touches is an input to what a member is OWED, only to when
+ * the curator stops assuming they still hold it.
  *
  * The comparison is on the LEDGER, not on the sink. The ledger is
  * what the system says it spent — kinds, classes and refs — so two
@@ -174,16 +181,79 @@ describe('a declared dump buys latency and nothing else', () => {
     const slow = await ledgerOf(quiet, RUNE);
     expect(shapeOf(fast, fastContract)).toEqual(shapeOf(slow, slowContract));
     expect(fast.filter((r) => r.kind === 'recovery_nudge')).toHaveLength(1);
+    // The same nudge once the two arms' contract ULIDs are normalised —
+    // the nudge NAMES what moved, so the ids differ for a reason that
+    // has nothing to do with the property.
+    const normalise = (body: string | undefined, contract: string): string =>
+      (body ?? '').split(contract).join('<contract>');
     expect(
-      arm.sinks.rune?.injections.at(-1)?.body,
-      'the accelerated nudge is byte-identical to the one the clock produces',
-    ).toBe(quiet.sinks.rune?.injections.at(-1)?.body);
+      normalise(arm.sinks.rune?.injections.at(-1)?.body, fastContract),
+      'the accelerated nudge is the same nudge the clock produces',
+    ).toBe(normalise(quiet.sinks.rune?.injections.at(-1)?.body, slowContract));
 
     // And no EXTRA spend: the signalled arm did not earn a second
     // nudge by having been signalled.
     arm.harness.clock.ms = T0 + 4 * HOUR;
     await arm.harness.curator.sweep();
     expect((await ledgerOf(arm, RUNE)).filter((r) => r.kind === 'recovery_nudge')).toHaveLength(1);
+  });
+
+  it('ACCEPTED DIVERGENCE: a signal can spend one nudge a quiet clock would not', async () => {
+    // Named, measured, and left in place rather than argued away.
+    //
+    // ARM A — no signal. The member reads on their own before the TTL
+    // runs out, so the lease never becomes nudgeable and no nudge is
+    // ever owed.
+    const quiet = await setUpArm();
+    await reachTheOwedState(quiet);
+    quiet.harness.clock.ms = T0 + 5 * MINUTE;
+    await get(quiet.harness.app, '/spine/events', RUNE);
+    quiet.harness.clock.ms = T0 + 4 * HOUR;
+    await quiet.harness.curator.sweep();
+    expect((await ledgerOf(quiet, RUNE)).filter((r) => r.kind === 'recovery_nudge')).toHaveLength(
+      0,
+    );
+
+    // ARM B — the same member, the same reading habit, but the runner
+    // declares a dump at one minute. The signal moves the lease before
+    // the read moves the receipt, so one nudge lands.
+    await reachTheOwedState(arm);
+    arm.harness.clock.ms = T0 + MINUTE;
+    await signal(arm, RUNE, 'rune', { signal: 'dump_declared', source: 'compact' });
+    arm.harness.clock.ms = T0 + 2 * MINUTE;
+    await arm.harness.curator.sweep();
+    arm.harness.clock.ms = T0 + 5 * MINUTE;
+    await get(arm.harness.app, '/spine/events', RUNE);
+    arm.harness.clock.ms = T0 + 4 * HOUR;
+    await arm.harness.curator.sweep();
+    expect(
+      (await ledgerOf(arm, RUNE)).filter((r) => r.kind === 'recovery_nudge'),
+      'the divergence is exactly one nudge',
+    ).toHaveLength(1);
+
+    // AND IT IS BOUNDED AT ONE. The clause is "at most one additional
+    // nudge", so a member who keeps signalling must not keep earning
+    // them — otherwise a chatty runner could spend an unbounded amount
+    // of somebody's album, and that would be a signal with teeth.
+    for (let i = 1; i <= 4; i++) {
+      arm.harness.clock.ms = T0 + (4 + i) * HOUR;
+      await signal(arm, RUNE, 'rune', { signal: 'dump_declared', source: 'compact' });
+      await arm.harness.curator.sweep();
+    }
+    expect(
+      (await ledgerOf(arm, RUNE)).filter((r) => r.kind === 'recovery_nudge'),
+      'four more signals must not buy four more nudges',
+    ).toHaveLength(1);
+
+    // THE OWED END STATE IS IDENTICAL. Both members have read
+    // everything; neither is owed anything further. That is the half of
+    // the claim that is not negotiable, and it survives.
+    const owed = async (a: Arm): Promise<number> => {
+      const head = ((await get(a.harness.app, '/spine/events', ANDREWJON)) as { headSeq: number })
+        .headSeq;
+      return head - (a.harness.curatorStore.receipt('rune')?.seq ?? 0);
+    };
+    expect(await owed(arm)).toBe(await owed(quiet));
   });
 
   it('invents nothing when there is nothing unread', async () => {

@@ -141,13 +141,17 @@ let broker: FakeBroker | null = null;
 let runner: RunnerHandle | null = null;
 let socket: Socket | null = null;
 let delivered: ChannelEvent[] = [];
+/** The runner's spine-recovery cooldown clock, so the window is drivable. */
+const clock = { ms: 1_700_000_000_000 };
 
 beforeEach(() => {
   fakeBrokerSpine.orient = PACK;
   fakeBrokerSpine.signals.length = 0;
   fakeBrokerSpine.absent = false;
+  fakeBrokerSpine.absentSignals = false;
   fakeBrokerObjectives.length = 0;
   delivered = [];
+  clock.ms = 1_700_000_000_000;
 });
 
 afterEach(async () => {
@@ -163,6 +167,7 @@ afterEach(async () => {
   fakeBrokerObjectives.length = 0;
   fakeBrokerSpine.signals.length = 0;
   fakeBrokerSpine.absent = false;
+  fakeBrokerSpine.absentSignals = false;
 });
 
 async function startWithSink(): Promise<void> {
@@ -172,6 +177,7 @@ async function startWithSink(): Promise<void> {
     token: FAKE_BROKER_TOKEN,
     log: () => {},
     noTrace: true,
+    now: () => clock.ms,
     channelSink: {
       deliver: async (event) => {
         delivered.push(event);
@@ -263,7 +269,7 @@ describe('spine recovery on the session-attach trigger', () => {
     expect(delivered.find(isRecovery)?.content).not.toContain('obj-77');
   });
 
-  it('honours its own cooldown on a second attach', async () => {
+  it('honours its own cooldown, and OPENS again when it expires', async () => {
     await startWithSink();
     const first = await connectFakeBridge((runner as RunnerHandle).socketPath);
     socket = first.socket;
@@ -277,6 +283,53 @@ describe('spine recovery on the session-attach trigger', () => {
     await waitFor(() => second.received.some((f) => f.kind === 'mcp_response' && f.id === 2));
     await new Promise((r) => setTimeout(r, 150));
     expect(delivered.filter(isRecovery)).toHaveLength(1);
+    second.socket.destroy();
+
+    // THE POSITIVE CONTROL, and it needs the injected clock: a
+    // suppression test on its own passes against a cooldown that never
+    // reopens, which is a runner that recovers exactly once per
+    // process and then goes quiet forever. Sleeping cannot establish
+    // this — it can only ever prove the negative half.
+    clock.ms += 11_000;
+    const third = await connectFakeBridge((runner as RunnerHandle).socketPath);
+    sendFrame(third.socket, { kind: 'mcp_request', id: 3, method: 'tools/list' });
+    await waitFor(() => delivered.filter(isRecovery).length === 2);
+    expect(delivered.filter(isRecovery)).toHaveLength(2);
+    third.socket.destroy();
+  });
+
+  it('recovers against a broker with an annex and NO curator', async () => {
+    // The configuration that a single shared availability flag broke,
+    // and it is not hypothetical — this repo's own server suite
+    // constructs it. Signals 404 (pure ceiling, no curator wired);
+    // orient answers 200 (the annex is right there). One flag meant
+    // the ceiling's 404 permanently disabled the floor's recovery, and
+    // it was a race besides: whether recovery worked at all depended
+    // on which 404 landed first.
+    fakeBrokerSpine.absentSignals = true;
+    await startWithSink();
+    const bridge = await connectFakeBridge((runner as RunnerHandle).socketPath);
+    socket = bridge.socket;
+
+    // Trigger 1: the fresh bridge's first tools/list. The
+    // bridge_connect signal 404s on the way past.
+    sendFrame(socket, { kind: 'mcp_request', id: 1, method: 'tools/list' });
+    await waitFor(() => delivered.some(isRecovery));
+    expect(delivered.filter(isRecovery)).toHaveLength(1);
+    expect(fakeBrokerSpine.signals, 'the signal endpoint really is 404ing').toHaveLength(0);
+
+    // Trigger 2: a second session attach, after the signal 404 has
+    // definitely landed (the first trigger's bridge_connect and
+    // bridge_disconnect both went to it). This is the arm that failed
+    // — the recovery injector had been switched off by somebody
+    // else's endpoint, so the FIRST recovery worked and every one
+    // after it silently did not.
+    clock.ms += 11_000;
+    const second = await connectFakeBridge((runner as RunnerHandle).socketPath);
+    sendFrame(second.socket, { kind: 'mcp_request', id: 2, method: 'tools/list' });
+    await waitFor(() => delivered.filter(isRecovery).length === 2);
+    expect(delivered.filter(isRecovery)).toHaveLength(2);
+    expect(delivered.filter(isRecovery).at(-1)?.content).toContain('evt_contract_1');
     second.socket.destroy();
   });
 

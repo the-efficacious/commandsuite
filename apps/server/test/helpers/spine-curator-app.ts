@@ -17,11 +17,12 @@
 import { Broker, InMemoryEventLog } from 'csuite-core';
 import type { Message, Permission } from 'csuite-sdk/types';
 import { PERMISSIONS } from 'csuite-sdk/types';
-import { vi } from 'vitest';
+import { expect, vi } from 'vitest';
 import { createApp } from '../../src/app.js';
 import { openDatabase } from '../../src/db.js';
 import { createMemberStore } from '../../src/members.js';
 import { SessionStore } from '../../src/sessions.js';
+import type { CuratorStore } from '../../src/spine/index.js';
 import { createSqliteAnnexStore, createSqliteCuratorStore } from '../../src/spine/index.js';
 import { createTokenStoreFromMembers } from '../../src/tokens.js';
 import { mockTeamStore } from './test-stores.js';
@@ -73,7 +74,33 @@ export function makeCuratorApp() {
   broker.seedMembers(members.members());
   const db = openDatabase(':memory:');
   const spine = createSqliteAnnexStore(db);
-  const curatorStore = createSqliteCuratorStore(db);
+
+  /**
+   * The curator store, WRAPPED so the floor-only suite can assert
+   * behaviourally that no signal was ever acted on.
+   *
+   * `invalidateLeases` is the only thing `onSignal` does, so counting
+   * calls to it is a true spy on the signal path — and unlike a source
+   * grep for the string `onSignal`, it cannot be defeated by a rename,
+   * by a helper, or by a route that reaches the curator some other
+   * way. The name check that shipped first was defeated in review by
+   * calling `curatorStore.invalidateLeases` through a harness helper:
+   * thirty tests green, guard silent.
+   */
+  const signalActions: Array<{ member: string; by: string }> = [];
+  const baseCuratorStore = createSqliteCuratorStore(db);
+  const curatorStore = new Proxy(baseCuratorStore, {
+    get(target, prop, receiver) {
+      if (prop === 'invalidateLeases') {
+        return (member: string, by: string, now: number, ttlMs: number): number => {
+          signalActions.push({ member, by });
+          return target.invalidateLeases(member, by, now, ttlMs);
+        };
+      }
+      const value = Reflect.get(target, prop, receiver);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  }) as CuratorStore;
   // Exposed because the floor signals route is RUNNER-auth, and the
   // only way to prove that is to drive it with the other auth plane —
   // a browser session, which must be refused.
@@ -128,6 +155,8 @@ export function makeCuratorApp() {
     app: created.app,
     curator,
     curatorStore,
+    /** Every lease invalidation, i.e. every signal the curator acted on. */
+    signalActions,
     spine,
     broker,
     members,
@@ -185,4 +214,31 @@ export async function get(
 /** Bodies of every curator injection a sink received, joined for substring assertions. */
 export function injectionText(sink: Sink): string {
   return sink.injections.map((m) => m.body).join('\n');
+}
+
+/**
+ * THE FLOOR PROPERTY, ASSERTED BEHAVIOURALLY.
+ *
+ * Call this from the floor-only suite's `afterEach`. It makes two
+ * claims no rename can defeat:
+ *
+ *   1. the curator never acted on a signal — `invalidateLeases`, the
+ *      only thing `onSignal` does, was never called;
+ *   2. no lease in the database carries an invalidation, which is the
+ *      same fact read off the state rather than off the calls.
+ *
+ * Both, because they fail differently: a refactor that invalidates
+ * through some other method defeats (1) and is caught by (2), and a
+ * test that reaches into the DB to plant a row defeats (2) and is
+ * caught by (1).
+ */
+export function assertNoSignalsWereUsed(harness: CuratorApp): void {
+  expect(
+    harness.signalActions,
+    'the floor-only suite acted on a floor signal — its whole claim is that it does not',
+  ).toEqual([]);
+  expect(
+    harness.curatorStore.leases().filter((lease) => lease.invalidatedAt !== null),
+    'a lease was invalidated, which only a floor signal does',
+  ).toEqual([]);
 }

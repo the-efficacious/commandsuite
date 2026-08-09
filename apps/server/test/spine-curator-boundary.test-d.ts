@@ -9,9 +9,12 @@
  *      discouraged way, no way — because `ReceiptVia` is a closed
  *      union of read events and there is no other entry point.
  *   2  the ledger is an ACCOUNT and not an archive. There is no field
- *      for the injected text, so the audit trail cannot become a
- *      second copy of the member's traffic and therefore a second
- *      place it leaks from.
+ *      for the injected text — not for confidentiality (every
+ *      injection is a broker push, so its text is already durable in
+ *      the event log and readable at GET /history) but because a
+ *      second copy can drift from the log it duplicates, has to be
+ *      retained on its own schedule, and grows the ledger by the size
+ *      of the traffic it exists to summarise.
  *
  * A runtime test of claim 1 exists too (`spine-curator.test.ts`: a
  * push happens and the receipt does not move), and it is the weaker
@@ -77,7 +80,7 @@ store.logInjection({
   bytes: 180,
   delivered: true,
   at: 1_700_000_000_000,
-  // @ts-expect-error the ledger records the spend, never the text — keeping it would make the audit trail leak
+  // @ts-expect-error the ledger records the spend, never the text — the text is already in the broker's event log, and a second copy would only drift from it
   body: 'spine: criterion_verdict evt_1 …',
 });
 

@@ -148,8 +148,21 @@ export const fakeBrokerSpine: {
   /** Curator config writes the `subscribe` tool made. */
   curatorWrites: Array<Record<string, unknown>>;
   curatorConfig: Record<string, unknown>;
-  /** Answer `/spine/*` with a 404, as a broker predating the spine would. */
+  /**
+   * 404 the ANNEX (`/spine/orient`), as a broker predating the spine
+   * would.
+   *
+   * Split from `absentSignals` deliberately. A single flag could only
+   * ever construct "both present" or "both absent", and the
+   * configuration that broke the runner is neither: an annex with no
+   * curator answers orient 200 and signals 404, and one shared
+   * availability flag turned that 404 into a permanent loss of
+   * recovery. A fixture that cannot express the broken deployment
+   * cannot catch the bug in it.
+   */
   absent: boolean;
+  /** 404 only `POST /members/:name/spine-signals` — an annex with no curator. */
+  absentSignals: boolean;
 } = {
   appends: [],
   orient: {},
@@ -163,6 +176,7 @@ export const fakeBrokerSpine: {
   curatorWrites: [],
   curatorConfig: {},
   absent: false,
+  absentSignals: false,
 };
 
 /**
@@ -464,7 +478,7 @@ export async function startFakeBroker(): Promise<FakeBroker> {
     }
 
     if (url.pathname.endsWith('/spine-signals') && req.method === 'POST') {
-      if (fakeBrokerSpine.absent) {
+      if (fakeBrokerSpine.absent || fakeBrokerSpine.absentSignals) {
         res.writeHead(404, jsonHeaders);
         res.end(JSON.stringify({ error: 'no spine here' }));
         return;
