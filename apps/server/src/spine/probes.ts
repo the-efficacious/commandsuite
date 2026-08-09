@@ -58,6 +58,12 @@ import { applyFilters, getPath } from '../notifications/render.js';
 import type { SecretsStore } from '../secrets.js';
 import type { AnnexWritePath } from './append.js';
 import { carrierFields, readRecipe, recipeSubject } from './checks.js';
+import {
+  createEgressPolicy,
+  createPinnedFetch,
+  type EgressPolicy,
+  type ProbeTransport,
+} from './egress.js';
 import type { CheckStore } from './probe-store.js';
 import type { AnnexStore, AppendResult } from './store.js';
 import { PROBE_ACTOR_PREFIX } from './store.js';
@@ -103,8 +109,20 @@ export interface ProbeEngineOptions {
   secrets?: SecretsStore;
   /** Injected everywhere. There is no `Date.now()` below this line. */
   now?: () => number;
-  /** Injected so the security pins are testable without a network. */
-  fetchImpl?: typeof fetch;
+  /**
+   * How the engine reaches the world.
+   *
+   * Defaults to a `node:https` transport that pins the socket to the
+   * addresses the egress policy approved. Replaceable by a deployment
+   * with an egress proxy — which is then accountable for the same
+   * pinning property, since the approved addresses are handed to it.
+   */
+  transport?: ProbeTransport;
+  /**
+   * Where a probe may point its camera. Defaults to "nowhere private",
+   * with an empty allowlist.
+   */
+  egress?: EgressPolicy;
 }
 
 /** What a poll came back with, or why it did not. */
@@ -117,7 +135,8 @@ class SpineProbeEngine implements ProbeEngine {
   private readonly logger: Logger;
   private readonly secrets: SecretsStore | undefined;
   private readonly now: () => number;
-  private readonly fetchImpl: typeof fetch;
+  private readonly transport: ProbeTransport;
+  private readonly egress: EgressPolicy;
   /** A sweep still running when the next tick arrives must not double-poll. */
   private sweeping = false;
 
@@ -128,7 +147,13 @@ class SpineProbeEngine implements ProbeEngine {
     this.logger = options.logger;
     this.secrets = options.secrets;
     this.now = options.now ?? Date.now;
-    this.fetchImpl = options.fetchImpl ?? fetch;
+    // SAFE BY DEFAULT, and that is the whole point of defaulting it
+    // here rather than at the composition root. The first version made
+    // the transport an option that `run.ts` never passed, so production
+    // ran on global `fetch` with no pin at all while the fixture header
+    // described an egress hook nobody had wired.
+    this.transport = options.transport ?? createPinnedFetch();
+    this.egress = options.egress ?? createEgressPolicy();
   }
 
   checks(query: ListSpineChecksQuery = {}): SpineCheck[] {
@@ -371,6 +396,16 @@ class SpineProbeEngine implements ProbeEngine {
    *                       ever send a credential that member could have
    *                       sent by hand. Arming a check is not a way to
    *                       borrow somebody else's access.
+   *   not our own network the hostname is RESOLVED and every address it
+   *                       answers with is checked against the private,
+   *                       loopback, link-local and reserved ranges, and
+   *                       the socket is then pinned to those addresses.
+   *                       This is the one pin the authoring check
+   *                       cannot do on its own: `vault.internal` is a
+   *                       well-formed name, and only a resolver knows
+   *                       it points at the thing holding the team's
+   *                       credentials. See `egress.ts` for why the pin
+   *                       has to travel with the request.
    */
   private async poll(recipe: SpineHttpPollRecipe, author: string): Promise<PollOutcome> {
     let url: URL;
@@ -381,6 +416,24 @@ class SpineProbeEngine implements ProbeEngine {
     }
     if (url.protocol !== 'https:') {
       return { ok: false, reason: `refusing to poll ${url.protocol}// — https only` };
+    }
+
+    // BEFORE THE SECRET IS RESOLVED, deliberately. A refused
+    // destination must never be a destination that has had a
+    // credential decrypted for it, even in memory, and ordering the
+    // two the other way would make every blocked poll a small
+    // unnecessary handling of the team's secrets.
+    const destination = await this.egress.check(url.hostname);
+    if (!destination.ok) {
+      return {
+        ok: false,
+        reason:
+          `refusing to poll ${url.hostname}: ${destination.reason}. A probe fetches from the ` +
+          'SERVER and writes what it gets into a permanent observation every member can read, ' +
+          'so this would be a way to read the deployment’s own network and publish it. If this ' +
+          'host is genuinely meant to be polled, it goes on the server’s probe allowlist — ' +
+          'never in the recipe.',
+      };
     }
 
     const headers: Record<string, string> = { Accept: 'application/json' };
@@ -397,11 +450,17 @@ class SpineProbeEngine implements ProbeEngine {
 
     let response: Response;
     try {
-      response = await this.fetchImpl(url, {
+      response = await this.transport(url, {
         method: 'GET',
         headers,
         redirect: 'manual',
         signal: AbortSignal.timeout(POLL_TIMEOUT_MS),
+        // THE CHECKED ADDRESSES TRAVEL WITH THE REQUEST. Handing the
+        // transport a hostname and trusting it to resolve the same
+        // answer is a time-of-check/time-of-use bug with a name — DNS
+        // rebinding — and it is the standard defeat for a
+        // resolve-then-fetch control.
+        pinnedAddresses: destination.addresses,
       });
     } catch (err) {
       return { ok: false, reason: err instanceof Error ? err.message : String(err) };
@@ -595,7 +654,11 @@ class SpineProbeEngine implements ProbeEngine {
     }
   }
 
-  private revisionFrom(check: SpineCheck, payload: unknown, at: string): SpineRevisionInput | null {
+  private revisionFrom(
+    check: SpineCheck,
+    payload: unknown,
+    at: string,
+  ): (Omit<SpineRevisionInput, 'how'> & { how: 'observed' }) | null {
     const path = check.recipe.revisionPath;
     if (path === undefined) return null;
     const value = getPath(payload, path);

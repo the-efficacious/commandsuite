@@ -63,6 +63,7 @@ import { updateServerConfigFile } from './server-config.js';
 import { SessionStore } from './sessions.js';
 import {
   createAnnexWritePath,
+  createEgressPolicy,
   createSqliteCheckStore,
   createSqliteCuratorStore,
 } from './spine/index.js';
@@ -276,6 +277,23 @@ export interface RunServerOptions {
   host?: string;
   dbPath?: string;
   /**
+   * Hostnames the spine's probe engine may poll even though they
+   * resolve inside a private network.
+   *
+   * SERVER CONFIG, and it is the only place this can live. A probe
+   * fetches from the server, attaches the check author's own secret,
+   * and writes the response into a permanent observation every member
+   * can read — so an exception carried in the recipe would be a member
+   * authorising their own exception in the same breath as making the
+   * request. Empty by default: a team that genuinely polls something
+   * internal says so once, out of band, where whoever runs the server
+   * can see it.
+   *
+   * Exact hostnames, lower-cased. Not a suffix and not a range:
+   * `internal.example.com` does not admit `evil.internal.example.com`.
+   */
+  probeAllowHosts?: readonly string[];
+  /**
    * Pre-opened main DB. Used by test fixtures that seed team + members
    * before boot — `:memory:` SQLite handles aren't shared across opens,
    * so passing the seeded handle here is the only way to keep that
@@ -372,6 +390,26 @@ function defaultActivityDbPath(mainDbPath: string): string {
   return `${mainDbPath}-activity`;
 }
 
+/**
+ * The deployment's probe allowlist, from the environment.
+ *
+ * An env var rather than a field in the team config, because this is an
+ * OPERATOR's decision about the network the server sits in, not the
+ * team's decision about how they work — and the team config is editable
+ * over the wire by anyone holding `team.manage`, which would put the
+ * exception back within reach of a member.
+ */
+export const PROBE_ALLOW_HOSTS_ENV = 'CSUITE_SPINE_PROBE_ALLOW_HOSTS';
+
+function readProbeAllowHosts(env: NodeJS.ProcessEnv = process.env): string[] {
+  const raw = env[PROBE_ALLOW_HOSTS_ENV];
+  if (raw === undefined) return [];
+  return raw
+    .split(',')
+    .map((h) => h.trim().toLowerCase())
+    .filter((h) => h.length > 0);
+}
+
 export async function runServer(options: RunServerOptions): Promise<RunningServer> {
   const host = options.host ?? '127.0.0.1';
   const dbPath = options.dbPath ?? ':memory:';
@@ -454,6 +492,16 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   // stream. `createApp` builds the engine itself, because the sweep and
   // the webhook tap both live there.
   const spineCheckStore = createSqliteCheckStore(db);
+  // WHERE A PROBE MAY POINT ITS CAMERA. Constructed here so the policy
+  // is a fact about the deployment rather than a default buried in the
+  // engine, and so the allowlist has exactly one place a reader has to
+  // look to answer "what internal hosts can this server be made to
+  // fetch". Empty unless a deployment says otherwise; the engine's own
+  // default is the same policy, so a caller that passes nothing is
+  // still safe.
+  const spineEgress = createEgressPolicy({
+    allowHosts: options.probeAllowHosts ?? readProbeAllowHosts(),
+  });
   // MUST run before `registerSecretValues` below: identity values that
   // are still in `secrets` when that call happens stay registered for
   // the life of the process, and the migration would appear to have
@@ -735,6 +783,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
     spine: spineStore,
     spineCurator: spineCuratorStore,
     spineChecks: spineCheckStore,
+    probeEgress: spineEgress,
     notifications: notificationsStore,
     activityStore: activityStore,
     telemetryStore: telemetryStore,

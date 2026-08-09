@@ -2737,6 +2737,97 @@ const SpineDotPathSchema = z.string().min(1).max(256);
  */
 const SpineCheckPredicateSchema = z.array(NotificationFilterRuleSchema).max(32);
 
+/**
+ * Whether a poll URL's own text puts it inside a private network.
+ *
+ * DUPLICATED FROM THE SERVER'S `egress.ts` ON PURPOSE, and the
+ * duplication is the smaller cost. The SDK is the wire contract and is
+ * published to clients; making it depend on the server package to
+ * validate a URL would invert the dependency the whole repo is built
+ * on. What is duplicated is a list of IANA-assigned constants, which is
+ * the one class of thing that does not drift — and the server checks
+ * again at fire time with the authoritative list, against resolved
+ * addresses rather than text, so a divergence here can only ever be
+ * this half being more permissive than the half that actually holds.
+ *
+ * Names are deliberately NOT judged: `vault.internal` is a well-formed
+ * hostname and only a resolver knows where it points. That check is the
+ * server's, at fire time, and it is the load-bearing one.
+ */
+const SPINE_BLOCKED_V4: readonly [string, number][] = [
+  ['0.0.0.0', 8],
+  ['10.0.0.0', 8],
+  ['100.64.0.0', 10],
+  ['127.0.0.0', 8],
+  ['169.254.0.0', 16],
+  ['172.16.0.0', 12],
+  ['192.168.0.0', 16],
+  ['224.0.0.0', 4],
+  ['240.0.0.0', 4],
+];
+
+function spineV4ToInt(address: string): number | null {
+  const parts = address.split('.');
+  if (parts.length !== 4) return null;
+  let out = 0;
+  for (const part of parts) {
+    const n = Number(part);
+    if (!Number.isInteger(n) || n < 0 || n > 255) return null;
+    out = ((out << 8) | n) >>> 0;
+  }
+  return out;
+}
+
+function spinePollHostReason(raw: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return null;
+  }
+  const host = parsed.hostname;
+  const bare = host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
+  // A v4-MAPPED v6 LITERAL IS A V4 ADDRESS WEARING A V6 SPELLING, and
+  // it arrives in two forms: the dotted one a member types
+  // (`::ffff:169.254.169.254`) and the hex one `new URL()` normalises
+  // it to (`::ffff:a9fe:a9fe`). Reading only the first is a documented
+  // bypass, because the URL parser rewrites it before anything here
+  // sees it.
+  const dotted = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(bare);
+  const hex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(bare);
+  const candidate =
+    dotted !== null
+      ? (dotted[1] as string)
+      : hex !== null
+        ? [
+            Number.parseInt(hex[1] as string, 16) >> 8,
+            Number.parseInt(hex[1] as string, 16) & 0xff,
+            Number.parseInt(hex[2] as string, 16) >> 8,
+            Number.parseInt(hex[2] as string, 16) & 0xff,
+          ].join('.')
+        : bare;
+  const asInt = spineV4ToInt(candidate);
+  if (asInt !== null) {
+    for (const [prefix, bits] of SPINE_BLOCKED_V4) {
+      const base = spineV4ToInt(prefix) as number;
+      const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0;
+      if ((asInt & mask) >>> 0 === (base & mask) >>> 0) {
+        return `${candidate} is inside ${prefix}/${bits}`;
+      }
+    }
+    return null;
+  }
+  if (!bare.includes(':')) return null;
+  const lower = bare.toLowerCase();
+  if (lower === '::1' || lower === '::') return `${bare} is loopback or unspecified`;
+  const head = Number.parseInt(lower.split(':')[0] ?? '', 16);
+  if (Number.isInteger(head)) {
+    if ((head & 0xfe00) === 0xfc00) return `${bare} is inside fc00::/7`;
+    if ((head & 0xffc0) === 0xfe80) return `${bare} is inside fe80::/10`;
+  }
+  return null;
+}
+
 export const SpineWebhookRecipeSchema = z.object({
   kind: z.literal('webhook'),
   endpoint: z.string().min(1).max(128),
@@ -2769,7 +2860,20 @@ export const SpineHttpPollRecipeSchema = z.object({
       // HTTPS ONLY. A poll carries a resolved secret in a header on
       // some deployments, and cleartext is not a tuning knob.
       return parsed.protocol === 'https:';
-    }, 'a poll URL must be an absolute https:// URL — the probe will not send a team credential in cleartext'),
+    }, 'a poll URL must be an absolute https:// URL — the probe will not send a team credential in cleartext')
+    .superRefine((raw, ctx) => {
+      const reason = spinePollHostReason(raw);
+      if (reason === null) return;
+      ctx.addIssue({
+        code: 'custom',
+        message:
+          `this poll points inside the deployment's own network: ${reason}. A probe fetches ` +
+          'from the SERVER, attaches the author’s secret, and writes the response into a ' +
+          'permanent observation every member can read — so a private address here is a way to ' +
+          'read the server’s own network and publish it. A name is checked again when the poll ' +
+          'actually fires, against every address it resolves to.',
+      });
+    }),
   intervalMs: z
     .number()
     .int()

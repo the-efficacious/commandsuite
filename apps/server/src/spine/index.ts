@@ -17,13 +17,20 @@ export {
 } from './curator-schema.js';
 export type { CuratorStore, LeaseRecord, LeaseState, ReceiptVia } from './curator-store.js';
 export { createSqliteCuratorStore } from './curator-store.js';
-export type { SpineErrorCode, SpineErrorDetail } from './errors.js';
-export { SpineError, staleStateRev } from './errors.js';
-export { SPINE_CHECK_TABLES } from './probe-schema.js';
 // NO `createSqliteAnnexStore` AND NO `AnnexWriter` HERE, deliberately.
 // The barrel hands out the read surface and the hooked write path; a
 // consumer that wants a raw append-capable handle has to name
 // `./store.js` itself, which is exactly what the import scanner reads.
+export type { EgressPolicy, EgressPolicyOptions, ProbeTransport } from './egress.js';
+export {
+  blockedAddressReason,
+  createEgressPolicy,
+  createPinnedFetch,
+  hostAsIpLiteral,
+} from './egress.js';
+export type { SpineErrorCode, SpineErrorDetail } from './errors.js';
+export { SpineError, staleStateRev } from './errors.js';
+export { SPINE_CHECK_TABLES } from './probe-schema.js';
 export type { CheckStore } from './probe-store.js';
 export { createSqliteCheckStore } from './probe-store.js';
 export type { ProbeEngine, ProbeEngineOptions } from './probes.js';

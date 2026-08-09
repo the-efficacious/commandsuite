@@ -30,8 +30,11 @@ import { createSqliteSecretsStore } from '../../src/secrets.js';
 import { SessionStore } from '../../src/sessions.js';
 import {
   createAnnexWritePath,
+  createEgressPolicy,
   createSqliteCheckStore,
   createSqliteCuratorStore,
+  type EgressPolicy,
+  type ProbeTransport,
 } from '../../src/spine/index.js';
 import { createTokenStoreFromMembers } from '../../src/tokens.js';
 import { mockTeamStore } from './test-stores.js';
@@ -52,24 +55,53 @@ export const HOOK_SLUG = 'ci';
 
 export interface FetchCall {
   url: string;
-  init: RequestInit | undefined;
+  init: Parameters<ProbeTransport>[1];
 }
 
-/** A scripted `fetch`: one response per call, and every call recorded. */
+/**
+ * A scripted transport: one response per call, every call recorded.
+ *
+ * Records `pinnedAddresses` along with everything else, because the
+ * pin travelling with the request is the property that makes the
+ * egress check worth having — a transport that received a hostname and
+ * resolved it again would undo the check however carefully the check
+ * was written.
+ */
 export function scriptedFetch(responses: (() => Response)[]): {
-  impl: typeof fetch;
+  impl: ProbeTransport;
   calls: FetchCall[];
 } {
   const calls: FetchCall[] = [];
   let n = 0;
-  const impl = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    calls.push({ url: String(input), init });
+  const impl: ProbeTransport = async (url, init) => {
+    calls.push({ url: String(url), init });
     const next = responses[Math.min(n, responses.length - 1)];
     n += 1;
-    if (next === undefined) throw new Error('scripted fetch ran out of responses');
+    if (next === undefined) throw new Error('scripted transport ran out of responses');
     return next();
-  }) as unknown as typeof fetch;
+  };
   return { impl, calls };
+}
+
+/**
+ * An egress policy over a FAKE RESOLVER, so a suite can decide what a
+ * name points at without a network.
+ *
+ * Names not in the map fail to resolve, which is what the policy is
+ * meant to do with `kubernetes.default.svc` on a laptop.
+ */
+export function fakeEgress(
+  map: Record<string, string[]> = { 'ci.example.com': ['93.184.216.34'] },
+  allowHosts: readonly string[] = [],
+): EgressPolicy {
+  return createEgressPolicy({
+    allowHosts,
+    resolve: async (hostname) => {
+      const found = map[hostname];
+      if (found === undefined) throw new Error(`ENOTFOUND ${hostname}`);
+      return found;
+    },
+  });
 }
 
 export function jsonResponse(body: unknown, status = 200): Response {
@@ -79,7 +111,9 @@ export function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-export function makeProbeApp(options: { fetchImpl?: typeof fetch } = {}) {
+export function makeProbeApp(
+  options: { fetchImpl?: ProbeTransport; egress?: EgressPolicy; allowHosts?: string[] } = {},
+) {
   setKek(testKek());
   const clock = { ms: 1_700_000_000_000 };
   const now = () => clock.ms;
@@ -128,7 +162,12 @@ export function makeProbeApp(options: { fetchImpl?: typeof fetch } = {}) {
     spineChecks,
     notifications,
     secrets,
-    ...(options.fetchImpl !== undefined ? { probeFetch: options.fetchImpl } : {}),
+    ...(options.fetchImpl !== undefined ? { probeTransport: options.fetchImpl } : {}),
+    // A FAKE RESOLVER BY DEFAULT, so the suite's `ci.example.com`
+    // resolves to something public without a network — and so a test
+    // that reaches for a private address gets the real refusal rather
+    // than a DNS failure that would pass for the wrong reason.
+    probeEgress: options.egress ?? fakeEgress(undefined, options.allowHosts ?? []),
     now,
     version: '0.0.0',
     logger,

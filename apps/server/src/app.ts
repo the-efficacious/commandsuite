@@ -206,7 +206,9 @@ import {
   type CuratorStore,
   createCurator,
   createProbeEngine,
+  type EgressPolicy,
   type ProbeEngine,
+  type ProbeTransport,
   SpineError,
 } from './spine/index.js';
 import type { TeamStore } from './team-store.js';
@@ -344,17 +346,27 @@ export interface AppOptions {
    */
   spineChecks?: CheckStore;
   /**
-   * The `fetch` the probe engine polls with.
+   * How the probe engine reaches the world.
    *
-   * A real extension point rather than a test hook, and it is the only
-   * place the spine reaches the network at all: a deployment that wants
-   * an egress proxy, an allowlist or a connection pool in front of
-   * outbound polls puts it here. It is also what lets the security
-   * pins — https-only, no redirects, the size cap — be asserted
-   * without a socket, which matters because those are the assertions
-   * nobody wants to discover are untested.
+   * Defaults, in the engine, to a `node:https` transport that pins the
+   * socket to the addresses the egress policy approved — safe without
+   * anybody wiring anything, which is the property the first version
+   * did not have: this was an option `run.ts` never passed, so
+   * production ran on global `fetch` with no pin while the fixture
+   * header described an egress hook nobody had wired. A deployment
+   * with an egress proxy replaces it and is handed the same approved
+   * addresses, so it is accountable for the same pin.
    */
-  probeFetch?: typeof fetch;
+  probeTransport?: ProbeTransport;
+  /**
+   * Where a probe may point its camera.
+   *
+   * Defaults to "nowhere private, and nothing excepted". The allowlist
+   * is SERVER CONFIG and can only be server config: an exception
+   * carried in the recipe would be a member authorising their own
+   * exception in the same breath as making the request.
+   */
+  probeEgress?: EgressPolicy;
   /**
    * External Notifications registry — inbound webhook/API endpoints
    * routed to members and channels as ambient input. The
@@ -656,7 +668,8 @@ export function createApp(options: AppOptions): CreatedApp {
     spine,
     spineCurator,
     spineChecks,
-    probeFetch,
+    probeTransport,
+    probeEgress,
     notifications,
     telemetryStore,
     genaiStore,
@@ -702,7 +715,8 @@ export function createApp(options: AppOptions): CreatedApp {
       checks: spineChecks,
       logger,
       ...(secrets !== undefined ? { secrets } : {}),
-      ...(probeFetch !== undefined ? { fetchImpl: probeFetch } : {}),
+      ...(probeTransport !== undefined ? { transport: probeTransport } : {}),
+      ...(probeEgress !== undefined ? { egress: probeEgress } : {}),
       now,
     });
     probes = engine;

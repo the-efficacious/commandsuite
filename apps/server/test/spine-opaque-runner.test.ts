@@ -129,6 +129,7 @@ describe('the opaque-runner property', () => {
       'curator-schema.ts',
       'curator-store.ts',
       'curator.ts',
+      'egress.ts',
       'errors.ts',
       'index.ts',
       'probe-schema.ts',
