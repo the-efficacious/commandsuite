@@ -86,6 +86,34 @@ const ALLOWED = ['spine/append.ts', 'spine/store.ts'];
  */
 const IMPORT_STATEMENT = /^\s*import\s[\s\S]*?from\s+['"][^'"]+['"];?$/gm;
 
+/**
+ * The store module, however it is spelled from wherever it is imported.
+ *
+ * NAMED IMPORTS ARE NOT THE ONLY ROUTE, which is what the first version
+ * of this scan assumed. `import * as store from './store.js'` names no
+ * grant and reaches every export including the factory; `await
+ * import('./store.js')` names nothing at all and is not an import
+ * statement. Both walk straight past a specifier-name check, so the
+ * MODULE is watched as well as the names: any namespace import of it,
+ * and any dynamic import of it, is a grant on its own.
+ */
+const NAMESPACE_IMPORT = /import\s+\*\s+as\s+\w+\s+from\s+(['"])([^'"]+)\1/;
+const DYNAMIC_IMPORT = /import\s*\(\s*(['"])([^'"]+)\1\s*\)/;
+
+/**
+ * Whether a specifier names the annex store.
+ *
+ * `./store.js` from inside `spine/` and `../spine/store.js` from
+ * outside it are the same module, and `notifications/store.js` is a
+ * different one that must not be swept up — otherwise the rule
+ * degenerates into "nobody may import anything called store".
+ */
+function isAnnexStoreSpecifier(specifier: string, importingFile: string): boolean {
+  if (!specifier.endsWith('/store.js')) return false;
+  if (specifier.includes('spine/store.js')) return true;
+  return importingFile.startsWith('spine/') && /^\.{1,2}\/store\.js$/.test(specifier);
+}
+
 interface Hit {
   file: string;
   grant: string;
@@ -104,10 +132,29 @@ function scanImports(dir = SRC, prefix = ''): Hit[] {
     if (!entry.name.endsWith('.ts')) continue;
     const source = readFileSync(join(dir, entry.name), 'utf8');
     for (const statement of source.match(IMPORT_STATEMENT) ?? []) {
+      const namespace = NAMESPACE_IMPORT.exec(statement);
+      if (namespace !== null && isAnnexStoreSpecifier(namespace[2] as string, label)) {
+        // A namespace binding reaches every export, including the
+        // factory, without naming one.
+        hits.push({ file: label, grant: 'namespace', statement: statement.trim() });
+        continue;
+      }
+      // The grant NAMES need no specifier filter: `AnnexWriter` and
+      // `createSqliteAnnexStore` are exported by one module in the
+      // repo, so naming one is naming it however the path is spelled.
       for (const grant of WRITE_GRANTS) {
         if (new RegExp(`\\b${grant}\\b`).test(statement)) {
           hits.push({ file: label, grant, statement: statement.trim() });
         }
+      }
+    }
+    // Dynamic imports are not statements and never match the pattern
+    // above. One line, and it closes a route that would otherwise be
+    // invisible to every assertion in this file.
+    for (const line of source.split('\n')) {
+      const dynamic = DYNAMIC_IMPORT.exec(line);
+      if (dynamic !== null && isAnnexStoreSpecifier(dynamic[2] as string, label)) {
+        hits.push({ file: label, grant: 'dynamic', statement: line.trim() });
       }
     }
   }
@@ -159,6 +206,39 @@ describe('the annex has one write path, and the hooks are on it', () => {
         .map((h) => `${h.file} (${h.grant})`)
         .join(', ')}`,
     ).toEqual(['spine/append.ts']);
+  });
+
+  it('catches the three routes a specifier-name check would miss', () => {
+    // THE DEFEAT-TESTS ON THE SCANNER ITSELF, written as the three
+    // things that actually got past its first version. A scanner is
+    // only worth what its own negatives are worth.
+    const planted = mkdtempSync(join(tmpdir(), 'spine-append-dodge-'));
+    tmpDirs.push(planted);
+    writeFileSync(
+      join(planted, 'namespace.ts'),
+      "import * as store from '../spine/store.js';\nconst s = store.build(db);\n",
+    );
+    writeFileSync(
+      join(planted, 'dynamic.ts'),
+      "const m = await import('./spine/store.js');\nconst s = m.createSqliteAnnexStore(db);\n",
+    );
+    writeFileSync(
+      join(planted, 'named.ts'),
+      "import { createSqliteAnnexStore } from './spine/store.js';\n",
+    );
+    // A named import of something that is NOT a grant, from the same
+    // module, must stay clean — otherwise the rule degenerates into
+    // "nobody may mention the store", and `AnnexStore` is imported all
+    // over the server by design.
+    writeFileSync(
+      join(planted, 'reader.ts'),
+      "import type { AnnexStore, AppendResult } from './spine/store.js';\n",
+    );
+    expect(
+      scanImports(planted)
+        .map((h) => `${h.file}:${h.grant}`)
+        .sort(),
+    ).toEqual(['dynamic.ts:dynamic', 'named.ts:createSqliteAnnexStore', 'namespace.ts:namespace']);
   });
 
   it('names both grants — neither route to a writer is unwatched', () => {

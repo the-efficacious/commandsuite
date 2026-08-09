@@ -55,7 +55,7 @@
  * broken hook cannot silence the others.
  */
 
-import type { AppendSpineEventRequest } from 'csuite-sdk/types';
+import type { AppendSpineEventRequest, SpineRevisionInput } from 'csuite-sdk/types';
 import type { DatabaseSyncInstance } from '../db.js';
 import type { Logger } from '../logger.js';
 import {
@@ -85,9 +85,31 @@ export type AppendHook = (result: AppendResult) => Promise<void>;
  * `spine-boundary.test-d.ts` puts the hostile shapes in front of `tsc`
  * so the claim cannot rot into a comment.
  */
+/**
+ * A revision a probe may caption an event with: OBSERVED, never
+ * asserted.
+ *
+ * D2 and §10 in one field. `observed` means a flash went off;
+ * `asserted` means somebody named a value by hand, which is authored
+ * intent — epistemically a different object, and the system has no
+ * intent to author. An asserted revision from a probe would also be a
+ * derived value with a caption that lies about how it was obtained,
+ * which is precisely the shape §4 exists to make unrepresentable.
+ *
+ * Only `observed` revisions move a subject's head, so the practical
+ * consequence is smaller than the epistemic one — but it is exactly the
+ * direction that matters: the system must never be able to declare that
+ * the world is at a revision nobody looked at.
+ */
+type ObservedRevisionInput = Omit<SpineRevisionInput, 'how'> & { how: 'observed' };
+
 export type ProbeAppendRequest =
-  | Extract<AppendSpineEventRequest, { kind: 'observation' }>
-  | Extract<AppendSpineEventRequest, { kind: 'lifecycle' }>;
+  | (Omit<Extract<AppendSpineEventRequest, { kind: 'observation' }>, 'revision'> & {
+      revision?: ObservedRevisionInput;
+    })
+  | (Omit<Extract<AppendSpineEventRequest, { kind: 'lifecycle' }>, 'revision'> & {
+      revision?: ObservedRevisionInput;
+    });
 
 /** Who fired, and on whose behalf. Both captions, or the store refuses the write. */
 export interface ProbeIdentity {
@@ -98,10 +120,49 @@ export interface ProbeIdentity {
   now: number;
 }
 
+/**
+ * The read methods, as DATA, because the facade below is built from
+ * this list rather than from a spread of the writer.
+ *
+ * A `{ ...writer }` facade would carry `append` along with everything
+ * else and the whole exercise would be decorative. An explicit list
+ * cannot do that: a method absent from it is absent from the object,
+ * and adding a read method is a one-line edit that fails loudly (the
+ * caller gets `undefined is not a function`) rather than silently
+ * widening the surface.
+ */
+const READ_METHODS = [
+  'event',
+  'events',
+  'registerSubject',
+  'subject',
+  'subjects',
+  'revision',
+  'contract',
+  'contracts',
+  'ask',
+  'orient',
+  'rebuildProjections',
+] as const satisfies readonly (keyof AnnexStore)[];
+
 export interface AnnexWritePath {
   /**
    * The annex's READ surface, and the only handle this server hands
-   * out. It has no `append`, which is the whole point.
+   * out.
+   *
+   * A GENUINE FACADE, not the writer wearing a narrower type. The
+   * first version of this returned the writer itself and relied on
+   * `AnnexStore` having no `append` — which is a compile-time claim,
+   * and a compile-time claim about an object is defeated by one cast:
+   * `(path.store as unknown as { append: … }).append(…)` reached the
+   * annex, imported nothing from `store.js` but types, and bypassed
+   * every post-commit hook. The event landed, no check armed, no
+   * curator line went out, and the scanner saw nothing because there
+   * was nothing to see.
+   *
+   * So the object handed out genuinely does not have the method. The
+   * cast now returns `undefined` and throws at the call site — which
+   * is the difference between an architecture and an argument.
    */
   readonly store: AnnexStore;
   /**
@@ -143,7 +204,7 @@ class SpineWritePath implements AnnexWritePath {
     // leaves a bare writer lying around for a new module to be passed.
     const writer = createSqliteAnnexStore(options.db);
     this.writer = writer;
-    this.store = writer;
+    this.store = readOnlyFacade(writer);
     this.logger = options.logger;
   }
 
@@ -177,6 +238,30 @@ class SpineWritePath implements AnnexWritePath {
       now: probe.now,
     });
   }
+}
+
+/**
+ * A frozen object carrying the read methods and nothing else.
+ *
+ * Bound rather than delegated through a Proxy, for two reasons that
+ * are both about the failure being visible. A Proxy `get` trap that
+ * filtered by name would still be an object whose shape depends on a
+ * predicate someone can widen, and it would answer `undefined` for
+ * `append` while still holding a live reference to the writer in its
+ * closure — reachable by anyone who could reach the handler. This
+ * holds a reference too, but it holds it the way every closure does,
+ * and there is no key on the object that reaches it.
+ *
+ * Frozen so the facade cannot be re-fitted with an `append` by a
+ * caller who has one; that is not the attack this exists for, but a
+ * read-only surface that can be assigned to is not read-only.
+ */
+function readOnlyFacade(writer: AnnexWriter): AnnexStore {
+  const facade: Partial<Record<(typeof READ_METHODS)[number], unknown>> = {};
+  for (const name of READ_METHODS) {
+    facade[name] = (writer[name] as (...args: unknown[]) => unknown).bind(writer);
+  }
+  return Object.freeze(facade) as AnnexStore;
 }
 
 export function createAnnexWritePath(options: AnnexWritePathOptions): AnnexWritePath {
