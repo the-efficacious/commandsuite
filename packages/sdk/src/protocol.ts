@@ -280,7 +280,8 @@ export const PROCESS_DOCUMENT_PATHS = {
  *                                 unlike orient it advances nothing
  *   POST   /spine/subjects      — explicit registration
  *   GET    /spine/subjects      — listing, with transitive containment
- *   GET    /spine/contracts     — projection reads with staleness flags
+ *   GET    /spine/contracts     — projection reads with staleness flags;
+ *                                 ?focus=true returns the team's focus set (D9)
  *   GET    /spine/contracts/:id — one contract
  *   GET    /spine/curator       — this member's curator policy, as data
  *   PUT    /spine/curator       — change it at runtime (self, or members.manage)

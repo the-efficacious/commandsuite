@@ -3384,6 +3384,17 @@ export function createApp(options: AppOptions): CreatedApp {
           return c.json({ error: 'requires spine.author' }, 403);
         }
       }
+      // Curating the focus set is a distinct authority from authoring
+      // work (D9): `spine.focus`, not `spine.author`. Reading the focus
+      // set is baseline — every member plans against it — so only the
+      // authoring act is gated here, and it is gated at the ROUTE like
+      // every other permission, because membership is a granted power
+      // and the store enforces only what an act structurally MEANS.
+      if (input.kind === 'focus') {
+        if (!hasPermission(member.permissions, 'spine.focus')) {
+          return c.json({ error: 'requires spine.focus' }, 403);
+        }
+      }
       // EVERY member-naming field, not the two that were obvious.
       //
       // Assignment is how access gets granted, so this is a spelling
@@ -3554,6 +3565,7 @@ export function createApp(options: AppOptions): CreatedApp {
         state: c.req.query('state'),
         member: c.req.query('member'),
         subject: c.req.query('subject'),
+        focus: c.req.query('focus'),
       });
       if (!parsed.success) {
         return c.json({ error: 'invalid query', details: parsed.error.issues }, 400);

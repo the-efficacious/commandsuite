@@ -92,6 +92,25 @@ export const PERMISSIONS = [
    * holds. A leaf would imply those refusals could be granted away.
    */
   'spine.author',
+  /**
+   * Light or unlight a spine contract — decide what is in the team's
+   * FOCUS SET, the shared boundary of what is lit for travel now (D9).
+   *
+   * A SEPARATE leaf from `spine.author`, and the separation is the
+   * whole point. Authoring a contract states what the world must
+   * become; curating the focus set decides which of the team's
+   * contracts are the ones to travel to *now* — the allocator's
+   * authority, not the author's. A member may be able to author work
+   * without deciding the team's sprint, and hold the sprint without
+   * authoring, so the two powers are granted apart.
+   *
+   * It gates AUTHORING focus-membership events only. Reading the focus
+   * set is baseline — every member plans against it, so `orient` carries
+   * it and `GET /spine/contracts?focus=true` is open — and no heuristic
+   * ever lights a contract: membership is authored by a holder of this
+   * leaf, on the record, with a reason (§10, never take the photos).
+   */
+  'spine.focus',
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -2423,6 +2442,7 @@ export const SPINE_EVENT_KINDS = [
   'correction',
   'discussion',
   'promotion',
+  'focus',
 ] as const;
 
 export type SpineEventKind = (typeof SPINE_EVENT_KINDS)[number];
@@ -2465,6 +2485,13 @@ export const SPINE_EVENT_CLASSES: Record<SpineEventKind, SpineEventClass> = {
   lifecycle: 'authoritative',
   correction: 'authoritative',
   promotion: 'authoritative',
+  // Focus is a DECISION, not chatter: lighting a contract for travel
+  // carries the same op_id idempotency and state_rev precondition as
+  // any other authoritative act, and it generates the class-2 delta
+  // that tells subscribers the contract entered (or left) the team's
+  // focus set. It is deliberately NOT citation-locked — curating what
+  // is lit is not an act on the world that a pending ask should gate.
+  focus: 'authoritative',
 };
 
 /** The states from which no further authoritative event is accepted, correction excepted. */
@@ -2724,6 +2751,29 @@ export interface SpinePromotionBody {
   note?: string;
 }
 
+/**
+ * A focus-membership act (D9): a contract enters or leaves the team's
+ * focus set — the shared boundary of what is lit for travel now.
+ *
+ * ONE KIND, a direction, and a reason. `lit: true` lights the contract
+ * (it enters the set); `lit: false` unlights it. A boolean rather than
+ * two kinds because entering and leaving are the same act in opposite
+ * directions, and the projection is a SET — every focus event flips a
+ * contract's membership, so re-lighting an already-lit contract (or
+ * unlighting an unlit one) is refused rather than recorded as a no-op.
+ *
+ * The `reason` is required because membership is AUTHORED, never
+ * derived: a contract is lit because a permissioned member said so, on
+ * the record, with a reason someone can read later (§10 — the system
+ * never takes the photos).
+ */
+export interface SpineFocusBody {
+  contract: string;
+  /** `true` lights the contract into the focus set; `false` unlights it. */
+  lit: boolean;
+  reason: string;
+}
+
 export type SpineEventBody =
   | SpineObservationBody
   | SpineTestimonyBody
@@ -2738,7 +2788,8 @@ export type SpineEventBody =
   | SpineLifecycleBody
   | SpineCorrectionBody
   | SpineDiscussionBody
-  | SpinePromotionBody;
+  | SpinePromotionBody
+  | SpineFocusBody;
 
 /**
  * One captioned photograph in the annex.
@@ -2865,6 +2916,18 @@ export interface SpineContract {
   stale: boolean;
   /** The subject's latest observed revision, when there is one. WHOLE, like `revision`. */
   head: SpineRevision | null;
+  /**
+   * Whether this contract is in the team's FOCUS SET — its latest focus
+   * event is `lit` (D9). A reported state, folded from focus events,
+   * never derived: a contract is in focus because a permissioned member
+   * lit it. `false` when nobody has ever lit it or it was unlit.
+   *
+   * Out-of-focus is attention-silence, not record-absence: a contract
+   * with `inFocus: false` stays fully in the annex, in this list, and in
+   * its owner's queue — it only stops spending the team's album on
+   * ambient (class-2) traffic.
+   */
+  inFocus: boolean;
 }
 
 /** An outstanding request for a ruling. */
@@ -3018,6 +3081,13 @@ export type AppendSpineEventRequest =
       body: SpinePromotionBody;
       opId: string;
       expectedStateRev?: number;
+    })
+  | (SpineAppendCaptions & {
+      kind: 'focus';
+      body: SpineFocusBody;
+      opId: string;
+      /** Always required: focus is an authoritative act on the contract it lights. */
+      expectedStateRev: number;
     });
 
 export interface RegisterSpineSubjectRequest {
@@ -3049,6 +3119,13 @@ export interface ListSpineContractsQuery {
   /** Contracts where this member is assignee, verifier, or authority. */
   member?: string;
   subject?: string;
+  /**
+   * The team's focus set: contracts whose latest focus event is `lit`.
+   * The allocator's whole-plate view (#155 finding 8) — what is lit for
+   * travel now, across the whole team, not only the caller's own
+   * bindings. Reading it is baseline; only lighting is permissioned.
+   */
+  focus?: boolean;
 }
 
 // ─── Responses ───────────────────────────────────────────────────────
@@ -3209,6 +3286,13 @@ export interface OrientContract {
   /** The bound revision is behind the subject's head. Reported, never repaired. */
   stale: boolean;
   head: SpineRevision | null;
+  /**
+   * Whether this binding is in the team's focus set (D9). Lets a
+   * member's `orient` distinguish in-focus from out-of-focus bindings —
+   * out-of-focus work still reaches them here and as class 1, but
+   * generates no ambient class-2 traffic.
+   */
+  inFocus: boolean;
   /** Rulings that bind this contract, newest last. */
   rulings: SpineEvent[];
 }
@@ -3431,6 +3515,11 @@ export const SPINE_INJECTION_KINDS = [
   'recovery_nudge',
   'addressed',
   'subscription_delta',
+  // The focus set ran dry — a curator-computed class-1 transition, not
+  // an annex event addressed to anyone, so it earns its own ledger kind
+  // rather than borrowing `addressed`. "What did the system spend of my
+  // album" must be able to name this line for what it is.
+  'running_dry',
 ] as const;
 
 export type SpineInjectionKind = (typeof SPINE_INJECTION_KINDS)[number];
@@ -3517,8 +3606,9 @@ export interface SpineCuratorPolicy {
    * fanout. This list decides only which of them ALSO spend the rarest
    * budget there is: a push to a member who is away from their screen.
    * A kind absent from it is not silenced, it is un-buzzed. The director
-   * default is a blocking ask naming them and a proceed past their ask;
-   * everything else waits quietly in the queue until they look.
+   * default is a blocking ask naming them, a proceed past their ask, and
+   * `focus` — the focus set running dry, the allocator's cue to set the
+   * next one; everything else waits quietly in the queue until they look.
    */
   interruptWhitelist: SpineEventKind[];
   /** False when these are the team defaults rather than an authored row. */

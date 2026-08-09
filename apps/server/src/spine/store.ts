@@ -60,6 +60,7 @@ import type {
   SpineEventBody,
   SpineEventClass,
   SpineEventKind,
+  SpineFocusBody,
   SpineLifecycleBody,
   SpineProceedingBody,
   SpineProvenance,
@@ -146,6 +147,17 @@ export interface AnnexStore {
   revision(id: string): SpineRevision | null;
   contract(id: string): SpineContract | null;
   contracts(query?: ListSpineContractsQuery): SpineContract[];
+  /**
+   * The EFFECTIVE focus set (D9): the ids of contracts that are lit AND
+   * still travelable — `inFocus` and not in a terminal state. This is the
+   * set the curator gates ambient traffic against and the set whose
+   * emptying fires the running-dry interrupt. A lit contract that reaches
+   * `done`/`cancelled`/`superseded` leaves the effective set (it is no
+   * longer travel), even though its membership row still reads lit —
+   * which is why "runs dry" can be triggered by a completion, not only by
+   * an unlight.
+   */
+  focusSet(): string[];
   ask(id: string): SpineAsk | null;
   /** The Guaranteed Pack. The recovery call, and cheap by construction. */
   orient(member: string, now?: number): OrientPack;
@@ -293,6 +305,15 @@ interface AskRow {
   state: string;
   resolved_by: string | null;
   at: string;
+}
+
+interface FocusRow {
+  contract_id: string;
+  lit: number;
+  reason: string;
+  updated_by: string;
+  updated_at: string;
+  event_id: string;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────
@@ -455,6 +476,7 @@ function contractInBody(kind: SpineEventKind, body: SpineEventBody): string | nu
     case 'attempt':
     case 'criterion_verdict':
     case 'lifecycle':
+    case 'focus':
       return (body as { contract: string }).contract;
     case 'ruling':
     case 'ask':
@@ -703,9 +725,36 @@ class SqliteAnnexStore implements AnnexWriter {
       where.push('(assignee = ? OR verifier = ? OR authority = ?)');
       params.push(query.member, query.member, query.member);
     }
+    if (query.focus === true) {
+      // The team's focus set: contracts whose latest focus event is lit.
+      // A subquery rather than a join so the filter reads the same
+      // MEMBERSHIP the `inFocus` flag does — the effective/travelable
+      // narrowing (non-terminal) lives in `focusSet()`, for the curator.
+      where.push('id IN (SELECT contract_id FROM spine_focus WHERE lit = 1)');
+    }
     const sql = `SELECT * FROM spine_contracts${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY spec_seq ASC`;
     const rows = this.db.prepare(sql).all(...(params as never[])) as unknown as ContractRow[];
     return this.decorateContracts(rows);
+  }
+
+  /**
+   * The effective focus set: lit AND non-terminal contract ids.
+   *
+   * Terminal contracts are excluded even while their membership row
+   * still reads lit, because the set is "what is lit for TRAVEL now" and
+   * a done contract is not travel. This is what lets the running-dry
+   * transition be triggered by a completion as well as by an unlight.
+   */
+  focusSet(): string[] {
+    const rows = this.db
+      .prepare(
+        `SELECT f.contract_id AS contract_id
+         FROM spine_focus f JOIN spine_contracts c ON c.id = f.contract_id
+         WHERE f.lit = 1 AND c.state NOT IN (${SPINE_TERMINAL_STATES.map(() => '?').join(',')})
+         ORDER BY c.spec_seq ASC`,
+      )
+      .all(...([...SPINE_TERMINAL_STATES] as never[])) as unknown as { contract_id: string }[];
+    return rows.map((r) => r.contract_id);
   }
 
   /**
@@ -732,6 +781,17 @@ class SqliteAnnexStore implements AnnexWriter {
         .all(...(boundIds as never[])) as unknown as RevisionRow[];
       for (const rev of revs) bound.set(rev.id, rev);
     }
+    // Focus membership, batched over the whole set — one query for the
+    // lit rows rather than one per contract, so the flag costs the same
+    // whether the caller asked for one contract or the whole plate.
+    // `inFocus` is raw MEMBERSHIP (latest focus event is lit), not the
+    // effective/travelable set: the display wants "was this lit", and
+    // `focusSet()` applies the non-terminal filter for gating.
+    const litContracts = new Set(
+      this.rowsIn<FocusRow>('spine_focus', 'contract_id', [...new Set(rows.map((r) => r.id))])
+        .filter((row) => row.lit === 1)
+        .map((row) => row.contract_id),
+    );
     return rows.map((row) => {
       const head = heads.get(row.subject_id) ?? null;
       const boundRev = row.revision_id === null ? null : (bound.get(row.revision_id) ?? null);
@@ -772,6 +832,7 @@ class SqliteAnnexStore implements AnnexWriter {
         successor: row.successor,
         stale,
         head: head === null ? null : rowToRevision(head),
+        inFocus: litContracts.has(row.id),
       };
     });
   }
@@ -1282,6 +1343,42 @@ class SqliteAnnexStore implements AnnexWriter {
 
     if (kind === 'lifecycle') {
       this.assertLifecycleLegal(input, contract as SpineContract);
+    }
+
+    if (kind === 'focus') {
+      this.assertFocusFlips(input.body as SpineFocusBody, contract as SpineContract);
+    }
+  }
+
+  /**
+   * A FOCUS EVENT MUST FLIP MEMBERSHIP, or it is refused.
+   *
+   * The projection is a SET, and a set has no "re-add" — re-lighting a
+   * contract that is already lit, or unlighting one that is already out,
+   * changes nothing a reader could act on, so it is refused rather than
+   * recorded as a no-op event that bumps the counter and spends a line
+   * saying nothing moved. (The brief's pinned decision: idempotent, the
+   * projection is a set. A LOST WRITE still replays for free through the
+   * op_id ledger — this refusal is a DIFFERENT write, by construction,
+   * because a replay resolves before any structural check runs.)
+   *
+   * A contract with no focus row has never been lit, so unlighting it is
+   * the "already out" case; lighting it is the legal first light.
+   */
+  private assertFocusFlips(body: SpineFocusBody, contract: SpineContract): void {
+    const row = this.db
+      .prepare('SELECT lit FROM spine_focus WHERE contract_id = ?')
+      .get(contract.id) as { lit: number } | undefined;
+    const currentlyLit = row?.lit === 1;
+    if (body.lit === currentlyLit) {
+      throw new SpineError(
+        'invalid_transition',
+        body.lit
+          ? `contract ${contract.id} is already in the focus set. Lighting it again would ` +
+            'change nothing — the focus set is a set. Unlight it with `lit: false` to take it out.'
+          : `contract ${contract.id} is not in the focus set, so there is nothing to unlight. ` +
+            'Light it with `lit: true` to add it.',
+      );
     }
   }
 
@@ -2066,6 +2163,10 @@ class SqliteAnnexStore implements AnnexWriter {
         this.foldDischarge(event);
         this.touchContract(contractId, stateRev, event, {});
         break;
+      case 'focus':
+        this.foldFocus(event, contractId as string);
+        this.touchContract(contractId, stateRev, event, {});
+        break;
       default:
         this.touchContract(contractId, stateRev, event, {});
         break;
@@ -2356,6 +2457,31 @@ class SqliteAnnexStore implements AnnexWriter {
       .run(event.id, target.id);
   }
 
+  /**
+   * FOCUS MEMBERSHIP, folded to the one row that holds it.
+   *
+   * Upsert rather than insert, because a contract's membership is one
+   * standing fact and every focus event REPLACES it: the latest event
+   * decides whether the contract is lit, and carries the member and
+   * reason behind that decision. An unlight is kept as `lit = 0` rather
+   * than deleted so the row still answers "who last touched focus here,
+   * and why" — the record of a contract leaving the set is a fact, not
+   * an absence.
+   */
+  private foldFocus(event: SpineEvent, contractId: string): void {
+    const body = event.body as SpineFocusBody;
+    this.db
+      .prepare(
+        `INSERT INTO spine_focus (contract_id, lit, reason, updated_by, updated_at, event_id)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(contract_id) DO UPDATE SET
+           lit = excluded.lit, reason = excluded.reason,
+           updated_by = excluded.updated_by, updated_at = excluded.updated_at,
+           event_id = excluded.event_id`,
+      )
+      .run(contractId, body.lit ? 1 : 0, body.reason, event.actor, event.at, event.id);
+  }
+
   /** Advance the counter and the clock on a contract an event touched but did not reshape. */
   private touchContract(
     contractId: string | null,
@@ -2505,6 +2631,7 @@ class SqliteAnnexStore implements AnnexWriter {
         revision: contract.revision,
         stale: contract.stale,
         head: contract.head,
+        inFocus: contract.inFocus,
         rulings: rulings.filter((r) => r.contract_id === contract.id).map(rowToEvent),
       };
     });

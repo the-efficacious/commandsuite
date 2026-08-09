@@ -197,6 +197,27 @@ export const SPINE_SCHEMA = `
   );
   CREATE INDEX IF NOT EXISTS spine_asks_authority_idx ON spine_asks (authority, state);
   CREATE INDEX IF NOT EXISTS spine_asks_asker_idx ON spine_asks (asker, state);
+
+  -- The focus set (D9): one row per contract that has ever had a focus
+  -- event, holding its CURRENT membership. lit = 1 means the contract
+  -- is in the team's focus set — lit for travel now — and lit = 0 is
+  -- an authored unlight, kept (rather than deleted) so the last member
+  -- to touch focus and their reason survive. A contract with no row here
+  -- has never been touched by focus and is not in the set.
+  --
+  -- A PROJECTION, folded from focus events and nothing else, so it is
+  -- dropped and rebuilt with every other projection. Membership is a
+  -- SET: every focus event flips lit, and the store refuses a focus
+  -- event that would not change it, so this row and the event stream can
+  -- never disagree about what is lit.
+  CREATE TABLE IF NOT EXISTS spine_focus (
+    contract_id TEXT PRIMARY KEY,
+    lit INTEGER NOT NULL CHECK(lit IN (0,1)),
+    reason TEXT NOT NULL,
+    updated_by TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    event_id TEXT NOT NULL
+  );
 `;
 
 /**
@@ -211,4 +232,5 @@ export const SPINE_PROJECTION_TABLES: readonly string[] = [
   'spine_contract_verdicts',
   'spine_contract_waivers',
   'spine_asks',
+  'spine_focus',
 ];

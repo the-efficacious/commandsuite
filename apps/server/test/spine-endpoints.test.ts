@@ -204,6 +204,72 @@ describe('the write gate is spine.author and nothing else', () => {
   });
 });
 
+describe('the focus gate is spine.focus, distinct from spine.author', () => {
+  // The two leaves are held by DIFFERENT members in the fixture — lea has
+  // spine.author and not spine.focus, andrewjon the reverse — so a gate
+  // that confused the two would fail here rather than in production.
+  it('refuses lighting to a member who holds spine.author but not spine.focus', async () => {
+    const contract = await authorContract();
+    const res = await app.request(
+      '/spine/events',
+      authed(LEA, {
+        kind: 'focus',
+        opId: 'op-light',
+        expectedStateRev: 1,
+        body: { contract, lit: true, reason: 'lea cannot curate' },
+      }),
+    );
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: 'requires spine.focus' });
+  });
+
+  it('lets a spine.focus holder light a contract — the positive control', async () => {
+    const contract = await authorContract();
+    const res = await app.request(
+      '/spine/events',
+      authed(ANDREWJON, {
+        kind: 'focus',
+        opId: 'op-light',
+        expectedStateRev: 1,
+        body: { contract, lit: true, reason: 'this sprint' },
+      }),
+    );
+    expect(res.status).toBe(201);
+    const one = (await get(app, `/spine/contracts/${contract}`, RUNE)).contract as {
+      inFocus: boolean;
+    };
+    expect(one.inFocus).toBe(true);
+  });
+
+  it('exposes the team focus set at GET /spine/contracts?focus=true, to any member', async () => {
+    const lit = await authorContract();
+    // A second, distinct contract — a fresh opId, since a replayed spec
+    // would resolve to the first contract instead of a new one.
+    const dark = (
+      (await post(app, '/spine/events', LEA, { ...SPEC, opId: 'op-spec-2' })).event as SpineEvent
+    ).id;
+    await post(app, '/spine/events', ANDREWJON, {
+      kind: 'focus',
+      opId: 'op-light',
+      expectedStateRev: 1,
+      body: { contract: lit, lit: true, reason: 'this sprint' },
+    });
+    // Read by cora, who holds nothing — reading the focus set is baseline.
+    const set = (await get(app, '/spine/contracts?focus=true', CORA)) as {
+      contracts: { id: string; inFocus: boolean }[];
+    };
+    expect(set.contracts.map((c) => c.id)).toEqual([lit]);
+    expect(set.contracts.every((c) => c.inFocus)).toBe(true);
+    // The unfiltered listing still carries both, with the flag set right —
+    // out-of-focus is attention-silence, never record-absence.
+    const all = (await get(app, '/spine/contracts', CORA)) as {
+      contracts: { id: string; inFocus: boolean }[];
+    };
+    expect(new Set(all.contracts.map((c) => c.id))).toEqual(new Set([lit, dark]));
+    expect(all.contracts.find((c) => c.id === dark)?.inFocus).toBe(false);
+  });
+});
+
 describe('the typed error mapping', () => {
   it('403s a structurally illegitimate verdict, and 201s the same one from anyone else', async () => {
     const contract = await authorContract();

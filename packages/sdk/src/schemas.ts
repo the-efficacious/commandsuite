@@ -2231,6 +2231,18 @@ export const SpinePromotionBodySchema = z.object({
 });
 
 /**
+ * A focus-membership act (D9). `lit` is the direction — into the focus
+ * set or out of it — and `reason` is required because membership is
+ * authored, never derived: a contract is lit because a permissioned
+ * member said so, with a reason a reader can find.
+ */
+export const SpineFocusBodySchema = z.object({
+  contract: SpineIdSchema,
+  lit: z.boolean(),
+  reason: SpineProseSchema,
+});
+
+/**
  * ONE map from kind to body schema, keyed by the closed kind list.
  *
  * Both the append request and the event response are built from it, so
@@ -2253,6 +2265,7 @@ export const SPINE_BODY_SCHEMAS = {
   correction: SpineCorrectionBodySchema,
   discussion: SpineDiscussionBodySchema,
   promotion: SpinePromotionBodySchema,
+  focus: SpineFocusBodySchema,
 } as const satisfies Record<SpineEventKind, z.ZodType>;
 
 // ─── The event as it comes back ──────────────────────────────────────
@@ -2315,6 +2328,10 @@ const SPINE_KINDS_REQUIRING_STATE_REV: readonly SpineEventKind[] = [
   'attempt',
   'criterion_verdict',
   'lifecycle',
+  // Focus is always about one contract, so it is unconditionally
+  // state-changing: lighting or unlighting carries the contract's
+  // current counter as its precondition, exactly like a lifecycle move.
+  'focus',
 ];
 
 const spineAppendVariants = SPINE_EVENT_KINDS.map((kind) => {
@@ -2425,6 +2442,14 @@ export const ListSpineContractsQuerySchema = z.object({
   state: SpineContractStateSchema.optional(),
   member: NameSchema.optional(),
   subject: SpineIdSchema.optional(),
+  // Arrives as a string on the query line; `focus=true` means "the
+  // team's focus set". Coerced so the route reads one shape, and only
+  // `true` filters — an absent or `false` value leaves the listing
+  // unfiltered by focus.
+  focus: z
+    .enum(['true', 'false'])
+    .transform((v) => v === 'true')
+    .optional(),
 });
 
 // ─── Responses ───────────────────────────────────────────────────────
@@ -2466,6 +2491,8 @@ export const SpineContractSchema = z.object({
   successor: SpineIdSchema.nullable(),
   stale: z.boolean(),
   head: SpineRevisionSchema.nullable(),
+  /** In the team's focus set — its latest focus event is `lit` (D9). */
+  inFocus: z.boolean(),
 });
 
 export const SpineAskSchema = z.object({
@@ -2528,6 +2555,8 @@ export const OrientContractSchema = z.object({
   revision: SpineRevisionSchema.nullable(),
   stale: z.boolean(),
   head: SpineRevisionSchema.nullable(),
+  /** Whether this binding is in the team's focus set (D9). */
+  inFocus: z.boolean(),
   rulings: z.array(SpineEventSchema),
 });
 

@@ -89,6 +89,12 @@ export const PERMISSION_META: readonly PermissionMeta[] = [
     description:
       'Write and amend spine contracts — state what the world must become. Reading, attempting, verdicts, asks and discussion need no grant.',
   },
+  {
+    key: 'spine.focus',
+    label: 'Curate the focus set',
+    description:
+      'Light and unlight contracts in the team focus set — decide what is lit for travel now. Reading the focus set needs no grant; only changing it does.',
+  },
 ];
 
 /** Stable order for leaf chips in displays — matches PERMISSIONS constant. */

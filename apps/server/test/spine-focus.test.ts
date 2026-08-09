@@ -1,0 +1,326 @@
+/**
+ * The focus set (D9), at the store — membership as an annex event, the
+ * projection folded from it, and the effective set the curator gates on.
+ *
+ * Nearly every rule here is a refusal (re-lighting what is lit, lighting
+ * what is terminal, a probe curating focus), so each is paired with the
+ * NEAREST VALID THING it must still accept, and the completeness claims
+ * (the projection, the rebuild) assert the whole value rather than the
+ * presence of one member of it.
+ */
+
+import { beforeEach, describe, expect, it } from 'vitest';
+import { type DatabaseSyncInstance, openDatabase } from '../src/db.js';
+import { SpineError } from '../src/spine/index.js';
+import { type AnnexWriter, createSqliteAnnexStore } from '../src/spine/store.js';
+
+const T0 = Date.UTC(2026, 7, 9, 12, 0, 0);
+
+let db: DatabaseSyncInstance;
+let annex: AnnexWriter;
+let clock = T0;
+
+function tick(): number {
+  clock += 1000;
+  return clock;
+}
+
+beforeEach(() => {
+  db = openDatabase(':memory:');
+  annex = createSqliteAnnexStore(db);
+  clock = T0;
+  annex.registerSubject({ id: 'repo:acme', type: 'repo' }, 'lea', tick());
+});
+
+/** A fresh contract at state_rev 1. `n` distinguishes the ids in one test. */
+function authorContract(n = 0): string {
+  return annex.append(
+    {
+      kind: 'specification',
+      subject: 'repo:acme',
+      opId: `op-spec-${n}-${clock}`,
+      body: {
+        title: `Ship the endpoint ${n}`,
+        criteria: [{ id: 'c1', text: 'the endpoint returns 200' }],
+        assignee: 'rune',
+        verifier: 'lea',
+        authority: 'andrewjon',
+      },
+    },
+    { actor: 'lea', now: tick() },
+  ).event.id;
+}
+
+function light(contract: string, expectedStateRev: number, actor = 'andrewjon') {
+  return annex.append(
+    {
+      kind: 'focus',
+      opId: `op-light-${contract}-${clock}`,
+      expectedStateRev,
+      body: { contract, lit: true, reason: 'this sprint' },
+    },
+    { actor, now: tick() },
+  );
+}
+
+function unlight(contract: string, expectedStateRev: number, actor = 'andrewjon') {
+  return annex.append(
+    {
+      kind: 'focus',
+      opId: `op-unlight-${contract}-${clock}`,
+      expectedStateRev,
+      body: { contract, lit: false, reason: 'sprint over' },
+    },
+    { actor, now: tick() },
+  );
+}
+
+function expectSpineError(fn: () => unknown, code: string): SpineError {
+  try {
+    fn();
+  } catch (err) {
+    expect(err, 'expected a SpineError').toBeInstanceOf(SpineError);
+    const spineErr = err as SpineError;
+    expect(spineErr.code, `expected ${code}, got ${spineErr.code}: ${spineErr.message}`).toBe(code);
+    return spineErr;
+  }
+  throw new Error(`expected a ${code} SpineError, but the call returned`);
+}
+
+describe('lighting a contract into the focus set', () => {
+  it('lands the event, flips the projection, and advances the counter', () => {
+    const c = authorContract();
+    // Before: not lit, not in the set.
+    expect(annex.contract(c)?.inFocus).toBe(false);
+    expect(annex.focusSet()).toEqual([]);
+
+    const res = light(c, 1);
+    expect(res.event.kind).toBe('focus');
+    // The focus event is authoritative and contract-bound, so it bumps
+    // the counter exactly like any other act on the contract.
+    expect(res.contract?.stateRev).toBe(2);
+    expect(res.contract?.inFocus).toBe(true);
+    // The projection agrees, read back fresh.
+    expect(annex.contract(c)?.inFocus).toBe(true);
+    expect(annex.focusSet()).toEqual([c]);
+  });
+
+  it('leaves a DIFFERENT contract out of the set — membership is per contract', () => {
+    const lit = authorContract(1);
+    const dark = authorContract(2);
+    light(lit, 1);
+    expect(annex.focusSet()).toEqual([lit]);
+    expect(annex.contract(dark)?.inFocus).toBe(false);
+  });
+});
+
+describe('unlighting a contract', () => {
+  it('flips the projection back and removes it from the effective set', () => {
+    const c = authorContract();
+    light(c, 1); // → state_rev 2
+    unlight(c, 2); // → state_rev 3
+    expect(annex.contract(c)?.inFocus).toBe(false);
+    expect(annex.focusSet()).toEqual([]);
+  });
+});
+
+describe('the focus projection is a SET — every event must flip it', () => {
+  it('refuses re-lighting an already-lit contract, and still accepts unlighting it', () => {
+    const c = authorContract();
+    light(c, 1); // → state_rev 2
+    // Re-light with a fresh op_id (a genuine second write, not a replay).
+    expectSpineError(
+      () =>
+        annex.append(
+          {
+            kind: 'focus',
+            opId: 'op-relight',
+            expectedStateRev: 2,
+            body: { contract: c, lit: true, reason: 'again' },
+          },
+          { actor: 'andrewjon', now: tick() },
+        ),
+      'invalid_transition',
+    );
+    // NEAREST VALID THING: the contract is still lit and can be unlit.
+    expect(annex.contract(c)?.inFocus).toBe(true);
+    const off = unlight(c, 2);
+    expect(off.contract?.inFocus).toBe(false);
+  });
+
+  it('refuses unlighting a contract that is not in the set, and still accepts lighting it', () => {
+    const c = authorContract();
+    expectSpineError(
+      () =>
+        annex.append(
+          {
+            kind: 'focus',
+            opId: 'op-unlight-unset',
+            expectedStateRev: 1,
+            body: { contract: c, lit: false, reason: 'never lit' },
+          },
+          { actor: 'andrewjon', now: tick() },
+        ),
+      'invalid_transition',
+    );
+    // NEAREST VALID THING: lighting the never-lit contract works.
+    expect(light(c, 1).contract?.inFocus).toBe(true);
+  });
+
+  it('accepts re-lighting after an unlight — the round trip is legal', () => {
+    const c = authorContract();
+    light(c, 1); // rev 2
+    unlight(c, 2); // rev 3
+    const back = light(c, 3); // rev 4 — legal again, membership had flipped off
+    expect(back.contract?.inFocus).toBe(true);
+    expect(annex.focusSet()).toEqual([c]);
+  });
+});
+
+describe('focus carries the annex precondition', () => {
+  it('refuses a stale expectedStateRev and hands back the intervening delta', () => {
+    const c = authorContract();
+    light(c, 1); // → state_rev 2
+    const err = expectSpineError(
+      () =>
+        annex.append(
+          {
+            kind: 'focus',
+            opId: 'op-stale',
+            expectedStateRev: 1, // behind — the light already moved it to 2
+            body: { contract: c, lit: false, reason: 'stale write' },
+          },
+          { actor: 'andrewjon', now: tick() },
+        ),
+      'stale_state_rev',
+    );
+    // The refusal IS the re-injection: the light they missed rides in it.
+    const detail = err.detail as { intervening: { kind: string }[] };
+    expect(detail.intervening.map((e) => e.kind)).toEqual(['focus']);
+  });
+
+  it('replays a lost light idempotently — same op_id and payload, no second event', () => {
+    const c = authorContract();
+    const first = light(c, 1);
+    const headAfter = annex.events({ limit: 500 }).headSeq;
+    const replay = annex.append(
+      {
+        kind: 'focus',
+        opId: first.event.opId as string,
+        expectedStateRev: 1,
+        body: { contract: c, lit: true, reason: 'this sprint' },
+      },
+      { actor: 'andrewjon', now: tick() },
+    );
+    expect(replay.replayed).toBe(true);
+    expect(replay.event.id).toBe(first.event.id);
+    // Nothing was appended a second time, and the set is unchanged.
+    expect(annex.events({ limit: 500 }).headSeq).toBe(headAfter);
+    expect(annex.focusSet()).toEqual([c]);
+  });
+});
+
+describe('who may curate focus, and on what', () => {
+  it('refuses a probe — the system holds the camera; it does not curate', () => {
+    const c = authorContract();
+    expectSpineError(
+      () =>
+        annex.append(
+          {
+            kind: 'focus',
+            opId: 'op-probe-focus',
+            expectedStateRev: 1,
+            authoredBy: 'lea',
+            body: { contract: c, lit: true, reason: 'the probe decided' },
+          },
+          { actor: 'probe:check-1', now: tick() },
+        ),
+      'not_permitted',
+    );
+  });
+
+  it('refuses lighting a terminal contract', () => {
+    const c = authorContract();
+    annex.append(
+      {
+        kind: 'lifecycle',
+        opId: 'op-cancel',
+        expectedStateRev: 1,
+        body: { contract: c, state: 'cancelled', reason: 'dropped' },
+      },
+      { actor: 'andrewjon', now: tick() },
+    );
+    expectSpineError(
+      () =>
+        annex.append(
+          {
+            kind: 'focus',
+            opId: 'op-light-dead',
+            expectedStateRev: 2,
+            body: { contract: c, lit: true, reason: 'too late' },
+          },
+          { actor: 'andrewjon', now: tick() },
+        ),
+      'invalid_transition',
+    );
+  });
+});
+
+describe('the effective focus set vs. raw membership', () => {
+  it('drops a lit contract that goes terminal, while its membership row stays lit', () => {
+    const c = authorContract();
+    light(c, 1); // → state_rev 2, in the set
+    expect(annex.focusSet()).toEqual([c]);
+    annex.append(
+      {
+        kind: 'lifecycle',
+        opId: 'op-cancel-lit',
+        expectedStateRev: 2,
+        body: { contract: c, state: 'cancelled', reason: 'preempted for good' },
+      },
+      { actor: 'andrewjon', now: tick() },
+    );
+    // Effective set: empty — a cancelled contract is not travel, so it
+    // leaves the set even though nobody unlit it. This is what lets the
+    // running-dry interrupt fire on a completion, not only an unlight.
+    expect(annex.focusSet()).toEqual([]);
+    // Membership: still lit — the row records the last focus decision,
+    // and nobody unlit it. Attention-silence, not record-absence.
+    expect(annex.contract(c)?.inFocus).toBe(true);
+  });
+});
+
+describe('the focus projection rebuilds identically from the stream', () => {
+  it('refolds to the same set, membership and contracts after a varied history', () => {
+    const a = authorContract(1);
+    const b = authorContract(2);
+    const d = authorContract(3);
+    light(a, 1);
+    light(b, 1);
+    unlight(a, 2); // a: lit then unlit
+    light(a, 3); // a: lit again
+    light(d, 1);
+    // d goes terminal while lit — the interesting rebuild case.
+    annex.append(
+      {
+        kind: 'lifecycle',
+        opId: 'op-done-d',
+        expectedStateRev: 2,
+        body: { contract: d, state: 'cancelled', reason: 'dropped' },
+      },
+      { actor: 'andrewjon', now: tick() },
+    );
+
+    const setBefore = annex.focusSet();
+    const contractsBefore = annex.contracts();
+    // Not vacuous: the stream mixes lights, an unlight, a re-light, and
+    // a terminal transition on a lit contract.
+    expect(setBefore.sort()).toEqual([a, b].sort());
+
+    annex.rebuildProjections();
+
+    // Whole values, not spot fields.
+    expect(annex.focusSet()).toEqual(setBefore);
+    expect(annex.contracts()).toEqual(contractsBefore);
+  });
+});

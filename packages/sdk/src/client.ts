@@ -2175,6 +2175,7 @@ export class Client {
     if (query.state !== undefined) params.set('state', query.state);
     if (query.member !== undefined) params.set('member', query.member);
     if (query.subject !== undefined) params.set('subject', query.subject);
+    if (query.focus !== undefined) params.set('focus', String(query.focus));
     const qs = params.toString();
     const resp = await this.request(`${SPINE_PATHS.contracts}${qs ? `?${qs}` : ''}`);
     return ListSpineContractsResponseSchema.parse(await this.json(resp)).contracts;

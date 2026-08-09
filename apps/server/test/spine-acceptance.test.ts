@@ -522,6 +522,14 @@ describe('acceptance 8 — cursor recovery returns events of every kind, complet
       staplesTo: (verdict.event as SpineEvent).id,
       body: { correction: 'the evidence link pointed at the wrong run; the right one is #4412' },
     });
+    // Light it into the focus set (andrewjon holds `spine.focus`), so the
+    // recovery stream carries a `focus` event like every other kind.
+    await post(app, '/spine/events', ANDREWJON, {
+      kind: 'focus',
+      opId: 'op-focus',
+      expectedStateRev: await rev(),
+      body: { contract, lit: true, reason: 'the 0.6 push is what we are on now' },
+    });
 
     // ── Recovery: page from the beginning in small pages ──
     const head = (

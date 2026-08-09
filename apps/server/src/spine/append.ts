@@ -140,6 +140,7 @@ const READ_METHODS = [
   'revision',
   'contract',
   'contracts',
+  'focusSet',
   'ask',
   'orient',
   'queue',
