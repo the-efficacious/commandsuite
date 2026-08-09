@@ -86,6 +86,7 @@ beforeEach(() => {
       member: 'rune',
       leaseTtlMs: 1_800_000,
       nudgeMinIntervalMs: 900_000,
+      interruptWhitelist: ['ask', 'proceeding'],
       explicit: false,
       updatedBy: null,
       updatedAt: null,
