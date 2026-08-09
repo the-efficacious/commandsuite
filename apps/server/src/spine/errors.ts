@@ -100,6 +100,19 @@ export function staleStateRev(
  * legitimate — §5's whole point is that the annex refuses invented
  * authority, not deliberate action without it.
  *
+ * WHAT THE FIRST EXIT ACTUALLY IS, stated precisely because the obvious
+ * phrasing is false here. §5's prose says the call "must cite a ruling
+ * id", and an earlier version of this message told members to get the
+ * ruling AND CITE IT ON THIS WRITE. They cannot: a ruling resolves its
+ * ask the instant it lands, and a resolved ask does not lock, so the
+ * citation is never the thing that releases them. Instructing an agent
+ * to perform a step that has already been made unnecessary is the
+ * ceremony this design exists to remove, and worse, it implies a
+ * citation could substitute for an answer. The exit is: get the ruling,
+ * which resolves the ask and releases you. (The store still accepts a
+ * cited ruling as cover — see `coveringCitation` — for the day an ask
+ * outlives its ruling.)
+ *
  * The asks ride whole in the detail (see `SpineCitationRequiredDetail`)
  * and are also summarised in the sentence, because a member reading
  * only the message still has to be able to act on it.
@@ -144,10 +157,10 @@ export function citationRequired(
       'that memory is not a ruling and the annex holds no record of one — remembered ' +
       'authorisation is exactly what this refusal exists to convert into looked-up ' +
       `authorisation. Two ways forward, both on the record: get the ruling from ` +
-      `${[...new Set(asks.map((a) => a.authority))].join(' / ')} and cite it on this write, or ` +
-      'append a `proceeding` citing the ask and saying why you are going ahead without one. ' +
-      'Proceeding is a legitimate act, not a workaround: it covers your later acts on this ' +
-      'subject until that ask resolves.',
+      `${[...new Set(asks.map((a) => a.authority))].join(' / ')} — that resolves the ask and ` +
+      'releases you, with nothing further to cite — or append a `proceeding` citing the ask ' +
+      'and saying why you are going ahead without one. Proceeding is a legitimate act, not a ' +
+      'workaround: it covers your later acts on this subject until that ask resolves.',
     { subject, kind, contract, scope: [...scope], asks },
   );
 }

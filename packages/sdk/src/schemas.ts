@@ -1991,14 +1991,7 @@ export const SpineContractStateSchema = z.enum([
   'superseded',
 ]);
 export const SpineAskActionSchema = z.enum(['withdraw', 'decline', 'redirect', 'defer']);
-export const SpineAskStateSchema = z.enum([
-  'open',
-  'ruled',
-  'withdrawn',
-  'declined',
-  'redirected',
-  'deferred',
-]);
+export const SpineAskStateSchema = z.enum(['open', 'ruled', 'withdrawn', 'declined', 'deferred']);
 
 /** ISO-8601. Instants are strings on the wire so a reader never has to guess a zone. */
 const SpineInstantSchema = z.iso.datetime();

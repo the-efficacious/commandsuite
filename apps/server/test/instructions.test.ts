@@ -324,10 +324,18 @@ describe('composeInstructions', () => {
 
     // The citation rule, in one sentence, including both exits and the
     // anti-confabulation wording the refusal itself uses.
-    expect(packet.instructions).toMatch(/Raising one binds you/);
-    expect(packet.instructions).toMatch(/cite a ruling on it or record a `proceed` past it/);
+    expect(packet.instructions).toMatch(/An ask scoped to a subject or a contract binds you/);
+    expect(packet.instructions).toMatch(/record a `proceed` past it/);
     expect(packet.instructions).toMatch(/you do not have a ruling/);
     expect(packet.instructions).toMatch(/Proceeding is legitimate/);
+    // The ruling exit stated truthfully: a ruling RESOLVES its ask, so
+    // there is no citation step left to perform, and the prose must
+    // not instruct one.
+    expect(packet.instructions).toMatch(/Getting the ruling releases you on its own/);
+    expect(packet.instructions).not.toMatch(/cite a ruling on it/);
+    // And that a redirect is not an answer — the moment a member is
+    // most likely to believe they have been released.
+    expect(packet.instructions).toMatch(/A redirect does NOT release you/);
 
     // The cheap surface, and the promotion path off it.
     expect(packet.instructions).toContain('`discuss` is the cheap surface');

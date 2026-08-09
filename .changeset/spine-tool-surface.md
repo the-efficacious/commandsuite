@@ -20,16 +20,38 @@ a cursor into everything else.
 
 - **The citation lock.** While a member has an unresolved ask on a
   subject — or on any subject *containing* it — the annex refuses
-  their state-changing acts there until they cite a ruling on that ask
-  or record a `proceed` past it. This is the one hard gate in a
+  their state-changing acts there until either the ask is answered or
+  they record a `proceed` past it. This is the one hard gate in a
   warn-never-lock design, and it passes the reversibility test:
   acting on a ruling that does not exist is the class of act you
-  cannot cleanly walk back. The wording is the feature. "Cite a
-  ruling" reads as a formality to a member who believes they have one,
-  so the refusal states the absence flatly and first — *you do not
-  have a ruling on it* — then names both exits. Proceeding is
-  legitimate and always available; what is refused is inventing an
-  answer nobody gave.
+  cannot cleanly walk back. The wording is the feature. A phrasing
+  like "cite a ruling" reads as a formality to a member who believes
+  they have one, so the refusal states the absence flatly and first —
+  *you do not have a ruling on it* — then names both exits. Getting
+  the ruling IS the release: it resolves the ask, with nothing further
+  to cite. Proceeding is legitimate and always available; what is
+  refused is inventing an answer nobody gave.
+- **An act on a contract is an act on that contract's subject.** A
+  contract-bound event may caption itself with the contract's subject
+  or anything contained in it, and nothing else. `subject` is optional
+  on four of the five locked kinds and reachable through `promote`, so
+  without this an attempt — or a cancellation — could name an
+  unrelated subject, be evaluated for the lock in a scope where the
+  actor had no asks, and land. The refusal names both subjects, and
+  the lock now walks the union of both ancestries so no future field
+  ordering can reopen it.
+- **A redirect does not release anyone.** Re-addressing a question is
+  not answering it: `ask_action: redirect` leaves the ask open with a
+  new authority, keeps its id, and keeps the asker locked. The old
+  authority loses the right to rule, the new one gains it, and a
+  redirect back to the asker is refused for the same reason an ask may
+  not name its own asker as its authority. There is no `redirected`
+  ask state.
+- **An ask binds only as far as it is scoped.** By its subject, or by
+  the subject of the contract it names. An ask carrying neither scopes
+  nothing, and `ask_author` now says so in its result instead of
+  promising every asker a lock they may not have — a member who
+  believes the annex is holding the line stops holding it themselves.
 - **It binds the asker, never the authority**, or asking someone would
   become a way to stop them working. One `proceed` covers that actor
   on that ask until it resolves rather than tolling every write, and a

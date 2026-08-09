@@ -2534,8 +2534,19 @@ export type SpineContractState =
 /** What an `ask_action` does to an outstanding ask. */
 export type SpineAskAction = 'withdraw' | 'decline' | 'redirect' | 'defer';
 
-/** Where an ask stands. `open` is the only state the citation lock binds on. */
-export type SpineAskState = 'open' | 'ruled' | 'withdrawn' | 'declined' | 'redirected' | 'deferred';
+/**
+ * Where an ask stands. `open` and `deferred` are the states the
+ * citation lock binds on — the two in which the question is still
+ * unanswered.
+ *
+ * THERE IS NO `redirected`. A redirect re-addresses the question
+ * rather than resolving it: the ask stays `open` with a new
+ * `authority`, and the `ask_action` event records who moved it and
+ * why. A state meaning "resolved by being handed on" would be a lie
+ * about an ask nobody has answered, and it silently released the asker
+ * from the lock at the exact moment their authority said "not me".
+ */
+export type SpineAskState = 'open' | 'ruled' | 'withdrawn' | 'declined' | 'deferred';
 
 /**
  * A region of the world, registered before anything can be said about

@@ -341,6 +341,11 @@ describe('which kinds the lock reaches', () => {
     // refusal has to recognise it. Pinned to the literal so a change
     // to the constant is a change somebody has to make here too.
     expect([...SPINE_CITATION_LOCKED_KINDS]).toEqual([...LOCKED_KINDS]);
+    // The count as well as the contents. A list assertion compared
+    // against a literal already catches an addition, but stating the
+    // arity separately is what makes "five" a claim in the file rather
+    // than a property of whatever the literal happens to hold.
+    expect(LOCKED_KINDS).toHaveLength(5);
   });
 
   /**
@@ -624,6 +629,306 @@ describe('the lock reaches nobody else', () => {
     expect(attempt(contract, 1, 'lea').event.kind).toBe('attempt');
     expect(contractOn('repo:acme')).toMatch(/^evt_/);
     expectLocked(() => attempt(contract, 2, 'rune'));
+  });
+});
+
+describe('a caption cannot move an act out of its own contract’s scope', () => {
+  /**
+   * THE DODGE THIS CLOSES, plainly: `subject` is optional on the four
+   * contract-bound locked kinds, and the lock scopes on it. So an
+   * attempt — or a cancellation — on a contract about `repo:acme`,
+   * captioned `subject: repo:other`, was evaluated in a scope where
+   * the actor had no asks and landed. One caller-controlled field,
+   * reachable through `promote`, which defaults the caption to the
+   * origin post's subject.
+   */
+  beforeEach(() => {
+    annex.registerSubject({ id: 'repo:other', type: 'repo' }, 'lea', tick());
+  });
+
+  it('refuses an act on a contract captioned with an unrelated subject', () => {
+    const contract = contractOn('repo:acme');
+    askOn({ subject: 'repo:acme' });
+
+    let caught: SpineError | null = null;
+    try {
+      annex.append(
+        {
+          kind: 'attempt',
+          opId: op(),
+          expectedStateRev: 1,
+          subject: 'repo:other',
+          revision: {
+            subject: 'repo:acme',
+            value: 'sha-a',
+            how: 'asserted',
+            source: 'member:rune',
+          },
+          body: { contract, summary: 'pushed the fix' },
+        },
+        { actor: 'rune', now: tick() },
+      );
+    } catch (err) {
+      caught = err as SpineError;
+    }
+    expect(caught, 'the dodge must not land').not.toBeNull();
+    expect(caught?.code).toBe('invalid_input');
+    // Both subjects named, because the member has to be able to tell
+    // which of the two they got wrong.
+    expect(caught?.message).toContain('repo:other');
+    expect(caught?.message).toContain('repo:acme');
+    // And nothing was written: the contract's counter has not moved.
+    expect(annex.contract(contract)?.stateRev).toBe(1);
+  });
+
+  it('refuses the same dodge on a lifecycle, which is the irreversible one', () => {
+    const contract = contractOn('repo:acme');
+    askOn({ subject: 'repo:acme' });
+    const err = (() => {
+      try {
+        annex.append(
+          {
+            kind: 'lifecycle',
+            opId: op(),
+            expectedStateRev: 1,
+            subject: 'repo:other',
+            body: { contract, state: 'cancelled', reason: 'not needed' },
+          },
+          { actor: 'rune', now: tick() },
+        );
+      } catch (e) {
+        return e as SpineError;
+      }
+      return null;
+    })();
+    expect(err?.code).toBe('invalid_input');
+    expect(annex.contract(contract)?.state).toBe('active');
+  });
+
+  it('accepts a caption that is the contract’s own subject, or contained in it', () => {
+    // THE POSITIVE CONTROL, and it is the whole reason the rule is
+    // containment rather than equality: an attempt on one file inside
+    // the repo the contract is about is a true, narrower caption and
+    // must still land.
+    const contract = contractOn('repo:acme');
+    expect(
+      annex.append(
+        {
+          kind: 'attempt',
+          opId: op(),
+          expectedStateRev: 1,
+          subject: 'file:acme/api.ts',
+          revision: {
+            subject: 'repo:acme',
+            value: 'sha-a',
+            how: 'asserted',
+            source: 'member:rune',
+          },
+          body: { contract, summary: 'pushed the fix' },
+        },
+        { actor: 'rune', now: tick() },
+      ).event.subject,
+    ).toBe('file:acme/api.ts');
+    expect(
+      annex.append(
+        {
+          kind: 'attempt',
+          opId: op(),
+          expectedStateRev: 2,
+          subject: 'repo:acme',
+          revision: {
+            subject: 'repo:acme',
+            value: 'sha-b',
+            how: 'asserted',
+            source: 'member:rune',
+          },
+          body: { contract, summary: 'again' },
+        },
+        { actor: 'rune', now: tick() },
+      ).event.subject,
+    ).toBe('repo:acme');
+  });
+
+  it('still locks the narrower caption, which is what the dodge was reaching for', () => {
+    const contract = contractOn('repo:acme');
+    askOn({ subject: 'repo:acme' });
+    const err = expectLocked(() =>
+      annex.append(
+        {
+          kind: 'attempt',
+          opId: op(),
+          expectedStateRev: 1,
+          subject: 'file:acme/api.ts',
+          revision: {
+            subject: 'repo:acme',
+            value: 'sha-a',
+            how: 'asserted',
+            source: 'member:rune',
+          },
+          body: { contract, summary: 'pushed the fix' },
+        },
+        { actor: 'rune', now: tick() },
+      ),
+    );
+    // The scope is the union of both walks, so the repo-level ask is
+    // found from a file-level caption on a repo-level contract.
+    expect(detailOf(err).scope).toEqual(['repo:acme', 'file:acme/api.ts']);
+  });
+});
+
+describe('which refusal wins when several apply', () => {
+  /**
+   * ORDERING IS A DECISION AND NOTHING PINNED IT. Reordering the lock
+   * ahead of the precondition, or ahead of the legitimacy checks,
+   * passed the entire spine suite. Both orderings are load-bearing for
+   * a different reason, so both get a fixture.
+   */
+  it('answers a stale caller with the delta, not with the lock', () => {
+    // The delta-carrying refusal wins because it is the one that
+    // re-injects: reading what they missed may well remove the act.
+    const contract = contractOn('repo:acme');
+    askOn({ subject: 'repo:acme' });
+    annex.append(
+      {
+        kind: 'attempt',
+        opId: op(),
+        expectedStateRev: 1,
+        revision: { subject: 'repo:acme', value: 'sha-a', how: 'asserted', source: 'member:lea' },
+        body: { contract, summary: 'lea moved it' },
+      },
+      { actor: 'lea', now: tick() },
+    );
+
+    let caught: SpineError | null = null;
+    try {
+      attempt(contract, 1);
+    } catch (err) {
+      caught = err as SpineError;
+    }
+    expect(caught?.code).toBe('stale_state_rev');
+    // NON-EMPTY, because a stale refusal that wins the race and then
+    // hands back nothing is worse than the lock's answer.
+    const detail = caught?.detail as { intervening: { id: string }[] };
+    expect(detail.intervening.length).toBeGreaterThan(0);
+    expect(detail.intervening.map((e) => e.id)).toHaveLength(1);
+  });
+
+  it('answers a structurally impossible act as impossible, not as unauthorised', () => {
+    // No ruling could make an assignee's verdict legal, so sending the
+    // member to ask for one sends them to the wrong person.
+    const contract = contractOn('repo:acme');
+    askOn({ subject: 'repo:acme' });
+    let caught: SpineError | null = null;
+    try {
+      annex.append(
+        {
+          kind: 'criterion_verdict',
+          opId: op(),
+          expectedStateRev: 1,
+          revision: {
+            subject: 'repo:acme',
+            value: 'sha-a',
+            how: 'observed',
+            source: 'integration:github',
+          },
+          body: { contract, criterion: 'c1', decision: 'met', evidence: 'green' },
+        },
+        // rune is the assignee AND holds the open ask.
+        { actor: 'rune', now: tick() },
+      );
+    } catch (err) {
+      caught = err as SpineError;
+    }
+    expect(caught?.code).toBe('not_permitted');
+    expect(caught?.message).toMatch(/traveller/);
+  });
+});
+
+describe('a redirect re-addresses an ask; it does not resolve one', () => {
+  function redirect(ask: string, to: string, actor = 'andrewjon') {
+    return annex.append(
+      {
+        kind: 'ask_action',
+        opId: op(),
+        body: { ask, action: 'redirect', reason: 'lea owns this area', redirectTo: to },
+      },
+      { actor, now: tick() },
+    );
+  }
+
+  it('leaves the asker locked after their authority hands the question on', () => {
+    const contract = contractOn('repo:acme');
+    const ask = askOn({ subject: 'repo:acme' });
+    expectLocked(() => attempt(contract, 1));
+
+    redirect(ask, 'lea');
+    // The ask is open, not resolved: nobody has answered it.
+    expect(annex.ask(ask)?.state).toBe('open');
+    expect(annex.ask(ask)?.authority).toBe('lea');
+    expect(annex.ask(ask)?.resolvedBy).toBeNull();
+    // And the asker is still held to it — this is the moment the old
+    // behaviour released them, which is the one moment the lock is
+    // most obviously still needed.
+    expect(detailOf(expectLocked(() => attempt(contract, 1))).asks.map((a) => a.id)).toEqual([ask]);
+  });
+
+  it('moves the right to rule, and the ruling then releases the asker', () => {
+    const contract = contractOn('repo:acme');
+    const ask = askOn({ subject: 'repo:acme' });
+    redirect(ask, 'lea');
+
+    // The old authority may not rule on it any more.
+    let caught: SpineError | null = null;
+    try {
+      ruleOn(ask, 'andrewjon');
+    } catch (err) {
+      caught = err as SpineError;
+    }
+    expect(caught?.code).toBe('not_permitted');
+    expect(caught?.message).toContain('lea');
+
+    // The new one may, and that resolves it.
+    ruleOn(ask, 'lea');
+    expect(annex.ask(ask)?.state).toBe('ruled');
+    expect(attempt(contract, 1).event.kind).toBe('attempt');
+  });
+
+  it('shows the ask in the new authority’s orient and not the old one’s', () => {
+    const ask = askOn({ subject: 'repo:acme' });
+    expect(annex.orient('andrewjon').asksForMe.map((a) => a.id)).toEqual([ask]);
+    redirect(ask, 'lea');
+    expect(annex.orient('andrewjon').asksForMe).toEqual([]);
+    expect(annex.orient('lea').asksForMe.map((a) => a.id)).toEqual([ask]);
+    // And it is still the asker's open ask — one durable ask, one id.
+    expect(annex.orient('rune').myOpenAsks.map((a) => a.id)).toEqual([ask]);
+  });
+
+  it('refuses a redirect back to the asker', () => {
+    // The self-ask rule, restated where authority can move: redirected
+    // to the asker, the ask becomes one whose authority may rule on it
+    // and cite that ruling.
+    const ask = askOn({ subject: 'repo:acme' });
+    let caught: SpineError | null = null;
+    try {
+      redirect(ask, 'rune');
+    } catch (err) {
+      caught = err as SpineError;
+    }
+    expect(caught?.code).toBe('invalid_input');
+    expect(caught?.message).toContain('rune');
+    // The control: a redirect to anybody else still lands.
+    expect(redirect(ask, 'cora').event.kind).toBe('ask_action');
+  });
+
+  it('survives a projection rebuild with the redirect applied', () => {
+    // The fold is the only writer, and a redirect is now the one action
+    // that changes a column other than `state`. A rebuild that dropped
+    // the authority move would restore the released-asker bug silently.
+    const ask = askOn({ subject: 'repo:acme' });
+    redirect(ask, 'lea');
+    annex.rebuildProjections();
+    expect(annex.ask(ask)?.authority).toBe('lea');
+    expect(annex.ask(ask)?.state).toBe('open');
   });
 });
 

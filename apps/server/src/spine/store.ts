@@ -816,6 +816,43 @@ class SqliteAnnexStore implements AnnexStore {
       throw new SpineError('not_found', `no such contract: ${contractId}`);
     }
 
+    // ── A CONTRACT-BOUND EVENT IS ABOUT ITS CONTRACT'S SUBJECT ──
+    //
+    // `subject` is optional on the four contract-bound locked kinds and
+    // was, until this check existed, never compared against the
+    // contract's own. That was a HOLE IN THE CITATION LOCK, not a
+    // caption nicety: the lock scopes on the event's subject, so an
+    // attempt or a `lifecycle{cancelled}` on a contract about
+    // `repo:acme` carrying `subject: repo:other` was evaluated in a
+    // scope where the actor had no asks, and landed. Every text in this
+    // repo promising that promotion is not a way around the lock was
+    // false, because `promote` defaults the caption to the origin
+    // post's subject and hands the caller the field besides.
+    //
+    // The rule is the honest one rather than a patch on the lock: an
+    // act on a contract IS an act on that contract's part of the world.
+    // A NARROWER caption is true and useful — an attempt on one file
+    // inside the repo the contract is about — so containment is
+    // allowed downward. A caption pointing anywhere else is a false
+    // statement about what was touched, and it also drops the event off
+    // its own contract's subject page, where the members watching that
+    // region are looking.
+    if (contract !== null && parsed.subject !== undefined) {
+      const within = this.containingSubjects(parsed.subject);
+      if (!within.includes(contract.subject)) {
+        throw new SpineError(
+          'invalid_input',
+          `this ${kind} names contract ${contract.id}, which is about ${contract.subject}, but ` +
+            `captions itself ${parsed.subject} — a subject that is neither ${contract.subject} ` +
+            'nor contained in it. An act on a contract is an act on that contract’s part of ' +
+            'the world: caption it with the contract’s own subject, or with something ' +
+            'inside it, or leave `subject` off and it is taken from the contract. (Scoped rules ' +
+            'are resolved through this caption, so a caption pointing elsewhere would move the ' +
+            'act out of the scope of every rule declared where the work actually is.)',
+        );
+      }
+    }
+
     if (contract !== null && klass === 'authoritative' && kind !== 'correction') {
       if (TERMINAL.has(contract.state)) {
         // A TERMINAL REFUSAL CARRIES ITS DELTA TOO.
@@ -909,11 +946,25 @@ class SqliteAnnexStore implements AnnexStore {
     }
 
     this.assertStructurallyLegitimate(kind, parsed, ctx.actor, contract);
-    // AFTER legitimacy, deliberately. An event that is structurally not
-    // the thing it claims to be — a verdict from the assignee, a ruling
-    // from a bystander — should be refused as that, not as
-    // unauthorised: telling a member to go and get a ruling for an act
-    // no ruling could ever make legal sends them to the wrong person.
+    // THE LOCK RUNS LAST, AND THE ORDER IS A DECISION, NOT AN ACCIDENT.
+    // Every refusal above it beats it, for two different reasons:
+    //
+    //   THE PRECONDITION WINS because its refusal CARRIES A DELTA and
+    //   this one does not. §6 makes the refusal the re-injection, so
+    //   when a caller is both behind and locked, the answer that hands
+    //   back the events they missed is strictly the more useful one —
+    //   and reading them may well be what removes the act. Answering
+    //   "you have no ruling" to a member whose contract moved under
+    //   them spends their turn on the smaller of two problems.
+    //
+    //   LEGITIMACY WINS because a structurally impossible act — a
+    //   verdict from the assignee, a ruling from a bystander — is not
+    //   something any ruling could make legal. Refusing it as
+    //   unauthorised would send the member to ask for permission that
+    //   nobody, including the authority, is able to give.
+    //
+    // Both orderings are pinned by tests rather than left to this
+    // comment: a reordering here passes 141 spine tests without them.
     this.assertCitationLock(kind, parsed, ctx.actor, contract);
 
     // ── Write ──
@@ -1121,6 +1172,21 @@ class SqliteAnnexStore implements AnnexStore {
       if (ask.state !== 'open' && ask.state !== 'deferred') {
         throw new SpineError('invalid_transition', `ask ${ask.id} is already ${ask.state}`);
       }
+      // A redirect leaves the ask OPEN with a new authority, so it can
+      // reach the same place the self-ask rule closes at authoring
+      // time: redirected to the asker, the ask becomes one whose
+      // authority may rule on it and cite that ruling — a decision
+      // nobody outside the asker ever took, with a real row behind it.
+      // The rule is stated in one place at authoring and has to be
+      // stated again wherever authority can move.
+      if (body.action === 'redirect' && body.redirectTo === ask.asker) {
+        throw new SpineError(
+          'invalid_input',
+          `ask ${ask.id} cannot be redirected to ${ask.asker}, who raised it. A redirect moves ` +
+            'the question to somebody else; pointing it back at the asker would make a ruling ' +
+            'they can cite without anyone having decided anything.',
+        );
+      }
     }
 
     if (kind === 'proceeding') {
@@ -1186,11 +1252,13 @@ class SqliteAnnexStore implements AnnexStore {
    *                                      down, and a lock that spread
    *                                      by subject would be a lock on
    *                                      the team's throughput.
-   *   it does not survive resolution     a ruled, declined, withdrawn
-   *                                      or redirected ask binds
-   *                                      nothing. The question has been
-   *                                      answered; there is nothing
-   *                                      left to confabulate.
+   *   it does not survive resolution     a ruled, declined or withdrawn
+   *                                      ask binds nothing. The question
+   *                                      has been answered, or taken
+   *                                      back; there is nothing left to
+   *                                      confabulate. A REDIRECT is not
+   *                                      a resolution — see
+   *                                      `foldAskAction`.
    *   it does not toll every write       one `proceeding` per ask
    *                                      covers the actor until that
    *                                      ask resolves (settled scope,
@@ -1209,6 +1277,17 @@ class SqliteAnnexStore implements AnnexStore {
    * agent looking for the path of least resistance would find, and
    * §4 declares containment so that scoped rules cannot be stepped
    * around one level down.
+   *
+   * AND THE SCOPE IS A UNION, WHICH IS BELT AND BRACES. The caption
+   * check in `append` already guarantees that a contract-bound event's
+   * subject sits at or under its contract's, so the contract's ancestry
+   * is a subset of the caption's and this union is exactly the
+   * caption's walk. It is written as a union anyway because the hole
+   * this closes was ONE FIELD-ORDERING DECISION — `input.subject ??
+   * contract.subject`, where a caller-supplied caption won — and a
+   * rule that depends on which of two fields is read first will be
+   * reopened by the next person who reorders them. Taking both costs
+   * one walk and cannot be reopened that way at all.
    */
   private assertCitationLock(
     kind: SpineEventKind,
@@ -1217,16 +1296,25 @@ class SqliteAnnexStore implements AnnexStore {
     contract: SpineContract | null,
   ): void {
     if (!CITATION_LOCKED.has(kind)) return;
-    // The event's own subject when it has one (a specification always
-    // does), otherwise the subject of the contract it acts on — an
-    // attempt or a verdict names a contract, and the contract is what
-    // says which part of the world is being changed. Reading only the
-    // event's `subject` would have left four of the five locked kinds
-    // permanently unlocked, since none of them carries one.
+    // The narrowest true statement about where the act landed: its own
+    // caption when it has one (a specification always does), otherwise
+    // its contract's subject — an attempt or a verdict names a
+    // contract, and the contract is what says which part of the world
+    // is being changed. Reading only the event's `subject` would leave
+    // four of the five locked kinds permanently unlocked, since none of
+    // them is required to carry one.
     const subject = input.subject ?? contract?.subject ?? null;
     if (subject === null) return;
 
-    const scope = this.containingSubjects(subject);
+    // Contract's ancestry first, so the rendered scope reads outermost
+    // to innermost even in the impossible case where the two walks
+    // diverge.
+    const scope = [
+      ...new Set([
+        ...(contract === null ? [] : this.containingSubjects(contract.subject)),
+        ...this.containingSubjects(subject),
+      ]),
+    ];
     const asks = this.unresolvedAsksBy(actor, scope);
     if (asks.length === 0) return;
 
@@ -1302,15 +1390,22 @@ class SqliteAnnexStore implements AnnexStore {
    * until the ask resolves.
    *
    * The cited-ruling route is the primary one in §5's prose — "the call
-   * must cite a `ruling` id" — and today it is unreachable through this
-   * store, because the fold marks an ask `ruled` the instant its ruling
-   * lands and a resolved ask does not lock. It is written anyway,
-   * because the two facts that make it dead are both scheduled to
-   * change (phase 4 gives deferred asks a probe that re-arms them, and
-   * an ask may outlive a ruling that only partly answers it) and
-   * because the day one does, its absence would be a silent hole rather
+   * must cite a `ruling` id" — and it is UNREACHABLE BY CONSTRUCTION
+   * TODAY, not merely unused: `foldRuling` marks an ask `ruled` the
+   * instant its ruling lands, and a resolved ask does not lock, so no
+   * input can arrive here holding both an unresolved ask and a ruling
+   * on it. Every member-facing text has been reworded to say what is
+   * true instead — get the ruling, which RESOLVES the ask and releases
+   * you, with nothing further to cite.
+   *
+   * The branch stays because the fact that makes it dead is scheduled
+   * to change: phase 4 arms deferred asks with a probe that re-raises
+   * them, at which point an ask can outlive a ruling that only partly
+   * answered it, and the branch's absence would be a silent hole rather
    * than a failing test. It is one lookup over a list the caller
-   * already supplied.
+   * already supplied. Recorded as a decision rather than left to be
+   * discovered — a branch nothing can reach is a claim no test can
+   * check, and it should be either explained or deleted.
    *
    * Keyed on the ASK, not on the proceeding's subject. The ask carries
    * the scope — it is only in the locking set because its subject
@@ -1942,12 +2037,39 @@ class SqliteAnnexStore implements AnnexStore {
     }
   }
 
+  /**
+   * A REDIRECT IS A RE-ADDRESSING, NOT A RESOLUTION.
+   *
+   * The other three actions end the ask: withdrawn takes the question
+   * back, declined and ruled answer it. A redirect does none of those —
+   * the question is unchanged, unanswered, and now in front of somebody
+   * else — so it leaves the ask OPEN with a new authority, and the
+   * asker stays bound by the citation lock exactly as before. Treating
+   * it as a resolution silently released the asker the moment their
+   * authority said "not me, ask her", which is the one moment the lock
+   * is most obviously still needed.
+   *
+   * ONE DURABLE ASK, NOT A CHAIN. No successor row and no new id: the
+   * `ask_action` event carries who moved it, to whom, and why, so the
+   * lineage is in the stream where every other fact about the ask is.
+   * A successor ask would fork the identity that everything else cites
+   * — the proceeding that covers it, the ruling that will answer it —
+   * and leave the asker's own proceeding covering a dead id.
+   *
+   * `resolved_by` therefore stays NULL. It names the event that ENDED
+   * an ask, and nothing has ended.
+   */
   private foldAskAction(event: SpineEvent): void {
     const body = event.body as SpineAskActionBody;
+    if (body.action === 'redirect') {
+      this.db
+        .prepare("UPDATE spine_asks SET authority = ?, state = 'open' WHERE id = ?")
+        .run(body.redirectTo as string, body.ask);
+      return;
+    }
     const next: Record<string, SpineAskState> = {
       withdraw: 'withdrawn',
       decline: 'declined',
-      redirect: 'redirected',
       defer: 'deferred',
     };
     const state = next[body.action] ?? 'open';
