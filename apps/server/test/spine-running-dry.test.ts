@@ -133,6 +133,16 @@ describe('the focus set running dry', () => {
     expect(await runningDry(), 're-emptying after a re-light fires again').toHaveLength(2);
   });
 
+  it('does not fire when an unrelated contract changes while the set is already empty', async () => {
+    // The set has never been non-empty — nothing was ever lit. Cancelling
+    // an unlit contract is a lifecycle event that recomputes the set and
+    // finds it empty, but that is not a TRANSITION: it was empty before.
+    // Only the edge (non-empty → empty) fires, so this must say nothing.
+    const a = await authorContract('op-a');
+    await cancel(a, 1, 'op-cancel-a'); // never lit; set was empty throughout
+    expect(await runningDry(), 'an already-empty set is not a fresh transition').toHaveLength(0);
+  });
+
   it('does not tell the allocator who emptied it themselves', async () => {
     const a = await authorContract('op-a');
     await light(a, 1, 'op-light-a');
