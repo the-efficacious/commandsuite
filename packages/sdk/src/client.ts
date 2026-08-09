@@ -64,6 +64,7 @@ import {
   GetProcessDocumentResponseSchema,
   GetSecretResponseSchema,
   GetSpineContractResponseSchema,
+  GetSpineEventResponseSchema,
   GetToolSourceResponseSchema,
   GetVariableResponseSchema,
   HealthResponseSchema,
@@ -216,6 +217,7 @@ import type {
   SetToolCredentialRequest,
   SetVariableValueRequest,
   SpineContract,
+  SpineEvent,
   SpineSubject,
   Team,
   TokenInfo,
@@ -1986,6 +1988,20 @@ export class Client {
     const qs = params.toString();
     const resp = await this.request(`${SPINE_PATHS.events}${qs ? `?${qs}` : ''}`);
     return ListSpineEventsResponseSchema.parse(await this.json(resp));
+  }
+
+  /**
+   * One event, by id.
+   *
+   * The lookup behind `promote`: turning a post into a typed event
+   * means reading the post, and an id is what every citation, staple
+   * and promotion carries. Paging the stream to find one of them is a
+   * scan, and on an annex that only ever grows it is a scan that gets
+   * slower forever.
+   */
+  async spineEvent(id: string): Promise<SpineEvent> {
+    const resp = await this.request(SPINE_PATHS.event(id));
+    return GetSpineEventResponseSchema.parse(await this.json(resp)).event;
   }
 
   /**

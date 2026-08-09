@@ -3224,6 +3224,18 @@ export function createApp(options: AppOptions): CreatedApp {
       return c.json(spine.events(parsed.data));
     });
 
+    // GET /spine/events/:id — one event, by id.
+    //
+    // A read, not a second write path. Everything in the annex is
+    // reached by id — citations, staples, the post a promotion is
+    // built from — and finding one by paging a stream that only grows
+    // is a scan that gets slower forever.
+    app.get(`${SPINE_PATHS.events}/:id`, auth, (c) => {
+      const event = spine.event(c.req.param('id'));
+      if (event === null) return c.json({ error: 'no such event' }, 404);
+      return c.json({ event });
+    });
+
     // GET /spine/orient — the Guaranteed Pack for the caller.
     //
     // Composed SERVER-SIDE so recovery is one code path for every

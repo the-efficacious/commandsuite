@@ -3054,6 +3054,10 @@ export interface ListSpineEventsResponse {
   headSeq: number;
 }
 
+export interface GetSpineEventResponse {
+  event: SpineEvent;
+}
+
 export interface RegisterSpineSubjectResponse {
   subject: SpineSubject;
 }

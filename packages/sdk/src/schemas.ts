@@ -2484,6 +2484,10 @@ export const ListSpineEventsResponseSchema = z.object({
   headSeq: z.number().int().nonnegative(),
 });
 
+export const GetSpineEventResponseSchema = z.object({
+  event: SpineEventSchema,
+});
+
 export const RegisterSpineSubjectResponseSchema = z.object({
   subject: SpineSubjectSchema,
 });

@@ -390,6 +390,22 @@ describe('reads', () => {
     expect((await app.request('/spine/contracts/evt_nope', authed(CORA))).status).toBe(404);
   });
 
+  it('fetches one event by id, whole, and 404s an id that names nothing', async () => {
+    const contract = await authorContract();
+    const one = (await get(app, `/spine/events/${contract}`, CORA)) as unknown as {
+      event: SpineEvent;
+    };
+    // WHOLE, not "an object came back". This read is what `promote`
+    // builds a typed event out of, so a response that had dropped the
+    // body would produce a synthesis from nothing and say nothing
+    // about it.
+    expect(one.event.id).toBe(contract);
+    expect(one.event.kind).toBe('specification');
+    expect(one.event.subject).toBe('repo:acme');
+    expect((one.event.body as { title: string }).title).toBe('Ship the endpoint');
+    expect((await app.request('/spine/events/evt_nope', authed(CORA))).status).toBe(404);
+  });
+
   it('400s an out-of-range page size and honours one inside it', async () => {
     await authorContract();
     expect((await app.request('/spine/events?limit=5000', authed(RUNE))).status).toBe(400);

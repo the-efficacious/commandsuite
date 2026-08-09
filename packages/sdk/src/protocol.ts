@@ -265,6 +265,7 @@ export const PROCESS_DOCUMENT_PATHS = {
  *   POST   /spine/events        — the single append path (per-kind validation,
  *                                 op_id + expected_state_rev enforced)
  *   GET    /spine/events        — cursor + filters, complete pages
+ *   GET    /spine/events/:id    — one event, by id
  *   GET    /spine/orient        — the Guaranteed Pack for the caller; the
  *                                 recovery call, cheap by construction
  *   POST   /spine/subjects      — explicit registration
@@ -275,9 +276,14 @@ export const PROCESS_DOCUMENT_PATHS = {
  * There is ONE write path for events on purpose: every per-kind rule,
  * every precondition and every structural check is applied by the same
  * handler, so a kind cannot acquire a second route that forgets one.
+ * The by-id READ is a different matter: an event is what everything
+ * else cites, and promoting a post into a typed event means reading the
+ * post first — paging the whole stream to find one id is not a lookup,
+ * it is a scan wearing one.
  */
 export const SPINE_PATHS = {
   events: '/spine/events',
+  event: (id: string) => `/spine/events/${encodeURIComponent(id)}`,
   orient: '/spine/orient',
   subjects: '/spine/subjects',
   contracts: '/spine/contracts',

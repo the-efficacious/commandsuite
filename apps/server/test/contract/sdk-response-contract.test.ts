@@ -58,15 +58,15 @@
  * An endpoint absent from it is UNCHECKED, not proven correct. Adding a case
  * is three lines; that is the point of the table.
  *
- * Measured at `184fb20`: the seventeen cases below exercise sixteen distinct
- * response schemas out of 52 `*ResponseSchema` exports, across sixteen distinct
- * operations out of 128 GET/POST/PUT/PATCH/DELETE registrations in `createApp`
- * (the route total also includes HTML, streams, and binary responses with no
- * SDK response schema). This is a spot-check, not route-complete contract
- * coverage.
+ * Measured at `184fb20`, and again as the spine's by-id read landed: the
+ * eighteen cases below exercise seventeen distinct response schemas out of 53
+ * `*ResponseSchema` exports, across seventeen distinct operations out of 129
+ * GET/POST/PUT/PATCH/DELETE registrations in `createApp` (the route total also
+ * includes HTML, streams, and binary responses with no SDK response schema).
+ * This is a spot-check, not route-complete contract coverage.
  *
- * Seven of those are the spine, enrolled on the commit that introduced it
- * rather than after its first divergence — which is what the
+ * Eight of those are the spine, each enrolled on the commit that introduced the
+ * endpoint rather than after its first divergence — which is what the
  * process-document surface did not do, leaving a month of unchecked contract.
  *
  * AND IT ONLY SEES HTTP RESPONSES
@@ -105,6 +105,7 @@ import {
   FsListResponseSchema,
   GetObjectiveResponseSchema,
   GetSpineContractResponseSchema,
+  GetSpineEventResponseSchema,
   HealthResponseSchema,
   InstructionsResponseSchema,
   ListChannelsResponseSchema,
@@ -519,6 +520,20 @@ describe('SDK response contract', () => {
     };
     expect(body.events.some((e) => e.revision !== null && typeof e.revision === 'object')).toBe(
       true,
+    );
+  });
+
+  it('GET /spine/events/:id matches GetSpineEventResponseSchema', async () => {
+    const { app } = makeApp();
+    const { contract } = await seedSpine(app);
+    // The specification event itself: it carries a subject, an op id
+    // and a body, so a schema that had lost any of the three would not
+    // parse this one.
+    await expectMatchesContract(
+      app,
+      `/spine/events/${contract}`,
+      authed(ALICE),
+      GetSpineEventResponseSchema,
     );
   });
 
