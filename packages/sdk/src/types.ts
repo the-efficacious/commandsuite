@@ -2803,25 +2803,138 @@ export interface SpineAsk {
 // ─── Requests ────────────────────────────────────────────────────────
 
 /**
- * The single append path.
- *
- * `opId` is required on authoritative writes and `expectedStateRev` on
- * authoritative writes that name a contract: a lost response is a
- * miniature album dump, and the write path is built for it.
+ * Captions every kind may carry. The ones a kind MUST carry are
+ * redeclared as required on that kind's variant below.
  */
-export interface AppendSpineEventRequest {
-  kind: SpineEventKind;
-  body: SpineEventBody;
+interface SpineAppendCaptions {
   subject?: string;
   /** Fully captioned or absent. There is no id-only form. */
   revision?: SpineRevisionInput;
   cites?: string[];
   /** Correction/disclosure target. Any event, including a terminal one. */
   staplesTo?: string;
-  opId?: string;
-  expectedStateRev?: number;
   authoredBy?: string;
 }
+
+/**
+ * The single append path, as FOURTEEN VARIANTS rather than one shape
+ * with everything optional.
+ *
+ * The difference is the whole point. "A correction must staple to
+ * something" written as an optional field plus a runtime check is a
+ * rule enforced once, at the boundary a caller happens to cross. As a
+ * variant it is enforced by the compiler at every call site in the
+ * repo, and `spine-boundary.test-d.ts` puts the hostile calls in front
+ * of `tsc` so the claim cannot rot into a comment.
+ *
+ * Two directions are encoded, not one. `opId` is REQUIRED on every
+ * authoritative kind — a lost response is a miniature album dump and
+ * the retry has to be free — and FORBIDDEN (`never`) on the ambient
+ * ones, so a caller cannot make discussion look durable by handing it
+ * an idempotency key. A specification likewise forbids
+ * `expectedStateRev`: it creates the contract, so there is no prior
+ * counter it could be expecting.
+ */
+export type AppendSpineEventRequest =
+  // ── Ambient: no idempotency key, no precondition ──
+  | (SpineAppendCaptions & {
+      kind: 'observation';
+      /** A flash is always OF somewhere. */
+      subject: string;
+      body: SpineObservationBody;
+      opId?: never;
+      expectedStateRev?: never;
+    })
+  | (SpineAppendCaptions & {
+      kind: 'testimony';
+      subject: string;
+      body: SpineTestimonyBody;
+      opId?: never;
+      expectedStateRev?: never;
+    })
+  | (SpineAppendCaptions & {
+      kind: 'discussion';
+      body: SpineDiscussionBody;
+      opId?: never;
+      expectedStateRev?: never;
+    })
+  // ── Authoritative ──
+  | (SpineAppendCaptions & {
+      kind: 'specification';
+      subject: string;
+      body: SpineSpecificationBody;
+      opId: string;
+      expectedStateRev?: never;
+    })
+  | (SpineAppendCaptions & {
+      kind: 'amendment';
+      body: SpineAmendmentBody;
+      opId: string;
+      expectedStateRev: number;
+    })
+  | (SpineAppendCaptions & {
+      kind: 'attempt';
+      body: SpineAttemptBody;
+      opId: string;
+      expectedStateRev: number;
+    })
+  | (SpineAppendCaptions & {
+      kind: 'criterion_verdict';
+      /** A verdict is true of a revision or it is true of nothing. */
+      revision: SpineRevisionInput;
+      body: SpineCriterionVerdictBody;
+      opId: string;
+      expectedStateRev: number;
+    })
+  | (SpineAppendCaptions & {
+      kind: 'ruling';
+      body: SpineRulingBody;
+      opId: string;
+      /** Required exactly when the body names a contract. */
+      expectedStateRev?: number;
+    })
+  | (SpineAppendCaptions & {
+      kind: 'ask';
+      body: SpineAskBody;
+      opId: string;
+      /** Required exactly when the body names a contract. */
+      expectedStateRev?: number;
+    })
+  | (SpineAppendCaptions & {
+      kind: 'ask_action';
+      body: SpineAskActionBody;
+      opId: string;
+      expectedStateRev?: number;
+    })
+  | (SpineAppendCaptions & {
+      kind: 'proceeding';
+      subject: string;
+      body: SpineProceedingBody;
+      opId: string;
+      expectedStateRev?: number;
+    })
+  | (SpineAppendCaptions & {
+      kind: 'lifecycle';
+      body: SpineLifecycleBody;
+      opId: string;
+      expectedStateRev: number;
+    })
+  | (SpineAppendCaptions & {
+      kind: 'correction';
+      /** A correction that staples to nothing is a second claim, not a correction. */
+      staplesTo: string;
+      body: SpineCorrectionBody;
+      opId: string;
+      expectedStateRev?: number;
+    })
+  | (SpineAppendCaptions & {
+      kind: 'promotion';
+      /** Exactly one origin post. */
+      cites: string[];
+      body: SpinePromotionBody;
+      opId: string;
+      expectedStateRev?: number;
+    });
 
 export interface RegisterSpineSubjectRequest {
   id: string;
@@ -2889,6 +3002,33 @@ export interface ListSpineContractsResponse {
 
 export interface GetSpineContractResponse {
   contract: SpineContract;
+}
+
+// ─── Refusal payloads ────────────────────────────────────────────────
+//
+// The refusal IS the re-injection. These are what a caller gets back
+// instead of a hint, delivered at exactly the moment stale beliefs
+// would have caused harm.
+
+export interface SpineStaleStateRevDetail {
+  contract: string;
+  expectedStateRev: number;
+  currentStateRev: number;
+  /** In full, not as ids. A caller that must fetch to understand has been told nothing useful. */
+  intervening: SpineEvent[];
+}
+
+export interface SpineCoverageGapDetail {
+  contract: string;
+  revision: string | null;
+  /** Every criterion the completion does not cover, and why it does not. */
+  missing: { criterion: string; text: string; why: string }[];
+}
+
+export interface SpineIdempotencyConflictDetail {
+  opId: string;
+  /** The event the id already resolved to. */
+  originalEvent: string;
 }
 
 /** How the calling member is bound to a contract. */
