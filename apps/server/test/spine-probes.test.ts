@@ -18,6 +18,7 @@
 import type { SpineAsk, SpineCheck, SpineContract, SpineEvent } from 'csuite-sdk/types';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { openDatabase } from '../src/db.js';
+import { sliceOf } from '../src/spine/probes.js';
 import { createSqliteAnnexStore } from '../src/spine/store.js';
 import {
   authed,
@@ -443,6 +444,24 @@ describe('a check firing on an ask discharges it, and nobody typed anything', ()
     // absence of a demand rather than a new one — announcing it would
     // be the ceremony §10 forbids.
     expect(andrewjon.injections).toHaveLength(0);
+
+    // AND IT IS ON THE LEDGER. "What did the system spend of my album
+    // this week" has to include what a probe spent, or the account is
+    // complete only for the injections a member could already see
+    // coming.
+    const ledger = (await (
+      await ctx.app.request('/spine/injections', authed(tokenFor('lea')))
+    ).json()) as {
+      injections: { class: number; kind: string; refs: string[]; delivered: boolean }[];
+    };
+    const discharge = ledger.injections.filter((row) => row.refs.includes(obs.id));
+    expect(discharge).toHaveLength(1);
+    expect({
+      class: discharge[0]?.class,
+      kind: discharge[0]?.kind,
+      delivered: discharge[0]?.delivered,
+    }).toEqual({ class: 1, kind: 'addressed', delivered: true });
+
     lea.close();
     andrewjon.close();
   });
@@ -1113,6 +1132,49 @@ describe('the outbound poll, and every pin on it', () => {
     await app.probes.sweep();
     expect(fetchImpl.calls).toHaveLength(1);
     app.db.close();
+  });
+});
+
+describe('the slice a firing observation carries', () => {
+  it('is the paths the predicate named, and is bounded when it is everything', () => {
+    const payload = { a: { b: 'x' }, big: 'y'.repeat(64 * 1024), other: 1 };
+
+    // The normal case: named paths, so the reader can check the claim
+    // rather than take it.
+    expect(
+      JSON.parse(
+        sliceOf(payload, {
+          kind: 'webhook',
+          endpoint: 'ci',
+          when: [{ path: 'a.b', op: 'eq', value: 'x' }],
+          revisionPath: 'other',
+        }),
+      ),
+    ).toEqual({ 'a.b': 'x', other: 1 });
+
+    // A path that is not there renders as null rather than vanishing:
+    // "the predicate looked here and found nothing" and "the predicate
+    // never looked" are different facts.
+    expect(
+      JSON.parse(
+        sliceOf(payload, {
+          kind: 'webhook',
+          endpoint: 'ci',
+          when: [{ path: 'missing.path', op: 'exists' }],
+        }),
+      ),
+    ).toEqual({ 'missing.path': null });
+
+    // No predicate at all: "relevant" is honestly the whole payload,
+    // and an annex event is permanent, so it is bounded.
+    const whole = sliceOf(payload, { kind: 'webhook', endpoint: 'ci', when: [] });
+    expect(whole.length).toBeLessThan(16 * 1024);
+    expect(whole).toContain('[truncated at');
+    // The positive control: a small payload with no predicate rides
+    // whole and is NOT marked truncated.
+    const small = sliceOf({ a: 1 }, { kind: 'webhook', endpoint: 'ci', when: [] });
+    expect(JSON.parse(small)).toEqual({ a: 1 });
+    expect(small).not.toContain('truncated');
   });
 });
 
