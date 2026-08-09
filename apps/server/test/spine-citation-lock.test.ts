@@ -315,7 +315,34 @@ describe('containment: a rule one level up is not escaped one level down', () =>
   });
 });
 
+/**
+ * The five, WRITTEN OUT. Not derived from the exported constant.
+ *
+ * An earlier version of this suite iterated `SPINE_CITATION_LOCKED_KINDS`
+ * to build its cases and compared the result against the same list.
+ * Deleting `lifecycle` from the constant then deleted the case that
+ * would have caught it and the expectation that would have failed:
+ * eighteen tests, all green, against a store that no longer locked
+ * completions. A fixture that reads its answer from the thing under
+ * test cannot fail, and mutation is the only thing that says so.
+ */
+const LOCKED_KINDS = [
+  'specification',
+  'amendment',
+  'attempt',
+  'criterion_verdict',
+  'lifecycle',
+] as const;
+
 describe('which kinds the lock reaches', () => {
+  it('publishes exactly those five kinds as locked', () => {
+    // The list is a deliverable in its own right: the store enforces
+    // it, the tool descriptions teach it, and an agent reading a
+    // refusal has to recognise it. Pinned to the literal so a change
+    // to the constant is a change somebody has to make here too.
+    expect([...SPINE_CITATION_LOCKED_KINDS]).toEqual([...LOCKED_KINDS]);
+  });
+
   /**
    * COMPLETENESS IN BOTH DIRECTIONS, in one place. The locked list must
    * be exactly the five state-changing kinds: a sixth would make the
@@ -328,10 +355,7 @@ describe('which kinds the lock reaches', () => {
 
     // lea is the asker here, and also the author, verifier and a member
     // who may drive lifecycle — so one actor exercises all five kinds.
-    const acts: Record<
-      (typeof SPINE_CITATION_LOCKED_KINDS)[number],
-      (stateRev: number) => unknown
-    > = {
+    const acts: Record<(typeof LOCKED_KINDS)[number], (stateRev: number) => unknown> = {
       specification: () =>
         annex.append(
           {
@@ -394,14 +418,14 @@ describe('which kinds the lock reaches', () => {
         ),
     };
 
-    const refused = SPINE_CITATION_LOCKED_KINDS.map((kind) => {
+    const refused = LOCKED_KINDS.map((kind) => {
       const err = expectLocked(() => acts[kind](1));
       return [kind, detailOf(err).kind] as const;
     });
     // The whole list, mapped to itself: a store that locked four of the
     // five would produce a shorter array, and a store that reported the
     // wrong kind in its detail would produce a different one.
-    expect(refused).toEqual(SPINE_CITATION_LOCKED_KINDS.map((k) => [k, k]));
+    expect(refused).toEqual(LOCKED_KINDS.map((k) => [k, k]));
     // Nothing landed: the counter has not moved off the specification.
     expect(annex.contract(contract)?.stateRev).toBe(1);
 
