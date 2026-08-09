@@ -18,6 +18,7 @@
 import type { SpineAsk, SpineCheck, SpineContract, SpineEvent } from 'csuite-sdk/types';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { openDatabase } from '../src/db.js';
+import { createAnnexWritePath } from '../src/spine/index.js';
 import { sliceOf } from '../src/spine/probes.js';
 import { createSqliteAnnexStore } from '../src/spine/store.js';
 import {
@@ -421,7 +422,7 @@ describe('a check firing on an ask discharges it, and nobody typed anything', ()
     expect(body.asksForMe.map((a) => a.id)).not.toContain(askId);
   });
 
-  it('sends the asker exactly one class-1 line, naming the observation', async () => {
+  it('tells the asker AND the authority when the asker armed the check', async () => {
     const lea = ctx.sinkFor('lea');
     const andrewjon = ctx.sinkFor('andrewjon');
     await deliver(ctx, GREEN);
@@ -440,10 +441,19 @@ describe('a check firing on an ask discharges it, and nobody typed anything', ()
     );
     expect(lea.injections[0]?.body).toContain('run `orient` for the pack');
 
-    // NOT THE AUTHORITY. Their queue item went away, which is the
-    // absence of a demand rather than a new one — announcing it would
-    // be the ceremony §10 forbids.
-    expect(andrewjon.injections).toHaveLength(0);
+    // AND THE AUTHORITY, because LEA armed this check. andrewjon was
+    // asked to decide something and the decision was taken off their
+    // queue by a mechanism they never saw. Being silently released
+    // from a decision somebody asked you to make is not the absence of
+    // news, and the record of what released you is a photograph they
+    // can go and look at.
+    expect(andrewjon.injections).toHaveLength(1);
+    expect((andrewjon.injections[0]?.body ?? '').split('Since seq')[0]).toBe(
+      `spine: observation ${obs.id} by probe:${check.id} — an ask you were asked to rule on ` +
+        `discharged itself — the asker armed a check and the world answered it, so this is off ` +
+        `your queue without you deciding anything. On subject repo:acme. ` +
+        `ask ${askId} is discharged, resolved by this observation. `,
+    );
 
     // AND IT IS ON THE LEDGER. "What did the system spend of my album
     // this week" has to include what a probe spent, or the account is
@@ -462,6 +472,35 @@ describe('a check firing on an ask discharges it, and nobody typed anything', ()
       delivered: discharge[0]?.delivered,
     }).toEqual({ class: 1, kind: 'addressed', delivered: true });
 
+    lea.close();
+    andrewjon.close();
+  });
+
+  it('tells the asker ALONE when the authority armed it by deferring', async () => {
+    // The other side of the split, and the control on it. andrewjon
+    // deferred with a trigger, so andrewjon CHOSE this mechanism: the
+    // queue item going away is the thing they asked for, and telling
+    // them about it is the ceremony §10 forbids by name.
+    const deferred = await post(ctx, 'andrewjon', {
+      kind: 'ask_action',
+      opId: 'defer-arm',
+      body: {
+        ask: askId,
+        action: 'defer',
+        reason: 'come back when the build has run',
+        trigger: CI_RECIPE,
+      },
+    });
+    expect(deferred.status, await deferred.clone().text()).toBe(201);
+    const lea = ctx.sinkFor('lea');
+    const andrewjon = ctx.sinkFor('andrewjon');
+    await deliver(ctx, GREEN);
+    await settle();
+
+    const armed = (await listChecks(ctx)).find((c) => c.state === 'fired') as SpineCheck;
+    expect(armed.authoredBy, 'the defer is what armed the firing check').toBe('andrewjon');
+    expect(lea.injections).toHaveLength(1);
+    expect(andrewjon.injections).toHaveLength(0);
     lea.close();
     andrewjon.close();
   });
@@ -960,11 +999,15 @@ describe('the outbound poll, and every pin on it', () => {
       ...patch,
     });
 
-  async function armPoll(app: ProbeApp, patch: Record<string, unknown> = {}): Promise<string> {
+  async function armPoll(
+    app: ProbeApp,
+    patch: Record<string, unknown> = {},
+    who = 'lea',
+  ): Promise<string> {
     await registerSubject(app, 'repo:acme');
     const res = await app.app.request(
       '/spine/events',
-      authed(tokenFor('lea'), {
+      authed(tokenFor(who), {
         kind: 'ask',
         subject: 'repo:acme',
         opId: `ask-poll-${Math.random()}`,
@@ -992,14 +1035,21 @@ describe('the outbound poll, and every pin on it', () => {
     expect(obs.revision?.value).toBe('sha-poll');
     expect(app.annex.ask(askId)?.state).toBe('discharged');
 
-    // GET, no body, no redirects — the request itself, asserted.
+    // GET, no redirects, and PINNED — the request itself, asserted.
+    // `pinnedAddresses` is the load-bearing one: a transport handed a
+    // hostname would resolve it again and the egress check would be a
+    // time-of-check/time-of-use bug rather than a control.
     expect(fetchImpl.calls).toHaveLength(1);
     expect(fetchImpl.calls[0]?.url).toBe('https://ci.example.com/status');
     expect({
       method: fetchImpl.calls[0]?.init?.method,
       redirect: fetchImpl.calls[0]?.init?.redirect,
-      body: fetchImpl.calls[0]?.init?.body ?? null,
-    }).toEqual({ method: 'GET', redirect: 'manual', body: null });
+      pinned: fetchImpl.calls[0]?.init?.pinnedAddresses,
+    }).toEqual({ method: 'GET', redirect: 'manual', pinned: ['93.184.216.34'] });
+    // The transport signature has no `body` at all — a probe observes
+    // and does not act on the world, and that is a type rather than a
+    // convention.
+    expect('body' in (fetchImpl.calls[0]?.init ?? {})).toBe(false);
     app.db.close();
   });
 
@@ -1059,6 +1109,50 @@ describe('the outbound poll, and every pin on it', () => {
     app.db.close();
   });
 
+  it('does not double-poll when a slow sweep overlaps the next tick', async () => {
+    // THE GUARD THE CLAIM DOES NOT COVER. `claimForFiring` protects the
+    // OBSERVATION; it is taken after the network call comes back. Two
+    // overlapping sweeps therefore issue two outbound requests — with
+    // the author's secret on both — before either claims anything, and
+    // an endpoint slower than the tick makes that the normal case
+    // rather than a race.
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let calls = 0;
+    const app = makeProbeApp({
+      fetchImpl: async () => {
+        calls += 1;
+        await gate;
+        // NOT MATCHING, deliberately: a firing poll leaves the check
+        // terminal and the positive control below could never run,
+        // which would leave "the guard is stuck on forever" untested.
+        return jsonResponse({ state: 'red', sha: 'x' });
+      },
+    });
+    await armPoll(app);
+
+    const first = app.probes.sweep();
+    // A second tick lands while the first is still in flight. Both are
+    // awaited before anything is counted, so the assertion is about
+    // what the pair of them DID rather than about when the first one
+    // happened to reach the socket.
+    const second = app.probes.sweep();
+    await second;
+    (release as () => void)();
+    await first;
+    expect(calls, 'two overlapping sweeps must issue one request, not two').toBe(1);
+
+    // THE POSITIVE CONTROL: once the first sweep is done the guard is
+    // released, and a later due poll goes out normally. A guard stuck
+    // on would pass the assertion above forever.
+    app.clock.ms += 120_000;
+    await app.probes.sweep();
+    expect(calls).toBe(2);
+    app.db.close();
+  });
+
   it('honours the interval on an injected clock', async () => {
     const fetchImpl = scriptedFetch([() => jsonResponse({ state: 'red', sha: 'a' })]);
     const app = makeProbeApp({ fetchImpl: fetchImpl.impl });
@@ -1076,6 +1170,41 @@ describe('the outbound poll, and every pin on it', () => {
     app.clock.ms += 2_000;
     await app.probes.sweep();
     expect(fetchImpl.calls).toHaveLength(2);
+    app.db.close();
+  });
+
+  it('refuses a non-https poll at fire time, not only at authoring', async () => {
+    // A DEAD BRANCH IS A CLAIM NO TEST CAN CHECK, and the standard this
+    // repo already set for one (`coveringCitation`) is explain-or-test.
+    // The authoring pin means no http row can be authored — so the row
+    // is injected directly, which is the case the branch exists for: a
+    // migration, an import, or a future caller that does not pass the
+    // schema.
+    const fetchImpl = scriptedFetch([() => jsonResponse({ state: 'green', sha: 'x' })]);
+    const app = makeProbeApp({ fetchImpl: fetchImpl.impl });
+    await registerSubject(app, 'repo:acme');
+    app.checks.arm({
+      id: 'chk_smuggled',
+      sourceEvent: 'evt_smuggled',
+      carrier: 'ask',
+      subject: 'repo:acme',
+      contract: null,
+      ask: null,
+      recipe: {
+        kind: 'http_poll',
+        url: 'http://ci.example.com/status',
+        intervalMs: 60_000,
+        when: [],
+      },
+      authoredBy: 'lea',
+      at: new Date(app.clock.ms).toISOString(),
+    });
+    await app.probes.sweep();
+    expect(fetchImpl.calls, 'cleartext must not go out however the row arrived').toHaveLength(0);
+    expect(
+      app.logger.warn.mock.calls.find((c) => c[0] === 'spine: poll failed')?.[1],
+    ).toMatchObject({ reason: expect.stringContaining('https only') });
+    expect(app.checks.get('chk_smuggled')?.state).toBe('armed');
     app.db.close();
   });
 
@@ -1107,9 +1236,13 @@ describe('the outbound poll, and every pin on it', () => {
   });
 
   it('will not borrow access its author does not have', async () => {
-    // The secret exists and has a value, and lea is not bound to it.
-    // A check that could still send it would make arming a probe a
-    // privilege-escalation surface with a permanent record.
+    // ARMED BY RUNE, BOUND TO LEA, and the two names have to be
+    // different members for this to say anything. With `lea` doing
+    // both the arming and the binding, an implementation that resolved
+    // secrets as a HARD-CODED `lea` — or as the endpoint's creator, or
+    // as the first member on the roster — would pass identically. The
+    // author is the only name that should work here, so the fixture
+    // makes every other name wrong.
     const fetchImpl = scriptedFetch([() => jsonResponse({ state: 'green', sha: 'x' })]);
     const app = makeProbeApp({ fetchImpl: fetchImpl.impl });
     const secret = app.secrets.create({
@@ -1119,18 +1252,21 @@ describe('the outbound poll, and every pin on it', () => {
       creator: 'andrewjon',
     });
     app.secrets.setValue(secret.id, 'Bearer s3cret-value');
-    app.secrets.bind(secret.id, 'rune');
-    await armPoll(app, { authSecret: 'ci-token' });
+    app.secrets.bind(secret.id, 'lea');
+    await armPoll(app, { authSecret: 'ci-token' }, 'rune');
+    expect((await listChecks(app))[0]?.authoredBy, 'rune armed it').toBe('rune');
     await app.probes.sweep();
 
-    expect(fetchImpl.calls, 'the poll must not go out at all').toHaveLength(0);
+    expect(fetchImpl.calls, 'rune cannot reach lea’s secret, so nothing goes out').toHaveLength(0);
     expect((await listEvents(app)).filter((e) => e.kind === 'observation')).toEqual([]);
 
-    // The positive control: bind lea, and the same check goes out.
-    app.secrets.bind(secret.id, 'lea');
+    // The positive control: bind RUNE — the author — and the same
+    // check goes out with the value. Binding anyone else would not.
+    app.secrets.bind(secret.id, 'rune');
     app.clock.ms += 120_000;
     await app.probes.sweep();
     expect(fetchImpl.calls).toHaveLength(1);
+    expect(fetchImpl.calls[0]?.init?.headers?.Authorization).toBe('Bearer s3cret-value');
     app.db.close();
   });
 });
@@ -1215,6 +1351,71 @@ describe('only a probe discharges an ask, and only an unresolved one', () => {
       { actor: 'lea' },
     );
     expect(annex.ask(ask.event.id)?.state).toBe('open');
+    db.close();
+  });
+
+  it('spends nobody’s class-1 budget on a member’s staple', async () => {
+    // THE OTHER HALF OF THE SAME GATE, and it is the half that costs a
+    // member something. The fold's probe check keeps the ask open; the
+    // CURATOR's probe check is what keeps a member from spending
+    // somebody else's never-yields budget with a line that says
+    // "discharged" about an ask that is not. Two guards, two tests —
+    // the store one passes happily while the curator one is missing.
+    await registerSubject(ctx, 'repo:acme');
+    const askId = ((await (await armedAsk(ctx, undefined)).json()) as { event: SpineEvent }).event
+      .id;
+    const lea = ctx.sinkFor('lea');
+    const andrewjon = ctx.sinkFor('andrewjon');
+    lea.messages.length = 0;
+    andrewjon.messages.length = 0;
+
+    const stapled = await post(ctx, 'rune', {
+      kind: 'observation',
+      subject: 'repo:acme',
+      staplesTo: askId,
+      body: { what: 'ci', output: 'looks green to me' },
+    });
+    expect(stapled.status, await stapled.clone().text()).toBe(201);
+    await settle();
+
+    expect(lea.injections, 'a member’s staple must not spend the asker’s budget').toHaveLength(0);
+    expect(andrewjon.injections).toHaveLength(0);
+    expect(ctx.annex.ask(askId)?.state).toBe('open');
+    lea.close();
+    andrewjon.close();
+  });
+
+  it('a member stapling an observation still records the evidence', () => {
+    // The positive control on the two negatives above: stapling is a
+    // legitimate act and it is what stapling is FOR. What it does not
+    // do is resolve somebody else's question.
+    const db = openDatabase(':memory:');
+    const annex = createSqliteAnnexStore(db);
+    annex.registerSubject({ id: 'repo:acme', type: 'repo' }, 'lea');
+    const ask = annex.append(
+      {
+        kind: 'ask',
+        subject: 'repo:acme',
+        opId: 'op-ask',
+        body: {
+          authority: 'andrewjon',
+          question: 'ship it?',
+          context: 'ready',
+          unblocks: 'the release',
+        },
+      },
+      { actor: 'lea' },
+    );
+    const evidence = annex.append(
+      {
+        kind: 'observation',
+        subject: 'repo:acme',
+        staplesTo: ask.event.id,
+        body: { what: 'ci', output: 'green, I looked myself' },
+      },
+      { actor: 'lea' },
+    );
+    expect(annex.event(evidence.event.id)?.staplesTo).toBe(ask.event.id);
 
     // The positive control, on the same ask and the same staple: a
     // probe's observation closes it.
@@ -1278,6 +1479,194 @@ describe('only a probe discharges an ask, and only an unresolved one', () => {
       state: 'withdrawn',
       resolvedBy: withdrawal.event.id,
     });
+    db.close();
+  });
+});
+
+// ─── A replay arms nothing ──────────────────────────────────────────
+
+describe('a replayed append does not arm a second camera', () => {
+  it('returns the original event and leaves one check', async () => {
+    // Idempotency has to hold for the REGISTRY as well as for the
+    // annex. A retry after a lost response is a miniature album dump —
+    // the whole reason `op_id` exists — and arming a second check on
+    // it would point two cameras at one thing and give "did the thing
+    // I armed happen" two answers. The engine's own guard is
+    // `result.replayed`; the registry's UNIQUE index is the backstop,
+    // and a retry should not depend on a constraint to be a no-op.
+    await registerSubject(ctx, 'repo:acme');
+    const body = {
+      kind: 'ask' as const,
+      subject: 'repo:acme',
+      opId: 'op-replayed-ask',
+      body: {
+        authority: 'andrewjon',
+        question: 'ship when green?',
+        context: 'ready',
+        unblocks: 'the release',
+        check: CI_RECIPE,
+      },
+    };
+    const first = await post(ctx, 'lea', body);
+    expect(first.status, await first.clone().text()).toBe(201);
+    const firstId = ((await first.json()) as { event: SpineEvent }).event.id;
+
+    const replay = await post(ctx, 'lea', body);
+    // 200, not 201: the retry created nothing, which is the honest
+    // answer to "did my write land twice".
+    expect(replay.status).toBe(200);
+    const replayed = (await replay.json()) as { event: SpineEvent; replayed: boolean };
+    expect({ id: replayed.event.id, replayed: replayed.replayed }).toEqual({
+      id: firstId,
+      replayed: true,
+    });
+
+    const checks = await listChecks(ctx);
+    expect(checks).toHaveLength(1);
+    expect(checks[0]?.sourceEvent).toBe(firstId);
+
+    // And the check still fires exactly once, which is the property
+    // the count above exists to protect.
+    await deliver(ctx, GREEN);
+    expect((await listEvents(ctx)).filter((e) => e.kind === 'observation')).toHaveLength(1);
+  });
+});
+
+// ─── The read surface is a facade, not an argument ──────────────────
+
+describe('the annex handed to consumers genuinely cannot append', () => {
+  it('has no append to cast to', () => {
+    // THE DEFEAT-TEST ON THE CLAIM ITSELF. `AnnexStore` having no
+    // `append` is a compile-time claim, and a compile-time claim about
+    // an object is defeated by one cast:
+    //
+    //   (path.store as unknown as { append: … }).append(evt, ctx)
+    //
+    // which imports nothing but types, is invisible to the scanner, and
+    // — while `store` was the writer wearing a narrower type — reached
+    // the annex and bypassed every post-commit hook. The event landed,
+    // no check armed, no curator line went out.
+    //
+    // So the object handed out does not have the method, and this is
+    // what says so.
+    const db = openDatabase(':memory:');
+    const path = createAnnexWritePath({
+      db,
+      logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
+    });
+    const smuggled = path.store as unknown as { append?: unknown };
+    expect(smuggled.append, 'the facade must not carry the method at all').toBeUndefined();
+    expect(Object.keys(path.store)).not.toContain('append');
+    expect(Object.getPrototypeOf(path.store), 'nor reach it up the prototype chain').toBe(
+      Object.prototype,
+    );
+
+    // AND IT IS STILL A REAL ANNEX. A facade that lost the reads would
+    // pass every assertion above and break the whole server.
+    path.store.registerSubject({ id: 'repo:acme', type: 'repo' }, 'lea');
+    expect(path.store.subject('repo:acme')?.type).toBe('repo');
+    expect(path.store.events().events).toEqual([]);
+    expect(path.store.orient('lea').contracts).toEqual([]);
+
+    // Frozen, so a caller holding a writer cannot re-fit the facade
+    // with one. Not the attack this exists for, but a read-only
+    // surface that can be assigned to is not read-only.
+    expect(Object.isFrozen(path.store)).toBe(true);
+    db.close();
+  });
+
+  it('routes a write made through the path — the control on the facade', async () => {
+    // The positive control: the write path still works, and its hooks
+    // still run. A facade that broke the writer would satisfy the
+    // negatives above perfectly.
+    const db = openDatabase(':memory:');
+    const path = createAnnexWritePath({
+      db,
+      logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
+    });
+    const seen: string[] = [];
+    path.onAppend(async (result) => {
+      seen.push(result.event.id);
+    });
+    path.store.registerSubject({ id: 'repo:acme', type: 'repo' }, 'lea');
+    const result = await path.append(
+      { kind: 'observation', subject: 'repo:acme', body: { what: 'ci', output: 'green' } },
+      { actor: 'lea' },
+    );
+    expect(seen).toEqual([result.event.id]);
+    db.close();
+  });
+});
+
+// ─── A probe observes; it cannot assert ─────────────────────────────
+
+describe('a probe cannot caption an event with an asserted revision', () => {
+  it('refuses at the store, and accepts the observed one beside it', () => {
+    // D2 and §10. `asserted` means a member named the value by hand,
+    // which is authored intent, and the system has none — it holds the
+    // camera. It is not cosmetic either: only OBSERVED revisions move a
+    // subject's head, so an asserted one from a probe would be the
+    // system claiming the world is at a state nobody looked at, and
+    // every contract bound to the real head would render stale against
+    // a fiction.
+    const db = openDatabase(':memory:');
+    const annex = createSqliteAnnexStore(db);
+    annex.registerSubject({ id: 'repo:acme', type: 'repo' }, 'lea');
+
+    expect(() =>
+      annex.append(
+        {
+          kind: 'observation',
+          subject: 'repo:acme',
+          authoredBy: 'lea',
+          revision: {
+            subject: 'repo:acme',
+            value: 'sha-invented',
+            how: 'asserted',
+            source: 'probe:chk_1',
+          },
+          body: { what: 'ci', output: 'green' },
+        },
+        { actor: 'probe:chk_1' },
+      ),
+    ).toThrow(/A probe LOOKS; it cannot assert/);
+
+    // THE NEAREST VALID THING, still accepted — and the head moves,
+    // which is the property the refusal is protecting.
+    const observed = annex.append(
+      {
+        kind: 'observation',
+        subject: 'repo:acme',
+        authoredBy: 'lea',
+        revision: {
+          subject: 'repo:acme',
+          value: 'sha-seen',
+          how: 'observed',
+          source: 'probe:chk_1',
+        },
+        body: { what: 'ci', output: 'green' },
+      },
+      { actor: 'probe:chk_1' },
+    );
+    expect(observed.event.revision?.how).toBe('observed');
+
+    // And a MEMBER may still assert — the rule is about who is holding
+    // the camera, not about the field.
+    const asserted = annex.append(
+      {
+        kind: 'observation',
+        subject: 'repo:acme',
+        revision: {
+          subject: 'repo:acme',
+          value: 'sha-by-hand',
+          how: 'asserted',
+          source: 'member:lea',
+        },
+        body: { what: 'ci', output: 'I checked the console' },
+      },
+      { actor: 'lea' },
+    );
+    expect(asserted.event.revision?.how).toBe('asserted');
     db.close();
   });
 });

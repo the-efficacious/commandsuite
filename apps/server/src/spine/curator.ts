@@ -802,30 +802,58 @@ function addressedMembers(
         : [];
     }
     case 'observation': {
-      // THE DISCHARGE ARM (§7). A probe's firing observation stapled to
-      // an ask closed that ask without its authority typing anything —
-      // §9's armed setting, where the human does the thing and the
-      // probe is the confirmation. The one person who has to hear about
-      // it is the ASKER: they are the member who was blocked, and the
-      // thing that unblocked them happened in the world rather than in
-      // the annex, so nothing else would ever tell them.
+      // THE DISCHARGE ARM (§7), and it SPLITS BY WHO ARMED THE CHECK.
       //
-      // NOT the authority. Their queue item went away, which is the
-      // absence of a demand rather than a new one, and spending an
-      // album to announce that somebody no longer owes you an answer is
-      // exactly the ceremony §10 forbids.
+      // The asker always hears: they are the member who was blocked,
+      // and the thing that unblocked them happened in the world rather
+      // than in the annex, so nothing else would ever tell them.
+      //
+      // WHETHER THE AUTHORITY HEARS IS THE INTERESTING HALF, and the
+      // first version got it wrong in a way worth writing down. It
+      // addressed the asker alone, on the reasoning that a queue item
+      // going away is the absence of a demand rather than a new one and
+      // announcing it would be ceremony. That reasoning is true — of
+      // the DEFER case, where the authority themselves attached the
+      // trigger. It is false of the case that actually matters: the
+      // ASKER armed the check, and the authority's queue item then
+      // vanished, resolved, by a mechanism the authority never saw and
+      // did not choose. Being silently released from a decision
+      // somebody asked you to make is not the absence of news.
+      //
+      // The mechanism is legitimate — an asker has always been able to
+      // withdraw the ask or `proceed` past it, and an ask carrying a
+      // check is a BETTER record than a bare proceed, because the thing
+      // that discharged it is a photograph anybody can go and look at.
+      // So the answer is not to harden the gate; it is to tell the
+      // person whose decision was taken off the table.
+      //
+      // WHO ARMED IT is read off the event, not off the check registry.
+      // `authoredBy` on a probe's observation is the member whose
+      // recipe fired, which is exactly the carrier event's actor. Going
+      // to the registry would make the curator's routing depend on a
+      // table the annex can be rebuilt without.
       if (!event.actor.startsWith('probe:') || event.staplesTo === null) return [];
       const stapled = annex.event(event.staplesTo);
       if (stapled === null || stapled.kind !== 'ask') return [];
       const ask = annex.ask(stapled.id);
       if (ask === null) return [];
-      return [
+      const targets: AddressedTarget[] = [
         {
           member: ask.asker,
           why: 'the check you armed fired — this ask is discharged, nobody had to answer it',
           detail: `ask ${ask.id} is ${ask.state}, resolved by this observation`,
         },
       ];
+      if (event.authoredBy !== ask.authority && ask.authority !== ask.asker) {
+        targets.push({
+          member: ask.authority,
+          why:
+            'an ask you were asked to rule on discharged itself — the asker armed a check and ' +
+            'the world answered it, so this is off your queue without you deciding anything',
+          detail: `ask ${ask.id} is ${ask.state}, resolved by this observation`,
+        });
+      }
+      return targets;
     }
     case 'lifecycle': {
       const state = (event.body as SpineLifecycleBody).state;

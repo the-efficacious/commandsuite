@@ -280,6 +280,46 @@ write.appendAsProbe({
   body: { what: 'x', output: '{}' },
 });
 
+// A PROBE OBSERVES; IT CANNOT ASSERT. `asserted` is a member naming a
+// value by hand — authored intent — and the system has none. The store
+// refuses it at runtime, because it is reachable by callers no compiler
+// saw; this is the half that stops the engine ever forming one. Only
+// OBSERVED revisions move a subject's head, so the field is also the
+// one place a probe could claim the world is at a state nobody looked
+// at.
+write.appendAsProbe(
+  {
+    kind: 'observation',
+    subject: 'repo:acme',
+    revision: {
+      subject: 'repo:acme',
+      value: 'sha-a',
+      // @ts-expect-error a probe looks; it does not name a value by hand
+      how: 'asserted',
+      source: 'probe:chk_1',
+    },
+    body: { what: 'ci', output: '{}' },
+  },
+  probe,
+);
+
+// The positive control on that one field: `observed` still compiles, so
+// the narrowing removed a VALUE rather than the field.
+write.appendAsProbe(
+  {
+    kind: 'observation',
+    subject: 'repo:acme',
+    revision: {
+      subject: 'repo:acme',
+      value: 'sha-a',
+      how: 'observed',
+      source: 'probe:chk_1',
+    },
+    body: { what: 'ci', output: '{}' },
+  },
+  probe,
+);
+
 /**
  * EVERY KIND, one at a time, as a type-level assertion.
  *

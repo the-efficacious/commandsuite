@@ -1328,6 +1328,32 @@ class SqliteAnnexStore implements AnnexWriter {
       );
     }
 
+    // A PROBE OBSERVES; IT CANNOT ASSERT.
+    //
+    // D2 splits the kinds by how they were obtained, and §4 puts `how`
+    // in the revision so a value can never render without saying which
+    // it is. `asserted` means a member named the value by hand — an act
+    // of authorship — and the system has no hand to name it with. The
+    // engine only ever writes `observed`, but a literal in one function
+    // is not a rule: this method is the guarantee point, reachable by a
+    // caller no compiler saw, and an append-only table keeps whatever
+    // it is given forever.
+    //
+    // The consequence is not cosmetic either. Only `observed`
+    // revisions move a subject's head, so an asserted one from a probe
+    // would be the system quietly claiming the world is at a state
+    // nobody looked at — and then every contract bound to the real head
+    // would render stale against a fiction.
+    if (input.revision !== undefined && input.revision.how !== 'observed') {
+      throw new SpineError(
+        'not_permitted',
+        `${actor} is a probe and captioned this ${kind} with an ${input.revision.how} ` +
+          'revision. A probe LOOKS; it cannot assert. An asserted revision is a member naming a ' +
+          'value by hand, which is authored intent, and the system has none — it holds the ' +
+          'camera. Record what the probe saw as `observed`, or record nothing.',
+      );
+    }
+
     if (kind === 'observation') return;
 
     if (kind !== 'lifecycle') {
@@ -1436,12 +1462,21 @@ class SqliteAnnexStore implements AnnexWriter {
    *                                      down, and a lock that spread
    *                                      by subject would be a lock on
    *                                      the team's throughput.
-   *   it does not survive resolution     a ruled, declined or withdrawn
-   *                                      ask binds nothing. The question
-   *                                      has been answered, or taken
-   *                                      back; there is nothing left to
-   *                                      confabulate. A REDIRECT is not
-   *                                      a resolution — see
+   *   it does not survive resolution     a ruled, declined, withdrawn
+   *                                      or DISCHARGED ask binds
+   *                                      nothing. The question has been
+   *                                      answered, or taken back; there
+   *                                      is nothing left to
+   *                                      confabulate. `discharged` is
+   *                                      the armed-setting resolution
+   *                                      (§9) — the world did the thing
+   *                                      and a probe photographed it —
+   *                                      and it releases the lock for
+   *                                      the same reason a ruling does:
+   *                                      the asker now has something
+   *                                      real to point at instead of a
+   *                                      memory. A REDIRECT is not a
+   *                                      resolution — see
    *                                      `foldAskAction`.
    *   it does not toll every write       one `proceeding` per ask
    *                                      covers the actor until that
