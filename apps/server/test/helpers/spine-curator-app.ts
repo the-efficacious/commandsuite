@@ -52,7 +52,17 @@ export interface Sink {
   close: () => void;
 }
 
-export function makeCuratorApp() {
+export interface CuratorAppOptions {
+  /**
+   * The phone hook the curator fires for a whitelisted class-1 delivery
+   * — the same `onPushed` `POST /push` uses. Left undefined by the
+   * curator suites (a curator with no phone is a perfectly good
+   * curator); the whitelist suite passes a spy or a real `dispatchPush`.
+   */
+  onPushed?: (message: Message) => void;
+}
+
+export function makeCuratorApp(opts: CuratorAppOptions = {}) {
   const clock = { ms: T0 };
   const broker = new Broker({ eventLog: new InMemoryEventLog(), now: () => clock.ms });
   const members = createMemberStore([
@@ -117,6 +127,7 @@ export function makeCuratorApp() {
     now: () => clock.ms,
     version: '0.0.0',
     logger,
+    ...(opts.onPushed !== undefined ? { onPushed: opts.onPushed } : {}),
   });
   if (created.curator === undefined) {
     throw new Error('fixture wired a curator store but createApp built no curator');

@@ -802,6 +802,13 @@ export function createApp(options: AppOptions): CreatedApp {
       broker,
       logger,
       now,
+      // The phone, wired to the EXISTING push hook — the same
+      // `dispatchPush`/`shouldPush` path `POST /push` uses, not a second
+      // one. The curator fires it only for a class-1 delivery whose kind
+      // is on the member's interrupt whitelist; `shouldPush` then gates
+      // the rest. Absent when the deployment configured no web push, and
+      // the queue still holds every item regardless.
+      phonePush: onPushed,
     });
     curator = built;
     // The class-1 hook, registered on the ONE write path. Phase 3

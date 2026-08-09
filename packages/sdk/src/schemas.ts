@@ -2690,6 +2690,8 @@ export const SpineCuratorPolicySchema = z.object({
   member: NameSchema,
   leaseTtlMs: z.number().int().positive(),
   nudgeMinIntervalMs: z.number().int().nonnegative(),
+  /** The class-1 event kinds that may buzz a phone. The queue holds them all regardless. */
+  interruptWhitelist: z.array(SpineEventKindSchema),
   explicit: z.boolean(),
   updatedBy: NameSchema.nullable(),
   updatedAt: SpineInstantSchema.nullable(),
@@ -2720,10 +2722,22 @@ export const SetSpineCuratorConfigRequestSchema = z
       .object({
         leaseTtlMs: z.number().int().positive().optional(),
         nudgeMinIntervalMs: z.number().int().nonnegative().optional(),
+        // A wholesale replacement, empty array allowed — setting the
+        // whitelist to nothing ("never buzz my phone") is a legitimate
+        // and meaningful choice, so it is a set operation and not a
+        // patch that could never clear the last kind.
+        interruptWhitelist: z.array(SpineEventKindSchema).optional(),
       })
-      .refine((p) => p.leaseTtlMs !== undefined || p.nudgeMinIntervalMs !== undefined, {
-        message: 'policy must set at least one of leaseTtlMs, nudgeMinIntervalMs',
-      })
+      .refine(
+        (p) =>
+          p.leaseTtlMs !== undefined ||
+          p.nudgeMinIntervalMs !== undefined ||
+          p.interruptWhitelist !== undefined,
+        {
+          message:
+            'policy must set at least one of leaseTtlMs, nudgeMinIntervalMs, interruptWhitelist',
+        },
+      )
       .optional(),
   })
   .refine((body) => body.subscription !== undefined || body.policy !== undefined, {

@@ -19,6 +19,7 @@
 import type {
   ListSpineInjectionsQuery,
   SpineCuratorPolicy,
+  SpineEventKind,
   SpineInjection,
   SpineInjectionKind,
   SpineSubscription,
@@ -26,6 +27,7 @@ import type {
 } from 'csuite-sdk/types';
 import type { DatabaseSyncInstance } from '../db.js';
 import {
+  DEFAULT_INTERRUPT_WHITELIST,
   DEFAULT_LEASE_TTL_MS,
   DEFAULT_NUDGE_MIN_INTERVAL_MS,
   SPINE_CURATOR_SCHEMA,
@@ -184,7 +186,11 @@ export interface CuratorStore {
   policy(member: string): SpineCuratorPolicy;
   setPolicy(
     member: string,
-    patch: { leaseTtlMs?: number; nudgeMinIntervalMs?: number },
+    patch: {
+      leaseTtlMs?: number;
+      nudgeMinIntervalMs?: number;
+      interruptWhitelist?: SpineEventKind[];
+    },
     updatedBy: string,
     now: number,
   ): SpineCuratorPolicy;
@@ -233,6 +239,7 @@ interface PolicyRow {
   member: string;
   lease_ttl_ms: number;
   nudge_min_interval_ms: number;
+  interrupt_whitelist: string | null;
   updated_by: string;
   updated_at: number;
 }
@@ -247,6 +254,18 @@ class SqliteCuratorStore implements CuratorStore {
   constructor(db: DatabaseSyncInstance) {
     this.db = db;
     db.exec(SPINE_CURATOR_SCHEMA);
+    // The interrupt whitelist column arrived after the policy table did.
+    // `CREATE TABLE IF NOT EXISTS` cannot add a column to a table that
+    // already exists, so a dev DB from before this change keeps its
+    // old shape — an idempotent guarded ALTER brings it forward. (These
+    // tables are droppable and rebuildable from the annex besides, but a
+    // migration that costs one pragma is cheaper than dropping them.)
+    const cols = db.prepare('PRAGMA table_info(spine_curator_policy)').all() as {
+      name: string;
+    }[];
+    if (!cols.some((c) => c.name === 'interrupt_whitelist')) {
+      db.exec('ALTER TABLE spine_curator_policy ADD COLUMN interrupt_whitelist TEXT');
+    }
   }
 
   // ─── Leases ─────────────────────────────────────────────────────
@@ -485,6 +504,7 @@ class SqliteCuratorStore implements CuratorStore {
         member,
         leaseTtlMs: DEFAULT_LEASE_TTL_MS,
         nudgeMinIntervalMs: DEFAULT_NUDGE_MIN_INTERVAL_MS,
+        interruptWhitelist: [...DEFAULT_INTERRUPT_WHITELIST],
         explicit: false,
         updatedBy: null,
         updatedAt: null,
@@ -494,6 +514,13 @@ class SqliteCuratorStore implements CuratorStore {
       member: row.member,
       leaseTtlMs: row.lease_ttl_ms,
       nudgeMinIntervalMs: row.nudge_min_interval_ms,
+      // NULL means "run the team default"; a stored array (empty
+      // included) is an authored choice. The two are different facts, so
+      // a null column falls back to the default rather than to [].
+      interruptWhitelist:
+        row.interrupt_whitelist === null
+          ? [...DEFAULT_INTERRUPT_WHITELIST]
+          : (JSON.parse(row.interrupt_whitelist) as SpineEventKind[]),
       explicit: true,
       updatedBy: row.updated_by,
       updatedAt: iso(row.updated_at),
@@ -502,33 +529,49 @@ class SqliteCuratorStore implements CuratorStore {
 
   setPolicy(
     member: string,
-    patch: { leaseTtlMs?: number; nudgeMinIntervalMs?: number },
+    patch: {
+      leaseTtlMs?: number;
+      nudgeMinIntervalMs?: number;
+      interruptWhitelist?: SpineEventKind[];
+    },
     updatedBy: string,
     now: number,
   ): SpineCuratorPolicy {
     // Patch semantics against the EFFECTIVE policy, not against the
     // row: a member with no row who sets only a nudge interval must
-    // keep the default TTL rather than acquire a zero.
+    // keep the default TTL rather than acquire a zero. The whitelist is
+    // a SET, not a patch — an empty array is a real choice ("never buzz
+    // me"), so `undefined` means leave it and `[]` means clear it.
     const current = this.policy(member);
     const next = {
       leaseTtlMs: patch.leaseTtlMs ?? current.leaseTtlMs,
       nudgeMinIntervalMs: patch.nudgeMinIntervalMs ?? current.nudgeMinIntervalMs,
+      interruptWhitelist: patch.interruptWhitelist ?? current.interruptWhitelist,
     };
     this.db
       .prepare(
-        `INSERT INTO spine_curator_policy (member, lease_ttl_ms, nudge_min_interval_ms, updated_by, updated_at)
-         VALUES (?, ?, ?, ?, ?)
+        `INSERT INTO spine_curator_policy (member, lease_ttl_ms, nudge_min_interval_ms, interrupt_whitelist, updated_by, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT(member) DO UPDATE SET
            lease_ttl_ms = excluded.lease_ttl_ms,
            nudge_min_interval_ms = excluded.nudge_min_interval_ms,
+           interrupt_whitelist = excluded.interrupt_whitelist,
            updated_by = excluded.updated_by,
            updated_at = excluded.updated_at`,
       )
-      .run(member, next.leaseTtlMs, next.nudgeMinIntervalMs, updatedBy, now);
+      .run(
+        member,
+        next.leaseTtlMs,
+        next.nudgeMinIntervalMs,
+        JSON.stringify(next.interruptWhitelist),
+        updatedBy,
+        now,
+      );
     return {
       member,
       leaseTtlMs: next.leaseTtlMs,
       nudgeMinIntervalMs: next.nudgeMinIntervalMs,
+      interruptWhitelist: next.interruptWhitelist,
       explicit: true,
       updatedBy,
       updatedAt: iso(now),

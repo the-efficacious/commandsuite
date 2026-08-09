@@ -58,15 +58,18 @@
 import type { Broker } from 'csuite-core';
 import type {
   ListSpineInjectionsQuery,
+  Message,
   SpineAskActionBody,
   SpineAskBody,
   SpineContract,
   SpineContractState,
   SpineCuratorConfigResponse,
   SpineEvent,
+  SpineEventKind,
   SpineFloorSignal,
   SpineInjection,
   SpineLifecycleBody,
+  SpineProceedingBody,
   SpineRulingBody,
   SpineRunnerCapabilities,
   SpineSubscription,
@@ -129,6 +132,19 @@ export interface CuratorOptions {
   logger: Logger;
   /** Injected everywhere. There is no `Date.now()` below this line. */
   now?: () => number;
+  /**
+   * THE PHONE, and the one place a spine event reaches it.
+   *
+   * Given the SAME message the class-1 broker push already produced, so
+   * there is no second push path — this rides the existing VAPID /
+   * `shouldPush` machinery, extended, not a parallel one. Called ONLY
+   * for a class-1 delivery whose kind is on the member's interrupt
+   * whitelist; `shouldPush` then applies the rest (never to a live
+   * subscriber, never to the sender). Absent when the deployment has no
+   * web push configured, in which case the queue still holds every item
+   * — the whitelist gates the phone, never the queue.
+   */
+  phonePush?: (message: Message) => void;
 }
 
 export interface Curator {
@@ -175,7 +191,11 @@ export interface Curator {
   ): void;
   setPolicy(
     member: string,
-    patch: { leaseTtlMs?: number; nudgeMinIntervalMs?: number },
+    patch: {
+      leaseTtlMs?: number;
+      nudgeMinIntervalMs?: number;
+      interruptWhitelist?: SpineEventKind[];
+    },
     updatedBy: string,
   ): void;
   injections(query: ListSpineInjectionsQuery & { member: string }): SpineInjection[];
@@ -212,6 +232,7 @@ class SpineCurator implements Curator {
   private readonly broker: Broker;
   private readonly logger: Logger;
   private readonly now: () => number;
+  private readonly phonePush: ((message: Message) => void) | undefined;
   /**
    * How far class 2 has been swept.
    *
@@ -243,6 +264,7 @@ class SpineCurator implements Curator {
     this.broker = options.broker;
     this.logger = options.logger;
     this.now = options.now ?? Date.now;
+    this.phonePush = options.phonePush;
     this.sweptSeq = this.headSeq();
   }
 
@@ -348,7 +370,7 @@ class SpineCurator implements Curator {
     const member = target.member;
     const cursor = this.store.receipt(member)?.seq ?? 0;
     const body = renderAddressed(event, contract, target, cursor);
-    const delivered = await this.push(member, body, 1, event.id);
+    const { delivered, message } = await this.push(member, body, 1, event.id);
     // The ref is the contract when there is one — a lease is a claim
     // about a thing that goes stale, and an event never does.
     const refs = [event.contract ?? event.id];
@@ -371,6 +393,26 @@ class SpineCurator implements Curator {
       bytes: body.length,
       delivered,
     });
+
+    // THE PHONE, gated by the interrupt whitelist — the only place a
+    // spine event reaches one. The queue already holds this event
+    // (that is a free read) and a live session already got the line
+    // above; this decides only whether it ALSO buzzes a phone, which is
+    // the rarest budget. `shouldPush` inside `phonePush` applies the
+    // rest — never to a live subscriber, never to the sender — so a
+    // whitelisted kind that the member is sitting in front of still does
+    // not buzz. A kind off the list is not silenced; it is un-buzzed.
+    if (message !== null && this.phonePush !== undefined) {
+      const whitelist = this.store.policy(member).interruptWhitelist;
+      if (whitelist.includes(event.kind)) {
+        this.phonePush(message);
+        this.logger.info('spine: class-1 phone', {
+          member,
+          event: event.id,
+          kind: event.kind,
+        });
+      }
+    }
   }
 
   // ─── Floor signals ──────────────────────────────────────────────
@@ -472,7 +514,10 @@ class SpineCurator implements Curator {
       const cursor = this.store.receipt(member)?.seq ?? 0;
       const body = renderDeltaBatch(batch, this.annex, cursor);
       const refs = [...batch.byContract.keys()];
-      const delivered = await this.push(member, body, 2, refs.join(','));
+      // Class 2 never buzzes a phone — subscription deltas yield to the
+      // member's budget, and the phone is the least yielding budget
+      // there is. Only class-1 addressed deliveries reach it, gated.
+      const { delivered } = await this.push(member, body, 2, refs.join(','));
       if (delivered) {
         const seq = Math.max(...[...batch.byContract.values()].flat().map((event) => event.seq));
         this.store.grantLeases(member, refs, seq, 'class2', now);
@@ -546,7 +591,7 @@ class SpineCurator implements Curator {
         stale.map((lease) => lease.ref),
         cursor,
       );
-      const delivered = await this.push(member, body, 0, 'nudge');
+      const { delivered } = await this.push(member, body, 0, 'nudge');
       // Spent whether or not it landed — "at most one" has to mean at
       // most one ATTEMPT, or a nudge that failed to deliver and is
       // retried next tick is a nudge that repeats.
@@ -628,7 +673,11 @@ class SpineCurator implements Curator {
 
   setPolicy(
     member: string,
-    patch: { leaseTtlMs?: number; nudgeMinIntervalMs?: number },
+    patch: {
+      leaseTtlMs?: number;
+      nudgeMinIntervalMs?: number;
+      interruptWhitelist?: SpineEventKind[];
+    },
     updatedBy: string,
   ): void {
     this.store.setPolicy(member, patch, updatedBy, this.now());
@@ -654,7 +703,7 @@ class SpineCurator implements Curator {
     body: string,
     injectionClass: 0 | 1 | 2,
     ref: string,
-  ): Promise<boolean> {
+  ): Promise<{ delivered: boolean; message: Message | null }> {
     try {
       const result = await this.broker.push(
         {
@@ -666,14 +715,18 @@ class SpineCurator implements Curator {
         },
         { from: 'csuite' },
       );
-      return result.delivery.live > 0;
+      // The message is returned WHOLE, delivered or not: an offline
+      // member (`live === 0`) is precisely the one the phone push exists
+      // for, so the phone gate must run on the message regardless of
+      // whether a live session took it.
+      return { delivered: result.delivery.live > 0, message: result.message };
     } catch (err) {
       this.logger.warn('spine: injection push failed', {
         member,
         class: injectionClass,
         error: err instanceof Error ? err.message : String(err),
       });
-      return false;
+      return { delivered: false, message: null };
     }
   }
 
@@ -854,6 +907,31 @@ function addressedMembers(
         });
       }
       return targets;
+    }
+    case 'proceeding': {
+      // SOMEONE WENT AHEAD WITHOUT WAITING FOR THE RULING, and the
+      // authority they were waiting on is the one who should hear it.
+      //
+      // The citation lock made proceeding a legitimate, typed act rather
+      // than a silent one: an asker with an open ask may proceed past it
+      // on the record instead of citing a ruling. But the AUTHORITY —
+      // the member asked to make the call — was released from a decision
+      // they never made, by a party who is not them. §9 names exactly
+      // this ("a proceed on an irreversible subject") as an interrupt a
+      // director should be able to opt into, and it is why `proceeding`
+      // is on the default whitelist. The queue does not carry it (a
+      // proceeding is not an ask awaiting a ruling), so a class-1 line —
+      // and, if whitelisted, a phone buzz — is the only way they learn.
+      const ask = annex.ask((event.body as SpineProceedingBody).ask);
+      return ask === null
+        ? []
+        : [
+            {
+              member: ask.authority,
+              why: 'someone proceeded past your ask without waiting for a ruling',
+              detail: `ask ${ask.id} is still ${ask.state}`,
+            },
+          ];
     }
     case 'lifecycle': {
       const state = (event.body as SpineLifecycleBody).state;

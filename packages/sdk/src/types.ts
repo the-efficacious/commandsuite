@@ -3507,6 +3507,20 @@ export interface SpineCuratorPolicy {
   leaseTtlMs: number;
   /** Floor on the gap between two nudges to the same member. */
   nudgeMinIntervalMs: number;
+  /**
+   * THE INTERRUPT WHITELIST — which class-1 event kinds may reach a
+   * phone. §9.
+   *
+   * The whitelist gates the PHONE, never the queue. Every addressed
+   * event is always in the durable Queue — that is free, it is a read —
+   * and every class-1 event still reaches a live session over the WS
+   * fanout. This list decides only which of them ALSO spend the rarest
+   * budget there is: a push to a member who is away from their screen.
+   * A kind absent from it is not silenced, it is un-buzzed. The director
+   * default is a blocking ask naming them and a proceed past their ask;
+   * everything else waits quietly in the queue until they look.
+   */
+  interruptWhitelist: SpineEventKind[];
   /** False when these are the team defaults rather than an authored row. */
   explicit: boolean;
   updatedBy: string | null;
@@ -3532,7 +3546,12 @@ export interface SetSpineCuratorConfigRequest {
   /** Defaults to the caller. Naming somebody else requires `members.manage`. */
   member?: string;
   subscription?: { contract: string; level: SpineSubscriptionLevel };
-  policy?: { leaseTtlMs?: number; nudgeMinIntervalMs?: number };
+  policy?: {
+    leaseTtlMs?: number;
+    nudgeMinIntervalMs?: number;
+    /** Replace the interrupt whitelist wholesale — the set of class-1 kinds that may buzz a phone. */
+    interruptWhitelist?: SpineEventKind[];
+  };
 }
 
 export interface ListSpineInjectionsQuery {

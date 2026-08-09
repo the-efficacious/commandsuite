@@ -25,6 +25,8 @@
  * format. The wire surface renders ISO at the boundary.
  */
 
+import type { SpineEventKind } from 'csuite-sdk/types';
+
 export const SPINE_CURATOR_SCHEMA = `
   -- ─── Leases ─────────────────────────────────────────────────────
   --
@@ -179,10 +181,20 @@ export const SPINE_CURATOR_SCHEMA = `
   -- reason: attention allocation is the contested resource, and tuning
   -- it must never mean shipping a release. A member with no row runs
   -- on the team defaults, which is a state and not a gap.
+  --
+  -- THE INTERRUPT WHITELIST rides here too, as a JSON array of event
+  -- kinds — which class-1 deliveries may reach a phone (§9). It lives on
+  -- the policy row and not in its own table because it is one more piece
+  -- of the same per-member attention policy, tuned the same way and
+  -- carrying the same updated-by/at trail. NULL is "run the team
+  -- default"; a stored array (including the empty one, "never buzz me")
+  -- is an authored choice, exactly as an absent vs present row is
+  -- everywhere else in this schema.
   CREATE TABLE IF NOT EXISTS spine_curator_policy (
     member TEXT PRIMARY KEY,
     lease_ttl_ms INTEGER NOT NULL,
     nudge_min_interval_ms INTEGER NOT NULL,
+    interrupt_whitelist TEXT,
     updated_by TEXT NOT NULL,
     updated_at INTEGER NOT NULL
   );
@@ -209,6 +221,29 @@ export const DEFAULT_LEASE_TTL_MS = 30 * 60 * 1000;
  * leases that expire together gets one line and not twelve.
  */
 export const DEFAULT_NUDGE_MIN_INTERVAL_MS = 15 * 60 * 1000;
+
+/**
+ * The team-default interrupt whitelist — the class-1 kinds that buzz a
+ * phone when a member has authored no whitelist of their own.
+ *
+ * §9's plausible director default, made the team default because it is
+ * harmless for the members who have no phone (an agent's runner is a
+ * browser it does not carry). Two kinds only, and each is a decision a
+ * human should not miss while away from their screen:
+ *
+ *   ask         a blocking ask naming them as the authority — someone is
+ *               stopped, waiting on a choice that is theirs to make;
+ *   proceeding  someone proceeded PAST their ask without waiting for the
+ *               ruling. The citation lock made that a legitimate, typed
+ *               act rather than a silent one, and being released from a
+ *               decision somebody asked you to make is not the absence
+ *               of news — it is news the authority should get.
+ *
+ * Everything else stays quiet in the queue until they look. The
+ * focus-set-running-dry trigger §9 also names is phase 6 — the focus set
+ * does not exist yet, so it is not here.
+ */
+export const DEFAULT_INTERRUPT_WHITELIST: SpineEventKind[] = ['ask', 'proceeding'];
 
 /** The curator tables, for the test that proves the curator can be dropped whole. */
 export const SPINE_CURATOR_TABLES: readonly string[] = [
