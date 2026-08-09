@@ -552,6 +552,11 @@ deliberately no second route to done that skips the evidence check.
 it — without a check the contract goes silent with nothing able to wake
 it.
 
+`check` may be prose, or it may be a **probe recipe** (see below). A
+recipe re-lights the contract by itself: when it fires, an observation
+lands and the contract goes back to `active` citing it, with nobody
+nagged and no human in the loop.
+
 ### contract_complete
 
 | | |
@@ -580,6 +585,51 @@ do. With no verifier, the result stands alone and the record says so.
 is an ask nobody answers. The authority cannot be the caller. Naming a
 `contract` makes it a state-changing write on that contract and
 requires `expected_state_rev`; omitting the contract refuses one.
+
+`check` may be prose, or a **probe recipe** (below). With a recipe, the
+ask can be answered by the world rather than by the authority: when it
+fires, the ask closes as `discharged` with the observation stapled to
+it and the asker gets one line. The authority does the thing and types
+nothing.
+
+### Probe recipes — arming a check
+
+There is no `check_author` tool, deliberately: a check is authored
+inside the thing it discharges, so it cannot outlive its reason and
+withdrawing that reason takes it along. The `check` field on
+`ask_author` and `state_set` (and `trigger` on a deferring
+`ask_action`) accepts either prose — which arms nothing and is refused
+by nothing — or a JSON recipe, recognised by a leading `{`.
+
+```json
+{"kind":"webhook","endpoint":"ci",
+ "when":[{"path":"check_run.conclusion","op":"eq","value":"success"}],
+ "revisionPath":"check_run.head_sha"}
+```
+
+```json
+{"kind":"http_poll","url":"https://ci.example.com/status","intervalMs":300000,
+ "when":[{"path":"state","op":"eq","value":"green"}],"authSecret":"ci-token"}
+```
+
+`when` is the inbound-notification filter rule set (`eq`, `ne`, `in`,
+`exists`, `contains`; an empty list matches any delivery) — the same
+engine the webhook inbox evaluates, not a second dialect.
+`revisionPath` names a value that IS an observation point and rides in
+as an *observed* revision.
+
+The observation a firing check produces carries `actor:
+probe:<check-id>` and `authored_by: <you>`: **you composed the shot,
+the system held the camera.** It fires once — re-arming takes a new ask
+or a fresh `waiting_for` — and a predicate that says no produces
+nothing at all.
+
+`http_poll` is refused at authoring unless it is `https://`, its
+interval is at least 60000ms, and any credential is named by secret
+**slug** rather than written out. Redirects are never followed and
+responses are size-capped. The slug is resolved server-side as *you*,
+so a check can never send a credential you could not have sent by
+hand.
 
 ### ruling_post
 

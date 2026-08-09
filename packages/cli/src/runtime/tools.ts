@@ -1884,6 +1884,40 @@ const SPINE_SETTABLE_STATES = [
   'superseded',
 ] as const;
 
+/**
+ * THE RECIPE GRAMMAR, and the one string in this file that has to be
+ * complete rather than merely honest.
+ *
+ * A check is authored inside the thing it discharges — there is no
+ * `check_author` tool, deliberately — so this description is the ONLY
+ * place a member learns that the field can do anything at all. Left as
+ * "what would confirm the answer", every check in the team stays prose
+ * forever and the probe engine watches an empty registry. So the two
+ * recipe shapes are spelled out here, with a worked example of each,
+ * and the refusal rules are stated where they are cheapest to obey.
+ *
+ * Prose is still legitimate and still records what the member meant;
+ * it simply arms nothing, and that has to be said or the rule reads as
+ * a trap.
+ */
+const SPINE_CHECK_RECIPE_HELP =
+  'Prose is fine and arms nothing. To have the SYSTEM confirm it, write a JSON recipe here ' +
+  'instead and it becomes a probe: the system presses the button, and the observation it ' +
+  'produces is attributed to YOU (`authored_by`) with the probe as its actor — you composed ' +
+  'the shot, the system held the camera. Two kinds. ' +
+  '(1) webhook: {"kind":"webhook","endpoint":"<inbound endpoint slug>","when":[{"path":' +
+  '"check_run.conclusion","op":"eq","value":"success"}],"revisionPath":"check_run.head_sha"} ' +
+  '— fires on a VERIFIED delivery to that endpoint whose payload matches. ' +
+  '(2) http_poll: {"kind":"http_poll","url":"https://…","intervalMs":300000,"when":[…],' +
+  '"authSecret":"<secret slug>"} — an outbound GET on an interval. `when` is the inbound-' +
+  'notification filter rules (ops: eq, ne, in, exists, contains; empty list means any ' +
+  'delivery). `revisionPath` is optional and names a value that IS an observation point — a ' +
+  'SHA, a build id — which rides in as an observed revision. Poll rules, refused here rather ' +
+  'than at fire time: https only, no redirects followed, minimum interval 60000ms, and a ' +
+  'secret named by SLUG which is resolved server-side as you (never write a token into this ' +
+  'field — it would be in the annex permanently). It fires ONCE: re-arming takes a new ask or ' +
+  'a fresh waiting_for.';
+
 const SPINE_OP_ID_FIELD = {
   type: 'string',
   description:
@@ -2114,7 +2148,10 @@ function buildSpineTools(instructions: InstructionsResponse): Tool[] {
             type: 'string',
             description:
               'REQUIRED on `waiting_for`: what will confirm it. Without a check the contract ' +
-              'goes silent with nothing able to wake it, which is how work disappears.',
+              'goes silent with nothing able to wake it, which is how work disappears. ' +
+              SPINE_CHECK_RECIPE_HELP +
+              ' A recipe here re-lights this contract automatically: the observation lands and ' +
+              'the contract goes back to `active` citing it, with nobody nagged.',
           },
           preempted_by: { type: 'string', description: 'On `parked`: what took priority.' },
           successor: {
@@ -2214,7 +2251,12 @@ function buildSpineTools(instructions: InstructionsResponse): Tool[] {
           },
           check: {
             type: 'string',
-            description: 'Optional: what would confirm the answer on its own.',
+            description:
+              'Optional: what would confirm the answer on its own, so the authority never has ' +
+              'to type one. ' +
+              SPINE_CHECK_RECIPE_HELP +
+              ' When it fires, this ask closes as `discharged` with the observation stapled to ' +
+              'it — the authority does the thing and types nothing.',
           },
           op_id: SPINE_OP_ID_FIELD,
         },

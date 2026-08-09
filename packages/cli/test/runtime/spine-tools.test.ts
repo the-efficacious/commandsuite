@@ -246,6 +246,71 @@ describe('orient is announced as the recovery call', () => {
   });
 });
 
+describe('the recipe grammar reaches the two fields that carry a check', () => {
+  /**
+   * THE DELIVERABLE, NAMED THEN GREPPED.
+   *
+   * There is no `check_author` tool — a check is authored inside the
+   * thing it discharges — so these two field descriptions are the ONLY
+   * place a member learns the field can arm a probe at all. Left as
+   * "what would confirm the answer", every check on the team stays
+   * prose and the probe engine watches an empty registry: the helper
+   * would be proven and the thing the work exists to deliver would not
+   * be. That is the exact failure CONTRIBUTING names.
+   */
+  const RECIPE_MARKERS = [
+    '"kind":"webhook"',
+    '"kind":"http_poll"',
+    'https only',
+    'no redirects followed',
+    'minimum interval 60000ms',
+    'named by SLUG',
+    'It fires ONCE',
+    'Prose is fine and arms nothing',
+  ];
+
+  function fieldDescription(toolName: string, field: string): string {
+    const props = tool(toolName)?.inputSchema.properties as
+      | Record<string, { description?: string }>
+      | undefined;
+    const found = props?.[field]?.description;
+    if (found === undefined) throw new Error(`${toolName} has no ${field} field`);
+    return found;
+  }
+
+  it('spells the grammar out on ask_author.check', () => {
+    const text = fieldDescription('ask_author', 'check');
+    for (const marker of RECIPE_MARKERS) {
+      expect(text, `ask_author.check must name ${marker}`).toContain(marker);
+    }
+    // And what firing DOES here, which differs from the other carrier.
+    expect(text).toContain('discharged');
+    expect(text).toContain('types nothing');
+  });
+
+  it('spells the same grammar out on state_set.check', () => {
+    const text = fieldDescription('state_set', 'check');
+    for (const marker of RECIPE_MARKERS) {
+      expect(text, `state_set.check must name ${marker}`).toContain(marker);
+    }
+    expect(text).toContain('back to `active` citing it');
+    expect(text).toContain('nobody nagged');
+  });
+
+  it('states the provenance, because it is what the member is agreeing to', () => {
+    // A member arming a check is agreeing that observations will land
+    // under their name. §7's honesty is only honest if they were told.
+    for (const [toolName, field] of [
+      ['ask_author', 'check'],
+      ['state_set', 'check'],
+    ] as const) {
+      const text = fieldDescription(toolName, field);
+      expect(text).toContain('attributed to YOU');
+      expect(text).toContain('you composed');
+    }
+  });
+});
+
 describe('the citation rule reaches every tool it binds', () => {
   /** The exact sentence an agent has to see. Named, then grepped. */
   const CITATION_MARKERS = ['CITATION LOCK', 'YOU DO NOT HAVE A RULING', 'CONTAINING it'];

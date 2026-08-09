@@ -940,6 +940,80 @@ that the same scenario reaches the same end state — only sooner. A
 runner that never posts here, including every runner that does not
 exist yet, gets every guarantee the spine makes.
 
+### The check registry
+
+The system cannot take photographs — it has no judgement about what
+matters. What it can do is press a button a member composed. A **check**
+is a member's recipe plus the predicate that decides whether the shot
+came out; when it fires, an `observation` lands with `actor:
+probe:<check-id>` and `authored_by: <the member>`, and whatever the
+check was armed on discharges.
+
+**A check is authored inside the thing it discharges.** There is no
+`POST /spine/checks` and no `check_author` tool, deliberately: a check
+that could be authored on its own could outlive its reason, and
+withdrawing that reason would leave it armed. The three carriers are an
+`ask` with a `check`/`trigger`, an `ask_action{defer}` with a
+`trigger`, and a `lifecycle` moving a contract to `waiting_for(event,
+check)`. A field whose first non-space character is `{` is read as a
+JSON recipe and validated; anything else is prose, arms nothing, and is
+refused by nothing.
+
+Two recipe kinds:
+
+| Kind | Armed by | Shape |
+|---|---|---|
+| `webhook` | a **verified** delivery to an inbound endpoint | `{kind, endpoint, when[], revisionPath?}` |
+| `http_poll` | an interval, on the server's sweep | `{kind, url, intervalMs, when[], revisionPath?, authSecret?, authHeader?}` |
+
+`when` is the inbound-notification filter rules — the same engine the
+webhook inbox has evaluated since it shipped, over exactly these
+payloads, rather than a second predicate dialect a member would have to
+tell apart. `revisionPath` names a value that IS an observation point (a
+SHA, a build id) and rides in as an *observed* revision sourced to the
+probe.
+
+The webhook tap sits after HMAC verification and the provider's dedupe
+and **before** the endpoint's own filters and its debounce window. Not
+after the filters, because those belong to the endpoint's notification
+targets and a member's check must not depend on somebody else's
+routing config; not after the debounce, because debounce is an
+attention device and a check is evidence, which must not carry a
+coalescing window's instant.
+
+`http_poll`'s pins are refused **at authoring**, which is the only
+moment a member is present to be told: `https://` only, no redirects
+followed, a response size cap, no request body, a minimum interval of
+60s, and an auth secret named by **slug** and resolved server-side *as
+the check's author* — so arming a probe can never borrow access its
+author does not have, and no token is ever written into a permanent
+event.
+
+**Discharge, two shapes.** A check on a `waiting_for` contract appends
+the lifecycle back to `active` citing the observation — nobody nagged,
+nobody had to notice. A check on an ask closes it as `discharged` with
+the observation stapled to it, and the asker gets one class-1 line; the
+authority's queue item goes away without the authority typing. A
+predicate that says no fires nothing and records nothing but a
+last-evaluated stamp.
+
+**One fire per arming.** A fired check is terminal and points at its
+observation, so "did the thing I armed actually happen" is a lookup
+with exactly one answer. Re-arming takes a new carrier event.
+
+#### `GET /spine/checks` · `GET /spine/checks/:id`
+
+| | |
+|---|---|
+| **Auth** | dual; any authenticated member |
+| **Query** | `state`, `contract`, `ask`, `subject`, `limit` (≤ 500) |
+| **Returns** | `{ checks }` / `{ check }` |
+
+Read-only, and ungated beyond authentication like every other annex
+read: a check says what the team armed a camera on, and hiding that
+from teammates would make "did the thing I armed happen" answerable
+only by its author.
+
 ## Tool sources
 
 Registry of platform-defined external tools — see
