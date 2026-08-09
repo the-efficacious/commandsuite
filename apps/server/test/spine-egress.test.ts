@@ -31,8 +31,13 @@
  */
 
 import type { SpineEvent } from 'csuite-sdk/types';
-import { beforeEach, describe, expect, it } from 'vitest';
-import { blockedAddressReason, createEgressPolicy, hostAsIpLiteral } from '../src/spine/egress.js';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  blockedAddressReason,
+  createEgressPolicy,
+  createPinnedFetch,
+  hostAsIpLiteral,
+} from '../src/spine/egress.js';
 import {
   authed,
   fakeEgress,
@@ -424,6 +429,111 @@ describe('an internal host is polled only when the SERVER says so', () => {
       await app.app.request('/spine/events?limit=500', authed(tokenFor('lea')))
     ).json()) as { events: SpineEvent[] };
     expect(events.events.filter((e) => e.kind === 'observation')).toEqual([]);
+    app.db.close();
+  });
+});
+
+// ─── E3: the pin guard, on the REAL transport ────────────────────────
+//
+// The connection-time half of §layer-3, exercised against
+// `createPinnedFetch` itself rather than a scripted stand-in. The guard
+// that matters is the one that refuses to hand a socket a hostname when
+// the checked-address list came back empty: without it, a poll whose
+// egress check somehow yielded zero addresses would fall through to the
+// system resolver and undo the entire control. No network happens
+// because the guard rejects before any connection is attempted.
+
+describe('the pinned transport refuses to connect with no address (E3)', () => {
+  it('rejects an empty pinnedAddresses instead of resolving the name itself', async () => {
+    const transport = createPinnedFetch();
+    await expect(
+      transport(new URL('https://ci.example.com/status'), {
+        method: 'GET',
+        headers: {},
+        redirect: 'manual',
+        signal: AbortSignal.timeout(1_000),
+        pinnedAddresses: [],
+      }),
+    ).rejects.toThrow(/no checked address to pin to/);
+  });
+});
+
+// ─── E4: the secret is never resolved for a refused destination ──────
+//
+// The ordering claim, checked on the REAL path rather than by reading a
+// log string: `resolveSecret` calls `secrets.getBySlug` and
+// `secrets.resolveFor`, and neither may run for a destination the egress
+// check refused. A refused host that has had a credential decrypted for
+// it — even into memory the fetch never uses — is a handling of the
+// team's secrets the refusal is supposed to prevent. Spies on the store
+// are the direct assertion; the positive control proves the spies fire
+// at all.
+
+describe('the author’s secret is not resolved for a refused destination (E4)', () => {
+  async function armSecretPoll(app: ProbeApp, url: string, opId: string): Promise<void> {
+    const secret = app.secrets.create({
+      slug: 'ci-token',
+      envName: 'CI_TOKEN',
+      allMembers: true,
+      creator: 'andrewjon',
+    });
+    app.secrets.setValue(secret.id, 'Bearer s3cret-value');
+    const res = await app.app.request(
+      '/spine/events',
+      authed(tokenFor('lea'), {
+        kind: 'ask',
+        subject: 'repo:acme',
+        opId,
+        body: {
+          authority: 'andrewjon',
+          question: 'live?',
+          context: 'x',
+          unblocks: 'y',
+          check: JSON.stringify({
+            kind: 'http_poll',
+            url,
+            intervalMs: 60_000,
+            authSecret: 'ci-token',
+            when: [],
+          }),
+        },
+      }),
+    );
+    expect(res.status, await res.clone().text()).toBe(201);
+  }
+
+  it('never touches the secrets store when egress refuses the host', async () => {
+    const app = makeProbeApp({ egress: fakeEgress({ 'vault.internal': ['10.0.7.4'] }) });
+    await registerSubject(app);
+    await armSecretPoll(app, 'https://vault.internal/v1/x', 'ask-e4-refused');
+    const getBySlug = vi.spyOn(app.secrets, 'getBySlug');
+    const resolveFor = vi.spyOn(app.secrets, 'resolveFor');
+    await app.probes.sweep();
+    expect(
+      getBySlug,
+      'a refused destination must not have its secret looked up',
+    ).not.toHaveBeenCalled();
+    expect(
+      resolveFor,
+      'a refused destination must not have any secret resolved',
+    ).not.toHaveBeenCalled();
+    app.db.close();
+  });
+
+  it('DOES resolve the secret for an allowed destination — the control', async () => {
+    const fetchImpl = scriptedFetch([() => jsonResponse({ state: 'green' })]);
+    const app = makeProbeApp({
+      fetchImpl: fetchImpl.impl,
+      egress: fakeEgress({ 'ci.example.com': ['93.184.216.34'] }),
+    });
+    await registerSubject(app);
+    await armSecretPoll(app, 'https://ci.example.com/status', 'ask-e4-allowed');
+    const getBySlug = vi.spyOn(app.secrets, 'getBySlug');
+    await app.probes.sweep();
+    expect(
+      getBySlug,
+      'an allowed destination resolves the secret it was armed with',
+    ).toHaveBeenCalledWith('ci-token');
     app.db.close();
   });
 });

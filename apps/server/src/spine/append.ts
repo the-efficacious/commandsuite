@@ -194,7 +194,20 @@ export interface AnnexWritePathOptions {
 
 class SpineWritePath implements AnnexWritePath {
   readonly store: AnnexStore;
-  private readonly writer: AnnexWriter;
+  /**
+   * The append-capable handle, as a REAL private field.
+   *
+   * `private readonly writer` was a TYPE-only private: `private` is
+   * erased at runtime, so `(path as unknown as { writer: AnnexWriter })
+   * .writer.append(…)` reached the writer by a cast, bypassing every
+   * post-commit hook — the same class of hole `readOnlyFacade` closes
+   * for `store`, left open on the write path itself. `#writer` is a
+   * genuine JS private: it is not a property on the object, no cast
+   * reaches it, and `in` from outside the class throws rather than
+   * probes. There is no readonly modifier because `#` fields cannot
+   * carry one; it is assigned once here and never again.
+   */
+  #writer: AnnexWriter;
   private readonly logger: Logger;
   private readonly hooks: AppendHook[] = [];
 
@@ -204,7 +217,7 @@ class SpineWritePath implements AnnexWritePath {
     // path and gets one; there is no arrangement of the wiring that
     // leaves a bare writer lying around for a new module to be passed.
     const writer = createSqliteAnnexStore(options.db);
-    this.writer = writer;
+    this.#writer = writer;
     this.store = readOnlyFacade(writer);
     this.logger = options.logger;
   }
@@ -218,7 +231,7 @@ class SpineWritePath implements AnnexWritePath {
     // the idempotency check to the projection fold happens in this one
     // call, so the event is committed before any hook or any concurrent
     // caller gets the event loop back.
-    const result = this.writer.append(input, ctx);
+    const result = this.#writer.append(input, ctx);
     for (const hook of this.hooks) {
       try {
         await hook(result);
