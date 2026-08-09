@@ -299,6 +299,64 @@ describe('composeInstructions', () => {
     expect(packet.instructions).not.toContain('tool description refreshes');
   });
 
+  /**
+   * The spine section is short by design and carries exactly three
+   * things a frozen prompt has to hold: where to go when context is
+   * gone, the one gate that refuses rather than warns, and that talking
+   * is free. Each is asserted by the string a member reads, because the
+   * prose IS the deliverable here — a section that composed correctly
+   * and said none of these would pass any structural check.
+   */
+  it('teaches the spine: the recovery call, the citation rule, and the cheap surface', () => {
+    const packet = composeInstructions({
+      self: ALPHA_1,
+      team: TEAM,
+      teammates: TEAMMATES,
+      openObjectives: [],
+      processDocument: null,
+    });
+    expect(packet.instructions).toContain('── Spine ──');
+
+    // The recovery call, named as such, with the trigger that matters.
+    expect(packet.instructions).toContain('`orient` is the recovery call');
+    expect(packet.instructions).toMatch(/after a restart or compaction/);
+    expect(packet.instructions).toMatch(/Guessing costs more than the call/);
+
+    // The citation rule, in one sentence, including both exits and the
+    // anti-confabulation wording the refusal itself uses.
+    expect(packet.instructions).toMatch(/Raising one binds you/);
+    expect(packet.instructions).toMatch(/cite a ruling on it or record a `proceed` past it/);
+    expect(packet.instructions).toMatch(/you do not have a ruling/);
+    expect(packet.instructions).toMatch(/Proceeding is legitimate/);
+
+    // The cheap surface, and the promotion path off it.
+    expect(packet.instructions).toContain('`discuss` is the cheap surface');
+    expect(packet.instructions).toMatch(/`promote` turns it into the typed event/);
+
+    // And the precondition, which is the field agents will otherwise
+    // omit and then guess at.
+    expect(packet.instructions).toContain('expected_state_rev');
+    expect(packet.instructions).toMatch(/returns the events you missed IN FULL/);
+  });
+
+  it('leaves the objectives section untouched while the spine runs beside it', () => {
+    // Cut-over is a later phase. Until then both surfaces are taught,
+    // and an edit that quietly replaced one with the other would be a
+    // fleet-wide behaviour change delivered as a prose tweak.
+    const packet = composeInstructions({
+      self: ALPHA_1,
+      team: TEAM,
+      teammates: TEAMMATES,
+      openObjectives: [],
+      processDocument: null,
+    });
+    expect(packet.instructions).toContain('── Objectives ──');
+    expect(packet.instructions).toContain('── Spine ──');
+    expect(packet.instructions.indexOf('── Objectives ──')).toBeLessThan(
+      packet.instructions.indexOf('── Spine ──'),
+    );
+  });
+
   it('teaches all three channel thread types and the context_refresh re-brief', () => {
     const packet = composeInstructions({
       self: ALPHA_1,

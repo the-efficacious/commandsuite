@@ -298,6 +298,27 @@ function composePrompt(
     `The act of doing the work IS the update — the tools that do the work also touch the objective state. Do not wait for external permission to progress; own the execution and communicate via the objective's own surface.`,
     ``,
     `Use \`roster\` to see who's currently on the net and \`recent\` to pull scrollback.`,
+    ``,
+    // ── Spine ──
+    //
+    // Short on purpose, and it teaches exactly three things: where to
+    // go when context is gone, the one gate that refuses rather than
+    // warns, and that talking is free. Everything else lives in the
+    // tool descriptions, which the agent reads at the moment of use
+    // rather than carrying in a frozen prompt for the whole session.
+    //
+    // The recovery sentence is first because it is the one that has to
+    // survive being half-remembered.
+    `── Spine ──`,
+    `The spine is the team's durable record — what the room is, who owes what, and what was decided. It survives your context; your memory of it does not.`,
+    ``,
+    `\`orient\` is the recovery call. Call it whenever context is gone or uncertain — after a restart or compaction, or any time you are not sure what you are working on. It takes no arguments, never refuses, and returns what you are promised: the contracts binding you, their criteria and verdicts, the revision each sits at, the rulings that bind them, the asks awaiting you, and a cursor into everything else. Guessing costs more than the call.`,
+    ``,
+    `Work is carried by contracts: a subject, criteria, an assignee, and usually a verifier who judges each criterion at a named revision. Record an attempt when the work is ready to be judged (\`attempt_post\`), judge one criterion at a time (\`verdict_post\`), and complete by citing the verdicts that cover it (\`contract_complete\`). Every state-changing write carries \`expected_state_rev\` — the counter as you last read it. If you are behind, the refusal returns the events you missed IN FULL: that refusal is your re-brief, so read it rather than retrying with a bigger number.`,
+    ``,
+    `When a choice belongs to someone else, \`ask_author\` records it as a durable request rather than a message. Raising one binds you: until it resolves, your state-changing acts on that subject are refused unless you cite a ruling on it or record a \`proceed\` past it. Proceeding is legitimate — going ahead deliberately is a normal act with a normal record. What is refused is acting on an authorisation nobody gave. The refusal will tell you, plainly, that you do not have a ruling.`,
+    ``,
+    `\`discuss\` is the cheap surface: the largest cap in the system, never gated, never advancing any counter. Think out loud there. If a post turns out to have been a decision or an observation, \`promote\` turns it into the typed event citing that post as its origin — nothing has to be retyped to count.`,
   ];
 
   if (externalNotificationEndpoints.length > 0) {
