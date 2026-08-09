@@ -128,6 +128,16 @@ export const CODEX_META: AgentAdapterMeta = {
   // without judging it.
   testedVersions: null,
   versionArgs: ['--version'],
+  // Codex has no compaction hook — there is no notification in the
+  // app-server protocol that says "the thread's context was
+  // discarded". What it does have is `thread/tokenUsage/updated`
+  // carrying `modelContextWindow`, so a dump is INFERABLE from a token
+  // discontinuity. That inference is a spike (log-only, env-gated), so
+  // `dumpSignal` stays false until it has been measured: declaring a
+  // capability the runner does not reliably have would be worse than
+  // declaring none, because the whole value of the roster is that it
+  // is believed.
+  spineSignals: { dumpSignal: false, tokenUsage: true },
 };
 
 export interface CodexAdapterOptions {
@@ -230,6 +240,10 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
         // notifications feed the same observable claude's hooks drive.
         // Undefined when --no-trace.
         busy: runner.captureHost?.busy,
+        // The spike's outlet. Behind the env flag inside the watcher —
+        // the wiring is unconditional so the path is exercised on every
+        // run, and only the side effect is gated.
+        reportDump: (source) => runner.reportSpineSignal('dump_declared', { source }),
         log,
       });
 

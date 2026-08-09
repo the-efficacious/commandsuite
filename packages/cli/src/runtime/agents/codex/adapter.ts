@@ -31,7 +31,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
-import type { InstructionsResponse } from 'csuite-sdk/types';
+import type { InstructionsResponse, SpineDumpSource } from 'csuite-sdk/types';
 import { CLI_VERSION } from '../../../version.js';
 import { composeFixedContext } from '../../fixed-context.js';
 import type { Presence } from '../../presence.js';
@@ -59,6 +59,7 @@ import {
   type TurnStartedNotification,
 } from './protocol.js';
 import { attachRolloutReader, type RolloutReader } from './rollout-reader.js';
+import { attachCodexTokenUsageWatch } from './token-usage-watch.js';
 
 export class CodexAdapterError extends AgentAdapterError {
   constructor(message: string) {
@@ -175,6 +176,13 @@ export interface CodexSpawnOptions {
    * 0↔busy transition contract.
    */
   busy?: BusySignal;
+  /**
+   * Report an inferred context discard to the curator. Wired to the
+   * runner's floor-signal reporter, and called ONLY when
+   * `CSUITE_SPINE_CODEX_DUMP_SIGNAL=1` — the inference is a spike and
+   * the flag is what keeps it from becoming a dependency.
+   */
+  reportDump?: (source: SpineDumpSource) => void;
   /** Logger, structured JSON to stderr by default. */
   log: (msg: string, ctx?: Record<string, unknown>) => void;
 }
@@ -531,6 +539,16 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
     opts.printActivity === false ? null : attachCodexActivityPrinter({ rpc, log: opts.log });
   rpc.onNotification(NOTIFICATIONS.error, (params) => {
     opts.log('codex: error notification', params as Record<string, unknown>);
+  });
+  // The dump-signal spike. Subscribed unconditionally — codex has been
+  // emitting `thread/tokenUsage/updated` all along and nothing read it
+  // — but log-only unless the operator sets the env flag. See
+  // `token-usage-watch.ts` for why an inference is kept at arm's
+  // length from a declaration.
+  attachCodexTokenUsageWatch({
+    rpc,
+    log: opts.log,
+    ...(opts.reportDump !== undefined ? { reportDump: opts.reportDump } : {}),
   });
 
   // ─── Shutdown wiring ──────────────────────────────────────────
