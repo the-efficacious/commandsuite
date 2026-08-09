@@ -319,6 +319,11 @@ describe('composeInstructions', () => {
 
     // The recovery call, named as such, with the trigger that matters.
     expect(packet.instructions).toContain('`orient` is the recovery call');
+    // The curator's half: a member who does not know that acts naming
+    // them arrive on their own will poll, which is the behaviour the
+    // whole class-1 machinery exists to make unnecessary.
+    expect(packet.instructions).toContain('reaches you unbidden');
+    expect(packet.instructions).toContain('You never have to poll');
     expect(packet.instructions).toMatch(/after a restart or compaction/);
     expect(packet.instructions).toMatch(/Guessing costs more than the call/);
 

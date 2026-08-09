@@ -846,6 +846,100 @@ same thing the moment they proceed on the record or are ruled on — it
 is a conflict with the state of their own outstanding ask. See
 [the citation lock](/docs/dev/mcp-tools#the-citation-lock).
 
+### The curator
+
+The curator decides what enters whose album, and when. Its state is
+operational bookkeeping — leases, receipts, an injection ledger, and
+per-member policy rows — kept apart from the annex on purpose: the
+annex records what members did and is the only truth about the room;
+these record what the system spent of whose attention, and could be
+dropped whole without falsifying a fact. These routes register only
+when a curator store is injected alongside the annex.
+
+Four injection classes:
+
+| Class | What | Yields to a subscription? |
+|---|---|---|
+| 0 recovery | The Guaranteed Pack, delivered because a member (or their runner) called `orient` | No |
+| 1 addressed | An ask naming you, a verdict on your contract, a ruling on your ask, a redirect to you | No |
+| 2 subscription | Per member per contract: `all`, `lifecycle`, `none`; batched per sweep tick | It **is** the subscription |
+| 3 silence | `parked` and `waiting_for` contracts generate nothing | n/a — nothing is sent |
+
+Class-1 and class-2 lines carry an id, a title, and what changed, plus
+a cursor. Never the contract text: re-sending a whole contract on every
+event is issue #155's second finding, and an id, a title and what
+changed suffice.
+
+#### `GET /spine/curator` · `PUT /spine/curator`
+
+| | |
+|---|---|
+| **Auth** | dual; self, or `members.manage` for another member |
+| **Query** (GET) | `member` (defaults to the caller) |
+| **Body** (PUT) | `{ member?, subscription?: {contract, level}, policy?: {leaseTtlMs?, nudgeMinIntervalMs?} }` |
+| **Returns** | `{ member, subscriptions, policy, capabilities }` |
+
+Policy is **data**. Levels and cadences are rows with an updated-by/at
+trail, changed at runtime, never a code constant per member — attention
+allocation is the contested resource, and tuning it must not mean
+shipping. An empty write is refused: `{}` would otherwise resolve to
+"read the config and report it changed".
+
+`subscriptions` reports the EFFECTIVE level for every contract binding
+the member, with `explicit` distinguishing an authored choice from a
+derived default (the default is `lifecycle` for the contract's
+originator and `none` for everyone else — assignee, verifier and
+authority hear what binds them through class 1, which never yields).
+
+`capabilities` is what the member's runner declared it can signal, and
+is **in memory only** — a restart forgets it. Nothing correctness-
+bearing may read it, and a fact that routinely disappears is a fact
+nothing can come to depend on.
+
+#### `GET /spine/injections`
+
+| | |
+|---|---|
+| **Auth** | dual; self, or `members.manage` for another member |
+| **Query** | `member`, `limit` (≤ 500), `since_id` |
+| **Returns** | `{ injections }`, newest first |
+
+"What did the system spend of my album this week", answerable. Each row
+carries the member, the class, the kind, the event or contract refs,
+the cursor the injection framed itself against, the instant, the byte
+size, and whether the delivery sink accepted it.
+
+There is deliberately no body column: the ledger accounts for spend and
+does not archive it, because keeping the text would make the audit
+trail a second copy of the member's traffic and therefore a second
+place it can leak from. The gate is self-or-`members.manage` rather
+than open like the annex reads, because a member's ledger is the
+closest thing this system holds to a description of their working day.
+
+#### `POST /members/:name/spine-signals`
+
+| | |
+|---|---|
+| **Auth** | **runner only** (opaque bearer), and **self only** |
+| **Body** | `{ signal, source?, capabilities? }` |
+| **Returns** | `{ accepted: true, leasesInvalidated }` |
+
+Floor signals: `bridge_connect`, `bridge_disconnect`, `session_start`,
+`session_end`, `dump_declared` (with `source: compact \| clear \|
+token_discontinuity`). Each invalidates the member's live leases
+immediately, which is what shrinks the curator's reactive window.
+
+Runner-auth because a browser session cannot observe a compaction;
+self-only for the same reason the activity upload is. `capabilities`
+rides on `session_start` and declares the runner's ceiling
+(`{dumpSignal, tokenUsage}`).
+
+**These buy latency and nothing else.** The whole curator correctness
+suite runs with zero signals reported, and the signals suite asserts
+that the same scenario reaches the same end state — only sooner. A
+runner that never posts here, including every runner that does not
+exist yet, gets every guarantee the spine makes.
+
 ## Tool sources
 
 Registry of platform-defined external tools — see

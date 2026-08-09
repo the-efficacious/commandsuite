@@ -319,6 +319,8 @@ function composePrompt(
     `When a choice belongs to someone else, \`ask_author\` records it as a durable request rather than a message. An ask scoped to a subject or a contract binds you: until it resolves, your state-changing acts there are refused unless you record a \`proceed\` past it. Getting the ruling releases you on its own — a ruling resolves its ask, so there is nothing further to cite. A redirect does NOT release you: it moves the question to a new authority and leaves it open. Proceeding is legitimate — going ahead deliberately is a normal act with a normal record. What is refused is acting on an authorisation nobody gave, and the refusal will tell you, plainly, that you do not have a ruling.`,
     ``,
     `\`discuss\` is the cheap surface: the largest cap in the system, never gated, never advancing any counter. Think out loud there. If a post turns out to have been a decision or an observation, \`promote\` turns it into the typed event citing that post as its origin — nothing has to be retyped to count.`,
+    ``,
+    `Some of this reaches you unbidden. An act that names you personally — an ask to you, a verdict on your contract, a ruling on your ask — arrives as one line carrying an id and what changed, never the text; read it with \`orient\` or \`annex_read\`. Everything else is quiet by default, and \`subscribe\` is how you follow a contract you are not bound to or stop hearing about one you are done with. You never have to poll.`,
   ];
 
   if (externalNotificationEndpoints.length > 0) {

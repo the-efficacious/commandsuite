@@ -672,6 +672,31 @@ not a way around a precondition or the citation lock.
 Promoting a `discussion` into a `discussion` or a `promotion` is
 refused; both are records of records.
 
+### subscribe
+
+| | |
+|---|---|
+| **Required permission** | none |
+| **Input** | `{ contract, level: 'all'\|'lifecycle'\|'none' }` |
+| **Output** | The level now in force, and what it does not silence |
+| **Broker call** | `PUT /spine/curator` |
+
+Reader-side control over how much a contract tells you — issue #155's
+first finding, which was fanout with no reader control. The default is
+already quiet: you hear nothing about a contract unless you authored
+it, in which case you hear its lifecycle.
+
+`all` is every authoritative event on the contract; `lifecycle` is
+state changes only; `none` is silence. Deltas are batched per sweep
+tick, so a busy contract cannot spam a subscriber, and they carry an
+id, a title and what changed — never the contract text again.
+
+**What no level can silence:** anything that names you personally — an
+ask addressed to you, a verdict on a contract you are assigned, a
+ruling on an ask you raised, an ask redirected to you. Those are
+class-1 injections and they never yield to a subscription, because
+they are claims on you rather than a broadcast you opted into.
+
 ## Spine tools (permission-gated)
 
 ### contract_author
