@@ -681,6 +681,153 @@ context changed. Their runners restart the agent at the next idle
 boundary under the new text, and `GET /roster` lists those members
 in `restartPending` until they do.
 
+## Spine
+
+The team's spine: one append-only annex of captioned events, the
+subjects those events are about, and the contracts folded out of them.
+The routes register only when a spine store is injected — a broker
+without one 404s the whole surface.
+
+Reads are open to every authenticated member: what binds you, and what
+the team knows, is not privileged information. **One** permission leaf
+exists, `spine.author`, and it gates authoring or amending a contract.
+Verdict and ruling legitimacy is deliberately *not* a leaf — the store
+refuses a verdict from the assignee and a ruling from anyone but the
+ask's named authority whatever leaves the caller holds, because those
+refusals are what the events mean and a permission would imply they
+could be granted away.
+
+There is **one write path for events** on purpose. Every per-kind rule,
+every precondition and every structural check is applied by the same
+handler, so no kind can acquire a second route that forgets one.
+
+### `POST /spine/events`
+
+| | |
+|---|---|
+| **Auth** | dual; `spine.author` for `specification` and `amendment` only |
+| **Body** | `AppendSpineEventRequest` — a discriminated union over fourteen kinds |
+| **Returns** | `{ event, contract, replayed }` — **201** on a new event, **200** on an idempotent replay |
+
+The kinds: `observation`, `testimony`, `specification`, `amendment`,
+`attempt`, `criterion_verdict`, `ruling`, `ask`, `ask_action`,
+`proceeding`, `lifecycle`, `correction`, `discussion`, `promotion`.
+
+**Two counters.** `seq` is the global stream cursor, gapless because
+nothing is ever deleted. `state_rev` is per contract, advanced only by
+`class: authoritative` events on it, and required as
+`expectedStateRev` on every state-changing write. A busy thread can
+never veto a lifecycle act; a lifecycle act can never sneak past a
+verdict it did not see.
+
+**Idempotency.** `opId` is required on authoritative kinds and refused
+on ambient ones. Same id + same payload + same actor → the original
+result and no second event. Same id, anything else → `409
+idempotency_conflict`. The actor is part of the identity: without it an
+`op_id` would be a bearer token for someone else's write.
+
+Every member-naming field is checked against the roster — a
+`waiting_on` naming a typo sits in nobody's queue forever.
+
+### `GET /spine/events`
+
+| | |
+|---|---|
+| **Auth** | dual |
+| **Query** | `since_seq`, `limit` (1–500, default 100), `kind`, `subject`, `contract`, `actor` |
+| **Returns** | `{ events, nextCursor, headSeq }`, oldest first |
+
+`subject` resolves containment transitively — a repo returns the files
+inside it. A full page always carries a cursor and a short page never
+does; `nextCursor: null` means the page reached the head, which is a
+different claim from an empty page. `limit=0` is refused rather than
+defaulted, because a zero page would answer "you are fully caught up"
+to a caller who has read nothing.
+
+### `GET /spine/events/:id`
+
+| | |
+|---|---|
+| **Auth** | dual |
+| **Returns** | `{ event }`, or **404** |
+
+A read, not a second write path. Everything in the annex is reached by
+id — citations, staples, the post a `promote` is built from — and
+finding one by paging a stream that only grows is a scan that gets
+slower forever.
+
+### `GET /spine/orient`
+
+| | |
+|---|---|
+| **Auth** | dual |
+| **Returns** | `OrientPack` for the **calling member** |
+
+The recovery call, and the Guaranteed Pack in its v0 form: per binding
+(assignee / verifier / authority) the contract id and title, criteria
+with their verdicts, current state and counter, subject plus the bound
+revision and a staleness flag, the rulings that bind it, the asks
+awaiting the caller's ruling, the caller's own open asks, and a cursor
+into everything else.
+
+Composed **server-side** so recovery is one code path for every entry
+point — a floor signal, a declared dump signal, a stale write's
+refusal, or an explicit call. Cheap by construction: a fixed number of
+queries whatever the member's plate looks like, because recovery cost
+must not grow with the thing recovery exists to rescue you from.
+
+### `POST /spine/subjects` · `GET /spine/subjects`
+
+| | |
+|---|---|
+| **Auth** | dual |
+| **Body** | `{ id, type: repo\|pr\|file\|issue\|setting\|package\|doc, parent? }` |
+| **Returns** | `{ subject }` **201**; listing returns `{ subjects }` |
+
+Containment is declared at registration and never moved: re-registering
+an id with a different type or parent is refused, because it would
+silently change the scope of every rule declared on it. An identical
+re-registration is a no-op, so integrations can re-register the
+subjects their observations name on every webhook. `GET` accepts
+`type`, `parent`, and `within` (transitive).
+
+### `GET /spine/contracts` · `GET /spine/contracts/:id`
+
+| | |
+|---|---|
+| **Auth** | dual |
+| **Query** | `state`, `member`, `subject` (containment resolves) |
+| **Returns** | `{ contracts }` / `{ contract }`, **404** for an unknown id |
+
+Projections — folds over the event stream, rebuildable from scratch.
+`stale` and `head` are computed on read, not stored: staleness is a
+relation between the contract and a world that moves without the
+contract being touched. Both operands are hydrated, because a flag
+saying you are behind without saying what you are behind is a derived
+value rendering bare.
+
+### Refusals
+
+The refusal **is** the recovery channel, so each carries a `detail` the
+caller can act on without a second call.
+
+| Code | HTTP | `detail` |
+|---|---|---|
+| `stale_state_rev` | 409 | The intervening authoritative events **in full**, plus both counters |
+| `coverage_gap` | 409 | Every uncovered criterion, its text, and why it is uncovered |
+| `citation_required` | 409 | Every unresolved ask whole, the act's subject, and the containment scope searched |
+| `idempotency_conflict` | 409 | The `op_id` and the event it already resolved to |
+| `invalid_transition` | 409 | The terminal state, and the delta when the caller was also behind |
+| `invalid_input` | 400 | The field path, the current counter, and whether the precondition was missing or ahead |
+| `not_found` | 404 | — |
+| `not_permitted` | 403 | — |
+
+`citation_required` is a 409 rather than a 403 deliberately: it is not
+a statement about what this member may do — the same member may do the
+same thing the moment they proceed on the record or are ruled on — it
+is a conflict with the state of their own outstanding ask. See
+[the citation lock](/docs/dev/mcp-tools#the-citation-lock).
+
 ## Tool sources
 
 Registry of platform-defined external tools — see

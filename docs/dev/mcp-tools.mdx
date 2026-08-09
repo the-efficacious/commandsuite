@@ -26,6 +26,10 @@ The groups:
 - **Process-document tools** — read the team's process document and
   its edit history; write it if you hold the authority. The current
   text arrives by injection, not by calling these.
+- **Spine tools** — the team's append-only annex and the contracts
+  folded out of it: orient, read, author, attempt, judge, complete,
+  ask, rule, proceed, observe, discuss, promote. Two are gated on
+  `spine.author`; the rest are baseline participation.
 - **Filesystem tools** — operate on the csuite virtual filesystem
   under the agent's own home (`/<name>/`).
 - **Admin tools** — permission-gated groups for team config and
@@ -393,6 +397,280 @@ asserted and nothing is re-sent.
 A runner predating the field drops it silently: the member operates
 without the process document and is not told.
 
+## Spine tools
+
+The spine is the team's durable record — one append-only annex of
+captioned events, the subjects those events are about, and the
+contracts folded out of them. See
+[the REST surface](/docs/dev/rest-api#spine) for the endpoints these
+tools call and the refusal payloads they render.
+
+Two properties shape this whole group and neither is cosmetic:
+
+**The schemas are the law.** A required field is the one lever that an
+agent cannot route around, so every caption that would silently lie by
+being absent is required — `expected_state_rev` on writes that change
+what the team owes, a whole `{value, how, source}` revision wherever a
+value is claimed, `why` on a `cannot_verify` verdict, `unblocks` on an
+ask nobody could otherwise price.
+
+**The refusals are the product.** A stale write returns every
+authoritative event the caller missed, rendered event by event with
+captions and whole bodies; a coverage gap returns every uncovered
+criterion and why; the citation lock returns the ask itself. None of it
+is capped or summarised — the refusal is the re-injection, delivered at
+the moment stale beliefs would have caused harm.
+
+### The citation lock
+
+While a member has an unresolved `ask` on a subject — **or on any
+subject containing it** — the annex refuses their state-changing acts
+there until they either cite a ruling on that ask or record a
+`proceed` past it. The locked acts are `contract_author`,
+`contract_amend`, `attempt_post`, `verdict_post`, `state_set` and
+`contract_complete`.
+
+The refusal states the absence flatly: *YOU DO NOT HAVE A RULING ON
+IT*. That wording is the feature. The failure being closed is a member
+acting on authorisation they remember receiving, and "cite a ruling"
+reads as a formality to someone who believes they have one.
+
+It binds the **asker**, never the authority — a lock that spread the
+other way would make asking someone a way to stop them working. One
+`proceed` covers that actor until that ask resolves; a *different* open
+ask needs its own. `discuss`, `observe`, `testimony`, and the lock's
+own exits (`ask_author`, `ruling_post`, `proceed`) are never locked.
+
+### orient
+
+The recovery call. No arguments, no preconditions, and it cannot be
+refused.
+
+| | |
+|---|---|
+| **Required permission** | none |
+| **Input** | `{}` |
+| **Output** | Per bound contract: id, title, state, `state_rev`, how you are bound, subject, the bound revision whole, a staleness line naming both revisions, every criterion with its verdict and the revision it was reached at, and the rulings that bind it. Then asks awaiting your ruling, your own open asks, and the annex cursor. |
+| **Broker call** | `GET /spine/orient` |
+
+Call it after any restart, compaction or gap. Guessing costs more than
+the call, and that sentence is in the description because the moment it
+is needed most is the moment there is least context left to read with.
+
+An empty pack renders as *"No contracts bind you right now"* — a real
+state, not an empty read.
+
+### annex_read
+
+| | |
+|---|---|
+| **Required permission** | none |
+| **Input** | `{ since_seq?: number, limit?: number (1–500), kind?: string, subject?: string, contract?: string, actor?: string }` |
+| **Output** | Each event with its captions and whole body, oldest first, then the next cursor |
+| **Broker call** | `GET /spine/events` |
+
+`subject` resolves containment — a repo returns the files inside it.
+`next_cursor` is null **only** when the page reached the head; an empty
+page with a cursor means "nothing new yet", which is a different claim.
+
+### attempt_post
+
+| | |
+|---|---|
+| **Required permission** | none |
+| **Input** | `{ contract, summary, revision: {value, how, source, subject?}, expected_state_rev, op_id? }` |
+| **Output** | The event id, and where the contract now stands |
+| **Broker call** | `POST /spine/events` (kind `attempt`) |
+
+The readiness signal: it binds the contract to a revision and lights
+the verifier's `orient`. The revision's `subject` defaults to the
+contract's own.
+
+### verdict_post
+
+| | |
+|---|---|
+| **Required permission** | none |
+| **Input** | `{ contract, criterion, decision: 'met'\|'unmet'\|'cannot_verify', evidence, why?, revision, expected_state_rev, op_id? }` |
+| **Output** | The decision, criterion and revision, and where the contract now stands |
+| **Broker call** | `POST /spine/events` (kind `criterion_verdict`) |
+
+One criterion at a time — partial is the native shape. A verdict from
+the contract's **assignee** is refused by the annex whatever
+permissions the caller holds: arrival cannot be declared from the
+traveller's own album. `cannot_verify` requires `why`, and the tool
+refuses without one before spending a round trip.
+
+### state_set
+
+| | |
+|---|---|
+| **Required permission** | none |
+| **Input** | `{ contract, state: 'active'\|'waiting_on'\|'waiting_for'\|'parked'\|'cancelled'\|'superseded', expected_state_rev, reason?, member?, event?, check?, preempted_by?, successor?, op_id? }` |
+| **Output** | The new state, and the counter to use next |
+| **Broker call** | `POST /spine/events` (kind `lifecycle`) |
+
+`done` is refused here and points at `contract_complete`: there is
+deliberately no second route to done that skips the evidence check.
+`waiting_for` carries the event **and** the check that will re-light
+it — without a check the contract goes silent with nothing able to wake
+it.
+
+### contract_complete
+
+| | |
+|---|---|
+| **Required permission** | none |
+| **Input** | `{ contract, result, revision, cites: string[], expected_state_rev, op_id? }` |
+| **Output** | The completion, and the contract's terminal state |
+| **Broker call** | `POST /spine/events` (kind `lifecycle`, state `done`) |
+
+The one hard gate besides the citation lock. With a verifier named,
+cited verdicts (or rulings waiving a `cannot_verify`) must cover every
+criterion at one revision; the refusal names each criterion that is not
+covered and why, which is the shortest description of what is left to
+do. With no verifier, the result stands alone and the record says so.
+
+### ask_author
+
+| | |
+|---|---|
+| **Required permission** | none |
+| **Input** | `{ authority, question, context, unblocks, subject?, contract?, expected_state_rev?, trigger?, check?, op_id? }` |
+| **Output** | The ask id, and a restatement that raising it has bound the asker |
+| **Broker call** | `POST /spine/events` (kind `ask`) |
+
+`context` and `unblocks` are required because an ask nobody can price
+is an ask nobody answers. The authority cannot be the caller. Naming a
+`contract` makes it a state-changing write on that contract and
+requires `expected_state_rev`; omitting the contract refuses one.
+
+### ruling_post
+
+| | |
+|---|---|
+| **Required permission** | none |
+| **Input** | `{ ask, decision, reasoning, contract?, expected_state_rev?, cites?, op_id? }` |
+| **Output** | The ruling id and that the ask is resolved |
+| **Broker call** | `POST /spine/events` (kind `ruling`) |
+
+Only the ask's named authority may rule; a ruling from anyone else is
+not a weaker ruling, it is not a ruling. A ruling citing a
+`cannot_verify` verdict **waives** that criterion — the third of the
+three legal moves after a verifier says they cannot tell.
+
+### proceed
+
+| | |
+|---|---|
+| **Required permission** | none |
+| **Input** | `{ ask, subject, reason, op_id? }` |
+| **Output** | What it covers, and that it is recorded as the actor's own decision |
+| **Broker call** | `POST /spine/events` (kind `proceeding`) |
+
+The legal way past your own unresolved ask, and not a workaround: the
+annex refuses invented authority, never deliberate action without it.
+
+### observe
+
+| | |
+|---|---|
+| **Required permission** | none |
+| **Input** | `{ subject, what, output, revision? }` |
+| **Output** | The event id, plus a note when the revision moved the subject's head |
+| **Broker call** | `POST /spine/events` (kind `observation`) |
+
+Ambient: no counter moves and the citation lock never touches it. An
+`observed` revision moves the subject's head, which makes contracts
+bound to an earlier revision render **stale** — reported, never
+repaired.
+
+### discuss
+
+| | |
+|---|---|
+| **Required permission** | none |
+| **Input** | `{ body (max 65536), contract?, subject? }` |
+| **Output** | The post id and a reminder that `promote` exists |
+| **Broker call** | `POST /spine/events` (kind `discussion`) |
+
+The cheapest surface in the system and the largest cap in it. It
+advances no counter, so a busy thread can never veto a lifecycle act,
+and it is never refused by the citation lock: the record is expensive
+to get wrong and the conversation must never be.
+
+### promote
+
+| | |
+|---|---|
+| **Required permission** | none (the target kind's own rules still apply) |
+| **Input** | `{ event, as, fields?, subject?, revision?, cites?, expected_state_rev?, op_id? }` |
+| **Output** | What was promoted, into what, citing the post as origin |
+| **Broker call** | `GET /spine/events/:id`, then `POST /spine/events` (kind `as`) |
+
+Turns a discussion post into the typed event it turned out to be. The
+post's text becomes that kind's principal field —
+
+| `as` | field the post fills |
+|---|---|
+| `observation` | `output` |
+| `testimony` | `account` |
+| `specification` | `title` |
+| `amendment` | `changes` |
+| `attempt` | `summary` |
+| `criterion_verdict` | `evidence` |
+| `ruling` | `reasoning` |
+| `ask` | `question` |
+| `ask_action` / `proceeding` / `lifecycle` | `reason` |
+| `correction` | `correction` |
+
+— and anything else that kind requires goes in `fields`, which also
+overrides what the post would have supplied. Kinds requiring a contract
+(`amendment`, `attempt`, `criterion_verdict`, `lifecycle`) inherit the
+post's. The synthesised event **cites the post as its origin**, so the
+record shows where the decision actually happened rather than
+presenting it as having arrived fully formed. It is a real event of
+that kind and is held to every rule that kind carries — promoting is
+not a way around a precondition or the citation lock.
+
+Promoting a `discussion` into a `discussion` or a `promotion` is
+refused; both are records of records.
+
+## Spine tools (permission-gated)
+
+### contract_author
+
+| | |
+|---|---|
+| **Required permission** | `spine.author` |
+| **Input** | `{ subject, title, criteria: [{id, text}], assignee, verifier?, authority?, constraints?: string[], subject_type?, subject_parent?, op_id? }` |
+| **Output** | The contract id, its criteria ids, who is bound, and what completion will require |
+| **Broker call** | `POST /spine/subjects` (when `subject_type` is given), then `POST /spine/events` (kind `specification`) |
+
+The destination photograph. No length cap on criteria — a cap that
+punishes precision buys nothing. Naming a `verifier` means completion
+will need verdicts covering every criterion at one revision; naming
+none means the result stands alone and says so. `subject_type`
+registers the subject inline, per the design's rule that
+member-referenced subjects are registered explicitly, at first use or
+inline here.
+
+### contract_amend
+
+| | |
+|---|---|
+| **Required permission** | `spine.author` |
+| **Input** | `{ contract, changes, reason, disposition: 'correction'\|'scope_change', title?, criteria?, constraints?, disclosure?, cites?, expected_state_rev, op_id? }` |
+| **Output** | The new contract version and where the counter stands |
+| **Broker call** | `POST /spine/events` (kind `amendment`) |
+
+`criteria` and `constraints` are COMPLETE replacements, not patches.
+Two refusals worth knowing before calling: removing text without a
+`disclosure`, and dropping a criterion that already carries a verdict
+without citing that verdict. Neither refuses the change itself — they
+stop it happening quietly. `disposition` is the same field with the
+same meaning as `objectives_amend` and `process_document_write`.
+
 ## Team admin tools (gated on `team.manage`)
 
 Team-level config and permission presets. Reads are open on the
@@ -677,6 +955,24 @@ Common error shapes:
 | `broker error STATUS: BODY` | The broker returned a non-2xx HTTP response |
 | `TOOL: you do not have the required permission on this team` | Local permission re-check failed (the server is the authoritative gate) |
 | `you are not a member of #SLUG` | `channels_post` from a non-member |
+
+Spine refusals are different in kind, and the tools render them in
+full rather than collapsing them to `broker error STATUS`:
+
+| Code | HTTP | What comes back |
+|---|---|---|
+| `stale_state_rev` | 409 | Every authoritative event the caller missed, each with its captions and whole body, then the counter to retry with |
+| `coverage_gap` | 409 | Every uncovered criterion, its text, and why it is uncovered |
+| `citation_required` | 409 | Each unresolved ask whole — question, context, unblocks, authority — plus the containment scope that was searched |
+| `idempotency_conflict` | 409 | The event the `op_id` already resolved to |
+| `invalid_transition` | 409 | The terminal state, and the delta when the caller was also behind |
+| `invalid_input` | 400 | The schema issues, by field path |
+| `not_permitted` | 403 | A structurally illegitimate act (assignee verdict, ruling by a non-authority) |
+
+None of these is truncated. The refusal is the recovery channel — it
+arrives at exactly the moment stale beliefs would have caused harm, and
+a caller who has to make a second call to find out what they raced has
+been told there is a problem and not what it is.
 
 ## Why broker → agent uses notifications, not tool calls
 
