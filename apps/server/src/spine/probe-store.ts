@@ -211,8 +211,19 @@ class SqliteCheckStore implements CheckStore {
   claimForFiring(id: string): boolean {
     // ONE STATEMENT, and the `WHERE state = 'armed'` is the claim. A
     // read-then-write would leave a window between them, and the window
-    // is exactly a tick of the event loop — which is exactly how long
-    // two inbound deliveries take to interleave.
+    // is exactly a tick of the event loop.
+    //
+    // THE SECOND OF TWO MECHANISMS, and worth saying so because the
+    // first hides it. `armedForEndpoint` stops returning a check the
+    // instant it leaves `armed`, so on the delivery path a second
+    // request never reaches here — mutating this clause away leaves the
+    // end-to-end suite green, which is a fact about the call graph and
+    // not about the guard. What it holds is the shape the poll sweep
+    // already has: LIST the due checks, then fire them across an await
+    // apiece. There the list is stale by construction, and the claim is
+    // the only thing between a slow endpoint and two photographs of one
+    // thing. `spine-probes.test.ts` asserts the transition directly for
+    // that reason.
     const result = this.db
       .prepare("UPDATE spine_checks SET state = 'fired' WHERE id = ? AND state = 'armed'")
       .run(id);

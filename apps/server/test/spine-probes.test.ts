@@ -468,6 +468,29 @@ describe('a check firing on an ask discharges it, and nobody typed anything', ()
     lea.close();
   });
 
+  it('claims the shutter atomically: only the first caller wins', async () => {
+    // TWO MECHANISMS HOLD "one fire per arming" and only one of them is
+    // visible from the delivery path: `armedForEndpoint` stops
+    // returning a check the moment it leaves `armed`, so a second
+    // delivery never reaches the claim at all. That makes the claim
+    // untestable end-to-end and it does NOT make it decoration — it is
+    // what holds if any caller ever lists checks and then fires them
+    // across an await, which the poll sweep does by construction. So
+    // the transition is asserted where it lives.
+    await deliver(ctx, GREEN);
+    const check = (await listChecks(ctx))[0] as SpineCheck;
+    expect(ctx.checks.claimForFiring(check.id), 'a fired check cannot be claimed again').toBe(
+      false,
+    );
+
+    // The positive control: an armed check yields exactly one winner.
+    const second = await armedAsk(ctx, CI_RECIPE);
+    expect(second.status, await second.clone().text()).toBe(201);
+    const fresh = (await listChecks(ctx)).find((c) => c.state === 'armed') as SpineCheck;
+    expect(ctx.checks.claimForFiring(fresh.id)).toBe(true);
+    expect(ctx.checks.claimForFiring(fresh.id)).toBe(false);
+  });
+
   it('fires once per arming: a second matching delivery adds nothing', async () => {
     await deliver(ctx, GREEN);
     const first = (await listEvents(ctx)).find((e) => e.kind === 'observation') as SpineEvent;
@@ -961,7 +984,7 @@ describe('the outbound poll, and every pin on it', () => {
     app.db.close();
   });
 
-  it('does not follow a redirect, and stays armed', async () => {
+  it('does not follow a redirect, and says so', async () => {
     const fetchImpl = scriptedFetch([
       () => new Response(null, { status: 302, headers: { Location: 'https://evil.example/x' } }),
     ]);
@@ -974,6 +997,20 @@ describe('the outbound poll, and every pin on it', () => {
     // a URL nobody authored — with the auth header attached.
     expect(fetchImpl.calls.map((c) => c.url)).toEqual(['https://ci.example.com/status']);
     expect((await listChecks(app))[0]?.state).toBe('armed');
+
+    // THE REASON, not merely the absence of an observation. `!ok`
+    // catches a 302 as "HTTP 302" all on its own, so an engine with no
+    // redirect branch at all passes every assertion above — and would
+    // then follow the redirect the moment `redirect: 'manual'` came
+    // off. Naming the refusal is what separates "we declined to
+    // follow it" from "it happened not to be a 200".
+    const warned = app.logger.warn.mock.calls.find((c) => c[0] === 'spine: poll failed');
+    expect(warned?.[1]).toMatchObject({
+      reason: expect.stringContaining('refused to follow a 302 redirect'),
+    });
+    expect(warned?.[1]).toMatchObject({
+      reason: expect.stringContaining('a followed redirect is one nobody authored'),
+    });
     app.db.close();
   });
 
@@ -1076,6 +1113,110 @@ describe('the outbound poll, and every pin on it', () => {
     await app.probes.sweep();
     expect(fetchImpl.calls).toHaveLength(1);
     app.db.close();
+  });
+});
+
+// ─── What discharges an ask, and what does not ──────────────────────
+
+describe('only a probe discharges an ask, and only an unresolved one', () => {
+  it('a member stapling an observation to an ask does not close it', () => {
+    // The staple is the MECHANISM of the discharge, and a mechanism
+    // anybody can operate is a way to answer your own question with a
+    // photograph. A member may absolutely staple an observation to an
+    // ask — that is evidence, and it is what stapling is for — but the
+    // ask stays open until somebody with standing resolves it.
+    const db = openDatabase(':memory:');
+    const annex = createSqliteAnnexStore(db);
+    annex.registerSubject({ id: 'repo:acme', type: 'repo' }, 'lea');
+    const ask = annex.append(
+      {
+        kind: 'ask',
+        subject: 'repo:acme',
+        opId: 'op-ask',
+        body: {
+          authority: 'andrewjon',
+          question: 'ship it?',
+          context: 'ready',
+          unblocks: 'the release',
+        },
+      },
+      { actor: 'lea' },
+    );
+
+    annex.append(
+      {
+        kind: 'observation',
+        subject: 'repo:acme',
+        staplesTo: ask.event.id,
+        body: { what: 'ci', output: 'green, I looked myself' },
+      },
+      { actor: 'lea' },
+    );
+    expect(annex.ask(ask.event.id)?.state).toBe('open');
+
+    // The positive control, on the same ask and the same staple: a
+    // probe's observation closes it.
+    const fired = annex.append(
+      {
+        kind: 'observation',
+        subject: 'repo:acme',
+        staplesTo: ask.event.id,
+        authoredBy: 'lea',
+        body: { what: 'ci', output: 'green' },
+      },
+      { actor: 'probe:chk_1' },
+    );
+    expect(annex.ask(ask.event.id)).toMatchObject({
+      state: 'discharged',
+      resolvedBy: fired.event.id,
+    });
+    db.close();
+  });
+
+  it('a late fire does not overwrite the resolution a member gave', () => {
+    // The first answer is the one that happened. A probe arriving
+    // after a withdrawal must not rewrite the record to say the world
+    // answered a question the asker had already taken back.
+    const db = openDatabase(':memory:');
+    const annex = createSqliteAnnexStore(db);
+    annex.registerSubject({ id: 'repo:acme', type: 'repo' }, 'lea');
+    const ask = annex.append(
+      {
+        kind: 'ask',
+        subject: 'repo:acme',
+        opId: 'op-ask',
+        body: {
+          authority: 'andrewjon',
+          question: 'ship it?',
+          context: 'ready',
+          unblocks: 'the release',
+        },
+      },
+      { actor: 'lea' },
+    );
+    const withdrawal = annex.append(
+      {
+        kind: 'ask_action',
+        opId: 'op-withdraw',
+        body: { ask: ask.event.id, action: 'withdraw', reason: 'we shipped without it' },
+      },
+      { actor: 'lea' },
+    );
+    annex.append(
+      {
+        kind: 'observation',
+        subject: 'repo:acme',
+        staplesTo: ask.event.id,
+        authoredBy: 'lea',
+        body: { what: 'ci', output: 'green' },
+      },
+      { actor: 'probe:chk_1' },
+    );
+    expect(annex.ask(ask.event.id)).toMatchObject({
+      state: 'withdrawn',
+      resolvedBy: withdrawal.event.id,
+    });
+    db.close();
   });
 });
 
