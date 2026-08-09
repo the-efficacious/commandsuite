@@ -145,6 +145,18 @@ export interface CuratorOptions {
    * — the whitelist gates the phone, never the queue.
    */
   phonePush?: (message: Message) => void;
+  /**
+   * THE ALLOCATORS — members who hold `spine.focus`, resolved live so a
+   * grant or revocation between events is seen without a restart.
+   *
+   * The recipients of the focus-set-running-dry interrupt: when the set
+   * empties, the people who CAN set the next one are told, because that
+   * is the act the line is asking for. The whitelist gates their phone
+   * (§9 — the whitelist is a phone gate, not a recipient selector), so
+   * this is who hears it at all. Absent — no focus configured — means the
+   * transition is computed and logged but addressed to nobody.
+   */
+  focusHolders?: () => string[];
 }
 
 export interface Curator {
@@ -233,6 +245,16 @@ class SpineCurator implements Curator {
   private readonly logger: Logger;
   private readonly now: () => number;
   private readonly phonePush: ((message: Message) => void) | undefined;
+  private readonly focusHolders: (() => string[]) | undefined;
+  /**
+   * Whether the effective focus set was empty as of the last event that
+   * could have changed it. In memory on purpose, like `sweptSeq`: the
+   * running-dry line is edge-triggered (non-empty → empty), and a
+   * restart re-reads the current emptiness rather than re-firing. A
+   * restart while the set is empty and stays empty is not a transition,
+   * so it correctly fires nothing.
+   */
+  private focusEmpty: boolean;
   /**
    * How far class 2 has been swept.
    *
@@ -265,7 +287,9 @@ class SpineCurator implements Curator {
     this.logger = options.logger;
     this.now = options.now ?? Date.now;
     this.phonePush = options.phonePush;
+    this.focusHolders = options.focusHolders;
     this.sweptSeq = this.headSeq();
+    this.focusEmpty = this.annex.focusSet().length === 0;
   }
 
   // ─── Class 0 — recovery ─────────────────────────────────────────
@@ -358,6 +382,66 @@ class SpineCurator implements Curator {
     for (const target of addressedMembers(event, result.contract, this.annex)) {
       if (target.member === event.actor) continue;
       await this.deliverAddressed(target, event, result.contract, now);
+    }
+
+    // THE FOCUS SET RUNNING DRY — a curator-computed class-1 transition,
+    // not an annex event addressed to anyone. Only `focus` (changes
+    // lit-ness) and `lifecycle` (can move a lit contract to terminal, out
+    // of the effective set) can empty it, so the recompute is scoped to
+    // those two kinds. Edge-triggered on non-empty → empty, so a set that
+    // is already empty and stays empty says nothing, and re-emptying
+    // after a re-light fires again.
+    if (event.kind === 'focus' || event.kind === 'lifecycle') {
+      const nowEmpty = this.annex.focusSet().length === 0;
+      if (nowEmpty && !this.focusEmpty) {
+        await this.deliverRunningDry(event, now);
+      }
+      this.focusEmpty = nowEmpty;
+    }
+  }
+
+  /**
+   * The focus set just emptied — tell the allocators, one class-1 line.
+   *
+   * Recipients are the `spine.focus` holders (the people who set the next
+   * focus), never the member who caused the transition — an allocator who
+   * unlit the last contract already knows. The whitelist gates the phone
+   * exactly as it does for any class 1: a holder with `focus` on their
+   * whitelist (the team default) buzzes; everyone else waits in a live
+   * session or their next read. There is no lease to grant — a
+   * running-dry line is not a claim about holding a contract — but it is
+   * logged, so "what did the system spend of my album" can name it.
+   */
+  private async deliverRunningDry(trigger: SpineEvent, now: number): Promise<void> {
+    if (this.focusHolders === undefined) return;
+    const body = renderRunningDry(trigger);
+    for (const member of new Set(this.focusHolders())) {
+      if (member === trigger.actor) continue;
+      const cursor = this.store.receipt(member)?.seq ?? 0;
+      const { delivered, message } = await this.push(member, body, 1, 'focus_dry');
+      this.store.logInjection({
+        member,
+        class: 1,
+        kind: 'running_dry',
+        refs: [trigger.id],
+        cursor,
+        bytes: body.length,
+        delivered,
+        at: now,
+      });
+      this.logger.info('spine: focus set ran dry', {
+        member,
+        trigger: trigger.id,
+        delivered,
+      });
+      // The phone, gated on `focus` in the whitelist — §9's
+      // focus-set-running-dry interrupt, on the same VAPID path as every
+      // other class-1 buzz.
+      if (message !== null && this.phonePush !== undefined) {
+        if (this.store.policy(member).interruptWhitelist.includes('focus')) {
+          this.phonePush(message);
+        }
+      }
     }
   }
 
@@ -1068,6 +1152,22 @@ function renderNudge(
     `spine: ${refs.length} thing(s) you were holding have moved since you last read:\n` +
     `${lines.join('\n')}\n` +
     `Run \`orient\` when convenient — cursor ${cursor}.`
+  );
+}
+
+/**
+ * The focus-set-running-dry line.
+ *
+ * A POINTER, like every class-1 line: it names what emptied the set and
+ * the cheapest call to see the plate, and nothing more. No list of
+ * candidates, no "here is what to light" — deciding the next focus is the
+ * allocator's judgement, and the system does not take the photos.
+ */
+function renderRunningDry(trigger: SpineEvent): string {
+  return (
+    'spine: the focus set has run dry — no contract is lit for travel now. ' +
+    `The last one left when ${trigger.kind} ${trigger.id} landed. ` +
+    'Set the next focus, or run `orient` for the plate.'
   );
 }
 

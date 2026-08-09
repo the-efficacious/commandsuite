@@ -21,6 +21,7 @@ import {
   CORA,
   type CuratorApp,
   get,
+  injectionText,
   LEA,
   makeCuratorApp,
   post,
@@ -158,16 +159,20 @@ describe('class 2 is gated by focus, class 1 is not — the pinned line', () => 
 
     // CLASS 1 NOT GATED: rune (assignee) and lea (verifier) each get the
     // addressed line, out of focus and all — a contract ending under you
-    // reaches you regardless of what is lit.
+    // reaches you regardless of what is lit. Asserted on both the ledger
+    // (structured refs) and the line the member actually reads.
     const runeAddressed = (await ledger(RUNE)).filter((r) => r.kind === 'addressed');
     expect(runeAddressed.flatMap((r) => r.refs)).toContain(a);
+    expect(injectionText(sinks.rune as Sink)).toContain(a);
     const leaAddressed = (await ledger(LEA)).filter((r) => r.kind === 'addressed');
     expect(leaAddressed.flatMap((r) => r.refs)).toContain(a);
 
     // CLASS 2 GATED: cora, subscribed to A, hears nothing about it — A is
     // out of focus, so the ambient delta is silenced even though the same
-    // event reached rune and lea as class 1.
+    // event reached rune and lea as class 1. Nothing in her ledger and
+    // nothing in the line she would have read.
     expect(deltas(await ledger(CORA))).toHaveLength(0);
+    expect(sinks.cora?.injections ?? []).toHaveLength(0);
   });
 });
 
@@ -209,6 +214,8 @@ describe('the nudge bound holds on an out-of-focus contract', () => {
     const first = (await ledger(RUNE)).filter((r) => r.kind === 'recovery_nudge');
     expect(first, 'in focus, the owed nudge lands').toHaveLength(1);
     expect(first[0]?.refs, 'and it names A').toContain(a);
+    // The line rune reads is a pointer at `orient`, not the pack itself.
+    expect(injectionText(sinks.rune as Sink)).toContain('orient');
 
     // THE BOUND: still one, across further sweeps inside the cadence
     // floor — focus silencing it earlier did not spend it, and lighting

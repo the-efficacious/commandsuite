@@ -809,6 +809,15 @@ export function createApp(options: AppOptions): CreatedApp {
       // the rest. Absent when the deployment configured no web push, and
       // the queue still holds every item regardless.
       phonePush: onPushed,
+      // The allocators, resolved live: who the focus-set-running-dry line
+      // is addressed to (§9). Read off the member store on each
+      // transition so a grant or revocation of `spine.focus` is seen
+      // without a restart.
+      focusHolders: () =>
+        members
+          .members()
+          .filter((m) => hasPermission(m.permissions, 'spine.focus'))
+          .map((m) => m.name),
     });
     curator = built;
     // The class-1 hook, registered on the ONE write path. Phase 3

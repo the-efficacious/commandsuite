@@ -182,7 +182,7 @@ describe('the interrupt whitelist, both directions', () => {
         headers: { Authorization: `Bearer ${ANDREWJON}` },
       })
     ).json()) as { policy: { interruptWhitelist: string[]; explicit: boolean } };
-    expect(before.policy.interruptWhitelist).toEqual(['ask', 'proceeding']);
+    expect(before.policy.interruptWhitelist).toEqual(['ask', 'proceeding', 'focus']);
     expect(before.policy.explicit).toBe(false);
 
     // An authored choice: only criterion_verdict.

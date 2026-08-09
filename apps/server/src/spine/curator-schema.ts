@@ -238,12 +238,18 @@ export const DEFAULT_NUDGE_MIN_INTERVAL_MS = 15 * 60 * 1000;
  *               act rather than a silent one, and being released from a
  *               decision somebody asked you to make is not the absence
  *               of news — it is news the authority should get.
+ *   focus       the focus set running dry (§9) — the allocator's cue to
+ *               set the next one. The `focus` kind stands for the
+ *               running-dry transition in the whitelist: individual
+ *               light/unlight events are not class 1 and never buzz, but
+ *               the set emptying is exactly the interrupt a director opts
+ *               into. Harmless for phoneless members (an agent's runner
+ *               carries no phone), and running-dry is addressed only to
+ *               `spine.focus` holders in the first place.
  *
- * Everything else stays quiet in the queue until they look. The
- * focus-set-running-dry trigger §9 also names is phase 6 — the focus set
- * does not exist yet, so it is not here.
+ * Everything else stays quiet in the queue until they look.
  */
-export const DEFAULT_INTERRUPT_WHITELIST: SpineEventKind[] = ['ask', 'proceeding'];
+export const DEFAULT_INTERRUPT_WHITELIST: SpineEventKind[] = ['ask', 'proceeding', 'focus'];
 
 /** The curator tables, for the test that proves the curator can be dropped whole. */
 export const SPINE_CURATOR_TABLES: readonly string[] = [
