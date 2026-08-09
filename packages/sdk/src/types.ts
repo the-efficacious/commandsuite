@@ -3231,6 +3231,110 @@ export interface OrientPack {
   myOpenAsks: SpineAsk[];
 }
 
+// ─── The human seat: the Queue ───────────────────────────────────────
+//
+// §9. The director is a member with the smallest album and the rarest
+// flash, and the Queue is their orient pack rendered down to the two
+// things that are theirs to move: asks awaiting their ruling, and
+// contracts stuck on them. It is a READ, and a read that changes
+// nothing — VISITING IS NOT HANDLING. The only thing that takes an item
+// off the Queue is a resolving event landing (a ruling, an ask_action,
+// a lifecycle move), never the human opening it and never the read
+// itself. That is why the Queue does not ride `orient`: an orient
+// advances a receipt, and a receipt advanced by looking would let the
+// system mark its own homework.
+
+/**
+ * One ask awaiting this member's ruling, WITH the contract it is about.
+ *
+ * The contract rides WHOLE and not as an id because every act the human
+ * can take on a contract-bound ask — defer, decline, redirect — is an
+ * authoritative write on that contract and so must carry its current
+ * `stateRev` as the precondition. Handing the id alone would make the
+ * queue a screen a member cannot act from without a second call, and
+ * the second call is a race. `null` when the ask names no contract, in
+ * which case those acts carry no precondition.
+ */
+export interface SpineQueueAskItem {
+  ask: SpineAsk;
+  contract: SpineContract | null;
+}
+
+/**
+ * The human seat's Queue: what is theirs to move, and nothing else.
+ *
+ * `asks` are OPEN asks where this member is the authority — deliberately
+ * NOT deferred ones, because a defer re-arms the ask and it leaves the
+ * queue until its trigger fires (the armed-setting shape of §9). Orient
+ * keeps deferred asks; the Queue does not, and that difference is the
+ * "an item leaves when its resolving event lands" property made visible.
+ */
+export interface SpineQueue {
+  member: string;
+  /** ISO-8601 instant the queue was read. Everything in it is true as of here. */
+  at: string;
+  /** Open asks awaiting this member's ruling. Question, context and unblocks ride verbatim. */
+  asks: SpineQueueAskItem[];
+  /** Contracts stuck on this member — `waiting_on(you)`. */
+  waitingOn: SpineContract[];
+}
+
+export interface GetSpineQueueQuery {
+  /** Defaults to the caller. The Queue is a free annex read, so naming another member is allowed. */
+  member?: string;
+}
+
+export interface GetSpineQueueResponse {
+  queue: SpineQueue;
+}
+
+/**
+ * The four human acts, as CLIENT SHAPES over the single append path.
+ *
+ * There is deliberately no agent tool for any of these — §2 gives
+ * humans levers 2–4 through the web UI, and these are that surface. Each
+ * is one append: a `dictate a ruling` is a `ruling`, and defer / decline
+ * / redirect are the three `ask_action`s an authority takes on an ask
+ * they will not (yet) rule on. `opId` is generated per act when the
+ * caller does not supply one, so a tap is idempotent on retry; a
+ * contract-bound act carries the `expectedStateRev` the store demands.
+ */
+export interface DictateRulingRequest {
+  ask: string;
+  decision: string;
+  reasoning: string;
+  /** Bind the ruling to a contract so completion can cite it. Requires `expectedStateRev`. */
+  contract?: string;
+  expectedStateRev?: number;
+  opId?: string;
+}
+
+export interface DeferAskRequest {
+  ask: string;
+  reason: string;
+  /** The ask comes back armed on this trigger. */
+  trigger?: string;
+  /** Required when the ask names a contract — every act on one carries its precondition. */
+  expectedStateRev?: number;
+  opId?: string;
+}
+
+export interface DeclineAskRequest {
+  ask: string;
+  reason: string;
+  expectedStateRev?: number;
+  opId?: string;
+}
+
+export interface RedirectAskRequest {
+  ask: string;
+  /** The member the question moves to. The ask stays OPEN under the new authority. */
+  redirectTo: string;
+  reason: string;
+  expectedStateRev?: number;
+  opId?: string;
+}
+
 // ─── The curator ─────────────────────────────────────────────────────
 //
 // The annex records what members did. The curator records what the

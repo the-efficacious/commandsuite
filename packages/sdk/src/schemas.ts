@@ -2541,6 +2541,32 @@ export const OrientPackSchema = z.object({
 });
 
 /**
+ * The human seat's Queue — asks awaiting my ruling (with the contract
+ * each is about, whole, so the acts carry their precondition) and the
+ * contracts stuck on me. A read that advances nothing: visiting is not
+ * handling.
+ */
+export const SpineQueueAskItemSchema = z.object({
+  ask: SpineAskSchema,
+  contract: SpineContractSchema.nullable(),
+});
+
+export const SpineQueueSchema = z.object({
+  member: NameSchema,
+  at: SpineInstantSchema,
+  asks: z.array(SpineQueueAskItemSchema),
+  waitingOn: z.array(SpineContractSchema),
+});
+
+export const GetSpineQueueResponseSchema = z.object({
+  queue: SpineQueueSchema,
+});
+
+export const GetSpineQueueQuerySchema = z.object({
+  member: NameSchema.optional(),
+});
+
+/**
  * The delta a stale write gets back.
  *
  * The refusal IS the re-injection: it is delivered through the tool

@@ -66,6 +66,7 @@ import {
   GetSpineCheckResponseSchema,
   GetSpineContractResponseSchema,
   GetSpineEventResponseSchema,
+  GetSpineQueueResponseSchema,
   GetToolSourceResponseSchema,
   GetVariableResponseSchema,
   HealthResponseSchema,
@@ -160,10 +161,13 @@ import type {
   CreateSecretRequest,
   CreateToolSourceRequest,
   CreateVariableRequest,
+  DeclineAskRequest,
+  DeferAskRequest,
   DeviceAuthorizationRequest,
   DeviceAuthorizationResponse,
   DeviceTokenErrorCode,
   DeviceTokenResponse,
+  DictateRulingRequest,
   DiscussObjectiveRequest,
   EditProcessDocumentRequest,
   EnrollTotpResponse,
@@ -210,6 +214,7 @@ import type {
   PushSubscriptionPayload,
   PushSubscriptionResponse,
   ReassignObjectiveRequest,
+  RedirectAskRequest,
   RefreshToolSourceResponse,
   RegisterSpineSubjectRequest,
   RejectEnrollmentRequest,
@@ -233,6 +238,7 @@ import type {
   SpineCuratorConfigResponse,
   SpineEvent,
   SpineInjection,
+  SpineQueue,
   SpineSubject,
   Team,
   TokenInfo,
@@ -308,6 +314,19 @@ export class ClientError extends Error {
     this.status = status;
     this.body = body;
   }
+}
+
+/**
+ * A fresh idempotency key for a human act.
+ *
+ * The four seat acts generate one per tap when the caller supplies none,
+ * so a retry after a lost response resolves to the original event rather
+ * than a duplicate — the same guarantee `opId` gives an agent, minted on
+ * the human's behalf. `crypto.randomUUID` is a global in every runtime
+ * this client ships to (Node ≥ 19 and the browser).
+ */
+function mintOpId(): string {
+  return `op_${crypto.randomUUID()}`;
 }
 
 export class Client {
@@ -2031,6 +2050,101 @@ export class Client {
   async spineOrient(): Promise<OrientPack> {
     const resp = await this.request(SPINE_PATHS.orient);
     return OrientPackSchema.parse(await this.json(resp));
+  }
+
+  /**
+   * The human seat's Queue: asks awaiting my ruling and contracts stuck
+   * on me. Defaults to the caller; naming another member is a free annex
+   * read.
+   *
+   * This is a SEPARATE read from `orient` on purpose. Orient advances a
+   * receipt — reading the pack is what proves a member holds it — and
+   * the Queue must advance nothing, because opening a queue item is not
+   * handling it. Visiting is not handling: the only thing that takes an
+   * item off the Queue is one of the four acts below producing its
+   * resolving event.
+   */
+  async spineQueue(member?: string): Promise<SpineQueue> {
+    const qs = member === undefined ? '' : `?member=${encodeURIComponent(member)}`;
+    const resp = await this.request(`${SPINE_PATHS.queue}${qs}`);
+    return GetSpineQueueResponseSchema.parse(await this.json(resp)).queue;
+  }
+
+  // ─── The four human acts ─────────────────────────────────────────
+  //
+  // §9's four one-tap acts, each ONE append over the single write path.
+  // There is no agent tool for any of them: they are the human's lever,
+  // the tool schema's counterpart for a member whose runner is a
+  // browser. Each parses its payload before send and the response after,
+  // per SDK convention, and mints an `opId` when the caller supplies
+  // none so a tap is idempotent on retry.
+
+  /**
+   * Dictate a ruling — answer an ask I am the authority on. Resolves the
+   * ask and releases the citation lock. Binding a contract (so
+   * completion can cite the ruling) is optional and, when done, carries
+   * that contract's `expectedStateRev`.
+   */
+  async spineDictateRuling(req: DictateRulingRequest): Promise<AppendSpineEventResponse> {
+    return this.appendSpineEvent({
+      kind: 'ruling',
+      opId: req.opId ?? mintOpId(),
+      body: {
+        ask: req.ask,
+        decision: req.decision,
+        reasoning: req.reasoning,
+        ...(req.contract !== undefined ? { contract: req.contract } : {}),
+      },
+      ...(req.expectedStateRev !== undefined ? { expectedStateRev: req.expectedStateRev } : {}),
+    } as AppendSpineEventRequest);
+  }
+
+  /**
+   * Defer an ask — attach a trigger and it comes back armed, leaving the
+   * queue until the trigger fires. `expectedStateRev` is required when
+   * the ask names a contract.
+   */
+  async spineDefer(req: DeferAskRequest): Promise<AppendSpineEventResponse> {
+    return this.appendSpineEvent({
+      kind: 'ask_action',
+      opId: req.opId ?? mintOpId(),
+      body: {
+        ask: req.ask,
+        action: 'defer',
+        reason: req.reason,
+        ...(req.trigger !== undefined ? { trigger: req.trigger } : {}),
+      },
+      ...(req.expectedStateRev !== undefined ? { expectedStateRev: req.expectedStateRev } : {}),
+    } as AppendSpineEventRequest);
+  }
+
+  /** Decline an ask — close it with a reason. */
+  async spineDecline(req: DeclineAskRequest): Promise<AppendSpineEventResponse> {
+    return this.appendSpineEvent({
+      kind: 'ask_action',
+      opId: req.opId ?? mintOpId(),
+      body: { ask: req.ask, action: 'decline', reason: req.reason },
+      ...(req.expectedStateRev !== undefined ? { expectedStateRev: req.expectedStateRev } : {}),
+    } as AppendSpineEventRequest);
+  }
+
+  /**
+   * Redirect an ask — move the question to another authority. The ask
+   * stays OPEN under the new authority (there is no `redirected` state);
+   * it leaves my queue and arrives in theirs.
+   */
+  async spineRedirect(req: RedirectAskRequest): Promise<AppendSpineEventResponse> {
+    return this.appendSpineEvent({
+      kind: 'ask_action',
+      opId: req.opId ?? mintOpId(),
+      body: {
+        ask: req.ask,
+        action: 'redirect',
+        reason: req.reason,
+        redirectTo: req.redirectTo,
+      },
+      ...(req.expectedStateRev !== undefined ? { expectedStateRev: req.expectedStateRev } : {}),
+    } as AppendSpineEventRequest);
   }
 
   /** Register a region of the world. `parent` declares containment, once. */

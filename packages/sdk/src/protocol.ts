@@ -275,6 +275,9 @@ export const PROCESS_DOCUMENT_PATHS = {
  *   GET    /spine/events/:id    — one event, by id
  *   GET    /spine/orient        — the Guaranteed Pack for the caller; the
  *                                 recovery call, cheap by construction
+ *   GET    /spine/queue         — the human seat's queue (asks awaiting me,
+ *                                 contracts stuck on me); RECEIPT-NEUTRAL —
+ *                                 unlike orient it advances nothing
  *   POST   /spine/subjects      — explicit registration
  *   GET    /spine/subjects      — listing, with transitive containment
  *   GET    /spine/contracts     — projection reads with staleness flags
@@ -296,6 +299,10 @@ export const SPINE_PATHS = {
   events: '/spine/events',
   event: (id: string) => `/spine/events/${encodeURIComponent(id)}`,
   orient: '/spine/orient',
+  // The human seat's queue. A SEPARATE read from orient precisely
+  // because orient advances a receipt and the queue must not: opening
+  // an item is not handling it.
+  queue: '/spine/queue',
   subjects: '/spine/subjects',
   contracts: '/spine/contracts',
   contract: (id: string) => `/spine/contracts/${encodeURIComponent(id)}`,
