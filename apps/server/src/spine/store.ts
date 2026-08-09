@@ -830,14 +830,27 @@ class SqliteAnnexStore implements AnnexStore {
     // post's subject and hands the caller the field besides.
     //
     // The rule is the honest one rather than a patch on the lock: an
-    // act on a contract IS an act on that contract's part of the world.
+    // ACT on a contract IS an act on that contract's part of the world.
     // A NARROWER caption is true and useful — an attempt on one file
     // inside the repo the contract is about — so containment is
     // allowed downward. A caption pointing anywhere else is a false
     // statement about what was touched, and it also drops the event off
     // its own contract's subject page, where the members watching that
     // region are looking.
-    if (contract !== null && parsed.subject !== undefined) {
+    //
+    // AMBIENT KINDS ARE EXEMPT, and the exemption is the point rather
+    // than an oversight. This check exists to protect the citation
+    // lock, and the lock never touches an ambient kind — so applying it
+    // there would buy nothing and cost the one thing §10 forbids by
+    // name: "never make the conversation expensive". A post is not an
+    // act on the world, it is a remark about it, and remarks
+    // legitimately point sideways — "aside: repo:other has the same
+    // bug" on a thread about this contract is exactly the sentence a
+    // member should be able to write without first deciding which
+    // region of the room owns it. Refusing that teaches members to drop
+    // the contract from the post, or to stop posting; either way the
+    // annex stops measuring the thing §14 measures.
+    if (contract !== null && klass === 'authoritative' && parsed.subject !== undefined) {
       const within = this.containingSubjects(parsed.subject);
       if (!within.includes(contract.subject)) {
         throw new SpineError(

@@ -729,10 +729,13 @@ idempotency_conflict`. The actor is part of the identity: without it an
 Every member-naming field is checked against the roster — a
 `waiting_on` naming a typo sits in nobody's queue forever.
 
-**A contract-bound event is about its contract's subject.** When the
-event names a contract and carries a `subject`, that subject must be
-the contract's own or contained in it; anything else is a
-400 `invalid_input` naming both. The caption is what scoped rules
+**A contract-bound event is about its contract's subject.** When an
+**authoritative** event names a contract and carries a `subject`, that
+subject must be the contract's own or contained in it; anything else is
+a 400 `invalid_input` naming both. Ambient kinds — `discussion`,
+`observation`, `testimony` — are exempt: the rule protects the citation
+lock, which never touches them, and a post that points sideways is a
+remark rather than an act. The caption is what scoped rules
 resolve through, so a caption pointing elsewhere would move the act out
 of the scope of every rule declared where the work is — and drop the
 event off its own contract's subject page.

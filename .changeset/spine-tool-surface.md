@@ -31,9 +31,14 @@ a cursor into everything else.
   the ruling IS the release: it resolves the ask, with nothing further
   to cite. Proceeding is legitimate and always available; what is
   refused is inventing an answer nobody gave.
-- **An act on a contract is an act on that contract's subject.** A
-  contract-bound event may caption itself with the contract's subject
-  or anything contained in it, and nothing else. `subject` is optional
+- **An act on a contract is an act on that contract's subject.** An
+  authoritative contract-bound event may caption itself with the
+  contract's subject or anything contained in it, and nothing else.
+  Ambient kinds are exempt — the rule protects the citation lock, the
+  lock never touches them, and a post that points sideways is a remark
+  rather than an act; making that refusable would make the
+  conversation expensive, which is the one cost the design forbids by
+  name. `subject` is optional
   on four of the five locked kinds and reachable through `promote`, so
   without this an attempt — or a cancellation — could name an
   unrelated subject, be evaluated for the lock in a scope where the

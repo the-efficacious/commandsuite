@@ -462,13 +462,20 @@ new `authority` — one durable ask, one id, the move recorded by the
 the old one may not, and a redirect back to the asker is refused for
 the same reason an ask may not name its own asker as authority.
 
-**A contract-bound act is about its contract's subject.** An event
-naming a contract may caption itself with that contract's subject or
-anything contained in it; a caption pointing elsewhere is refused with
-`invalid_input` naming both. Without that rule, `subject` — optional on
-four of the five locked kinds and settable through `promote` — moved
-the act into a scope where the actor had no asks, and the lock passed
-it.
+**A contract-bound act is about its contract's subject.** An
+*authoritative* event naming a contract may caption itself with that
+contract's subject or anything contained in it; a caption pointing
+elsewhere is refused with `invalid_input` naming both. Without that
+rule, `subject` — optional on four of the five locked kinds and
+settable through `promote` — moved the act into a scope where the actor
+had no asks, and the lock passed it.
+
+Ambient kinds are exempt, deliberately. The rule exists to protect the
+lock, the lock never touches an ambient kind, and a post is a remark
+about the world rather than an act on it — *"aside: repo:other has the
+same bug"* on a thread about this contract must stay free to write, or
+the conversation gets expensive and the annex stops measuring what §14
+measures.
 
 ### orient
 

@@ -206,6 +206,13 @@ describe('an unresolved ask binds its asker', () => {
     // route around.
     expect(err.message).toContain('proceeding');
     expect(err.message).toContain('andrewjon');
+    // THE RULING EXIT, WORDED TRUTHFULLY. A ruling resolves its ask, so
+    // "cite it on this write" instructs a step that cannot be the thing
+    // that releases them — and the function's own doc comment calling
+    // the wording "the feature" is not something that fails when the
+    // wording reverts. This is.
+    expect(err.message).toMatch(/that resolves the ask and releases you/);
+    expect(err.message).not.toMatch(/cite it on this write/);
     // The ask itself, in the sentence — a member reading only the
     // message still has to be able to act on it.
     expect(err.message).toContain(ask);
@@ -681,6 +688,80 @@ describe('a caption cannot move an act out of its own contract’s scope', () =>
     expect(annex.contract(contract)?.stateRev).toBe(1);
   });
 
+  it('leaves the conversation alone — a post may name a contract and point elsewhere', () => {
+    // THE EXEMPTION IS THE POINT, not an oversight. This rule exists to
+    // protect the citation lock, and the lock never touches an ambient
+    // kind, so applying it here would buy nothing and cost the one
+    // thing §10 forbids by name: never make the conversation
+    // expensive. "Aside: repo:other has the same bug" on a thread about
+    // this contract is exactly the remark a member should be able to
+    // write without first deciding which region of the room owns it.
+    const contract = contractOn('repo:acme');
+    const post = annex.append(
+      {
+        kind: 'discussion',
+        subject: 'repo:other',
+        body: { body: 'aside — repo:other has the same bug', contract },
+      },
+      { actor: 'rune', now: tick() },
+    );
+    expect(post.event.kind).toBe('discussion');
+    expect(post.event.subject).toBe('repo:other');
+    // …and it is still a post about this contract: the caption says
+    // where the remark points, the body says what it is about.
+    expect(post.event.contract).toBe(contract);
+    // The observation and testimony halves of ambient, same shape.
+    expect(
+      annex.append(
+        {
+          kind: 'observation',
+          subject: 'repo:other',
+          body: { what: 'grepped the other repo', output: 'same handler, same bug' },
+        },
+        { actor: 'rune', now: tick() },
+      ).event.kind,
+    ).toBe('observation');
+  });
+
+  it('refuses the same shape on an authoritative kind, which is the control on that exemption', () => {
+    // The pairing that makes the exemption a decision rather than a
+    // hole: identical caption, identical contract, and the kind is what
+    // decides. An attempt is an act on the world; a post is not.
+    const contract = contractOn('repo:acme');
+    annex.append(
+      {
+        kind: 'discussion',
+        subject: 'repo:other',
+        body: { body: 'aside — repo:other has the same bug', contract },
+      },
+      { actor: 'rune', now: tick() },
+    );
+    const err = (() => {
+      try {
+        annex.append(
+          {
+            kind: 'attempt',
+            opId: op(),
+            expectedStateRev: 1,
+            subject: 'repo:other',
+            revision: {
+              subject: 'repo:acme',
+              value: 'sha-a',
+              how: 'asserted',
+              source: 'member:rune',
+            },
+            body: { contract, summary: 'pushed the fix' },
+          },
+          { actor: 'rune', now: tick() },
+        );
+      } catch (e) {
+        return e as SpineError;
+      }
+      return null;
+    })();
+    expect(err?.code).toBe('invalid_input');
+  });
+
   it('refuses the same dodge on a lifecycle, which is the irreversible one', () => {
     const contract = contractOn('repo:acme');
     askOn({ subject: 'repo:acme' });
@@ -870,6 +951,25 @@ describe('a redirect re-addresses an ask; it does not resolve one', () => {
     // behaviour released them, which is the one moment the lock is
     // most obviously still needed.
     expect(detailOf(expectLocked(() => attempt(contract, 1))).asks.map((a) => a.id)).toEqual([ask]);
+  });
+
+  it('returns a deferred ask to open, since the new authority never deferred it', () => {
+    const ask = askOn({ subject: 'repo:acme' });
+    annex.append(
+      {
+        kind: 'ask_action',
+        opId: op(),
+        body: { ask, action: 'defer', reason: 'after the release', trigger: 'the release' },
+      },
+      { actor: 'andrewjon', now: tick() },
+    );
+    expect(annex.ask(ask)?.state).toBe('deferred');
+    redirect(ask, 'lea');
+    // Open, not deferred: the deferral was the OLD authority's answer
+    // about their own queue, and it does not travel with the question.
+    // Either way it keeps locking the asker, which is what matters.
+    expect(annex.ask(ask)?.state).toBe('open');
+    expect(annex.ask(ask)?.authority).toBe('lea');
   });
 
   it('moves the right to rule, and the ruling then releases the asker', () => {

@@ -353,6 +353,18 @@ describe('the descriptions state the rules that will otherwise refuse the call',
     expect(describeOf('ruling_post')).toMatch(/Only the\s+ask’s named authority can rule on it/);
   });
 
+  it('says the proceed cover is keyed to the ask, and that its subject is caption only', () => {
+    // The sentence exists because the field invites the opposite
+    // reading: `proceed` takes a `subject`, so an agent will assume
+    // that is what it covers, and will re-proceed on each narrower one.
+    // The cover is per-ask-per-actor and the ask already carries the
+    // scope.
+    const proceed = describeOf('proceed');
+    expect(proceed).toContain('The cover is keyed to the ASK, not to what you type in `subject`');
+    expect(proceed).toMatch(/`subject` here is caption only/);
+    expect(proceed).toMatch(/naming a narrower one does not narrow what this proceeding covers/);
+  });
+
   it('states the state_rev contract, including that the refusal carries the delta', () => {
     const state = describeOf('state_set');
     expect(state).toMatch(/expected_state_rev` is the contract counter AS YOU LAST READ IT/);
