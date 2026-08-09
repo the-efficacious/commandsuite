@@ -162,6 +162,15 @@ describe('a poll at a private address is refused at the keyboard', () => {
       ['2606:2800:220:1:248:1893:25c8:1946', false],
       ['::ffff:127.0.0.1', true],
       ['::ffff:8.8.8.8', false],
+      // THE HEX SPELLING OF THE SAME THING, which is what `new URL()`
+      // normalises a v4-mapped literal to before anything here sees
+      // it. A blocklist that read only the dotted form would wave the
+      // normalised one straight through — and the normalised one is the
+      // only form that ever actually arrives.
+      ['::ffff:7f00:1', true], // 127.0.0.1
+      ['::ffff:a9fe:a9fe', true], // 169.254.169.254
+      ['::ffff:a00:5', true], // 10.0.0.5
+      ['::ffff:808:808', false], // 8.8.8.8 — the control on the spelling
     ] as const) {
       expect(
         blockedAddressReason(address) !== null,
