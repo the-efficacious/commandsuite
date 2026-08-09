@@ -24,6 +24,7 @@ import {
   PROTOCOL_VERSION,
   RUNNER_VERSION_HEADER,
   SECRET_PATHS,
+  SPINE_PATHS,
   TOOL_SOURCE_PATHS,
   VARIABLE_PATHS,
 } from './protocol.js';
@@ -31,6 +32,8 @@ import {
   ActivityReportSchema,
   AddChannelMemberRequestSchema,
   AmendObjectiveRequestSchema,
+  AppendSpineEventRequestSchema,
+  AppendSpineEventResponseSchema,
   ApproveEnrollmentRequestSchema,
   ApproveEnrollmentResponseSchema,
   BindSecretRequestSchema,
@@ -60,6 +63,7 @@ import {
   GetObjectiveResponseSchema,
   GetProcessDocumentResponseSchema,
   GetSecretResponseSchema,
+  GetSpineContractResponseSchema,
   GetToolSourceResponseSchema,
   GetVariableResponseSchema,
   HealthResponseSchema,
@@ -78,6 +82,9 @@ import {
   ListObjectivesResponseSchema,
   ListPendingEnrollmentsResponseSchema,
   ListSecretsResponseSchema,
+  ListSpineContractsResponseSchema,
+  ListSpineEventsResponseSchema,
+  ListSpineSubjectsResponseSchema,
   ListTokensResponseSchema,
   ListToolSourcesResponseSchema,
   ListVariablesResponseSchema,
@@ -86,6 +93,7 @@ import {
   NotificationEndpointSchema,
   NotificationProfileSchema,
   ObjectiveSchema,
+  OrientPackSchema,
   PermissionPresetsSchema,
   ProcessDocumentEditSchema,
   ProcessDocumentHistoryResponseSchema,
@@ -94,6 +102,8 @@ import {
   PushResultSchema,
   PushSubscriptionResponseSchema,
   RefreshToolSourceResponseSchema,
+  RegisterSpineSubjectRequestSchema,
+  RegisterSpineSubjectResponseSchema,
   RejectEnrollmentRequestSchema,
   RenameChannelRequestSchema,
   ReplayNotificationDeliveryResponseSchema,
@@ -122,6 +132,8 @@ import type {
   ActivityRow,
   AddChannelMemberRequest,
   AmendObjectiveRequest,
+  AppendSpineEventRequest,
+  AppendSpineEventResponse,
   ApproveEnrollmentRequest,
   ApproveEnrollmentResponse,
   BindSecretRequest,
@@ -165,6 +177,10 @@ import type {
   ListActivityQuery,
   ListGenaiQuery,
   ListObjectivesQuery,
+  ListSpineContractsQuery,
+  ListSpineEventsQuery,
+  ListSpineEventsResponse,
+  ListSpineSubjectsQuery,
   Member,
   Message,
   NotificationDelivery,
@@ -173,6 +189,7 @@ import type {
   NotificationProfile,
   NotificationProfileSummary,
   Objective,
+  OrientPack,
   PendingEnrollment,
   Permission,
   PermissionPresets,
@@ -184,6 +201,7 @@ import type {
   PushSubscriptionResponse,
   ReassignObjectiveRequest,
   RefreshToolSourceResponse,
+  RegisterSpineSubjectRequest,
   RejectEnrollmentRequest,
   RenameChannelRequest,
   ResolveSecretsResponse,
@@ -197,6 +215,8 @@ import type {
   SetSecretValueRequest,
   SetToolCredentialRequest,
   SetVariableValueRequest,
+  SpineContract,
+  SpineSubject,
   Team,
   TokenInfo,
   ToolSource,
@@ -1919,6 +1939,105 @@ export class Client {
     else if (u.protocol === 'https:') u.protocol = 'wss:';
     for (const [k, v] of Object.entries(query)) u.searchParams.set(k, v);
     return u.toString();
+  }
+
+  // ─── Spine ──────────────────────────────────────────────────────
+  // The annex, its subjects, and the contracts folded out of it.
+  //
+  // Every payload is parsed BEFORE it is sent and every response
+  // AFTER it arrives. Sending first and validating never would put a
+  // malformed event in an append-only store, where it stays.
+
+  /**
+   * Append one captioned event. The only write path there is.
+   *
+   * `opId` is required on authoritative kinds and the server treats a
+   * repeat as a replay: the same id with the same payload resolves to
+   * the original event and appends nothing. A lost response therefore
+   * costs a retry, not a duplicate.
+   *
+   * Throws `ClientError` with a 409 on a stale `expectedStateRev`; the
+   * body carries the intervening authoritative events in full, which
+   * is the recovery channel rather than a hint to go and look.
+   */
+  async appendSpineEvent(payload: AppendSpineEventRequest): Promise<AppendSpineEventResponse> {
+    const validated = AppendSpineEventRequestSchema.parse(payload);
+    const resp = await this.request(SPINE_PATHS.events, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(validated),
+    });
+    return AppendSpineEventResponseSchema.parse(await this.json(resp));
+  }
+
+  /**
+   * Page the annex. `nextCursor` is `null` only when the page reached
+   * the head — an empty page with a cursor means "nothing yet", which
+   * is a different claim.
+   */
+  async spineEvents(query: ListSpineEventsQuery = {}): Promise<ListSpineEventsResponse> {
+    const params = new URLSearchParams();
+    if (query.since_seq !== undefined) params.set('since_seq', String(query.since_seq));
+    if (query.limit !== undefined) params.set('limit', String(query.limit));
+    if (query.kind !== undefined) params.set('kind', query.kind);
+    if (query.subject !== undefined) params.set('subject', query.subject);
+    if (query.contract !== undefined) params.set('contract', query.contract);
+    if (query.actor !== undefined) params.set('actor', query.actor);
+    const qs = params.toString();
+    const resp = await this.request(`${SPINE_PATHS.events}${qs ? `?${qs}` : ''}`);
+    return ListSpineEventsResponseSchema.parse(await this.json(resp));
+  }
+
+  /**
+   * The Guaranteed Pack for the calling member: every contract they
+   * are bound to, its criteria with verdicts, the subject and revision
+   * it sits at, whether that revision is behind the head, the rulings
+   * that bind it, and a cursor into everything else.
+   *
+   * This is the recovery call. It is composed server-side so that
+   * recovery is one code path for every entry point.
+   */
+  async spineOrient(): Promise<OrientPack> {
+    const resp = await this.request(SPINE_PATHS.orient);
+    return OrientPackSchema.parse(await this.json(resp));
+  }
+
+  /** Register a region of the world. `parent` declares containment, once. */
+  async registerSpineSubject(payload: RegisterSpineSubjectRequest): Promise<SpineSubject> {
+    const validated = RegisterSpineSubjectRequestSchema.parse(payload);
+    const resp = await this.request(SPINE_PATHS.subjects, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(validated),
+    });
+    return RegisterSpineSubjectResponseSchema.parse(await this.json(resp)).subject;
+  }
+
+  /** `within` resolves containment transitively — a repo reaches the files in it. */
+  async spineSubjects(query: ListSpineSubjectsQuery = {}): Promise<SpineSubject[]> {
+    const params = new URLSearchParams();
+    if (query.type !== undefined) params.set('type', query.type);
+    if (query.parent !== undefined) params.set('parent', query.parent);
+    if (query.within !== undefined) params.set('within', query.within);
+    const qs = params.toString();
+    const resp = await this.request(`${SPINE_PATHS.subjects}${qs ? `?${qs}` : ''}`);
+    return ListSpineSubjectsResponseSchema.parse(await this.json(resp)).subjects;
+  }
+
+  /** Contracts as the projection holds them, staleness flags included. */
+  async spineContracts(query: ListSpineContractsQuery = {}): Promise<SpineContract[]> {
+    const params = new URLSearchParams();
+    if (query.state !== undefined) params.set('state', query.state);
+    if (query.member !== undefined) params.set('member', query.member);
+    if (query.subject !== undefined) params.set('subject', query.subject);
+    const qs = params.toString();
+    const resp = await this.request(`${SPINE_PATHS.contracts}${qs ? `?${qs}` : ''}`);
+    return ListSpineContractsResponseSchema.parse(await this.json(resp)).contracts;
+  }
+
+  async spineContract(id: string): Promise<SpineContract> {
+    const resp = await this.request(SPINE_PATHS.contract(id));
+    return GetSpineContractResponseSchema.parse(await this.json(resp)).contract;
   }
 }
 

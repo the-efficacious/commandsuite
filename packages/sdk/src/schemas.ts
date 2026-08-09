@@ -7,7 +7,8 @@
  */
 
 import { z } from 'zod';
-import { PERMISSIONS } from './types.js';
+import type { SpineEventKind } from './types.js';
+import { PERMISSIONS, SPINE_EVENT_CLASSES, SPINE_EVENT_KINDS } from './types.js';
 
 export const LogLevelSchema = z.enum(['debug', 'info', 'notice', 'warning', 'error', 'critical']);
 
@@ -1932,3 +1933,611 @@ export const FsMoveRequestSchema = z.object({
 });
 
 export const FsWriteCollisionSchema = z.enum(['error', 'overwrite', 'suffix']);
+
+// ───────────────────────────── Spine ──────────────────────────────
+//
+// The annex's write path is where every guarantee in the spine lives,
+// and these schemas are the enforcement. A required field is a law of
+// physics for an agent: the cheapest way to do the important thing has
+// to be the way that records it, and that is a property of the shape,
+// not of anybody's diligence.
+
+/**
+ * A single large SANITY BOUND on durable prose — NOT a budget.
+ *
+ * Caps scale WITH durability here, which is the opposite of the usual
+ * instinct. The fields this bounds (criteria, result, reasoning,
+ * disclosure, evidence, a correction) are the permanent ones, and a
+ * cap that punishes precision on a permanent field is a cap that
+ * degrades the record forever to save bytes once. 1 MiB exists to stop
+ * abuse, and nothing about it should be read as guidance on length.
+ */
+export const SPINE_DURABLE_SANITY_BOUND = 1_048_576;
+
+/**
+ * The largest real CAP in the system, and it belongs to the cheapest
+ * event. Conversation must never be expensive; if it is, the record
+ * gets routed around and the annex measures nothing.
+ */
+export const SPINE_DISCUSSION_MAX = 65_536;
+
+/** Identifiers: event ids, subject ids, criterion ids, op ids. */
+const SpineIdSchema = z.string().min(1).max(256);
+
+/** Durable prose. Sanity-bounded, never budgeted. */
+const SpineProseSchema = z.string().min(1).max(SPINE_DURABLE_SANITY_BOUND);
+
+export const SpineEventKindSchema = z.enum(SPINE_EVENT_KINDS);
+export const SpineEventClassSchema = z.enum(['authoritative', 'ambient']);
+export const SpineProvenanceSchema = z.enum(['native', 'legacy_projection']);
+export const SpineSubjectTypeSchema = z.enum([
+  'repo',
+  'pr',
+  'file',
+  'issue',
+  'setting',
+  'package',
+  'doc',
+]);
+export const SpineRevisionHowSchema = z.enum(['observed', 'asserted']);
+export const SpineVerdictDecisionSchema = z.enum(['met', 'unmet', 'cannot_verify']);
+export const SpineContractStateSchema = z.enum([
+  'active',
+  'waiting_on',
+  'waiting_for',
+  'parked',
+  'done',
+  'cancelled',
+  'superseded',
+]);
+export const SpineAskActionSchema = z.enum(['withdraw', 'decline', 'redirect', 'defer']);
+export const SpineAskStateSchema = z.enum([
+  'open',
+  'ruled',
+  'withdrawn',
+  'declined',
+  'redirected',
+  'deferred',
+]);
+
+/** ISO-8601. Instants are strings on the wire so a reader never has to guess a zone. */
+const SpineInstantSchema = z.iso.datetime();
+
+export const SpineSubjectSchema = z.object({
+  id: SpineIdSchema,
+  type: SpineSubjectTypeSchema,
+  parent: SpineIdSchema.nullable(),
+  registeredBy: NameSchema,
+  at: SpineInstantSchema,
+});
+
+export const SpineRevisionSchema = z.object({
+  id: SpineIdSchema,
+  subject: SpineIdSchema,
+  value: z.string().min(1).max(4096),
+  how: SpineRevisionHowSchema,
+  source: z.string().min(1).max(512),
+  at: SpineInstantSchema,
+});
+
+/**
+ * There is NO id-only form, and that is the whole point.
+ *
+ * `{value}` alone is a derived value rendering bare — *"verified at
+ * abc123"* with nothing saying who looked or when. All four caption
+ * fields are required so the dishonest shape is unrepresentable rather
+ * than merely discouraged.
+ */
+export const SpineRevisionInputSchema = z.object({
+  subject: SpineIdSchema,
+  value: z.string().min(1).max(4096),
+  how: SpineRevisionHowSchema,
+  source: z.string().min(1).max(512),
+  at: SpineInstantSchema.optional(),
+});
+
+export const SpineCriterionSchema = z.object({
+  id: SpineIdSchema,
+  /** Durable and uncapped in practice. D4: no cap that punishes precision. */
+  text: SpineProseSchema,
+});
+
+const SpineCriteriaSchema = z
+  .array(SpineCriterionSchema)
+  .min(1, 'a contract with no criteria cannot be verified and cannot be completed')
+  .max(256)
+  .refine((cs) => new Set(cs.map((c) => c.id)).size === cs.length, {
+    message: 'criterion ids must be unique within a contract — a verdict names exactly one',
+  });
+
+// ─── Per-kind bodies ─────────────────────────────────────────────────
+
+export const SpineObservationBodySchema = z.object({
+  what: SpineProseSchema,
+  output: SpineProseSchema,
+});
+
+export const SpineTestimonyBodySchema = z.object({
+  what: SpineProseSchema,
+  account: SpineProseSchema,
+  observer: NameSchema,
+});
+
+export const SpineSpecificationBodySchema = z.object({
+  title: SpineProseSchema,
+  criteria: SpineCriteriaSchema,
+  assignee: NameSchema,
+  verifier: NameSchema.optional(),
+  authority: NameSchema.optional(),
+  constraints: z.array(SpineProseSchema).max(64).optional(),
+});
+
+export const SpineAmendmentBodySchema = z
+  .object({
+    contract: SpineIdSchema,
+    changes: SpineProseSchema,
+    reason: SpineProseSchema,
+    disposition: AmendmentDispositionSchema,
+    title: SpineProseSchema.optional(),
+    criteria: SpineCriteriaSchema.optional(),
+    constraints: z.array(SpineProseSchema).max(64).optional(),
+    disclosure: SpineProseSchema.optional(),
+  })
+  .refine((b) => b.title !== undefined || b.criteria !== undefined || b.constraints !== undefined, {
+    message:
+      'an amendment that changes no field of the contract is a discussion post wearing an ' +
+      'amendment costume — supply title, criteria, or constraints',
+  });
+
+export const SpineAttemptBodySchema = z.object({
+  contract: SpineIdSchema,
+  summary: SpineProseSchema,
+});
+
+export const SpineCriterionVerdictBodySchema = z
+  .object({
+    contract: SpineIdSchema,
+    criterion: SpineIdSchema,
+    decision: SpineVerdictDecisionSchema,
+    evidence: SpineProseSchema,
+    why: SpineProseSchema.optional(),
+  })
+  .refine((b) => b.decision !== 'cannot_verify' || b.why !== undefined, {
+    path: ['why'],
+    message:
+      "a 'cannot_verify' without a reason is indistinguishable from silence, and silence is " +
+      'what the three legal resolution moves need to act on',
+  });
+
+export const SpineRulingBodySchema = z.object({
+  ask: SpineIdSchema,
+  decision: SpineProseSchema,
+  reasoning: SpineProseSchema,
+  contract: SpineIdSchema.optional(),
+});
+
+export const SpineAskBodySchema = z.object({
+  authority: NameSchema,
+  question: SpineProseSchema,
+  context: SpineProseSchema,
+  unblocks: SpineProseSchema,
+  contract: SpineIdSchema.optional(),
+  trigger: SpineProseSchema.optional(),
+  check: SpineProseSchema.optional(),
+});
+
+export const SpineAskActionBodySchema = z
+  .object({
+    ask: SpineIdSchema,
+    action: SpineAskActionSchema,
+    reason: SpineProseSchema,
+    redirectTo: NameSchema.optional(),
+    trigger: SpineProseSchema.optional(),
+  })
+  .refine((b) => b.action !== 'redirect' || b.redirectTo !== undefined, {
+    path: ['redirectTo'],
+    message: 'a redirect that names nobody has not redirected the ask, it has dropped it',
+  });
+
+export const SpineProceedingBodySchema = z.object({
+  ask: SpineIdSchema,
+  reason: SpineProseSchema,
+});
+
+/**
+ * The lifecycle body carries the fields ITS OWN STATE needs and
+ * refuses the ones it does not.
+ *
+ * Both directions are checked. A `waiting_for` with no check is a
+ * contract that goes silent with nothing to re-light it — the exact
+ * shape that made the predecessor's blocked state a place work went to
+ * die. A `done` carrying a `successor` is a record contradicting
+ * itself; accepting it would let a reader draw either conclusion.
+ */
+export const SpineLifecycleBodySchema = z
+  .object({
+    contract: SpineIdSchema,
+    state: SpineContractStateSchema,
+    reason: SpineProseSchema.optional(),
+    member: NameSchema.optional(),
+    event: SpineProseSchema.optional(),
+    check: SpineProseSchema.optional(),
+    preemptedBy: SpineProseSchema.optional(),
+    result: SpineProseSchema.optional(),
+    successor: SpineIdSchema.optional(),
+  })
+  .superRefine((b, ctx) => {
+    const required: Partial<Record<string, readonly string[]>> = {
+      waiting_on: ['member'],
+      waiting_for: ['event', 'check'],
+      parked: ['preemptedBy'],
+      done: ['result'],
+      cancelled: ['reason'],
+      superseded: ['successor'],
+    };
+    const allowed: Record<string, readonly string[]> = {
+      active: ['reason'],
+      waiting_on: ['member', 'reason'],
+      waiting_for: ['event', 'check', 'reason'],
+      parked: ['preemptedBy', 'reason'],
+      done: ['result', 'reason'],
+      cancelled: ['reason'],
+      superseded: ['successor', 'reason'],
+    };
+    for (const field of required[b.state] ?? []) {
+      if ((b as Record<string, unknown>)[field] === undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          path: [field],
+          message: `state '${b.state}' requires '${field}'`,
+        });
+      }
+    }
+    for (const field of ['member', 'event', 'check', 'preemptedBy', 'result', 'successor']) {
+      if ((b as Record<string, unknown>)[field] === undefined) continue;
+      if ((allowed[b.state] ?? []).includes(field)) continue;
+      ctx.addIssue({
+        code: 'custom',
+        path: [field],
+        message: `state '${b.state}' does not carry '${field}' — the record would contradict itself`,
+      });
+    }
+  });
+
+export const SpineCorrectionBodySchema = z.object({
+  correction: SpineProseSchema,
+});
+
+export const SpineDiscussionBodySchema = z.object({
+  /** The one cap that is a real cap, and it is the largest. */
+  body: z.string().min(1).max(SPINE_DISCUSSION_MAX),
+  contract: SpineIdSchema.optional(),
+});
+
+export const SpinePromotionBodySchema = z.object({
+  as: SpineEventKindSchema,
+  note: SpineProseSchema.optional(),
+});
+
+/**
+ * ONE map from kind to body schema, keyed by the closed kind list.
+ *
+ * Both the append request and the event response are built from it, so
+ * an endpoint cannot accept a body shape the wire format cannot
+ * describe — the divergence class the process-document field list was
+ * built to remove, one layer up.
+ */
+export const SPINE_BODY_SCHEMAS = {
+  observation: SpineObservationBodySchema,
+  testimony: SpineTestimonyBodySchema,
+  specification: SpineSpecificationBodySchema,
+  amendment: SpineAmendmentBodySchema,
+  attempt: SpineAttemptBodySchema,
+  criterion_verdict: SpineCriterionVerdictBodySchema,
+  ruling: SpineRulingBodySchema,
+  ask: SpineAskBodySchema,
+  ask_action: SpineAskActionBodySchema,
+  proceeding: SpineProceedingBodySchema,
+  lifecycle: SpineLifecycleBodySchema,
+  correction: SpineCorrectionBodySchema,
+  discussion: SpineDiscussionBodySchema,
+  promotion: SpinePromotionBodySchema,
+} as const satisfies Record<SpineEventKind, z.ZodType>;
+
+// ─── The event as it comes back ──────────────────────────────────────
+
+const SPINE_EVENT_SHAPE = {
+  seq: z.number().int().positive(),
+  id: SpineIdSchema,
+  class: SpineEventClassSchema,
+  subject: SpineIdSchema.nullable(),
+  revision: SpineIdSchema.nullable(),
+  actor: z.string().min(1).max(256),
+  authoredBy: NameSchema.nullable(),
+  at: SpineInstantSchema,
+  provenance: SpineProvenanceSchema,
+  opId: SpineIdSchema.nullable(),
+  cites: z.array(SpineIdSchema),
+  staplesTo: SpineIdSchema.nullable(),
+  contract: SpineIdSchema.nullable(),
+  stateRev: z.number().int().nonnegative().nullable(),
+};
+
+const spineEventVariants = SPINE_EVENT_KINDS.map((kind) =>
+  z.object({ ...SPINE_EVENT_SHAPE, kind: z.literal(kind), body: SPINE_BODY_SCHEMAS[kind] }),
+);
+
+export const SpineEventSchema = z.discriminatedUnion(
+  'kind',
+  spineEventVariants as [(typeof spineEventVariants)[number], ...typeof spineEventVariants],
+);
+
+// ─── Requests ────────────────────────────────────────────────────────
+
+/**
+ * Which kinds must carry which envelope fields.
+ *
+ * Tables rather than fourteen hand-written variants, because the
+ * fourteenth is where the omission lands. Each list is the answer to
+ * one question and the variants below are derived from all of them.
+ */
+const SPINE_KINDS_REQUIRING_SUBJECT: readonly SpineEventKind[] = [
+  'observation',
+  'testimony',
+  'specification',
+  'proceeding',
+];
+/** A verdict with no revision is an opinion about nothing in particular. */
+const SPINE_KINDS_REQUIRING_REVISION: readonly SpineEventKind[] = ['criterion_verdict'];
+/** A correction that staples to nothing is a second claim, not a correction. */
+const SPINE_KINDS_REQUIRING_STAPLE: readonly SpineEventKind[] = ['correction'];
+/** A promotion names exactly one origin post. */
+const SPINE_KINDS_REQUIRING_ONE_CITE: readonly SpineEventKind[] = ['promotion'];
+/**
+ * Authoritative AND unconditionally contract-bound. `ask`, `ruling`
+ * and `correction` reach a contract only sometimes, so their
+ * precondition is enforced where the contract is known — in the store.
+ */
+const SPINE_KINDS_REQUIRING_STATE_REV: readonly SpineEventKind[] = [
+  'amendment',
+  'attempt',
+  'criterion_verdict',
+  'lifecycle',
+];
+
+const spineAppendVariants = SPINE_EVENT_KINDS.map((kind) => {
+  const authoritative = SPINE_EVENT_CLASSES[kind] === 'authoritative';
+  const base = {
+    kind: z.literal(kind),
+    body: SPINE_BODY_SCHEMAS[kind],
+    subject: SPINE_KINDS_REQUIRING_SUBJECT.includes(kind)
+      ? SpineIdSchema
+      : SpineIdSchema.optional(),
+    revision: SPINE_KINDS_REQUIRING_REVISION.includes(kind)
+      ? SpineRevisionInputSchema
+      : SpineRevisionInputSchema.optional(),
+    cites: SPINE_KINDS_REQUIRING_ONE_CITE.includes(kind)
+      ? z.array(SpineIdSchema).length(1)
+      : z.array(SpineIdSchema).max(256).optional(),
+    staplesTo: SPINE_KINDS_REQUIRING_STAPLE.includes(kind)
+      ? SpineIdSchema
+      : SpineIdSchema.optional(),
+    // Idempotency is not optional on a durable write. A lost response
+    // is a miniature album dump and the retry has to be free.
+    opId: authoritative ? SpineIdSchema : z.undefined().optional(),
+    expectedStateRev: SPINE_KINDS_REQUIRING_STATE_REV.includes(kind)
+      ? z.number().int().nonnegative()
+      : z.number().int().nonnegative().optional(),
+    authoredBy: NameSchema.optional(),
+  };
+  return z.object(base);
+});
+
+export const AppendSpineEventRequestSchema = z
+  .discriminatedUnion(
+    'kind',
+    spineAppendVariants as [(typeof spineAppendVariants)[number], ...typeof spineAppendVariants],
+  )
+  .superRefine((input, ctx) => {
+    // A specification CREATES the contract, so there is no prior
+    // `state_rev` to have believed. Accepting one would let a caller
+    // assert a precondition about a thing that does not exist.
+    if (input.kind === 'specification' && input.expectedStateRev !== undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['expectedStateRev'],
+        message:
+          'a specification creates the contract — there is no prior state_rev to expect, and ' +
+          'the contract id is the specification event id',
+      });
+    }
+    // Conditionally contract-bound kinds: the moment the body names a
+    // contract, the write is state-changing and carries a precondition.
+    //
+    // The variants are built from the kind list rather than written
+    // out fourteen times, so `kind` does not narrow `body` here. The
+    // read below is one optional field the map above already validated.
+    if (input.kind === 'ask' || input.kind === 'ruling') {
+      const named = (input.body as { contract?: string }).contract !== undefined;
+      if (named && input.expectedStateRev === undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['expectedStateRev'],
+          message: `a ${input.kind} naming a contract is a state-changing write on it and requires expectedStateRev`,
+        });
+      }
+      if (!named && input.expectedStateRev !== undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['expectedStateRev'],
+          message: `this ${input.kind} names no contract, so there is no state_rev it could be expecting`,
+        });
+      }
+    }
+  });
+
+export const RegisterSpineSubjectRequestSchema = z.object({
+  id: SpineIdSchema,
+  type: SpineSubjectTypeSchema,
+  parent: SpineIdSchema.optional(),
+});
+
+/** Query params arrive as strings; coerce so the route reads one shape. */
+const spineQueryInt = (max: number) => z.coerce.number().int().nonnegative().max(max).optional();
+
+export const ListSpineEventsQuerySchema = z.object({
+  since_seq: spineQueryInt(Number.MAX_SAFE_INTEGER),
+  limit: spineQueryInt(500),
+  kind: SpineEventKindSchema.optional(),
+  subject: SpineIdSchema.optional(),
+  contract: SpineIdSchema.optional(),
+  actor: z.string().min(1).max(256).optional(),
+});
+
+export const ListSpineSubjectsQuerySchema = z.object({
+  type: SpineSubjectTypeSchema.optional(),
+  parent: SpineIdSchema.optional(),
+  within: SpineIdSchema.optional(),
+});
+
+export const ListSpineContractsQuerySchema = z.object({
+  state: SpineContractStateSchema.optional(),
+  member: NameSchema.optional(),
+  subject: SpineIdSchema.optional(),
+});
+
+// ─── Responses ───────────────────────────────────────────────────────
+
+export const SpineCriterionStatusSchema = z.object({
+  criterion: SpineIdSchema,
+  text: SpineProseSchema,
+  decision: SpineVerdictDecisionSchema.nullable(),
+  revision: SpineIdSchema.nullable(),
+  event: SpineIdSchema.nullable(),
+  waivedBy: SpineIdSchema.nullable(),
+});
+
+export const SpineContractSchema = z.object({
+  id: SpineIdSchema,
+  title: SpineProseSchema,
+  state: SpineContractStateSchema,
+  stateRev: z.number().int().positive(),
+  version: z.number().int().positive(),
+  subject: SpineIdSchema,
+  revision: SpineIdSchema.nullable(),
+  criteria: z.array(SpineCriterionSchema),
+  assignee: NameSchema,
+  verifier: NameSchema.nullable(),
+  authority: NameSchema.nullable(),
+  constraints: z.array(SpineProseSchema),
+  createdBy: NameSchema,
+  createdAt: SpineInstantSchema,
+  updatedAt: SpineInstantSchema,
+  waitingOn: NameSchema.nullable(),
+  waitingFor: z.object({ event: SpineProseSchema, check: SpineProseSchema }).nullable(),
+  preemptedBy: SpineProseSchema.nullable(),
+  result: SpineProseSchema.nullable(),
+  reason: SpineProseSchema.nullable(),
+  successor: SpineIdSchema.nullable(),
+  stale: z.boolean(),
+  head: SpineIdSchema.nullable(),
+});
+
+export const SpineAskSchema = z.object({
+  id: SpineIdSchema,
+  authority: NameSchema,
+  asker: NameSchema,
+  subject: SpineIdSchema.nullable(),
+  contract: SpineIdSchema.nullable(),
+  question: SpineProseSchema,
+  context: SpineProseSchema,
+  unblocks: SpineProseSchema,
+  state: SpineAskStateSchema,
+  resolvedBy: SpineIdSchema.nullable(),
+  at: SpineInstantSchema,
+});
+
+export const AppendSpineEventResponseSchema = z.object({
+  event: SpineEventSchema,
+  contract: SpineContractSchema.nullable(),
+  replayed: z.boolean(),
+});
+
+export const ListSpineEventsResponseSchema = z.object({
+  events: z.array(SpineEventSchema),
+  /** `null` means the page reached the head — not the same as an empty page. */
+  nextCursor: z.number().int().positive().nullable(),
+  headSeq: z.number().int().nonnegative(),
+});
+
+export const RegisterSpineSubjectResponseSchema = z.object({
+  subject: SpineSubjectSchema,
+});
+
+export const ListSpineSubjectsResponseSchema = z.object({
+  subjects: z.array(SpineSubjectSchema),
+});
+
+export const ListSpineContractsResponseSchema = z.object({
+  contracts: z.array(SpineContractSchema),
+});
+
+export const GetSpineContractResponseSchema = z.object({
+  contract: SpineContractSchema,
+});
+
+export const SpineBindingSchema = z.enum(['assignee', 'verifier', 'authority']);
+
+export const OrientContractSchema = z.object({
+  bindings: z.array(SpineBindingSchema).min(1),
+  contract: SpineIdSchema,
+  title: SpineProseSchema,
+  state: SpineContractStateSchema,
+  stateRev: z.number().int().positive(),
+  criteria: z.array(SpineCriterionStatusSchema),
+  subject: SpineSubjectSchema,
+  revision: SpineRevisionSchema.nullable(),
+  stale: z.boolean(),
+  head: SpineRevisionSchema.nullable(),
+  rulings: z.array(SpineEventSchema),
+});
+
+export const OrientPackSchema = z.object({
+  member: NameSchema,
+  at: SpineInstantSchema,
+  cursor: z.number().int().nonnegative(),
+  contracts: z.array(OrientContractSchema),
+  asksForMe: z.array(SpineAskSchema),
+  myOpenAsks: z.array(SpineAskSchema),
+});
+
+/**
+ * The delta a stale write gets back.
+ *
+ * The refusal IS the re-injection: it is delivered through the tool
+ * result at exactly the moment staleness would have caused harm, on
+ * any runner, forever. So it carries the intervening events in full
+ * rather than a count or a hint — a caller who has to make a second
+ * call to find out what it raced has been told there is a problem and
+ * not what it is.
+ */
+export const SpineStaleStateRevDetailSchema = z.object({
+  contract: SpineIdSchema,
+  expectedStateRev: z.number().int().nonnegative(),
+  currentStateRev: z.number().int().nonnegative(),
+  intervening: z.array(SpineEventSchema),
+});
+
+/** What completion is missing, named criterion by criterion. */
+export const SpineCoverageGapDetailSchema = z.object({
+  contract: SpineIdSchema,
+  revision: SpineIdSchema.nullable(),
+  missing: z.array(
+    z.object({ criterion: SpineIdSchema, text: SpineProseSchema, why: SpineProseSchema }),
+  ),
+});
+
+export const SpineIdempotencyConflictDetailSchema = z.object({
+  opId: SpineIdSchema,
+  originalEvent: SpineIdSchema,
+});

@@ -75,6 +75,23 @@ export const PERMISSIONS = [
    * team — and "can create an objective" is not a comparable power.
    */
   'process.manage',
+  /**
+   * Author or amend a spine contract — state what the world must
+   * become, and change that statement afterwards.
+   *
+   * ONE leaf, and deliberately narrow. Everything else on the spine is
+   * baseline participation: reading the annex, posting an attempt,
+   * returning a verdict, raising an ask, discussing. Those are what it
+   * means to be on the team, and the admission rule above says they
+   * are not permissions.
+   *
+   * Verdict and ruling legitimacy is NOT modelled here either, because
+   * it is structural rather than granted: a verdict may not come from
+   * the assignee and a ruling may only come from the ask's named
+   * authority, and the store refuses both regardless of what anyone
+   * holds. A leaf would imply those refusals could be granted away.
+   */
+  'spine.author',
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -2365,4 +2382,550 @@ export interface FsRemoveQuery {
 export interface FsMoveRequest {
   from: string;
   to: string;
+}
+
+// ─────────────────────────────── Spine ────────────────────────────────
+//
+// The team's spine: one append-only annex of captioned events, the
+// subjects those events are about, and the contracts folded out of
+// them.
+//
+// The register is deliberately legal-epistemic — contract, verdict,
+// ruling, testimony — because the vocabulary carries the behavioural
+// priors an agent member needs before any instruction exists.
+//
+// Everything here is a photograph with a caption. A caption that is
+// optional is a caption that will be missing exactly when it matters,
+// so the required fields below are the ones without which the record
+// silently lies once the world moves.
+
+/**
+ * What an event IS, epistemically. The three that matter are already
+ * distinguishable here: an `observation` is the author's own flash, a
+ * `testimony` is their account of someone else's, and a
+ * `specification` is authored intent with no flash at all.
+ *
+ * The list is closed. A kind nobody can name is a kind nothing can
+ * cite, and an uncitable event is inert.
+ */
+export const SPINE_EVENT_KINDS = [
+  'observation',
+  'testimony',
+  'specification',
+  'amendment',
+  'attempt',
+  'criterion_verdict',
+  'ruling',
+  'ask',
+  'ask_action',
+  'proceeding',
+  'lifecycle',
+  'correction',
+  'discussion',
+  'promotion',
+] as const;
+
+export type SpineEventKind = (typeof SPINE_EVENT_KINDS)[number];
+
+/**
+ * Whether an event moves a contract's `state_rev`.
+ *
+ * `authoritative` events carry a precondition and advance the counter;
+ * `ambient` events never do. The split is what makes "a busy thread
+ * can never veto a lifecycle act, and a lifecycle act can never sneak
+ * past a verdict it didn't see" true at the same time.
+ */
+export type SpineEventClass = 'authoritative' | 'ambient';
+
+/**
+ * THE single statement of which kinds move a contract.
+ *
+ * One map, keyed by the closed kind list, so a new kind cannot be
+ * added without someone answering the question — and so the store,
+ * the schemas and the routes cannot disagree about the answer. A kind
+ * whose class is decided in three places is a kind whose precondition
+ * is enforced in two.
+ *
+ * `observation`, `testimony` and `discussion` are ambient: the room
+ * moving, and the team talking about it, must never be able to veto a
+ * lifecycle act. Everything else is a change to what the team owes.
+ */
+export const SPINE_EVENT_CLASSES: Record<SpineEventKind, SpineEventClass> = {
+  observation: 'ambient',
+  testimony: 'ambient',
+  discussion: 'ambient',
+  specification: 'authoritative',
+  amendment: 'authoritative',
+  attempt: 'authoritative',
+  criterion_verdict: 'authoritative',
+  ruling: 'authoritative',
+  ask: 'authoritative',
+  ask_action: 'authoritative',
+  proceeding: 'authoritative',
+  lifecycle: 'authoritative',
+  correction: 'authoritative',
+  promotion: 'authoritative',
+};
+
+/** The states from which no further authoritative event is accepted, correction excepted. */
+export const SPINE_TERMINAL_STATES = ['done', 'cancelled', 'superseded'] as const;
+
+/**
+ * Native events were written by this system. `legacy_projection` marks
+ * history imported from a predecessor, and it is permanent — an
+ * imported row never acquires native status, because nobody ever took
+ * that photograph.
+ */
+export type SpineProvenance = 'native' | 'legacy_projection';
+
+/** The regions of the world a contract can be about. */
+export type SpineSubjectType = 'repo' | 'pr' | 'file' | 'issue' | 'setting' | 'package' | 'doc';
+
+/**
+ * How a revision was obtained. `observed` means someone (or some
+ * integration) looked; `asserted` means a member named it by hand.
+ * Only `observed` revisions move a subject's head, so a member's
+ * assertion can never make someone else's contract stale.
+ */
+export type SpineRevisionHow = 'observed' | 'asserted';
+
+/** One verdict's answer about one criterion at one revision. */
+export type SpineVerdictDecision = 'met' | 'unmet' | 'cannot_verify';
+
+/** The lifecycle states of a contract. `done`, `cancelled` and `superseded` are terminal. */
+export type SpineContractState =
+  | 'active'
+  | 'waiting_on'
+  | 'waiting_for'
+  | 'parked'
+  | 'done'
+  | 'cancelled'
+  | 'superseded';
+
+/** What an `ask_action` does to an outstanding ask. */
+export type SpineAskAction = 'withdraw' | 'decline' | 'redirect' | 'defer';
+
+/** Where an ask stands. `open` is the only state the citation lock binds on. */
+export type SpineAskState = 'open' | 'ruled' | 'withdrawn' | 'declined' | 'redirected' | 'deferred';
+
+/**
+ * A region of the world, registered before anything can be said about
+ * it. `parent` is declared at registration and containment resolves
+ * transitively, so a rule stated on a repo reaches a file inside it.
+ */
+export interface SpineSubject {
+  id: string;
+  type: SpineSubjectType;
+  /** `null` for a root subject. Never retargeted after registration. */
+  parent: string | null;
+  registeredBy: string;
+  /** ISO-8601. */
+  at: string;
+}
+
+/**
+ * An immutable observation point on a subject.
+ *
+ * There is deliberately no shape here that can carry a bare value:
+ * `"verified at abc123"` cannot be serialized without `"observed at
+ * 03:19:02 from the GitHub review event"` riding along. Honesty
+ * enforced by the shape of the data rather than by a reviewer noticing.
+ */
+export interface SpineRevision {
+  id: string;
+  subject: string;
+  value: string;
+  how: SpineRevisionHow;
+  /** Who or what produced it: `integration:github`, `member:rune`, … */
+  source: string;
+  /** ISO-8601. */
+  at: string;
+}
+
+/** What a caller supplies to bind a revision. Every caption field required. */
+export interface SpineRevisionInput {
+  subject: string;
+  value: string;
+  how: SpineRevisionHow;
+  source: string;
+  /** ISO-8601. Defaults to the append instant. */
+  at?: string;
+}
+
+/** One acceptance criterion inside a `specification`. Prose, not a predicate. */
+export interface SpineCriterion {
+  id: string;
+  text: string;
+}
+
+// ─── Per-kind bodies ─────────────────────────────────────────────────
+
+export interface SpineObservationBody {
+  what: string;
+  output: string;
+}
+
+export interface SpineTestimonyBody {
+  what: string;
+  account: string;
+  /** Whose flash this is an account of. */
+  observer: string;
+}
+
+export interface SpineSpecificationBody {
+  title: string;
+  criteria: SpineCriterion[];
+  assignee: string;
+  /** Named ⇒ completion needs verdicts. Absent ⇒ the result stands alone and says so. */
+  verifier?: string;
+  /** Whose rulings bind this contract. */
+  authority?: string;
+  constraints?: string[];
+}
+
+export interface SpineAmendmentBody {
+  contract: string;
+  changes: string;
+  reason: string;
+  /** `correction` — the prior text was never validly binding. `scope_change` — forward-only. */
+  disposition: AmendmentDisposition;
+  title?: string;
+  criteria?: SpineCriterion[];
+  constraints?: string[];
+  /** Required when the amendment removes text. What the reader already saw cannot be unseen. */
+  disclosure?: string;
+}
+
+export interface SpineAttemptBody {
+  contract: string;
+  summary: string;
+}
+
+export interface SpineCriterionVerdictBody {
+  contract: string;
+  criterion: string;
+  decision: SpineVerdictDecision;
+  evidence: string;
+  /** Required on `cannot_verify`. A verdict that cannot say why is not a verdict. */
+  why?: string;
+}
+
+export interface SpineRulingBody {
+  ask: string;
+  decision: string;
+  reasoning: string;
+  /** Set when the ruling binds a contract — that is what makes it citable at completion. */
+  contract?: string;
+}
+
+export interface SpineAskBody {
+  authority: string;
+  question: string;
+  context: string;
+  /** What this ask is holding up. Required: an ask nobody can price is an ask nobody answers. */
+  unblocks: string;
+  contract?: string;
+  trigger?: string;
+  check?: string;
+}
+
+export interface SpineAskActionBody {
+  ask: string;
+  action: SpineAskAction;
+  reason: string;
+  /** Required on `redirect`. */
+  redirectTo?: string;
+  /** Optional on `defer` — the ask comes back armed. */
+  trigger?: string;
+}
+
+export interface SpineProceedingBody {
+  ask: string;
+  reason: string;
+}
+
+export interface SpineLifecycleBody {
+  contract: string;
+  state: SpineContractState;
+  reason?: string;
+  /** `waiting_on` — the named member who can act. */
+  member?: string;
+  /** `waiting_for` — the event being waited on. */
+  event?: string;
+  /** `waiting_for` — the check that will re-light it. */
+  check?: string;
+  /** `parked` — what took priority. */
+  preemptedBy?: string;
+  /** `done` — the completion result. No cap: it is the durable one. */
+  result?: string;
+  /** `superseded` — the contract that carries the work forward. */
+  successor?: string;
+}
+
+export interface SpineCorrectionBody {
+  correction: string;
+}
+
+export interface SpineDiscussionBody {
+  body: string;
+  contract?: string;
+}
+
+export interface SpinePromotionBody {
+  /** The typed kind the cited discussion is being promoted into. */
+  as: SpineEventKind;
+  note?: string;
+}
+
+export type SpineEventBody =
+  | SpineObservationBody
+  | SpineTestimonyBody
+  | SpineSpecificationBody
+  | SpineAmendmentBody
+  | SpineAttemptBody
+  | SpineCriterionVerdictBody
+  | SpineRulingBody
+  | SpineAskBody
+  | SpineAskActionBody
+  | SpineProceedingBody
+  | SpineLifecycleBody
+  | SpineCorrectionBody
+  | SpineDiscussionBody
+  | SpinePromotionBody;
+
+/**
+ * One captioned photograph in the annex.
+ *
+ * `seq` is the stream cursor — global, gapless, and the only thing
+ * recovery needs. `stateRev` is the per-contract counter this event
+ * produced when it was authoritative and bound to a contract; it is
+ * `null` otherwise, which is a different statement from `0`.
+ */
+export interface SpineEvent {
+  seq: number;
+  id: string;
+  kind: SpineEventKind;
+  class: SpineEventClass;
+  subject: string | null;
+  revision: string | null;
+  actor: string;
+  /** For probe results: whose recipe fired. The member took the photo; the system held the camera. */
+  authoredBy: string | null;
+  /** ISO-8601. */
+  at: string;
+  provenance: SpineProvenance;
+  opId: string | null;
+  cites: string[];
+  staplesTo: string | null;
+  body: SpineEventBody;
+  /** The contract this event is about, when it is about one. */
+  contract: string | null;
+  /** The contract's `state_rev` after this event. `null` when the event moved no contract. */
+  stateRev: number | null;
+}
+
+/** A verdict as the contract projection holds it — latest per criterion per revision. */
+export interface SpineCriterionStatus {
+  criterion: string;
+  text: string;
+  decision: SpineVerdictDecision | null;
+  /** The revision the decision was reached at. */
+  revision: string | null;
+  /** The verdict event, so a reader can go and look. */
+  event: string | null;
+  /** A `cannot_verify` waived by the authority's ruling. Carries the ruling's event id. */
+  waivedBy: string | null;
+}
+
+/**
+ * A contract, folded out of the events that made it. Rebuildable from
+ * `spine_events` alone — the annex is the only truth.
+ */
+export interface SpineContract {
+  id: string;
+  title: string;
+  state: SpineContractState;
+  /** Advanced only by authoritative events on this contract. */
+  stateRev: number;
+  /** Bumped by each amendment. */
+  version: number;
+  subject: string;
+  /** The revision the contract is bound to, when one has been named. */
+  revision: string | null;
+  criteria: SpineCriterion[];
+  assignee: string;
+  verifier: string | null;
+  authority: string | null;
+  constraints: string[];
+  createdBy: string;
+  /** ISO-8601. */
+  createdAt: string;
+  /** ISO-8601. */
+  updatedAt: string;
+  /** `waiting_on`. */
+  waitingOn: string | null;
+  /** `waiting_for` — what the room has to do. */
+  waitingFor: { event: string; check: string } | null;
+  /** `parked`. */
+  preemptedBy: string | null;
+  /** `done`. */
+  result: string | null;
+  /** `cancelled`, or any state whose author gave a reason. */
+  reason: string | null;
+  /** `superseded` — the contract carrying the work forward. Never retargeted. */
+  successor: string | null;
+  /**
+   * The bound revision is no longer the subject's latest OBSERVED
+   * revision. A reported state, never an edit — nothing retargets.
+   */
+  stale: boolean;
+  /** The subject's latest observed revision, when there is one. */
+  head: string | null;
+}
+
+/** An outstanding request for a ruling. */
+export interface SpineAsk {
+  id: string;
+  authority: string;
+  asker: string;
+  subject: string | null;
+  contract: string | null;
+  question: string;
+  context: string;
+  unblocks: string;
+  state: SpineAskState;
+  /** The event that resolved it — a ruling or an ask_action. */
+  resolvedBy: string | null;
+  /** ISO-8601. */
+  at: string;
+}
+
+// ─── Requests ────────────────────────────────────────────────────────
+
+/**
+ * The single append path.
+ *
+ * `opId` is required on authoritative writes and `expectedStateRev` on
+ * authoritative writes that name a contract: a lost response is a
+ * miniature album dump, and the write path is built for it.
+ */
+export interface AppendSpineEventRequest {
+  kind: SpineEventKind;
+  body: SpineEventBody;
+  subject?: string;
+  /** Fully captioned or absent. There is no id-only form. */
+  revision?: SpineRevisionInput;
+  cites?: string[];
+  /** Correction/disclosure target. Any event, including a terminal one. */
+  staplesTo?: string;
+  opId?: string;
+  expectedStateRev?: number;
+  authoredBy?: string;
+}
+
+export interface RegisterSpineSubjectRequest {
+  id: string;
+  type: SpineSubjectType;
+  parent?: string;
+}
+
+export interface ListSpineEventsQuery {
+  /** Exclusive lower bound on `seq`. Omit to start at the beginning. */
+  since_seq?: number;
+  limit?: number;
+  kind?: SpineEventKind;
+  subject?: string;
+  contract?: string;
+  actor?: string;
+}
+
+export interface ListSpineSubjectsQuery {
+  type?: SpineSubjectType;
+  /** Direct children only. */
+  parent?: string;
+  /** Transitive containment: this subject and everything inside it. */
+  within?: string;
+}
+
+export interface ListSpineContractsQuery {
+  state?: SpineContractState;
+  /** Contracts where this member is assignee, verifier, or authority. */
+  member?: string;
+  subject?: string;
+}
+
+// ─── Responses ───────────────────────────────────────────────────────
+
+export interface AppendSpineEventResponse {
+  event: SpineEvent;
+  /** The contract as it stands after the append, when the event named one. */
+  contract: SpineContract | null;
+  /** True when an `opId` replay resolved to an event that already existed. */
+  replayed: boolean;
+}
+
+export interface ListSpineEventsResponse {
+  events: SpineEvent[];
+  /**
+   * Feed this back as `since_seq`. `null` when the page reached the
+   * head — which is a different statement from an empty page.
+   */
+  nextCursor: number | null;
+  /** The annex head at the moment the page was cut. */
+  headSeq: number;
+}
+
+export interface RegisterSpineSubjectResponse {
+  subject: SpineSubject;
+}
+
+export interface ListSpineSubjectsResponse {
+  subjects: SpineSubject[];
+}
+
+export interface ListSpineContractsResponse {
+  contracts: SpineContract[];
+}
+
+export interface GetSpineContractResponse {
+  contract: SpineContract;
+}
+
+/** How the calling member is bound to a contract. */
+export type SpineBinding = 'assignee' | 'verifier' | 'authority';
+
+/** One contract as the Guaranteed Pack renders it. */
+export interface OrientContract {
+  /** Every way this member is bound, so a verifier who is also the authority sees both. */
+  bindings: SpineBinding[];
+  contract: string;
+  title: string;
+  state: SpineContractState;
+  stateRev: number;
+  criteria: SpineCriterionStatus[];
+  subject: SpineSubject;
+  revision: SpineRevision | null;
+  /** The bound revision is behind the subject's head. Reported, never repaired. */
+  stale: boolean;
+  head: SpineRevision | null;
+  /** Rulings that bind this contract, newest last. */
+  rulings: SpineEvent[];
+}
+
+/**
+ * v0 of the Guaranteed Pack: what any member is promised on recovery,
+ * small and fixed. Server-composed, one cheap call, and the only
+ * recovery path there is.
+ */
+export interface OrientPack {
+  member: string;
+  /** ISO-8601 instant the pack was composed. Everything in it is true as of here. */
+  at: string;
+  /** The annex head. Feed to `GET /spine/events?since_seq=` for everything else. */
+  cursor: number;
+  contracts: OrientContract[];
+  /** Asks awaiting this member's ruling. */
+  asksForMe: SpineAsk[];
+  /** This member's own asks that are still open. */
+  myOpenAsks: SpineAsk[];
 }

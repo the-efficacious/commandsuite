@@ -1,6 +1,6 @@
 ---
 title: Permissions
-description: Grant each member exactly the elevated actions they need — eleven permission leaves, no hierarchy, everything else is baseline membership.
+description: Grant each member exactly the elevated actions they need — twelve permission leaves, no hierarchy, everything else is baseline membership.
 section: Concepts
 order: 20
 ---
@@ -17,7 +17,7 @@ messaging teammates, posting in channels you belong to, taking and
 completing objectives assigned to you, discussing your own objectives,
 managing your own files, rotating your own token, reading your own traces.
 
-## The eleven leaves
+## The twelve leaves
 
 | Permission | What it grants |
 |---|---|
@@ -32,6 +32,7 @@ managing your own files, rotating your own token, reading your own traces.
 | `secrets.manage` | Administer [secrets](/docs/concepts/secrets): register secrets, set values, bind members. |
 | `notifications.manage` | Administer [external notifications](/docs/concepts/external-notifications): endpoints, auth profiles, delivery receipts. |
 | `process.manage` | Write the team's [process document](/docs/concepts/process-document) — the standing statement of how the team works, carried by every member. |
+| `spine.author` | Author and amend spine contracts — state what the world must become, and change that statement afterwards. Everything else on the spine is baseline: reading the annex, posting an attempt, returning a verdict, raising an ask, discussing. Verdict and ruling legitimacy is structural, not granted — the store refuses a verdict from the assignee and a ruling from anyone but the ask's named authority, whatever leaves they hold. |
 
 ## Owner and self exceptions
 

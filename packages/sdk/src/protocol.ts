@@ -109,6 +109,15 @@ export const PATHS = {
   variables: '/variables',
   /** The team's process document. Singleton; no id in the path. */
   processDocument: '/process-document',
+  // Spine — the team's append-only annex of captioned events, the
+  // subjects they are about, and the contracts folded out of them.
+  // Reading, attempting, verdicts, asks and discussion are baseline
+  // participation; authoring or amending a contract gates on
+  // `spine.author`. Verdict and ruling legitimacy is STRUCTURAL — the
+  // store refuses a verdict from the assignee and a ruling from anyone
+  // but the ask's authority — and no permission leaf grants either.
+  // Subresource paths compose via SPINE_PATHS below.
+  spine: '/spine',
   // External Notifications — inbound webhooks / API calls routed to
   // members and channels as ambient input. Admin surface under
   // `/notifications/*` gates on `notifications.manage`; the ingress
@@ -248,6 +257,31 @@ export const SECRET_PATHS = {
 /** The process document's edit history — RETRIEVED, never injected. */
 export const PROCESS_DOCUMENT_PATHS = {
   history: '/process-document/history',
+} as const;
+
+/**
+ * Spine subresources.
+ *
+ *   POST   /spine/events        — the single append path (per-kind validation,
+ *                                 op_id + expected_state_rev enforced)
+ *   GET    /spine/events        — cursor + filters, complete pages
+ *   GET    /spine/orient        — the Guaranteed Pack for the caller; the
+ *                                 recovery call, cheap by construction
+ *   POST   /spine/subjects      — explicit registration
+ *   GET    /spine/subjects      — listing, with transitive containment
+ *   GET    /spine/contracts     — projection reads with staleness flags
+ *   GET    /spine/contracts/:id — one contract
+ *
+ * There is ONE write path for events on purpose: every per-kind rule,
+ * every precondition and every structural check is applied by the same
+ * handler, so a kind cannot acquire a second route that forgets one.
+ */
+export const SPINE_PATHS = {
+  events: '/spine/events',
+  orient: '/spine/orient',
+  subjects: '/spine/subjects',
+  contracts: '/spine/contracts',
+  contract: (id: string) => `/spine/contracts/${encodeURIComponent(id)}`,
 } as const;
 
 /** Path builders for variable subresources. Mirrors `SECRET_PATHS`. */

@@ -83,6 +83,12 @@ export const PERMISSION_META: readonly PermissionMeta[] = [
     description:
       'Administer external-notification endpoints: register inbound webhooks, set write-only signing secrets, review and replay delivery receipts.',
   },
+  {
+    key: 'spine.author',
+    label: 'Author contracts',
+    description:
+      'Write and amend spine contracts — state what the world must become. Reading, attempting, verdicts, asks and discussion need no grant.',
+  },
 ];
 
 /** Stable order for leaf chips in displays — matches PERMISSIONS constant. */
