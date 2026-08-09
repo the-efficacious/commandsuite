@@ -463,6 +463,19 @@ class SpineCurator implements Curator {
     const events = this.drainNewEvents();
     if (events.length === 0) return;
 
+    // The team's focus set, as it stands at this tick — the third arm of
+    // class-3 silence (parked ∪ waiting_for ∪ OUT-OF-FOCUS), the hole
+    // phase 3 left open now closed. It is INERT when nothing is lit: an
+    // empty set means the team has not adopted focus, so class 2 flows
+    // for every contract exactly as before — which is why every phase-3
+    // guarantee is preserved unchanged. Once anything is lit, the focus
+    // set is the boundary: a contract outside it goes parked-shaped for
+    // attention, generating no class-2 traffic while staying fully in
+    // the annex. Class 1 is not touched here and never consults focus —
+    // an ask that names you reaches you out of focus.
+    const focusSet = new Set(this.annex.focusSet());
+    const focusActive = focusSet.size > 0;
+
     // Contract → its state as of the last event BEFORE this window.
     // Silence is about the state a contract was sitting in when an
     // event arrived, not the state it ended up in: the lifecycle event
@@ -483,7 +496,8 @@ class SpineCurator implements Curator {
         state = this.stateBefore(contractId, event.seq);
         stateAtArrival.set(contractId, state);
       }
-      const silenced = SILENT_STATES.has(state);
+      const outOfFocus = focusActive && !focusSet.has(contractId);
+      const silenced = SILENT_STATES.has(state) || outOfFocus;
       if (event.kind === 'lifecycle') {
         stateAtArrival.set(contractId, (event.body as SpineLifecycleBody).state);
       }
@@ -564,6 +578,13 @@ class SpineCurator implements Curator {
    */
   private async sweepNudges(): Promise<void> {
     const now = this.now();
+    // Out-of-focus work is silent for nudges too, so a member is never
+    // nudged into oblivion about a contract the team has parked
+    // attention-wise. Computed once per sweep and inert while nothing is
+    // lit, so the phase-3 nudge bound holds unchanged — and holds on an
+    // out-of-focus contract, which generates no nudge at all.
+    const focusSet = new Set(this.annex.focusSet());
+    const focusActive = focusSet.size > 0;
     const byMember = new Map<string, LeaseRecord[]>();
     for (const lease of this.store.leases()) {
       const list = byMember.get(lease.member) ?? [];
@@ -581,7 +602,7 @@ class SpineCurator implements Curator {
         (lease) =>
           lease.nudgedAt === null &&
           this.store.leaseState(lease, policy.leaseTtlMs, now) !== 'live' &&
-          this.hasUnreadMovement(lease, readTo),
+          this.hasUnreadMovement(lease, readTo, focusSet, focusActive),
       );
       if (stale.length === 0) continue;
 
@@ -624,12 +645,20 @@ class SpineCurator implements Curator {
     }
   }
 
-  private hasUnreadMovement(lease: LeaseRecord, readTo: number): boolean {
+  private hasUnreadMovement(
+    lease: LeaseRecord,
+    readTo: number,
+    focusSet: ReadonlySet<string>,
+    focusActive: boolean,
+  ): boolean {
     const contract = this.annex.contract(lease.ref);
     // A lease on an ask, not a contract. Asks reach their holder
     // through class 1, which never yields and never waits for a sweep.
     if (contract === null) return false;
     if (SILENT_STATES.has(contract.state)) return false;
+    // Out-of-focus is the third silence, applied to nudges as it is to
+    // class 2: no nudge about work the team has parked attention on.
+    if (focusActive && !focusSet.has(contract.id)) return false;
     const page = this.annex.events({
       contract: lease.ref,
       since_seq: readTo,
