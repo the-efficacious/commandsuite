@@ -28,8 +28,9 @@ The groups:
   text arrives by injection, not by calling these.
 - **Spine tools** — the team's append-only annex and the contracts
   folded out of it: orient, read, author, attempt, judge, complete,
-  ask, rule, proceed, observe, discuss, promote. Two are gated on
-  `spine.author`; the rest are baseline participation.
+  ask, rule, proceed, observe, discuss, promote, focus. Authoring and
+  amending are gated on `spine.author`, curating the focus set on
+  `spine.focus`; the rest are baseline participation.
 - **Filesystem tools** — operate on the csuite virtual filesystem
   under the agent's own home (`/<name>/`).
 - **Admin tools** — permission-gated groups for team config and
@@ -789,6 +790,33 @@ Two refusals worth knowing before calling: removing text without a
 without citing that verdict. Neither refuses the change itself — they
 stop it happening quietly. `disposition` is the same field with the
 same meaning as `objectives_amend` and `process_document_write`.
+
+### focus
+
+| | |
+|---|---|
+| **Required permission** | `spine.focus` |
+| **Input** | `{ contract, lit: boolean, reason, expected_state_rev, op_id? }` |
+| **Output** | Where the contract now stands and that it was lit or unlit |
+| **Broker call** | `POST /spine/events` (kind `focus`) |
+
+Light or unlight a contract in the team's **focus set** (D9) — the
+shared boundary of what is lit for travel now. A distinct leaf from
+`spine.author`: authoring states what the world must become, curating
+the focus set decides which contracts are the ones to travel to now.
+Reading the set needs no tool — `orient` marks each binding in or out of
+focus, and `GET /spine/contracts?focus=true` returns the whole lit
+plate — so only the lighting act is gated.
+
+Focus governs **ambient** attention only: a contract out of focus
+generates no subscription deltas and no recovery nudges, so the team is
+not spammed about work that is not the current push — but it stays fully
+in the annex, in `orient`, and in its owner's queue, and anything that
+names a member personally (an ask, a verdict, a contract ending) still
+reaches them out of focus. The projection is a set, so re-lighting what
+is already lit, or unlighting what is not, is refused. When the last lit
+contract leaves the set — by an unlight or by going terminal — the
+allocators get the focus-set-running-dry interrupt.
 
 ## Team admin tools (gated on `team.manage`)
 

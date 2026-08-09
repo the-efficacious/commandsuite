@@ -689,13 +689,14 @@ The routes register only when a spine store is injected — a broker
 without one 404s the whole surface.
 
 Reads are open to every authenticated member: what binds you, and what
-the team knows, is not privileged information. **One** permission leaf
-exists, `spine.author`, and it gates authoring or amending a contract.
-Verdict and ruling legitimacy is deliberately *not* a leaf — the store
-refuses a verdict from the assignee and a ruling from anyone but the
-ask's named authority whatever leaves the caller holds, because those
-refusals are what the events mean and a permission would imply they
-could be granted away.
+the team knows, is not privileged information. **Two** permission leaves
+exist: `spine.author` gates authoring or amending a contract, and
+`spine.focus` gates curating the team's focus set (lighting or
+unlighting contracts). Verdict and ruling legitimacy is deliberately
+*not* a leaf — the store refuses a verdict from the assignee and a
+ruling from anyone but the ask's named authority whatever leaves the
+caller holds, because those refusals are what the events mean and a
+permission would imply they could be granted away.
 
 There is **one write path for events** on purpose. Every per-kind rule,
 every precondition and every structural check is applied by the same
@@ -705,13 +706,14 @@ handler, so no kind can acquire a second route that forgets one.
 
 | | |
 |---|---|
-| **Auth** | dual; `spine.author` for `specification` and `amendment` only |
-| **Body** | `AppendSpineEventRequest` — a discriminated union over fourteen kinds |
+| **Auth** | dual; `spine.author` for `specification`/`amendment`, `spine.focus` for `focus` |
+| **Body** | `AppendSpineEventRequest` — a discriminated union over fifteen kinds |
 | **Returns** | `{ event, contract, replayed }` — **201** on a new event, **200** on an idempotent replay |
 
 The kinds: `observation`, `testimony`, `specification`, `amendment`,
 `attempt`, `criterion_verdict`, `ruling`, `ask`, `ask_action`,
-`proceeding`, `lifecycle`, `correction`, `discussion`, `promotion`.
+`proceeding`, `lifecycle`, `correction`, `discussion`, `promotion`,
+`focus`.
 
 **Two counters.** `seq` is the global stream cursor, gapless because
 nothing is ever deleted. `state_rev` is per contract, advanced only by
@@ -838,7 +840,7 @@ subjects their observations name on every webhook. `GET` accepts
 | | |
 |---|---|
 | **Auth** | dual |
-| **Query** | `state`, `member`, `subject` (containment resolves) |
+| **Query** | `state`, `member`, `subject` (containment resolves), `focus=true` |
 | **Returns** | `{ contracts }` / `{ contract }`, **404** for an unknown id |
 
 Projections — folds over the event stream, rebuildable from scratch.
@@ -846,7 +848,11 @@ Projections — folds over the event stream, rebuildable from scratch.
 relation between the contract and a world that moves without the
 contract being touched. Both operands are hydrated, because a flag
 saying you are behind without saying what you are behind is a derived
-value rendering bare.
+value rendering bare. `inFocus` (D9) is folded the same way — the
+contract's latest focus event is `lit` — and `?focus=true` returns the
+team's focus set: every lit contract across the team, the allocator's
+whole-plate view. Reading it is baseline; only lighting is
+permissioned.
 
 ### Refusals
 
@@ -887,7 +893,16 @@ Four injection classes:
 | 0 recovery | The Guaranteed Pack, delivered because a member (or their runner) called `orient` | No |
 | 1 addressed | An ask naming you, a verdict on your contract, a ruling on your ask, a redirect to you | No |
 | 2 subscription | Per member per contract: `all`, `lifecycle`, `none`; batched per sweep tick | It **is** the subscription |
-| 3 silence | `parked` and `waiting_for` contracts generate nothing | n/a — nothing is sent |
+| 3 silence | `parked`, `waiting_for`, and **out-of-focus** contracts generate nothing | n/a — nothing is sent |
+
+Class 3 is `parked ∪ waiting_for ∪ out-of-focus` (D9): once the team has
+lit anything, a contract outside the focus set is parked-shaped for
+attention and generates no class-2 deltas and no recovery nudges, while
+staying fully in the annex and queryable. Focus gates class 2 (ambient)
+and **never** class 1 (addressed) — an ask naming you, a verdict on your
+contract, or a contract ending under you reaches you out of focus. The
+gate is inert while nothing is lit, so a team that has not adopted focus
+sees class 2 exactly as before.
 
 Class-1 and class-2 lines carry an id, a title, and what changed, plus
 a cursor. Never the contract text: re-sending a whole contract on every
@@ -902,7 +917,9 @@ the rarest budget — by wiring that one delivery into the existing web
 push path (`dispatchPush` / `shouldPush`), so the standing rules still
 hold: never to a live subscriber, never to the sender. A kind off the
 list is not silenced, it is un-buzzed. The director default is a
-blocking `ask` naming them and a `proceeding` past their ask.
+blocking `ask` naming them, a `proceeding` past their ask, and `focus` —
+the focus set running dry, a curator-computed class-1 line to the
+`spine.focus` holders when the last lit contract leaves the set.
 
 #### `GET /spine/curator` · `PUT /spine/curator`
 
@@ -924,7 +941,7 @@ buzz a phone, written **wholesale** — the empty set is a real choice
 ("never buzz me"), so it is a set operation and not a patch that could
 never clear the last kind. On the response `policy`, `interruptWhitelist`
 rides beside the cadences, and `explicit: false` marks the team default
-(`['ask', 'proceeding']`) rather than an authored row.
+(`['ask', 'proceeding', 'focus']`) rather than an authored row.
 
 `subscriptions` reports the EFFECTIVE level for every contract binding
 the member, with `explicit` distinguishing an authored choice from a
@@ -948,7 +965,10 @@ nothing can come to depend on.
 "What did the system spend of my album this week", answerable. Each row
 carries the member, the class, the kind, the event or contract refs,
 the cursor the injection framed itself against, the instant, the byte
-size, and whether the delivery sink accepted it.
+size, and whether the delivery sink accepted it. The kinds are
+`recovery_pack`, `recovery_nudge`, `addressed`, `subscription_delta`,
+and `running_dry` — the focus set emptying, a curator-computed class-1
+line that is not an annex event and so earns its own ledger kind.
 
 There is deliberately no body column: the ledger accounts for spend and
 does not archive it, because keeping the text would make the audit

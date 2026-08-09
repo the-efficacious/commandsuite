@@ -351,6 +351,9 @@ const _noProceeding: ProbeMayNotAuthor<'proceeding'> = true;
 const _noCorrection: ProbeMayNotAuthor<'correction'> = true;
 const _noDiscussion: ProbeMayNotAuthor<'discussion'> = true;
 const _noPromotion: ProbeMayNotAuthor<'promotion'> = true;
+// Curating the focus set is a judgement — deciding what the team travels
+// to now — and the system takes no photos. A probe cannot author it.
+const _noFocus: ProbeMayNotAuthor<'focus'> = true;
 void [
   _mayObserve,
   _mayRelight,
@@ -366,4 +369,5 @@ void [
   _noCorrection,
   _noDiscussion,
   _noPromotion,
+  _noFocus,
 ];
