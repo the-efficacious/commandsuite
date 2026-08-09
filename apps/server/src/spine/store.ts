@@ -68,9 +68,13 @@ import type {
   SpineSpecificationBody,
   SpineSubject,
 } from 'csuite-sdk/types';
-import { SPINE_EVENT_CLASSES, SPINE_TERMINAL_STATES } from 'csuite-sdk/types';
+import {
+  SPINE_CITATION_LOCKED_KINDS,
+  SPINE_EVENT_CLASSES,
+  SPINE_TERMINAL_STATES,
+} from 'csuite-sdk/types';
 import type { DatabaseSyncInstance } from '../db.js';
-import { SpineError, staleStateRev } from './errors.js';
+import { citationRequired, SpineError, staleStateRev } from './errors.js';
 import { SPINE_PROJECTION_TABLES, SPINE_SCHEMA } from './schema.js';
 import { eventId, revisionId } from './ulid.js';
 
@@ -78,6 +82,12 @@ import { eventId, revisionId } from './ulid.js';
 export const SPINE_EVENTS_DEFAULT_LIMIT = 100;
 
 const TERMINAL: ReadonlySet<SpineContractState> = new Set(SPINE_TERMINAL_STATES);
+
+/** The five state-changing kinds the citation lock binds. */
+const CITATION_LOCKED: ReadonlySet<SpineEventKind> = new Set(SPINE_CITATION_LOCKED_KINDS);
+
+/** An ask still awaiting its answer. Only these lock; a resolved ask binds nothing. */
+const UNRESOLVED_ASK_STATES: readonly SpineAskState[] = ['open', 'deferred'];
 
 export interface AppendContext {
   /** `member`, `probe:<id>`, or `integration:<id>`. */
@@ -899,6 +909,12 @@ class SqliteAnnexStore implements AnnexStore {
     }
 
     this.assertStructurallyLegitimate(kind, parsed, ctx.actor, contract);
+    // AFTER legitimacy, deliberately. An event that is structurally not
+    // the thing it claims to be — a verdict from the assignee, a ruling
+    // from a bystander — should be refused as that, not as
+    // unauthorised: telling a member to go and get a ruling for an act
+    // no ruling could ever make legal sends them to the wrong person.
+    this.assertCitationLock(kind, parsed, ctx.actor, contract);
 
     // ── Write ──
     const id = eventId(now);
@@ -1141,6 +1157,189 @@ class SqliteAnnexStore implements AnnexStore {
     if (kind === 'lifecycle') {
       this.assertLifecycleLegal(input, contract as SpineContract);
     }
+  }
+
+  /**
+   * THE CITATION LOCK — the one hard gate in a warn-never-lock design.
+   *
+   * A member who has asked someone else to decide something, and has
+   * not been answered, may not then act as though they were. Not
+   * because acting is forbidden — it is not, and `proceeding` is the
+   * legal way to do it — but because "I was told to go ahead" is the
+   * cheapest sentence an agent can produce and costs the same whether
+   * or not anyone said it. This converts remembered authorisation into
+   * looked-up authorisation, and it is the only refusal in the system
+   * that exists to catch a member being confidently wrong about their
+   * own past rather than about the world.
+   *
+   * WHY THIS ONE GATE AND NOT THE OTHERS. §5's reversibility test:
+   * every other collision here is warned about and left to the members,
+   * because the acts are walk-back-able. Acting on a ruling that does
+   * not exist is not — the work is done, the members who read the
+   * record believe a decision was taken, and the correction has to
+   * unwind belief rather than state.
+   *
+   * FOUR THINGS IT DOES NOT DO, each one a decision:
+   *
+   *   it does not bind other members     the ask is the ASKER's. lea's
+   *                                      open question never slows rune
+   *                                      down, and a lock that spread
+   *                                      by subject would be a lock on
+   *                                      the team's throughput.
+   *   it does not survive resolution     a ruled, declined, withdrawn
+   *                                      or redirected ask binds
+   *                                      nothing. The question has been
+   *                                      answered; there is nothing
+   *                                      left to confabulate.
+   *   it does not toll every write       one `proceeding` per ask
+   *                                      covers the actor until that
+   *                                      ask resolves (settled scope,
+   *                                      §5). A per-write toll is what
+   *                                      members route around, and a
+   *                                      routed-around record measures
+   *                                      nothing.
+   *   it does not reach ambient acts     see SPINE_CITATION_LOCKED_KINDS.
+   *                                      Talking about the problem is
+   *                                      never the act that needs
+   *                                      authorising.
+   *
+   * CONTAINMENT IS THE POINT OF THE WALK. An ask raised on the repo
+   * reaches an act on a file inside it. Without that, the lock is
+   * escaped by naming a narrower subject — which is precisely what an
+   * agent looking for the path of least resistance would find, and
+   * §4 declares containment so that scoped rules cannot be stepped
+   * around one level down.
+   */
+  private assertCitationLock(
+    kind: SpineEventKind,
+    input: AppendSpineEventRequest,
+    actor: string,
+    contract: SpineContract | null,
+  ): void {
+    if (!CITATION_LOCKED.has(kind)) return;
+    // The event's own subject when it has one (a specification always
+    // does), otherwise the subject of the contract it acts on — an
+    // attempt or a verdict names a contract, and the contract is what
+    // says which part of the world is being changed. Reading only the
+    // event's `subject` would have left four of the five locked kinds
+    // permanently unlocked, since none of them carries one.
+    const subject = input.subject ?? contract?.subject ?? null;
+    if (subject === null) return;
+
+    const scope = this.containingSubjects(subject);
+    const asks = this.unresolvedAsksBy(actor, scope);
+    if (asks.length === 0) return;
+
+    const uncovered = asks.filter((ask) => this.coveringCitation(ask, input, actor) === null);
+    if (uncovered.length === 0) return;
+    throw citationRequired(kind, subject, contract?.id ?? null, scope, uncovered);
+  }
+
+  /**
+   * A subject and every subject containing it, outermost first.
+   *
+   * The mirror of `containedSubjects`, and it walks the other way for a
+   * reason: the question here is "which declared scopes cover this
+   * act", and answering it by expanding every ask's subtree would cost
+   * one subtree walk per ask instead of one ancestry walk per write.
+   */
+  private containingSubjects(leaf: string): string[] {
+    const rows = this.db
+      .prepare(
+        `WITH RECURSIVE ancestry(id, parent) AS (
+           SELECT id, parent FROM spine_subjects WHERE id = ?
+           UNION
+           SELECT s.id, s.parent FROM spine_subjects s JOIN ancestry a ON s.id = a.parent
+         )
+         SELECT id FROM ancestry`,
+      )
+      .all(leaf) as unknown as { id: string }[];
+    // Outermost first, so the rendered scope reads `repo ⊃ file` the
+    // way containment is spoken. The CTE yields the leaf first and its
+    // ancestors after it.
+    const ids = rows.map((r) => r.id);
+    return ids.length > 0 ? ids.reverse() : [leaf];
+  }
+
+  /**
+   * This actor's own asks, still awaiting an answer, anywhere in the
+   * given scope.
+   *
+   * AN ASK THAT NAMES ONLY A CONTRACT IS SCOPED BY THAT CONTRACT'S
+   * SUBJECT. §5's required fields for `ask_author` are authority,
+   * question, context and unblocks — a subject is optional — so the
+   * commonest ask there is names a contract and nothing else. Matching
+   * on `subject_id` alone would have left exactly that shape binding
+   * nothing, and the lock would have been reachable only by members who
+   * happened to caption their ask with a region of the world.
+   *
+   * `asker`, not `authority`. The ask belongs to whoever raised it, and
+   * it is their own subsequent acts that risk being taken on an answer
+   * nobody gave. An authority's pending queue must never slow down
+   * their own work — a lock that spread that way would make asking
+   * someone a way to stop them.
+   */
+  private unresolvedAsksBy(actor: string, scope: readonly string[]): SpineAsk[] {
+    const rows = this.db
+      .prepare(
+        `SELECT a.* FROM spine_asks a
+         LEFT JOIN spine_contracts c ON c.id = a.contract_id
+         WHERE a.asker = ?
+           AND a.state IN (${UNRESOLVED_ASK_STATES.map(() => '?').join(',')})
+           AND COALESCE(a.subject_id, c.subject_id) IN (${scope.map(() => '?').join(',')})
+         ORDER BY a.at ASC, a.id ASC`,
+      )
+      .all(...([actor, ...UNRESOLVED_ASK_STATES, ...scope] as never[])) as unknown as AskRow[];
+    return rows.map(rowToAsk);
+  }
+
+  /**
+   * What lets this write past that ask, or `null`.
+   *
+   * TWO ROUTES, and they are not equally travelled. A `proceeding` is
+   * the one that fires: it is a durable act of record by this actor
+   * naming this ask, and it covers everything they do on the subject
+   * until the ask resolves.
+   *
+   * The cited-ruling route is the primary one in §5's prose — "the call
+   * must cite a `ruling` id" — and today it is unreachable through this
+   * store, because the fold marks an ask `ruled` the instant its ruling
+   * lands and a resolved ask does not lock. It is written anyway,
+   * because the two facts that make it dead are both scheduled to
+   * change (phase 4 gives deferred asks a probe that re-arms them, and
+   * an ask may outlive a ruling that only partly answers it) and
+   * because the day one does, its absence would be a silent hole rather
+   * than a failing test. It is one lookup over a list the caller
+   * already supplied.
+   *
+   * Keyed on the ASK, not on the proceeding's subject. The ask carries
+   * the scope — it is only in the locking set because its subject
+   * covers this act — so re-deriving scope from the proceeding would
+   * check the same containment twice and let the two answers disagree.
+   */
+  private coveringCitation(
+    ask: SpineAsk,
+    input: AppendSpineEventRequest,
+    actor: string,
+  ): string | null {
+    for (const citedId of input.cites ?? []) {
+      const cited = this.event(citedId);
+      if (
+        cited !== null &&
+        cited.kind === 'ruling' &&
+        (cited.body as SpineRulingBody).ask === ask.id
+      ) {
+        return cited.id;
+      }
+    }
+    const row = this.db
+      .prepare(
+        `SELECT id FROM spine_events
+         WHERE kind = 'proceeding' AND actor = ? AND json_extract(body, '$.ask') = ?
+         ORDER BY seq ASC LIMIT 1`,
+      )
+      .get(actor, ask.id) as { id: string } | undefined;
+    return row?.id ?? null;
   }
 
   /**

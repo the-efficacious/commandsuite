@@ -16,8 +16,11 @@
  */
 
 import type {
+  SpineAsk,
+  SpineCitationRequiredDetail,
   SpineCoverageGapDetail,
   SpineEvent,
+  SpineEventKind,
   SpineIdempotencyConflictDetail,
   SpinePreconditionDetail,
   SpineStaleStateRevDetail,
@@ -35,14 +38,16 @@ export type SpineErrorCode =
   | 'idempotency_conflict'
   | 'coverage_gap'
   | 'invalid_transition'
-  | 'not_permitted';
+  | 'not_permitted'
+  | 'citation_required';
 
 export type SpineErrorDetail =
   | SpineStaleStateRevDetail
   | SpineCoverageGapDetail
   | SpineIdempotencyConflictDetail
   | SpinePreconditionDetail
-  | SpineTerminalDetail;
+  | SpineTerminalDetail
+  | SpineCitationRequiredDetail;
 
 export class SpineError extends Error {
   readonly code: SpineErrorCode;
@@ -74,5 +79,75 @@ export function staleStateRev(
       `${intervening.length} authoritative event(s) landed while you were away: ${summary}. ` +
       'They are in the refusal in full — read them and retry deliberately.',
     { contract, expectedStateRev: expected, currentStateRev: current, intervening },
+  );
+}
+
+/**
+ * The citation lock's refusal, and the one message in this file whose
+ * exact wording is the feature.
+ *
+ * §5: "An agent that cannot cite a ruling is told, in the refusal, that
+ * it does not have one." The failure being closed is a member acting on
+ * remembered authorisation — the most confident-sounding sentence an
+ * agent can produce is "I was told to go ahead", and it costs nothing
+ * to produce whether or not anyone said it. So the refusal states the
+ * absence FLATLY and first, before the remedies: not "cite a ruling",
+ * which a member who believes they have one will read as a formality,
+ * but "you do not have one", which contradicts the belief directly.
+ *
+ * Then both ways forward, because a lock with no exit is a lock members
+ * route around: get the ruling, or proceed on the record. Proceeding is
+ * legitimate — §5's whole point is that the annex refuses invented
+ * authority, not deliberate action without it.
+ *
+ * The asks ride whole in the detail (see `SpineCitationRequiredDetail`)
+ * and are also summarised in the sentence, because a member reading
+ * only the message still has to be able to act on it.
+ */
+export function citationRequired(
+  kind: SpineEventKind,
+  subject: string,
+  contract: string | null,
+  scope: readonly string[],
+  asks: SpineAsk[],
+): SpineError {
+  const plural = asks.length === 1 ? '' : 's';
+  const them = asks.length === 1 ? 'it' : 'them';
+  const lines = asks
+    .map((a) => {
+      // An ask carrying only a contract is scoped by that contract's
+      // subject, so naming the contract is what tells the reader why
+      // this ask reached this act.
+      const where = a.subject ?? (a.contract !== null ? `contract ${a.contract}` : '(no subject)');
+      return (
+        `${a.id} (${a.state}, to ${a.authority}, on ${where}): ` +
+        `"${a.question}" — unblocks: ${a.unblocks}`
+      );
+    })
+    .join('; ');
+  // The scope is named only when it is doing work — that is, when an
+  // ask reached this act from a subject the caller never mentioned. On
+  // a same-subject ask it would restate the subject twice and read as
+  // noise; on a repo-level ask reaching a file it is the only thing
+  // that explains the refusal at all.
+  const viaContainer = asks.some((a) => a.subject !== null && a.subject !== subject);
+  const containment = viaContainer
+    ? ` At least one of those asks was raised on a subject CONTAINING this one — the scope ` +
+      `searched was ${scope.join(' ⊃ ')}, and a rule stated one level up is not escaped by ` +
+      'acting one level down.'
+    : '';
+  return new SpineError(
+    'citation_required',
+    `this ${kind} on ${subject} is a state-changing act, and you have ${asks.length} ` +
+      `unresolved ask${plural} covering it: ${lines}.${containment} ` +
+      `YOU DO NOT HAVE A RULING ON ${them.toUpperCase()}. If you remember being authorised, ` +
+      'that memory is not a ruling and the annex holds no record of one — remembered ' +
+      'authorisation is exactly what this refusal exists to convert into looked-up ' +
+      `authorisation. Two ways forward, both on the record: get the ruling from ` +
+      `${[...new Set(asks.map((a) => a.authority))].join(' / ')} and cite it on this write, or ` +
+      'append a `proceeding` citing the ask and saying why you are going ahead without one. ' +
+      'Proceeding is a legitimate act, not a workaround: it covers your later acts on this ' +
+      'subject until that ask resolves.',
+    { subject, kind, contract, scope: [...scope], asks },
   );
 }

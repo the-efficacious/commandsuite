@@ -2578,3 +2578,16 @@ export const SpineIdempotencyConflictDetailSchema = z.object({
   opId: SpineIdSchema,
   originalEvent: SpineIdSchema,
 });
+
+/**
+ * The citation lock's refusal. The asks are whole: an id would ask the
+ * member to remember what they asked, which is the failure mode the
+ * lock exists to close.
+ */
+export const SpineCitationRequiredDetailSchema = z.object({
+  subject: SpineIdSchema,
+  kind: SpineEventKindSchema,
+  contract: SpineIdSchema.nullable(),
+  scope: z.array(SpineIdSchema),
+  asks: z.array(SpineAskSchema),
+});

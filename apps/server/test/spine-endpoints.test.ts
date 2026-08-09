@@ -145,16 +145,30 @@ describe('the write gate is spine.author and nothing else', () => {
       kind: 'discussion',
       body: { body: 'the handler was deliberate; see the 2024 thread', contract },
     });
+    const ask = (
+      await post(app, '/spine/events', RUNE, {
+        kind: 'ask',
+        opId: 'op-ask',
+        subject: 'repo:acme',
+        body: {
+          authority: 'andrewjon',
+          question: 'ship on Friday?',
+          context: 'tight window',
+          unblocks: 'the release',
+        },
+      })
+    ).event as SpineEvent;
+    // Raising that ask put rune under the citation lock on this
+    // subject, and the completion below is exactly the act it binds —
+    // asked whether to ship, then shipped. Proceeding is the legal way
+    // through and is itself baseline participation: no leaf grants it,
+    // and the record now says rune went ahead knowingly rather than
+    // implying andrewjon agreed.
     await post(app, '/spine/events', RUNE, {
-      kind: 'ask',
-      opId: 'op-ask',
+      kind: 'proceeding',
+      opId: 'op-proceed',
       subject: 'repo:acme',
-      body: {
-        authority: 'andrewjon',
-        question: 'ship on Friday?',
-        context: 'tight window',
-        unblocks: 'the release',
-      },
+      body: { ask: ask.id, reason: 'the window closes today and the release is revertible' },
     });
     await post(app, '/spine/events', CORA, {
       kind: 'criterion_verdict',

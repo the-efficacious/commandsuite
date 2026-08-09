@@ -2471,6 +2471,35 @@ export const SPINE_EVENT_CLASSES: Record<SpineEventKind, SpineEventClass> = {
 export const SPINE_TERMINAL_STATES = ['done', 'cancelled', 'superseded'] as const;
 
 /**
+ * The kinds the CITATION LOCK binds — the acts that change what the
+ * team owes, as against the acts that ask, answer, or talk.
+ *
+ * Published here rather than kept inside the store for the same reason
+ * `SPINE_EVENT_CLASSES` is: the rule is stated in three places that
+ * must not drift — the store enforces it, the tool descriptions teach
+ * it, and an agent reading the refusal has to recognise the list it
+ * names. A kind whose lockedness is decided in three places is a kind
+ * that is locked in two.
+ *
+ * Everything absent from this list is deliberately absent.
+ * `discussion`, `observation` and `testimony` are never locked because
+ * the conversation must never become expensive; `ask`, `ruling`,
+ * `ask_action` and `proceeding` are never locked because they are the
+ * lock's own exits, and locking them would leave a member with an open
+ * ask no legal move at all; `correction` is never locked because
+ * stapling a correction is the only way a record ever becomes less
+ * wrong; `promotion` is never locked because the typed event it
+ * produces is locked on its own merits.
+ */
+export const SPINE_CITATION_LOCKED_KINDS = [
+  'specification',
+  'amendment',
+  'attempt',
+  'criterion_verdict',
+  'lifecycle',
+] as const;
+
+/**
  * Native events were written by this system. `legacy_projection` marks
  * history imported from a predecessor, and it is permanent — an
  * imported row never acquires native status, because nobody ever took
@@ -3112,6 +3141,33 @@ export interface SpineIdempotencyConflictDetail {
   opId: string;
   /** The event the id already resolved to. */
   originalEvent: string;
+}
+
+/**
+ * The citation lock's refusal: the actor has an unresolved ask covering
+ * what they just tried to change.
+ *
+ * The asks ride WHOLE rather than as ids, and that is the anti-
+ * confabulation mechanism working rather than a courtesy. The failure
+ * this closes is a member acting on an authorisation they remember
+ * receiving; handing back `ask_01H…` invites them to remember what it
+ * said. Handing back the question, the authority it went to, and what
+ * it unblocks makes "did anyone actually decide this?" a thing the
+ * refusal has already answered.
+ */
+export interface SpineCitationRequiredDetail {
+  /** The subject the act landed on, after resolving through its contract. */
+  subject: string;
+  kind: SpineEventKind;
+  contract: string | null;
+  /**
+   * The subject and every subject containing it — the scope that was
+   * searched. A repo-level ask reaches an act on a file inside it, and
+   * a member who cannot see the walk cannot tell why.
+   */
+  scope: string[];
+  /** Every unresolved ask by this actor in that scope. Whole, not ids. */
+  asks: SpineAsk[];
 }
 
 /** How the calling member is bound to a contract. */

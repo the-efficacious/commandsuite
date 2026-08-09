@@ -3098,11 +3098,19 @@ export function createApp(options: AppOptions): CreatedApp {
     /**
      * The typed error → HTTP mapping, in one place.
      *
-     * 409 is the interesting column: four different codes land there
+     * 409 is the interesting column: five different codes land there
      * and each carries a `detail` the caller can act on without a
      * second call. The refusal IS the recovery channel, so dropping
      * `detail` here would turn "here are the three events you missed"
      * into "something changed".
+     *
+     * `citation_required` is a 409 and deliberately not a 403. It is
+     * not a statement about what this member may do — the same member
+     * may do the same thing the moment they proceed on the record or
+     * are ruled on — it is a conflict with the state of their own
+     * outstanding ask. A 403 would read as "you lack a permission",
+     * which is the one wrong lesson to teach: no leaf grants this and
+     * none can.
      */
     const mapSpineError = (
       // biome-ignore lint/suspicious/noExplicitAny: Hono's Context type is invariant; helper is only ever called inside a route handler
@@ -3117,7 +3125,8 @@ export function createApp(options: AppOptions): CreatedApp {
               ? 403
               : err.code === 'invalid_input'
                 ? 400
-                : // stale_state_rev | idempotency_conflict | coverage_gap | invalid_transition
+                : // stale_state_rev | idempotency_conflict | coverage_gap |
+                  // invalid_transition | citation_required
                   409;
         return ctx.json(
           err.detail === undefined
