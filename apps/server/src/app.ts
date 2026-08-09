@@ -42,12 +42,14 @@ import {
   PROTOCOL_HEADER,
   PROTOCOL_VERSION,
   RUNNER_VERSION_HEADER,
+  SPINE_PATHS,
 } from 'csuite-sdk/protocol';
 import {
   ActivityKindSchema,
   ActivityReportSchema,
   AddChannelMemberRequestSchema,
   AmendObjectiveRequestSchema,
+  AppendSpineEventRequestSchema,
   ApproveEnrollmentRequestSchema,
   BindSecretRequestSchema,
   BindToolSourceRequestSchema,
@@ -74,12 +76,16 @@ import {
   FsWriteCollisionSchema,
   InvokeToolRequestSchema,
   ListObjectivesQuerySchema,
+  ListSpineContractsQuerySchema,
+  ListSpineEventsQuerySchema,
+  ListSpineSubjectsQuerySchema,
   LogLevelSchema,
   NameSchema,
   PendingEnrollmentSchema,
   PushPayloadSchema,
   PushSubscriptionPayloadSchema,
   ReassignObjectiveRequestSchema,
+  RegisterSpineSubjectRequestSchema,
   RejectEnrollmentRequestSchema,
   RenameChannelRequestSchema,
   SetCustomToolRequestSchema,
@@ -101,6 +107,7 @@ import {
 import type {
   ActivityEvent,
   ActivityKind,
+  AppendSpineEventRequest,
   Attachment,
   ChannelSummary,
   InstructionBlockKind,
@@ -187,6 +194,7 @@ import type { PushSubscriptionStore } from './push/store.js';
 import type { RawBodyStore } from './raw-body-store.js';
 import { SecretsError, type SecretsStore } from './secrets.js';
 import { SESSION_COOKIE_NAME, SESSION_TTL_MS, type SessionStore } from './sessions.js';
+import { type AnnexStore, SpineError } from './spine/index.js';
 import type { TeamStore } from './team-store.js';
 import type { TelemetryStore } from './telemetry-store.js';
 import { generateBearerToken, type TokenStore } from './tokens.js';
@@ -284,6 +292,13 @@ export interface AppOptions {
    * the current document in its own field.
    */
   processDocument?: ProcessDocumentStore;
+  /**
+   * The team's spine — the append-only annex, its subjects, and the
+   * contracts folded out of them. The `/spine*` endpoints are
+   * registered iff this is provided, same opt-out pattern as
+   * `objectives`, so a test exercising chat paths carries none of it.
+   */
+  spine?: AnnexStore;
   /**
    * External Notifications registry — inbound webhook/API endpoints
    * routed to members and channels as ambient input. The
@@ -543,6 +558,7 @@ export function createApp(options: AppOptions): CreatedApp {
     secrets,
     variables,
     processDocument,
+    spine,
     notifications,
     telemetryStore,
     genaiStore,
@@ -3061,6 +3077,171 @@ export function createApp(options: AppOptions): CreatedApp {
         }
         return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
       }
+    });
+  }
+
+  // ─── Spine endpoints ──────────────────────────────────────────────
+  //
+  // The annex over HTTP. Reads are open to every authenticated member
+  // — what binds you, and what the team knows, is not privileged
+  // information — and there is exactly ONE write path for events, so
+  // no kind can acquire a second route that forgets a precondition.
+  //
+  // ONE permission leaf, `spine.author`, and it gates authoring or
+  // amending a contract. Everything else here is baseline
+  // participation. Verdict and ruling legitimacy is deliberately NOT
+  // gated: the store refuses a verdict from the assignee and a ruling
+  // from anyone but the ask's named authority, whatever leaves the
+  // caller holds, because those refusals are what the events MEAN and
+  // a permission would imply they could be granted away.
+  if (spine !== undefined) {
+    /**
+     * The typed error → HTTP mapping, in one place.
+     *
+     * 409 is the interesting column: four different codes land there
+     * and each carries a `detail` the caller can act on without a
+     * second call. The refusal IS the recovery channel, so dropping
+     * `detail` here would turn "here are the three events you missed"
+     * into "something changed".
+     */
+    const mapSpineError = (
+      // biome-ignore lint/suspicious/noExplicitAny: Hono's Context type is invariant; helper is only ever called inside a route handler
+      ctx: Context<any, string, Record<string, unknown>>,
+      err: unknown,
+    ): Response => {
+      if (err instanceof SpineError) {
+        const status =
+          err.code === 'not_found'
+            ? 404
+            : err.code === 'not_permitted'
+              ? 403
+              : err.code === 'invalid_input'
+                ? 400
+                : // stale_state_rev | idempotency_conflict | coverage_gap | invalid_transition
+                  409;
+        return ctx.json(
+          err.detail === undefined
+            ? { error: err.message, code: err.code }
+            : { error: err.message, code: err.code, detail: err.detail },
+          status,
+        );
+      }
+      return ctx.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+    };
+
+    /** Every member an event names has to be a member. */
+    const unknownMember = (name: string | undefined): string | null =>
+      name !== undefined && members.findByName(name) === null ? name : null;
+
+    // POST /spine/events — the single append path.
+    app.post(SPINE_PATHS.events, auth, async (c) => {
+      const member = c.get('member');
+      const raw = await c.req.json().catch(() => null);
+      const parsed = AppendSpineEventRequestSchema.safeParse(raw);
+      if (!parsed.success) {
+        return c.json({ error: 'invalid spine event', details: parsed.error.issues }, 400);
+      }
+      const input = parsed.data as AppendSpineEventRequest;
+
+      if (input.kind === 'specification' || input.kind === 'amendment') {
+        if (!hasPermission(member.permissions, 'spine.author')) {
+          return c.json({ error: 'requires spine.author' }, 403);
+        }
+      }
+      // Named members must exist. Assignment is how access gets
+      // granted, so this is a spelling check and not a capability
+      // judgement — nothing here refuses a member for being the wrong
+      // person for the job.
+      const named =
+        input.kind === 'specification'
+          ? [input.body.assignee, input.body.verifier, input.body.authority]
+          : input.kind === 'ask'
+            ? [input.body.authority]
+            : [];
+      for (const name of named) {
+        const missing = unknownMember(name);
+        if (missing !== null) return c.json({ error: `no such member: ${missing}` }, 400);
+      }
+
+      try {
+        const result = spine.append(input, { actor: member.name });
+        // 200 on a replay, 201 on a new event. A retry after a lost
+        // response gets the original result and a status that says it
+        // created nothing, which is the honest answer to "did my write
+        // land twice".
+        return c.json(result, result.replayed ? 200 : 201);
+      } catch (err) {
+        return mapSpineError(c, err);
+      }
+    });
+
+    // GET /spine/events — cursor + filters, complete pages.
+    app.get(SPINE_PATHS.events, auth, (c) => {
+      const parsed = ListSpineEventsQuerySchema.safeParse({
+        since_seq: c.req.query('since_seq'),
+        limit: c.req.query('limit'),
+        kind: c.req.query('kind'),
+        subject: c.req.query('subject'),
+        contract: c.req.query('contract'),
+        actor: c.req.query('actor'),
+      });
+      if (!parsed.success) {
+        return c.json({ error: 'invalid query', details: parsed.error.issues }, 400);
+      }
+      return c.json(spine.events(parsed.data));
+    });
+
+    // GET /spine/orient — the Guaranteed Pack for the caller.
+    //
+    // Composed SERVER-SIDE so recovery is one code path for every
+    // entry point: a floor signal, a declared dump signal, a stale
+    // write's refusal, or an explicit call all end up here.
+    app.get(SPINE_PATHS.orient, auth, (c) => c.json(spine.orient(c.get('member').name)));
+
+    // POST /spine/subjects — explicit registration.
+    app.post(SPINE_PATHS.subjects, auth, async (c) => {
+      const raw = await c.req.json().catch(() => null);
+      const parsed = RegisterSpineSubjectRequestSchema.safeParse(raw);
+      if (!parsed.success) {
+        return c.json({ error: 'invalid subject', details: parsed.error.issues }, 400);
+      }
+      try {
+        return c.json({ subject: spine.registerSubject(parsed.data, c.get('member').name) }, 201);
+      } catch (err) {
+        return mapSpineError(c, err);
+      }
+    });
+
+    // GET /spine/subjects — `within` resolves containment transitively.
+    app.get(SPINE_PATHS.subjects, auth, (c) => {
+      const parsed = ListSpineSubjectsQuerySchema.safeParse({
+        type: c.req.query('type'),
+        parent: c.req.query('parent'),
+        within: c.req.query('within'),
+      });
+      if (!parsed.success) {
+        return c.json({ error: 'invalid query', details: parsed.error.issues }, 400);
+      }
+      return c.json({ subjects: spine.subjects(parsed.data) });
+    });
+
+    // GET /spine/contracts — projection reads, staleness flags included.
+    app.get(SPINE_PATHS.contracts, auth, (c) => {
+      const parsed = ListSpineContractsQuerySchema.safeParse({
+        state: c.req.query('state'),
+        member: c.req.query('member'),
+        subject: c.req.query('subject'),
+      });
+      if (!parsed.success) {
+        return c.json({ error: 'invalid query', details: parsed.error.issues }, 400);
+      }
+      return c.json({ contracts: spine.contracts(parsed.data) });
+    });
+
+    app.get(`${SPINE_PATHS.contracts}/:id`, auth, (c) => {
+      const contract = spine.contract(c.req.param('id'));
+      if (contract === null) return c.json({ error: 'no such contract' }, 404);
+      return c.json({ contract });
     });
   }
 

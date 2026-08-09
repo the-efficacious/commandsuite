@@ -61,6 +61,7 @@ import { createRawBodyStore, type RawBodyStore } from './raw-body-store.js';
 import { createSqliteSecretsStore } from './secrets.js';
 import { updateServerConfigFile } from './server-config.js';
 import { SessionStore } from './sessions.js';
+import { createSqliteAnnexStore } from './spine/index.js';
 import { SqliteEventLog } from './sqlite-event-log.js';
 import { openTeamAndMembers, type TeamStore } from './team-store.js';
 import { createTelemetryStore, type TelemetryStore } from './telemetry-store.js';
@@ -428,6 +429,10 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   // moved those rows OUT of `secrets` by the time values are read.
   const variablesStore = createSqliteVariablesStore(db);
   const processDocumentStore = createSqliteProcessDocumentStore(db);
+  // The spine's annex — append-only events, subjects, revisions, and
+  // the contract projections folded out of them. Main DB handle, same
+  // idempotent-DDL-in-the-constructor idiom as every other store here.
+  const spineStore = createSqliteAnnexStore(db);
   // MUST run before `registerSecretValues` below: identity values that
   // are still in `secrets` when that call happens stay registered for
   // the life of the process, and the migration would appear to have
@@ -706,6 +711,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
     secrets: secretsStore,
     variables: variablesStore,
     processDocument: processDocumentStore,
+    spine: spineStore,
     notifications: notificationsStore,
     activityStore: activityStore,
     telemetryStore: telemetryStore,
