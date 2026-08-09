@@ -130,7 +130,7 @@ import { createSqliteFilesystemStore, LocalBlobStore } from '../../src/files/ind
 import { createMemberStore } from '../../src/members.js';
 import { createSqliteObjectivesStore } from '../../src/objectives.js';
 import { SessionStore } from '../../src/sessions.js';
-import { createSqliteAnnexStore, createSqliteCuratorStore } from '../../src/spine/index.js';
+import { createAnnexWritePath, createSqliteCuratorStore } from '../../src/spine/index.js';
 import { createTokenStoreFromMembers } from '../../src/tokens.js';
 import { mockTeamStore } from '../helpers/test-stores.js';
 
@@ -181,7 +181,8 @@ function makeApp() {
   tmpDirs.push(blobDir);
   const objectives = createSqliteObjectivesStore(db);
   const channels = createSqliteChannelStore(db);
-  const spine = createSqliteAnnexStore(db);
+  const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+  const spine = createAnnexWritePath({ db, logger });
   const spineCurator = createSqliteCuratorStore(db);
   const files = createSqliteFilesystemStore({
     db,
@@ -209,7 +210,7 @@ function makeApp() {
     spineCurator,
     files,
     version: '0.0.0',
-    logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    logger,
   });
   return { app };
 }

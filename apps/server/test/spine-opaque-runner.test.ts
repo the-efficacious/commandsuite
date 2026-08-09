@@ -124,6 +124,7 @@ describe('the opaque-runner property', () => {
     // the spine fails this until someone updates it, which is the
     // moment to ask whether the new file belongs behind this property.
     expect(files.sort()).toEqual([
+      'append.ts',
       'curator-schema.ts',
       'curator-store.ts',
       'curator.ts',

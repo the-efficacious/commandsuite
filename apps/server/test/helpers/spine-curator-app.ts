@@ -23,7 +23,7 @@ import { openDatabase } from '../../src/db.js';
 import { createMemberStore } from '../../src/members.js';
 import { SessionStore } from '../../src/sessions.js';
 import type { CuratorStore } from '../../src/spine/index.js';
-import { createSqliteAnnexStore, createSqliteCuratorStore } from '../../src/spine/index.js';
+import { createAnnexWritePath, createSqliteCuratorStore } from '../../src/spine/index.js';
 import { createTokenStoreFromMembers } from '../../src/tokens.js';
 import { mockTeamStore } from './test-stores.js';
 
@@ -73,7 +73,8 @@ export function makeCuratorApp() {
   ]);
   broker.seedMembers(members.members());
   const db = openDatabase(':memory:');
-  const spine = createSqliteAnnexStore(db);
+  const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+  const spine = createAnnexWritePath({ db, logger });
 
   /**
    * The curator store, WRAPPED so the floor-only suite can assert
@@ -115,7 +116,7 @@ export function makeCuratorApp() {
     spineCurator: curatorStore,
     now: () => clock.ms,
     version: '0.0.0',
-    logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    logger,
   });
   if (created.curator === undefined) {
     throw new Error('fixture wired a curator store but createApp built no curator');
@@ -158,6 +159,7 @@ export function makeCuratorApp() {
     /** Every lease invalidation, i.e. every signal the curator acted on. */
     signalActions,
     spine,
+    annex: spine.store,
     broker,
     members,
     sessions,

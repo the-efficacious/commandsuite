@@ -109,16 +109,20 @@ export interface AppendResult {
 }
 
 /**
- * The annex's public surface.
+ * The annex's public surface — READS ONLY, and the omission is load-bearing.
  *
- * There is exactly one write method for events and it only appends.
- * No update, no delete, no "fix this row" — the absence is the
- * architecture, and `spine-boundary.test-d.ts` puts the hostile calls
- * in front of the compiler so the absence cannot rot into a comment.
+ * There is exactly one write method for events and it only appends; it
+ * lives on `AnnexWriter` below, and this type deliberately does not
+ * carry it. Everything in the server that is handed an annex is handed
+ * THIS type, so a new module cannot append even by accident: the call
+ * does not typecheck. See `append.ts` for why that replaced a grep, and
+ * `spine-boundary.test-d.ts` for the hostile calls put in front of the
+ * compiler so the absence cannot rot into a comment.
+ *
+ * No update, no delete, no "fix this row" — that absence is the
+ * architecture, and it holds on the writer too.
  */
 export interface AnnexStore {
-  /** The single append path. Every rule in the system is applied here. */
-  append(input: AppendSpineEventRequest, ctx: AppendContext): AppendResult;
   event(id: string): SpineEvent | null;
   /** Cursor + filters, complete pages. `subject` resolves containment transitively. */
   events(query?: ListSpineEventsQuery): ListSpineEventsResponse;
@@ -138,6 +142,23 @@ export interface AnnexStore {
   orient(member: string, now?: number): OrientPack;
   /** Drop every projection and refold the stream. The annex is the only truth. */
   rebuildProjections(): void;
+}
+
+/**
+ * The write-capable handle, and the ONE name that grants it.
+ *
+ * Exactly one module in `apps/server/src` may import this type or the
+ * factory that returns it — `spine/append.ts`, which wraps it in the
+ * hooked write path everything else uses. `spine-append-callers.test.ts`
+ * asserts that set over the import graph, because a handle can arrive
+ * as a parameter and the compiler cannot see where a parameter came
+ * from. The two nets together are the property: you cannot call
+ * `append` without this type, and you cannot get this type without an
+ * import the scanner reads.
+ */
+export interface AnnexWriter extends AnnexStore {
+  /** The single append path. Every rule in the system is applied here. */
+  append(input: AppendSpineEventRequest, ctx: AppendContext): AppendResult;
 }
 
 // ─── Rows ─────────────────────────────────────────────────────────────
@@ -423,7 +444,7 @@ function contractInBody(kind: SpineEventKind, body: SpineEventBody): string | nu
 
 // ─── The store ────────────────────────────────────────────────────────
 
-class SqliteAnnexStore implements AnnexStore {
+class SqliteAnnexStore implements AnnexWriter {
   private readonly db: DatabaseSyncInstance;
 
   constructor(db: DatabaseSyncInstance) {
@@ -2263,6 +2284,13 @@ class SqliteAnnexStore implements AnnexStore {
   }
 }
 
-export function createSqliteAnnexStore(db: DatabaseSyncInstance): AnnexStore {
+/**
+ * The only way to obtain an append-capable annex.
+ *
+ * Not re-exported from `spine/index.js`: the barrel hands out
+ * `createAnnexWritePath`, so a consumer reaching for a writer has to
+ * name this module explicitly and the import scanner sees it.
+ */
+export function createSqliteAnnexStore(db: DatabaseSyncInstance): AnnexWriter {
   return new SqliteAnnexStore(db);
 }

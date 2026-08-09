@@ -21,12 +21,17 @@ import type {
 } from 'csuite-sdk/types';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { type DatabaseSyncInstance, openDatabase } from '../src/db.js';
-import { type AnnexStore, createSqliteAnnexStore, SpineError } from '../src/spine/index.js';
+import { SpineError } from '../src/spine/index.js';
+// The WRITE-CAPABLE handle, imported from the store module rather than
+// the barrel. `spine-append-callers.test.ts` asserts that exactly one
+// module in `src/` may do this; tests are not `src/`, and a store unit
+// suite that could not append would be testing nothing.
+import { type AnnexWriter, createSqliteAnnexStore } from '../src/spine/store.js';
 
 const T0 = Date.UTC(2026, 7, 8, 12, 0, 0);
 
 let db: DatabaseSyncInstance;
-let annex: AnnexStore;
+let annex: AnnexWriter;
 let clock = T0;
 
 /** Distinct instants, so `at` ordering is never a coin flip. */

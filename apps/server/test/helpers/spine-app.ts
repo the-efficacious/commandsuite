@@ -27,7 +27,7 @@ import { createApp } from '../../src/app.js';
 import { openDatabase } from '../../src/db.js';
 import { createMemberStore } from '../../src/members.js';
 import { SessionStore } from '../../src/sessions.js';
-import { createSqliteAnnexStore } from '../../src/spine/index.js';
+import { createAnnexWritePath } from '../../src/spine/index.js';
 import { createTokenStoreFromMembers } from '../../src/tokens.js';
 import { mockTeamStore } from './test-stores.js';
 
@@ -58,7 +58,8 @@ export function makeSpineApp() {
     { name: 'cora', role: { title: 'engineer', description: '' }, permissions: [], token: CORA },
   ]);
   const db = openDatabase(':memory:');
-  const spine = createSqliteAnnexStore(db);
+  const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+  const spine = createAnnexWritePath({ db, logger });
   const { app } = createApp({
     broker,
     members,
@@ -67,9 +68,9 @@ export function makeSpineApp() {
     teamStore: mockTeamStore({ name: 'spine-team', context: '', permissionPresets: {} }),
     spine,
     version: '0.0.0',
-    logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    logger,
   });
-  return { app, spine, members, db };
+  return { app, spine, annex: spine.store, members, db };
 }
 
 export type SpineApp = ReturnType<typeof makeSpineApp>['app'];

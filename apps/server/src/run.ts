@@ -61,7 +61,7 @@ import { createRawBodyStore, type RawBodyStore } from './raw-body-store.js';
 import { createSqliteSecretsStore } from './secrets.js';
 import { updateServerConfigFile } from './server-config.js';
 import { SessionStore } from './sessions.js';
-import { createSqliteAnnexStore, createSqliteCuratorStore } from './spine/index.js';
+import { createAnnexWritePath, createSqliteCuratorStore } from './spine/index.js';
 import { SqliteEventLog } from './sqlite-event-log.js';
 import { openTeamAndMembers, type TeamStore } from './team-store.js';
 import { createTelemetryStore, type TelemetryStore } from './telemetry-store.js';
@@ -432,7 +432,11 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   // The spine's annex — append-only events, subjects, revisions, and
   // the contract projections folded out of them. Main DB handle, same
   // idempotent-DDL-in-the-constructor idiom as every other store here.
-  const spineStore = createSqliteAnnexStore(db);
+  //
+  // A WRITE PATH, not a store: the append-capable handle never leaves
+  // `spine/append.ts`, so what this composition root holds — and hands
+  // to `createApp` — is a read surface plus one hooked `append`.
+  const spineStore = createAnnexWritePath({ db, logger: log });
   // The curator's bookkeeping. A SEPARATE store from the annex on
   // purpose: the annex records what members did and is the only truth
   // about the room; these five tables record what the system spent of

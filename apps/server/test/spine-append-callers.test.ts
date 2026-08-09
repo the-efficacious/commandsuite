@@ -1,25 +1,50 @@
 /**
- * ONE CALLER OF `AnnexStore.append`, and the curator hook hangs off it.
+ * ONE WRITE PATH INTO THE ANNEX, held structurally.
  *
- * The class-1 injection fires from a post-commit hook on the single
- * append route. That arrangement is only sound while the route really
- * is the single append path — a second caller anywhere in the server
- * would be a write whose addressees are never told, and it would be
- * invisible: the annex would be perfectly correct, the event would be
- * there, and the member who needed to know would simply never hear.
- * Silence has no error message.
+ * The curator's class-1 injection and the probe engine's arming both
+ * hang off post-commit hooks on the append path. That arrangement is
+ * only sound while there really is one path — a second write anywhere
+ * in the server would be an event whose addressees are never told and
+ * whose checks are never armed, and it would be INVISIBLE: the annex
+ * would be perfectly correct, the event would be there, and the member
+ * who needed to know would simply never hear. Silence has no error
+ * message.
  *
- * The next phase makes this live rather than theoretical. The probe
- * engine writes `observation` events, and a probe discharging a
- * `waiting_for` contract without telling its assignee is precisely the
- * failure class 1 exists to prevent. So the invariant is enforced
- * from outside now, before there is anything to break it.
+ * WHAT THIS FILE USED TO DO, AND WHY IT STOPPED. Phase 3 grepped `src/`
+ * for `.append(` on a list of plausible receiver names —
+ * `spine|annex|store|annexStore|spineStore`. The verifier flagged it as
+ * the condition of phase 4 for the reason the regex itself admits: the
+ * failure it exists to catch is a NEW MODULE holding the store under a
+ * NEW NAME, and an allowlist of names cannot see one. `this.writer`,
+ * `deps.a`, or a destructured `{ append }` all walk straight past it.
+ * The probe engine is that new module, so the heuristic had to go
+ * before it landed.
  *
- * WHY A GREP. The property is about the SHAPE OF THE CALL GRAPH, and a
- * behavioural test can only show that the paths it happened to drive
- * went through the hook. This is checkable exhaustively, on every run,
- * in milliseconds — and, like the opaque-runner scanner beside it, it
- * is itself tested in both directions.
+ * WHAT HOLDS IT NOW — two nets, and neither is a spelling.
+ *
+ *   THE COMPILER. `AnnexStore`, the type every consumer receives, has
+ *   no `append`. `spine-boundary.test-d.ts` puts that in front of
+ *   `tsc`. A new module cannot append by accident because the call does
+ *   not typecheck, whatever it calls its variable.
+ *
+ *   THE IMPORT GRAPH, asserted below. A writer can also arrive as a
+ *   parameter, which the compiler cannot trace, so the second net is
+ *   about who can OBTAIN one: naming `AnnexWriter` or
+ *   `createSqliteAnnexStore`. Those names appear in an import
+ *   statement, which is fixed text in the importing file — an alias
+ *   (`import { AnnexWriter as W }`) still contains the exported name —
+ *   so the set of modules that can hold a writer is exactly the set
+ *   this scan returns. One entry, and it is the write path itself.
+ *
+ * The two together are the property: you cannot call `append` without
+ * the writer type, and you cannot reach the writer type without an
+ * import this test reads.
+ *
+ * WHY A SCAN AT ALL, when the compiler does most of it. Because the
+ * remaining hole is a parameter, and a behavioural test can only show
+ * that the paths it happened to drive went through the hook. This is
+ * checkable exhaustively, on every run, in milliseconds — and, like the
+ * opaque-runner scanner beside it, it is tested in both directions.
  */
 
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -36,105 +61,187 @@ afterEach(() => {
 const SRC = fileURLToPath(new URL('../src/', import.meta.url));
 
 /**
- * `<something>.append(` where `<something>` is a plausible annex
- * handle. Deliberately loose on the receiver name and tight on the
- * method: the failure mode is a new module holding the store under a
- * new name, so matching only the exact spelling `spine.append(` would
- * miss the case this exists for.
+ * The two exported names that grant an append-capable annex, and the
+ * only route to one. Kept as data rather than baked into a regex so a
+ * third grant (there should never be one) is a one-line edit here and a
+ * failing test everywhere else.
  */
-const APPEND_CALL = /\b(spine|annex|store|annexStore|spineStore)\.append\s*\(/g;
+const WRITE_GRANTS = ['AnnexWriter', 'createSqliteAnnexStore'] as const;
+
+/**
+ * The module allowed to hold a writer. The store defines it; the write
+ * path is the single consumer, and it wraps it in the hooked surface
+ * everything else receives.
+ */
+const ALLOWED = ['spine/append.ts', 'spine/store.ts'];
+
+/**
+ * Import statements, whole, including multi-line ones.
+ *
+ * Matching the STATEMENT rather than the bare name is what makes this
+ * about the import graph instead of about prose: `AnnexWriter` written
+ * in a comment (this file's own subject matter, and several of the
+ * spine's headers) is not a grant, and a scan that counted it would
+ * either be noisy or would train people to stop writing the comments.
+ */
+const IMPORT_STATEMENT = /^\s*import\s[\s\S]*?from\s+['"][^'"]+['"];?$/gm;
 
 interface Hit {
   file: string;
-  line: number;
-  text: string;
+  grant: string;
+  statement: string;
 }
 
-function scan(dir = SRC, prefix = ''): Hit[] {
+/** Every `src/` module whose imports name a write grant. */
+function scanImports(dir = SRC, prefix = ''): Hit[] {
   const hits: Hit[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const label = `${prefix}${entry.name}`;
     if (entry.isDirectory()) {
-      hits.push(...scan(join(dir, entry.name), `${label}/`));
+      hits.push(...scanImports(join(dir, entry.name), `${label}/`));
       continue;
     }
     if (!entry.name.endsWith('.ts')) continue;
-    // The store's own file defines `append`; it is the callee, not a
-    // caller, and excluding it by path keeps the rule readable.
-    if (label === 'spine/store.ts') continue;
     const source = readFileSync(join(dir, entry.name), 'utf8');
-    source.split('\n').forEach((text, i) => {
-      APPEND_CALL.lastIndex = 0;
-      if (APPEND_CALL.test(text)) hits.push({ file: label, line: i + 1, text: text.trim() });
-    });
+    for (const statement of source.match(IMPORT_STATEMENT) ?? []) {
+      for (const grant of WRITE_GRANTS) {
+        if (new RegExp(`\\b${grant}\\b`).test(statement)) {
+          hits.push({ file: label, grant, statement: statement.trim() });
+        }
+      }
+    }
   }
   return hits;
 }
 
-describe('the annex has one append caller, and the curator hook is on it', () => {
-  it('finds exactly one call site, in app.ts', () => {
-    const hits = scan();
-    // FILES, not line numbers. A line pin fails on every edit above it
-    // and teaches people to update the number without reading why —
-    // and the property is "one caller, and it is the route", which a
-    // line number does not express any better than a filename does.
-    // The `line` field is carried anyway so a failure can say where.
+/**
+ * Any `.append(` in the spine module, whatever the receiver.
+ *
+ * NO RECEIVER ALLOWLIST — that is the whole difference from what this
+ * replaced. Inside `src/spine/` the annex is the only thing with an
+ * `append`, so every call is a candidate and the exemptions are named
+ * by FILE: the store defines the method, and the write path is the one
+ * caller. A probe engine calling `this.writer.append(…)` shows up here
+ * even though no name in it was foreseen.
+ */
+const ANY_APPEND_CALL = /\.append\s*\(/;
+
+function scanSpineAppendCalls(): { file: string; line: number; text: string }[] {
+  const out: { file: string; line: number; text: string }[] = [];
+  const walk = (dir: string, prefix: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const label = `${prefix}${entry.name}`;
+      if (entry.isDirectory()) {
+        walk(join(dir, entry.name), `${label}/`);
+        continue;
+      }
+      if (!entry.name.endsWith('.ts')) continue;
+      const source = readFileSync(join(dir, entry.name), 'utf8');
+      source.split('\n').forEach((text, i) => {
+        if (ANY_APPEND_CALL.test(text)) out.push({ file: label, line: i + 1, text: text.trim() });
+      });
+    }
+  };
+  walk(join(SRC, 'spine'), 'spine/');
+  return out;
+}
+
+describe('the annex has one write path, and the hooks are on it', () => {
+  it('grants an append-capable annex to exactly one module', () => {
+    const hits = scanImports();
     expect(
-      hits.map((h) => h.file),
-      `a second annex write path appeared: ${hits.map((h) => `${h.file}:${h.line}`).join(', ')}`,
-    ).toEqual(['app.ts']);
+      [...new Set(hits.map((h) => h.file))].sort(),
+      `a second module can obtain an annex writer: ${hits
+        .map((h) => `${h.file} (${h.grant})`)
+        .join(', ')}`,
+    ).toEqual(['spine/append.ts']);
   });
 
-  it('has the curator hook on that same call site', () => {
-    // A single call site with no hook on it satisfies the test above
-    // just as happily. This is the half that makes it mean something.
-    const source = readFileSync(join(SRC, 'app.ts'), 'utf8');
-    const call = source.indexOf('spine.append(');
-    expect(call, 'the append call must exist to hang a hook off').toBeGreaterThan(0);
-    const window = source.slice(call, call + 1600);
-    expect(window).toContain('curator.onAppend(result)');
+  it('names both grants — neither route to a writer is unwatched', () => {
+    // The assertion above passes just as happily if one of the two
+    // names stopped being a grant (say `createSqliteAnnexStore` were
+    // retyped to return the read surface and a third factory appeared).
+    // Both have to be seen, from the one allowed module, for the set to
+    // mean what it says.
+    const grants = scanImports()
+      .filter((h) => h.file === 'spine/append.ts')
+      .map((h) => h.grant);
+    expect(new Set(grants)).toEqual(new Set(WRITE_GRANTS));
+  });
+
+  it('has no `.append(` inside the spine outside the store and the write path', () => {
+    const calls = scanSpineAppendCalls().filter((c) => !ALLOWED.includes(c.file));
+    expect(
+      calls.map((c) => `${c.file}:${c.line}`),
+      `a second annex write inside the spine: ${calls
+        .map((c) => `${c.file}:${c.line} — ${c.text}`)
+        .join(' | ')}`,
+    ).toEqual([]);
+  });
+
+  it('runs the registered hooks on the one path, and the route awaits it', () => {
+    // A single write path with no hooks on it satisfies everything
+    // above just as happily. This is the half that makes it mean
+    // something: the path dispatches to its hook list, and the append
+    // route waits for that to finish before it answers.
+    const path = readFileSync(join(SRC, 'spine/append.ts'), 'utf8');
+    expect(path).toContain('for (const hook of this.hooks)');
+    expect(path).toContain('await hook(result)');
+
+    const app = readFileSync(join(SRC, 'app.ts'), 'utf8');
+    expect(app).toContain('await spine.append(input, { actor: member.name })');
+    expect(app, 'the curator must register itself on the write path').toContain(
+      'spine.onAppend((result) => built.onAppend(result))',
+    );
   });
 
   it('descends: a second write path one directory down cannot hide', () => {
-    // The real tree has its only caller at the top level, so "does the
-    // scan recurse" is invisible to the assertion above — a mutation
-    // deleting the descent survived the whole suite. And the descent is
-    // exactly what phase 4 needs: a probe engine arrives as
-    // `src/spine/probes/…` or `src/probes/…`, one directory down, and
-    // that is where the second append path will actually appear.
+    // The real tree has its only grant at `spine/append.ts`, so "does
+    // the scan recurse" is invisible to the assertions above — a
+    // mutation deleting the descent survived the whole suite last
+    // phase. And the descent is exactly what phase 4 needed: the probe
+    // engine arrives inside `src/spine/`, one directory down.
     const nested = mkdtempSync(join(tmpdir(), 'spine-append-scan-'));
     tmpDirs.push(nested);
     mkdirSync(join(nested, 'probes'));
     writeFileSync(join(nested, 'top.ts'), 'const x = 1;\n');
     writeFileSync(
       join(nested, 'probes', 'engine.ts'),
-      "const result = spine.append(observation, { actor: 'probe:' + id });\n",
+      "import { type AnnexWriter } from '../store.js';\nconst w: AnnexWriter = null as never;\n",
     );
-    const hits = scan(nested);
-    expect(hits.map((h) => h.file)).toEqual(['probes/engine.ts']);
+    expect(scanImports(nested).map((h) => h.file)).toEqual(['probes/engine.ts']);
   });
 
-  it('can fail: a planted second caller is found, and a definition is not', () => {
+  it('can fail: a planted grant is found, an aliased one is too, prose is not', () => {
     // The positive control on the scanner itself. Run before trusting
-    // the negative one — a check that cannot pass is as broken as one
-    // that cannot fail, and the tell is that both cases look alike.
-    const planted = [
-      'const result = spine.append(input, { actor: probe });',
-      'const r = annexStore.append(evt, ctx);',
-    ].filter((line) => {
-      APPEND_CALL.lastIndex = 0;
-      return APPEND_CALL.test(line);
-    });
-    expect(planted).toHaveLength(2);
+    // the negatives — a check that cannot pass is as broken as one that
+    // cannot fail, and the tell is that both cases look alike.
+    const planted = mkdtempSync(join(tmpdir(), 'spine-append-plant-'));
+    tmpDirs.push(planted);
+    writeFileSync(
+      join(planted, 'sneaky.ts'),
+      // Aliased on import: the local name is gone, the specifier is not.
+      "import { createSqliteAnnexStore as build } from './spine/store.js';\nconst s = build(db);\n",
+    );
+    writeFileSync(
+      join(planted, 'multiline.ts'),
+      "import {\n  type AnnexWriter,\n  type AppendResult,\n} from './spine/store.js';\n",
+    );
+    writeFileSync(
+      join(planted, 'prose.ts'),
+      // The word in a comment and in a type position that came from
+      // somewhere else. Neither is a grant, and a scanner that flagged
+      // them would make the spine's headers unwritable.
+      '/** Only `AnnexWriter` may append. */\nconst note = "createSqliteAnnexStore";\n',
+    );
+    const hits = scanImports(planted);
+    expect(hits.map((h) => h.file).sort()).toEqual(['multiline.ts', 'sneaky.ts']);
 
-    const notCalls = [
-      '  append(input: AppendSpineEventRequest, ctx: AppendContext): AppendResult {',
-    ];
-    expect(
-      notCalls.filter((line) => {
-        APPEND_CALL.lastIndex = 0;
-        return APPEND_CALL.test(line);
-      }),
-    ).toEqual([]);
+    // And the `.append(` half, on receivers no allowlist would have had.
+    expect(ANY_APPEND_CALL.test('const r = this.writer.append(evt, ctx);')).toBe(true);
+    expect(ANY_APPEND_CALL.test('const r = deps.a.append(evt, ctx);')).toBe(true);
+    expect(ANY_APPEND_CALL.test('  append(input: AppendSpineEventRequest): AppendResult {')).toBe(
+      false,
+    );
   });
 });

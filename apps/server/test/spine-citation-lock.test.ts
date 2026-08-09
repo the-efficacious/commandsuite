@@ -35,13 +35,14 @@ import type { SpineAsk, SpineCitationRequiredDetail, SpineEventKind } from 'csui
 import { SPINE_CITATION_LOCKED_KINDS } from 'csuite-sdk/types';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { type DatabaseSyncInstance, openDatabase } from '../src/db.js';
-import { type AnnexStore, createSqliteAnnexStore, SpineError } from '../src/spine/index.js';
+import { SpineError } from '../src/spine/index.js';
+import { type AnnexWriter, createSqliteAnnexStore } from '../src/spine/store.js';
 import { authed, LEA, makeSpineApp, post, RUNE } from './helpers/spine-app.js';
 
 const T0 = Date.UTC(2026, 7, 9, 9, 0, 0);
 
 let db: DatabaseSyncInstance;
-let annex: AnnexStore;
+let annex: AnnexWriter;
 let clock = T0;
 let ops = 0;
 

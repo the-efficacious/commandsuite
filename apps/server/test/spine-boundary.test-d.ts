@@ -30,8 +30,33 @@
  */
 
 import type { AnnexStore } from '../src/spine/index.js';
+import type { AnnexWriter } from '../src/spine/store.js';
 
-declare const annex: AnnexStore;
+/**
+ * The WRITE-CAPABLE handle. Every hostile call below is made against
+ * it, because a negative asserted against a type with no `append` at
+ * all would pass for the wrong reason — the boundary being tested is
+ * "which appends the compiler accepts", not "is there an append".
+ */
+declare const annex: AnnexWriter;
+
+/**
+ * The read surface, and the fourth architectural claim (phase 4): the
+ * handle every consumer of the annex receives CANNOT APPEND. The
+ * curator, the probe engine and 6,000 lines of route layer all hold
+ * this type, so a second write path is a type error at its call site
+ * rather than a grep somebody has to keep current.
+ */
+declare const readOnly: AnnexStore;
+
+// @ts-expect-error — no `append` on the read surface. There is exactly
+// one way to obtain one (`spine/append.ts`), and it hooks the write.
+readOnly.append({ kind: 'discussion', body: { body: 'hi' } }, { actor: 'lea' });
+
+// The positive control for THAT claim: the read surface is a real,
+// usable annex — the split removed one method, not the store.
+const _readable = readOnly.contract('evt_1');
+void _readable;
 
 // ─── The positive control ────────────────────────────────────────────
 // If the public surface stopped being usable, every negative below

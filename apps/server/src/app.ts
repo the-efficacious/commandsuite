@@ -199,7 +199,7 @@ import type { RawBodyStore } from './raw-body-store.js';
 import { SecretsError, type SecretsStore } from './secrets.js';
 import { SESSION_COOKIE_NAME, SESSION_TTL_MS, type SessionStore } from './sessions.js';
 import {
-  type AnnexStore,
+  type AnnexWritePath,
   type Curator,
   type CuratorStore,
   createCurator,
@@ -307,8 +307,14 @@ export interface AppOptions {
    * contracts folded out of them. The `/spine*` endpoints are
    * registered iff this is provided, same opt-out pattern as
    * `objectives`, so a test exercising chat paths carries none of it.
+   *
+   * A WRITE PATH rather than a store, and the difference is the
+   * invariant: `AnnexWritePath.store` is the read surface and has no
+   * `append`, so nothing in this 6,000-line file can reach the annex
+   * except through `spine.append`, where the post-commit hooks are.
+   * See `spine/append.ts`.
    */
-  spine?: AnnexStore;
+  spine?: AnnexWritePath;
   /**
    * The curator's bookkeeping — leases, receipts, the injection ledger
    * and the per-member policy rows.
@@ -687,13 +693,19 @@ export function createApp(options: AppOptions): CreatedApp {
   let curator: Curator | undefined;
   if (spine !== undefined && spineCurator !== undefined) {
     const built = createCurator({
-      annex: spine,
+      annex: spine.store,
       store: spineCurator,
       broker,
       logger,
       now,
     });
     curator = built;
+    // The class-1 hook, registered on the ONE write path. Phase 3
+    // called this from the append route; it moved here when the probe
+    // engine became a second writer, so that "every committed event is
+    // seen by the curator" stopped depending on which route did the
+    // writing.
+    spine.onAppend((result) => built.onAppend(result));
     const sweepInterval = setInterval(() => {
       void built.sweep().catch((err) => {
         logger.warn('spine curator sweep failed', {
@@ -3170,6 +3182,10 @@ export function createApp(options: AppOptions): CreatedApp {
   // caller holds, because those refusals are what the events MEAN and
   // a permission would imply they could be granted away.
   if (spine !== undefined) {
+    // The READ surface. It has no `append`, so every route below that
+    // wants to change the annex has to go through `spine.append` and
+    // its post-commit hooks — enforced by the compiler, not by review.
+    const annex = spine.store;
     /**
      * The typed error → HTTP mapping, in one place.
      *
@@ -3272,27 +3288,18 @@ export function createApp(options: AppOptions): CreatedApp {
       }
 
       try {
-        const result = spine.append(input, { actor: member.name });
-        // POST-COMMIT, and awaited rather than fired and forgotten.
+        // AWAITED, and the await is the contract rather than a style.
         //
-        // Awaited because class 1 is the class that must not wait for
-        // a tick — an ask naming you should be in your sink before the
-        // asker's tool call returns — and because a hook nobody awaits
-        // is a hook no test can observe without a sleep.
-        //
-        // Its failure never fails the append. The event is already in
-        // the annex; refusing the response now would tell the caller
-        // their write did not land, which is the one thing that is not
-        // true. The curator swallows its own push failures; this catch
-        // is the backstop for anything else.
-        if (curator !== undefined) {
-          await curator.onAppend(result).catch((err: unknown) => {
-            logger.warn('spine curator append hook failed', {
-              event: result.event.id,
-              error: err instanceof Error ? err.message : String(err),
-            });
-          });
-        }
+        // The write path runs its post-commit hooks — the curator's
+        // class-1 injection, the probe engine's arming — before it
+        // resolves, because an ask naming you should be in your sink
+        // before the asker's tool call returns, and because a hook
+        // nobody awaits is a hook no test can observe without a sleep.
+        // A hook's failure never fails the append: the event is already
+        // in the annex, and refusing the response now would tell the
+        // caller their write did not land, which is the one thing that
+        // is not true.
+        const result = await spine.append(input, { actor: member.name });
         // 200 on a replay, 201 on a new event. A retry after a lost
         // response gets the original result and a status that says it
         // created nothing, which is the honest answer to "did my write
@@ -3316,7 +3323,7 @@ export function createApp(options: AppOptions): CreatedApp {
       if (!parsed.success) {
         return c.json({ error: 'invalid query', details: parsed.error.issues }, 400);
       }
-      const page = spine.events(parsed.data);
+      const page = annex.events(parsed.data);
       // A read that reached the head proves the member is caught up to
       // the head; a partial page proves only as far as it got. Framing
       // the receipt on the last event RETURNED — rather than on
@@ -3333,7 +3340,7 @@ export function createApp(options: AppOptions): CreatedApp {
     // built from — and finding one by paging a stream that only grows
     // is a scan that gets slower forever.
     app.get(`${SPINE_PATHS.events}/:id`, auth, (c) => {
-      const event = spine.event(c.req.param('id'));
+      const event = annex.event(c.req.param('id'));
       if (event === null) return c.json({ error: 'no such event' }, 404);
       // A BY-ID READ ADVANCES NOTHING, and this is the one place that
       // rule has to be written down because the opposite is so
@@ -3370,7 +3377,7 @@ export function createApp(options: AppOptions): CreatedApp {
     // move a receipt, and the cleanest way to guarantee that is for
     // the only receipt-moving code to live on read paths.
     app.get(SPINE_PATHS.orient, auth, (c) => {
-      const pack = spine.orient(c.get('member').name);
+      const pack = annex.orient(c.get('member').name);
       curator?.onOrient(c.get('member').name, pack, JSON.stringify(pack).length);
       return c.json(pack);
     });
@@ -3383,7 +3390,7 @@ export function createApp(options: AppOptions): CreatedApp {
         return c.json({ error: 'invalid subject', details: parsed.error.issues }, 400);
       }
       try {
-        return c.json({ subject: spine.registerSubject(parsed.data, c.get('member').name) }, 201);
+        return c.json({ subject: annex.registerSubject(parsed.data, c.get('member').name) }, 201);
       } catch (err) {
         return mapSpineError(c, err);
       }
@@ -3399,7 +3406,7 @@ export function createApp(options: AppOptions): CreatedApp {
       if (!parsed.success) {
         return c.json({ error: 'invalid query', details: parsed.error.issues }, 400);
       }
-      return c.json({ subjects: spine.subjects(parsed.data) });
+      return c.json({ subjects: annex.subjects(parsed.data) });
     });
 
     // GET /spine/contracts — projection reads, staleness flags included.
@@ -3412,11 +3419,11 @@ export function createApp(options: AppOptions): CreatedApp {
       if (!parsed.success) {
         return c.json({ error: 'invalid query', details: parsed.error.issues }, 400);
       }
-      return c.json({ contracts: spine.contracts(parsed.data) });
+      return c.json({ contracts: annex.contracts(parsed.data) });
     });
 
     app.get(`${SPINE_PATHS.contracts}/:id`, auth, (c) => {
-      const contract = spine.contract(c.req.param('id'));
+      const contract = annex.contract(c.req.param('id'));
       if (contract === null) return c.json({ error: 'no such contract' }, 404);
       return c.json({ contract });
     });
@@ -3481,7 +3488,7 @@ export function createApp(options: AppOptions): CreatedApp {
           // A level on a contract that does not exist is a level that
           // will never fire, and it would sit in the config screen
           // forever looking like it was doing something.
-          if (spine.contract(sub.contract) === null) {
+          if (annex.contract(sub.contract) === null) {
             return c.json({ error: `no such contract: ${sub.contract}` }, 404);
           }
           activeCurator.setSubscription(

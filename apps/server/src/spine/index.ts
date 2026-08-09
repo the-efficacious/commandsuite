@@ -6,6 +6,8 @@
  * nothing reaches past it into a table or a row shape.
  */
 
+export type { AnnexWritePath, AppendHook } from './append.js';
+export { createAnnexWritePath } from './append.js';
 export type { Curator, CuratorOptions, OrientLike } from './curator.js';
 export { createCurator } from './curator.js';
 export {
@@ -17,5 +19,9 @@ export type { CuratorStore, LeaseRecord, LeaseState, ReceiptVia } from './curato
 export { createSqliteCuratorStore } from './curator-store.js';
 export type { SpineErrorCode, SpineErrorDetail } from './errors.js';
 export { SpineError, staleStateRev } from './errors.js';
+// NO `createSqliteAnnexStore` AND NO `AnnexWriter` HERE, deliberately.
+// The barrel hands out the read surface and the hooked write path; a
+// consumer that wants a raw append-capable handle has to name
+// `./store.js` itself, which is exactly what the import scanner reads.
 export type { AnnexStore, AppendContext, AppendResult } from './store.js';
-export { createSqliteAnnexStore, SPINE_EVENTS_DEFAULT_LIMIT } from './store.js';
+export { SPINE_EVENTS_DEFAULT_LIMIT } from './store.js';

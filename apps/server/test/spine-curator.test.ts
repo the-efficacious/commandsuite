@@ -1371,7 +1371,7 @@ describe('a restarted curator does not replay the backlog', () => {
     // A SECOND curator over the same stores — a process restart, with a
     // full backlog sitting unswept in front of it.
     const restarted = createCurator({
-      annex: harness.spine,
+      annex: harness.annex,
       store: harness.curatorStore,
       broker: harness.broker,
       logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
