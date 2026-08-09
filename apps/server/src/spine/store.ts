@@ -132,6 +132,16 @@ export interface AnnexStore {
 
 // ─── Rows ─────────────────────────────────────────────────────────────
 
+/**
+ * An event row as every read selects it: the event, its projected
+ * contract, and its revision JOINED IN.
+ *
+ * The join is in the row rather than in a second lookup because an
+ * event renders on the wire in four places — the stream, a stale
+ * refusal's delta, orient's rulings, and an append's own response —
+ * and a hydration step that each of them has to remember is a
+ * hydration step three of them will eventually forget.
+ */
 interface EventRow {
   seq: number;
   id: string;
@@ -139,6 +149,12 @@ interface EventRow {
   class: string;
   subject_id: string | null;
   revision_id: string | null;
+  rev_id?: string | null;
+  rev_subject?: string | null;
+  rev_value?: string | null;
+  rev_how?: string | null;
+  rev_source?: string | null;
+  rev_at?: string | null;
   actor: string;
   authored_by: string | null;
   at: string;
@@ -299,6 +315,17 @@ function parseJson<T>(raw: string, what: string): T {
   }
 }
 
+/**
+ * The columns every event read selects. One constant, so "the stream
+ * hydrates and the delta does not" is not a state this store can reach.
+ */
+const EVENT_SELECT = `e.*, i.contract_id, i.state_rev,
+         r.id AS rev_id, r.subject_id AS rev_subject, r.value AS rev_value,
+         r.how AS rev_how, r.source AS rev_source, r.at AS rev_at`;
+const EVENT_FROM = `FROM spine_events e
+       LEFT JOIN spine_event_index i ON i.seq = e.seq
+       LEFT JOIN spine_revisions r ON r.id = e.revision_id`;
+
 function rowToEvent(row: EventRow): SpineEvent {
   return {
     seq: row.seq,
@@ -306,7 +333,17 @@ function rowToEvent(row: EventRow): SpineEvent {
     kind: row.kind as SpineEventKind,
     class: row.class as SpineEventClass,
     subject: row.subject_id,
-    revision: row.revision_id,
+    revision:
+      row.rev_id == null
+        ? null
+        : {
+            id: row.rev_id,
+            subject: row.rev_subject as string,
+            value: row.rev_value as string,
+            how: row.rev_how as SpineRevision['how'],
+            source: row.rev_source as string,
+            at: row.rev_at as string,
+          },
     actor: row.actor,
     authoredBy: row.authored_by,
     at: row.at,
@@ -519,13 +556,9 @@ class SqliteAnnexStore implements AnnexStore {
   // ─── Events ─────────────────────────────────────────────────────
 
   event(id: string): SpineEvent | null {
-    const row = this.db
-      .prepare(
-        `SELECT e.*, i.contract_id, i.state_rev
-         FROM spine_events e LEFT JOIN spine_event_index i ON i.seq = e.seq
-         WHERE e.id = ?`,
-      )
-      .get(id) as EventRow | undefined;
+    const row = this.db.prepare(`SELECT ${EVENT_SELECT} ${EVENT_FROM} WHERE e.id = ?`).get(id) as
+      | EventRow
+      | undefined;
     return row ? rowToEvent(row) : null;
   }
 
@@ -565,8 +598,7 @@ class SqliteAnnexStore implements AnnexStore {
     }
     const rows = this.db
       .prepare(
-        `SELECT e.*, i.contract_id, i.state_rev
-         FROM spine_events e LEFT JOIN spine_event_index i ON i.seq = e.seq
+        `SELECT ${EVENT_SELECT} ${EVENT_FROM}
          WHERE ${where.join(' AND ')}
          ORDER BY e.seq ASC
          LIMIT ?`,
@@ -802,8 +834,12 @@ class SqliteAnnexStore implements AnnexStore {
             'corrects.',
           {
             contract: contract.id,
-            expectedStateRev: parsed.expectedStateRev ?? contract.stateRev,
+            state: contract.state,
             currentStateRev: contract.stateRev,
+            // NULL when they sent none. Echoing the contract's own
+            // counter back at a caller who supplied nothing invents a
+            // belief they never held.
+            suppliedStateRev: parsed.expectedStateRev ?? null,
             intervening: behind
               ? this.interveningEvents(contract.id, parsed.expectedStateRev as number)
               : [],
@@ -934,7 +970,7 @@ class SqliteAnnexStore implements AnnexStore {
 
   /** The stored row, before the projection has an opinion about it. */
   private rawEvent(id: string): SpineEvent {
-    const row = this.db.prepare('SELECT * FROM spine_events WHERE id = ?').get(id) as
+    const row = this.db.prepare(`SELECT ${EVENT_SELECT} ${EVENT_FROM} WHERE e.id = ?`).get(id) as
       | EventRow
       | undefined;
     if (row === undefined) throw new SpineError('not_found', `event ${id} vanished mid-write`);
@@ -975,8 +1011,7 @@ class SqliteAnnexStore implements AnnexStore {
   private interveningEvents(contractId: string, sinceStateRev: number): SpineEvent[] {
     const rows = this.db
       .prepare(
-        `SELECT e.*, i.contract_id, i.state_rev
-         FROM spine_events e JOIN spine_event_index i ON i.seq = e.seq
+        `SELECT ${EVENT_SELECT} ${EVENT_FROM}
          WHERE i.contract_id = ? AND i.state_rev > ? AND e.class = 'authoritative'
          ORDER BY e.seq ASC`,
       )
@@ -1016,6 +1051,23 @@ class SqliteAnnexStore implements AnnexStore {
           'invalid_input',
           `contract ${target.id} has no criterion '${body.criterion}' (it has: ` +
             `${target.criteria.map((c) => c.id).join(', ')})`,
+        );
+      }
+    }
+
+    if (kind === 'ask') {
+      // D7, VERBATIM: "some choices belong to ANOTHER member." An ask
+      // that names its own asker is not a request for a ruling, it is
+      // a member manufacturing an authority to cite — and citing your
+      // own ruling is the hallucinated-authorisation failure with a
+      // real row behind it, which is worse than the hallucination.
+      const body = input.body as SpineAskBody;
+      if (body.authority === actor) {
+        throw new SpineError(
+          'invalid_input',
+          `${actor} cannot be the authority on their own ask. An ask is a request for a ` +
+            'choice that belongs to somebody else; naming yourself makes a ruling you can ' +
+            'cite without anyone having decided anything.',
         );
       }
     }
@@ -1081,7 +1133,9 @@ class SqliteAnnexStore implements AnnexStore {
     }
 
     if (kind === 'amendment') {
-      this.assertAmendmentDiscloses(input.body as SpineAmendmentBody, contract as SpineContract);
+      const target = contract as SpineContract;
+      this.assertAmendmentDiscloses(input.body as SpineAmendmentBody, target);
+      this.assertAmendmentCitesOrphans(input, target);
     }
 
     if (kind === 'lifecycle') {
@@ -1109,12 +1163,24 @@ class SqliteAnnexStore implements AnnexStore {
    *   title or criterion text that is no longer
    *   CONTAINED in its replacement                      removal
    *
-   * Containment rather than a length heuristic, so the common honest
-   * edits stay free: adding a criterion, adding a constraint,
-   * appending a clarification to existing text, and changing nothing
-   * textual are all accepted without a disclosure. Rewording is a
-   * removal, because a reworded criterion is one that somebody read in
-   * a form that is now gone.
+   * SO WHAT THIS FREES IS APPENDS AND ADDITIONS, AND NOTHING ELSE.
+   * Adding a criterion, adding a constraint, appending a clarification
+   * to existing text, and changing nothing textual are accepted without
+   * a disclosure. Rewording, dropping and truncating all require one.
+   *
+   * Two limits, stated because the rule reads more forgiving than it
+   * is and because neither is a defect the store can close:
+   *
+   *   A TYPO FIX IS REFUSED. "endpont" → "endpoint" removes the
+   *   original characters, so it needs a disclosure like any other
+   *   rewrite. That is a real cost and it is not what containment was
+   *   chosen for — it was chosen over a length heuristic because it is
+   *   exact, not because it spares corrections.
+   *
+   *   MEANING CAN BE INVERTED BY WRAPPING. "IGNORE THIS: <old text> —
+   *   no longer required" contains the original and is therefore free.
+   *   No syntactic rule reaches that; it needs a reader, which is the
+   *   tool surface's job in phase 2, not the store's.
    *
    * A SIDE EFFECT WORTH NAMING: dropping a criterion also drops its
    * verdicts from `orient` and from the completion gate, since both
@@ -1155,6 +1221,63 @@ class SqliteAnnexStore implements AnnexStore {
         'disclosure. Text that members have already read cannot be made to have never existed — ' +
         'say what was removed and why anyone working to it should know, and the amendment lands. ' +
         'Adding criteria or constraints, and appending to existing text, need no disclosure.',
+    );
+  }
+
+  /**
+   * Dropping a criterion that has been JUDGED must cite the verdicts it
+   * orphans.
+   *
+   * A CITATION, NOT A PERMISSION. Nothing here decides whether the drop
+   * is allowed — an author who wants it gets it, in one extra field.
+   * What it removes is the shape where "we dropped the criterion the
+   * verifier could not pass" is a fact recoverable only by somebody
+   * paging the annex and noticing. Cited, the orphaned verdicts land in
+   * the amendment's own `cites`, where every reader of the amendment
+   * sees them.
+   *
+   * This is the backstop under a real hole: the completion gate reads
+   * the CURRENT criteria list, so dropping a criterion also drops its
+   * verdicts from the gate. That is correct behaviour — a criterion no
+   * longer in the contract cannot block it — which is exactly why the
+   * drop must not be quiet.
+   *
+   * A criterion nobody ever judged orphans nothing and needs no
+   * citation.
+   */
+  private assertAmendmentCitesOrphans(
+    input: AppendSpineEventRequest,
+    contract: SpineContract,
+  ): void {
+    const body = input.body as SpineAmendmentBody;
+    if (body.criteria === undefined) return;
+    const kept = new Set(body.criteria.map((c) => c.id));
+    const dropped = contract.criteria.filter((c) => !kept.has(c.id)).map((c) => c.id);
+    if (dropped.length === 0) return;
+
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM spine_contract_verdicts
+         WHERE contract_id = ? AND criterion_id IN (${dropped.map(() => '?').join(',')})
+         ORDER BY seq ASC`,
+      )
+      .all(...([contract.id, ...dropped] as never[])) as unknown as VerdictRow[];
+    if (rows.length === 0) return;
+
+    const cites = new Set(input.cites ?? []);
+    const uncited = rows.filter((r) => !cites.has(r.event_id));
+    if (uncited.length === 0) return;
+
+    throw new SpineError(
+      'invalid_input',
+      `this amendment drops ${dropped.map((d) => `'${d}'`).join(', ')}, which ${
+        uncited.length === 1 ? 'carries a verdict' : 'carry verdicts'
+      } the contract would silently lose: ` +
+        uncited
+          .map((r) => `${r.event_id} (${r.decision} on '${r.criterion_id}' by ${r.actor})`)
+          .join('; ') +
+        '. Cite them on the amendment. Nothing here refuses the drop — this only makes the ' +
+        'record say that a judged criterion was removed, rather than leaving it to be found.',
     );
   }
 
@@ -1261,9 +1384,32 @@ class SqliteAnnexStore implements AnnexStore {
         continue;
       }
       // `cannot_verify`: covered only by the third legal move — the
-      // authority's ruling, citing THAT verdict, and itself cited here.
+      // AUTHORITY's ruling, citing THAT verdict, and itself cited here.
+      //
+      // WHO RULED IS THE WHOLE CHECK. Without it the assignee could
+      // raise an ask, answer it, cite his own answer, and complete:
+      // every event legitimate on its own, the contract's declared
+      // authority never consulted, and the record showing a waiver
+      // that reads exactly like a real one. The ask-side clause above
+      // closes the self-ask; this closes the case where somebody else
+      // rules on a waiver that was not theirs to give.
       const waiver = cited.find((e) => e.kind === 'ruling' && e.cites.includes(verdict.event_id));
-      if (waiver !== undefined) continue;
+      if (waiver !== undefined) {
+        const illegitimate =
+          waiver.actor === contract.assignee
+            ? `${waiver.actor} is the assignee of this contract and cannot waive its criteria`
+            : contract.authority !== null && waiver.actor !== contract.authority
+              ? `ruling ${waiver.id} is by ${waiver.actor}, and this contract names ` +
+                `${contract.authority} as its authority`
+              : null;
+        if (illegitimate === null) continue;
+        missing.push({
+          criterion: criterion.id,
+          text: criterion.text,
+          why: `the cited waiver does not bind: ${illegitimate}`,
+        });
+        continue;
+      }
       missing.push({
         criterion: criterion.id,
         text: criterion.text,
@@ -1285,15 +1431,28 @@ class SqliteAnnexStore implements AnnexStore {
   }
 
   /**
-   * The CURRENT verdict per criterion at one revision VALUE.
+   * The CURRENT verdict per criterion AT ONE REVISION VALUE.
    *
    * By value rather than by revision id, because revisions are never
    * deduplicated: a verdict reached at one observation of `sha-a` and
    * a completion naming another observation of `sha-a` are about the
    * same state of the world and two different rows. Latest by `seq`
-   * wins within a value, which is the same latest-wins rule `orient`
-   * renders — so the gate and the display can never disagree, and that
-   * is the property that broke.
+   * wins within a value.
+   *
+   * THE EXACT PROPERTY THIS BUYS, stated narrowly because a wider
+   * claim was wrong: at a GIVEN revision, the gate and `orient` read
+   * the same latest-wins answer, so a completion cannot cite a verdict
+   * that a later verdict AT THAT REVISION superseded. It does NOT
+   * follow that the gate and the display always agree. `orient` shows
+   * the latest verdict across ALL revisions, so `met@sha-a` then
+   * `unmet@sha-b` leaves a completion at sha-a legitimately covered
+   * while the pack headlines `unmet`.
+   *
+   * That divergence is correct — a verdict is true OF a revision, and
+   * an `unmet` at a revision the contract never completed against does
+   * not un-complete it — but it is a real thing a reader can be
+   * confused by, so `orient` discloses it rather than leaving it to be
+   * inferred: see `atBoundRevision`.
    */
   private currentVerdictsAt(contractId: string, value: string): Map<string, VerdictRow> {
     const rows = this.db
@@ -1353,7 +1512,9 @@ class SqliteAnnexStore implements AnnexStore {
         this.foldAmendment(event, contractId as string, stateRev as number);
         break;
       case 'attempt':
-        this.touchContract(contractId as string, stateRev, event, { revision: event.revision });
+        this.touchContract(contractId as string, stateRev, event, {
+          revision: event.revision?.id ?? null,
+        });
         break;
       case 'criterion_verdict':
         this.foldVerdict(event, contractId as string, stateRev);
@@ -1424,7 +1585,7 @@ class SqliteAnnexStore implements AnnexStore {
         body.title,
         stateRev,
         event.subject as string,
-        event.revision,
+        event.revision?.id ?? null,
         JSON.stringify(body.criteria),
         body.assignee,
         body.verifier ?? null,
@@ -1478,7 +1639,7 @@ class SqliteAnnexStore implements AnnexStore {
       .run(
         contractId,
         body.criterion,
-        event.revision as string,
+        event.revision?.id as string,
         body.decision,
         event.id,
         event.actor,
@@ -1529,7 +1690,7 @@ class SqliteAnnexStore implements AnnexStore {
         body.result ?? null,
         body.reason ?? null,
         body.successor ?? null,
-        bindsRevision ? event.revision : null,
+        bindsRevision ? (event.revision?.id ?? null) : null,
         contractId,
       );
   }
@@ -1578,7 +1739,7 @@ class SqliteAnnexStore implements AnnexStore {
            ON CONFLICT(contract_id, criterion_id, revision_id)
            DO UPDATE SET ruling_event_id = excluded.ruling_event_id`,
         )
-        .run(vb.contract, vb.criterion, target.revision, event.id);
+        .run(vb.contract, vb.criterion, target.revision.id, event.id);
     }
   }
 
@@ -1629,7 +1790,7 @@ class SqliteAnnexStore implements AnnexStore {
     try {
       for (const table of SPINE_PROJECTION_TABLES) this.db.exec(`DELETE FROM ${table}`);
       const rows = this.db
-        .prepare('SELECT * FROM spine_events ORDER BY seq ASC')
+        .prepare(`SELECT ${EVENT_SELECT} ${EVENT_FROM} ORDER BY e.seq ASC`)
         .all() as unknown as EventRow[];
       for (const row of rows) this.applyToProjections(rowToEvent(row));
       this.db.prepare('COMMIT').run();
@@ -1685,8 +1846,7 @@ class SqliteAnnexStore implements AnnexStore {
         ? []
         : (this.db
             .prepare(
-              `SELECT e.*, i.contract_id, i.state_rev
-               FROM spine_events e JOIN spine_event_index i ON i.seq = e.seq
+              `SELECT ${EVENT_SELECT} ${EVENT_FROM}
                WHERE e.kind = 'ruling' AND i.contract_id IN (${ids.map(() => '?').join(',')})
                ORDER BY e.seq ASC`,
             )
@@ -1717,10 +1877,17 @@ class SqliteAnnexStore implements AnnexStore {
             w.criterion_id === criterion.id &&
             w.revision_id === latest?.revision_id,
         );
+        const at = latest === undefined ? null : (revisions.get(latest.revision_id) ?? null);
         return {
           criterion: criterion.id,
           text: criterion.text,
           decision: (latest?.decision as SpineCriterionStatus['decision']) ?? null,
+          // The relation, stated. A headline `unmet` reached at a
+          // revision the contract has moved off is a different claim
+          // from an `unmet` where the contract is sitting, and both
+          // render as "unmet" unless something says which.
+          atBoundRevision:
+            at !== null && contract.revision !== null && at.value === contract.revision.value,
           // WHOLE, for the same reason the contract's own revision is:
           // "met at rev_01H…" is a verdict a member cannot check.
           revision: latest === undefined ? null : (revisions.get(latest.revision_id) ?? null),

@@ -376,13 +376,30 @@ async function seedSpine(app: App): Promise<{ contract: string; orientIsPopulate
   }
 
   const pack = (await (await app.request('/spine/orient', authed(ALICE))).json()) as {
-    contracts: { stale: boolean; criteria: unknown[] }[];
+    contracts: unknown[];
     asksForMe: unknown[];
   };
+  // Hydrated revisions are part of the published shape now, so the
+  // fixture has to actually carry them — a contract case whose
+  // `revision` and `head` were both null would parse against a schema
+  // that had reverted to bare ids.
+  const first = pack.contracts[0] as
+    | {
+        stale: boolean;
+        criteria: { revision: unknown }[];
+        revision: unknown;
+        head: unknown;
+      }
+    | undefined;
   const populated =
     pack.contracts.length > 0 &&
-    pack.contracts[0]?.stale === true &&
-    (pack.contracts[0]?.criteria.length ?? 0) > 0 &&
+    first?.stale === true &&
+    (first?.criteria.length ?? 0) > 0 &&
+    typeof first?.revision === 'object' &&
+    first?.revision !== null &&
+    typeof first?.head === 'object' &&
+    first?.head !== null &&
+    typeof first?.criteria[0]?.revision === 'object' &&
     pack.asksForMe.length > 0;
   return { contract, orientIsPopulated: populated };
 }
@@ -494,6 +511,15 @@ describe('SDK response contract', () => {
     const { app } = makeApp();
     await seedSpine(app);
     await expectMatchesContract(app, '/spine/events', authed(ALICE), ListSpineEventsResponseSchema);
+    // Non-vacuous: the stream must actually contain an event carrying
+    // a revision, since a revision-less stream parses against a schema
+    // that had reverted to bare ids.
+    const body = (await (await app.request('/spine/events', authed(ALICE))).json()) as {
+      events: { revision: unknown }[];
+    };
+    expect(body.events.some((e) => e.revision !== null && typeof e.revision === 'object')).toBe(
+      true,
+    );
   });
 
   it('GET /spine/subjects matches ListSpineSubjectsResponseSchema', async () => {

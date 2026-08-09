@@ -2251,7 +2251,8 @@ const SPINE_EVENT_SHAPE = {
   id: SpineIdSchema,
   class: SpineEventClassSchema,
   subject: SpineIdSchema.nullable(),
-  revision: SpineIdSchema.nullable(),
+  /** WHOLE. An event is what a stale refusal hands back, and that is no place for an id. */
+  revision: SpineRevisionSchema.nullable(),
   actor: z.string().min(1).max(256),
   authoredBy: NameSchema.nullable(),
   at: SpineInstantSchema,
@@ -2425,6 +2426,8 @@ export const SpineCriterionStatusSchema = z.object({
   revision: SpineRevisionSchema.nullable(),
   event: SpineIdSchema.nullable(),
   waivedBy: SpineIdSchema.nullable(),
+  /** Whether the verdict's revision is the one the contract is bound to. */
+  atBoundRevision: z.boolean(),
 });
 
 export const SpineContractSchema = z.object({
@@ -2560,6 +2563,15 @@ export const SpinePreconditionDetailSchema = z.object({
   currentStateRev: z.number().int().nonnegative(),
   problem: z.enum(['missing', 'ahead']),
   suppliedStateRev: z.number().int().nonnegative().nullable(),
+});
+
+/** A write to a contract that has ended. `suppliedStateRev` is null when none was sent. */
+export const SpineTerminalDetailSchema = z.object({
+  contract: SpineIdSchema,
+  state: SpineContractStateSchema,
+  currentStateRev: z.number().int().nonnegative(),
+  suppliedStateRev: z.number().int().nonnegative().nullable(),
+  intervening: z.array(SpineEventSchema),
 });
 
 export const SpineIdempotencyConflictDetailSchema = z.object({

@@ -26,6 +26,7 @@ import type {
   SpineEvent,
   SpinePreconditionDetail,
   SpineStaleStateRevDetail,
+  SpineTerminalDetail,
 } from 'csuite-sdk/types';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -194,9 +195,11 @@ describe('F1 — a completion cited a verdict the projection had already superse
     expect((done.contract as SpineContract).state).toBe('done');
   });
 
-  it('still accepts a waiver, which is a ruling over the CURRENT cannot_verify', async () => {
-    // The other positive control: F1 tightened the gate, and the third
-    // legal move after `cannot_verify` must still work.
+  it('still accepts a waiver by the contract’s authority over the CURRENT cannot_verify', async () => {
+    // The other positive control, and N1's as well: F1 tightened the
+    // gate and N1 tightened who may waive, and the third legal move
+    // after `cannot_verify` must still work when the AUTHORITY makes
+    // it. andrewjon is this contract's declared authority.
     const contract = await authorContract();
     const cv = await post(app, '/spine/events', LEA, {
       kind: 'criterion_verdict',
@@ -237,6 +240,416 @@ describe('F1 — a completion cited a verdict the projection had already superse
       body: { contract, state: 'done', result: 'shipped with c1 waived' },
     });
     expect((done.contract as SpineContract).state).toBe('done');
+    expect((waiver.event as SpineEvent).actor).toBe('andrewjon');
+  });
+});
+
+describe('N1 — the assignee waived his own cannot_verify and completed', () => {
+  /**
+   * Reproduced end to end: lea posts `cannot_verify`; rune — the
+   * ASSIGNEE — raises an ask naming HIMSELF as authority, rules on his
+   * own ask citing the verdict, cites the ruling, and completes. Every
+   * event legitimate on its own; the contract's declared authority
+   * never consulted; the record showing a waiver that reads exactly
+   * like a real one.
+   *
+   * Two clauses close it, and both are needed: the self-ask is refused
+   * outright, and a waiver is checked against who was entitled to give
+   * it. Closing only the first leaves cora ruling on rune's ask.
+   */
+  async function cannotVerify(): Promise<{ contract: string; cv: string }> {
+    const contract = await authorContract();
+    const cv = await post(app, '/spine/events', LEA, {
+      kind: 'criterion_verdict',
+      opId: 'op-cv',
+      expectedStateRev: 1,
+      revision: observed('sha-a'),
+      body: {
+        contract,
+        criterion: 'c1',
+        decision: 'cannot_verify',
+        evidence: 'no deploy access',
+        why: 'the staging box is not mine to reach',
+      },
+    });
+    return { contract, cv: (cv.event as SpineEvent).id };
+  }
+
+  it('refuses an ask that names its own asker as the authority', async () => {
+    await cannotVerify();
+    const body = await refused(
+      RUNE,
+      {
+        kind: 'ask',
+        opId: 'op-self-ask',
+        subject: 'repo:acme',
+        body: {
+          authority: 'rune',
+          question: 'may I waive c1?',
+          context: 'lea cannot verify it',
+          unblocks: 'completion',
+        },
+      },
+      400,
+    );
+    expect(body.error).toContain('cannot be the authority on their own ask');
+  });
+
+  it('refuses a completion whose waiver was ruled by the assignee', async () => {
+    // The second clause, exercised on its own: cora raises the ask —
+    // legitimately, she is not its authority — and rune rules on it.
+    const { contract, cv } = await cannotVerify();
+    const ask = await post(app, '/spine/events', CORA, {
+      kind: 'ask',
+      opId: 'op-ask',
+      subject: 'repo:acme',
+      body: {
+        authority: 'rune',
+        question: 'waive c1?',
+        context: 'lea cannot verify it',
+        unblocks: 'completion',
+      },
+    });
+    const selfRuling = await post(app, '/spine/events', RUNE, {
+      kind: 'ruling',
+      opId: 'op-self-rule',
+      cites: [cv],
+      body: { ask: (ask.event as SpineEvent).id, decision: 'waived', reasoning: 'fine by me' },
+    });
+    const body = await refused(
+      RUNE,
+      {
+        kind: 'lifecycle',
+        opId: 'op-done',
+        expectedStateRev: 2,
+        revision: asserted('sha-a'),
+        cites: [cv, (selfRuling.event as SpineEvent).id],
+        body: { contract, state: 'done', result: 'shipped' },
+      },
+      409,
+    );
+    expect(body.code).toBe('coverage_gap');
+    const detail = body.detail as SpineCoverageGapDetail;
+    expect(detail.missing[0]?.why).toContain('is the assignee of this contract');
+    expect((await contractOf(contract)).state).toBe('active');
+  });
+
+  it('refuses a waiver from a third party when the contract names an authority', async () => {
+    // cora is neither assignee nor authority. A waiver is the
+    // authority's to give, and "not the assignee" alone would let this
+    // through.
+    const { contract, cv } = await cannotVerify();
+    const ask = await post(app, '/spine/events', RUNE, {
+      kind: 'ask',
+      opId: 'op-ask',
+      subject: 'repo:acme',
+      body: {
+        authority: 'cora',
+        question: 'waive c1?',
+        context: 'lea cannot verify it',
+        unblocks: 'completion',
+      },
+    });
+    const ruling = await post(app, '/spine/events', CORA, {
+      kind: 'ruling',
+      opId: 'op-rule',
+      cites: [cv],
+      body: { ask: (ask.event as SpineEvent).id, decision: 'waived', reasoning: 'seems fine' },
+    });
+    const body = await refused(
+      RUNE,
+      {
+        kind: 'lifecycle',
+        opId: 'op-done',
+        expectedStateRev: 2,
+        revision: asserted('sha-a'),
+        cites: [cv, (ruling.event as SpineEvent).id],
+        body: { contract, state: 'done', result: 'shipped' },
+      },
+      409,
+    );
+    expect((body.detail as SpineCoverageGapDetail).missing[0]?.why).toContain(
+      'names andrewjon as its authority',
+    );
+  });
+
+  it('still lets a member raise an ask naming somebody else', async () => {
+    // The control for clause (a): it must refuse SELF-asks, not asks.
+    await post(app, '/spine/events', RUNE, {
+      kind: 'ask',
+      opId: 'op-ask',
+      subject: 'repo:acme',
+      body: {
+        authority: 'andrewjon',
+        question: 'may I?',
+        context: 'because',
+        unblocks: 'the work',
+      },
+    });
+  });
+});
+
+describe('N2 — the gate and orient disagree across revisions, and orient now says so', () => {
+  /**
+   * The behaviour is correct and the earlier claim was not. A verdict
+   * is true OF a revision, so `met@sha-a` then `unmet@sha-b` leaves a
+   * completion at sha-a covered while the pack headlines `unmet`.
+   * Pinned here as the intended behaviour, with the disclosure that
+   * keeps a reader from mistaking one for the other.
+   */
+  it('completes at sha-a while orient headlines the sha-b verdict, flagged off-revision', async () => {
+    const contract = await authorContract();
+    const met = await post(app, '/spine/events', LEA, {
+      kind: 'criterion_verdict',
+      opId: 'op-v1',
+      expectedStateRev: 1,
+      revision: observed('sha-a'),
+      body: { contract, criterion: 'c1', decision: 'met', evidence: 'green at sha-a' },
+    });
+    await post(app, '/spine/events', LEA, {
+      kind: 'criterion_verdict',
+      opId: 'op-v2',
+      expectedStateRev: 2,
+      revision: observed('sha-b'),
+      body: { contract, criterion: 'c1', decision: 'unmet', evidence: 'sha-b regressed it' },
+    });
+
+    const done = await post(app, '/spine/events', RUNE, {
+      kind: 'lifecycle',
+      opId: 'op-done',
+      expectedStateRev: 3,
+      revision: asserted('sha-a'),
+      cites: [(met.event as SpineEvent).id],
+      body: { contract, state: 'done', result: 'shipped what was green at sha-a' },
+    });
+    expect((done.contract as SpineContract).state).toBe('done');
+
+    const pack = (await get(app, '/spine/orient', LEA)) as {
+      contracts: {
+        criteria: {
+          decision: string;
+          revision: { value: string } | null;
+          atBoundRevision: boolean;
+        }[];
+      }[];
+    };
+    const status = pack.contracts[0]?.criteria[0];
+    // The headline is the latest verdict across all revisions…
+    expect(status?.decision).toBe('unmet');
+    expect(status?.revision?.value).toBe('sha-b');
+    // …and it says, in the payload, that it is not about the revision
+    // this contract completed at. Without this the pack reads as
+    // "unmet" beside a contract reading "done" and nothing reconciles
+    // them.
+    expect(status?.atBoundRevision).toBe(false);
+    expect((done.contract as SpineContract).revision).toMatchObject({ value: 'sha-a' });
+  });
+
+  it('flags a verdict at the bound revision as on-revision', async () => {
+    // The positive control: a fix that hard-coded `false` would
+    // satisfy the assertion above.
+    const contract = await authorContract();
+    await post(app, '/spine/events', RUNE, {
+      kind: 'attempt',
+      opId: 'op-attempt',
+      expectedStateRev: 1,
+      revision: asserted('sha-a'),
+      body: { contract, summary: 'pushed' },
+    });
+    await post(app, '/spine/events', LEA, {
+      kind: 'criterion_verdict',
+      opId: 'op-v1',
+      expectedStateRev: 2,
+      revision: observed('sha-a'),
+      body: { contract, criterion: 'c1', decision: 'met', evidence: 'green' },
+    });
+    const pack = (await get(app, '/spine/orient', LEA)) as {
+      contracts: { criteria: { atBoundRevision: boolean }[] }[];
+    };
+    expect(pack.contracts[0]?.criteria[0]?.atBoundRevision).toBe(true);
+  });
+});
+
+describe('N4 — an event on the wire still carried a bare revision id', () => {
+  /**
+   * F7 hydrated contracts and left the payload that matters most: an
+   * EVENT is what a stale refusal hands back, and that is the one
+   * moment with no second call available to resolve an id.
+   */
+  it('hydrates the revision on the stale-refusal delta', async () => {
+    const contract = await authorContract();
+    await post(app, '/spine/events', LEA, {
+      kind: 'criterion_verdict',
+      opId: 'op-verdict',
+      expectedStateRev: 1,
+      revision: observed('sha-a'),
+      body: { contract, criterion: 'c1', decision: 'met', evidence: 'green' },
+    });
+    const body = await refused(
+      ANDREWJON,
+      {
+        kind: 'lifecycle',
+        opId: 'op-cancel',
+        expectedStateRev: 1,
+        body: { contract, state: 'cancelled', reason: 'deprioritised' },
+      },
+      409,
+    );
+    const raced = (body.detail as SpineStaleStateRevDetail).intervening[0];
+    expect(raced?.revision).toMatchObject({
+      value: 'sha-a',
+      how: 'observed',
+      source: 'integration:github',
+    });
+  });
+
+  it('hydrates the revision on the stream, on an append response, and on orient rulings', async () => {
+    const contract = await authorContract();
+    const attempt = await post(app, '/spine/events', RUNE, {
+      kind: 'attempt',
+      opId: 'op-attempt',
+      expectedStateRev: 1,
+      revision: asserted('sha-a'),
+      body: { contract, summary: 'pushed' },
+    });
+    // The append's own response.
+    expect((attempt.event as SpineEvent).revision).toMatchObject({ value: 'sha-a' });
+    // The stream.
+    const stream = (await get(
+      app,
+      `/spine/events?contract=${encodeURIComponent(contract)}&kind=attempt`,
+      RUNE,
+    )) as unknown as ListSpineEventsResponse;
+    expect(stream.events[0]?.revision).toMatchObject({ value: 'sha-a', how: 'asserted' });
+
+    // Orient's rulings.
+    const ask = await post(app, '/spine/events', RUNE, {
+      kind: 'ask',
+      opId: 'op-ask',
+      subject: 'repo:acme',
+      expectedStateRev: 2,
+      body: {
+        authority: 'andrewjon',
+        question: 'ship?',
+        context: 'x',
+        unblocks: 'y',
+        contract,
+      },
+    });
+    await post(app, '/spine/events', ANDREWJON, {
+      kind: 'ruling',
+      opId: 'op-rule',
+      expectedStateRev: 3,
+      revision: observed('sha-b'),
+      body: {
+        ask: (ask.event as SpineEvent).id,
+        decision: 'ship it',
+        reasoning: 'window holds',
+        contract,
+      },
+    });
+    const pack = (await get(app, '/spine/orient', RUNE)) as {
+      contracts: { rulings: SpineEvent[] }[];
+    };
+    expect(pack.contracts[0]?.rulings[0]?.revision).toMatchObject({ value: 'sha-b' });
+  });
+
+  it('still reports null for an event that carries no revision', async () => {
+    // The positive control: hydration must not invent a caption where
+    // there was none.
+    const chat = await post(app, '/spine/events', RUNE, {
+      kind: 'discussion',
+      body: { body: 'no revision here' },
+    });
+    expect((chat.event as SpineEvent).revision).toBeNull();
+  });
+});
+
+describe('N6 — an amendment dropped a judged criterion and the verdicts went quiet', () => {
+  /**
+   * The backstop under the forward-flag from the last round. Dropping a
+   * criterion legitimately removes it from the completion gate — a
+   * criterion no longer in the contract cannot block it — so the drop
+   * itself must land in the record where a reader meets it, not only in
+   * the annex where somebody has to go looking.
+   *
+   * A CITATION, not a permission: the author gets the drop, in one
+   * extra field, and the orphaned verdicts ride along in the
+   * amendment's own `cites`.
+   */
+  const TWO = [
+    { id: 'c1', text: 'the endpoint returns 200' },
+    { id: 'c2', text: 'the reference page documents it' },
+  ];
+
+  async function judgedC2(): Promise<{ contract: string; verdict: string }> {
+    const contract = await authorContract(TWO);
+    const verdict = await post(app, '/spine/events', LEA, {
+      kind: 'criterion_verdict',
+      opId: 'op-v2',
+      expectedStateRev: 1,
+      revision: observed('sha-a'),
+      body: {
+        contract,
+        criterion: 'c2',
+        decision: 'unmet',
+        evidence: 'the reference page does not exist',
+      },
+    });
+    return { contract, verdict: (verdict.event as SpineEvent).id };
+  }
+
+  const dropC2 = (contract: string, extra: Record<string, unknown> = {}) => ({
+    kind: 'amendment',
+    opId: 'op-amend',
+    expectedStateRev: 2,
+    body: {
+      contract,
+      changes: 'c2 moves to the docs team',
+      reason: 'the reference page is not ours to write',
+      disposition: 'scope_change',
+      disclosure: 'c2 has been dropped; it required the reference page',
+      criteria: [TWO[0]],
+    },
+    ...extra,
+  });
+
+  it('refuses the drop when the orphaned verdicts are not cited, and names them', async () => {
+    const { contract, verdict } = await judgedC2();
+    const body = await refused(LEA, dropC2(contract), 400);
+    expect(body.error).toContain(verdict);
+    expect(body.error).toContain("unmet on 'c2' by lea");
+    expect((await contractOf(contract)).criteria).toEqual(TWO);
+  });
+
+  it('lands the same drop when it cites them, and the verdicts ride on the amendment', async () => {
+    const { contract, verdict } = await judgedC2();
+    const amended = await post(app, '/spine/events', LEA, dropC2(contract, { cites: [verdict] }));
+    expect((amended.contract as SpineContract).criteria).toEqual([TWO[0]]);
+    // The point of the backstop: a reader of the amendment sees the
+    // orphaned verdict without going to look for it.
+    expect((amended.event as SpineEvent).cites).toEqual([verdict]);
+  });
+
+  it('needs no citation to drop a criterion nobody ever judged', async () => {
+    // The control. This rule is about orphaning EVIDENCE, and a
+    // criterion with no verdicts orphans none — a fix that demanded a
+    // citation for every drop would satisfy the negative above.
+    const contract = await authorContract(TWO);
+    const amended = await post(app, '/spine/events', LEA, {
+      kind: 'amendment',
+      opId: 'op-amend',
+      expectedStateRev: 1,
+      body: {
+        contract,
+        changes: 'c2 moves to the docs team',
+        reason: 'not ours to write',
+        disposition: 'scope_change',
+        disclosure: 'c2 has been dropped',
+        criteria: [TWO[0]],
+      },
+    });
+    expect((amended.contract as SpineContract).criteria).toEqual([TWO[0]]);
   });
 });
 
@@ -342,8 +755,10 @@ describe('F3 — a stale write against a terminal contract was refused with no d
       409,
     );
     expect(body.code).toBe('invalid_transition');
-    const detail = body.detail as SpineStaleStateRevDetail;
+    const detail = body.detail as SpineTerminalDetail;
     expect(detail.currentStateRev).toBe(3);
+    expect(detail.state).toBe('cancelled');
+    expect(detail.suppliedStateRev).toBe(1);
     // Both events, in order, in full — and the cancellation is the one
     // that explains why no retry will help.
     expect(detail.intervening.map((e) => e.id)).toEqual([
@@ -351,6 +766,44 @@ describe('F3 — a stale write against a terminal contract was refused with no d
       (cancelled.event as SpineEvent).id,
     ]);
     expect(body.error).toContain('no retry against a newer counter will succeed');
+  });
+
+  it('reports suppliedStateRev as null when the caller sent none', async () => {
+    // N3. `ask_action` binds to a contract through its ask, so the
+    // schema cannot require the precondition and the terminality check
+    // is reached without one. Echoing the contract's own counter back
+    // here invented a belief the caller never held.
+    const contract = await authorContract();
+    const ask = await post(app, '/spine/events', RUNE, {
+      kind: 'ask',
+      opId: 'op-ask',
+      subject: 'repo:acme',
+      expectedStateRev: 1,
+      body: {
+        authority: 'andrewjon',
+        question: 'ship?',
+        context: 'x',
+        unblocks: 'y',
+        contract,
+      },
+    });
+    await post(app, '/spine/events', ANDREWJON, {
+      kind: 'lifecycle',
+      opId: 'op-cancel',
+      expectedStateRev: 2,
+      body: { contract, state: 'cancelled', reason: 'deprioritised' },
+    });
+    const body = await refused(
+      ANDREWJON,
+      {
+        kind: 'ask_action',
+        opId: 'op-decline',
+        body: { ask: (ask.event as SpineEvent).id, action: 'decline', reason: 'moot now' },
+      },
+      409,
+    );
+    expect((body.detail as SpineTerminalDetail).suppliedStateRev).toBeNull();
+    expect((body.detail as SpineTerminalDetail).currentStateRev).toBe(3);
   });
 
   it('refuses an up-to-date write to a terminal contract with an empty delta, not a wrong one', async () => {
@@ -373,7 +826,8 @@ describe('F3 — a stale write against a terminal contract was refused with no d
     );
     // The caller is not behind, so there is genuinely nothing to hand
     // back. Fabricating a delta here would be the mirror of the defect.
-    expect((body.detail as SpineStaleStateRevDetail).intervening).toEqual([]);
+    expect((body.detail as SpineTerminalDetail).intervening).toEqual([]);
+    expect((body.detail as SpineTerminalDetail).suppliedStateRev).toBe(2);
     expect(body.error).not.toContain('no retry against a newer counter will succeed');
   });
 });

@@ -35,17 +35,22 @@ re-orientation.
 - **No bare derived values.** A revision is `{value, how, source, at}`
   or it is not a revision: *"verified at abc123"* cannot be serialized
   without *"observed at 03:19 from the GitHub review event"* riding
-  along. That holds on the way out as well as in — a contract's bound
-  revision, the subject's head and the revision each verdict was
-  reached at all render whole, because a `stale` flag served with two
-  opaque ids tells a member they are behind and nothing about what
+  along. That holds on the way out as well as in — every revision on
+  the wire renders whole, the one carried by an EVENT included, because
+  an event is what a stale refusal hands back at the moment there is no
+  second call available to resolve an id. A `stale` flag served with
+  two opaque ids tells a member they are behind and nothing about what
   they are behind. Only `observed` revisions move a head, and the head
   is ordered by arrival rather than by the caller's timestamp, so one
   skewed clock cannot pin it and falsify staleness for a whole subject.
 - **Legitimacy is structural, not granted.** A verdict from the
   assignee is refused — arrival cannot be declared from the traveller's
   own album — and a ruling from anyone but the ask's named authority is
-  refused. Neither is a weakly-authorised act; neither is the act.
+  refused. An ask may not name its own asker as its authority, and a
+  ruling waives a criterion only when it comes from the contract's
+  authority: otherwise an assignee could raise an ask, answer it, cite
+  his own answer and complete, with every event legitimate on its own.
+  None of these is a weakly-authorised act; none of them is the act.
 - **Completion cannot outrun its evidence.** With a verifier named,
   `done` needs the CURRENT verdict on every criterion at one revision
   to be `met` — or waived by a cited ruling over a `cannot_verify` —
@@ -60,9 +65,12 @@ re-orientation.
   successor and leaves the old journey terminal at its own revision
   with its verdicts intact. An amendment that removes text — a dropped
   criterion or constraint, or wording no longer contained in its
-  replacement — must carry a `disclosure`. Adding and appending are
-  free; what members have already read cannot be made to have never
-  existed.
+  replacement — must carry a `disclosure`, and one that drops a
+  criterion somebody has already judged must additionally CITE the
+  verdicts it orphans, so a dropped-because-it-failed criterion lands
+  in the record a reader already reads. What the rule frees is
+  ADDITIONS AND APPENDS: rewording, dropping and truncating all say so.
+  What members have already read cannot be made to have never existed.
 - **No cap that punishes precision.** Durable prose carries a single
   1 MiB sanity bound, documented as a bound and not a budget; the
   largest real cap in the system belongs to `discussion`, the cheapest
@@ -82,6 +90,13 @@ session lifecycle — never on a runner choosing to reveal its context.
 A CI fixture holds that from day one: the spine imports no trace,
 capture, telemetry or gen-ai module, and the scanner that checks it is
 tested in both directions.
+
+One known limit, carried forward deliberately: the removal rule is
+syntactic, so an amendment can invert a criterion's meaning by wrapping
+it — *"IGNORE THIS: <old text> — no longer required"* contains the
+original and is therefore free. No rule over strings reaches that; it
+needs a reader, and that belongs to the tool surface rather than the
+store.
 
 Phase 1 is the store, the routes and the SDK. The MCP tool surface,
 the curator, probes, the human queue and citation-lock enforcement at

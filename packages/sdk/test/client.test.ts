@@ -434,7 +434,17 @@ describe('spine client', () => {
             kind: 'criterion_verdict',
             class: 'authoritative',
             opId: 'op-1',
-            revision: 'rev_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+            // WHOLE, like every revision on the wire. A bare id here
+            // is what an event used to carry, and this fixture failing
+            // is what caught the last place it still did.
+            revision: {
+              id: 'rev_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+              subject: SUBJECT,
+              value: 'sha-a',
+              how: 'observed',
+              source: 'integration:github',
+              at: '2026-08-08T12:00:00.000Z',
+            },
             contract: 'evt_1',
             stateRev: 2,
             body: {

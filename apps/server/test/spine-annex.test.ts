@@ -297,12 +297,15 @@ describe('revisions', () => {
       },
       { actor: 'rune', now: tick() },
     );
-    const stored = annex.revision(attempt.event.revision as string);
+    // Read off the EVENT, because that is where a caller meets it —
+    // and the event carries the caption whole, so nothing has to
+    // resolve an id through a route that does not exist.
+    const stored = attempt.event.revision;
     // The whole record. A store that dropped `source` would still
     // return a revision, and "verified at sha-a" with nobody saying
     // who looked is the exact shape §4 exists to remove.
     expect(stored).toEqual({
-      id: attempt.event.revision,
+      id: expect.any(String),
       subject: 'repo:acme',
       value: 'sha-a',
       how: 'asserted',
@@ -310,6 +313,8 @@ describe('revisions', () => {
       at: stored?.at,
     });
     expect(stored?.at).toBeTruthy();
+    // …and the standalone lookup agrees with what the event carries.
+    expect(annex.revision(stored?.id as string)).toEqual(stored);
   });
 
   it('moves the head on an observed revision and never on an asserted one', () => {
@@ -1202,6 +1207,7 @@ describe('orient', () => {
         },
         event: expect.any(String),
         waivedBy: null,
+        atBoundRevision: true,
       },
     ]);
     expect(one?.stale).toBe(true);

@@ -2707,7 +2707,17 @@ export interface SpineEvent {
   kind: SpineEventKind;
   class: SpineEventClass;
   subject: string | null;
-  revision: string | null;
+  /**
+   * The revision this event was captioned with, WHOLE.
+   *
+   * An id here was the last place a derived value still rendered bare,
+   * and it was the worst one: an event is what a stale refusal returns
+   * as its delta, so a member being told what they raced was handed a
+   * verdict reading "met at rev_01H…" — the exact recovery moment the
+   * caption exists for, and the one payload with no second call
+   * available to resolve it.
+   */
+  revision: SpineRevision | null;
   actor: string;
   /** For probe results: whose recipe fired. The member took the photo; the system held the camera. */
   authoredBy: string | null;
@@ -2742,6 +2752,20 @@ export interface SpineCriterionStatus {
   event: string | null;
   /** A `cannot_verify` waived by the authority's ruling. Carries the ruling's event id. */
   waivedBy: string | null;
+  /**
+   * Whether `revision` is the revision the CONTRACT is bound to.
+   *
+   * A verdict is true of a revision, so a headline `unmet` reached at
+   * a revision the contract has since moved off is a different claim
+   * from an `unmet` at the revision the contract is sitting on — and
+   * rendering both as "unmet" collapses them. `false` here is the
+   * reader's cue that the decision and the contract are talking about
+   * different states of the world.
+   *
+   * `false` when either side has no revision, since a relation needs
+   * two operands.
+   */
+  atBoundRevision: boolean;
 }
 
 /**
@@ -3063,6 +3087,25 @@ export interface SpinePreconditionDetail {
   /** `missing` — none supplied. `ahead` — supplied a counter the contract has never reached. */
   problem: 'missing' | 'ahead';
   suppliedStateRev: number | null;
+}
+
+/**
+ * A write to a contract that has ended.
+ *
+ * Distinct from `SpineStaleStateRevDetail` because of one field: a
+ * caller who supplied NO precondition must not have one echoed back at
+ * them. Reporting `expectedStateRev: <the contract's own counter>` for
+ * a caller who sent nothing invents a belief they never held, which is
+ * the same class of lie as a bare derived value.
+ */
+export interface SpineTerminalDetail {
+  contract: string;
+  state: SpineContractState;
+  currentStateRev: number;
+  /** `null` when the caller supplied none. */
+  suppliedStateRev: number | null;
+  /** The authoritative events the caller missed, in full. Empty when they missed none. */
+  intervening: SpineEvent[];
 }
 
 export interface SpineIdempotencyConflictDetail {

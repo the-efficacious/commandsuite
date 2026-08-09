@@ -142,7 +142,17 @@ describe('acceptance 1 — a cancellation that races a verdict conflicts, and is
       decision: 'met',
       evidence: 'the integration suite is green at sha-a',
     });
-    expect(shown?.revision).toBe((verdict.event as SpineEvent).revision);
+    // WHOLE, here of all places. A stale refusal is the recovery
+    // moment — there is no second call to resolve an id with — so the
+    // raced verdict arrives saying which revision it was reached at
+    // and who observed it, not `rev_01H…`.
+    expect(shown?.revision).toEqual((verdict.event as SpineEvent).revision);
+    expect(shown?.revision).toMatchObject({
+      subject: 'repo:acme',
+      value: 'sha-a',
+      how: 'observed',
+      source: 'integration:github',
+    });
     expect(body.detail.currentStateRev).toBe(3);
 
     // …and the cancellation did NOT land.
@@ -253,7 +263,7 @@ describe('acceptance 2 — the head moves, and supersession leaves the old contr
         text: 'the endpoint returns 200',
         decision: 'met',
         revision: {
-          id: (verdict.event as SpineEvent).revision,
+          id: (verdict.event as SpineEvent).revision?.id,
           subject: 'repo:acme',
           value: 'sha-a',
           how: 'observed',
@@ -262,6 +272,11 @@ describe('acceptance 2 — the head moves, and supersession leaves the old contr
         },
         event: (verdict.event as SpineEvent).id,
         waivedBy: null,
+        // The verdict was reached at sha-a and the contract is still
+        // bound to sha-a — the supersession did not retarget it — so
+        // the decision and the contract are talking about the same
+        // state of the world.
+        atBoundRevision: true,
       },
     ]);
 
