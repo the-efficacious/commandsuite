@@ -26,29 +26,43 @@ re-orientation.
   count and not a hint. Staleness is never detected; it is discovered
   by the member at the first act where it matters, and the refusal is
   delivered at exactly that moment on any runner.
-- **Idempotency on `op_id`.** Same id and same payload replays the
-  original event and appends nothing; a different payload is refused.
-  `expected_state_rev` is deliberately excluded from payload identity —
-  it is a precondition, not content, so a caller retrying after reading
-  the delta still means the same write.
+- **Idempotency on `op_id`.** Same actor, same id and same payload
+  replays the original event and appends nothing; anything else is
+  refused. The actor is part of the identity, so an id is never a
+  bearer token for somebody else's write. `expected_state_rev` is
+  deliberately excluded — it is a precondition, not content, so a
+  caller retrying after reading the delta still means the same write.
 - **No bare derived values.** A revision is `{value, how, source, at}`
   or it is not a revision: *"verified at abc123"* cannot be serialized
   without *"observed at 03:19 from the GitHub review event"* riding
-  along. Only `observed` revisions move a subject's head, so one
-  member's assertion cannot rewrite everyone else's staleness.
+  along. That holds on the way out as well as in — a contract's bound
+  revision, the subject's head and the revision each verdict was
+  reached at all render whole, because a `stale` flag served with two
+  opaque ids tells a member they are behind and nothing about what
+  they are behind. Only `observed` revisions move a head, and the head
+  is ordered by arrival rather than by the caller's timestamp, so one
+  skewed clock cannot pin it and falsify staleness for a whole subject.
 - **Legitimacy is structural, not granted.** A verdict from the
   assignee is refused — arrival cannot be declared from the traveller's
   own album — and a ruling from anyone but the ask's named authority is
   refused. Neither is a weakly-authorised act; neither is the act.
 - **Completion cannot outrun its evidence.** With a verifier named,
-  `done` must cite verdicts, or rulings waiving a `cannot_verify`,
-  covering every criterion at one revision, and the refusal names each
-  gap. With no verifier, the result stands alone and says so.
+  `done` needs the CURRENT verdict on every criterion at one revision
+  to be `met` — or waived by a cited ruling over a `cannot_verify` —
+  and to be cited. Coverage is read off the same latest-wins projection
+  `orient` renders, so the gate and the display cannot disagree, and
+  citing a verdict a later one superseded does not complete anything.
+  The refusal names each gap. With no verifier, the result stands alone
+  and says so.
 - **Nothing is removed and nothing is retargeted.** Corrections staple
   to any event including a terminal one; amendments version; the room
   moving under a contract is answered by supersession, which links a
   successor and leaves the old journey terminal at its own revision
-  with its verdicts intact.
+  with its verdicts intact. An amendment that removes text — a dropped
+  criterion or constraint, or wording no longer contained in its
+  replacement — must carry a `disclosure`. Adding and appending are
+  free; what members have already read cannot be made to have never
+  existed.
 - **No cap that punishes precision.** Durable prose carries a single
   1 MiB sanity bound, documented as a bound and not a budget; the
   largest real cap in the system belongs to `discussion`, the cheapest
