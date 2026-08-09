@@ -61,7 +61,11 @@ import { createRawBodyStore, type RawBodyStore } from './raw-body-store.js';
 import { createSqliteSecretsStore } from './secrets.js';
 import { updateServerConfigFile } from './server-config.js';
 import { SessionStore } from './sessions.js';
-import { createAnnexWritePath, createSqliteCuratorStore } from './spine/index.js';
+import {
+  createAnnexWritePath,
+  createSqliteCheckStore,
+  createSqliteCuratorStore,
+} from './spine/index.js';
 import { SqliteEventLog } from './sqlite-event-log.js';
 import { openTeamAndMembers, type TeamStore } from './team-store.js';
 import { createTelemetryStore, type TelemetryStore } from './telemetry-store.js';
@@ -443,6 +447,13 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   // whose attention, and could be dropped whole without falsifying a
   // single fact. `createApp` builds the curator itself over both.
   const spineCuratorStore = createSqliteCuratorStore(db);
+  // The probe engine's check registry. A THIRD class of table: neither
+  // annex truth nor curator bookkeeping, but a projection of the
+  // carrier events — the asks and the `waiting_for` lifecycles that
+  // declared a recipe — which `rebuildChecks()` can refold from the
+  // stream. `createApp` builds the engine itself, because the sweep and
+  // the webhook tap both live there.
+  const spineCheckStore = createSqliteCheckStore(db);
   // MUST run before `registerSecretValues` below: identity values that
   // are still in `secrets` when that call happens stay registered for
   // the life of the process, and the migration would appear to have
@@ -723,6 +734,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
     processDocument: processDocumentStore,
     spine: spineStore,
     spineCurator: spineCuratorStore,
+    spineChecks: spineCheckStore,
     notifications: notificationsStore,
     activityStore: activityStore,
     telemetryStore: telemetryStore,

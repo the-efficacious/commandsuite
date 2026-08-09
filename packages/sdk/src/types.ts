@@ -2545,8 +2545,15 @@ export type SpineAskAction = 'withdraw' | 'decline' | 'redirect' | 'defer';
  * why. A state meaning "resolved by being handed on" would be a lie
  * about an ask nobody has answered, and it silently released the asker
  * from the lock at the exact moment their authority said "not me".
+ *
+ * `discharged` is the armed-setting class of ask (§9), and it is the
+ * one resolution NO MEMBER TYPED: the asker armed a check on the ask,
+ * the world did the thing, the probe observed it, and the authority's
+ * queue item closed with that observation stapled to it. It is a real
+ * resolution — the question has an answer — so it releases the citation
+ * lock exactly as a ruling does.
  */
-export type SpineAskState = 'open' | 'ruled' | 'withdrawn' | 'declined' | 'deferred';
+export type SpineAskState = 'open' | 'ruled' | 'withdrawn' | 'declined' | 'deferred' | 'discharged';
 
 /**
  * A region of the world, registered before anything can be said about
@@ -3435,4 +3442,157 @@ export interface ListSpineInjectionsQuery {
    * or it is not a cursor. Feed back the `id` of a page's last row.
    */
   before_id?: number;
+}
+
+// ─── The probe engine ────────────────────────────────────────────────
+
+/**
+ * A recipe: what the system does when a member points it at something.
+ *
+ * §7 — the system cannot take photographs, because it has no judgement
+ * about what matters. What it CAN do is press a button a member
+ * composed. So a recipe is authored by a member, inside the very event
+ * it discharges, and the observation it produces is captioned with that
+ * member's name (`authoredBy`) beside the probe's (`actor`). The member
+ * took the photo; the system held the camera.
+ *
+ * TWO KINDS IN PHASE 4 (workstation commands are deferred by the
+ * design, not overlooked):
+ *
+ *   webhook     armed on the existing inbound endpoint registry. The
+ *               inbox's HMAC verification and provider dedupe run
+ *               FIRST; a check only ever sees a delivery the team
+ *               already accepted as genuine.
+ *   http_poll   an outbound GET on an interval, with the security pins
+ *               below, none of which is negotiable at authoring time.
+ */
+export type SpineCheckRecipe = SpineWebhookRecipe | SpineHttpPollRecipe;
+
+/** What every recipe carries, whatever presses the button. */
+interface SpineRecipeCommon {
+  /**
+   * The predicate, as inbound-notification filter rules — the SAME
+   * engine and the same evaluation semantics the webhook inbox has used
+   * since it shipped. Reused rather than reinvented on purpose: a
+   * second predicate language would be a second set of edge cases
+   * around `exists`, empty arrays and type coercion, and members would
+   * have to know which one they were writing.
+   *
+   * All rules must pass. An empty list is `true` — a check on "any
+   * delivery at all", which is a legitimate thing to arm.
+   */
+  when: NotificationFilterRule[];
+  /**
+   * Dot-path to a value that IS an observation point on the subject —
+   * a commit SHA, a build id, a version.
+   *
+   * When set and present, the firing observation carries an OBSERVED
+   * revision reading it, sourced to the probe. When unset, the
+   * observation carries no revision, which is the honest answer for a
+   * recipe that watched something with no revision to it.
+   */
+  revisionPath?: string;
+}
+
+export interface SpineWebhookRecipe extends SpineRecipeCommon {
+  kind: 'webhook';
+  /** The inbound endpoint's slug. Immutable, so the arming survives a rename of its label. */
+  endpoint: string;
+}
+
+export interface SpineHttpPollRecipe extends SpineRecipeCommon {
+  kind: 'http_poll';
+  /**
+   * HTTPS ONLY, refused at authoring otherwise. The URL is part of the
+   * authored check — the member took responsibility for where the
+   * system points its camera, and a URL the server derived would be the
+   * system deciding what to look at.
+   */
+  url: string;
+  /** Floor of `SPINE_POLL_MIN_INTERVAL_MS`. A probe is not a monitoring agent. */
+  intervalMs: number;
+  /**
+   * Slug of a secret in the team's secrets store, resolved SERVER-SIDE
+   * at poll time and never stored here. A recipe is an annex event and
+   * annex events are permanent; a token written into one could not be
+   * rotated, redacted, or unseen.
+   */
+  authSecret?: string;
+  /** Header the resolved secret is sent as. Defaults to `Authorization`. */
+  authHeader?: string;
+}
+
+/** The floor on a poll interval. A probe presses a button; it does not monitor. */
+export const SPINE_POLL_MIN_INTERVAL_MS = 60_000;
+
+/**
+ * Where a check stands.
+ *
+ * ONE FIRE PER ARMING, so `fired` is terminal and points at the
+ * observation it produced. Re-arming takes a new carrier event — a new
+ * ask, a fresh `waiting_for` — which keeps "did the thing I armed
+ * actually happen" a lookup with exactly one answer rather than a
+ * history to interpret.
+ *
+ * `disarmed` is the carrier going away: the ask withdrawn or answered,
+ * the contract moved off `waiting_for`. Nothing was observed and
+ * nothing will be.
+ */
+export type SpineCheckState = 'armed' | 'fired' | 'disarmed';
+
+/** Which carrier event a check was born from. There is no standalone check tool. */
+export type SpineCheckCarrier = 'ask' | 'waiting_for';
+
+/**
+ * A check, as the registry holds it.
+ *
+ * A FOLD OVER THE CARRIER EVENTS, not a table members write to. §5's
+ * tool table has no `check_author` and that is deliberate: a check is
+ * authored as part of the thing it discharges, so it cannot drift away
+ * from what it was for, and withdrawing that thing takes the check with
+ * it. `lastEvaluatedAt` is the one column that is pure bookkeeping —
+ * lost on a rebuild, and a fact about the engine rather than the team.
+ */
+export interface SpineCheck {
+  /** `chk_<ulid>`. */
+  id: string;
+  /** The `ask` or `lifecycle` event that armed it. */
+  sourceEvent: string;
+  carrier: SpineCheckCarrier;
+  /** What the observation will be of. Always resolvable, or the carrier is refused. */
+  subject: string;
+  /** Set for a `waiting_for` check: the contract the firing re-lights. */
+  contract: string | null;
+  /** Set for an ask check: the ask the firing discharges. */
+  ask: string | null;
+  recipe: SpineCheckRecipe;
+  /** The member who composed the recipe. Rides onto the observation as `authoredBy`. */
+  authoredBy: string;
+  state: SpineCheckState;
+  /** The observation this check produced. Set iff `state` is `fired`. */
+  firedEvent: string | null;
+  /** ISO-8601. */
+  firedAt: string | null;
+  /** ISO-8601. Bookkeeping: the last time the predicate was evaluated, true or false. */
+  lastEvaluatedAt: string | null;
+  /** Why it stopped being armed, in the members' own terms. */
+  disarmedReason: string | null;
+  /** ISO-8601. */
+  at: string;
+}
+
+export interface ListSpineChecksQuery {
+  state?: SpineCheckState;
+  contract?: string;
+  ask?: string;
+  subject?: string;
+  limit?: number;
+}
+
+export interface ListSpineChecksResponse {
+  checks: SpineCheck[];
+}
+
+export interface GetSpineCheckResponse {
+  check: SpineCheck;
 }

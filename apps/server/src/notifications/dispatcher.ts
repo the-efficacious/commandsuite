@@ -101,6 +101,27 @@ export interface NotificationDispatcherOptions {
   activity: ActivityTracker;
   logger: Logger;
   now?: () => number;
+  /**
+   * The spine's probe engine, tapping VERIFIED deliveries.
+   *
+   * WHERE THIS FIRES, precisely, because the position is a decision.
+   * It is after HMAC verification and after the provider's dedupe —
+   * a check must never see bytes the team has not accepted as genuine,
+   * and a redelivered webhook must not fire an armed check twice — and
+   * BEFORE the endpoint's own filters and its debounce window.
+   *
+   * Not after the filters, because those belong to the endpoint's
+   * NOTIFICATION targets: an endpoint whose filter drops a payload
+   * would otherwise silently disarm every check armed on it, and a
+   * member's check would depend on somebody else's routing config.
+   *
+   * Not after the debounce, because debounce is an ATTENTION device —
+   * it exists so a burst of deliveries becomes one message in a
+   * member's album. A check is not attention; it is evidence, and
+   * holding evidence for a coalescing window would put the wrong
+   * instant on a permanent observation.
+   */
+  onVerifiedDelivery?: (input: { endpoint: string; payload: unknown }) => Promise<void>;
 }
 
 interface DebounceBuffer {
@@ -475,6 +496,22 @@ export function createNotificationDispatcher(
         title,
         overrides: input.overrides,
       });
+
+      // The probe tap. Awaited so a check's observation is in the annex
+      // before the ingress answers — the same reason the spine's append
+      // route awaits its hooks — and its failure never fails the
+      // delivery: the notification and the check are separate promises
+      // to separate people.
+      if (options.onVerifiedDelivery !== undefined) {
+        await options
+          .onVerifiedDelivery({ endpoint: endpoint.slug, payload: parsePayload(bodyText) })
+          .catch((err: unknown) => {
+            logger.warn('spine probe tap failed', {
+              endpoint: endpoint.slug,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
+      }
 
       return runPipeline(endpoint, delivery);
     },

@@ -301,6 +301,11 @@ export const SPINE_PATHS = {
   contract: (id: string) => `/spine/contracts/${encodeURIComponent(id)}`,
   curator: '/spine/curator',
   injections: '/spine/injections',
+  // The check registry. READ-ONLY on purpose: a check is authored
+  // inside the ask or the `waiting_for` it discharges, so there is no
+  // POST here and §5's tool table has no `check_author`.
+  checks: '/spine/checks',
+  check: (id: string) => `/spine/checks/${encodeURIComponent(id)}`,
 } as const;
 
 /** Path builders for variable subresources. Mirrors `SECRET_PATHS`. */

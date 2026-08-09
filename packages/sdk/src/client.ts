@@ -63,6 +63,7 @@ import {
   GetObjectiveResponseSchema,
   GetProcessDocumentResponseSchema,
   GetSecretResponseSchema,
+  GetSpineCheckResponseSchema,
   GetSpineContractResponseSchema,
   GetSpineEventResponseSchema,
   GetToolSourceResponseSchema,
@@ -83,6 +84,7 @@ import {
   ListObjectivesResponseSchema,
   ListPendingEnrollmentsResponseSchema,
   ListSecretsResponseSchema,
+  ListSpineChecksResponseSchema,
   ListSpineContractsResponseSchema,
   ListSpineEventsResponseSchema,
   ListSpineInjectionsResponseSchema,
@@ -183,6 +185,7 @@ import type {
   ListActivityQuery,
   ListGenaiQuery,
   ListObjectivesQuery,
+  ListSpineChecksQuery,
   ListSpineContractsQuery,
   ListSpineEventsQuery,
   ListSpineEventsResponse,
@@ -225,6 +228,7 @@ import type {
   SetSpineCuratorConfigRequest,
   SetToolCredentialRequest,
   SetVariableValueRequest,
+  SpineCheck,
   SpineContract,
   SpineCuratorConfigResponse,
   SpineEvent,
@@ -2123,6 +2127,32 @@ export class Client {
     const qs = params.toString();
     const resp = await this.request(`${SPINE_PATHS.injections}${qs ? `?${qs}` : ''}`);
     return ListSpineInjectionsResponseSchema.parse(await this.json(resp)).injections;
+  }
+
+  /**
+   * The checks a member armed — what the system is holding a camera on.
+   *
+   * READ-ONLY, and there is no authoring counterpart anywhere in this
+   * client. A check is born inside the ask or the `waiting_for` it
+   * discharges (§7), so the way to arm one is to author that, and the
+   * way to disarm one is to withdraw it.
+   */
+  async spineChecks(query: ListSpineChecksQuery = {}): Promise<SpineCheck[]> {
+    const params = new URLSearchParams();
+    if (query.state !== undefined) params.set('state', query.state);
+    if (query.contract !== undefined) params.set('contract', query.contract);
+    if (query.ask !== undefined) params.set('ask', query.ask);
+    if (query.subject !== undefined) params.set('subject', query.subject);
+    if (query.limit !== undefined) params.set('limit', String(query.limit));
+    const qs = params.toString();
+    const resp = await this.request(`${SPINE_PATHS.checks}${qs ? `?${qs}` : ''}`);
+    return ListSpineChecksResponseSchema.parse(await this.json(resp)).checks;
+  }
+
+  /** One check, by id — "did the thing I armed actually happen", answered in one call. */
+  async spineCheck(id: string): Promise<SpineCheck> {
+    const resp = await this.request(SPINE_PATHS.check(id));
+    return GetSpineCheckResponseSchema.parse(await this.json(resp)).check;
   }
 }
 

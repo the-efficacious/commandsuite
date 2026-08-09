@@ -133,8 +133,33 @@ const APP_IN_SCOPE = [
  * `orient` carries everything the push would have said, and their next
  * stale write is refused with the delta regardless. Nothing captured
  * is lost, because the curator captures nothing.
+ *
+ * 2026-08-09, +8 −1 = 65. The probe engine, and one deletion. The
+ * deletion is `spine curator append hook failed`: the curator's hook
+ * moved onto the annex write path, which logs `spine append hook
+ * failed` for any hook, so the site is one rather than one per
+ * subscriber. The additions are `spine append hook failed`
+ * (append.ts), `spine probe sweep failed` (app.ts), `spine probe tap
+ * failed` (dispatcher.ts), and five in probes.ts: `spine: stored
+ * carrier holds an unarmable recipe`, `spine: carrier declares a
+ * recipe with no subject`, `spine: poll failed`, `spine: check fired
+ * but produced no observation`, `spine: check fired but the contract
+ * did not re-light`.
+ *
+ * ALL OPERATIONAL, and two of them deserve the argument rather than
+ * the assertion, because they are the two where something real is
+ * lost. `check fired but produced no observation` means the world did
+ * the thing and the annex holds no photograph of it; `did not
+ * re-light` means a contract stayed `waiting_for` after its check
+ * fired. Neither is a completeness claim in this census's sense — that
+ * scope is CAPTURE retention, where the only record of a loss is the
+ * log line — because in both cases the loss is recorded where the
+ * member looks for it: the check row carries `disarmed_reason` and is
+ * served at `GET /spine/checks`, and the observation stands in the
+ * annex whatever the lifecycle did. The line is an operator's copy of
+ * a fact the product already surfaces.
  */
-const TOTAL_SITES = 58;
+const TOTAL_SITES = 65;
 
 function messagesIn(file: string): string[] {
   const src = readFileSync(join(SRC, file), 'utf8');

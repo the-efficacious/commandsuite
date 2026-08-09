@@ -801,6 +801,32 @@ function addressedMembers(
         ? [{ member: body.redirectTo, why: 'an ask was redirected to you' }]
         : [];
     }
+    case 'observation': {
+      // THE DISCHARGE ARM (§7). A probe's firing observation stapled to
+      // an ask closed that ask without its authority typing anything —
+      // §9's armed setting, where the human does the thing and the
+      // probe is the confirmation. The one person who has to hear about
+      // it is the ASKER: they are the member who was blocked, and the
+      // thing that unblocked them happened in the world rather than in
+      // the annex, so nothing else would ever tell them.
+      //
+      // NOT the authority. Their queue item went away, which is the
+      // absence of a demand rather than a new one, and spending an
+      // album to announce that somebody no longer owes you an answer is
+      // exactly the ceremony §10 forbids.
+      if (!event.actor.startsWith('probe:') || event.staplesTo === null) return [];
+      const stapled = annex.event(event.staplesTo);
+      if (stapled === null || stapled.kind !== 'ask') return [];
+      const ask = annex.ask(stapled.id);
+      if (ask === null) return [];
+      return [
+        {
+          member: ask.asker,
+          why: 'the check you armed fired — this ask is discharged, nobody had to answer it',
+          detail: `ask ${ask.id} is ${ask.state}, resolved by this observation`,
+        },
+      ];
+    }
     case 'lifecycle': {
       const state = (event.body as SpineLifecycleBody).state;
       if (!CLASS1_LIFECYCLE_STATES.has(state) || contract === null) return [];

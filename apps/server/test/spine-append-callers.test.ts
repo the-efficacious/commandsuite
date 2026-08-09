@@ -115,34 +115,38 @@ function scanImports(dir = SRC, prefix = ''): Hit[] {
 }
 
 /**
- * Any `.append(` in the spine module, whatever the receiver.
+ * Any `.append(` anywhere in `src/`, whatever the receiver.
  *
  * NO RECEIVER ALLOWLIST — that is the whole difference from what this
- * replaced. Inside `src/spine/` the annex is the only thing with an
- * `append`, so every call is a candidate and the exemptions are named
- * by FILE: the store defines the method, and the write path is the one
- * caller. A probe engine calling `this.writer.append(…)` shows up here
- * even though no name in it was foreseen.
+ * replaced, and it is why this is composed with the import scan rather
+ * than used alone. Two things in this repo answer to `.append(`: the
+ * annex writer (whose acquisition the import scan already fences) and
+ * the hooked write path, which is the sanctioned way to write and which
+ * the probe engine uses. A regex cannot tell them apart.
+ *
+ * So the property asserted is the COMPOSITION: every `.append(` call in
+ * `src/` lives either in the two files allowed to hold a writer, or in
+ * a file that imports no write grant at all — and a file that cannot
+ * hold a writer can only be calling the hooked path. There is no third
+ * possibility, which is what makes this exhaustive rather than
+ * suggestive.
  */
 const ANY_APPEND_CALL = /\.append\s*\(/;
 
-function scanSpineAppendCalls(): { file: string; line: number; text: string }[] {
+function scanAppendCalls(dir = SRC, prefix = ''): { file: string; line: number; text: string }[] {
   const out: { file: string; line: number; text: string }[] = [];
-  const walk = (dir: string, prefix: string): void => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const label = `${prefix}${entry.name}`;
-      if (entry.isDirectory()) {
-        walk(join(dir, entry.name), `${label}/`);
-        continue;
-      }
-      if (!entry.name.endsWith('.ts')) continue;
-      const source = readFileSync(join(dir, entry.name), 'utf8');
-      source.split('\n').forEach((text, i) => {
-        if (ANY_APPEND_CALL.test(text)) out.push({ file: label, line: i + 1, text: text.trim() });
-      });
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const label = `${prefix}${entry.name}`;
+    if (entry.isDirectory()) {
+      out.push(...scanAppendCalls(join(dir, entry.name), `${label}/`));
+      continue;
     }
-  };
-  walk(join(SRC, 'spine'), 'spine/');
+    if (!entry.name.endsWith('.ts')) continue;
+    const source = readFileSync(join(dir, entry.name), 'utf8');
+    source.split('\n').forEach((text, i) => {
+      if (ANY_APPEND_CALL.test(text)) out.push({ file: label, line: i + 1, text: text.trim() });
+    });
+  }
   return out;
 }
 
@@ -169,14 +173,25 @@ describe('the annex has one write path, and the hooks are on it', () => {
     expect(new Set(grants)).toEqual(new Set(WRITE_GRANTS));
   });
 
-  it('has no `.append(` inside the spine outside the store and the write path', () => {
-    const calls = scanSpineAppendCalls().filter((c) => !ALLOWED.includes(c.file));
+  it('every `.append(` is either in the two grant files or in a file with no grant', () => {
+    const granted = new Set(scanImports().map((h) => h.file));
+    const calls = scanAppendCalls().filter((c) => !ALLOWED.includes(c.file) && granted.has(c.file));
     expect(
       calls.map((c) => `${c.file}:${c.line}`),
-      `a second annex write inside the spine: ${calls
+      `a module that can hold an annex writer also calls append: ${calls
         .map((c) => `${c.file}:${c.line} — ${c.text}`)
         .join(' | ')}`,
     ).toEqual([]);
+    // AND THE SCAN REACHED SOMETHING. The filter above returns an empty
+    // list just as happily against a directory with no `.append(` in it
+    // at all — including the day someone breaks the walk. The probe
+    // engine's two calls are the ones that must be seen, because they
+    // are the second writer this whole property exists for.
+    const probeCalls = scanAppendCalls().filter((c) => c.file === 'spine/probes.ts');
+    expect(
+      probeCalls.length,
+      'the probe engine writes through the hooked path; the scan must see those calls',
+    ).toBeGreaterThanOrEqual(2);
   });
 
   it('runs the registered hooks on the one path, and the route awaits it', () => {
@@ -239,6 +254,7 @@ describe('the annex has one write path, and the hooks are on it', () => {
 
     // And the `.append(` half, on receivers no allowlist would have had.
     expect(ANY_APPEND_CALL.test('const r = this.writer.append(evt, ctx);')).toBe(true);
+    expect(ANY_APPEND_CALL.test('await engine.write.append(observation, ctx);')).toBe(true);
     expect(ANY_APPEND_CALL.test('const r = deps.a.append(evt, ctx);')).toBe(true);
     expect(ANY_APPEND_CALL.test('  append(input: AppendSpineEventRequest): AppendResult {')).toBe(
       false,

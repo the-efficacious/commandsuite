@@ -19,9 +19,14 @@ export type { CuratorStore, LeaseRecord, LeaseState, ReceiptVia } from './curato
 export { createSqliteCuratorStore } from './curator-store.js';
 export type { SpineErrorCode, SpineErrorDetail } from './errors.js';
 export { SpineError, staleStateRev } from './errors.js';
+export { SPINE_CHECK_TABLES } from './probe-schema.js';
 // NO `createSqliteAnnexStore` AND NO `AnnexWriter` HERE, deliberately.
 // The barrel hands out the read surface and the hooked write path; a
 // consumer that wants a raw append-capable handle has to name
 // `./store.js` itself, which is exactly what the import scanner reads.
+export type { CheckStore } from './probe-store.js';
+export { createSqliteCheckStore } from './probe-store.js';
+export type { ProbeEngine, ProbeEngineOptions } from './probes.js';
+export { createProbeEngine } from './probes.js';
 export type { AnnexStore, AppendContext, AppendResult } from './store.js';
 export { SPINE_EVENTS_DEFAULT_LIMIT } from './store.js';

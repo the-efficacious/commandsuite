@@ -125,11 +125,15 @@ describe('the opaque-runner property', () => {
     // moment to ask whether the new file belongs behind this property.
     expect(files.sort()).toEqual([
       'append.ts',
+      'checks.ts',
       'curator-schema.ts',
       'curator-store.ts',
       'curator.ts',
       'errors.ts',
       'index.ts',
+      'probe-schema.ts',
+      'probe-store.ts',
+      'probes.ts',
       'schema.ts',
       'store.ts',
       'ulid.ts',

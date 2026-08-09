@@ -76,6 +76,7 @@ import {
   FsWriteCollisionSchema,
   InvokeToolRequestSchema,
   ListObjectivesQuerySchema,
+  ListSpineChecksQuerySchema,
   ListSpineContractsQuerySchema,
   ListSpineEventsQuerySchema,
   ListSpineInjectionsQuerySchema,
@@ -200,9 +201,12 @@ import { SecretsError, type SecretsStore } from './secrets.js';
 import { SESSION_COOKIE_NAME, SESSION_TTL_MS, type SessionStore } from './sessions.js';
 import {
   type AnnexWritePath,
+  type CheckStore,
   type Curator,
   type CuratorStore,
   createCurator,
+  createProbeEngine,
+  type ProbeEngine,
   SpineError,
 } from './spine/index.js';
 import type { TeamStore } from './team-store.js';
@@ -328,6 +332,17 @@ export interface AppOptions {
    * read-only spine.
    */
   spineCurator?: CuratorStore;
+  /**
+   * The probe engine's check registry.
+   *
+   * Provided as a STORE for the same reason the curator's is: the
+   * engine needs the write path, the secrets store and a sweep that
+   * dies with the app, and all three live here. Wired iff BOTH this and
+   * `spine` are present. Without it the spine still records everything
+   * a member authors — including the recipes — and nothing presses a
+   * button, which is a coherent state and not a broken one.
+   */
+  spineChecks?: CheckStore;
   /**
    * External Notifications registry — inbound webhook/API endpoints
    * routed to members and channels as ambient input. The
@@ -548,6 +563,18 @@ const HARD_CAP_MAX_FILE_SIZE = 1024 * 1024 * 1024;
 const SPINE_SWEEP_INTERVAL_MS = 10_000;
 
 /**
+ * How often the probe engine looks for a poll that is due.
+ *
+ * Deliberately much shorter than any poll interval a member can author
+ * (the floor is 60s), because this tick is not the schedule — the
+ * check's own `intervalMs` is. What this controls is how late a due
+ * poll can be, and a 10s granularity against a 60s floor keeps the
+ * worst-case lateness under a sixth of the shortest interval anyone
+ * asked for. Webhook checks never touch it: those are event-driven.
+ */
+const SPINE_PROBE_SWEEP_INTERVAL_MS = 10_000;
+
+/**
  * Enrollment source-label limits, READ OFF `PendingEnrollmentSchema` rather
  * than restated here. These fields were unbounded at the producer while the
  * schema capped them, so `/enroll/pending` returned rows the SDK refused to
@@ -609,6 +636,7 @@ export function createApp(options: AppOptions): CreatedApp {
     processDocument,
     spine,
     spineCurator,
+    spineChecks,
     notifications,
     telemetryStore,
     genaiStore,
@@ -639,6 +667,39 @@ export function createApp(options: AppOptions): CreatedApp {
   // of the running broker, not config or persisted truth.
   const activityTracker: ActivityTracker = createActivityTracker(now);
 
+  // The probe engine — the system pressing a button a member composed.
+  //
+  // BEFORE the dispatcher, because the webhook tap is one of its
+  // options and a check must see a verified delivery in the same call
+  // that accepted it. Registered on the write path here rather than in
+  // the curator block below so arming and disarming settle before the
+  // attention line goes out: by the time the curator decides who to
+  // tell, the registry already agrees with the annex.
+  let probes: ProbeEngine | undefined;
+  if (spine !== undefined && spineChecks !== undefined) {
+    const engine = createProbeEngine({
+      write: spine,
+      checks: spineChecks,
+      logger,
+      ...(secrets !== undefined ? { secrets } : {}),
+      now,
+    });
+    probes = engine;
+    spine.onAppend((result) => engine.onAppend(result));
+    // The interval half, on the blessed sweep idiom. `http_poll` checks
+    // whose interval has elapsed; webhook checks are event-driven and
+    // never touched here.
+    const pollInterval = setInterval(() => {
+      void engine.sweep().catch((err) => {
+        logger.warn('spine probe sweep failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }, SPINE_PROBE_SWEEP_INTERVAL_MS);
+    pollInterval.unref?.();
+    shutdownSignal?.addEventListener('abort', () => clearInterval(pollInterval), { once: true });
+  }
+
   // External Notifications dispatcher — owned here (not by run.ts)
   // because the delivery policy reads the in-process activity
   // tracker. The sweep interval expires stale offline-queue rows,
@@ -655,6 +716,13 @@ export function createApp(options: AppOptions): CreatedApp {
       activity: activityTracker,
       logger,
       now,
+      ...(probes !== undefined
+        ? {
+            onVerifiedDelivery: async (input: { endpoint: string; payload: unknown }) => {
+              await (probes as ProbeEngine).onDelivery(input);
+            },
+          }
+        : {}),
     });
     const dispatcher = notificationDispatcher;
     void dispatcher.recover().catch((err) => {
@@ -3427,6 +3495,42 @@ export function createApp(options: AppOptions): CreatedApp {
       if (contract === null) return c.json({ error: 'no such contract' }, 404);
       return c.json({ contract });
     });
+
+    // ─── The check registry ─────────────────────────────────────────
+    //
+    // READ-ONLY, and the absence of a POST is the design rather than a
+    // gap. A check is authored inside the ask or the `waiting_for` it
+    // discharges (§5's tool table has no `check_author`), so there is
+    // nothing to create here and nothing to delete: withdrawing the
+    // carrier disarms the check.
+    //
+    // Ungated beyond authentication, like every other annex read. A
+    // check says what the team armed a camera on; hiding that from
+    // teammates would make "did the thing I armed happen" answerable
+    // only by its author, which is the siloing the spine exists
+    // against.
+    if (probes !== undefined) {
+      const engine = probes;
+      app.get(SPINE_PATHS.checks, auth, (c) => {
+        const parsed = ListSpineChecksQuerySchema.safeParse({
+          state: c.req.query('state'),
+          contract: c.req.query('contract'),
+          ask: c.req.query('ask'),
+          subject: c.req.query('subject'),
+          limit: c.req.query('limit'),
+        });
+        if (!parsed.success) {
+          return c.json({ error: 'invalid query', details: parsed.error.issues }, 400);
+        }
+        return c.json({ checks: engine.checks(parsed.data) });
+      });
+
+      app.get(`${SPINE_PATHS.checks}/:id`, auth, (c) => {
+        const check = engine.check(c.req.param('id'));
+        if (check === null) return c.json({ error: 'no such check' }, 404);
+        return c.json({ check });
+      });
+    }
 
     // ─── The curator's own surface ──────────────────────────────────
     //

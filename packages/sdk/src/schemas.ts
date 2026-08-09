@@ -15,6 +15,7 @@ import {
   SPINE_EVENT_KINDS,
   SPINE_FLOOR_SIGNALS,
   SPINE_INJECTION_KINDS,
+  SPINE_POLL_MIN_INTERVAL_MS,
   SPINE_SUBSCRIPTION_LEVELS,
 } from './types.js';
 
@@ -1999,7 +2000,16 @@ export const SpineContractStateSchema = z.enum([
   'superseded',
 ]);
 export const SpineAskActionSchema = z.enum(['withdraw', 'decline', 'redirect', 'defer']);
-export const SpineAskStateSchema = z.enum(['open', 'ruled', 'withdrawn', 'declined', 'deferred']);
+export const SpineAskStateSchema = z.enum([
+  'open',
+  'ruled',
+  'withdrawn',
+  'declined',
+  'deferred',
+  // The armed-setting class (§9): the probe was the confirmation, and
+  // nobody typed anything.
+  'discharged',
+]);
 
 /** ISO-8601. Instants are strings on the wire so a reader never has to guess a zone. */
 const SpineInstantSchema = z.iso.datetime();
@@ -2706,3 +2716,115 @@ export const ListSpineInjectionsQuerySchema = z.object({
 export const SpineCuratorConfigQuerySchema = z.object({
   member: NameSchema.optional(),
 });
+
+// ─── The probe engine ────────────────────────────────────────────────
+
+/**
+ * A dot-path into a JSON payload, in the notification inbox's own
+ * syntax. Bounded because it is authored inside a permanent event.
+ */
+const SpineDotPathSchema = z.string().min(1).max(256);
+
+/**
+ * The predicate, as the SAME filter rules the webhook inbox evaluates.
+ *
+ * NOT A NEW LANGUAGE, deliberately. `applyFilters` has been deciding
+ * whether an inbound payload matches since External Notifications
+ * shipped; a check asks exactly that question of exactly those
+ * payloads. A second predicate dialect would double the edge cases
+ * around `exists`, empty arrays and coercion, and would make a member
+ * guess which one they were writing.
+ */
+const SpineCheckPredicateSchema = z.array(NotificationFilterRuleSchema).max(32);
+
+export const SpineWebhookRecipeSchema = z.object({
+  kind: z.literal('webhook'),
+  endpoint: z.string().min(1).max(128),
+  when: SpineCheckPredicateSchema,
+  revisionPath: SpineDotPathSchema.optional(),
+});
+
+/**
+ * The outbound poll, with its security pins IN THE SCHEMA rather than
+ * in the engine that runs it.
+ *
+ * Each of these is refused at AUTHORING TIME, which is the only moment
+ * a member is present to be told. A pin checked at fire time would fail
+ * silently, hours later, into a log — and a check that quietly never
+ * fires is indistinguishable from a world that never did the thing.
+ */
+export const SpineHttpPollRecipeSchema = z.object({
+  kind: z.literal('http_poll'),
+  url: z
+    .string()
+    .min(1)
+    .max(2048)
+    .refine((raw) => {
+      let parsed: URL;
+      try {
+        parsed = new URL(raw);
+      } catch {
+        return false;
+      }
+      // HTTPS ONLY. A poll carries a resolved secret in a header on
+      // some deployments, and cleartext is not a tuning knob.
+      return parsed.protocol === 'https:';
+    }, 'a poll URL must be an absolute https:// URL — the probe will not send a team credential in cleartext'),
+  intervalMs: z
+    .number()
+    .int()
+    .min(SPINE_POLL_MIN_INTERVAL_MS)
+    .max(24 * 60 * 60 * 1000),
+  // A SLUG, never a value. The recipe lives in an append-only event;
+  // a token written into one could never be rotated or unseen.
+  authSecret: z
+    .string()
+    .min(1)
+    .max(128)
+    .regex(/^[a-z0-9][a-z0-9-]*$/, 'name the secret by slug; the probe resolves it server-side')
+    .optional(),
+  authHeader: z
+    .string()
+    .min(1)
+    .max(128)
+    .regex(/^[A-Za-z0-9-]+$/)
+    .optional(),
+  when: SpineCheckPredicateSchema,
+  revisionPath: SpineDotPathSchema.optional(),
+});
+
+export const SpineCheckRecipeSchema = z.discriminatedUnion('kind', [
+  SpineWebhookRecipeSchema,
+  SpineHttpPollRecipeSchema,
+]);
+
+export const SpineCheckStateSchema = z.enum(['armed', 'fired', 'disarmed']);
+export const SpineCheckCarrierSchema = z.enum(['ask', 'waiting_for']);
+
+export const SpineCheckSchema = z.object({
+  id: SpineIdSchema,
+  sourceEvent: SpineIdSchema,
+  carrier: SpineCheckCarrierSchema,
+  subject: SpineIdSchema,
+  contract: SpineIdSchema.nullable(),
+  ask: SpineIdSchema.nullable(),
+  recipe: SpineCheckRecipeSchema,
+  authoredBy: NameSchema,
+  state: SpineCheckStateSchema,
+  firedEvent: SpineIdSchema.nullable(),
+  firedAt: SpineInstantSchema.nullable(),
+  lastEvaluatedAt: SpineInstantSchema.nullable(),
+  disarmedReason: z.string().min(1).max(2048).nullable(),
+  at: SpineInstantSchema,
+});
+
+export const ListSpineChecksQuerySchema = z.object({
+  state: SpineCheckStateSchema.optional(),
+  contract: SpineIdSchema.optional(),
+  ask: SpineIdSchema.optional(),
+  subject: SpineIdSchema.optional(),
+  limit: z.coerce.number().int().positive().max(500).optional(),
+});
+
+export const ListSpineChecksResponseSchema = z.object({ checks: z.array(SpineCheckSchema) });
+export const GetSpineCheckResponseSchema = z.object({ check: SpineCheckSchema });

@@ -74,6 +74,7 @@ import {
   SPINE_TERMINAL_STATES,
 } from 'csuite-sdk/types';
 import type { DatabaseSyncInstance } from '../db.js';
+import { carrierFields, noSubjectForRecipe, readRecipe, recipeSubject } from './checks.js';
 import { citationRequired, SpineError, staleStateRev } from './errors.js';
 import { SPINE_PROJECTION_TABLES, SPINE_SCHEMA } from './schema.js';
 import { eventId, revisionId } from './ulid.js';
@@ -88,6 +89,13 @@ const CITATION_LOCKED: ReadonlySet<SpineEventKind> = new Set(SPINE_CITATION_LOCK
 
 /** An ask still awaiting its answer. Only these lock; a resolved ask binds nothing. */
 const UNRESOLVED_ASK_STATES: readonly SpineAskState[] = ['open', 'deferred'];
+
+/**
+ * What marks an actor as the system pressing a button rather than a
+ * member taking a photograph. Member names cannot contain `:`, so the
+ * namespace is collision-free by construction.
+ */
+export const PROBE_ACTOR_PREFIX = 'probe:';
 
 export interface AppendContext {
   /** `member`, `probe:<id>`, or `integration:<id>`. */
@@ -1137,6 +1145,9 @@ class SqliteAnnexStore implements AnnexWriter {
     actor: string,
     contract: SpineContract | null,
   ): void {
+    this.assertProvenanceLegitimate(kind, input, actor, contract);
+    this.assertRecipeArmable(kind, input, contract);
+
     if (kind === 'criterion_verdict') {
       const body = input.body as SpineCriterionVerdictBody;
       const target = contract as SpineContract;
@@ -1256,6 +1267,145 @@ class SqliteAnnexStore implements AnnexWriter {
 
     if (kind === 'lifecycle') {
       this.assertLifecycleLegal(input, contract as SpineContract);
+    }
+  }
+
+  /**
+   * WHO MAY CLAIM WHAT — the two halves of §7's provenance rule, both
+   * enforced here because both are properties of what the caption
+   * MEANS rather than permissions somebody could be granted.
+   *
+   * A PROBE MAY AUTHOR ONLY OBSERVATIONS. `actor: probe:<check-id>` is
+   * the system saying "I pressed the button a member composed", and the
+   * only honest thing that can come out of a button press is a
+   * photograph. Everything else in the registry is a JUDGEMENT — a
+   * verdict, a ruling, a specification, an amendment — and §10 forbids
+   * the system to make one by name. So the closed list is `observation`
+   * plus exactly one lifecycle shape, below, and nothing widens it.
+   *
+   * THE ONE LIFECYCLE, narrowly. §7: a check firing on a `waiting_for`
+   * contract appends the lifecycle back to `active`, citing the
+   * observation. That is a real state change authored by no member, so
+   * it is fenced on every side that could be widened later: only to
+   * `active`, only from `waiting_for`, only citing an observation THIS
+   * probe took. A probe cancelling a contract, or re-lighting one that
+   * was parked, or citing somebody else's evidence, are all different
+   * acts wearing this one's clothes.
+   *
+   * AND A MEMBER MAY NOT CLAIM `authoredBy`. It is the field that says
+   * "this photograph was composed by someone other than whoever's name
+   * is on the shutter", and it exists for exactly one relationship. A
+   * member who could set it could file their own observation under a
+   * colleague's authorship, which is the same failure as a forged
+   * ruling with a cheaper input. The probe engine is server-internal
+   * and sets it from the check row; nobody else has a use for it.
+   */
+  private assertProvenanceLegitimate(
+    kind: SpineEventKind,
+    input: AppendSpineEventRequest,
+    actor: string,
+    contract: SpineContract | null,
+  ): void {
+    if (!actor.startsWith(PROBE_ACTOR_PREFIX)) {
+      if (input.authoredBy !== undefined) {
+        throw new SpineError(
+          'not_permitted',
+          `${actor} set authoredBy=${input.authoredBy} on this ${kind}. That caption says a ` +
+            'photograph was composed by someone other than whoever took it, and it exists for ' +
+            'one relationship only: a probe firing a recipe its author wrote. A member writing ' +
+            "it would be filing their own observation under a colleague's name.",
+        );
+      }
+      return;
+    }
+
+    if (input.authoredBy === undefined) {
+      throw new SpineError(
+        'invalid_input',
+        `${actor} is a probe, and a probe's event must carry authoredBy — the member whose ` +
+          'recipe fired. Without it the annex holds a photograph nobody composed, which is the ' +
+          'system taking a picture on its own judgement.',
+      );
+    }
+
+    if (kind === 'observation') return;
+
+    if (kind !== 'lifecycle') {
+      throw new SpineError(
+        'not_permitted',
+        `${actor} is a probe and may only append observations. A ${kind} is a judgement, and ` +
+          'the system has none — it holds the camera; the member composes the shot. (The one ' +
+          'exception is the lifecycle that re-lights a waiting_for contract, citing the ' +
+          "probe's own firing observation.)",
+      );
+    }
+
+    const body = input.body as SpineLifecycleBody;
+    const target = contract as SpineContract | null;
+    if (body.state !== 'active') {
+      throw new SpineError(
+        'not_permitted',
+        `${actor} is a probe and may only move a contract to active. A lifecycle to ` +
+          `${body.state} decides something, and deciding is not what a probe does.`,
+      );
+    }
+    if (target === null || target.state !== 'waiting_for') {
+      throw new SpineError(
+        'not_permitted',
+        `${actor} is a probe, and a probe may only re-light a contract that is waiting_for the ` +
+          `room. ${target === null ? 'This lifecycle names no contract' : `Contract ${target.id} is ${target.state}`}, ` +
+          'so there is nothing a probe is entitled to change about it.',
+      );
+    }
+    const ownObservation = (input.cites ?? []).some((id) => {
+      const cited = this.event(id);
+      return cited !== null && cited.kind === 'observation' && cited.actor === actor;
+    });
+    if (!ownObservation) {
+      throw new SpineError(
+        'not_permitted',
+        `${actor} must cite its OWN firing observation to re-light ${target.id}. A discharge ` +
+          'that cites nothing is a state change with no evidence behind it, and one citing ' +
+          "another probe's observation is a check claiming a photograph it did not take.",
+      );
+    }
+  }
+
+  /**
+   * A DECLARED RECIPE MUST BE ARMABLE, refused here if it is not.
+   *
+   * The store rather than the route, for the reason every other rule in
+   * this file is here: a probe, a migration or a future handler reaches
+   * `append` without passing a Hono middleware, and an append-only
+   * table keeps whatever it is given forever. This is also where the
+   * http_poll security pins bind — https-only, the interval floor, a
+   * secret named by slug and never by value — because that is the one
+   * moment a member is present to be told.
+   */
+  private assertRecipeArmable(
+    kind: SpineEventKind,
+    input: AppendSpineEventRequest,
+    contract: SpineContract | null,
+  ): void {
+    const fields = carrierFields(kind, input.body);
+    // Throws on a malformed declaration; returns null on prose.
+    const recipe = readRecipe(fields);
+    if (recipe === null) return;
+
+    // An ask_action re-arms a check on an ask whose subject the ask
+    // itself carries, so the caption to resolve against is the ask's.
+    let eventSubject = input.subject ?? null;
+    let contractSubject = contract?.subject ?? null;
+    if (kind === 'ask_action') {
+      const ask = this.ask((input.body as SpineAskActionBody).ask);
+      eventSubject = ask?.subject ?? null;
+      contractSubject =
+        ask?.contract === undefined || ask.contract === null
+          ? null
+          : (this.contract(ask.contract)?.subject ?? null);
+    }
+    if (recipeSubject({ eventSubject, contractSubject }) === null) {
+      throw noSubjectForRecipe(kind);
     }
   }
 
@@ -1862,6 +2012,10 @@ class SqliteAnnexStore implements AnnexWriter {
         this.foldAskAction(event);
         this.touchContract(contractId, stateRev, event, {});
         break;
+      case 'observation':
+        this.foldDischarge(event);
+        this.touchContract(contractId, stateRev, event, {});
+        break;
       default:
         this.touchContract(contractId, stateRev, event, {});
         break;
@@ -2110,6 +2264,46 @@ class SqliteAnnexStore implements AnnexWriter {
     this.db
       .prepare('UPDATE spine_asks SET state = ?, resolved_by = ? WHERE id = ?')
       .run(state, event.id, body.ask);
+  }
+
+  /**
+   * THE ARMED-SETTING DISCHARGE (§9): an ask resolved by a photograph
+   * instead of by a sentence.
+   *
+   * A probe's firing observation stapled to an `ask` event closes that
+   * ask as `discharged`, with the observation as `resolvedBy`. The
+   * authority's queue item goes away without the authority typing —
+   * which is the entire point of the class: the human does the thing,
+   * the probe is the confirmation.
+   *
+   * READ OFF THE EVENT, NOT OFF THE CHECK REGISTRY, and that is what
+   * makes it a fold. `spine_checks` is materialised by the probe
+   * engine; if this consulted it, `rebuildProjections()` would need the
+   * registry to be present and correct in order to recompute the asks,
+   * and the annex would have stopped being the only truth. Everything
+   * here — the actor's `probe:` namespace, the staple, the ask it
+   * points at — is in the event stream, so a rebuild from bare events
+   * reaches the same answer.
+   *
+   * THE STAPLE IS THE MECHANISM AND ALSO THE MEANING. §7 says the
+   * observation is stapled to the ask; `staples_to` is how the annex
+   * attaches one photograph to another without rewriting either, and it
+   * is what makes the queue item render its own evidence.
+   */
+  private foldDischarge(event: SpineEvent): void {
+    if (!event.actor.startsWith(PROBE_ACTOR_PREFIX)) return;
+    if (event.staplesTo === null) return;
+    const target = this.event(event.staplesTo);
+    if (target === null || target.kind !== 'ask') return;
+    // Only an ask still awaiting an answer can be discharged. A ruled
+    // or withdrawn ask that a late probe fired on keeps the resolution
+    // a member gave it — the first answer is the one that happened.
+    this.db
+      .prepare(
+        `UPDATE spine_asks SET state = 'discharged', resolved_by = ?
+         WHERE id = ? AND state IN ('open','deferred')`,
+      )
+      .run(event.id, target.id);
   }
 
   /** Advance the counter and the clock on a contract an event touched but did not reshape. */
