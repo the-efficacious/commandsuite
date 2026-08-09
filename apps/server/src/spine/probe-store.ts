@@ -197,11 +197,14 @@ class SqliteCheckStore implements CheckStore {
       .all() as unknown as CheckRow[];
     return rows.map(rowToCheck).filter((check) => {
       if (check.recipe.kind !== 'http_poll') return false;
-      // NEVER EVALUATED means due now. A check armed at 09:00 with a
-      // five-minute interval must not sit idle until 09:05 — the
-      // member armed it because they expect the world to be looked at.
-      const since = check.lastEvaluatedAt ?? check.at;
-      return now - Date.parse(since) >= check.recipe.intervalMs;
+      // NEVER EVALUATED MEANS DUE NOW, and it is a rule rather than a
+      // rounding. A check armed at 09:00 with a five-minute interval
+      // must not sit idle until 09:05: the member armed it because
+      // they want the world looked at, and the thing they are waiting
+      // for may already have happened. `intervalMs` is the gap BETWEEN
+      // looks, not a delay before the first one.
+      if (check.lastEvaluatedAt === null) return true;
+      return now - Date.parse(check.lastEvaluatedAt) >= check.recipe.intervalMs;
     });
   }
 

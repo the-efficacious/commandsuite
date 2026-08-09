@@ -131,7 +131,7 @@ function scanImports(dir = SRC, prefix = ''): Hit[] {
  * possibility, which is what makes this exhaustive rather than
  * suggestive.
  */
-const ANY_APPEND_CALL = /\.append\s*\(/;
+const ANY_APPEND_CALL = /\.append[A-Za-z]*\s*\(/;
 
 function scanAppendCalls(dir = SRC, prefix = ''): { file: string; line: number; text: string }[] {
   const out: { file: string; line: number; text: string }[] = [];
@@ -204,7 +204,7 @@ describe('the annex has one write path, and the hooks are on it', () => {
     expect(path).toContain('await hook(result)');
 
     const app = readFileSync(join(SRC, 'app.ts'), 'utf8');
-    expect(app).toContain('await spine.append(input, { actor: member.name })');
+    expect(app).toContain('await spine.append(input, { actor: member.name, now: now() })');
     expect(app, 'the curator must register itself on the write path').toContain(
       'spine.onAppend((result) => built.onAppend(result))',
     );
@@ -255,6 +255,10 @@ describe('the annex has one write path, and the hooks are on it', () => {
     // And the `.append(` half, on receivers no allowlist would have had.
     expect(ANY_APPEND_CALL.test('const r = this.writer.append(evt, ctx);')).toBe(true);
     expect(ANY_APPEND_CALL.test('await engine.write.append(observation, ctx);')).toBe(true);
+    // And the narrowed probe surface, which is a different method name
+    // on the same object — a regex pinned to the exact spelling
+    // `.append(` would have gone blind the day it was introduced.
+    expect(ANY_APPEND_CALL.test('await this.write.appendAsProbe(input, id);')).toBe(true);
     expect(ANY_APPEND_CALL.test('const r = deps.a.append(evt, ctx);')).toBe(true);
     expect(ANY_APPEND_CALL.test('  append(input: AppendSpineEventRequest): AppendResult {')).toBe(
       false,

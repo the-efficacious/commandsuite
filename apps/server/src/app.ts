@@ -344,6 +344,18 @@ export interface AppOptions {
    */
   spineChecks?: CheckStore;
   /**
+   * The `fetch` the probe engine polls with.
+   *
+   * A real extension point rather than a test hook, and it is the only
+   * place the spine reaches the network at all: a deployment that wants
+   * an egress proxy, an allowlist or a connection pool in front of
+   * outbound polls puts it here. It is also what lets the security
+   * pins — https-only, no redirects, the size cap — be asserted
+   * without a socket, which matters because those are the assertions
+   * nobody wants to discover are untested.
+   */
+  probeFetch?: typeof fetch;
+  /**
    * External Notifications registry — inbound webhook/API endpoints
    * routed to members and channels as ambient input. The
    * `/notifications*` admin endpoints and the `/hooks/:slug` ingress
@@ -616,6 +628,13 @@ export interface CreatedApp {
    * measures the interval instead of the batching.
    */
   curator?: Curator;
+  /**
+   * The probe engine, present iff both `spine` and `spineChecks` were
+   * wired. Exposed for the same reason as the two above: the poll half
+   * is time-driven, and a suite that waited for a real interval would
+   * be measuring `setInterval`.
+   */
+  probes?: ProbeEngine;
 }
 
 export function createApp(options: AppOptions): CreatedApp {
@@ -637,6 +656,7 @@ export function createApp(options: AppOptions): CreatedApp {
     spine,
     spineCurator,
     spineChecks,
+    probeFetch,
     notifications,
     telemetryStore,
     genaiStore,
@@ -682,6 +702,7 @@ export function createApp(options: AppOptions): CreatedApp {
       checks: spineChecks,
       logger,
       ...(secrets !== undefined ? { secrets } : {}),
+      ...(probeFetch !== undefined ? { fetchImpl: probeFetch } : {}),
       now,
     });
     probes = engine;
@@ -3367,7 +3388,15 @@ export function createApp(options: AppOptions): CreatedApp {
         // in the annex, and refusing the response now would tell the
         // caller their write did not land, which is the one thing that
         // is not true.
-        const result = await spine.append(input, { actor: member.name });
+        // THE APP'S CLOCK, not the store's default. Everything else
+        // in this file runs on the injected `now` — the curator's
+        // leases, the dispatcher's queue, the activity tracker — and an
+        // annex stamping wall-clock instants beside them made the two
+        // halves of the same system disagree about what time it was.
+        // The probe engine's interval arithmetic compares a check's
+        // `at` (an annex caption) against this clock, so the
+        // disagreement was not cosmetic.
+        const result = await spine.append(input, { actor: member.name, now: now() });
         // 200 on a replay, 201 on a new event. A retry after a lost
         // response gets the original result and a status that says it
         // created nothing, which is the honest answer to "did my write
@@ -6683,6 +6712,7 @@ export function createApp(options: AppOptions): CreatedApp {
     injectWebSocket,
     ...(notificationDispatcher !== undefined ? { notificationDispatcher } : {}),
     ...(curator !== undefined ? { curator } : {}),
+    ...(probes !== undefined ? { probes } : {}),
   };
 }
 

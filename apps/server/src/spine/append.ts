@@ -69,6 +69,35 @@ import {
 /** Post-commit observer of a committed append. Never able to fail the write. */
 export type AppendHook = (result: AppendResult) => Promise<void>;
 
+/**
+ * WHAT A PROBE MAY HAND THE ANNEX — the closed list, as a type.
+ *
+ * §7 gives the probe engine exactly two writes: the `observation` a
+ * firing recipe produces, and the `lifecycle` back to `active` that
+ * re-lights a `waiting_for` contract citing it. Everything else in the
+ * kind registry is a JUDGEMENT — a verdict, a ruling, a specification —
+ * and §10 forbids the system to make one by name.
+ *
+ * The store refuses the rest at runtime, and must, because a store is
+ * reachable by callers no compiler saw. This type is the other half:
+ * inside the engine, a discussion or a verdict is not a refusal to
+ * handle, it is a call that does not typecheck.
+ * `spine-boundary.test-d.ts` puts the hostile shapes in front of `tsc`
+ * so the claim cannot rot into a comment.
+ */
+export type ProbeAppendRequest =
+  | Extract<AppendSpineEventRequest, { kind: 'observation' }>
+  | Extract<AppendSpineEventRequest, { kind: 'lifecycle' }>;
+
+/** Who fired, and on whose behalf. Both captions, or the store refuses the write. */
+export interface ProbeIdentity {
+  /** The check id. Becomes `actor: probe:<id>`. */
+  check: string;
+  /** The member whose recipe fired. Becomes `authored_by`. */
+  authoredBy: string;
+  now: number;
+}
+
 export interface AnnexWritePath {
   /**
    * The annex's READ surface, and the only handle this server hands
@@ -84,6 +113,14 @@ export interface AnnexWritePath {
    * claim depends on that ordering.
    */
   append(input: AppendSpineEventRequest, ctx: AppendContext): Promise<AppendResult>;
+  /**
+   * The probe engine's write, narrowed to the two kinds §7 allows and
+   * with the provenance pair assembled HERE rather than at each call
+   * site. A probe that forgot `authored_by` would be the system taking
+   * a photograph on its own judgement, and forgetting is exactly what a
+   * per-call-site convention invites.
+   */
+  appendAsProbe(input: ProbeAppendRequest, probe: ProbeIdentity): Promise<AppendResult>;
   /** Register a post-commit observer. Registration order is delivery order. */
   onAppend(hook: AppendHook): void;
 }
@@ -132,6 +169,13 @@ class SpineWritePath implements AnnexWritePath {
       }
     }
     return result;
+  }
+
+  async appendAsProbe(input: ProbeAppendRequest, probe: ProbeIdentity): Promise<AppendResult> {
+    return this.append({ ...input, authoredBy: probe.authoredBy } as AppendSpineEventRequest, {
+      actor: `probe:${probe.check}`,
+      now: probe.now,
+    });
   }
 }
 

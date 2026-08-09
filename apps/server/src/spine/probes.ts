@@ -61,7 +61,6 @@ import { carrierFields, readRecipe, recipeSubject } from './checks.js';
 import type { CheckStore } from './probe-store.js';
 import type { AnnexStore, AppendResult } from './store.js';
 import { PROBE_ACTOR_PREFIX } from './store.js';
-import { ulid } from './ulid.js';
 
 /**
  * How much of a triggering payload rides into the observation body.
@@ -252,7 +251,16 @@ class SpineProbeEngine implements ProbeEngine {
     }
 
     const check = this.store.arm({
-      id: `chk_${ulid(Date.parse(event.at))}`,
+      // DERIVED FROM THE CARRIER, not minted fresh, and the rebuild is
+      // why. A check's id becomes an actor — `probe:<check-id>` on
+      // every observation it fires, in the annex forever — so a
+      // refolded registry that minted new ids would leave every
+      // historical observation pointing at a check that no longer
+      // exists, and `rebuildChecks()` would silently lose every `fired`
+      // state. One check per carrier event (the UNIQUE index), so the
+      // carrier's own ulid is already unique, and the derivation makes
+      // "which event armed this" readable off a bare id.
+      id: `chk_${event.id.replace(/^evt_/, '')}`,
       sourceEvent: event.id,
       carrier: fields.carrier,
       subject,
@@ -494,11 +502,10 @@ class SpineProbeEngine implements ProbeEngine {
   ): Promise<void> {
     if (!this.store.claimForFiring(check.id)) return;
 
-    const actor = `${PROBE_ACTOR_PREFIX}${check.id}`;
     let observation: SpineEvent;
     try {
       const revision = this.revisionFrom(check, payload, at);
-      const result = await this.write.append(
+      const result = await this.write.appendAsProbe(
         {
           kind: 'observation',
           subject: check.subject,
@@ -507,15 +514,14 @@ class SpineProbeEngine implements ProbeEngine {
           // rather than merely near it.
           ...(check.ask !== null ? { staplesTo: check.ask } : {}),
           ...(revision !== null ? { revision } : {}),
-          // The provenance pair, and the whole of §7's honesty: the
-          // actor is the camera, `authoredBy` is the photographer.
-          authoredBy: check.authoredBy,
           body: {
             what: `check ${check.id}, armed by ${check.authoredBy}, fired on ${source}`,
             output: sliceOf(payload, check.recipe),
           },
         },
-        { actor, now: Date.parse(at) },
+        // The provenance pair, and the whole of §7's honesty: the actor
+        // is the camera, `authoredBy` is the photographer.
+        { check: check.id, authoredBy: check.authoredBy, now: Date.parse(at) },
       );
       observation = result.event;
     } catch (err) {
@@ -559,13 +565,12 @@ class SpineProbeEngine implements ProbeEngine {
       return;
     }
     try {
-      await this.write.append(
+      await this.write.appendAsProbe(
         {
           kind: 'lifecycle',
           opId: `probe-${check.id}-relight`,
           expectedStateRev: contract.stateRev,
           cites: [observation.id],
-          authoredBy: check.authoredBy,
           body: {
             contract: contract.id,
             state: 'active',
@@ -574,7 +579,7 @@ class SpineProbeEngine implements ProbeEngine {
               'The room did the thing that was being waited for.',
           },
         },
-        { actor: `${PROBE_ACTOR_PREFIX}${check.id}`, now: Date.parse(at) },
+        { check: check.id, authoredBy: check.authoredBy, now: Date.parse(at) },
       );
     } catch (err) {
       // The observation stands whatever happens here — it is a true

@@ -99,7 +99,7 @@ export function carrierFields(kind: SpineEventKind, body: unknown): CarrierField
 
 /** A field declares a recipe when it opens with `{`. Everything else is prose. */
 export function declaresRecipe(text: string | undefined): boolean {
-  return text !== undefined && text.trimStart().startsWith('{');
+  return text?.trimStart().startsWith('{') === true;
 }
 
 /**

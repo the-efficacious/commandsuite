@@ -29,7 +29,9 @@
  * Type-only: no runtime assertions, checked by `tsc --noEmit`.
  */
 
-import type { AnnexStore } from '../src/spine/index.js';
+import type { SpineEventKind } from 'csuite-sdk/types';
+import type { ProbeAppendRequest, ProbeIdentity } from '../src/spine/append.js';
+import type { AnnexStore, AnnexWritePath } from '../src/spine/index.js';
 import type { AnnexWriter } from '../src/spine/store.js';
 
 /**
@@ -234,3 +236,94 @@ annex.setContractState(_spec.event.id, 'done');
 
 // @ts-expect-error there is no truncation, no reset, no "start again"
 annex.clear();
+
+// ─── 5. A probe can author nothing but its two allowed shapes ────────
+//
+// §7 gives the probe engine exactly two writes: the observation a
+// firing recipe produces, and the lifecycle back to `active` that
+// re-lights a `waiting_for` contract citing it. Everything else in the
+// registry is a JUDGEMENT, and §10 forbids the system to make one.
+//
+// The store refuses the rest at runtime and must, because it is
+// reachable by callers no compiler saw — `spine-probes.test.ts` drives
+// those refusals, including one over HTTP. These are the other half:
+// inside the engine, a probe-authored verdict is not a refusal to
+// handle, it is a call that does not compile.
+
+declare const write: AnnexWritePath;
+declare const probe: ProbeIdentity;
+
+// The positive controls FIRST. Every negative below is a deviation from
+// these, and a surface that accepted nothing would satisfy them all.
+write.appendAsProbe(
+  { kind: 'observation', subject: 'repo:acme', body: { what: 'ci went green', output: '{}' } },
+  probe,
+);
+write.appendAsProbe(
+  {
+    kind: 'lifecycle',
+    opId: 'probe-chk_1-relight',
+    expectedStateRev: 3,
+    cites: ['evt_obs'],
+    body: { contract: 'evt_1', state: 'active' },
+  },
+  probe,
+);
+
+// @ts-expect-error a probe has no opinions to post
+write.appendAsProbe({ kind: 'discussion', body: { body: 'looks green to me' } }, probe);
+
+// @ts-expect-error the identity is not optional: an unattributed probe write is the system composing a shot
+write.appendAsProbe({
+  kind: 'observation',
+  subject: 'repo:acme',
+  body: { what: 'x', output: '{}' },
+});
+
+/**
+ * EVERY KIND, one at a time, as a type-level assertion.
+ *
+ * `@ts-expect-error` on a hostile call cannot express this cleanly: a
+ * verdict body on a probe request produces errors on several lines, and
+ * a directive suppresses only the next one — so the fixture would pass
+ * for a reason nobody chose. This form says the thing directly, and it
+ * enumerates the whole registry rather than the four kinds somebody
+ * thought of. Widening `ProbeAppendRequest` by one kind fails exactly
+ * one line here, and names it.
+ */
+type ProbeMayNotAuthor<K extends SpineEventKind> =
+  Extract<ProbeAppendRequest, { kind: K }> extends never ? true : false;
+
+// The two allowed kinds resolve to `false` — the assertion runs in both
+// directions, so a `ProbeAppendRequest` narrowed to nothing at all
+// fails here rather than passing every negative below it.
+const _mayObserve: ProbeMayNotAuthor<'observation'> = false;
+const _mayRelight: ProbeMayNotAuthor<'lifecycle'> = false;
+const _noTestimony: ProbeMayNotAuthor<'testimony'> = true;
+const _noSpecification: ProbeMayNotAuthor<'specification'> = true;
+const _noAmendment: ProbeMayNotAuthor<'amendment'> = true;
+const _noAttempt: ProbeMayNotAuthor<'attempt'> = true;
+const _noVerdict: ProbeMayNotAuthor<'criterion_verdict'> = true;
+const _noRuling: ProbeMayNotAuthor<'ruling'> = true;
+const _noAsk: ProbeMayNotAuthor<'ask'> = true;
+const _noAskAction: ProbeMayNotAuthor<'ask_action'> = true;
+const _noProceeding: ProbeMayNotAuthor<'proceeding'> = true;
+const _noCorrection: ProbeMayNotAuthor<'correction'> = true;
+const _noDiscussion: ProbeMayNotAuthor<'discussion'> = true;
+const _noPromotion: ProbeMayNotAuthor<'promotion'> = true;
+void [
+  _mayObserve,
+  _mayRelight,
+  _noTestimony,
+  _noSpecification,
+  _noAmendment,
+  _noAttempt,
+  _noVerdict,
+  _noRuling,
+  _noAsk,
+  _noAskAction,
+  _noProceeding,
+  _noCorrection,
+  _noDiscussion,
+  _noPromotion,
+];
