@@ -59,6 +59,8 @@ import { ObjectivesPanel } from './components/ObjectivesPanel.js';
 import { RouteModal } from './components/RouteModal.js';
 import { SecretDetail } from './components/SecretDetail.js';
 import { SecretsPanel } from './components/SecretsPanel.js';
+import { SpineBoardPanel } from './components/SpineBoardPanel.js';
+import { SpineQueuePanel } from './components/SpineQueuePanel.js';
 import { AppShell, NavColumn } from './components/shell/index.js';
 import { TeamHome } from './components/TeamHome.js';
 import { ToolSourceDetail } from './components/ToolSourceDetail.js';
@@ -87,6 +89,7 @@ import { initializePushState } from './lib/push.js';
 import { loadRoster, startRosterPolling } from './lib/roster.js';
 import { setRouterTeamSlug } from './lib/router.js';
 import { loadSecrets } from './lib/secrets.js';
+import { loadSpineQueue } from './lib/spine.js';
 import { dismissToastsByTag, toast } from './lib/toast.js';
 import { loadToolSources } from './lib/tool-sources.js';
 import { initializeLastReadFromStore, markThreadRead } from './lib/unread.js';
@@ -226,6 +229,20 @@ export function TeamShell(props: TeamShellProps): JSX.Element {
           return;
         }
         recordFailure('objectives', err);
+      }
+      try {
+        // Preloaded for the nav badge. A deployment with no spine 404s
+        // here — that is a configuration, not a failure worth surfacing,
+        // so a 404 is swallowed while anything else is recorded.
+        await loadSpineQueue();
+      } catch (err) {
+        if (isUnauthorized(err)) {
+          handleUnauthorized('Your session expired — please sign in again.');
+          return;
+        }
+        if (!(err instanceof Error && (err as { status?: number }).status === 404)) {
+          recordFailure('spine', err);
+        }
       }
       try {
         await loadChannels();
@@ -421,6 +438,10 @@ function renderView(v: View, viewer: string) {
       return <ObjectiveDetail id={v.id} viewer={viewer} />;
     case 'objective-create':
       return <ObjectiveCreate />;
+    case 'spine-queue':
+      return <SpineQueuePanel viewer={viewer} />;
+    case 'spine-board':
+      return <SpineBoardPanel viewer={viewer} />;
     case 'member-profile':
       return <MemberProfile name={v.name} tab={v.tab} viewer={viewer} />;
     case 'files':

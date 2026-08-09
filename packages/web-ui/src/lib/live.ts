@@ -30,6 +30,7 @@ import { notifyNewMessage } from './notify.js';
 import { loadObjectives } from './objectives.js';
 import { loadRoster } from './roster.js';
 import { loadSecrets } from './secrets.js';
+import { loadSpineBoard, loadSpineQueue, spineBoardLoaded } from './spine.js';
 import { loadToolSources } from './tool-sources.js';
 
 export const streamConnected = signal(false);
@@ -140,6 +141,23 @@ export function startSubscribe(options: StartSubscribeOptions): () => void {
           void loadObjectives().catch(() => {
             /* swallow — next event will retry */
           });
+        }
+        if (data && data.kind === 'spine_injection') {
+          // A class-1 or class-2 spine line reached this member: an ask
+          // named them, a verdict landed, a ruling answered them, a
+          // check discharged an ask, a contract they hold moved. The
+          // queue is what changed, so re-read it (receipt-neutrally) —
+          // never `orient`, which would advance a receipt on a push the
+          // member has not acted on. The board follows only if it is
+          // already open.
+          void loadSpineQueue().catch(() => {
+            /* next spine_injection retries */
+          });
+          if (spineBoardLoaded.value) {
+            void loadSpineBoard(name).catch(() => {
+              /* next spine_injection retries */
+            });
+          }
         }
         if (data && data.kind === 'instructions') {
           // An instruction-bearing edit landed. Both the packet (team

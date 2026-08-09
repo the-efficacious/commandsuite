@@ -13,6 +13,8 @@ describe('parseRoute / formatRoute', () => {
     ['/objectives', { kind: 'objectives-list' }],
     ['/objectives/new', { kind: 'objective-create' }],
     ['/objectives/abc-123', { kind: 'objective-detail', id: 'abc-123' }],
+    ['/spine', { kind: 'spine-queue' }],
+    ['/spine/board', { kind: 'spine-board' }],
     ['/members', { kind: 'members' }],
     ['/tools', { kind: 'tool-sources' }],
     ['/tools/jira', { kind: 'tool-source-detail', slug: 'jira' }],

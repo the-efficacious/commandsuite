@@ -40,6 +40,8 @@ export type View =
   | { kind: 'objectives-list' }
   | { kind: 'objective-detail'; id: string }
   | { kind: 'objective-create' }
+  | { kind: 'spine-queue' }
+  | { kind: 'spine-board' }
   | { kind: 'member-profile'; name: string; tab: ProfileTab }
   | { kind: 'files'; path: string }
   | { kind: 'members' }
@@ -150,6 +152,10 @@ function viewFromRoute(route: Route): View {
       return { kind: 'objective-create' };
     case 'objective-detail':
       return { kind: 'objective-detail', id: route.id };
+    case 'spine-queue':
+      return { kind: 'spine-queue' };
+    case 'spine-board':
+      return { kind: 'spine-board' };
     case 'members':
       return { kind: 'members' };
     case 'tool-sources':
@@ -252,6 +258,16 @@ export function selectObjectiveDetail(id: string): void {
 
 export function selectObjectiveCreate(): void {
   navigate({ kind: 'objective-create' });
+  isSidebarOpen.value = false;
+}
+
+export function selectSpineQueue(): void {
+  navigate({ kind: 'spine-queue' });
+  isSidebarOpen.value = false;
+}
+
+export function selectSpineBoard(): void {
+  navigate({ kind: 'spine-board' });
   isSidebarOpen.value = false;
 }
 

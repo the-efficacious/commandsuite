@@ -35,6 +35,8 @@ export type Route =
   | (RouteBase & { kind: 'objectives-list' })
   | (RouteBase & { kind: 'objective-create' })
   | (RouteBase & { kind: 'objective-detail'; id: string })
+  | (RouteBase & { kind: 'spine-queue' })
+  | (RouteBase & { kind: 'spine-board' })
   | (RouteBase & { kind: 'members' })
   | (RouteBase & { kind: 'member-profile'; name: string; tab: ProfileTab })
   | (RouteBase & { kind: 'tool-sources' })
@@ -90,6 +92,15 @@ export function parseRoute(pathname: string): Route {
     if (rest.length === 1 && rest[0] === 'new') return withTeam({ kind: 'objective-create' }, team);
     if (rest.length === 1 && rest[0])
       return withTeam({ kind: 'objective-detail', id: rest[0] }, team);
+  }
+
+  // The human seat lives at `/spine` (the queue) and `/spine/board`.
+  // Deliberately NOT `/spine/queue` — that path is the API's own
+  // receipt-neutral read, registered ahead of the SPA fallback, so a
+  // browser navigation there would return JSON instead of the app.
+  if (head === 'spine') {
+    if (rest.length === 0) return withTeam({ kind: 'spine-queue' }, team);
+    if (rest.length === 1 && rest[0] === 'board') return withTeam({ kind: 'spine-board' }, team);
   }
 
   if (head === 'members' && rest.length === 0) return withTeam({ kind: 'members' }, team);
@@ -166,6 +177,10 @@ function baseFor(route: Route): string {
       return '/objectives/new';
     case 'objective-detail':
       return `/objectives/${encodeURIComponent(route.id)}`;
+    case 'spine-queue':
+      return '/spine';
+    case 'spine-board':
+      return '/spine/board';
     case 'members':
       return '/members';
     case 'tool-sources':

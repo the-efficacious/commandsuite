@@ -43,6 +43,8 @@ import {
   selectMemberProfile,
   selectObjectiveCreate,
   selectObjectiveDetail,
+  selectSpineBoard,
+  selectSpineQueue,
 } from '../lib/view.js';
 import { AtSign, Hash, MessageCircle, Plus, Search, Target } from './icons/index.js';
 
@@ -106,6 +108,20 @@ export function CommandPalette() {
       label: '+ New objective',
       sub: 'create',
       run: () => selectObjectiveCreate(),
+    },
+    {
+      kind: 'action',
+      id: 'action:spine-queue',
+      label: 'Open queue',
+      sub: 'the human seat',
+      run: () => selectSpineQueue(),
+    },
+    {
+      kind: 'action',
+      id: 'action:spine-board',
+      label: 'Open board',
+      sub: 'the plate',
+      run: () => selectSpineBoard(),
     },
   ];
   const ranked = rankItems(query, [...paletteSource.value, ...actions]);

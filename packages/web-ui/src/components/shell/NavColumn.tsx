@@ -42,6 +42,7 @@ import {
 } from '../../lib/messages.js';
 import { objectives } from '../../lib/objectives.js';
 import { memberKind, presenceActivity, roster } from '../../lib/roster.js';
+import { spineQueue } from '../../lib/spine.js';
 import { currentTeam } from '../../lib/team.js';
 import { lastReadByThread, unreadCount } from '../../lib/unread.js';
 import {
@@ -58,6 +59,7 @@ import {
   selectObjectivesList,
   selectOverview,
   selectSecrets,
+  selectSpineQueue,
   selectToolSources,
   view,
 } from '../../lib/view.js';
@@ -66,6 +68,7 @@ import {
   Hash,
   Home,
   Inbox,
+  KeyRound,
   Lock,
   LogOut,
   Plus,
@@ -106,6 +109,9 @@ export function NavColumn({ viewer }: NavColumnProps) {
   const inboxActive = v.kind === 'inbox';
   const objectivesActive =
     v.kind === 'objectives-list' || v.kind === 'objective-detail' || v.kind === 'objective-create';
+  const spineActive = v.kind === 'spine-queue' || v.kind === 'spine-board';
+  const queueCount =
+    (spineQueue.value?.asks.length ?? 0) + (spineQueue.value?.waitingOn.length ?? 0);
   const filesActive = v.kind === 'files';
   const membersActive = v.kind === 'members';
   const toolsActive = v.kind === 'tool-sources' || v.kind === 'tool-source-detail';
@@ -171,6 +177,16 @@ export function NavColumn({ viewer }: NavColumnProps) {
               <UnreadBadge count={activeObjectiveCount} />
             ) : undefined
           }
+        />
+        <NavItem
+          label="Queue"
+          glyph={<KeyRound size={15} aria-hidden="true" />}
+          active={spineActive}
+          onClick={selectSpineQueue}
+          ariaLabel={
+            queueCount > 0 ? `Open your queue (${queueCount} waiting on you)` : 'Open your queue'
+          }
+          trailing={queueCount > 0 && !spineActive ? <UnreadBadge count={queueCount} /> : undefined}
         />
         <NavItem
           label="Files"
