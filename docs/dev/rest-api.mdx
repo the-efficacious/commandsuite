@@ -794,6 +794,30 @@ refusal, or an explicit call. Cheap by construction: a fixed number of
 queries whatever the member's plate looks like, because recovery cost
 must not grow with the thing recovery exists to rescue you from.
 
+### `GET /spine/queue`
+
+| | |
+|---|---|
+| **Auth** | dual |
+| **Query** | `member` (defaults to the caller) |
+| **Returns** | `{ queue }` — open asks awaiting the member's ruling and contracts stuck on them |
+
+The human seat's queue (§9): the asks where the member is the authority
+and the state is still `open`, each carrying its question, context and
+`unblocks` verbatim plus the **whole** contract it is about (so an act
+can send that contract's `state_rev` without a second call), and the
+contracts sitting in `waiting_on(member)`.
+
+**Receipt-neutral, and that is the point.** Unlike `orient`, this read
+advances **no receipt and no lease** — it never touches the curator.
+Opening a queue item is not handling it; the only thing that takes an
+item off the queue is one of the four human acts producing its resolving
+event over the append path. Deferred asks are deliberately absent: a
+defer re-arms an ask and it leaves the queue until its trigger fires.
+There is no agent tool for the acts — they are the human's surface, one
+`POST /spine/events` each (a `ruling`, or an `ask_action` defer /
+decline / redirect).
+
 ### `POST /spine/subjects` · `GET /spine/subjects`
 
 | | |
@@ -870,13 +894,23 @@ a cursor. Never the contract text: re-sending a whole contract on every
 event is issue #155's second finding, and an id, a title and what
 changed suffice.
 
+**The interrupt whitelist gates the phone, not the queue.** Every
+addressed event is always in the durable queue (a free read) and every
+class-1 line reaches a live session over the WS fanout. The per-member
+whitelist (below) decides which class-1 **kinds** also reach a phone —
+the rarest budget — by wiring that one delivery into the existing web
+push path (`dispatchPush` / `shouldPush`), so the standing rules still
+hold: never to a live subscriber, never to the sender. A kind off the
+list is not silenced, it is un-buzzed. The director default is a
+blocking `ask` naming them and a `proceeding` past their ask.
+
 #### `GET /spine/curator` · `PUT /spine/curator`
 
 | | |
 |---|---|
 | **Auth** | dual; self, or `members.manage` for another member |
 | **Query** (GET) | `member` (defaults to the caller) |
-| **Body** (PUT) | `{ member?, subscription?: {contract, level}, policy?: {leaseTtlMs?, nudgeMinIntervalMs?} }` |
+| **Body** (PUT) | `{ member?, subscription?: {contract, level}, policy?: {leaseTtlMs?, nudgeMinIntervalMs?, interruptWhitelist?} }` |
 | **Returns** | `{ member, subscriptions, policy, capabilities }` |
 
 Policy is **data**. Levels and cadences are rows with an updated-by/at
@@ -884,6 +918,13 @@ trail, changed at runtime, never a code constant per member — attention
 allocation is the contested resource, and tuning it must not mean
 shipping. An empty write is refused: `{}` would otherwise resolve to
 "read the config and report it changed".
+
+`policy.interruptWhitelist` is the set of class-1 event kinds that may
+buzz a phone, written **wholesale** — the empty set is a real choice
+("never buzz me"), so it is a set operation and not a patch that could
+never clear the last kind. On the response `policy`, `interruptWhitelist`
+rides beside the cadences, and `explicit: false` marks the team default
+(`['ask', 'proceeding']`) rather than an authored row.
 
 `subscriptions` reports the EFFECTIVE level for every contract binding
 the member, with `explicit` distinguishing an authored choice from a
