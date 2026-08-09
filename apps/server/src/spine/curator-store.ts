@@ -58,6 +58,8 @@ export interface LeaseRecord {
   invalidatedAt: number | null;
   invalidatedBy: string | null;
   nudgedAt: number | null;
+  /** Whether that nudge landed. `null` when none has been spent this epoch. */
+  nudgeDelivered: boolean | null;
 }
 
 export interface ReceiptRecord {
@@ -121,20 +123,40 @@ export interface CuratorStore {
   leaseState(lease: LeaseRecord, ttlMs: number, now: number): LeaseState;
   /** Returns how many LIVE leases were invalidated — zero is an answer, not a failure. */
   invalidateLeases(member: string, by: string, now: number, ttlMs: number): number;
-  /** Spend this generation's nudge. */
-  markNudged(member: string, refs: readonly string[], now: number): void;
+  /**
+   * Spend this generation's nudge, recording whether it LANDED.
+   *
+   * Also stamps the per-member cadence floor, which lives outside the
+   * lease rows precisely so a re-arm cannot erase it. The attempt is
+   * what counts against cadence — a nudge into a dead sink still costs
+   * the sweep — while only the delivery decides whether the epoch is
+   * genuinely spent.
+   */
+  markNudged(member: string, refs: readonly string[], now: number, delivered: boolean): void;
   /** The most recent nudge to this member across every lease, for the cadence floor. */
   lastNudgeAt(member: string): number | null;
   /**
-   * Forget every spent nudge for this member — a new lease epoch.
+   * Re-arm the nudges this member never actually received.
    *
-   * Called when the member's own LIVENESS is proven: they read, they
-   * wrote, or their runner bracketed a session. Without it, a nudge
-   * attempted at an offline member was spent forever — `nudged_at` is
-   * cleared only by a lease grant, and a grant requires a CONFIRMED
-   * delivery, so the member who could not be reached is precisely the
-   * member who is never reached again. That is permanent dark for the
-   * opaque-runner population this whole design is for.
+   * Called when their LIVENESS is proven: they read, they wrote, or
+   * their runner bracketed a session. It exists for one case and is
+   * scoped to exactly that case — a nudge attempted while the member
+   * was offline was spent on nobody, and without a re-arm the member
+   * who could not be reached is precisely the member who is never
+   * reached again. Permanent dark for the opaque-runner population
+   * this whole design is for.
+   *
+   * UNDELIVERED ONLY, and the narrowing is not a refinement — the
+   * broad version was a regression that rebuilt the dead
+   * objective-context watchdog. Re-arming DELIVERED nudges too meant
+   * every proof of liveness re-opened a nudge the member had already
+   * been given, so a member working steadily was nudged again on every
+   * sweep tick past a lease's TTL: six writes over six hours produced
+   * six nudges. A delivered nudge is spent for its epoch, and only a
+   * lease re-grant — a genuine new epoch — resets it.
+   *
+   * It does not touch the cadence floor. That is why the floor is in
+   * another table.
    */
   rearmNudges(member: string): void;
 
@@ -177,6 +199,7 @@ interface LeaseRow {
   invalidated_at: number | null;
   invalidated_by: string | null;
   nudged_at: number | null;
+  nudge_delivered: number | null;
 }
 
 interface ReceiptRow {
@@ -241,15 +264,17 @@ class SqliteCuratorStore implements CuratorStore {
     // window in which a concurrent sweep sees a member holding
     // nothing and nudges them about what they were just handed.
     const stmt = this.db.prepare(
-      `INSERT INTO spine_leases (member, ref, seq, granted_at, source, invalidated_at, invalidated_by, nudged_at)
-       VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL)
+      `INSERT INTO spine_leases
+         (member, ref, seq, granted_at, source, invalidated_at, invalidated_by, nudged_at, nudge_delivered)
+       VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, NULL)
        ON CONFLICT(member, ref) DO UPDATE SET
          seq = excluded.seq,
          granted_at = excluded.granted_at,
          source = excluded.source,
          invalidated_at = NULL,
          invalidated_by = NULL,
-         nudged_at = NULL`,
+         nudged_at = NULL,
+         nudge_delivered = NULL`,
     );
     for (const ref of new Set(refs)) stmt.run(member, ref, seq, now, source);
   }
@@ -287,16 +312,24 @@ class SqliteCuratorStore implements CuratorStore {
     return live.length;
   }
 
-  markNudged(member: string, refs: readonly string[], now: number): void {
+  markNudged(member: string, refs: readonly string[], now: number, delivered: boolean): void {
     const stmt = this.db.prepare(
-      'UPDATE spine_leases SET nudged_at = ? WHERE member = ? AND ref = ?',
+      'UPDATE spine_leases SET nudged_at = ?, nudge_delivered = ? WHERE member = ? AND ref = ?',
     );
-    for (const ref of new Set(refs)) stmt.run(now, member, ref);
+    for (const ref of new Set(refs)) stmt.run(now, delivered ? 1 : 0, member, ref);
+    // The cadence floor, stamped on the ATTEMPT and in its own table —
+    // out of reach of `rearmNudges`, which is the whole point.
+    this.db
+      .prepare(
+        `INSERT INTO spine_nudge_cadence (member, last_attempt_at) VALUES (?, ?)
+         ON CONFLICT(member) DO UPDATE SET last_attempt_at = excluded.last_attempt_at`,
+      )
+      .run(member, now);
   }
 
   lastNudgeAt(member: string): number | null {
     const row = this.db
-      .prepare('SELECT MAX(nudged_at) AS last FROM spine_leases WHERE member = ?')
+      .prepare('SELECT last_attempt_at AS last FROM spine_nudge_cadence WHERE member = ?')
       .get(member) as { last: number | null } | undefined;
     return row?.last ?? null;
   }
@@ -304,7 +337,8 @@ class SqliteCuratorStore implements CuratorStore {
   rearmNudges(member: string): void {
     this.db
       .prepare(
-        'UPDATE spine_leases SET nudged_at = NULL WHERE member = ? AND nudged_at IS NOT NULL',
+        `UPDATE spine_leases SET nudged_at = NULL, nudge_delivered = NULL
+         WHERE member = ? AND nudged_at IS NOT NULL AND nudge_delivered = 0`,
       )
       .run(member);
   }
@@ -512,6 +546,7 @@ function rowToLease(row: LeaseRow): LeaseRecord {
     invalidatedAt: row.invalidated_at,
     invalidatedBy: row.invalidated_by,
     nudgedAt: row.nudged_at,
+    nudgeDelivered: row.nudge_delivered === null ? null : row.nudge_delivered === 1,
   };
 }
 

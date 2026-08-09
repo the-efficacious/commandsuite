@@ -48,7 +48,8 @@ import {
   T0,
 } from './helpers/spine-curator-app.js';
 
-const HOUR = 60 * 60 * 1000;
+const MINUTE = 60 * 1000;
+const HOUR = 60 * MINUTE;
 
 let harness: CuratorApp;
 let app: CuratorApp['app'];
@@ -1168,6 +1169,141 @@ describe('a nudge is per lease EPOCH, and a member returning starts a new one', 
     expect(nudge).toContain('orient');
     expect(nudge).not.toContain(CRITERION_TEXT);
     expect(nudge).not.toContain(OUTCOME_TEXT);
+  });
+});
+
+describe('the nudge bound holds for a member who has NOT read', () => {
+  /**
+   * rune orients, then a verdict lands that he never reads, and his
+   * lease is aged out. Everything below starts here.
+   *
+   * THE UNREAD PART IS THE POINT. The first version of these bounds
+   * used a member who had read everything, so `hasUnreadMovement`
+   * gated every arm identically and the pass case and the fail case
+   * failed the same way — the harness, not the logic. On an unread
+   * member the gates are actually load-bearing, and a regression in
+   * either one shows up as extra nudges.
+   */
+  async function owedAndUnread(): Promise<string> {
+    const contract = await authorContract();
+    await get(app, '/spine/orient', RUNE);
+    await post(app, '/spine/events', LEA, {
+      kind: 'criterion_verdict',
+      opId: 'op-verdict',
+      expectedStateRev: 1,
+      revision: observed('sha-a'),
+      body: { contract, criterion: 'c1', decision: 'unmet', evidence: 'the ETag is missing' },
+    });
+    harness.clock.ms = T0 + 2 * HOUR;
+    return contract;
+  }
+
+  const nudges = async (): Promise<SpineInjection[]> =>
+    (await ledger(RUNE)).filter((r) => r.kind === 'recovery_nudge');
+
+  it('spends ONE nudge across ten ordinary writes while unread', async () => {
+    // The regression this pins: `provenLive` re-armed every spent
+    // nudge, so each write re-opened the one the member had already
+    // been given. Measured at the time: ten discussion posts over five
+    // minutes produced eleven nudges against a fifteen-minute floor.
+    //
+    // The writes name NO CONTRACT deliberately — that is the sharpest
+    // shape, because it proves liveness while renewing no lease, so
+    // nothing else can be doing the suppressing.
+    const contract = await owedAndUnread();
+    await harness.curator.sweep();
+    const first = await nudges();
+    expect(first, 'the first nudge is owed and lands').toHaveLength(1);
+    expect(first[0]?.delivered, 'rune has a sink, so it landed').toBe(true);
+
+    // PHASE 1 — ten writes inside the cadence floor.
+    for (let i = 1; i <= 10; i++) {
+      harness.clock.ms = T0 + 2 * HOUR + i * 30_000;
+      await post(app, '/spine/events', RUNE, {
+        kind: 'discussion',
+        body: { body: `still working, note ${i}` },
+      });
+      await harness.curator.sweep();
+    }
+    expect(await nudges(), 'ten writes must not buy ten nudges').toHaveLength(1);
+
+    // PHASE 2 — six writes spaced an HOUR apart, well OUTSIDE the
+    // fifteen-minute floor. This is the phase that isolates the
+    // undelivered filter: with the floor passed on every tick, the
+    // only thing left standing between a working member and a nudge
+    // per hour is that a DELIVERED nudge is spent for its epoch. The
+    // measured regression was exactly this shape — six writes over six
+    // hours, zero signals, six nudges — and a fixture that stayed
+    // inside the floor could not see it.
+    for (let hour = 3; hour <= 8; hour++) {
+      harness.clock.ms = T0 + hour * HOUR;
+      await post(app, '/spine/events', RUNE, {
+        kind: 'discussion',
+        body: { body: `hour ${hour}, still on it` },
+      });
+      await harness.curator.sweep();
+    }
+    expect(await nudges(), 'six hourly writes must not buy six nudges').toHaveLength(1);
+
+    // The verdict is STILL unread, so the silence is the gates working
+    // and not the member having caught up.
+    const head = ((await get(app, '/spine/events', ANDREWJON)) as { headSeq: number }).headSeq;
+    expect(harness.curatorStore.receipt('rune')?.seq).toBeLessThan(head);
+    expect(contract).toBeTruthy();
+  });
+
+  it('holds the aggregate cadence floor after an UNDELIVERED nudge is re-armed', async () => {
+    // This is the floor on its own, isolated from the undelivered
+    // filter: the nudge really is re-armed here (it was never
+    // delivered — rune has no sink), so the only thing standing
+    // between the member and a second nudge one minute later is the
+    // cadence floor.
+    //
+    // The floor read MAX(nudged_at) over the member's leases — the
+    // exact column the re-arm nulls — so after any proof of liveness
+    // it had no rows to compute itself from and waved everything
+    // through. It lives in its own table now.
+    sinks.rune?.close();
+    await owedAndUnread();
+    await harness.curator.sweep();
+    const first = await nudges();
+    expect(first).toHaveLength(1);
+    expect(first[0]?.delivered, 'nothing took it — so it IS re-armable').toBe(false);
+
+    // A write proves liveness and re-arms the undelivered nudge.
+    harness.clock.ms = T0 + 2 * HOUR + MINUTE;
+    await post(app, '/spine/events', RUNE, {
+      kind: 'discussion',
+      body: { body: 'back for a moment' },
+    });
+    expect(
+      harness.curatorStore.leases('rune').every((l) => l.nudgedAt === null),
+      'the re-arm really happened, so the floor is the only thing left',
+    ).toBe(true);
+
+    await harness.curator.sweep();
+    expect(await nudges(), 'inside the 15-minute floor').toHaveLength(1);
+
+    // THE POSITIVE CONTROL: past the floor, with the movement still
+    // unread, a nudge is owed again. Without it this passes against a
+    // floor that blocks forever.
+    harness.clock.ms = T0 + 4 * HOUR;
+    await harness.curator.sweep();
+    expect(await nudges()).toHaveLength(2);
+
+    // AND THE STAMP MOVED. Asserting only that a second nudge fired
+    // leaves a stamp that is written once and never updated
+    // indistinguishable from a working floor — the first attempt's
+    // time would keep satisfying every later comparison, and the floor
+    // would be permanently open from then on. So: re-arm again, one
+    // minute after the SECOND nudge, and require silence.
+    harness.clock.ms = T0 + 4 * HOUR + MINUTE;
+    await post(app, '/spine/events', RUNE, {
+      kind: 'discussion',
+      body: { body: 'and again' },
+    });
+    await harness.curator.sweep();
+    expect(await nudges(), 'the floor measures from the LAST attempt').toHaveLength(2);
   });
 });
 

@@ -303,6 +303,15 @@ class SpineCurator implements Curator {
     this.store.rearmNudges(member);
   }
 
+  // A NOTE ON WHAT `provenLive` MAY NOT DO, because the first version
+  // of it did: it re-arms UNDELIVERED nudges and nothing else, and it
+  // does not touch the cadence floor. Widening it to every spent nudge
+  // turns each proof of liveness into permission to nudge again, so a
+  // member writing steadily is nudged on every sweep tick past a
+  // lease's TTL — the dead objective-context watchdog, rebuilt. The
+  // narrow lever is the whole fix; the intent (an offline member who
+  // returns is reachable again) is unchanged.
+
   // ─── Class 1 — addressed ────────────────────────────────────────
 
   async onAppend(result: AppendResult): Promise<void> {
@@ -538,15 +547,19 @@ class SpineCurator implements Curator {
         cursor,
       );
       const delivered = await this.push(member, body, 0, 'nudge');
-      // Spent whether or not it landed. A nudge that failed to deliver
-      // and is retried next tick is a nudge that repeats, and "at most
-      // one" has to mean at most one attempt — the member is offline,
-      // and their next `orient` is a better recovery than a second
-      // line into a sink nobody is reading.
+      // Spent whether or not it landed — "at most one" has to mean at
+      // most one ATTEMPT, or a nudge that failed to deliver and is
+      // retried next tick is a nudge that repeats.
+      //
+      // But WHETHER it landed is recorded, because it decides one
+      // thing: only an undelivered nudge is re-armed when the member
+      // later proves liveness. A delivered nudge is spent for its
+      // epoch and only a lease re-grant resets it.
       this.store.markNudged(
         member,
         stale.map((lease) => lease.ref),
         now,
+        delivered,
       );
       this.store.logInjection({
         member,

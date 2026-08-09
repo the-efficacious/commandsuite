@@ -256,6 +256,49 @@ describe('a declared dump buys latency and nothing else', () => {
     expect(await owed(arm)).toBe(await owed(quiet));
   });
 
+  it('spends at most ONE extra nudge across six signals to a member who has NOT read', async () => {
+    // The bound, on a member for whom it can actually fail.
+    //
+    // The arm pinned two commits ago used a member who had READ
+    // everything, so `hasUnreadMovement` gated every case identically
+    // and the pass and the fail failed the same way — a statement
+    // about the harness rather than the logic. Measured on an unread
+    // member before the fix: six signals in six minutes produced six
+    // nudges, because each one re-armed the nudge already spent AND
+    // erased the cadence floor's only input.
+    const contract = await authorContract(arm);
+    await get(arm.harness.app, '/spine/orient', RUNE);
+    await post(arm.harness.app, '/spine/events', LEA, {
+      kind: 'criterion_verdict',
+      opId: 'op-verdict',
+      expectedStateRev: 1,
+      revision: observed('sha-a'),
+      body: { contract, criterion: 'c1', decision: 'unmet', evidence: 'the ETag is missing' },
+    });
+    arm.harness.clock.ms = T0 + 2 * HOUR;
+    await arm.harness.curator.sweep();
+    const nudges = async (): Promise<number> =>
+      (await ledgerOf(arm, RUNE)).filter((r) => r.kind === 'recovery_nudge').length;
+    const afterFirst = await nudges();
+    expect(afterFirst, 'the first nudge is owed').toBe(1);
+
+    for (let i = 1; i <= 6; i++) {
+      arm.harness.clock.ms = T0 + 2 * HOUR + i * MINUTE;
+      await signal(arm, RUNE, 'rune', { signal: 'dump_declared', source: 'compact' });
+      await arm.harness.curator.sweep();
+    }
+    expect(
+      (await nudges()) - afterFirst,
+      'six signals may buy at most one more nudge',
+    ).toBeLessThanOrEqual(1);
+
+    // And the member is STILL unread, so the silence above is the
+    // gates holding and not the member having caught up.
+    const head = ((await get(arm.harness.app, '/spine/events', ANDREWJON)) as { headSeq: number })
+      .headSeq;
+    expect(arm.harness.curatorStore.receipt('rune')?.seq).toBeLessThan(head);
+  });
+
   it('invents nothing when there is nothing unread', async () => {
     await authorContract(arm);
     await get(arm.harness.app, '/spine/orient', RUNE);

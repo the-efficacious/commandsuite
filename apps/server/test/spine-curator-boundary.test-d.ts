@@ -4,10 +4,14 @@
  * TWO ARCHITECTURAL CLAIMS, neither of which a runtime test can
  * establish, because both are about what the surface DOES NOT OFFER:
  *
- *   1  a receipt cannot be advanced by anything but a READ. The
- *      curator's own pushes have no way to move one — not a
- *      discouraged way, no way — because `ReceiptVia` is a closed
- *      union of read events and there is no other entry point.
+ *   1  a receipt cannot be advanced by anything but a WATERMARK-
+ *      ESTABLISHING read. The curator's own pushes have no way to
+ *      move one — not a discouraged way, no way — because
+ *      `ReceiptVia` is a closed union and there is no other entry
+ *      point. `event_read` is enumerated among the negatives on
+ *      purpose: it is the value most likely to be re-added, because
+ *      re-adding it looks like a small kindness to a member who
+ *      demonstrably read something.
  *   2  the ledger is an ACCOUNT and not an archive. There is no field
  *      for the injected text — not for confidentiality (every
  *      injection is a broker push, so its text is already durable in
@@ -65,6 +69,9 @@ store.advanceReceipt('rune', 42, 'delivery', 1_700_000_000_000);
 
 // @ts-expect-error a nudge is a pointer at `orient`, so it cannot stand in for one
 store.advanceReceipt('rune', 42, 'nudge', 1_700_000_000_000);
+
+// @ts-expect-error a by-id read establishes no watermark: it proves one event was seen and nothing about the events below it
+store.advanceReceipt('rune', 42, 'event_read', 1_700_000_000_000);
 
 // @ts-expect-error there is no second entry point that skips the `via` question entirely
 store.setReceipt('rune', 42);

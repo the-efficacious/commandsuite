@@ -61,9 +61,47 @@ export const SPINE_CURATOR_SCHEMA = `
     -- When this generation's single nudge was spent. Cleared on every
     -- grant/renew, because a renewed lease is a new generation.
     nudged_at INTEGER,
+    -- WHETHER THAT NUDGE LANDED, and it is the difference between the
+    -- two things "spent" can mean.
+    --
+    -- A DELIVERED nudge is spent for its epoch, full stop: the member
+    -- was told, and only a genuine new epoch (a lease re-grant) resets
+    -- it. An UNDELIVERED one was spent on nobody — the sink took
+    -- nothing — and that is the entire case the epoch re-arm exists
+    -- for: the offline member whose push failed and who later comes
+    -- back. Without this column the re-arm cannot tell them apart, so
+    -- every proof of liveness re-opened every nudge, and a member
+    -- writing steadily was nudged on every sweep tick. That is the
+    -- dead objective-context watchdog rebuilt with better tables.
+    nudge_delivered INTEGER CHECK(nudge_delivered IN (0,1)),
     PRIMARY KEY (member, ref)
   );
   CREATE INDEX IF NOT EXISTS spine_leases_member_idx ON spine_leases (member, granted_at);
+
+  -- ─── Nudge cadence ──────────────────────────────────────────────
+  --
+  -- WHEN A NUDGE WAS LAST ATTEMPTED, per member, and deliberately NOT
+  -- a column the re-arm can reach.
+  --
+  -- This lived as MAX(nudged_at) over the member's leases, which reads
+  -- like a saving until you notice that the re-arm nulls exactly those
+  -- values: after any proof of liveness the aggregate floor had no
+  -- rows to compute itself from and waved everything through. Measured
+  -- at the time: ten discussion posts over five minutes produced
+  -- eleven nudges against a fifteen-minute floor.
+  --
+  -- A floor whose input another operation can erase is not a floor. It
+  -- gets its own table so that no future clearing of lease state can
+  -- silently disarm it — the failure mode is not that someone forgets
+  -- the rule, it is that the rule shares storage with something whose
+  -- job is to forget.
+  CREATE TABLE IF NOT EXISTS spine_nudge_cadence (
+    member TEXT PRIMARY KEY,
+    -- The ATTEMPT, not the delivery. A nudge into a dead sink still
+    -- costs the sweep and still counts against the cadence; what it
+    -- does not cost is the member's epoch.
+    last_attempt_at INTEGER NOT NULL
+  );
 
   -- ─── Receipts ───────────────────────────────────────────────────
   --
@@ -79,7 +117,9 @@ export const SPINE_CURATOR_SCHEMA = `
     member TEXT PRIMARY KEY,
     seq INTEGER NOT NULL,
     at INTEGER NOT NULL,
-    -- orient | annex_read | event_read | ack
+    -- orient | annex_read | ack. NOT event_read: a by-id read proves
+    -- one event was seen and nothing about the events below it, so it
+    -- establishes no watermark and moves nothing.
     via TEXT NOT NULL
   );
 
@@ -173,6 +213,7 @@ export const DEFAULT_NUDGE_MIN_INTERVAL_MS = 15 * 60 * 1000;
 /** The curator tables, for the test that proves the curator can be dropped whole. */
 export const SPINE_CURATOR_TABLES: readonly string[] = [
   'spine_leases',
+  'spine_nudge_cadence',
   'spine_receipts',
   'spine_injections',
   'spine_subscriptions',

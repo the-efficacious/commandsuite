@@ -121,13 +121,21 @@ wrong direction on a phase about exactly that, so they are here.
    which hands the member an event id. `ReceiptVia` has no
    `event_read` member, so this is not a decision a future caller can
    re-make by accident.
-3. **A nudge is one per lease EPOCH, and a member's return starts a new
-   one.** Proven liveness — a read, an append, or a session bracket —
-   re-arms. Without it a nudge attempted at an offline member was
+3. **A nudge is one per lease EPOCH, and a member's return re-arms only
+   the nudges they never received.** Proven liveness — a read, an
+   append, or a session bracket — re-arms an UNDELIVERED nudge and
+   nothing else, and the per-member cadence floor lives in its own
+   table where no re-arm can reach it. Both narrowings are load-bearing
+   rather than tidy: the broad version re-opened nudges a member had
+   already been given and erased the floor's only input, so a member
+   writing steadily was nudged on every sweep tick past a lease's TTL —
+   the dead objective-context watchdog, rebuilt with better tables. Without it a nudge attempted at an offline member was
    spent forever, because the flag clears only on a lease grant and a
    grant needs a confirmed delivery: the member who could not be
    reached was exactly the member never reached again, which is
    permanent dark for the opaque-runner population this design is for.
+   A DELIVERED nudge is spent for its epoch, full stop; only a lease
+   re-grant resets it.
 4. **Silence is evaluated at the state a contract was in when an event
    ARRIVED**, not the state it ended in. The lifecycle event that
    parks a contract reaches its subscribers; everything after it does
