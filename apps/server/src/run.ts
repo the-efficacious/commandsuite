@@ -61,7 +61,7 @@ import { createRawBodyStore, type RawBodyStore } from './raw-body-store.js';
 import { createSqliteSecretsStore } from './secrets.js';
 import { updateServerConfigFile } from './server-config.js';
 import { SessionStore } from './sessions.js';
-import { createSqliteAnnexStore } from './spine/index.js';
+import { createSqliteAnnexStore, createSqliteCuratorStore } from './spine/index.js';
 import { SqliteEventLog } from './sqlite-event-log.js';
 import { openTeamAndMembers, type TeamStore } from './team-store.js';
 import { createTelemetryStore, type TelemetryStore } from './telemetry-store.js';
@@ -433,6 +433,12 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   // the contract projections folded out of them. Main DB handle, same
   // idempotent-DDL-in-the-constructor idiom as every other store here.
   const spineStore = createSqliteAnnexStore(db);
+  // The curator's bookkeeping. A SEPARATE store from the annex on
+  // purpose: the annex records what members did and is the only truth
+  // about the room; these five tables record what the system spent of
+  // whose attention, and could be dropped whole without falsifying a
+  // single fact. `createApp` builds the curator itself over both.
+  const spineCuratorStore = createSqliteCuratorStore(db);
   // MUST run before `registerSecretValues` below: identity values that
   // are still in `secrets` when that call happens stay registered for
   // the life of the process, and the migration would appear to have
@@ -712,6 +718,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
     variables: variablesStore,
     processDocument: processDocumentStore,
     spine: spineStore,
+    spineCurator: spineCuratorStore,
     notifications: notificationsStore,
     activityStore: activityStore,
     telemetryStore: telemetryStore,

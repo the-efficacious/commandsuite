@@ -8,7 +8,15 @@
 
 import { z } from 'zod';
 import type { SpineEventKind } from './types.js';
-import { PERMISSIONS, SPINE_EVENT_CLASSES, SPINE_EVENT_KINDS } from './types.js';
+import {
+  PERMISSIONS,
+  SPINE_DUMP_SOURCES,
+  SPINE_EVENT_CLASSES,
+  SPINE_EVENT_KINDS,
+  SPINE_FLOOR_SIGNALS,
+  SPINE_INJECTION_KINDS,
+  SPINE_SUBSCRIPTION_LEVELS,
+} from './types.js';
 
 export const LogLevelSchema = z.enum(['debug', 'info', 'notice', 'warning', 'error', 'critical']);
 
@@ -2587,4 +2595,111 @@ export const SpineCitationRequiredDetailSchema = z.object({
   contract: SpineIdSchema.nullable(),
   scope: z.array(SpineIdSchema),
   asks: z.array(SpineAskSchema),
+});
+
+// ─── The curator ─────────────────────────────────────────────────────
+
+export const SpineFloorSignalSchema = z.enum(SPINE_FLOOR_SIGNALS);
+
+export const SpineDumpSourceSchema = z.enum(SPINE_DUMP_SOURCES);
+
+export const SpineRunnerCapabilitiesSchema = z.object({
+  dumpSignal: z.boolean(),
+  tokenUsage: z.boolean(),
+});
+
+export const ReportSpineSignalRequestSchema = z.object({
+  signal: SpineFloorSignalSchema,
+  source: SpineDumpSourceSchema.optional(),
+  capabilities: SpineRunnerCapabilitiesSchema.optional(),
+});
+
+export const ReportSpineSignalResponseSchema = z.object({
+  accepted: z.literal(true),
+  leasesInvalidated: z.number().int().nonnegative(),
+});
+
+export const SpineInjectionKindSchema = z.enum(SPINE_INJECTION_KINDS);
+
+export const SpineInjectionSchema = z.object({
+  id: z.number().int().positive(),
+  member: NameSchema,
+  // Literal union rather than `min(0).max(2)`: class 3 is SILENCE, so a
+  // row claiming it is a contradiction in terms and must not parse.
+  class: z.union([z.literal(0), z.literal(1), z.literal(2)]),
+  kind: SpineInjectionKindSchema,
+  refs: z.array(SpineIdSchema),
+  cursor: z.number().int().nonnegative(),
+  at: SpineInstantSchema,
+  bytes: z.number().int().nonnegative(),
+  delivered: z.boolean(),
+});
+
+export const ListSpineInjectionsResponseSchema = z.object({
+  injections: z.array(SpineInjectionSchema),
+});
+
+export const SpineSubscriptionLevelSchema = z.enum(SPINE_SUBSCRIPTION_LEVELS);
+
+export const SpineSubscriptionSchema = z.object({
+  member: NameSchema,
+  contract: SpineIdSchema,
+  level: SpineSubscriptionLevelSchema,
+  explicit: z.boolean(),
+  updatedBy: NameSchema.nullable(),
+  updatedAt: SpineInstantSchema.nullable(),
+});
+
+export const SpineCuratorPolicySchema = z.object({
+  member: NameSchema,
+  leaseTtlMs: z.number().int().positive(),
+  nudgeMinIntervalMs: z.number().int().nonnegative(),
+  explicit: z.boolean(),
+  updatedBy: NameSchema.nullable(),
+  updatedAt: SpineInstantSchema.nullable(),
+});
+
+export const SpineCuratorConfigResponseSchema = z.object({
+  member: NameSchema,
+  subscriptions: z.array(SpineSubscriptionSchema),
+  policy: SpineCuratorPolicySchema,
+  capabilities: SpineRunnerCapabilitiesSchema.nullable(),
+});
+
+/**
+ * A curator-config write, with the empty write refused.
+ *
+ * `{}` parses as a perfectly valid object under a shape where both
+ * fields are optional, and it would resolve to "read the config and
+ * report it changed" — a write that lies about having written. The
+ * refinement is what makes the request type mean what its name says.
+ */
+export const SetSpineCuratorConfigRequestSchema = z
+  .object({
+    member: NameSchema.optional(),
+    subscription: z
+      .object({ contract: SpineIdSchema, level: SpineSubscriptionLevelSchema })
+      .optional(),
+    policy: z
+      .object({
+        leaseTtlMs: z.number().int().positive().optional(),
+        nudgeMinIntervalMs: z.number().int().nonnegative().optional(),
+      })
+      .refine((p) => p.leaseTtlMs !== undefined || p.nudgeMinIntervalMs !== undefined, {
+        message: 'policy must set at least one of leaseTtlMs, nudgeMinIntervalMs',
+      })
+      .optional(),
+  })
+  .refine((body) => body.subscription !== undefined || body.policy !== undefined, {
+    message: 'supply `subscription`, `policy`, or both — an empty write changes nothing',
+  });
+
+export const ListSpineInjectionsQuerySchema = z.object({
+  member: NameSchema.optional(),
+  limit: z.coerce.number().int().positive().max(500).optional(),
+  since_id: z.coerce.number().int().nonnegative().optional(),
+});
+
+export const SpineCuratorConfigQuerySchema = z.object({
+  member: NameSchema.optional(),
 });

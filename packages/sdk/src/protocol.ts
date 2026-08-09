@@ -193,6 +193,13 @@ export const MEMBER_PATHS = {
   /** DELETE — revoke a specific token row by id (members.manage or self). */
   token: (name: string, tokenId: string) =>
     `/members/${encodeURIComponent(name)}/tokens/${encodeURIComponent(tokenId)}`,
+  /**
+   * POST — floor signals from this member's runner. Runner-auth,
+   * self-only, and deliberately shaped like the activity upload rather
+   * than like a spine write: these are facts about a RUNNER, not
+   * captioned photographs of the room, and they never enter the annex.
+   */
+  spineSignals: (name: string) => `/members/${encodeURIComponent(name)}/spine-signals`,
 } as const;
 
 /**
@@ -272,6 +279,10 @@ export const PROCESS_DOCUMENT_PATHS = {
  *   GET    /spine/subjects      — listing, with transitive containment
  *   GET    /spine/contracts     — projection reads with staleness flags
  *   GET    /spine/contracts/:id — one contract
+ *   GET    /spine/curator       — this member's curator policy, as data
+ *   PUT    /spine/curator       — change it at runtime (self, or members.manage)
+ *   GET    /spine/injections    — the curator's ledger: what the system
+ *                                 spent of whose album
  *
  * There is ONE write path for events on purpose: every per-kind rule,
  * every precondition and every structural check is applied by the same
@@ -288,6 +299,8 @@ export const SPINE_PATHS = {
   subjects: '/spine/subjects',
   contracts: '/spine/contracts',
   contract: (id: string) => `/spine/contracts/${encodeURIComponent(id)}`,
+  curator: '/spine/curator',
+  injections: '/spine/injections',
 } as const;
 
 /** Path builders for variable subresources. Mirrors `SECRET_PATHS`. */

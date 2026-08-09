@@ -78,6 +78,7 @@ import {
   ListObjectivesQuerySchema,
   ListSpineContractsQuerySchema,
   ListSpineEventsQuerySchema,
+  ListSpineInjectionsQuerySchema,
   ListSpineSubjectsQuerySchema,
   LogLevelSchema,
   NameSchema,
@@ -88,11 +89,14 @@ import {
   RegisterSpineSubjectRequestSchema,
   RejectEnrollmentRequestSchema,
   RenameChannelRequestSchema,
+  ReportSpineSignalRequestSchema,
   SetCustomToolRequestSchema,
   SetNotificationSecretRequestSchema,
   SetSecretValueRequestSchema,
+  SetSpineCuratorConfigRequestSchema,
   SetToolCredentialRequestSchema,
   SetVariableValueRequestSchema,
+  SpineCuratorConfigQuerySchema,
   TotpLoginRequestSchema,
   UpdateMemberRequestSchema,
   UpdateNotificationEndpointRequestSchema,
@@ -194,7 +198,13 @@ import type { PushSubscriptionStore } from './push/store.js';
 import type { RawBodyStore } from './raw-body-store.js';
 import { SecretsError, type SecretsStore } from './secrets.js';
 import { SESSION_COOKIE_NAME, SESSION_TTL_MS, type SessionStore } from './sessions.js';
-import { type AnnexStore, SpineError } from './spine/index.js';
+import {
+  type AnnexStore,
+  type Curator,
+  type CuratorStore,
+  createCurator,
+  SpineError,
+} from './spine/index.js';
 import type { TeamStore } from './team-store.js';
 import type { TelemetryStore } from './telemetry-store.js';
 import { generateBearerToken, type TokenStore } from './tokens.js';
@@ -299,6 +309,19 @@ export interface AppOptions {
    * `objectives`, so a test exercising chat paths carries none of it.
    */
   spine?: AnnexStore;
+  /**
+   * The curator's bookkeeping — leases, receipts, the injection ledger
+   * and the per-member policy rows.
+   *
+   * Provided as a STORE and not as a curator, because `createApp` owns
+   * the curator itself: it needs the broker to push through and the
+   * sweep interval to live and die with the app, exactly like the
+   * notification dispatcher above. The curator is wired iff BOTH this
+   * and `spine` are present — a curator without an annex has nothing
+   * to curate, and an annex without a curator is a perfectly good
+   * read-only spine.
+   */
+  spineCurator?: CuratorStore;
   /**
    * External Notifications registry — inbound webhook/API endpoints
    * routed to members and channels as ambient input. The
@@ -507,6 +530,18 @@ const DEFAULT_MAX_FILE_SIZE = 25 * 1024 * 1024;
 const HARD_CAP_MAX_FILE_SIZE = 1024 * 1024 * 1024;
 
 /**
+ * How often the curator's time-driven half runs.
+ *
+ * Ten seconds is a BATCHING window, not a latency budget: nothing that
+ * has to reach a member promptly waits for it (class 0 is a read,
+ * class 1 fires on the append), and everything that does wait is
+ * something the window makes cheaper by collapsing N events on one
+ * contract into one line. Shortening it would spend more of the
+ * subscriber's album to save nothing they asked for.
+ */
+const SPINE_SWEEP_INTERVAL_MS = 10_000;
+
+/**
  * Enrollment source-label limits, READ OFF `PendingEnrollmentSchema` rather
  * than restated here. These fields were unbounded at the producer while the
  * schema capped them, so `/enroll/pending` returned rows the SDK refused to
@@ -540,6 +575,14 @@ export interface CreatedApp {
    * wake/idle/sweep transitions directly without a live WebSocket.
    */
   notificationDispatcher?: NotificationDispatcher;
+  /**
+   * The spine curator, present iff both `spine` and `spineCurator`
+   * were wired. Exposed for the same reason the dispatcher is: the
+   * sweep is the only time-driven half of the system, and a suite that
+   * has to wait for a real interval to observe a batch is a suite that
+   * measures the interval instead of the batching.
+   */
+  curator?: Curator;
 }
 
 export function createApp(options: AppOptions): CreatedApp {
@@ -559,6 +602,7 @@ export function createApp(options: AppOptions): CreatedApp {
     variables,
     processDocument,
     spine,
+    spineCurator,
     notifications,
     telemetryStore,
     genaiStore,
@@ -628,6 +672,37 @@ export function createApp(options: AppOptions): CreatedApp {
       },
       { once: true },
     );
+  }
+
+  // The curator — what enters whose album, and when. Owned here for
+  // the same reason the dispatcher above is: it pushes through the
+  // broker and its sweep must die with the app.
+  //
+  // The sweep does the TIME-driven half (batched class-2 deltas, at
+  // most one nudge per member); the event-driven half is hooked
+  // directly off the append path and the orient read, because an ask
+  // that names you must not wait a tick. There is no `recover()` call
+  // to make: the curator's own state is bookkeeping, and its cursor
+  // starts at the annex head so a restart re-sends nothing.
+  let curator: Curator | undefined;
+  if (spine !== undefined && spineCurator !== undefined) {
+    const built = createCurator({
+      annex: spine,
+      store: spineCurator,
+      broker,
+      logger,
+      now,
+    });
+    curator = built;
+    const sweepInterval = setInterval(() => {
+      void built.sweep().catch((err) => {
+        logger.warn('spine curator sweep failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }, SPINE_SWEEP_INTERVAL_MS);
+    sweepInterval.unref?.();
+    shutdownSignal?.addEventListener('abort', () => clearInterval(sweepInterval), { once: true });
   }
 
   // Per-member GenAI inference correlators. The api-body OTEL records for
@@ -3198,6 +3273,26 @@ export function createApp(options: AppOptions): CreatedApp {
 
       try {
         const result = spine.append(input, { actor: member.name });
+        // POST-COMMIT, and awaited rather than fired and forgotten.
+        //
+        // Awaited because class 1 is the class that must not wait for
+        // a tick — an ask naming you should be in your sink before the
+        // asker's tool call returns — and because a hook nobody awaits
+        // is a hook no test can observe without a sleep.
+        //
+        // Its failure never fails the append. The event is already in
+        // the annex; refusing the response now would tell the caller
+        // their write did not land, which is the one thing that is not
+        // true. The curator swallows its own push failures; this catch
+        // is the backstop for anything else.
+        if (curator !== undefined) {
+          await curator.onAppend(result).catch((err: unknown) => {
+            logger.warn('spine curator append hook failed', {
+              event: result.event.id,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
+        }
         // 200 on a replay, 201 on a new event. A retry after a lost
         // response gets the original result and a status that says it
         // created nothing, which is the honest answer to "did my write
@@ -3221,7 +3316,14 @@ export function createApp(options: AppOptions): CreatedApp {
       if (!parsed.success) {
         return c.json({ error: 'invalid query', details: parsed.error.issues }, 400);
       }
-      return c.json(spine.events(parsed.data));
+      const page = spine.events(parsed.data);
+      // A read that reached the head proves the member is caught up to
+      // the head; a partial page proves only as far as it got. Framing
+      // the receipt on the last event RETURNED — rather than on
+      // `headSeq` — is the difference between a receipt and a wish.
+      const reached = page.events.at(-1)?.seq;
+      if (reached !== undefined) curator?.onRead(c.get('member').name, reached, 'annex_read');
+      return c.json(page);
     });
 
     // GET /spine/events/:id — one event, by id.
@@ -3233,6 +3335,12 @@ export function createApp(options: AppOptions): CreatedApp {
     app.get(`${SPINE_PATHS.events}/:id`, auth, (c) => {
       const event = spine.event(c.req.param('id'));
       if (event === null) return c.json({ error: 'no such event' }, 404);
+      // Reading ONE event proves the member saw that event and says
+      // nothing about the ones around it, so the receipt only moves if
+      // this is genuinely further than they had got. `advanceReceipt`
+      // is monotonic, which is what makes reading an old event by id
+      // harmless rather than a receipt going backwards.
+      curator?.onRead(c.get('member').name, event.seq, 'event_read');
       return c.json({ event });
     });
 
@@ -3241,7 +3349,18 @@ export function createApp(options: AppOptions): CreatedApp {
     // Composed SERVER-SIDE so recovery is one code path for every
     // entry point: a floor signal, a declared dump signal, a stale
     // write's refusal, or an explicit call all end up here.
-    app.get(SPINE_PATHS.orient, auth, (c) => c.json(spine.orient(c.get('member').name)));
+    //
+    // And it is the LEASE AND RECEIPT EVENT. A member (or their
+    // runner) reading their pack is the only thing that proves they
+    // hold it, so the accounting hangs off the read rather than off
+    // anything the curator sent — the curator's own pushes must never
+    // move a receipt, and the cleanest way to guarantee that is for
+    // the only receipt-moving code to live on read paths.
+    app.get(SPINE_PATHS.orient, auth, (c) => {
+      const pack = spine.orient(c.get('member').name);
+      curator?.onOrient(c.get('member').name, pack, JSON.stringify(pack).length);
+      return c.json(pack);
+    });
 
     // POST /spine/subjects — explicit registration.
     app.post(SPINE_PATHS.subjects, auth, async (c) => {
@@ -3288,6 +3407,149 @@ export function createApp(options: AppOptions): CreatedApp {
       if (contract === null) return c.json({ error: 'no such contract' }, 404);
       return c.json({ contract });
     });
+
+    // ─── The curator's own surface ──────────────────────────────────
+    //
+    // Registered iff a curator exists. Two routes for policy — which
+    // is DATA, so it changes at runtime and never in a release — and
+    // one for the ledger.
+    //
+    // The gate on all three is SELF-OR-`members.manage`, and the
+    // asymmetry with the rest of the spine is deliberate. Annex reads
+    // are open to every member because what binds you and what the
+    // team knows is not privileged. A member's curator ledger is a
+    // different object: it is a record of what has been landing in
+    // their context and how often, which is the closest thing this
+    // system holds to a description of somebody's working day.
+    if (curator !== undefined) {
+      const activeCurator = curator;
+      /** Self, or `members.manage` for anyone. Returns the resolved name or a refusal. */
+      const resolveCuratorSubject = (
+        // biome-ignore lint/suspicious/noExplicitAny: Hono's Context type is invariant; helper is only ever called inside a route handler
+        ctx: Context<any, string, Record<string, unknown>>,
+        requested: string | undefined,
+      ): { name: string } | { refusal: Response } => {
+        const me = ctx.get('member');
+        const name = requested ?? me.name;
+        if (name !== me.name && !hasPermission(me.permissions, 'members.manage')) {
+          return {
+            refusal: ctx.json(
+              { error: `reading or setting '${name}' curator state requires members.manage` },
+              403,
+            ),
+          };
+        }
+        if (members.findByName(name) === null) {
+          return { refusal: ctx.json({ error: `no such member: ${name}` }, 404) };
+        }
+        return { name };
+      };
+
+      app.get(SPINE_PATHS.curator, auth, (c) => {
+        const parsed = SpineCuratorConfigQuerySchema.safeParse({ member: c.req.query('member') });
+        if (!parsed.success) {
+          return c.json({ error: 'invalid query', details: parsed.error.issues }, 400);
+        }
+        const subject = resolveCuratorSubject(c, parsed.data.member);
+        if ('refusal' in subject) return subject.refusal;
+        return c.json(activeCurator.config(subject.name));
+      });
+
+      app.put(SPINE_PATHS.curator, auth, async (c) => {
+        const raw = await c.req.json().catch(() => null);
+        const parsed = SetSpineCuratorConfigRequestSchema.safeParse(raw);
+        if (!parsed.success) {
+          return c.json({ error: 'invalid curator config', details: parsed.error.issues }, 400);
+        }
+        const subject = resolveCuratorSubject(c, parsed.data.member);
+        if ('refusal' in subject) return subject.refusal;
+        const sub = parsed.data.subscription;
+        if (sub !== undefined) {
+          // A level on a contract that does not exist is a level that
+          // will never fire, and it would sit in the config screen
+          // forever looking like it was doing something.
+          if (spine.contract(sub.contract) === null) {
+            return c.json({ error: `no such contract: ${sub.contract}` }, 404);
+          }
+          activeCurator.setSubscription(
+            subject.name,
+            sub.contract,
+            sub.level,
+            c.get('member').name,
+          );
+        }
+        if (parsed.data.policy !== undefined) {
+          activeCurator.setPolicy(subject.name, parsed.data.policy, c.get('member').name);
+        }
+        return c.json(activeCurator.config(subject.name));
+      });
+
+      app.get(SPINE_PATHS.injections, auth, (c) => {
+        const parsed = ListSpineInjectionsQuerySchema.safeParse({
+          member: c.req.query('member'),
+          limit: c.req.query('limit'),
+          since_id: c.req.query('since_id'),
+        });
+        if (!parsed.success) {
+          return c.json({ error: 'invalid query', details: parsed.error.issues }, 400);
+        }
+        const subject = resolveCuratorSubject(c, parsed.data.member);
+        if ('refusal' in subject) return subject.refusal;
+        return c.json({
+          injections: activeCurator.injections({ ...parsed.data, member: subject.name }),
+        });
+      });
+
+      // POST /members/:name/spine-signals — floor signals.
+      //
+      // SELF-ONLY AND RUNNER-AUTH, matching the activity upload: a
+      // member reports facts about their own runner and nobody
+      // reports on their behalf. `tokenId !== null` is the only
+      // signal the auth plane gives that a caller is the runner
+      // (opaque-bearer auth), and a browser session declaring that a
+      // member's context was compacted would be an assertion about
+      // something it cannot observe.
+      //
+      // What this endpoint buys is LATENCY AND NOTHING ELSE. Every
+      // curator correctness test runs without a single call to it. A
+      // runner that never posts here — including every runner that
+      // does not exist yet — gets the same guarantees, later.
+      app.post('/members/:name/spine-signals', auth, async (c) => {
+        const member = c.get('member');
+        const parsedName = NameSchema.safeParse(c.req.param('name'));
+        if (!parsedName.success) return c.json({ error: 'invalid name' }, 400);
+        if (parsedName.data !== member.name) {
+          return c.json(
+            { error: `user '${member.name}' cannot report signals for '${parsedName.data}'` },
+            403,
+          );
+        }
+        if (c.get('tokenId') === null) {
+          return c.json(
+            { error: 'spine signals are reported by the runner, not by a session' },
+            403,
+          );
+        }
+        const raw = await c.req.json().catch(() => null);
+        const parsed = ReportSpineSignalRequestSchema.safeParse(raw);
+        if (!parsed.success) {
+          return c.json({ error: 'invalid spine signal', details: parsed.error.issues }, 400);
+        }
+        const leasesInvalidated = activeCurator.onSignal(
+          member.name,
+          parsed.data.signal,
+          parsed.data.capabilities,
+        );
+        if (parsed.data.signal === 'dump_declared') {
+          logger.info('spine: dump declared', {
+            member: member.name,
+            source: parsed.data.source ?? null,
+            leasesInvalidated,
+          });
+        }
+        return c.json({ accepted: true, leasesInvalidated });
+      });
+    }
   }
 
   // ─── Variable endpoints ───────────────────────────────────────────
@@ -6296,6 +6558,7 @@ export function createApp(options: AppOptions): CreatedApp {
     app,
     injectWebSocket,
     ...(notificationDispatcher !== undefined ? { notificationDispatcher } : {}),
+    ...(curator !== undefined ? { curator } : {}),
   };
 }
 

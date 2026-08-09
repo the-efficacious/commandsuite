@@ -123,8 +123,18 @@ const APP_IN_SCOPE = [
  * removed along with the legacy-cap machinery it served: it warned
  * about pre-0.4.0 runners rejecting oversized packets locally, and
  * zero deployed runners remained when the wire renamed (protocol v2).
+ *
+ * 2026-08-09, +3 = 58. The spine curator: `spine curator sweep
+ * failed`, `spine curator append hook failed` (both in app.ts) and
+ * `spine: injection push failed` (curator.ts). All three are
+ * OPERATIONAL, and the reason is the floor rule rather than a judgement
+ * call about severity — no correctness property rests on an injection
+ * being delivered. A failed push costs latency: the member's next
+ * `orient` carries everything the push would have said, and their next
+ * stale write is refused with the delta regardless. Nothing captured
+ * is lost, because the curator captures nothing.
  */
-const TOTAL_SITES = 55;
+const TOTAL_SITES = 58;
 
 function messagesIn(file: string): string[] {
   const src = readFileSync(join(SRC, file), 'utf8');

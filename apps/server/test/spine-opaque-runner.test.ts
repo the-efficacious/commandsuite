@@ -79,11 +79,14 @@ function ceilingImports(imports: readonly ScannedImport[]): ScannedImport[] {
 /**
  * RECURSIVE, because a flat `readdirSync` is a hiding place.
  *
- * The module is five files today and the check passed on all five —
- * and would have gone on passing the day someone added
- * `src/spine/curator/leases.ts` importing the trace layer, because the
- * scanner would never have opened the directory. A property enforced
- * on part of a module is not enforced.
+ * The module was five files when this scanner was written and the
+ * check passed on all five — and would have gone on passing the day
+ * someone added `src/spine/curator/leases.ts` importing the trace
+ * layer, because the scanner would never have opened the directory. A
+ * property enforced on part of a module is not enforced. The curator
+ * landed three files later, which is the case this anticipated: its
+ * whole job is scheduling against runner lifecycle, so it is the most
+ * likely thing in the repo to reach for a compaction hook.
  */
 function scanSpine(dir = SPINE_DIR, prefix = ''): { files: string[]; imports: ScannedImport[] } {
   const files: string[] = [];
@@ -120,7 +123,16 @@ describe('the opaque-runner property', () => {
     // The exact list is deliberate rather than a count: a file added to
     // the spine fails this until someone updates it, which is the
     // moment to ask whether the new file belongs behind this property.
-    expect(files.sort()).toEqual(['errors.ts', 'index.ts', 'schema.ts', 'store.ts', 'ulid.ts']);
+    expect(files.sort()).toEqual([
+      'curator-schema.ts',
+      'curator-store.ts',
+      'curator.ts',
+      'errors.ts',
+      'index.ts',
+      'schema.ts',
+      'store.ts',
+      'ulid.ts',
+    ]);
     expect(imports.length).toBeGreaterThan(5);
     expect(imports.map((i) => i.specifier)).toContain('csuite-sdk/types');
   });

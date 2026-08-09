@@ -3223,3 +3223,211 @@ export interface OrientPack {
   /** This member's own asks that are still open. */
   myOpenAsks: SpineAsk[];
 }
+
+// ─── The curator ─────────────────────────────────────────────────────
+//
+// The annex records what members did. The curator records what the
+// SYSTEM spent of whose album doing it — leases, receipts, injections,
+// and the per-member policy that decides who hears what.
+//
+// The governing rule for everything below is the floor rule: the
+// signals a runner reports make re-orientation SOONER and never make
+// it exist. Delete every value in `SpineRunnerCapabilities` and every
+// guarantee still holds; only the reactive window widens.
+
+/**
+ * What a runner can tell the server about a member's context lifecycle
+ * WITHOUT reading their mind — each of these is an act, observed at
+ * the floor.
+ *
+ *   bridge_connect / bridge_disconnect   the MCP bridge attached/left
+ *   session_start  / session_end         the run bracket
+ *   dump_declared                        the runner's own declaration
+ *                                        that context was discarded
+ *
+ * `dump_declared` is the only ceiling entry in the list, and it is
+ * deliberately shaped as a REPORT of something the runner already
+ * knows rather than as an inference the server draws. A runner that
+ * never sends one loses latency and nothing else.
+ */
+export const SPINE_FLOOR_SIGNALS = [
+  'bridge_connect',
+  'bridge_disconnect',
+  'session_start',
+  'session_end',
+  'dump_declared',
+] as const;
+
+export type SpineFloorSignal = (typeof SPINE_FLOOR_SIGNALS)[number];
+
+/**
+ * Why a dump was declared. `compact` and `clear` are Claude Code's
+ * SessionStart hook sources; `token_discontinuity` is the codex spike's
+ * inference from `thread/tokenUsage/updated` and is the reason this is
+ * a closed union rather than free text — a signal whose provenance
+ * cannot be read is a signal nobody can later discount.
+ */
+export const SPINE_DUMP_SOURCES = ['compact', 'clear', 'token_discontinuity'] as const;
+
+export type SpineDumpSource = (typeof SPINE_DUMP_SOURCES)[number];
+
+/**
+ * A runner's declared ceiling, sent once per session bracket.
+ *
+ * Nothing correctness-bearing may read this. It exists so an operator
+ * can answer "whose recovery is accelerated and whose is purely
+ * reactive" without guessing from the runner id.
+ */
+export interface SpineRunnerCapabilities {
+  /** The runner can tell the server its context was discarded. */
+  dumpSignal: boolean;
+  /** The runner sees token counts against a declared context window. */
+  tokenUsage: boolean;
+}
+
+export interface ReportSpineSignalRequest {
+  signal: SpineFloorSignal;
+  /** Required by nothing; meaningful on `dump_declared`. */
+  source?: SpineDumpSource;
+  /** Declared on `session_start`. Ignored on every other signal. */
+  capabilities?: SpineRunnerCapabilities;
+}
+
+export interface ReportSpineSignalResponse {
+  accepted: true;
+  /**
+   * How many live leases this signal invalidated. Zero is a normal
+   * answer and is reported rather than omitted: "the signal arrived
+   * and there was nothing holding" and "the signal was dropped" are
+   * different facts.
+   */
+  leasesInvalidated: number;
+}
+
+/**
+ * What kind of spend an injection was.
+ *
+ *   recovery_pack       the Guaranteed Pack — an `orient` read, which
+ *                       is how the pack reaches an album.
+ *   recovery_nudge      one line pointing at `orient`. The whole
+ *                       budget an expired lease buys.
+ *   addressed           class 1 — an act that named this member.
+ *   subscription_delta  class 2 — a batched tick of what they asked to
+ *                       hear about.
+ */
+export const SPINE_INJECTION_KINDS = [
+  'recovery_pack',
+  'recovery_nudge',
+  'addressed',
+  'subscription_delta',
+] as const;
+
+export type SpineInjectionKind = (typeof SPINE_INJECTION_KINDS)[number];
+
+/**
+ * One entry in the curator's ledger — "what did the system spend of my
+ * album this week", answerable.
+ *
+ * `bytes` is on the row rather than derivable from it because the body
+ * is not retained: the ledger is an accounting of spend, not a second
+ * copy of the member's traffic. Keeping the text would make the audit
+ * trail itself a place a member's album leaks from.
+ */
+export interface SpineInjection {
+  id: number;
+  member: string;
+  /** 0 recovery · 1 addressed · 2 subscription delta. Class 3 is silence and has no row. */
+  class: 0 | 1 | 2;
+  kind: SpineInjectionKind;
+  /** Event ids, contract ids, or the pack's contract set. Never the text. */
+  refs: string[];
+  /** The annex head the injection framed itself against — the "since seq N" it carried. */
+  cursor: number;
+  /** ISO-8601. */
+  at: string;
+  bytes: number;
+  /** Whether the delivery sink accepted it. A lease is only recorded when this is true. */
+  delivered: boolean;
+}
+
+export interface ListSpineInjectionsResponse {
+  injections: SpineInjection[];
+}
+
+/**
+ * A reader-side subscription level, per member per contract — #155
+ * finding 1's answer, and the reason class 2 exists at all.
+ *
+ *   all        every authoritative event on the contract
+ *   lifecycle  lifecycle events only
+ *   none       silence
+ */
+export const SPINE_SUBSCRIPTION_LEVELS = ['all', 'lifecycle', 'none'] as const;
+
+export type SpineSubscriptionLevel = (typeof SPINE_SUBSCRIPTION_LEVELS)[number];
+
+/**
+ * The EFFECTIVE level, with the fact of whether anyone chose it.
+ *
+ * A derived default and an authored choice render identically without
+ * `explicit`, and they are different facts: one is what nobody has had
+ * an opinion about yet, the other is a decision with an author. The
+ * trail is null exactly when `explicit` is false.
+ */
+export interface SpineSubscription {
+  member: string;
+  contract: string;
+  level: SpineSubscriptionLevel;
+  /** False when this is the derived default rather than an authored row. */
+  explicit: boolean;
+  updatedBy: string | null;
+  /** ISO-8601. */
+  updatedAt: string | null;
+}
+
+/**
+ * Per-member curator cadence. Policy is DATA — tuning attention
+ * allocation must never mean shipping code, because attention is the
+ * eternally contested resource and the argument outlives the schema.
+ */
+export interface SpineCuratorPolicy {
+  member: string;
+  /** How long a lease stands before an act or a read renews it. */
+  leaseTtlMs: number;
+  /** Floor on the gap between two nudges to the same member. */
+  nudgeMinIntervalMs: number;
+  /** False when these are the team defaults rather than an authored row. */
+  explicit: boolean;
+  updatedBy: string | null;
+  /** ISO-8601. */
+  updatedAt: string | null;
+}
+
+export interface SpineCuratorConfigResponse {
+  member: string;
+  /** Every contract that binds this member, with the level that will reach them. */
+  subscriptions: SpineSubscription[];
+  policy: SpineCuratorPolicy;
+  /**
+   * What this member's runner declared it can signal, this process's
+   * lifetime. `null` when no session has declared anything — which is
+   * indistinguishable in effect from a runner that declared nothing,
+   * and deliberately so.
+   */
+  capabilities: SpineRunnerCapabilities | null;
+}
+
+export interface SetSpineCuratorConfigRequest {
+  /** Defaults to the caller. Naming somebody else requires `members.manage`. */
+  member?: string;
+  subscription?: { contract: string; level: SpineSubscriptionLevel };
+  policy?: { leaseTtlMs?: number; nudgeMinIntervalMs?: number };
+}
+
+export interface ListSpineInjectionsQuery {
+  /** Defaults to the caller. Naming somebody else requires `members.manage`. */
+  member?: string;
+  limit?: number;
+  /** Exclusive lower bound on the ledger id. */
+  since_id?: number;
+}

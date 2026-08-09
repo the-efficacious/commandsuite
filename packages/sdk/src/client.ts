@@ -85,6 +85,7 @@ import {
   ListSecretsResponseSchema,
   ListSpineContractsResponseSchema,
   ListSpineEventsResponseSchema,
+  ListSpineInjectionsResponseSchema,
   ListSpineSubjectsResponseSchema,
   ListTokensResponseSchema,
   ListToolSourcesResponseSchema,
@@ -108,6 +109,8 @@ import {
   RejectEnrollmentRequestSchema,
   RenameChannelRequestSchema,
   ReplayNotificationDeliveryResponseSchema,
+  ReportSpineSignalRequestSchema,
+  ReportSpineSignalResponseSchema,
   ResolveSecretsResponseSchema,
   RosterResponseSchema,
   RotateTokenResponseSchema,
@@ -116,8 +119,10 @@ import {
   SetCustomToolRequestSchema,
   SetNotificationSecretRequestSchema,
   SetSecretValueRequestSchema,
+  SetSpineCuratorConfigRequestSchema,
   SetToolCredentialRequestSchema,
   SetVariableValueRequestSchema,
+  SpineCuratorConfigResponseSchema,
   TeamSchema,
   ToolSourceSchema,
   UpdateNotificationEndpointRequestSchema,
@@ -181,6 +186,7 @@ import type {
   ListSpineContractsQuery,
   ListSpineEventsQuery,
   ListSpineEventsResponse,
+  ListSpineInjectionsQuery,
   ListSpineSubjectsQuery,
   Member,
   Message,
@@ -205,6 +211,8 @@ import type {
   RegisterSpineSubjectRequest,
   RejectEnrollmentRequest,
   RenameChannelRequest,
+  ReportSpineSignalRequest,
+  ReportSpineSignalResponse,
   ResolveSecretsResponse,
   RosterResponse,
   RotateTokenResponse,
@@ -214,10 +222,13 @@ import type {
   SetCustomToolRequest,
   SetNotificationSecretRequest,
   SetSecretValueRequest,
+  SetSpineCuratorConfigRequest,
   SetToolCredentialRequest,
   SetVariableValueRequest,
   SpineContract,
+  SpineCuratorConfigResponse,
   SpineEvent,
+  SpineInjection,
   SpineSubject,
   Team,
   TokenInfo,
@@ -2054,6 +2065,64 @@ export class Client {
   async spineContract(id: string): Promise<SpineContract> {
     const resp = await this.request(SPINE_PATHS.contract(id));
     return GetSpineContractResponseSchema.parse(await this.json(resp)).contract;
+  }
+
+  /**
+   * Report a floor signal for this member's own runner.
+   *
+   * Fire-and-forget from the caller's point of view but NOT from the
+   * protocol's: the response says how many leases the signal
+   * invalidated, so "the signal arrived and nothing was holding" stays
+   * distinguishable from "the signal never landed". Every signal is an
+   * accelerant — the curator is correct without a single one of them.
+   */
+  async reportSpineSignal(
+    name: string,
+    payload: ReportSpineSignalRequest,
+  ): Promise<ReportSpineSignalResponse> {
+    const validated = ReportSpineSignalRequestSchema.parse(payload);
+    const resp = await this.request(MEMBER_PATHS.spineSignals(name), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(validated),
+    });
+    return ReportSpineSignalResponseSchema.parse(await this.json(resp));
+  }
+
+  /** A member's curator policy, as data. Self, or `members.manage` for anyone. */
+  async spineCuratorConfig(member?: string): Promise<SpineCuratorConfigResponse> {
+    const qs = member === undefined ? '' : `?member=${encodeURIComponent(member)}`;
+    const resp = await this.request(`${SPINE_PATHS.curator}${qs}`);
+    return SpineCuratorConfigResponseSchema.parse(await this.json(resp));
+  }
+
+  /** Change it at runtime. Policy is data; tuning attention must never mean shipping. */
+  async setSpineCuratorConfig(
+    payload: SetSpineCuratorConfigRequest,
+  ): Promise<SpineCuratorConfigResponse> {
+    const validated = SetSpineCuratorConfigRequestSchema.parse(payload);
+    const resp = await this.request(SPINE_PATHS.curator, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(validated),
+    });
+    return SpineCuratorConfigResponseSchema.parse(await this.json(resp));
+  }
+
+  /**
+   * The curator's ledger — what the system spent of whose album.
+   *
+   * Newest first, because the question this answers is almost always
+   * about the recent past ("what has been landing in my context?").
+   */
+  async spineInjections(query: ListSpineInjectionsQuery = {}): Promise<SpineInjection[]> {
+    const params = new URLSearchParams();
+    if (query.member !== undefined) params.set('member', query.member);
+    if (query.limit !== undefined) params.set('limit', String(query.limit));
+    if (query.since_id !== undefined) params.set('since_id', String(query.since_id));
+    const qs = params.toString();
+    const resp = await this.request(`${SPINE_PATHS.injections}${qs ? `?${qs}` : ''}`);
+    return ListSpineInjectionsResponseSchema.parse(await this.json(resp)).injections;
   }
 }
 

@@ -58,15 +58,15 @@
  * An endpoint absent from it is UNCHECKED, not proven correct. Adding a case
  * is three lines; that is the point of the table.
  *
- * Measured at `184fb20`, and again as the spine's by-id read landed: the
- * eighteen cases below exercise seventeen distinct response schemas out of 53
- * `*ResponseSchema` exports, across seventeen distinct operations out of 129
- * GET/POST/PUT/PATCH/DELETE registrations in `createApp` (the route total also
- * includes HTML, streams, and binary responses with no SDK response schema).
- * This is a spot-check, not route-complete contract coverage.
+ * Measured at `184fb20`, again as the spine's by-id read landed, and again as
+ * the curator did: the twenty-one cases below exercise twenty distinct
+ * response schemas out of 56 `*ResponseSchema` exports, across twenty distinct
+ * operations in `createApp` (the route total also includes HTML, streams, and
+ * binary responses with no SDK response schema). This is a spot-check, not
+ * route-complete contract coverage.
  *
- * Eight of those are the spine, each enrolled on the commit that introduced the
- * endpoint rather than after its first divergence — which is what the
+ * Eleven of those are the spine, each enrolled on the commit that introduced
+ * the endpoint rather than after its first divergence — which is what the
  * process-document surface did not do, leaving a month of unchecked contract.
  *
  * AND IT ONLY SEES HTTP RESPONSES
@@ -113,10 +113,13 @@ import {
   ListObjectivesResponseSchema,
   ListSpineContractsResponseSchema,
   ListSpineEventsResponseSchema,
+  ListSpineInjectionsResponseSchema,
   ListSpineSubjectsResponseSchema,
   OrientPackSchema,
   RegisterSpineSubjectResponseSchema,
+  ReportSpineSignalResponseSchema,
   RosterResponseSchema,
+  SpineCuratorConfigResponseSchema,
 } from 'csuite-sdk/schemas';
 import type { Objective, Team } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -127,7 +130,7 @@ import { createSqliteFilesystemStore, LocalBlobStore } from '../../src/files/ind
 import { createMemberStore } from '../../src/members.js';
 import { createSqliteObjectivesStore } from '../../src/objectives.js';
 import { SessionStore } from '../../src/sessions.js';
-import { createSqliteAnnexStore } from '../../src/spine/index.js';
+import { createSqliteAnnexStore, createSqliteCuratorStore } from '../../src/spine/index.js';
 import { createTokenStoreFromMembers } from '../../src/tokens.js';
 import { mockTeamStore } from '../helpers/test-stores.js';
 
@@ -179,6 +182,7 @@ function makeApp() {
   const objectives = createSqliteObjectivesStore(db);
   const channels = createSqliteChannelStore(db);
   const spine = createSqliteAnnexStore(db);
+  const spineCurator = createSqliteCuratorStore(db);
   const files = createSqliteFilesystemStore({
     db,
     blobs: new LocalBlobStore(blobDir),
@@ -202,6 +206,7 @@ function makeApp() {
     objectives,
     channels,
     spine,
+    spineCurator,
     files,
     version: '0.0.0',
     logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -579,6 +584,69 @@ describe('SDK response contract', () => {
     const seeded = await seedSpine(app);
     expect(seeded.orientIsPopulated, 'the orient fixture must not be empty').toBe(true);
     await expectMatchesContract(app, '/spine/orient', authed(ALICE), OrientPackSchema);
+  });
+
+  // The curator's three. Seeded so each case exercises a POPULATED
+  // shape: a ledger with rows in it, a config with a real subscription
+  // and a declared capability set. An empty ledger and a null
+  // capability parse against almost anything.
+  it('GET /spine/injections matches ListSpineInjectionsResponseSchema', async () => {
+    const { app } = makeApp();
+    await seedSpine(app);
+    await app.request('/spine/orient', authed(BOB));
+    const rows = (await (await app.request('/spine/injections', authed(BOB))).json()) as {
+      injections: unknown[];
+    };
+    expect(rows.injections.length, 'the ledger fixture must not be empty').toBeGreaterThan(0);
+    await expectMatchesContract(
+      app,
+      '/spine/injections',
+      authed(BOB),
+      ListSpineInjectionsResponseSchema,
+    );
+  });
+
+  it('GET /spine/curator matches SpineCuratorConfigResponseSchema', async () => {
+    const { app } = makeApp();
+    const { contract } = await seedSpine(app);
+    const declared = await app.request(
+      '/members/alice/spine-signals',
+      authed(ALICE, {
+        signal: 'session_start',
+        capabilities: { dumpSignal: true, tokenUsage: false },
+      }),
+    );
+    expect(declared.status, 'capability fixture failed').toBe(200);
+    const set = await app.request(
+      '/spine/curator',
+      authed(ALICE, { subscription: { contract, level: 'all' } }, 'PUT'),
+    );
+    expect(set.status, 'subscription fixture failed').toBe(200);
+    const config = (await (await app.request('/spine/curator', authed(ALICE))).json()) as {
+      subscriptions: { explicit: boolean }[];
+      capabilities: unknown;
+    };
+    expect(config.subscriptions.some((s) => s.explicit)).toBe(true);
+    expect(config.capabilities).not.toBeNull();
+    await expectMatchesContract(
+      app,
+      '/spine/curator',
+      authed(ALICE),
+      SpineCuratorConfigResponseSchema,
+    );
+  });
+
+  it('POST /members/:name/spine-signals matches ReportSpineSignalResponseSchema', async () => {
+    const { app } = makeApp();
+    await seedSpine(app);
+    await app.request('/spine/orient', authed(ALICE));
+    await expectMatchesContract(
+      app,
+      '/members/alice/spine-signals',
+      authed(ALICE, { signal: 'dump_declared', source: 'compact' }),
+      ReportSpineSignalResponseSchema,
+      200,
+    );
   });
 
   // Converted from a pinned KNOWN DIVERGENCE on 2026-07-30, which is
