@@ -2729,8 +2729,15 @@ export interface SpineCriterionStatus {
   criterion: string;
   text: string;
   decision: SpineVerdictDecision | null;
-  /** The revision the decision was reached at. */
-  revision: string | null;
+  /**
+   * The revision the decision was reached at, WHOLE.
+   *
+   * An id here would be a derived value rendering bare — "met at
+   * rev_01H…" says nothing a reader can act on, and there is no route
+   * that resolves one. The caption travels with the verdict or the
+   * verdict is not evidence.
+   */
+  revision: SpineRevision | null;
   /** The verdict event, so a reader can go and look. */
   event: string | null;
   /** A `cannot_verify` waived by the authority's ruling. Carries the ruling's event id. */
@@ -2750,8 +2757,14 @@ export interface SpineContract {
   /** Bumped by each amendment. */
   version: number;
   subject: string;
-  /** The revision the contract is bound to, when one has been named. */
-  revision: string | null;
+  /**
+   * The revision the contract is bound to, WHOLE.
+   *
+   * Both operands of `stale` are hydrated for the same reason: a
+   * staleness flag served with two opaque ids tells a member they are
+   * behind and nothing about what they are behind.
+   */
+  revision: SpineRevision | null;
   criteria: SpineCriterion[];
   assignee: string;
   verifier: string | null;
@@ -2779,8 +2792,8 @@ export interface SpineContract {
    * revision. A reported state, never an edit — nothing retargets.
    */
   stale: boolean;
-  /** The subject's latest observed revision, when there is one. */
-  head: string | null;
+  /** The subject's latest observed revision, when there is one. WHOLE, like `revision`. */
+  head: SpineRevision | null;
 }
 
 /** An outstanding request for a ruling. */
@@ -3020,9 +3033,36 @@ export interface SpineStaleStateRevDetail {
 
 export interface SpineCoverageGapDetail {
   contract: string;
-  revision: string | null;
+  /**
+   * The revision the completion named, as it was supplied.
+   *
+   * The CAPTION, not an id — at the moment coverage is checked the
+   * revision has not been written, so there is no id to give, and a
+   * `null` here while the value sat in scope was the refusal failing
+   * its own "never render bare" rule.
+   */
+  revision: SpineRevisionInput | null;
   /** Every criterion the completion does not cover, and why it does not. */
   missing: { criterion: string; text: string; why: string }[];
+}
+
+/**
+ * A precondition that was not merely wrong but unusable: absent, or
+ * naming a counter the contract has never reached.
+ *
+ * Separate from `SpineStaleStateRevDetail` because neither of these
+ * has a delta. Reporting "you are behind, here are 0 events" for a
+ * caller who is AHEAD is a refusal that contradicts itself, and a
+ * caller cannot act on a contradiction.
+ */
+export interface SpinePreconditionDetail {
+  contract: string;
+  /** Where in the request the problem is, matching the shape zod would have produced. */
+  path: string[];
+  currentStateRev: number;
+  /** `missing` — none supplied. `ahead` — supplied a counter the contract has never reached. */
+  problem: 'missing' | 'ahead';
+  suppliedStateRev: number | null;
 }
 
 export interface SpineIdempotencyConflictDetail {

@@ -498,30 +498,54 @@ describe('spine client', () => {
     ]);
   });
 
-  it('throws when the broker returns an orient pack that fails its own schema', async () => {
-    const client = new Client({
+  /**
+   * ONE DEFECT PER FIXTURE, and the assertion names it.
+   *
+   * The first draft of these was a single pack that was malformed in
+   * two ways at once, asserted with a bare `rejects.toThrow()`. That
+   * passes if either defect is caught, if neither is caught and the
+   * client throws for an unrelated reason, and — the case that matters
+   * — if the schema stops checking one of them entirely. `toThrow()`
+   * with no argument cannot tell a caught contract violation from a
+   * typo in the fixture.
+   */
+  const wellFormedPack = {
+    member: 'lea',
+    at: '2026-08-08T12:00:00.000Z',
+    cursor: 0,
+    contracts: [],
+    asksForMe: [],
+    myOpenAsks: [],
+  };
+
+  function orientClient(pack: unknown): Client {
+    return new Client({
       url: 'http://broker.test',
       token: 't',
-      fetch: makeFakeFetch(() =>
-        jsonResponse({ member: 'lea', at: 'not-a-timestamp', cursor: 0, contracts: [] }),
-      ),
+      fetch: makeFakeFetch(() => jsonResponse(pack)),
     });
-    await expect(client.spineOrient()).rejects.toThrow();
-    // The positive control: a well-formed empty pack parses.
-    const ok = new Client({
-      url: 'http://broker.test',
-      token: 't',
-      fetch: makeFakeFetch(() =>
-        jsonResponse({
-          member: 'lea',
-          at: '2026-08-08T12:00:00.000Z',
-          cursor: 0,
-          contracts: [],
-          asksForMe: [],
-          myOpenAsks: [],
-        }),
-      ),
-    });
-    expect((await ok.spineOrient()).member).toBe('lea');
+  }
+
+  it('rejects an orient pack whose instant is not an instant, naming the field', async () => {
+    await expect(
+      orientClient({ ...wellFormedPack, at: 'not-a-timestamp' }).spineOrient(),
+    ).rejects.toThrow(/at/);
+  });
+
+  it('rejects an orient pack missing the asks a member is promised, naming the field', async () => {
+    const { asksForMe: _dropped, ...withoutAsks } = wellFormedPack;
+    // Dropping a promised array is the silent-degradation case: a
+    // recovery call that returns no asks and a broker that stopped
+    // sending them look identical to a caller that does not parse.
+    await expect(orientClient(withoutAsks).spineOrient()).rejects.toThrow(/asksForMe/);
+  });
+
+  it('accepts a well-formed empty pack', async () => {
+    // The positive control. An empty plate is a real state, and a
+    // client that threw on it would satisfy both negatives above.
+    const pack = await orientClient(wellFormedPack).spineOrient();
+    expect(pack.member).toBe('lea');
+    expect(pack.contracts).toEqual([]);
+    expect(pack.asksForMe).toEqual([]);
   });
 });

@@ -24,10 +24,16 @@
  * not a check whose answer was fixed before it ran).
  */
 
-import { readdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+
+const tmpDirs: string[] = [];
+afterEach(() => {
+  for (const d of tmpDirs.splice(0)) rmSync(d, { recursive: true, force: true });
+});
 
 const SPINE_DIR = fileURLToPath(new URL('../src/spine/', import.meta.url));
 
@@ -70,9 +76,30 @@ function ceilingImports(imports: readonly ScannedImport[]): ScannedImport[] {
   );
 }
 
-function scanSpine(): { files: string[]; imports: ScannedImport[] } {
-  const files = readdirSync(SPINE_DIR).filter((f) => f.endsWith('.ts'));
-  const imports = files.flatMap((f) => importsIn(f, readFileSync(join(SPINE_DIR, f), 'utf8')));
+/**
+ * RECURSIVE, because a flat `readdirSync` is a hiding place.
+ *
+ * The module is five files today and the check passed on all five —
+ * and would have gone on passing the day someone added
+ * `src/spine/curator/leases.ts` importing the trace layer, because the
+ * scanner would never have opened the directory. A property enforced
+ * on part of a module is not enforced.
+ */
+function scanSpine(dir = SPINE_DIR, prefix = ''): { files: string[]; imports: ScannedImport[] } {
+  const files: string[] = [];
+  const imports: ScannedImport[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const label = `${prefix}${entry.name}`;
+    if (entry.isDirectory()) {
+      const nested = scanSpine(join(dir, entry.name), `${label}/`);
+      files.push(...nested.files);
+      imports.push(...nested.imports);
+      continue;
+    }
+    if (!entry.name.endsWith('.ts')) continue;
+    files.push(label);
+    imports.push(...importsIn(label, readFileSync(join(dir, entry.name), 'utf8')));
+  }
   return { files, imports };
 }
 
@@ -89,9 +116,29 @@ describe('the opaque-runner property', () => {
     // A scanner pointed at an empty directory reports no violations
     // just as cheerfully as a clean one. These two assertions are what
     // separate those.
+    //
+    // The exact list is deliberate rather than a count: a file added to
+    // the spine fails this until someone updates it, which is the
+    // moment to ask whether the new file belongs behind this property.
     expect(files.sort()).toEqual(['errors.ts', 'index.ts', 'schema.ts', 'store.ts', 'ulid.ts']);
     expect(imports.length).toBeGreaterThan(5);
     expect(imports.map((i) => i.specifier)).toContain('csuite-sdk/types');
+  });
+
+  it('descends: a file in a subdirectory cannot hide from the scan', () => {
+    const nested = mkdtempSync(join(tmpdir(), 'spine-scan-'));
+    tmpDirs.push(nested);
+    mkdirSync(join(nested, 'curator'));
+    writeFileSync(join(nested, 'top.ts'), "import { x } from '../db.js';\n");
+    writeFileSync(
+      join(nested, 'curator', 'leases.ts'),
+      "import { readTrace } from '../../trace/transcript-reader.js';\n",
+    );
+    const { files, imports } = scanSpine(nested);
+    expect(files.sort()).toEqual(['curator/leases.ts', 'top.ts']);
+    // The whole point: the violation is one directory down, and the
+    // flat scanner this replaces reported the tree clean.
+    expect(ceilingImports(imports).map((i) => i.file)).toEqual(['curator/leases.ts']);
   });
 
   it('can fail: a planted ceiling import is flagged, and a floor import is not', () => {

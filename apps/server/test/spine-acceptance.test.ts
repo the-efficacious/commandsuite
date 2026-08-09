@@ -190,7 +190,7 @@ describe('acceptance 2 — the head moves, and supersession leaves the old contr
       body: { contract: original, criterion: 'c1', decision: 'met', evidence: 'green at sha-a' },
     });
     const boundBefore = (await contractOf(original)).revision;
-    expect(boundBefore).not.toBeNull();
+    expect(boundBefore).toMatchObject({ value: 'sha-a' });
 
     // The room moves under the contract.
     await post(app, '/spine/events', CORA, {
@@ -208,10 +208,17 @@ describe('acceptance 2 — the head moves, and supersession leaves the old contr
       [{ id: 'c1', text: 'the endpoint returns 200' }],
       'op-spec-successor',
     );
+    // THE REVISION IS SUPPLIED ON PURPOSE. The original fixture omitted
+    // this optional field, and that omission was the only reason the
+    // test passed against a fold that applied `COALESCE(?, revision_id)`
+    // to every lifecycle state — a superseded event carrying a revision
+    // retargeted the contract it was terminating. The incident this
+    // test is named after, committed by the code meant to prevent it.
     await post(app, '/spine/events', LEA, {
       kind: 'lifecycle',
       opId: 'op-supersede',
       expectedStateRev: 3,
+      revision: observed('sha-b'),
       body: { contract: original, state: 'superseded', successor },
     });
 
@@ -222,7 +229,12 @@ describe('acceptance 2 — the head moves, and supersession leaves the old contr
     // revision, same subject, same criteria. This is the assertion the
     // incident was about — a silent retarget would leave the contract
     // pointing at sha-b with verdicts reached at sha-a.
-    expect(after.revision).toBe(boundBefore);
+    expect(after.revision).toEqual(boundBefore);
+    // …and still stale, because the world really did move. Retargeting
+    // would have quietly cleared this and claimed the sha-a verdicts
+    // for sha-b.
+    expect(after.stale).toBe(true);
+    expect(after.head).toMatchObject({ value: 'sha-b' });
     expect(after.subject).toBe('repo:acme');
     expect(after.criteria).toEqual([{ id: 'c1', text: 'the endpoint returns 200' }]);
 
@@ -240,7 +252,14 @@ describe('acceptance 2 — the head moves, and supersession leaves the old contr
         criterion: 'c1',
         text: 'the endpoint returns 200',
         decision: 'met',
-        revision: (verdict.event as SpineEvent).revision,
+        revision: {
+          id: (verdict.event as SpineEvent).revision,
+          subject: 'repo:acme',
+          value: 'sha-a',
+          how: 'observed',
+          source: 'integration:github',
+          at: expect.any(String),
+        },
         event: (verdict.event as SpineEvent).id,
         waivedBy: null,
       },
@@ -389,6 +408,9 @@ describe('acceptance 8 — cursor recovery returns events of every kind, complet
         changes: 'c2 now names the reference page',
         reason: 'the original said "the docs", which nobody could check',
         disposition: 'correction',
+        disclosure:
+          'c2 previously read "the docs say so"; anyone who satisfied it by editing the ' +
+          'changelog was working to a criterion this contract no longer states',
         criteria: [
           { id: 'c1', text: 'the endpoint returns 200' },
           { id: 'c2', text: 'the reference page documents it' },

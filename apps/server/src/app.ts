@@ -3133,6 +3133,31 @@ export function createApp(options: AppOptions): CreatedApp {
     const unknownMember = (name: string | undefined): string | null =>
       name !== undefined && members.findByName(name) === null ? name : null;
 
+    /**
+     * THE list of member-naming fields across every kind, in one place.
+     *
+     * Written as one exhaustive switch rather than as checks scattered
+     * over the handler, because the defect was omission: two kinds were
+     * covered and three were not, and nothing said so. A new kind that
+     * names a member now has to pass through here.
+     */
+    const membersNamedBy = (input: AppendSpineEventRequest): (string | undefined)[] => {
+      switch (input.kind) {
+        case 'specification':
+          return [input.body.assignee, input.body.verifier, input.body.authority];
+        case 'ask':
+          return [input.body.authority];
+        case 'ask_action':
+          return [input.body.redirectTo];
+        case 'testimony':
+          return [input.body.observer];
+        case 'lifecycle':
+          return [input.body.member];
+        default:
+          return [];
+      }
+    };
+
     // POST /spine/events — the single append path.
     app.post(SPINE_PATHS.events, auth, async (c) => {
       const member = c.get('member');
@@ -3148,17 +3173,16 @@ export function createApp(options: AppOptions): CreatedApp {
           return c.json({ error: 'requires spine.author' }, 403);
         }
       }
-      // Named members must exist. Assignment is how access gets
-      // granted, so this is a spelling check and not a capability
-      // judgement — nothing here refuses a member for being the wrong
-      // person for the job.
-      const named =
-        input.kind === 'specification'
-          ? [input.body.assignee, input.body.verifier, input.body.authority]
-          : input.kind === 'ask'
-            ? [input.body.authority]
-            : [];
-      for (const name of named) {
+      // EVERY member-naming field, not the two that were obvious.
+      //
+      // Assignment is how access gets granted, so this is a spelling
+      // check and not a capability judgement — nothing here refuses a
+      // member for being the wrong person for the job. But a name that
+      // resolves to nobody is not a judgement call: a `waiting_on`
+      // naming a typo sits in nobody's queue forever, a redirect to a
+      // typo drops the ask, and testimony attributed to a typo is
+      // hearsay with no source. Each of those was accepted with a 201.
+      for (const name of membersNamedBy(input)) {
         const missing = unknownMember(name);
         if (missing !== null) return c.json({ error: `no such member: ${missing}` }, 400);
       }

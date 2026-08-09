@@ -352,8 +352,13 @@ describe('revisions', () => {
     );
     const contract = annex.contract(spec.event.id);
     expect(contract?.stale).toBe(true);
-    expect(contract?.head).not.toBeNull();
-    expect(annex.revision(contract?.head as string)?.value).toBe('sha-b');
+    // Hydrated: the head arrives WHOLE, so a reader of `stale` can see
+    // what they are behind without a second lookup there is no route for.
+    expect(contract?.head).toMatchObject({
+      value: 'sha-b',
+      how: 'observed',
+      source: 'integration:github',
+    });
   });
 
   it('does not report a contract stale against a re-observation of its own revision', () => {
@@ -762,7 +767,10 @@ describe('completion coverage', () => {
     // check that reported one of two missing criteria fails here.
     expect(detail.missing.map((m) => m.criterion)).toEqual(['c2']);
     expect(detail.missing[0]?.text).toBe('the docs say so');
-    expect(detail.missing[0]?.why).toContain('no verdict cited');
+    expect(detail.missing[0]?.why).toContain('no verdict has been reached');
+    // F9: the refusal carries the caption it was refused against,
+    // rather than a null beside a message quoting the value.
+    expect(detail.revision).toMatchObject({ value: 'sha-a', how: 'asserted' });
     expect(annex.contract(spec.event.id)?.state).toBe('active');
   });
 
@@ -1066,6 +1074,9 @@ describe('projections are folds', () => {
           changes: 'tightened c2',
           reason: 'the original was ambiguous',
           disposition: 'correction',
+          disclosure:
+            'the prior wording of c2 was "the docs say so" — anyone who read it as ' +
+            'covering the changelog was working to something this contract never meant',
           criteria: [
             { id: 'c1', text: 'the endpoint returns 200' },
             { id: 'c2', text: 'the reference page documents it' },
@@ -1170,16 +1181,25 @@ describe('orient', () => {
     expect(pack.cursor).toBe(annex.events().headSeq);
     expect(pack.contracts).toHaveLength(1);
     const one = pack.contracts[0];
-    // Every binding, not the first one found. lea authored it AND
-    // verifies it; a pack that reported one would understate what she
-    // is on the hook for.
+    // lea is the verifier and nothing else here — authoring a contract
+    // is not a binding, and the pack says so. The two-binding case is
+    // the next test, which is where "every binding, not the first one
+    // found" is actually measured.
     expect(one?.bindings).toEqual(['verifier']);
     expect(one?.criteria).toEqual([
       {
         criterion: 'c1',
         text: 'the endpoint returns 200',
         decision: 'unmet',
-        revision: expect.any(String),
+        // WHOLE. "unmet at rev_01H…" is a verdict a member cannot check.
+        revision: {
+          id: expect.any(String),
+          subject: 'repo:acme',
+          value: 'sha-a',
+          how: 'observed',
+          source: 'integration:github',
+          at: expect.any(String),
+        },
         event: expect.any(String),
         waivedBy: null,
       },

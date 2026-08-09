@@ -2387,7 +2387,16 @@ const spineQueryInt = (max: number) => z.coerce.number().int().nonnegative().max
 
 export const ListSpineEventsQuerySchema = z.object({
   since_seq: spineQueryInt(Number.MAX_SAFE_INTEGER),
-  limit: spineQueryInt(500),
+  /**
+   * POSITIVE, not merely non-negative.
+   *
+   * `limit=0` returns an empty page with a null cursor, and the
+   * published contract says a null cursor means the page REACHED THE
+   * HEAD. So a zero page does not return nothing — it returns "you are
+   * fully caught up" to a caller who has seen nothing, which is the
+   * one answer recovery must never give wrongly.
+   */
+  limit: z.coerce.number().int().positive().max(500).optional(),
   kind: SpineEventKindSchema.optional(),
   subject: SpineIdSchema.optional(),
   contract: SpineIdSchema.optional(),
@@ -2412,7 +2421,8 @@ export const SpineCriterionStatusSchema = z.object({
   criterion: SpineIdSchema,
   text: SpineProseSchema,
   decision: SpineVerdictDecisionSchema.nullable(),
-  revision: SpineIdSchema.nullable(),
+  /** WHOLE. A bare id is a derived value rendering bare, and no route resolves one. */
+  revision: SpineRevisionSchema.nullable(),
   event: SpineIdSchema.nullable(),
   waivedBy: SpineIdSchema.nullable(),
 });
@@ -2424,7 +2434,8 @@ export const SpineContractSchema = z.object({
   stateRev: z.number().int().positive(),
   version: z.number().int().positive(),
   subject: SpineIdSchema,
-  revision: SpineIdSchema.nullable(),
+  /** Both operands of `stale` are hydrated, or the flag is unactionable. */
+  revision: SpineRevisionSchema.nullable(),
   criteria: z.array(SpineCriterionSchema),
   assignee: NameSchema,
   verifier: NameSchema.nullable(),
@@ -2440,7 +2451,7 @@ export const SpineContractSchema = z.object({
   reason: SpineProseSchema.nullable(),
   successor: SpineIdSchema.nullable(),
   stale: z.boolean(),
-  head: SpineIdSchema.nullable(),
+  head: SpineRevisionSchema.nullable(),
 });
 
 export const SpineAskSchema = z.object({
@@ -2531,10 +2542,24 @@ export const SpineStaleStateRevDetailSchema = z.object({
 /** What completion is missing, named criterion by criterion. */
 export const SpineCoverageGapDetailSchema = z.object({
   contract: SpineIdSchema,
-  revision: SpineIdSchema.nullable(),
+  /** The caption the completion supplied — there is no id yet at the moment of refusal. */
+  revision: SpineRevisionInputSchema.nullable(),
   missing: z.array(
     z.object({ criterion: SpineIdSchema, text: SpineProseSchema, why: SpineProseSchema }),
   ),
+});
+
+/**
+ * A precondition that is absent or ahead of the contract. Neither has
+ * a delta, so neither may borrow the stale refusal's shape and claim
+ * one.
+ */
+export const SpinePreconditionDetailSchema = z.object({
+  contract: SpineIdSchema,
+  path: z.array(z.string()),
+  currentStateRev: z.number().int().nonnegative(),
+  problem: z.enum(['missing', 'ahead']),
+  suppliedStateRev: z.number().int().nonnegative().nullable(),
 });
 
 export const SpineIdempotencyConflictDetailSchema = z.object({

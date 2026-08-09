@@ -19,6 +19,7 @@ import type {
   SpineCoverageGapDetail,
   SpineEvent,
   SpineIdempotencyConflictDetail,
+  SpinePreconditionDetail,
   SpineStaleStateRevDetail,
 } from 'csuite-sdk/types';
 
@@ -38,7 +39,8 @@ export type SpineErrorCode =
 export type SpineErrorDetail =
   | SpineStaleStateRevDetail
   | SpineCoverageGapDetail
-  | SpineIdempotencyConflictDetail;
+  | SpineIdempotencyConflictDetail
+  | SpinePreconditionDetail;
 
 export class SpineError extends Error {
   readonly code: SpineErrorCode;

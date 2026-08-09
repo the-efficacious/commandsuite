@@ -254,8 +254,18 @@ function canonicalJson(value: unknown): string {
  * write, and treating that as a different payload would refuse the one
  * retry the whole mechanism exists to make free.
  */
-function opPayload(input: AppendSpineEventRequest): string {
+function opPayload(input: AppendSpineEventRequest, actor: string): string {
   return canonicalJson({
+    // THE ACTOR IS PART OF THE IDENTITY.
+    //
+    // Without it an `op_id` was a bearer token for someone else's
+    // write: any member who learned lea's id and payload got
+    // `replayed: true` and lea's event back as their own success. The
+    // worst shape was the structurally forbidden one — the assignee,
+    // who may not post a verdict at all, could replay the verifier's
+    // and be told it worked. An idempotency key answers "did MY write
+    // land", and whose write it was is the first half of that question.
+    actor,
     kind: input.kind,
     body: input.body,
     subject: input.subject ?? null,
@@ -268,6 +278,14 @@ function opPayload(input: AppendSpineEventRequest): string {
 
 function iso(now: number): string {
   return new Date(now).toISOString();
+}
+
+/**
+ * "a ask_action" is the tell that a message was assembled rather than
+ * written, and an agent reading a refusal is the consumer here.
+ */
+function indefiniteArticle(word: string): 'a' | 'an' {
+  return /^[aeiou]/.test(word) ? 'an' : 'a';
 }
 
 function parseJson<T>(raw: string, what: string): T {
@@ -464,12 +482,23 @@ class SqliteAnnexStore implements AnnexStore {
   }
 
   /**
-   * The subject's head: its latest OBSERVED revision.
+   * The subject's head: its latest OBSERVED revision, by ARRIVAL.
    *
    * Asserted revisions deliberately do not move it. A member naming a
    * SHA by hand is saying what they believe; letting that flip every
    * other contract on the subject to stale would let one member's
    * belief rewrite everyone else's staleness.
+   *
+   * ORDERED BY `rowid`, NOT BY `at`. `at` is a CAPTION — supplied by
+   * the caller, optional, and trusted only as a statement about when
+   * the photo was taken. Ordering on it let one future-dated
+   * observation (clock skew, or a backfill naming a real historical
+   * instant) pin the head permanently: every later observation sorted
+   * behind it, the whole subject's staleness became false, and nothing
+   * could correct it because nothing removes a revision. The annex's
+   * own monotonic counters are the only clock it may trust for
+   * ordering, and `at` stays what it is — evidence about the world,
+   * not an index into the store.
    */
   private headRevisions(subjectIds: readonly string[]): Map<string, RevisionRow> {
     const heads = new Map<string, RevisionRow>();
@@ -478,11 +507,11 @@ class SqliteAnnexStore implements AnnexStore {
       .prepare(
         `SELECT * FROM spine_revisions
          WHERE how = 'observed' AND subject_id IN (${subjectIds.map(() => '?').join(',')})
-         ORDER BY at ASC, rowid ASC`,
+         ORDER BY rowid ASC`,
       )
       .all(...(subjectIds as never[])) as unknown as RevisionRow[];
-    // Ascending, so the last write per subject wins and the map ends up
-    // holding the newest.
+    // Ascending by arrival, so the last row per subject wins and the
+    // map ends up holding the most recently observed.
     for (const row of rows) heads.set(row.subject_id, row);
     return heads;
   }
@@ -501,6 +530,19 @@ class SqliteAnnexStore implements AnnexStore {
   }
 
   events(query: ListSpineEventsQuery = {}): ListSpineEventsResponse {
+    // Refused rather than defaulted. A zero page returns `nextCursor:
+    // null`, which the published contract reads as "you have reached
+    // the head" — so quietly substituting a default would be kinder
+    // than the caller deserves, and answering honestly with an empty
+    // page would tell a caller who has seen nothing that they are
+    // fully caught up.
+    if (query.limit !== undefined && query.limit < 1) {
+      throw new SpineError(
+        'invalid_input',
+        `limit must be at least 1 (got ${query.limit}) — an empty page carries a null cursor, ` +
+          'which means "you have reached the head", and that is not true of a page nobody read',
+      );
+    }
     const limit = query.limit ?? SPINE_EVENTS_DEFAULT_LIMIT;
     const where: string[] = ['e.seq > ?'];
     const params: unknown[] = [query.since_seq ?? 0];
@@ -607,6 +649,11 @@ class SqliteAnnexStore implements AnnexStore {
     return rows.map((row) => {
       const head = heads.get(row.subject_id) ?? null;
       const boundRev = row.revision_id === null ? null : (bound.get(row.revision_id) ?? null);
+      // HYDRATED, both of them. `stale` is a claim about the relation
+      // between two revisions, and serving it with two opaque ids
+      // tells a member they are behind and nothing about what they are
+      // behind — a derived value rendering bare, with no route that
+      // would resolve it.
       // Compared by VALUE, not by row id. Two observations of the same
       // SHA are two observation points and one head; comparing ids
       // would report a contract stale against a re-observation of the
@@ -619,7 +666,7 @@ class SqliteAnnexStore implements AnnexStore {
         stateRev: row.state_rev,
         version: row.version,
         subject: row.subject_id,
-        revision: row.revision_id,
+        revision: boundRev === null ? null : rowToRevision(boundRev),
         criteria: parseJson<SpineCriterion[]>(row.criteria, 'criteria'),
         assignee: row.assignee,
         verifier: row.verifier,
@@ -638,7 +685,7 @@ class SqliteAnnexStore implements AnnexStore {
         reason: row.reason,
         successor: row.successor,
         stale,
-        head: head?.id ?? null,
+        head: head === null ? null : rowToRevision(head),
       };
     });
   }
@@ -670,7 +717,7 @@ class SqliteAnnexStore implements AnnexStore {
         | { op_id: string; event_id: string; payload: string }
         | undefined;
       if (prior !== undefined) {
-        if (prior.payload === opPayload(parsed)) {
+        if (prior.payload === opPayload(parsed, ctx.actor)) {
           const original = this.event(prior.event_id);
           if (original === null) {
             throw new SpineError(
@@ -686,9 +733,9 @@ class SqliteAnnexStore implements AnnexStore {
         }
         throw new SpineError(
           'idempotency_conflict',
-          `op_id ${parsed.opId} was already used for a DIFFERENT payload (event ` +
-            `${prior.event_id}). Reusing it would either duplicate that event or silently ` +
-            'replace what it said; pick a new op_id for a new write.',
+          `op_id ${parsed.opId} was already used for a different actor or payload (event ` +
+            `${prior.event_id}). Reusing it would either duplicate that event or hand you ` +
+            "somebody else's; pick a new op_id for a new write.",
           { opId: parsed.opId, originalEvent: prior.event_id },
         );
       }
@@ -729,11 +776,38 @@ class SqliteAnnexStore implements AnnexStore {
 
     if (contract !== null && klass === 'authoritative' && kind !== 'correction') {
       if (TERMINAL.has(contract.state)) {
+        // A TERMINAL REFUSAL CARRIES ITS DELTA TOO.
+        //
+        // This is the one case where staleness is not suspected but
+        // PROVEN — the caller is writing to a contract that has since
+        // ended — and it used to be the only refusal that told them
+        // nothing about what they missed. §6 says the refusal IS the
+        // re-injection; a caller who has to make a second call to
+        // discover the contract is over has been re-injected with
+        // nothing. The delta includes the event that terminated it,
+        // which is precisely the thing they need to read.
+        const behind =
+          parsed.expectedStateRev !== undefined && parsed.expectedStateRev < contract.stateRev;
         throw new SpineError(
           'invalid_transition',
-          `contract ${contract.id} is ${contract.state} and terminal. A correction can still be ` +
-            'stapled to any event on it, including a terminal one — that is the only way a ' +
-            'terminal record changes, and it never rewrites what it corrects.',
+          `contract ${contract.id} is ${contract.state} and terminal, at state_rev ` +
+            `${contract.stateRev}. ` +
+            (behind
+              ? `You wrote against ${parsed.expectedStateRev as number}; the ` +
+                'authoritative events you missed are in this refusal in full, and no retry ' +
+                'against a newer counter will succeed — the contract has ended. '
+              : '') +
+            'A correction can still be stapled to any event on it, including a terminal one — ' +
+            'that is the only way a terminal record changes, and it never rewrites what it ' +
+            'corrects.',
+          {
+            contract: contract.id,
+            expectedStateRev: parsed.expectedStateRev ?? contract.stateRev,
+            currentStateRev: contract.stateRev,
+            intervening: behind
+              ? this.interveningEvents(contract.id, parsed.expectedStateRev as number)
+              : [],
+          },
         );
       }
     }
@@ -743,8 +817,39 @@ class SqliteAnnexStore implements AnnexStore {
       if (parsed.expectedStateRev === undefined) {
         throw new SpineError(
           'invalid_input',
-          `a ${kind} on contract ${contract.id} is a state-changing write and must carry ` +
+          `${indefiniteArticle(kind)} ${kind} on contract ${contract.id} is a state-changing ` +
+            'write and must carry ' +
             `expectedStateRev (currently ${contract.stateRev})`,
+          {
+            contract: contract.id,
+            path: ['expectedStateRev'],
+            currentStateRev: contract.stateRev,
+            problem: 'missing',
+            suppliedStateRev: null,
+          },
+        );
+      }
+      // AHEAD OF THE HEAD IS NOT STALENESS.
+      //
+      // A precondition above the contract's counter names a revision
+      // that has never existed, so there is no delta and never will
+      // be. Routing it through the stale refusal produced a message
+      // that contradicted itself — "0 events landed while you were
+      // away… they are in the refusal in full" — and a caller cannot
+      // act on a contradiction.
+      if (parsed.expectedStateRev > contract.stateRev) {
+        throw new SpineError(
+          'invalid_input',
+          `expectedStateRev ${parsed.expectedStateRev} is ahead of contract ${contract.id}, ` +
+            `which is at ${contract.stateRev}. You cannot have seen a state this contract has ` +
+            'never reached, so there is no delta to return — re-read the contract.',
+          {
+            contract: contract.id,
+            path: ['expectedStateRev'],
+            currentStateRev: contract.stateRev,
+            problem: 'ahead',
+            suppliedStateRev: parsed.expectedStateRev,
+          },
         );
       }
       if (parsed.expectedStateRev !== contract.stateRev) {
@@ -809,7 +914,7 @@ class SqliteAnnexStore implements AnnexStore {
       if (parsed.opId !== undefined) {
         this.db
           .prepare('INSERT INTO spine_ops (op_id, event_id, payload, at) VALUES (?, ?, ?, ?)')
-          .run(parsed.opId, id, opPayload(parsed), at);
+          .run(parsed.opId, id, opPayload(parsed, ctx.actor), at);
       }
       const stored = this.rawEvent(id);
       this.applyToProjections(stored);
@@ -975,9 +1080,82 @@ class SqliteAnnexStore implements AnnexStore {
       }
     }
 
+    if (kind === 'amendment') {
+      this.assertAmendmentDiscloses(input.body as SpineAmendmentBody, contract as SpineContract);
+    }
+
     if (kind === 'lifecycle') {
       this.assertLifecycleLegal(input, contract as SpineContract);
     }
+  }
+
+  /**
+   * §5's one stated amendment refusal: removing text without a
+   * `disclosure`.
+   *
+   * WHY IT NEEDS ENFORCING AT ALL. Finding 4 of #155 was "amendments
+   * can't undo contamination". A photo seen cannot be unseen, so an
+   * amendment that quietly drops a criterion leaves every member who
+   * already read it working to a requirement the record no longer
+   * admits existed. The prior text survives in the event stream, but
+   * "recoverable by whoever thinks to page the annex" is not the same
+   * as "disclosed", and the difference is the whole finding.
+   *
+   * WHAT COUNTS AS REMOVAL, precisely, because a rule this cheap to
+   * trip has to be predictable:
+   *
+   *   a criterion whose id is gone                      removal
+   *   a constraint no longer in the list                removal
+   *   title or criterion text that is no longer
+   *   CONTAINED in its replacement                      removal
+   *
+   * Containment rather than a length heuristic, so the common honest
+   * edits stay free: adding a criterion, adding a constraint,
+   * appending a clarification to existing text, and changing nothing
+   * textual are all accepted without a disclosure. Rewording is a
+   * removal, because a reworded criterion is one that somebody read in
+   * a form that is now gone.
+   *
+   * A SIDE EFFECT WORTH NAMING: dropping a criterion also drops its
+   * verdicts from `orient` and from the completion gate, since both
+   * read the CURRENT criteria list. That is correct — a criterion that
+   * is no longer in the contract cannot block completing it — and it is
+   * exactly why the removal itself has to be disclosed rather than
+   * merely permitted.
+   */
+  private assertAmendmentDiscloses(body: SpineAmendmentBody, contract: SpineContract): void {
+    if (body.disclosure !== undefined) return;
+    const removed: string[] = [];
+
+    if (body.title !== undefined && !body.title.includes(contract.title)) {
+      removed.push(`the title "${contract.title}"`);
+    }
+    if (body.criteria !== undefined) {
+      const next = new Map(body.criteria.map((c) => [c.id, c.text]));
+      for (const prior of contract.criteria) {
+        const replacement = next.get(prior.id);
+        if (replacement === undefined) {
+          removed.push(`criterion '${prior.id}'`);
+        } else if (!replacement.includes(prior.text)) {
+          removed.push(`the wording of criterion '${prior.id}'`);
+        }
+      }
+    }
+    if (body.constraints !== undefined) {
+      const next = body.constraints;
+      for (const prior of contract.constraints) {
+        if (!next.some((c) => c.includes(prior))) removed.push(`the constraint "${prior}"`);
+      }
+    }
+
+    if (removed.length === 0) return;
+    throw new SpineError(
+      'invalid_input',
+      `this amendment removes ${removed.join(', ')} from contract ${contract.id} and carries no ` +
+        'disclosure. Text that members have already read cannot be made to have never existed — ' +
+        'say what was removed and why anyone working to it should know, and the amendment lands. ' +
+        'Adding criteria or constraints, and appending to existing text, need no disclosure.',
+    );
   }
 
   private assertLifecycleLegal(input: AppendSpineEventRequest, contract: SpineContract): void {
@@ -1018,6 +1196,8 @@ class SqliteAnnexStore implements AnnexStore {
           'it is true of nothing.',
         {
           contract: contract.id,
+          // Genuinely null here: the completion named no revision, so
+          // there is no caption to hand back.
           revision: null,
           missing: criteria.map((c) => ({
             criterion: c.id,
@@ -1029,52 +1209,67 @@ class SqliteAnnexStore implements AnnexStore {
     }
 
     const cited = (input.cites ?? []).map((id) => this.event(id)).filter((e) => e !== null);
+    const citedIds = new Set(cited.map((e) => e.id));
+    // THE PROJECTION DECIDES, THE CITATION PROVES IT WAS SEEN.
+    //
+    // Reading only `cites` was a real hole and it is the one the
+    // changeset's "completion cannot outrun its evidence" claim rests
+    // on: a verifier who posts `met` and then `unmet` at the same
+    // revision leaves the contract unmet, and a completion that cites
+    // only the superseded `met` used to pass while `orient` reported
+    // unmet to everyone looking at it. The cite list is caller-supplied
+    // and a caller may cite whatever it likes; the projection is the
+    // team's answer. So coverage is read off the projection, and the
+    // cite list is used for exactly one thing — proving the completer
+    // had the CURRENT verdict in hand.
+    const current = this.currentVerdictsAt(contract.id, revision.value);
     const missing: { criterion: string; text: string; why: string }[] = [];
     for (const criterion of criteria) {
-      const verdict = cited.find(
-        (e) =>
-          e.kind === 'criterion_verdict' &&
-          (e.body as SpineCriterionVerdictBody).contract === contract.id &&
-          (e.body as SpineCriterionVerdictBody).criterion === criterion.id &&
-          this.revision(e.revision ?? '')?.value === revision.value,
-      );
-      if (verdict !== undefined) {
-        const decision = (verdict.body as SpineCriterionVerdictBody).decision;
-        if (decision === 'met') continue;
-        if (decision === 'unmet') {
-          missing.push({
-            criterion: criterion.id,
-            text: criterion.text,
-            why: `the cited verdict ${verdict.id} says unmet at ${revision.value}`,
-          });
-          continue;
-        }
-      }
-      // A ruling waiving a cannot_verify is the third legal move, and
-      // it stands in for a verdict rather than replacing the record of
-      // one — the waiver cites the cannot_verify it forgives.
-      const waiver = cited.find((e) => {
-        if (e.kind !== 'ruling') return false;
-        return e.cites.some((citedId) => {
-          const target = this.event(citedId);
-          if (target === null || target.kind !== 'criterion_verdict') return false;
-          const vb = target.body as SpineCriterionVerdictBody;
-          return (
-            vb.contract === contract.id &&
-            vb.criterion === criterion.id &&
-            vb.decision === 'cannot_verify' &&
-            this.revision(target.revision ?? '')?.value === revision.value
-          );
+      const verdict = current.get(criterion.id);
+      if (verdict === undefined) {
+        missing.push({
+          criterion: criterion.id,
+          text: criterion.text,
+          why: `no verdict has been reached on this criterion at ${revision.value}`,
         });
-      });
+        continue;
+      }
+      if (!citedIds.has(verdict.event_id)) {
+        missing.push({
+          criterion: criterion.id,
+          text: criterion.text,
+          why:
+            `the current verdict at ${revision.value} is ${verdict.event_id} ` +
+            `(${verdict.decision}) and the completion does not cite it` +
+            (cited.some(
+              (e) =>
+                e.kind === 'criterion_verdict' &&
+                (e.body as SpineCriterionVerdictBody).criterion === criterion.id,
+            )
+              ? ' — the verdict cited for this criterion has been superseded'
+              : ''),
+        });
+        continue;
+      }
+      if (verdict.decision === 'met') continue;
+      if (verdict.decision === 'unmet') {
+        missing.push({
+          criterion: criterion.id,
+          text: criterion.text,
+          why: `the current verdict ${verdict.event_id} says unmet at ${revision.value}`,
+        });
+        continue;
+      }
+      // `cannot_verify`: covered only by the third legal move — the
+      // authority's ruling, citing THAT verdict, and itself cited here.
+      const waiver = cited.find((e) => e.kind === 'ruling' && e.cites.includes(verdict.event_id));
       if (waiver !== undefined) continue;
       missing.push({
         criterion: criterion.id,
         text: criterion.text,
         why:
-          verdict === undefined
-            ? `no verdict cited for this criterion at ${revision.value}`
-            : `the cited verdict ${verdict.id} says cannot_verify and no ruling waives it`,
+          `the current verdict ${verdict.event_id} says cannot_verify at ${revision.value} ` +
+          'and no cited ruling waives it',
       });
     }
 
@@ -1084,9 +1279,34 @@ class SqliteAnnexStore implements AnnexStore {
         `contract ${contract.id} cannot complete at ${revision.value}: ` +
           `${missing.length} of ${criteria.length} criteria are not covered — ` +
           missing.map((m) => `'${m.criterion}' (${m.why})`).join('; '),
-        { contract: contract.id, revision: null, missing },
+        { contract: contract.id, revision, missing },
       );
     }
+  }
+
+  /**
+   * The CURRENT verdict per criterion at one revision VALUE.
+   *
+   * By value rather than by revision id, because revisions are never
+   * deduplicated: a verdict reached at one observation of `sha-a` and
+   * a completion naming another observation of `sha-a` are about the
+   * same state of the world and two different rows. Latest by `seq`
+   * wins within a value, which is the same latest-wins rule `orient`
+   * renders — so the gate and the display can never disagree, and that
+   * is the property that broke.
+   */
+  private currentVerdictsAt(contractId: string, value: string): Map<string, VerdictRow> {
+    const rows = this.db
+      .prepare(
+        `SELECT v.* FROM spine_contract_verdicts v
+         JOIN spine_revisions r ON r.id = v.revision_id
+         WHERE v.contract_id = ? AND r.value = ?
+         ORDER BY v.seq ASC`,
+      )
+      .all(contractId, value) as unknown as VerdictRow[];
+    const latest = new Map<string, VerdictRow>();
+    for (const row of rows) latest.set(row.criterion_id, row);
+    return latest;
   }
 
   // ─── The fold ───────────────────────────────────────────────────
@@ -1268,8 +1488,25 @@ class SqliteAnnexStore implements AnnexStore {
     this.touchContract(contractId, stateRev, event, {});
   }
 
+  /**
+   * States that may move a contract's bound revision. `done(revision)`
+   * and nothing else.
+   *
+   * This list exists because `COALESCE(?, revision_id)` applied to
+   * EVERY state, and a `superseded` event that happened to carry the
+   * optional revision retargeted the contract it was terminating —
+   * flipping `stale` back to false and claiming verdicts reached at the
+   * old revision for the new one. That is the silent retargeting §10
+   * forbids and the exact incident acceptance 2 is named after,
+   * committed by the code meant to prevent it.
+   */
+  private static readonly REVISION_BINDING_STATES: ReadonlySet<SpineContractState> = new Set([
+    'done',
+  ]);
+
   private foldLifecycle(event: SpineEvent, contractId: string, stateRev: number | null): void {
     const body = event.body as SpineLifecycleBody;
+    const bindsRevision = SqliteAnnexStore.REVISION_BINDING_STATES.has(body.state);
     this.db
       .prepare(
         `UPDATE spine_contracts
@@ -1292,7 +1529,7 @@ class SqliteAnnexStore implements AnnexStore {
         body.result ?? null,
         body.reason ?? null,
         body.successor ?? null,
-        event.revision,
+        bindsRevision ? event.revision : null,
         contractId,
       );
   }
@@ -1432,13 +1669,13 @@ class SqliteAnnexStore implements AnnexStore {
         ...new Set(contracts.map((c) => c.subject)),
       ]).map((s) => [s.id, rowToSubject(s)]),
     );
-    const revisionIds = [
-      ...new Set(
-        contracts.flatMap((c) => [c.revision, c.head].filter((r): r is string => r !== null)),
-      ),
-    ];
+    // The contracts already carry their bound revision and head whole.
+    // What still needs hydrating is the revision each VERDICT was
+    // reached at — one batched lookup, so the cost stays flat in the
+    // size of the member's plate.
+    const verdictRevisionIds = [...new Set(verdicts.map((v) => v.revision_id))];
     const revisions = new Map(
-      this.rowsIn<RevisionRow>('spine_revisions', 'id', revisionIds).map((r) => [
+      this.rowsIn<RevisionRow>('spine_revisions', 'id', verdictRevisionIds).map((r) => [
         r.id,
         rowToRevision(r),
       ]),
@@ -1484,7 +1721,9 @@ class SqliteAnnexStore implements AnnexStore {
           criterion: criterion.id,
           text: criterion.text,
           decision: (latest?.decision as SpineCriterionStatus['decision']) ?? null,
-          revision: latest?.revision_id ?? null,
+          // WHOLE, for the same reason the contract's own revision is:
+          // "met at rev_01H…" is a verdict a member cannot check.
+          revision: latest === undefined ? null : (revisions.get(latest.revision_id) ?? null),
           event: latest?.event_id ?? null,
           waivedBy: waiver?.ruling_event_id ?? null,
         };
@@ -1497,9 +1736,9 @@ class SqliteAnnexStore implements AnnexStore {
         stateRev: contract.stateRev,
         criteria,
         subject: subjects.get(contract.subject) as SpineSubject,
-        revision: contract.revision === null ? null : (revisions.get(contract.revision) ?? null),
+        revision: contract.revision,
         stale: contract.stale,
-        head: contract.head === null ? null : (revisions.get(contract.head) ?? null),
+        head: contract.head,
         rulings: rulings.filter((r) => r.contract_id === contract.id).map(rowToEvent),
       };
     });
