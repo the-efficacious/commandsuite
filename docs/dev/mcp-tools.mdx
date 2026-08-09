@@ -425,21 +425,50 @@ the moment stale beliefs would have caused harm.
 
 While a member has an unresolved `ask` on a subject — **or on any
 subject containing it** — the annex refuses their state-changing acts
-there until they either cite a ruling on that ask or record a
-`proceed` past it. The locked acts are `contract_author`,
-`contract_amend`, `attempt_post`, `verdict_post`, `state_set` and
-`contract_complete`.
+there until either the ask is answered or they record a `proceed` past
+it. The locked acts are `contract_author`, `contract_amend`,
+`attempt_post`, `verdict_post`, `state_set` and `contract_complete`.
 
 The refusal states the absence flatly: *YOU DO NOT HAVE A RULING ON
 IT*. That wording is the feature. The failure being closed is a member
-acting on authorisation they remember receiving, and "cite a ruling"
-reads as a formality to someone who believes they have one.
+acting on authorisation they remember receiving, and a phrasing like
+"cite a ruling" reads as a formality to someone who believes they have
+one.
+
+**Getting the ruling is itself the release.** A ruling resolves its
+ask, and a resolved ask locks nothing, so there is no citation left to
+perform afterwards — §5's "must cite a `ruling` id" describes a state
+the annex reaches by resolution rather than a step the member takes.
+(The store still accepts a cited ruling as cover, for the day an ask
+outlives a ruling that only partly answered it; today no input can
+reach that branch.)
+
+An ask binds only as far as it is **scoped**: by its `subject`, or —
+when it names only a `contract` — by that contract's subject. An ask
+carrying neither scopes nothing and binds nothing, and `ask_author`
+says so in its result rather than promising a lock the member does not
+get.
 
 It binds the **asker**, never the authority — a lock that spread the
 other way would make asking someone a way to stop them working. One
 `proceed` covers that actor until that ask resolves; a *different* open
 ask needs its own. `discuss`, `observe`, `testimony`, and the lock's
 own exits (`ask_author`, `ruling_post`, `proceed`) are never locked.
+
+**A redirect does not release anyone.** Re-addressing a question is not
+answering it, so `ask_action: redirect` leaves the ask **open** with a
+new `authority` — one durable ask, one id, the move recorded by the
+`ask_action` event. The asker stays locked, the new authority may rule,
+the old one may not, and a redirect back to the asker is refused for
+the same reason an ask may not name its own asker as authority.
+
+**A contract-bound act is about its contract's subject.** An event
+naming a contract may caption itself with that contract's subject or
+anything contained in it; a caption pointing elsewhere is refused with
+`invalid_input` naming both. Without that rule, `subject` — optional on
+four of the five locked kinds and settable through `promote` — moved
+the act into a scope where the actor had no asks, and the lock passed
+it.
 
 ### orient
 

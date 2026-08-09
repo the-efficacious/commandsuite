@@ -1846,10 +1846,12 @@ const SPINE_CITATION_RULE =
   'CITATION LOCK: while you have an unresolved `ask` on a subject — or on any subject ' +
   'CONTAINING it — the annex refuses your state-changing acts there (`contract_author`, ' +
   '`contract_amend`, `attempt_post`, `verdict_post`, `state_set`, `contract_complete`) until ' +
-  'you either cite a ruling on that ask or record a `proceed` past it. The refusal tells you, ' +
-  'in so many words, that YOU DO NOT HAVE A RULING. Believing you were authorised is not a ' +
-  'ruling; this is the one gate in the system that will not take your word for it. Proceeding ' +
-  'is legitimate and always available — what is refused is inventing an answer nobody gave.';
+  'either the ask is answered or you record a `proceed` past it. Getting the ruling IS the ' +
+  'release: it resolves the ask, and there is nothing further for you to cite. The refusal ' +
+  'tells you, in so many words, that YOU DO NOT HAVE A RULING. Believing you were authorised ' +
+  'is not a ruling; this is the one gate in the system that will not take your word for it. ' +
+  'Proceeding is legitimate and always available — what is refused is inventing an answer ' +
+  'nobody gave.';
 
 /** Said once, in every description that returns a contract counter. */
 const SPINE_STATE_REV_RULE =
@@ -1858,6 +1860,28 @@ const SPINE_STATE_REV_RULE =
   'write is refused AND the refusal carries every authoritative event you missed, in full — ' +
   'that is how you find out you lost context, so read them and retry deliberately rather than ' +
   'guessing a higher number.';
+
+/**
+ * The states `state_set` will move a contract to.
+ *
+ * ONE list, read by the tool's own enum and by the handler that
+ * validates against it. It was two hand-written copies, and a mutation
+ * shrinking the handler's copy to two entries passed the whole suite:
+ * the schema an agent reads and the check that enforces it could
+ * disagree with nothing to say so.
+ *
+ * `done` is deliberately absent. Completion goes through
+ * `contract_complete`, where the evidence is checked, and a second
+ * route to done that skipped it would be the gate's only hole.
+ */
+const SPINE_SETTABLE_STATES = [
+  'active',
+  'waiting_on',
+  'waiting_for',
+  'parked',
+  'cancelled',
+  'superseded',
+] as const;
 
 const SPINE_OP_ID_FIELD = {
   type: 'string',
@@ -2004,7 +2028,9 @@ function buildSpineTools(instructions: InstructionsResponse): Tool[] {
         'indistinguishable from silence, and silence is what the three legal ways out of it ' +
         '(amend the criterion, re-scope the verifier, or get the authority to waive it by ' +
         'ruling) have to act on. ' +
-        SPINE_STATE_REV_RULE,
+        SPINE_STATE_REV_RULE +
+        ' ' +
+        SPINE_CITATION_RULE,
       inputSchema: {
         type: 'object',
         properties: {
@@ -2067,7 +2093,7 @@ function buildSpineTools(instructions: InstructionsResponse): Tool[] {
           contract: { type: 'string', description: 'The contract id.' },
           state: {
             type: 'string',
-            enum: ['active', 'waiting_on', 'waiting_for', 'parked', 'cancelled', 'superseded'],
+            enum: [...SPINE_SETTABLE_STATES],
             description: 'The state to move to. `done` is refused here — see `contract_complete`.',
           },
           expected_state_rev: {
@@ -2146,7 +2172,11 @@ function buildSpineTools(instructions: InstructionsResponse): Tool[] {
         'Every field is required because an ask that cannot be priced is an ask nobody answers: ' +
         '`question` (what is being decided), `context` (what they need in order to decide it), ' +
         'and `unblocks` (what is stopped until they do). It lands in their queue and stays ' +
-        'there until they rule, decline, redirect or defer it. **Raising one binds you**: ' +
+        'there until they rule, decline, redirect or defer it — a redirect re-addresses the ' +
+        'question rather than answering it, so the ask stays open under its new authority. ' +
+        '**Raising one binds you, but only as far as it is scoped**: an ask carrying a ' +
+        '`subject` or a `contract` locks your state-changing acts there; an ask carrying ' +
+        'neither scopes nothing and holds you to nothing. ' +
         SPINE_CITATION_RULE,
       inputSchema: {
         type: 'object',
@@ -2196,7 +2226,9 @@ function buildSpineTools(instructions: InstructionsResponse): Tool[] {
         'Answer an ask that names YOU as its authority. A ruling is an authored, citable ' +
         'decision — the thing members point at afterwards instead of remembering. **Only the ' +
         'ask’s named authority can rule on it**: a ruling from anyone else is not a weaker ' +
-        'ruling, it is not a ruling, and the annex refuses it whatever permissions you hold. ' +
+        'ruling, it is not a ruling, and the annex refuses it whatever permissions you hold — ' +
+        'including after a redirect, which moves the ask to a new authority and leaves it ' +
+        'open rather than resolving it. ' +
         'A ruling that cites a `cannot_verify` verdict WAIVES that criterion, which is one of ' +
         'the three legal ways out of one. Ruling resolves the ask and releases the asker.',
       inputSchema: {
@@ -2240,8 +2272,11 @@ function buildSpineTools(instructions: InstructionsResponse): Tool[] {
         'unresolved ask and it is not a workaround — the annex refuses invented authority, ' +
         'never deliberate action without it. One `proceed` covers your later acts on that ' +
         'subject until the ask resolves, so it is one deliberate act of record rather than a ' +
-        'toll on every write. `reason` is what a reader sees later instead of an answer nobody ' +
-        'gave; say why waiting cost more than acting.',
+        'toll on every write. The cover is keyed to the ASK, not to what you type in ' +
+        '`subject`: the ask already carries the scope it locks, so `subject` here is caption ' +
+        'only — naming a narrower one does not narrow what this proceeding covers, and naming ' +
+        'a wider one does not widen it. `reason` is what a reader sees later instead of an ' +
+        'answer nobody gave; say why waiting cost more than acting.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -3513,8 +3548,9 @@ function renderSpineRefusal(err: unknown): string | null {
         ...detail.asks.map(renderSpineAsk),
         '',
         `Scope searched: ${detail.scope.join(' ⊃ ')} (your act was on ${detail.subject}).`,
-        'Get a ruling and cite it, or `proceed` past the ask and say why — either is a real ' +
-          'answer; acting as though it were already answered is not.',
+        'Get the ruling — that resolves the ask and releases you, with nothing further to ' +
+          'cite — or `proceed` past the ask and say why. Either is a real answer; acting as ' +
+          'though it were already answered is not.',
       ].join('\n');
     }
     case 'idempotency_conflict': {
@@ -4016,9 +4052,10 @@ async function handleStateSet(
         'is deliberately no second route to done that skips it.',
     );
   }
-  const legal = ['active', 'waiting_on', 'waiting_for', 'parked', 'cancelled', 'superseded'];
-  if (!legal.includes(state)) {
-    return errorResult(`state_set: \`state\` must be one of: ${legal.join(', ')} (got '${state}')`);
+  if (!(SPINE_SETTABLE_STATES as readonly string[]).includes(state)) {
+    return errorResult(
+      `state_set: \`state\` must be one of: ${SPINE_SETTABLE_STATES.join(', ')} (got '${state}')`,
+    );
   }
   const stateRev = spineStateRev(args);
   if (stateRev === undefined) {
@@ -4125,12 +4162,27 @@ async function handleAskAuthor(
       ...spineOptional(args, 'check'),
     },
   });
+  // WHAT IT BINDS DEPENDS ON WHETHER IT NAMES ANYTHING, and saying
+  // otherwise was a false guarantee in the one place a member would
+  // rely on it. The lock scopes on the ask's subject — or, failing
+  // that, the subject of the contract it names — so an ask carrying
+  // neither binds nothing at all. Telling every asker "THIS NOW BINDS
+  // YOU" taught them a protection they did not have, which is worse
+  // than teaching them nothing: a member who believes the annex is
+  // holding the line stops holding it themselves.
+  const scope = spineString(args, 'subject');
+  const bound =
+    scope || contract
+      ? 'THIS NOW BINDS YOU: until it resolves, your state-changing acts on ' +
+        `${scope || `contract ${contract}`} are refused unless you record a \`proceed\` past ` +
+        'it. Getting the ruling releases you on its own — it resolves the ask.'
+      : 'This ask has no `subject` and no `contract`, so it scopes nothing and does NOT bind ' +
+        'your acts. Nothing will stop you acting as though it had been answered. Name a ' +
+        'subject or a contract if it should hold you to waiting.';
   return textResult(
     `asked ${authority}: ${result.event.id} (#${result.event.seq}).\n` +
       'It is in their queue and stays there until they rule, decline, redirect or defer it.\n' +
-      'THIS NOW BINDS YOU: until it resolves, your state-changing acts on ' +
-      `${spineString(args, 'subject') || contract || 'its scope'} are refused unless you cite a ` +
-      'ruling on it or record a `proceed` past it.',
+      bound,
   );
 }
 

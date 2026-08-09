@@ -115,6 +115,14 @@ export const fakeBrokerCapabilities: { rawBodyAck: boolean } = { rawBodyAck: tru
  * `refuseNext` makes the next append answer with a canned refusal, so
  * the refusal RENDERING is drivable end to end: a stale delta must
  * arrive whole, and only a real 409 through the client proves it does.
+ *
+ * `replayNext` and the contract echo exist for the same reason in the
+ * success direction. An append response that always carried
+ * `contract: null, replayed: false` left three rendered lines — the
+ * contract's new `state_rev`, its staleness warning, and the REPLAY
+ * notice — unreachable in every test, and mutations deleting two of
+ * them survived a full green suite. The `state_rev` line in particular
+ * is the number every tool description tells an agent to read back.
  */
 export const fakeBrokerSpine: {
   appends: Array<Record<string, unknown>>;
@@ -124,6 +132,8 @@ export const fakeBrokerSpine: {
   contracts: Record<string, Record<string, unknown>>;
   subjects: Array<Record<string, unknown>>;
   refuseNext: { status: number; body: Record<string, unknown> } | null;
+  /** Answer the next append as an idempotent replay of an existing event. */
+  replayNext: boolean;
 } = {
   appends: [],
   orient: {},
@@ -132,6 +142,7 @@ export const fakeBrokerSpine: {
   contracts: {},
   subjects: [],
   refuseNext: null,
+  replayNext: false,
 };
 
 /**
@@ -382,7 +393,18 @@ export async function startFakeBroker(): Promise<FakeBroker> {
         res.end(JSON.stringify(refusal.body));
         return;
       }
-      res.writeHead(201, jsonHeaders);
+      // The contract the payload names, as the real broker returns it:
+      // its state AFTER the append. Tests stage it in
+      // `fakeBrokerSpine.contracts`, so the rendered `state_rev` line
+      // and the staleness warning are reachable.
+      const named =
+        typeof (parsed.body as { contract?: unknown } | undefined)?.contract === 'string'
+          ? ((parsed.body as { contract: string }).contract as string)
+          : null;
+      const contract = named === null ? null : (fakeBrokerSpine.contracts[named] ?? null);
+      const replayed = fakeBrokerSpine.replayNext;
+      fakeBrokerSpine.replayNext = false;
+      res.writeHead(replayed ? 200 : 201, jsonHeaders);
       res.end(
         JSON.stringify({
           event: {
@@ -399,12 +421,12 @@ export async function startFakeBroker(): Promise<FakeBroker> {
             opId: (parsed.opId as string | undefined) ?? null,
             cites: (parsed.cites as string[] | undefined) ?? [],
             staplesTo: null,
-            contract: null,
+            contract: named,
             stateRev: null,
             body: parsed.body,
           },
-          contract: null,
-          replayed: false,
+          contract,
+          replayed,
         }),
       );
       return;

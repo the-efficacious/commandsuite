@@ -30,7 +30,9 @@
 
 import type { Client as BrokerClient } from 'csuite-sdk/client';
 import { Client } from 'csuite-sdk/client';
+import { SpineContractStateSchema } from 'csuite-sdk/schemas';
 import type { InstructionsResponse, SpineEvent } from 'csuite-sdk/types';
+import { SPINE_CITATION_LOCKED_KINDS } from 'csuite-sdk/types';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { defineTools, handleToolCall } from '../../src/runtime/tools.js';
 import {
@@ -75,6 +77,7 @@ beforeEach(() => {
   fakeBrokerSpine.contracts = {};
   fakeBrokerSpine.orient = {};
   fakeBrokerSpine.refuseNext = null;
+  fakeBrokerSpine.replayNext = false;
 });
 
 function tool(name: string, packet: InstructionsResponse = PACKET) {
@@ -232,16 +235,68 @@ describe('the citation rule reaches every tool it binds', () => {
   /** The exact sentence an agent has to see. Named, then grepped. */
   const CITATION_MARKERS = ['CITATION LOCK', 'YOU DO NOT HAVE A RULING', 'CONTAINING it'];
 
-  it('carries the rule on every state-changing tool', () => {
-    for (const name of ['attempt_post', 'state_set', 'contract_complete']) {
+  /**
+   * ALL SIX, and the list is written out rather than sampled.
+   *
+   * The previous version iterated three ungated tools plus the two
+   * gated ones — and `verdict_post` was missing the rule for exactly
+   * as long as nothing enumerated the tools the rule itself names. A
+   * partial list reads as a complete one.
+   */
+  const LOCKED_TOOLS = [
+    'contract_author',
+    'contract_amend',
+    'attempt_post',
+    'verdict_post',
+    'state_set',
+    'contract_complete',
+  ];
+
+  it('carries the rule on every one of the six tools it binds', () => {
+    for (const name of LOCKED_TOOLS) {
       for (const marker of CITATION_MARKERS) {
-        expect(describeOf(name), `${name} must carry "${marker}"`).toContain(marker);
+        expect(describeOf(name, AUTHOR), `${name} must carry "${marker}"`).toContain(marker);
       }
     }
-    for (const gated of ['contract_author', 'contract_amend']) {
-      for (const marker of CITATION_MARKERS) {
-        expect(describeOf(gated, AUTHOR), `${gated} must carry "${marker}"`).toContain(marker);
-      }
+  });
+
+  /**
+   * THE CROSS-CHECK THAT WOULD HAVE CAUGHT THE OMISSION.
+   *
+   * The rule's own sentence lists the tools it binds, and the store
+   * locks a list of KINDS. Those are two statements of one fact in two
+   * vocabularies, and nothing compared them — so the sentence could
+   * name a tool that did not carry it, which is precisely what
+   * happened. This maps kinds to tools and asserts both directions.
+   */
+  it('names exactly the tools whose kinds the store locks, and no others', () => {
+    const toolForKind: Record<string, string[]> = {
+      specification: ['contract_author'],
+      amendment: ['contract_amend'],
+      attempt: ['attempt_post'],
+      criterion_verdict: ['verdict_post'],
+      // One kind, two tools: both write a `lifecycle`.
+      lifecycle: ['state_set', 'contract_complete'],
+    };
+    const expected = SPINE_CITATION_LOCKED_KINDS.flatMap((kind) => toolForKind[kind] ?? []);
+    // Every kind the store locks is accounted for by a tool.
+    expect(expected.length, 'a locked kind has no tool mapped to it').toBe(LOCKED_TOOLS.length);
+    // The rule's own prose names each of them…
+    const rule = describeOf('attempt_post');
+    for (const name of expected) {
+      expect(rule, `the citation rule must name \`${name}\``).toContain(`\`${name}\``);
+    }
+    // …and each of them carries the rule.
+    for (const name of expected) {
+      expect(describeOf(name, AUTHOR), `${name} must carry the rule`).toContain('CITATION LOCK');
+    }
+    // No tool outside that set claims to be locked, which is the other
+    // half of the drift: a rule pasted onto a tool it does not bind
+    // teaches a refusal that will never come.
+    for (const name of ['orient', 'annex_read', 'discuss', 'observe', 'proceed', 'ruling_post']) {
+      expect(describeOf(name), `${name} must not claim to be locked`).not.toContain(
+        'CITATION LOCK',
+      );
     }
   });
 
@@ -252,9 +307,15 @@ describe('the citation rule reaches every tool it binds', () => {
     expect(describeOf('ask_author')).toMatch(/binds you/i);
   });
 
-  it('names both exits wherever it states the rule', () => {
+  it('names both exits truthfully wherever it states the rule', () => {
     const attempt = describeOf('attempt_post');
-    expect(attempt).toMatch(/cite a ruling/);
+    // The ruling exit is the ANSWER, not a citation ceremony: a ruling
+    // resolves its ask, so there is nothing left to cite afterwards.
+    // Telling an agent to cite it on the write is instructing a step
+    // that cannot be the thing that releases them.
+    expect(attempt).toMatch(/Getting the ruling IS the release/);
+    expect(attempt).toMatch(/it resolves the ask/);
+    expect(attempt).not.toMatch(/cite a ruling on that ask/);
     expect(attempt).toMatch(/`proceed`/);
     expect(attempt).toMatch(/Proceeding is legitimate/);
   });
@@ -795,7 +856,10 @@ describe('a refusal is rendered completely, because the refusal is the re-brief'
     expect(text).toContain('awaiting andrewjon');
     // The containment that explains why an act on a file was refused.
     expect(text).toContain('Scope searched: repo:acme ⊃ file:acme/api.ts');
-    expect(text).toMatch(/Get a ruling and cite it, or `proceed` past the ask/);
+    // The truthful exit: a ruling RESOLVES the ask, so there is
+    // nothing left to cite once it lands.
+    expect(text).toMatch(/Get the ruling — that resolves the ask and releases you/);
+    expect(text).toMatch(/`proceed` past the ask and say why/);
   });
 
   it('names the event a duplicated op id already resolved to', async () => {
@@ -959,22 +1023,59 @@ describe('the tool refuses what the annex would refuse, with the reason', () => 
     expect(fakeBrokerSpine.appends).toEqual([]);
   });
 
-  it('accepts every other lifecycle state, which is the control on that refusal', async () => {
-    // A tool that refused every state would satisfy the test above.
-    const { isError } = await call('state_set', {
-      contract: CONTRACT,
-      state: 'waiting_on',
-      member: 'lea',
-      reason: 'needs a review',
-      expected_state_rev: 2,
-    });
-    expect(isError).toBe(false);
-    expect(lastAppend().body).toEqual({
-      contract: CONTRACT,
-      state: 'waiting_on',
-      member: 'lea',
-      reason: 'needs a review',
-    });
+  it('accepts every other lifecycle state, not merely one of them', async () => {
+    // THE CONTROL, exercised across the whole list. Sampling one state
+    // let a mutation shrink the handler's legal list to two and pass:
+    // "a tool that refuses everything" is not the only failure — "a
+    // tool that refuses four of six" satisfied it too.
+    const extra: Record<string, Record<string, unknown>> = {
+      active: {},
+      waiting_on: { member: 'lea' },
+      waiting_for: { event: 'the nightly build', check: 'CI reports green on main' },
+      parked: { preempted_by: 'the incident' },
+      cancelled: {},
+      superseded: { successor: 'evt_successor' },
+    };
+    const accepted: string[] = [];
+    for (const state of Object.keys(extra)) {
+      const { isError, text } = await call('state_set', {
+        contract: CONTRACT,
+        state,
+        reason: 'because',
+        expected_state_rev: 2,
+        ...extra[state],
+      });
+      expect(isError, `${state} must be accepted: ${text}`).toBe(false);
+      accepted.push((lastAppend().body as { state: string }).state);
+    }
+    expect(accepted).toEqual([
+      'active',
+      'waiting_on',
+      'waiting_for',
+      'parked',
+      'cancelled',
+      'superseded',
+    ]);
+  });
+
+  /**
+   * The enum an agent reads and the check the handler applies are one
+   * list, and together with `done` they must be every lifecycle state
+   * there is. A new state that reached neither tool would be
+   * unreachable through the surface with nothing to say so.
+   */
+  it('offers exactly the lifecycle states that are not completion', () => {
+    const props = tool('state_set')?.inputSchema.properties as Record<string, { enum?: string[] }>;
+    const offered = props.state?.enum ?? [];
+    expect(offered).toEqual([
+      'active',
+      'waiting_on',
+      'waiting_for',
+      'parked',
+      'cancelled',
+      'superseded',
+    ]);
+    expect([...offered, 'done'].sort()).toEqual([...SpineContractStateSchema.options].sort());
   });
 
   it('refuses cannot_verify with no why, and accepts it with one', async () => {
@@ -1039,5 +1140,226 @@ describe('the tool refuses what the annex would refuse, with the reason', () => 
     });
     expect(isError).toBe(false);
     expect(lastAppend().kind).toBe('ask');
+  });
+});
+
+// ─── the result of a write, rendered ─────────────────────────────────
+
+describe('a write reports where the contract now stands', () => {
+  it('renders the new state_rev, which is the number every description tells you to read back', async () => {
+    // `SPINE_STATE_REV_RULE` tells an agent to send the counter "as you
+    // last read it", and this line is where they last read it. It went
+    // unrendered in every test until the fake broker could echo a
+    // contract — two mutations deleting parts of this line survived a
+    // green suite.
+    seedContract();
+    const { text, isError } = await call('attempt_post', {
+      contract: CONTRACT,
+      summary: 'pushed the fix',
+      expected_state_rev: 2,
+      revision: { value: 'sha-a', how: 'asserted', source: 'member:rune' },
+    });
+    expect(isError, text).toBe(false);
+    expect(text).toContain(`contract ${CONTRACT} is now active at state_rev 2`);
+    expect(text).toContain('pass that as expected_state_rev on your next write');
+  });
+
+  it('warns that the contract is stale, naming both revisions', async () => {
+    seedContract();
+    const contract = fakeBrokerSpine.contracts[CONTRACT] as Record<string, unknown>;
+    contract.stale = true;
+    contract.revision = {
+      id: 'rev_1',
+      subject: 'repo:acme',
+      value: 'sha-a',
+      how: 'asserted',
+      source: 'member:rune',
+      at: '2026-08-09T09:00:00.000Z',
+    };
+    contract.head = {
+      id: 'rev_2',
+      subject: 'repo:acme',
+      value: 'sha-b',
+      how: 'observed',
+      source: 'integration:github',
+      at: '2026-08-09T09:04:00.000Z',
+    };
+    const { text } = await call('attempt_post', {
+      contract: CONTRACT,
+      summary: 'pushed the fix',
+      expected_state_rev: 2,
+      revision: { value: 'sha-a', how: 'asserted', source: 'member:rune' },
+    });
+    // Both operands. A flag saying you are behind, without saying what
+    // you are behind, is a derived value rendering bare.
+    expect(text).toContain('STALE: it is bound to sha-a');
+    expect(text).toContain('observed at sha-b (integration:github');
+  });
+
+  it('says plainly when a write was a replay rather than a second event', async () => {
+    seedContract();
+    fakeBrokerSpine.replayNext = true;
+    const { text, isError } = await call('attempt_post', {
+      contract: CONTRACT,
+      summary: 'pushed the fix',
+      expected_state_rev: 2,
+      op_id: 'op-mine',
+      revision: { value: 'sha-a', how: 'asserted', source: 'member:rune' },
+    });
+    expect(isError, text).toBe(false);
+    // The honest answer to "did my write land twice".
+    expect(text).toContain('REPLAY');
+    expect(text).toContain('nothing was appended a second time');
+  });
+
+  it('omits the replay notice on a first write, which is the control', async () => {
+    seedContract();
+    const { text } = await call('attempt_post', {
+      contract: CONTRACT,
+      summary: 'pushed the fix',
+      expected_state_rev: 2,
+      revision: { value: 'sha-a', how: 'asserted', source: 'member:rune' },
+    });
+    expect(text).not.toContain('REPLAY');
+  });
+});
+
+// ─── what an ask actually binds ──────────────────────────────────────
+
+describe('ask_author tells the truth about what the ask binds', () => {
+  it('names the scope when the ask has one', async () => {
+    const { text } = await call('ask_author', {
+      authority: 'andrewjon',
+      question: 'may we drop the legacy header?',
+      context: 'two callers still send it',
+      unblocks: 'the migration',
+      subject: 'repo:acme',
+    });
+    expect(text).toMatch(/THIS NOW BINDS YOU/);
+    expect(text).toContain('repo:acme');
+    expect(text).toMatch(/Getting the ruling releases you on its own/);
+  });
+
+  it('names the contract as the scope when that is what it carries', async () => {
+    const { text } = await call('ask_author', {
+      authority: 'andrewjon',
+      question: 'ship on Friday?',
+      context: 'tight window',
+      unblocks: 'the release',
+      contract: CONTRACT,
+      expected_state_rev: 2,
+    });
+    expect(text).toMatch(/THIS NOW BINDS YOU/);
+    expect(text).toContain(`contract ${CONTRACT}`);
+  });
+
+  it('says an unscoped ask binds NOTHING, rather than promising a lock it does not get', async () => {
+    // An uncaptioned ask legitimately scopes nothing — subject and
+    // contract are both optional by design. Telling its author "THIS
+    // NOW BINDS YOU" taught them a protection they did not have, which
+    // is worse than teaching them none: a member who believes the annex
+    // is holding the line stops holding it themselves.
+    const { text } = await call('ask_author', {
+      authority: 'andrewjon',
+      question: 'are we still targeting Friday?',
+      context: 'no particular subject',
+      unblocks: 'planning',
+    });
+    expect(text).not.toMatch(/THIS NOW BINDS YOU/);
+    expect(text).toMatch(/does NOT bind your acts/);
+    expect(text).toMatch(/Name a subject or a contract/);
+  });
+
+  it('says the same thing in the description an agent reads before calling', () => {
+    const desc = describeOf('ask_author');
+    expect(desc).toMatch(/only as far as it is scoped/);
+    expect(desc).toMatch(/an ask carrying\s+neither scopes nothing/);
+  });
+});
+
+// ─── promote cannot dodge the lock by inheriting a caption ───────────
+
+describe('promote cannot move an act out of its contract’s scope', () => {
+  it('is refused when the origin post’s caption points outside the contract', async () => {
+    // The agent-reachable half of the dodge: `promote` defaults the new
+    // event's subject to the origin post's. A post about `repo:other`
+    // promoted into an attempt on a contract about `repo:acme` would
+    // have been evaluated for the lock in the wrong scope entirely.
+    fakeBrokerSpine.eventsById.evt_stray = {
+      seq: 9,
+      id: 'evt_stray',
+      kind: 'discussion',
+      class: 'ambient',
+      subject: 'repo:other',
+      revision: null,
+      actor: 'rune',
+      authoredBy: null,
+      at: '2026-08-09T09:00:00.000Z',
+      provenance: 'native',
+      opId: null,
+      cites: [],
+      staplesTo: null,
+      contract: CONTRACT,
+      stateRev: null,
+      body: { body: 'pushed the fix', contract: CONTRACT },
+    };
+    // The real annex refuses this; the fake stages that refusal so the
+    // rendering an agent sees is what gets asserted.
+    fakeBrokerSpine.refuseNext = {
+      status: 400,
+      body: {
+        error:
+          'this attempt names contract evt_contract_1, which is about repo:acme, but captions ' +
+          'itself repo:other — a subject that is neither repo:acme nor contained in it.',
+        code: 'invalid_input',
+      },
+    };
+    const { text, isError } = await call('promote', {
+      event: 'evt_stray',
+      as: 'attempt',
+      expected_state_rev: 2,
+    });
+    // The caption went out as the post's, which is what makes the
+    // server-side rule load-bearing rather than decorative…
+    expect(lastAppend().subject).toBe('repo:other');
+    // …and the refusal is what the agent gets, naming both subjects.
+    expect(isError).toBe(true);
+    expect(text).toContain('repo:other');
+    expect(text).toContain('repo:acme');
+  });
+
+  it('sends the contract’s own scope when the post carries none, which is the control', async () => {
+    // Built whole rather than spread from a fixture defined in another
+    // describe: a partial event fails the client's response schema one
+    // layer before the handler, and the test would never reach the
+    // branch it names.
+    fakeBrokerSpine.eventsById.evt_plain = {
+      seq: 9,
+      id: 'evt_plain',
+      kind: 'discussion',
+      class: 'ambient',
+      subject: null,
+      revision: null,
+      actor: 'cora',
+      authoredBy: null,
+      at: '2026-08-09T09:00:00.000Z',
+      provenance: 'native',
+      opId: null,
+      cites: [],
+      staplesTo: null,
+      contract: CONTRACT,
+      stateRev: null,
+      body: { body: 'pushed the fix', contract: CONTRACT },
+    };
+    const { isError } = await call('promote', {
+      event: 'evt_plain',
+      as: 'attempt',
+      expected_state_rev: 2,
+    });
+    expect(isError).toBe(false);
+    // No caption at all, so the annex takes the contract's — which is
+    // the scope the lock is evaluated in.
+    expect(lastAppend().subject).toBeUndefined();
+    expect((lastAppend().body as { contract: string }).contract).toBe(CONTRACT);
   });
 });
