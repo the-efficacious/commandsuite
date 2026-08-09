@@ -333,3 +333,195 @@ describe('process document edit parsing', () => {
     expect(ProcessDocumentEditSchema.safeParse(forged).success).toBe(false);
   });
 });
+
+/**
+ * The spine client, and the schema laws it enforces BEFORE anything
+ * reaches the wire.
+ *
+ * The append path validates its payload before sending, which matters
+ * more here than on any other surface in this SDK: the annex is
+ * append-only, so a malformed event that reaches it stays there. A
+ * client that sent first and validated never would turn a caller's
+ * typo into a permanent record.
+ */
+describe('spine client', () => {
+  const SUBJECT = 'repo:acme';
+  const OBSERVED = {
+    subject: SUBJECT,
+    value: 'sha-a',
+    how: 'observed' as const,
+    source: 'integration:github',
+  };
+
+  function eventFixture(overrides: Record<string, unknown> = {}) {
+    return {
+      seq: 1,
+      id: 'evt_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      kind: 'discussion',
+      class: 'ambient',
+      subject: null,
+      revision: null,
+      actor: 'rune',
+      authoredBy: null,
+      at: '2026-08-08T12:00:00.000Z',
+      provenance: 'native',
+      opId: null,
+      cites: [],
+      staplesTo: null,
+      contract: null,
+      stateRev: null,
+      body: { body: 'a thought' },
+      ...overrides,
+    };
+  }
+
+  it('sends the append payload and parses the response through the published schema', async () => {
+    const sent: unknown[] = [];
+    const client = new Client({
+      url: 'http://broker.test',
+      token: 't',
+      fetch: makeFakeFetch((url, init) => {
+        expect(url.pathname).toBe('/spine/events');
+        expect(init.method).toBe('POST');
+        sent.push(JSON.parse(String(init.body)));
+        return jsonResponse({ event: eventFixture(), contract: null, replayed: false });
+      }),
+    });
+    const result = await client.appendSpineEvent({
+      kind: 'discussion',
+      body: { body: 'a thought' },
+    });
+    expect(result.replayed).toBe(false);
+    expect(result.event.id).toBe('evt_01ARZ3NDEKTSV4RRFFQ69G5FAV');
+    expect(sent).toEqual([{ kind: 'discussion', body: { body: 'a thought' } }]);
+  });
+
+  it('refuses to send an event the schema rejects', async () => {
+    let called = false;
+    const client = new Client({
+      url: 'http://broker.test',
+      token: 't',
+      fetch: makeFakeFetch(() => {
+        called = true;
+        return jsonResponse({});
+      }),
+    });
+    await expect(
+      client.appendSpineEvent({
+        kind: 'criterion_verdict',
+        opId: 'op-1',
+        expectedStateRev: 1,
+        revision: OBSERVED,
+        // `cannot_verify` with no `why` — the one refusal that keeps a
+        // dead-end verdict out of a permanent record.
+        body: { contract: 'evt_1', criterion: 'c1', decision: 'cannot_verify', evidence: 'e' },
+      } as never),
+    ).rejects.toThrow(/why/);
+    // Nothing reached the wire. Asserting only the throw would pass
+    // against a client that sent the event and then complained.
+    expect(called, 'an invalid event must not reach the annex').toBe(false);
+  });
+
+  it('accepts the nearest valid thing — the same verdict carrying a reason', async () => {
+    let called = false;
+    const client = new Client({
+      url: 'http://broker.test',
+      token: 't',
+      fetch: makeFakeFetch(() => {
+        called = true;
+        return jsonResponse({
+          event: eventFixture({
+            kind: 'criterion_verdict',
+            class: 'authoritative',
+            opId: 'op-1',
+            revision: 'rev_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+            contract: 'evt_1',
+            stateRev: 2,
+            body: {
+              contract: 'evt_1',
+              criterion: 'c1',
+              decision: 'cannot_verify',
+              evidence: 'e',
+              why: 'no deploy access',
+            },
+          }),
+          contract: null,
+          replayed: false,
+        });
+      }),
+    });
+    const result = await client.appendSpineEvent({
+      kind: 'criterion_verdict',
+      opId: 'op-1',
+      expectedStateRev: 1,
+      revision: OBSERVED,
+      body: {
+        contract: 'evt_1',
+        criterion: 'c1',
+        decision: 'cannot_verify',
+        evidence: 'e',
+        why: 'no deploy access',
+      },
+    });
+    expect(called).toBe(true);
+    expect(result.event.kind).toBe('criterion_verdict');
+  });
+
+  it('composes every event filter onto the query string', async () => {
+    let seen: URL | null = null;
+    const client = new Client({
+      url: 'http://broker.test',
+      token: 't',
+      fetch: makeFakeFetch((url) => {
+        seen = url;
+        return jsonResponse({ events: [], nextCursor: null, headSeq: 0 });
+      }),
+    });
+    await client.spineEvents({
+      since_seq: 12,
+      limit: 25,
+      kind: 'criterion_verdict',
+      subject: SUBJECT,
+      contract: 'evt_1',
+      actor: 'lea',
+    });
+    // The whole query, sorted, so a dropped filter fails here rather
+    // than returning a quietly wider page at runtime.
+    const params = [...(seen as unknown as URL).searchParams.entries()].sort();
+    expect(params).toEqual([
+      ['actor', 'lea'],
+      ['contract', 'evt_1'],
+      ['kind', 'criterion_verdict'],
+      ['limit', '25'],
+      ['since_seq', '12'],
+      ['subject', SUBJECT],
+    ]);
+  });
+
+  it('throws when the broker returns an orient pack that fails its own schema', async () => {
+    const client = new Client({
+      url: 'http://broker.test',
+      token: 't',
+      fetch: makeFakeFetch(() =>
+        jsonResponse({ member: 'lea', at: 'not-a-timestamp', cursor: 0, contracts: [] }),
+      ),
+    });
+    await expect(client.spineOrient()).rejects.toThrow();
+    // The positive control: a well-formed empty pack parses.
+    const ok = new Client({
+      url: 'http://broker.test',
+      token: 't',
+      fetch: makeFakeFetch(() =>
+        jsonResponse({
+          member: 'lea',
+          at: '2026-08-08T12:00:00.000Z',
+          cursor: 0,
+          contracts: [],
+          asksForMe: [],
+          myOpenAsks: [],
+        }),
+      ),
+    });
+    expect((await ok.spineOrient()).member).toBe('lea');
+  });
+});

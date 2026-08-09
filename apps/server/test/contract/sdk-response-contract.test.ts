@@ -58,11 +58,16 @@
  * An endpoint absent from it is UNCHECKED, not proven correct. Adding a case
  * is three lines; that is the point of the table.
  *
- * Measured at `cf346ee`: the ten cases below exercise nine distinct response
- * schemas out of 42 `*ResponseSchema` exports, across nine distinct operations
- * out of 107 GET/POST/PUT/PATCH/DELETE registrations in `createApp` (the route
- * total also includes HTML, streams, and binary responses with no SDK response
- * schema). This is a spot-check, not route-complete contract coverage.
+ * Measured at `184fb20`: the seventeen cases below exercise sixteen distinct
+ * response schemas out of 52 `*ResponseSchema` exports, across sixteen distinct
+ * operations out of 128 GET/POST/PUT/PATCH/DELETE registrations in `createApp`
+ * (the route total also includes HTML, streams, and binary responses with no
+ * SDK response schema). This is a spot-check, not route-complete contract
+ * coverage.
+ *
+ * Seven of those are the spine, enrolled on the commit that introduced it
+ * rather than after its first divergence — which is what the
+ * process-document surface did not do, leaving a month of unchecked contract.
  *
  * AND IT ONLY SEES HTTP RESPONSES
  * -------------------------------
@@ -95,14 +100,21 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Broker, InMemoryEventLog } from 'csuite-core';
 import {
+  AppendSpineEventResponseSchema,
   FsEntryResponseSchema,
   FsListResponseSchema,
   GetObjectiveResponseSchema,
+  GetSpineContractResponseSchema,
   HealthResponseSchema,
   InstructionsResponseSchema,
   ListChannelsResponseSchema,
   ListMembersResponseSchema,
   ListObjectivesResponseSchema,
+  ListSpineContractsResponseSchema,
+  ListSpineEventsResponseSchema,
+  ListSpineSubjectsResponseSchema,
+  OrientPackSchema,
+  RegisterSpineSubjectResponseSchema,
   RosterResponseSchema,
 } from 'csuite-sdk/schemas';
 import type { Objective, Team } from 'csuite-sdk/types';
@@ -114,6 +126,7 @@ import { createSqliteFilesystemStore, LocalBlobStore } from '../../src/files/ind
 import { createMemberStore } from '../../src/members.js';
 import { createSqliteObjectivesStore } from '../../src/objectives.js';
 import { SessionStore } from '../../src/sessions.js';
+import { createSqliteAnnexStore } from '../../src/spine/index.js';
 import { createTokenStoreFromMembers } from '../../src/tokens.js';
 import { mockTeamStore } from '../helpers/test-stores.js';
 
@@ -140,7 +153,13 @@ function makeApp() {
     {
       name: 'alice',
       role: { title: 'admin', description: 'runs the team' },
-      permissions: ['members.manage', 'objectives.create', 'objectives.watch', 'activity.read'],
+      permissions: [
+        'members.manage',
+        'objectives.create',
+        'objectives.watch',
+        'activity.read',
+        'spine.author',
+      ],
       token: ALICE,
     },
     {
@@ -158,6 +177,7 @@ function makeApp() {
   tmpDirs.push(blobDir);
   const objectives = createSqliteObjectivesStore(db);
   const channels = createSqliteChannelStore(db);
+  const spine = createSqliteAnnexStore(db);
   const files = createSqliteFilesystemStore({
     db,
     blobs: new LocalBlobStore(blobDir),
@@ -180,6 +200,7 @@ function makeApp() {
     teamStore: mockTeamStore(TEAM),
     objectives,
     channels,
+    spine,
     files,
     version: '0.0.0',
     logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -233,9 +254,10 @@ async function expectMatchesContract(
   path: string,
   init: RequestInit,
   schema: { parse: (v: unknown) => unknown },
+  expectedStatus = 200,
 ): Promise<void> {
   const res = await app.request(path, init);
-  expect(res.status, `${path} did not 200`).toBe(200);
+  expect(res.status, `${path} did not ${expectedStatus}`).toBe(expectedStatus);
   const body: unknown = await res.json();
   // `.parse` throws a ZodError naming the offending path, so a failure
   // points at the diverging field rather than just "contract broken".
@@ -271,6 +293,98 @@ async function seedObjectiveWithFile(app: App): Promise<Objective> {
   );
   expect(created.status).toBe(200);
   return (await created.json()) as Objective;
+}
+
+/**
+ * A spine with something in it: a subject, a contract alice verifies,
+ * an attempt at one revision, a verdict, an ask and a ruling, and an
+ * observation that moves the head so `stale` is true.
+ */
+async function seedSpine(app: App): Promise<{ contract: string; orientIsPopulated: boolean }> {
+  const subject = await app.request(
+    '/spine/subjects',
+    authed(ALICE, { id: 'repo:acme', type: 'repo' }),
+  );
+  expect(subject.status, 'subject fixture failed').toBe(201);
+  const specRes = await app.request(
+    '/spine/events',
+    authed(ALICE, {
+      kind: 'specification',
+      subject: 'repo:acme',
+      opId: 'op-spec',
+      body: {
+        title: 'Ship the endpoint',
+        criteria: [{ id: 'c1', text: 'the endpoint returns 200' }],
+        assignee: 'bob',
+        verifier: 'alice',
+        authority: 'alice',
+      },
+    }),
+  );
+  expect(specRes.status, 'spec fixture failed').toBe(201);
+  const contract = ((await specRes.json()) as { event: { id: string } }).event.id;
+
+  const steps: unknown[] = [
+    {
+      kind: 'attempt',
+      opId: 'op-attempt',
+      expectedStateRev: 1,
+      revision: { subject: 'repo:acme', value: 'sha-a', how: 'asserted', source: 'member:bob' },
+      body: { contract, summary: 'pushed the fix' },
+    },
+    {
+      kind: 'criterion_verdict',
+      opId: 'op-verdict',
+      expectedStateRev: 2,
+      revision: {
+        subject: 'repo:acme',
+        value: 'sha-a',
+        how: 'observed',
+        source: 'integration:github',
+      },
+      body: { contract, criterion: 'c1', decision: 'met', evidence: 'green at sha-a' },
+    },
+    {
+      kind: 'ask',
+      opId: 'op-ask',
+      subject: 'repo:acme',
+      expectedStateRev: 3,
+      body: {
+        authority: 'alice',
+        question: 'ship on Friday?',
+        context: 'tight window',
+        unblocks: 'the release',
+        contract,
+      },
+    },
+    {
+      kind: 'observation',
+      subject: 'repo:acme',
+      revision: {
+        subject: 'repo:acme',
+        value: 'sha-b',
+        how: 'observed',
+        source: 'integration:github',
+      },
+      body: { what: 'push webhook', output: 'main moved to sha-b' },
+    },
+  ];
+  for (const [i, step] of steps.entries()) {
+    const who = i === 1 || i === 3 ? ALICE : BOB;
+    const res = await app.request('/spine/events', authed(who, step));
+    expect(res.status, `spine fixture step ${i} failed: ${await res.text()}`).toBe(201);
+  }
+
+  const pack = (await (await app.request('/spine/orient', authed(ALICE))).json()) as {
+    contracts: { stale: boolean; criteria: unknown[] }[];
+    asksForMe: unknown[];
+  };
+  const populated =
+    pack.contracts.length > 0 &&
+    pack.contracts[0]?.stale === true &&
+    (pack.contracts[0]?.criteria.length ?? 0) > 0 &&
+    pack.asksForMe.length > 0;
+  return { contract, orientIsPopulated: populated };
 }
 
 // ─── Covered endpoints ───────────────────────────────────────────────
@@ -341,6 +455,89 @@ describe('SDK response contract', () => {
       authed(BOB),
       FsEntryResponseSchema,
     );
+  });
+
+  // ─── Spine ─────────────────────────────────────────────────────────
+  //
+  // Enrolled from day one rather than added after the first divergence.
+  // The process-document surface shipped without a case here and the
+  // gap was invisible for a month; every spine endpoint that emits a
+  // published schema is in this table on the commit that introduces it.
+
+  it('POST /spine/subjects matches RegisterSpineSubjectResponseSchema', async () => {
+    const { app } = makeApp();
+    await expectMatchesContract(
+      app,
+      '/spine/subjects',
+      authed(ALICE, { id: 'repo:acme', type: 'repo' }),
+      RegisterSpineSubjectResponseSchema,
+      201,
+    );
+  });
+
+  it('POST /spine/events matches AppendSpineEventResponseSchema', async () => {
+    const { app } = makeApp();
+    await seedSpine(app);
+    await expectMatchesContract(
+      app,
+      '/spine/events',
+      authed(BOB, {
+        kind: 'discussion',
+        body: { body: 'a thought about the contract' },
+      }),
+      AppendSpineEventResponseSchema,
+      201,
+    );
+  });
+
+  it('GET /spine/events matches ListSpineEventsResponseSchema', async () => {
+    const { app } = makeApp();
+    await seedSpine(app);
+    await expectMatchesContract(app, '/spine/events', authed(ALICE), ListSpineEventsResponseSchema);
+  });
+
+  it('GET /spine/subjects matches ListSpineSubjectsResponseSchema', async () => {
+    const { app } = makeApp();
+    await seedSpine(app);
+    await expectMatchesContract(
+      app,
+      '/spine/subjects',
+      authed(ALICE),
+      ListSpineSubjectsResponseSchema,
+    );
+  });
+
+  it('GET /spine/contracts matches ListSpineContractsResponseSchema', async () => {
+    const { app } = makeApp();
+    await seedSpine(app);
+    await expectMatchesContract(
+      app,
+      '/spine/contracts',
+      authed(ALICE),
+      ListSpineContractsResponseSchema,
+    );
+  });
+
+  it('GET /spine/contracts/:id matches GetSpineContractResponseSchema', async () => {
+    const { app } = makeApp();
+    const { contract } = await seedSpine(app);
+    await expectMatchesContract(
+      app,
+      `/spine/contracts/${contract}`,
+      authed(ALICE),
+      GetSpineContractResponseSchema,
+    );
+  });
+
+  // Orient is the recovery call, so its schema is the one a member is
+  // promised. Seeded with a verdict, a stale revision and a ruling so
+  // the case exercises the populated shape rather than an empty pack —
+  // an empty pack parses against almost anything.
+  it('GET /spine/orient matches OrientPackSchema', async () => {
+    const { app } = makeApp();
+    const seeded = await seedSpine(app);
+    expect(seeded.orientIsPopulated, 'the orient fixture must not be empty').toBe(true);
+    await expectMatchesContract(app, '/spine/orient', authed(ALICE), OrientPackSchema);
   });
 
   // Converted from a pinned KNOWN DIVERGENCE on 2026-07-30, which is
