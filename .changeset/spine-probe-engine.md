@@ -47,6 +47,24 @@ says both, permanently.
   ever written into a permanent event. A pin checked later would fail
   silently, hours on, into a log — and a check that quietly never
   fires cannot be told apart from a world that never did the thing.
+- **A poll cannot be pointed at the deployment's own network.** A probe
+  fetches from the SERVER, attaches the author's secret, and writes the
+  response into a permanent observation every member can read — so
+  `https://169.254.169.254/…`, `https://10.0.0.5` or
+  `https://vault.internal:8200` would be a server-side request forgery
+  with a durable, team-readable exfiltration channel attached, reached
+  by an ordinary act of authorship. Three layers, because each alone is
+  bypassable: an IP literal in a private, loopback, link-local, CGNAT,
+  multicast or reserved range is refused **at authoring**; a NAME is
+  resolved at fire time and **every** address it answers with is
+  checked (a name that does not resolve is refused, not attempted); and
+  the connection is **pinned** to the addresses that were checked,
+  because resolve-then-fetch is a time-of-check/time-of-use bug and DNS
+  rebinding is its standard defeat. TLS is untouched — SNI and
+  certificate validation stay bound to the authored hostname. The
+  escape hatch is `CSUITE_SPINE_PROBE_ALLOW_HOSTS` on the **server**,
+  empty by default; an allowlisted host is still resolved and still
+  pinned.
 - **Discharge, two shapes.** A check firing on a `waiting_for`
   contract appends the lifecycle back to `active` **citing the
   observation** — nobody nagged, nobody had to notice, and no human was
@@ -79,14 +97,39 @@ says both, permanently.
   caller that never passes a route inherits them; the narrow list is
   also a type, so inside the engine a probe-authored verdict does not
   compile.
-- **The write path is structural now.** `AnnexStore`, the type every
-  consumer receives, no longer has `append`; the write-capable
-  `AnnexWriter` is named by exactly one module, which wraps it in a
-  path that dispatches a registered hook list post-commit. The curator
-  and the probe engine both register there. Phase 3 held "one append
-  caller" with a regex over receiver names, which could not have seen
-  a new module holding the store under a new name — precisely what the
-  probe engine is.
+- **And a probe observes rather than asserts.** A `probe:`-actored
+  event may only caption itself with an `observed` revision. `asserted`
+  is a member naming a value by hand — authored intent, which §10
+  forbids the system to produce — and it is not cosmetic: only observed
+  revisions move a subject's head, so an asserted one from a probe
+  would be the system claiming the world is at a state nobody looked
+  at, with every contract bound to the real head rendering stale
+  against a fiction. Refused at the store and unrepresentable in the
+  engine's own request type.
+- **The discharge tells the authority too, when the asker armed the
+  check.** The asker always hears — the thing that unblocked them
+  happened in the world, so nothing else would tell them. The authority
+  hears when they did not arm it themselves: their queue item vanished,
+  resolved, by a mechanism they never saw and did not choose. When the
+  authority armed it by deferring with a trigger, the asker alone
+  hears, because the queue item going away is the thing the authority
+  asked for.
+- **The write path is structural now, at runtime and not only in the
+  types.** `AnnexStore`, the type every consumer receives, no longer
+  has `append`; the write-capable `AnnexWriter` is named by exactly one
+  module, which wraps it in a path that dispatches a registered hook
+  list post-commit. The curator and the probe engine both register
+  there. Phase 3 held "one append caller" with a regex over receiver
+  names, which could not have seen a new module holding the store under
+  a new name — precisely what the probe engine is.
+
+  A type-level claim about an object is defeated by one cast, so the
+  object handed out is a genuine frozen facade carrying only the read
+  methods: `(path.store as unknown as { append }).append(…)` now
+  returns `undefined` and throws, rather than reaching the annex and
+  bypassing every hook. The scanner was widened to match: a namespace
+  import of the store module and a dynamic import of it are grants on
+  their own, since neither names a symbol.
 
 ## Decisions, on the record
 
@@ -140,3 +183,55 @@ says both, permanently.
    one system disagree about what time it was. The probe engine's
    interval arithmetic compares a check's caption against that clock,
    so the disagreement was not cosmetic.
+9. **A REDIRECT does not disarm a check.** Withdrawing the ask,
+   declining it and ruling on it all do; a redirect does not, because
+   it re-addresses the question rather than resolving it — the question
+   is unchanged, unanswered, and now in front of somebody else, and the
+   world doing the thing still answers it. Recorded because a reader
+   assumes the opposite: "the ask moved, so the arming moved with it"
+   is the natural reading, and it would silently drop the check at the
+   one moment the asker is least likely to be watching.
+10. **A poll's destination policy lives in server config, never in the
+    recipe.** An exception carried in the request would be a member
+    authorising their own exception in the same breath as making it. It
+    is an env var rather than team config for the same reason one step
+    further out: team config is editable over the wire by anyone
+    holding `team.manage`, which would put the exception back within a
+    member's reach. Exact hostnames, never suffixes — a suffix match on
+    `internal.example.com` admits `evil.internal.example.com`, which an
+    attacker can register.
+11. **The transport carries the approved addresses rather than a
+    hostname.** A transport that resolved the name itself would undo
+    the egress check however carefully the check was written, so the
+    pin is a parameter of the interface: any replacement — a
+    deployment's egress proxy, a test's script — is handed the same
+    addresses and is accountable for the same property. It is also why
+    the seam is not `typeof fetch`: `fetch` has no supported hook for a
+    custom lookup, so a fetch-based poll is rebindable by construction.
+12. **The transport and the egress policy default to safe.** The first
+    version made both options that `run.ts` never passed, so production
+    ran on global `fetch` with no pin at all while the fixture header
+    described an egress hook nobody had wired. A security control that
+    is only present when a composition root remembers to wire it is a
+    security control that is absent.
+13. **A member's staple does not discharge, and does not spend an
+    album.** Stapling an observation to an ask is a legitimate act and
+    is what stapling is for — but only a `probe:` actor's staple
+    resolves the ask, and only a probe's staple addresses anybody.
+    Without the second half, a member could spend another member's
+    never-yields class-1 budget with a line that says "discharged"
+    about an ask that is not.
+
+## Known gaps, recorded rather than fixed
+
+- **A check killed by a transient annex failure is queryable but not
+  surfaced.** Decision 6 disarms a check whose fire could not record
+  its evidence, with the reason on the row and readable at `GET
+  /spine/checks`. Nothing pushes it: the member who armed it finds out
+  by looking. That is the right trade for phase 4 — the alternative is
+  a class-1 line about the system's own plumbing — but "a check I armed
+  quietly died" deserves a surface, and the human seat in phase 5 is
+  where it belongs.
+- **A check's recipe is served whole**, including `authSecret`. That is
+  a slug and never a value, so nothing sensitive is disclosed today; if
+  secret slugs ever become sensitive, this read needs a gate.

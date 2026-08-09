@@ -984,10 +984,44 @@ coalescing window's instant.
 `http_poll`'s pins are refused **at authoring**, which is the only
 moment a member is present to be told: `https://` only, no redirects
 followed, a response size cap, no request body, a minimum interval of
-60s, and an auth secret named by **slug** and resolved server-side *as
-the check's author* — so arming a probe can never borrow access its
-author does not have, and no token is ever written into a permanent
-event.
+60s, an auth secret named by **slug** and resolved server-side *as the
+check's author* — so arming a probe can never borrow access its author
+does not have, and no token is ever written into a permanent event —
+and a destination that is not inside the deployment's own network.
+
+#### Where a poll may point
+
+A probe fetches **from the server**, attaches the check author's
+secret, and writes the response into a permanent observation every
+member can read. A poll at `169.254.169.254`, `10.0.0.5` or
+`vault.internal` would therefore be a server-side request forgery with
+a durable, team-readable exfiltration channel attached — reachable by
+an ordinary act of authorship. Three layers stop it:
+
+1. **At authoring**, an IP literal in a private, loopback, link-local,
+   CGNAT, multicast or reserved range is refused with the rest of the
+   pins. This catches the honest mistake and the obvious attempt; it
+   cannot catch a name.
+2. **At fire time**, the hostname is resolved and **every** returned
+   address is checked against the same ranges. This is the
+   load-bearing layer: `vault.internal` is a well-formed hostname and
+   only a resolver knows where it points. A name that does not resolve
+   is refused rather than attempted.
+3. **The connection is pinned** to the addresses that were checked.
+   Resolve-then-fetch is a time-of-check/time-of-use bug, and DNS
+   rebinding is its standard defeat; the transport is handed the
+   approved addresses and connects to those. TLS is unaffected — SNI
+   and certificate validation stay bound to the authored hostname.
+
+A team that genuinely polls something internal sets
+`CSUITE_SPINE_PROBE_ALLOW_HOSTS` (comma-separated, exact hostnames,
+empty by default) on the **server**. It is deliberately not a recipe
+field and not team config: an exception carried in the request would be
+a member authorising their own exception in the same breath as making
+it, and team config is editable over the wire by anyone holding
+`team.manage`. An allowlisted host is still resolved and still pinned —
+excepting a host says where the probe may go, not that it may go
+unchecked.
 
 **Discharge, two shapes.** A check on a `waiting_for` contract appends
 the lifecycle back to `active` citing the observation — nobody nagged,

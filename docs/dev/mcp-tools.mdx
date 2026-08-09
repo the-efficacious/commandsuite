@@ -625,11 +625,19 @@ or a fresh `waiting_for` — and a predicate that says no produces
 nothing at all.
 
 `http_poll` is refused at authoring unless it is `https://`, its
-interval is at least 60000ms, and any credential is named by secret
-**slug** rather than written out. Redirects are never followed and
-responses are size-capped. The slug is resolved server-side as *you*,
-so a check can never send a credential you could not have sent by
-hand.
+interval is at least 60000ms, any credential is named by secret **slug**
+rather than written out, and the host is not a private, loopback or
+link-local address. Redirects are never followed and responses are
+size-capped. The slug is resolved server-side as *you*, so a check can
+never send a credential you could not have sent by hand.
+
+A **name** is checked again when the poll fires, against every address
+it resolves to, and the connection is pinned to those addresses — so
+`https://vault.internal/…` is authorable and simply never goes out. A
+probe fetches from the server and publishes what it gets to the whole
+team; if you genuinely need to poll something internal, an operator
+adds the host to the server's allowlist. There is no field on the
+recipe that grants it.
 
 ### ruling_post
 
