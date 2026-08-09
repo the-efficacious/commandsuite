@@ -58,14 +58,14 @@
  * An endpoint absent from it is UNCHECKED, not proven correct. Adding a case
  * is three lines; that is the point of the table.
  *
- * Measured at `184fb20`, again as the spine's by-id read landed, and again as
- * the curator did: the twenty-one cases below exercise twenty distinct
- * response schemas out of 56 `*ResponseSchema` exports, across twenty distinct
- * operations in `createApp` (the route total also includes HTML, streams, and
- * binary responses with no SDK response schema). This is a spot-check, not
- * route-complete contract coverage.
+ * Measured at `184fb20`, again as the spine's by-id read landed, again as the
+ * curator did, and again as the probe engine did: the twenty-three cases below
+ * exercise twenty-two distinct response schemas out of 58 `*ResponseSchema`
+ * exports, across twenty-two distinct operations in `createApp` (the route
+ * total also includes HTML, streams, and binary responses with no SDK response
+ * schema). This is a spot-check, not route-complete contract coverage.
  *
- * Eleven of those are the spine, each enrolled on the commit that introduced
+ * Thirteen of those are the spine, each enrolled on the commit that introduced
  * the endpoint rather than after its first divergence — which is what the
  * process-document surface did not do, leaving a month of unchecked contract.
  *
@@ -104,6 +104,7 @@ import {
   FsEntryResponseSchema,
   FsListResponseSchema,
   GetObjectiveResponseSchema,
+  GetSpineCheckResponseSchema,
   GetSpineContractResponseSchema,
   GetSpineEventResponseSchema,
   HealthResponseSchema,
@@ -111,6 +112,7 @@ import {
   ListChannelsResponseSchema,
   ListMembersResponseSchema,
   ListObjectivesResponseSchema,
+  ListSpineChecksResponseSchema,
   ListSpineContractsResponseSchema,
   ListSpineEventsResponseSchema,
   ListSpineInjectionsResponseSchema,
@@ -130,7 +132,11 @@ import { createSqliteFilesystemStore, LocalBlobStore } from '../../src/files/ind
 import { createMemberStore } from '../../src/members.js';
 import { createSqliteObjectivesStore } from '../../src/objectives.js';
 import { SessionStore } from '../../src/sessions.js';
-import { createAnnexWritePath, createSqliteCuratorStore } from '../../src/spine/index.js';
+import {
+  createAnnexWritePath,
+  createSqliteCheckStore,
+  createSqliteCuratorStore,
+} from '../../src/spine/index.js';
 import { createTokenStoreFromMembers } from '../../src/tokens.js';
 import { mockTeamStore } from '../helpers/test-stores.js';
 
@@ -184,6 +190,7 @@ function makeApp() {
   const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
   const spine = createAnnexWritePath({ db, logger });
   const spineCurator = createSqliteCuratorStore(db);
+  const spineChecks = createSqliteCheckStore(db);
   const files = createSqliteFilesystemStore({
     db,
     blobs: new LocalBlobStore(blobDir),
@@ -208,6 +215,7 @@ function makeApp() {
     channels,
     spine,
     spineCurator,
+    spineChecks,
     files,
     version: '0.0.0',
     logger,
@@ -374,6 +382,28 @@ async function seedSpine(app: App): Promise<{ contract: string; orientIsPopulate
         source: 'integration:github',
       },
       body: { what: 'push webhook', output: 'main moved to sha-b' },
+    },
+    // An ARMED CHECK, so the two `/spine/checks` cases below exercise a
+    // populated registry. An empty list parses against almost anything,
+    // and a check's recipe is a discriminated union — the one shape in
+    // this surface where an empty page proves least.
+    {
+      kind: 'ask',
+      opId: 'op-armed-ask',
+      subject: 'repo:acme',
+      body: {
+        authority: 'alice',
+        question: 'cut the release when CI is green?',
+        context: 'the branch is ready',
+        unblocks: 'the 0.6 release',
+        check: JSON.stringify({
+          kind: 'http_poll',
+          url: 'https://ci.example.com/status',
+          intervalMs: 300_000,
+          when: [{ path: 'state', op: 'eq', value: 'green' }],
+          revisionPath: 'sha',
+        }),
+      },
     },
   ];
   for (const [i, step] of steps.entries()) {
@@ -634,6 +664,36 @@ describe('SDK response contract', () => {
       '/spine/curator',
       authed(ALICE),
       SpineCuratorConfigResponseSchema,
+    );
+  });
+
+  // The check registry's two. Both seeded with a real armed check, and
+  // an http_poll one specifically: the recipe is a discriminated union
+  // and a webhook recipe would leave the poll arm — the one carrying
+  // the security pins — unparsed by the contract.
+  it('GET /spine/checks matches ListSpineChecksResponseSchema', async () => {
+    const { app } = makeApp();
+    await seedSpine(app);
+    const body = (await (await app.request('/spine/checks', authed(ALICE))).json()) as {
+      checks: { state: string; recipe: { kind: string } }[];
+    };
+    expect(body.checks.length, 'the check fixture must not be empty').toBeGreaterThan(0);
+    expect(body.checks[0]?.recipe.kind).toBe('http_poll');
+    await expectMatchesContract(app, '/spine/checks', authed(ALICE), ListSpineChecksResponseSchema);
+  });
+
+  it('GET /spine/checks/:id matches GetSpineCheckResponseSchema', async () => {
+    const { app } = makeApp();
+    await seedSpine(app);
+    const body = (await (await app.request('/spine/checks', authed(ALICE))).json()) as {
+      checks: { id: string }[];
+    };
+    const id = body.checks[0]?.id as string;
+    await expectMatchesContract(
+      app,
+      `/spine/checks/${id}`,
+      authed(ALICE),
+      GetSpineCheckResponseSchema,
     );
   });
 

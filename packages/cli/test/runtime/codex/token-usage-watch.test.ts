@@ -16,6 +16,8 @@
  * explicit about.
  */
 
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import type { JsonRpcClient } from '../../../src/runtime/agents/codex/json-rpc.js';
 import { NOTIFICATIONS } from '../../../src/runtime/agents/codex/protocol.js';
@@ -349,5 +351,35 @@ describe('the subscription codex has been emitting into nothing', () => {
     rpc.emit(NOTIFICATIONS.tokenUsageUpdated, {});
     expect(lines).toEqual([]);
     expect(watch.seen()).toBe(2);
+  });
+});
+
+describe('the spike keeps its own measurement where the next measurer will look', () => {
+  const WATCH_SRC = fileURLToPath(
+    new URL('../../../src/runtime/agents/codex/token-usage-watch.ts', import.meta.url),
+  );
+  const PROTOCOL_SRC = fileURLToPath(
+    new URL('../../../src/runtime/agents/codex/protocol.ts', import.meta.url),
+  );
+
+  it('records the total-is-cumulative finding, and cites evidence that still exists', () => {
+    // A SPIKE MEASURES, and a measurement that lives only in a report
+    // is a measurement the next person repeats. This one changes what
+    // the default ought to be — `total_reset` is the shape this file
+    // reports, and the vendor's own documentation says `total` is a
+    // running cumulative, which does not fall when context is
+    // discarded — so it belongs in the header of the file whose
+    // `REPORTABLE` set it argues against.
+    const header = readFileSync(WATCH_SRC, 'utf8').slice(0, 4000);
+    expect(header).toContain('running thread cumulative');
+    expect(header).toContain('most likely measures');
+    expect(header).toContain('plausible compaction signal');
+    expect(header).toContain('last_shrank');
+
+    // AND THE CITATION IS LIVE. The finding rests on a sentence in
+    // `protocol.ts`; if that sentence is reworded, the quotation above
+    // becomes a claim about a document that no longer says it, and the
+    // next measurer inherits a stale argument with a confident tone.
+    expect(readFileSync(PROTOCOL_SRC, 'utf8')).toContain('running thread cumulative');
   });
 });

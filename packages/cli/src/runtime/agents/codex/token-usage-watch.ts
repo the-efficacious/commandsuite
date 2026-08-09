@@ -49,6 +49,27 @@
  * a spike that only records the shape it already believed in returns
  * its own assumption.
  *
+ * MEASUREMENT, 2026-08-09 — and it is in-repo evidence rather than a
+ * hunch, so it belongs here where the next measurer will look before
+ * touching `REPORTABLE`. `protocol.ts`'s documentation of
+ * `thread/tokenUsage/updated` (confirmed against the codex 0.142.5
+ * app-server schema) states it outright: "`last` is the most recent
+ * request's breakdown … `total` is the running thread cumulative."
+ * A cumulative thread counter does not fall when context is discarded
+ * — the thread is the same thread and the bill keeps adding up — so
+ * `total_reset`, THE ONE SHAPE THIS FILE REPORTS, most likely measures
+ * a thread restart and not a compaction at all. `last_shrank` is the
+ * plausible compaction signal, and it is the one currently log-only.
+ *
+ * Not acted on here, deliberately, because the evidence is a vendor's
+ * prose and not a measured compaction: swapping `REPORTABLE` on the
+ * strength of a docstring would replace one unverified inference with
+ * another. What the finding does is name the experiment worth running
+ * — force a compaction, watch both series across it — and record that
+ * the current default is reporting the shape the documentation argues
+ * against. Either way nothing is at risk: this is ceiling, and a
+ * signal may spend at most one extra nudge.
+ *
  * EDGE-TRIGGERED. A saturated window stays saturated across every
  * notification of a long turn, and a level-triggered watcher would log
  * the same line ten times — a stream of identical lines is how an
