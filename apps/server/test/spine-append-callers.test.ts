@@ -22,10 +22,16 @@
  * is itself tested in both directions.
  */
 
-import { readdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+
+const tmpDirs: string[] = [];
+afterEach(() => {
+  for (const d of tmpDirs.splice(0)) rmSync(d, { recursive: true, force: true });
+});
 
 const SRC = fileURLToPath(new URL('../src/', import.meta.url));
 
@@ -49,6 +55,7 @@ function scan(dir = SRC, prefix = ''): Hit[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const label = `${prefix}${entry.name}`;
     if (entry.isDirectory()) {
+      hits.push(...scan(join(dir, entry.name), `${label}/`));
       continue;
     }
     if (!entry.name.endsWith('.ts')) continue;
@@ -86,6 +93,25 @@ describe('the annex has one append caller, and the curator hook is on it', () =>
     expect(call, 'the append call must exist to hang a hook off').toBeGreaterThan(0);
     const window = source.slice(call, call + 1600);
     expect(window).toContain('curator.onAppend(result)');
+  });
+
+  it('descends: a second write path one directory down cannot hide', () => {
+    // The real tree has its only caller at the top level, so "does the
+    // scan recurse" is invisible to the assertion above — a mutation
+    // deleting the descent survived the whole suite. And the descent is
+    // exactly what phase 4 needs: a probe engine arrives as
+    // `src/spine/probes/…` or `src/probes/…`, one directory down, and
+    // that is where the second append path will actually appear.
+    const nested = mkdtempSync(join(tmpdir(), 'spine-append-scan-'));
+    tmpDirs.push(nested);
+    mkdirSync(join(nested, 'probes'));
+    writeFileSync(join(nested, 'top.ts'), 'const x = 1;\n');
+    writeFileSync(
+      join(nested, 'probes', 'engine.ts'),
+      "const result = spine.append(observation, { actor: 'probe:' + id });\n",
+    );
+    const hits = scan(nested);
+    expect(hits.map((h) => h.file)).toEqual(['probes/engine.ts']);
   });
 
   it('can fail: a planted second caller is found, and a definition is not', () => {

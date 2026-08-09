@@ -1116,17 +1116,22 @@ describe('a nudge is per lease EPOCH, and a member returning starts a new one', 
     expect(attempted, 'the nudge was attempted').toHaveLength(1);
     expect(attempted[0]?.delivered, 'and it did not land').toBe(false);
 
-    // He comes back and ACTS without reading — an append, which is the
-    // floor's own liveness proof and needs no signal, no runner
-    // cooperation and no cheap trick.
+    // He comes back and ACTS without reading — the floor's own liveness
+    // proof, needing no signal and no runner cooperation.
+    //
+    // The act deliberately names NO CONTRACT. An append that touches
+    // the contract renews the lease, and a lease grant clears the
+    // spent-nudge flag on its own — so a fixture using one would pass
+    // with the epoch re-arm deleted, which is exactly what the first
+    // draft of this test did (the mutation survived). A contract-less
+    // discussion isolates the property: liveness proven, no lease
+    // granted, no receipt moved.
     sinks.rune = harness.sinkFor('rune');
     harness.clock.ms = T0 + 3 * HOUR;
     await post(app, '/spine/events', RUNE, {
       kind: 'discussion',
-      body: { contract, body: 'back at this' },
+      body: { body: 'back at this' },
     });
-    // His own append renews his lease on this contract, so age it out
-    // again before asking whether he is nudgeable.
     harness.clock.ms = T0 + 6 * HOUR;
     await harness.curator.sweep();
     const after = (await ledger(RUNE)).filter((r) => r.kind === 'recovery_nudge');
