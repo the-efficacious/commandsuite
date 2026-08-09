@@ -34,6 +34,7 @@ import {
 } from '../src/components/SpineQueuePanel.js';
 import { __resetSpineWhitelistControlForTests } from '../src/components/SpineWhitelistControl.js';
 import { __resetClientForTests, setClient } from '../src/lib/client.js';
+import { __resetIdentityForTests, setIdentity } from '../src/lib/identity.js';
 import { roster } from '../src/lib/roster.js';
 import { __resetSpineForTests } from '../src/lib/spine.js';
 
@@ -66,6 +67,7 @@ function mkContract(overrides: Partial<SpineContract> = {}): SpineContract {
     successor: null,
     stale: false,
     head: null,
+    inFocus: false,
     ...overrides,
   };
 }
@@ -139,6 +141,7 @@ interface Captured {
 function stubSpine(opts: {
   queue?: SpineQueue;
   contracts?: SpineContract[];
+  focusSet?: SpineContract[];
   curator?: SpineCuratorConfigResponse;
 }): { captured: Captured[]; setQueue: (q: SpineQueue) => void } {
   const captured: Captured[] = [];
@@ -149,6 +152,7 @@ function stubSpine(opts: {
     waitingOn: [],
   };
   const contracts = opts.contracts ?? [];
+  const focusSet = opts.focusSet ?? [];
   const curator = opts.curator ?? mkCurator(['ask', 'proceeding']);
   const json = (body: unknown, status = 200) =>
     Promise.resolve(
@@ -165,6 +169,11 @@ function stubSpine(opts: {
     if (method === 'GET' && url.includes('/spine/queue')) return json({ queue });
     if (method === 'GET' && url.includes('/spine/curator')) return json(curator);
     if (method === 'PUT' && url.includes('/spine/curator')) return json(curator);
+    // The team focus set — `?focus=true` — before the member-scoped list,
+    // since both match `/spine/contracts`.
+    if (method === 'GET' && url.includes('/spine/contracts') && url.includes('focus=true')) {
+      return json({ contracts: focusSet });
+    }
     if (method === 'GET' && url.includes('/spine/contracts')) return json({ contracts });
     if (method === 'POST' && url.includes('/spine/events')) {
       return json({ event: mkEvent(), contract: null, replayed: false }, 201);
@@ -177,6 +186,7 @@ function stubSpine(opts: {
 
 beforeEach(() => {
   __resetClientForTests();
+  __resetIdentityForTests();
   __resetSpineForTests();
   __resetSpineQueuePanelForTests();
   __resetSpineBoardPanelForTests();
@@ -386,6 +396,71 @@ describe('SpineBoardPanel — lanes and roles, status pulled from state', () => 
     fireEvent.click(screen.getByRole('button', { name: 'Relationships' }));
     expect(await screen.findByText(/Mine to rule on/i)).toBeTruthy();
     expect(screen.getByText(/Mine to verify/i)).toBeTruthy();
+  });
+
+  it('marks an in-focus contract wherever it is drawn', async () => {
+    stubSpine({
+      contracts: [mkContract({ id: 'ct_a', title: 'Active one', state: 'active', inFocus: true })],
+    });
+    render(<SpineBoardPanel viewer="director-1" />);
+    await screen.findByText('Active one');
+    // The focus badge rides beside the title in the lanes view.
+    expect(screen.getByText('focus')).toBeTruthy();
+  });
+});
+
+describe('SpineBoardPanel — the focus set (D9), finding 8', () => {
+  it('shows the whole team focus set to a spine.focus holder, not just their own', async () => {
+    // The allocator holds spine.focus. Their own board is one contract;
+    // the team focus set is a DIFFERENT, larger one — the whole-plate view.
+    setIdentity({
+      member: 'director-1',
+      role: { title: 'director', description: '' },
+      permissions: ['spine.focus'],
+    });
+    stubSpine({
+      contracts: [mkContract({ id: 'ct_mine', title: 'My own thing', inFocus: false })],
+      focusSet: [
+        mkContract({ id: 'ct_x', title: 'Someone elses lit work', assignee: 'scout', inFocus: true }),
+        mkContract({ id: 'ct_y', title: 'Another lit one', assignee: 'cora', inFocus: true }),
+      ],
+    });
+    render(<SpineBoardPanel viewer="director-1" />);
+    await screen.findByText('My own thing');
+    fireEvent.click(screen.getByRole('button', { name: 'Focus' }));
+    // The team's lit plate — contracts the allocator does not own.
+    expect(await screen.findByText('Someone elses lit work')).toBeTruthy();
+    expect(screen.getByText('Another lit one')).toBeTruthy();
+    expect(screen.getByText(/whole team/i)).toBeTruthy();
+  });
+
+  it('shows a non-holder only their OWN in-focus contracts, never the team set', async () => {
+    // No spine.focus — the focus view is the in-focus filter over the
+    // viewer's own plate, and it must not fetch or show the team set.
+    setIdentity({
+      member: 'scout',
+      role: { title: 'engineer', description: '' },
+      permissions: [],
+    });
+    const { captured } = stubSpine({
+      contracts: [
+        mkContract({ id: 'ct_lit', title: 'My lit one', inFocus: true }),
+        mkContract({ id: 'ct_dark', title: 'My dark one', inFocus: false }),
+      ],
+      focusSet: [mkContract({ id: 'ct_secret', title: 'Team lit work', inFocus: true })],
+    });
+    render(<SpineBoardPanel viewer="scout" />);
+    await screen.findByText('My lit one');
+    fireEvent.click(screen.getByRole('button', { name: 'Focus' }));
+    // Their own in-focus contract shows; their out-of-focus one does not;
+    // and the team set was never fetched.
+    expect(await screen.findByText('My lit one')).toBeTruthy();
+    expect(screen.queryByText('My dark one')).toBeNull();
+    expect(screen.queryByText('Team lit work')).toBeNull();
+    expect(
+      captured.some((c) => c.url.includes('focus=true')),
+      'a non-holder must not request the team focus set',
+    ).toBe(false);
   });
 });
 

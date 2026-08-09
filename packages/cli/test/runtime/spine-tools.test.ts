@@ -57,6 +57,13 @@ const PACKET: InstructionsResponse = {
 /** The same member, holding the authoring leaf. */
 const AUTHOR: InstructionsResponse = { ...PACKET, permissions: ['spine.author'] };
 
+/**
+ * The allocator: holds `spine.focus` and NOT `spine.author`, so the
+ * focus tool must appear without the authoring tools — the two leaves
+ * are separate authorities.
+ */
+const CURATOR: InstructionsResponse = { ...PACKET, permissions: ['spine.focus'] };
+
 let broker: FakeBroker;
 let client: BrokerClient;
 
@@ -156,6 +163,7 @@ function seedContract(): void {
     successor: null,
     stale: false,
     head: null,
+    inFocus: false,
   };
 }
 
@@ -209,6 +217,22 @@ describe('the spine surface', () => {
     const names = defineTools(AUTHOR).map((t) => t.name);
     expect(names).toContain('contract_author');
     expect(names).toContain('contract_amend');
+  });
+
+  it('withholds focus from a member without spine.focus', () => {
+    // PACKET holds nothing; AUTHOR holds spine.author but not spine.focus.
+    // Neither gets the focus tool — the leaves are separate.
+    expect(defineTools(PACKET).map((t) => t.name)).not.toContain('focus');
+    expect(defineTools(AUTHOR).map((t) => t.name)).not.toContain('focus');
+  });
+
+  it('offers focus to a spine.focus holder, even without spine.author', () => {
+    const names = defineTools(CURATOR).map((t) => t.name);
+    expect(names, 'the focus tool is gated on spine.focus, not spine.author').toContain('focus');
+    // And it did not smuggle in the authoring tools — the gates are
+    // independent, and a curator is not an author.
+    expect(names).not.toContain('contract_author');
+    expect(names).not.toContain('contract_amend');
   });
 });
 
@@ -537,6 +561,31 @@ describe('the payload a tool composes', () => {
       evidence: 'tried the staging deploy',
       why: 'no access to the deploy',
     });
+  });
+
+  it('sends a focus event carrying lit, the reason, the precondition and an op id', async () => {
+    seedContract();
+    const { text, isError } = await call(
+      'focus',
+      { contract: CONTRACT, lit: true, reason: 'this sprint', expected_state_rev: 2 },
+      CURATOR,
+    );
+    expect(isError, text).toBe(false);
+    const sent = lastAppend();
+    expect(sent.kind).toBe('focus');
+    expect(sent.expectedStateRev).toBe(2);
+    expect(typeof sent.opId).toBe('string');
+    expect(sent.body).toEqual({ contract: CONTRACT, lit: true, reason: 'this sprint' });
+  });
+
+  it('sends an unlight when lit is false — the direction is carried, not inferred', async () => {
+    seedContract();
+    await call(
+      'focus',
+      { contract: CONTRACT, lit: false, reason: 'sprint over', expected_state_rev: 2 },
+      CURATOR,
+    );
+    expect((lastAppend().body as { lit: boolean }).lit).toBe(false);
   });
 
   it('sends completion as a done lifecycle carrying the verdicts it stands on', async () => {
@@ -1044,6 +1093,7 @@ describe('orient renders the whole pack', () => {
             source: 'integration:github',
             at: '2026-08-09T09:04:00.000Z',
           },
+          inFocus: true,
           rulings: [],
         },
       ],
@@ -1070,6 +1120,9 @@ describe('orient renders the whole pack', () => {
     expect(text).toContain('orient for rune');
     expect(text).toContain('annex cursor 42');
     expect(text).toContain('you are: assignee');
+    // The focus marker, so an agent can tell an in-focus binding from an
+    // out-of-focus one and plan against the set.
+    expect(text).toContain('[in focus]');
     // BOTH criteria, including the one nobody has judged — a renderer
     // that printed only the judged ones would hide the work left.
     expect(text).toContain('c1: unmet at sha-a');

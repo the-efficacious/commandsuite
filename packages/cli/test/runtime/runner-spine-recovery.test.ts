@@ -81,6 +81,7 @@ const PACK = {
       },
       stale: false,
       head: null,
+      inFocus: false,
       rulings: [],
     },
   ],

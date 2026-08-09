@@ -1,10 +1,10 @@
 /**
- * The Board — the allocator's plate. §9, and #155 finding 8 at the
- * granularity the data supports today.
+ * The Board — the allocator's plate. §9, and #155 finding 8.
  *
  * STATUS IS PULLED FROM STATE. There is no status-text input anywhere in
  * this component — the lanes and the roles are folded out of
- * `GET /spine/contracts` and presence, never typed by anyone. Two views:
+ * `GET /spine/contracts` and presence, never typed by anyone. Three
+ * views:
  *
  *   Lanes         active / waiting / parked. Done and cancelled are
  *                 filtered out by default — a finished plate is not a
@@ -14,17 +14,29 @@
  *                 binds me more than one way when it does, so it can
  *                 appear in more than one group, exactly as orient's
  *                 bindings do.
- *
- * The focus set (D9) is phase 6 — the lanes are lifecycle-based until it
- * lands, and that is stated rather than pretended around.
+ *   Focus         the focus set (D9). For a member who holds
+ *                 `spine.focus` this is the TEAM's whole lit plate —
+ *                 finding 8's allocation view — loaded from
+ *                 `GET /spine/contracts?focus=true`. For everyone else it
+ *                 is the in-focus filter over their own bindings. Every
+ *                 view marks an in-focus contract, so the boundary is
+ *                 visible wherever a contract is drawn.
  */
 
 import { signal } from '@preact/signals';
 import type { SpineContract, SpineContractState } from 'csuite-sdk/types';
 import type { ComponentChildren } from 'preact';
 import { useEffect } from 'preact/hooks';
+import { identity } from '../lib/identity.js';
 import { roster } from '../lib/roster.js';
-import { loadSpineBoard, spineBoard, spineBoardLoaded } from '../lib/spine.js';
+import {
+  loadSpineBoard,
+  loadSpineFocusSet,
+  spineBoard,
+  spineBoardLoaded,
+  spineFocusSet,
+  spineFocusSetLoaded,
+} from '../lib/spine.js';
 import { selectSpineQueue } from '../lib/view.js';
 import { EmptyState, ErrorCallout, PageHeader } from './ui/index.js';
 
@@ -33,8 +45,8 @@ export interface SpineBoardPanelProps {
 }
 
 const panelError = signal<string | null>(null);
-/** Board view: lifecycle lanes or my relationships. */
-const boardView = signal<'lanes' | 'relationships'>('lanes');
+/** Board view: lifecycle lanes, my relationships, or the focus set. */
+const boardView = signal<'lanes' | 'relationships' | 'focus'>('lanes');
 /** Whether terminal contracts (done/cancelled/superseded) are shown. Off by default. */
 const showDone = signal(false);
 
@@ -122,6 +134,15 @@ export function SpineBoardPanel({ viewer }: SpineBoardPanelProps) {
         >
           Relationships
         </button>
+        <button
+          type="button"
+          class={boardView.value === 'focus' ? 'btn btn-primary' : 'btn'}
+          onClick={() => {
+            boardView.value = 'focus';
+          }}
+        >
+          Focus
+        </button>
         <label style="margin-left:auto;display:flex;align-items:center;gap:6px;font-family:var(--ef-font-body);font-size:12px;color:var(--ef-text-faint);cursor:pointer">
           <input
             type="checkbox"
@@ -134,7 +155,9 @@ export function SpineBoardPanel({ viewer }: SpineBoardPanelProps) {
         </label>
       </div>
 
-      {contracts.length === 0 ? (
+      {boardView.value === 'focus' ? (
+        <FocusView contracts={contracts} />
+      ) : contracts.length === 0 ? (
         <EmptyState title="Nothing on your plate" message="Contracts you own show up here." />
       ) : boardView.value === 'lanes' ? (
         <Lanes contracts={contracts} showDone={showDone.value} />
@@ -142,6 +165,53 @@ export function SpineBoardPanel({ viewer }: SpineBoardPanelProps) {
         <Relationships contracts={contracts} viewer={viewer} showDone={showDone.value} />
       )}
     </div>
+  );
+}
+
+/**
+ * The focus set (D9). A member who holds `spine.focus` sees the TEAM's
+ * whole lit plate — every contract lit for travel now, across everyone,
+ * which is #155 finding 8's allocation view. A member without it sees the
+ * in-focus filter over their own bindings: what of MINE is lit. Either
+ * way, "what is lit" is a fact on the record, never a local toggle.
+ */
+function FocusView({ contracts }: { contracts: SpineContract[] }) {
+  const canCurate = (identity.value?.permissions ?? []).includes('spine.focus');
+  const teamLoaded = spineFocusSetLoaded.value;
+
+  useEffect(() => {
+    if (canCurate && !teamLoaded) {
+      void loadSpineFocusSet().catch((e) => {
+        panelError.value = e instanceof Error ? e.message : String(e);
+      });
+    }
+  }, [canCurate, teamLoaded]);
+
+  // The allocator sees the team set; everyone else, their own lit
+  // bindings. Both are folded from focus events, never typed.
+  const rows = canCurate ? spineFocusSet.value : contracts.filter((c) => c.inFocus);
+
+  if (canCurate && !teamLoaded) {
+    return <div class="ef-skeleton" style="height:56px;border-radius:10px" aria-busy="true" />;
+  }
+  if (rows.length === 0) {
+    return (
+      <EmptyState
+        title="The focus set is empty"
+        message={
+          canCurate
+            ? 'Nothing is lit for travel right now. Light a contract to set the team’s focus.'
+            : 'None of your contracts are in the team’s focus set right now.'
+        }
+      />
+    );
+  }
+  return (
+    <Lane label={canCurate ? 'Lit for travel — the whole team' : 'Mine, in focus'} count={rows.length}>
+      {rows.map((c) => (
+        <ContractRow key={c.id} contract={c} />
+      ))}
+    </Lane>
   );
 }
 
@@ -278,6 +348,7 @@ function ContractRow({ contract }: { contract: SpineContract }) {
         >
           {contract.title}
         </span>
+        {contract.inFocus && <span class="badge soft">focus</span>}
         {contract.stale && <span class="badge caution soft">stale</span>}
       </div>
       <div style="font-family:var(--ef-font-mono);font-size:11px;letter-spacing:.06em;color:var(--ef-text-muted);margin-top:6px;display:flex;align-items:center;gap:6px">

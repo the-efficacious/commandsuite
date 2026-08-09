@@ -30,6 +30,7 @@ const WHITELIST_KINDS: { kind: SpineEventKind; label: string }[] = [
   { kind: 'lifecycle', label: 'A contract I hold is ended or parked' },
   { kind: 'ask_action', label: 'An ask is redirected to me' },
   { kind: 'observation', label: 'A check I armed fires' },
+  { kind: 'focus', label: 'The focus set runs dry' },
 ];
 
 const busy = signal(false);

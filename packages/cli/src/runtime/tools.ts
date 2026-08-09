@@ -2456,6 +2456,49 @@ function buildSpineTools(instructions: InstructionsResponse): Tool[] {
     },
   ];
 
+  // `focus` is gated on a DIFFERENT leaf (`spine.focus`) and appears
+  // BEFORE the `spine.author` early-return, because curating the focus
+  // set and authoring work are separate authorities: an allocator may
+  // hold one without the other. Reading the set needs no tool — `orient`
+  // marks each binding in/out of focus and `annex_read` pages the events
+  // — so only the lighting act is a tool, and only for its holder.
+  if (instructions.permissions.includes('spine.focus')) {
+    tools.push({
+      name: 'focus',
+      description:
+        'Light or unlight a contract in the team FOCUS SET — the shared boundary of what is lit ' +
+        'for travel now. Requires `spine.focus`. `lit: true` adds it, `lit: false` takes it out; ' +
+        'the `reason` is required and lands on the record. Focus governs AMBIENT attention only: ' +
+        'a contract out of focus generates no subscription deltas and no recovery nudges, so the ' +
+        'team is not spammed about work that is not the current push — but it stays fully in the ' +
+        'annex, in `orient`, and in its owner’s queue, and anything that names a member ' +
+        'personally (an ask, a verdict, a contract ending) still reaches them out of focus. ' +
+        'Lighting is a set operation: re-lighting what is already lit, or unlighting what is not, ' +
+        'is refused. ' +
+        SPINE_STATE_REV_RULE,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          contract: { type: 'string', description: 'The contract id (from `orient`).' },
+          lit: {
+            type: 'boolean',
+            description: 'true to light it into the focus set, false to unlight it.',
+          },
+          reason: {
+            type: 'string',
+            description: 'Why — it lands on the record for whoever reads the set later.',
+          },
+          expected_state_rev: {
+            type: 'number',
+            description: 'The contract counter as you last read it.',
+          },
+          op_id: SPINE_OP_ID_FIELD,
+        },
+        required: ['contract', 'lit', 'reason', 'expected_state_rev'],
+      },
+    });
+  }
+
   // The gate, and its wording follows `process_document_write`: the
   // description says the leaf out loud so a member without it does not
   // discover the boundary by eating a 403 mid-task. Everything above is
@@ -2887,6 +2930,7 @@ export async function handleToolCall(
       case 'discuss':
       case 'promote':
       case 'subscribe':
+      case 'focus':
         return await handleSpineTool(name, args, brokerClient, instructions);
       case 'objectives_amend':
         return await handleObjectivesAmend(args, brokerClient);
@@ -3818,6 +3862,8 @@ async function dispatchSpineTool(
       return await handleDiscuss(args, brokerClient);
     case 'subscribe':
       return await handleSubscribe(args, brokerClient);
+    case 'focus':
+      return await handleFocus(args, brokerClient);
     default:
       return await handlePromote(args, brokerClient);
   }
@@ -3846,7 +3892,7 @@ export function renderOrientPack(pack: OrientPack, memberName: string): string {
   for (const c of pack.contracts) {
     lines.push(
       '',
-      `${c.contract} [${c.state}, state_rev ${c.stateRev}] ${c.title}`,
+      `${c.contract} [${c.state}, state_rev ${c.stateRev}]${c.inFocus ? ' [in focus]' : ''} ${c.title}`,
       `  you are: ${c.bindings.join(' + ')}`,
       `  subject: ${c.subject.id} (${c.subject.type}${c.subject.parent !== null ? `, inside ${c.subject.parent}` : ''})`,
       c.revision === null
@@ -4413,6 +4459,38 @@ async function handleSubscribe(
           ? 'You will hear its state changes, batched, as an id and what changed.'
           : 'You will hear every authoritative event on it, batched per tick, as ids and what ' +
             'changed — never the contract text again.'),
+  );
+}
+
+async function handleFocus(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+): Promise<CallToolResult> {
+  const contract = spineString(args, 'contract');
+  const reason = spineString(args, 'reason');
+  if (!contract) return errorResult('focus: `contract` is required — read it from `orient`');
+  if (typeof args.lit !== 'boolean') {
+    return errorResult('focus: `lit` is required — true lights it into the set, false unlights it');
+  }
+  if (!reason) {
+    return errorResult(
+      'focus: `reason` is required — membership is authored, and it lands on the record for ' +
+        'whoever reads the set later.',
+    );
+  }
+  const stateRev = spineStateRev(args);
+  if (stateRev === undefined) {
+    return errorResult('focus: `expected_state_rev` is required — read it from `orient`.');
+  }
+  const result = await appendSpine(brokerClient, {
+    kind: 'focus',
+    opId: spineOpId(args),
+    expectedStateRev: stateRev,
+    body: { contract, lit: args.lit, reason },
+  });
+  return renderAppendResult(
+    result,
+    args.lit ? `lit ${contract} into the focus set` : `unlit ${contract} from the focus set`,
   );
 }
 

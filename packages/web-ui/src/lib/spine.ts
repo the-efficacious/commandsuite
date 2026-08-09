@@ -41,6 +41,15 @@ export const spineQueueLoaded = signal(false);
 export const spineBoard = signal<SpineContract[]>([]);
 export const spineBoardLoaded = signal(false);
 
+/**
+ * The team's focus set — every lit contract, across the whole team, not
+ * only the caller's own bindings. The allocator's whole-plate view (#155
+ * finding 8), loaded only for members who hold `spine.focus`. Reading it
+ * is a baseline annex read; only lighting is permissioned.
+ */
+export const spineFocusSet = signal<SpineContract[]>([]);
+export const spineFocusSetLoaded = signal(false);
+
 /** The caller's curator config, which carries the interrupt whitelist. */
 export const spineCurator = signal<SpineCuratorConfigResponse | null>(null);
 export const spineCuratorLoaded = signal(false);
@@ -58,6 +67,17 @@ export async function loadSpineQueue(): Promise<void> {
 export async function loadSpineBoard(viewer: string): Promise<void> {
   spineBoard.value = await getClient().spineContracts({ member: viewer });
   spineBoardLoaded.value = true;
+}
+
+/**
+ * Load the team's focus set — the whole lit plate. For `spine.focus`
+ * holders; the caller gates the call on the leaf, and the read itself is
+ * open (a member without the leaf can see it too, they just cannot
+ * change it).
+ */
+export async function loadSpineFocusSet(): Promise<void> {
+  spineFocusSet.value = await getClient().spineContracts({ focus: true });
+  spineFocusSetLoaded.value = true;
 }
 
 /** Load the caller's curator config, for the interrupt-whitelist control. */
@@ -109,6 +129,8 @@ export function __resetSpineForTests(): void {
   spineQueueLoaded.value = false;
   spineBoard.value = [];
   spineBoardLoaded.value = false;
+  spineFocusSet.value = [];
+  spineFocusSetLoaded.value = false;
   spineCurator.value = null;
   spineCuratorLoaded.value = false;
 }
