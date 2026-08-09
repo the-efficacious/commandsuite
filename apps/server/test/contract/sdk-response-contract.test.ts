@@ -107,6 +107,7 @@ import {
   GetSpineCheckResponseSchema,
   GetSpineContractResponseSchema,
   GetSpineEventResponseSchema,
+  GetSpineQueueResponseSchema,
   HealthResponseSchema,
   InstructionsResponseSchema,
   ListChannelsResponseSchema,
@@ -615,6 +616,25 @@ describe('SDK response contract', () => {
     const seeded = await seedSpine(app);
     expect(seeded.orientIsPopulated, 'the orient fixture must not be empty').toBe(true);
     await expectMatchesContract(app, '/spine/orient', authed(ALICE), OrientPackSchema);
+  });
+
+  // The human seat's queue. Seeded so alice's queue carries a
+  // CONTRACT-BOUND ask — the case exercises the whole SpineContract that
+  // rides on each ask item (its stateRev is the precondition every act
+  // must carry), which an ask naming no contract would leave null and
+  // therefore unchecked.
+  it('GET /spine/queue matches GetSpineQueueResponseSchema', async () => {
+    const { app } = makeApp();
+    await seedSpine(app);
+    const q = (await (await app.request('/spine/queue', authed(ALICE))).json()) as {
+      queue: { asks: { contract: unknown }[] };
+    };
+    expect(q.queue.asks.length, 'alice must have open asks in her queue').toBeGreaterThan(0);
+    expect(
+      q.queue.asks.some((a) => a.contract !== null && typeof a.contract === 'object'),
+      'a contract-bound ask must ride its whole contract',
+    ).toBe(true);
+    await expectMatchesContract(app, '/spine/queue', authed(ALICE), GetSpineQueueResponseSchema);
   });
 
   // The curator's three. Seeded so each case exercises a POPULATED

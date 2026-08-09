@@ -74,6 +74,7 @@ import {
   FsMoveRequestSchema,
   FsPathSchema,
   FsWriteCollisionSchema,
+  GetSpineQueueQuerySchema,
   InvokeToolRequestSchema,
   ListObjectivesQuerySchema,
   ListSpineChecksQuerySchema,
@@ -3491,6 +3492,26 @@ export function createApp(options: AppOptions): CreatedApp {
       const pack = annex.orient(c.get('member').name);
       curator?.onOrient(c.get('member').name, pack, JSON.stringify(pack).length);
       return c.json(pack);
+    });
+
+    // GET /spine/queue — the human seat's queue. RECEIPT-NEUTRAL.
+    //
+    // The load-bearing §9 property lives in what this route does NOT do:
+    // it never touches the curator. `orient` above advances a receipt
+    // and grants leases, because reading the pack is what proves a
+    // member holds it. Opening a queue item proves nothing of the kind —
+    // VISITING IS NOT HANDLING — so this read moves no watermark and no
+    // lease. The only thing that takes an item off the queue is one of
+    // the four acts producing its resolving event, arriving over the
+    // append path. `member` defaults to the caller; naming another
+    // member is a free annex read, like `/spine/contracts?member=`.
+    app.get(SPINE_PATHS.queue, auth, (c) => {
+      const parsed = GetSpineQueueQuerySchema.safeParse({ member: c.req.query('member') });
+      if (!parsed.success) {
+        return c.json({ error: 'invalid query', details: parsed.error.issues }, 400);
+      }
+      const member = parsed.data.member ?? c.get('member').name;
+      return c.json({ queue: annex.queue(member) });
     });
 
     // POST /spine/subjects — explicit registration.

@@ -142,6 +142,7 @@ const READ_METHODS = [
   'contracts',
   'ask',
   'orient',
+  'queue',
   'rebuildProjections',
 ] as const satisfies readonly (keyof AnnexStore)[];
 

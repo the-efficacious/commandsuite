@@ -63,6 +63,7 @@ import type {
   SpineLifecycleBody,
   SpineProceedingBody,
   SpineProvenance,
+  SpineQueue,
   SpineRevision,
   SpineRulingBody,
   SpineSpecificationBody,
@@ -148,6 +149,20 @@ export interface AnnexStore {
   ask(id: string): SpineAsk | null;
   /** The Guaranteed Pack. The recovery call, and cheap by construction. */
   orient(member: string, now?: number): OrientPack;
+  /**
+   * The human seat's Queue — asks awaiting this member's ruling and the
+   * contracts stuck on them.
+   *
+   * A SEPARATE read from `orient`, and the separation is the point.
+   * `orient` is the recovery call, so reading it advances a receipt at
+   * the route layer (that read is what proves a member holds the pack).
+   * The Queue must advance NOTHING: opening an item is not handling it,
+   * so this method — and the route over it — is receipt-neutral, and
+   * `ReceiptVia` has no member a queue read could ever move a watermark
+   * through. The only thing that takes an item off the Queue is one of
+   * the four acts producing its resolving event.
+   */
+  queue(member: string, now?: number): SpineQueue;
   /** Drop every projection and refold the stream. The annex is the only truth. */
   rebuildProjections(): void;
 }
@@ -2503,6 +2518,44 @@ class SqliteAnnexStore implements AnnexWriter {
       asksForMe: asks.filter((a) => a.authority === member),
       myOpenAsks: asks.filter((a) => a.asker === member && a.state === 'open'),
     };
+  }
+
+  queue(member: string, now: number = Date.now()): SpineQueue {
+    // OPEN, never deferred. A defer re-arms an ask and it leaves the
+    // queue until its trigger fires; keeping deferred asks here would
+    // make the defer act appear to do nothing. This is the one place the
+    // queue's ask set is narrower than orient's `asksForMe`, and the
+    // narrowing is exactly the "an item leaves when its resolving event
+    // lands" property.
+    const askRows = this.db
+      .prepare(`SELECT * FROM spine_asks WHERE authority = ? AND state = 'open' ORDER BY at ASC`)
+      .all(member) as unknown as AskRow[];
+    const asks = askRows.map(rowToAsk);
+    // The contract each ask is about, WHOLE — its `stateRev` is the
+    // precondition every act on a contract-bound ask must carry, so the
+    // human can act from the queue without a second call to fetch it.
+    const askContractIds = [...new Set(asks.map((a) => a.contract).filter((id) => id !== null))];
+    const askContracts = new Map<string, SpineContract>();
+    for (const id of askContractIds) {
+      const contract = this.contract(id as string);
+      if (contract !== null) askContracts.set(id as string, contract);
+    }
+    const askItems = asks.map((ask) => ({
+      ask,
+      contract: ask.contract === null ? null : (askContracts.get(ask.contract) ?? null),
+    }));
+
+    // Contracts stuck on this member. `waiting_on(member)` is the
+    // lifecycle state that puts a contract in someone's queue (§8), and
+    // it is the only contract state that does.
+    const waitingRows = this.db
+      .prepare(
+        `SELECT * FROM spine_contracts WHERE state = 'waiting_on' AND waiting_on = ? ORDER BY spec_seq ASC`,
+      )
+      .all(member) as unknown as ContractRow[];
+    const waitingOn = this.decorateContracts(waitingRows);
+
+    return { member, at: iso(now), asks: askItems, waitingOn };
   }
 
   private rowsIn<T>(table: string, column: string, values: readonly string[]): T[] {
