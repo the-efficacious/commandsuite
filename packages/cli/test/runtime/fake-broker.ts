@@ -103,6 +103,38 @@ export const fakeBrokerSecrets: {
 export const fakeBrokerCapabilities: { rawBodyAck: boolean } = { rawBodyAck: true };
 
 /**
+ * The spine surface the fake broker serves.
+ *
+ * Canned rather than a real annex on purpose: the link tests exercise
+ * the CLI's side of the wire — what it sends, and what it renders back
+ * — and the annex's own rules are held by the server's suites against
+ * the real store. What matters here is that a spine tool call reaches
+ * `/spine/*` with the payload the tool composed, which is the half no
+ * server-side test can see.
+ *
+ * `refuseNext` makes the next append answer with a canned refusal, so
+ * the refusal RENDERING is drivable end to end: a stale delta must
+ * arrive whole, and only a real 409 through the client proves it does.
+ */
+export const fakeBrokerSpine: {
+  appends: Array<Record<string, unknown>>;
+  orient: Record<string, unknown>;
+  events: Array<Record<string, unknown>>;
+  eventsById: Record<string, Record<string, unknown>>;
+  contracts: Record<string, Record<string, unknown>>;
+  subjects: Array<Record<string, unknown>>;
+  refuseNext: { status: number; body: Record<string, unknown> } | null;
+} = {
+  appends: [],
+  orient: {},
+  events: [],
+  eventsById: {},
+  contracts: {},
+  subjects: [],
+  refuseNext: null,
+};
+
+/**
  * Activity events received on POST /members/:name/activity, in arrival
  * order. The conformance suite reads this to assert the run bracket
  * (`session_start` / `session_end`) and capture uploads reach the
@@ -332,6 +364,111 @@ export async function startFakeBroker(): Promise<FakeBroker> {
       }
       res.writeHead(200, jsonHeaders);
       res.end(JSON.stringify({ objective, events: [] }));
+      return;
+    }
+
+    // ─── Spine ────────────────────────────────────────────────────
+    // Records what the tool composed, then answers with whatever the
+    // test staged. The assertions live on `fakeBrokerSpine.appends`:
+    // the payload a tool sends IS the agent-facing contract, and a
+    // suite that only reads what came back cannot see it.
+    if (url.pathname === '/spine/events' && req.method === 'POST') {
+      const parsed = JSON.parse((await readBody(req)) || '{}') as Record<string, unknown>;
+      fakeBrokerSpine.appends.push(parsed);
+      const refusal = fakeBrokerSpine.refuseNext;
+      if (refusal !== null) {
+        fakeBrokerSpine.refuseNext = null;
+        res.writeHead(refusal.status, jsonHeaders);
+        res.end(JSON.stringify(refusal.body));
+        return;
+      }
+      res.writeHead(201, jsonHeaders);
+      res.end(
+        JSON.stringify({
+          event: {
+            seq: fakeBrokerSpine.appends.length,
+            id: `evt_fake_${fakeBrokerSpine.appends.length}`,
+            kind: parsed.kind,
+            class: 'authoritative',
+            subject: (parsed.subject as string | undefined) ?? null,
+            revision: null,
+            actor: FAKE_BROKER_NAME,
+            authoredBy: null,
+            at: '2026-08-09T09:00:00.000Z',
+            provenance: 'native',
+            opId: (parsed.opId as string | undefined) ?? null,
+            cites: (parsed.cites as string[] | undefined) ?? [],
+            staplesTo: null,
+            contract: null,
+            stateRev: null,
+            body: parsed.body,
+          },
+          contract: null,
+          replayed: false,
+        }),
+      );
+      return;
+    }
+
+    if (url.pathname === '/spine/orient' && req.method === 'GET') {
+      res.writeHead(200, jsonHeaders);
+      res.end(JSON.stringify(fakeBrokerSpine.orient));
+      return;
+    }
+
+    if (url.pathname === '/spine/events' && req.method === 'GET') {
+      res.writeHead(200, jsonHeaders);
+      res.end(
+        JSON.stringify({
+          events: fakeBrokerSpine.events,
+          nextCursor: null,
+          headSeq: fakeBrokerSpine.events.length,
+        }),
+      );
+      return;
+    }
+
+    if (url.pathname.startsWith('/spine/events/') && req.method === 'GET') {
+      const id = decodeURIComponent(url.pathname.slice('/spine/events/'.length));
+      const event = fakeBrokerSpine.eventsById[id];
+      if (!event) {
+        res.writeHead(404, jsonHeaders);
+        res.end(JSON.stringify({ error: 'no such event' }));
+        return;
+      }
+      res.writeHead(200, jsonHeaders);
+      res.end(JSON.stringify({ event }));
+      return;
+    }
+
+    if (url.pathname.startsWith('/spine/contracts/') && req.method === 'GET') {
+      const id = decodeURIComponent(url.pathname.slice('/spine/contracts/'.length));
+      const contract = fakeBrokerSpine.contracts[id];
+      if (!contract) {
+        res.writeHead(404, jsonHeaders);
+        res.end(JSON.stringify({ error: 'no such contract' }));
+        return;
+      }
+      res.writeHead(200, jsonHeaders);
+      res.end(JSON.stringify({ contract }));
+      return;
+    }
+
+    if (url.pathname === '/spine/subjects' && req.method === 'POST') {
+      const parsed = JSON.parse((await readBody(req)) || '{}') as Record<string, unknown>;
+      fakeBrokerSpine.subjects.push(parsed);
+      res.writeHead(201, jsonHeaders);
+      res.end(
+        JSON.stringify({
+          subject: {
+            id: parsed.id,
+            type: parsed.type,
+            parent: (parsed.parent as string | undefined) ?? null,
+            registeredBy: FAKE_BROKER_NAME,
+            at: '2026-08-09T09:00:00.000Z',
+          },
+        }),
+      );
       return;
     }
 

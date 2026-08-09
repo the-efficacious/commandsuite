@@ -13,8 +13,10 @@
  *      its stdout, and assert the expected behavior flows through:
  *        - `initialize` handshake succeeds with `tools.listChanged`
  *          declared
- *        - `tools/list` returns the full 13-tool surface (the fake
- *          broker's member has every permission leaf)
+ *        - `tools/list` returns the whole surface the fake broker's
+ *          member is entitled to — which deliberately excludes the
+ *          two `spine.author` tools and `process_document_write`,
+ *          because a gate that only holds in a unit test is not a gate
  *        - `tools/call` against `send` hits the broker's `/push`
  *
  * Broker SSE events never cross the bridge — they reach the agent
@@ -175,9 +177,14 @@ describeIfBuilt('runner + bridge end-to-end', () => {
     };
     const names = result.tools.map((t) => t.name).sort();
     expect(names).toEqual([
+      'annex_read',
+      'ask_author',
+      'attempt_post',
       'broadcast',
       'channels_list',
       'channels_post',
+      'contract_complete',
+      'discuss',
       'fs_ls',
       'fs_mkdir',
       'fs_mv',
@@ -200,17 +207,31 @@ describeIfBuilt('runner + bridge end-to-end', () => {
       'objectives_update',
       'objectives_view',
       'objectives_watchers',
+      'observe',
+      'orient',
       'presets_delete',
       'presets_list',
       'presets_set',
+      'proceed',
       'process_document_get',
       'process_document_history',
+      'promote',
       'recent',
       'roster',
+      'ruling_post',
       'send',
+      'state_set',
       'team_get',
       'team_update',
+      'verdict_post',
     ]);
+    // The gated pair is ABSENT, and that is the assertion the sorted
+    // list above would let you read past: this member holds neither
+    // `spine.author` nor `process.manage`, so the toolbox that reaches
+    // a real MCP client through a real bridge must not contain them.
+    expect(names).not.toContain('contract_author');
+    expect(names).not.toContain('contract_amend');
+    expect(names).not.toContain('process_document_write');
 
     // Descriptions are static: identity, team name, and the teammate
     // roster live in the system-prompt instructions, never in tool

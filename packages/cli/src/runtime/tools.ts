@@ -34,13 +34,33 @@
  *   - objectives_cancel   — requires `objectives.cancel` (or being the objective's originator)
  *   - objectives_watchers — requires `objectives.watch` (or being the objective's originator)
  *   - objectives_reassign — requires `objectives.reassign`
+ *
+ * Spine tools — the team's annex and the contracts folded out of it:
+ *   - orient            — the recovery call; no args, never refuses
+ *   - annex_read        — page the record from a cursor
+ *   - attempt_post      — bind a revision; the readiness signal
+ *   - verdict_post      — judge one criterion at one revision
+ *   - state_set         — lifecycle transitions (not completion)
+ *   - contract_complete — complete, citing the verdicts that cover it
+ *   - ask_author        — request a ruling; binds the asker until answered
+ *   - ruling_post       — answer an ask that names you
+ *   - proceed           — go ahead without the ruling, on the record
+ *   - observe           — record what you saw
+ *   - discuss           — the cheap surface; largest cap; never gated
+ *   - promote           — turn a post into the typed event it was
+ *
+ * Permission-gated spine tools:
+ *   - contract_author   — requires `spine.author`
+ *   - contract_amend    — requires `spine.author`
  */
 
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { Client as BrokerClient, ClientError } from 'csuite-sdk/client';
-import { PROCESS_DOCUMENT_MAX } from 'csuite-sdk/schemas';
+import { PROCESS_DOCUMENT_MAX, SPINE_DISCUSSION_MAX } from 'csuite-sdk/schemas';
 import { formatTextMetrics } from 'csuite-sdk/text-metrics';
 import type {
+  AppendSpineEventRequest,
+  AppendSpineEventResponse,
   Attachment,
   CustomToolBinding,
   FsEntry,
@@ -58,11 +78,22 @@ import type {
   ObjectiveStatus,
   ResolvedToolSource,
   SecretSummary,
+  SpineAsk,
+  SpineCitationRequiredDetail,
+  SpineCoverageGapDetail,
+  SpineEvent,
+  SpineEventKind,
+  SpineIdempotencyConflictDetail,
+  SpineRevisionInput,
+  SpineStaleStateRevDetail,
+  SpineSubjectType,
+  SpineTerminalDetail,
   ToolCredentialKind,
   ToolSourceKind,
   ToolSourceSummary,
   VariableSummary,
 } from 'csuite-sdk/types';
+import { SPINE_EVENT_CLASSES } from 'csuite-sdk/types';
 
 const LEVELS: readonly LogLevel[] = ['debug', 'info', 'notice', 'warning', 'error', 'critical'];
 const OBJECTIVE_STATUSES: readonly ObjectiveStatus[] = ['active', 'blocked', 'done', 'cancelled'];
@@ -448,6 +479,14 @@ export function defineTools(
     // context. These cover the edit history, which injection
     // deliberately leaves out, and the write path.
     ...buildProcessDocumentTools(instructions),
+    // The team's spine: the annex, the contracts folded out of it, and
+    // the acts that move them. `orient` is the recovery call and the
+    // cheapest thing in the toolbox; `discuss` is the cheapest way to
+    // say something and never gated. Two tools — authoring and amending
+    // a contract — are gated on `spine.author`; everything else is
+    // baseline participation, because a member who cannot record what
+    // they did cannot be held to anything.
+    ...buildSpineTools(instructions),
     // Admin tools for live team/member/preset management. Each gated
     // on the corresponding `team.manage` or `members.manage`
     // permission so non-admin agents don't see them in their toolbox.
@@ -1781,6 +1820,688 @@ function buildProcessDocumentTools(instructions: InstructionsResponse): Tool[] {
   return tools;
 }
 
+/**
+ * The spine tool surface.
+ *
+ * THE SCHEMAS ARE THE LAW. This is the one lever CommandSuite has that
+ * an agent cannot route around: a required field is a law of physics
+ * for a member whose only way to act is a tool call. So the fields that
+ * would silently lie by being absent are required here —
+ * `expected_state_rev` on every write that changes what the team owes,
+ * a whole `revision` caption wherever a value is claimed, `why` on a
+ * verdict that could not be reached.
+ *
+ * THE REFUSALS ARE THE PRODUCT. The annex answers a stale write with
+ * the events the caller missed, an incomplete completion with the
+ * criteria it does not cover, and a state-changing act under an
+ * unresolved ask with the ask itself. Those bodies are rendered in
+ * full and never capped: the refusal IS the re-injection, delivered at
+ * exactly the moment stale beliefs would have caused harm, and
+ * truncating one is a broken guarantee rather than a tidier result.
+ *
+ * The cheapest call in the surface is `orient`, deliberately: recovery
+ * has to cost less than guessing, or members guess.
+ */
+const SPINE_CITATION_RULE =
+  'CITATION LOCK: while you have an unresolved `ask` on a subject — or on any subject ' +
+  'CONTAINING it — the annex refuses your state-changing acts there (`contract_author`, ' +
+  '`contract_amend`, `attempt_post`, `verdict_post`, `state_set`, `contract_complete`) until ' +
+  'you either cite a ruling on that ask or record a `proceed` past it. The refusal tells you, ' +
+  'in so many words, that YOU DO NOT HAVE A RULING. Believing you were authorised is not a ' +
+  'ruling; this is the one gate in the system that will not take your word for it. Proceeding ' +
+  'is legitimate and always available — what is refused is inventing an answer nobody gave.';
+
+/** Said once, in every description that returns a contract counter. */
+const SPINE_STATE_REV_RULE =
+  '`expected_state_rev` is the contract counter AS YOU LAST READ IT (from `orient`, ' +
+  '`annex_read`, or the result of your own last write). If the contract has moved since, the ' +
+  'write is refused AND the refusal carries every authoritative event you missed, in full — ' +
+  'that is how you find out you lost context, so read them and retry deliberately rather than ' +
+  'guessing a higher number.';
+
+const SPINE_OP_ID_FIELD = {
+  type: 'string',
+  description:
+    'Optional idempotency key of your choosing. Send the SAME id with the SAME payload on a ' +
+    'retry and the annex returns the original event without appending a second one — which is ' +
+    'what makes a lost response cheap. Omit it and one is generated for you, in which case a ' +
+    'retry is a new write.',
+} as const;
+
+const SPINE_REVISION_FIELD = {
+  type: 'object',
+  description:
+    'The observation point this act is about. Never a bare value: `how` and `source` ride ' +
+    'along so "verified at abc123" cannot be recorded without "observed at 03:19 from the ' +
+    'GitHub review event".',
+  properties: {
+    value: { type: 'string', description: 'The revision itself — a SHA, a version, a build id.' },
+    how: {
+      type: 'string',
+      enum: ['observed', 'asserted'],
+      description:
+        '`observed` — you or an integration actually looked. `asserted` — you named it by ' +
+        'hand. Only observed revisions move a subject’s head, so your assertion can never ' +
+        "make someone else's contract stale.",
+    },
+    source: {
+      type: 'string',
+      description: 'Who or what produced it: `integration:github`, `member:rune`, `probe:ci`.',
+    },
+    subject: {
+      type: 'string',
+      description:
+        "Optional. Defaults to the contract's own subject, which is almost always what you " +
+        'mean.',
+    },
+  },
+  required: ['value', 'how', 'source'],
+} as const;
+
+/**
+ * The spine's tools.
+ *
+ * Two are gated on `spine.author` — authoring and amending a contract —
+ * and everything else is baseline participation. Attempting, judging,
+ * asking, ruling, proceeding, observing and talking are not privileges:
+ * a member who cannot record what they did cannot be held to anything,
+ * and gating the record would only produce work that happened off it.
+ */
+function buildSpineTools(instructions: InstructionsResponse): Tool[] {
+  const tools: Tool[] = [
+    {
+      name: 'orient',
+      // THE RECOVERY CALL, and the cheapest description in the surface
+      // to act on: no arguments, no preconditions, no way to be
+      // refused. Everything an agent needs in order to decide to call
+      // it is in the first two sentences, because the moment it is
+      // needed most is the moment there is least context left to read
+      // with.
+      description:
+        'Get your bearings. **Call this first after any restart, compaction, or gap — and ' +
+        'whenever you are not certain what you are working on.** No arguments, never refuses, ' +
+        'and cheap by construction. Returns everything you are promised: every contract you ' +
+        'are bound to and how (assignee / verifier / authority), its criteria with the verdict ' +
+        'reached on each, the state and the counter, the subject and the exact revision it ' +
+        'sits at, whether that revision is behind the world, the rulings that bind it, the ' +
+        'asks awaiting YOUR ruling, your own open asks, and a cursor into everything else. ' +
+        'Guessing is more expensive than this call. It is not a status report for anyone ' +
+        'else — it is composed for you.',
+      inputSchema: { type: 'object', properties: {} },
+    },
+    {
+      name: 'annex_read',
+      description:
+        'Page the annex — the team’s append-only record of everything that has been ' +
+        'observed, specified, attempted, judged, asked, ruled and said. `orient` gives you a ' +
+        '`cursor`; pass it as `since_seq` here to read everything that happened while you were ' +
+        'away, oldest first. Filter by `kind`, `subject` (containment resolves, so a repo ' +
+        'reaches the files in it), `contract`, or `actor`. `next_cursor` is null ONLY when the ' +
+        'page reached the head of the stream — an empty page with a cursor means "nothing new ' +
+        'yet", which is a different claim. Never refuses.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          since_seq: {
+            type: 'number',
+            description:
+              'Read everything after this stream position. Omit to start at the beginning.',
+          },
+          limit: { type: 'number', description: 'Page size, 1–500. Defaults to 100.' },
+          kind: {
+            type: 'string',
+            description:
+              'One kind only: observation, testimony, specification, amendment, attempt, ' +
+              'criterion_verdict, ruling, ask, ask_action, proceeding, lifecycle, correction, ' +
+              'discussion, promotion.',
+          },
+          subject: {
+            type: 'string',
+            description: 'A subject id. Resolves containment — a repo returns the files inside it.',
+          },
+          contract: { type: 'string', description: 'Everything that touched one contract.' },
+          actor: { type: 'string', description: 'Everything one member (or probe) did.' },
+        },
+      },
+    },
+    {
+      name: 'attempt_post',
+      description:
+        'Record an attempt on a contract: what you did, and the exact revision you did it at. ' +
+        'This is the READINESS SIGNAL — it binds the contract to that revision and it is what ' +
+        'lights up the verifier’s `orient`, so post it when the work is ready to be ' +
+        'judged rather than when it is merged. ' +
+        SPINE_STATE_REV_RULE +
+        ' ' +
+        SPINE_CITATION_RULE,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          contract: { type: 'string', description: 'The contract id.' },
+          summary: {
+            type: 'string',
+            description: 'What you did, and anything the verifier needs in order to judge it.',
+          },
+          revision: SPINE_REVISION_FIELD,
+          expected_state_rev: {
+            type: 'number',
+            description: 'The contract counter as you last read it.',
+          },
+          op_id: SPINE_OP_ID_FIELD,
+        },
+        required: ['contract', 'summary', 'revision', 'expected_state_rev'],
+      },
+    },
+    {
+      name: 'verdict_post',
+      description:
+        'Judge ONE criterion of a contract at ONE revision. Verdicts are per-criterion by ' +
+        'construction — partial is the native shape, and you never have to decide the whole ' +
+        'contract to record what you actually checked. **You cannot judge a contract you are ' +
+        'the assignee of**: arrival cannot be declared from the traveller’s own album, ' +
+        'and the annex refuses it whatever permissions you hold. `cannot_verify` is a ' +
+        'first-class answer and REQUIRES `why` — a verdict that cannot say why is ' +
+        'indistinguishable from silence, and silence is what the three legal ways out of it ' +
+        '(amend the criterion, re-scope the verifier, or get the authority to waive it by ' +
+        'ruling) have to act on. ' +
+        SPINE_STATE_REV_RULE,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          contract: { type: 'string', description: 'The contract id.' },
+          criterion: {
+            type: 'string',
+            description: 'The criterion id, exactly as it appears in the contract.',
+          },
+          decision: {
+            type: 'string',
+            enum: ['met', 'unmet', 'cannot_verify'],
+            description:
+              '`met` / `unmet` — you looked and this is the answer at that revision. ' +
+              '`cannot_verify` — you could not tell, which is a real answer and requires `why`.',
+          },
+          evidence: {
+            type: 'string',
+            description: 'What you actually looked at. This is the record of the check itself.',
+          },
+          why: {
+            type: 'string',
+            description:
+              'REQUIRED on `cannot_verify`: what stopped you. No access, no environment, the ' +
+              'criterion is unmeasurable as written — say which, because each has a different ' +
+              'remedy.',
+          },
+          revision: SPINE_REVISION_FIELD,
+          expected_state_rev: {
+            type: 'number',
+            description: 'The contract counter as you last read it.',
+          },
+          op_id: SPINE_OP_ID_FIELD,
+        },
+        required: [
+          'contract',
+          'criterion',
+          'decision',
+          'evidence',
+          'revision',
+          'expected_state_rev',
+        ],
+      },
+    },
+    {
+      name: 'state_set',
+      description:
+        'Move a contract to a new lifecycle state: `active`, `waiting_on` (a named member who ' +
+        'can act — they see it in their queue), `waiting_for` (the world; carries the event ' +
+        'and the check that will re-light it, and stays SILENT until then), `parked` (the team ' +
+        'chose to stop; visible, quiet, resumable), `cancelled`, or `superseded` (the successor ' +
+        'contract carries the work forward — the old one stays terminal at its own revision ' +
+        'with its verdicts intact, and is never silently retargeted). **Completion is not here: ' +
+        'use `contract_complete`**, which is where the evidence gets checked. ' +
+        SPINE_STATE_REV_RULE +
+        ' ' +
+        SPINE_CITATION_RULE,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          contract: { type: 'string', description: 'The contract id.' },
+          state: {
+            type: 'string',
+            enum: ['active', 'waiting_on', 'waiting_for', 'parked', 'cancelled', 'superseded'],
+            description: 'The state to move to. `done` is refused here — see `contract_complete`.',
+          },
+          expected_state_rev: {
+            type: 'number',
+            description: 'The contract counter as you last read it.',
+          },
+          reason: {
+            type: 'string',
+            description: 'Why. Required in practice for every terminal move.',
+          },
+          member: { type: 'string', description: 'REQUIRED on `waiting_on`: who can unblock it.' },
+          event: {
+            type: 'string',
+            description: 'REQUIRED on `waiting_for`: the event being waited on.',
+          },
+          check: {
+            type: 'string',
+            description:
+              'REQUIRED on `waiting_for`: what will confirm it. Without a check the contract ' +
+              'goes silent with nothing able to wake it, which is how work disappears.',
+          },
+          preempted_by: { type: 'string', description: 'On `parked`: what took priority.' },
+          successor: {
+            type: 'string',
+            description: 'REQUIRED on `superseded`: the contract that carries the work forward.',
+          },
+          op_id: SPINE_OP_ID_FIELD,
+        },
+        required: ['contract', 'state', 'expected_state_rev'],
+      },
+    },
+    {
+      name: 'contract_complete',
+      description:
+        'Complete a contract: the result, the revision it is true at, and the verdicts that ' +
+        'say so. **When the contract names a verifier this is a HARD GATE** — cited verdicts ' +
+        '(or rulings waiving a `cannot_verify`) must cover EVERY criterion at ONE revision, and ' +
+        'the refusal names each criterion that is not covered and why it is not. Read that list ' +
+        'rather than re-sending: it is the shortest description of what is left to do. With no ' +
+        'verifier named, the result stands alone and the record says so. ' +
+        SPINE_STATE_REV_RULE +
+        ' ' +
+        SPINE_CITATION_RULE,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          contract: { type: 'string', description: 'The contract id.' },
+          result: {
+            type: 'string',
+            description:
+              'What was delivered, and whether it satisfies the contract as written. No length ' +
+              'cap — this is one of the permanent fields, and caps scale WITH durability here.',
+          },
+          revision: SPINE_REVISION_FIELD,
+          cites: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'The verdict event ids (and any waiving rulings) this completion stands on. ' +
+              'Citing a verdict that a later one at the same revision superseded is refused — ' +
+              'the annex checks the CURRENT verdict, and the citation proves you had it in hand.',
+          },
+          expected_state_rev: {
+            type: 'number',
+            description: 'The contract counter as you last read it.',
+          },
+          op_id: SPINE_OP_ID_FIELD,
+        },
+        required: ['contract', 'result', 'revision', 'cites', 'expected_state_rev'],
+      },
+    },
+    {
+      name: 'ask_author',
+      description:
+        'Ask another member for a ruling — a durable, citable decision, not a chat message. ' +
+        'Every field is required because an ask that cannot be priced is an ask nobody answers: ' +
+        '`question` (what is being decided), `context` (what they need in order to decide it), ' +
+        'and `unblocks` (what is stopped until they do). It lands in their queue and stays ' +
+        'there until they rule, decline, redirect or defer it. **Raising one binds you**: ' +
+        SPINE_CITATION_RULE,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          authority: {
+            type: 'string',
+            description:
+              'The member whose call this is. It cannot be you — an ask naming yourself would ' +
+              'manufacture a ruling you could cite without anyone having decided anything.',
+          },
+          question: { type: 'string', description: 'The decision you need, stated as a question.' },
+          context: { type: 'string', description: 'What they need in order to answer it.' },
+          unblocks: {
+            type: 'string',
+            description: 'What is held up until they do. This is how they prioritise your ask.',
+          },
+          subject: {
+            type: 'string',
+            description:
+              'The part of the world this is about. Scopes the citation lock: an ask on a repo ' +
+              'binds your acts on every file in it.',
+          },
+          contract: {
+            type: 'string',
+            description: 'The contract this ask is about. Requires `expected_state_rev` with it.',
+          },
+          expected_state_rev: {
+            type: 'number',
+            description: 'REQUIRED when `contract` is given; refused when it is not.',
+          },
+          trigger: {
+            type: 'string',
+            description: 'Optional: what should re-raise this if deferred.',
+          },
+          check: {
+            type: 'string',
+            description: 'Optional: what would confirm the answer on its own.',
+          },
+          op_id: SPINE_OP_ID_FIELD,
+        },
+        required: ['authority', 'question', 'context', 'unblocks'],
+      },
+    },
+    {
+      name: 'ruling_post',
+      description:
+        'Answer an ask that names YOU as its authority. A ruling is an authored, citable ' +
+        'decision — the thing members point at afterwards instead of remembering. **Only the ' +
+        'ask’s named authority can rule on it**: a ruling from anyone else is not a weaker ' +
+        'ruling, it is not a ruling, and the annex refuses it whatever permissions you hold. ' +
+        'A ruling that cites a `cannot_verify` verdict WAIVES that criterion, which is one of ' +
+        'the three legal ways out of one. Ruling resolves the ask and releases the asker.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          ask: {
+            type: 'string',
+            description: 'The ask event id (see `orient` → asks awaiting you).',
+          },
+          decision: { type: 'string', description: 'What you decided, plainly.' },
+          reasoning: {
+            type: 'string',
+            description:
+              'Why. No length cap — this is what a member reads in six weeks instead of the ' +
+              'conversation you are in now.',
+          },
+          contract: {
+            type: 'string',
+            description: 'The contract this ruling binds, if any. Requires `expected_state_rev`.',
+          },
+          expected_state_rev: {
+            type: 'number',
+            description: 'REQUIRED when `contract` is given; refused when it is not.',
+          },
+          cites: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'Events this ruling stands on. Citing a `cannot_verify` verdict here is what ' +
+              'makes this ruling a WAIVER of that criterion.',
+          },
+          op_id: SPINE_OP_ID_FIELD,
+        },
+        required: ['ask', 'decision', 'reasoning'],
+      },
+    },
+    {
+      name: 'proceed',
+      description:
+        'Go ahead without the ruling, on the record. This is the LEGAL way past your own ' +
+        'unresolved ask and it is not a workaround — the annex refuses invented authority, ' +
+        'never deliberate action without it. One `proceed` covers your later acts on that ' +
+        'subject until the ask resolves, so it is one deliberate act of record rather than a ' +
+        'toll on every write. `reason` is what a reader sees later instead of an answer nobody ' +
+        'gave; say why waiting cost more than acting.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          ask: {
+            type: 'string',
+            description: 'The ask you are proceeding past. Must still be open.',
+          },
+          subject: { type: 'string', description: 'The part of the world you are acting on.' },
+          reason: { type: 'string', description: 'Why you are going ahead without the ruling.' },
+          op_id: SPINE_OP_ID_FIELD,
+        },
+        required: ['ask', 'subject', 'reason'],
+      },
+    },
+    {
+      name: 'observe',
+      description:
+        'Record what you saw. An observation is YOUR OWN look at part of the world — the test ' +
+        'output, the file as it stands, the deploy that failed — and it is epistemically ' +
+        'different from what someone told you, which is why the annex types them separately. ' +
+        'Attach a `revision` when you are looking at a versioned thing: an `observed` one moves ' +
+        'that subject’s head and can therefore make bound contracts render stale, which is ' +
+        'reported, never repaired. Ambient and never refused by the citation lock — looking is ' +
+        'never the act that needs authorising.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          subject: { type: 'string', description: 'The part of the world you looked at.' },
+          what: { type: 'string', description: 'What you did to see it.' },
+          output: { type: 'string', description: 'What you saw, verbatim where that matters.' },
+          revision: SPINE_REVISION_FIELD,
+        },
+        required: ['subject', 'what', 'output'],
+      },
+    },
+    {
+      name: 'discuss',
+      description:
+        'Say something. The cheapest surface in the system and the largest cap in it (' +
+        String(SPINE_DISCUSSION_MAX) +
+        ' characters): thinking out loud, questions, findings, disagreement. It never advances ' +
+        'a contract counter, so a busy thread can never veto a lifecycle act, and **it is ' +
+        'never refused by the citation lock** — the record is expensive to get wrong and the ' +
+        'conversation must never be. If a post turns out to have been a decision, an ' +
+        'observation or a commitment, `promote` turns it into the typed event, citing the post ' +
+        'as its origin, so nothing has to be retyped to be counted.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          body: {
+            type: 'string',
+            description: `What you want to say. Max ${String(SPINE_DISCUSSION_MAX)} characters.`,
+          },
+          contract: { type: 'string', description: 'The contract this is about, if any.' },
+          subject: { type: 'string', description: 'The subject this is about, if any.' },
+        },
+        required: ['body'],
+      },
+    },
+    {
+      name: 'promote',
+      description:
+        'Turn a discussion post into the typed event it turned out to be. Give it the post’s ' +
+        'event id and `as` — the kind it should become — and the post’s text becomes that ' +
+        "kind's principal field (an `observation`'s output, an `attempt`'s summary, a " +
+        "`ruling`'s reasoning). Supply anything else that kind requires in `fields`; if you " +
+        'miss one, the refusal names it. The typed event CITES the post as its origin, so the ' +
+        'record shows where the decision actually happened rather than pretending it arrived ' +
+        'fully formed. The result is a real event of that kind and is held to every rule that ' +
+        'kind carries — promoting is not a way around a precondition or the citation lock.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          event: { type: 'string', description: 'The discussion event id to promote.' },
+          as: {
+            type: 'string',
+            description:
+              'The kind it becomes: observation, testimony, specification, amendment, attempt, ' +
+              'criterion_verdict, ruling, ask, ask_action, proceeding, lifecycle, correction.',
+          },
+          fields: {
+            type: 'object',
+            description:
+              "The body fields that kind requires and the post does not supply — an attempt's " +
+              "`contract`, a verdict's `criterion` and `decision`, an ask's `authority`. Any " +
+              'field you set here overrides what would have been taken from the post.',
+          },
+          subject: {
+            type: 'string',
+            description: 'Subject for the new event; defaults to the post’s.',
+          },
+          revision: SPINE_REVISION_FIELD,
+          cites: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Extra citations. The origin post is always cited first, automatically.',
+          },
+          expected_state_rev: {
+            type: 'number',
+            description: 'Required when the promoted kind reaches a contract.',
+          },
+          op_id: SPINE_OP_ID_FIELD,
+        },
+        required: ['event', 'as'],
+      },
+    },
+  ];
+
+  // The gate, and its wording follows `process_document_write`: the
+  // description says the leaf out loud so a member without it does not
+  // discover the boundary by eating a 403 mid-task. Everything above is
+  // baseline participation — a member who cannot record what they did
+  // cannot be held to anything, and gating the record only produces
+  // work that happens off it.
+  if (!instructions.permissions.includes('spine.author')) return tools;
+
+  tools.push(
+    {
+      name: 'contract_author',
+      description:
+        'Author a contract: what the world must BECOME, bound to a subject and decomposed into ' +
+        'criteria. Requires `spine.author`. This is the destination photograph and the one that ' +
+        'must never be blurred — there is no length cap on criteria, because a cap that ' +
+        'punishes precision buys nothing. Each criterion is prose a person could check, not a ' +
+        'predicate, and each gets its own verdict later. Naming a `verifier` means completion ' +
+        'will need verdicts covering every criterion; naming none means the result will stand ' +
+        'alone and say so. Naming an `authority` says whose rulings bind this work. The subject ' +
+        'must already be registered, or pass `subject_type` and it is registered inline. ' +
+        SPINE_CITATION_RULE,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          subject: {
+            type: 'string',
+            description: 'The part of the world this contract is about, e.g. `repo:acme`.',
+          },
+          subject_type: {
+            type: 'string',
+            enum: ['repo', 'pr', 'file', 'issue', 'setting', 'package', 'doc'],
+            description: 'Register the subject inline when it is new. Omit when it already exists.',
+          },
+          subject_parent: {
+            type: 'string',
+            description:
+              'The subject containing it, when registering inline. Containment is declared here ' +
+              'and never moved, and scoped rules follow it downward.',
+          },
+          title: { type: 'string', description: 'What this contract is, in one line.' },
+          criteria: {
+            type: 'array',
+            description:
+              'What must be true for this to be done. Each is judged separately, so write them ' +
+              'as things a verifier can check one at a time. No length cap.',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'string', description: 'A short stable handle, e.g. `c1`.' },
+                text: { type: 'string', description: 'The criterion, as prose.' },
+              },
+              required: ['id', 'text'],
+            },
+          },
+          assignee: { type: 'string', description: 'The member who will travel to it.' },
+          verifier: {
+            type: 'string',
+            description:
+              'The member who will judge it. Named ⇒ completion needs verdicts covering every ' +
+              'criterion. Cannot be the assignee in practice — the annex refuses a verdict from ' +
+              'the assignee.',
+          },
+          authority: { type: 'string', description: 'Whose rulings bind this contract.' },
+          constraints: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'Standing "do not" clauses: do not fix this here, do not publish anything. These ' +
+              'come from you — nothing derives them.',
+          },
+          op_id: SPINE_OP_ID_FIELD,
+        },
+        required: ['subject', 'title', 'criteria', 'assignee'],
+      },
+    },
+    {
+      name: 'contract_amend',
+      description:
+        'Amend a contract — its title, criteria or constraints. Requires `spine.author`. The ' +
+        'prior version is kept and this is versioned, never replaced. Two refusals worth ' +
+        'knowing before you call: **removing text without a `disclosure` is refused** (what ' +
+        'members have already read cannot be made never to have existed — say what went and ' +
+        'why anyone working to it should know), and **dropping a criterion that already ' +
+        'carries a verdict must CITE that verdict** (nothing here refuses the drop; it only ' +
+        'stops a judged criterion disappearing quietly). Adding criteria or constraints, and ' +
+        'appending to existing text, need neither. `disposition` is not optional and you must ' +
+        'choose deliberately: `correction` means the prior text was never validly binding; ' +
+        '`scope_change` means work already underway finishes under it. ' +
+        SPINE_STATE_REV_RULE +
+        ' ' +
+        SPINE_CITATION_RULE,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          contract: { type: 'string', description: 'The contract id.' },
+          changes: { type: 'string', description: 'What is changing, in prose.' },
+          reason: { type: 'string', description: 'Why it is changing.' },
+          disposition: {
+            type: 'string',
+            enum: ['correction', 'scope_change'],
+            description:
+              '`correction` — retroactive; the prior text was never validly binding. ' +
+              '`scope_change` — forward-only; work already underway finishes under the prior ' +
+              'text. The same field and meaning as `process_document_write`.',
+          },
+          title: { type: 'string', description: 'Replacement title.' },
+          criteria: {
+            type: 'array',
+            description:
+              'The COMPLETE new criteria list, not a patch. Anything you leave out is removed, ' +
+              'and removal needs a `disclosure`.',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                text: { type: 'string' },
+              },
+              required: ['id', 'text'],
+            },
+          },
+          constraints: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'The COMPLETE new constraints list, not a patch.',
+          },
+          disclosure: {
+            type: 'string',
+            description:
+              'REQUIRED when this removes text: what was removed, and what anyone already ' +
+              'working to it needs to know. Contamination is disclosed, never erased.',
+          },
+          cites: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'Events this amendment stands on — including the verdicts it orphans when it ' +
+              'drops a judged criterion.',
+          },
+          expected_state_rev: {
+            type: 'number',
+            description: 'The contract counter as you last read it.',
+          },
+          op_id: SPINE_OP_ID_FIELD,
+        },
+        required: ['contract', 'changes', 'reason', 'disposition', 'expected_state_rev'],
+      },
+    },
+  );
+
+  return tools;
+}
+
 function buildAuthorityTools(instructions: InstructionsResponse): Tool[] {
   const { permissions } = instructions;
   const canCreate = permissions.includes('objectives.create');
@@ -2039,6 +2760,27 @@ export async function handleToolCall(
         return await handleProcessDocumentHistory(brokerClient);
       case 'process_document_write':
         return await handleProcessDocumentWrite(args, brokerClient);
+      // ─── Spine ────────────────────────────────────────────────
+      // Enumerated rather than folded into the default arm, so this
+      // switch stays the readable index of the surface. They share one
+      // dispatcher because they share one refusal renderer: every
+      // spine refusal carries a delta, a coverage gap or an ask, and
+      // rendering that completely is the product.
+      case 'orient':
+      case 'annex_read':
+      case 'contract_author':
+      case 'contract_amend':
+      case 'attempt_post':
+      case 'verdict_post':
+      case 'state_set':
+      case 'contract_complete':
+      case 'ask_author':
+      case 'ruling_post':
+      case 'proceed':
+      case 'observe':
+      case 'discuss':
+      case 'promote':
+        return await handleSpineTool(name, args, brokerClient, instructions);
       case 'objectives_amend':
         return await handleObjectivesAmend(args, brokerClient);
       case 'objectives_correct_event':
@@ -2601,6 +3343,976 @@ async function handleProcessDocumentWrite(
       `${created ? 'History begins here.' : 'The prior text is retained and retrievable via `process_document_history`.'} ` +
       'Every member receives it in their injected context at their NEXT runner start — ' +
       'a teammate already running has not seen it. No broadcast is needed and none was sent.',
+  );
+}
+
+// ─── Spine ────────────────────────────────────────────────────────────
+//
+// One dispatcher for the whole surface, and the reason is the refusals.
+// Every spine refusal carries a `detail` the caller can act on without
+// a second call — the events they missed, the criteria they do not
+// cover, the ask they have not had answered — and rendering that is one
+// job, done once, rather than fourteen chances to forget it.
+
+/**
+ * An event, rendered whole.
+ *
+ * CAPTIONS THEN BODY, and the body as JSON on purpose. This renderer is
+ * what a member reads when a refusal hands back what they missed, and a
+ * prose renderer makes a default-value decision at every field — which
+ * is exactly where one fact becomes indistinguishable from another. The
+ * captions are named because they are what makes the event evidence;
+ * the body is dumped because dropping a field of it is not a formatting
+ * choice, it is data loss at the one moment the caller cannot go and
+ * look.
+ */
+function renderSpineEvent(event: SpineEvent): string {
+  const rev = event.revision;
+  const lines = [
+    `  #${event.seq} ${event.kind} ${event.id} — by ${event.actor} at ${event.at}` +
+      (event.authoredBy !== null ? ` (recipe authored by ${event.authoredBy})` : ''),
+    `      class: ${event.class}` +
+      (event.contract !== null ? `  contract: ${event.contract}` : '') +
+      (event.stateRev !== null ? `  state_rev: ${event.stateRev}` : '') +
+      (event.provenance !== 'native' ? `  provenance: ${event.provenance}` : ''),
+  ];
+  if (event.subject !== null) lines.push(`      subject: ${event.subject}`);
+  if (rev !== null) {
+    // WHOLE. "met at rev_01H…" is a claim a member cannot check, and
+    // this is the payload with no second call available to resolve it.
+    lines.push(`      revision: ${rev.value} (${rev.how}, from ${rev.source}, at ${rev.at})`);
+  }
+  if (event.cites.length > 0) lines.push(`      cites: ${event.cites.join(', ')}`);
+  if (event.staplesTo !== null) lines.push(`      staples to: ${event.staplesTo}`);
+  if (event.opId !== null) lines.push(`      op_id: ${event.opId}`);
+  lines.push(
+    '      body:',
+    ...JSON.stringify(event.body, null, 2)
+      .split('\n')
+      .map((l) => `        ${l}`),
+  );
+  return lines.join('\n');
+}
+
+/** Every intervening event, in full. No cap, ever — the delta IS the re-injection. */
+function renderInterveningEvents(events: SpineEvent[], contract: string): string {
+  const rendered = events.map(renderSpineEvent).join('\n');
+  return (
+    `\n\nThe ${events.length} authoritative event(s) that landed on ${contract} while you were ` +
+    `away, in full — this refusal is your re-brief, so read them here rather than fetching ` +
+    `them again:\n${rendered}`
+  );
+}
+
+/** An ask, rendered with every field that makes it answerable. */
+function renderSpineAsk(ask: SpineAsk): string {
+  return [
+    `  ${ask.id} — ${ask.state}, raised by ${ask.asker}, awaiting ${ask.authority}`,
+    `      on: ${ask.subject ?? (ask.contract !== null ? `contract ${ask.contract}` : '(no subject)')}`,
+    `      question: ${ask.question}`,
+    `      context: ${ask.context}`,
+    `      unblocks: ${ask.unblocks}`,
+  ].join('\n');
+}
+
+interface SpineRefusalBody {
+  error?: string;
+  code?: string;
+  detail?: unknown;
+  /** Zod issues from a route-level schema refusal. */
+  details?: { path?: (string | number)[]; message?: string }[];
+}
+
+/**
+ * Turn a spine refusal into something an agent can act on, complete.
+ *
+ * Returns null when the error is not a spine refusal, so the caller
+ * falls through to the generic handler rather than swallowing an
+ * unrelated failure as if it were understood.
+ *
+ * NOTHING HERE IS CAPPED. §5 makes the refusal the recovery channel: it
+ * arrives at exactly the moment staleness would have caused harm, on
+ * any runner, forever. Truncating it to keep a tool result tidy trades
+ * the guarantee for the appearance of one.
+ */
+function renderSpineRefusal(err: unknown): string | null {
+  // A payload the SDK refused before it was ever sent. Rendering the
+  // issues is the point: the schema is the law, so "which law did I
+  // break" has to be answerable from the refusal.
+  const issues = (err as { issues?: { path?: (string | number)[]; message?: string }[] }).issues;
+  if (Array.isArray(issues)) {
+    return [
+      'the annex refused this payload before sending it — the schema is the law here, and ' +
+        'these are the fields it names:',
+      ...issues.map((i) => `  ${(i.path ?? []).join('.') || '(root)'}: ${i.message ?? 'invalid'}`),
+    ].join('\n');
+  }
+
+  const ce = err as ClientError;
+  if (ce?.name !== 'ClientError') return null;
+  let body: SpineRefusalBody;
+  try {
+    body = JSON.parse(ce.body) as SpineRefusalBody;
+  } catch {
+    return `the broker refused this (HTTP ${ce.status}): ${ce.body || ce.message}`;
+  }
+  const message = body.error ?? ce.message;
+  if (body.code === undefined) {
+    if (Array.isArray(body.details)) {
+      return [
+        `${message} (HTTP ${ce.status}) — the fields the schema names:`,
+        ...body.details.map(
+          (i) => `  ${(i.path ?? []).join('.') || '(root)'}: ${i.message ?? 'invalid'}`,
+        ),
+      ].join('\n');
+    }
+    return `${message} (HTTP ${ce.status})`;
+  }
+
+  switch (body.code) {
+    case 'stale_state_rev': {
+      const detail = body.detail as SpineStaleStateRevDetail;
+      return (
+        message +
+        renderInterveningEvents(detail.intervening, detail.contract) +
+        `\n\nRetry with expected_state_rev=${detail.currentStateRev} once you have read them, and ` +
+        'only if the act still makes sense.'
+      );
+    }
+    case 'invalid_transition': {
+      const detail = body.detail as SpineTerminalDetail | undefined;
+      if (detail?.intervening === undefined) return message;
+      return (
+        message +
+        (detail.intervening.length > 0
+          ? renderInterveningEvents(detail.intervening, detail.contract)
+          : '')
+      );
+    }
+    case 'coverage_gap': {
+      const detail = body.detail as SpineCoverageGapDetail;
+      return [
+        message,
+        '',
+        detail.revision === null
+          ? 'No revision was named, so nothing can be covered:'
+          : `Uncovered at ${detail.revision.value} (${detail.revision.how}, from ` +
+            `${detail.revision.source}):`,
+        // Every one of them. This list is the shortest description of
+        // what is left to do, and a truncated one sends a member back
+        // to guess the rest.
+        ...detail.missing.map((m) => `  ${m.criterion}: ${m.text}\n      why: ${m.why}`),
+      ].join('\n');
+    }
+    case 'citation_required': {
+      const detail = body.detail as SpineCitationRequiredDetail;
+      return [
+        message,
+        '',
+        `The ask${detail.asks.length === 1 ? '' : 's'} holding this up, in full:`,
+        ...detail.asks.map(renderSpineAsk),
+        '',
+        `Scope searched: ${detail.scope.join(' ⊃ ')} (your act was on ${detail.subject}).`,
+        'Get a ruling and cite it, or `proceed` past the ask and say why — either is a real ' +
+          'answer; acting as though it were already answered is not.',
+      ].join('\n');
+    }
+    case 'idempotency_conflict': {
+      const detail = body.detail as SpineIdempotencyConflictDetail;
+      return (
+        `${message}\n\nop_id ${detail.opId} already resolved to event ${detail.originalEvent}. ` +
+        'Read that event before retrying: either your write already landed, or you are about ' +
+        'to overwrite the meaning of somebody else’s.'
+      );
+    }
+    default:
+      return `${message} (${body.code})`;
+  }
+}
+
+/**
+ * Build a revision caption, defaulting its subject to the contract's.
+ *
+ * The value, `how` and `source` are never defaulted — those are the
+ * three fields that make a revision evidence rather than a number, and
+ * inventing any of them would be the system taking a photograph. The
+ * SUBJECT is different: it is bookkeeping the contract already knows,
+ * and making an agent restate it is how it gets restated wrongly.
+ */
+async function spineRevisionInput(
+  raw: unknown,
+  brokerClient: BrokerClient,
+  contract: string | undefined,
+): Promise<SpineRevisionInput | null> {
+  if (raw === null || typeof raw !== 'object') return null;
+  const rev = raw as Record<string, unknown>;
+  const value = typeof rev.value === 'string' ? rev.value : '';
+  const how = rev.how === 'observed' || rev.how === 'asserted' ? rev.how : null;
+  const source = typeof rev.source === 'string' ? rev.source : '';
+  if (!value || how === null || !source) return null;
+  let subject = typeof rev.subject === 'string' ? rev.subject : '';
+  if (!subject) {
+    if (contract === undefined) return null;
+    subject = (await brokerClient.spineContract(contract)).subject;
+  }
+  return { subject, value, how, source };
+}
+
+const SPINE_REVISION_HELP =
+  '`revision` must carry `value`, `how` ("observed" — you looked — or "asserted" — you named ' +
+  'it by hand) and `source` (who or what produced it). A bare value is not a revision: it is a ' +
+  'claim with nobody standing behind it.';
+
+/**
+ * The kind → principal-prose-field map `promote` synthesises through.
+ *
+ * ONE FIELD PER KIND, chosen as the one that carries the argument
+ * rather than the label: a post that turns out to be a ruling becomes
+ * its `reasoning`, not its `decision`, because the reasoning is what
+ * the member actually wrote and the decision is the one-line summary
+ * they still have to state. Two kinds are deliberately absent —
+ * promoting a discussion into a discussion is a no-op, and promoting
+ * one into a promotion is a record of a record.
+ */
+const SPINE_PROMOTION_TEXT_FIELD: Partial<Record<SpineEventKind, string>> = {
+  observation: 'output',
+  testimony: 'account',
+  specification: 'title',
+  amendment: 'changes',
+  attempt: 'summary',
+  criterion_verdict: 'evidence',
+  ruling: 'reasoning',
+  ask: 'question',
+  ask_action: 'reason',
+  proceeding: 'reason',
+  lifecycle: 'reason',
+  correction: 'correction',
+};
+
+/**
+ * Kinds whose body REQUIRES a contract, which the origin post can
+ * supply. Only the required ones: inheriting a contract onto a kind
+ * where it is optional would silently make the write state-changing and
+ * demand a precondition the caller had no reason to send.
+ */
+const SPINE_PROMOTION_INHERITS_CONTRACT: readonly SpineEventKind[] = [
+  'amendment',
+  'attempt',
+  'criterion_verdict',
+  'lifecycle',
+];
+
+/**
+ * The one cast in the surface, and it is deliberate.
+ *
+ * `AppendSpineEventRequest` is fourteen variants so that every call
+ * site inside the server is checked by the compiler. This call site is
+ * a tool handler assembling a body out of a JSON object an agent sent,
+ * so there is nothing for the compiler to check against — the check
+ * happens where it can: the SDK client parses the payload against the
+ * schema BEFORE sending, and `renderSpineRefusal` renders the issues.
+ */
+function appendSpine(
+  brokerClient: BrokerClient,
+  payload: Record<string, unknown>,
+): Promise<AppendSpineEventResponse> {
+  return brokerClient.appendSpineEvent(payload as unknown as AppendSpineEventRequest);
+}
+
+/** `op_id` is optional on the tool and required by the annex; fill it in when omitted. */
+function spineOpId(args: Record<string, unknown>): string {
+  return typeof args.op_id === 'string' && args.op_id.length > 0
+    ? args.op_id
+    : `op_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function spineString(args: Record<string, unknown>, key: string): string {
+  return typeof args[key] === 'string' ? (args[key] as string) : '';
+}
+
+function spineStateRev(args: Record<string, unknown>): number | undefined {
+  return typeof args.expected_state_rev === 'number' ? args.expected_state_rev : undefined;
+}
+
+function spineOptional(args: Record<string, unknown>, key: string): Record<string, string> {
+  const value = args[key];
+  return typeof value === 'string' && value.length > 0 ? { [key]: value } : {};
+}
+
+/** What a write reports back: the event, and where the contract now stands. */
+function renderAppendResult(result: AppendSpineEventResponse, what: string): CallToolResult {
+  const { event, contract } = result;
+  const replayed = result.replayed
+    ? ' (REPLAY — this op_id had already landed, so nothing was appended a second time)'
+    : '';
+  const where =
+    contract === null
+      ? ''
+      : `\ncontract ${contract.id} is now ${contract.state} at state_rev ${contract.stateRev}` +
+        ` — pass that as expected_state_rev on your next write to it.` +
+        (contract.stale && contract.head !== null
+          ? `\nSTALE: it is bound to ${contract.revision?.value ?? '(none)'} and the subject has ` +
+            `since been observed at ${contract.head.value} (${contract.head.source}, ` +
+            `${contract.head.at}).`
+          : '');
+  return textResult(`${what} as ${event.id} (#${event.seq})${replayed}.${where}`);
+}
+
+async function handleSpineTool(
+  name: string,
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+  instructions: InstructionsResponse,
+): Promise<CallToolResult> {
+  try {
+    return await dispatchSpineTool(name, args, brokerClient, instructions);
+  } catch (err) {
+    const rendered = renderSpineRefusal(err);
+    // Not a spine refusal — rethrow so the outer handler reports it
+    // rather than this one guessing at what it was.
+    if (rendered === null) throw err;
+    return errorResult(rendered);
+  }
+}
+
+async function dispatchSpineTool(
+  name: string,
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+  instructions: InstructionsResponse,
+): Promise<CallToolResult> {
+  switch (name) {
+    case 'orient':
+      return await handleOrient(brokerClient, instructions);
+    case 'annex_read':
+      return await handleAnnexRead(args, brokerClient);
+    case 'contract_author':
+      return await handleContractAuthor(args, brokerClient);
+    case 'contract_amend':
+      return await handleContractAmend(args, brokerClient);
+    case 'attempt_post':
+      return await handleAttemptPost(args, brokerClient);
+    case 'verdict_post':
+      return await handleVerdictPost(args, brokerClient);
+    case 'state_set':
+      return await handleStateSet(args, brokerClient);
+    case 'contract_complete':
+      return await handleContractComplete(args, brokerClient);
+    case 'ask_author':
+      return await handleAskAuthor(args, brokerClient);
+    case 'ruling_post':
+      return await handleRulingPost(args, brokerClient);
+    case 'proceed':
+      return await handleProceed(args, brokerClient);
+    case 'observe':
+      return await handleObserve(args, brokerClient);
+    case 'discuss':
+      return await handleDiscuss(args, brokerClient);
+    default:
+      return await handlePromote(args, brokerClient);
+  }
+}
+
+/**
+ * The recovery call, rendered.
+ *
+ * Everything the pack carries reaches the page. This is what a member
+ * reads when they have nothing else, so a renderer that summarised
+ * would be deciding on their behalf which of their obligations they
+ * still remember.
+ */
+async function handleOrient(
+  brokerClient: BrokerClient,
+  instructions: InstructionsResponse,
+): Promise<CallToolResult> {
+  const pack = await brokerClient.spineOrient();
+  const lines = [`orient for ${pack.member} — as of ${pack.at}, annex cursor ${pack.cursor}.`];
+  if (pack.contracts.length === 0) {
+    lines.push('', 'No contracts bind you right now. That is a real state, not an empty read.');
+  }
+  for (const c of pack.contracts) {
+    lines.push(
+      '',
+      `${c.contract} [${c.state}, state_rev ${c.stateRev}] ${c.title}`,
+      `  you are: ${c.bindings.join(' + ')}`,
+      `  subject: ${c.subject.id} (${c.subject.type}${c.subject.parent !== null ? `, inside ${c.subject.parent}` : ''})`,
+      c.revision === null
+        ? '  revision: none bound yet'
+        : `  revision: ${c.revision.value} (${c.revision.how}, from ${c.revision.source}, at ${c.revision.at})`,
+    );
+    if (c.stale && c.head !== null) {
+      lines.push(
+        `  STALE: the subject has since been observed at ${c.head.value} ` +
+          `(${c.head.source}, ${c.head.at}). Reported, not repaired — decide what it means.`,
+      );
+    }
+    lines.push('  criteria:');
+    for (const crit of c.criteria) {
+      const decision = crit.decision ?? 'no verdict yet';
+      const at =
+        crit.revision === null
+          ? ''
+          : ` at ${crit.revision.value}${crit.atBoundRevision ? '' : ' — NOT the revision this contract is bound to'}`;
+      lines.push(
+        `    ${crit.criterion}: ${decision}${at}` +
+          (crit.event !== null ? ` [${crit.event}]` : '') +
+          (crit.waivedBy !== null ? ` WAIVED by ruling ${crit.waivedBy}` : ''),
+        `        ${crit.text}`,
+      );
+    }
+    if (c.rulings.length > 0) {
+      lines.push('  rulings that bind this contract:');
+      for (const ruling of c.rulings) lines.push(renderSpineEvent(ruling));
+    }
+  }
+  if (pack.asksForMe.length > 0) {
+    lines.push('', `asks awaiting YOUR ruling (${pack.asksForMe.length}):`);
+    for (const ask of pack.asksForMe) lines.push(renderSpineAsk(ask));
+    lines.push('  Answer with `ruling_post`, or decline / redirect / defer.');
+  }
+  if (pack.myOpenAsks.length > 0) {
+    lines.push('', `your own open asks (${pack.myOpenAsks.length}) — these bind YOU:`);
+    for (const ask of pack.myOpenAsks) lines.push(renderSpineAsk(ask));
+    lines.push(
+      '  Until each resolves you cannot make state-changing acts on its subject without ' +
+        'citing a ruling or recording a `proceed`.',
+    );
+  }
+  lines.push(
+    '',
+    `Everything else since cursor ${pack.cursor}: \`annex_read since_seq=${pack.cursor}\`. ` +
+      `You are ${instructions.name}.`,
+  );
+  return textResult(lines.join('\n'));
+}
+
+async function handleAnnexRead(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+): Promise<CallToolResult> {
+  const page = await brokerClient.spineEvents({
+    ...(typeof args.since_seq === 'number' ? { since_seq: args.since_seq } : {}),
+    ...(typeof args.limit === 'number' ? { limit: args.limit } : {}),
+    ...(typeof args.kind === 'string' ? { kind: args.kind as SpineEventKind } : {}),
+    ...(typeof args.subject === 'string' ? { subject: args.subject } : {}),
+    ...(typeof args.contract === 'string' ? { contract: args.contract } : {}),
+    ...(typeof args.actor === 'string' ? { actor: args.actor } : {}),
+  });
+  if (page.events.length === 0) {
+    return textResult(
+      `no events matched. The annex head is at ${page.headSeq}, so this is "nothing here", ` +
+        'not "nothing exists".',
+    );
+  }
+  const tail =
+    page.nextCursor === null
+      ? `\n\nThis page reached the head (seq ${page.headSeq}). There is nothing after it yet.`
+      : `\n\nMore to read: \`annex_read since_seq=${page.nextCursor}\` (head is at ${page.headSeq}).`;
+  return textResult(
+    `${page.events.length} event(s), oldest first:\n${page.events.map(renderSpineEvent).join('\n')}${tail}`,
+  );
+}
+
+async function handleContractAuthor(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+): Promise<CallToolResult> {
+  const subject = spineString(args, 'subject');
+  const title = spineString(args, 'title');
+  const assignee = spineString(args, 'assignee');
+  if (!subject)
+    return errorResult(
+      'contract_author: `subject` is required — a contract is about a part of the world.',
+    );
+  if (!title) return errorResult('contract_author: `title` is required');
+  if (!assignee)
+    return errorResult('contract_author: `assignee` is required — somebody has to travel to it.');
+  const criteria = Array.isArray(args.criteria) ? (args.criteria as unknown[]) : [];
+  if (criteria.length === 0) {
+    return errorResult(
+      'contract_author: `criteria` is required and must not be empty. A contract with no ' +
+        'criteria cannot be verified, completed, or argued with — it is a wish.',
+    );
+  }
+  // Inline registration, per §4: member-referenced subjects are
+  // registered explicitly, at first use or inline here. Idempotent on
+  // an identical re-registration, refused on a conflicting one.
+  const subjectType = spineString(args, 'subject_type');
+  const subjectParent = spineString(args, 'subject_parent');
+  if (subjectType) {
+    await brokerClient.registerSpineSubject({
+      id: subject,
+      type: subjectType as SpineSubjectType,
+      ...(subjectParent ? { parent: subjectParent } : {}),
+    });
+  }
+  const result = await appendSpine(brokerClient, {
+    kind: 'specification',
+    subject,
+    opId: spineOpId(args),
+    body: {
+      title,
+      criteria,
+      assignee,
+      ...spineOptional(args, 'verifier'),
+      ...spineOptional(args, 'authority'),
+      ...(Array.isArray(args.constraints) ? { constraints: args.constraints } : {}),
+    },
+  });
+  const verifier = spineString(args, 'verifier');
+  return textResult(
+    `authored contract ${result.event.id} at state_rev 1 on ${subject}: ${title}\n` +
+      `criteria: ${(criteria as { id: string }[]).map((c) => c.id).join(', ')}\n` +
+      `assignee ${assignee}` +
+      (verifier ? `, verifier ${verifier}` : ', no verifier') +
+      '\n' +
+      (verifier
+        ? `Completion will need verdicts from ${verifier} covering every criterion at one ` +
+          'revision.'
+        : 'With no verifier named, completion’s result will stand alone and the record will ' +
+          'say so.'),
+  );
+}
+
+async function handleContractAmend(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+): Promise<CallToolResult> {
+  const contract = spineString(args, 'contract');
+  if (!contract) return errorResult('contract_amend: `contract` is required');
+  const changes = spineString(args, 'changes');
+  const reason = spineString(args, 'reason');
+  if (!changes) return errorResult('contract_amend: `changes` is required');
+  if (!reason) return errorResult('contract_amend: `reason` is required');
+  if (args.disposition !== 'correction' && args.disposition !== 'scope_change') {
+    return errorResult(
+      'contract_amend: `disposition` must be "correction" (retroactive — the prior text was ' +
+        'never validly binding) or "scope_change" (forward-only — work already underway ' +
+        'finishes under the prior text). If you cannot say which, you have not finished ' +
+        'thinking about the amendment.',
+    );
+  }
+  const stateRev = spineStateRev(args);
+  if (stateRev === undefined) {
+    return errorResult('contract_amend: `expected_state_rev` is required — read it from `orient`.');
+  }
+  const result = await appendSpine(brokerClient, {
+    kind: 'amendment',
+    opId: spineOpId(args),
+    expectedStateRev: stateRev,
+    ...(Array.isArray(args.cites) ? { cites: args.cites } : {}),
+    body: {
+      contract,
+      changes,
+      reason,
+      disposition: args.disposition,
+      ...spineOptional(args, 'title'),
+      ...(Array.isArray(args.criteria) ? { criteria: args.criteria } : {}),
+      ...(Array.isArray(args.constraints) ? { constraints: args.constraints } : {}),
+      ...spineOptional(args, 'disclosure'),
+    },
+  });
+  return renderAppendResult(
+    result,
+    `amended ${contract} to version ${result.contract?.version ?? '?'} (${String(args.disposition)})`,
+  );
+}
+
+async function handleAttemptPost(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+): Promise<CallToolResult> {
+  const contract = spineString(args, 'contract');
+  const summary = spineString(args, 'summary');
+  if (!contract) return errorResult('attempt_post: `contract` is required');
+  if (!summary) return errorResult('attempt_post: `summary` is required');
+  const stateRev = spineStateRev(args);
+  if (stateRev === undefined) {
+    return errorResult('attempt_post: `expected_state_rev` is required — read it from `orient`.');
+  }
+  const revision = await spineRevisionInput(args.revision, brokerClient, contract);
+  if (revision === null) {
+    return errorResult(
+      `attempt_post: a complete \`revision\` is required — an attempt binds the contract to the ` +
+        `point in the world you reached. ${SPINE_REVISION_HELP}`,
+    );
+  }
+  const result = await appendSpine(brokerClient, {
+    kind: 'attempt',
+    opId: spineOpId(args),
+    expectedStateRev: stateRev,
+    revision,
+    body: { contract, summary },
+  });
+  return renderAppendResult(result, `recorded an attempt at ${revision.value}`);
+}
+
+async function handleVerdictPost(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+): Promise<CallToolResult> {
+  const contract = spineString(args, 'contract');
+  const criterion = spineString(args, 'criterion');
+  const evidence = spineString(args, 'evidence');
+  if (!contract) return errorResult('verdict_post: `contract` is required');
+  if (!criterion) return errorResult('verdict_post: `criterion` is required');
+  if (args.decision !== 'met' && args.decision !== 'unmet' && args.decision !== 'cannot_verify') {
+    return errorResult(
+      'verdict_post: `decision` must be "met", "unmet" or "cannot_verify". `cannot_verify` is ' +
+        'a real answer, not a failure to answer — use it rather than guessing.',
+    );
+  }
+  if (!evidence) return errorResult('verdict_post: `evidence` is required — what did you look at?');
+  const why = spineString(args, 'why');
+  if (args.decision === 'cannot_verify' && !why) {
+    return errorResult(
+      'verdict_post: `why` is required on `cannot_verify`. A verdict that cannot say why it ' +
+        'could not be reached is indistinguishable from silence, and the three ways out of it ' +
+        '— amend the criterion, re-scope the verifier, waive it by ruling — each need a ' +
+        'different one.',
+    );
+  }
+  const stateRev = spineStateRev(args);
+  if (stateRev === undefined) {
+    return errorResult('verdict_post: `expected_state_rev` is required — read it from `orient`.');
+  }
+  const revision = await spineRevisionInput(args.revision, brokerClient, contract);
+  if (revision === null) {
+    return errorResult(
+      `verdict_post: a complete \`revision\` is required — a verdict is true OF a revision or ` +
+        `it is true of nothing. ${SPINE_REVISION_HELP}`,
+    );
+  }
+  const result = await appendSpine(brokerClient, {
+    kind: 'criterion_verdict',
+    opId: spineOpId(args),
+    expectedStateRev: stateRev,
+    revision,
+    body: {
+      contract,
+      criterion,
+      decision: args.decision,
+      evidence,
+      ...(why ? { why } : {}),
+    },
+  });
+  return renderAppendResult(
+    result,
+    `recorded ${String(args.decision)} on '${criterion}' at ${revision.value}`,
+  );
+}
+
+async function handleStateSet(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+): Promise<CallToolResult> {
+  const contract = spineString(args, 'contract');
+  const state = spineString(args, 'state');
+  if (!contract) return errorResult('state_set: `contract` is required');
+  if (state === 'done') {
+    return errorResult(
+      'state_set: completion goes through `contract_complete`, which takes the result, the ' +
+        'revision and the verdicts it stands on. That is where the evidence is checked; there ' +
+        'is deliberately no second route to done that skips it.',
+    );
+  }
+  const legal = ['active', 'waiting_on', 'waiting_for', 'parked', 'cancelled', 'superseded'];
+  if (!legal.includes(state)) {
+    return errorResult(`state_set: \`state\` must be one of: ${legal.join(', ')} (got '${state}')`);
+  }
+  const stateRev = spineStateRev(args);
+  if (stateRev === undefined) {
+    return errorResult('state_set: `expected_state_rev` is required — read it from `orient`.');
+  }
+  const result = await appendSpine(brokerClient, {
+    kind: 'lifecycle',
+    opId: spineOpId(args),
+    expectedStateRev: stateRev,
+    body: {
+      contract,
+      state,
+      ...spineOptional(args, 'reason'),
+      ...spineOptional(args, 'member'),
+      ...spineOptional(args, 'event'),
+      ...spineOptional(args, 'check'),
+      ...(typeof args.preempted_by === 'string' && args.preempted_by.length > 0
+        ? { preemptedBy: args.preempted_by }
+        : {}),
+      ...spineOptional(args, 'successor'),
+    },
+  });
+  return renderAppendResult(result, `moved ${contract} to ${state}`);
+}
+
+async function handleContractComplete(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+): Promise<CallToolResult> {
+  const contract = spineString(args, 'contract');
+  const result_ = spineString(args, 'result');
+  if (!contract) return errorResult('contract_complete: `contract` is required');
+  if (!result_) {
+    return errorResult(
+      'contract_complete: `result` is required — say what was delivered and whether it ' +
+        'satisfies the contract as written.',
+    );
+  }
+  const stateRev = spineStateRev(args);
+  if (stateRev === undefined) {
+    return errorResult(
+      'contract_complete: `expected_state_rev` is required — read it from `orient`.',
+    );
+  }
+  const revision = await spineRevisionInput(args.revision, brokerClient, contract);
+  if (revision === null) {
+    return errorResult(
+      `contract_complete: a complete \`revision\` is required — completion names the point in ` +
+        `the world the verdicts were reached at. ${SPINE_REVISION_HELP}`,
+    );
+  }
+  const cites = Array.isArray(args.cites) ? (args.cites as string[]) : [];
+  const appended = await appendSpine(brokerClient, {
+    kind: 'lifecycle',
+    opId: spineOpId(args),
+    expectedStateRev: stateRev,
+    revision,
+    cites,
+    body: { contract, state: 'done', result: result_ },
+  });
+  return renderAppendResult(appended, `completed ${contract} at ${revision.value}`);
+}
+
+async function handleAskAuthor(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+): Promise<CallToolResult> {
+  const authority = spineString(args, 'authority');
+  const question = spineString(args, 'question');
+  const context = spineString(args, 'context');
+  const unblocks = spineString(args, 'unblocks');
+  if (!authority) return errorResult('ask_author: `authority` is required — whose call is this?');
+  if (!question) return errorResult('ask_author: `question` is required');
+  if (!context) {
+    return errorResult(
+      'ask_author: `context` is required — what does the authority need in order to decide?',
+    );
+  }
+  if (!unblocks) {
+    return errorResult(
+      'ask_author: `unblocks` is required — an ask nobody can price is an ask nobody answers.',
+    );
+  }
+  const contract = spineString(args, 'contract');
+  const stateRev = spineStateRev(args);
+  if (contract && stateRev === undefined) {
+    return errorResult(
+      'ask_author: an ask naming a `contract` is a state-changing write on it and requires ' +
+        '`expected_state_rev`.',
+    );
+  }
+  const result = await appendSpine(brokerClient, {
+    kind: 'ask',
+    opId: spineOpId(args),
+    ...spineOptional(args, 'subject'),
+    ...(contract ? { expectedStateRev: stateRev } : {}),
+    body: {
+      authority,
+      question,
+      context,
+      unblocks,
+      ...(contract ? { contract } : {}),
+      ...spineOptional(args, 'trigger'),
+      ...spineOptional(args, 'check'),
+    },
+  });
+  return textResult(
+    `asked ${authority}: ${result.event.id} (#${result.event.seq}).\n` +
+      'It is in their queue and stays there until they rule, decline, redirect or defer it.\n' +
+      'THIS NOW BINDS YOU: until it resolves, your state-changing acts on ' +
+      `${spineString(args, 'subject') || contract || 'its scope'} are refused unless you cite a ` +
+      'ruling on it or record a `proceed` past it.',
+  );
+}
+
+async function handleRulingPost(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+): Promise<CallToolResult> {
+  const ask = spineString(args, 'ask');
+  const decision = spineString(args, 'decision');
+  const reasoning = spineString(args, 'reasoning');
+  if (!ask) return errorResult('ruling_post: `ask` is required (see `orient` → asks awaiting you)');
+  if (!decision) return errorResult('ruling_post: `decision` is required');
+  if (!reasoning) {
+    return errorResult(
+      'ruling_post: `reasoning` is required — it is what a member reads in six weeks instead ' +
+        'of this conversation.',
+    );
+  }
+  const contract = spineString(args, 'contract');
+  const stateRev = spineStateRev(args);
+  if (contract && stateRev === undefined) {
+    return errorResult(
+      'ruling_post: a ruling naming a `contract` is a state-changing write on it and requires ' +
+        '`expected_state_rev`.',
+    );
+  }
+  const result = await appendSpine(brokerClient, {
+    kind: 'ruling',
+    opId: spineOpId(args),
+    ...(Array.isArray(args.cites) ? { cites: args.cites } : {}),
+    ...(contract ? { expectedStateRev: stateRev } : {}),
+    body: { ask, decision, reasoning, ...(contract ? { contract } : {}) },
+  });
+  return textResult(
+    `ruled on ${ask} as ${result.event.id} (#${result.event.seq}). The ask is resolved and the ` +
+      'asker is released; they cite this ruling when they act on it.',
+  );
+}
+
+async function handleProceed(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+): Promise<CallToolResult> {
+  const ask = spineString(args, 'ask');
+  const subject = spineString(args, 'subject');
+  const reason = spineString(args, 'reason');
+  if (!ask) return errorResult('proceed: `ask` is required — which ask are you proceeding past?');
+  if (!subject) return errorResult('proceed: `subject` is required');
+  if (!reason) {
+    return errorResult(
+      'proceed: `reason` is required — it is what a reader gets later instead of an answer ' +
+        'nobody gave.',
+    );
+  }
+  const result = await appendSpine(brokerClient, {
+    kind: 'proceeding',
+    opId: spineOpId(args),
+    subject,
+    body: { ask, reason },
+  });
+  return textResult(
+    `recorded a proceeding past ${ask} as ${result.event.id} (#${result.event.seq}). ` +
+      `Your state-changing acts on ${subject} are covered until that ask resolves. This is on ` +
+      'the record as your decision, not as an answer you were given.',
+  );
+}
+
+async function handleObserve(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+): Promise<CallToolResult> {
+  const subject = spineString(args, 'subject');
+  const what = spineString(args, 'what');
+  const output = spineString(args, 'output');
+  if (!subject) return errorResult('observe: `subject` is required — what part of the world?');
+  if (!what) return errorResult('observe: `what` is required — what did you do to see it?');
+  if (!output) return errorResult('observe: `output` is required — what did you see?');
+  const revision =
+    args.revision === undefined
+      ? null
+      : await spineRevisionInput(args.revision, brokerClient, undefined);
+  if (args.revision !== undefined && revision === null) {
+    return errorResult(`observe: ${SPINE_REVISION_HELP}`);
+  }
+  const result = await appendSpine(brokerClient, {
+    kind: 'observation',
+    subject,
+    ...(revision !== null ? { revision } : {}),
+    body: { what, output },
+  });
+  return textResult(
+    `recorded an observation of ${subject} as ${result.event.id} (#${result.event.seq})` +
+      (revision !== null && revision.how === 'observed'
+        ? `. It moves ${subject}'s head to ${revision.value}, so contracts bound to an earlier ` +
+          'revision now render stale — reported, never repaired.'
+        : '.'),
+  );
+}
+
+async function handleDiscuss(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+): Promise<CallToolResult> {
+  const body = spineString(args, 'body');
+  if (!body) return errorResult('discuss: `body` is required');
+  const result = await appendSpine(brokerClient, {
+    kind: 'discussion',
+    ...spineOptional(args, 'subject'),
+    body: { body, ...spineOptional(args, 'contract') },
+  });
+  return textResult(
+    `posted ${result.event.id} (#${result.event.seq}). Ambient: no counter moved, nothing was ` +
+      'gated. If this turns out to have been a decision or an observation, `promote` it rather ' +
+      'than retyping it.',
+  );
+}
+
+async function handlePromote(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+): Promise<CallToolResult> {
+  const eventId = spineString(args, 'event');
+  const as = spineString(args, 'as') as SpineEventKind;
+  if (!eventId) return errorResult('promote: `event` is required — the discussion post to promote');
+  const textField = SPINE_PROMOTION_TEXT_FIELD[as];
+  if (textField === undefined) {
+    return errorResult(
+      `promote: cannot promote into '${as || '(nothing)'}'. Promotion turns a discussion post ` +
+        'into a typed event, so the target must be one of: ' +
+        `${Object.keys(SPINE_PROMOTION_TEXT_FIELD).join(', ')}.`,
+    );
+  }
+  const origin = await brokerClient.spineEvent(eventId);
+  if (origin.kind !== 'discussion') {
+    return errorResult(
+      `promote: ${origin.id} is a ${origin.kind}, not a discussion. Promotion turns CHATTER ` +
+        'into a typed event; a typed event is already what it is.',
+    );
+  }
+  const post = origin.body as { body: string; contract?: string };
+  const supplied =
+    args.fields !== null && typeof args.fields === 'object'
+      ? (args.fields as Record<string, unknown>)
+      : {};
+  const inheritsContract =
+    SPINE_PROMOTION_INHERITS_CONTRACT.includes(as) &&
+    supplied.contract === undefined &&
+    origin.contract !== null;
+  const body = {
+    // The post's own text carries into the field that holds the
+    // argument, and anything the caller states explicitly wins.
+    [textField]: post.body,
+    ...(inheritsContract ? { contract: origin.contract } : {}),
+    ...supplied,
+  };
+  const extraCites = Array.isArray(args.cites) ? (args.cites as string[]) : [];
+  const revision =
+    args.revision === undefined
+      ? null
+      : await spineRevisionInput(
+          args.revision,
+          brokerClient,
+          typeof body.contract === 'string' ? body.contract : undefined,
+        );
+  const stateRev = spineStateRev(args);
+  const subject = spineString(args, 'subject') || origin.subject;
+  const result = await appendSpine(brokerClient, {
+    kind: as,
+    // THE ORIGIN, CITED, ALWAYS AND FIRST. This is the whole point of
+    // promotion over retyping: the record shows where the decision
+    // actually happened instead of presenting it as having arrived
+    // fully formed.
+    cites: [origin.id, ...extraCites],
+    ...(subject !== null && subject !== '' ? { subject } : {}),
+    ...(revision !== null ? { revision } : {}),
+    ...(stateRev !== undefined ? { expectedStateRev: stateRev } : {}),
+    ...(SPINE_EVENT_CLASSES[as] === 'authoritative' ? { opId: spineOpId(args) } : {}),
+    body,
+  });
+  return renderAppendResult(
+    result,
+    `promoted ${origin.id} (discussion by ${origin.actor}) into a ${as}, citing the post as its origin`,
   );
 }
 

@@ -145,9 +145,14 @@ describeIfBuilt('csuite claude end-to-end', () => {
     const transcript = JSON.parse(readFileSync(transcriptPath, 'utf8'));
     expect(transcript.initialized).toBe(true);
     expect(transcript.toolNames).toEqual([
+      'annex_read',
+      'ask_author',
+      'attempt_post',
       'broadcast',
       'channels_list',
       'channels_post',
+      'contract_complete',
+      'discuss',
       'fs_ls',
       'fs_mkdir',
       'fs_mv',
@@ -170,16 +175,23 @@ describeIfBuilt('csuite claude end-to-end', () => {
       'objectives_update',
       'objectives_view',
       'objectives_watchers',
+      'observe',
+      'orient',
       'presets_delete',
       'presets_list',
       'presets_set',
+      'proceed',
       'process_document_get',
       'process_document_history',
+      'promote',
       'recent',
       'roster',
+      'ruling_post',
       'send',
+      'state_set',
       'team_get',
       'team_update',
+      'verdict_post',
     ]);
   }, 30_000);
 });
