@@ -221,6 +221,7 @@ describeIfBuilt('runner + bridge end-to-end', () => {
       'ruling_post',
       'send',
       'state_set',
+      'subscribe',
       'team_get',
       'team_update',
       'verdict_post',

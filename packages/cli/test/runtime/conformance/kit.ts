@@ -48,6 +48,7 @@ import {
   FAKE_BROKER_NAME,
   type FakeBroker,
   fakeBrokerActivity,
+  fakeBrokerSpine,
   startFakeBroker,
 } from '../fake-broker.js';
 
@@ -112,6 +113,7 @@ export function describeRunnerConformance(subject: ConformanceSubject): void {
       sandbox = mkdtempSync(join(tmpdir(), `csuite-conformance-${subject.id}-`));
       logs = [];
       fakeBrokerActivity.length = 0;
+      fakeBrokerSpine.signals.length = 0;
     });
 
     afterEach(() => {
@@ -184,6 +186,42 @@ export function describeRunnerConformance(subject: ConformanceSubject): void {
       expect(mine.indexOf(start as (typeof mine)[number])).toBeLessThan(
         mine.indexOf(end as (typeof mine)[number]),
       );
+    }, 30_000);
+
+    it('S4b: reports the session bracket and its declared ceiling to the curator', async () => {
+      // TRACE OFF, deliberately. The activity bracket in S4 is capture,
+      // and capture is optional; the curator's bracket is floor, and a
+      // runner started with `--no-trace` must still report it. Running
+      // this with trace on would leave the two indistinguishable.
+      const exitCode = await run({ trace: false });
+      expect(exitCode).toBe(0);
+
+      const mine = fakeBrokerSpine.signals.filter((s) => s.member === FAKE_BROKER_NAME);
+      const start = mine.find((s) => s.body.signal === 'session_start');
+      const end = mine.find((s) => s.body.signal === 'session_end');
+      expect(start, 'no session_start reported to the curator').toBeDefined();
+      expect(end, 'no session_end reported to the curator').toBeDefined();
+      expect(mine.indexOf(start as (typeof mine)[number])).toBeLessThan(
+        mine.indexOf(end as (typeof mine)[number]),
+      );
+
+      // The DECLARED CEILING, in full, both fields present. A runner
+      // that forwarded `undefined` here would satisfy any assertion
+      // that only checked the signal arrived — and the roster's whole
+      // value is that a declaration is believed.
+      const capabilities = start?.body.capabilities as
+        | { dumpSignal: unknown; tokenUsage: unknown }
+        | undefined;
+      expect(capabilities, 'session_start carried no declared capabilities').toBeDefined();
+      expect(typeof capabilities?.dumpSignal).toBe('boolean');
+      expect(typeof capabilities?.tokenUsage).toBe('boolean');
+
+      // The BRIDGE bracket is deliberately not asserted here. It is a
+      // property of a run in which an agent actually attached a
+      // bridge, not of the runner, and the codex fake agent does not —
+      // so requiring it would make this conformance point a statement
+      // about the fixture. `runner-spine-recovery.test.ts` drives a
+      // real bridge and holds that half.
     }, 30_000);
 
     it('S5: logs a machine-readable run summary on every exit path', async () => {

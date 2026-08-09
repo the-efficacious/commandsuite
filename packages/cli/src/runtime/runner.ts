@@ -55,7 +55,9 @@ import type {
   InstructionsResponse,
   Message,
   Objective,
+  ReportSpineSignalRequest,
   ResolvedToolSource,
+  SpineFloorSignal,
 } from 'csuite-sdk/types';
 import { CLI_VERSION } from '../version.js';
 import { startActivityReporter } from './busy-reporter.js';
@@ -71,7 +73,7 @@ import {
 } from './ipc.js';
 import { createObjectivesTracker } from './objectives-tracker.js';
 import { createPresence, type Presence } from './presence.js';
-import { defineTools, formatAgentTimestamp, handleToolCall } from './tools.js';
+import { defineTools, formatAgentTimestamp, handleToolCall, renderOrientPack } from './tools.js';
 import { type CaptureHost, startCaptureHost } from './trace/host.js';
 
 export class RunnerStartupError extends Error {
@@ -212,6 +214,21 @@ export interface RunnerHandle {
   /** Presence signal driven by the forwarder. */
   readonly presence: Presence;
   /**
+   * Report a floor signal for this member. Fire-and-forget by
+   * construction — it returns void, because a caller who could await
+   * it would eventually be tempted to branch on it, and nothing may
+   * branch on a signal.
+   *
+   * The runner reports the bridge bracket itself; the session bracket
+   * is reported by the agent-session driver, which is where the run
+   * actually begins and ends and where the adapter's declared
+   * capabilities are in scope.
+   */
+  reportSpineSignal(
+    signal: SpineFloorSignal,
+    extras?: Omit<ReportSpineSignalRequest, 'signal'>,
+  ): void;
+  /**
    * Graceful shutdown. Aborts the SSE forwarder, closes the active
    * bridge connection (if any), closes the IPC server, and unlinks
    * the socket. Idempotent — calling twice is safe. Awaiting on
@@ -294,6 +311,56 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
   const REBRIEF_COOLDOWN_MS = 10_000;
   let lastRebriefMs = 0;
   let sendRebrief: (reason: 'session-start' | 'context-compaction') => void = () => {};
+
+  // ── Spine recovery ───────────────────────────────────────────────
+  // ADDITIVE, and deliberately parallel to the re-brief above rather
+  // than folded into it. The old path composes from the objectives
+  // snapshot and skips an empty plate; this one calls `orient` and
+  // injects whatever the server composed, including the header and
+  // cursor a member with an empty plate is owed. Both fire on the same
+  // two triggers, independently, until the cut-over deletes the first.
+  //
+  // Its cooldown is its own for the same reason: sharing one would let
+  // a re-brief suppress a recovery, and recovery is the guarantee.
+  const SPINE_RECOVERY_COOLDOWN_MS = 10_000;
+  let lastSpineRecoveryMs = 0;
+  let spineAvailable = true;
+  let sendSpineRecovery: (reason: 'session-start' | 'context-compaction') => void = () => {};
+
+  /**
+   * Report a floor signal, and never let it matter.
+   *
+   * Fire-and-forget, failures logged and swallowed, and a broker with
+   * no spine turns the whole thing off after one 404. That posture is
+   * not defensiveness — it is the floor rule stated in code. A signal
+   * is an accelerant; a runner that cannot report one loses latency and
+   * nothing else, so an error here must never reach the session.
+   */
+  const reportSpineSignal = (
+    signal: SpineFloorSignal,
+    extras: Omit<ReportSpineSignalRequest, 'signal'> = {},
+  ): void => {
+    if (!spineAvailable) return;
+    void brokerClient
+      .reportSpineSignal(instructions.name, { signal, ...extras })
+      .then((result) => {
+        log('runner: spine signal reported', {
+          signal,
+          leasesInvalidated: result.leasesInvalidated,
+        });
+      })
+      .catch((err: unknown) => {
+        if (err instanceof ClientError && err.status === 404) {
+          spineAvailable = false;
+          log('runner: broker has no spine signals endpoint — not reporting again');
+          return;
+        }
+        log('runner: spine signal report failed', {
+          signal,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+  };
 
   // At most one active bridge connection at a time. When a second
   // bridge connects, the older one gets dropped (`displace-old`,
@@ -406,6 +473,12 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
           // are already covered by the tools/list attach trigger.
           if (source === 'compact' || source === 'clear') {
             sendRebrief('context-compaction');
+            // The declared dump signal, and the spine's own recovery.
+            // The report shrinks the curator's reactive window; the
+            // recovery is what actually puts the member back on
+            // course, and it does not wait for the report to land.
+            reportSpineSignal('dump_declared', { source });
+            sendSpineRecovery('context-compaction');
           }
         },
       });
@@ -433,6 +506,11 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
 
   const ipcServer: NetServer = createNetServer((socket) => {
     log('runner: bridge connecting');
+    // Bridge lifecycle reached the server for the first time here.
+    // Until now connect and disconnect were runner-local log lines,
+    // which meant the floor's own "session lifecycle" signal had no
+    // wire at all.
+    reportSpineSignal('bridge_connect');
 
     if (activeBridge !== null) {
       if (secondBridgePolicy === 'reject-new') {
@@ -463,13 +541,17 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
         // setImmediate lets the response frame flush first.
         if (frame.method === 'tools/list' && !rebriefedThisConnection) {
           rebriefedThisConnection = true;
-          setImmediate(() => sendRebrief('session-start'));
+          setImmediate(() => {
+            sendRebrief('session-start');
+            sendSpineRecovery('session-start');
+          });
         }
         return response;
       },
       onClose: () => {
         if (activeBridge === conn) activeBridge = null;
         log('runner: bridge disconnected');
+        reportSpineSignal('bridge_disconnect');
       },
       log,
     });
@@ -605,6 +687,63 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
           error: err instanceof Error ? err.message : String(err),
         });
       });
+  };
+
+  /**
+   * The Guaranteed Pack, injected.
+   *
+   * The runner COMPOSES NOTHING. It calls `orient` and formats what
+   * comes back with `renderOrientPack` — the same function the `orient`
+   * tool uses, so a member recovering after a compaction reads exactly
+   * what they would have read had they called the tool themselves.
+   * Recovery that differs by which door you came through is not one
+   * guarantee, it is two.
+   *
+   * The call itself is what records the lease and advances the receipt
+   * server-side, which is why this is a real HTTP read rather than a
+   * cached snapshot: the accounting is a property of the read.
+   *
+   * And there is no empty-plate skip. A member with nothing on their
+   * plate gets the header and the cursor, because "you are bound to
+   * nothing right now" is a real answer and the alternative — silence —
+   * is indistinguishable from a broken runner.
+   */
+  sendSpineRecovery = (reason) => {
+    if (!spineAvailable) return;
+    const now = Date.now();
+    if (now - lastSpineRecoveryMs < SPINE_RECOVERY_COOLDOWN_MS) return;
+    lastSpineRecoveryMs = now;
+    void (async () => {
+      const pack = await brokerClient.spineOrient();
+      const content = renderOrientPack(pack, instructions.name);
+      log('runner: sending spine recovery', {
+        reason,
+        contracts: pack.contracts.length,
+        cursor: pack.cursor,
+        bytes: content.length,
+      });
+      await sink.deliver({
+        content,
+        meta: {
+          kind: 'spine_recovery',
+          from: 'csuite',
+          reason,
+          level: 'info',
+          ts: formatAgentTimestamp(now),
+          ts_ms: String(now),
+        },
+      });
+    })().catch((err: unknown) => {
+      if (err instanceof ClientError && err.status === 404) {
+        spineAvailable = false;
+        log('runner: broker has no spine — skipping spine recovery from now on');
+        return;
+      }
+      log('runner: spine recovery failed', {
+        reason,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
   };
 
   // External-tools refresher: a `tool_source` channel event means the
@@ -743,6 +882,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
 
   return {
     socketPath,
+    reportSpineSignal,
     // A getter, not a snapshot: `refreshInstructions` reassigns the
     // closure variable and every consumer — adapter respawns, the MCP
     // dispatch, the re-brief composer — must see the current packet.

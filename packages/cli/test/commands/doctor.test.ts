@@ -115,6 +115,9 @@ const FAKE_META: AgentAdapterMeta = {
   signals: 'teardown',
   testedVersions: null,
   versionArgs: null,
+  // The floor: a runner that can report nothing about its own context
+  // lifecycle. Every spine guarantee still holds for it.
+  spineSignals: { dumpSignal: false, tokenUsage: false },
 };
 
 function fakeAdapter(doctor?: () => Promise<AgentDoctorCheck[]>): AgentAdapter {

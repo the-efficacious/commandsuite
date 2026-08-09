@@ -33,6 +33,7 @@
  * docs/runners/conformance.mdx for the written standard.
  */
 
+import type { SpineRunnerCapabilities } from 'csuite-sdk/types';
 import type { Presence } from '../presence.js';
 import type { RunnerHandle, RunnerOptions } from '../runner.js';
 
@@ -116,6 +117,26 @@ export interface AgentAdapterMeta {
    * agents with no stable version flag.
    */
   readonly versionArgs: readonly string[] | null;
+  /**
+   * What this runner can tell the SERVER about the member's context
+   * lifecycle — the spine's ceiling, declared once per session bracket
+   * and forwarded to the curator.
+   *
+   * Separate from `captureTier`, and the distinction is the point.
+   * `captureTier` is about what this runner reveals of the agent's
+   * CONTENT, for humans reading traces. This is about what it can
+   * report of the agent's CONTEXT LIFECYCLE, for the curator's
+   * scheduling. A tier-3 runner with no compaction hook and a tier-0
+   * runner with one are both real, and collapsing them into one number
+   * would make the curator's ceiling a function of the trace layer's.
+   *
+   * Nothing correctness-bearing may read this — a runner declaring
+   * `{dumpSignal: false, tokenUsage: false}` gets every guarantee the
+   * spine makes, later. It exists so an operator can answer "whose
+   * re-orientation is accelerated" without inferring it from the
+   * runner id.
+   */
+  readonly spineSignals: SpineRunnerCapabilities;
 }
 
 /**

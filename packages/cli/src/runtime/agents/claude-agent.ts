@@ -77,6 +77,14 @@ export const CLAUDE_META: AgentAdapterMeta = {
   // by CI against real SDK releases.
   testedVersions: null,
   versionArgs: ['--version'],
+  // Claude Code declares a REAL dump signal: the SessionStart hook
+  // fires with `source: compact | clear`, which is the agent telling
+  // us its own prior context is gone rather than us inferring it. Token
+  // counts arrive as operational OTEL metrics with no declared context
+  // window to compare against, so `tokenUsage` is false — the honest
+  // answer, and reporting it true would put a capability in the roster
+  // that nothing can act on.
+  spineSignals: { dumpSignal: true, tokenUsage: false },
 };
 
 export interface ClaudeAdapterOptions {

@@ -76,6 +76,7 @@ import type {
   NotificationProfileSummary,
   NotificationTarget,
   ObjectiveStatus,
+  OrientPack,
   ResolvedToolSource,
   SecretSummary,
   SpineAsk,
@@ -2383,6 +2384,34 @@ function buildSpineTools(instructions: InstructionsResponse): Tool[] {
         required: ['event', 'as'],
       },
     },
+    {
+      name: 'subscribe',
+      // The reader-side control #155 finding 1 asked for. Its
+      // description leads with the DEFAULT, because the failure this
+      // exists to fix was members drowning in fanout they never chose,
+      // and a member who does not know silence is the default will
+      // assume the noise is unavoidable.
+      description:
+        'Choose how much a contract tells you. Levels: `all` (every authoritative event on ' +
+        'it), `lifecycle` (state changes only), `none` (silence). **The default is already ' +
+        'quiet** — you hear nothing about a contract unless you authored it, in which case ' +
+        'you hear its lifecycle. Anything that names you personally — an ask to you, a ' +
+        'verdict on your contract, a ruling on your ask — reaches you regardless of every ' +
+        'level here, so turning a contract to `none` never silences work that is actually ' +
+        'yours. Use it to follow something you are not bound to, or to stop hearing about ' +
+        'one you are done with. Deltas only ever carry an id, a title and what changed.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          contract: { type: 'string', description: 'The contract id (from `orient`).' },
+          level: {
+            type: 'string',
+            description: 'all | lifecycle | none.',
+          },
+        },
+        required: ['contract', 'level'],
+      },
+    },
   ];
 
   // The gate, and its wording follows `process_document_write`: the
@@ -2815,6 +2844,7 @@ export async function handleToolCall(
       case 'observe':
       case 'discuss':
       case 'promote':
+      case 'subscribe':
         return await handleSpineTool(name, args, brokerClient, instructions);
       case 'objectives_amend':
         return await handleObjectivesAmend(args, brokerClient);
@@ -3744,6 +3774,8 @@ async function dispatchSpineTool(
       return await handleObserve(args, brokerClient);
     case 'discuss':
       return await handleDiscuss(args, brokerClient);
+    case 'subscribe':
+      return await handleSubscribe(args, brokerClient);
     default:
       return await handlePromote(args, brokerClient);
   }
@@ -3756,12 +3788,15 @@ async function dispatchSpineTool(
  * reads when they have nothing else, so a renderer that summarised
  * would be deciding on their behalf which of their obligations they
  * still remember.
+ *
+ * EXPORTED, and composing NOTHING. The runner injects this same string
+ * on its recovery triggers (fresh bridge, declared dump), and it must
+ * be the same string the tool produces or a member's recovery would
+ * depend on which door they came through. Everything in it comes off
+ * the server's pack verbatim; the only thing this function decides is
+ * where the line breaks go.
  */
-async function handleOrient(
-  brokerClient: BrokerClient,
-  instructions: InstructionsResponse,
-): Promise<CallToolResult> {
-  const pack = await brokerClient.spineOrient();
+export function renderOrientPack(pack: OrientPack, memberName: string): string {
   const lines = [`orient for ${pack.member} — as of ${pack.at}, annex cursor ${pack.cursor}.`];
   if (pack.contracts.length === 0) {
     lines.push('', 'No contracts bind you right now. That is a real state, not an empty read.');
@@ -3817,9 +3852,16 @@ async function handleOrient(
   lines.push(
     '',
     `Everything else since cursor ${pack.cursor}: \`annex_read since_seq=${pack.cursor}\`. ` +
-      `You are ${instructions.name}.`,
+      `You are ${memberName}.`,
   );
-  return textResult(lines.join('\n'));
+  return lines.join('\n');
+}
+
+async function handleOrient(
+  brokerClient: BrokerClient,
+  instructions: InstructionsResponse,
+): Promise<CallToolResult> {
+  return textResult(renderOrientPack(await brokerClient.spineOrient(), instructions.name));
 }
 
 async function handleAnnexRead(
@@ -4297,6 +4339,38 @@ async function handleDiscuss(
     `posted ${result.event.id} (#${result.event.seq}). Ambient: no counter moved, nothing was ` +
       'gated. If this turns out to have been a decision or an observation, `promote` it rather ' +
       'than retyping it.',
+  );
+}
+
+/**
+ * Reader-side subscription, set for the caller on one contract.
+ *
+ * The result restates what class 1 does regardless, because the
+ * dangerous misreading of this tool is "I have turned this contract
+ * off" — and a member who believes an ask to them can be silenced by
+ * a level will stop trusting the queue.
+ */
+async function handleSubscribe(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+): Promise<CallToolResult> {
+  const contract = spineString(args, 'contract');
+  const level = spineString(args, 'level');
+  if (!contract) return errorResult('subscribe: `contract` is required — read it from `orient`');
+  if (level !== 'all' && level !== 'lifecycle' && level !== 'none') {
+    return errorResult('subscribe: `level` must be one of all, lifecycle, none');
+  }
+  const config = await brokerClient.setSpineCuratorConfig({ subscription: { contract, level } });
+  const set = config.subscriptions.find((s) => s.contract === contract);
+  return textResult(
+    `${contract} is now \`${set?.level ?? level}\` for you. ` +
+      (level === 'none'
+        ? 'You will hear nothing about it on the sweep. Anything that names you personally still ' +
+          'reaches you — that is not a subscription and cannot be switched off.'
+        : level === 'lifecycle'
+          ? 'You will hear its state changes, batched, as an id and what changed.'
+          : 'You will hear every authoritative event on it, batched per tick, as ids and what ' +
+            'changed — never the contract text again.'),
   );
 }
 

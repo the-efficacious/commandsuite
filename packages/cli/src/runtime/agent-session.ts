@@ -228,6 +228,17 @@ export async function runAgentSession(
     runnerVersion: CLI_VERSION,
     captureTier: meta.captureTier,
   });
+  // The same bracket, reported to the CURATOR rather than to the
+  // activity stream — and carrying this runner's declared ceiling.
+  //
+  // Reported HERE and not inside `startRunner` because this is where
+  // the run actually begins and where `meta` is in scope: the
+  // capabilities being declared are the ADAPTER's, and a runner that
+  // guessed them from its own id would be declaring on behalf of a
+  // framework it does not know. Note the activity event above goes to
+  // the capture host and is absent under `--no-trace`; this one is not,
+  // because the curator is floor and capture is ceiling.
+  runner.reportSpineSignal('session_start', { capabilities: meta.spineSignals });
 
   const removeProcessHandlers = (handlers: { sigint: () => void; sigterm: () => void }): void => {
     process.off('SIGINT', handlers.sigint);
@@ -472,6 +483,7 @@ function finishRun(args: {
     agentSessionId: args.agentSessionId,
     capture,
   };
+  args.runner.reportSpineSignal('session_end');
   args.runner.captureHost?.enqueue({
     kind: 'session_end',
     ts: Date.now(),

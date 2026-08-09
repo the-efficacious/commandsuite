@@ -134,6 +134,22 @@ export const fakeBrokerSpine: {
   refuseNext: { status: number; body: Record<string, unknown> } | null;
   /** Answer the next append as an idempotent replay of an existing event. */
   replayNext: boolean;
+  /**
+   * Every floor signal the runner reported, in order, with the member
+   * it was reported for.
+   *
+   * Recorded rather than counted because the SHAPE is the contract: a
+   * `session_start` carrying no capabilities and one carrying
+   * `{dumpSignal: true}` are different declarations, and a test that
+   * only counted signals would pass against a runner that forwarded
+   * the adapter's ceiling as `undefined` forever.
+   */
+  signals: Array<{ member: string; body: Record<string, unknown> }>;
+  /** Curator config writes the `subscribe` tool made. */
+  curatorWrites: Array<Record<string, unknown>>;
+  curatorConfig: Record<string, unknown>;
+  /** Answer `/spine/*` with a 404, as a broker predating the spine would. */
+  absent: boolean;
 } = {
   appends: [],
   orient: {},
@@ -143,6 +159,10 @@ export const fakeBrokerSpine: {
   subjects: [],
   refuseNext: null,
   replayNext: false,
+  signals: [],
+  curatorWrites: [],
+  curatorConfig: {},
+  absent: false,
 };
 
 /**
@@ -433,8 +453,43 @@ export async function startFakeBroker(): Promise<FakeBroker> {
     }
 
     if (url.pathname === '/spine/orient' && req.method === 'GET') {
+      if (fakeBrokerSpine.absent) {
+        res.writeHead(404, jsonHeaders);
+        res.end(JSON.stringify({ error: 'no spine here' }));
+        return;
+      }
       res.writeHead(200, jsonHeaders);
       res.end(JSON.stringify(fakeBrokerSpine.orient));
+      return;
+    }
+
+    if (url.pathname.endsWith('/spine-signals') && req.method === 'POST') {
+      if (fakeBrokerSpine.absent) {
+        res.writeHead(404, jsonHeaders);
+        res.end(JSON.stringify({ error: 'no spine here' }));
+        return;
+      }
+      const member = decodeURIComponent(
+        url.pathname.slice('/members/'.length, -'/spine-signals'.length),
+      );
+      const body = JSON.parse((await readBody(req)) || '{}') as Record<string, unknown>;
+      fakeBrokerSpine.signals.push({ member, body });
+      res.writeHead(200, jsonHeaders);
+      res.end(JSON.stringify({ accepted: true, leasesInvalidated: 0 }));
+      return;
+    }
+
+    if (url.pathname === '/spine/curator' && req.method === 'PUT') {
+      const body = JSON.parse((await readBody(req)) || '{}') as Record<string, unknown>;
+      fakeBrokerSpine.curatorWrites.push(body);
+      res.writeHead(200, jsonHeaders);
+      res.end(JSON.stringify(fakeBrokerSpine.curatorConfig));
+      return;
+    }
+
+    if (url.pathname === '/spine/curator' && req.method === 'GET') {
+      res.writeHead(200, jsonHeaders);
+      res.end(JSON.stringify(fakeBrokerSpine.curatorConfig));
       return;
     }
 

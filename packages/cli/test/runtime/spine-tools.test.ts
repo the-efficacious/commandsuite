@@ -78,6 +78,20 @@ beforeEach(() => {
   fakeBrokerSpine.orient = {};
   fakeBrokerSpine.refuseNext = null;
   fakeBrokerSpine.replayNext = false;
+  fakeBrokerSpine.curatorWrites.length = 0;
+  fakeBrokerSpine.curatorConfig = {
+    member: 'rune',
+    subscriptions: [],
+    policy: {
+      member: 'rune',
+      leaseTtlMs: 1_800_000,
+      nudgeMinIntervalMs: 900_000,
+      explicit: false,
+      updatedBy: null,
+      updatedAt: null,
+    },
+    capabilities: null,
+  };
 });
 
 function tool(name: string, packet: InstructionsResponse = PACKET) {
@@ -147,7 +161,7 @@ function seedContract(): void {
 // ─── the surface, and its gate ───────────────────────────────────────
 
 describe('the spine surface', () => {
-  it('offers the twelve ungated tools to a member with no permissions at all', () => {
+  it('offers the thirteen ungated tools to a member with no permissions at all', () => {
     const names = defineTools(PACKET).map((t) => t.name);
     // The WHOLE list, not "orient is in there". Participation in the
     // record is not a privilege: a member who cannot say what they did
@@ -166,6 +180,7 @@ describe('the spine surface', () => {
       'observe',
       'discuss',
       'promote',
+      'subscribe',
     ]) {
       expect(names, `${name} must be baseline participation`).toContain(name);
     }
@@ -1373,5 +1388,83 @@ describe('promote cannot move an act out of its contract’s scope', () => {
     // the scope the lock is evaluated in.
     expect(lastAppend().subject).toBeUndefined();
     expect((lastAppend().body as { contract: string }).contract).toBe(CONTRACT);
+  });
+});
+
+// ─── the reader-side control ─────────────────────────────────────────
+
+describe('subscribe is the reader-side control, and says what it cannot silence', () => {
+  it('leads with the fact that the default is already quiet', () => {
+    // #155 finding 1 was members drowning in fanout they never chose.
+    // A member who does not know silence is the default will read the
+    // noise as unavoidable and never reach for this tool at all, so
+    // the default is the first thing the description states.
+    const description = describeOf('subscribe');
+    expect(description).toMatch(/default is already\s+\*\*?quiet|default is already quiet/i);
+    expect(description).toContain('all');
+    expect(description).toContain('lifecycle');
+    expect(description).toContain('none');
+    // The anti-misreading clause, named as a string because it is the
+    // deliverable: a member must not believe an ask to them can be
+    // switched off.
+    expect(description).toMatch(/names you personally/i);
+    expect(description).toMatch(/regardless of every\s+level/i);
+  });
+
+  it('sends the level the agent chose, for the contract it named', () => {
+    fakeBrokerSpine.curatorConfig = {
+      ...(fakeBrokerSpine.curatorConfig as Record<string, unknown>),
+      subscriptions: [
+        {
+          member: 'rune',
+          contract: CONTRACT,
+          level: 'all',
+          explicit: true,
+          updatedBy: 'rune',
+          updatedAt: '2026-08-09T09:00:00.000Z',
+        },
+      ],
+    };
+    return call('subscribe', { contract: CONTRACT, level: 'all' }).then(({ text, isError }) => {
+      expect(isError).toBe(false);
+      // What went OUT. A tool that sent the level under the wrong key
+      // satisfies every assertion made on what came back.
+      expect(fakeBrokerSpine.curatorWrites).toEqual([
+        { subscription: { contract: CONTRACT, level: 'all' } },
+      ]);
+      expect(text).toContain(CONTRACT);
+      expect(text).toContain('all');
+      expect(text).toMatch(/never the contract text again/i);
+    });
+  });
+
+  it('restates what `none` does NOT silence', async () => {
+    fakeBrokerSpine.curatorConfig = {
+      ...(fakeBrokerSpine.curatorConfig as Record<string, unknown>),
+      subscriptions: [
+        {
+          member: 'rune',
+          contract: CONTRACT,
+          level: 'none',
+          explicit: true,
+          updatedBy: 'rune',
+          updatedAt: '2026-08-09T09:00:00.000Z',
+        },
+      ],
+    };
+    const { text } = await call('subscribe', { contract: CONTRACT, level: 'none' });
+    expect(text).toMatch(/names you personally still\s+reaches you/i);
+    expect(text).toMatch(/cannot be switched off/i);
+  });
+
+  it('refuses a level outside the three, and accepts the nearest valid one', async () => {
+    const bad = await call('subscribe', { contract: CONTRACT, level: 'everything' });
+    expect(bad.isError).toBe(true);
+    expect(bad.text).toContain('all, lifecycle, none');
+    expect(fakeBrokerSpine.curatorWrites).toHaveLength(0);
+    // The positive control: the check still admits what it should.
+    const good = await call('subscribe', { contract: CONTRACT, level: 'lifecycle' });
+    expect(good.isError).toBe(false);
+    expect(fakeBrokerSpine.curatorWrites).toHaveLength(1);
   });
 });
