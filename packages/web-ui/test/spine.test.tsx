@@ -365,8 +365,18 @@ describe('SpineBoardPanel — lanes and roles, status pulled from state', () => 
     stubSpine({ contracts });
     const { container } = render(<SpineBoardPanel viewer="director-1" />);
     await screen.findByText('Active one');
-    expect(container.querySelectorAll('input[type="text"]').length).toBe(0);
-    expect(container.querySelectorAll('textarea').length).toBe(0);
+    // Broad on purpose. A bare `<input>` renders as text, and so do
+    // `type=search` and a contenteditable div — all of which a narrow
+    // `input[type=text]` check waves through. The board's only legit
+    // controls are the lane/role/queue buttons and the show-done
+    // checkbox, so anything a member could TYPE STATUS into must count
+    // zero. Add one such field and this guard dies.
+    expect(
+      container.querySelectorAll(
+        'input:not([type="checkbox"]):not([type="radio"]):not([type="button"]), textarea, [contenteditable]',
+      ).length,
+      'the board never asks anyone to type status',
+    ).toBe(0);
   });
 
   it('groups by relationship when asked', async () => {

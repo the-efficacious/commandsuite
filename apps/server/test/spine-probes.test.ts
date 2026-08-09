@@ -1575,6 +1575,34 @@ describe('the annex handed to consumers genuinely cannot append', () => {
     db.close();
   });
 
+  it('does not expose the raw writer on the write-path object either', () => {
+    // THE PHASE-4 CARRY-FORWARD, PINNED. The facade above closes the
+    // cast hole for `path.store`; this closes it for the path object
+    // itself. `private readonly writer` is a TYPE-only private — erased
+    // at runtime — so `(path as unknown as { writer }).writer.append(
+    // evt, ctx)` reached an append-capable handle by a cast, bypassing
+    // every post-commit hook, invisible to the scanner. `#writer` is a
+    // real JS private: it is not a property on the object, no cast
+    // reaches it, and `in` from outside the class is false. Revert the
+    // field to `private readonly writer` and both assertions below die —
+    // which is the whole point of writing them down.
+    const db = openDatabase(':memory:');
+    const path = createAnnexWritePath({
+      db,
+      logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
+    });
+    expect('writer' in (path as unknown as object), 'no `writer` key to reach through').toBe(false);
+    expect(
+      (path as unknown as { writer?: unknown }).writer,
+      'and no append-capable handle behind a cast',
+    ).toBeUndefined();
+    // Still a real write path — the private handle is unreachable, not
+    // absent (the control on the negatives above).
+    path.store.registerSubject({ id: 'repo:acme', type: 'repo' }, 'lea');
+    expect(path.store.subject('repo:acme')?.type).toBe('repo');
+    db.close();
+  });
+
   it('routes a write made through the path — the control on the facade', async () => {
     // The positive control: the write path still works, and its hooks
     // still run. A facade that broke the writer would satisfy the
