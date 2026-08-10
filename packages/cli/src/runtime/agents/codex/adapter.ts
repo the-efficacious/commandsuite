@@ -504,8 +504,7 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
   // host's uploader. This is the SOLE content source; the app-server
   // stream stays presence/busy/printer-only, mirroring how the Claude
   // runner went transcript-primary with its hooks presence-only. Absent
-  // under `--no-trace` (no capture host). Objective open/close markers
-  // are emitted by the runner around this session, not here.
+  // under `--no-trace` (no capture host).
   const rolloutReader: RolloutReader | null = opts.captureHost
     ? attachRolloutReader({
         sessionsDir: join(codexHome.path, 'sessions'),

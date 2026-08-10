@@ -5,11 +5,9 @@
  *
  *   - the broker `Client` (authenticated to the csuite server)
  *   - the cached `InstructionsResponse` (name, role, permissions, team
- *     context, initial open objectives)
- *   - the live SSE forwarder (chat + objective events from the broker)
- *   - the objectives tracker (keeps the "open objectives" snapshot
- *     fresh — it seeds the context re-brief pushed at session attach
- *     and after context compaction)
+ *     context)
+ *   - the live SSE forwarder (chat and tool-source events from the
+ *     broker)
  *   - the IPC server that the MCP bridge (a stdio MCP server spawned
  *     by the agent) connects to over a Unix domain socket
  *
@@ -54,7 +52,6 @@ import { isReservedEnvName } from 'csuite-sdk/schemas';
 import type {
   InstructionsResponse,
   Message,
-  Objective,
   ReportSpineSignalRequest,
   ResolvedToolSource,
   SpineFloorSignal,
@@ -71,7 +68,6 @@ import {
   type IpcMcpResponse,
   parseFrame,
 } from './ipc.js';
-import { createObjectivesTracker } from './objectives-tracker.js';
 import { createPresence, type Presence } from './presence.js';
 import { defineTools, formatAgentTimestamp, handleToolCall, renderOrientPack } from './tools.js';
 import { type CaptureHost, startCaptureHost } from './trace/host.js';
@@ -295,45 +291,28 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
     throw new RunnerStartupError(`instructions failed against ${options.url}: ${errMsg}${hint}`);
   }
 
-  // Live open-objectives snapshot — mutated as the objectives tracker
-  // refreshes from SSE events. Tool descriptions deliberately do NOT
-  // read it (static descriptions keep the model's prompt-prefix cache
-  // intact); it seeds the context re-brief pushed as message traffic.
-  let openObjectives: Objective[] = instructions.openObjectives;
-
   // Live external-tools snapshot from the broker's tool-source
-  // registry. Unlike objective STATE, this is a CAPABILITY surface:
+  // registry. Unlike record state, this is a CAPABILITY surface:
   // when it changes (a `tool_source` channel event), the runner
   // refetches the instructions, swaps the snapshot, and emits a genuine
   // `tools/list_changed` — the one event class that earns a
   // prompt-prefix cache break.
   let externalTools: ResolvedToolSource[] = instructions.toolSources;
 
-  // ── Context re-brief ─────────────────────────────────────────────
-  // Static surfaces (system prompt, tool descriptions) are frozen per
-  // session, so live state reaches the agent as message traffic. This
-  // is the re-assertion path: a `context_refresh` channel push
-  // composed from the live open-objectives snapshot, sent when a
-  // fresh MCP session attaches (first `tools/list` on a new bridge
-  // connection) and when the agent's context falls off (SessionStart
-  // hook with source=compact|clear). Empty plates are skipped — an
-  // empty re-brief is noise. The real implementation is assigned once
-  // the notification sink exists below; the cooldown guards against
-  // double-fire when an attach and a compaction land together.
-  const REBRIEF_COOLDOWN_MS = 10_000;
-  let lastRebriefMs = 0;
-  let sendRebrief: (reason: 'session-start' | 'context-compaction') => void = () => {};
-
   // ── Spine recovery ───────────────────────────────────────────────
-  // ADDITIVE, and deliberately parallel to the re-brief above rather
-  // than folded into it. The old path composes from the objectives
-  // snapshot and skips an empty plate; this one calls `orient` and
-  // injects whatever the server composed, including the header and
-  // cursor a member with an empty plate is owed. Both fire on the same
-  // two triggers, independently, until the cut-over deletes the first.
+  // THE ONLY RECOVERY PATH, as of the cut-over. It ran beside the
+  // objectives `context_refresh` re-brief for a phase, deliberately,
+  // and the re-brief has now gone with the subsystem it composed from.
   //
-  // Its cooldown is its own for the same reason: sharing one would let
-  // a re-brief suppress a recovery, and recovery is the guarantee.
+  // The two were not equivalent, which is why one replaced the other
+  // rather than being kept for redundancy. The re-brief COMPOSED —
+  // runner-side, from a snapshot the runner kept fresh — and skipped
+  // an empty plate, so a member with nothing assigned was told
+  // nothing at all. This one composes NOTHING: it calls `orient` and
+  // injects what the server returns, including the header and cursor
+  // a member with an empty plate is owed, and every call is a
+  // server-visible read that records the lease and advances receipts.
+  // One code path for every entry point.
   const SPINE_RECOVERY_COOLDOWN_MS = 10_000;
   let lastSpineRecoveryMs = 0;
   /**
@@ -506,7 +485,6 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
           // agent needs its plate re-asserted. `startup` / `resume`
           // are already covered by the tools/list attach trigger.
           if (source === 'compact' || source === 'clear') {
-            sendRebrief('context-compaction');
             // The declared dump signal, and the spine's own recovery.
             // The report shrinks the curator's reactive window; the
             // recovery is what actually puts the member back on
@@ -570,13 +548,12 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
         const response = await handleMcpRequest(frame, instructions, brokerClient, externalTools);
         // First `tools/list` on a fresh bridge connection = the
         // agent's MCP session just came up (new session, or an agent
-        // restart against a live runner). Re-assert the open plate as
-        // message traffic once the response is on the wire —
-        // setImmediate lets the response frame flush first.
+        // restart against a live runner). Recover once the response is
+        // on the wire — setImmediate lets the response frame flush
+        // first.
         if (frame.method === 'tools/list' && !rebriefedThisConnection) {
           rebriefedThisConnection = true;
           setImmediate(() => {
-            sendRebrief('session-start');
             sendSpineRecovery('session-start');
           });
         }
@@ -612,56 +589,10 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
     socketPath,
     name: instructions.name,
     role: instructions.role.title,
-    openObjectives: instructions.openObjectives.length,
     version: CLI_VERSION,
   });
 
-  // Objectives tracker: refresh the open set when SSE objective
-  // events arrive. On every diff, emit objective_open/close
-  // events into the agent's activity stream so the server can
-  // slice traces by time range later. The refreshed snapshot also
-  // seeds the context re-brief (session attach / compaction) —
-  // tool descriptions themselves stay static so the prompt-prefix
-  // cache survives; state freshness is message traffic.
-  const tracker = createObjectivesTracker({
-    brokerClient,
-    name: instructions.name,
-    log,
-    onRefresh: (next) => {
-      if (captureHost !== null) {
-        const prevIds = new Set(openObjectives.map((o) => o.id));
-        const nextIds = new Set(next.map((o) => o.id));
-        for (const id of nextIds) {
-          if (!prevIds.has(id)) {
-            captureHost.noteObjectiveOpen(id);
-            log('runner: objective open recorded', { objectiveId: id });
-          }
-        }
-        for (const id of prevIds) {
-          if (!nextIds.has(id)) {
-            // We can't tell done vs cancelled vs reassigned from
-            // the tracker alone — the objective is just "no longer
-            // open." The server has the terminal state in its
-            // audit log, so consumers that care can join on
-            // objective id. Stamp `done` as the default — it's
-            // the most common outcome and it's a hint, not a
-            // source of truth.
-            captureHost.noteObjectiveClose(id, 'done');
-            log('runner: objective close recorded', { objectiveId: id });
-          }
-        }
-      }
-      openObjectives = next;
-    },
-  });
-
-  // Record open markers for whatever the slot already had at
-  // startup, so in-flight objectives get bracketed in the activity
-  // stream from the first uploaded event.
   if (captureHost !== null) {
-    for (const obj of instructions.openObjectives) {
-      captureHost.noteObjectiveOpen(obj.id);
-    }
     // Activity reporter — subscribes to the capture host's activity
     // signal and POSTs `/presence/activity` on state transitions
     // (idle↔working↔blocked), plus a heartbeat while non-idle so the
@@ -689,38 +620,6 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
         from: event.meta.from ?? null,
       });
     },
-  };
-
-  // Real re-brief implementation, now that the sink exists. Rides the
-  // same delivery path as broker events, so it renders identically
-  // for both agents (a `<channel>` block into claude's streaming
-  // input, a turn dispatch for codex).
-  sendRebrief = (reason) => {
-    if (openObjectives.length === 0) return;
-    const now = Date.now();
-    if (now - lastRebriefMs < REBRIEF_COOLDOWN_MS) return;
-    lastRebriefMs = now;
-    log('runner: sending context re-brief', {
-      reason,
-      openObjectives: openObjectives.length,
-    });
-    void sink
-      .deliver({
-        content: composeRebrief(openObjectives),
-        meta: {
-          kind: 'context_refresh',
-          from: 'csuite',
-          reason,
-          level: 'info',
-          ts: formatAgentTimestamp(now),
-          ts_ms: String(now),
-        },
-      })
-      .catch((err: unknown) => {
-        log('runner: context re-brief send failed', {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      });
   };
 
   /**
@@ -859,9 +758,6 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
     signal: abortController.signal,
     log,
     presence,
-    onObjectiveEvent: (message) => {
-      tracker.refresh(message);
-    },
     onToolSourceEvent: () => {
       scheduleExternalToolsRefresh();
     },
@@ -933,24 +829,6 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
     shutdown,
     waitClosed,
   };
-}
-
-/**
- * Compose the `context_refresh` re-brief body from the live open
- * objectives. Plain prose — it arrives as an ordinary channel push, so
- * it appends to the agent's context instead of invalidating any cached
- * prefix the way a tool-description mutation would.
- */
-function composeRebrief(open: Objective[]): string {
-  const lines = open.map((o) => {
-    const block = o.status === 'blocked' && o.blockReason ? ` (blocked: ${o.blockReason})` : '';
-    return `- ${o.id} [${o.status}] ${o.title}${block}\n    outcome: ${o.outcome}`;
-  });
-  return (
-    `Context refresh — your open objectives (${open.length}):\n` +
-    `${lines.join('\n')}\n` +
-    'Use `objectives_view <id>` for full detail and `objectives_list` to re-check at any time.'
-  );
 }
 
 /**

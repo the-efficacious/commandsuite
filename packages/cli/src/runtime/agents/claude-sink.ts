@@ -12,7 +12,7 @@
  * routing (and its mismatch-retry dance) has no equivalent here.
  *
  * Bundling is kept: each dispatched user message has model-side
- * awareness cost, so a burst of micro-events (ten objective updates
+ * awareness cost, so a burst of micro-events (ten channel posts
  * landing at once) collapses within a 200ms window into a single
  * message carrying the same prose.
  *

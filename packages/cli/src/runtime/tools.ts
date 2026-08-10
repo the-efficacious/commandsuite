@@ -6,9 +6,9 @@
  * path and permission-scoped wording — never live state and never
  * identity/roster prose (who-you-are and the teammate list live in the
  * system-prompt instructions; repeating them per-tool wastes context).
- * Live state (open objectives, presence) reaches the agent as message
- * traffic: channel events plus the runner's `context_refresh`
- * re-briefs. `tools/list_changed` is reserved for genuine capability
+ * Live state reaches the agent by being PULLED — `orient` for the
+ * record, `roster` for presence — never baked into a description.
+ * `tools/list_changed` is reserved for genuine capability
  * changes (tools appearing or disappearing), never state freshness —
  * mutating descriptions mid-session would invalidate the model's
  * prompt-prefix cache.
@@ -20,20 +20,6 @@
  *   - channels_list  — list named channels visible to this agent
  *   - channels_post  — post into a specific named channel by slug
  *   - recent         — fetch recent team-chat / DM / channel history
- *
- * Objective tools:
- *   - objectives_list     — the caller's active plate
- *   - objectives_view     — full detail on one objective
- *   - objectives_update   — state transitions (block / resume)
- *   - objectives_discuss  — post into the objective thread
- *   - objectives_complete — mark done with required result
- *
- * Permission-gated objective tools (only appear in the toolbox when the
- * caller holds the matching leaf permission):
- *   - objectives_create   — requires `objectives.create`
- *   - objectives_cancel   — requires `objectives.cancel` (or being the objective's originator)
- *   - objectives_watchers — requires `objectives.watch` (or being the objective's originator)
- *   - objectives_reassign — requires `objectives.reassign`
  *
  * Spine tools — the team's annex and the contracts folded out of it:
  *   - orient            — the recovery call; no args, never refuses
@@ -75,7 +61,6 @@ import type {
   NotificationFilterRule,
   NotificationProfileSummary,
   NotificationTarget,
-  ObjectiveStatus,
   OrientPack,
   ResolvedToolSource,
   SecretSummary,
@@ -97,19 +82,6 @@ import type {
 import { SPINE_EVENT_CLASSES } from 'csuite-sdk/types';
 
 const LEVELS: readonly LogLevel[] = ['debug', 'info', 'notice', 'warning', 'error', 'critical'];
-const OBJECTIVE_STATUSES: readonly ObjectiveStatus[] = ['active', 'blocked', 'done', 'cancelled'];
-
-/**
- * The non-terminal statuses. An agent's "open plate" is the union of the
- * two, which is why `objectives_list` accepts `open` as a filter: a
- * lifecycle status selects one, and recovering agents need both in a
- * single call. `status=active` alone silently omits blocked work.
- */
-const OPEN_OBJECTIVE_STATUSES: readonly ObjectiveStatus[] = ['active', 'blocked'];
-
-/** What `objectives_list` accepts: the four statuses plus the `open` union. */
-const OBJECTIVE_LIST_FILTERS: readonly string[] = [...OBJECTIVE_STATUSES, 'open'];
-
 const DEFAULT_RECENT_LIMIT = 50;
 const MAX_RECENT_LIMIT = 500;
 
@@ -117,9 +89,9 @@ const MAX_RECENT_LIMIT = 500;
  * Build the tool set. Descriptions are static per session — the only
  * interpolation is boot-stable and functional (fs home path,
  * permission-scoped wording). Identity and the teammate roster live in
- * the system-prompt instructions; live objective state is delivered via
- * channel notifications and `context_refresh` re-briefs, never baked
- * into tool metadata (see the file header for the doctrine).
+ * the system-prompt instructions; live state is PULLED by the agent
+ * when it needs it, never baked into tool metadata (see the file
+ * header for the doctrine).
  *
  * `externalTools` is the resolved tool-source snapshot — platform-
  * defined tools the broker executes on the agent's behalf. It
@@ -277,146 +249,6 @@ export function defineTools(
         },
       },
     },
-    {
-      name: 'objectives_list',
-      description:
-        `List objectives you have a relationship with — ` +
-        `assigned to you, originated by you, or objectives you're watching. ` +
-        `**After a restart or context compaction, call this with \`status: "open"\`** — ` +
-        `that is your whole open plate (active + blocked) in one call. ` +
-        `The unfiltered call also returns every completed and cancelled objective you ` +
-        `have ever been related to, which on a long-running team is large enough to ` +
-        `overflow an agent's tool-result limit; prefer \`open\` for recovery and reach ` +
-        `for the unfiltered call when you actually want history. ` +
-        `\`status\` accepts a single lifecycle state (active | blocked | done | cancelled) ` +
-        `or \`open\` for the active+blocked union; omit it to return all statuses. ` +
-        `\`assignee\` narrows to one member's plate — pass your own name to separate ` +
-        `what you own from what you merely watch or originated. ` +
-        `Objectives always carry a required outcome — use \`objectives_view\` ` +
-        `for full detail including the body, watcher list, attachments and audit log. ` +
-        `Each row renders the objective's id, status, title, assignee, originator, ` +
-        `outcome, and last-updated time.`,
-      inputSchema: {
-        type: 'object',
-        properties: {
-          status: {
-            type: 'string',
-            enum: [...OBJECTIVE_LIST_FILTERS],
-            description:
-              'Filter by lifecycle status, or `open` for the active+blocked union — ' +
-              'the whole open plate in one call, which is what recovery wants. ' +
-              'Omit to return all statuses including completed and cancelled history.',
-          },
-          assignee: {
-            type: 'string',
-            description:
-              'Narrow to objectives assigned to this member. Pass your own name for ' +
-              'your own plate as distinct from what you watch or originated. Always a ' +
-              'subset of what you can already see.',
-          },
-        },
-      },
-    },
-    {
-      name: 'objectives_view',
-      description:
-        `Fetch the full state of a single objective. Use this before calling ` +
-        `\`objectives_update\` or \`objectives_complete\` so you have the latest acceptance ` +
-        `criteria fresh in context. Returns the full objective record (id, title, outcome, ` +
-        `body, status, assignee, originator, watchers, attachments, block reason if any, ` +
-        `result if completed) plus the append-only event log.`,
-      inputSchema: {
-        type: 'object',
-        properties: {
-          id: { type: 'string', description: 'The objective id (e.g. obj-xxxxx-y).' },
-        },
-        required: ['id'],
-      },
-    },
-    {
-      name: 'objectives_update',
-      description:
-        `Transition an objective's status. Use status='blocked' + blockReason when you're ` +
-        `stuck and need a director to intervene. Use status='active' to resume after a ` +
-        `block. This tool is for STATE transitions only — for progress notes, questions, ` +
-        `intermediate findings, or any conversation about the objective, use ` +
-        `\`objectives_discuss\` to post into the objective's discussion thread. This tool ` +
-        `never transitions to 'done' — call \`objectives_complete\` for that. Returns the ` +
-        `updated objective.`,
-      inputSchema: {
-        type: 'object',
-        properties: {
-          id: { type: 'string', description: 'The objective id.' },
-          status: {
-            type: 'string',
-            enum: ['active', 'blocked'],
-            description:
-              "Required new status. Use 'blocked' + blockReason when stuck; 'active' to resume.",
-          },
-          blockReason: {
-            type: 'string',
-            description:
-              'Required when status=blocked. Concisely describe what is blocking you. ' +
-              'Max 2048 characters.',
-          },
-        },
-        required: ['id', 'status'],
-      },
-    },
-    {
-      name: 'objectives_discuss',
-      description:
-        `Post a message into an objective's dedicated discussion thread. The thread ` +
-        `members are the originator, the assignee, and all directors on the team — ` +
-        `everyone who needs visibility into the work gets the message immediately on ` +
-        `their live stream. Use this for progress updates, questions, intermediate ` +
-        `findings, coordination with the originator, or acknowledgments — anything that's ` +
-        `conversation rather than a state transition. Every post is archived alongside ` +
-        `the objective's event log and is visible in the web UI's inline thread view. ` +
-        `Optionally attach files from your home; thread members receive automatic read access. ` +
-        `Returns the new message id.`,
-      inputSchema: {
-        type: 'object',
-        properties: {
-          id: { type: 'string', description: 'The objective id.' },
-          body: {
-            type: 'string',
-            description:
-              'The message body to post into the objective thread. Max 16384 characters.',
-          },
-          attachments: {
-            type: 'array',
-            items: { type: 'string' },
-            description:
-              'Optional list of file paths to attach. Max 64. Each must already exist and be readable to you.',
-          },
-        },
-        required: ['id', 'body'],
-      },
-    },
-    {
-      name: 'objectives_complete',
-      description:
-        `Mark an objective as done with a required result summary. Call ` +
-        `\`objectives_view\` first to refresh the acceptance criteria in context. The ` +
-        `\`result\` should explicitly address whether the stated outcome was met and link ` +
-        `or describe the deliverable. Only the current assignee may call this. Returns ` +
-        `the now-completed objective with its \`completedAt\` and \`result\` filled in.`,
-      inputSchema: {
-        type: 'object',
-        properties: {
-          id: { type: 'string', description: 'The objective id.' },
-          result: {
-            type: 'string',
-            description:
-              'Required summary of what was delivered and how it meets the stated outcome. ' +
-              'Max 4096 characters — the call is rejected if you exceed it, so check the ' +
-              'length before writing a long completion rather than after.',
-          },
-        },
-        required: ['id', 'result'],
-      },
-    },
     // ── Filesystem tools ───────────────────────────────────────────
     //
     // Every slot has a home at `/<name>/` with full read/write access;
@@ -425,36 +257,29 @@ export function defineTools(
     // can see) or director authority. See `fs_shared` for a list of
     // files shared with you.
     //
-    // Objective namespaces live at `/objectives/<id>/`. Files attached
-    // at objective-create time are mirrored there automatically, and
-    // the server-side membership ACL is real.
+    // There used to be a second scope — an objective namespace at
+    // `/objectives/<id>/`, owned by a set of members rather than by a
+    // person — and it went with the objectives subsystem. Two defects
+    // it produced are recorded here because their SHAPE outlives it:
     //
-    // Collaborative read/write/delete by every member of an objective
-    // (originator + assignee + watchers) is what this namespace is FOR,
-    // and it works. It did not until 2026-07-30, and the two defects
-    // are recorded here because their shape is worth keeping:
-    //
-    //   1. `filesystem-store.ts` non-root `list()` gated on
-    //      `members.manage || ownsPath` and never called `canRead()`.
-    //      An objective namespace is owned by `obj:<id>` and by no
-    //      member, so an ownership test refused every member of the
-    //      objective, including its assignee. `stat`, `read` and
-    //      `listShared` all gated on `canRead` already; `list` was the
-    //      one that did not.
+    //   1. non-root `list()` gated on `members.manage || ownsPath` and
+    //      never called `canRead()`, so a scope nobody individually
+    //      owned refused everyone who could read files inside it.
+    //      `stat`, `read` and `listShared` all gated on `canRead`
+    //      already; `list` was the one that did not.
     //   2. `FsEntrySchema.owner` was `NameSchema`, whose pattern
-    //      excludes `:`, so every namespace entry failed the schema
-    //      shipped alongside the code producing it. The server
-    //      responded correctly and the SDK client threw parsing that
-    //      successful response.
+    //      excludes `:`, so every entry in that namespace failed the
+    //      schema shipped alongside the code producing it.
     //
-    // Defect 2's failure mode is the one to remember: validation ran on
-    // the RESPONSE, after the write had committed. `fs_write` and
-    // `fs_mkdir` reported an error for work that had already succeeded,
-    // so an agent that retried hit a collision on a file it was told it
-    // never wrote, and one that gave up left a file it did not know
-    // existed. `fs_rm` alone "worked" throughout — it returns void and
-    // parses nothing. The only namespace operation an agent could
-    // complete and be told the truth about was the destructive one.
+    // Defect 2's failure mode is the one to remember, and it is not
+    // about objectives at all: validation ran on the RESPONSE, after
+    // the write had committed. `fs_write` and `fs_mkdir` reported an
+    // error for work that had already succeeded, so an agent that
+    // retried hit a collision on a file it was told it never wrote,
+    // and one that gave up left a file it did not know existed.
+    // `fs_rm` alone "worked" throughout — it returns void and parses
+    // nothing. The only operation an agent could complete and be told
+    // the truth about was the destructive one.
     ...buildFilesystemTools(name),
     // ── Permission-gated tools ──────────────────────────────────────
     //
@@ -465,16 +290,6 @@ export function defineTools(
     // request 403s — but keeping them out of the tool list is the
     // first line of defense and the natural UX.
     //
-    //   objectives.create:   objectives_create
-    //   objectives.cancel:   objectives_cancel (plus the objective's own originator)
-    //   objectives.watch:    objectives_watchers (plus the objective's own originator)
-    //   objectives.reassign: objectives_reassign
-    //
-    // For members without the broader permission, the `cancel` and
-    // `watchers` descriptions call out the "only objectives you
-    // originated" rule so the agent doesn't try to touch someone
-    // else's objective and eat a 403.
-    ...buildAuthorityTools(instructions),
     // The team's process document. Reading it is not how an agent
     // learns what binds it — the document is already in its fixed
     // context. These cover the edit history, which injection
@@ -655,7 +470,7 @@ function buildAdminTools(instructions: InstructionsResponse): Tool[] {
             type: 'array',
             items: { type: 'string' },
             description:
-              'Leaf permissions, e.g. ["objectives.create","objectives.cancel"]. Unknown leaves are rejected.',
+              'Leaf permissions, e.g. ["spine.author","spine.focus"]. Unknown leaves are rejected.',
           },
         },
         required: ['name', 'permissions'],
@@ -1577,8 +1392,6 @@ function buildFilesystemTools(name: string): Tool[] {
         `List the contents of a directory in the csuite virtual filesystem. ` +
         `Your home is \`${home}\`; passing "/" lists the set of homes you can see. ` +
         `Entries include per-item metadata (kind, size, mime type, owner). ` +
-        `Listing \`/objectives/<id>\` works for members of that objective and for ` +
-        `directors; those entries are owned by \`obj:<id>\` rather than by a member. ` +
         `PATHS MUST NOT END IN "/". Directories are DISPLAYED with a trailing slash ` +
         `(\`/you/notes/\`) but are STORED without one, and the API rejects a trailing ` +
         `slash as an invalid path — so strip it before passing a directory path from ` +
@@ -1597,8 +1410,7 @@ function buildFilesystemTools(name: string): Tool[] {
       name: 'fs_stat',
       description:
         `Fetch metadata for a single path. Returns null if the path does not exist. ` +
-        `Works under \`/objectives/<id>\` for members of that objective and for ` +
-        `directors. Paths must not end in "/".`,
+        `Paths must not end in "/".`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -1612,9 +1424,7 @@ function buildFilesystemTools(name: string): Tool[] {
       description:
         `Read the contents of a file. Text-like files (mime \`text/*\` or \`application/json\`) ` +
         `are returned as UTF-8; everything else is returned as base64. The response ` +
-        `always includes the path, size, mime type, and either \`text\` or \`base64\`. ` +
-        `Works under \`/objectives/<id>\` for members of that objective and for ` +
-        `directors.`,
+        `always includes the path, size, mime type, and either \`text\` or \`base64\`.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -1638,11 +1448,8 @@ function buildFilesystemTools(name: string): Tool[] {
           path: {
             type: 'string',
             description:
-              `Absolute path to write. Allowed under ${home} (your home), anywhere ` +
-              `if you're a director, and under \`/objectives/<id>/\` if you are a ` +
-              `member of that objective — an objective namespace is the right place ` +
-              `for work-scoped files, and its entries are owned by \`obj:<id>\` ` +
-              `rather than by you.`,
+              `Absolute path to write. Allowed under ${home} (your home), and ` +
+              `anywhere if you're a director.`,
           },
           mimeType: {
             type: 'string',
@@ -1669,8 +1476,7 @@ function buildFilesystemTools(name: string): Tool[] {
       name: 'fs_mkdir',
       description:
         `Create a directory. Pass recursive=true to auto-create missing parents. ` +
-        `Your home is ${home}. Returns the directory's FsEntry. Works under ` +
-        `\`/objectives/<id>/\` for members of that objective and for directors.`,
+        `Your home is ${home}. Returns the directory's FsEntry.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -1703,8 +1509,7 @@ function buildFilesystemTools(name: string): Tool[] {
       description:
         `Rename / move a file. Directory moves are not currently supported. ` +
         `Both the source and destination must sit under a tree you own (or you must be a director). ` +
-        `Returns the FsEntry at the destination path. A destination under ` +
-        `\`/objectives/<id>/\` works if you are a member of that objective, or a director.`,
+        `Returns the FsEntry at the destination path.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -1719,11 +1524,8 @@ function buildFilesystemTools(name: string): Tool[] {
       description:
         `List every file that has been shared with you via a message attachment — ` +
         `entries another member explicitly attached to a thread you can see. Owner- ` +
-        `private files from other slots never appear here. Files that live in objective ` +
-        `namespaces (\`/objectives/<id>/...\`) are NOT in this list either; access there ` +
-        `flows from membership, not grants. This tool itself is unaffected by the ` +
-        `namespace defects noted on \`fs_ls\` and \`fs_read\` — it returns grant-backed ` +
-        `entries correctly. Returns each file's FsEntry (path, size, mime, owner).`,
+        `private files from other slots never appear here. Returns each file's ` +
+        `FsEntry (path, size, mime, owner).`,
       inputSchema: { type: 'object', properties: {} },
     },
   ];
@@ -1737,9 +1539,9 @@ function buildFilesystemTools(name: string): Tool[] {
  * carry: the superseded text behind each edit, and the write path.
  *
  * The write gate is `process.manage`, a DEDICATED leaf rather than a
- * reuse of `objectives.create`. Under this design the permission IS
+ * reuse of `spine.author`. Under this design the permission IS
  * the authority — whoever holds it can rewrite what binds the team —
- * and "can create an objective" is not a comparable power.
+ * and "can author a contract" is not a comparable power.
  */
 function buildProcessDocumentTools(instructions: InstructionsResponse): Tool[] {
   const tools: Tool[] = [
@@ -1810,7 +1612,7 @@ function buildProcessDocumentTools(instructions: InstructionsResponse): Tool[] {
           description:
             '`correction` — retroactive; the prior text was never validly binding. ' +
             '`scope_change` — forward-only; work already underway finishes under the prior ' +
-            'text. Same field and meaning as `objectives_amend`, so "does work started under ' +
+            'text. Same field and meaning as `contract_amend`, so "does work started under ' +
             'the old process finish under it" has one answer across contracts and process.',
         },
       },
@@ -2670,224 +2472,6 @@ function buildSpineTools(instructions: InstructionsResponse): Tool[] {
   return tools;
 }
 
-function buildAuthorityTools(instructions: InstructionsResponse): Tool[] {
-  const { permissions } = instructions;
-  const canCreate = permissions.includes('objectives.create');
-  const canCancel = permissions.includes('objectives.cancel');
-  const canWatch = permissions.includes('objectives.watch');
-  const canReassign = permissions.includes('objectives.reassign');
-  const canManageMembers = permissions.includes('members.manage');
-  if (!canCreate && !canCancel && !canWatch && !canReassign && !canManageMembers) {
-    return [];
-  }
-
-  const tools: Tool[] = [];
-
-  if (!canCreate) return tools;
-
-  // objectives_create — requires objectives.create
-  tools.push({
-    name: 'objectives_create',
-    description:
-      `Create and assign a new objective. You can direct work ` +
-      `to any teammate — the assignee receives an immediate channel push with the title, ` +
-      `outcome, and originator stamped as you. The \`outcome\` field is ` +
-      `contractual: it must state the tangible, verifiable result that defines "done", not ` +
-      `just a vague intent. Optionally include a \`body\` for additional context and ` +
-      `\`watchers\` (a list of names) to loop other teammates into the discussion thread ` +
-      `from the start. Use \`roster\` for available assignees. Returns the new objective ` +
-      `with its generated id.`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        title: {
-          type: 'string',
-          description: 'Short, specific title for the objective. Max 200 characters.',
-        },
-        outcome: {
-          type: 'string',
-          description:
-            'Required. The tangible result that defines "done" — what specifically must be true for this objective to be marked complete. Max 2048 characters.',
-        },
-        body: {
-          type: 'string',
-          description:
-            'Optional longer context — constraints, scoping notes, links, reproductions. Max 4096 characters.',
-        },
-        assignee: {
-          type: 'string',
-          description: 'Name of the teammate who will execute this objective.',
-        },
-        watchers: {
-          type: 'array',
-          items: { type: 'string' },
-          description:
-            'Optional list of teammate names to add as watchers on the objective thread from the start. Max 64.',
-        },
-        attachments: {
-          type: 'array',
-          items: { type: 'string' },
-          description:
-            "Optional list of file paths to attach to the objective. Max 64. Each is mirrored into the objective's namespace at `/objectives/<id>/<basename>` so the file lives with the objective rather than in your home; every thread member (originator, assignee, watchers, directors) gets read/write access via the namespace ACL. Use `fs_write` to upload a file first.",
-        },
-      },
-      required: ['title', 'outcome', 'assignee'],
-    },
-  });
-
-  // objectives_cancel — originator always, or members with objectives.cancel
-  const cancelScope = canCancel
-    ? 'You can cancel any non-terminal objective on the team.'
-    : "You can cancel objectives you originated (created). Attempting to cancel someone else's objective will be refused by the server.";
-  if (canCreate) {
-    tools.push({
-      name: 'objectives_amend',
-      description:
-        "Amend an objective's contract — its outcome, title and/or body. Requires " +
-        "`objectives.create`; the contract is not the executor's to rewrite, though an " +
-        'assignee who holds that permission may amend their own. The PRIOR TEXT IS KEPT and ' +
-        'rendered by `objectives_view`, so this corrects the record rather than replacing it ' +
-        'silently. Supply at least one field that actually differs — a no-op is rejected ' +
-        'rather than recorded as a version bump. `disposition` is REQUIRED and you must ' +
-        'choose deliberately: `correction` means the prior text was wrong and work was never ' +
-        'validly held to it (retroactive); `scope_change` means a new demand, and work ' +
-        'already underway finishes under the prior text (forward-only). If you cannot say ' +
-        'which one it is, you have not finished thinking about the amendment.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          id: { type: 'string', description: 'The objective id.' },
-          outcome: { type: 'string', description: 'Replacement outcome text.' },
-          title: { type: 'string', description: 'Replacement title.' },
-          body: { type: 'string', description: 'Replacement body.' },
-          reason: {
-            type: 'string',
-            description:
-              'REQUIRED. Why the contract changed. Without it an amendment is a silent replacement.',
-          },
-          disposition: {
-            type: 'string',
-            enum: ['correction', 'scope_change'],
-            description:
-              'REQUIRED. `correction` = retroactive (the prior text was wrong). ' +
-              '`scope_change` = forward-only (a new demand on work already underway).',
-          },
-        },
-        required: ['id', 'reason', 'disposition'],
-      },
-    });
-    tools.push({
-      name: 'objectives_correct_event',
-      description:
-        'Correct an earlier lifecycle event on an objective — most often a completion ' +
-        'recorded at the wrong moment, such as at a PR head rather than the merge SHA. ' +
-        'Requires `objectives.create`. The original event is NEVER rewritten: this appends a ' +
-        'superseding record naming it, and `objectives_view` marks the corrected event inline ' +
-        'so a reader of the log sees it. Does NOT change the contract version — correcting ' +
-        'the record of what happened is not a change to what was required. Get `eventId` ' +
-        'from the event log in `objectives_view` — a timestamp is NOT an identity, because ' +
-        'creation emits two events in the same millisecond.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          id: { type: 'string', description: 'The objective id.' },
-          eventId: {
-            type: 'string',
-            description: 'Durable id of the event being corrected, shown by `objectives_view`.',
-          },
-          correction: { type: 'string', description: 'What the record should say instead.' },
-          reason: { type: 'string', description: 'REQUIRED. Why the record was wrong.' },
-        },
-        required: ['id', 'eventId', 'correction', 'reason'],
-      },
-    });
-  }
-
-  tools.push({
-    name: 'objectives_cancel',
-    description:
-      `Terminally cancel an objective. Use this when work is no longer needed — priorities ` +
-      `shifted, the problem went away, the assignee is overwhelmed, etc. Cancellation is ` +
-      `terminal: a cancelled objective cannot be resumed (create a fresh one if you change ` +
-      `your mind). ${cancelScope} Include a \`reason\` so the assignee and any watchers ` +
-      `understand why. Returns the now-cancelled objective.`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        id: { type: 'string', description: 'The objective id.' },
-        reason: {
-          type: 'string',
-          description:
-            'Optional but strongly recommended — explain why the objective is being cancelled.',
-        },
-      },
-      required: ['id'],
-    },
-  });
-
-  // objectives_watchers — originator always, or members with objectives.watch
-  const watchersScope = canWatch
-    ? 'You can manage watchers on any objective on the team.'
-    : "You can manage watchers on objectives you originated. Attempting to modify watchers on someone else's objective will be refused by the server.";
-  tools.push({
-    name: 'objectives_watchers',
-    description:
-      `Add or remove watchers on an objective's discussion thread. Watchers receive every ` +
-      `lifecycle event and every discussion post on the objective — use this to loop in a ` +
-      `reviewer, a subject-matter expert, or anyone who should have awareness without ` +
-      `being the assignee. Directors are implicit members and never need to be added. ` +
-      `${watchersScope} Pass \`add\` and/or \`remove\` as arrays of names. Returns the ` +
-      `updated objective with its new watcher list.`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        id: { type: 'string', description: 'The objective id.' },
-        add: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Optional list of teammate names to add as watchers. Max 64.',
-        },
-        remove: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Optional list of teammate names to remove from watchers. Max 64.',
-        },
-      },
-      required: ['id'],
-    },
-  });
-
-  // objectives_reassign — requires objectives.reassign
-  if (canReassign) {
-    tools.push({
-      name: 'objectives_reassign',
-      description:
-        `Reassign a non-terminal objective to a different teammate. Both the previous and ` +
-        `new assignee receive channel pushes — the previous one so they know the ` +
-        `objective left their plate, the new one so they know they now own it. Use this ` +
-        `when the initial assignee is overwhelmed, the wrong skill match, or unavailable. ` +
-        `Returns the reassigned objective.`,
-      inputSchema: {
-        type: 'object',
-        properties: {
-          id: { type: 'string', description: 'The objective id.' },
-          to: {
-            type: 'string',
-            description: 'Name of the new assignee.',
-          },
-          note: {
-            type: 'string',
-            description: 'Optional note explaining the reassignment.',
-          },
-        },
-        required: ['id', 'to'],
-      },
-    });
-  }
-
-  return tools;
-}
-
 export async function handleToolCall(
   name: string,
   rawArgs: Record<string, unknown> | undefined,
@@ -2910,18 +2494,6 @@ export async function handleToolCall(
         return await handleChannelsPost(args, brokerClient);
       case 'recent':
         return await handleRecent(args, brokerClient, instructions);
-      case 'objectives_list':
-        return await handleObjectivesList(args, brokerClient, instructions);
-      case 'objectives_view':
-        return await handleObjectivesView(args, brokerClient);
-      case 'objectives_update':
-        return await handleObjectivesUpdate(args, brokerClient);
-      case 'objectives_discuss':
-        return await handleObjectivesDiscuss(args, brokerClient);
-      case 'objectives_complete':
-        return await handleObjectivesComplete(args, brokerClient);
-      case 'objectives_create':
-        return await handleObjectivesCreate(args, brokerClient, instructions);
       case 'process_document_get':
         return await handleProcessDocumentGet(brokerClient);
       case 'process_document_history':
@@ -2952,16 +2524,6 @@ export async function handleToolCall(
       case 'focus':
       case 'focus_set':
         return await handleSpineTool(name, args, brokerClient, instructions);
-      case 'objectives_amend':
-        return await handleObjectivesAmend(args, brokerClient);
-      case 'objectives_correct_event':
-        return await handleObjectivesCorrectEvent(args, brokerClient);
-      case 'objectives_cancel':
-        return await handleObjectivesCancel(args, brokerClient, instructions);
-      case 'objectives_watchers':
-        return await handleObjectivesWatchers(args, brokerClient, instructions);
-      case 'objectives_reassign':
-        return await handleObjectivesReassign(args, brokerClient, instructions);
       case 'fs_ls':
         return await handleFsLs(args, brokerClient, instructions);
       case 'fs_stat':
@@ -3116,7 +2678,7 @@ async function handleRoster(
         : `no report ${activityWindow} (idle, lapsed, or never reported)`;
     const auth = t.permissions.includes('members.manage')
       ? ' [admin]'
-      : t.permissions.includes('objectives.create')
+      : t.permissions.includes('spine.author')
         ? ' [operator]'
         : '';
     return `- ${t.name}${self} [${t.role.title}]${auth} ${state}; activity=${activity}`;
@@ -3348,91 +2910,6 @@ async function handleChannelsPost(
   );
 }
 
-// ── Objectives handlers ────────────────────────────────────────────
-
-async function handleObjectivesList(
-  args: Record<string, unknown>,
-  brokerClient: BrokerClient,
-  instructions: InstructionsResponse,
-): Promise<CallToolResult> {
-  const filter = typeof args.status === 'string' ? args.status : undefined;
-  if (filter !== undefined && !OBJECTIVE_LIST_FILTERS.includes(filter)) {
-    return errorResult(
-      `objectives_list: invalid status '${String(args.status)}'. Must be one of: ${OBJECTIVE_LIST_FILTERS.join(', ')}.`,
-    );
-  }
-  const assignee =
-    typeof args.assignee === 'string' && args.assignee.length > 0 ? args.assignee : undefined;
-
-  // `related`, not `assignee` — this tool promises "objectives you have
-  // a relationship with", and pinning `assignee` collapsed that to the
-  // assignee-only view for any caller holding `objectives.create`,
-  // hiding everything they originated or watch.
-  //
-  // `open` spans two statuses and the server's `status` takes one, so it
-  // is applied here over the unfiltered relationship set.
-  const serverStatus = filter && filter !== 'open' ? (filter as ObjectiveStatus) : undefined;
-  const list = await brokerClient.listObjectives({
-    related: instructions.name,
-    ...(serverStatus ? { status: serverStatus } : {}),
-  });
-
-  let rows = list;
-  if (filter === 'open') {
-    rows = rows.filter((o) => OPEN_OBJECTIVE_STATUSES.includes(o.status));
-  }
-  // `assignee` is applied HERE rather than sent to the server, which
-  // honours it on exactly one of three branches: it is silently dropped
-  // whenever `related` is also present, and a caller without
-  // `objectives.create` always gets the whole relationship union no
-  // matter what they asked for. Sending it would return a superset with
-  // nothing saying so. Narrowing the related set is also self-scoping by
-  // construction — the result can only ever be a subset of what this
-  // member could already see, so it cannot be used to fish.
-  if (assignee) {
-    rows = rows.filter((o) => o.assignee === assignee);
-  }
-
-  // The status word premodifies ("open objectives") and the assignee
-  // clause postmodifies ("objectives … assigned to X"); joining them into
-  // one prefix produced "no open assigned to X objectives for Y". When the
-  // assignee IS the caller, "for Y assigned to Y" is redundant — the whole
-  // point of the filter is that those are different questions, so the
-  // phrase should say only the narrower one.
-  const subject =
-    assignee === undefined
-      ? `objectives for ${instructions.name}`
-      : assignee === instructions.name
-        ? `objectives assigned to ${instructions.name}`
-        : `objectives for ${instructions.name} assigned to ${assignee}`;
-  const statusWord = filter === 'open' ? 'open' : filter;
-  const phrase = statusWord ? `${statusWord} ${subject}` : subject;
-  if (rows.length === 0) {
-    return textResult(`no ${phrase}`);
-  }
-  const lines = rows.map((o) => {
-    // `(you)` mirrors the web UI's own row treatment. Without it an agent
-    // cannot tell work it owns from work it merely watches, which is the
-    // whole reason assignee is rendered.
-    const own = o.assignee === instructions.name ? ' (you)' : '';
-    // The contract version belongs HERE, not only on `objectives_view`.
-    // For an agent recovering from a cleared context this list IS the
-    // record it sees — `objectives_list status=open` is the documented
-    // recovery path, and `view` is what you call once you already know
-    // something is worth opening. Without the marker a verifier who
-    // checked v2, came back, and reads v3 here has no way to know the
-    // contract moved under them.
-    const amended = o.outcomeVersion > 1 ? ` [contract v${o.outcomeVersion} — amended]` : '';
-    return (
-      `- ${o.id} [${o.status}]${amended} ${o.title}\n` +
-      `    assignee: ${o.assignee}${own}  originator: ${o.originator}\n` +
-      `    outcome: ${o.outcome}\n` +
-      `    updated: ${formatAgentTimestamp(o.updatedAt)} (${formatRelativeAge(o.updatedAt)})`
-    );
-  });
-  return textResult(`${phrase}:\n${lines.join('\n')}`);
-}
-
 async function handleProcessDocumentGet(brokerClient: BrokerClient): Promise<CallToolResult> {
   const doc = await brokerClient.getProcessDocument();
   if (doc === null) {
@@ -3495,7 +2972,7 @@ async function handleProcessDocumentWrite(
   if (args.disposition !== 'correction' && args.disposition !== 'scope_change') {
     return errorResult(
       'process_document_write: `disposition` must be "correction" (retroactive) or ' +
-        '"scope_change" (forward-only) — the same field and meaning as `objectives_amend`',
+        '"scope_change" (forward-only) — the same field and meaning as `contract_amend`',
     );
   }
   const { document, edit } = await brokerClient.writeProcessDocument({
@@ -4610,344 +4087,6 @@ async function handlePromote(
     result,
     `promoted ${origin.id} (discussion by ${origin.actor}) into a ${as}, citing the post as its origin`,
   );
-}
-
-async function handleObjectivesAmend(
-  args: Record<string, unknown>,
-  brokerClient: BrokerClient,
-): Promise<CallToolResult> {
-  const id = typeof args.id === 'string' ? args.id : '';
-  if (!id) return errorResult('objectives_amend: `id` is required');
-  const reason = typeof args.reason === 'string' ? args.reason : '';
-  if (!reason) return errorResult('objectives_amend: `reason` is required');
-  const disposition = args.disposition === 'scope_change' ? 'scope_change' : 'correction';
-  if (args.disposition !== 'correction' && args.disposition !== 'scope_change') {
-    return errorResult(
-      'objectives_amend: `disposition` must be "correction" (retroactive) or "scope_change" (forward-only)',
-    );
-  }
-  const updated = await brokerClient.amendObjective(id, {
-    ...(typeof args.outcome === 'string' ? { outcome: args.outcome } : {}),
-    ...(typeof args.title === 'string' ? { title: args.title } : {}),
-    ...(typeof args.body === 'string' ? { body: args.body } : {}),
-    reason,
-    disposition,
-  });
-  const binding =
-    disposition === 'correction'
-      ? 'retroactive — work was never validly held to the prior text'
-      : 'forward-only — work already underway finishes under the prior text';
-  return textResult(
-    `amended '${updated.id}' to contract version ${updated.outcomeVersion} (${disposition}: ${binding}). ` +
-      'The prior text is kept and shown by `objectives_view`.',
-  );
-}
-
-async function handleObjectivesCorrectEvent(
-  args: Record<string, unknown>,
-  brokerClient: BrokerClient,
-): Promise<CallToolResult> {
-  const id = typeof args.id === 'string' ? args.id : '';
-  if (!id) return errorResult('objectives_correct_event: `id` is required');
-  const eventId = typeof args.eventId === 'string' ? args.eventId : '';
-  if (!eventId) {
-    return errorResult('objectives_correct_event: `eventId` is required (see `objectives_view`)');
-  }
-  const correction = typeof args.correction === 'string' ? args.correction : '';
-  const reason = typeof args.reason === 'string' ? args.reason : '';
-  if (!correction) return errorResult('objectives_correct_event: `correction` is required');
-  if (!reason) return errorResult('objectives_correct_event: `reason` is required');
-  const updated = await brokerClient.correctObjectiveEvent(id, { eventId, correction, reason });
-  return textResult(
-    `recorded a correction on '${updated.id}'. The original event is unchanged and is now ` +
-      'marked corrected in `objectives_view`.',
-  );
-}
-
-async function handleObjectivesView(
-  args: Record<string, unknown>,
-  brokerClient: BrokerClient,
-): Promise<CallToolResult> {
-  const id = typeof args.id === 'string' ? args.id : '';
-  if (!id) return errorResult('objectives_view: `id` is required');
-  const { objective, events } = await brokerClient.getObjective(id);
-  const lines: string[] = [
-    `${objective.id} [${objective.status}] ${objective.title}`,
-    `assignee: ${objective.assignee}  originator: ${objective.originator}`,
-    `outcome: ${objective.outcome}`,
-    `created: ${formatAgentTimestamp(objective.createdAt)} (${formatRelativeAge(objective.createdAt)})`,
-    `updated: ${formatAgentTimestamp(objective.updatedAt)} (${formatRelativeAge(objective.updatedAt)})`,
-  ];
-  if (objective.completedAt) {
-    lines.push(
-      `completed: ${formatAgentTimestamp(objective.completedAt)} (${formatRelativeAge(objective.completedAt)})`,
-    );
-  }
-  if (objective.watchers.length > 0) {
-    lines.push(`watchers: ${objective.watchers.join(', ')}`);
-  }
-  if (objective.body) lines.push(`body: ${objective.body}`);
-  if (objective.blockReason) lines.push(`block reason: ${objective.blockReason}`);
-  if (objective.result) lines.push(`result: ${objective.result}`);
-
-  // Amendments render WITH the record, never only in the event log.
-  // A reader who sees `status: done` and a result must not have to go
-  // reconstruct that the contract moved, or that the completion was
-  // recorded at the wrong moment. The structured field is the one an
-  // agent trusts, and it is the one that used to lie.
-  const contractAmendments = objective.amendments.filter((a) => a.target === 'contract');
-  const eventCorrections = objective.amendments.filter((a) => a.target === 'event');
-
-  if (objective.outcomeVersion > 1 || contractAmendments.length > 0) {
-    lines.push(
-      `contract version: ${objective.outcomeVersion} — the outcome above has been amended ${
-        contractAmendments.length === 1 ? 'once' : `${contractAmendments.length} times`
-      }`,
-    );
-    lines.push('amendments:');
-    for (const a of contractAmendments) {
-      if (a.target !== 'contract') continue;
-      const binding =
-        a.disposition === 'correction'
-          ? 'retroactive — work was never validly held to the prior text'
-          : 'forward-only — work already underway finishes under the prior text';
-      lines.push(
-        `  v${a.version} ${formatAgentTimestamp(a.ts)} ${a.actor} changed ${a.fields.join(', ')}`,
-      );
-      lines.push(`    disposition: ${a.disposition} (${binding})`);
-      lines.push(`    reason: ${a.reason}`);
-      for (const [field, prev] of Object.entries(a.previous)) {
-        lines.push(`    superseded ${field}: ${prev}`);
-      }
-    }
-  }
-  if (eventCorrections.length > 0) {
-    lines.push('event corrections:');
-    for (const a of eventCorrections) {
-      if (a.target !== 'event') continue;
-      lines.push(
-        `  ${formatAgentTimestamp(a.ts)} ${a.actor} corrects the ${a.eventKind} ${a.eventId} of ${formatAgentTimestamp(a.eventTs)}`,
-      );
-      lines.push(`    correction: ${a.correction}`);
-      lines.push(`    reason: ${a.reason}`);
-    }
-  }
-
-  lines.push('events:');
-  // Marked by EVENT ID, not timestamp. Keying on `ts` marked every
-  // event sharing that millisecond — so correcting `watcher_added`
-  // also branded the `assigned` beside it: a durable surface asserting
-  // something false about a record, inside the feature built to stop
-  // exactly that.
-  const correctedIds = new Set(
-    eventCorrections.map((a) => (a.target === 'event' ? a.eventId : '')),
-  );
-  for (const ev of events) {
-    const ts = formatAgentTimestamp(ev.ts);
-    const age = formatRelativeAge(ev.ts);
-    // Mark a superseded event inline too. Reading the log top-down is
-    // how an agent reconstructs what happened, and an uncorrected-
-    // looking `completed` is exactly the thing that misled a reader.
-    const mark = correctedIds.has(ev.id) ? ' [CORRECTED — see event corrections above]' : '';
-    lines.push(
-      `  ${ts} (${age}) ${ev.id} ${ev.actor} ${ev.kind} ${JSON.stringify(ev.payload)}${mark}`,
-    );
-  }
-  return textResult(lines.join('\n'));
-}
-
-async function handleObjectivesUpdate(
-  args: Record<string, unknown>,
-  brokerClient: BrokerClient,
-): Promise<CallToolResult> {
-  const id = typeof args.id === 'string' ? args.id : '';
-  if (!id) return errorResult('objectives_update: `id` is required');
-  const statusArg = typeof args.status === 'string' ? args.status : undefined;
-  if (statusArg !== 'active' && statusArg !== 'blocked') {
-    return errorResult(
-      `objectives_update: status is required and must be 'active' or 'blocked' (use objectives_complete for 'done' and objectives_discuss for progress notes)`,
-    );
-  }
-  const blockReason = typeof args.blockReason === 'string' ? args.blockReason : undefined;
-  if (statusArg === 'blocked' && (!blockReason || blockReason.trim().length === 0)) {
-    return errorResult('objectives_update: blockReason is required when status=blocked');
-  }
-  const updated = await brokerClient.updateObjective(id, {
-    status: statusArg,
-    ...(blockReason !== undefined ? { blockReason } : {}),
-  });
-  return textResult(
-    `updated ${updated.id}: status=${updated.status}${
-      updated.blockReason ? ` blockReason="${updated.blockReason}"` : ''
-    }`,
-  );
-}
-
-async function handleObjectivesDiscuss(
-  args: Record<string, unknown>,
-  brokerClient: BrokerClient,
-): Promise<CallToolResult> {
-  const id = typeof args.id === 'string' ? args.id : '';
-  const body = typeof args.body === 'string' ? args.body : '';
-  if (!id || !body) {
-    return errorResult('objectives_discuss: both `id` and `body` are required');
-  }
-  const attachmentsResult = await resolveAttachmentPaths(args.attachments, brokerClient);
-  if ('error' in attachmentsResult) {
-    return errorResult(`objectives_discuss: ${attachmentsResult.error}`);
-  }
-  const message = await brokerClient.discussObjective(id, {
-    body,
-    ...(attachmentsResult.list.length > 0 ? { attachments: attachmentsResult.list } : {}),
-  });
-  const attachmentNote =
-    attachmentsResult.list.length > 0 ? ` attachments=${attachmentsResult.list.length}` : '';
-  return textResult(
-    `posted to objective ${id} thread: msg=${message.id}${attachmentNote} (fanned out to thread members)`,
-  );
-}
-
-async function handleObjectivesComplete(
-  args: Record<string, unknown>,
-  brokerClient: BrokerClient,
-): Promise<CallToolResult> {
-  const id = typeof args.id === 'string' ? args.id : '';
-  const result = typeof args.result === 'string' ? args.result : '';
-  if (!id || !result) {
-    return errorResult('objectives_complete: both `id` and `result` are required');
-  }
-  const updated = await brokerClient.completeObjective(id, result);
-  return textResult(`completed ${updated.id}. Result recorded and originator notified.`);
-}
-
-// ── Permission-gated handlers (defensive re-checks) ───────────────────
-// The server is authoritative on permissions — if a member somehow
-// invokes one of these tools we'll get a 403 at the broker. But a
-// fast local permission check gives a better error message and avoids
-// a round trip. The tool list generation already prevents members
-// without the permission from seeing these tools; the handler-level check
-// defends against a stale MCP client or prompt injection that name-calls
-// the tool.
-
-async function handleObjectivesCreate(
-  args: Record<string, unknown>,
-  brokerClient: BrokerClient,
-  instructions: InstructionsResponse,
-): Promise<CallToolResult> {
-  if (
-    !instructions.permissions.includes('members.manage') &&
-    !instructions.permissions.includes('objectives.create') &&
-    !instructions.permissions.includes('objectives.create')
-  ) {
-    return errorResult('objectives_create: you do not have the required permission on this team');
-  }
-  const title = typeof args.title === 'string' ? args.title.trim() : '';
-  const outcome = typeof args.outcome === 'string' ? args.outcome.trim() : '';
-  const assignee = typeof args.assignee === 'string' ? args.assignee : '';
-  if (!title) return errorResult('objectives_create: `title` is required');
-  if (!outcome) return errorResult('objectives_create: `outcome` is required');
-  if (!assignee) return errorResult('objectives_create: `assignee` is required');
-  const body = typeof args.body === 'string' ? args.body : undefined;
-  // Watchers: accept only an array of strings; silently filter out
-  // anything else so a misshapen payload doesn't poison the request.
-  let watchers: string[] | undefined;
-  if (Array.isArray(args.watchers)) {
-    watchers = args.watchers.filter((v): v is string => typeof v === 'string');
-  }
-  const attachmentsResult = await resolveAttachmentPaths(args.attachments, brokerClient);
-  if ('error' in attachmentsResult) {
-    return errorResult(`objectives_create: ${attachmentsResult.error}`);
-  }
-  const created = await brokerClient.createObjective({
-    title,
-    outcome,
-    assignee,
-    ...(body ? { body } : {}),
-    ...(watchers && watchers.length > 0 ? { watchers } : {}),
-    ...(attachmentsResult.list.length > 0 ? { attachments: attachmentsResult.list } : {}),
-  });
-  return textResult(
-    `created ${created.id} assigned to ${created.assignee}: ${created.title}\n` +
-      `outcome: ${created.outcome}\n` +
-      (created.watchers.length > 0
-        ? `watchers: ${created.watchers.join(', ')}`
-        : 'watchers: (none)') +
-      (created.attachments.length > 0
-        ? `\nattachments: ${created.attachments.map((a) => a.path).join(', ')}`
-        : ''),
-  );
-}
-
-async function handleObjectivesCancel(
-  args: Record<string, unknown>,
-  brokerClient: BrokerClient,
-  instructions: InstructionsResponse,
-): Promise<CallToolResult> {
-  if (
-    !instructions.permissions.includes('members.manage') &&
-    !instructions.permissions.includes('objectives.create') &&
-    !instructions.permissions.includes('objectives.create')
-  ) {
-    return errorResult('objectives_cancel: you do not have the required permission on this team');
-  }
-  const id = typeof args.id === 'string' ? args.id : '';
-  if (!id) return errorResult('objectives_cancel: `id` is required');
-  const reason = typeof args.reason === 'string' ? args.reason : undefined;
-  const updated = await brokerClient.cancelObjective(id, reason ? { reason } : {});
-  return textResult(`cancelled ${updated.id}: ${updated.title}`);
-}
-
-async function handleObjectivesWatchers(
-  args: Record<string, unknown>,
-  brokerClient: BrokerClient,
-  instructions: InstructionsResponse,
-): Promise<CallToolResult> {
-  if (
-    !instructions.permissions.includes('members.manage') &&
-    !instructions.permissions.includes('objectives.create') &&
-    !instructions.permissions.includes('objectives.create')
-  ) {
-    return errorResult('objectives_watchers: you do not have the required permission on this team');
-  }
-  const id = typeof args.id === 'string' ? args.id : '';
-  if (!id) return errorResult('objectives_watchers: `id` is required');
-  const add = Array.isArray(args.add)
-    ? args.add.filter((v): v is string => typeof v === 'string')
-    : undefined;
-  const remove = Array.isArray(args.remove)
-    ? args.remove.filter((v): v is string => typeof v === 'string')
-    : undefined;
-  if ((!add || add.length === 0) && (!remove || remove.length === 0)) {
-    return errorResult('objectives_watchers: must include at least one of `add` or `remove`');
-  }
-  const updated = await brokerClient.updateObjectiveWatchers(id, {
-    ...(add && add.length > 0 ? { add } : {}),
-    ...(remove && remove.length > 0 ? { remove } : {}),
-  });
-  return textResult(
-    `updated ${updated.id} watchers: ${
-      updated.watchers.length > 0 ? updated.watchers.join(', ') : '(none)'
-    }`,
-  );
-}
-
-async function handleObjectivesReassign(
-  args: Record<string, unknown>,
-  brokerClient: BrokerClient,
-  instructions: InstructionsResponse,
-): Promise<CallToolResult> {
-  if (!instructions.permissions.includes('members.manage')) {
-    return errorResult('objectives_reassign: you do not have the required permission on this team');
-  }
-  const id = typeof args.id === 'string' ? args.id : '';
-  const to = typeof args.to === 'string' ? args.to : '';
-  if (!id || !to) return errorResult('objectives_reassign: both `id` and `to` are required');
-  const note = typeof args.note === 'string' ? args.note : undefined;
-  const updated = await brokerClient.reassignObjective(id, {
-    to,
-    ...(note ? { note } : {}),
-  });
-  return textResult(`reassigned ${updated.id} to ${updated.assignee}: ${updated.title}`);
 }
 
 // ── Admin handlers (team / presets / members) ─────────────────────
@@ -6278,7 +5417,7 @@ function formatRecentLine(m: Message): string {
  *   - Unambiguous about timezone (UTC label)
  *   - Dated (mm/dd/yy so the agent can tell "today" vs "three weeks ago")
  *   - Precise to the second (distinguishes near-simultaneous events,
- *     which happens in rapid objective lifecycle transitions)
+ *     which happens in rapid lifecycle transitions)
  *   - Fixed-width (21 chars) so columns line up cleanly in tables
  *
  * We intentionally don't include milliseconds — the second granularity
@@ -6298,7 +5437,7 @@ export function formatAgentTimestamp(ms: number): string {
 
 /**
  * Format a relative time hint from a unix-ms timestamp. Used in the
- * objective event log to answer "how long ago was that?" at a glance
+ * event log to answer "how long ago was that?" at a glance
  * without making the agent do subtraction. Caller supplies `now` so
  * tests can pin time; production uses Date.now.
  *

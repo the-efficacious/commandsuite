@@ -41,7 +41,6 @@ import {
   FAKE_BROKER_TEAM_NAME,
   FAKE_BROKER_TOKEN,
   type FakeBroker,
-  fakeBrokerObjectiveQueries,
   startFakeBroker,
 } from './fake-broker.js';
 
@@ -169,7 +168,7 @@ describeIfBuilt('runner + bridge end-to-end', () => {
     send({ jsonrpc: '2.0', method: 'notifications/initialized' });
   });
 
-  it('lists the full tool surface (chat + objective + filesystem + permission-gated)', async () => {
+  it('lists the full tool surface (chat + spine + filesystem + permission-gated)', async () => {
     send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
     const response = await waitForMessage((m) => m.id === 2);
     const result = response.result as {
@@ -197,17 +196,6 @@ describeIfBuilt('runner + bridge end-to-end', () => {
       'members_add',
       'members_remove',
       'members_update',
-      'objectives_amend',
-      'objectives_cancel',
-      'objectives_complete',
-      'objectives_correct_event',
-      'objectives_create',
-      'objectives_discuss',
-      'objectives_list',
-      'objectives_reassign',
-      'objectives_update',
-      'objectives_view',
-      'objectives_watchers',
       'observe',
       'orient',
       'presets_delete',
@@ -250,13 +238,16 @@ describeIfBuilt('runner + bridge end-to-end', () => {
     const fsWrite = result.tools.find((t) => t.name === 'fs_write');
     expect(fsWrite?.description).toContain(`/${FAKE_BROKER_NAME}`);
 
-    const listTool = result.tools.find((t) => t.name === 'objectives_list');
-    expect(listTool?.description).toContain('assigned to you');
-    const completeTool = result.tools.find((t) => t.name === 'objectives_complete');
-    expect(completeTool?.description).toContain('acceptance');
+    // The recovery call is the one an agent has to be able to act on
+    // from its description alone, because the moment it is needed is
+    // the moment there is least context left to read with. Asserted on
+    // the string that reaches the MCP client, not on the source.
+    const orientTool = result.tools.find((t) => t.name === 'orient');
+    expect(orientTool?.description).toContain('Call this first after any restart');
+    expect(orientTool?.description).toContain('never refuses');
   });
 
-  it('no fs tool description tells an agent the objective namespace is broken', async () => {
+  it('no fs tool description warns an agent off a working surface', async () => {
     // A tool description is a SPECIFICATION. It sits in every agent's
     // context and is the only spec an agent has for a tool whose source it
     // cannot read, so a description that is wrong is not a documentation
@@ -264,10 +255,12 @@ describeIfBuilt('runner + bridge end-to-end', () => {
     //
     // This exact class shipped. `fs_ls`/`fs_stat`/`fs_read`/`fs_write`/
     // `fs_mkdir`/`fs_mv` all carried "KNOWN DEFECT" notices telling agents
-    // the objective namespace failed and to write to their home instead.
+    // a working namespace had failed and to write to their home instead.
     // Those defects were fixed in 0.3.1 (#54) — and the notices shipped in
     // the SAME artifact as the fix, so the published package documented its
-    // own working feature as broken.
+    // own working feature as broken. (The namespace those notices were
+    // about was the objectives one, and it is gone; the VOCABULARY is
+    // what this guards, and that outlives any one surface.)
     //
     // The measured cost, on 2026-07-31: a teammate routed his evidence
     // around the namespace on the doc's instruction, and then — when he hit
@@ -279,10 +272,9 @@ describeIfBuilt('runner + bridge end-to-end', () => {
     // WHAT THIS TEST IS. A guard against re-introducing the specific
     // language, not a proof that the descriptions are accurate — no test
     // can check prose against behaviour. The BEHAVIOUR these descriptions
-    // now claim is established separately, in
-    // `apps/server/test/files/objective-namespace.test.ts`. If that file
-    // ever goes red, this test will still pass and will then be asserting
-    // something false. They belong to each other.
+    // claim is established separately, by the filesystem store's own
+    // suite. If that goes red, this test will still pass and will then
+    // be asserting something false. They belong to each other.
     send({ jsonrpc: '2.0', id: 99, method: 'tools/list', params: {} });
     const response = await waitForMessage((m) => m.id === 99);
     const result = response.result as {
@@ -303,13 +295,13 @@ describeIfBuilt('runner + bridge end-to-end', () => {
       }
     }
 
-    // The positive half. Absence alone would also pass if someone deleted
-    // every mention of objective namespaces, which would leave an agent
-    // with no idea the surface exists.
+    // The positive half. Absence alone would also pass if someone
+    // deleted every description on every fs tool, which would leave an
+    // agent with no idea the surface exists at all.
     const fsWrite = fsTools.find((t) => t.name === 'fs_write');
-    expect(JSON.stringify(fsWrite)).toContain('/objectives/<id>/');
+    expect(JSON.stringify(fsWrite)).toContain(`/${FAKE_BROKER_NAME}`);
 
-    // The one namespace-adjacent gotcha that IS live: `fs_ls` renders
+    // The one gotcha that IS live: `fs_ls` renders
     // directories with a trailing slash that the path schema rejects, so
     // the listing's own output is not valid input. Documented until that is
     // fixed; delete this assertion when it is, not before.
@@ -361,49 +353,5 @@ describeIfBuilt('runner + bridge end-to-end', () => {
     expect(result.content[0]?.text ?? '').toContain('[reviewer]');
     expect(result.content[0]?.text ?? '').toContain('[engineer]');
     expect(result.content[0]?.text ?? '').not.toContain('[object Object]');
-  });
-
-  // The tool's choice of filter IS the agent-facing contract. `assignee`
-  // collapses to assignee-only for any caller holding `objectives.create`
-  // — which is every coordinating member — hiding everything they
-  // originated or watch. Every server-side test stays green through that
-  // regression, so it has to be asserted on the wire.
-  it('objectives_list queries by relationship, not assignee', async () => {
-    fakeBrokerObjectiveQueries.length = 0;
-    send({
-      jsonrpc: '2.0',
-      id: 5,
-      method: 'tools/call',
-      params: { name: 'objectives_list', arguments: {} },
-    });
-    const response = await waitForMessage((m) => m.id === 5);
-    const result = response.result as { content: Array<{ type: string; text: string }> };
-
-    expect(fakeBrokerObjectiveQueries).toHaveLength(1);
-    const params = new URLSearchParams(fakeBrokerObjectiveQueries[0] ?? '');
-    expect(params.get('related')).toBe(FAKE_BROKER_NAME);
-    expect(params.has('assignee')).toBe(false);
-
-    // The empty-state text said "assigned to", which stayed misleading
-    // even once the query was right.
-    expect(result.content[0]?.text ?? '').toContain(`no objectives for ${FAKE_BROKER_NAME}`);
-    expect(result.content[0]?.text ?? '').not.toContain('assigned to');
-  });
-
-  it('objectives_list forwards a status filter alongside the relationship', async () => {
-    fakeBrokerObjectiveQueries.length = 0;
-    send({
-      jsonrpc: '2.0',
-      id: 6,
-      method: 'tools/call',
-      params: { name: 'objectives_list', arguments: { status: 'active' } },
-    });
-    await waitForMessage((m) => m.id === 6);
-
-    expect(fakeBrokerObjectiveQueries).toHaveLength(1);
-    const params = new URLSearchParams(fakeBrokerObjectiveQueries[0] ?? '');
-    expect(params.get('related')).toBe(FAKE_BROKER_NAME);
-    expect(params.get('status')).toBe('active');
-    expect(params.has('assignee')).toBe(false);
   });
 });

@@ -18,7 +18,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ActivityUploader } from '../../src/runtime/trace/activity-uploader.js';
 
 function makeEvent(ts: number): ActivityEvent {
-  return { kind: 'objective_open', ts, objectiveId: `obj-${ts}` };
+  return { kind: 'tool_action', ts, toolName: `fs_read-${ts}` };
 }
 
 /** A tool_action event whose JSON size is ≈ `sizeBytes` (for cap tests). */

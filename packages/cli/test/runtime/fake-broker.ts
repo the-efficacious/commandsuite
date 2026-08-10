@@ -42,22 +42,6 @@ export const FAKE_BROKER_NAME = 'link-test-agent';
 export const FAKE_BROKER_TEAM_NAME = 'fake-team';
 export const FAKE_BROKER_MISSION = 'Exercise the link in isolation.';
 
-/**
- * Objectives the fake broker will return from /instructions + /objectives.
- * Tests can push onto or read from this to verify the runner's
- * open-plate handling (e.g. the `context_refresh` re-brief).
- */
-export const fakeBrokerObjectives: Array<Record<string, unknown>> = [];
-
-/**
- * Raw query strings the fake broker saw on `GET /objectives`, in order.
- * The MCP tool's choice of filter IS the agent-facing contract — asking
- * for `assignee` instead of `related` reinstates the empty-plate defect
- * while every server-side test stays green — so tests assert on what
- * went out, not only on what came back.
- */
-export const fakeBrokerObjectiveQueries: string[] = [];
-
 /** Runner-version headers observed on instructions fetches, including refreshes. */
 export const fakeBrokerInstructionsRunnerVersions: Array<string | undefined> = [];
 
@@ -273,16 +257,13 @@ export async function startFakeBroker(): Promise<FakeBroker> {
           name: FAKE_BROKER_NAME,
           role: { title: 'engineer', description: '' },
           // Admin-level permissions so the link test exercises the
-          // full gated tool surface.
-          permissions: [
-            'team.manage',
-            'members.manage',
-            'objectives.create',
-            'objectives.cancel',
-            'objectives.reassign',
-            'objectives.watch',
-            'activity.read',
-          ],
+          // gated tool surface — but deliberately NOT `spine.author`
+          // or `process.manage`. `bridge.test.ts` asserts that
+          // `contract_author`, `contract_amend` and
+          // `process_document_write` are ABSENT from the toolbox that
+          // reaches a real MCP client, and that assertion is only
+          // worth anything while this fixture withholds their leaves.
+          permissions: ['team.manage', 'members.manage', 'activity.read'],
           instructions: fakeBrokerInstructions.value,
           team: {
             name: FAKE_BROKER_TEAM_NAME,
@@ -301,7 +282,7 @@ export async function startFakeBroker(): Promise<FakeBroker> {
               permissions: [],
             },
           ],
-          openObjectives: fakeBrokerObjectives,
+          openObjectives: [],
           toolSources: fakeBrokerToolSources,
         }),
       );
@@ -392,26 +373,6 @@ export async function startFakeBroker(): Promise<FakeBroker> {
           ],
         }),
       );
-      return;
-    }
-
-    if (url.pathname === '/objectives' && req.method === 'GET') {
-      fakeBrokerObjectiveQueries.push(url.searchParams.toString());
-      res.writeHead(200, jsonHeaders);
-      res.end(JSON.stringify({ objectives: fakeBrokerObjectives }));
-      return;
-    }
-
-    if (url.pathname.startsWith('/objectives/') && req.method === 'GET') {
-      const id = url.pathname.slice('/objectives/'.length);
-      const objective = fakeBrokerObjectives.find((o) => o.id === id);
-      if (!objective) {
-        res.writeHead(404, jsonHeaders);
-        res.end(JSON.stringify({ error: `no such objective: ${id}` }));
-        return;
-      }
-      res.writeHead(200, jsonHeaders);
-      res.end(JSON.stringify({ objective, events: [] }));
       return;
     }
 

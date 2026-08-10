@@ -19,7 +19,7 @@ export async function runRosterCommand(client: Client): Promise<string> {
     const priv = (
       t.permissions.includes('members.manage')
         ? 'admin'
-        : t.permissions.includes('objectives.create')
+        : t.permissions.includes('spine.author')
           ? 'operator'
           : 'member'
     ).padEnd(12);

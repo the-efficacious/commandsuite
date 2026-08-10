@@ -30,7 +30,6 @@ csuite rotate      --user <name> [--config-path <path>]                   rotate
 csuite claude-code [--no-trace] [--doctor] [-- <claude args>...]          spawn claude wrapped in a csuite runner
 csuite push        --body <text> (--agent <id> | --broadcast) [--title <t>] [--level <lvl>] [--data key=value]...
 csuite roster                                                             list teammates, userType, and connection state
-csuite objectives  list | view | create | update | complete | cancel | reassign   team objectives
 csuite serve       [--config-path <path>] [--port <n>] [--host <h>] [--db <path>]
 ```
 
@@ -40,7 +39,7 @@ Spawns `claude` as a child of a long-lived **runner** process. The
 runner:
 
 - Fetches `/instructions` from the broker to learn this slot's
-  name, role, permissions, teammates, and open objectives
+  name, role, permissions, teammates, and resolved tools
 - Binds a Unix domain socket and starts an IPC server
 - Starts the trace host: a loopback HTTP CONNECT proxy that
   terminates TLS with a per-session CA, reassembles HTTP/1.1
@@ -55,7 +54,7 @@ runner:
 Flags:
 
 - `--no-trace` — disable the trace subsystem entirely. Runner still
-  handles SSE, objectives, and bridge IPC.
+  handles SSE, spine recovery, and bridge IPC.
 - `--doctor` — preflight check: claude binary, `$TMPDIR` writable,
   loopback bind, per-session CA generation. Exits 0 on pass, 1 on
   any FAIL (WARN doesn't fail the exit code).
@@ -84,7 +83,7 @@ members never invoke it directly.
 | Variable | Purpose |
 |---|---|
 | `CSUITE_URL` | Broker base URL (default `http://127.0.0.1:8717`) |
-| `CSUITE_TOKEN` | Slot bearer token — required for `claude-code`, `push`, `roster`, `objectives` |
+| `CSUITE_TOKEN` | Slot bearer token — required for `claude-code`, `push`, `roster` |
 | `CLAUDE_PATH` | Override the claude binary path (otherwise `which claude`) |
 | `CSUITE_RUNNER_SOCKET` | Set by the runner on the bridge's env; members never set this |
 
@@ -109,14 +108,6 @@ To push a one-shot chat message without spawning claude:
 ```bash
 csuite roster
 csuite push --agent engineer-1 --body "ci failed on main" --level warning
-```
-
-To manage objectives from the terminal:
-
-```bash
-csuite objectives list --assignee engineer-1 --status active
-csuite objectives create --assignee engineer-1 --title "…" --outcome "…"
-csuite objectives complete --id obj-xxx --result "shipped as PR #1245"
 ```
 
 ## License

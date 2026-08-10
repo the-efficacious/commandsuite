@@ -12,7 +12,7 @@
  *
  *   ▸ turn
  *      ⚒ Bash
- *      ⚒ mcp__csuite__objectives_list
+ *      ⚒ mcp__csuite__orient
  *      assistant: Found the issue. The shape of the merge in…
  *      └─ done · 12.4s · 3 tools · $0.18
  *

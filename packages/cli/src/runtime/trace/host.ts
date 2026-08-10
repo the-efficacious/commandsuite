@@ -133,13 +133,6 @@ export interface CaptureHost {
    * A no-op for an empty batch.
    */
   uploadGenai(inferences: CodexGenaiInferenceUpload[]): Promise<void>;
-  /** Record an objective_open event in the agent's activity stream. */
-  noteObjectiveOpen(objectiveId: string): void;
-  /** Record an objective_close event. */
-  noteObjectiveClose(
-    objectiveId: string,
-    result: 'done' | 'cancelled' | 'reassigned' | 'runner_shutdown',
-  ): void;
   /**
    * Lifetime accounting of the activity uploader (enqueued / uploaded /
    * dropped). The agent-session driver stamps this into the run
@@ -335,21 +328,6 @@ export async function startCaptureHost(options: CaptureHostOptions): Promise<Cap
     async uploadGenai(inferences) {
       if (inferences.length === 0) return;
       await options.brokerClient.uploadGenaiInference(options.name, { inferences });
-    },
-    noteObjectiveOpen(objectiveId) {
-      uploader.enqueue({
-        kind: 'objective_open',
-        ts: Date.now(),
-        objectiveId,
-      });
-    },
-    noteObjectiveClose(objectiveId, result) {
-      uploader.enqueue({
-        kind: 'objective_close',
-        ts: Date.now(),
-        objectiveId,
-        result,
-      });
     },
     stats() {
       return uploader.stats();

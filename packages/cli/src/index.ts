@@ -9,7 +9,6 @@
  *   csuite claude      — run Claude Code headlessly as an agent member
  *   csuite push        — push an event to a teammate or broadcast
  *   csuite roster      — list members and connection state
- *   csuite objectives  — list / view / mutate team objectives
  *   csuite serve       — run a local broker (optional peer: csuite-server)
  *
  * The internal `csuite mcp-bridge` verb is hidden from the top-level
@@ -19,7 +18,7 @@
  *
  * Global env vars (defaults):
  *   CSUITE_URL       = http://127.0.0.1:8717
- *   CSUITE_TOKEN     (required for claude / push / roster / objectives)
+ *   CSUITE_TOKEN     (required for claude / push / roster)
  */
 
 import { Client } from 'csuite-sdk/client';
@@ -35,7 +34,6 @@ import { runEnrollCommand } from './commands/enroll.js';
 import { UsageError } from './commands/errors.js';
 import { runMemberCommand } from './commands/member.js';
 import { runNotificationsCommand } from './commands/notifications.js';
-import { runObjectivesCommand } from './commands/objectives.js';
 import { runPresetsCommand } from './commands/presets.js';
 import { runPruneTracesCommand } from './commands/prune-traces.js';
 import { type PushCommandInput, runPushCommand } from './commands/push.js';
@@ -62,13 +60,12 @@ usage:
   csuite auth          list|migrate                         inspect the local auth store; fold a legacy project-scoped .csuite/auth.json into it
   csuite enroll      --member <name> [--config-path <path>]   (re-)enroll a member for web UI login (TOTP — separate from 'csuite connect')
   csuite rotate      --member <name> [--config-path <path>]   rotate a member's bearer token (atomic; prints new token once)
-  csuite quickstart  [--skip-browser] [--assignee <name>]   seed a demo objective + open the web UI
+  csuite quickstart  [--skip-browser] [--assignee <name>]   seed a demo contract + open the web UI
   csuite claude      [--no-trace] [--no-secrets] [--doctor] [--skip-doctor] [--cwd <dir>] [--model <name>] [--resume [<sessionId>]]   run Claude Code headlessly (Agent SDK) as an agent member of a csuite team (--resume alone continues the most recent session; alias: claude-code)
   csuite codex       [--no-trace] [--no-secrets] [--doctor] [--skip-doctor] [--cwd <dir>] [--model <name>] [--resume [<threadId>]] [-- <codex args>...]   spawn OpenAI Codex CLI as a headless agent member of a csuite team (--resume alone picks up the most recent thread)
   csuite push        --body <text> (--agent <id> | --broadcast) [--title <t>] [--level <lvl>] [--data key=value]...
   csuite roster      [--reveal-token --member <name> [--config-path <path>]]
                                     list teammates (no flags) or rotate+print a member's token (alias over 'csuite rotate')
-  csuite objectives  list|view|create|update|complete|cancel|reassign   team objectives
   csuite tools       list|show|add|rm|enable|disable|cred|bind|unbind|def|def-rm|refresh   tool-source registry (platform tools)
   csuite secrets     list|view|add|update|set-value|delete-value|bind|unbind|rm   broker-held env secrets (values are write-only)
   csuite variables   list|view|add|update|set-value|delete-value|bind|unbind|rm   broker-held env variables that are NOT secrets (values readable, never redacted from traces)
@@ -143,7 +140,7 @@ function resolveAuth(input: { url?: string; token?: string }): {
  * is "set me up, then start the session" rather than bouncing the
  * operator out to a separate command.
  *
- * Single-use verbs (push, roster, objectives) keep the hard fail —
+ * Single-use verbs (push, roster) keep the hard fail —
  * those are typically scripted, and prompting from the middle of a
  * pipeline would be surprising.
  */
@@ -218,9 +215,6 @@ async function main(): Promise<void> {
       return;
     case 'roster':
       await handleRoster(rest);
-      return;
-    case 'objectives':
-      await handleObjectives(rest);
       return;
     case 'team':
       await handleTeam(rest);
@@ -598,49 +592,9 @@ async function handleServe(args: string[]): Promise<void> {
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
 }
 
-async function handleObjectives(args: string[]): Promise<void> {
-  // Objectives has its own internal subcommand routing that parses
-  // flags per-subcommand. We still pull `--url` / `--token` out of
-  // argv here so `csuite objectives list --url http://...` works the
-  // same way the other subcommands do.
-  //
-  // Strategy: extract --url and --token pairs from argv, passing the
-  // rest through to runObjectivesCommand. parseArgs would reject
-  // unknown options, so we do this by hand with a tight loop.
-  const clientOpts: Record<string, string> = {};
-  const passthrough: string[] = [];
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg === '--help' || arg === '-h') {
-      process.stdout.write(USAGE);
-      return;
-    }
-    if (arg === '--url' || arg === '--token') {
-      const next = args[i + 1];
-      if (next === undefined) {
-        fail(`${arg} requires a value`, 2);
-      }
-      clientOpts[arg.slice(2)] = next as string;
-      i++;
-      continue;
-    }
-    if (arg === undefined) continue;
-    passthrough.push(arg);
-  }
-
-  try {
-    const client = makeClient(clientOpts);
-    const output = await runObjectivesCommand(client, passthrough);
-    log(output);
-  } catch (err) {
-    if (err instanceof UsageError) fail(err.message, 2);
-    fail(err instanceof Error ? err.message : String(err));
-  }
-}
-
 /**
  * Split off `--url` / `--token` for `makeClient`, pass everything else
- * through to the subcommand. Same pattern as `handleObjectives`.
+ * through to the subcommand.
  */
 function splitClientOpts(args: string[]): {
   clientOpts: Record<string, string>;
@@ -765,7 +719,7 @@ function handleAuth(args: string[]): void {
  *
  * No interactive TUI: the agent runs as an SDK-driven stream-json
  * subprocess under our control. The director communicates with the
- * agent through the broker (chat / DMs / objectives / `csuite push`);
+ * agent through the broker (chat / DMs / `csuite push`);
  * channel events arrive as streaming-input user messages.
  *
  * Arg handling: `--url` and `--token` are csuite knobs; `--no-trace`,
@@ -904,7 +858,7 @@ async function handleClaude(args: string[]): Promise<void> {
  *
  * No interactive TUI: codex runs as `codex app-server` (a JSON-RPC
  * daemon) under our control. The director communicates with the
- * agent through the broker (chat / DMs / objectives / `csuite push`).
+ * agent through the broker (chat / DMs / `csuite push`).
  * Channel events arrive at codex as `turn/start` (when idle) or
  * `turn/steer` (mid-turn) — the structural equivalent of claude's
  * streaming-input injection.

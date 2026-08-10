@@ -12,7 +12,7 @@
  * Unlike `csuite claude` (interactive, with a TUI you talk to in
  * the same terminal), codex runs headlessly under `codex app-server`.
  * The director communicates with the agent through the broker — chat,
- * DMs, objectives, `csuite push` — and the agent's outputs flow back
+ * DMs, `csuite push` — and the agent's outputs flow back
  * out through the same channels (or as work products on the local
  * filesystem). The adapter declares `signals: 'teardown'`, so Ctrl-C
  * ends the session gracefully instead of being forwarded.

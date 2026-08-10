@@ -189,22 +189,14 @@ describe('CaptureHost', () => {
   it('enqueue forwards events to the activity uploader', async () => {
     const stub = stubBrokerClient();
     host = await startCaptureHost({ ...BASE, brokerClient: stub.client });
-    host.enqueue({ kind: 'objective_open', ts: 1_700_000_000_000, objectiveId: 'obj-1' });
+    host.enqueue({
+      kind: 'tool_action',
+      ts: 1_700_000_000_000,
+      toolName: 'fs_read',
+    });
     await host.close();
     host = null;
-    expect(stub.uploaded.some((e) => e.kind === 'objective_open')).toBe(true);
-  });
-
-  it('noteObjectiveOpen / noteObjectiveClose enqueue lifecycle markers', async () => {
-    const stub = stubBrokerClient();
-    host = await startCaptureHost({ ...BASE, brokerClient: stub.client });
-    host.noteObjectiveOpen('obj-42');
-    host.noteObjectiveClose('obj-42', 'done');
-    await host.close();
-    host = null;
-    const kinds = stub.uploaded.map((e) => e.kind);
-    expect(kinds).toContain('objective_open');
-    expect(kinds).toContain('objective_close');
+    expect(stub.uploaded.some((e) => e.kind === 'tool_action')).toBe(true);
   });
 
   it('Claude Code tool hooks drive PRESENCE only — no tool_action content', async () => {

@@ -13,7 +13,7 @@
  * item the model sees on its next API call. Sending each broker event
  * as its own steer would inflate the model's input transcript with
  * one steer per event. Bundling within a 200ms window collapses
- * bursts (e.g. ten objective updates landing simultaneously) into one
+ * bursts (e.g. ten channel posts landing simultaneously) into one
  * steer carrying the same prose.
  *
  * Routing rule:

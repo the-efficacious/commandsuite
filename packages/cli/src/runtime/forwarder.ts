@@ -64,23 +64,13 @@ export interface ForwarderOptions {
   signal: AbortSignal;
   log: (msg: string, ctx?: Record<string, unknown>) => void;
   /**
-   * Invoked for every message the forwarder observes whose `data.kind`
-   * is `'objective'`. The tracker uses this to refresh the runner's
-   * cached open-objectives snapshot (which seeds the `context_refresh`
-   * re-brief and the activity markers). Fires for both self-originated
-   * and inbound events — even though the self-echo suppression below
-   * drops self-originated objective messages from the channel forward,
-   * the tracker still wants to know about them so the snapshot stays
-   * correct after the agent acts on its own objective.
-   */
-  onObjectiveEvent?: (message: Message) => void;
-  /**
    * Invoked for every message whose `data.kind` is `'tool_source'` —
    * the broker's registry changed in a way that affects this member.
    * The runner refreshes its external-tools snapshot and emits
    * `tools/list_changed` (a genuine capability change — the one case
    * that earns a prompt-prefix cache break). Fires for self-originated
-   * events too, same rationale as `onObjectiveEvent`.
+   * events too: the registry changed either way, and the snapshot has
+   * to stay correct after the agent's own action.
    */
   onToolSourceEvent?: (message: Message) => void;
   /**
@@ -109,7 +99,6 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
     name,
     signal,
     log,
-    onObjectiveEvent,
     onToolSourceEvent,
     onInstructionsEvent,
     presence,
@@ -172,22 +161,10 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
             ? (message.data as Record<string, unknown>).kind
             : null;
 
-        // Objectives tracker observes every objective event — including
-        // ones where the agent itself was the actor — so the open-plate
-        // snapshot stays correct after a self-initiated update.
-        if (dataKind === 'objective' && onObjectiveEvent) {
-          try {
-            onObjectiveEvent(message);
-          } catch (err) {
-            log('onObjectiveEvent handler threw', {
-              error: err instanceof Error ? err.message : String(err),
-            });
-          }
-        }
-
         // Tool-source registry changes drive the external-tools
-        // refresh (→ tools/list_changed). Same self-echo-exempt
-        // treatment as objectives.
+        // refresh (→ tools/list_changed), and are exempt from the
+        // self-echo suppression below: the registry changed whoever
+        // caused it.
         if (dataKind === 'tool_source' && onToolSourceEvent) {
           try {
             onToolSourceEvent(message);

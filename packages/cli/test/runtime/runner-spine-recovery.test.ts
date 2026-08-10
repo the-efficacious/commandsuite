@@ -8,14 +8,16 @@
  * the pack a member gets does not depend on which door they came
  * through.
  *
- * ADDITIVE. The objectives re-brief is untouched by this phase, and
- * the test that matters most here is the one asserting BOTH fire, on
- * the same trigger, independently. The moment one suppresses the other
- * the cut-over stops being a deletion and becomes a migration.
+ * THE ONLY RECOVERY PATH, as of the cut-over. It ran beside the
+ * objectives `context_refresh` re-brief for a phase — with a test here
+ * asserting BOTH fired on one trigger, independently — and that
+ * re-brief has now gone with the subsystem it composed from. What
+ * survives is the assertion that NO `context_refresh` is delivered at
+ * all: a runner still emitting one would mean the deletion missed a
+ * path, and the agent would be reading a plate composed from a store
+ * that no longer exists.
  *
- * The fake bridge is a raw UDS socket speaking the IPC frame protocol
- * — the same seam `runner-rebrief.test.ts` uses, deliberately, so the
- * two paths are observed through one instrument.
+ * The fake bridge is a raw UDS socket speaking the IPC frame protocol.
  */
 
 import { connect, type Socket } from 'node:net';
@@ -29,7 +31,6 @@ import {
   FAKE_BROKER_NAME,
   FAKE_BROKER_TOKEN,
   type FakeBroker,
-  fakeBrokerObjectives,
   fakeBrokerSpine,
   startFakeBroker,
 } from './fake-broker.js';
@@ -150,7 +151,6 @@ beforeEach(() => {
   fakeBrokerSpine.signals.length = 0;
   fakeBrokerSpine.absent = false;
   fakeBrokerSpine.absentSignals = false;
-  fakeBrokerObjectives.length = 0;
   delivered = [];
   clock.ms = 1_700_000_000_000;
 });
@@ -165,7 +165,6 @@ afterEach(async () => {
   }
   await broker?.close();
   broker = null;
-  fakeBrokerObjectives.length = 0;
   fakeBrokerSpine.signals.length = 0;
   fakeBrokerSpine.absent = false;
   fakeBrokerSpine.absentSignals = false;
@@ -231,43 +230,11 @@ describe('spine recovery on the session-attach trigger', () => {
     const recovery = delivered.find(isRecovery);
     expect(recovery?.content).toContain('No contracts bind you right now');
     expect(recovery?.content).toContain('annex cursor 7');
-    // The old path stayed silent on exactly this input — asserted here
-    // so the two behaviours are visibly different in one file.
+    // …and NOTHING composes a `context_refresh` any more. The re-brief
+    // was the runner recomposing an open-objectives plate and pushing
+    // it; it went with the subsystem. A runner still emitting one
+    // would mean the deletion missed a path.
     expect(delivered.filter(isRebrief)).toHaveLength(0);
-  });
-
-  it('fires alongside the objectives re-brief, independently', async () => {
-    fakeBrokerObjectives.push({
-      id: 'obj-77',
-      title: 'Restore search indexing',
-      body: '',
-      outcome: 'Search results include documents created in the last hour.',
-      status: 'active',
-      assignee: FAKE_BROKER_NAME,
-      originator: 'director-1',
-      watchers: [],
-      createdAt: 1,
-      updatedAt: 1,
-      completedAt: null,
-      result: null,
-      blockReason: null,
-      attachments: [],
-    });
-    await startWithSink();
-    const bridge = await connectFakeBridge((runner as RunnerHandle).socketPath);
-    socket = bridge.socket;
-    sendFrame(socket, { kind: 'mcp_request', id: 1, method: 'tools/list' });
-    await waitFor(() => delivered.some(isRecovery) && delivered.some(isRebrief));
-
-    // BOTH, on one trigger. Until the cut-over deletes the first, a
-    // change that made either suppress the other would be a silent
-    // regression in the guarantee.
-    expect(delivered.filter(isRecovery)).toHaveLength(1);
-    expect(delivered.filter(isRebrief)).toHaveLength(1);
-    // And they are different objects: the re-brief is composed from the
-    // objectives snapshot, the recovery from the annex.
-    expect(delivered.find(isRebrief)?.content).toContain('obj-77');
-    expect(delivered.find(isRecovery)?.content).not.toContain('obj-77');
   });
 
   it('honours its own cooldown, and OPENS again when it expires', async () => {

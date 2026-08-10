@@ -207,7 +207,7 @@ describe('the spine surface', () => {
     // in the fixture, "gated" and "admin-only" are indistinguishable.
     const senior: InstructionsResponse = {
       ...PACKET,
-      permissions: ['objectives.create', 'members.manage', 'team.manage', 'process.manage'],
+      permissions: ['members.manage', 'team.manage', 'process.manage'],
     };
     const names = defineTools(senior).map((t) => t.name);
     expect(names).not.toContain('contract_author');

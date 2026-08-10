@@ -6,7 +6,7 @@
  * A runner (`csuite claude`, `csuite codex`, ...) is the parent
  * process that owns one csuite session. Everything broker-side is
  * SHARED and lives in the driver + `startRunner`: auth, instructions, IPC
- * socket, SSE forwarder, objectives tracker, capture host, secrets,
+ * socket, SSE forwarder, capture host, secrets,
  * presence, signal handling, teardown ordering, and the end-of-run
  * summary. An adapter implements ONLY what is specific to one agent
  * framework:
