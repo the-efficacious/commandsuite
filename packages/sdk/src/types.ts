@@ -3134,10 +3134,20 @@ export interface ListSpineContractsQuery {
   member?: string;
   subject?: string;
   /**
-   * The team's focus set: contracts whose latest focus event is `lit`.
-   * The allocator's whole-plate view (#155 finding 8) — what is lit for
+   * The team's focus set, EFFECTIVE: contracts whose latest focus event
+   * is `lit` **and** that have not reached a terminal state. The
+   * allocator's whole-plate view (#155 finding 8) — what is lit for
    * travel now, across the whole team, not only the caller's own
    * bindings. Reading it is baseline; only lighting is permissioned.
+   *
+   * The terminal narrowing is what keeps the plate from accumulating the
+   * dead: a lit contract that completes can never be unlit (every
+   * authoritative act on a terminal contract is refused, `focus`
+   * included), so raw membership would weld finished work onto this view
+   * with no act able to clear it — and completing lit work is the
+   * prescribed way the set empties, so that is the normal path rather
+   * than an edge case. The same predicate as `SpineContract.inFocus` and
+   * as the curator's own gate: one meaning of "in focus".
    */
   focus?: boolean;
 }
