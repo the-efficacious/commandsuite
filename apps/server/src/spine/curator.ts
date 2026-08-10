@@ -902,55 +902,114 @@ class SpineCurator implements Curator {
    * The EFFECTIVE focus set as of immediately before `seq` — lit by the
    * last focus event below `seq`, and not terminal at that point.
    *
-   * Read off the event stream rather than off the projection, because
-   * the projection is "now" and this asks about a moment in the past.
-   * `focus` events are rare by construction (curation is a deliberate,
-   * occasional act), so one indexed page over the kind is the same shape
-   * and the same bound as `stateBefore`'s page over `lifecycle`.
+   * NOT REPLAYED FROM THE STREAM, and that is the whole design. The
+   * store already maintains membership as a projection; a question about
+   * a moment in the past is that projection with the intervening events
+   * UNDONE. Read the set, put back what has ended since, walk back over
+   * the focus events at or after `seq`, and you are standing where the
+   * window began.
+   *
+   * Every read below is scoped either to the unswept region — the tick's
+   * own window on a healthy system — or to the live plate, which is
+   * small by construction. Nothing is a function of the team's history:
+   * not the focus events (`eventsSince`), not the lit-but-finished rows
+   * (asked about by name, never listed). There is no page ceiling
+   * anywhere in it, so there is nothing to truncate at, silently or
+   * otherwise.
    *
    * Returned MUTABLE on purpose: the sweep rolls it forward as focus and
    * terminal-lifecycle events pass through the window, so that every
    * event is judged against the membership that existed when it landed.
    */
   private focusSetBefore(seq: number): Set<string> {
-    // PAGED TO EXHAUSTION, not one page. `events()` walks seq ASC from
-    // the beginning, so a single page is the OLDEST focus events: a team
-    // that has curated more than a page's worth would have computed
-    // silence against membership frozen at its first sprints, and the
-    // break below would never reach the recent ones. `stateBefore` gets
-    // away with one page because it is scoped to a single contract's
-    // lifecycle, which is bounded; focus is team-wide and grows for as
-    // long as the team curates.
-    const lit = new Map<string, boolean>();
-    let cursor = 0;
-    let reached = false;
-    for (let page = 0; page < SWEEP_MAX_PAGES && !reached; page++) {
-      const result = this.annex.events({
-        since_seq: cursor,
-        kind: 'focus',
-        limit: SWEEP_PAGE_SIZE,
-      });
-      for (const event of result.events) {
-        if (event.seq >= seq) {
-          reached = true;
-          break;
-        }
-        if (event.contract === null) continue;
-        lit.set(event.contract, (event.body as SpineFocusBody).lit);
-      }
-      if (result.nextCursor === null) break;
-      cursor = result.nextCursor;
+    // The unswept region: everything at or after `seq`, in the two kinds
+    // that can move membership. `since_seq` is exclusive, so this is the
+    // window plus whatever `drainNewEvents` deferred past its page cap —
+    // the deferral must be covered too, or the projection would carry
+    // changes the undo below never sees.
+    const since = Math.max(0, seq - 1);
+    const focusEvents = this.eventsSince(since, 'focus');
+
+    // THE SEED: the effective set as it stands NOW, plus the contracts
+    // that ENDED in that region — they were still travelable at `seq`.
+    //
+    // The second half is easy to leave out and silent when it is. A lit
+    // contract that reaches `done` keeps its lit row, because it can
+    // never be unlit — every authoritative act on a terminal contract is
+    // refused, `focus` included — so it leaves the EFFECTIVE set with no
+    // event to mark it. `focusSet()` has already forgotten it, while the
+    // events it was carrying on the way out are in this very window.
+    //
+    // Scoped to what ended in the unswept region rather than to every
+    // lit row, deliberately: the lit-but-dead rows accumulate one per
+    // contract the team ever completed while lit, so a seed built from
+    // all of them would put the team's whole history into every tick,
+    // one query per row — the defect this read was rewritten to remove,
+    // wearing a different dimension. Terminal is ABSORBING, so nothing
+    // that ended before `seq` can have been travelable at `seq`, and
+    // none of the older rows needs asking about at all.
+    //
+    // The terminal test inside the loop NARROWS THE QUESTION and decides
+    // nothing: a lit contract with a non-terminal lifecycle event in the
+    // region is still non-terminal now, so `focusSet()` has it already.
+    // Dropping the test would ask about more contracts and return the
+    // same set — it is here to keep the id list the length of the
+    // endings rather than the length of the region.
+    const ended: string[] = [];
+    for (const event of this.eventsSince(since, 'lifecycle')) {
+      if (event.contract === null) continue;
+      if (TERMINAL_STATES.has((event.body as SpineLifecycleBody).state)) ended.push(event.contract);
     }
-    const set = new Set<string>();
-    for (const [contractId, isLit] of lit) {
-      if (!isLit) continue;
-      // Terminal AT THAT POINT, from the same lifecycle history the
-      // state-at-arrival map reads — a contract that ended before this
-      // window was already out of the effective set.
-      if (TERMINAL_STATES.has(this.stateBefore(contractId, seq))) continue;
-      set.add(contractId);
+    const set = new Set(this.annex.focusSet());
+    for (const contractId of this.annex.focusMembership(ended)) set.add(contractId);
+
+    // THE UNDO. Every focus event flips membership — the store refuses
+    // one that would not (`assertFocusFlips`) — so the inverse of an
+    // event is exact and needs no history behind it: `lit: true` means
+    // the contract was OUT immediately before, `lit: false` means it was
+    // IN. Applied NEWEST-FIRST, so the oldest event in the region has
+    // the last word, and that is the one describing the moment `seq`.
+    //
+    // Every contract the undo touches was non-terminal at `seq` without
+    // being asked: a focus event cannot land on a terminal contract, and
+    // terminal is absorbing, so a contract with a focus event at or
+    // after `seq` was live at `seq`.
+    for (let i = focusEvents.length - 1; i >= 0; i--) {
+      const event = focusEvents[i] as SpineEvent;
+      if (event.contract === null) continue;
+      if ((event.body as SpineFocusBody).lit) set.delete(event.contract);
+      else set.add(event.contract);
     }
     return set;
+  }
+
+  /**
+   * Every event of one kind at or after `sinceSeq`, paged to the head.
+   *
+   * NO CEILING, and it does not need one. The range is what this curator
+   * has not yet swept, which is the tick's own window on a healthy
+   * system — a handful of events, and on most ticks no `focus` event at
+   * all, because curating is a deliberate, occasional act. From a
+   * backlog it shrinks by a whole window per tick until it is that
+   * again. Nothing here is a function of how long the team has been
+   * curating, which is the property that matters: a read that walked
+   * history from seq 0 had to stop somewhere, and stopping meant
+   * computing silence against a membership frozen mid-history —
+   * silently, in the over-silencing direction, on every tick after,
+   * with no tick able to recover.
+   *
+   * The loop terminates because the store returns a null cursor on any
+   * short page and every full page strictly advances the cursor.
+   */
+  private eventsSince(sinceSeq: number, kind: SpineEventKind): SpineEvent[] {
+    const collected: SpineEvent[] = [];
+    let cursor: number | null = sinceSeq;
+    while (cursor !== null) {
+      const page = this.annex.events({ since_seq: cursor, kind, limit: SWEEP_PAGE_SIZE });
+      collected.push(...page.events);
+      cursor = page.nextCursor;
+    }
+    return collected;
   }
 
   /** A contract's state immediately before `seq`, from its own lifecycle history. */

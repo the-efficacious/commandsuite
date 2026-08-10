@@ -158,6 +158,31 @@ export interface AnnexStore {
    * an unlight.
    */
   focusSet(): string[];
+  /**
+   * RAW focus membership, ASKED ABOUT NAMED CONTRACTS: which of them
+   * carry a `lit` row, terminal or not. `focusSet()` narrowed by
+   * nothing, and narrowed instead by the caller's question.
+   *
+   * The pair is deliberate and the line between them is the same one
+   * twice: `focusSet()` = this ∩ non-terminal. Every wire surface —
+   * `inFocus`, `?focus=true`, the Board, the tool — serves the
+   * EFFECTIVE set, because a reader must never be shown a plate the
+   * scheduler does not act on. This one exists for the single question
+   * the effective set cannot answer: **was this contract lit when it
+   * ended.** A contract that was lit and has since ended left the
+   * effective set with no event to mark it (it can never be unlit —
+   * every authoritative act on a terminal contract is refused), so the
+   * effective set has already forgotten a membership that was real
+   * while the events being judged were arriving.
+   *
+   * TAKES ITS CONTRACTS RATHER THAN LISTING ALL OF THEM, because the
+   * unlisted answer grows without bound: one lit row survives every
+   * contract the team ever completed while lit, so "every raw-lit
+   * contract" is a set the size of the team's history, and a caller
+   * handed it would put that history back into whatever it does per
+   * row. Callers know the few contracts they are asking about.
+   */
+  focusMembership(contractIds: readonly string[]): string[];
   ask(id: string): SpineAsk | null;
   /** The Guaranteed Pack. The recovery call, and cheap by construction. */
   orient(member: string, now?: number): OrientPack;
@@ -767,6 +792,24 @@ class SqliteAnnexStore implements AnnexWriter {
       )
       .all(...([...SPINE_TERMINAL_STATES] as never[])) as unknown as { contract_id: string }[];
     return rows.map((r) => r.contract_id);
+  }
+
+  /**
+   * Raw membership among the named contracts — the lit rows, with no
+   * terminal narrowing.
+   *
+   * The projection row and nothing else, which is what makes it the
+   * right answer to a question about the past: the fold writes exactly
+   * one row per contract and every focus event replaces it, so the row
+   * says "this contract's last focus event lit it" at any depth of
+   * history, for the cost of one indexed read. An empty question costs
+   * no query at all. See the interface for why the effective set cannot
+   * stand in for it, and why this one is asked rather than listed.
+   */
+  focusMembership(contractIds: readonly string[]): string[] {
+    return this.rowsIn<FocusRow>('spine_focus', 'contract_id', contractIds)
+      .filter((row) => row.lit === 1)
+      .map((row) => row.contract_id);
   }
 
   /**
