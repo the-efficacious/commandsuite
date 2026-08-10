@@ -28,9 +28,10 @@ The groups:
   text arrives by injection, not by calling these.
 - **Spine tools** — the team's append-only annex and the contracts
   folded out of it: orient, read, author, attempt, judge, complete,
-  ask, rule, proceed, observe, discuss, promote, focus. Authoring and
-  amending are gated on `spine.author`, curating the focus set on
-  `spine.focus`; the rest are baseline participation.
+  ask, rule, proceed, observe, discuss, promote, focus, focus_set.
+  Authoring and amending are gated on `spine.author`, *changing* the
+  focus set on `spine.focus`; the rest, reading the set included, are
+  baseline participation.
 - **Filesystem tools** — operate on the csuite virtual filesystem
   under the agent's own home (`/<name>/`).
 - **Admin tools** — permission-gated groups for team config and
@@ -756,6 +757,31 @@ ruling on an ask you raised, an ask redirected to you. Those are
 class-1 injections and they never yield to a subscription, because
 they are claims on you rather than a broadcast you opted into.
 
+### focus_set
+
+| | |
+|---|---|
+| **Required permission** | none |
+| **Input** | `{}` |
+| **Output** | Every contract lit for travel now — id, state, title, assignee, verifier, subject, staleness — or that the set is empty |
+| **Broker call** | `GET /spine/contracts?focus=true` |
+
+The team's **focus set** (D9): the shared boundary of what is lit for
+travel right now, whoever holds it. Reading it is baseline and that is
+deliberate — the design's claim is that agents *plan* against the set,
+and an agent that cannot see the team's plate cannot plan against it,
+only be silenced by it. `orient` marks your own bindings, which answers
+"am I in the push"; this answers "what *is* the push", which is what
+anyone deciding what to pick up next is actually asking.
+
+What comes back is the **effective** set: lit *and* still travelable. A
+contract that ends leaves by ending — no unlight is needed, and none is
+possible — so this is never a graveyard of finished work. An empty
+result is a real answer and says so: nothing is lit, so focus is
+narrowing nobody's attention and ambient traffic flows everywhere.
+
+Changing the set takes `spine.focus` — see [focus](#focus).
+
 ## Spine tools (permission-gated)
 
 ### contract_author
@@ -804,9 +830,10 @@ Light or unlight a contract in the team's **focus set** (D9) — the
 shared boundary of what is lit for travel now. A distinct leaf from
 `spine.author`: authoring states what the world must become, curating
 the focus set decides which contracts are the ones to travel to now.
-Reading the set needs no tool — `orient` marks each binding in or out of
-focus, and `GET /spine/contracts?focus=true` returns the whole lit
-plate — so only the lighting act is gated.
+Reading the set is baseline — [focus_set](#focus_set) returns the whole
+lit plate, `orient` marks each of your own bindings in or out of focus,
+and `GET /spine/contracts?focus=true` is the same read on the HTTP API
+— so only the lighting act is gated.
 
 Focus governs **ambient** attention only: a contract out of focus
 generates no subscription deltas and no recovery nudges, so the team is

@@ -2491,7 +2491,7 @@ export const SpineContractSchema = z.object({
   successor: SpineIdSchema.nullable(),
   stale: z.boolean(),
   head: SpineRevisionSchema.nullable(),
-  /** In the team's focus set — its latest focus event is `lit` (D9). */
+  /** In the team's focus set (D9) — latest focus event `lit` AND not terminal. */
   inFocus: z.boolean(),
 });
 
@@ -2555,7 +2555,7 @@ export const OrientContractSchema = z.object({
   revision: SpineRevisionSchema.nullable(),
   stale: z.boolean(),
   head: SpineRevisionSchema.nullable(),
-  /** Whether this binding is in the team's focus set (D9). */
+  /** Whether this binding is in the team's focus set (D9) — lit AND not terminal. */
   inFocus: z.boolean(),
   rulings: z.array(SpineEventSchema),
 });

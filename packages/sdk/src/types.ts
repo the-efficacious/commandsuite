@@ -2917,10 +2917,24 @@ export interface SpineContract {
   /** The subject's latest observed revision, when there is one. WHOLE, like `revision`. */
   head: SpineRevision | null;
   /**
-   * Whether this contract is in the team's FOCUS SET — its latest focus
-   * event is `lit` (D9). A reported state, folded from focus events,
-   * never derived: a contract is in focus because a permissioned member
-   * lit it. `false` when nobody has ever lit it or it was unlit.
+   * Whether this contract is in the team's FOCUS SET (D9) — the
+   * EFFECTIVE set: its latest focus event is `lit` **and** it has not
+   * reached a terminal state. A reported state, never derived: a
+   * contract is in focus because a permissioned member lit it.
+   *
+   * `false` in three ways, and the third is the one to know about:
+   * nobody ever lit it, somebody unlit it, or **it ended**. A lit
+   * contract that reaches `done`/`cancelled`/`superseded` leaves the
+   * set the moment it does, with no act required — and no act is
+   * possible, since every authoritative event on a terminal contract is
+   * refused, `focus` included. The focus set is what is lit for TRAVEL
+   * now, and finished work is not travel.
+   *
+   * One definition, everywhere: this flag, `?focus=true`, and the
+   * curator's own gate all read `lit ∧ non-terminal`, so a reader is
+   * never shown a plate the scheduler does not act on. The raw
+   * membership row is not lost — it survives in the focus events, which
+   * are what the record is made of.
    *
    * Out-of-focus is attention-silence, not record-absence: a contract
    * with `inFocus: false` stays fully in the annex, in this list, and in
@@ -3287,10 +3301,11 @@ export interface OrientContract {
   stale: boolean;
   head: SpineRevision | null;
   /**
-   * Whether this binding is in the team's focus set (D9). Lets a
-   * member's `orient` distinguish in-focus from out-of-focus bindings —
-   * out-of-focus work still reaches them here and as class 1, but
-   * generates no ambient class-2 traffic.
+   * Whether this binding is in the team's focus set (D9) — lit AND not
+   * yet ended, the same EFFECTIVE set `SpineContract.inFocus` reports.
+   * Lets a member's `orient` distinguish in-focus from out-of-focus
+   * bindings — out-of-focus work still reaches them here and as class 1,
+   * but generates no ambient class-2 traffic.
    */
   inFocus: boolean;
   /** Rulings that bind this contract, newest last. */

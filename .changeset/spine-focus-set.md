@@ -99,14 +99,42 @@ subsystem exists to stop:
   the set was silenced by its own effect — so the "left focus" delta
   mostly never fired. A focus event is never silenced by the membership
   it changes; entering and leaving the push are both news.
-- **The membership read pages to exhaustion.** `events()` walks seq ASC
-  from the beginning, so one page is the OLDEST focus events: a team
-  that had curated past a page would have computed silence against
-  membership frozen at its first sprints. Its neighbour `stateBefore`
-  survives on one page only because it is scoped to a single contract's
-  lifecycle, which is bounded; focus is team-wide and grows for as long
-  as the team curates.
+- **The membership read is a function of the sweep window, not of the
+  team's history.** It is read off the `spine_focus` projection and
+  UNDONE back to the window's start: every focus event flips membership
+  (one that would not is refused), so inverting the events at or after
+  the window's first seq is exact, and the store's own row supplies
+  everything older. A contract that ended inside that region is put back
+  into the seed by name — it left the effective set with no event to
+  mark it — and `focusMembership()` answers that one question, asked
+  about the few contracts that ended rather than listing every lit row,
+  because the lit rows accumulate one per contract the team ever
+  completed while lit.
+
+  This replaces a read that reconstructed membership by walking the
+  focus stream from seq 0 on every tick, with a ceiling of 20 pages ×
+  500. Past 10,000 focus events it froze the team's membership
+  mid-history — silently, in the OVER-silencing direction, and with no
+  recovery, because every tick restarted from the same cursor and hit
+  the same wall ten seconds later. An earlier version of this note
+  claimed that read "pages to exhaustion"; it did not, and the code
+  comment saying so was wrong in the same way. **A read with a bound has
+  to say what the bound is**, and if the answer is "it truncates", that
+  is the defect and not the documentation.
 - **Reading the set is baseline; changing it takes the leaf.** The new
   `focus_set` tool exists because D9 claims agents plan against the set,
   and an agent that can only be silenced by a boundary it cannot read is
   not planning against it.
+- **`focusSet()` and `focusMembership()` are one concept each.** The
+  effective set is `lit ∧ non-terminal` and is what every wire surface
+  and the curator's gate serve; raw membership is the lit row and is
+  asked about BY NAME, never listed, so no caller can accidentally take
+  a set the size of the team's history and do per-row work on it.
+- **The arms of the at-arrival rule each got their own fixture.** Three
+  of the four were unguarded: nearly every fixture swept after each act,
+  so the window was one event and the roll-forward never ran, and the
+  focus-event exemption only bites when a DARK contract is lit while
+  another is lit, which nothing drove. Where two events share a tick
+  they share an injection, so the new fixtures assert the RENDERED line
+  (`1 event(s): lifecycle`) — a row count cannot tell "the ending was
+  delivered" from "the ending and everything behind it were".

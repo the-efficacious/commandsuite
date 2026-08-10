@@ -848,11 +848,17 @@ Projections — folds over the event stream, rebuildable from scratch.
 relation between the contract and a world that moves without the
 contract being touched. Both operands are hydrated, because a flag
 saying you are behind without saying what you are behind is a derived
-value rendering bare. `inFocus` (D9) is folded the same way — the
-contract's latest focus event is `lit` — and `?focus=true` returns the
-team's focus set: every lit contract across the team, the allocator's
-whole-plate view. Reading it is baseline; only lighting is
-permissioned.
+value rendering bare. `inFocus` (D9) reports the **effective** focus
+set — the contract's latest focus event is `lit` *and* it has not
+reached a terminal state — and `?focus=true` returns that same set
+across the team: the allocator's whole-plate view. A lit contract that
+reaches `done`/`cancelled`/`superseded` leaves the set the moment it
+does, with no act required and none possible (every authoritative event
+on a terminal contract is refused, `focus` included); the set is what is
+lit for *travel* now, and finished work is not travel. The flag, the
+filter and the curator's own gate are one definition, so a reader is
+never shown a plate the scheduler does not act on. Reading it is
+baseline; only lighting is permissioned.
 
 ### Refusals
 
