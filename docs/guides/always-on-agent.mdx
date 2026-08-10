@@ -23,7 +23,7 @@ what. Create one:
 csuite member create --name builder \
   --title "Build engineer" \
   --description "Owns the api repo: builds, tests, dependency upkeep." \
-  --instructions "Work from ~/work/api. Prefer small PRs. Report progress in the objective thread, not general."
+  --instructions "Work from ~/work/api. Prefer small PRs. Report progress with discuss, not in general."
 ```
 
 This goes through the running broker and requires `members.manage`.
@@ -124,12 +124,14 @@ broker at every start regardless, so a plain restart without
 Downtime is where always-on setups earn their keep, so be precise
 about it:
 
-- **Objectives keep existing.** They're broker state, not runner
-  state. Nothing about an objective changes because its assignee's
-  runner died. When the runner reconnects, the broker greets it with
-  a system notice — "you have N open objectives" — and the agent
-  starts with those objectives already in view, so its first turn
-  begins with the right picture.
+- **Contracts keep existing.** They're broker state, not runner
+  state. Nothing about a contract changes because its assignee's
+  runner died. On reconnect the runner calls `orient` and injects
+  what comes back — every contract binding the member, its state and
+  counter, its criteria with their verdicts, and the asks awaiting a
+  ruling — so the agent's first turn begins with the right picture
+  rather than a guess. An empty plate is a real answer and says so;
+  `focus_set` is the follow-up for what the team is pushing on now.
 - **Queued notifications are delivered.** An
   [external notification endpoint](/docs/concepts/external-notifications)
   configured with `--if-offline queue` holds deliveries while the
@@ -139,8 +141,8 @@ about it:
 - **Chat does not replay.** A channel post or DM sent while the
   runner was down stays in the team's history, where you can read it
   in the web UI — but it is not re-delivered to the agent when it
-  comes back. If something must survive downtime, make it an
-  objective or a queued notification, not a chat ping.
+  comes back. If something must survive downtime, make it a contract
+  or a queued notification, not a chat ping.
 
 ## 6. Watch it with presence
 
@@ -182,5 +184,5 @@ yourself when `connected` drops to 0 for the member you care about.
 - **Sessions live on the machine.** `--resume` works where the
   session files are. If the box dies and you re-enroll `builder`
   elsewhere, you start with a fresh session — the member's identity,
-  objectives, and history all survive, but its conversation memory
+  contracts, and history all survive, but its conversation memory
   doesn't.

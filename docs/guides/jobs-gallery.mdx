@@ -10,7 +10,7 @@ order: 50
 Blueprints, not tutorials. Each entry is the
 [four-step method](/docs/guides/give-an-agent-a-job) compressed to
 its choices: what access to provision, what events to route in, the
-spine of the standing instructions, and a first objective. Pattern-
+spine of the standing instructions, and a first contract. Pattern-
 match your own workflow onto the closest one.
 
 Every blueprint assumes the basics from
@@ -32,9 +32,9 @@ proves it.
   restore it fully to scratch, verify integrity (row counts,
   checksums, a sample query), then destroy the scratch copy. Post
   the result in #ops with numbers, not adjectives."
-- **First objective**: "Restore last night's primary-DB backup to
-  scratch and report row counts against production" — outcome:
-  numbers in the thread.
+- **First contract**: "Restore last night's primary-DB backup to
+  scratch and report row counts against production" — criterion:
+  row counts recorded against production, per table.
 - **The trace shows**: the restore commands, the verification
   queries, and exactly what was destroyed after.
 
@@ -49,11 +49,11 @@ A support inbox that triages itself, with a human veto.
   email-to-webhook bridge.
 - **Instructions spine**: "Classify each incoming message. Answer
   the routine ones from the canned-response library, draft-first:
-  post the draft in #support and send only after a 👍. Open an
-  objective for anything that needs real work, assigned to the
+  post the draft in #support and send only after a 👍. Author a
+  contract for anything that needs real work, assigned to the
   on-call member."
-- **First objective**: "Clear the current backlog of 14 unanswered
-  messages" — outcome: every message answered or escalated with a
+- **First contract**: "Clear the current backlog of 14 unanswered
+  messages" — criterion: every message answered or escalated with a
   reason.
 - **The trace shows**: every classification decision and every
   draft, before a single customer saw anything.
@@ -70,9 +70,9 @@ A daily brief that reads everything so the team doesn't.
   morning, post a five-bullet brief to #intel: what changed, why it
   matters, one-line sources. No bullet without a link. Flag anything
   that contradicts a position in the watchlist."
-- **First objective**: "Build the initial watchlist from the last
-  quarter's #intel history" — outcome: watchlist file reviewed by a
-  named member.
+- **First contract**: "Build the initial watchlist from the last
+  quarter's #intel history" — criterion: every recurring position in
+  the quarter has a line; verifier: a named member.
 - **The trace shows**: which sources it actually read, so "why did
   the brief miss X" has an answer.
 
@@ -88,10 +88,11 @@ Nightly exports land; clean data comes out; anomalies get flagged.
   ~/schemas, clean known defect patterns (they're listed in the
   process document — read it fresh each run), load, then reconcile
   row counts end to end. Post the reconciliation line to #data.
-  Anything outside tolerance is a blocked objective, not a Slack
-  message."
-- **First objective**: "Backfill and reconcile last week's five
-  exports" — outcome: counts match or discrepancies are itemized.
+  Anything outside tolerance is a contract waiting on a named
+  person, not a Slack message."
+- **First contract**: "Backfill and reconcile last week's five
+  exports" — criteria: counts match end to end, or every discrepancy
+  is itemized.
 - **The trace shows**: every transform applied to data that feeds
   decisions — the lineage question answered by receipt rather than
   memory.
@@ -108,9 +109,9 @@ human re-pasting it.
   metadata; schedule per the calendar in the process document;
   adapt the excerpt per channel — no reworded titles; post the
   publish record to #content."
-- **First objective**: "Publish the Q3 announcement across all four
-  surfaces at Tuesday 09:00" — outcome: four live URLs in the
-  thread.
+- **First contract**: "Publish the Q3 announcement across all four
+  surfaces at Tuesday 09:00" — criterion: four live URLs, one per
+  surface.
 - **The trace shows**: what went out, where, and when — per surface,
   with the exact API calls.
 
@@ -125,12 +126,13 @@ question "is anything about to bite us?"
   daily sweep cron for everything else.
 - **Instructions spine**: "Maintain ~/renewals.md with every domain,
   cert, and license and its date. Thirty days out: post a warning in
-  #ops. Seven days out: open an objective assigned to the owner.
+  #ops. Seven days out: author a contract assigned to the owner.
   Never renew anything yourself — your job is that nothing expires
   unnoticed, not that everything renews unreviewed."
-- **First objective**: "Build the initial inventory from the
-  registrar, cert monitor, and SaaS admin panels" — outcome:
-  renewals file with dates, reviewed in #ops.
+- **First contract**: "Build the initial inventory from the
+  registrar, cert monitor, and SaaS admin panels" — criterion: every
+  domain, cert, and license in the file with its date; verifier: the
+  ops owner.
 - **The trace shows**: the sweep that produced each warning — so a
   missed expiry is a diagnosable failure, not a mystery.
 

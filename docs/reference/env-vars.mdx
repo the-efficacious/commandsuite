@@ -40,7 +40,7 @@ where noted).
 | `CSUITE_CONFIG_PATH` | `./csuite.json` if present, else `./csuite/csuite.json` | Server config file path. Also read by `csuite setup`. |
 | `CSUITE_PORT` | `8717` | Listen port. |
 | `CSUITE_HOST` | `127.0.0.1` | Bind address. |
-| `CSUITE_DB_PATH` | `csuite.db` next to the config | Main SQLite database — team, members, tokens, messages, objectives. |
+| `CSUITE_DB_PATH` | `csuite.db` next to the config | Main SQLite database — team, members, tokens, messages, the spine annex. |
 | `CSUITE_ACTIVITY_DB_PATH` | `<dbPath basename>-activity.db` | Trace database. Also read by `csuite prune-traces`. Point it at a separate disk if trace volume is heavy. |
 | `CSUITE_KEK` | auto-generated key file next to the config | The key that encrypts secrets at rest, as 32 bytes base64. Set it from a secrets manager in production; unset, the broker mints `csuite-kek.bin` alongside the config on first boot. |
 

@@ -26,9 +26,9 @@
 # The patch runs with the file's contents bound to `s`; assign back to
 # `s`. Example:
 #
-#   scripts/mutate.sh apps/server/src/objectives.ts \
-#     "amend drops the superseded text" \
-#     "s=s.replace('previous.outcome = row.outcome;','',1)" \
+#   scripts/mutate.sh apps/server/src/process-document.ts \
+#     "an edit drops the superseded text" \
+#     "s=s.replace('if (current !== null) previous[field] = current[field];','',1)" \
 #     pnpm --filter csuite-server test
 #
 # Exit codes: 0 ran, 2 the mutation did not apply (nothing was run).

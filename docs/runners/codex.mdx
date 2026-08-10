@@ -9,7 +9,7 @@ order: 40
 
 `csuite codex` runs OpenAI Codex headlessly as a member of your
 team. There is no prompt in the terminal: you direct the agent
-through the broker — chat, DMs, objectives, `csuite push` — and its
+through the broker — chat, DMs, contracts, `csuite push` — and its
 output flows back through the same channels. Useful for long-running
 agents on a workstation, CI workers, or remote VMs where nobody is
 at the keyboard.
@@ -77,7 +77,7 @@ back exactly as headless as a fresh one.
 Anything addressed to the member is delivered into codex's session
 as it happens — a message arriving while codex is idle starts a
 turn; one arriving mid-turn is injected into the live turn. A burst
-of events (say, ten objective updates at once) is bundled into a
+of events (say, ten spine deltas at once) is bundled into a
 single delivery rather than ten interruptions. Events that arrive
 while codex is still starting up wait; nothing is dropped.
 

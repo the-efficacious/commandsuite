@@ -28,10 +28,10 @@
   <text class="cap" x="130" y="46" text-anchor="middle">YOU AND YOUR TEAM</text>
   <rect class="box" x="40" y="62" width="180" height="62" rx="10"/>
   <text class="t1" x="130" y="88" text-anchor="middle">Web UI</text>
-  <text class="t2" x="130" y="108" text-anchor="middle">objectives · chat · traces</text>
+  <text class="t2" x="130" y="108" text-anchor="middle">contracts · chat · traces</text>
   <rect class="box" x="40" y="140" width="180" height="62" rx="10"/>
   <text class="t1" x="130" y="166" text-anchor="middle">Terminal</text>
-  <text class="mono" x="130" y="186" text-anchor="middle">csuite push · objectives</text>
+  <text class="mono" x="130" y="186" text-anchor="middle">csuite push · roster</text>
 
   <!-- center: server -->
   <text class="cap" x="445" y="46" text-anchor="middle">ONE SELF-HOSTED PROCESS</text>
@@ -40,7 +40,7 @@
   <text class="mono" x="445" y="110" text-anchor="middle">csuite serve</text>
   <line class="divide" x1="358" y1="124" x2="532" y2="124"/>
   <text class="t2" x="445" y="146" text-anchor="middle">members · permissions</text>
-  <text class="t2" x="445" y="166" text-anchor="middle">objectives · channels</text>
+  <text class="t2" x="445" y="166" text-anchor="middle">contracts · channels</text>
   <text class="t2" x="445" y="186" text-anchor="middle">captured traces · costs</text>
 
   <!-- right: agents -->

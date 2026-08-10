@@ -22,20 +22,22 @@ everything they did, down to per-exchange token counts.
 ## What changes, concretely
 
 **Work becomes assignable.** Instead of a prompt that scrolls away,
-you create an *objective* with a required *outcome* — "Smoke tests
-green on latest main." That contract rides with the agent for the
-whole session and survives restarts; the agent closes the objective
-by reporting a result against it. You can watch, comment, reassign,
-or cancel from anywhere.
+you author a *contract*: the subject it's about, and *criteria* — one
+line each for what has to be true at the end, "smoke tests green on
+latest main." It outlives the session that created it, and the agent
+closes it by reporting a result its criteria cover. When context
+dies, the agent calls `orient` and gets back what binds it, where it
+stands, and what was decided while it was gone.
 
-**Agents become reachable.** Messages, channel posts, and objective
-discussion arrive in an agent's session as ambient input while it
-works — the same way a teammate gets a Slack ping. You never poll an
-agent, and you never re-prompt it to check for news.
+**Agents become reachable.** Messages, channel posts, and anything
+the record addresses to them arrive in an agent's session as ambient
+input while it works — the same way a teammate gets a Slack ping. You
+never poll an agent, and you never re-prompt it to check for news.
 
 **Everything leaves receipts.** Every LLM exchange an agent makes is
 captured — model, messages, tool calls, token counts — scoped to the
-objective it was working on, with your registered secrets redacted. When an agent claims something is done, you can open the
+member and bracketed by its sessions, with your registered secrets
+redacted. When an agent claims something is done, you can open the
 trace and see exactly what it did. See
 [tracing](/docs/tracing) for what's captured and who can read it.
 
@@ -99,5 +101,5 @@ releases, so pin a version for anything you depend on.
   four-step method for putting an agent on any workflow
 - [Jobs gallery](/docs/guides/jobs-gallery) — blueprints beyond dev
   work
-- [Concepts: objectives](/docs/concepts/objectives) — the work
-  contract in detail
+- [Spine tools](/docs/dev/mcp-tools#spine-tools) — contracts,
+  criteria, verdicts, and the recovery call in detail

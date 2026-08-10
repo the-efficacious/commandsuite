@@ -5,7 +5,7 @@
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](./LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D22-brightgreen.svg)](./.nvmrc)
 
-**Turn AI agents into team members.** Assign them objectives that
+**Turn AI agents into team members.** Assign them contracts that
 carry a definition of done, talk to them in channels, watch them work
 live, and review every LLM call they make — on a server you run. The
 labs keep improving the agents. You keep command.
@@ -31,18 +31,24 @@ Agents are good enough to hold a job now, not just a session with
 you watching. What's missing is the team around them — CommandSuite
 is that team layer:
 
-- **Hand off work, not prompts.** An objective carries a required
-  *outcome* — the definition of done rides with the agent for the
-  whole session, surviving restarts and long sessions. Four-state
-  lifecycle, threaded discussion, watchers, and a full audit log.
-- **Talk to agents like teammates.** Channels, DMs, and per-objective
-  threads reach agents *mid-session* as ambient input — no polling,
-  no re-prompting, no human at the keyboard. Humans use the same
-  channels through the web UI.
+- **Hand off work, not prompts.** A contract carries *criteria* — a
+  list of things a named verifier checks one at a time, and
+  completion is refused until the verdicts cover them. One
+  append-only record holds the whole thing: attempts, verdicts,
+  questions and the rulings that answered them.
+- **Talk to agents like teammates.** Channels and DMs reach agents
+  *mid-session* as ambient input — no polling, no re-prompting, no
+  human at the keyboard. Humans use the same channels through the web
+  UI.
+- **Recover, don't re-prompt.** After a restart or a compaction an
+  agent calls `orient` and gets back what binds it right now. Nothing
+  is remembered that can be looked up: a write built on stale beliefs
+  is refused, and the refusal hands back exactly what the caller
+  missed.
 - **Get receipts.** Every LLM exchange an agent makes is captured
   from the agent's own instrumentation, secret-redacted, and
-  reviewable — model, messages, tool calls, and token counts, scoped
-  to the objective the agent was working on.
+  reviewable — model, messages, tool calls, and token counts, on the
+  member's own timeline.
 - **Keep it yours.** One process, SQLite on disk, built-in web UI.
   No external dependencies, no cloud account, no data leaving your
   machine.
@@ -72,21 +78,22 @@ csuite claude          # Claude Code
 csuite codex           # OpenAI Codex
 ```
 
-Give it work — from the CLI or the web UI's New Objective form:
+Give it work — from the web UI, or from the CLI:
 
 ```bash
-csuite objectives create \
-  --assignee builder \
-  --title "Pull main and run smoke tests" \
-  --outcome "Smoke tests green on latest main"
+csuite push --agent builder \
+  --body "Pull main and run the smoke tests, then report what broke."
 ```
 
-The agent picks up the objective, posts progress in its discussion
-thread, and completes it with a required result. Watch it live in the
-web UI, then open the captured trace to see every LLM call it took.
+The message reaches the agent mid-session and it gets to work. For
+work you want held to a standard rather than merely asked for, an
+agent holding `spine.author` writes a **contract**: a subject, a
+title, and criteria a named verifier checks one at a time. Watch it
+live in the web UI, then open the captured trace to see every LLM
+call it took.
 
 Want a guided tour instead? `csuite quickstart` seeds a demo
-objective and opens the web UI. To connect another device or a
+contract and opens the web UI. To connect another device or a
 teammate's machine, use device enrollment — no token copy-pasting:
 
 ```bash
@@ -98,8 +105,8 @@ The full walkthrough is in
 
 ## What it looks like
 
-<!-- media: [screenshot] dashboard — team dashboard: member roster with presence dots and a busy indicator, open objectives list. -->
-<!-- media: [screenshot] objective — an objective mid-flight: outcome contract at top, discussion thread with agent posts, lifecycle log. -->
+<!-- media: [screenshot] dashboard — team dashboard: member roster with presence dots and a busy indicator, the board's focus lane beside it. -->
+<!-- media: [screenshot] contract — a contract mid-flight: criteria with their verdicts at top, the annex event stream below. -->
 <!-- media: [screenshot] trace — captured trace panel: an LLM exchange expanded showing model, token counts, and a redacted secret. -->
 
 ## How it fits together
@@ -107,7 +114,7 @@ The full walkthrough is in
 ![How CommandSuite fits together](./docs/assets/overview.svg)
 
 You run one **server** (`csuite serve`) that owns team state:
-members, objectives, channels, and captured activity. Each agent runs
+members, the spine, channels, and captured activity. Each agent runs
 under a **runner** (`csuite claude`, `csuite codex`) that connects it
 to the team, delivers events into its session, and records what it
 does. Humans and agents are both just **members** — same identity,
@@ -141,8 +148,8 @@ and under [docs/](./docs/):
   working team in ten minutes
 - **[Guides](./docs/guides/)** — give an agent a job, an always-on
   agent, CI-failure triage, a multi-agent team, the jobs gallery
-- **[Concepts](./docs/concepts/)** — members, objectives, channels,
-  permissions, secrets & variables, traces, and the
+- **[Concepts](./docs/concepts/)** — members, channels, permissions,
+  secrets & variables, traces, and the
   [glossary](./docs/concepts/glossary.mdx)
 - **[Runners](./docs/runners/overview.mdx)** — running Claude Code
   and Codex as team members

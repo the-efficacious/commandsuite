@@ -15,8 +15,8 @@ work. For each member, the broker keeps a running timeline of:
 - **Every tool call** — the tool's name, its input, and its result.
 - **The prompt that woke each turn** — whether a person typed it or a
   channel event delivered it.
-- **Objective markers** — when the member picked up an objective and
-  when it released it (done, cancelled, reassigned, or shut down).
+- **Session markers** — when a runner session started and ended, and
+  how it exited.
 - **Cost and token telemetry** — the operational numbers behind each
   call.
 
@@ -27,24 +27,25 @@ topic: see [the trace pipeline](/docs/dev/trace-pipeline).
 
 ## Viewing a trace
 
-Open any objective in the web UI. Its trace view shows the assignee's
-activity across the objective's lifetime: each LLM exchange with the
-model name and token usage, expandable message content, and every
-tool call inline where it happened.
+Open a member's profile in the web UI and select **Activity**. The
+timeline shows that member's work in order: each LLM exchange with
+the model name and token usage, expandable message content, and
+every tool call inline where it happened.
 
-{/* media: screenshot trace-view — an objective's trace panel with one llm_exchange expanded (model name, token counts, message blocks) above a tool call row */}
+{/* media: screenshot trace-view — a member's Activity tab with one llm_exchange expanded (model name, token counts, message blocks) above a tool call row */}
 
-A per-objective trace is a time window over the member's activity —
-everything the agent did between taking the objective and releasing
-it. Nothing is stored twice, and work done between objectives is
-still on the member's timeline.
+The timeline is **per member** and bracketed by runner sessions —
+`session_start` to `session_end`. There is no per-contract trace
+view: what the team owes and what happened to it is recorded in
+[the spine's annex](/docs/dev/mcp-tools#spine-tools), which is a
+separate record from captured activity.
 
 ## Who can see traces
 
 Viewing another member's activity requires the `activity.read`
 permission. Members can always see their own. The broker enforces
-this on every request — watching or originating an objective does not
-grant access to the assignee's trace.
+this on every request, and no other relationship to a member's work
+grants access to their trace.
 
 ## What is redacted
 
@@ -67,7 +68,7 @@ Traces are the heaviest data the broker stores, so they live in their
 own database file next to the main one — `./csuite.db` gets a
 `./csuite-activity.db` sibling (override with
 `CSUITE_ACTIVITY_DB_PATH`). A burst of agent activity never slows
-down chat or objectives.
+down chat or the spine.
 
 Prune old rows on a cadence:
 

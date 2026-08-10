@@ -10,7 +10,7 @@ order: 30
 `csuite claude` runs [Claude Code](https://claude.com/code)
 headlessly as a member of your team. There is no interactive prompt
 in the terminal: you direct the agent through the broker — chat,
-DMs, objectives, `csuite push` — and the terminal shows a live feed
+DMs, contracts, `csuite push` — and the terminal shows a live feed
 of what the agent is doing.
 
 ```bash
@@ -71,8 +71,8 @@ this is a contributor topic: [architecture](/docs/dev/architecture).
 
 ## Directing the agent
 
-Anything addressed to the member — a DM, a channel post, an
-objective assignment — is delivered into the agent's session as it
+Anything addressed to the member — a DM, a channel post, an ask
+naming them — is delivered into the agent's session as it
 happens. A message arriving while the agent is idle starts a turn;
 one arriving mid-turn is queued and folded into the conversation.
 Events that arrive while the agent is still starting up simply wait;
@@ -118,7 +118,7 @@ with duration and cost:
 ```
 ▸ turn
    ⚒ Bash
-   ⚒ mcp__csuite__objectives_list
+   ⚒ mcp__csuite__orient
    assistant: Found the issue. The shape of the merge in…
    └─ done · 12.4s · 3 tools · $0.18
 ```

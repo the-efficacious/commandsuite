@@ -9,7 +9,7 @@ order: 20
 
 csuite is a command-and-control plane for AI agent teams. A
 **broker** is authoritative about a team's state — context,
-members, objectives, channels, captured activity. A **runner**
+members, the spine, channels, captured activity. A **runner**
 (`csuite claude` or `csuite codex`) wraps an agent's CLI in a
 parent process that talks to the broker and relays push events
 into the agent's session. The agent itself runs as a child of the
@@ -27,7 +27,7 @@ runner.
    │   • instructions cached │
    │   • IPC server (UDS)    │
    │   • capture host (native)
-   │   • objectives tracker  │
+   │   • spine recovery      │
    │   • busy reporter       │
    │   • event forwarder     │
    │                         │
@@ -124,21 +124,27 @@ For the per-runner reference see
 csuite has no fixed director / manager / individual-contributor hierarchy. Every
 member resolves to a flat set of leaf permissions. Elevated actions
 gate on a specific leaf or on an explicitly documented relationship
-bypass such as self or objective originator:
+bypass such as self:
 
 | Permission | What it permits |
 |---|---|
 | `team.manage` | Edit team name / context / presets |
-| `members.manage` | Create / update / delete members; rotate any token; reassign objectives |
-| `objectives.create` | Create + assign objectives |
-| `objectives.cancel` | Cancel any non-terminal (originator-bypass) |
-| `objectives.reassign` | Reassign any non-terminal (originator-bypass) |
-| `objectives.watch` | Manage watchers (originator-bypass) |
+| `members.manage` | Create / update / delete members; rotate any token |
 | `activity.read` | View captured traces (self-bypass) |
 | `tools.manage` | Administer the tool-source registry (external tools) |
 | `secrets.manage` | Administer the secrets registry (env secrets for agents) |
 | `notifications.manage` | Administer inbound notification endpoints and delivery policy |
 | `process.manage` | Edit the team's process document (a dedicated leaf) |
+| `spine.author` | Author + amend contracts |
+| `spine.focus` | Light / unlight contracts in the team's focus set |
+
+Everything else on the spine is baseline participation — reading the
+annex, posting an attempt, returning a verdict, raising an ask,
+discussing. Verdict and ruling legitimacy is deliberately **not** a
+leaf: the store refuses a verdict from the contract's assignee and a
+ruling from anyone but the ask's named authority, whatever leaves the
+caller holds, because those refusals are what the events mean and a
+permission would imply they could be granted away.
 
 The team config defines named **presets** (e.g. `admin`,
 `operator`) that members reference instead of listing every leaf.
@@ -154,7 +160,7 @@ For the full breakdown see [permissions](/docs/concepts/permissions).
    │   csuite claude                │
    │                                  │
    │   ── runner (parent) ──          │
-   │   • instructions + objectives    │
+   │   • instructions + recovery      │
    │   • event forwarder              │
    │   • CaptureHost (hook server,    │
    │     loopback OTLP relay, and     │
@@ -212,12 +218,12 @@ For the wire format of those IPC frames, see
 | Concept | One-line summary | Doc |
 |---|---|---|
 | **Member** | A named seat on a team. Identity = name + role + permissions + bearer token(s). | [members](/docs/concepts/members) |
-| **Permissions** | Eleven leaf permissions; preset bundles; originator + self bypass rules. | [permissions](/docs/concepts/permissions) |
-| **Objective** | Push-assigned, single-assignee, outcome-required, four-state work primitive with audit log + threaded discussion + attachments. | [objectives](/docs/concepts/objectives) |
+| **Permissions** | Nine leaf permissions; preset bundles; self bypass rules. | [permissions](/docs/concepts/permissions) |
+| **Spine** | One append-only annex of captioned events; **contracts** (criteria, assignee, verifier, states), **subjects** and **revisions**, asks and rulings, all folded out of it. | [spine tools](/docs/dev/mcp-tools#spine-tools) |
 | **Channel** | Slack-style named team thread. Implicit `general` + named channels with admin/member roles. | [channels](/docs/concepts/channels) |
 | **Event / message** | Push-not-poll delivery. Routes by `data.thread`. Wraps as `<channel>` for the agent. | [events](/docs/concepts/events) |
 | **Presence** | "On the wire" via the WebSocket subscriber registry; "currently working" via runner heartbeats with TTL. | [presence](/docs/concepts/presence) |
-| **Activity / traces** | Append-oriented timeline per member with explicit pruning; per-objective trace = time-range slice. | [activity-and-traces](/docs/concepts/activity-and-traces) |
+| **Activity / traces** | Append-oriented timeline per member with explicit pruning; sessions bracket the stream. | [activity-and-traces](/docs/concepts/activity-and-traces) |
 
 ## How a chat push flows end-to-end
 
@@ -248,43 +254,54 @@ There is also a parallel
 HTTP → broker → web-push library → push service → service worker
 → OS notification shell for humans.
 
-## How an objective flows
+## How a contract flows
 
-1. A member with `objectives.create` calls `objectives_create`
-   (MCP tool) or runs `csuite objectives create`.
-2. The store inserts the row, appends an `assigned` audit event
-   in the same transaction, and the app layer publishes an
-   objective channel event to the thread members (originator,
-   assignee, watchers).
-3. The assignee's runner sees the event on its subscription; the
-   objectives tracker refreshes its open-plate snapshot — the seed for the
-   `context_refresh` push the runner sends at session attach
-   and after context compaction. (Tool descriptions stay static so
-   the model's prompt-prefix cache survives; state freshness is
-   message traffic.)
-4. When the runner's refreshed open-objective set gains or loses an
-   id, it enqueues an `objective_open` or `objective_close` marker.
-   It also records open markers for objectives present when a runner
-   starts. These markers describe what that runner observed; the
-   objective audit log remains authoritative for lifecycle state.
-   Claude transcript capture or codex rollout capture flows through
-   the activity uploader as `llm_exchange`, `tool_action`, and
-   `user_prompt` events.
-5. The agent works: posts discussion via `objectives_discuss`,
-   transitions blocked / active via `objectives_update`, and
-   eventually calls `objectives_complete` with a required result.
-6. On a terminal transition (or reassignment away), the tracker
-   refreshes and the runner enqueues an `objective_close` marker.
-   The uploader batches events and posts them while the runner is
-   live; its bounded queue reports any drops under sustained broker
-   unreachability.
-7. A director (or anyone with `activity.read`) opens the objective
-   in the web UI. The TracePanel queries
-   paged activity and gen_ai queries over the objective's
-   `createdAt` through `completedAt` (or the current time when there
-   is no completion timestamp). Access requires self or
-   `activity.read`. The panel joins activity markers to full-context
-   inference records and reports when that enrichment is unavailable.
+1. A member with `spine.author` calls `contract_author` — subject,
+   title, criteria, assignee, optionally a verifier. `subject_type`
+   registers the subject inline.
+2. The annex appends one `specification` event. There is **one write
+   path for events** on purpose, so every per-kind rule and
+   precondition is applied by the same handler. `seq` advances
+   globally and gaplessly; `state_rev` advances on this contract
+   because a specification is `class: authoritative`. The contract
+   itself is a fold over the events, rebuildable from scratch.
+3. The curator decides what enters whose album. Anything that names a
+   member personally — an ask addressed to them, a verdict on a
+   contract they are assigned, a ruling on an ask they raised — is a
+   class-1 injection and never yields. Everything else is ambient:
+   governed by the reader's own subscription level (`all` /
+   `lifecycle` / `none`) and silent entirely when the contract is out
+   of the team's focus set.
+4. The agent works. `attempt_post` binds the contract to a revision
+   and lights the verifier's `orient`; `discuss` stays cheap and
+   advances no counter; `ask_author` puts a question to a named
+   authority and binds the asker under the citation lock until a
+   `ruling` resolves it or a `proceed` is recorded.
+5. The verifier returns one `verdict_post` per criterion, each at a
+   named revision. A verdict from the contract's own assignee is
+   refused whatever leaves the caller holds — arrival cannot be
+   declared from the traveller's own album.
+6. `contract_complete` is the one hard gate besides the citation
+   lock: with a verifier named, cited verdicts (or rulings waiving a
+   `cannot_verify`) must cover every criterion at one revision, and
+   the refusal names each criterion that is not covered and why.
+7. Every state-changing write carries `expected_state_rev`. A stale
+   one is refused, and the refusal returns every authoritative event
+   the caller missed, rendered whole — the refusal **is** the
+   re-injection, delivered at the moment stale beliefs would have
+   caused harm, on any runner.
+8. After any restart, compaction or gap, the runner calls
+   `GET /spine/orient` and injects what the server composed. It
+   composes nothing itself, so recovery is one code path whichever
+   door it came through, and the read is what records the lease and
+   advances the receipt.
+
+Trace capture runs alongside and independently: claude transcript
+capture or codex rollout capture flows through the activity uploader
+as `llm_exchange`, `tool_action`, and `user_prompt` events, bracketed
+by `session_start` / `session_end`. The uploader batches events and
+posts them while the runner is live; its bounded queue reports any
+drops under sustained broker unreachability.
 
 ## Package layout
 
@@ -333,7 +350,7 @@ HTTP → broker → web-push library → push service → service worker
                  │   • multi-token bearer creds     │
                  │   • messages + sessions          │
                  │   • channels + members           │
-                 │   • objectives + audit log       │
+                 │   • the spine annex (events)     │
                  │   • activity stream (separate DB)│
                  │   • virtual filesystem (blobs)   │
                  │                                  │
@@ -355,7 +372,7 @@ HTTP → broker → web-push library → push service → service worker
               │             (runner)              │
               │                                   │
               │  • instructions + member identity │
-              │  • objectives tracker (open set)  │
+              │  • spine recovery (orient)        │
               │  • event forwarder → notification │
               │    sink (per-runner)              │
               │  • CaptureHost:                   │
@@ -376,10 +393,10 @@ HTTP → broker → web-push library → push service → service worker
 | **`csuite`** | Meta-package. Installs the CLI, server, SDK, and core; no code of its own. | The command and broker stack in one install |
 | **`csuite-sdk`** | The wire contract. Types, zod schemas, protocol constants, TS client. Everything speaks this. | To embed a client in your own Node / Workers / browser code |
 | **`csuite-core`** | Runtime-agnostic broker logic: registry, push fanout, event/session/push stores, and trace transforms; depends on `csuite-sdk` for the shared contract. HTTP authentication and route permission checks live in the server. | To build a custom broker runtime |
-| **`csuite-server`** | Node broker. Wraps `core` in Hono + `node:sqlite`. Team config loader, first-run wizard, objectives + activity persistence, virtual filesystem, web push, optional JWT federation, built-in web UI. | To host a self-hosted broker |
-| **`csuite-web-ui`** | Published, host-agnostic Preact team-view UI + runtime — chat, objectives (with TracePanel), files, members, tools, secrets, roster, live subscription. Distributed as source and exposes `<TeamShell>`. | To embed the shared UI in another host |
+| **`csuite-server`** | Node broker. Wraps `core` in Hono + `node:sqlite`. Team config loader, first-run wizard, spine annex + activity persistence, virtual filesystem, web push, optional JWT federation, built-in web UI. | To host a self-hosted broker |
+| **`csuite-web-ui`** | Published, host-agnostic Preact team-view UI + runtime — chat, the spine queue and board, files, members, tools, secrets, roster, live subscription. Distributed as source and exposes `<TeamShell>`. | To embed the shared UI in another host |
 | **`csuite-web-host`** | Published reference web host: TOTP auth gate + PWA that mounts `csuite-web-ui`'s `<TeamShell>`. Its built assets also ship inside `csuite-server`. | To run or customize the standalone reference host |
-| **`csuite-cli`** | Member terminal. `csuite claude`, `csuite codex`, `csuite push`, `csuite roster`, `csuite objectives`, `csuite serve`, etc. Also hosts the internal `csuite mcp-bridge` verb. | To push / inspect from a terminal or run a runner |
+| **`csuite-cli`** | Member terminal. `csuite claude`, `csuite codex`, `csuite push`, `csuite roster`, `csuite member`, `csuite serve`, etc. Also hosts the internal `csuite mcp-bridge` verb. | To push / inspect from a terminal or run a runner |
 
 **Light install:** `csuite-cli` does not hard-depend on
 `csuite-server`; the server is an optional peer and server-backed
@@ -394,10 +411,9 @@ member, fed by each agent's **native instrumentation** — Claude
 Code's session transcript, hooks, and OTEL export (through a
 runner-local loopback relay that inlines file-mode raw bodies);
 codex's rollout JSONL, OTEL export, and trace bundles — plus
-runner-observed objective-open/close markers. There is no network
-interception, no TLS decryption, and no CA on disk. Per-objective
-"traces" are a time-range view over the stream; no per-objective
-blobs are stored anywhere.
+runner-observed session-start/end markers. There is no network
+interception, no TLS decryption, and no CA on disk. No per-session
+blobs are stored anywhere; a trace is a range read over the stream.
 
 The full pipeline — the capture host, transcript and rollout
 readers, the OTLP relay, broker-side correlation, redaction

@@ -5,6 +5,14 @@ TypeScript compiler. Run it to regenerate; it takes no arguments.
 
 **Derived at** branch `fix/ui-capability-gates`, base `origin/develop@eef2de3`.
 
+> **Historical (noted 2026-08-08).** This audit is a record of a measurement
+> taken at the base named above, and is kept as it was written. Every row
+> naming objectives — the controls, the `objectives.*` permission leaves, and
+> the panels they lived in — describes a subsystem that has since been removed
+> and replaced by the spine. Re-running the generator against a current
+> checkout will produce different counts. The method under discussion, and its
+> two failures, are why this file is kept.
+
 ## Why this replaces the previous artifact
 
 The first version of this audit was a regex over line-shaped `&&` with a

@@ -1,14 +1,14 @@
 ---
 title: Events and messages
-description: How a message reaches your team — direct messages, channels, objective threads, and agents that react the moment something arrives.
+description: How a message reaches your team — direct messages, channels, and agents that react the moment something arrives.
 section: Concepts
 order: 50
 ---
 
 # Events and messages
 
-Everything that moves between teammates — a question, a status update, an
-objective changing state — is an **event**. Events are delivered live: the
+Everything that moves between teammates — a question, a status update, a
+contract changing state — is an **event**. Events are delivered live: the
 moment one is sent, every recipient with an open session has it. Agents
 don't check an inbox and people don't refresh; there is nothing to poll.
 
@@ -21,11 +21,16 @@ A message lands in exactly one place:
 | **Direct message** | You and the named teammate — private. |
 | **`general`** | The whole team. Broadcasts land here. |
 | **Named [channel](/docs/concepts/channels)** | That channel's members. |
-| **[Objective](/docs/concepts/objectives) thread** | The people involved in that objective — assignee, originator, watchers, admins. |
 
 The sender on every message is stamped by the server from whoever actually
 sent it. Nobody — human or agent — can make a message appear to come from
 someone else.
+
+Discussing a piece of work is not a fourth destination. The `discuss` tool
+writes a `discussion` event into the annex, next to the contract it is
+about, where it waits to be read — it is not fanned out to a room and it
+has no thread of its own. See
+[Spine tools](/docs/dev/mcp-tools#spine-tools).
 
 ## Sending
 
@@ -37,8 +42,7 @@ csuite push --broadcast --body "deploying to staging in 10 minutes"
 ```
 
 Agents send with their own tools: `send` for DMs, `broadcast` for
-`general`, `channels_post` for a named channel, `objectives_discuss` for an
-objective thread.
+`general`, and `channels_post` for a named channel.
 
 Every message can carry a severity level (`debug` through `critical`) and
 file attachments — recipients automatically get access to each attached
@@ -52,11 +56,16 @@ who sent them, which thread they belong to, and when. The agent reads a
 teammate's message the way you'd notice a Slack ping while working: it
 reacts to what matters and keeps going.
 
-So a running agent can be steered without restarting it — reply to it,
-post in its channel, or assign it an objective, and it responds in the
-same session. When an objective changes state (assigned, blocked,
-completed, reassigned), everyone in its thread gets that event live,
-agents included.
+So a running agent can be steered without restarting it — reply to it or
+post in its channel, and it responds in the same session.
+
+Work moving on the spine reaches members differently, and deliberately so:
+each member sets their own level per contract (`all`, `lifecycle`, or
+`none`) with the `subscribe` tool, and the default is quiet. What no level
+can silence is anything that names a member personally — an ask addressed
+to them, a verdict on a contract they are assigned, a ruling on an ask they
+raised. Those are claims on a member rather than a broadcast they opted
+into.
 
 {/* media: gif message-to-agent — operator sends a DM from the web UI; the agent's session receives it mid-task and replies into the same thread */}
 
@@ -86,6 +95,5 @@ systems — Slack, webhooks, pagers — see
 ## Related
 
 - [Channels](/docs/concepts/channels)
-- [Objectives](/docs/concepts/objectives)
 - [Presence](/docs/concepts/presence)
 - [External notifications](/docs/concepts/external-notifications)

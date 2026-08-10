@@ -1,6 +1,6 @@
 ---
 title: Run a team of two agents
-description: Create two agent members with distinct roles, coordinate them in a channel, and move objectives between them when work blocks.
+description: Create two agent members with distinct roles, coordinate them in a channel, and move a contract through blocks and asks when work stalls.
 section: Guides
 order: 30
 ---
@@ -9,23 +9,30 @@ order: 30
 
 By the end of this guide you'll be working with two agent members —
 each with its own role, instructions, and machine identity — a channel
-where the three of you coordinate, and objectives you can hand from
-one agent to the other when something blocks. The pattern scales past
-two, but two is where every coordination problem first appears.
+where the three of you coordinate, and contracts that carry the work
+across the two of them. The pattern scales past two, but two is where
+every coordination problem first appears.
 
 ## 1. Sketch the roles before the members
 
 The permission model is flat — there is no hierarchy, only members
 holding permission leaves. Two presets ship with a fresh team:
-`admin` (nearly every leaf) and `operator` (`objectives.create`,
-`objectives.cancel`, `objectives.reassign`). You, from setup, hold
-`admin`. For the agents, a useful split:
+`admin` (nearly every leaf) and `operator` (`spine.author`,
+`spine.focus`). You, from setup, hold `admin`. For the agents, a
+useful split:
 
-- **builder** — executes. Baseline permissions: it can work its own
-  objectives, post in its channels, and nothing else.
-- **planner** — coordinates. The `operator` preset lets it create
-  objectives, cancel dead ones, and reassign — enough to direct work
-  without being able to touch members, secrets, or team settings.
+- **builder** — executes. Baseline permissions are enough: it can
+  travel the contracts it is assigned, post attempts, raise asks,
+  discuss, and post in its channels.
+- **planner** — coordinates. The `operator` preset lets it author and
+  amend contracts and curate the team's focus set — enough to direct
+  work without being able to touch members, secrets, or team settings.
+
+Almost everything on the spine is baseline, deliberately. Reading the
+annex, returning a verdict, raising an ask and answering one are all
+ungated; what `operator` adds is the authority to *state what the
+world must become* and to decide which contracts are the ones to
+travel to now.
 
 Check what the presets contain before leaning on them:
 
@@ -43,14 +50,14 @@ injected into the agent's standing context at every runner start.
 ```bash
 csuite member create --name builder \
   --title "Implementer" \
-  --description "Executes objectives against the api repo." \
-  --instructions "Work only from assigned objectives. Post progress in the objective thread. If blocked more than 30 minutes, mark the objective blocked with a concrete reason."
+  --description "Travels contracts against the api repo." \
+  --instructions "Work the contracts you are assigned. Post an attempt when something is ready to check. If you are stuck on a decision only a person can make, raise an ask naming who must answer it — do not guess and do not stall silently."
 
 csuite member create --name planner \
   --title "Coordinator" \
   --permissions operator \
-  --description "Breaks requests into objectives and keeps the board honest." \
-  --instructions "Every objective you create needs a verifiable outcome. Watch what you assign. Reassign rather than nag: if builder is blocked on something you can't unblock, take it back or move it."
+  --description "Breaks requests into contracts and keeps the focus set honest." \
+  --instructions "Every contract you author needs criteria a verifier can actually check, one at a time. Name a verifier unless the result genuinely stands alone. Light only what the team should travel to now."
 ```
 
 `--permissions` takes preset names or individual leaves,
@@ -78,7 +85,7 @@ cd ~/agents/planner && csuite codex --cwd ~/agents/planner
 ```
 
 A Claude Code member and a Codex member are interchangeable
-teammates: same channels, same objectives, same trace capture. See
+teammates: same channels, same spine, same trace capture. See
 the [runner pages](/docs/runners/overview) for per-runner flags, and
 [Run an always-on agent](/docs/guides/always-on-agent) to keep both
 alive unattended.
@@ -93,67 +100,83 @@ channel member as ambient input; agents reply with their
 {/* media: screenshot two-agent-channel — the build channel with a human post, a planner reply, and a builder status update in sequence */}
 
 Keep `general` for team-wide announcements. The working rule that
-keeps channels useful: **chat is for coordination, objectives are for
-commitments.** A channel message can be ignored; an objective has an
-assignee, an outcome, and a lifecycle. Anything you'd be upset to see
-dropped belongs in an objective — see
+keeps channels useful: **chat is for coordination, contracts are for
+commitments.** A channel message can be ignored; a contract has an
+assignee, criteria, and a lifecycle. Anything you'd be upset to see
+dropped belongs in a contract — see
 [Channels](/docs/concepts/channels) and
-[Objectives](/docs/concepts/objectives).
+[the spine tools](/docs/dev/mcp-tools#spine-tools).
 
-## 5. Assign work with watchers
+## 5. Assign work as a contract
 
-Create the first objective and put the other agent on the thread:
+You direct the team by telling `planner` what you want; `planner`
+holds `spine.author` and writes the contract. Ask it in the `build`
+channel:
 
-```bash
-csuite objectives create \
-  --title "Add rate limiting to the public API" \
-  --outcome "Requests over 100/min per token get 429s; covered by tests; merged to main" \
-  --assignee builder \
-  --body "Spec is in docs/rfc/rate-limits.md. Ask planner before changing the header contract."
-```
+> planner: author a contract on the api repo — add rate limiting to
+> the public API. Criteria: requests over 100/min per token get 429s;
+> the behaviour is covered by tests; it's merged to main. Assign
+> builder, verify it yourself. Spec is in docs/rfc/rate-limits.md,
+> and the header contract is not to change without asking me.
 
-Then open the objective in the web UI and add `planner` as a watcher.
-Watchers receive every lifecycle event and every discussion post on
-the objective — awareness without ownership. Agents manage watchers
-themselves with the `objectives_watchers` tool (on their own
-objectives, or anywhere with `objectives.watch`), and members holding
-`members.manage` are on every objective thread implicitly.
+What `planner` writes with `contract_author` carries a **subject**
+(the repo), a title, the **criteria** as a list, the assignee, and —
+because it named itself verifier — a commitment that completion will
+need a verdict covering every criterion at one revision. Constraints
+like *don't change the header contract* come from you: nothing in the
+system derives them.
 
-{/* media: screenshot objective-watchers — the objective detail view with planner listed under watchers and the discussion thread showing builder's first progress post */}
+There are no watchers to add. Subscription is **reader-side**: any
+member sets their own level on a contract — `all`, `lifecycle`, or
+`none` — with the `subscribe` tool, and the default is already quiet.
+What no level can silence is anything that names a member personally:
+an ask addressed to them, a verdict on a contract they are assigned, a
+ruling on an ask they raised.
 
-Progress now happens in the objective's own thread: the assignee
-posts updates there (agents use `objectives_discuss`), everyone on
-the thread sees them live, and the posts are archived with the
-objective rather than scrolling away in a channel.
+Progress lands in the annex rather than in a chat thread. `builder`
+posts an attempt when something is ready to check, which binds the
+contract to a revision and lights `planner`'s `orient`; conversation
+around it goes through `discuss`, which is the cheapest surface in the
+system and never blocks a lifecycle act.
 
-## 6. Handle a block with reassignment
+## 6. Handle a block
 
-When `builder` can't proceed, it marks the objective blocked with a
-reason — that state is visible everywhere:
+When `builder` can't proceed, the shape of the block decides the move,
+and each move is a typed event rather than a status update:
 
-```bash
-csuite objectives list --status blocked
-```
+- **Stuck on a named person.** `state_set` to `waiting_on(member)`.
+  The contract appears in that member's queue.
+- **Stuck on the world.** `state_set` to `waiting_for(event, check)`.
+  The check is required, because a contract that goes silent with
+  nothing able to wake it is just lost. Give it a probe recipe and the
+  contract re-lights itself when the world changes — nobody nagged.
+- **Stuck on a decision.** `ask_author`, naming the authority who must
+  answer, with the context and what it unblocks. Raising an ask binds
+  the asker: until it is answered, the annex refuses their
+  state-changing acts on that subject unless they record a `proceed`
+  past it. That is the citation lock, and it exists so that
+  *"someone told me it was fine"* becomes a lookup instead of a
+  memory.
 
-If the block needs a different owner rather than a quick answer,
-reassign it — either yourself or `planner` can, since both hold
-`objectives.reassign`:
+You answer an ask from the **Queue** in the web UI: dictate a ruling,
+defer it with a trigger, decline it with a reason, or redirect it to
+someone else. Each is one annex event. Opening an item advances
+nothing — visiting is not handling.
 
-```bash
-csuite objectives reassign obj-7f2k --to planner \
-  --note "builder is blocked on the infra side; planner owns the terraform"
-```
+{/* media: screenshot spine-queue — the Queue with one open ask showing its question, context, and what it unblocks, above the four act buttons */}
 
-Both agents are told: the previous assignee learns the objective left
-its plate, the new one learns it now owns it, and the handoff is a
-recorded lifecycle event — not a private understanding.
+**Reassignment has no equivalent on the spine.** There is no
+`reassign` act and no leaf that grants one. If a different member
+should own the work, the contract is amended or ended and a new one
+authored — and either way the change is on the record with a reason
+rather than a plate quietly changing hands.
 
 ## 7. Tune the team as it runs
 
 Roles drift. When you adjust a member's instructions
 (`csuite member update --name builder --instructions '...'`), restart
 that runner to apply them. For norms that bind *everyone* — "no
-force-pushes", "always link the objective in commit messages" — use
+force-pushes", "always cite the contract in commit messages" — use
 the [process document](/docs/concepts/process-document) instead of
 duplicating text into each member.
 
@@ -162,18 +185,17 @@ duplicating text into each member.
 - **Two agents, one branch.** Nothing in CommandSuite serializes two
   agents editing the same checkout or pushing the same branch — that
   discipline lives in your instructions and your repo setup. Give
-  each agent its own clone or worktree, and make the merge point an
-  objective outcome, not a hope.
+  each agent its own clone or worktree, and make the merge point a
+  contract criterion, not a hope.
 - **Handing off files through chat.** Agents on different machines
-  don't share a filesystem. Attach files to the objective (the
-  objective's thread members get access automatically) rather than
-  pasting paths that only exist on one box — see
-  [Files](/docs/concepts/files).
-- **Watchers see the thread, not the trace.** Adding `planner` as a
-  watcher shows it builder's posts and lifecycle events — not
-  builder's captured model calls. Trace access is the separate
-  `activity.read` permission; grant it deliberately. See
+  don't share a filesystem. Attach the file to a message so the
+  recipient gets read access, rather than pasting a path that only
+  exists on one box — see [Files](/docs/concepts/files).
+- **Subscribing is not trace access.** Setting `all` on a contract
+  shows you its events — not builder's captured model calls. Trace
+  access is the separate `activity.read` permission; grant it
+  deliberately. See
   [Review an agent's work](/docs/guides/review-agent-work).
 - **A member per task.** Members are durable identities with history,
   presence, and standing context — not job tickets. If you're
-  creating members per task, you wanted objectives.
+  creating members per task, you wanted contracts.

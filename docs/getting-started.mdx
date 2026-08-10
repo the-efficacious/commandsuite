@@ -1,6 +1,6 @@
 ---
 title: Getting started
-description: Stand up a CommandSuite server, connect an agent as a team member, assign your first objective, and read the captured trace — in about ten minutes.
+description: Stand up a CommandSuite server, connect an agent as a team member, put it on its first contract, and read the captured trace — in about ten minutes.
 section: Get started
 order: 10
 ---
@@ -8,7 +8,7 @@ order: 10
 # Getting started
 
 By the end of this page you'll have a running team server, one agent
-working as a team member, one objective assigned and completed, and a
+working as a team member, one contract authored and completed, and a
 captured trace showing exactly what the agent did.
 
 ## Prerequisites
@@ -44,7 +44,7 @@ server only stores a hash. (Prefer to run setup separately?
 Open http://127.0.0.1:8717, enter your TOTP code, and you'll land on
 an empty team dashboard.
 
-{/* media: [screenshot] first-login — the dashboard right after setup: your member in the roster, empty objectives list, empty general channel. */}
+{/* media: [screenshot] first-login — the dashboard right after setup: your member in the roster, an empty queue, empty general channel. */}
 
 If someone else already runs the server, skip this step — you'll
 connect to theirs in the next one.
@@ -62,8 +62,8 @@ csuite connect --url http://127.0.0.1:8717
 The CLI prints a short code and a URL. Open the URL in the browser
 where you're signed in, enter the code, and approve the device —
 picking an existing member for it, or creating a new one (call it
-`builder`, give it the agent preset). The token lands directly in the
-CLI's auth store, never in a clipboard or scrollback.
+`builder`, give it the `operator` preset). The token lands directly
+in the CLI's auth store, never in a clipboard or scrollback.
 
 Already have a token? `CSUITE_TOKEN=csuite_…` in the environment (or
 `--token` on any command) works too — handy for CI. Details in
@@ -80,7 +80,7 @@ csuite codex         # OpenAI Codex
 The agent starts headless — no TUI takes over your terminal. You'll
 see a banner naming the member it connected as, and the member goes
 green on the team dashboard. From here you direct it through the
-team: objectives, channel messages, DMs. Your own project files and
+team: contracts, channel messages, DMs. Your own project files and
 agent config are untouched — the runner adds team context on top of
 the agent's normal setup.
 
@@ -95,44 +95,65 @@ Flags, resuming sessions, and per-runner behavior are covered in
 
 ## 5. Give it work
 
-Objectives are how work changes hands. Every objective carries an
-**outcome** — the definition of done the agent works against:
+Work is carried by **contracts** on the team's spine. A contract names
+a **subject** — the piece of the world it's about, a repo, a PR, a
+file — a title, and a list of **criteria**: one line each for what has
+to be true at the end. Every agent's standing brief already teaches it
+the spine, so you direct it the way you'd direct a colleague:
 
 ```bash
-csuite objectives create \
-  --assignee builder \
-  --title "Pull main and run smoke tests" \
-  --outcome "Smoke tests green on latest main" \
-  --body "See the CI failure on #1234 for context"
+csuite push --agent builder \
+  --body "Pull main and get the smoke tests green in this checkout.
+Author a contract for it first — the repo as its subject, one
+criterion for each thing that has to hold — assign it to yourself,
+and name me as its authority."
 ```
 
-(Or use the web UI's New Objective form. In a hurry?
-`csuite quickstart` seeds a demo objective for you.)
+Authoring a contract takes the `spine.author` leaf, which the seeded
+`operator` preset carries; the admin you created at setup holds every
+leaf. The **authority** is the member whose rulings bind the
+contract — naming yourself is what puts it on your Board, and sends
+anything the agent needs decided to your Queue.
 
-Within a couple of seconds the agent sees the assignment in its
-session and starts working. Open the objective in the web UI to watch
-it happen: the agent posts progress to the discussion thread, the
-lifecycle log records every state change, and when it's done it
-completes the objective with a required result.
+Within a couple of seconds the message lands in the agent's session
+and it starts working. Open **Queue → Board** in the web UI to watch:
+the contract sits in **Active** while the assignee travels, moves to
+**Waiting** if it gets stuck on a named member or on the world, and
+leaves the lanes when it lands — the done toggle shows it there. Each
+row carries the assignee's presence dot, and a `stale` badge if the
+world moved under the contract since.
 
-{/* media: [gif] objective-live — create the objective in the web UI, watch the agent's first discussion post arrive and the objective move to done. */}
+On a one-agent team, name no **verifier**. Arrival can't be declared
+from the traveller's own album, so a contract that names one stays
+open until that member returns a **verdict** on every criterion; with
+none named, the completion result stands alone and the record says so.
 
-You can reply in the thread while it works — your message reaches the
+If the agent hits a decision that isn't its to make, it raises an
+**ask** — a durable question carrying what it unblocks — and the ask
+lands in your Queue with four acts on it: rule, defer, decline,
+redirect. Until it's answered the agent's own state-changing acts on
+that subject are refused; it can record a `proceed` and go ahead
+deliberately, but it can't act on a ruling nobody gave.
+
+{/* media: [gif] contract-live — the Board: the new contract appears in the active lane, then leaves it as the agent completes. */}
+
+You can message it while it works — another `csuite push` reaches the
 agent mid-session, like a teammate leaning over the desk. More in
-[objectives](/docs/concepts/objectives) and
+[the spine tools](/docs/dev/mcp-tools#spine-tools) and
 [channels](/docs/concepts/channels).
 
 ## 6. Read the trace
 
-Open the completed objective and expand **Captured traces**. This is
-the receipt: every LLM exchange the agent made while the objective
-was open, with
+Traces are per member. Open `builder`'s profile in the web UI and
+pick **Activity**. This is the receipt: the run bracketed by
+`session_start` and `session_end`, and every LLM exchange inside it,
+with
 
 - model and token counts,
 - each request and response, including tool calls and their results,
 - your registered secrets already redacted.
 
-{/* media: [screenshot] trace-panel — one exchange expanded: model + token-count line, a tool call with its result, a [REDACTED] value visible. */}
+{/* media: [screenshot] trace-panel — the Activity tab with one exchange expanded: model + token-count line, a tool call with its result, a [REDACTED] value visible. */}
 
 Trace access is permissioned (`activity.read`, plus every member can
 see their own). What's captured, what's redacted, and how long it's

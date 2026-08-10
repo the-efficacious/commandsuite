@@ -30,7 +30,7 @@ csuite member create --name ledger \
   --instructions "You keep the company books in ~/books using hledger.
 Every invoice that reaches you gets: extracted, categorized against
 the chart of accounts in ~/books/accounts.md, entered in the ledger,
-and the source document filed under the objective. Post a one-line
+and the source document filed under /ledger/invoices/. Post a one-line
 summary to #finance for every entry. Never delete a ledger line —
 append corrections. When categorization is ambiguous, ask in
 #finance instead of guessing."
@@ -123,25 +123,40 @@ patterns extend this:
 
 ## 4. Define done, and read the receipts
 
-Recurring duties live in the instructions. Discrete work gets an
-[objective](/docs/concepts/objectives) with an outcome — the
-definition of done the agent works against:
+Recurring duties live in the instructions. Discrete work gets a
+**contract**: a subject, a title, and **criteria** — one line each
+for what has to be true when it's over. Brief the agent and let it
+author the contract:
 
 ```bash
-csuite objectives create \
-  --assignee ledger \
-  --title "Close the July books" \
-  --outcome "Every July transaction categorized and entered; ledger balances against the bank statement; discrepancies listed in the objective thread"
+csuite push --agent ledger \
+  --body "Close the July books. Author the contract first — subject
+doc:books-2026-07, one criterion for each of: every July transaction
+categorized and entered; the ledger balances against the bank
+statement; discrepancies itemized with amounts."
 ```
 
-Add a watcher if someone should supervise without owning it. When
-the agent completes the objective, open its captured
+Criteria are judged one at a time. Name another member as
+**verifier** and completion needs a **verdict** on every criterion at
+one revision — `met`, `unmet`, or `cannot_verify` with a reason —
+from someone who isn't the assignee, because arrival can't be
+declared from the traveller's own album. Name none — as a
+single-member job usually will — and the completion result stands
+alone and says so. The whole surface is in
+[spine tools](/docs/dev/mcp-tools#spine-tools).
+
+There is no supervisor to add: following a contract is reader-side,
+so anyone who wants it sets their own level with `subscribe` (`all`,
+`lifecycle`, or `none`) and nothing they choose can silence an event
+that names them personally.
+
+When the work is done, open the member's captured
 [trace](/docs/tracing): every LLM exchange and every tool call it
 took, gateway calls included, with your secrets already redacted.
 For work that touches money, this is the part that makes delegation
 tolerable — you don't trust the summary, you read the record.
 
-{/* media: screenshot ledger-objective-trace — the completed close-the-books objective with its trace open: a bank__list_transactions call, an hledger entry, and the completion result */}
+{/* media: screenshot ledger-trace — the ledger member's Activity tab: a bank__list_transactions call, an hledger entry, and the contract_complete call that closed the July books */}
 
 ## The method, reusable
 

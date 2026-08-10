@@ -1,6 +1,6 @@
 ---
 title: MCP tools reference
-description: Every MCP tool the runner exposes to the agent — chat, channels, objectives, filesystem, admin surfaces — with input schemas, broker effects, and permission gating.
+description: Every MCP tool the runner exposes to the agent — chat, channels, the spine, filesystem, admin surfaces — with input schemas, broker effects, and permission gating.
 section: Development
 order: 50
 ---
@@ -20,9 +20,6 @@ The groups:
 
 - **Chat tools** — message teammates, post to channels, fetch
   history.
-- **Objective tools** — list / view / update / discuss / complete
-  objectives, plus permission-gated tools for authoring, amending,
-  and correcting objectives created by others.
 - **Process-document tools** — read the team's process document and
   its edit history; write it if you hold the authority. The current
   text arrives by injection, not by calling these.
@@ -136,187 +133,6 @@ channel. Pass `with` xor `channel`.
 
 `limit` defaults to 50, capped at 500. Newest-first ordering.
 
-## Objective tools (always available)
-
-### objectives_list
-
-List objectives the caller has a relationship with — assigned to
-them, originated by them, or watched. `status: 'open'` is the
-active+blocked union (the whole open plate in one call — what
-recovery after a restart or compaction wants); the unfiltered call
-also returns full done/cancelled history. Use `objectives_view`
-for the watcher list and audit log.
-
-| | |
-|---|---|
-| **Input** | `{ status?: 'active' \| 'blocked' \| 'done' \| 'cancelled' \| 'open', assignee?: string }` |
-| **Output** | Per-objective: `- <id> [<status>] <title>` + assignee/originator + outcome line + relative-age update line |
-| **Broker call** | `GET /objectives?status=<filter>&assignee=<filter>` (the broker scopes non-`objectives.create` callers to their own relationship union) |
-
-### objectives_view
-
-Full state for a single objective: title, outcome, status,
-assignee, originator, watchers, body, blockReason, result, plus
-the append-only `objective_events` audit log.
-
-| | |
-|---|---|
-| **Input** | `{ id: string (req) }` |
-| **Output** | Multi-line block with all fields + `events:` followed by `<ts> (<age>) <actor> <kind> <payload>` per event |
-| **Broker call** | `GET /objectives/:id` |
-
-### objectives_update
-
-Transition status (`active ↔ blocked`) and/or post a block reason.
-**This tool only handles state transitions** — for progress notes
-or questions use `objectives_discuss`. For terminal `done` use
-`objectives_complete`. For `cancelled` use `objectives_cancel`
-(if you have permission).
-
-| | |
-|---|---|
-| **Input** | `{ id: string (req), status: 'active' \| 'blocked' (req), blockReason?: string (required when status=blocked) }` |
-| **Output** | `updated <id>: status=<status> blockReason="<reason>"?` |
-| **Broker call** | `PATCH /objectives/:id` |
-
-### objectives_discuss
-
-Post a discussion message into the `obj:<id>` thread. Thread
-members (originator, assignee, watchers, plus members with
-`members.manage` as implicit observers) all receive it on their
-live streams.
-
-| | |
-|---|---|
-| **Input** | `{ id: string (req), body: string (req, ≤ 16384 chars), attachments?: string[] (≤ 64) }` |
-| **Output** | `posted to objective <id> thread: msg=<id> attachments=N? (fanned out to thread members)` |
-| **Broker call** | `POST /objectives/:id/discuss` |
-
-### objectives_complete
-
-Mark an objective `done` with a required result string. Only the
-current assignee can call this. The result becomes part of the
-audit log.
-
-| | |
-|---|---|
-| **Input** | `{ id: string (req), result: string (req) }` |
-| **Output** | `completed <id>. Result recorded and originator notified.` |
-| **Broker call** | `POST /objectives/:id/complete` |
-
-## Objective tools (permission-gated)
-
-The runner only adds these to the tool list when the caller's
-permissions allow them. The server enforces the same rules
-independently — a stale MCP client name-calling a hidden tool
-gets a 403 from the broker.
-
-Note on the toolbox gate as registered today: the whole group
-surfaces only when the caller holds `objectives.create`
-(`buildAuthorityTools` returns early without it). The
-originator-bypass on `objectives_cancel` / `objectives_watchers`
-below is the **server's** rule — the broker honors it on the HTTP
-API regardless of what the toolbox shows — and the tool
-descriptions adapt their scope wording when the caller lacks the
-broader permission.
-
-### objectives_create
-
-Create and assign a new objective. Available when caller has
-`objectives.create`. The originator is stamped as the caller.
-
-| | |
-|---|---|
-| **Required permission** | `objectives.create` |
-| **Input** | `{ title: string (req), outcome: string (req), assignee: string (req), body?: string, watchers?: string[], attachments?: string[] }` |
-| **Output** | `created <id> assigned to <name>: <title>` + outcome + watchers + attachments lines |
-| **Broker call** | `POST /objectives` |
-
-The `outcome` field is contractual: it must state the tangible
-verifiable result, not just intent. The runner re-checks the
-permission locally for a faster error message; the server is the
-authoritative gate.
-
-### objectives_amend
-
-Amend an objective's contract — outcome, title and/or body. The
-gate is the permission, not the role: an assignee holding
-`objectives.create` may amend their own contract. Prior text is
-kept and rendered by `objectives_view`; a no-op amendment (no field
-differs) is rejected rather than recorded as a version bump.
-`disposition` is required: `correction` is retroactive (the prior
-text was wrong), `scope_change` is forward-only (work already
-underway finishes under the prior text).
-
-| | |
-|---|---|
-| **Required permission** | `objectives.create` |
-| **Input** | `{ id: string (req), outcome?: string, title?: string, body?: string, reason: string (req), disposition: 'correction' \| 'scope_change' (req) }` |
-| **Output** | `amended '<id>' to contract version <N> (<disposition>: <what it binds>). The prior text is kept and shown by objectives_view.` |
-| **Broker call** | `POST /objectives/:id/amend` |
-
-### objectives_correct_event
-
-Correct an earlier lifecycle event — most often a completion
-recorded at the wrong moment. The original event is never
-rewritten: this appends a superseding record naming it, and
-`objectives_view` marks the corrected event inline. Does not bump
-the contract version. `eventId` comes from the event log in
-`objectives_view` (a timestamp is not an identity — creation emits
-two events in the same millisecond).
-
-| | |
-|---|---|
-| **Required permission** | `objectives.create` |
-| **Input** | `{ id: string (req), eventId: string (req), correction: string (req), reason: string (req) }` |
-| **Output** | `recorded a correction on '<id>'. The original event is unchanged and is now marked corrected in objectives_view.` |
-| **Broker call** | `POST /objectives/:id/correct-event` |
-
-### objectives_cancel
-
-Terminally cancel an objective. Available when caller has
-`objectives.cancel`, OR is the originator (originators can always
-cancel their own). Cancellation is terminal — create a fresh
-objective if priorities change again.
-
-| | |
-|---|---|
-| **Required permission** | `objectives.cancel` (originator-bypass) |
-| **Input** | `{ id: string (req), reason?: string }` |
-| **Output** | `cancelled <id>: <title>` |
-| **Broker call** | `POST /objectives/:id/cancel` |
-
-### objectives_watchers
-
-Add or remove watchers on an objective's discussion thread.
-Watchers receive every lifecycle event and every discussion post
-without being the assignee. Available when caller has
-`objectives.watch`, OR is the originator.
-
-| | |
-|---|---|
-| **Required permission** | `objectives.watch` (originator-bypass) |
-| **Input** | `{ id: string (req), add?: string[] (≤ 64), remove?: string[] (≤ 64) }` (must include at least one) |
-| **Output** | `updated <id> watchers: <name1>, <name2>...` |
-| **Broker call** | `POST /objectives/:id/watchers` |
-
-### objectives_reassign
-
-Reassign a non-terminal objective to a different teammate.
-Available only when caller has `objectives.reassign`.
-
-| | |
-|---|---|
-| **Required permission** | `objectives.reassign` |
-| **Input** | `{ id: string (req), to: string (req), note?: string }` |
-| **Output** | `reassigned <id> to <new>: <title>` |
-| **Broker call** | `POST /objectives/:id/reassign` |
-
-Both old and new assignees receive channel pushes. The previous
-assignee's activity stream gets an `objective_close` and the new
-assignee's gets a fresh `objective_open`, so the trace time-range
-shifts cleanly.
-
 ## Process-document tools
 
 The team's process document is **injected**: the current text is
@@ -368,7 +184,7 @@ The first write creates version 1; every later write increments the
 version and retains the prior text, so nothing is destroyed.
 
 `disposition` is the same field with the same meaning as
-`objectives_amend`, so *does work started under the old process finish
+`contract_amend`, so *does work started under the old process finish
 under it* has one answer across contracts and process.
 
 ### Delivery bound
@@ -815,7 +631,7 @@ Two refusals worth knowing before calling: removing text without a
 `disclosure`, and dropping a criterion that already carries a verdict
 without citing that verdict. Neither refuses the change itself — they
 stop it happening quietly. `disposition` is the same field with the
-same meaning as `objectives_amend` and `process_document_write`.
+same meaning as `process_document_write`.
 
 ### focus
 
@@ -894,7 +710,7 @@ every call.
 | `tool_sources_delete` | Delete + cascade (bindings, credential, tool defs, cache). |
 | `tool_sources_define_tool` | Set/replace a custom tool `{description, inputSchema, binding}`. The description teaches the full binding grammar inline. |
 | `tool_sources_delete_tool` | Remove one custom tool def. |
-| `tool_sources_bindings` | `add`/`remove` member access (mirrors `objectives_watchers`). |
+| `tool_sources_bindings` | `add`/`remove` member access. |
 | `tool_sources_set_credential` | Set/rotate the write-only credential (bearer or named header). The description warns that the secret enters the session transcript — when a human holds the key, they should drop it via the web UI instead. |
 | `tool_sources_delete_credential` | Remove the credential. |
 | `tool_sources_refresh` | Re-discover an mcp source's upstream tools. |
@@ -1064,9 +880,9 @@ supported. Both ends must sit under a tree the caller owns
 
 ### fs_shared
 
-List files explicitly shared with the caller via message or
-objective attachments. Owner-private files from other members
-never appear here.
+List files explicitly shared with the caller via message
+attachments. Owner-private files from other members never appear
+here.
 
 | | |
 |---|---|
@@ -1084,19 +900,22 @@ instructions). Mutating descriptions mid-session would invalidate
 the model's prompt-prefix cache, so state freshness rides message
 traffic instead:
 
-- **Objective lifecycle events** (assigned / blocked / completed /
-  cancelled / reassigned) arrive as ordinary channel notifications
-  the moment they happen.
-- **Context refreshes** — the runner re-asserts the open plate with
-  a `context_refresh` channel push (tagged
-  `meta.kind = "context_refresh"`, `meta.from = "csuite"`) at
-  session attach (first `tools/list` on a fresh bridge connection)
-  and after context compaction (SessionStart hook with
-  source=compact|clear). Empty plates are skipped.
+- **Spine deltas** — subscription deltas and anything that names the
+  member personally arrive as ordinary channel notifications the
+  moment they happen.
+- **Recovery** — the runner injects the Guaranteed Pack as a
+  `spine_recovery` channel push (tagged
+  `meta.kind = "spine_recovery"`, `meta.from = "csuite"`) at session
+  attach (first `tools/list` on a fresh bridge connection) and after
+  context compaction (SessionStart hook with source=compact|clear).
 
-The runner's objectives tracker keeps the open-plate snapshot fresh
-(debounced 150ms to coalesce bursts) — it seeds the context refresh
-and the objective_open/close activity markers.
+The runner **composes nothing**: on either trigger it calls `orient`
+and renders what the server returns, with the same renderer the
+[orient](#orient) tool uses, so recovery reads identically whichever
+door it came through. There is no empty-plate skip — *"No contracts
+bind you right now"* is a real answer, and the alternative is
+indistinguishable from a broken runner. The call is a real read, which
+is what records the lease and advances the receipt server-side.
 
 `notifications/tools/list_changed` fires only for genuine
 capability changes: when a `tool_source` registry event changes the
@@ -1155,7 +974,7 @@ A tool call requires the agent to decide to call the tool. A
 check its mailbox or not. That's the point: push, not poll.
 
 Tool calls are the right primitive for **agent → broker** pushes
-(every send / broadcast / objectives_* call IS a tool call). The
+(every send / broadcast / spine call IS a tool call). The
 asymmetry is intentional — broker → agent is push, agent → broker
 is pull.
 

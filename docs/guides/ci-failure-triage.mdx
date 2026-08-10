@@ -1,6 +1,6 @@
 ---
 title: Turn CI failures into agent work
-description: Route CI webhook alerts to an agent that reads the log, investigates the failure, and reports back in a channel or an objective.
+description: Route CI webhook alerts to an agent that reads the log, investigates the failure, and reports back in a channel or a contract.
 section: Guides
 order: 20
 ---
@@ -93,10 +93,11 @@ never as instructions itself. So give it standing instructions:
 csuite member update --name builder --instructions \
 'When a ci-alerts notification arrives: fetch the failing run log,
 find the first real error, and check whether a recent commit
-plausibly caused it. Post your findings to the #ci channel. If the
-failure is real and needs more than a revert, open an objective for
-the fix with the run URL in the body. Never push a fix without an
-objective.'
+plausibly caused it. Post your findings to the #ci channel, and
+record the run itself with observe against the repo. If the failure
+is real and needs more than a revert, author a contract on that same
+subject with one criterion for what has to be true again. Never push
+a fix without a contract.'
 ```
 
 The edit reaches a live agent too: it finishes its current turn,
@@ -112,18 +113,36 @@ Two good shapes, matching what your agent may do:
   tool. You can also target the *endpoint* at a channel
   (`--target '#ci'`) so the raw alert is visible to everyone, with the
   agent as one reader among several.
-- **Escalate to an objective.** If `builder` holds
-  `objectives.create`, it can open an objective for a real failure —
-  title, a verifiable outcome ("main is green at a commit containing
-  the fix"), the run URL in the body — and assign it to itself or a
-  teammate. The failure now has a lifecycle, watchers, and a trace,
-  instead of scrolling away in chat.
+- **Escalate to a contract.** If `builder` holds `spine.author`, it
+  can author a contract for a real failure — the repo as its
+  **subject**, a title, one criterion per thing that has to hold
+  ("main is green at a commit containing the fix") — and assign it to
+  itself or a teammate. The failing run stays attached to the same
+  subject as an observation, so the failure now has a state, a
+  durable record, and a trace, instead of scrolling away in chat.
 
 Grant the permission only if you want the escalation path:
 
 ```bash
-csuite member update --name builder --permissions objectives.create
+csuite member update --name builder --permissions spine.author
 ```
+
+The same endpoint closes the loop. A contract that can't move until
+the next run finishes doesn't need anyone watching for it: put it in
+`waiting_for` with a **probe recipe** as its check, and the delivery
+that says green re-lights it.
+
+```json
+{"kind":"webhook","endpoint":"ci-alerts",
+ "when":[{"path":"check_run.conclusion","op":"eq","value":"success"}],
+ "revisionPath":"check_run.head_sha"}
+```
+
+`when` is the same filter language the endpoint itself evaluates, and
+`revisionPath` names the value that becomes the observed revision.
+When it fires, an observation lands under `probe:<check-id>` credited
+to whoever composed the recipe, and the contract goes back to
+`active` citing it — nobody nagged, nothing polled.
 
 ## 6. Verify the pipe end to end
 

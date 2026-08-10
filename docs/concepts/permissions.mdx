@@ -1,6 +1,6 @@
 ---
 title: Permissions
-description: Grant each member exactly the elevated actions they need — twelve permission leaves, no hierarchy, everything else is baseline membership.
+description: Grant each member exactly the elevated actions they need — nine permission leaves, no hierarchy, everything else is baseline membership.
 section: Concepts
 order: 20
 ---
@@ -9,24 +9,21 @@ order: 20
 
 You decide what each member can do by granting **permission leaves** — flat,
 independent grants with no ranking and no built-in hierarchy. There is no
-"manager" tier: a member with `objectives.create` can assign work, a member
+"manager" tier: a member with `spine.author` can assign work, a member
 with `activity.read` can review traces, and neither outranks the other.
 
 Everything not on the list below is baseline membership and needs no grant:
-messaging teammates, posting in channels you belong to, taking and
-completing objectives assigned to you, discussing your own objectives,
-managing your own files, rotating your own token, reading your own traces.
+messaging teammates, posting in channels you belong to, reading the annex,
+posting an attempt, returning a verdict, raising an ask, completing a
+contract assigned to you, managing your own files, rotating your own token,
+reading your own traces.
 
-## The twelve leaves
+## The nine leaves
 
 | Permission | What it grants |
 |---|---|
 | `team.manage` | Edit the team name, the standing team context, and permission presets. |
-| `members.manage` | Create, update, and delete members. Rotate any member's token. Approve or reject device enrollments. Read members' private instructions. Holders also see every objective thread. |
-| `objectives.create` | Create objectives and assign them to any teammate. Also required to amend an objective's contract or correct its event log. |
-| `objectives.cancel` | Cancel any open objective, and block or unblock objectives you aren't assigned to. |
-| `objectives.reassign` | Move any open objective to a different assignee. |
-| `objectives.watch` | Add or remove watchers on any objective. |
+| `members.manage` | Create, update, and delete members. Rotate any member's token. Approve or reject device enrollments. Read members' private instructions. |
 | `activity.read` | View any member's captured traces. Your own are always visible without it. |
 | `tools.manage` | Administer [tool sources](/docs/concepts/tool-sources): register sources, set credentials, bind members, define custom tools. |
 | `secrets.manage` | Administer [secrets](/docs/concepts/secrets): register secrets, set values, bind members. |
@@ -39,12 +36,14 @@ managing your own files, rotating your own token, reading your own traces.
 
 A member never needs elevated permissions to manage their own work:
 
-- The **originator** of an objective can always cancel it and manage its
-  watchers, with no leaf required.
+- Travelling a contract you are assigned — posting an attempt, moving it
+  between states, completing it — needs no leaf.
 - Every member can always read their **own** activity and traces.
 
-Reassignment has no such exception — moving work between teammates always
-requires `objectives.reassign`, even for objectives you created.
+Two spine rules are not exceptions but structure: the store refuses a
+verdict from the contract's own assignee, and a ruling from anyone but the
+ask's named authority, whatever leaves the caller holds. Those refusals are
+what the events mean, so no permission can grant past them.
 
 ## Presets
 
@@ -52,7 +51,7 @@ Instead of listing leaves on every member, define named bundles once and
 reference them by name:
 
 ```bash
-csuite presets set --name operator --permissions objectives.create,objectives.cancel
+csuite presets set --name operator --permissions spine.author,spine.focus
 csuite member update --name bob --permissions operator
 csuite presets list
 ```
@@ -87,6 +86,5 @@ source, and pair the trust with review — every agent's work is captured as
 ## Related
 
 - [Members](/docs/concepts/members)
-- [Objectives](/docs/concepts/objectives)
 - [Activity and traces](/docs/concepts/activity-and-traces)
 - [Process document](/docs/concepts/process-document)

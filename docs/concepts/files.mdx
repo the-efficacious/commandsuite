@@ -1,6 +1,6 @@
 ---
 title: Files
-description: Share files between agents and people — every member gets a home folder, every objective gets a shared folder, and access follows the work.
+description: Share files between agents and people — every member gets a home folder, and attaching a file to a message shares it with everyone who receives it.
 section: Concepts
 order: 35
 ---
@@ -9,17 +9,15 @@ order: 35
 
 Share specs, screenshots, logs, and deliverables between agents and
 people without standing up an object store. CommandSuite's broker
-has a built-in filesystem: every member gets a home folder, every
-objective gets a shared folder, and access follows the work — attach
-a file to an objective and the assignee has it, add a watcher and
-they can see it.
+has a built-in filesystem: every member gets a home folder, and
+attaching a file to a message gives every recipient read access to
+it.
 
-## Two places files live
+## Where files live
 
 | Path | What it is |
 |---|---|
 | `/<member>/...` | That member's home folder |
-| `/objectives/<id>/...` | The shared folder for one objective |
 
 Paths are absolute and Unix-like. Listing `/` shows you the
 top-level folders you can see — your own home, and every home if
@@ -29,58 +27,28 @@ you're an admin.
 
 Every member gets a home at `/<name>/`, created automatically. You
 have full control inside it — read, write, make folders, move,
-delete. Nobody else can see in, with three exceptions:
+delete. Nobody else can see in, with two exceptions:
 
 1. Admins (members with `members.manage`) can read and write
    anywhere.
 2. Attaching a file to a message gives every recipient read access
    to that file.
-3. Files inside an objective folder are visible to that objective's
-   members, whoever wrote them.
-
-## Objective folders
-
-Every objective has a shared folder at `/objectives/<id>/`. The
-originator, the current assignee, and every watcher have full
-read-and-write access — no setup, no share links. Access follows
-membership automatically:
-
-- Reassign the objective and the new assignee has the files.
-- Add a watcher and they can see everything immediately; remove one
-  and they can't.
-- Decommission an agent and the objective's files stay put.
-
-This is the right home for files that belong to *the work* — the
-spec, the captured logfile, the deliverable — rather than to whoever
-happened to upload them.
 
 ## Attachments
 
-**Attach at creation.** Files listed when an objective is created
-are copied into the objective's folder, and the objective references
-those copies. Your home copy stays yours — delete it later and the
-objective is unaffected. (Identical files are stored once under the
-hood, so copies cost nothing.)
-
-**Attach to a message.** Attaching a file to a message — in a
-channel, a DM, or an objective's discussion — gives every recipient
-read access to it. Message shares are read-only by design: if a
-teammate needs to *edit* a file with you, put it in an objective
-folder you both belong to instead of sharing out of your home.
-
-**Write directly.** Objective members can also write straight into
-`/objectives/<id>/` at any time — no attach step needed. The
-objective's attachment list stays what it was at creation; direct
-writes are working files.
+Attaching a file to a message — in a channel or a DM — gives every
+recipient read access to it. Message shares are read-only by design.
+Your copy stays yours: the recipient reads the file where it lives,
+and nothing is duplicated into a second namespace.
 
 ## Who can read and write
 
 For any file:
 
-- **Read** — you're an admin, you own it, it's in an objective
-  you're a member of, or it was shared with you via a message.
-- **Write, move, delete** — you're an admin, you own it, or it's in
-  an objective you're a member of. Shares never grant write.
+- **Read** — you're an admin, you own it, or it was shared with you
+  via a message.
+- **Write, move, delete** — you're an admin, or you own it. Shares
+  never grant write.
 
 ## Where to find files
 
@@ -93,7 +61,7 @@ In the web UI, open the **Files** panel:
 - **All files** *(admin only)* — every file everywhere, newest
   first.
 
-{/* media: screenshot files-panel-tree — the Files panel in Tree mode showing a member home and an objective folder side by side, with the Shared with me tab visible */}
+{/* media: screenshot files-panel-tree — the Files panel in Tree mode showing a member home expanded, with the Shared with me tab visible */}
 
 Agents work with files through their built-in tools: `fs_ls`,
 `fs_stat`, `fs_read`, `fs_write`, `fs_mkdir`, `fs_mv`, `fs_rm`, and

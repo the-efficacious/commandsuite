@@ -1,6 +1,6 @@
 ---
 title: Review an agent's work
-description: Read an objective's discussion and lifecycle log, open the trace behind it, understand the token numbers, and correct the record when it's wrong.
+description: Read a contract's criteria and verdicts, open the trace behind them, understand the token numbers, and correct the record when it's wrong.
 section: Guides
 order: 40
 ---
@@ -8,46 +8,66 @@ order: 40
 # Review an agent's work
 
 By the end of this guide you'll be able to take any completed
-objective and answer, with evidence: what was the agent told, what
+contract and answer, with evidence: what was the agent told, what
 did it actually do, what did it cost, and is the record accurate?
-That loop — assign, execute, review, correct — is the accountability
+That loop — author, execute, verify, correct — is the accountability
 story the rest of the product exists to support.
 
-## 1. Start with the objective record
+## 1. Start with the contract record
 
-Every objective carries its own audit trail. From the terminal:
+A contract is a fold over the annex, so its record is every event
+that was ever written about it — the specification and any
+amendments, attempts, verdicts, asks and rulings, lifecycle changes,
+and discussion. Open the **Board** in the web UI and select the
+contract, or read the same thing over the API:
 
-```bash
-csuite objectives view obj-7f2k
+```
+GET /spine/contracts/<id>
+GET /spine/events?contract=<id>
 ```
 
-You get the contract (title, outcome, body), the current state,
-the result the assignee claimed at completion, and the full event
-log — every assignment, block, discussion post, and state change,
-each stamped with a timestamp and the member who did it. The web UI
-shows the same record with the discussion thread inline.
+Agents read it with `annex_read`, filtered by contract. Every event
+carries its captions — who acted, when, on which subject, at which
+revision, and which events it cites.
 
-{/* media: screenshot review-objective-detail — an objective detail view showing the outcome, a completion result, and the lifecycle log with discussion posts interleaved */}
+{/* media: screenshot review-contract-detail — a contract detail view showing criteria with their verdicts, the current state, and the event stream below */}
 
-Read the result against the outcome first. The outcome was the
-contract; the result is the claim. Everything below is how you check
-the claim.
+Read the **criteria** first, and each criterion's verdict. That is
+the whole check: the criteria were what the world had to become, and
+a verdict is a verifier's judgement — `met`, `unmet`, or
+`cannot_verify` — reached at a named revision, with evidence. A
+completed contract with a verifier named could not have been
+completed at all unless cited verdicts (or a ruling waiving a
+`cannot_verify`) covered every criterion at one revision. With no
+verifier named, the completion result stands alone and the record
+says so — which is itself worth noticing during a review.
+
+Two rules make the record worth trusting, and neither is a
+permission anyone can be granted past: a verdict from the contract's
+own **assignee** is refused, and a ruling from anyone but the ask's
+named **authority** is refused.
 
 ## 2. Open the trace
 
-Open the objective and expand its trace. What you're looking at is a
-time slice of the assignee's activity — every model call and tool
-action captured between the moment the agent took the objective and
-the moment it closed it. The capture comes from each agent's own
-instrumentation, with no proxy or traffic interception — see
+The contract tells you what was committed to and what was judged; the
+trace tells you what the agent actually did. Open the assignee's
+member profile and select **Activity** for their timeline — every
+model call and tool action captured while they worked, bracketed by
+`session_start` / `session_end`. The capture comes from each agent's
+own instrumentation, with no proxy or traffic interception — see
 [Trace capture](/docs/tracing) for how, and
 [Activity and traces](/docs/concepts/activity-and-traces) for what
 each row means.
 
+There is no per-contract trace view. Traces are per member; use the
+contract's own timestamps to know which stretch of the timeline to
+read.
+
 Reading someone else's trace requires the `activity.read`
-permission; every member can always read their own. Being a watcher
-on the objective is *not* enough — thread visibility and trace
-visibility are separate grants.
+permission; every member can always read their own. No relationship
+to the work grants it — being the author, the verifier, or the
+authority on a contract tells you nothing about the assignee's model
+calls. Record visibility and trace visibility are separate grants.
 
 Each turn row shows the model used, the token counts, the agent's
 response — its reasoning, the text it produced, the tools it called
@@ -56,7 +76,7 @@ the call. That last part is the piece chat logs never give you: not
 just what the agent said, but exactly what it was looking at when it
 said it.
 
-{/* media: screenshot review-trace-panel — an objective's trace expanded to one turn row: token usage line, a tool call with its result, and the input context unfolded */}
+{/* media: screenshot review-trace-panel — a member's Activity timeline with one turn row expanded: token usage line, a tool call with its result, and the input context unfolded */}
 
 ## 3. Understand the numbers
 
@@ -76,7 +96,7 @@ in=48210 out=612 cache_hit=45876
 
 CommandSuite reports counts; it does not convert them to money.
 Multiply by your provider's current per-token pricing — and when
-comparing objectives, compare total tokens across the trace, not
+comparing contracts, compare total tokens across the trace, not
 turn counts. Ten cheap turns can cost less than one turn dragging a
 bloated context.
 
@@ -109,35 +129,37 @@ file contents the agent read, tool output — the trace is useful
 
 ## 5. Correct the record, don't rewrite it
 
-Review sometimes finds the record wrong: an outcome that was amended
+Review sometimes finds the record wrong: a criterion that was amended
 verbally but never in writing, or a completion recorded at the wrong
-moment. Two operations exist for exactly this, both append-only, both
-available to members holding `objectives.create` (an assignee holding
-it may amend its own objective — the contract is otherwise not the
-executor's to rewrite):
+revision. Nothing edits the annex. Two shapes of repair exist, and
+both append:
 
-**Amend the contract** — `objectives_amend` changes the outcome,
-title, or body. The prior text is kept and rendered in the objective
-view, the contract's version number increments, and a `reason` is
-required. So is a `disposition`, and it's a real decision:
+**Amend the contract** — `contract_amend` changes the title,
+criteria, or constraints. It requires `spine.author`, a `reason`, and
+a `disposition`, and the disposition is a real decision:
 `correction` means the prior text was wrong and work was never
 validly held to it; `scope_change` means a new demand — work already
 underway finishes under the old text. If you can't say which, you
-haven't finished thinking about the amendment.
+haven't finished thinking about the amendment. `criteria` and
+`constraints` are complete replacements rather than patches, and two
+refusals are worth knowing before calling: removing text without a
+`disclosure`, and dropping a criterion that already carries a verdict
+without citing that verdict. Neither refuses the change — they stop
+it happening quietly.
 
-**Correct an event** — `objectives_correct_event` supersedes one
-lifecycle event, named by the event id shown in the log. The classic
+**Staple a correction** — a `correction` event names the event it
+corrects and is appended beside it, so the original is never
+rewritten and nobody reads the stale version innocently. The classic
 case: a completion recorded at a PR head instead of the merge commit.
-The original event is never rewritten — a superseding record is
-appended, and the log marks the corrected event inline so nobody
-reads the stale version innocently. The contract version doesn't
-change; correcting what *happened* is not a change to what was
-*required*.
+An agent reaches this by `promote`-ing the discussion post where the
+mistake was noticed, `as: correction` — which makes the record show
+where the correction actually came from rather than presenting it as
+having arrived fully formed. Correcting what *happened* is not a
+change to what was *required*, and it moves no contract version.
 
-Both live in the agent toolbox, so the usual flow is asking an agent
-with the permission to record the amendment — the change lands
-attributed to whoever made it, with the reason attached, visible to
-the whole objective thread.
+Because the durable fields carry no length caps, neither repair has
+to be terse. Caps in this system scale **with** durability: the
+roomiest fields are the permanent ones.
 
 ## 6. Prune what you no longer need
 
@@ -150,9 +172,9 @@ csuite prune-traces --older-than 30d
 
 It shows the cutoff and row counts and asks before deleting; pass
 `--yes` in scripts. Pruning removes captured activity older than the
-cutoff — objectives, their event logs, discussions, amendments, and
-corrections are separate records and are untouched. The accountability
-trail outlives the raw trace.
+cutoff — the annex is a separate store, and contracts, verdicts,
+rulings, amendments, and corrections are untouched. The
+accountability trail outlives the raw trace.
 
 ## Where this breaks
 
@@ -168,8 +190,8 @@ trail outlives the raw trace.
   credential and pruning by age. Prefer keeping real secrets in the
   secrets store, where redaction is guaranteed by knowledge rather
   than pattern-matching.
-- **The record resists cleanup by design.** Amendments and
-  corrections add to the log; nothing edits it. If what you want is
+- **The record resists cleanup by design.** Amendments version and
+  corrections staple; nothing edits the annex. If what you want is
   for an embarrassing entry to not have happened, the product is
   built to disappoint you — that's the accountability loop holding
   under pressure from its own operators.

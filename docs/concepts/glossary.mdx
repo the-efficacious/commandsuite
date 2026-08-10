@@ -12,20 +12,44 @@ concept page where one exists.
 
 **Activity stream** — the permanent, timestamped record of
 everything a member does: model turns, tool actions, prompts, and
-session and objective markers. See
+session markers. See
 [Activity and traces](/docs/concepts/activity-and-traces).
 
+**Annex** — the spine's one append-only store of captioned events.
+Nothing is ever removed: corrections staple to what they correct and
+amendments version it. Contracts, queues, and the focus set are all
+folds over the annex. See
+[Spine tools](/docs/dev/mcp-tools#spine-tools).
+
+**Ask** — a question put to a named authority, carrying the context
+it needs and what it unblocks. Raising one holds the asker's own
+state-changing writes on that subject until a ruling resolves it, or
+until the asker deliberately records a `proceed` past it.
+
 **Broker** — the server at the center of a team. It holds messages,
-objectives, files, secrets, and traces, and every member connects to
+the spine, files, secrets, and traces, and every member connects to
 it. You run it yourself with `csuite serve`.
 
 **Channel** — a named team conversation, like a Slack channel. Every
 team has a built-in `general` channel that reaches everyone. See
 [Channels](/docs/concepts/channels).
 
+**Contract** — the unit of work: a subject, a title, a list of
+criteria, one assignee, and optionally a verifier and an authority.
+Authored into the annex, versioned by amendment, and completed only
+against evidence. See [Spine tools](/docs/dev/mcp-tools#spine-tools).
+
+**Criterion** — one clause of a contract's definition of done. Each
+is checked on its own and carries its own verdict.
+
 **Enrollment** — the approval flow (`csuite connect`) that lets a
 CLI on a new device join the broker without anyone copy-pasting a
 token. See [Device enrollment](/docs/enrollment).
+
+**Focus set** — the team's shared boundary of what is lit for travel
+right now. Reading it is baseline — every member plans against it —
+while lighting or unlighting a contract takes `spine.focus`. See
+[Spine tools](/docs/dev/mcp-tools#spine-tools).
 
 **Instruction blocks** — the standing context every agent starts
 with: the team context, its role description, its personal
@@ -40,22 +64,17 @@ as restart-pending until they have.
 member has a name, a role, permissions, and its own credentials. See
 [Members](/docs/concepts/members).
 
-**Objective** — a unit of assigned work that carries its own
-definition of done. Created by an originator, executed by one
-assignee, observed by watchers. See
-[Objectives](/docs/concepts/objectives).
-
-**Originator** — the member who created an objective. See
-[Objectives](/docs/concepts/objectives).
-
-**Outcome** — the required "definition of done" on an objective: the
-tangible result that makes it complete. See
-[Objectives](/docs/concepts/objectives).
+**Orient** — the spine's recovery call: no arguments, and it cannot
+be refused. It returns every contract that binds you — its state,
+its criteria with their verdicts, the revision it is bound to and
+whether that revision has gone stale — plus the asks awaiting your
+ruling and your own open ones. Call it after any restart,
+compaction, or gap. See
+[Spine tools](/docs/dev/mcp-tools#spine-tools).
 
 **Permission** — a named capability a member holds, such as
-`objectives.create` or `activity.read`. The model is flat: any
-member can hold any set. See
-[Permissions](/docs/concepts/permissions).
+`spine.author` or `activity.read`. The model is flat: any member can
+hold any set. See [Permissions](/docs/concepts/permissions).
 
 **Presence** — a member's live state: whether they're connected, and
 whether they're idle, working, or blocked. See
@@ -69,6 +88,15 @@ by one. See [Permissions](/docs/concepts/permissions).
 it works, carried in every agent's standing context. See
 [Process document](/docs/concepts/process-document).
 
+**Revision** — an immutable observation point on a subject: a value,
+how it was obtained (observed or asserted), and the source it came
+from. A contract bound to a revision its subject has since moved
+past renders **stale** — a reported state, never a repaired one.
+
+**Ruling** — the answer to an ask, from the ask's named authority
+and from nobody else. Resolving the ask is what releases the hold it
+placed on the asker.
+
 **Runner** — the program that runs an agent as a team member and
 connects it to the broker. Claude Code (`csuite claude`) and OpenAI
 Codex (`csuite codex`) are the two runners that ship today. See
@@ -78,18 +106,30 @@ Codex (`csuite codex`) are the two runners that ship today. See
 agent's environment at session start, and redacted from captured
 traces. See [Secrets](/docs/concepts/secrets).
 
+**Spine** — the team's durable record of what it owes and why: the
+annex of events, the subjects those events are about, and the
+contracts folded out of them. See
+[Spine tools](/docs/dev/mcp-tools#spine-tools).
+
+**Subject** — what an event or a contract is about: a repo, PR,
+file, issue, setting, package, or doc. Subjects contain one
+another — a file sits inside its repo — and a rule scoped to one
+reaches everything inside it.
+
 **Tool source** — a registered provider of extra tools for agents —
 a wrapped HTTP API or a remote MCP server — with its credential held
 on the broker. See [Tool sources](/docs/concepts/tool-sources).
 
-**Trace** — everything a member did while one objective was open:
-that objective's slice of the assignee's activity stream. See
+**Trace** — what a member's agent actually did, read off its
+activity stream: turns in order, each with its model, token usage,
+and tool calls. See
 [Activity and traces](/docs/concepts/activity-and-traces).
 
 **Variable** — a broker-held non-confidential value injected into an
 agent's environment at session start. Not redacted from traces. See
 [Variables](/docs/concepts/variables).
 
-**Watcher** — a member added to an objective to observe it: they
-follow its discussion and files without being the assignee. See
-[Objectives](/docs/concepts/objectives).
+**Verdict** — a verifier's decision on one criterion: `met`,
+`unmet`, or `cannot_verify`, which must say why. A contract's
+assignee cannot return one on their own contract. See
+[Spine tools](/docs/dev/mcp-tools#spine-tools).

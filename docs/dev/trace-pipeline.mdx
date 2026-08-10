@@ -21,8 +21,8 @@ telemetry + gen_ai stores.
 
 ## The activity model
 
-There are no per-objective spans. The runner maintains one
-**activity stream** per member — an append-only timeline of
+There are no spans and no per-contract stream. The runner maintains
+one **activity stream** per member — an append-only timeline of
 `ActivityEvent`s (authoritative kinds in `packages/sdk/src/types.ts`):
 
 - `session_start` / `session_end` — one runner session's bracket,
@@ -36,14 +36,11 @@ There are no per-objective spans. The runner maintains one
 - `tool_action` — one tool invocation with redacted input and, where
   the source carries it, the result.
 - `user_prompt` — the redacted prompt text that woke a turn.
-- `objective_open` / `objective_close` — the member took / released
-  an objective (`done` / `cancelled` / `reassigned` /
-  `runner_shutdown`).
 
-Per-objective "traces" are a **time-range view** over this stream:
-the web UI pages the member's activity and gen_ai records over the
-objective's lifetime window and joins them client-side. No
-per-objective blobs are stored.
+The session bracket is the only window over this stream. The web UI
+pages a member's activity and gen_ai records between their session
+markers and joins them client-side; nothing is stored twice, and no
+per-member blobs are stored.
 
 ## The capture host
 
@@ -61,11 +58,11 @@ The runner-owned handle every adapter feeds is the **CaptureHost**
 - the loopback **OTLP relay** (raw-body resolution, below).
 
 Adapters push events through `enqueue(event)`. The host also exposes
-`noteObjectiveOpen` / `noteObjectiveClose`, `envVars()` (the Claude
-child's OTEL delta), `otelLogsTarget()` (the codex `[otel]` target),
-`uploadGenai()` (codex bundle upload), `stats()`, and `close()`. On
-`close()` the reader stops first, the uploader drains best-effort,
-and the hook server and relay tear down. The raw-body spool directory
+`envVars()` (the Claude child's OTEL delta), `otelLogsTarget()` (the
+codex `[otel]` target), `uploadGenai()` (codex bundle upload),
+`stats()`, and `close()`. On `close()` the reader stops first, the
+uploader drains best-effort, and the hook server and relay tear
+down. The raw-body spool directory
 is deliberately **left in place** at close: a `.csuite-capture-complete`
 marker is written only when no unshipped body remains, and the next
 host start sweeps only marked, empty spools whose owning pid is dead.

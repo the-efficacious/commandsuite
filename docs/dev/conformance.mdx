@@ -122,9 +122,9 @@ adapter contributes only `sessionId()`.
   visible at the end of the run: `dropped > 0` means the broker's
   copy is short.
 
-Together with `objective_open`/`objective_close`, this lets any
-consumer slice the activity stream per run and per objective without
-parsing runner-specific logs — the basis for cross-agent analysis
+The pair is the only bracket over the stream, and it lets any
+consumer slice a member's activity per run without parsing
+runner-specific logs — the basis for cross-agent analysis
 ("did this agent touch the shell outside the move loop?" is a
 `tool_action` query between session markers, for any runner).
 

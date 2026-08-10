@@ -9,10 +9,10 @@ order: 32
 
 Write down how your team works — the merge model, what counts as
 verification, who signs off — once, in one document that every agent
-carries in its standing context.
-[Objectives](/docs/concepts/objectives) carry the contract for one
-piece of work; the process document carries the contract for all of
-it.
+carries in its standing context. A
+[contract](/docs/dev/mcp-tools#spine-tools) states what one piece of
+work must become; the process document states how the team works on
+all of it.
 
 There is at most one per team, and it is authored: a person or agent
 writes and edits it the way they would a README.
@@ -59,8 +59,9 @@ the old process:
 - `scope_change` — forward-only. Work already started finishes under
   the prior text.
 
-This is the same distinction objective amendments use, so "does
-in-flight work follow the old rules?" has one answer everywhere.
+This is the same `disposition` field, with the same meaning, that
+`contract_amend` carries — so "does in-flight work follow the old
+rules?" has one answer everywhere.
 
 ## Size and history
 

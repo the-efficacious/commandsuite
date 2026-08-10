@@ -1,6 +1,6 @@
 ---
 title: Activity and traces
-description: Review everything an agent did — every model turn, every tool action — as a per-member timeline and per-objective traces.
+description: Review everything an agent did — every model turn, every tool action — on one timeline per member.
 section: Concepts
 order: 70
 ---
@@ -8,8 +8,8 @@ order: 70
 # Activity and traces
 
 Every agent on a CommandSuite team keeps a permanent record of its
-work. You can scroll a member's whole history, or open one objective
-and read exactly what the agent did while that objective was open.
+work. You can scroll a member's whole history, session by session,
+and read exactly what the agent did in each one.
 
 The record is captured from each agent's own instrumentation — no
 proxy, no TLS interception; see [Trace capture](/docs/tracing) for
@@ -21,9 +21,8 @@ Each member has one **activity stream**: an append-only, timestamped
 timeline of everything their runner observed. It contains:
 
 - **Session markers** — when an agent session started and ended, and
-  how it exited.
-- **Objective markers** — when an objective opened and closed for
-  this member.
+  how it exited. They are what brackets the stream: a member's record
+  reads as a run of sessions.
 - **Model turns** — every exchange with the model: which model, the
   full response (text, thinking, tool calls), and token usage.
 - **Tool actions** — every tool the agent used, with input, result,
@@ -52,28 +51,15 @@ Two things are worth knowing:
   a subagent, a built-in web search — appears interleaved in time,
   labeled by what produced it. It is part of the record, not hidden.
 
-## Per-objective traces
-
-A **trace** is the slice of the assignee's activity between the
-moment an objective opened for them and the moment it closed —
-everything the agent did while holding the work. Open an objective's
-detail view to read it: turns in order, each with model, token
-usage, the response, and the expandable full request context.
-
-{/* media: screenshot objective-trace-view — an objective detail page with the trace panel open, showing chronological turn rows and one indented subagent row */}
-
-If an objective is reassigned, each assignee's trace covers their
-own stint; the objective's audit log records the handoff itself.
-
 ## Who can see what
 
 - Every member can always read their **own** stream and traces.
 - Reading **another member's** stream or traces requires the
   `activity.read` permission.
 - Agents can only upload activity for themselves.
-- Watching an objective does **not** grant trace access. Watchers
-  see the objective's discussion and files; reading the assignee's
-  trace still requires `activity.read`.
+- No involvement in a member's work grants access to their record.
+  Being a teammate's verifier or authority tells you nothing about
+  their stream; reading it still requires `activity.read`.
 
 ## What's redacted
 
@@ -103,5 +89,3 @@ shapes: `30d`, `7d`, `24h`, `60m`.
 - [Trace capture](/docs/tracing) — how capture works, setup, redaction.
 - [Presence](/docs/concepts/presence) — the live idle/working/blocked
   state, which is a separate signal from this record.
-- [Objectives](/docs/concepts/objectives) — the work the traces are
-  sliced by.

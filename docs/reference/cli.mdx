@@ -1,6 +1,6 @@
 ---
 title: CLI reference
-description: Every csuite command and its flags — running the broker, enrolling devices, launching agents, and managing members, objectives, tools, secrets, variables, and notifications.
+description: Every csuite command and its flags — running the broker, enrolling devices, launching agents, and managing members, tools, secrets, variables, and notifications.
 section: Reference
 order: 10
 ---
@@ -33,12 +33,11 @@ a fresh machine sets itself up.
 | [`setup`](#setup) | First-run wizard — team, first admin, config |
 | [`connect`](#connect) | Enroll this device with a broker |
 | [`auth`](#auth) | Inspect the local auth store |
-| [`quickstart`](#quickstart) | Seed a demo objective, open the web UI |
+| [`quickstart`](#quickstart) | Seed a demo contract, open the web UI |
 | [`claude`](#claude) | Run Claude Code as an agent member |
 | [`codex`](#codex) | Run OpenAI Codex as an agent member |
 | [`push`](#push) | Send a message to a member or the team |
 | [`roster`](#roster) | List members and connection state |
-| [`objectives`](#objectives) | Create and manage objectives |
 | [`member`](#member) | Manage team members |
 | [`enroll`](#enroll) | (Re-)enroll a member for web UI login |
 | [`rotate`](#rotate) | Rotate a member's bearer tokens |
@@ -80,7 +79,7 @@ csuite-server listening on http://127.0.0.1:8717
 ```
 
 Traces land in a separate activity database (`csuite-activity.db` by
-default) so heavy trace writes never stall chat or objective writes.
+default) so heavy trace writes never stall chat or annex writes.
 See [config files](/docs/reference/config) for everything serve reads
 and writes.
 
@@ -176,7 +175,7 @@ you to rotate the token rather than just delete the file.
 csuite quickstart [--skip-browser] [--assignee <name>]
 ```
 
-After setup and serve: seeds a demo objective (skipped if it already
+After setup and serve: seeds a demo contract (skipped if it already
 exists), opens the web UI in your browser, and prints the next step.
 Health-checks the broker first and bails with a clear hint if it's
 down.
@@ -184,7 +183,7 @@ down.
 | Flag | Description |
 |---|---|
 | `--skip-browser` | Don't open the browser (CI, headless). |
-| `--assignee <name>` | Assignee for the demo objective. Defaults to the first member who can't create objectives, falling back to the first member. |
+| `--assignee <name>` | Assignee for the demo contract. Defaults to the first member without `spine.author`, falling back to the first member. |
 
 ## claude
 
@@ -195,7 +194,7 @@ csuite claude [--cwd <dir>] [--model <name>] [--resume [<sessionId>]]
 
 Run Claude Code headlessly as an agent member of your team. There is
 no terminal UI to type into — you work with the agent through
-channels, direct messages, objectives, and `csuite push`, and review
+channels, direct messages, contracts, and `csuite push`, and review
 its work in the web UI.
 
 `claude-code` is a deprecated alias for this command.
@@ -310,41 +309,6 @@ broker never stores token plaintext, so the only honest "reveal" is to
 mint a fresh token and print it once. **This invalidates the member's
 previous tokens** — the output says so before it does it.
 
-## objectives
-
-```
-csuite objectives list     [--mine] [--assignee <name>] [--status <s>]
-csuite objectives view     <id>
-csuite objectives create   --title <t> --outcome <o> --assignee <n> [--body <b>]
-csuite objectives update   <id> [--status active|blocked] [--block-reason <r>] [--note <n>]
-csuite objectives complete <id> --result <r>
-csuite objectives cancel   <id> [--reason <r>]
-csuite objectives reassign <id> --to <name> [--note <n>]
-```
-
-Assign work that carries its own definition of done. See
-[objectives](/docs/concepts/objectives) for the model.
-
-- `list --status` accepts `active | blocked | done | cancelled`.
-  `--mine` filters to your own assignments.
-- `create` requires `--outcome` — the tangible definition of "done".
-- `update` needs at least one of `--status`, `--block-reason`,
-  `--note`, and `--status` only accepts `active` or `blocked`; use
-  `complete` and `cancel` for the terminal states.
-- `complete --result` is required and becomes the "what was actually
-  delivered" record on the objective.
-- `create`, `cancel`, and `reassign` require `objectives.create`,
-  `objectives.cancel`, and `objectives.reassign` respectively
-  (checked by the broker).
-
-```
-$ csuite objectives create \
-    --title "Fix the flaky login test" \
-    --outcome "test passes 50 consecutive runs in CI" \
-    --assignee nova
-created obj_01j... [active] Fix the flaky login test
-```
-
 ## member
 
 ```
@@ -371,16 +335,15 @@ or skip both and have the member's device run `csuite connect`.
 `--permissions` takes a comma-separated list of preset names and/or
 permission leaves. The leaves are:
 
-`team.manage`, `members.manage`, `objectives.create`,
-`objectives.cancel`, `objectives.reassign`, `objectives.watch`,
-`activity.read`, `tools.manage`, `secrets.manage`,
-`notifications.manage`, `process.manage`
+`team.manage`, `members.manage`, `activity.read`, `tools.manage`,
+`secrets.manage`, `notifications.manage`, `process.manage`,
+`spine.author`, `spine.focus`
 
 Omitted means baseline — a full team member with no elevated
 authority. See [permissions](/docs/concepts/permissions).
 
 ```
-$ csuite member create --name nova --title "backend eng" --permissions objectives.watch
+$ csuite member create --name nova --title "backend eng" --permissions spine.author
 ```
 
 ## enroll
@@ -452,8 +415,8 @@ preset; a change re-resolves every member that references it on the
 next read — no per-member sweep needed.
 
 ```
-$ csuite presets set --name operator --permissions objectives.create,objectives.cancel
-preset 'operator' set: objectives.create, objectives.cancel
+$ csuite presets set --name operator --permissions spine.author,spine.focus
+preset 'operator' set: spine.author, spine.focus
 ```
 
 `delete` warns when members still reference the preset — their

@@ -1,6 +1,6 @@
 ---
 title: Runners overview
-description: A runner keeps one agent connected to your team — it delivers messages and objectives, gives the agent the team toolbox, and records its work.
+description: A runner keeps one agent connected to your team — it delivers messages and spine events, gives the agent the team toolbox, and records its work.
 section: Runners
 order: 20
 ---
@@ -9,8 +9,8 @@ order: 20
 
 A **runner** is the process that turns an AI agent into a
 team member. You start one in a terminal; it connects to the broker,
-briefs the agent on who it is (name, role, teammates, team context,
-open objectives), delivers chat and objectives as they happen, and
+briefs the agent on who it is (name, role, teammates, team
+context), delivers chat and spine events as they happen, and
 records the agent's work as [traces](/docs/tracing). The agent runs
 under the runner and exits with it.
 
@@ -30,14 +30,14 @@ contract and a conformance suite — see
 1. **Authenticates** with `--token`, `$CSUITE_TOKEN`, or the entry
    saved by `csuite connect`.
 2. **Fetches the member's instructions** — its identity, permissions,
-   teammates, team context, and currently open objectives.
+   teammates, and team context.
 3. **Runs a preflight** (the same checks as `--doctor`) and refuses
    to start on a failure instead of dying mid-session.
 4. **Starts trace capture** (unless `--no-trace`), built from the
    agent's own instrumentation — no proxy, no certificates. See
    [tracing](/docs/tracing).
 5. **Spawns the agent** with the team toolbox attached.
-6. **Delivers events** — chat, DMs, objective updates — into the
+6. **Delivers events** — chat, DMs, spine deltas — into the
    agent's session the moment they arrive. No polling, no human
    relay.
 7. **Restarts the agent when its instructions change.** An edit to
@@ -62,16 +62,25 @@ appears in the toolbox follows the member's permissions:
 | Tools | What they do | Available with |
 |---|---|---|
 | `roster`, `broadcast`, `send`, `channels_list`, `channels_post`, `recent` | See teammates, post to channels, DM, read history | Always |
-| `objectives_list` / `_view` / `_update` / `_discuss` / `_complete` | Work an assigned objective through to its outcome | Always |
+| `orient`, `annex_read`, `focus_set` | Recover after a gap, page the annex, read the team's focus set | Always |
+| `attempt_post`, `verdict_post`, `state_set`, `contract_complete` | Carry a contract from attempt to verdict to done | Always |
+| `ask_author`, `ruling_post`, `proceed`, `observe`, `discuss`, `promote`, `subscribe` | Raise and answer asks, record observations, talk, follow a contract | Always |
 | `fs_ls` / `_stat` / `_read` / `_write` / `_mkdir` / `_rm` / `_mv` / `_shared` | The team's shared virtual filesystem | Always |
-| `objectives_create`, `objectives_amend`, `objectives_correct_event` | Create objectives and revise their contracts | `objectives.create` |
-| `objectives_cancel`, `objectives_watchers`, `objectives_reassign` | Cancel, manage watchers, reassign | `objectives.cancel` / `.watch` (each with originator bypass) / `.reassign` |
+| `contract_author`, `contract_amend` | State what the world must become, and revise that statement | `spine.author` |
+| `focus` | Light or unlight a contract in the team's focus set | `spine.focus` |
 | `team_*`, `presets_*` | Team settings and permission presets | `team.manage` |
 | `members_*` | Add, update, remove members | `members.manage` |
 | `tool_sources_*` | The external tool registry | `tools.manage` |
 | `variables_*`, `secrets_*` | Team variables and secrets | `secrets.manage` |
 | `notifications_*` | Inbound notification endpoints | `notifications.manage` |
 | `process_document_*` | The team's process document | reads always; writes need `process.manage` |
+
+Most of the spine carries no leaf at all, and that is deliberate:
+verdict and ruling legitimacy is structural rather than granted. The
+store refuses a verdict from the contract's assignee and a ruling
+from anyone but the ask's named authority, whatever leaves the caller
+holds — a permission there would imply those refusals could be
+granted away.
 
 The toolbox filtering is a convenience — the broker enforces every
 permission on its own end regardless. Full input and output schemas:
@@ -83,7 +92,7 @@ permission on its own end regardless. Full input and output schemas:
 |---|---|---|
 | **Agent** | Claude Code, headless | OpenAI Codex, headless |
 | **You need** | Claude Code credentials on the machine (`claude login` or `ANTHROPIC_API_KEY`) | `codex` installed and `codex login` run once |
-| **Directing it** | Through the broker: chat, DMs, objectives, `csuite push` | Same |
+| **Directing it** | Through the broker: chat, DMs, contracts, `csuite push` | Same |
 | **Terminal** | Activity feed + status strip | Activity feed + status strip |
 | **Model** | `--model` (e.g. `claude-sonnet-5`) | `--model` (e.g. `gpt-5`) |
 | **Resume** | `--resume [<sessionId>]` — bare resumes the most recent session in the directory | `--resume [<threadId>]` — bare resumes the most recent thread |
@@ -99,7 +108,7 @@ behavior. The wiring lives in
 
 - **Schedule agents.** One runner is one agent for the life of one
   process.
-- **Keep state on your machine.** Instructions, objectives, history,
+- **Keep state on your machine.** Instructions, contracts, history,
   and traces all live on the broker; restarting a runner loses
   nothing.
 - **Grant authority.** Permissions are enforced by the broker on

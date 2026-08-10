@@ -77,8 +77,8 @@ Liveness probe. Cheap; always responds 200 if the process is up.
 The member's composed instruction packet. Returns the caller's full
 member record (name, role, instructions, permissions) plus the team
 (name, context, permissionPresets), the public projection
-of every teammate, the caller's currently-open objectives, the
-external tools resolved for them (`toolSources`), and the team's
+of every teammate, the external tools resolved for them
+(`toolSources`), and the team's
 process document (`processDocument` — `null` when none is set,
 absent on brokers that predate the field).
 
@@ -112,9 +112,10 @@ for display). The SDK sends it via
 
 The runner caches this at startup and uses it for the session — the
 composed `instructions` prose is pinned into the agent's system
-prompt, `openObjectives` seeds the runner's `context_refresh` push,
-and `permissions` decides which permission-gated tools appear in
-`tools/list`. It refetches mid-session in exactly two cases: a
+prompt, and `permissions` decides which permission-gated tools appear
+in `tools/list`. Recovery is not composed from this packet: the runner
+calls [`GET /spine/orient`](#get-spineorient) and injects what the
+server returns. It refetches mid-session in exactly two cases: a
 `tool_source` registry event (to recompute the external toolbox) and
 the drain-and-restart cycle an instruction edit triggers (below).
 
@@ -345,15 +346,10 @@ row id and broadcasts to live `/activity/stream` subscribers.
 
 Range query. Returns newest-first up to 1000 rows. `kind` filter
 accepts a single value or repeated params, OR-combined
-(`session_start | session_end | objective_open | objective_close |
-llm_exchange | tool_action | user_prompt`). `cursor_ts` +
-`cursor_id` form a composite paging cursor (both or neither —
-"rows strictly before this (ts, id)"), which stays stable when many
-rows share a timestamp.
-
-The TracePanel uses
-`from=<objective.createdAt>&to=<objective.completedAt>&kind=llm_exchange`
-to render per-objective traces.
+(`session_start | session_end | llm_exchange | tool_action |
+user_prompt`). `cursor_ts` + `cursor_id` form a composite paging
+cursor (both or neither — "rows strictly before this (ts, id)"),
+which stays stable when many rows share a timestamp.
 
 ### `GET /members/:name/activity/stream` (WebSocket)
 
@@ -366,7 +362,7 @@ Live tail of the activity stream — a WebSocket upgrade, not SSE.
 Name and permission are validated by pre-upgrade middleware so
 rejection is a proper HTTP 400/403 rather than a failed handshake;
 on server shutdown the socket closes with code `1001`. Used by the
-TracePanel for in-flight objectives where new events keep arriving.
+TracePanel for a live session where new events keep arriving.
 
 ### `GET /members/:name/genai?from=<ts>&to=<ts>&limit=<n>&view=summary`
 
@@ -473,149 +469,6 @@ sweep. Unknown leaves are rejected with 400.
 `referencedBy` names the members that still reference the deleted
 preset; their resolved permissions silently drop its leaves on the
 next read.
-
-## Objectives
-
-### `GET /objectives?assignee=<name>&related=<name>&status=<s>`
-
-| | |
-|---|---|
-| **Auth** | dual |
-| **Returns** | `ListObjectivesResponse` — `{ objectives: Objective[] }` |
-
-Callers **without** `objectives.create` are scoped to their own
-relationship union — objectives they are assigned, originated, or
-watch — and may only pass their own name in `assignee` / `related`
-(403 otherwise). Callers **with** `objectives.create` get the
-team-wide list; `related=<name>` narrows it to one member's
-relationship union, `assignee=<name>` to one member's plate. The
-MCP `objectives_list` tool sits on top of this route.
-
-### `POST /objectives`
-
-| | |
-|---|---|
-| **Auth** | dual; requires `objectives.create` |
-| **Body** | `CreateObjectiveRequest` — `{ title, outcome, assignee, body?, watchers?, attachments? }` |
-| **Returns** | `Objective` |
-
-Creates the objective and appends an `assigned` audit event in
-the same transaction. Originator is stamped from the caller. If
-`watchers` are supplied, they're de-duped and validated; each
-must resolve to a known member. `attachments` validate that the
-caller has read access to each path.
-
-### `GET /objectives/:id`
-
-| | |
-|---|---|
-| **Auth** | dual; thread participant (assignee, originator, watcher) OR `objectives.create` |
-| **Returns** | `GetObjectiveResponse` — `{ objective: Objective, events: ObjectiveEvent[] }` |
-
-Full state plus the append-only event log.
-
-### `PATCH /objectives/:id`
-
-| | |
-|---|---|
-| **Auth** | dual; assignee OR `objectives.cancel` |
-| **Body** | `UpdateObjectiveRequest` — `{ status?: 'active'\|'blocked', blockReason? }` |
-| **Returns** | `Objective` |
-
-Round-trip transition. Use `complete` / `cancel` for terminal
-states. `blockReason` is required when `status: 'blocked'`.
-
-### `POST /objectives/:id/complete`
-
-| | |
-|---|---|
-| **Auth** | dual; **assignee only** |
-| **Body** | `CompleteObjectiveRequest` — `{ result: <required string> }` |
-| **Returns** | `Objective` |
-
-Terminal transition to `done`. The result string goes into the
-audit log and is the "what was actually delivered" summary.
-
-### `POST /objectives/:id/cancel`
-
-| | |
-|---|---|
-| **Auth** | dual; `objectives.cancel` OR originator |
-| **Body** | `CancelObjectiveRequest` — `{ reason? }` |
-| **Returns** | `Objective` |
-
-Terminal transition to `cancelled`.
-
-### `POST /objectives/:id/amend`
-
-| | |
-|---|---|
-| **Auth** | dual; `objectives.create` |
-| **Body** | `AmendObjectiveRequest` — `{ title?, outcome?, body?, reason: <required>, disposition: 'correction'\|'scope_change' }` (at least one contract field) |
-| **Returns** | `Objective` (with bumped `outcomeVersion`) |
-
-Amend the objective's contract — title, outcome and/or body. The
-gate is the permission, not the role: an assignee holding
-`objectives.create` may amend their own contract. Prior text is
-retained in the event log (rendered by `objectives_view`), so this
-corrects the record rather than silently replacing it. A no-op
-amendment (no field actually differs) is rejected rather than
-recorded as a version bump. `disposition` states whether the change
-is retroactive (`correction` — the prior text was wrong) or
-forward-only (`scope_change` — work already underway finishes under
-the prior text).
-
-### `POST /objectives/:id/correct-event`
-
-| | |
-|---|---|
-| **Auth** | dual; `objectives.create` |
-| **Body** | `CorrectObjectiveEventRequest` — `{ eventId, correction, reason }` |
-| **Returns** | `Objective` |
-
-Correct an earlier lifecycle event (e.g. a completion recorded at
-the wrong moment). The target event is never rewritten — this
-appends a superseding record naming it by `eventId` (a durable id;
-timestamps are not identities because creation emits two events in
-the same millisecond). Does not change the contract version.
-
-### `POST /objectives/:id/reassign`
-
-| | |
-|---|---|
-| **Auth** | dual; `objectives.reassign` |
-| **Body** | `ReassignObjectiveRequest` — `{ to: <name>, note? }` |
-| **Returns** | `Objective` |
-
-Moves to a new assignee. Both old and new assignees receive
-channel events. Activity stream gets `objective_close` (with
-`result: 'reassigned'`) for old, `objective_open` for new. The new
-assignee's attachment access follows from the objective-namespace
-ACL — no grant backfill.
-
-### `POST /objectives/:id/discuss`
-
-| | |
-|---|---|
-| **Auth** | dual; thread member only |
-| **Body** | `DiscussObjectiveRequest` — `{ body, title?, attachments? }` |
-| **Returns** | `Message` (the underlying push) |
-
-Posts into the `obj:<id>` thread. Members include originator,
-assignee, watchers, plus members with `members.manage` (implicit).
-
-### `POST /objectives/:id/watchers`
-
-| | |
-|---|---|
-| **Auth** | dual; `objectives.watch` OR originator |
-| **Body** | `UpdateWatchersRequest` — `{ add?: string[], remove?: string[] }` (must include at least one) |
-| **Returns** | `Objective` |
-
-POST, not PATCH. Names must resolve to known members. Adding a
-watcher fires a `watcher_added` audit event; removing fires
-`watcher_removed` (fanned out to the removed watcher too, so they
-get the exit notification).
 
 ## Process document
 
@@ -1347,8 +1200,8 @@ a home you own or that's been shared with you.
 
 Friendly URL — segments are URL-encoded individually so the path
 works directly in `<a href>` and `<img src>`. The server checks
-read access (own home, `members.manage`, objective-namespace
-membership, or a grant from a message attachment).
+read access (own home, `members.manage`, or a grant from a message
+attachment).
 
 ### `POST /fs/write`
 
@@ -1398,7 +1251,7 @@ v1.
 | **Auth** | dual |
 | **Returns** | `FsListResponse` |
 
-Files shared with the caller via message / objective attachments.
+Files shared with the caller via message attachments.
 Owner-private files from other members never appear.
 
 ### `GET /fs/all`
@@ -1604,7 +1457,7 @@ Common error codes:
 | `forbidden` | Auth resolved but lacks the required permission |
 | `not_found` | Resource doesn't exist |
 | `conflict` | Slug / name collision, or invariant would be violated |
-| `gone` | Resource is archived (channel, completed objective with destructive intent) |
+| `gone` | Resource is archived (an archived channel, or a terminal record with destructive intent) |
 | `rate_limited` | TOTP / enrollment rate limit hit; check `Retry-After` |
 | `payload_too_large` | Body exceeded the per-route cap |
 
@@ -1613,7 +1466,7 @@ list when applicable.
 
 ## Source of truth
 
-- `packages/sdk/src/protocol.ts` — `PATHS`, `OBJECTIVE_PATHS`,
+- `packages/sdk/src/protocol.ts` — `PATHS`, `SPINE_PATHS`,
   `CHANNEL_PATHS`, `MEMBER_PATHS`, `TOOL_SOURCE_PATHS`,
   `SECRET_PATHS`, `VARIABLE_PATHS`, `NOTIFICATION_PATHS`,
   `PROCESS_DOCUMENT_PATHS`, `FS_PATHS`, plus the
@@ -1621,5 +1474,5 @@ list when applicable.
 - `packages/sdk/src/schemas.ts` — every request / response shape
 - `apps/server/src/app.ts` — endpoint dispatch
 - `apps/server/src/auth.ts` — the auth middleware
-- `apps/server/src/{members,objectives,channels,enrollments,sessions,...}.ts`
+- `apps/server/src/{members,spine,channels,enrollments,sessions,...}.ts`
   — per-route handlers
