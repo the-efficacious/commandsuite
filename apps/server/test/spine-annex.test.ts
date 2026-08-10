@@ -1162,6 +1162,63 @@ describe('projections are folds', () => {
   });
 });
 
+/**
+ * ADOPTED FROM THE PHASE-6 VERIFICATION (round 4, block C).
+ *
+ * `contractStateBefore` rests on two claims that were true and
+ * unguarded: that `lifecycle` is the sole writer of
+ * `spine_contracts.state`, and that an absent row means `active`
+ * because the specification fold writes that as a SQL literal, not as
+ * a fallback. Neither claim was asserted anywhere, and two mutations
+ * survived the whole suite:
+ *
+ * - `i.seq < ?` → `<=`, under which a parking lifecycle event reads
+ *   its own state as the state before it, and so silences its own
+ *   class-2 delivery — the exact property the curator's `stateBefore`
+ *   comment is about;
+ * - the absent row returning `'waiting_on'` rather than `'active'`.
+ *
+ * Both die here.
+ */
+describe('the last lifecycle event below seq', () => {
+  it('is exclusive at seq, and ignores every other kind', () => {
+    const contract = authorContract().event.id;
+    // A contract with no lifecycle event at all reads `active` — the
+    // state the specification fold literally wrote.
+    expect(annex.contractStateBefore(contract, 10_000), 'the fold wrote active').toBe('active');
+
+    const park = annex.append(
+      {
+        kind: 'lifecycle',
+        opId: 'op-park-state-before',
+        expectedStateRev: 1,
+        body: { contract, state: 'parked', preemptedBy: 'the incident' },
+      },
+      { actor: 'lea', now: tick() },
+    );
+    // Non-lifecycle events land AFTER the park; none may change the
+    // answer, because lifecycle is the sole writer of the state.
+    for (let i = 0; i < 3; i++) {
+      annex.append(
+        { kind: 'discussion', body: { contract, body: `talking ${i}` } },
+        { actor: 'cora', now: tick() },
+      );
+    }
+
+    const head = annex.events({ limit: 1 }).headSeq;
+    expect(annex.contractStateBefore(contract, head + 1), 'the last lifecycle wins').toBe('parked');
+    // EXCLUSIVE at the boundary: asked about the park's own seq, the
+    // answer is the state BEFORE it. Inclusive here is what lets a
+    // parking event silence its own delivery.
+    expect(annex.contractStateBefore(contract, park.event.seq), 'exclusive at seq').toBe('active');
+    expect(annex.contractStateBefore(contract, park.event.seq + 1), 'inclusive one past').toBe(
+      'parked',
+    );
+    // An unknown contract reads `active`, not a crash.
+    expect(annex.contractStateBefore('evt_nope', head), 'unknown ids do not throw').toBe('active');
+  });
+});
+
 describe('orient', () => {
   it('returns every binding a member holds, with criteria, staleness and a cursor', () => {
     const spec = authorContract();
