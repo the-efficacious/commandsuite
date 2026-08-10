@@ -3,11 +3,10 @@
  *
  * Append-only timeline per member, capturing everything the member's
  * runner observed, normalized from each agent's native instrumentation:
- * LLM exchanges and tool actions (Claude Code OTEL export, codex
- * app-server stream) plus objective lifecycle markers
- * (`objective_open` / `objective_close`). Objective traces are a
- * view over this stream — you query by time range bounded by the
- * markers for a given objectiveId.
+ * LLM exchanges, tool actions and prompts (Claude Code OTEL export,
+ * codex app-server stream), bracketed per run by `session_start` /
+ * `session_end`. A trace is a VIEW over this stream — query it by time
+ * range for whatever window you can name.
  *
  * The store is a thin wrapper around SQLite plus an in-process
  * `EventEmitter` that the SSE endpoint subscribes to for live tail.

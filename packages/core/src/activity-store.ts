@@ -2,20 +2,23 @@
  * Activity store — per-member append-only timeline of everything a
  * member's runner observed.
  *
- * The broker's activity surface captures four kinds of events (see
+ * The broker's activity surface captures these kinds of event (see
  * `csuite-sdk/types`'s `ActivityEvent`), all normalized
  * runner-side from each agent's native instrumentation:
  *   - `llm_exchange` — a decoded model request/response pair (from
  *     Claude Code's OTEL body export or the codex app-server stream).
  *   - `tool_action` — a single tool invocation (Claude Code hooks /
  *     OTEL tool records, codex item stream).
- *   - `objective_open` / `objective_close` — lifecycle markers the
- *     runner emits when the objectives tracker's open set changes.
+ *   - `user_prompt` — what the member actually asked for.
+ *   - `session_start` / `session_end` — run brackets, one pair per
+ *     runner invocation.
  *
- * Objective "traces" are a time-range view over this stream: the web
- * UI queries `GET /members/:name/activity?from=<open>&to=<close>
- * &kind=llm_exchange` rather than reading a separately-stored per-
- * objective blob.
+ * A "trace" is a time-range VIEW over this stream rather than a stored
+ * object: a caller queries `GET /members/:name/activity?from=&to=
+ * &kind=llm_exchange` for whatever window it can name. There is
+ * deliberately no per-something blob — the store is kind-agnostic, and
+ * it outlived the objectives lifecycle markers it was first sliced by
+ * precisely because it never knew about them.
  *
  * This module defines the runtime-agnostic `ActivityStore` interface
  * plus an in-memory reference implementation. The concrete SQLite
