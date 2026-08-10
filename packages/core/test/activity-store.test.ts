@@ -51,8 +51,8 @@ function toolAction(ts: number, toolName = 'Bash'): ActivityEvent {
   };
 }
 
-function objectiveOpen(ts: number, id = 'obj-1'): ActivityEvent {
-  return { kind: 'objective_open', ts, objectiveId: id };
+function sessionStart(ts: number, runner = 'claude'): ActivityEvent {
+  return { kind: 'session_start', ts, runner };
 }
 
 function store(options: { now?: () => number; maxLimit?: number } = {}) {
@@ -127,17 +127,17 @@ describe('InMemoryActivityStore.list', () => {
 
   it('filters by kind', () => {
     const s = store();
-    s.append('engineer-1', [llm(100), toolAction(150), objectiveOpen(200)]);
+    s.append('engineer-1', [llm(100), toolAction(150), sessionStart(200)]);
     const toolRows = s.list({ memberName: 'engineer-1', kinds: ['tool_action'] });
     expect(toolRows).toHaveLength(1);
     expect(toolRows[0]?.event.kind).toBe('tool_action');
 
     const lifecycleRows = s.list({
       memberName: 'engineer-1',
-      kinds: ['objective_open', 'objective_close'] as readonly ActivityKind[],
+      kinds: ['session_start', 'session_end'] as readonly ActivityKind[],
     });
     expect(lifecycleRows).toHaveLength(1);
-    expect(lifecycleRows[0]?.event.kind).toBe('objective_open');
+    expect(lifecycleRows[0]?.event.kind).toBe('session_start');
   });
 
   it('filters by from/to inclusive', () => {

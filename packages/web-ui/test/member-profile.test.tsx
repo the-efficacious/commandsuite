@@ -51,7 +51,6 @@ const COMMANDER_PACKET: InstructionsResponse = {
     },
     { name: 'engineer-1', role: { title: 'engineer', description: '' }, permissions: [] },
   ],
-  openObjectives: [],
   toolSources: [],
   processDocument: null,
   instructions: 'Lead the team.',

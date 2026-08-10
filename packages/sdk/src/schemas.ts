@@ -235,178 +235,22 @@ export const HealthResponseSchema = z.object({
     .optional(),
 });
 
-// ───────────────────────── Objectives ─────────────────────────
-
-export const ObjectiveStatusSchema = z.enum(['active', 'blocked', 'done', 'cancelled']);
-
-export const ObjectiveEventKindSchema = z.enum([
-  'assigned',
-  'blocked',
-  'unblocked',
-  'completed',
-  'cancelled',
-  'reassigned',
-  'watcher_added',
-  'watcher_removed',
-  'amended',
-  'event_corrected',
-]);
-
-export const AmendmentDispositionSchema = z.enum(['correction', 'scope_change']);
-export const AmendableFieldSchema = z.enum(['title', 'outcome', 'body']);
-
-export const ObjectiveAmendmentSchema = z.discriminatedUnion('target', [
-  z.object({
-    target: z.literal('contract'),
-    version: z.number().int().positive(),
-    ts: z.number().int().nonnegative(),
-    actor: NameSchema,
-    disposition: AmendmentDispositionSchema,
-    reason: z.string().min(1).max(2048),
-    fields: z.array(AmendableFieldSchema).min(1),
-    previous: z
-      .object({
-        title: z.string().optional(),
-        outcome: z.string().optional(),
-        body: z.string().optional(),
-      })
-      .default({}),
-  }),
-  z.object({
-    target: z.literal('event'),
-    ts: z.number().int().nonnegative(),
-    actor: NameSchema,
-    reason: z.string().min(1).max(2048),
-    eventId: z.string().min(1),
-    eventKind: ObjectiveEventKindSchema,
-    eventTs: z.number().int().nonnegative(),
-    correction: z.string().min(1).max(4096),
-  }),
-]);
-
 /**
- * At least one contract field, and `reason`/`disposition` are
- * required. An amendment that supplies no field is rejected upstream
- * rather than recorded as a no-op version bump.
+ * Whether an amendment binds work already underway.
+ *
+ * `correction` is retroactive — the prior text was never validly
+ * binding. `scope_change` is forward-only — work already started
+ * finishes under the prior text. An amender who cannot say which one
+ * it is has not finished thinking about the amendment.
+ *
+ * SHARED, and it outlived the subsystem it was written for. It arrived
+ * with objectives, and the process document and the spine's
+ * `amendment` both adopted the same field with the same meaning
+ * deliberately, so "does work started under the old text finish under
+ * it" has ONE answer across every amendable thing on the team. It
+ * therefore stays here now that objectives are gone.
  */
-export const AmendObjectiveRequestSchema = z.object({
-  title: z.string().min(1).max(200).optional(),
-  outcome: z.string().min(1).max(2048).optional(),
-  body: z.string().max(4096).optional(),
-  reason: z.string().min(1).max(2048),
-  disposition: AmendmentDispositionSchema,
-});
-
-export const CorrectObjectiveEventRequestSchema = z.object({
-  eventId: z.string().min(1),
-  correction: z.string().min(1).max(4096),
-  reason: z.string().min(1).max(2048),
-});
-
-export const ObjectiveSchema = z.object({
-  id: z.string().min(1),
-  title: z.string().min(1).max(200),
-  body: z.string().max(4096).default(''),
-  outcome: z.string().min(1).max(2048),
-  status: ObjectiveStatusSchema,
-  assignee: NameSchema,
-  originator: NameSchema,
-  watchers: z.array(NameSchema).default([]),
-  createdAt: z.number().int().nonnegative(),
-  updatedAt: z.number().int().nonnegative(),
-  completedAt: z.number().int().nonnegative().nullable(),
-  result: z.string().nullable(),
-  blockReason: z.string().nullable(),
-  attachments: z.array(AttachmentSchema).default([]),
-  // Defaulted so a client reading an older broker's response still
-  // parses: absent means "never amended, version 1", which is the
-  // truth for every objective created before amendment existed.
-  outcomeVersion: z.number().int().positive().default(1),
-  amendments: z.array(ObjectiveAmendmentSchema).default([]),
-});
-
-export const ObjectiveEventSchema = z.object({
-  id: z.string().default(''),
-  objectiveId: z.string().min(1),
-  ts: z.number().int().nonnegative(),
-  actor: NameSchema,
-  kind: ObjectiveEventKindSchema,
-  payload: z.record(z.string(), z.unknown()),
-});
-
-export const CreateObjectiveRequestSchema = z.object({
-  title: z.string().min(1).max(200),
-  outcome: z.string().min(1).max(2048),
-  body: z.string().max(4096).optional(),
-  assignee: NameSchema,
-  watchers: z.array(NameSchema).max(64).optional(),
-  attachments: z.array(AttachmentSchema).max(64).optional(),
-});
-
-export const UpdateWatchersRequestSchema = z
-  .object({
-    add: z.array(NameSchema).max(64).optional(),
-    remove: z.array(NameSchema).max(64).optional(),
-  })
-  .refine(
-    (v) => (v.add && v.add.length > 0) || (v.remove && v.remove.length > 0),
-    'must include at least one of: add, remove',
-  );
-
-export const UpdateObjectiveRequestSchema = z
-  .object({
-    status: z.enum(['active', 'blocked']).optional(),
-    blockReason: z.string().max(2048).optional(),
-  })
-  .refine(
-    (v) => v.status !== undefined || v.blockReason !== undefined,
-    'update must include at least one of: status, blockReason',
-  );
-
-export const DiscussObjectiveRequestSchema = z.object({
-  body: z
-    .string()
-    .min(1)
-    .max(16 * 1024),
-  title: z.string().max(200).optional(),
-  attachments: z.array(AttachmentSchema).max(64).optional(),
-});
-
-export const CompleteObjectiveRequestSchema = z.object({
-  result: z.string().min(1).max(4096),
-});
-
-export const CancelObjectiveRequestSchema = z.object({
-  reason: z.string().max(2048).optional(),
-});
-
-export const ReassignObjectiveRequestSchema = z.object({
-  to: NameSchema,
-  note: z.string().max(2048).optional(),
-});
-
-export const ListObjectivesResponseSchema = z.object({
-  objectives: z.array(ObjectiveSchema),
-});
-
-export const GetObjectiveResponseSchema = z.object({
-  objective: ObjectiveSchema,
-  events: z.array(ObjectiveEventSchema),
-});
-
-export const ListObjectivesQuerySchema = z.object({
-  assignee: NameSchema.optional(),
-  /**
-   * Scope to every objective this member has ANY relationship with —
-   * assigned, originated, or watching. Distinct from `assignee`, which
-   * is the narrower "on their plate" question: a member who originates
-   * or watches without being assigned matches `related` and not
-   * `assignee`. Members without `objectives.create` may only pass their
-   * own name.
-   */
-  related: NameSchema.optional(),
-  status: ObjectiveStatusSchema.optional(),
-});
+export const AmendmentDispositionSchema = z.enum(['correction', 'scope_change']);
 
 // ───────────────────────── Channels ─────────────────────────
 //
@@ -1252,7 +1096,7 @@ export const HookIngressResponseSchema = z.object({
 // Trace entries are normalized runner-side from each agent's native
 // instrumentation (Claude Code OTEL bodies, the codex app-server
 // stream). They flow through the member activity stream (below)
-// rather than a per-objective table. Every captured exchange is an
+// rather than a per-contract table. Every captured exchange is an
 // Anthropic `/v1/messages`-shaped record — there is no opaque HTTP
 // catch-all, since the capture surface no longer intercepts arbitrary
 // traffic. Schemas stay permissive because Anthropic's API shape
@@ -1434,8 +1278,6 @@ export const GetGenaiInferenceResponseSchema = z.object({
 export const ActivityKindSchema = z.enum([
   'session_start',
   'session_end',
-  'objective_open',
-  'objective_close',
   'llm_exchange',
   'tool_action',
   'user_prompt',
@@ -1471,17 +1313,6 @@ export const ActivityEventSchema = z.discriminatedUnion('kind', [
         peakQueuedBytes: z.number().int().nonnegative().optional(),
       })
       .optional(),
-  }),
-  z.object({
-    kind: z.literal('objective_open'),
-    ts: z.number().int().nonnegative(),
-    objectiveId: z.string().min(1),
-  }),
-  z.object({
-    kind: z.literal('objective_close'),
-    ts: z.number().int().nonnegative(),
-    objectiveId: z.string().min(1),
-    result: z.enum(['done', 'cancelled', 'reassigned', 'runner_shutdown']),
   }),
   z.object({
     kind: z.literal('llm_exchange'),
@@ -1775,7 +1606,6 @@ export const InstructionBlockDescriptorSchema = z.object({
 export const InstructionsResponseSchema = MemberSchema.extend({
   team: TeamSchema,
   teammates: z.array(TeammateSchema),
-  openObjectives: z.array(ObjectiveSchema),
   // Defaulted so pre-tool-sources brokers (and test fixtures) that
   // omit the field still parse.
   toolSources: z.array(ResolvedToolSourceSchema).default([]),
@@ -1863,31 +1693,33 @@ export const FsEntryKindSchema = z.enum(['file', 'directory']);
 /**
  * Owner of a filesystem entry.
  *
- * Two legitimate kinds, and the second is why this is not `NameSchema`:
+ * Two kinds, and the second is why this is not `NameSchema`:
  *
  *   - a member name — `Cora`, the owner of `/Cora/...`
- *   - an objective namespace — `obj:<objective-id>`, the owner of
- *     `/objectives/<id>/...`, where the ACL gate is membership of the
- *     objective rather than any one member
+ *   - a LEGACY `obj:<id>` owner, from the objectives file namespace at
+ *     `/objectives/<id>/`, which was removed in the spine cut-over
  *
- * The server has always produced both (`OBJECTIVE_OWNER_PREFIX` in
- * `files/paths.ts`), while this field accepted only the first. Because
- * `NameSchema`'s pattern excludes `:`, every objective-namespace entry
- * failed the schema that ships alongside the code producing it — the
- * write committed and the caller was told it failed, since validation
- * happens on the response.
+ * THE SECOND ARM IS DELIBERATELY NOT NARROWED BACK, and that decision
+ * is the whole reason this comment is long. Nothing produces an
+ * `obj:` owner any more — the namespace and its ACL provider are gone.
+ * But rows written while it existed are STILL IN DEPLOYED DATABASES,
+ * `fs_entries` has no migration that rewrites them, and `GET /fs/ls`
+ * will happily return one to a client running this schema.
  *
- * Widened rather than changing the producer: `obj:<id>` is part of the
- * shipped authorization model, not a malformed name. That is the
- * opposite call from `Broker.push`, where nothing legitimate produced
- * the rejected value and the producer moved instead.
+ * Narrowing would therefore recreate, exactly, the defect the widening
+ * fixed: `NameSchema`'s pattern excludes `:`, so every such entry
+ * failed the schema shipped alongside the code producing it, and
+ * because validation happens on the RESPONSE the write had already
+ * committed when the caller was told it failed. Removing dead code is
+ * good; removing the schema that lets a client read data the removal
+ * left behind is not the same act.
  */
 export const FsOwnerSchema = z.union([
   NameSchema,
   z
     .string()
     .max(133)
-    .regex(/^obj:[a-zA-Z0-9._-]+$/, 'objective owner must be obj:<objective-id>'),
+    .regex(/^obj:[a-zA-Z0-9._-]+$/, 'a legacy objective-namespace owner is obj:<id>'),
 ]);
 
 export const FsEntrySchema = z.object({
@@ -1907,11 +1739,11 @@ export const FsEntrySchema = z.object({
    * Whether the requesting viewer may mutate this entry — the server's
    * own `canWrite()` predicate, evaluated per request.
    *
-   * Present so a client does not have to RECONSTRUCT the rule. A UI that
-   * infers "can I delete this" from `owner === me` is wrong for objective
-   * namespace entries, whose owner is `obj:<id>` and whose write rule
-   * includes objective membership — information the client does not have
-   * and cannot derive. Optional so older servers that omit it still
+   * Present so a client does not have to RECONSTRUCT the rule. A UI
+   * that infers "can I delete this" from `owner === me` is wrong
+   * wherever the rule is not ownership — grants, admin authority, and
+   * the legacy `obj:<id>` entries above are all cases the client
+   * cannot derive. Optional so older servers that omit it still
    * parse; a client seeing `undefined` should ask rather than guess.
    */
   canWrite: z.boolean().optional(),

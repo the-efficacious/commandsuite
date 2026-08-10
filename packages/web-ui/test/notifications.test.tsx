@@ -40,7 +40,6 @@ function mkPacket(permissions: InstructionsResponse['permissions']): Instruction
       { name: 'director-1', role: { title: 'director', description: '' }, permissions: [] },
       { name: 'builder', role: { title: 'engineer', description: '' }, permissions: [] },
     ],
-    openObjectives: [],
     toolSources: [],
     processDocument: null,
   };

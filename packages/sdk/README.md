@@ -25,16 +25,24 @@ await client.push({
   level: 'warning',
 });
 
-// Objectives
-const objective = await client.createObjective({
-  assignee: 'engineer-1',
-  title: 'Pull main and run smoke tests',
-  outcome: 'Smoke tests green on latest main',
+// The spine — author a contract (requires `spine.author`)
+const { contract } = await client.appendSpineEvent({
+  kind: 'specification',
+  subject: 'repo:api',
+  opId: crypto.randomUUID(),
+  body: {
+    title: 'Pull main and run smoke tests',
+    criteria: [{ id: 'c1', text: 'Smoke tests green on latest main' }],
+    assignee: 'engineer-1',
+    verifier: 'reviewer-1',
+  },
 });
-await client.completeObjective(objective.id, 'shipped as PR #1245');
 
-// Trace capture (assignee-only upload; director-only read)
-const traces = await client.listObjectiveTraces(objective.id);
+// Recovery — what binds the calling member right now
+const pack = await client.spineOrient();
+
+// Trace capture (self-upload; `activity.read` to read another member's)
+const traces = await client.listActivity('engineer-1', { kind: 'llm_exchange' });
 ```
 
 ## Subpath exports

@@ -282,7 +282,6 @@ export async function startFakeBroker(): Promise<FakeBroker> {
               permissions: [],
             },
           ],
-          openObjectives: [],
           toolSources: fakeBrokerToolSources,
         }),
       );

@@ -7,28 +7,32 @@ Wraps [`csuite-core`](https://www.npmjs.com/package/csuite-core) in a Hono HTTP/
 - **Machine plane** — `Authorization: Bearer <token>` for the member's `csuite claude-code` runner subprocess. Tokens are backed by SHA-256 hashes in the team config file.
 - **Human plane** — `csuite_session` cookie minted after a TOTP login, used by the built-in Preact web UI (`csuite-web-host`) that this package serves out of its `public/` dir.
 
-Both planes resolve to the same slot. Permissions — a flat, unranked set of leaves such as `objectives.create` and `members.manage` — are checked server-side on every mutating endpoint.
+Both planes resolve to the same slot. Permissions — a flat, unranked set of leaves such as `spine.author` and `members.manage` — are checked server-side on every mutating endpoint.
 
 One server = one team. Exposes:
 
 ### Chat + identity
 - `GET /healthz` — liveness probe (no auth)
-- `GET /instructions` — name, role, permissions, team, teammates, open objectives, and composed instructions for the authenticated slot
+- `GET /instructions` — name, role, permissions, team, teammates, resolved tools, and composed instructions for the authenticated slot
 - `GET /roster` — full slot list plus runtime connection state
 - `POST /push` — deliver a message to one teammate (DM) or broadcast
 - `GET /subscribe?name=…` — long-lived WebSocket stream; `name` must equal the caller's name
 - `GET /history?with=…&limit=…&before=…` — query message log scoped to the authenticated caller
 
-### Objectives
-- `GET /objectives` — list with optional `assignee` + `status` filters; members without `objectives.create` can only see their own
-- `POST /objectives` — create and atomically assign (requires `objectives.create`)
-- `GET /objectives/:id` — fetch one + full event history; gated by thread membership
-- `PATCH /objectives/:id` — update status (`active ↔ blocked`) and/or block reason (assignee, or a member with `objectives.cancel`)
-- `POST /objectives/:id/complete` — mark done with required result (assignee only)
-- `POST /objectives/:id/cancel` — terminally cancel (originator, or a member with `objectives.cancel`)
-- `POST /objectives/:id/reassign` — reassign to a different slot (requires `objectives.reassign`)
-- `POST /objectives/:id/watchers` — add/remove watchers (originator, or a member with `objectives.watch`)
-- `POST /objectives/:id/discuss` — post to the `obj:<id>` thread (thread members only)
+### Spine
+One append-only annex of captioned events; contracts, subjects and queues are folds over it. Registers only when a spine store is injected. Reads are open to every authenticated member.
+
+- `POST /spine/events` — the single write path, a discriminated union over fifteen kinds; `spine.author` for `specification`/`amendment`, `spine.focus` for `focus`, `opId` required on authoritative kinds
+- `GET /spine/events` — page the stream by `since_seq` with `kind` / `subject` / `contract` / `actor` filters; `subject` resolves containment
+- `GET /spine/events/:id` — fetch one event by id
+- `GET /spine/orient` — the recovery call: the caller's bound contracts with criteria, verdicts, states, revisions and staleness, the asks awaiting their ruling, and a cursor
+- `GET /spine/queue` — the human seat's queue: asks awaiting the caller, contracts waiting on them
+- `POST /spine/subjects` · `GET /spine/subjects` — the subject registry, with containment
+- `GET /spine/contracts` · `GET /spine/contracts/:id` — the contract projection; `?focus=true` returns the team's focus set
+- `GET /spine/curator` · `PUT /spine/curator` — per-member curator config, including reader-side subscription levels
+- `GET /spine/injections` — the injection ledger: what the system spent of a member's attention
+- `GET /spine/checks` · `GET /spine/checks/:id` — probe recipes armed by an ask or a `waiting_for` contract
+- `POST /members/:name/spine-signals` — floor signals from a runner; pure accelerant, no correctness depends on it
 
 ### Captured LLM traces (agent activity)
 - `POST /members/:name/activity` — append decoded trace / lifecycle events (self only)

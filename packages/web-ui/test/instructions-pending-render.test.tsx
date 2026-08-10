@@ -41,7 +41,6 @@ function packetWith(overrides: Partial<InstructionsResponse> = {}): Instructions
       },
       { name: 'turner', role: { title: 'engineer', description: '' }, permissions: [] },
     ],
-    openObjectives: [],
     toolSources: [],
     processDocument: DOC,
     instructions: '',

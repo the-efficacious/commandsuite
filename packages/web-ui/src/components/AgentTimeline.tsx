@@ -77,14 +77,11 @@ type KindFilter = Record<ActivityEvent['kind'], boolean>;
 const DEFAULT_FILTERS: KindFilter = {
   // `KindFilter` is a Record over the SDK's whole ActivityEvent
   // vocabulary, so every kind needs an entry even when nothing draws
-  // it. Run brackets (session_start/session_end) and the retired
-  // objective markers pass the filter and then fall through
-  // buildThread, which skips kinds it has no renderer for. No chip
-  // for any of them.
+  // it. Run brackets (session_start/session_end) pass the filter and
+  // then fall through buildThread, which skips kinds it has no
+  // renderer for. No chip for either.
   session_start: true,
   session_end: true,
-  objective_open: true,
-  objective_close: true,
   llm_exchange: true,
   tool_action: true,
   user_prompt: true,

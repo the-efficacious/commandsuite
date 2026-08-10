@@ -56,7 +56,6 @@ describe('authored instruction fields have no length cap', () => {
       instructions: LONG,
       team: { name: 'team', context: '', permissionPresets: {} },
       teammates: [],
-      openObjectives: [],
       toolSources: [],
     });
     expect(parsed.instructions.length).toBeGreaterThan(8_192);

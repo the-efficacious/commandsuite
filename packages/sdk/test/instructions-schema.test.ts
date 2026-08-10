@@ -19,7 +19,6 @@ const BASE = {
   instructions: 'Sign your own work.',
   team: { name: 'demo-team', context: 'ctx', permissionPresets: {} },
   teammates: [],
-  openObjectives: [],
   processDocument: null,
 };
 

@@ -49,7 +49,6 @@ const PACKET: InstructionsResponse = {
   instructions: '',
   team: { name: 'demo', context: '', permissionPresets: {} },
   teammates: [],
-  openObjectives: [],
   toolSources: [],
   processDocument: null,
 };

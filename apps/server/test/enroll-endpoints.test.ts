@@ -38,16 +38,8 @@ const TEAM: Team = {
   name: 'enroll-team',
   context: '',
   permissionPresets: {
-    admin: [
-      'team.manage',
-      'members.manage',
-      'objectives.create',
-      'objectives.cancel',
-      'objectives.reassign',
-      'objectives.watch',
-      'activity.read',
-    ],
-    operator: ['objectives.create'],
+    admin: ['team.manage', 'members.manage', 'spine.author', 'spine.focus', 'activity.read'],
+    operator: ['spine.author'],
   },
 };
 

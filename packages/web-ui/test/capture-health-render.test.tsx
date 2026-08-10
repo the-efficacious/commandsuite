@@ -40,7 +40,6 @@ const PACKET: InstructionsResponse = {
     },
     { name: 'turner', role: { title: 'engineer', description: '' }, permissions: [] },
   ],
-  openObjectives: [],
   toolSources: [],
   processDocument: null,
   instructions: '',

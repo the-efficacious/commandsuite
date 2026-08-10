@@ -50,8 +50,8 @@ function makeApp() {
       permissions: [
         'team.manage',
         'members.manage',
-        'objectives.create',
-        'objectives.cancel',
+        'spine.author',
+        'spine.focus',
         'secrets.manage',
         'tools.manage',
       ],
@@ -102,10 +102,12 @@ describe('the write gate is process.manage and nothing else', () => {
 
   /**
    * The reason this leaf exists. A director holding six other
-   * permissions — including `objectives.create`, which the predecessor
-   * used as this gate — still cannot rewrite the team's process.
+   * permissions — including `spine.author`, which is the closest
+   * thing to it and is deliberately not it — still cannot rewrite the
+   * team's process. (The predecessor gate was `objectives.create`,
+   * which is what made a DEDICATED leaf necessary in the first place.)
    */
-  it('refuses a member holding every other permission, including objectives.create', async () => {
+  it('refuses a member holding every other permission, including spine.author', async () => {
     const { app } = makeApp();
     const res = await app.request('/process-document', authed(ADMIN, write(V1)));
     expect(res.status).toBe(403);

@@ -51,7 +51,6 @@ describe('composeInstructions', () => {
       self: ALPHA_1,
       team: TEAM,
       teammates: TEAMMATES,
-      openObjectives: [],
       processDocument: null,
     };
     const packet = composeInstructions(input);
@@ -66,7 +65,6 @@ describe('composeInstructions', () => {
       self: ALPHA_1,
       team: TEAM,
       teammates: TEAMMATES,
-      openObjectives: [],
       processDocument: null,
     };
     const personalBlock = ALPHA_1.instructions;
@@ -85,7 +83,6 @@ describe('composeInstructions', () => {
       self: DIRECTOR,
       team: TEAM,
       teammates: TEAMMATES,
-      openObjectives: [],
       processDocument: null,
     });
     expect(packet.name).toBe('director-1');
@@ -93,7 +90,6 @@ describe('composeInstructions', () => {
     expect(packet.permissions).toContain('members.manage');
     expect(packet.team).toEqual(TEAM);
     expect(packet.teammates).toEqual(TEAMMATES);
-    expect(packet.openObjectives).toEqual([]);
   });
 
   it('renders complementary instructions that reference team context', () => {
@@ -101,7 +97,6 @@ describe('composeInstructions', () => {
       self: ALPHA_1,
       team: TEAM,
       teammates: TEAMMATES,
-      openObjectives: [],
       processDocument: null,
     });
     expect(packet.instructions).toContain('You: engineer-1');
@@ -116,7 +111,6 @@ describe('composeInstructions', () => {
       self: ALPHA_1,
       team: TEAM,
       teammates: TEAMMATES,
-      openObjectives: [],
       processDocument: null,
       brokerVersion: '0.4.0',
       runnerVersion: '0.3.4',
@@ -132,7 +126,6 @@ describe('composeInstructions', () => {
       self: ALPHA_1,
       team: TEAM,
       teammates: TEAMMATES,
-      openObjectives: [],
       processDocument: null,
     };
     const packet = composeInstructions(input);
@@ -155,7 +148,6 @@ describe('composeInstructions', () => {
         self: ALPHA_1,
         team: TEAM,
         teammates: TEAMMATES,
-        openObjectives: [],
         processDocument: null,
         brokerVersion: 'x'.repeat(64),
         runnerVersion,
@@ -170,7 +162,6 @@ describe('composeInstructions', () => {
       self: ALPHA_1,
       team: TEAM,
       teammates: TEAMMATES,
-      openObjectives: [],
       processDocument: null,
       brokerVersion: '0.5.0-alpha.20260801+broker',
       runnerVersion: '0.5.0-alpha.20260731+runner',
@@ -185,7 +176,6 @@ describe('composeInstructions', () => {
       self: ALPHA_1,
       team: TEAM,
       teammates: TEAMMATES,
-      openObjectives: [],
       processDocument: null,
     });
     expect(packet.teammates.some((t) => t.name === 'engineer-1')).toBe(true);
@@ -204,7 +194,6 @@ describe('composeInstructions', () => {
       self: DIRECTOR,
       team: teamNoContext,
       teammates: TEAMMATES,
-      openObjectives: [],
       processDocument: null,
     });
     expect(packet.instructions).not.toContain('Context:');
@@ -216,7 +205,6 @@ describe('composeInstructions', () => {
       self: ENGINEER_2,
       team: TEAM,
       teammates: TEAMMATES,
-      openObjectives: [],
       processDocument: null,
     });
     expect(packet.instructions).not.toContain('Personal instructions:');
@@ -227,7 +215,6 @@ describe('composeInstructions', () => {
       self: ENGINEER_2,
       team: TEAM,
       teammates: TEAMMATES,
-      openObjectives: [],
       processDocument: null,
     });
     expect(packet.instructions).toContain('Your own sends are suppressed by the link');
@@ -246,7 +233,6 @@ describe('composeInstructions', () => {
       self: ALPHA_1,
       team: TEAM,
       teammates: TEAMMATES,
-      openObjectives: [],
       processDocument: null,
     });
     expect(packet.instructions).toContain('── Spine ──');
@@ -300,7 +286,6 @@ describe('composeInstructions', () => {
       self: ALPHA_1,
       team: TEAM,
       teammates: TEAMMATES,
-      openObjectives: [],
       processDocument: null,
     });
     expect(packet.instructions).toContain('── Spine ──');
@@ -314,7 +299,6 @@ describe('composeInstructions', () => {
       self: ALPHA_1,
       team: TEAM,
       teammates: TEAMMATES,
-      openObjectives: [],
       processDocument: null,
     });
     expect(packet.instructions).toContain('thread="primary"');

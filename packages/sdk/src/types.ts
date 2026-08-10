@@ -48,9 +48,9 @@ export type CaptureHealthState = 'ok' | 'gap' | 'unevaluated';
 
 /**
  * The set of elevated actions gated by membership policy. Baseline
- * participation (DM, posting to the primary thread, taking an assigned
- * objective, discussing on your own objectives, managing your own
- * files) is NOT a permission — it's what it means to be on the team.
+ * participation (DM, posting to the primary thread, taking a contract
+ * assigned to you, discussing on it, managing your own files) is NOT a
+ * permission — it's what it means to be on the team.
  * Only actions that touch other members or shape the team itself are
  * permissions.
  *
@@ -60,19 +60,15 @@ export type CaptureHealthState = 'ok' | 'gap' | 'unevaluated';
 export const PERMISSIONS = [
   'team.manage',
   'members.manage',
-  'objectives.create',
-  'objectives.cancel',
-  'objectives.reassign',
-  'objectives.watch',
   'activity.read',
   'tools.manage',
   'secrets.manage',
   'notifications.manage',
   /**
    * Edit the team's process document. A DEDICATED leaf rather than a
-   * reuse of `objectives.create`: under this design the permission is
+   * reuse of `spine.author`: under this design the permission is
    * the entire authority — whoever holds it can rewrite what binds the
-   * team — and "can create an objective" is not a comparable power.
+   * team — and "can author a contract" is not a comparable power.
    */
   'process.manage',
   /**
@@ -151,7 +147,7 @@ export interface Team {
   /**
    * Named permission bundles members can reference instead of listing
    * every leaf permission. Always present (may be empty). Common
-   * presets: `admin` (all permissions), `operator` (objectives-only).
+   * presets: `admin` (all permissions), `operator` (spine-only).
    */
   permissionPresets: PermissionPresets;
 }
@@ -381,7 +377,7 @@ export interface InstructionBlockDescriptor {
 /**
  * Full instruction packet returned from `GET /instructions`. Used by
  * the runner and the web UI to initialize themselves with team/
- * role/permissions/objectives context. Extends `Member` so the
+ * role and permissions context. Extends `Member` so the
  * caller's own name/role/permissions/instructions are flat at the
  * top level — teammates appear in the `teammates` list as the public
  * `Teammate` projection.
@@ -389,15 +385,13 @@ export interface InstructionBlockDescriptor {
 export interface InstructionsResponse extends Member {
   team: Team;
   teammates: Teammate[];
-  /** Objectives currently assigned to this member with status === 'active' or 'blocked'. */
-  openObjectives: Objective[];
   /**
    * External tools resolved for this member from the tool-source
    * registry — enabled sources the member is bound to (or that are
    * open to all members). The runner merges these into the agent's
    * MCP toolbox as `<source>__<name>` and dispatches invocations back
    * to the broker. Structured field only — never rendered into the
-   * composed instructions (same staleness rule as `openObjectives`).
+   * composed instructions — structured field only, never rendered.
    */
   toolSources: ResolvedToolSource[];
   /**
@@ -1479,105 +1473,6 @@ export interface RejectEnrollmentRequest {
   reason?: string;
 }
 
-// ─────────────────────────── Objectives ───────────────────────────────
-
-export type ObjectiveStatus = 'active' | 'blocked' | 'done' | 'cancelled';
-
-/**
- * An objective is the apex task primitive on a team: push-assigned,
- * outcome-required, single-assignee. The `outcome` field is the tangible
- * definition of "done" that propagates into channel pushes and the runner's
- * `context_refresh` re-briefs so the assignee always has the acceptance
- * criteria in front of them.
- */
-export interface Objective {
-  id: string;
-  title: string;
-  /** Optional longer context. */
-  body: string;
-  /** Required — the tangible outcome that defines "done". */
-  outcome: string;
-  status: ObjectiveStatus;
-  assignee: string;
-  originator: string;
-  /**
-   * Additional names that have been explicitly added to the
-   * objective's discussion thread. Watchers receive every lifecycle
-   * event and every discussion post on their SSE streams without
-   * being the assignee. Members with `objectives.watch` can add
-   * themselves or others; originators can manage their own
-   * objectives' watchers. Members with `members.manage` are implicit
-   * observers regardless and do NOT appear in this list.
-   */
-  watchers: string[];
-  createdAt: number;
-  updatedAt: number;
-  /** Set iff status === 'done'. */
-  completedAt: number | null;
-  /** Required on completion; explains what was delivered. */
-  result: string | null;
-  /** Set while status === 'blocked'; cleared on unblock. */
-  blockReason: string | null;
-  /**
-   * The contract version the `title`/`outcome`/`body` above represent.
-   * 1 on creation, incremented by each contract amendment.
-   *
-   * Every lifecycle event records the version current when it was
-   * emitted, so "which contract was this work built against" is a
-   * field on the completion rather than a reconstruction from
-   * timestamps.
-   */
-  outcomeVersion: number;
-  /**
-   * Ordered amendment record — contract changes and lifecycle-event
-   * corrections, oldest first. Empty for an objective that has never
-   * been amended.
-   *
-   * Present on the objective itself, deliberately: the structured
-   * field is the one a reader trusts, and an amendment that lives
-   * only in a discussion thread reproduces the defect this exists to
-   * remove.
-   */
-  amendments: ObjectiveAmendment[];
-  /**
-   * Files attached to the objective at creation time. Thread members
-   * (originator, assignee, watchers) all receive read grants for each
-   * attachment, so any thread-scoped UI can render them alongside
-   * the objective body.
-   */
-  attachments: Attachment[];
-}
-
-/**
- * Events on an objective's audit log. Kinds split into two groups:
- *
- *   Lifecycle transitions (the state machine of the work):
- *     assigned | blocked | unblocked | completed | cancelled | reassigned
- *
- *   Membership changes (the audience of the thread):
- *     watcher_added | watcher_removed
- *
- * Discussion — ordinary conversation about the objective — lives in
- * the `obj:<id>` thread as regular messages and is NOT in the event
- * log. The event log is strictly auditable transitions.
- */
-export type ObjectiveEventKind =
-  | 'assigned'
-  | 'blocked'
-  | 'unblocked'
-  | 'completed'
-  | 'cancelled'
-  | 'reassigned'
-  | 'watcher_added'
-  | 'watcher_removed'
-  /** The contract text changed. Payload is an `ObjectiveAmendment`. */
-  | 'amended'
-  /**
-   * An earlier lifecycle event was corrected. The original event is
-   * never rewritten — this one supersedes it and names it.
-   */
-  | 'event_corrected';
-
 /**
  * Whether an amendment binds work that was already underway.
  *
@@ -1645,7 +1540,7 @@ export interface EditProcessDocumentRequest {
    * `correction` — retroactive; the prior text was never validly
    * binding. `scope_change` — forward-only; work already underway
    * finishes under the prior text. Same field and meaning as an
-   * objective contract amendment, so "does work started under the old
+   * spine contract amendment, so "does work started under the old
    * process finish under it" has one answer across both.
    */
   disposition: AmendmentDisposition;
@@ -1660,206 +1555,13 @@ export interface ProcessDocumentHistoryResponse {
   edits: ProcessDocumentEdit[];
 }
 
-/** Contract fields that carry contract weight and can be amended. */
-export type AmendableField = 'title' | 'outcome' | 'body';
-
-/**
- * One entry in an objective's amendment record.
- *
- * Ordered, append-only, and rendered WITH the objective rather than
- * beside it — a reader who sees the current contract must not have to
- * find a discussion post to learn it was corrected.
- *
- * The sequence is NOT monotone improvement: a real amendment on
- * 2026-08-01 reversed the ruling that preceded it by 45 seconds. So
- * an entry carries its `reason`, not only the superseded text — a
- * reader who sees only the final state learns the right answer and
- * nothing about how it was reached.
- */
-export type ObjectiveAmendment =
-  | {
-      target: 'contract';
-      /** Contract version this amendment produced. Starts at 1 on creation. */
-      version: number;
-      ts: number;
-      actor: string;
-      disposition: AmendmentDisposition;
-      /** Why. Required — an amendment without a reason is a silent replacement. */
-      reason: string;
-      /** Which fields changed. Distinguishes an outcome move from a prose fix. */
-      fields: AmendableField[];
-      /** The superseded values, keyed by field. Only changed fields appear. */
-      previous: Partial<Record<AmendableField, string>>;
-    }
-  | {
-      target: 'event';
-      ts: number;
-      actor: string;
-      reason: string;
-      /** The event being corrected. It remains in the log, unrewritten. */
-      /** Durable id of the corrected event. */
-      eventId: string;
-      /** Kind and timestamp of the corrected event, for display. */
-      eventKind: ObjectiveEventKind;
-      eventTs: number;
-      /** What the record should say instead. */
-      correction: string;
-    };
-
-export interface ObjectiveEvent {
-  /**
-   * Durable, unique per event. A timestamp is not an identity — create
-   * emits two events in the same millisecond — so anything naming a
-   * specific event (a correction) uses this.
-   */
-  id: string;
-  objectiveId: string;
-  ts: number;
-  actor: string;
-  kind: ObjectiveEventKind;
-  payload: Record<string, unknown>;
-}
-
-export interface CreateObjectiveRequest {
-  title: string;
-  outcome: string;
-  body?: string;
-  assignee: string;
-  /**
-   * Optional initial watchers (names that should be looped into
-   * the objective's thread from the start). Duplicates and the
-   * objective's own assignee/originator are de-duped server-side.
-   * Every name must resolve to a known team member.
-   */
-  watchers?: string[];
-  /**
-   * Optional files to attach. The originator must have read access
-   * to each path. Thread members receive automatic read grants as
-   * part of the `assigned` event fanout.
-   */
-  attachments?: Attachment[];
-}
-
-/**
- * Add or remove watchers on an existing objective. Either field may
- * be omitted; both may be present for a combined add + remove.
- * Names that are already watchers are no-ops on `add`, and
- * names that aren't currently watchers are no-ops on `remove`.
- * Every name in both lists must resolve to a known team member.
- */
-export interface UpdateWatchersRequest {
-  add?: string[];
-  remove?: string[];
-}
-
-export interface UpdateObjectiveRequest {
-  status?: 'active' | 'blocked';
-  blockReason?: string;
-}
-
-export interface CompleteObjectiveRequest {
-  result: string;
-}
-
-export interface CancelObjectiveRequest {
-  reason?: string;
-}
-
-export interface ReassignObjectiveRequest {
-  to: string;
-  note?: string;
-}
-
-/**
- * Amend the contract. Requires `objectives.create` — the contract is
- * not the executor's to rewrite, and the gate is the permission
- * rather than the role (an assignee who holds it may amend).
- *
- * At least one field must be supplied and must actually differ; an
- * amendment that changes nothing is rejected rather than recorded as
- * a no-op version bump.
- */
-export interface AmendObjectiveRequest {
-  title?: string;
-  outcome?: string;
-  body?: string;
-  /** Required. Without it an amendment is a silent replacement. */
-  reason: string;
-  /**
-   * Required. Whether work already underway is bound by this. See
-   * `AmendmentDisposition` — the amender states it because it cannot
-   * be inferred from the text.
-   */
-  disposition: AmendmentDisposition;
-}
-
-/**
- * Correct an earlier lifecycle event. Requires `objectives.create`.
- *
- * The original event is never rewritten — this appends a superseding
- * record naming it. The motivating case: an objective completed at a
- * PR head rather than the merge SHA, where the author could only mark
- * it "provisional" in prose because the completed event was
- * unrewritable.
- */
-export interface CorrectObjectiveEventRequest {
-  /**
-   * Durable id of the event being corrected, from the event log.
-   * Unambiguous by construction: a timestamp is not, because create
-   * emits `assigned` and `watcher_added` in the same millisecond and a
-   * watcher batch emits several of one kind.
-   */
-  eventId: string;
-  /** What the record should say instead. */
-  correction: string;
-  reason: string;
-}
-
-/**
- * Post a discussion message into an objective's thread. Members of the
- * thread (originator, assignee, watchers) all receive it via their
- * SSE streams. The post is a normal team `Message` with thread
- * key `obj:<id>`, not an event-log entry.
- */
-export interface DiscussObjectiveRequest {
-  body: string;
-  title?: string;
-  /**
-   * Optional files to attach to this discussion post. Resolved and
-   * grant-propagated the same way attachments on `/push` are —
-   * every thread member who receives the post also gets read
-   * access to each attachment.
-   */
-  attachments?: Attachment[];
-}
-
-export interface ListObjectivesResponse {
-  objectives: Objective[];
-}
-
-export interface GetObjectiveResponse {
-  objective: Objective;
-  events: ObjectiveEvent[];
-}
-
-export interface ListObjectivesQuery {
-  assignee?: string;
-  /**
-   * Every objective this member has ANY relationship with — assigned,
-   * originated, or watching. Wider than `assignee`, which omits work a
-   * member originated or watches without being assigned.
-   */
-  related?: string;
-  status?: ObjectiveStatus;
-}
-
 // ─────────────────────────── Activity / Traces ────────────────────────
 
 /**
  * Trace capture — one structured model exchange normalized from an
  * agent's native instrumentation (Claude Code's OpenTelemetry export,
  * the codex app-server stream). Each entry represents a single model
- * exchange the agent made while working on an objective, parsed from
+ * exchange the agent made while working, parsed from
  * an Anthropic `/v1/messages`-shaped body into a typed shape.
  *
  * There is no opaque catch-all variant: the capture surface no longer
@@ -2108,16 +1810,12 @@ export interface ListGenaiQuery {
  * app-server stream), normalized runner-side into this model.
  *
  * Activity is the source of truth for "what did this member actually
- * do" — LLM exchanges, tool actions, and objective lifecycle markers.
- * Objective "traces" are a time-range slice of this stream between
- * `objective_open` and `objective_close` markers for a given
- * objectiveId.
+ * do" — LLM exchanges, tool actions and prompts, bracketed per run by
+ * `session_start` / `session_end`.
  */
 export type ActivityEvent =
   | ActivitySessionStart
   | ActivitySessionEnd
-  | ActivityObjectiveOpen
-  | ActivityObjectiveClose
   | ActivityLlmExchange
   | ActivityToolAction
   | ActivityUserPrompt;
@@ -2128,8 +1826,7 @@ export type ActivityKind = ActivityEvent['kind'];
  * A runner session opened — the member's agent process came up under a
  * csuite runner. Emitted once per `csuite <runner>` invocation, before
  * any other activity of the run. Together with `session_end` it
- * brackets a run the same way `objective_open`/`objective_close`
- * bracket an objective, so consumers can slice the stream per run
+ * brackets a run, so consumers can slice the stream per run
  * regardless of which agent produced it.
  */
 export interface ActivitySessionStart {
@@ -2177,20 +1874,6 @@ export interface ActivitySessionEnd {
     /** Peak serialized UTF-8 event payload queued at once, when reported by the runner. */
     readonly peakQueuedBytes?: number;
   };
-}
-
-export interface ActivityObjectiveOpen {
-  readonly kind: 'objective_open';
-  readonly ts: number;
-  readonly objectiveId: string;
-}
-
-export interface ActivityObjectiveClose {
-  readonly kind: 'objective_close';
-  readonly ts: number;
-  readonly objectiveId: string;
-  /** Terminal state that caused the close. */
-  readonly result: 'done' | 'cancelled' | 'reassigned' | 'runner_shutdown';
 }
 
 export interface ActivityLlmExchange {
@@ -2355,14 +2038,14 @@ export interface FsEntry {
    * Whether the requesting viewer may mutate this entry — the server's
    * `canWrite()` predicate, evaluated per request. Optional: an older
    * server omits it. Treat `undefined` as unknown rather than false, and
-   * do not reconstruct the rule from `owner` — that inference is wrong
-   * for objective namespace entries.
+   * do not reconstruct the rule from `owner` — the rule is the
+   * server's and a client cannot evaluate it for an arbitrary path.
    */
   canWrite?: boolean;
 }
 
 /**
- * Lightweight file reference embedded in a `Message` or an objective.
+ * Lightweight file reference embedded in a `Message`.
  * Recipients resolve downloads via `GET /fs/read/<path>`. The
  * accompanying `size` and `mimeType` let clients render previews
  * without an extra round-trip.

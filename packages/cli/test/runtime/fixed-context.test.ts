@@ -39,7 +39,6 @@ function instructions(over: Partial<InstructionsResponse> = {}): InstructionsRes
     instructions: 'your standing instructions',
     team: { name: 'demo', context: '', permissionPresets: {} },
     teammates: [],
-    openObjectives: [],
     toolSources: [],
     processDocument: null,
     ...over,
@@ -132,7 +131,6 @@ describe('the three states survive the parse', () => {
     instructions: 'standing instructions',
     team: { name: 'demo', context: '', permissionPresets: {} },
     teammates: [],
-    openObjectives: [],
     toolSources: [],
   };
 

@@ -843,7 +843,6 @@ export function createApp(options: AppOptions): CreatedApp {
         self: current,
         team: teamStore.getTeam(),
         teammates: teammatesFromMembers(members),
-        openObjectives: [],
         // Read from storage, not from process memory. This is the
         // cold-broker path: a live runner keeps uploading without
         // refetching /instructions, so omitting the document here means
@@ -888,7 +887,6 @@ export function createApp(options: AppOptions): CreatedApp {
       self: current,
       team: teamStore.getTeam(),
       teammates: teammatesFromMembers(members),
-      openObjectives: [],
       // The watchdog's own input. Omitting the document here does not
       // degrade the feature — it removes it, because this is what
       // decides which blocks are looked for at all.
@@ -1001,7 +999,6 @@ export function createApp(options: AppOptions): CreatedApp {
       teammates: teammatesFromMembers(members),
       // Structured fields only — never rendered into the prose, so
       // they cannot move the hash. See instructions.ts.
-      openObjectives: [],
       processDocument: processDocument ? processDocument.get() : null,
       externalNotificationEndpoints: externalEndpointsFor(self.name),
     });
@@ -1402,7 +1399,6 @@ export function createApp(options: AppOptions): CreatedApp {
       brokerVersion: version,
       runnerVersion,
       teammates: teammatesFromMembers(members),
-      openObjectives: [],
       // Structured field only — never rendered into the prose.
       toolSources: toolSources ? toolSources.resolveFor(member.name) : [],
       // Structured field only, same as toolSources — the runner

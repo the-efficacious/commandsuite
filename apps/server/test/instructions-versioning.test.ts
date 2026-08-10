@@ -180,7 +180,6 @@ describe('composedInstructionsSha256 canonicalization', () => {
       },
       team: { name: 'demo-team', context: 'ctx', permissionPresets: {} },
       teammates: [],
-      openObjectives: [],
       processDocument: null,
     };
     const bare = composedInstructionsSha256(base);

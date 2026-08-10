@@ -41,26 +41,6 @@ export const PERMISSION_META: readonly PermissionMeta[] = [
     description: 'Create and edit the team process document that binds every member.',
   },
   {
-    key: 'objectives.create',
-    label: 'Create objectives',
-    description: 'Post new objectives and assign them to teammates.',
-  },
-  {
-    key: 'objectives.cancel',
-    label: 'Cancel objectives',
-    description: "Cancel an objective that's mid-flight.",
-  },
-  {
-    key: 'objectives.reassign',
-    label: 'Reassign objectives',
-    description: 'Move an objective from one assignee to another.',
-  },
-  {
-    key: 'objectives.watch',
-    label: 'Manage watchers',
-    description: 'Add or remove watchers on any objective, not just your own.',
-  },
-  {
     key: 'activity.read',
     label: 'Read activity',
     description: "View another member's LLM / tool activity timeline.",

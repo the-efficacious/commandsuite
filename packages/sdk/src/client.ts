@@ -17,7 +17,6 @@ import {
   FS_PATHS,
   MEMBER_PATHS,
   NOTIFICATION_PATHS,
-  OBJECTIVE_PATHS,
   PATHS,
   PROCESS_DOCUMENT_PATHS,
   PROTOCOL_HEADER,
@@ -31,7 +30,6 @@ import {
 import {
   ActivityReportSchema,
   AddChannelMemberRequestSchema,
-  AmendObjectiveRequestSchema,
   AppendSpineEventRequestSchema,
   AppendSpineEventResponseSchema,
   ApproveEnrollmentRequestSchema,
@@ -40,7 +38,6 @@ import {
   BindToolSourceRequestSchema,
   BindVariableRequestSchema,
   ChannelSchema,
-  CorrectObjectiveEventRequestSchema,
   CreateChannelRequestSchema,
   CreateMemberResponseSchema,
   CreateNotificationEndpointRequestSchema,
@@ -60,7 +57,6 @@ import {
   GetChannelResponseSchema,
   GetGenaiInferenceResponseSchema,
   GetNotificationEndpointResponseSchema,
-  GetObjectiveResponseSchema,
   GetProcessDocumentResponseSchema,
   GetSecretResponseSchema,
   GetSpineCheckResponseSchema,
@@ -82,7 +78,6 @@ import {
   ListNotificationDeliveriesResponseSchema,
   ListNotificationEndpointsResponseSchema,
   ListNotificationProfilesResponseSchema,
-  ListObjectivesResponseSchema,
   ListPendingEnrollmentsResponseSchema,
   ListSecretsResponseSchema,
   ListSpineChecksResponseSchema,
@@ -97,7 +92,6 @@ import {
   MessageSchema,
   NotificationEndpointSchema,
   NotificationProfileSchema,
-  ObjectiveSchema,
   OrientPackSchema,
   PermissionPresetsSchema,
   ProcessDocumentEditSchema,
@@ -140,7 +134,6 @@ import type {
   ActivityReport,
   ActivityRow,
   AddChannelMemberRequest,
-  AmendObjectiveRequest,
   AppendSpineEventRequest,
   AppendSpineEventResponse,
   ApproveEnrollmentRequest,
@@ -148,16 +141,13 @@ import type {
   BindSecretRequest,
   BindToolSourceRequest,
   BindVariableRequest,
-  CancelObjectiveRequest,
   Channel,
   ChannelSummary,
-  CorrectObjectiveEventRequest,
   CreateChannelRequest,
   CreateMemberRequest,
   CreateMemberResponse,
   CreateNotificationEndpointRequest,
   CreateNotificationProfileRequest,
-  CreateObjectiveRequest,
   CreateSecretRequest,
   CreateToolSourceRequest,
   CreateVariableRequest,
@@ -168,7 +158,6 @@ import type {
   DeviceTokenErrorCode,
   DeviceTokenResponse,
   DictateRulingRequest,
-  DiscussObjectiveRequest,
   EditProcessDocumentRequest,
   EnrollTotpResponse,
   FsEntry,
@@ -178,7 +167,6 @@ import type {
   GenAiInferenceSummary,
   GetChannelResponse,
   GetNotificationEndpointResponse,
-  GetObjectiveResponse,
   GetSecretResponse,
   GetToolSourceResponse,
   GetVariableResponse,
@@ -188,7 +176,6 @@ import type {
   InvokeToolResponse,
   ListActivityQuery,
   ListGenaiQuery,
-  ListObjectivesQuery,
   ListSpineChecksQuery,
   ListSpineContractsQuery,
   ListSpineEventsQuery,
@@ -202,7 +189,6 @@ import type {
   NotificationEndpointSummary,
   NotificationProfile,
   NotificationProfileSummary,
-  Objective,
   OrientPack,
   PendingEnrollment,
   Permission,
@@ -213,7 +199,6 @@ import type {
   PushResult,
   PushSubscriptionPayload,
   PushSubscriptionResponse,
-  ReassignObjectiveRequest,
   RedirectAskRequest,
   RefreshToolSourceResponse,
   RegisterSpineSubjectRequest,
@@ -248,11 +233,9 @@ import type {
   UpdateMemberRequest,
   UpdateNotificationEndpointRequest,
   UpdateNotificationProfileRequest,
-  UpdateObjectiveRequest,
   UpdateSecretRequest,
   UpdateToolSourceRequest,
   UpdateVariableRequest,
-  UpdateWatchersRequest,
   UploadActivityRequest,
   UploadActivityResponse,
   VapidPublicKeyResponse,
@@ -490,7 +473,7 @@ export class Client {
    * member.
    *
    * Returns the caller's name, role, permissions, team
-   * (name/context/presets), list of teammates, open objectives
+   * (name/context/presets), list of teammates
    * currently on the caller's plate, the member's personal
    * `instructions` string ready for `new Server({instructions})` in
    * the MCP link, and — from brokers with the instruction-block model
@@ -517,134 +500,6 @@ export class Client {
   async roster(): Promise<RosterResponse> {
     const resp = await this.request(PATHS.roster, { method: 'GET' });
     return RosterResponseSchema.parse(await this.json(resp));
-  }
-
-  // ─────────────────────── Objectives ───────────────────────
-
-  /**
-   * List objectives. Members without `objectives.create` see only
-   * their own; members with that permission can filter by any
-   * `assignee` name. Pass `status` to scope to a single lifecycle
-   * state; omit to see all.
-   *
-   * Pass `related` for the union a member actually has a stake in —
-   * assigned OR originated OR watching. `assignee` alone answers a
-   * narrower question and omits work you originated or watch, which is
-   * the whole plate for a coordinating member.
-   */
-  async listObjectives(query: ListObjectivesQuery = {}): Promise<Objective[]> {
-    const params = new URLSearchParams();
-    if (query.assignee) params.set('assignee', query.assignee);
-    if (query.related) params.set('related', query.related);
-    if (query.status) params.set('status', query.status);
-    const qs = params.toString();
-    const path = qs ? `${PATHS.objectives}?${qs}` : PATHS.objectives;
-    const resp = await this.request(path, { method: 'GET' });
-    return ListObjectivesResponseSchema.parse(await this.json(resp)).objectives;
-  }
-
-  /** Fetch a single objective plus its full event history. */
-  async getObjective(id: string): Promise<GetObjectiveResponse> {
-    const resp = await this.request(OBJECTIVE_PATHS.one(id), { method: 'GET' });
-    return GetObjectiveResponseSchema.parse(await this.json(resp));
-  }
-
-  /**
-   * Create (and atomically assign) an objective. Requires the caller
-   * to hold the `objectives.create` permission.
-   */
-  async createObjective(payload: CreateObjectiveRequest): Promise<Objective> {
-    const resp = await this.request(PATHS.objectives, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    return ObjectiveSchema.parse(await this.json(resp));
-  }
-
-  /**
-   * Update an objective's status (active ↔ blocked), post a note to
-   * its thread, or both. Cannot transition to `done` — use
-   * `completeObjective` for that.
-   */
-  async updateObjective(id: string, payload: UpdateObjectiveRequest): Promise<Objective> {
-    const resp = await this.request(OBJECTIVE_PATHS.one(id), {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    return ObjectiveSchema.parse(await this.json(resp));
-  }
-
-  /**
-   * Mark an objective done with a required result summary. Only the
-   * objective's current assignee can call this.
-   */
-  async completeObjective(id: string, result: string): Promise<Objective> {
-    const resp = await this.request(OBJECTIVE_PATHS.complete(id), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ result }),
-    });
-    return ObjectiveSchema.parse(await this.json(resp));
-  }
-
-  /**
-   * Terminally cancel an objective. Originator, or any member with
-   * `objectives.cancel`.
-   */
-  async cancelObjective(id: string, payload: CancelObjectiveRequest = {}): Promise<Objective> {
-    const resp = await this.request(OBJECTIVE_PATHS.cancel(id), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    return ObjectiveSchema.parse(await this.json(resp));
-  }
-
-  /**
-   * Reassign an objective to a different member. Requires
-   * `objectives.reassign`. Pushes to both old and new assignee.
-   */
-  async reassignObjective(id: string, payload: ReassignObjectiveRequest): Promise<Objective> {
-    const resp = await this.request(OBJECTIVE_PATHS.reassign(id), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    return ObjectiveSchema.parse(await this.json(resp));
-  }
-
-  /**
-   * Amend an objective's contract text. Requires `objectives.create`.
-   * The prior text stays recoverable in the amendment record; the
-   * response carries the current contract and its version.
-   */
-  async amendObjective(id: string, payload: AmendObjectiveRequest): Promise<Objective> {
-    const validated = AmendObjectiveRequestSchema.parse(payload);
-    const resp = await this.request(OBJECTIVE_PATHS.amend(id), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(validated),
-    });
-    return ObjectiveSchema.parse(await this.json(resp));
-  }
-
-  /**
-   * Correct an earlier lifecycle event. Requires `objectives.create`.
-   * The target event is superseded, never rewritten.
-   */
-  async correctObjectiveEvent(
-    id: string,
-    payload: CorrectObjectiveEventRequest,
-  ): Promise<Objective> {
-    const validated = CorrectObjectiveEventRequestSchema.parse(payload);
-    const resp = await this.request(OBJECTIVE_PATHS.correctEvent(id), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(validated),
-    });
-    return ObjectiveSchema.parse(await this.json(resp));
   }
 
   // ─── Team process document ──────────────────────────────────────
@@ -705,40 +560,10 @@ export class Client {
   }
 
   /**
-   * Add and/or remove watchers on an objective. Originator or any
-   * member with `objectives.watch`. Every name must resolve to a
-   * known team member. Empty add/remove arrays are no-ops; the
-   * server still returns the updated objective for sync purposes.
-   */
-  async updateObjectiveWatchers(id: string, payload: UpdateWatchersRequest): Promise<Objective> {
-    const resp = await this.request(OBJECTIVE_PATHS.watchers(id), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    return ObjectiveSchema.parse(await this.json(resp));
-  }
-
-  /**
-   * Post a discussion message into an objective's thread. Fans out to
-   * every member of the thread (originator + assignee + explicit
-   * watchers) via their SSE streams, scoped to thread key `obj:<id>`.
-   * Caller must already be a thread member server-side.
-   */
-  async discussObjective(id: string, payload: DiscussObjectiveRequest): Promise<Message> {
-    const resp = await this.request(OBJECTIVE_PATHS.discuss(id), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    return MessageSchema.parse(await this.json(resp));
-  }
-
-  /**
    * Append activity events for `name`. Only the member itself may
    * POST its own activity (server returns 403 for any other caller).
    * Used by the runner's streaming uploader to ship decoded HTTP
-   * exchanges + objective lifecycle markers to the broker in real time.
+   * exchanges to the broker in real time.
    */
   async uploadActivity(
     name: string,
@@ -778,10 +603,9 @@ export class Client {
    * Supports range filtering by `from`/`to` timestamps and by kind.
    * Returns newest-first up to `limit` rows.
    *
-   * Objective traces are a view over this endpoint: query with
-   * `from=objective.openedAt`, `to=objective.closedAt`, and
-   * `kind=llm_exchange` to pull the LLM calls made during an
-   * objective's lifetime.
+   * A time-range trace is a view over this endpoint: query with
+   * `from`/`to` and `kind=llm_exchange` to pull the LLM calls made
+   * during any window you can name.
    */
   async listActivity(name: string, query: ListActivityQuery = {}): Promise<ActivityRow[]> {
     const params = new URLSearchParams();
@@ -1845,8 +1669,7 @@ export class Client {
   }
 
   /**
-   * Enumerate files shared with the caller via message or objective
-   * attachments. Unique by path — a file referenced from multiple
+   * Enumerate files shared with the caller via message attachments. Unique by path — a file referenced from multiple
    * messages appears once. Owner's own files aren't in this list;
    * use `fsList` under the owner home for those.
    */

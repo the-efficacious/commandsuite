@@ -79,7 +79,6 @@ const input = (processDocument: ProcessDocument | null) => ({
   self: SELF,
   team: TEAM,
   teammates: TEAMMATES,
-  openObjectives: [],
   processDocument,
 });
 

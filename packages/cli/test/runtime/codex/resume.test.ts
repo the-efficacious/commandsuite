@@ -86,7 +86,6 @@ const MINIMAL_PACKET: InstructionsResponse = {
   instructions: 'instructions prose',
   permissions: [],
   teammates: [],
-  openObjectives: [],
   toolSources: [],
   processDocument: null,
 };

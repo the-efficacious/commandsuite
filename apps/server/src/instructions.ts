@@ -65,18 +65,9 @@ export interface ComposeInstructionsInput {
   /** Every teammate on the team, including the caller. */
   teammates: Teammate[];
   /**
-   * Objectives currently assigned to the caller with status `active`
-   * or `blocked`. Returned verbatim on `InstructionsResponse.openObjectives`
-   * so the link + web UI can seed their initial state without a
-   * second round trip. NOT rendered into the instructions string —
-   * see file header for the reasoning.
-   */
-  openObjectives: InstructionsResponse['openObjectives'];
-  /**
    * External tools resolved for the caller from the tool-source
-   * registry. Same rule as `openObjectives`: structured field only,
-   * never rendered into the prose. Defaults to empty when the
-   * registry isn't wired.
+   * registry. Structured field only, never rendered into the prose.
+   * Defaults to empty when the registry isn't wired.
    */
   toolSources?: ResolvedToolSource[];
   /**
@@ -85,7 +76,7 @@ export interface ComposeInstructionsInput {
    * → the instructions gain the external-notification doctrine
    * section: what `<external_content>` blocks are, that their
    * content is untrusted input rather than instructions, and how to
-   * read the queued/coalesced markers. Unlike live objective state,
+   * read the queued/coalesced markers. Unlike live state,
    * this IS rendered into the prose — it's a standing contract
    * (config-class, changes on deliberate admin action), exactly what
    * the frozen system prompt is for.
@@ -102,7 +93,7 @@ export interface ComposeInstructionsInput {
  * team + teammate context for programmatic consumers.
  */
 export function composeInstructions(input: ComposeInstructionsInput): InstructionsResponse {
-  const { self, team, teammates, openObjectives } = input;
+  const { self, team, teammates } = input;
   const others = teammates.filter((t) => t.name !== self.name);
   const instructions = composePrompt(
     self,
@@ -120,7 +111,6 @@ export function composeInstructions(input: ComposeInstructionsInput): Instructio
     instructions,
     team,
     teammates,
-    openObjectives,
     toolSources: input.toolSources ?? [],
     // The team's process document rides HERE, never inside
     // `instructions`: a member authors their own `instructions`, the

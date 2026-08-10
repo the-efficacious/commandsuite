@@ -42,7 +42,6 @@ const PACKET: InstructionsResponse = {
       permissions: ['members.manage'],
     },
   ],
-  openObjectives: [],
   toolSources: [],
   processDocument: null,
 };

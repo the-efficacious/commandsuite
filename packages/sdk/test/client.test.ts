@@ -70,7 +70,6 @@ describe('Client', () => {
           instructions: '',
           team: { name: 'team', context: '', permissionPresets: {} },
           teammates: [],
-          openObjectives: [],
           toolSources: [],
           processDocument: null,
         });
