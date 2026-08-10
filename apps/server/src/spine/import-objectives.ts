@@ -138,6 +138,20 @@ export interface ObjectivesImportSummary {
    * this count is how many do not.
    */
   rowidFallbacks: number;
+  /**
+   * Legacy rows that resolved to an event ALREADY IN THE ANNEX rather
+   * than appending one, and which were not simply a re-run of a row the
+   * ledger already covered.
+   *
+   * This is the ambient dedupe reporting a collision it cannot tell
+   * apart from a resumed write. Two posts by one author, at one
+   * instant, on one contract, with byte-identical text are
+   * indistinguishable from one post written once — so a team that
+   * genuinely double-posted has one row here and one post in the annex,
+   * and is told which. Pathological, and reported rather than left for
+   * somebody to notice a missing line years later.
+   */
+  collapsed: UnimportedRow[];
 }
 
 interface ObjectiveRow {
@@ -326,6 +340,7 @@ class ObjectivesImporter {
     appended: {},
     unimported: [],
     rowidFallbacks: 0,
+    collapsed: [],
   };
   /** legacy event id (or `row:<rowid>`) -> the spine event it became. */
   private readonly produced = new Map<string, string>();
@@ -341,6 +356,14 @@ class ObjectivesImporter {
       .prepare('SELECT event_id FROM spine_legacy_import WHERE legacy_kind = ? AND legacy_id = ?')
       .get(kind, id) as { event_id: string } | undefined;
     return row?.event_id ?? null;
+  }
+
+  /** The legacy row already ledgered against `eventId`, if any. */
+  private ledgerHolder(eventId: string): string | null {
+    const row = this.db
+      .prepare('SELECT legacy_id FROM spine_legacy_import WHERE event_id = ? LIMIT 1')
+      .get(eventId) as { legacy_id: string } | undefined;
+    return row?.legacy_id ?? null;
   }
 
   private ledgerPut(kind: string, id: string, eventId: string, at: number): void {
@@ -438,6 +461,24 @@ class ObjectivesImporter {
         s.ambient.body,
       );
       if (already !== null) {
+        // Distinguish the two reasons this can fire. If the annex
+        // already holds this post AND some other legacy row is
+        // ledgered against that same event, the two rows are distinct
+        // posts that collapsed into one — say so. If nothing is
+        // ledgered against it, this is the crash window doing its job:
+        // the event landed, the ledger write did not, and this run is
+        // finishing what the last one started.
+        if (this.ledgerHolder(already) !== null) {
+          this.summary.collapsed.push({
+            source: s.source,
+            id: s.id,
+            kind: s.kind,
+            reason:
+              `it is byte-identical to an already-imported post by ${s.ambient.actor} at the ` +
+              'same instant on the same contract, so the two are indistinguishable and the ' +
+              `annex holds one where the legacy record held two (kept: ${already})`,
+          });
+        }
         this.ledgerPut(s.source, s.id, already, s.ts);
         this.produced.set(s.id, already);
         return null;
@@ -1003,6 +1044,15 @@ export function formatImportSummary(summary: ObjectivesImportSummary): string {
     '  criteria  — the outcome is ONE criterion, carried verbatim, never decomposed',
     '  watchers  — the spine has no watchers; subscription is reader-side',
   );
+  if (summary.collapsed.length > 0) {
+    lines.push(
+      '',
+      `${summary.collapsed.length} legacy posts collapsed into an existing annex event:`,
+    );
+    for (const row of summary.collapsed) {
+      lines.push(`  ${row.source} ${row.id} (${row.kind}): ${row.reason}`);
+    }
+  }
   if (summary.unimported.length > 0) {
     lines.push('', `${summary.unimported.length} legacy rows left unimported:`);
     for (const row of summary.unimported) {

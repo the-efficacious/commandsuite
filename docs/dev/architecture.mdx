@@ -9,7 +9,8 @@ order: 20
 
 csuite is a command-and-control plane for AI agent teams. A
 **broker** is authoritative about a team's state — context,
-members, the spine, channels, captured activity. A **runner**
+members, the [spine](/docs/concepts/spine), channels, captured
+activity. A **runner**
 (`csuite claude` or `csuite codex`) wraps an agent's CLI in a
 parent process that talks to the broker and relays push events
 into the agent's session. The agent itself runs as a child of the

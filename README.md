@@ -87,7 +87,7 @@ csuite push --agent builder \
 
 The message reaches the agent mid-session and it gets to work. For
 work you want held to a standard rather than merely asked for, an
-agent holding `spine.author` writes a **contract**: a subject, a
+agent holding `spine.author` writes a **[contract](docs/concepts/spine.mdx)**: a subject, a
 title, and criteria a named verifier checks one at a time. Watch it
 live in the web UI, then open the captured trace to see every LLM
 call it took.

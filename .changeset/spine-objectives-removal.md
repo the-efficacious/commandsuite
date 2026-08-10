@@ -98,6 +98,23 @@ become nine. The `operator` preset becomes `spine.author` +
   resolution if and only if it is set, so without it `INSERT OR
   REPLACE` walks straight past the trigger. Measured both ways, and the
   fixture drives that exact statement rather than trusting the reading.
+- **The provenance guard is file-resident, not connection-resident.** A
+  pragma is scoped to a CONNECTION and this property is scoped to a
+  FILE, so against the caller the rule names — a migration holding a
+  raw `new DatabaseSync(path)`, where `recursive_triggers` defaults to
+  0 — `INSERT OR REPLACE` still flipped provenance to native with the
+  row's id and seq intact. A third trigger refuses **id reuse on
+  INSERT**, which fires for REPLACE whatever the pragma says, because
+  REPLACE is an insert. It is also the narrower statement: event ids
+  are ULIDs minted per append and never reused, so it forbids something
+  no legitimate caller does. **Stated residuals**, because the previous
+  version of this claim was an overstatement: on a foreign raw handle,
+  an `INSERT OR REPLACE` colliding on `op_id` rather than on `id` still
+  deletes the row it hits (the id guard does not fire, and the delete
+  guard needs the pragma) — refused on every handle this server opens;
+  and nothing survives a caller willing to `DROP` the triggers or copy
+  the table over itself, which is true of any schema-resident
+  constraint.
 - **A correction of a legacy `assigned` event no longer vanishes.**
   `assigned` is the one legacy kind that produces no event of its own —
   its content *is* the specification — and it was recorded in the
@@ -146,6 +163,12 @@ become nine. The `operator` preset becomes `spine.author` +
   (server 200, SDK throws parsing its own server's correct response,
   invisible to any test reading JSON directly). A legacy row is now
   seeded straight into `fs_entries` and asserted to parse.
+- **Two byte-identical posts collapsing into one is reported.** One
+  author, one instant, one contract, identical text, two legacy message
+  ids: nothing distinguishes that from one post written once, so the
+  annex holds one. The summary now says which row collapsed and what it
+  was kept as — and deliberately does NOT say it for the crash-window
+  resume, which runs the same code path and loses nothing.
 - **The scanner strips comments instead of skipping comment-shaped
   lines.** A tool name planted inside a template literal, on a
   continuation line starting with `*` — a markdown bullet, which is how

@@ -67,10 +67,15 @@ nobody chose any of it, because the old system had no such concept.
   records the text as it was *before* it and never after, so the chain
   is walked backwards from the row as it stands today. The specification
   is authored at the original text and each amendment carries it
-  forward, landing on exactly the title and outcome the row holds — a
-  fold over recorded values, asserted as a round trip. The prior text
-  rides along in `disclosure`, which is what §10 means by *contamination
-  is disclosed, never erased*.
+  forward, landing on exactly the title and outcome the row holds. It is
+  a fold over recorded values: every string it produces was written down
+  by somebody, either in the row or in a `previous` map. What CONSTRAINS
+  it is the assertion on the reconstructed ORIGINAL text — the round
+  trip alone does not, because the unroll and the replay are inverses
+  and an error in one is cancelled by the same error in the other.
+  Measured, after an earlier draft of this line claimed otherwise. The
+  prior text rides along in `disclosure`, which is what §10 means by
+  *contamination is disclosed, never erased*.
 - **A required prose field the record never carried gets a marked
   sentinel,** not a manufactured claim: a cancellation with no recorded
   reason imports as `[legacy objectives import] the cancellation

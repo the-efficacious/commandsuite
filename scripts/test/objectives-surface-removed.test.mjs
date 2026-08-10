@@ -288,6 +288,25 @@ describe('the scanner can fail — one planted occurrence per form', () => {
     expect(hits[0]?.line, 'and it points at the right line').toBe(4);
   });
 
+  it('finds a tool name after a `//` INSIDE a template literal', () => {
+    // THE TEMPLATE BRANCH, on its own. The `*`-bullet fixture above
+    // passes for a different reason — `*` is never a comment opener to
+    // this stripper — so it does not constrain the code that tracks
+    // template literals at all. `//` IS a comment opener, so this is
+    // the only shape where treating a backtick as ordinary text
+    // silently reopens the original defeat: a URL, a path, or a
+    // commented-out example inside a description would swallow the
+    // rest of the line.
+    const { hits } = plant(
+      [
+        'export const tool = {',
+        '  description: `Your plate. See https://example.test/docs — call objectives_list.`,',
+        '};',
+      ].join('\n'),
+    );
+    expect(hits.map((h) => h.id)).toEqual(['tool name']);
+  });
+
   it('does NOT flag a trailing comment written after real code', () => {
     // The other direction of the same defect: the line-based version
     // flagged this, because the line does not START with a comment

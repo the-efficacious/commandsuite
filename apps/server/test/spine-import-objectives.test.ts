@@ -19,8 +19,12 @@
  * exercised through the same SQL it will meet in production.
  */
 
+import { mkdtempSync, rmSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { SpineContract, SpineEvent } from 'csuite-sdk/types';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type DatabaseSyncInstance, openDatabase } from '../src/db.js';
 import type { AnnexWritePath } from '../src/spine/append.js';
 import {
@@ -337,6 +341,11 @@ function seedLegacyRecord(): void {
 async function runImport(): Promise<ObjectivesImportSummary> {
   return importObjectives({ db, spine, registeredBy: 'andrewjon', now: T0 });
 }
+
+const rawDirs: string[] = [];
+afterEach(() => {
+  for (const d of rawDirs.splice(0)) rmSync(d, { recursive: true, force: true });
+});
 
 beforeEach(() => {
   db = openDatabase(':memory:');
@@ -827,17 +836,67 @@ describe('provenance is permanent', () => {
     // seq, so nothing downstream can tell afterwards. An `UPDATE OF
     // provenance` trigger alone did not see it, because it is not an
     // UPDATE.
+    expect(
+      () =>
+        db
+          .prepare(
+            `INSERT OR REPLACE INTO spine_events
+             (seq, id, kind, class, subject_id, revision_id, actor, authored_by, at,
+              provenance, op_id, cites, staples_to, body)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'native', ?, ?, ?, ?)`,
+          )
+          .run(
+            row.seq as number,
+            row.id as string,
+            row.kind as string,
+            row.class as string,
+            row.subject_id as string | null,
+            row.revision_id as string | null,
+            row.actor as string,
+            row.authored_by as string | null,
+            row.at as string,
+            row.op_id as string | null,
+            row.cites as string,
+            row.staples_to as string | null,
+            row.body as string,
+          ),
+      // Refused by the ID-REUSE guard, which fires FIRST: `BEFORE
+      // INSERT` runs before REPLACE's conflict resolution gets as far
+      // as deleting anything. That ordering is why the id guard works
+      // on a raw handle and the delete guard does not — see the
+      // raw-handle case below.
+    ).toThrow(/never reused/);
+
+    // The whole stream, not a spot check: a REPLACE that got halfway
+    // would leave the row changed and the caller merely informed.
+    expect(allEvents()).toEqual(before);
+    expect(spine.store.event(legacy.id)?.provenance).toBe('legacy_projection');
+  });
+
+  it('refuses a REPLACE that collides on op_id rather than on id', async () => {
+    await runImport();
+    const before = allEvents();
+    const victim = before.find((e) => e.opId !== null) as SpineEvent;
+    const row = db.prepare('SELECT * FROM spine_events WHERE id = ?').get(victim.id) as Record<
+      string,
+      unknown
+    >;
+
+    // A DIFFERENT unique key. The id-reuse guard does not fire — the
+    // id really is new — so this one rests on the delete trigger, and
+    // therefore on `PRAGMA recursive_triggers`, which `openDatabase`
+    // sets. It is the one route that is still open to a foreign RAW
+    // handle, and the schema comment says so rather than glossing it.
     expect(() =>
       db
         .prepare(
           `INSERT OR REPLACE INTO spine_events
              (seq, id, kind, class, subject_id, revision_id, actor, authored_by, at,
               provenance, op_id, cites, staples_to, body)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'native', ?, ?, ?, ?)`,
+           VALUES (?, 'evt_forged_new_id', ?, ?, ?, ?, ?, ?, ?, 'native', ?, ?, ?, ?)`,
         )
         .run(
-          row.seq as number,
-          row.id as string,
+          8888,
           row.kind as string,
           row.class as string,
           row.subject_id as string | null,
@@ -845,17 +904,13 @@ describe('provenance is permanent', () => {
           row.actor as string,
           row.authored_by as string | null,
           row.at as string,
-          row.op_id as string | null,
+          row.op_id as string,
           row.cites as string,
           row.staples_to as string | null,
           row.body as string,
         ),
     ).toThrow(/append-only/);
-
-    // The whole stream, not a spot check: a REPLACE that got halfway
-    // would leave the row changed and the caller merely informed.
     expect(allEvents()).toEqual(before);
-    expect(spine.store.event(legacy.id)?.provenance).toBe('legacy_projection');
   });
 
   it('refuses a bare DELETE — the other half of the same rewrite', async () => {
@@ -904,6 +959,96 @@ describe('provenance is permanent', () => {
         .run('legacy_projection', native.event.id),
     ).toThrow(/provenance is permanent/);
     expect(spine.store.event(native.event.id)?.provenance).toBe('native');
+  });
+
+  it('holds on a RAW handle, where the pragma is off — the caller the rule names', async () => {
+    // THE PROPERTY IS FILE-SCOPED; A PRAGMA IS CONNECTION-SCOPED.
+    //
+    // Every other case here runs through `openDatabase`, which sets
+    // `recursive_triggers`. But the caller this whole rule names is a
+    // migration holding a raw handle, and a raw `new
+    // DatabaseSync(path)` has the pragma at its default of 0 — under
+    // which REPLACE walks past the delete trigger entirely. So this
+    // one deliberately does NOT use `openDatabase`: it opens the same
+    // file the way a stranger would.
+    const dir = mkdtempSync(join(tmpdir(), 'spine-raw-'));
+    rawDirs.push(dir);
+    const file = join(dir, 'csuite.db');
+    const seeded = openDatabase(file);
+    const seededSpine = createAnnexWritePath({
+      db: seeded,
+      logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
+    });
+    seededSpine.store.registerSubject({ id: 'repo:acme', type: 'repo' }, 'lea', T0);
+    const evt = await seededSpine.append(
+      { kind: 'discussion', body: { body: 'a fact somebody would rather rewrite' } },
+      { actor: 'lea', provenance: 'legacy_projection', now: T0 },
+    );
+    seeded.close();
+
+    const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as {
+      DatabaseSync: new (path: string) => DatabaseSyncInstance;
+    };
+    const raw = new DatabaseSync(file);
+    const pragma = raw.prepare('PRAGMA recursive_triggers').get() as {
+      recursive_triggers: number;
+    };
+    // Assert the HOSTILE CONDITION actually holds before reading the
+    // verdict — a raw handle that happened to have the pragma on would
+    // make this test pass for the wrong reason.
+    expect(pragma.recursive_triggers, 'a raw handle must have the pragma OFF').toBe(0);
+
+    const row = raw.prepare('SELECT * FROM spine_events WHERE id = ?').get(evt.event.id) as Record<
+      string,
+      unknown
+    >;
+    expect(() =>
+      raw
+        .prepare(
+          `INSERT OR REPLACE INTO spine_events
+             (seq, id, kind, class, subject_id, revision_id, actor, authored_by, at,
+              provenance, op_id, cites, staples_to, body)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'native', ?, ?, ?, ?)`,
+        )
+        .run(
+          row.seq as number,
+          row.id as string,
+          row.kind as string,
+          row.class as string,
+          row.subject_id as string | null,
+          row.revision_id as string | null,
+          row.actor as string,
+          row.authored_by as string | null,
+          row.at as string,
+          row.op_id as string | null,
+          row.cites as string,
+          row.staples_to as string | null,
+          row.body as string,
+        ),
+    ).toThrow(/never reused/);
+
+    const after = raw
+      .prepare('SELECT provenance FROM spine_events WHERE id = ?')
+      .get(evt.event.id) as { provenance: string };
+    expect(after.provenance, 'the row did not move').toBe('legacy_projection');
+
+    // THE POSITIVE CONTROL, on the same raw handle: a genuinely new
+    // event still inserts. An id-reuse guard that refused every insert
+    // would satisfy the refusal above and break the annex.
+    const before = (raw.prepare('SELECT COUNT(*) n FROM spine_events').get() as { n: number }).n;
+    raw
+      .prepare(
+        `INSERT INTO spine_events
+           (id, kind, class, subject_id, revision_id, actor, authored_by, at,
+            provenance, op_id, cites, staples_to, body)
+         VALUES ('evt_genuinely_new', 'discussion', 'ambient', NULL, NULL, 'lea', NULL,
+                 ?, 'native', NULL, '[]', NULL, '{"body":"new"}')`,
+      )
+      .run(row.at as string);
+    expect((raw.prepare('SELECT COUNT(*) n FROM spine_events').get() as { n: number }).n).toBe(
+      before + 1,
+    );
+    raw.close();
   });
 
   it('lets a NATIVE event cite and staple to a legacy one — the positive control', async () => {
@@ -1132,6 +1277,46 @@ describe('the crash window between the annex write and the ledger write', () => 
     // Still once. Authoritative kinds are covered by op_id; ambient
     // ones carry none, which is why the annex itself is asked.
     expect(bodiesOn(race.id).filter((b) => b.includes('Three files'))).toHaveLength(1);
+  });
+
+  it('REPORTS two byte-identical posts collapsing into one, rather than swallowing them', async () => {
+    // The pathological case the ambient dedupe cannot resolve: two
+    // distinct legacy message ids, one author, one instant, one
+    // contract, byte-identical text. Nothing distinguishes them from
+    // one post written once — so the annex holds one, and the summary
+    // has to SAY one was dropped rather than leaving a reader to
+    // notice a missing line years later.
+    discussPost('msg-dup-a', 'obj-1', T0 + 6 * DAY, 'rune', 'ship it');
+    discussPost('msg-dup-b', 'obj-1', T0 + 6 * DAY, 'rune', 'ship it');
+
+    const summary = await runImport();
+
+    const shipped = contractsByTitle().get('Ship the rate limiter') as SpineContract;
+    expect(bodiesOn(shipped.id).filter((b) => b === 'ship it')).toHaveLength(1);
+    const collapsed = summary.collapsed.find((r) => r.id === 'msg-dup-b');
+    expect(collapsed, 'the collapse is reported').toBeDefined();
+    expect(collapsed?.reason).toContain('byte-identical');
+    expect(collapsed?.reason).toContain('the annex holds one where the legacy record held two');
+    // And a person reading the printed report is told — a field nobody
+    // prints has not said anything.
+    expect(formatImportSummary(summary)).toContain('collapsed into an existing annex event');
+    expect(formatImportSummary(summary)).toContain('msg-dup-b');
+  });
+
+  it('does NOT report a collapse when it is just the crash window resuming', async () => {
+    // The same code path fires for the resumed write, and that is not a
+    // collapse — nothing was lost. Reporting it there would cry wolf on
+    // every recovery and train an operator to skip the block.
+    await runImport();
+    db.prepare('DELETE FROM spine_legacy_import WHERE legacy_kind = ? AND legacy_id = ?').run(
+      'message',
+      'msg-race',
+    );
+
+    const second = await runImport();
+
+    expect(second.collapsed, 'a resumed write is not a collapse').toEqual([]);
+    expect(formatImportSummary(second)).not.toContain('collapsed into an existing annex event');
   });
 
   it('still imports a genuinely new post at the same instant — the control', async () => {

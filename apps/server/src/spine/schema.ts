@@ -256,13 +256,14 @@ export const SPINE_SCHEMA = `
     );
   END;
 
-  -- AND THE OTHER HALF, because an UPDATE trigger alone did not hold
-  -- the rule it was written for.
+  -- AND THE OTHER TWO, because an UPDATE trigger alone did not hold
+  -- the rule it was written for, and a DELETE trigger alone did not
+  -- either. Each was added after MEASURING that the previous set left
+  -- the named caller a way through.
   --
-  -- Scoping to 'UPDATE OF provenance' left the caller this exists to
-  -- survive — a migration holding a raw handle — two ways through, and
-  -- both PRESERVE the row's id AND its seq, so nothing downstream can
-  -- tell the difference afterwards:
+  -- Scoping to 'UPDATE OF provenance' left two routes, and both
+  -- PRESERVE the row's id AND its seq, so nothing downstream can tell
+  -- the difference afterwards:
   --
   --   INSERT OR REPLACE INTO spine_events (...) VALUES (..., 'native')
   --   DELETE FROM spine_events WHERE id = ?;  then a fresh INSERT
@@ -271,25 +272,59 @@ export const SPINE_SCHEMA = `
   -- reinsert migration is not an exotic attack; it is how people
   -- routinely change a column they cannot ALTER.
   --
-  -- This closes both without widening the claim, because the table's
-  -- own header already asserts exactly this: "Nothing ever deletes, so
-  -- the stream is gapless and a reader that has seen seq N has seen
-  -- everything up to N. That property is the entire recovery story."
-  -- It was true of this module and unenforced against anything else.
+  -- The DELETE trigger closes the second, and closes the first too —
+  -- but ONLY on a connection with 'PRAGMA recursive_triggers' set,
+  -- because SQLite fires delete triggers for rows removed by REPLACE
+  -- conflict resolution if and only if that pragma is on. It defaults
+  -- OFF. 'db.ts' sets it on every handle this server opens.
   --
-  -- REPLACE NEEDS 'PRAGMA recursive_triggers', and this is the part
-  -- that is easy to get wrong: SQLite fires delete triggers for rows
-  -- removed by REPLACE conflict resolution IF AND ONLY IF recursive
-  -- triggers are enabled. With the default (off), 'INSERT OR REPLACE'
-  -- walks straight past this trigger. 'db.ts' sets the pragma, and
-  -- 'spine-annex.test.ts' drives that exact statement rather than
-  -- trusting the reading.
+  -- A PRAGMA IS CONNECTION-SCOPED AND THIS PROPERTY IS FILE-SCOPED,
+  -- which is the gap the third trigger exists for. The caller this
+  -- whole rule names is "a migration holding a raw handle" — and a raw
+  -- 'new DatabaseSync(path)' has recursive_triggers = 0, so REPLACE
+  -- walked past the delete trigger and flipped provenance to native
+  -- with id and seq intact. Measured, not reasoned about.
+  --
+  -- An INSERT trigger has no such dependency: REPLACE is an INSERT
+  -- whatever the pragma says, so refusing id reuse fires on a raw
+  -- handle. It is also the narrower and more honest statement — event
+  -- ids are ULIDs minted per append and are never reused, so this
+  -- forbids something no legitimate caller does, rather than a shape
+  -- that merely looks suspicious.
+  --
+  -- WHAT IS STILL OPEN, stated rather than glossed:
+  --
+  --   * On a RAW handle, an 'INSERT OR REPLACE' that conflicts on a
+  --     DIFFERENT unique key — 'op_id' — still deletes the row it
+  --     collides with. The id-reuse trigger does not fire (the id is
+  --     new) and the delete trigger needs the pragma. Measured;
+  --     refused on any handle 'openDatabase' returns.
+  --   * Any caller that DROPs these triggers, or copies the table and
+  --     renames it over this one, defeats them. No schema-resident
+  --     constraint survives DROP, and claiming otherwise would be the
+  --     same overstatement this comment replaced.
+  --
+  -- So the accurate claim is: through this server's own handles, every
+  -- route is closed; on a foreign raw handle, everything but the
+  -- op_id-collision REPLACE is closed; and nothing survives a caller
+  -- willing to drop the constraint itself.
   CREATE TRIGGER IF NOT EXISTS spine_events_are_append_only
   BEFORE DELETE ON spine_events
   BEGIN
     SELECT RAISE(
       ABORT,
       'spine_events is append-only: the stream is gapless and recovery depends on it, so no row is ever deleted — not to correct one, and not to rewrite one by deleting and re-inserting it. Corrections staple; they never replace.'
+    );
+  END;
+
+  -- The file-resident half, which needs no pragma to fire.
+  CREATE TRIGGER IF NOT EXISTS spine_events_id_is_never_reused
+  BEFORE INSERT ON spine_events
+  WHEN EXISTS (SELECT 1 FROM spine_events WHERE id = NEW.id)
+  BEGIN
+    SELECT RAISE(
+      ABORT,
+      'an event id is never reused: ids are minted per append and an insert carrying one that already exists is a rewrite wearing an insert''s clothes. Corrections staple to the event they correct; they never replace it.'
     );
   END;
 `;
