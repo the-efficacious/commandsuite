@@ -1,6 +1,6 @@
 /**
  * Model-id and tool-name display helpers, shared across the trace
- * surfaces (AgentTimeline, TracePanel, GenAiBlocks). Kept in a lib
+ * surfaces (AgentTimeline, GenAiBlocks). Kept in a lib
  * module (no JSX) so component files can share them without import
  * cycles.
  */
@@ -30,7 +30,7 @@ export function prettyModel(id: string): string {
 /**
  * Human label for a genai record's `querySource` thread attribution —
  * which interleaved lane of the member's work made the call. Used on
- * call rows in the timeline and TracePanel so subagent/sidecar calls
+ * call rows in the timeline so subagent/sidecar calls
  * read as what they are instead of raw attribute strings.
  */
 export function describeQuerySource(

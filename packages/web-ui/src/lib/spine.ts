@@ -2,9 +2,8 @@
  * The human seat's state — the Queue, the Board, and the interrupt
  * whitelist — as signals over the spine SDK client. §9.
  *
- * Mirrors `objectives.ts`: signals as the single source of truth, thin
- * fetch wrappers that refresh them, synchronous selectors components
- * read. The live stream (`live.ts`) triggers a reload whenever a spine
+ * Signals as the single source of truth, thin fetch wrappers that
+ * refresh them, synchronous selectors components read. The live stream (`live.ts`) triggers a reload whenever a spine
  * event crosses the wire.
  *
  * TWO PROPERTIES THIS MODULE EXISTS TO HONOUR, both from §9:

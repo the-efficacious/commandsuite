@@ -1,8 +1,8 @@
 /**
  * The human half of the capture-health surface.
  *
- * The objective's outcome says the state must be visible "on the
- * surface an agent already reads AND on the human view." Shipping the
+ * The original work item's outcome said the state must be visible "on
+ * the surface an agent already reads AND on the human view." Shipping the
  * roster field alone satisfied the agent plane only — caught in
  * verification, because `rg captureHealth packages/web-ui` found
  * nothing. The human plane is the one that would have shown the gap to

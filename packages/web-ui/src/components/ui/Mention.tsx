@@ -7,9 +7,8 @@
  *   - Hovering reveals a small card with avatar / role / DM action
  *
  * Drop-in replacement for ad-hoc `<span>{name}</span>` usages in
- * ObjectivesPanel assignee fields, MessageLine senders, roster rows,
- * objective watcher lists, etc. — anywhere a name appears and the
- * reader might want to jump to "who is this" or "DM them."
+ * MessageLine senders, roster rows, etc. — anywhere a name appears
+ * and the reader might want to jump to "who is this" or "DM them."
  */
 
 import { signal } from '@preact/signals';

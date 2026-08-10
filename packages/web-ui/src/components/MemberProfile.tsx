@@ -3,8 +3,7 @@
  *
  * Replaces the admin-only AgentPage. Everyone can open a teammate's
  * profile (`/@:name`); progressive disclosure shows admins the extra
- * tabs (Activity, Manage). Non-admins see Overview / Objectives /
- * Files.
+ * tabs (Activity, Manage). Non-admins see Overview / Files.
  *
  *   ← Home › @alice
  *   ┌───────────────────────────────────────────────┐
@@ -12,36 +11,29 @@
  *   │      "ships the billing service"              │
  *   │                         [→ DM] [→ Files]      │
  *   ├───────────────────────────────────────────────┤
- *   │ Overview  Objectives  Activity*  Files  Manage*│  (*admin)
+ *   │ Overview  Activity*  Files  Manage*           │  (*admin)
  *   ├───────────────────────────────────────────────┤
  *   │  tab content                                   │
  *   └───────────────────────────────────────────────┘
  */
 
 import { signal } from '@preact/signals';
-import type { Member, Objective, Teammate } from 'csuite-sdk/types';
+import type { Member, Teammate } from 'csuite-sdk/types';
 import { hasPermission } from 'csuite-sdk/types';
 import { useEffect } from 'preact/hooks';
 import { getClient } from '../lib/client.js';
 import { initials } from '../lib/initials.js';
 import { instructions } from '../lib/instructions.js';
 import { memberActivityError, startMemberActivitySubscribe } from '../lib/member-activity.js';
-import { objectives as objectivesSignal } from '../lib/objectives.js';
 import { PERMISSION_META, sortLeaves, summarizePermissions } from '../lib/permissions.js';
 import { memberKind, presenceCaptureWarning, roster as rosterSignal } from '../lib/roster.js';
 import type { ProfileTab } from '../lib/routes.js';
-import {
-  selectDmWith,
-  selectFiles,
-  selectMemberProfile,
-  selectObjectiveDetail,
-  selectOverview,
-} from '../lib/view.js';
+import { selectDmWith, selectFiles, selectMemberProfile, selectOverview } from '../lib/view.js';
 import { AgentTimeline } from './AgentTimeline.js';
 import { ArrowLeft, ArrowRight } from './icons/index.js';
 import { MemberAdminForm } from './members/MemberAdminForm.js';
 import { type Reveal, RevealBanner } from './members/Reveal.js';
-import { EmptyState, ErrorCallout, Loading, Mention } from './ui/index.js';
+import { EmptyState, ErrorCallout, Loading } from './ui/index.js';
 
 /** Full Member detail for the active Manage tab. Loaded on demand. */
 const manageMember = signal<Member | null>(null);
@@ -67,7 +59,6 @@ export interface MemberProfileProps {
 export function MemberProfile({ name, tab, viewer }: MemberProfileProps) {
   const b = instructions.value;
   const rosterResp = rosterSignal.value;
-  const objectives = objectivesSignal.value;
   const isAdmin = b !== null && hasPermission(b.permissions, 'members.manage');
   const isSelf = viewer === name;
 
@@ -244,14 +235,11 @@ export function MemberProfile({ name, tab, viewer }: MemberProfileProps) {
       >
         {effectiveTab === 'overview' && (
           <OverviewTab
-            name={name}
-            objectives={objectives}
             teammate={teammate}
             isSelf={isSelf}
             selfBrief={b.name === name ? b.role : null}
           />
         )}
-        {effectiveTab === 'objectives' && <ObjectivesTab name={name} objectives={objectives} />}
         {effectiveTab === 'activity' && <ActivityTab error={memberActivityError.value} />}
         {effectiveTab === 'files' && (
           <EmptyState
@@ -329,25 +317,14 @@ function TabBar({
 }
 
 function OverviewTab({
-  name,
-  objectives,
   teammate,
   isSelf,
   selfBrief,
 }: {
-  name: string;
-  objectives: Objective[];
   teammate: Teammate | undefined;
   isSelf: boolean;
   selfBrief: { title: string; description: string } | null;
 }) {
-  const assignedCount = objectives.filter(
-    (o) => o.assignee === name && o.status !== 'done' && o.status !== 'cancelled',
-  ).length;
-  const watchingCount = objectives.filter(
-    (o) => o.assignee !== name && o.watchers.includes(name),
-  ).length;
-
   const b = instructions.value;
   const permsLabel = teammate
     ? summarizePermissions(teammate.permissions, b?.team.permissionPresets ?? {}).label
@@ -365,87 +342,8 @@ function OverviewTab({
           <div class="fact-k">PERMISSIONS</div>
           <div class="fact-v">{permsLabel}</div>
         </div>
-        <div>
-          <div class="fact-k">ACTIVE OBJECTIVES</div>
-          <div class="fact-v">{assignedCount}</div>
-        </div>
-        <div>
-          <div class="fact-k">WATCHING</div>
-          <div class="fact-v">{watchingCount}</div>
-        </div>
       </div>
     </section>
-  );
-}
-
-function ObjectivesTab({ name, objectives }: { name: string; objectives: Objective[] }) {
-  const assigned = objectives.filter(
-    (o) => o.assignee === name && o.status !== 'done' && o.status !== 'cancelled',
-  );
-  const watching = objectives.filter(
-    (o) =>
-      o.assignee !== name &&
-      o.watchers.includes(name) &&
-      o.status !== 'done' &&
-      o.status !== 'cancelled',
-  );
-  const done = objectives.filter(
-    (o) => o.assignee === name && (o.status === 'done' || o.status === 'cancelled'),
-  );
-  return (
-    <>
-      <section class="card">
-        <ObjectiveList title="Assigned" objectives={assigned} emptyLabel="none assigned" />
-      </section>
-      <section class="card">
-        <ObjectiveList title="Watching" objectives={watching} emptyLabel="nothing on watch" />
-      </section>
-      {done.length > 0 && (
-        <section class="card">
-          <ObjectiveList title="Closed" objectives={done} emptyLabel="none" />
-        </section>
-      )}
-    </>
-  );
-}
-
-function ObjectiveList({
-  title,
-  objectives,
-  emptyLabel,
-}: {
-  title: string;
-  objectives: Objective[];
-  emptyLabel: string;
-}) {
-  return (
-    <div>
-      <div class="eyebrow" style="margin-bottom:8px">
-        {title} ({objectives.length})
-      </div>
-      {objectives.length === 0 ? (
-        <div style="font-family:var(--ef-font-body);font-size:13px;color:var(--ef-text-muted);font-style:italic">
-          {emptyLabel}
-        </div>
-      ) : (
-        <ul style="display:flex;flex-direction:column;gap:4px;list-style:none;padding:0;margin:0">
-          {objectives.map((o) => (
-            <li key={o.id}>
-              <button
-                type="button"
-                onClick={() => selectObjectiveDetail(o.id)}
-                class="text-link-action"
-                style="font-family:var(--ef-font-body);font-size:14px;text-align:left;padding:0;background:none;border:none;cursor:pointer"
-              >
-                <span style={`color:${statusColor(o.status)};font-weight:600`}>[{o.status}]</span>{' '}
-                {o.title} <span style="color:var(--ef-text-muted)">— assigned to </span>
-                <Mention name={o.assignee} plain variant="text" />
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
   );
 }
 
@@ -554,15 +452,14 @@ export function __resetMemberProfileForTests(): void {
 
 const TAB_LABELS: Record<ProfileTab, string> = {
   overview: 'Overview',
-  objectives: 'Objectives',
   activity: 'Activity',
   files: 'Files',
   manage: 'Manage',
 };
 
 function tabsFor({ isAdmin, isSelf }: { isAdmin: boolean; isSelf: boolean }): ProfileTab[] {
-  const tabs: ProfileTab[] = ['overview', 'objectives', 'files'];
-  if (isAdmin) tabs.splice(2, 0, 'activity');
+  const tabs: ProfileTab[] = ['overview', 'files'];
+  if (isAdmin) tabs.splice(1, 0, 'activity');
   if (isAdmin && !isSelf) tabs.push('manage');
   return tabs;
 }
@@ -576,17 +473,4 @@ function badgeClassFor(summary: import('../lib/permissions.js').PermissionSummar
 function labelFor(leaf: string): string {
   const meta = PERMISSION_META.find((m) => m.key === leaf);
   return meta ? `${meta.label} — ${meta.description}` : leaf;
-}
-
-function statusColor(status: Objective['status']): string {
-  switch (status) {
-    case 'active':
-      return 'var(--ef-lamp-nominal)';
-    case 'blocked':
-      return 'var(--ef-lamp-caution)';
-    case 'done':
-      return 'var(--ef-lamp-stood-down)';
-    case 'cancelled':
-      return 'var(--ef-lamp-stood-down)';
-  }
 }

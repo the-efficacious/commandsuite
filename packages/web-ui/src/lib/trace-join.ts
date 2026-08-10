@@ -1,6 +1,6 @@
 /**
- * The llm_exchange ↔ GenAI-inference join — shared by the objective
- * TracePanel and the member AgentTimeline.
+ * The llm_exchange ↔ GenAI-inference join — used by the member
+ * AgentTimeline.
  *
  * The two capture layers observe the same model work from different
  * points: the exchange marker (activity stream) is the
@@ -51,7 +51,7 @@ import type { ActivityLlmExchange } from 'csuite-sdk/types';
 /**
  * The fields the join needs from an inference record — satisfied by
  * both `GenAiInferenceSummary` (timeline) and the full
- * `GenAiInferenceRecord` (TracePanel).
+ * `GenAiInferenceRecord`.
  */
 export interface JoinableCall {
   id: number;

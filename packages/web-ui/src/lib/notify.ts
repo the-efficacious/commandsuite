@@ -20,16 +20,9 @@
 
 import type { Message } from 'csuite-sdk/types';
 import { identity } from './identity.js';
-import {
-  dmOther,
-  isDmThread,
-  isObjectiveThread,
-  OBJ_PREFIX,
-  PRIMARY_THREAD,
-  threadKeyOf,
-} from './messages.js';
+import { dmOther, isDmThread, PRIMARY_THREAD, threadKeyOf } from './messages.js';
 import { toast } from './toast.js';
-import { selectDmWith, selectObjectiveDetail, selectThread, view } from './view.js';
+import { selectDmWith, selectThread, view } from './view.js';
 
 /** Keep toast body readable — long messages get clipped with an ellipsis. */
 const MAX_BODY = 140;
@@ -73,10 +66,6 @@ export function notifyNewMessage(msg: Message): void {
 function isActiveThread(threadKey: string): boolean {
   const v = view.value;
   if (v.kind === 'thread' && v.key === threadKey) return true;
-  // Objective threads surface inside the objective detail view — treat
-  // the matching detail route as "active" so we don't toast when the
-  // viewer is reading the objective.
-  if (v.kind === 'objective-detail' && threadKey === `${OBJ_PREFIX}${v.id}`) return true;
   return false;
 }
 
@@ -84,7 +73,6 @@ function titleFor(msg: Message, threadKey: string): string {
   const sender = msg.from ?? 'Someone';
   if (threadKey === PRIMARY_THREAD) return `${sender} · #team`;
   if (isDmThread(threadKey)) return `${sender} · DM`;
-  if (isObjectiveThread(threadKey)) return `${sender} · objective`;
   return sender;
 }
 
@@ -96,10 +84,6 @@ function routeToThread(threadKey: string): void {
   const dm = dmOther(threadKey);
   if (dm !== null) {
     selectDmWith(dm);
-    return;
-  }
-  if (isObjectiveThread(threadKey)) {
-    selectObjectiveDetail(threadKey.slice(OBJ_PREFIX.length));
     return;
   }
   // Unknown scheme — best effort.

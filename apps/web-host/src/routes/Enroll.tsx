@@ -239,10 +239,9 @@ function permissionOptions(): string[] {
   const leaves: Permission[] = [
     'team.manage',
     'members.manage',
-    'objectives.create',
-    'objectives.cancel',
-    'objectives.reassign',
-    'objectives.watch',
+    'process.manage',
+    'spine.author',
+    'spine.focus',
     'activity.read',
   ];
   return [...presetNames, ...leaves];

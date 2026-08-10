@@ -414,9 +414,9 @@ export function FilesPanel({ viewer, path }: FilesPanelProps) {
               </a>
             )}
             {/* Ask, don't infer. `entry.owner === viewer` was wrong for
-                objective namespace entries — owner is `obj:<id>` and the
-                server's rule includes objective membership, which this
-                component cannot determine.
+                namespaced entries whose owner is not a member name, and
+                the server's rule includes memberships this component
+                cannot determine.
 
                 Strictly `=== true`, with NO fallback to the old
                 inference. Against a server too old to send `canWrite`,

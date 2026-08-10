@@ -2,9 +2,9 @@
  * TeamShell — public entry point for csuite-web-ui.
  *
  * Renders the entire team-view surface: nav column, header, panels
- * for chat / roster / objectives / files / members, the command
- * palette, and the live-subscription lifecycle. Hosts wrap their
- * own auth + cross-team chrome around it.
+ * for chat / roster / spine / files / members, the command palette,
+ * and the live-subscription lifecycle. Hosts wrap their own auth +
+ * cross-team chrome around it.
  *
  * Contract:
  *
@@ -18,7 +18,7 @@
  *
  * On mount the shell:
  *   - Wires the client + identity + callbacks into internal signals.
- *   - Loads instructions, history, roster, objectives (non-fatal failures
+ *   - Loads instructions, history, roster, spine (non-fatal failures
  *     land in a dismissable banner; 401 triggers `onUnauthorized`).
  *   - Starts live WebSocket subscription and roster polling.
  *   - Installs global ⌘K / Ctrl-K to toggle the command palette.
@@ -53,9 +53,6 @@ import { MemberProfile } from './components/MemberProfile.js';
 import { MembersPanel } from './components/MembersPanel.js';
 import { NotificationDetail } from './components/NotificationDetail.js';
 import { NotificationsPanel } from './components/NotificationsPanel.js';
-import { ObjectiveCreate } from './components/ObjectiveCreate.js';
-import { ObjectiveDetail } from './components/ObjectiveDetail.js';
-import { ObjectivesPanel } from './components/ObjectivesPanel.js';
 import { RouteModal } from './components/RouteModal.js';
 import { SecretDetail } from './components/SecretDetail.js';
 import { SecretsPanel } from './components/SecretsPanel.js';
@@ -81,9 +78,8 @@ import { type Identity, setIdentity } from './lib/identity.js';
 import { closeInspector } from './lib/inspector.js';
 import { loadInstructions } from './lib/instructions.js';
 import { startSubscribe, streamConnected } from './lib/live.js';
-import { appendMessages, dmOther, messagesByThread, objectiveThreadKey } from './lib/messages.js';
+import { appendMessages, dmOther, messagesByThread } from './lib/messages.js';
 import { loadNotificationEndpoints } from './lib/notifications.js';
-import { loadObjectives } from './lib/objectives.js';
 import { closePalette, togglePalette } from './lib/palette.js';
 import { initializePushState } from './lib/push.js';
 import { loadRoster, startRosterPolling } from './lib/roster.js';
@@ -120,7 +116,7 @@ export interface TeamShellProps {
   onUnauthorized?: UnauthorizedHandler;
   /**
    * Optional team slug. When set, every in-shell navigation emits
-   * URLs under `/t/<slug>/...` — e.g. `/t/acme-robotics/objectives`.
+   * URLs under `/t/<slug>/...` — e.g. `/t/acme-robotics/spine`.
    * Omit for single-team deployments (URLs at origin root). Routes
    * parsed from the URL already recognize the `/t/:slug` prefix;
    * setting this prop just closes the loop so navigation emits the
@@ -222,15 +218,6 @@ export function TeamShell(props: TeamShellProps): JSX.Element {
         recordFailure('roster', err);
       }
       try {
-        await loadObjectives();
-      } catch (err) {
-        if (isUnauthorized(err)) {
-          handleUnauthorized('Your session expired — please sign in again.');
-          return;
-        }
-        recordFailure('objectives', err);
-      }
-      try {
         // Preloaded for the nav badge. A deployment with no spine 404s
         // here — that is a configuration, not a failure worth surfacing,
         // so a 404 is swallowed while anything else is recorded.
@@ -302,16 +289,10 @@ export function TeamShell(props: TeamShellProps): JSX.Element {
       // Auto-read the active thread: any time the view changes or a
       // new message lands, bump lastRead for the active thread so its
       // unread count stays at 0 while the viewer is watching it.
-      // Objective threads (`obj:<id>`) don't have a top-level URL —
-      // they surface inside the objective detail view, so when that
-      // view is active the embedded thread is what the viewer is
-      // looking at and counts as read.
       disposeAutoRead = effect(() => {
         const current = view.value;
         const map = messagesByThread.value;
-        let key: string | null = null;
-        if (current.kind === 'thread') key = current.key;
-        else if (current.kind === 'objective-detail') key = objectiveThreadKey(current.id);
+        const key: string | null = current.kind === 'thread' ? current.key : null;
         if (key === null) return;
         const messages = map.get(key) ?? [];
         if (messages.length === 0) return;
@@ -411,8 +392,8 @@ function renderView(v: View, viewer: string) {
   switch (v.kind) {
     case 'thread': {
       // Channel threads get a header above the transcript with the
-      // channel name + member count + admin gear. DMs and objective
-      // threads don't (those have their own headers inside Transcript).
+      // channel name + member count + admin gear. DMs don't (those
+      // have their own headers inside Transcript).
       const channel = v.channelSlug ? channelBySlug(v.channelSlug) : null;
       return (
         <>
@@ -432,12 +413,6 @@ function renderView(v: View, viewer: string) {
       return <ChannelBrowse />;
     case 'channel-create':
       return <ChannelCreate />;
-    case 'objectives-list':
-      return <ObjectivesPanel viewer={viewer} />;
-    case 'objective-detail':
-      return <ObjectiveDetail id={v.id} viewer={viewer} />;
-    case 'objective-create':
-      return <ObjectiveCreate />;
     case 'spine-queue':
       return <SpineQueuePanel viewer={viewer} />;
     case 'spine-board':

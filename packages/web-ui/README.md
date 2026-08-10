@@ -9,7 +9,7 @@ The **team-view UI + runtime** for [CommandSuite](https://github.com/the-efficac
 Everything a member sees *inside* a team:
 
 - **Chat** — transcript, composer, channels, DMs, threads
-- **Objectives** — list, detail, creation, and the `TracePanel` (LLM activity review)
+- **Spine** — the human seat: queue and board
 - **Files · Members · Tools · Secrets** panels
 - **Chrome** — command palette, activity inspector, toasts, theming
 - **Runtime** — the live WebSocket subscription + reconnect, roster polling, unread tracking, signals/state

@@ -1,8 +1,7 @@
 /**
  * Renderers for GenAI inference content — the full-request layer's
- * `systemInstructions` parts and `inputMessages`. Shared by the
- * objective TracePanel and the member AgentTimeline so both trace
- * surfaces present the enriched record identically.
+ * `systemInstructions` parts and `inputMessages`. Used by the member
+ * AgentTimeline to present the enriched record.
  *
  * Styles mirror the Anthropic-block renderers (text as mono pre with
  * channel-tag highlighting, tool calls/results as labeled JSON,

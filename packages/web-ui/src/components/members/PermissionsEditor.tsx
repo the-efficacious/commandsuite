@@ -4,8 +4,8 @@
  *   Quick apply:  [ admin ]  [ operator ]  [ baseline ]
  *   ┌──────────────────────────────────┐
  *   │ ☑ Manage members (members.manage)│  description…
- *   │ ☐ Create objectives              │
- *   │ ☐ Cancel objectives              │
+ *   │ ☐ Manage process                 │
+ *   │ ☐ Author contracts               │
  *   │ …                                │
  *   └──────────────────────────────────┘
  *

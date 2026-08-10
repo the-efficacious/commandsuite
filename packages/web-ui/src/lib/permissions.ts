@@ -2,7 +2,7 @@
  * Permissions — UI-side metadata and summary helpers.
  *
  * The server vocabulary is a set of composable leaves (`team.manage`,
- * `members.manage`, `objectives.create`, …) bundled by named presets
+ * `members.manage`, `tools.manage`, …) bundled by named presets
  * like "admin" or "operator" on the team config. Earlier UI code
  * collapsed members into 3 fixed bins (admin / operator / baseline),
  * which hid arbitrary custom mixes. These helpers replace that

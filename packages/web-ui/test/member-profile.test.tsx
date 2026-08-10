@@ -2,7 +2,7 @@
  * MemberProfile + AgentTimeline render tests.
  *
  * Covers:
- *   - Non-admin sees a profile (Overview/Objectives/Files) but no Activity tab
+ *   - Non-admin sees a profile (Overview/Files) but no Activity tab
  *   - Admin sees the full page (header, metadata, activity, manage)
  *   - AgentTimeline renders each event kind correctly
  *   - Filter bar toggles hide/show per-kind rows
@@ -15,12 +15,7 @@
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { Client } from 'csuite-sdk/client';
-import type {
-  ActivityRow,
-  InstructionsResponse,
-  Objective,
-  RosterResponse,
-} from 'csuite-sdk/types';
+import type { ActivityRow, InstructionsResponse, RosterResponse } from 'csuite-sdk/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   __resetAgentTimelineForTests,
@@ -39,7 +34,6 @@ import {
   memberActivityName,
   memberActivityRows,
 } from '../src/lib/member-activity.js';
-import { objectives as objectivesSignal } from '../src/lib/objectives.js';
 import { roster } from '../src/lib/roster.js';
 
 const originalFetch = globalThis.fetch;
@@ -88,25 +82,6 @@ const ROSTER: RosterResponse = {
       role: { title: 'engineer', description: '' },
     },
   ],
-};
-
-const OBJECTIVE: Objective = {
-  id: 'obj-1',
-  title: 'Ship the feature',
-  body: '',
-  outcome: 'Feature shipped',
-  status: 'active',
-  assignee: 'engineer-1',
-  originator: 'director-1',
-  watchers: [],
-  createdAt: 1_700_000_000_000,
-  updatedAt: 1_700_000_000_500,
-  completedAt: null,
-  result: null,
-  blockReason: null,
-  attachments: [],
-  outcomeVersion: 1,
-  amendments: [],
 };
 
 const LLM_ROW: ActivityRow = {
@@ -162,22 +137,15 @@ const TOOL_ROW: ActivityRow = {
   },
 };
 
-const OPEN_ROW: ActivityRow = {
+const PROMPT_ROW: ActivityRow = {
   id: 3,
   memberName: 'engineer-1',
-  createdAt: 1_700_000_002_000,
-  event: { kind: 'objective_open', ts: 1_700_000_001_000, objectiveId: 'obj-1' },
-};
-
-const CLOSE_ROW: ActivityRow = {
-  id: 4,
-  memberName: 'engineer-1',
-  createdAt: 1_700_000_003_000,
+  createdAt: 1_700_000_001_000,
   event: {
-    kind: 'objective_close',
-    ts: 1_700_000_002_000,
-    objectiveId: 'obj-1',
-    result: 'done',
+    kind: 'user_prompt',
+    ts: 1_700_000_001_000,
+    text: 'wake up and ship it',
+    agent: 'claude',
   },
 };
 
@@ -231,14 +199,12 @@ beforeEach(() => {
   StubWebSocket.instances = [];
   (globalThis as { WebSocket?: unknown }).WebSocket = StubWebSocket;
   roster.value = ROSTER;
-  objectivesSignal.value = [OBJECTIVE];
 });
 
 afterEach(() => {
   cleanup();
   instructions.value = null;
   roster.value = null;
-  objectivesSignal.value = [];
   __resetMemberActivityForTests();
   __resetAgentTimelineForTests();
   globalThis.fetch = originalFetch;
@@ -257,7 +223,6 @@ describe('MemberProfile', () => {
     expect(screen.queryByRole('tab', { name: /activity/i })).toBeNull();
     expect(screen.queryByRole('tab', { name: /manage/i })).toBeNull();
     expect(screen.getByRole('tab', { name: /overview/i })).toBeTruthy();
-    expect(screen.getByRole('tab', { name: /objectives/i })).toBeTruthy();
     expect(screen.getByRole('tab', { name: /files/i })).toBeTruthy();
   });
 
@@ -283,18 +248,12 @@ describe('MemberProfile', () => {
     render(<MemberProfile name="director-1" tab="overview" viewer="director-1" />);
     expect(screen.queryByText(/DM director-1/)).toBeNull();
   });
-
-  it('switches to the objectives tab when that tab is active', () => {
-    instructions.value = COMMANDER_PACKET;
-    render(<MemberProfile name="engineer-1" tab="objectives" viewer="director-1" />);
-    expect(screen.getByText(/Ship the feature/)).toBeTruthy();
-  });
 });
 
 describe('AgentTimeline', () => {
   it('renders each event kind with distinct affordances', () => {
     instructions.value = COMMANDER_PACKET;
-    memberActivityRows.value = [CLOSE_ROW, OPEN_ROW, TOOL_ROW, LLM_ROW];
+    memberActivityRows.value = [PROMPT_ROW, TOOL_ROW, LLM_ROW];
     memberActivityLoading.value = false;
     const { container } = render(<AgentTimeline />);
 
@@ -307,10 +266,10 @@ describe('AgentTimeline', () => {
     expect(text).not.toContain('ping');
     // Tool action with no matching tool_use renders standalone.
     expect(text).toContain('Bash');
-    // Objective open marker (chevron-down) and close marker (chevron-up).
-    expect(container.querySelector('.lucide-chevron-down')).toBeTruthy();
-    expect(container.querySelector('.lucide-chevron-up')).toBeTruthy();
-    expect(text).toContain('closed (done)');
+    // User prompt renders as its own opener block, labelled and
+    // carrying the text that woke the turn.
+    expect(text.toLowerCase()).toContain('prompt');
+    expect(text).toContain('wake up and ship it');
   });
 
   it('folds a tool result into its call card and renders MCP names as server · tool', () => {

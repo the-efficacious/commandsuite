@@ -4,14 +4,14 @@
  * A "thread" is:
  *   - the shared team channel (`primary`)
  *   - a DM conversation (`dm:<other>`)
- *   - an objective's discussion thread (`obj:<id>`)
+ *   - a non-general channel (`chan:<id>`)
  *
  * `threadKeyOf` maps a Message to its thread key from the perspective
  * of the current viewer. When the sender tags a message with an
  * explicit thread key in `data.thread`, that wins — this is how
- * objective discussions and objective lifecycle events route into
- * their dedicated thread. Otherwise we fall back to the legacy
- * primary/DM derivation based on `agentId` + `from`.
+ * channel-tagged messages route into their dedicated thread.
+ * Otherwise we fall back to the legacy primary/DM derivation based on
+ * `agentId` + `from`.
  *
  * The signal value is a `Map<threadKey, Message[]>` — we store the Map
  * itself so reads stay O(1) and we can still replace it on change to
@@ -25,7 +25,6 @@ import type { Message } from 'csuite-sdk/types';
 
 export const PRIMARY_THREAD = 'primary';
 export const DM_PREFIX = 'dm:';
-export const OBJ_PREFIX = 'obj:';
 export const CHAN_PREFIX = 'chan:';
 /**
  * Special channel id reserved for the synthetic "general" channel —
@@ -56,16 +55,6 @@ export function dmThreadKey(other: string): string {
 /** True if `key` names a DM thread (not the shared team channel). */
 export function isDmThread(key: string): boolean {
   return key.startsWith(DM_PREFIX);
-}
-
-/** Build an objective thread key from an objective id. */
-export function objectiveThreadKey(id: string): string {
-  return `${OBJ_PREFIX}${id}`;
-}
-
-/** True if `key` names an objective discussion thread. */
-export function isObjectiveThread(key: string): boolean {
-  return key.startsWith(OBJ_PREFIX);
 }
 
 /**
@@ -106,13 +95,11 @@ export function dmOther(key: string): string | null {
 
 /** Thread key for `msg` from the perspective of the viewer `self`. */
 export function threadKeyOf(msg: Message, self: string): string {
-  // Explicit thread override wins. Objective lifecycle events and
-  // discussion posts both ship with `data.thread = 'obj:<id>'` so
-  // they route straight into the objective's dedicated thread,
-  // bypassing the primary/DM heuristics below. Channel-tagged
-  // messages flow the same way: `data.thread = 'chan:<id>'`. The
-  // general channel uses the legacy `'primary'` key so persisted
-  // state stays valid; we collapse `chan:general` → primary here.
+  // Explicit thread override wins, bypassing the primary/DM
+  // heuristics below. Channel-tagged messages ship with
+  // `data.thread = 'chan:<id>'`. The general channel uses the legacy
+  // `'primary'` key so persisted state stays valid; we collapse
+  // `chan:general` → primary here.
   const explicit = typeof msg.data?.thread === 'string' ? (msg.data.thread as string) : null;
   if (explicit !== null && explicit.length > 0) {
     if (explicit === channelThreadKey(GENERAL_CHANNEL_ID)) return GENERAL_THREAD;

@@ -7,7 +7,6 @@
  *   ├───────────────────────┤
  *   │  Home                 │
  *   │  Inbox          ⓫     │
- *   │  Objectives     ⓷     │
  *   │  Files                │
  *   │  Members              │  admin only
  *   ├───────────────────────┤
@@ -40,7 +39,6 @@ import {
   GENERAL_THREAD,
   messagesByThread,
 } from '../../lib/messages.js';
-import { objectives } from '../../lib/objectives.js';
 import { memberKind, presenceActivity, roster } from '../../lib/roster.js';
 import { spineQueue } from '../../lib/spine.js';
 import { currentTeam } from '../../lib/team.js';
@@ -56,7 +54,6 @@ import {
   selectInbox,
   selectMembers,
   selectNotifications,
-  selectObjectivesList,
   selectOverview,
   selectSecrets,
   selectSpineQueue,
@@ -73,7 +70,6 @@ import {
   LogOut,
   Plus,
   Settings,
-  Target,
   Users,
   Webhook,
   Wrench,
@@ -107,8 +103,6 @@ export function NavColumn({ viewer }: NavColumnProps) {
 
   const homeActive = v.kind === 'overview';
   const inboxActive = v.kind === 'inbox';
-  const objectivesActive =
-    v.kind === 'objectives-list' || v.kind === 'objective-detail' || v.kind === 'objective-create';
   const spineActive = v.kind === 'spine-queue' || v.kind === 'spine-board';
   const queueCount =
     (spineQueue.value?.asks.length ?? 0) + (spineQueue.value?.waitingOn.length ?? 0);
@@ -123,9 +117,6 @@ export function NavColumn({ viewer }: NavColumnProps) {
   const canManageTools = b !== null && hasPermission(b.permissions, 'tools.manage');
   const canManageSecrets = b !== null && hasPermission(b.permissions, 'secrets.manage');
   const canManageNotifications = b !== null && hasPermission(b.permissions, 'notifications.manage');
-  const activeObjectiveCount = objectives.value.filter(
-    (o) => o.assignee === viewer && (o.status === 'active' || o.status === 'blocked'),
-  ).length;
   const channelList = joinedChannels();
   const channelsLoaded = channels.value !== null;
   const browseActive = v.kind === 'channels-browse';
@@ -161,22 +152,6 @@ export function NavColumn({ viewer }: NavColumnProps) {
           onClick={selectInbox}
           ariaLabel={inbox > 0 ? `Open inbox (${inbox} items)` : 'Open inbox'}
           trailing={inbox > 0 && !inboxActive ? <UnreadBadge count={inbox} /> : undefined}
-        />
-        <NavItem
-          label="Objectives"
-          glyph={<Target size={15} aria-hidden="true" />}
-          active={objectivesActive}
-          onClick={selectObjectivesList}
-          ariaLabel={
-            activeObjectiveCount > 0
-              ? `Open objectives panel (${activeObjectiveCount} on your plate)`
-              : 'Open objectives panel'
-          }
-          trailing={
-            activeObjectiveCount > 0 && !objectivesActive ? (
-              <UnreadBadge count={activeObjectiveCount} />
-            ) : undefined
-          }
         />
         <NavItem
           label="Queue"

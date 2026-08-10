@@ -11,7 +11,7 @@ This app is deliberately small: it's a **host**, not the UI itself. It owns only
 - **Boot / session bootstrap** — resolve the member, then hand off
 - **PWA shell** — installable, offline cache, service worker, Web Push registration
 
-Once authenticated, it mounts `<TeamShell>` from **`csuite-web-ui`** with a same-origin-cookie-authenticated client + the resolved identity. Everything *inside* the team view — chat, objectives, files, members, tools, secrets, roster, composer — lives in `csuite-web-ui`, not here.
+Once authenticated, it mounts `<TeamShell>` from **`csuite-web-ui`** with a same-origin-cookie-authenticated client + the resolved identity. Everything *inside* the team view — chat, spine, files, members, tools, secrets, roster, composer — lives in `csuite-web-ui`, not here.
 
 The SPA mounts at `/` and uses same-origin cookies to authenticate against the broker's API. All routing is signal-driven — no URL router dependency.
 
@@ -66,7 +66,7 @@ apps/web-host/
 └── turbo.json              # declares out-of-tree build output for turbo cache
 ```
 
-The team chat/roster/objectives/files experience itself (transcript, composer,
+The team chat/roster/spine/files experience itself (transcript, composer,
 roster panel, notifications, etc.) lives in `csuite-web-ui` as
 `<TeamShell>`, which this app mounts after the auth gate passes.
 

@@ -1,21 +1,19 @@
 /**
  * Command palette — signal-driven open/close state and fuzzy matching
- * over members, objectives, and threads.
+ * over members and threads.
  *
  * Opens on ⌘K / Ctrl-K. The keydown listener lives in
  * `routes/Shell.tsx` so only the authenticated shell participates.
  */
 
 import { computed, signal } from '@preact/signals';
-import type { Objective, Teammate } from 'csuite-sdk/types';
+import type { Teammate } from 'csuite-sdk/types';
 import { joinedChannels } from './channels.js';
 import { instructions } from './instructions.js';
-import { objectives as objectivesSignal } from './objectives.js';
 import { roster } from './roster.js';
 
 export type PaletteItem =
   | { kind: 'member'; id: string; name: string; label: string; sub: string }
-  | { kind: 'objective'; id: string; objective: Objective; label: string; sub: string }
   | { kind: 'thread-channel'; id: string; slug: string; label: string; sub: string }
   | { kind: 'thread-dm'; id: string; name: string; label: string; sub: string }
   | {
@@ -45,8 +43,8 @@ export function togglePalette(): void {
 
 /**
  * The canonical item list — everything the palette could jump to.
- * Actions with side-effects (create objective, etc.) live in the
- * component and get merged in at render time.
+ * Actions with side-effects live in the component and get merged in
+ * at render time.
  */
 export const paletteSource = computed<PaletteItem[]>(() => {
   const items: PaletteItem[] = [];
@@ -78,15 +76,6 @@ export const paletteSource = computed<PaletteItem[]>(() => {
       name: t.name,
       label: `DM @${t.name}`,
       sub: 'direct message',
-    });
-  }
-  for (const o of objectivesSignal.value) {
-    items.push({
-      kind: 'objective',
-      id: `obj:${o.id}`,
-      objective: o,
-      label: o.title,
-      sub: `${o.status} · assigned to ${o.assignee}`,
     });
   }
   return items;

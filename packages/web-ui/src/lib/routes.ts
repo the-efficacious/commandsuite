@@ -14,15 +14,9 @@
  * Unknown paths resolve to `home` so stale links don't strand users.
  */
 
-export type ProfileTab = 'overview' | 'activity' | 'objectives' | 'files' | 'manage';
+export type ProfileTab = 'overview' | 'activity' | 'files' | 'manage';
 
-export const PROFILE_TABS: readonly ProfileTab[] = [
-  'overview',
-  'activity',
-  'objectives',
-  'files',
-  'manage',
-];
+export const PROFILE_TABS: readonly ProfileTab[] = ['overview', 'activity', 'files', 'manage'];
 
 export type Route =
   | (RouteBase & { kind: 'home' })
@@ -32,9 +26,6 @@ export type Route =
   | (RouteBase & { kind: 'thread-dm'; name: string })
   | (RouteBase & { kind: 'channels-browse' })
   | (RouteBase & { kind: 'channel-create' })
-  | (RouteBase & { kind: 'objectives-list' })
-  | (RouteBase & { kind: 'objective-create' })
-  | (RouteBase & { kind: 'objective-detail'; id: string })
   | (RouteBase & { kind: 'spine-queue' })
   | (RouteBase & { kind: 'spine-board' })
   | (RouteBase & { kind: 'members' })
@@ -85,13 +76,6 @@ export function parseRoute(pathname: string): Route {
 
   if (head === 'dm' && rest.length === 1 && rest[0]) {
     return withTeam({ kind: 'thread-dm', name: rest[0] }, team);
-  }
-
-  if (head === 'objectives') {
-    if (rest.length === 0) return withTeam({ kind: 'objectives-list' }, team);
-    if (rest.length === 1 && rest[0] === 'new') return withTeam({ kind: 'objective-create' }, team);
-    if (rest.length === 1 && rest[0])
-      return withTeam({ kind: 'objective-detail', id: rest[0] }, team);
   }
 
   // The human seat lives at `/spine` (the queue) and `/spine/board`.
@@ -171,12 +155,6 @@ function baseFor(route: Route): string {
       return '/channels';
     case 'channel-create':
       return '/channels/new';
-    case 'objectives-list':
-      return '/objectives';
-    case 'objective-create':
-      return '/objectives/new';
-    case 'objective-detail':
-      return `/objectives/${encodeURIComponent(route.id)}`;
     case 'spine-queue':
       return '/spine';
     case 'spine-board':

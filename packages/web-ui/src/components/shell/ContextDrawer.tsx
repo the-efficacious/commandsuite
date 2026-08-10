@@ -2,8 +2,8 @@
  * ContextDrawer — right-side slide-in for quick-peek details.
  *
  * Phase 1 ships the primitive but nothing uses it. Phase 3 (inbox)
- * and follow-ups will wire content: inbox item preview, objective
- * quick-peek, member hover card expansion.
+ * and follow-ups will wire content: inbox item preview, member hover
+ * card expansion.
  *
  * Behavior:
  *   - When `open` is false, the column takes no space (rendered null).

@@ -25,7 +25,6 @@ import { MemberProfile } from '../src/components/MemberProfile.js';
 import { TeamHome } from '../src/components/TeamHome.js';
 import { __resetClientForTests } from '../src/lib/client.js';
 import { instructions } from '../src/lib/instructions.js';
-import { objectives as objectivesSignal } from '../src/lib/objectives.js';
 import { roster } from '../src/lib/roster.js';
 
 const PACKET: InstructionsResponse = {
@@ -82,14 +81,12 @@ beforeEach(() => {
       }),
     )) as typeof fetch;
   instructions.value = PACKET;
-  objectivesSignal.value = [];
 });
 
 afterEach(() => {
   cleanup();
   instructions.value = null;
   roster.value = null;
-  objectivesSignal.value = [];
 });
 
 describe('TeamHome roster row', () => {

@@ -6,10 +6,8 @@
  *   ├─────────────────────────────────────┤
  *   │ MEMBERS                             │
  *   │ @alice                 profile      │
- *   │ OBJECTIVES                          │
- *   │ Ship the feature    active · alice  │
  *   │ ACTIONS                             │
- *   │ + New objective        create       │
+ *   │ Open queue          the human seat  │
  *   ├─────────────────────────────────────┤
  *   │ ↑↓ MOVE · ↵ OPEN · ESC CLOSE        │
  *   └─────────────────────────────────────┘
@@ -41,18 +39,15 @@ import {
   selectChannel,
   selectDmWith,
   selectMemberProfile,
-  selectObjectiveCreate,
-  selectObjectiveDetail,
   selectSpineBoard,
   selectSpineQueue,
 } from '../lib/view.js';
-import { AtSign, Hash, MessageCircle, Plus, Search, Target } from './icons/index.js';
+import { AtSign, Hash, MessageCircle, Plus, Search } from './icons/index.js';
 
 const KIND_GROUP_LABELS: Record<PaletteItem['kind'], string> = {
   member: 'MEMBERS',
   'thread-channel': 'CHANNELS',
   'thread-dm': 'DIRECT MESSAGES',
-  objective: 'OBJECTIVES',
   action: 'ACTIONS',
 };
 
@@ -97,18 +92,11 @@ export function CommandPalette() {
   const [cursor, setCursor] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  // Actions come from the host context (create objective, etc.) so
-  // they can be permission-gated and always up-to-date with the
+  // Actions come from the host context so they can be
+  // permission-gated and always up-to-date with the
   // router. Kept local to the component instead of in the palette
   // source because they have side effects that need the viewer.
   const actions: PaletteItem[] = [
-    {
-      kind: 'action',
-      id: 'action:new-objective',
-      label: '+ New objective',
-      sub: 'create',
-      run: () => selectObjectiveCreate(),
-    },
     {
       kind: 'action',
       id: 'action:spine-queue',
@@ -193,7 +181,7 @@ export function CommandPalette() {
             ref={inputRef}
             type="text"
             class="jump-input"
-            placeholder="Jump to member, objective, thread…"
+            placeholder="Jump to member, thread…"
             value={query}
             onInput={(e) => {
               paletteQuery.value = (e.currentTarget as HTMLInputElement).value;
@@ -261,9 +249,6 @@ function activate(item: PaletteItem): void {
     case 'thread-dm':
       selectDmWith(item.name);
       return;
-    case 'objective':
-      selectObjectiveDetail(item.objective.id);
-      return;
     case 'action':
       item.run();
       return;
@@ -278,8 +263,6 @@ function kindIcon(kind: PaletteItem['kind']): ComponentChildren {
       return <Hash size={13} />;
     case 'thread-dm':
       return <MessageCircle size={13} />;
-    case 'objective':
-      return <Target size={13} />;
     case 'action':
       return <Plus size={13} />;
   }

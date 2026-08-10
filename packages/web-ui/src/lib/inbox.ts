@@ -1,47 +1,30 @@
 /**
  * Inbox — aggregated "what needs my attention" feed.
  *
- * Pulls from three existing sources:
- *   - Unread threads (primary + DMs) via `messagesByThread` + `lastRead`.
- *   - Objectives assigned to the viewer that are active or blocked.
- *   - Objectives the viewer watches that moved into `blocked`.
+ * Today this is unread threads (primary + DMs) via `messagesByThread`
+ * + `lastRead`.
  *
  * This is a pure computed: no new network traffic. The SSE stream and
- * the existing objective/message signals are authoritative; the inbox
- * is just a view over them.
+ * the existing message signals are authoritative; the inbox is just a
+ * view over them.
  */
 
 import { computed } from '@preact/signals';
-import type { Objective } from 'csuite-sdk/types';
 import { identity } from './identity.js';
 import { DM_PREFIX, isDmThread, messagesByThread, PRIMARY_THREAD } from './messages.js';
-import { objectives as objectivesSignal } from './objectives.js';
 import { lastReadByThread, unreadCount } from './unread.js';
 
-export type InboxItem =
-  | {
-      kind: 'thread-unread';
-      id: string;
-      threadKey: string;
-      title: string;
-      /** The last message's preview, trimmed for the row. */
-      preview: string;
-      /** Timestamp of the most recent unread message (ms). */
-      ts: number;
-      unread: number;
-    }
-  | {
-      kind: 'objective-assigned';
-      id: string;
-      objective: Objective;
-      ts: number;
-    }
-  | {
-      kind: 'objective-watched-blocked';
-      id: string;
-      objective: Objective;
-      ts: number;
-    };
+export interface InboxItem {
+  kind: 'thread-unread';
+  id: string;
+  threadKey: string;
+  title: string;
+  /** The last message's preview, trimmed for the row. */
+  preview: string;
+  /** Timestamp of the most recent unread message (ms). */
+  ts: number;
+  unread: number;
+}
 
 export const inboxItems = computed<InboxItem[]>(() => {
   const id = identity.value;
@@ -66,31 +49,6 @@ export const inboxItems = computed<InboxItem[]>(() => {
       preview: previewOf(latest.body),
       ts: latest.ts,
       unread: count,
-    });
-  }
-
-  // Objectives assigned to the viewer that are still open.
-  for (const o of objectivesSignal.value) {
-    if (o.assignee !== viewer) continue;
-    if (o.status !== 'active' && o.status !== 'blocked') continue;
-    items.push({
-      kind: 'objective-assigned',
-      id: `o:${o.id}`,
-      objective: o,
-      ts: o.updatedAt,
-    });
-  }
-
-  // Objectives I watch that are blocked (someone needs help).
-  for (const o of objectivesSignal.value) {
-    if (o.assignee === viewer) continue;
-    if (o.status !== 'blocked') continue;
-    if (!o.watchers.includes(viewer)) continue;
-    items.push({
-      kind: 'objective-watched-blocked',
-      id: `w:${o.id}`,
-      objective: o,
-      ts: o.updatedAt,
     });
   }
 

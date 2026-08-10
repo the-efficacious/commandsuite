@@ -14,7 +14,7 @@
  * Team-slug prefix: when an embedding host calls
  * `setRouterTeamSlug('acme')`, every outbound `navigate(...)` that
  * didn't already carry a `team` field auto-gets one. The URL shape
- * under a team slug becomes `/t/acme/objectives`, `/t/acme/c/team-chat`,
+ * under a team slug becomes `/t/acme/spine`, `/t/acme/c/team-chat`,
  * etc. — `lib/routes.ts` already handles the prefix. Single-team
  * deployments leave the slug unset so URLs live at the origin root.
  */

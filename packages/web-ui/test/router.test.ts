@@ -17,15 +17,15 @@ describe('router', () => {
   });
 
   it('navigate updates the signal and the URL', () => {
-    navigate({ kind: 'objectives-list' });
-    expect(currentRoute.value).toEqual({ kind: 'objectives-list' });
-    expect(window.location.pathname).toBe('/objectives');
+    navigate({ kind: 'tool-sources' });
+    expect(currentRoute.value).toEqual({ kind: 'tool-sources' });
+    expect(window.location.pathname).toBe('/tools');
   });
 
   it('navigate no-ops when target matches current', () => {
-    navigate({ kind: 'objectives-list' });
+    navigate({ kind: 'tool-sources' });
     const historyLenBefore = window.history.length;
-    navigate({ kind: 'objectives-list' });
+    navigate({ kind: 'tool-sources' });
     expect(window.history.length).toBe(historyLenBefore);
   });
 
@@ -38,21 +38,21 @@ describe('router', () => {
   });
 
   it('popstate updates the signal from the URL', () => {
-    navigate({ kind: 'objectives-list' });
+    navigate({ kind: 'tool-sources' });
     navigate({ kind: 'thread-channel', slug: 'general' });
     expect(currentRoute.value).toEqual({ kind: 'thread-channel', slug: 'general' });
     // Simulate back button: change the URL + dispatch popstate.
-    window.history.replaceState(null, '', '/objectives');
+    window.history.replaceState(null, '', '/tools');
     window.dispatchEvent(new PopStateEvent('popstate'));
-    expect(currentRoute.value).toEqual({ kind: 'objectives-list' });
+    expect(currentRoute.value).toEqual({ kind: 'tool-sources' });
   });
 
   describe('team slug prefix', () => {
     it('setRouterTeamSlug + navigate emits /t/<slug>/... URLs', () => {
       setRouterTeamSlug('acme');
-      navigate({ kind: 'objectives-list' });
-      expect(window.location.pathname).toBe('/t/acme/objectives');
-      expect(currentRoute.value).toEqual({ kind: 'objectives-list', team: 'acme' });
+      navigate({ kind: 'tool-sources' });
+      expect(window.location.pathname).toBe('/t/acme/tools');
+      expect(currentRoute.value).toEqual({ kind: 'tool-sources', team: 'acme' });
     });
 
     it('explicit team on the route overrides the active slug', () => {
@@ -69,7 +69,7 @@ describe('router', () => {
 
     it('clearing the slug returns to origin-rooted URLs', () => {
       setRouterTeamSlug('acme');
-      navigate({ kind: 'objectives-list' });
+      navigate({ kind: 'tool-sources' });
       setRouterTeamSlug(null);
       navigate({ kind: 'members' });
       expect(window.location.pathname).toBe('/members');

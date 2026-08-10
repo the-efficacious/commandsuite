@@ -2231,7 +2231,7 @@ body {
 
 /* Filter tray — tucked between the inspector header and the scroll
  * body. Collapsed-by-default to keep the live tail visually dominant;
- * expanding reveals the kind chips + objective scope picker. */
+ * expanding reveals the kind chips. */
 .activity-filter-tray {
   flex-shrink: 0;
   border-bottom: 1px solid var(--ef-border);

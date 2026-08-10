@@ -27,7 +27,6 @@ import { loadInstructions } from './instructions.js';
 import { appendMessages } from './messages.js';
 import { loadNotificationEndpoints } from './notifications.js';
 import { notifyNewMessage } from './notify.js';
-import { loadObjectives } from './objectives.js';
 import { loadRoster } from './roster.js';
 import { loadSecrets } from './secrets.js';
 import { loadSpineBoard, loadSpineQueue, spineBoardLoaded } from './spine.js';
@@ -113,9 +112,6 @@ export function startSubscribe(options: StartSubscribeOptions): () => void {
         // so backfill paths (which call appendMessages directly) stay
         // silent. Only live WS frames reach here.
         notifyNewMessage(msg);
-        // If this frame carried an objective event, refresh the
-        // objectives signal so the sidebar count + panel stay in
-        // sync with the server's authoritative state.
         const data = msg.data as Record<string, unknown> | undefined;
         if (data && data.kind === 'tool_source') {
           // Registry changes fan out as channel events — re-list so
@@ -135,11 +131,6 @@ export function startSubscribe(options: StartSubscribeOptions): () => void {
           // Same fan-out for the External Notifications registry.
           void loadNotificationEndpoints().catch(() => {
             /* next notification_endpoint event retries */
-          });
-        }
-        if (data && data.kind === 'objective') {
-          void loadObjectives().catch(() => {
-            /* swallow — next event will retry */
           });
         }
         if (data && data.kind === 'spine_injection') {

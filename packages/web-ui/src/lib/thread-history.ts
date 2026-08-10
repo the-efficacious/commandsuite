@@ -69,8 +69,8 @@ function patchState(key: string, patch: Partial<ThreadHistoryState>): void {
  * Build the thread-scoping query for a thread key. DM threads filter
  * by counterpart (`with`); channel threads (including the general /
  * primary thread) filter by channel id. Returns `null` for threads
- * with no server-side history endpoint — objective threads and the
- * self-DM — so callers skip paging cleanly.
+ * with no server-side history endpoint — the self-DM — so callers
+ * skip paging cleanly.
  */
 function queryFor(threadKey: string): HistoryQuery | null {
   if (isDmThread(threadKey)) {

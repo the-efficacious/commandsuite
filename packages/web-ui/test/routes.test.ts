@@ -10,9 +10,6 @@ describe('parseRoute / formatRoute', () => {
     ['/channels', { kind: 'channels-browse' }],
     ['/channels/new', { kind: 'channel-create' }],
     ['/dm/alice', { kind: 'thread-dm', name: 'alice' }],
-    ['/objectives', { kind: 'objectives-list' }],
-    ['/objectives/new', { kind: 'objective-create' }],
-    ['/objectives/abc-123', { kind: 'objective-detail', id: 'abc-123' }],
     ['/spine', { kind: 'spine-queue' }],
     ['/spine/board', { kind: 'spine-board' }],
     ['/members', { kind: 'members' }],
@@ -48,12 +45,12 @@ describe('parseRoute / formatRoute', () => {
   it('falls back to home for unknown paths', () => {
     expect(parseRoute('/nope/weird/path')).toEqual({ kind: 'home' });
     expect(parseRoute('/@')).toEqual({ kind: 'home' });
-    expect(parseRoute('/objectives/abc/extra')).toEqual({ kind: 'home' });
+    expect(parseRoute('/tools/jira/extra')).toEqual({ kind: 'home' });
   });
 
   it('strips duplicate and trailing slashes', () => {
     expect(parseRoute('//inbox//')).toEqual({ kind: 'inbox' });
-    expect(parseRoute('/objectives/')).toEqual({ kind: 'objectives-list' });
+    expect(parseRoute('/tools/')).toEqual({ kind: 'tool-sources' });
   });
 
   it('handles encoded names and paths', () => {
@@ -90,9 +87,9 @@ describe('parseRoute / formatRoute', () => {
     });
 
     it('strips /t/:slug and preserves the rest of the route', () => {
-      expect(parseRoute('/t/alpha/objectives/abc')).toEqual({
-        kind: 'objective-detail',
-        id: 'abc',
+      expect(parseRoute('/t/alpha/tools/jira')).toEqual({
+        kind: 'tool-source-detail',
+        slug: 'jira',
         team: 'alpha',
       });
       expect(parseRoute('/t/beta/@alice/activity')).toEqual({

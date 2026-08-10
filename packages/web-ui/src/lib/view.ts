@@ -37,9 +37,6 @@ export type View =
   | { kind: 'account' }
   | { kind: 'channels-browse' }
   | { kind: 'channel-create' }
-  | { kind: 'objectives-list' }
-  | { kind: 'objective-detail'; id: string }
-  | { kind: 'objective-create' }
   | { kind: 'spine-queue' }
   | { kind: 'spine-board' }
   | { kind: 'member-profile'; name: string; tab: ProfileTab }
@@ -84,7 +81,7 @@ if (typeof window !== 'undefined') {
   });
 
   // The inspector overlay is contextual to a thread. Navigating to
-  // anything else — a panel, the browse page, an objective — should
+  // anything else — a panel, the browse page — should
   // auto-close it so it doesn't reopen inappropriately on the next
   // thread visit. Likewise the navcol drawer collapses on every
   // navigation so a tap on a row doesn't leave the drawer obscuring
@@ -146,12 +143,6 @@ function viewFromRoute(route: Route): View {
       return { kind: 'channels-browse' };
     case 'channel-create':
       return { kind: 'channel-create' };
-    case 'objectives-list':
-      return { kind: 'objectives-list' };
-    case 'objective-create':
-      return { kind: 'objective-create' };
-    case 'objective-detail':
-      return { kind: 'objective-detail', id: route.id };
     case 'spine-queue':
       return { kind: 'spine-queue' };
     case 'spine-board':
@@ -205,9 +196,7 @@ export function selectThread(key: string): void {
     const ch = channelBySlug(id);
     navigate({ kind: 'thread-channel', slug: ch?.slug ?? id });
   }
-  // `obj:<id>` threads don't have a top-level URL — they surface
-  // inside the objective detail view. Ignore the call; callers
-  // asking for such a thread should route to the objective instead.
+  // Any other key scheme has no top-level URL; ignore the call.
   isSidebarOpen.value = false;
 }
 
@@ -243,21 +232,6 @@ export function selectInbox(): void {
 
 export function selectAccount(): void {
   navigate({ kind: 'account' });
-  isSidebarOpen.value = false;
-}
-
-export function selectObjectivesList(): void {
-  navigate({ kind: 'objectives-list' });
-  isSidebarOpen.value = false;
-}
-
-export function selectObjectiveDetail(id: string): void {
-  navigate({ kind: 'objective-detail', id });
-  isSidebarOpen.value = false;
-}
-
-export function selectObjectiveCreate(): void {
-  navigate({ kind: 'objective-create' });
   isSidebarOpen.value = false;
 }
 

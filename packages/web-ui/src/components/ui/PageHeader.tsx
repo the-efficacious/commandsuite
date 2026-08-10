@@ -5,7 +5,7 @@
  *   Title                            [actions]
  *   optional subtitle / description
  *
- * Used by ObjectivesPanel, MembersPanel, RosterPanel, MemberProfile,
+ * Used by MembersPanel, RosterPanel, MemberProfile,
  * etc. Replaces the ad-hoc "eyebrow + h2 + optional subtitle + maybe
  * a button off to the side" lockup that was copy-pasted across panels.
  */

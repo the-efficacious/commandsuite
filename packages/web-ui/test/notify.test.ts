@@ -107,21 +107,6 @@ describe('notifyNewMessage', () => {
     expect(toasts.value[0]?.body).toBe('second');
   });
 
-  it('objective-thread message deep-links to the objective detail', () => {
-    useViewer();
-    notifyNewMessage(msg({ data: { thread: 'obj:123', kind: 'objective' } }));
-    expect(toasts.value).toHaveLength(1);
-    expect(toasts.value[0]?.tag).toBe('msg:obj:123');
-    expect(toasts.value[0]?.title).toBe('build-bot · objective');
-  });
-
-  it('objective-thread message is suppressed when reading that objective', () => {
-    useViewer();
-    navigate({ kind: 'objective-detail', id: '123' });
-    notifyNewMessage(msg({ data: { thread: 'obj:123', kind: 'objective' } }));
-    expect(toasts.value).toHaveLength(0);
-  });
-
   it('empty body falls back to "New activity" (tickle / payloadless push)', () => {
     useViewer();
     notifyNewMessage(msg({ body: '' }));

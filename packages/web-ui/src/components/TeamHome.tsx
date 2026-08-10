@@ -4,7 +4,7 @@
  * Replaces RosterPanel as the default view. Shows:
  *   - Team name + context (the team's "about"), editable in place
  *     by members holding `team.manage`
- *   - At-a-glance stats (active objectives, blocked, total members)
+ *   - At-a-glance stats (members, online)
  *   - Roster — click a row to open the member's profile
  *     (hover card reveals the DM action)
  *
@@ -20,7 +20,6 @@ import { useState } from 'preact/hooks';
 import { getClient } from '../lib/client.js';
 import { initials } from '../lib/initials.js';
 import { instructions, loadInstructions } from '../lib/instructions.js';
-import { objectives } from '../lib/objectives.js';
 import { type PermissionSummary, summarizePermissions } from '../lib/permissions.js';
 import { presenceActivity, presenceCaptureWarning, roster } from '../lib/roster.js';
 import { selectMemberProfile } from '../lib/view.js';
@@ -33,7 +32,6 @@ export interface TeamHomeProps {
 export function TeamHome({ viewer }: TeamHomeProps) {
   const b = instructions.value;
   const r = roster.value;
-  const obj = objectives.value;
 
   if (!b || !r) {
     return <Loading label="Loading team…" />;
@@ -41,8 +39,6 @@ export function TeamHome({ viewer }: TeamHomeProps) {
 
   const connectedByName = new Map<string, Presence>(r.connected.map((a) => [a.name, a]));
   const onlineCount = r.connected.filter((c) => c.connected > 0).length;
-  const activeObjectives = obj.filter((o) => o.status === 'active').length;
-  const blockedObjectives = obj.filter((o) => o.status === 'blocked').length;
 
   return (
     <div
@@ -84,14 +80,6 @@ export function TeamHome({ viewer }: TeamHomeProps) {
         <div class="stat">
           <div class="stat-label">ONLINE</div>
           <div class="stat-value">{onlineCount}</div>
-        </div>
-        <div class="stat">
-          <div class="stat-label">ACTIVE OBJECTIVES</div>
-          <div class="stat-value">{activeObjectives}</div>
-        </div>
-        <div class={`stat${blockedObjectives > 0 ? ' caution' : ''}`}>
-          <div class="stat-label">BLOCKED</div>
-          <div class="stat-value">{blockedObjectives}</div>
         </div>
       </div>
 

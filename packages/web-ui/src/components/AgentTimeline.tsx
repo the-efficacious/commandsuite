@@ -4,10 +4,9 @@
  * Everything here is natively captured by the runner (Claude Code's
  * OTEL export via the broker OTLP ingest, the codex app-server event
  * stream, tool hooks) — there is no network interception. The stream
- * carries five event kinds: `user_prompt` (the prompt that woke a
- * turn), `llm_exchange` (one model turn), `tool_action` (one
- * natively-captured tool run), and the `objective_open` /
- * `objective_close` lifecycle markers.
+ * carries three rendered event kinds: `user_prompt` (the prompt that
+ * woke a turn), `llm_exchange` (one model turn), and `tool_action`
+ * (one natively-captured tool run).
  *
  * THE TURN IS THE SPINE. Each `llm_exchange` renders exactly ONE
  * block — its own response (thinking, text, tool calls) — never
@@ -41,9 +40,6 @@
  *   - `kindFilters` — per-event-kind toggles. Hidden kinds are dropped
  *     before threading.
  *   - `showApiCalls` — toggles the unmatched model-call ghost rows.
- *   - `objectiveFilter` — clip to rows that occurred while a chosen
- *     objective was open (model-call rows clip by the objective's
- *     open→close windows). `null` means "show everything."
  */
 
 import { signal } from '@preact/signals';
@@ -73,17 +69,18 @@ import {
 import type { TurnJoin } from '../lib/trace-join.js';
 import { joinTurns } from '../lib/trace-join.js';
 import { useWindowedList } from '../lib/use-windowed-list.js';
-import { selectObjectiveDetail } from '../lib/view.js';
 import { GenAiMessageBlock, GenAiRequestDetails } from './GenAiBlocks.js';
-import { ArrowUp, ChevronDown, ChevronUp } from './icons/index.js';
+import { ArrowUp, ChevronDown } from './icons/index.js';
 
 type KindFilter = Record<ActivityEvent['kind'], boolean>;
 
 const DEFAULT_FILTERS: KindFilter = {
-  // Run brackets (session_start/session_end) pass the filter but have
-  // no thread renderer yet — buildThread skips kinds it doesn't know.
-  // Rendering them as timeline boundary markers (mirroring the
-  // objective markers) is a follow-up; no chip until then.
+  // `KindFilter` is a Record over the SDK's whole ActivityEvent
+  // vocabulary, so every kind needs an entry even when nothing draws
+  // it. Run brackets (session_start/session_end) and the retired
+  // objective markers pass the filter and then fall through
+  // buildThread, which skips kinds it has no renderer for. No chip
+  // for any of them.
   session_start: true,
   session_end: true,
   objective_open: true,
@@ -102,14 +99,11 @@ const kindFilters = signal<KindFilter>({ ...DEFAULT_FILTERS });
  */
 const showApiCalls = signal(true);
 
-/** null = all activity; otherwise clip to windows where this objective was open. */
-const objectiveFilter = signal<string | null>(null);
-
 // ── Model + tool-name helpers ─────────────────────────────────────
 //
 // Moved to lib/model-format.ts so the shared GenAI block renderers
 // can use them without an import cycle; re-exported here because
-// TracePanel (and tests) import them from this module.
+// tests import them from this module.
 
 export { parseToolName, prettyModel } from '../lib/model-format.js';
 
@@ -169,19 +163,6 @@ type ThreadItem =
       querySource: string | null;
       agentName: string | null;
       usage: GenAiUsage | null;
-    }
-  | {
-      key: string;
-      variant: 'objective-open';
-      ts: number;
-      objectiveId: string;
-    }
-  | {
-      key: string;
-      variant: 'objective-close';
-      ts: number;
-      objectiveId: string;
-      result: 'done' | 'cancelled' | 'reassigned' | 'runner_shutdown';
     }
   | {
       key: string;
@@ -267,23 +248,6 @@ export function buildThread(
           agent: ev.agent ?? null,
         });
         break;
-      case 'objective_open':
-        thread.push({
-          key: `r${row.id}-oo`,
-          variant: 'objective-open',
-          ts: ev.ts,
-          objectiveId: ev.objectiveId,
-        });
-        break;
-      case 'objective_close':
-        thread.push({
-          key: `r${row.id}-oc`,
-          variant: 'objective-close',
-          ts: ev.ts,
-          objectiveId: ev.objectiveId,
-          result: ev.result,
-        });
-        break;
       case 'tool_action': {
         // Folded into a turn's tool_use call card — don't double-draw.
         if (ev.toolUseId !== undefined && toolUseIds.has(ev.toolUseId)) break;
@@ -344,99 +308,19 @@ export function buildThread(
   return thread;
 }
 
-/**
- * Clip the call ledger to the open→close windows of one objective —
- * the model-call analogue of `clipToObjective`. Windows are derived
- * from the FULL row stream (markers must not be pre-filtered away).
- */
-export function clipCallsToObjective(
-  calls: GenAiInferenceSummary[],
-  rows: ActivityRow[],
-  objectiveId: string | null,
-): GenAiInferenceSummary[] {
-  if (objectiveId === null) return calls;
-  const chron = [...rows].sort((a, b) => a.event.ts - b.event.ts);
-  const windows: Array<{ from: number; to: number | null }> = [];
-  let open: number | null = null;
-  for (const row of chron) {
-    const ev = row.event;
-    if (ev.kind === 'objective_open' && ev.objectiveId === objectiveId) {
-      if (open === null) open = ev.ts;
-    } else if (ev.kind === 'objective_close' && ev.objectiveId === objectiveId && open !== null) {
-      windows.push({ from: open, to: ev.ts });
-      open = null;
-    }
-  }
-  if (open !== null) windows.push({ from: open, to: null });
-  return calls.filter((c) =>
-    windows.some((w) => c.ts >= w.from && (w.to === null || c.ts <= w.to)),
-  );
-}
-
-export interface ObjectiveSeen {
-  id: string;
-  result: string | null;
-}
-
-/** Objectives that appeared in the row stream, first-seen order. */
-export function objectivesSeen(rows: ActivityRow[]): ObjectiveSeen[] {
-  const chron = [...rows].sort((a, b) => a.event.ts - b.event.ts);
-  const out = new Map<string, ObjectiveSeen>();
-  for (const row of chron) {
-    const ev = row.event;
-    if (ev.kind === 'objective_open' && !out.has(ev.objectiveId)) {
-      out.set(ev.objectiveId, { id: ev.objectiveId, result: null });
-    } else if (ev.kind === 'objective_close') {
-      const entry = out.get(ev.objectiveId);
-      if (entry) entry.result = ev.result;
-      else out.set(ev.objectiveId, { id: ev.objectiveId, result: ev.result });
-    }
-  }
-  return [...out.values()];
-}
-
-/**
- * Clip rows to windows where `objectiveId` was open. Open and close
- * markers for the target objective are always included; anything
- * strictly between a matching open and its close (non-inclusive on
- * the far side of interleaved opens for other objectives) is kept.
- * Input and output are oldest-first.
- */
-export function clipToObjective(rows: ActivityRow[], objectiveId: string | null): ActivityRow[] {
-  if (objectiveId === null) return rows;
-  const chron = [...rows].sort((a, b) => a.event.ts - b.event.ts);
-  const out: ActivityRow[] = [];
-  let active = false;
-  for (const row of chron) {
-    const ev = row.event;
-    if (ev.kind === 'objective_open' && ev.objectiveId === objectiveId) {
-      active = true;
-      out.push(row);
-    } else if (ev.kind === 'objective_close' && ev.objectiveId === objectiveId) {
-      active = false;
-      out.push(row);
-    } else if (active) {
-      out.push(row);
-    }
-  }
-  return out;
-}
-
 // ── Rendering ────────────────────────────────────────────────────
 
 export function AgentTimeline() {
   const rows = memberActivityRows.value;
   const connected = memberActivityConnected.value;
   const filters = kindFilters.value;
-  const objFilter = objectiveFilter.value;
 
   // Mirror TimelineBody's filter pipeline so the eyebrow count
-  // reflects what the user actually sees rendered. Memoized — the
-  // clip walks + sorts the whole row list, and this component
-  // re-renders on every arriving row.
+  // reflects what the user actually sees rendered. Memoized — this
+  // component re-renders on every arriving row.
   const filteredCount = useMemo(
-    () => clipToObjective(rows, objFilter).filter((row) => filters[row.event.kind]).length,
-    [rows, objFilter, filters],
+    () => rows.filter((row) => filters[row.event.kind]).length,
+    [rows, filters],
   );
 
   return (
@@ -463,30 +347,22 @@ export function AgentTimeline() {
  */
 export function timelineFilterSummary(): string | null {
   const filters = kindFilters.value;
-  const obj = objectiveFilter.value;
   const calls = showApiCalls.value;
   const onCount = (Object.values(filters) as boolean[]).filter(Boolean).length + (calls ? 1 : 0);
   const total = Object.keys(filters).length + 1;
-  const parts: string[] = [];
-  if (onCount < total) parts.push(`${onCount} of ${total} kinds`);
-  if (obj !== null) parts.push(`scope: ${obj}`);
-  return parts.length > 0 ? parts.join(' · ') : null;
+  if (onCount < total) return `${onCount} of ${total} kinds`;
+  return null;
 }
 
 /**
- * Filter chip bar + scope picker. Pure presentation around the
- * `kindFilters` and `objectiveFilter` signals; either consumer
- * (member-profile card or right-rail inspector) renders this where
- * makes sense in their layout.
+ * Filter chip bar. Pure presentation around the `kindFilters` signal;
+ * either consumer (member-profile card or right-rail inspector)
+ * renders this where makes sense in their layout.
  */
 export function TimelineFilters() {
   const filters = kindFilters.value;
-  const objFilter = objectiveFilter.value;
-  const rows = memberActivityRows.value;
-  const objectives = useMemo(() => objectivesSeen(rows), [rows]);
   return (
     <div class="flex items-center gap-2 flex-wrap">
-      {objectives.length > 0 && <ObjectiveSelect objectives={objectives} current={objFilter} />}
       <FilterBar filters={filters} />
     </div>
   );
@@ -505,23 +381,21 @@ export function TimelineBody() {
   const exhausted = memberActivityExhausted.value;
   const filters = kindFilters.value;
   const withApiCalls = showApiCalls.value;
-  const objFilter = objectiveFilter.value;
 
-  // The clip → filter → join → build pipeline is the activity feed's
-  // heavy lifting: each stage sorts the full row list. This component
+  // The filter → join → build pipeline is the activity feed's heavy
+  // lifting: each stage sorts the full row list. This component
   // re-renders on every arriving row, so without memoizing the whole
   // pipeline runs from scratch many times per second on a busy stream.
   // Deps are all signal values with stable identity between unrelated
   // renders.
   const thread = useMemo(() => {
-    const clipped = clipToObjective(rows, objFilter);
-    const filteredRows = clipped.filter((row) => filters[row.event.kind]);
+    const filteredRows = rows.filter((row) => filters[row.event.kind]);
     // The full ledger always joins — turns keep their calls even with
     // ghost rows toggled off; `showApiCalls` only gates whether the
     // unmatched remainder renders.
-    const built = buildThread(filteredRows, clipCallsToObjective(calls, rows, objFilter));
+    const built = buildThread(filteredRows, calls);
     return withApiCalls ? built : built.filter((item) => item.variant !== 'model-call');
-  }, [rows, calls, objFilter, filters, withApiCalls]);
+  }, [rows, calls, filters, withApiCalls]);
 
   // Trailing render window — a long stream expands into many turn
   // blocks (each re-serializing tool payloads). Paint only the tail;
@@ -595,40 +469,11 @@ export function TimelineBody() {
   );
 }
 
-function ObjectiveSelect({
-  objectives,
-  current,
-}: {
-  objectives: ObjectiveSeen[];
-  current: string | null;
-}) {
-  return (
-    <select
-      aria-label="Objective filter"
-      value={current ?? ''}
-      onChange={(e) => {
-        const v = (e.currentTarget as HTMLSelectElement).value;
-        objectiveFilter.value = v === '' ? null : v;
-      }}
-      style="font-family:var(--ef-font-mono);font-size:12px;padding:2px 6px;border:1px solid var(--ef-border);background:var(--ef-surface-raised);color:var(--ef-text);border-radius:var(--ef-radius-sm)"
-    >
-      <option value="">all activity</option>
-      {objectives.map((o) => (
-        <option key={o.id} value={o.id}>
-          {o.id} · {o.result ?? 'open'}
-        </option>
-      ))}
-    </select>
-  );
-}
-
 function FilterBar({ filters }: { filters: KindFilter }) {
   const kinds: Array<{ key: ActivityEvent['kind']; label: string }> = [
     { key: 'user_prompt', label: 'prompts' },
     { key: 'llm_exchange', label: 'LLM' },
     { key: 'tool_action', label: 'tools' },
-    { key: 'objective_open', label: 'obj open' },
-    { key: 'objective_close', label: 'obj close' },
   ];
   const callsOn = showApiCalls.value;
   return (
@@ -666,42 +511,6 @@ function FilterBar({ filters }: { filters: KindFilter }) {
 
 function ThreadItemView({ item }: { item: ThreadItem }) {
   switch (item.variant) {
-    case 'objective-open':
-      return (
-        <div
-          class="flex items-center gap-3"
-          style="font-family:var(--ef-font-mono);font-size:12px;color:var(--ef-text-secondary);border-left:2px solid var(--ef-border-strong);padding:6px 12px"
-        >
-          <span>{formatTs(item.ts)}</span>
-          <ChevronDown size={13} aria-hidden="true" class="flex-shrink-0" />
-          <button
-            type="button"
-            onClick={() => selectObjectiveDetail(item.objectiveId)}
-            style="background:transparent;color:var(--ef-text-secondary);font-family:inherit;font-size:inherit;padding:0"
-          >
-            {item.objectiveId}
-          </button>
-          <span style="color:var(--ef-text-muted)">opened</span>
-        </div>
-      );
-    case 'objective-close':
-      return (
-        <div
-          class="flex items-center gap-3"
-          style="font-family:var(--ef-font-mono);font-size:12px;color:var(--ef-text-muted);border-left:2px solid var(--ef-border);padding:6px 12px"
-        >
-          <span>{formatTs(item.ts)}</span>
-          <ChevronUp size={13} aria-hidden="true" class="flex-shrink-0" />
-          <button
-            type="button"
-            onClick={() => selectObjectiveDetail(item.objectiveId)}
-            style="background:transparent;color:var(--ef-text);font-family:inherit;font-size:inherit;padding:0"
-          >
-            {item.objectiveId}
-          </button>
-          <span>closed ({item.result})</span>
-        </div>
-      );
     case 'prompt':
       return <PromptBlock item={item} />;
     case 'turn':
@@ -1257,5 +1066,4 @@ function formatTs(ts: number): string {
 export function __resetAgentTimelineForTests(): void {
   kindFilters.value = { ...DEFAULT_FILTERS };
   showApiCalls.value = true;
-  objectiveFilter.value = null;
 }

@@ -2,7 +2,7 @@
  * Team-scoped store — structural extension point for multi-team hosts.
  *
  * Today the app uses module-level singletons (`instructions`, `roster`,
- * `messagesByThread`, `objectives`, `lastReadByThread`) because each
+ * `messagesByThread`, `lastReadByThread`) because each
  * shell instance serves one team. That works fine for N=1 but leaks
  * state if a host ever mounts two teams in the same tab.
  *
@@ -21,7 +21,7 @@
  * migration that lands alongside server-side team scoping.
  *
  * When you touch this file: update `lib/instructions.ts`, `lib/roster.ts`,
- * `lib/messages.ts`, `lib/objectives.ts`, and `lib/unread.ts` to
+ * `lib/messages.ts`, `lib/spine.ts`, and `lib/unread.ts` to
  * accept a teamId and return scoped instances. The live stream URL
  * also gains a team segment so reconnects don't cross-subscribe.
  */

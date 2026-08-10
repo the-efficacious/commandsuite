@@ -189,9 +189,9 @@ export function ActivityInspector({ agentName }: ActivityInspectorProps) {
         </button>
       </header>
 
-      {/* Filter tray — collapsed by default. Tucks the kind chips +
-          objective scope picker behind a single-row button so the live
-          tail dominates vertical space. The summary text on the right
+      {/* Filter tray — collapsed by default. Tucks the kind chips
+          behind a single-row button so the live tail dominates
+          vertical space. The summary text on the right
           flags any active filter even when collapsed so the operator
           sees the feed isn't showing everything. */}
       <div class="activity-filter-tray" data-open={filtersOpen ? 'true' : 'false'}>
