@@ -237,6 +237,60 @@ annex.setContractState(_spec.event.id, 'done');
 // @ts-expect-error there is no truncation, no reset, no "start again"
 annex.clear();
 
+// ─── 4. A legacy projection never acquires native status ─────────────
+//
+// §13, as a closed surface rather than a promise. `provenance` is
+// settable ONCE, on the context of the append that creates the event,
+// and there is no second place it appears. The routes enumerated here
+// are the ones somebody writing a migration would reach for by name —
+// a targeted promotion, a generic update of the column, a bulk
+// "finish the migration" sweep.
+//
+// The runtime half is a SQLite trigger (`schema.ts`), because the
+// caller this rule has to survive is a migration holding a raw handle
+// — code the compiler never sees. These two guard different writers
+// and neither one covers the other.
+
+// @ts-expect-error nobody took that photograph; nothing promotes it
+annex.promoteToNative(_spec.event.id);
+
+// @ts-expect-error the caption is not a field anyone edits afterwards
+annex.updateEvent(_spec.event.id, { provenance: 'native' });
+
+// @ts-expect-error a migration does not get to bless its own output
+annex.markImportComplete();
+
+// THE POSITIVE CONTROL. A correction to a legacy fact is not forbidden
+// — it is the ONE honest form the fix can take: a NEW native event that
+// cites or staples to the legacy one, leaving it exactly where it is.
+// Without this line the four negatives above are equally satisfied by a
+// store that refuses to record corrections at all.
+const _nativeCorrectionOfALegacyFact = annex.append(
+  {
+    kind: 'correction',
+    opId: 'op-correct-a-legacy-fact',
+    staplesTo: _spec.event.id,
+    expectedStateRev: 1,
+    cites: [_spec.event.id],
+    body: { correction: 'the imported result named the wrong page' },
+  },
+  { actor: 'lea', provenance: 'native' },
+);
+void _nativeCorrectionOfALegacyFact;
+
+// …and `provenance` is a CLOSED SET, not a free string, so a migration
+// cannot invent a third status that reads as neither. The directive sits
+// on the property rather than the call: it suppresses the next line
+// only, and the error is raised where the literal is.
+annex.append(
+  { kind: 'discussion', body: { body: 'hi' } },
+  {
+    actor: 'lea',
+    // @ts-expect-error 'mostly native' is not one of the two things a record can be
+    provenance: 'migrated-but-basically-native',
+  },
+);
+
 // ─── 5. A probe can author nothing but its two allowed shapes ────────
 //
 // §7 gives the probe engine exactly two writes: the observation a

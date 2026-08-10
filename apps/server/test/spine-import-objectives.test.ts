@@ -764,3 +764,97 @@ describe('an import that cannot be made honest says so', () => {
     expect(race.reason).toBe(`${IMPORT_NOTE} the cancellation recorded no reason`);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────
+
+describe('provenance is permanent', () => {
+  /**
+   * §13: legacy projections NEVER acquire native status. Nobody ever
+   * took that photograph, and no amount of later work makes it so.
+   *
+   * The compile-time half of this rule is in `spine-boundary.test-d.ts`
+   * — there is no `promoteToNative`, no update taking a `provenance`,
+   * no "finish the migration" sweep on the surface at all. That covers
+   * every caller the compiler sees. It does NOT cover the caller this
+   * rule actually has to survive: a migration holding a raw database
+   * handle, written by someone who has read neither §13 nor the comment
+   * on the events table. So the runtime half is a SQLite trigger, and
+   * these tests drive it the way that caller would — by raw SQL.
+   */
+  it('refuses to flip an imported event to native, by any SQL that tries', async () => {
+    await runImport();
+    const before = allEvents();
+    const legacy = before[0] as SpineEvent;
+    expect(legacy.provenance).toBe('legacy_projection');
+
+    // Exactly what a migration would write. The SPECIFIC refusal, by
+    // its own message — a bare `toThrow()` is satisfied by a typo in
+    // the table name just as happily as by the rule under test.
+    expect(() =>
+      db.prepare('UPDATE spine_events SET provenance = ? WHERE id = ?').run('native', legacy.id),
+    ).toThrow(/provenance is permanent/);
+
+    // …and the bulk form, which is how it would really be written.
+    expect(() => db.prepare("UPDATE spine_events SET provenance = 'native'").run()).toThrow(
+      /provenance is permanent/,
+    );
+
+    // Nothing moved. A trigger that aborts after the write would leave
+    // the row changed and the caller merely informed.
+    expect(allEvents()).toEqual(before);
+  });
+
+  it('refuses to rewrite a native event as legacy, the other direction', async () => {
+    await runImport();
+    spine.store.registerSubject({ id: 'repo:acme', type: 'repo' }, 'lea', T0);
+    const native = await spine.append(
+      { kind: 'discussion', body: { body: 'a native remark' } },
+      { actor: 'lea', now: T0 + 50 * DAY },
+    );
+    expect(native.event.provenance).toBe('native');
+
+    // The rule is symmetric: the caption says how the record was
+    // obtained, and a native event relabelled as an import is the same
+    // lie pointing the other way — it launders a live claim into
+    // something a reader will discount as history.
+    expect(() =>
+      db
+        .prepare('UPDATE spine_events SET provenance = ? WHERE id = ?')
+        .run('legacy_projection', native.event.id),
+    ).toThrow(/provenance is permanent/);
+    expect(spine.store.event(native.event.id)?.provenance).toBe('native');
+  });
+
+  it('lets a NATIVE event cite and staple to a legacy one — the positive control', async () => {
+    await runImport();
+    const doc = contractsByTitle().get('Document the webhook inbox') as SpineContract;
+    const legacyDone = eventsOn(doc.id).find(
+      (e) => e.kind === 'lifecycle' && (e.body as { state: string }).state === 'done',
+    ) as SpineEvent;
+
+    // The rule forbids LAUNDERING, not fixing the record. Without this
+    // the three refusals above are equally satisfied by a store that
+    // has stopped accepting corrections entirely.
+    const correction = await spine.append(
+      {
+        kind: 'correction',
+        opId: 'native-correction-of-legacy',
+        staplesTo: legacyDone.id,
+        expectedStateRev: doc.stateRev,
+        cites: [legacyDone.id],
+        body: { correction: 'this shipped to the reference page, not the guide' },
+      },
+      { actor: 'lea', now: T0 + 60 * DAY },
+    );
+
+    // The correction is NATIVE — it is a fresh claim by a live member,
+    // not part of the import — and it stands beside the legacy event
+    // rather than over it. Both provenances, both readable.
+    expect(correction.event.provenance).toBe('native');
+    expect(correction.event.staplesTo).toBe(legacyDone.id);
+    expect(correction.event.cites).toEqual([legacyDone.id]);
+    const stillThere = spine.store.event(legacyDone.id) as SpineEvent;
+    expect(stillThere.provenance, 'the legacy event did not move').toBe('legacy_projection');
+    expect((stillThere.body as { result: string }).result).toBe('reference page published');
+  });
+});

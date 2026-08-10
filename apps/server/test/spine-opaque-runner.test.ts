@@ -131,6 +131,14 @@ describe('the opaque-runner property', () => {
       'curator.ts',
       'egress.ts',
       'errors.ts',
+      // The legacy import and its command. Behind the property
+      // deliberately rather than by default: an importer reads a
+      // database and writes the annex, so it has no business near a
+      // runner's transcript — and "it only needed the trace layer to
+      // work out what happened" is exactly the sentence that would put
+      // it there.
+      'import-objectives-cli.ts',
+      'import-objectives.ts',
       'index.ts',
       'probe-schema.ts',
       'probe-store.ts',

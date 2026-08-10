@@ -102,3 +102,20 @@ nobody chose any of it, because the old system had no such concept.
 
 Legacy projections never acquire native status; a correction to a legacy
 fact is a new native event citing it, never an edit of it.
+
+**The provenance rule is now a constraint, not a claim.** A SQLite
+trigger refuses any update to `spine_events.provenance`, in both
+directions — a legacy projection never acquires native status, and a
+native event is never relabelled as history. The events table's header
+already said nothing updates a truth row and no code path can; that was
+true, and it was a claim about *that module*, which is the wrong scope
+for this rule. The caller it has to survive is a migration holding a raw
+handle, written by someone who has read neither the comment nor §13 —
+and the whole point of the import is that such code exists and will be
+written again. The compile-time half sits beside it: there is no
+`promoteToNative`, no update taking a `provenance`, and no
+"finish-the-migration" sweep on the surface, each asserted with
+`@ts-expect-error` so the absence cannot rot into a comment. Correcting
+a legacy fact is untouched and is the only honest form the fix can take:
+a new native event that cites or staples to the legacy one, leaving it
+exactly where it is.

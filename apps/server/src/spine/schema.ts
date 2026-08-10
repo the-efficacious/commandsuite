@@ -218,6 +218,43 @@ export const SPINE_SCHEMA = `
     updated_at TEXT NOT NULL,
     event_id TEXT NOT NULL
   );
+
+  -- ─── The provenance rule, as a constraint rather than a claim ────
+  --
+  -- §13: legacy projections NEVER acquire native status. Nobody ever
+  -- took that photograph, and no amount of later work makes it so.
+  --
+  -- The header above says nothing updates a truth row and no code path
+  -- can. That was true and it was a CLAIM ABOUT THIS MODULE, which is
+  -- the wrong scope for this particular rule: the case it has to
+  -- survive is a MIGRATION — code that opens this database, is not this
+  -- module, and is written by someone who has read neither the comment
+  -- nor §13. The whole point of the import is that such code exists and
+  -- will be written again. The same reasoning already put the revision
+  -- table's NOT NULLs in the DDL: "a store is reachable by a migration
+  -- that is not".
+  --
+  -- So the rule lives where SQLite enforces it against every writer of
+  -- this file, including one holding a raw handle. 'UPDATE OF
+  -- provenance' is scoped to the column rather than the row, because
+  -- refusing every update to 'spine_events' would be a different (and
+  -- broader) claim than the one §13 makes, and a constraint that
+  -- refuses more than its stated rule is one somebody eventually
+  -- disables wholesale.
+  --
+  -- A CORRECTION TO A LEGACY FACT IS STILL AVAILABLE, and is the only
+  -- honest form it can take: a NEW native event citing or stapling to
+  -- the legacy one. That path is untouched here — cites and staples are
+  -- inserts — which is what keeps this a rule about laundering rather
+  -- than a rule against fixing the record.
+  CREATE TRIGGER IF NOT EXISTS spine_events_provenance_is_permanent
+  BEFORE UPDATE OF provenance ON spine_events
+  BEGIN
+    SELECT RAISE(
+      ABORT,
+      'provenance is permanent: a legacy_projection event never acquires native status, and a native one is never rewritten as legacy. Correct a legacy fact with a NEW native event that cites or staples to it.'
+    );
+  END;
 `;
 
 /**
