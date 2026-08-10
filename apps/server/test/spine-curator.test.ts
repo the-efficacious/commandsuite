@@ -29,7 +29,7 @@
 
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import type { SpineEvent, SpineInjection } from 'csuite-sdk/types';
+import type { SpineContract, SpineEvent, SpineInjection } from 'csuite-sdk/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createCurator } from '../src/spine/index.js';
 import {
@@ -855,6 +855,101 @@ describe('class 3 — silence, and it is silence and not less', () => {
     await harness.curator.sweep();
     expect(sinks.cora?.injections).toHaveLength(baseline);
   });
+
+  it('stays silent on a parked contract with more than a page of lifecycle history', async () => {
+    /**
+     * ADOPTED FROM INDEPENDENT VERIFICATION, inverted — their probe
+     * asserted the DEFECT, so it passed against the broken code and this
+     * one passes against the fixed code.
+     *
+     * The state-at-arrival read walked ONE 500-event page of a
+     * contract's lifecycle history, ascending. Past the page it stopped
+     * early and reported a state the contract had left. Here it reports
+     * `active` for a contract that is genuinely `parked`, so class 3 —
+     * "parked. Nothing. Ever." — produces a delta, and the line it
+     * renders says `parked` in it.
+     *
+     * Reachable without a person: §7's checks append `lifecycle →
+     * active` when they fire, so a flapping probe writes two lifecycle
+     * events per flap. Five hundred is days on one busy contract.
+     */
+    const contract = await authorContract();
+    await app.request(
+      '/spine/curator',
+      authed(CORA, { subscription: { contract, level: 'all' } }, 'PUT'),
+    );
+
+    // 500 legal, non-silencing lifecycle events: active ↔ waiting_on.
+    // Written straight at the append path with the rev tracked locally —
+    // 500 HTTP round trips is not what is under test.
+    let rev = 1;
+    for (let i = 0; i < 250; i++) {
+      await harness.spine.append(
+        {
+          kind: 'lifecycle',
+          opId: `op-wait-${i}`,
+          expectedStateRev: rev++,
+          body: { contract, state: 'waiting_on', member: 'lea' },
+        },
+        { actor: 'andrewjon', now: harness.clock.ms },
+      );
+      await harness.spine.append(
+        {
+          kind: 'lifecycle',
+          opId: `op-back-${i}`,
+          expectedStateRev: rev++,
+          body: { contract, state: 'active' },
+        },
+        { actor: 'andrewjon', now: harness.clock.ms },
+      );
+    }
+    // Not vacuous: a FULL page, with more behind it. Asserting the page
+    // is full is the point — a short page here would mean the fixture
+    // never reached the state it exists to drive.
+    const page = harness.annex.events({ contract, kind: 'lifecycle', limit: 500 });
+    expect(page.events, 'a full page of lifecycle history').toHaveLength(500);
+    expect(page.nextCursor, 'and there is more past it').not.toBeNull();
+
+    // The 501st lifecycle event parks it, past the page.
+    await post(app, '/spine/events', ANDREWJON, {
+      kind: 'lifecycle',
+      opId: 'op-park',
+      expectedStateRev: rev++,
+      body: { contract, state: 'parked', preemptedBy: 'the incident' },
+    });
+    await harness.curator.sweep();
+    expect(
+      (harness.annex.contract(contract) as SpineContract).state,
+      'the contract really is parked',
+    ).toBe('parked');
+    const baseline = sinks.cora?.injections.length ?? 0;
+
+    // CHATTER BETWEEN THE PARK AND THE ACT, so the event immediately
+    // behind the attempt is NOT a lifecycle event. The state at arrival
+    // is the last LIFECYCLE event's, not the last event's, and a read
+    // that took whatever came last would find a discussion body, see no
+    // `state` on it, and call the contract un-silenced.
+    await post(app, '/spine/events', LEA, {
+      kind: 'discussion',
+      body: { contract, body: 'still parked, just noting it' },
+    });
+
+    // An authoritative event on a parked contract. Nothing. Ever.
+    await post(app, '/spine/events', RUNE, {
+      kind: 'attempt',
+      opId: 'op-attempt',
+      expectedStateRev: rev++,
+      revision: observed('sha-parked'),
+      body: { contract, summary: 'poked a parked contract' },
+    });
+    await harness.curator.sweep();
+    expect(sinks.cora?.injections, 'parked is parked at any depth of history').toHaveLength(
+      baseline,
+    );
+    // And named, because the count alone would also pass against a
+    // fixture that silenced the whole tick for some other reason.
+    expect(injectionText(sinks.cora as Sink)).not.toContain('poked a parked contract');
+  });
 });
 
 describe('leases', () => {
@@ -1200,6 +1295,58 @@ describe('the nudge bound holds for a member who has NOT read', () => {
 
   const nudges = async (): Promise<SpineInjection[]> =>
     (await ledger(RUNE)).filter((r) => r.kind === 'recovery_nudge');
+
+  it('sees movement hidden behind a page of chatter', async () => {
+    /**
+     * The sibling of the parked-past-a-page defect, found in the same
+     * sweep and failing the other way. `hasUnreadMovement` read ONE
+     * 500-event page of everything since the member's receipt and asked
+     * whether any of it was authoritative. `discussion` is unlimited and
+     * is what a busy contract fills with, so more than a page of chatter
+     * hid the authoritative event behind it and the member was never
+     * nudged about work they are holding a lease on.
+     *
+     * Silent, and toward SILENCE — the expensive direction, and the one
+     * the whole nudge exists to prevent.
+     */
+    const contract = await authorContract();
+    await get(app, '/spine/orient', RUNE);
+
+    // A page of chatter, authored by somebody else so it proves nobody's
+    // liveness but their own. Straight at the append path: 500 HTTP
+    // round trips is not what is under test.
+    for (let i = 0; i < 500; i++) {
+      await harness.spine.append(
+        { kind: 'discussion', body: { contract, body: `chatter ${i}` } },
+        { actor: 'lea', now: harness.clock.ms },
+      );
+    }
+    // THEN the movement rune is owed, at event 501 since his receipt.
+    await post(app, '/spine/events', LEA, {
+      kind: 'criterion_verdict',
+      opId: 'op-verdict',
+      expectedStateRev: 1,
+      revision: observed('sha-a'),
+      body: { contract, criterion: 'c1', decision: 'unmet', evidence: 'the ETag is missing' },
+    });
+    // Not vacuous: the first page since rune's receipt really is all
+    // chatter, so a single-page read genuinely cannot reach the verdict.
+    const readTo = harness.curatorStore.receipt('rune')?.seq ?? 0;
+    const firstPage = harness.annex.events({ contract, since_seq: readTo, limit: 500 });
+    expect(firstPage.events, 'a full page').toHaveLength(500);
+    expect(
+      firstPage.events.every((e) => e.kind === 'discussion'),
+      'and none of it is authoritative',
+    ).toBe(true);
+
+    harness.clock.ms = T0 + 2 * HOUR;
+    await harness.curator.sweep();
+    const owed = (await ledger(RUNE)).filter((r) => r.kind === 'recovery_nudge');
+    expect(owed, 'the nudge is owed however much chatter is stacked in front of it').toHaveLength(
+      1,
+    );
+    expect(owed[0]?.refs, 'and it names the contract that moved').toContain(contract);
+  });
 
   it('spends ONE nudge across ten ordinary writes while unread', async () => {
     // The regression this pins: `provenLive` re-armed every spent

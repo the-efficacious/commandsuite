@@ -777,12 +777,34 @@ class SpineCurator implements Curator {
     // Out-of-focus is the third silence, applied to nudges as it is to
     // class 2: no nudge about work the team has parked attention on.
     if (focusActive && !focusSet.has(contract.id)) return false;
-    const page = this.annex.events({
-      contract: lease.ref,
-      since_seq: readTo,
-      limit: SWEEP_PAGE_SIZE,
-    });
-    return page.events.some((event) => SPINE_EVENT_CLASSES[event.kind] === 'authoritative');
+    // PAGED, and short-circuiting on the first authoritative event.
+    //
+    // The same defect as `stateBefore`'s, in the other direction and
+    // found in the same sweep: one 500-event page over everything since
+    // the member's receipt, asked "is any of it authoritative". A
+    // contract carrying more than a page of chatter since the member
+    // last read — `discussion` is unlimited and is what a busy contract
+    // fills with — hid the authoritative event behind it, and the member
+    // was never nudged about movement they are holding a lease on.
+    // Silent, and toward SILENCE, which is the expensive direction.
+    //
+    // Bounded by what the member has not read, not by the contract's
+    // history, and the loop stops at the first authoritative event — so
+    // the answer that costs the most pages is the one that is `false`,
+    // which is the answer that spends nothing.
+    let cursor: number | null = readTo;
+    while (cursor !== null) {
+      const page = this.annex.events({
+        contract: lease.ref,
+        since_seq: cursor,
+        limit: SWEEP_PAGE_SIZE,
+      });
+      if (page.events.some((event) => SPINE_EVENT_CLASSES[event.kind] === 'authoritative')) {
+        return true;
+      }
+      cursor = page.nextCursor;
+    }
+    return false;
   }
 
   // ─── Policy as data ─────────────────────────────────────────────
@@ -1012,15 +1034,27 @@ class SpineCurator implements Curator {
     return collected;
   }
 
-  /** A contract's state immediately before `seq`, from its own lifecycle history. */
+  /**
+   * A contract's state immediately before `seq`.
+   *
+   * ONE INDEXED ROW, from the store, and it used to be a forward walk of
+   * one 500-event page. `events()` reads seq ASC, so that page was the
+   * OLDEST 500 lifecycle events on the contract: past them the walk
+   * stopped early and reported a state the contract had left, silently.
+   * The failure was toward NOISE — a genuinely `parked` contract read as
+   * `active`, so class 3's "parked. Nothing. Ever." became a delta whose
+   * own line said `parked` — and §7's checks append `lifecycle → active`
+   * when they fire, so a flapping probe writes two lifecycle events per
+   * flap with nobody involved. Days on one busy contract, not years.
+   *
+   * The rewrite is not "page it to exhaustion": that would make every
+   * tick that touches such a contract read its whole lifecycle history,
+   * which is the shape `focusSetBefore` was just rewritten to remove.
+   * The question is "the LAST lifecycle event below `seq`", and asking
+   * for the last one costs one row.
+   */
   private stateBefore(contractId: string, seq: number): SpineContractState {
-    const page = this.annex.events({ contract: contractId, kind: 'lifecycle', limit: 500 });
-    let state: SpineContractState = 'active';
-    for (const event of page.events) {
-      if (event.seq >= seq) break;
-      state = (event.body as SpineLifecycleBody).state;
-    }
-    return state;
+    return this.annex.contractStateBefore(contractId, seq);
   }
 
   /**

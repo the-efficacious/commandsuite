@@ -183,6 +183,25 @@ export interface AnnexStore {
    * row. Callers know the few contracts they are asking about.
    */
   focusMembership(contractIds: readonly string[]): string[];
+  /**
+   * The state this contract was in immediately before `seq`.
+   *
+   * `lifecycle` is the only kind that writes a contract's state, and a
+   * specification folds one in as `active`, so the answer is the state
+   * carried by the last lifecycle event below `seq` — and `active` when
+   * there is none, which is what the founding fold wrote.
+   *
+   * ASKED FOR THE LAST ONE, which is why it is here rather than walked
+   * by the caller. `events()` reads seq ASC by design, so a caller
+   * looking for the most recent event below a point has to read
+   * everything below that point and keep the last — which is fine on a
+   * contract with three lifecycle events and silently wrong on one with
+   * six hundred, since a bounded page returns the OLDEST of them. §7's
+   * checks append `lifecycle → active` on their own, so a flapping probe
+   * writes that history with nobody involved. The question is "the last
+   * one", and the last one is a single indexed row.
+   */
+  contractStateBefore(contractId: string, seq: number): SpineContractState;
   ask(id: string): SpineAsk | null;
   /** The Guaranteed Pack. The recovery call, and cheap by construction. */
   orient(member: string, now?: number): OrientPack;
@@ -810,6 +829,30 @@ class SqliteAnnexStore implements AnnexWriter {
     return this.rowsIn<FocusRow>('spine_focus', 'contract_id', contractIds)
       .filter((row) => row.lit === 1)
       .map((row) => row.contract_id);
+  }
+
+  /**
+   * The last lifecycle event below `seq`, read DESCENDING and one row
+   * deep. See the interface for why the direction is the whole point.
+   *
+   * Indexed on `spine_event_index (contract_id, seq)`, so this walks the
+   * contract's own events backwards from `seq` and stops at the first
+   * lifecycle one. `active` when the contract has none below `seq` —
+   * that is not a fallback, it is the state the specification fold
+   * wrote.
+   */
+  contractStateBefore(contractId: string, seq: number): SpineContractState {
+    const row = this.db
+      .prepare(
+        `SELECT e.body AS body
+           FROM spine_event_index i JOIN spine_events e ON e.seq = i.seq
+          WHERE i.contract_id = ? AND e.kind = 'lifecycle' AND i.seq < ?
+          ORDER BY i.seq DESC
+          LIMIT 1`,
+      )
+      .get(contractId, seq) as { body: string } | undefined;
+    if (row === undefined) return 'active';
+    return parseJson<SpineLifecycleBody>(row.body, 'body').state;
   }
 
   /**

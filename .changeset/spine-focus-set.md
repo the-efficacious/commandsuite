@@ -130,6 +130,25 @@ subsystem exists to stop:
   and the curator's gate serve; raw membership is the lit row and is
   asked about BY NAME, never listed, so no caller can accidentally take
   a set the size of the team's history and do per-row work on it.
+- **Two phase-3 reads that truncated at a page are fixed here**, found
+  while closing the above and shipping with it because both are live
+  defects rather than carry-forward. `stateBefore` walked one 500-event
+  page of a contract's lifecycle history ASCENDING, so past the page it
+  reported a state the contract had left: a genuinely `parked` contract
+  read as `active`, and class 3's "parked. Nothing. Ever." became a
+  delta whose own line said `parked`. It now asks the store for the LAST
+  lifecycle event below the seq — one indexed row, `contractStateBefore`
+  — rather than reading everything below it and keeping the last, which
+  is what made a bound necessary in the first place. `hasUnreadMovement`
+  read one page since the member's receipt and asked whether any of it
+  was authoritative; more than a page of `discussion` on a contract hid
+  the movement behind it and the member was never nudged. It now pages,
+  short-circuiting on the first authoritative event, so the answer that
+  costs the most is the one that spends nothing.
+
+  Both were reachable without a person: §7's checks append `lifecycle →
+  active` when they fire, so a flapping probe writes two lifecycle
+  events per flap, and `discussion` has no cap at all.
 - **The arms of the at-arrival rule each got their own fixture.** Three
   of the four were unguarded: nearly every fixture swept after each act,
   so the window was one event and the roll-forward never ran, and the

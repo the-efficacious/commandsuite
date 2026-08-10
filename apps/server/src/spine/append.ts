@@ -142,6 +142,7 @@ const READ_METHODS = [
   'contracts',
   'focusSet',
   'focusMembership',
+  'contractStateBefore',
   'ask',
   'orient',
   'queue',
