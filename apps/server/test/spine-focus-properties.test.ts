@@ -44,6 +44,13 @@ let app: CuratorApp['app'];
 beforeEach(async () => {
   harness = makeCuratorApp();
   app = harness.app;
+  // UNSET, not zero. A module-level `let` that survives the test is a
+  // measurement carried into the next one: a case that calls
+  // `expectClass2Silent` without building the world would otherwise be
+  // graded against whatever the previous test happened to owe, and pass
+  // or fail on that. -1 cannot be a delta count, so the assertion below
+  // catches the omission instead of absorbing it.
+  class2Baseline = -1;
   await post(app, '/spine/subjects', LEA, { id: 'repo:acme', type: 'repo' });
 });
 
@@ -116,8 +123,8 @@ async function outOfFocusWorld(): Promise<string> {
   return a;
 }
 
-/** Set by `outOfFocusWorld`: the class-2 traffic the SETUP owed cora. */
-let class2Baseline = 0;
+/** Set by `outOfFocusWorld`: the class-2 traffic the SETUP owed cora. -1 until it is. */
+let class2Baseline = -1;
 
 /**
  * After the act: cora, subscribed to A at `all`, heard nothing NEW about
@@ -125,6 +132,10 @@ let class2Baseline = 0;
  * measurement is the act and only the act.
  */
 async function expectClass2Silent(_a: string): Promise<void> {
+  expect(
+    class2Baseline,
+    'expectClass2Silent measures against a baseline `outOfFocusWorld` sets — this case never built one',
+  ).toBeGreaterThanOrEqual(0);
   await harness.curator.sweep();
   const rows = deltas(await ledger(CORA));
   expect(rows, 'no NEW class-2 delta on the out-of-focus contract').toHaveLength(class2Baseline);

@@ -344,6 +344,49 @@ describe('a lit contract that ends leaves the focus set on every surface', () =>
   });
 });
 
+describe('raw membership, the other half of the pair', () => {
+  /**
+   * `focusSet()` is lit AND non-terminal; `focusMembership()` is lit,
+   * full stop. The pair exists for one question the effective set cannot
+   * answer — was this contract lit WHEN IT ENDED — and the curator asks
+   * it of contracts that ended inside the window it is judging.
+   *
+   * Both halves are asserted, because a read that answered "lit" for
+   * every row it found would satisfy the interesting case and be wrong
+   * about the ordinary one.
+   */
+  it('reports a contract that ended while lit, and no contract that was unlit', () => {
+    const ended = authorContract(1);
+    const unlit = authorContract(2);
+    const live = authorContract(3);
+    const never = authorContract(4);
+    light(ended, 1);
+    light(unlit, 1);
+    unlight(unlit, 2);
+    light(live, 1);
+    annex.append(
+      {
+        kind: 'lifecycle',
+        opId: 'op-end-ended',
+        expectedStateRev: 2,
+        body: { contract: ended, state: 'cancelled', reason: 'the sprint took it' },
+      },
+      { actor: 'andrewjon', now: tick() },
+    );
+
+    // The one the effective set has already forgotten.
+    expect(annex.focusSet(), 'the effective set drops what ended').toEqual([live]);
+    expect(
+      annex.focusMembership([ended, unlit, live, never]).sort(),
+      'raw membership keeps the ended one and drops the unlit one',
+    ).toEqual([ended, live].sort());
+
+    // Scoped to the question asked, and an empty question is answerable.
+    expect(annex.focusMembership([unlit, never])).toEqual([]);
+    expect(annex.focusMembership([])).toEqual([]);
+  });
+});
+
 describe('the focus projection rebuilds identically from the stream', () => {
   it('refolds to the same set, membership and contracts after a varied history', () => {
     const a = authorContract(1);
@@ -366,6 +409,7 @@ describe('the focus projection rebuilds identically from the stream', () => {
     );
 
     const setBefore = annex.focusSet();
+    const membershipBefore = annex.focusMembership([a, b, d]);
     const contractsBefore = annex.contracts();
     // Not vacuous: the stream mixes lights, an unlight, a re-light, and
     // a terminal transition on a lit contract.
@@ -373,8 +417,14 @@ describe('the focus projection rebuilds identically from the stream', () => {
 
     annex.rebuildProjections();
 
-    // Whole values, not spot fields.
+    // Whole values, not spot fields — and BOTH readings of the
+    // projection, since the fold is what makes the raw row survive the
+    // terminal transition that removes d from the effective set.
     expect(annex.focusSet()).toEqual(setBefore);
+    expect(annex.focusMembership([a, b, d])).toEqual(membershipBefore);
+    expect(membershipBefore.sort(), 'and d is in it, having ended while lit').toEqual(
+      [a, b, d].sort(),
+    );
     expect(annex.contracts()).toEqual(contractsBefore);
   });
 });
