@@ -78,3 +78,35 @@ DECISIONS:
 - **Running-dry is edge-triggered from in-memory state**, like the
   sweep cursor: a restart re-reads current emptiness rather than
   re-firing, and an already-empty set says nothing.
+
+Settled during independent verification, and recorded here because a
+decision that lives only in a review comment is the thing this whole
+subsystem exists to stop:
+
+- **One definition of "in focus", applied everywhere.** The listing, the
+  `inFocus` flag and the curator's gate all read `lit ∧ non-terminal`.
+  `inFocus` was raw membership and is now the effective set — a
+  behaviour change on the wire, and the right one: a lit contract that
+  completes can never be unlit (every authoritative act on a terminal
+  contract is refused, `focus` included), so raw membership welded
+  finished work onto the allocator's plate with no act able to clear it,
+  on the path the design calls normal.
+- **Membership is judged AT ARRIVAL, not as of the sweep tick**, exactly
+  as contract state already was. A set read once per tick answers a
+  question about the END of the tick that the events in it were never
+  asked: an event that landed while nothing was lit was retroactively
+  silenced by a later lighting, and the event taking a contract OUT of
+  the set was silenced by its own effect — so the "left focus" delta
+  mostly never fired. A focus event is never silenced by the membership
+  it changes; entering and leaving the push are both news.
+- **The membership read pages to exhaustion.** `events()` walks seq ASC
+  from the beginning, so one page is the OLDEST focus events: a team
+  that had curated past a page would have computed silence against
+  membership frozen at its first sprints. Its neighbour `stateBefore`
+  survives on one page only because it is scoped to a single contract's
+  lifecycle, which is bounded; focus is team-wide and grows for as long
+  as the team curates.
+- **Reading the set is baseline; changing it takes the leaf.** The new
+  `focus_set` tool exists because D9 claims agents plan against the set,
+  and an agent that can only be silenced by a boundary it cannot read is
+  not planning against it.
