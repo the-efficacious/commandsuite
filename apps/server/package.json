@@ -37,7 +37,8 @@
   },
   "bin": {
     "csuite-server": "./dist/index.js",
-    "csuite-connect-platform": "./dist/connect-platform.js"
+    "csuite-connect-platform": "./dist/connect-platform.js",
+    "csuite-import-objectives": "./dist/import-objectives.js"
   },
   "files": [
     "dist",

@@ -108,4 +108,19 @@ export default defineConfig([
     banner: { js: '#!/usr/bin/env node' },
     define,
   },
+  // Third bin: `csuite-import-objectives` — the one-shot import of the
+  // legacy objectives record into the spine's annex. Its own binary
+  // because it is run once, explicitly, by an operator: wiring it into
+  // server startup would run a migration on a schedule nobody chose.
+  {
+    name: 'import-objectives-bin',
+    entry: { 'import-objectives': 'src/import-objectives.ts' },
+    format: ['esm'],
+    dts: false,
+    sourcemap: true,
+    clean: false,
+    target: 'node22',
+    banner: { js: '#!/usr/bin/env node' },
+    define,
+  },
 ]);
