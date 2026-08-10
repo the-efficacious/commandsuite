@@ -266,11 +266,25 @@ describe('who may curate focus, and on what', () => {
   });
 });
 
-describe('the effective focus set vs. raw membership', () => {
-  it('drops a lit contract that goes terminal, while its membership row stays lit', () => {
+describe('a lit contract that ends leaves the focus set on every surface', () => {
+  /**
+   * The blocker this pins, found in verification: a lit contract that
+   * goes terminal can NEVER be unlit — every authoritative act on a
+   * terminal contract is refused, `focus` included — so any surface that
+   * reported raw membership held finished work on the allocator's plate
+   * forever, with no act able to clear it. And completing lit work is
+   * the PRESCRIBED way the set empties, so it was the normal path.
+   *
+   * The fix is one definition of "in focus" everywhere: lit AND
+   * non-terminal. The raw decision survives in the event stream, which
+   * is where the record lives.
+   */
+  it('drops out of focusSet, of inFocus, and of the ?focus=true predicate', () => {
     const c = authorContract();
     light(c, 1); // → state_rev 2, in the set
     expect(annex.focusSet()).toEqual([c]);
+    expect(annex.contract(c)?.inFocus).toBe(true);
+
     annex.append(
       {
         kind: 'lifecycle',
@@ -280,13 +294,53 @@ describe('the effective focus set vs. raw membership', () => {
       },
       { actor: 'andrewjon', now: tick() },
     );
-    // Effective set: empty — a cancelled contract is not travel, so it
-    // leaves the set even though nobody unlit it. This is what lets the
-    // running-dry interrupt fire on a completion, not only an unlight.
-    expect(annex.focusSet()).toEqual([]);
-    // Membership: still lit — the row records the last focus decision,
-    // and nobody unlit it. Attention-silence, not record-absence.
-    expect(annex.contract(c)?.inFocus).toBe(true);
+
+    // All three surfaces agree, because they are one predicate.
+    expect(annex.focusSet(), 'the curator gate').toEqual([]);
+    expect(annex.contract(c)?.inFocus, 'the wire flag').toBe(false);
+    expect(annex.contracts({ focus: true }), "the allocator's plate").toEqual([]);
+
+    // And it cannot be cleared by hand — which is why the flag had to
+    // stop reporting raw membership rather than the unlight being fixed.
+    expectSpineError(
+      () =>
+        annex.append(
+          {
+            kind: 'focus',
+            opId: 'op-unlight-terminal',
+            expectedStateRev: 3,
+            body: { contract: c, lit: false, reason: 'tidy up' },
+          },
+          { actor: 'andrewjon', now: tick() },
+        ),
+      'invalid_transition',
+    );
+
+    // RECORD-HONESTY: the decision to light it is still on the record,
+    // in the events, which is what the record is made of. Attention
+    // silence never costs a photograph.
+    const focusEvents = annex.events({ kind: 'focus' }).events;
+    expect(focusEvents.map((e) => (e.body as { lit: boolean }).lit)).toEqual([true]);
+  });
+
+  it('keeps a NON-terminal lit contract on the plate — the positive control', () => {
+    const live = authorContract(1);
+    const dead = authorContract(2);
+    light(live, 1);
+    light(dead, 1);
+    annex.append(
+      {
+        kind: 'lifecycle',
+        opId: 'op-done-dead',
+        expectedStateRev: 2,
+        body: { contract: dead, state: 'cancelled', reason: 'dropped' },
+      },
+      { actor: 'andrewjon', now: tick() },
+    );
+    // The narrowing removed the dead one and nothing else.
+    expect(annex.focusSet()).toEqual([live]);
+    expect(annex.contracts({ focus: true }).map((c) => c.id)).toEqual([live]);
+    expect(annex.contract(live)?.inFocus).toBe(true);
   });
 });
 

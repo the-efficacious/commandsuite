@@ -726,11 +726,23 @@ class SqliteAnnexStore implements AnnexWriter {
       params.push(query.member, query.member, query.member);
     }
     if (query.focus === true) {
-      // The team's focus set: contracts whose latest focus event is lit.
-      // A subquery rather than a join so the filter reads the same
-      // MEMBERSHIP the `inFocus` flag does — the effective/travelable
-      // narrowing (non-terminal) lives in `focusSet()`, for the curator.
-      where.push('id IN (SELECT contract_id FROM spine_focus WHERE lit = 1)');
+      // The team's focus set, EFFECTIVE: lit AND still travelable. The
+      // same predicate `focusSet()` and `inFocus` use — one definition of
+      // "in focus", so the listing, the flag and the curator's gate
+      // cannot disagree.
+      //
+      // The terminal narrowing is what keeps the allocator's plate from
+      // accumulating the dead. A contract that is lit and then completed
+      // can never be unlit (every authoritative act on a terminal
+      // contract is refused, focus included), so a raw-membership filter
+      // held finished work on the plate FOREVER with no act able to
+      // clear it — and completing lit work is the prescribed way the set
+      // empties, so it was the normal path rather than an edge case.
+      where.push(
+        `id IN (SELECT contract_id FROM spine_focus WHERE lit = 1)
+         AND state NOT IN (${SPINE_TERMINAL_STATES.map(() => '?').join(',')})`,
+      );
+      params.push(...SPINE_TERMINAL_STATES);
     }
     const sql = `SELECT * FROM spine_contracts${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY spec_seq ASC`;
     const rows = this.db.prepare(sql).all(...(params as never[])) as unknown as ContractRow[];
@@ -784,9 +796,19 @@ class SqliteAnnexStore implements AnnexWriter {
     // Focus membership, batched over the whole set — one query for the
     // lit rows rather than one per contract, so the flag costs the same
     // whether the caller asked for one contract or the whole plate.
-    // `inFocus` is raw MEMBERSHIP (latest focus event is lit), not the
-    // effective/travelable set: the display wants "was this lit", and
-    // `focusSet()` applies the non-terminal filter for gating.
+    //
+    // `inFocus` is the EFFECTIVE set — lit AND non-terminal — and is the
+    // same predicate `focusSet()` and `?focus=true` apply. One meaning of
+    // "in focus" on the wire, and it is the one the curator gates on, so
+    // a reader can never be shown a flag that says something the
+    // scheduler does not act on.
+    //
+    // The raw membership row is NOT lost: it survives in `spine_focus`
+    // (who last touched focus, and why) and in the focus events
+    // themselves, which are what the record is made of. What the flag
+    // answers is the question every consumer actually asks — "is this in
+    // the team's focus set right now" — and a completed contract is not
+    // lit for travel however it left.
     const litContracts = new Set(
       this.rowsIn<FocusRow>('spine_focus', 'contract_id', [...new Set(rows.map((r) => r.id))])
         .filter((row) => row.lit === 1)
@@ -832,7 +854,7 @@ class SqliteAnnexStore implements AnnexWriter {
         successor: row.successor,
         stale,
         head: head === null ? null : rowToRevision(head),
-        inFocus: litContracts.has(row.id),
+        inFocus: litContracts.has(row.id) && !TERMINAL.has(row.state as SpineContractState),
       };
     });
   }
