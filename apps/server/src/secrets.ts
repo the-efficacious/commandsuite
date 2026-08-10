@@ -8,7 +8,7 @@
  * the agent child. The value never appears in composed instructions,
  * prompts, or MCP traffic — the agent just finds the variable set.
  *
- * Shares the main `DatabaseSync` handle with channels/objectives.
+ * Shares the main `DatabaseSync` handle with channels/files.
  * Values are KEK-encrypted at rest (`enc-v1:` envelope) and
  * WRITE-ONLY over the wire — no store method returns a value except
  * `resolveFor`, which only the runner-facing resolve endpoint calls.

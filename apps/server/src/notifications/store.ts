@@ -5,7 +5,7 @@
  * queue that backs the `if_offline: queue` / `if_busy: wait`
  * delivery policies.
  *
- * Shares the main `DatabaseSync` handle with channels/objectives —
+ * Shares the main `DatabaseSync` handle with channels/files —
  * endpoints and profiles are config-class; deliveries are bounded by
  * the per-endpoint ingress rate limit.
  *

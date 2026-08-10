@@ -43,7 +43,7 @@ export function openDatabase(path: string): DatabaseSyncInstance {
   // synchronous=NORMAL trades a small theoretical durability window
   // (losing the last-committed txn on a power cut between commit and
   // fsync) for a meaningful throughput win — acceptable for a chat /
-  // objectives / activity workload where we'd rather ship the push
+  // activity workload where we'd rather ship the push
   // and recompute on restart than block on fsync.
   db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA synchronous = NORMAL');

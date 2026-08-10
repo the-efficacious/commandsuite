@@ -48,26 +48,20 @@ import {
   ActivityKindSchema,
   ActivityReportSchema,
   AddChannelMemberRequestSchema,
-  AmendObjectiveRequestSchema,
   AppendSpineEventRequestSchema,
   ApproveEnrollmentRequestSchema,
   BindSecretRequestSchema,
   BindToolSourceRequestSchema,
   BindVariableRequestSchema,
-  CancelObjectiveRequestSchema,
-  CompleteObjectiveRequestSchema,
-  CorrectObjectiveEventRequestSchema,
   CreateChannelRequestSchema,
   CreateMemberRequestSchema,
   CreateNotificationEndpointRequestSchema,
   CreateNotificationProfileRequestSchema,
-  CreateObjectiveRequestSchema,
   CreateSecretRequestSchema,
   CreateToolSourceRequestSchema,
   CreateVariableRequestSchema,
   DeviceAuthorizationRequestSchema,
   DeviceTokenRequestSchema,
-  DiscussObjectiveRequestSchema,
   EditProcessDocumentRequestSchema,
   FsEntrySchema,
   FsMkdirRequestSchema,
@@ -76,7 +70,6 @@ import {
   FsWriteCollisionSchema,
   GetSpineQueueQuerySchema,
   InvokeToolRequestSchema,
-  ListObjectivesQuerySchema,
   ListSpineChecksQuerySchema,
   ListSpineContractsQuerySchema,
   ListSpineEventsQuerySchema,
@@ -87,7 +80,6 @@ import {
   PendingEnrollmentSchema,
   PushPayloadSchema,
   PushSubscriptionPayloadSchema,
-  ReassignObjectiveRequestSchema,
   RegisterSpineSubjectRequestSchema,
   RejectEnrollmentRequestSchema,
   RenameChannelRequestSchema,
@@ -103,15 +95,12 @@ import {
   UpdateMemberRequestSchema,
   UpdateNotificationEndpointRequestSchema,
   UpdateNotificationProfileRequestSchema,
-  UpdateObjectiveRequestSchema,
   UpdateSecretRequestSchema,
   UpdateToolSourceRequestSchema,
   UpdateVariableRequestSchema,
-  UpdateWatchersRequestSchema,
   UploadActivityRequestSchema,
 } from 'csuite-sdk/schemas';
 import type {
-  ActivityEvent,
   ActivityKind,
   AppendSpineEventRequest,
   Attachment,
@@ -123,9 +112,6 @@ import type {
   NotificationEndpointSummary,
   NotificationOverrides,
   NotificationTarget,
-  Objective,
-  ObjectiveEvent,
-  ObjectiveEventKind,
   Permission,
   Role,
   Secret,
@@ -154,13 +140,7 @@ import {
 } from './context-watchdog.js';
 import type { DiagnosticStore } from './diagnostics.js';
 import { type EnrollmentStore, formatUserCode, normalizeUserCode } from './enrollments.js';
-import {
-  basenameOf,
-  type FilesystemStore,
-  FsError,
-  objectiveNamespacePath,
-  type ViewerContext,
-} from './files/index.js';
+import { type FilesystemStore, FsError, type ViewerContext } from './files/index.js';
 import {
   createGenAiCorrelator,
   type GenAiCorrelator,
@@ -193,7 +173,6 @@ import {
   type NotificationsStore,
   toWireDelivery,
 } from './notifications/index.js';
-import { ObjectivesError, type ObjectivesStore } from './objectives.js';
 import { parseOtlpLogs, parseOtlpMetrics } from './otlp-parse.js';
 import { ProcessDocumentError, type ProcessDocumentStore } from './process-document.js';
 import type { PushSubscriptionStore } from './push/store.js';
@@ -253,13 +232,6 @@ export interface AppOptions {
    */
   teamStore: TeamStore;
   /**
-   * Objectives store — the server's authoritative task state. The
-   * `/objectives*` endpoints are registered iff this is provided,
-   * which lets tests opt out of the whole objectives surface when
-   * they're only exercising chat paths.
-   */
-  objectives?: ObjectivesStore;
-  /**
    * Channels store — named-thread metadata + membership. The
    * `/channels*` endpoints are registered iff this is provided. When
    * omitted, the server has no channel concept and team chat collapses
@@ -268,10 +240,10 @@ export interface AppOptions {
   channels?: ChannelStore;
   /**
    * Per-member activity store — append-only timeline of LLM
-   * exchanges, tool actions, and objective lifecycle markers the
+   * exchanges and tool actions the
    * runner ships up via the streaming uploader. The
    * `/members/:name/activity*` endpoints are registered iff this is
-   * provided, same opt-out pattern as `objectives`.
+   * provided, same opt-out pattern as `channels`.
    */
   activityStore?: ActivityStore;
   /**
@@ -279,7 +251,7 @@ export interface AppOptions {
    * HTTP bindings + proxied remote MCP servers). The `/tool-sources*`
    * endpoints are registered iff this is provided, and the instruction packet
    * gains per-member resolved tools. Same opt-out pattern as
-   * `objectives`.
+   * `channels`.
    */
   toolSources?: ToolSourceStore;
   /**
@@ -292,7 +264,7 @@ export interface AppOptions {
    * Secrets registry — broker-held environment secrets the runner
    * injects on the agent child at spawn. The `/secrets*` endpoints
    * are registered iff this is provided. Same opt-out pattern as
-   * `objectives`.
+   * `channels`.
    */
   secrets?: SecretsStore;
   /**
@@ -313,7 +285,7 @@ export interface AppOptions {
    * The team's spine — the append-only annex, its subjects, and the
    * contracts folded out of them. The `/spine*` endpoints are
    * registered iff this is provided, same opt-out pattern as
-   * `objectives`, so a test exercising chat paths carries none of it.
+   * `channels`, so a test exercising chat paths carries none of it.
    *
    * A WRITE PATH rather than a store, and the difference is the
    * invariant: `AnnexWritePath.store` is the read surface and has no
@@ -375,7 +347,7 @@ export interface AppOptions {
    * are registered iff this is provided; `createApp` owns the
    * dispatcher (debounce buffers, wake/idle queue flushes, sweep
    * interval) because the delivery policy needs the in-process
-   * activity tracker. Same opt-out pattern as `objectives`.
+   * activity tracker. Same opt-out pattern as `channels`.
    */
   notifications?: NotificationsStore;
   /**
@@ -554,7 +526,6 @@ const API_PATH_PREFIXES = [
   PATHS.session,
   PATHS.pushVapidPublicKey,
   PATHS.pushSubscriptions,
-  PATHS.objectives,
   // Note: PATHS.enroll (`/enroll`) is intentionally NOT here. The
   // SPA serves the verification page at the same path; only the
   // POST verb is API-routed. The four sub-endpoints below ARE
@@ -658,7 +629,6 @@ export function createApp(options: AppOptions): CreatedApp {
     enrollments,
     sessions,
     teamStore,
-    objectives,
     channels,
     activityStore,
     toolSources,
@@ -1062,7 +1032,7 @@ export function createApp(options: AppOptions): CreatedApp {
   // what makes the strict ripple work with no per-block bookkeeping —
   // a role edit reaches every teammate whose roster line moved, and an
   // edit that rewrites a block to its existing text reaches no one.
-  // One multi-recipient push, same rationale as publishObjectiveEvent.
+  // One multi-recipient push, one message id, one event-log row.
   const publishInstructionsEvent = async (
     changed: readonly InstructionBlockKind[],
     actor: string,
@@ -1407,16 +1377,6 @@ export function createApp(options: AppOptions): CreatedApp {
         runnerVersion = reportedRunnerVersion;
       }
     }
-    // Live open objectives for this member — included in the instruction packet
-    // so the runner can seed its open-plate snapshot (the source for
-    // `context_refresh` re-briefs) and the web UI can render the plate.
-    // Active + blocked are both "on the plate"; done/cancelled drop off.
-    const openObjectives: Objective[] = objectives
-      ? [
-          ...objectives.list({ assignee: member.name, status: 'active' }),
-          ...objectives.list({ assignee: member.name, status: 'blocked' }),
-        ]
-      : [];
     // External-notification doctrine: when any enabled endpoint can
     // reach this member (direct DM target, or a channel target on a
     // channel they belong to), the composed instructions gains the standing
@@ -1442,9 +1402,8 @@ export function createApp(options: AppOptions): CreatedApp {
       brokerVersion: version,
       runnerVersion,
       teammates: teammatesFromMembers(members),
-      openObjectives,
-      // Structured field only — never rendered into the prose (same
-      // staleness rule as openObjectives).
+      openObjectives: [],
+      // Structured field only — never rendered into the prose.
       toolSources: toolSources ? toolSources.resolveFor(member.name) : [],
       // Structured field only, same as toolSources — the runner
       // renders it into fixed context; the broker never folds it into
@@ -2366,7 +2325,7 @@ export function createApp(options: AppOptions): CreatedApp {
      * Recipients for a tool-source change event: the source's visible
      * set (whole team when allMembers, else bound members) plus every
      * `tools.manage` holder (admins observe registry changes the way
-     * `members.manage` holders observe objectives).
+     * `members.manage` holders observe every thread).
      */
     const toolSourceRecipients = (source: ToolSource, extraMember?: string): Set<string> => {
       const names = new Set<string>();
@@ -2390,7 +2349,7 @@ export function createApp(options: AppOptions): CreatedApp {
     ): Promise<void> => {
       const recipients = opts.recipients ?? toolSourceRecipients(source);
       // One multi-recipient push, not a per-target loop — same
-      // rationale as publishObjectiveEvent. Never include credential
+      // rationale as the multi-recipient push. Never include credential
       // material or header names in body or data.
       try {
         await broker.push(
@@ -3230,8 +3189,8 @@ export function createApp(options: AppOptions): CreatedApp {
   // The team's process as one authored document. Reads are open to
   // every member — what binds you is not privileged information.
   // Writes require `process.manage`, a DEDICATED leaf: under this
-  // shape the permission is the entire authority, and "can create an
-  // objective" is not a comparable power to "can rewrite what binds
+  // shape the permission is the entire authority, and "can author a
+  // contract" is not a comparable power to "can rewrite what binds
   // the team".
   if (processDocument) {
     const requireProcessManage = (
@@ -4621,644 +4580,6 @@ export function createApp(options: AppOptions): CreatedApp {
     });
   }
 
-  // ─── Objective endpoints ──────────────────────────────────────────
-  // Registered iff an ObjectivesStore is provided — keeps chat-only
-  // tests clean. Permission guards enforce the following access matrix:
-  //   agent                 — see/update/complete objectives assigned to self
-  //   operator / lead-agent — agent + create + cancel own-originated + see team
-  //   admin                 — any mutation, see everything
-  //
-  // All mutations publish an `ObjectiveEvent` through the broker on
-  // thread key `obj:<id>` so web clients + the link can react in
-  // real time. The publish is fire-and-forget so an SSE failure
-  // never blocks the HTTP response.
-  if (objectives !== undefined) {
-    /**
-     * The set of names that belong to an objective's thread.
-     * Originator + assignee + explicit watchers + every admin
-     * ("admins see everything in their team"). For a `reassigned`
-     * event, also include the previous assignee so they know the
-     * objective left their plate. For a `watcher_removed` event,
-     * also include the removed watcher so they get the exit
-     * notification before the next event skips them entirely.
-     *
-     * This function is reused by the lifecycle-event publisher, the
-     * `/discuss` endpoint, and the `/watchers` endpoint so every
-     * surface that fans out a push uses the same membership rule.
-     */
-    const objectiveThreadMembers = (
-      objective: Objective,
-      extraEvent?: ObjectiveEvent,
-    ): Set<string> => {
-      const names = new Set<string>([objective.assignee, objective.originator]);
-      for (const w of objective.watchers) names.add(w);
-      // Members with `members.manage` are implicit thread participants
-      // on every objective (observable-by-default for admins).
-      for (const m of members.members()) {
-        if (m.permissions.includes('members.manage')) names.add(m.name);
-      }
-      if (extraEvent?.kind === 'reassigned') {
-        const fromCs = extraEvent.payload.from;
-        if (typeof fromCs === 'string') names.add(fromCs);
-      }
-      if (extraEvent?.kind === 'watcher_removed') {
-        const cs = extraEvent.payload.name;
-        if (typeof cs === 'string') names.add(cs);
-      }
-      return names;
-    };
-
-    const publishObjectiveEvent = async (
-      objective: Objective,
-      event: ObjectiveEvent,
-      actor: string,
-    ): Promise<void> => {
-      const threadKey = `obj:${objective.id}`;
-      const primaryTargets = objectiveThreadMembers(objective, event);
-      const body = systemMessageForEvent(objective, event.kind, event);
-      // One multi-recipient push, not a per-target loop — see the
-      // /discuss endpoint for the rationale: a loop mints a distinct
-      // message id per recipient, so a connected web client renders
-      // the event once per other connected thread member.
-      try {
-        await broker.push(
-          {
-            body,
-            level: 'info',
-            // Minimal machine meta: classification + ids for filtering.
-            // The full objective state used to be serialized here as
-            // `data.objective = JSON.stringify(...)`, but that landed
-            // in the agent's channel-event envelope as a noisy XML
-            // attribute. Agents read the human-readable `body` above
-            // and call `objectives_view` for full state when they
-            // need it — one extra tool call on the rare path, clean
-            // events on the common path.
-            data: {
-              kind: 'objective',
-              event: event.kind,
-              objective_id: objective.id,
-              objective_status: objective.status,
-              thread: threadKey,
-              actor,
-            },
-          },
-          { from: actor, recipients: [...primaryTargets] },
-        );
-      } catch (err) {
-        logger.warn('failed to fanout objective event', {
-          objectiveId: objective.id,
-          event: event.kind,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    };
-
-    function mapObjectivesError(err: unknown): { status: number; body: { error: string } } {
-      if (err instanceof ObjectivesError) {
-        const status =
-          err.code === 'not_found'
-            ? 404
-            : err.code === 'terminal' || err.code === 'invalid_transition'
-              ? 409
-              : 400;
-        return { status, body: { error: err.message } };
-      }
-      return {
-        status: 500,
-        body: { error: err instanceof Error ? err.message : String(err) },
-      };
-    }
-
-    // GET /objectives?assignee=&status=
-    //
-    // Agents see objectives they have any relationship with:
-    // assigned, originated, or watching. Admins / operators /
-    // lead-agents see team-wide. When an agent passes an explicit
-    // `assignee` filter, it must match their own name — they can't
-    // fish for other agents' plates. The watching filter has no
-    // equivalent explicit param today; watched objectives appear in
-    // the default list.
-    app.get(PATHS.objectives, auth, (c) => {
-      const member = c.get('member');
-      const raw = {
-        assignee: c.req.query('assignee'),
-        related: c.req.query('related'),
-        status: c.req.query('status'),
-      };
-      const parsed = ListObjectivesQuerySchema.safeParse(raw);
-      if (!parsed.success) {
-        return c.json({ error: 'invalid query', details: parsed.error.issues }, 400);
-      }
-      const filter = parsed.data;
-
-      // Relationship union: assigned OR originated OR watching. Watchers
-      // live in a JSON column, so this is a post-filter rather than a
-      // store predicate — the same shape the plain-member branch has
-      // always used.
-      const relatedTo = (name: string): Objective[] =>
-        objectives
-          .list(filter.status ? { status: filter.status } : {})
-          .filter((o) => o.assignee === name || o.originator === name || o.watchers.includes(name));
-
-      const canListAny = hasPermission(member.permissions, 'objectives.create');
-      if (!canListAny) {
-        if (
-          (filter.assignee && filter.assignee !== member.name) ||
-          (filter.related && filter.related !== member.name)
-        ) {
-          return c.json(
-            { error: 'members without objectives.create may only list their own objectives' },
-            403,
-          );
-        }
-        // Default scope for a plain member: assigned OR originated OR watching.
-        return c.json({ objectives: relatedTo(member.name) });
-      }
-      // `related` is the explicit relationship question and applies to
-      // privileged callers too. Without it a privileged caller keeps the
-      // team-wide view the director dashboard depends on.
-      if (filter.related) {
-        return c.json({ objectives: relatedTo(filter.related) });
-      }
-      return c.json({ objectives: objectives.list(filter) });
-    });
-
-    // GET /objectives/:id
-    //
-    // A thread participant (assignee, originator, watcher) can always
-    // view. Anyone with `objectives.create` can view any.
-    app.get(`${PATHS.objectives}/:id`, auth, (c) => {
-      const member = c.get('member');
-      const id = c.req.param('id');
-      const obj = objectives.get(id);
-      if (!obj) return c.json({ error: `no such objective: ${id}` }, 404);
-      const isParticipant =
-        obj.assignee === member.name ||
-        obj.originator === member.name ||
-        obj.watchers.includes(member.name);
-      if (!isParticipant && !hasPermission(member.permissions, 'objectives.create')) {
-        return c.json(
-          { error: 'not a thread participant; viewing requires objectives.create' },
-          403,
-        );
-      }
-      return c.json({ objective: obj, events: objectives.events(id) });
-    });
-
-    // POST /objectives — requires `objectives.create`.
-    app.post(PATHS.objectives, auth, async (c) => {
-      const member = c.get('member');
-      if (!hasPermission(member.permissions, 'objectives.create')) {
-        return c.json(
-          { error: 'creating objectives requires the objectives.create permission' },
-          403,
-        );
-      }
-      const raw = await c.req.json().catch(() => null);
-      const parsed = CreateObjectiveRequestSchema.safeParse(raw);
-      if (!parsed.success) {
-        return c.json({ error: 'invalid objective payload', details: parsed.error.issues }, 400);
-      }
-      // Assignee must be a known user on the team.
-      if (!members.findByName(parsed.data.assignee)) {
-        return c.json({ error: `unknown assignee: ${parsed.data.assignee}` }, 400);
-      }
-      // Every initial watcher must also resolve — catch typos at
-      // creation time, not on the first fanout attempt.
-      if (Array.isArray(parsed.data.watchers)) {
-        for (const w of parsed.data.watchers) {
-          if (!members.findByName(w)) {
-            return c.json({ error: `unknown watcher: ${w}` }, 400);
-          }
-        }
-      }
-      const createAttachmentsResult = canonicalizeAttachments(
-        parsed.data.attachments,
-        toViewer(member),
-        files,
-      );
-      if (!createAttachmentsResult.ok) {
-        return c.json({ error: createAttachmentsResult.error }, createAttachmentsResult.status);
-      }
-      const inputWithCanonical =
-        createAttachmentsResult.canonical.length > 0
-          ? { ...parsed.data, attachments: createAttachmentsResult.canonical }
-          : parsed.data;
-      try {
-        const { objective: created, events } = objectives.create(inputWithCanonical, member.name);
-        logger.info('objective created', {
-          id: created.id,
-          originator: member.name,
-          assignee: created.assignee,
-          attachments: created.attachments.length,
-        });
-
-        // Mirror each attachment into the objective's own namespace
-        // (`/objectives/<id>/...`) so the file's home is the
-        // objective, not whichever member uploaded it. The originator's
-        // home copy stays put — `copyByBlobRef` shares a single
-        // underlying blob, so bytes aren't duplicated, but each entry
-        // is independently deletable.
-        //
-        // No fallback: if any copy fails, the whole create surfaces
-        // the error. A half-mirrored objective with mixed
-        // namespace/pointer paths is harder to reason about than a
-        // clean retry, and there's no legacy data to coexist with.
-        let finalObjective = created;
-        if (files && created.attachments.length > 0) {
-          const viewer = toViewer(member);
-          const namespacePaths: Attachment[] = created.attachments.map((att) => {
-            const dst = objectiveNamespacePath(created.id, basenameOf(att.path));
-            const copied = files.copyByBlobRef({
-              src: att.path,
-              dst,
-              mimeType: att.mimeType,
-              collision: 'suffix',
-              viewer,
-            });
-            return {
-              path: copied.path,
-              name: copied.name,
-              size: copied.size ?? att.size,
-              mimeType: copied.mimeType ?? att.mimeType,
-            };
-          });
-          finalObjective = objectives.setAttachments(created.id, namespacePaths);
-        }
-        queueMicrotask(() => {
-          for (const ev of events) {
-            void publishObjectiveEvent(finalObjective, ev, member.name);
-          }
-        });
-        return c.json(finalObjective);
-      } catch (err) {
-        const mapped = mapObjectivesError(err);
-        return c.json(mapped.body, mapped.status as 400 | 404 | 409 | 500);
-      }
-    });
-
-    // PATCH /objectives/:id — assignee, or a member with `objectives.cancel`.
-    app.patch(`${PATHS.objectives}/:id`, auth, async (c) => {
-      const member = c.get('member');
-      const id = c.req.param('id');
-      const current = objectives.get(id);
-      if (!current) return c.json({ error: `no such objective: ${id}` }, 404);
-      if (
-        current.assignee !== member.name &&
-        !hasPermission(member.permissions, 'objectives.cancel')
-      ) {
-        return c.json(
-          {
-            error: 'only the assignee or a member with objectives.cancel may update this objective',
-          },
-          403,
-        );
-      }
-      const raw = await c.req.json().catch(() => null);
-      const parsed = UpdateObjectiveRequestSchema.safeParse(raw);
-      if (!parsed.success) {
-        return c.json({ error: 'invalid update payload', details: parsed.error.issues }, 400);
-      }
-      try {
-        const { objective: updated, events } = objectives.update(id, parsed.data, member.name);
-        // `events` can have 0-2 entries: 0 for a no-op (status=current,
-        // no note), 1 for a single status transition or a note-only
-        // update, 2 for a status transition + note in the same call.
-        // Publish each one individually so each landing push carries
-        // its own structured body — the note's note, the block's
-        // block reason, etc.
-        queueMicrotask(() => {
-          for (const ev of events) {
-            void publishObjectiveEvent(updated, ev, member.name);
-          }
-        });
-        return c.json(updated);
-      } catch (err) {
-        const mapped = mapObjectivesError(err);
-        return c.json(mapped.body, mapped.status as 400 | 404 | 409 | 500);
-      }
-    });
-
-    // POST /objectives/:id/complete (assignee only)
-    app.post(`${PATHS.objectives}/:id/complete`, auth, async (c) => {
-      const member = c.get('member');
-      const id = c.req.param('id');
-      const current = objectives.get(id);
-      if (!current) return c.json({ error: `no such objective: ${id}` }, 404);
-      if (current.assignee !== member.name) {
-        return c.json({ error: 'only the assignee may complete this objective' }, 403);
-      }
-      const raw = await c.req.json().catch(() => null);
-      const parsed = CompleteObjectiveRequestSchema.safeParse(raw);
-      if (!parsed.success) {
-        return c.json({ error: 'invalid complete payload', details: parsed.error.issues }, 400);
-      }
-      try {
-        const { objective: updated, events } = objectives.complete(id, parsed.data, member.name);
-        queueMicrotask(() => {
-          for (const ev of events) {
-            void publishObjectiveEvent(updated, ev, member.name);
-          }
-        });
-        return c.json(updated);
-      } catch (err) {
-        const mapped = mapObjectivesError(err);
-        return c.json(mapped.body, mapped.status as 400 | 404 | 409 | 500);
-      }
-    });
-
-    // POST /objectives/:id/cancel — originator, or any member with `objectives.cancel`.
-    app.post(`${PATHS.objectives}/:id/cancel`, auth, async (c) => {
-      const member = c.get('member');
-      const id = c.req.param('id');
-      const current = objectives.get(id);
-      if (!current) return c.json({ error: `no such objective: ${id}` }, 404);
-      const isOriginator = current.originator === member.name;
-      if (!(isOriginator || hasPermission(member.permissions, 'objectives.cancel'))) {
-        return c.json({ error: 'cancel requires originator or objectives.cancel permission' }, 403);
-      }
-      const raw = await c.req.json().catch(() => ({}));
-      const parsed = CancelObjectiveRequestSchema.safeParse(raw);
-      if (!parsed.success) {
-        return c.json({ error: 'invalid cancel payload', details: parsed.error.issues }, 400);
-      }
-      try {
-        const { objective: updated, events } = objectives.cancel(id, parsed.data, member.name);
-        queueMicrotask(() => {
-          for (const ev of events) {
-            void publishObjectiveEvent(updated, ev, member.name);
-          }
-        });
-        return c.json(updated);
-      } catch (err) {
-        const mapped = mapObjectivesError(err);
-        return c.json(mapped.body, mapped.status as 400 | 404 | 409 | 500);
-      }
-    });
-
-    // POST /objectives/:id/amend — requires `objectives.create`.
-    //
-    // The gate is the PERMISSION, not the role. An assignee who holds
-    // `objectives.create` may amend their own contract; that looks
-    // wrong at a glance and is right — the constraint is "can this
-    // member author contracts", not "is this member the executor".
-    app.post(`${PATHS.objectives}/:id/amend`, auth, async (c) => {
-      const member = c.get('member');
-      const id = c.req.param('id');
-      const current = objectives.get(id);
-      if (!current) return c.json({ error: `no such objective: ${id}` }, 404);
-      if (!hasPermission(member.permissions, 'objectives.create')) {
-        return c.json({ error: 'amend requires objectives.create permission' }, 403);
-      }
-      const raw = await c.req.json().catch(() => null);
-      const parsed = AmendObjectiveRequestSchema.safeParse(raw);
-      if (!parsed.success) {
-        return c.json({ error: 'invalid amend payload', details: parsed.error.issues }, 400);
-      }
-      try {
-        const { objective: updated, events } = objectives.amend(id, parsed.data, member.name);
-        queueMicrotask(() => {
-          for (const ev of events) {
-            void publishObjectiveEvent(updated, ev, member.name);
-          }
-        });
-        return c.json(updated);
-      } catch (err) {
-        const mapped = mapObjectivesError(err);
-        return c.json(mapped.body, mapped.status as 400 | 404 | 409 | 500);
-      }
-    });
-
-    // POST /objectives/:id/correct-event — requires `objectives.create`.
-    // Appends a superseding record; the target event is never rewritten.
-    app.post(`${PATHS.objectives}/:id/correct-event`, auth, async (c) => {
-      const member = c.get('member');
-      const id = c.req.param('id');
-      const current = objectives.get(id);
-      if (!current) return c.json({ error: `no such objective: ${id}` }, 404);
-      if (!hasPermission(member.permissions, 'objectives.create')) {
-        return c.json({ error: 'correcting an event requires objectives.create permission' }, 403);
-      }
-      const raw = await c.req.json().catch(() => null);
-      const parsed = CorrectObjectiveEventRequestSchema.safeParse(raw);
-      if (!parsed.success) {
-        return c.json({ error: 'invalid correction payload', details: parsed.error.issues }, 400);
-      }
-      try {
-        const { objective: updated, events } = objectives.correctEvent(
-          id,
-          parsed.data,
-          member.name,
-        );
-        queueMicrotask(() => {
-          for (const ev of events) {
-            void publishObjectiveEvent(updated, ev, member.name);
-          }
-        });
-        return c.json(updated);
-      } catch (err) {
-        const mapped = mapObjectivesError(err);
-        return c.json(mapped.body, mapped.status as 400 | 404 | 409 | 500);
-      }
-    });
-
-    // POST /objectives/:id/reassign — requires `objectives.reassign`.
-    app.post(`${PATHS.objectives}/:id/reassign`, auth, async (c) => {
-      const member = c.get('member');
-      if (!hasPermission(member.permissions, 'objectives.reassign')) {
-        return c.json({ error: 'reassign requires the objectives.reassign permission' }, 403);
-      }
-      const id = c.req.param('id');
-      const raw = await c.req.json().catch(() => null);
-      const parsed = ReassignObjectiveRequestSchema.safeParse(raw);
-      if (!parsed.success) {
-        return c.json({ error: 'invalid reassign payload', details: parsed.error.issues }, 400);
-      }
-      if (!members.findByName(parsed.data.to)) {
-        return c.json({ error: `unknown assignee: ${parsed.data.to}` }, 400);
-      }
-      try {
-        const { objective: updated, events } = objectives.reassign(id, parsed.data, member.name);
-        // Attachment access for the new assignee comes "for free" from
-        // the objective-namespace ACL — they're now a thread member,
-        // so `canRead('/objectives/<id>/...')` returns true via
-        // `isObjectiveMember`. No grant backfill needed.
-        queueMicrotask(() => {
-          for (const ev of events) {
-            void publishObjectiveEvent(updated, ev, member.name);
-          }
-        });
-        return c.json(updated);
-      } catch (err) {
-        const mapped = mapObjectivesError(err);
-        return c.json(mapped.body, mapped.status as 400 | 404 | 409 | 500);
-      }
-    });
-
-    // POST /objectives/:id/watchers
-    //
-    // Add and/or remove watchers on an objective. Permitted to:
-    //   - any admin (team-wide)
-    //   - the originating operator / lead-agent (they own the
-    //     objective they made)
-    // Every name in both `add` and `remove` must resolve to a known
-    // user. Watcher mutations produce `watcher_added` and
-    // `watcher_removed` audit events that fan out to the full
-    // post-change thread membership (plus removed parties so they
-    // get the exit notification).
-    app.post(`${PATHS.objectives}/:id/watchers`, auth, async (c) => {
-      const member = c.get('member');
-      const id = c.req.param('id');
-      const current = objectives.get(id);
-      if (!current) return c.json({ error: `no such objective: ${id}` }, 404);
-
-      const isOriginator = current.originator === member.name;
-      if (!(isOriginator || hasPermission(member.permissions, 'objectives.watch'))) {
-        return c.json(
-          { error: 'watcher changes require originator or objectives.watch permission' },
-          403,
-        );
-      }
-
-      const raw = await c.req.json().catch(() => null);
-      const parsed = UpdateWatchersRequestSchema.safeParse(raw);
-      if (!parsed.success) {
-        return c.json({ error: 'invalid watchers payload', details: parsed.error.issues }, 400);
-      }
-
-      // Validate every name in both lists.
-      for (const cs of parsed.data.add ?? []) {
-        if (!members.findByName(cs)) {
-          return c.json({ error: `unknown watcher: ${cs}` }, 400);
-        }
-      }
-      for (const cs of parsed.data.remove ?? []) {
-        if (!members.findByName(cs)) {
-          return c.json({ error: `unknown watcher: ${cs}` }, 400);
-        }
-      }
-
-      try {
-        const { objective: updated, events } = objectives.updateWatchers(
-          id,
-          parsed.data,
-          member.name,
-        );
-        // Watcher membership changes have no FS-side bookkeeping to do:
-        // attachment access flows from `isObjectiveMember` in the
-        // namespace ACL, so adding a watcher grants access at the
-        // moment the membership lands and removing one revokes it the
-        // moment they're gone. No grant rows to backfill or sweep.
-        queueMicrotask(() => {
-          for (const ev of events) {
-            void publishObjectiveEvent(updated, ev, member.name);
-          }
-        });
-        return c.json(updated);
-      } catch (err) {
-        const mapped = mapObjectivesError(err);
-        return c.json(mapped.body, mapped.status as 400 | 404 | 409 | 500);
-      }
-    });
-
-    // POST /objectives/:id/discuss (thread members only)
-    //
-    // Discussion posts are real team messages with thread key
-    // `obj:<id>`. The post is ONE message delivered to every thread
-    // member via the broker's multi-recipient `recipients` path — the
-    // same path channel posts use. The message lands in the event log
-    // alongside chat, visible in the web UI's inline thread and in
-    // `recent`/`history` for anyone filtering by thread.
-    //
-    // Earlier this looped `broker.push({ to: member })` once per
-    // thread member. Each push minted its own message id, so a
-    // connected member's web client received the post once per *other*
-    // connected member and rendered it that many times (a single
-    // multi-recipient push has one id, which `appendMessages` dedupes).
-    //
-    // The caller itself also receives its own message back — the
-    // `recipients` path always includes the sender. The link's
-    // self-echo suppression DOES apply (agents won't see their own
-    // objective-discussion posts on the live stream — same as
-    // `broadcast`/`send`); the web client still renders its own posts
-    // because the web SSE handler does NOT suppress self-echoes.
-    app.post(`${PATHS.objectives}/:id/discuss`, auth, async (c) => {
-      const member = c.get('member');
-      const id = c.req.param('id');
-      const objective = objectives.get(id);
-      if (!objective) return c.json({ error: `no such objective: ${id}` }, 404);
-
-      const members = objectiveThreadMembers(objective);
-      if (!members.has(member.name)) {
-        return c.json(
-          { error: `user '${member.name}' is not a member of objective ${id}'s thread` },
-          403,
-        );
-      }
-
-      const raw = await c.req.json().catch(() => null);
-      const parsed = DiscussObjectiveRequestSchema.safeParse(raw);
-      if (!parsed.success) {
-        return c.json({ error: 'invalid discuss payload', details: parsed.error.issues }, 400);
-      }
-
-      const discussAttachmentsResult = canonicalizeAttachments(
-        parsed.data.attachments,
-        toViewer(member),
-        files,
-      );
-      if (!discussAttachmentsResult.ok) {
-        return c.json({ error: discussAttachmentsResult.error }, discussAttachmentsResult.status);
-      }
-      const discussAttachments = discussAttachmentsResult.canonical;
-
-      const threadKey = `obj:${id}`;
-      let canonical: Message | null = null;
-      try {
-        // Single multi-recipient push: one message id, one event-log
-        // row, delivered live to every connected thread member (and the
-        // sender). Offline members are dropped silently by the broker,
-        // exactly as the old per-target `hasMember` skip did.
-        const result = await broker.push(
-          {
-            body: parsed.data.body,
-            title: parsed.data.title ?? null,
-            level: 'info',
-            data: {
-              kind: 'objective_discuss',
-              objective_id: id,
-              thread: threadKey,
-            },
-            ...(discussAttachments.length > 0 ? { attachments: discussAttachments } : {}),
-          },
-          { from: member.name, recipients: [...members] },
-        );
-        canonical = result.message;
-      } catch (err) {
-        logger.warn('failed to fanout objective discuss', {
-          objectiveId: id,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-
-      // Materialize grants for every thread member (minus the owner,
-      // filtered inside files.grant). Use the message id so agents and
-      // the Files panel can trace the grant back to a specific post.
-      if (files && discussAttachments.length > 0 && canonical) {
-        grantAttachmentsTo(files, discussAttachments, members, canonical.id, logger);
-      }
-
-      if (!canonical) {
-        // Shouldn't happen — the caller is at least a member, and
-        // `broker.hasMember` should be true for any active name.
-        // Return 202 semantics as 200 with an empty-ish body rather
-        // than faking a Message shape.
-        return c.json({ error: 'no thread members are currently registered with the broker' }, 503);
-      }
-      return c.json(canonical);
-    });
-  }
-
   // `/subscribe` is a WebSocket endpoint — the browser / SDK open a
   // WS for their own member, and the server pipes every broker push
   // targeting them over `ws.send` as a JSON text frame. The pre-check
@@ -5344,12 +4665,8 @@ export function createApp(options: AppOptions): CreatedApp {
           // started messaging teammates. The reframed version is
           // explicit that it's a system notice, not a ping.
           const tokenId = c.get('tokenId');
-          if (objectives && tokenId !== null) {
-            const active = [
-              ...objectives.list({ assignee: member.name, status: 'active' }),
-              ...objectives.list({ assignee: member.name, status: 'blocked' }),
-            ];
-            const notice = composeSessionOnlineMessage(member.name, active.length);
+          if (tokenId !== null) {
+            const notice = composeSessionOnlineMessage(member.name);
             void broker.push(
               { to: member.name, body: notice.body, title: notice.title, level: 'info' },
               { from: 'csuite' },
@@ -5442,7 +4759,7 @@ export function createApp(options: AppOptions): CreatedApp {
 
   // ─── Agent activity stream (registered iff `activityStore` is set) ──
   //
-  // The runner streams decoded HTTP exchanges + objective lifecycle
+  // The runner streams decoded HTTP exchanges + tool-call
   // markers here as they happen. Three endpoints:
   //
   //   POST /members/:name/activity          — self upload only
@@ -5482,14 +4799,6 @@ export function createApp(options: AppOptions): CreatedApp {
       }
       try {
         const rows = activityStore.append(name, parsed.data.events);
-
-        // Objective context watchdog: after appending, check whether
-        // any llm_exchange events are missing active objective IDs
-        // from their context. If so, push a reminder so the agent
-        // picks the objective back up.
-        if (objectives) {
-          checkObjectiveContext(parsed.data.events, name, objectives, broker, logger);
-        }
 
         // Same rule: an empty accepted set exercises no write.
         if (rows.length > 0) diagnostics?.emit.activityAppended(name);
@@ -6779,85 +6088,13 @@ export function createApp(options: AppOptions): CreatedApp {
   };
 }
 
-/**
- * Objective context watchdog — scans uploaded LLM exchanges for
- * active objective IDs. If an objective is active for this user but
- * its ID doesn't appear anywhere in the exchange's system prompt or
- * messages, the agent has lost context (compaction, long session).
- * Pushes a reminder through the broker so the agent picks it back up.
- *
- * Debounced per user: only fires once per batch of uploads, and
- * only for the most recent exchange (checking every exchange in a
- * batch would spam on fast-uploading agents).
- */
-const watchdogLastFired = new Map<string, number>();
-const WATCHDOG_COOLDOWN_MS = 5 * 60 * 1000;
-
-function checkObjectiveContext(
-  events: ActivityEvent[],
-  name: string,
-  objectivesStore: ObjectivesStore,
-  broker: Broker,
-  logger: Logger,
-): void {
-  // Only inspect the most recent llm_exchange in this batch.
-  const llmEvent = events.findLast((e) => e.kind === 'llm_exchange');
-  if (llmEvent?.kind !== 'llm_exchange') return;
-
-  const active = [
-    ...objectivesStore.list({ assignee: name, status: 'active' }),
-    ...objectivesStore.list({ assignee: name, status: 'blocked' }),
-  ];
-  if (active.length === 0) return;
-
-  // Build a string from the full request context the agent sent to
-  // the LLM: system prompt + all text content blocks.
-  const entry = llmEvent.entry;
-  const parts: string[] = [];
-  if (entry.request.system) parts.push(entry.request.system);
-  for (const m of entry.request.messages) {
-    for (const block of m.content) {
-      if ('text' in block && typeof block.text === 'string') {
-        parts.push(block.text);
-      }
-    }
-  }
-  const contextText = parts.join(' ');
-
-  const now = Date.now();
-  const missing = active.filter((o) => {
-    if (contextText.includes(o.id)) return false;
-    const key = `${name}:${o.id}`;
-    const last = watchdogLastFired.get(key) ?? 0;
-    return now - last > WATCHDOG_COOLDOWN_MS;
-  });
-  if (missing.length === 0) return;
-
-  const lines = missing.map((o) => `  ${o.id}: ${o.title}\n    outcome: ${o.outcome}`);
-  const body =
-    `You have ${missing.length} active objective(s) that are no longer in your context. ` +
-    `Here they are — call \`objectives_view\` for full details:\n${lines.join('\n')}`;
-
-  for (const o of missing) watchdogLastFired.set(`${name}:${o.id}`, now);
-
-  void broker.push(
-    { to: name, body, title: 'objective context reminder', level: 'notice' },
-    { from: 'csuite' },
-  );
-  logger.info('objective context watchdog fired', {
-    name,
-    missing: missing.map((o) => o.id),
-  });
-}
-
 /** Re-export so `LoadedMember` consumers don't have to dig into members.ts. */
 export type { LoadedMember };
 
 /**
  * Validate + canonicalize a list of attachment claims. Server
  * re-derives name/size/mime from the stored entry so the caller
- * can't lie. Used by `/push`, `/objectives` create, and
- * `/objectives/:id/discuss` so every attachment-bearing path
+ * can't lie. Used by `/push` so every attachment-bearing path
  * shares the same resolver.
  *
  *   result.error      — a human-readable explanation; set iff
@@ -6975,24 +6212,33 @@ function toViewer(member: LoadedMember): ViewerContext {
  *   - "system notice" framing so the agent knows it's machine-emitted.
  *   - "no acknowledgement required" so the agent doesn't generate a
  *     reply turn just to say "got it".
- *   - The current plate count, so the agent has enough context to
- *     decide whether `objectives_list` is worth a tool call right now.
  *
- * Pure: takes the member name and the count of active+blocked
- * objectives, returns body/title. Tested directly.
+ * IT NO LONGER CARRIES A PLATE COUNT, and the omission is the point
+ * rather than a casualty of the objectives removal. The notice used to
+ * count the member's active and blocked objectives and push the number
+ * — a derived value, computed at connect time, stale the moment
+ * anything moved, and spent out of the member's context whether or not
+ * they needed it. §10: status is PULLED state, and the system never
+ * spends a member's budget on ceremony.
+ *
+ * `orient` is what replaces it, and it is strictly better at the job:
+ * it is the cheapest call in the surface by construction, it is never
+ * refused, and it returns the plate AS IT IS AT THE MOMENT THE AGENT
+ * ASKS rather than as it was when the socket opened. So the notice
+ * names the call instead of pre-answering it.
+ *
+ * Pure: takes the member name, returns body/title. Tested directly.
  */
-export function composeSessionOnlineMessage(
-  memberName: string,
-  activeObjectiveCount: number,
-): { title: string; body: string } {
-  const plate =
-    activeObjectiveCount > 0
-      ? `You have ${activeObjectiveCount} active objective(s) on your plate — call \`objectives_list\` to see them.`
-      : 'No active objectives are assigned to you right now.';
+export function composeSessionOnlineMessage(memberName: string): {
+  title: string;
+  body: string;
+} {
   const body =
-    `Connected to csuite as ${memberName}. ${plate} ` +
+    `Connected to csuite as ${memberName}. ` +
     'This is a system notice marking the start of a runtime session — no acknowledgement is required. ' +
-    'Resume any in-progress work, address open objectives, or stand by for new direction as appropriate.';
+    'Call `orient` to pick up your current plate — what is assigned to you, what is waiting on ' +
+    'you, and anything that moved while you were away. Then resume any in-progress work, address ' +
+    'open contracts, or stand by for new direction as appropriate.';
   return {
     title: 'csuite session online',
     body,
@@ -7057,153 +6303,6 @@ function nodeStreamToWebStream(stream: Readable): ReadableStream<Uint8Array> {
 function encodeFilenameForHeader(name: string): string {
   // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional — strip control chars from header values
   return name.replace(/[\x00-\x1f"\\]/g, '_');
-}
-
-/**
- * Render the human-readable body for a lifecycle event's channel push.
- * This is what the agent actually reads in its channel envelope — it
- * has to carry enough structured context that the agent can act on
- * the event without immediately calling `objectives_view`. Kept out of
- * the store so the store stays free of wire-format concerns.
- *
- * Format: a one-line header identifying the event, followed by a
- * structured block of `key: value` lines for the fields the agent
- * cares about. The lines are plain text (no JSON, no XML) so they
- * flow naturally in the agent's context window alongside chat.
- */
-function systemMessageForEvent(
-  objective: Objective,
-  kind: ObjectiveEventKind,
-  event: ObjectiveEvent | undefined,
-): string {
-  const header = `[objective ${kind}] ${objective.id}`;
-
-  switch (kind) {
-    case 'assigned': {
-      return [
-        header,
-        `title:      ${objective.title}`,
-        `outcome:    ${objective.outcome}`,
-        `assignee:   ${objective.assignee}`,
-        `originator: ${objective.originator}`,
-        `status:     ${objective.status}`,
-        objective.body ? `body:       ${objective.body}` : null,
-      ]
-        .filter((l): l is string => l !== null)
-        .join('\n');
-    }
-    case 'blocked': {
-      const reason =
-        typeof event?.payload.reason === 'string' ? event.payload.reason : '(no reason given)';
-      return [
-        header,
-        `title:    ${objective.title}`,
-        `assignee: ${objective.assignee}`,
-        `reason:   ${reason}`,
-      ].join('\n');
-    }
-    case 'unblocked': {
-      return [
-        header,
-        `title:    ${objective.title}`,
-        `assignee: ${objective.assignee}`,
-        `status:   active (resumed)`,
-      ].join('\n');
-    }
-    case 'completed': {
-      return [
-        header,
-        `title:    ${objective.title}`,
-        `outcome:  ${objective.outcome}`,
-        `assignee: ${objective.assignee}`,
-        `result:   ${objective.result ?? ''}`,
-      ].join('\n');
-    }
-    case 'cancelled': {
-      const reason =
-        typeof event?.payload.reason === 'string' ? event.payload.reason : '(no reason given)';
-      return [
-        header,
-        `title:    ${objective.title}`,
-        `assignee: ${objective.assignee}`,
-        `reason:   ${reason}`,
-      ].join('\n');
-    }
-    case 'reassigned': {
-      const from = typeof event?.payload.from === 'string' ? event.payload.from : '(unknown)';
-      const to = typeof event?.payload.to === 'string' ? event.payload.to : objective.assignee;
-      return [
-        header,
-        `title:   ${objective.title}`,
-        `outcome: ${objective.outcome}`,
-        `from:    ${from}`,
-        `to:      ${to}`,
-      ].join('\n');
-    }
-    case 'watcher_added': {
-      const cs = typeof event?.payload.name === 'string' ? event.payload.name : '(unknown)';
-      return [
-        header,
-        `title:    ${objective.title}`,
-        `outcome:  ${objective.outcome}`,
-        `watcher:  ${cs}`,
-        `status:   ${objective.status}`,
-      ].join('\n');
-    }
-    case 'watcher_removed': {
-      const cs = typeof event?.payload.name === 'string' ? event.payload.name : '(unknown)';
-      return [header, `title:   ${objective.title}`, `watcher: ${cs}`].join('\n');
-    }
-    case 'amended': {
-      // The agent executing the contract has to learn that it moved,
-      // and — because `disposition` decides whether work already done
-      // is still valid — has to learn which kind of change it was
-      // WITHOUT opening the objective. A `correction` means it was
-      // never validly held to the old text; a `scope_change` is a new
-      // demand on work already underway.
-      const fields = Array.isArray(event?.payload.fields)
-        ? (event.payload.fields as string[]).join(', ')
-        : '(unknown)';
-      const disposition =
-        typeof event?.payload.disposition === 'string' ? event.payload.disposition : '(unstated)';
-      const reason =
-        typeof event?.payload.reason === 'string' ? event.payload.reason : '(no reason given)';
-      const version =
-        typeof event?.payload.version === 'number'
-          ? event.payload.version
-          : objective.outcomeVersion;
-      return [
-        header,
-        `title:       ${objective.title}`,
-        `changed:     ${fields}`,
-        `disposition: ${disposition}${
-          disposition === 'correction'
-            ? ' (retroactive — work was never validly held to the prior text)'
-            : disposition === 'scope_change'
-              ? ' (forward-only — work already underway finishes under the prior text)'
-              : ''
-        }`,
-        `version:     ${version}`,
-        `reason:      ${reason}`,
-        `outcome:     ${objective.outcome}`,
-      ].join('\n');
-    }
-    case 'event_corrected': {
-      const correctedKind =
-        typeof event?.payload.eventKind === 'string' ? event.payload.eventKind : '(unknown)';
-      const correction =
-        typeof event?.payload.correction === 'string' ? event.payload.correction : '';
-      const reason =
-        typeof event?.payload.reason === 'string' ? event.payload.reason : '(no reason given)';
-      return [
-        header,
-        `title:      ${objective.title}`,
-        `corrects:   ${correctedKind}`,
-        `correction: ${correction}`,
-        `reason:     ${reason}`,
-      ].join('\n');
-    }
-  }
 }
 
 /**

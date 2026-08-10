@@ -10,7 +10,7 @@
  *     client; upstream tools are discovered into `mcp_tools_cache`
  *     and relayed.
  *
- * Shares the main `DatabaseSync` handle with channels/objectives.
+ * Shares the main `DatabaseSync` handle with channels/files.
  * Credentials are KEK-encrypted at rest (`enc-v1:` envelope) and
  * WRITE-ONLY over the wire — no store method returns the secret
  * except `getCredential`, which only the invoke path calls.

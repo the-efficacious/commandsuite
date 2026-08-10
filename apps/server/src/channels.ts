@@ -1,7 +1,7 @@
 /**
  * Channels store — SQLite-backed CRUD + membership for named team channels.
  *
- * Sits alongside the event log and objectives store, sharing the same
+ * Sits alongside the event log and the spine's annex, sharing the same
  * `DatabaseSync` handle. Channels are Slack-style named threads that
  * partition team chat: any team member can create one, the creator
  * becomes its admin, and members explicitly join (the lone exception
@@ -435,6 +435,6 @@ export function createSqliteChannelStore(db: DatabaseSyncInstance): ChannelStore
 
 function generateChannelId(): string {
   // Web-Crypto UUID v4 — short, unique, opaque. Same approach as
-  // generateObjectiveId so id formats stay consistent across stores.
+  // the other id generators so formats stay consistent across stores.
   return globalThis.crypto.randomUUID();
 }

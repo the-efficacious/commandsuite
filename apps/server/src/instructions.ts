@@ -12,16 +12,14 @@
  * X" and "Your role here: Y" — team context layered on top of
  * whatever the agent already knows about itself.
  *
- * Why instructions carry the *mechanism* but not the *live objective
- * list*: the prose is frozen per session, and tool descriptions are
- * deliberately static too — mutating either mid-session would
- * invalidate the model's prompt-prefix cache. Live state reaches the
- * agent as MESSAGE TRAFFIC instead: objective lifecycle events arrive
- * as channel events, and the runner re-asserts the open plate with a
- * `context_refresh` push at session start and after context
- * compaction. Static surfaces teach the mechanism; messages carry the
- * state. `openObjectives` is still returned on the response for
- * non-prose consumers (the web UI + the runner's re-brief composer).
+ * Why instructions carry the *mechanism* but never *live state*: the
+ * prose is frozen per session, and tool descriptions are deliberately
+ * static too — mutating either mid-session would invalidate the
+ * model's prompt-prefix cache. Static surfaces teach the mechanism;
+ * the agent PULLS the state when it needs it, with `orient`. That
+ * split is why the objectives section is gone from here rather than
+ * rewritten: it taught a mechanism, and the mechanism no longer
+ * exists.
  */
 
 import { createHash } from 'node:crypto';
@@ -280,22 +278,7 @@ function composePrompt(
     `  - thread="primary" — the team-wide general channel. Reply with \`broadcast\`.`,
     `  - thread="dm" — a direct message to you. Reply with \`send\`.`,
     `  - thread="channel" — a post in a named channel you belong to. The meta carries \`channel\` (the stable id) and \`channel_slug\`; reply with \`channels_post\` using the slug.`,
-    `The link also pushes <channel from="csuite" kind="context_refresh"> blocks — automatic re-briefs of your open objectives sent at session start and after context compaction. Treat them as authoritative and re-anchor on them.`,
     `Your own sends are suppressed by the link — you will not see echoes of your own broadcasts or DMs on the live stream. \`recent\` still returns them in scrollback.`,
-    ``,
-    `── Objectives ──`,
-    `Objectives are the apex task primitive on the team. They are assigned TO you (never picked up) by a member with the objectives.create permission. Every objective has a required \`outcome\` — the tangible result that defines "done" — and that outcome is the contract you are executing against.`,
-    ``,
-    `When an objective is assigned, a channel event arrives with kind="objective" and event="assigned". The event body carries the id, title, outcome, and originator so you can act on it immediately. Subsequent lifecycle events (blocked, unblocked, completed, cancelled, reassigned) land on the same channel with the same shape.`,
-    ``,
-    `Workflow:`,
-    `  - \`objectives_list\` — your current plate, live from the server. Call it whenever you're unsure what's open (after a restart or context compaction) rather than trusting memory.`,
-    `  - \`objectives_view\` <id> — full detail plus the append-only event log when you need acceptance criteria or history fresh in context.`,
-    `  - \`objectives_discuss\` <id> — post progress notes, questions, and intermediate findings into the objective's discussion thread. This is the conversational surface; the originator, watchers, and directors see every post.`,
-    `  - \`objectives_update\` <id> — state transitions only: flag a block (status=blocked, blockReason=...) or resume (status=active). Progress notes belong in \`objectives_discuss\`.`,
-    `  - \`objectives_complete\` <id> — deliver the result when the outcome is met. A result summary is required; it should explicitly address whether the stated outcome was satisfied and describe or link the deliverable.`,
-    ``,
-    `The act of doing the work IS the update — the tools that do the work also touch the objective state. Do not wait for external permission to progress; own the execution and communicate via the objective's own surface.`,
     ``,
     `Use \`roster\` to see who's currently on the net and \`recent\` to pull scrollback.`,
     ``,

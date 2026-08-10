@@ -682,7 +682,12 @@ class SpineCurator implements Curator {
    * spoken to this member for a while, which is the healthy case.
    * Nudging on that alone would ping every idle member every TTL
    * forever, which is the dead objectives watchdog rebuilt with better
-   * tables.
+   * tables. (That watchdog built its haystack from request fields both
+   * runners hard-code empty, so it never detected anything and nagged
+   * every assignee every five minutes for as long as it shipped. It
+   * was deleted with the objectives subsystem; it is named here
+   * because the failure is a shape, and the shape is reachable from
+   * this code.)
    *
    * So it takes BOTH counters, and they are deliberately different
    * counters. The LEASE says "we have stopped assuming you still hold

@@ -158,8 +158,18 @@ const APP_IN_SCOPE = [
  * served at `GET /spine/checks`, and the observation stands in the
  * annex whatever the lifecycle did. The line is an operator's copy of
  * a fact the product already surfaces.
+ *
+ * 2026-08-10, −2 = 63. The objectives cut-over, and the only census
+ * movement it caused. Four `logger.*` calls left app.ts with the
+ * subsystem — `failed to fanout objective event`, `objective created`,
+ * `failed to fanout objective discuss`, `objective context watchdog
+ * fired` — but only TWO of them were census sites: this census counts
+ * sites whose message carries a `': '`, and the other two do not.
+ * Recorded as the count it is rather than as the number of lines
+ * deleted, because a census that moves by "how much code went away"
+ * has stopped being a census.
  */
-const TOTAL_SITES = 65;
+const TOTAL_SITES = 63;
 
 function messagesIn(file: string): string[] {
   const src = readFileSync(join(SRC, file), 'utf8');

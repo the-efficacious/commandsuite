@@ -29,7 +29,6 @@ import WebSocket from 'ws';
 import { composeSessionOnlineMessage, createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
-import { createSqliteObjectivesStore } from '../src/objectives.js';
 import { type RunningServer, runServer } from '../src/run.js';
 import { SessionStore } from '../src/sessions.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
@@ -38,24 +37,29 @@ import { mockTeamStore, seedStores } from './helpers/test-stores.js';
 // ─── unit: composeSessionOnlineMessage ──────────────────────────────
 
 describe('composeSessionOnlineMessage', () => {
-  it('renders the empty-plate variant when no objectives are active', () => {
-    const m = composeSessionOnlineMessage('scout', 0);
+  it('names the member and frames itself as a system notice', () => {
+    const m = composeSessionOnlineMessage('scout');
     expect(m.title).toBe('csuite session online');
     expect(m.body).toContain('Connected to csuite as scout');
-    expect(m.body).toContain('No active objectives');
     // Explicit framing that this is NOT a probe.
     expect(m.body).toMatch(/system notice/i);
     expect(m.body).toMatch(/no acknowledgement/i);
   });
 
-  it('renders the populated-plate variant with the count', () => {
-    const m = composeSessionOnlineMessage('scout', 3);
-    expect(m.body).toContain('3 active objective(s)');
-    expect(m.body).toContain('objectives_list');
+  it('points at the recovery call rather than pushing a plate count', () => {
+    const m = composeSessionOnlineMessage('scout');
+    // §10: status is PULLED state. The notice used to carry a count of
+    // the member's active and blocked objectives — a derived value,
+    // computed at connect time and stale the moment anything moved,
+    // spent out of the member's context whether they needed it or not.
+    // `orient` answers the same question at the moment it is asked.
+    expect(m.body).toContain('orient');
+    expect(m.body).not.toMatch(/\d+ active/);
+    expect(m.body.toLowerCase()).not.toContain('on your plate —');
   });
 
   it('does NOT use the historical "comms check" title (regression)', () => {
-    const m = composeSessionOnlineMessage('scout', 1);
+    const m = composeSessionOnlineMessage('scout');
     expect(m.title.toLowerCase()).not.toContain('comms');
     expect(m.body.toLowerCase()).not.toContain('comms check');
   });
@@ -63,7 +67,7 @@ describe('composeSessionOnlineMessage', () => {
   it('does NOT phrase the message as a request for response', () => {
     // Wording sanity — these phrasings would invite an agent to
     // generate a reply turn instead of just absorbing the context.
-    const m = composeSessionOnlineMessage('scout', 0);
+    const m = composeSessionOnlineMessage('scout');
     expect(m.body.toLowerCase()).not.toMatch(/please respond/);
     expect(m.body.toLowerCase()).not.toMatch(/reply\b/);
     expect(m.body.toLowerCase()).not.toMatch(/are you there/);
@@ -210,7 +214,6 @@ describe('session-online gate — cookie subscriber receives nothing', () => {
   });
 
   it('a cookie-auth WS subscribe yields no session-online push within 1s', async () => {
-    // Build createApp with everything wired except objectives gating.
     // Mint a session cookie directly via the SessionStore, then do a
     // raw WS upgrade against the live HTTP server using that cookie.
     const broker = new Broker({ eventLog: new InMemoryEventLog() });
@@ -225,14 +228,12 @@ describe('session-online gate — cookie subscriber receives nothing', () => {
     const db = openDatabase(':memory:');
     const sessions = new SessionStore(db);
     const tokens = createTokenStoreFromMembers(db, members);
-    const objectives = createSqliteObjectivesStore(db);
     const { app, injectWebSocket } = createApp({
       broker,
       members,
       tokens,
       sessions,
       teamStore: mockTeamStore(TEAM),
-      objectives,
       version: '0.0.0',
       logger: silentLogger(),
     });

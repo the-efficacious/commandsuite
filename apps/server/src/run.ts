@@ -52,7 +52,6 @@ import {
   type WebPushConfig,
 } from './members.js';
 import { createSqliteNotificationsStore } from './notifications/index.js';
-import { createSqliteObjectivesStore } from './objectives.js';
 import { createSqliteProcessDocumentStore } from './process-document.js';
 import { dispatchPush } from './push/dispatch.js';
 import { PushSubscriptionStore } from './push/store.js';
@@ -145,11 +144,6 @@ export {
   NotificationsError,
   type NotificationsStore,
 } from './notifications/index.js';
-export {
-  createSqliteObjectivesStore,
-  ObjectivesError,
-  type ObjectivesStore,
-} from './objectives.js';
 export {
   type AppendBodyInput,
   type AppendBodyResult,
@@ -321,7 +315,7 @@ export interface RunServerOptions {
    * batched at up to 50 events / 64 KB / 500 ms per active agent.
    * Running it on its own `DatabaseSyncInstance` keeps trace writes
    * from contending with the main broker DB's write lock (events,
-   * objectives, sessions, push-subs). Dan's 2026-04-16 audit Part 5
+   * sessions, push-subs). Dan's 2026-04-16 audit Part 5
    * flagged single-connection contention as the first real ceiling
    * we'd hit under load.
    *
@@ -424,7 +418,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
       : httpsInput;
 
   // Open the main broker DB once and share it across modules for
-  // event log / sessions / push-subs / objectives. `node:sqlite` is
+  // event log / sessions / push-subs. `node:sqlite` is
   // single-connection-per-file; every module that writes to the
   // main DB gets a handle into the same underlying Database, not a
   // new connection.
@@ -455,7 +449,6 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   // production never hits that path.
   const enrollments = new EnrollmentStore(db, { kek: getKek() });
   const pushStore = new PushSubscriptionStore(db);
-  const objectivesStore = createSqliteObjectivesStore(db);
   const channelStore = createSqliteChannelStore(db);
   // Tool-source registry — config-class, low write volume, main DB.
   const toolSourceStore = createSqliteToolSourceStore(db);
@@ -586,24 +579,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   // tree + permissions + refcount metadata in the main SQLite.
   const filesRoot = options.filesRoot ?? './data/files';
   const blobStore = new LocalBlobStore(filesRoot);
-  // Wire the objective-namespace ACL: the FS layer asks the
-  // objectives store whether a given viewer is the originator,
-  // assignee, or one of the watchers of an objective. The closure
-  // hides the row shape so the FS package keeps no inbound
-  // dependency on the objectives module beyond this seam.
-  const filesStore = createSqliteFilesystemStore({
-    db,
-    blobs: blobStore,
-    objectiveAcl: {
-      isMember(objectiveId, viewerName) {
-        const obj = objectivesStore.get(objectiveId);
-        if (obj === null) return false;
-        if (obj.originator === viewerName) return true;
-        if (obj.assignee === viewerName) return true;
-        return obj.watchers.includes(viewerName);
-      },
-    },
-  });
+  const filesStore = createSqliteFilesystemStore({ db, blobs: blobStore });
   // Pre-seed home directories so browsers can list their own home
   // without having to write first.
   for (const s of memberStore.members()) {
@@ -773,7 +749,6 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
     enrollments,
     sessions,
     teamStore,
-    objectives: objectivesStore,
     channels: channelStore,
     toolSources: toolSourceStore,
     mcpManager,

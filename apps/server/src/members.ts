@@ -22,13 +22,13 @@
  *       "name": "demo-team",
  *       "context": "Ship the payment service. We own the full lifecycle...",
  *       "permissionPresets": {
- *         "admin":    ["team.manage", "members.manage", "objectives.create", "objectives.cancel", "objectives.reassign", "objectives.watch", "activity.read"],
- *         "operator": ["objectives.create", "objectives.cancel", "objectives.reassign"]
+ *         "admin":    ["team.manage", "members.manage", "spine.author", "spine.focus", "activity.read"],
+ *         "operator": ["spine.author", "spine.focus"]
  *       }
  *     },
  *     "members": [
  *       { "name": "director-1",  "role": { "title": "director", "description": "Leads the team." },
- *         "instructions": "Approve objectives before they go to the team.",
+ *         "instructions": "Rule on asks before the team is blocked on them.",
  *         "permissions": ["admin"],
  *         "tokenHash": "sha256:..." },
  *       { "name": "engineer-1", "role": { "title": "engineer", "description": "Ships code." },

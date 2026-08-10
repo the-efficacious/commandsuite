@@ -10,7 +10,7 @@
  *                     decremented on delete/overwrite. At refcount 0
  *                     the blob is dropped from disk.
  *   `fs_grants`     — (path, viewer, granted_via) rows. Populated when
- *                     a message or objective references an attachment,
+ *                     a message references an attachment,
  *                     granting the recipient read access to that exact
  *                     path even though the tree otherwise belongs to
  *                     someone else.
@@ -19,11 +19,6 @@
  *   admin             — full read/write/delete anywhere
  *   owner             — full read/write/delete under their home (first
  *                       path segment equals their user name)
- *   objective member  — full read/write/delete under
- *                       `/objectives/<id>/`, for the originator,
- *                       assignee and watchers of that objective. The
- *                       entry's `owner` is `obj:<id>`, which is NOT a
- *                       member name — do not infer access from it.
  *   everyone else     — read-only, and only when they hold a grant for
  *                       the specific path (exact match, not prefix)
  *
@@ -52,7 +47,6 @@ import {
   normalizePath,
   ownerOf,
   parentOf,
-  parseObjectiveNamespacePath,
   ROOT_PATH,
 } from './paths.js';
 
@@ -144,25 +138,6 @@ export interface WriteFileResult {
   renamed: boolean;
 }
 
-/**
- * Hook for the objective-namespace ACL gate. Decoupled from the
- * objectives store so the FS layer doesn't have to know what an
- * objective row looks like — it only needs the membership question
- * answered.
- *
- * `isMember` returns true if `viewerName` is the originator, the
- * current assignee, or one of the watchers of `objectiveId`. The FS
- * store calls this whenever a path under `/objectives/<id>/...` is
- * read, written, or deleted by a non-admin viewer.
- *
- * Optional at construction time — without a provider, the namespace
- * is silently treated as forbidden for non-admins (read/write 403),
- * which is the right failure mode while the caller is wiring things up.
- */
-export interface ObjectiveAclProvider {
-  isMember(objectiveId: string, viewerName: string): boolean;
-}
-
 export interface FilesystemStore {
   stat(path: string, viewer: ViewerContext): FsEntry | null;
   list(path: string, viewer: ViewerContext): FsEntry[];
@@ -173,8 +148,8 @@ export interface FilesystemStore {
   /**
    * Create a new file entry that points at the same blob as `src`.
    * Refcount-aware — the blob bytes are not duplicated; only the
-   * metadata row is. Used to materialize objective attachments into
-   * `/objectives/<id>/...` while keeping the originator's home copy
+   * metadata row is. Used to materialize an attachment into a second
+   * location while keeping the originator's home copy
    * intact. Source must be readable by `viewer`; destination must be
    * writable by `viewer`. Honors the same collision strategies as
    * `writeFile`.
@@ -190,7 +165,7 @@ export interface FilesystemStore {
 
   /**
    * Record that `viewer` is permitted to read `path` via a specific
-   * referencing context (message id, objective id, etc.). Idempotent —
+   * referencing context (the message id, say). Idempotent —
    * duplicate (path, viewer, via) triples are coalesced by the primary
    * key.
    */
@@ -217,19 +192,11 @@ export interface CopyByBlobRefInput {
 interface SqliteFilesystemStoreOptions {
   db: DatabaseSyncInstance;
   blobs: BlobStore;
-  /**
-   * ACL provider for the `/objectives/<id>/...` namespace. Injected
-   * rather than imported so the FS package has no inbound dependency
-   * on the objectives store. Optional — without it, namespace paths
-   * 403 for non-admins.
-   */
-  objectiveAcl?: ObjectiveAclProvider;
 }
 
 class SqliteFilesystemStore implements FilesystemStore {
   private readonly db: DatabaseSyncInstance;
   private readonly blobs: BlobStore;
-  private readonly objectiveAcl: ObjectiveAclProvider | null;
 
   private readonly getEntryStmt: StatementInstance;
   private readonly listChildrenStmt: StatementInstance;
@@ -252,7 +219,6 @@ class SqliteFilesystemStore implements FilesystemStore {
   constructor(opts: SqliteFilesystemStoreOptions) {
     this.db = opts.db;
     this.blobs = opts.blobs;
-    this.objectiveAcl = opts.objectiveAcl ?? null;
     this.db.exec(CREATE_SCHEMA);
 
     this.getEntryStmt = this.db.prepare('SELECT * FROM fs_entries WHERE path = ?');
@@ -313,30 +279,15 @@ class SqliteFilesystemStore implements FilesystemStore {
     return ownerOf(path) === viewer.name;
   }
 
-  /**
-   * Membership in the objective whose namespace contains `path`. Returns
-   * `false` for paths outside the objective namespace and for the bare
-   * `/objectives` parent (which has no specific objective). Used as the
-   * ACL gate for both read and write under `/objectives/<id>/...`.
-   */
-  private isObjectiveMember(path: string, viewer: ViewerContext): boolean {
-    if (this.objectiveAcl === null) return false;
-    const parsed = parseObjectiveNamespacePath(path);
-    if (parsed === null) return false;
-    return this.objectiveAcl.isMember(parsed.id, viewer.name);
-  }
-
   private canRead(path: string, viewer: ViewerContext): boolean {
     if (viewer.permissions.includes('members.manage')) return true;
     if (this.ownsPath(path, viewer)) return true;
-    if (this.isObjectiveMember(path, viewer)) return true;
     return this.hasGrant(path, viewer.name);
   }
 
   private canWrite(path: string, viewer: ViewerContext): boolean {
     if (viewer.permissions.includes('members.manage')) return true;
-    if (this.ownsPath(path, viewer)) return true;
-    return this.isObjectiveMember(path, viewer);
+    return this.ownsPath(path, viewer);
   }
 
   // ─── read API ──────────────────────────────────────────────────
@@ -347,9 +298,8 @@ class SqliteFilesystemStore implements FilesystemStore {
    * The server owns `canWrite()` and evaluates it on every mutating
    * request. Sending the answer along with the entry means a client does
    * not have to rebuild the predicate from the fields it happens to
-   * have — and for objective namespace entries it *cannot*: the owner is
-   * `obj:<id>` and the rule includes objective membership, which the
-   * client has no way to determine for an arbitrary path.
+   * have — and it should not have to, because the rule is the server's
+   * and the client has no way to evaluate it for an arbitrary path.
    *
    * The alternative — every consumer reimplementing the rule — is
    * already wrong in two places, in opposite directions. See
@@ -386,23 +336,20 @@ class SqliteFilesystemStore implements FilesystemStore {
         .map((r) => this.withCapability(rowToEntry(r), viewer));
     }
 
-    // `canRead`, not `ownsPath`. Objective namespaces are owned by
-    // `obj:<id>` and by no member, so an ownership test refuses every
-    // member of the objective — including its assignee. `canRead`
-    // already resolves objective membership and grants, and `stat`,
-    // `read` and `listShared` all gate on it; `list` was the one that
-    // did not, which is why `fs_ls /objectives/<id>` returned 403 to
-    // the person the namespace was created for.
+    // `canRead`, not `ownsPath`. A grant-holder may list a path they
+    // do not own, and `stat`, `read` and `listShared` all gate on
+    // `canRead`; `list` was the one that did not, which is how a
+    // grant-holder got a 403 on a directory they could already read
+    // files out of.
     if (!this.canRead(normalized, viewer)) {
       throw new FsError('forbidden', `cannot list ${normalized}`);
     }
     const target = this.getEntryStmt.get(normalized) as FsEntryRow | undefined;
     if (!target) {
       // Owner listing their own non-existent home is fine — return
-      // empty. Same for an objective member whose namespace has no
-      // files yet: the namespace exists as a concept before anything
-      // is written to it, and 404 there is indistinguishable from
-      // "you may not look".
+      // empty. A home exists as a concept before anything is written
+      // to it, and 404 there is indistinguishable from "you may not
+      // look".
       if (this.canRead(normalized, viewer)) {
         return [];
       }
@@ -538,8 +485,7 @@ class SqliteFilesystemStore implements FilesystemStore {
 
   /**
    * Materialize a new entry at `dst` that shares the underlying blob
-   * with `src`. Used to mount objective attachments into
-   * `/objectives/<id>/...` without duplicating blob bytes.
+   * with `src`, without duplicating blob bytes.
    *
    * Refcount semantics: the shared blob's refcount is incremented by
    * one — the source entry still holds its own reference, so deleting
@@ -569,8 +515,7 @@ class SqliteFilesystemStore implements FilesystemStore {
     const mimeType = input.mimeType ?? srcRow.mime_type ?? 'application/octet-stream';
     const now = Date.now();
 
-    // Auto-create dst ancestors (e.g. `/objectives` and
-    // `/objectives/<id>`) before the metadata transaction. Same
+    // Auto-create dst ancestors before the metadata transaction. Same
     // pattern as `writeFile` — keeps mkdir its own idempotent step.
     this.ensureDirectoryTree(parentOf(dstNormalized), input.viewer, now);
 

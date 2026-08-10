@@ -81,7 +81,7 @@ const WITHHELD_FROM_SEEDED_ADMIN: readonly Permission[] = [];
  */
 export const DEFAULT_PERMISSION_PRESETS: PermissionPresets = {
   admin: PERMISSIONS.filter((p) => !WITHHELD_FROM_SEEDED_ADMIN.includes(p)),
-  operator: ['objectives.create', 'objectives.cancel', 'objectives.reassign'],
+  operator: ['spine.author', 'spine.focus'],
 };
 
 export interface WizardIO {

@@ -9,13 +9,16 @@
  * the actual response could diverge silently and permanently — for any
  * endpoint — with the whole suite green.
  *
- * That is not hypothetical. `FsEntrySchema.owner` is `NameSchema`
- * (`/^[a-zA-Z0-9._-]+$/`) while objective namespaces are owned by
- * `obj:<id>`. The colon fails the pattern, so the SDK rejects its own
- * server's output for every `/objectives/<id>/…` path. `/fs/stat` returns
- * 200 with a correct entry; the SDK cannot parse it. It survived because it
- * is invisible to a test that reads JSON directly, and was found only when
- * an agent happened to try listing an objective namespace.
+ * That is not hypothetical, and the instance is worth keeping even
+ * though the subsystem it happened in has since been removed.
+ * `FsEntrySchema.owner` was `NameSchema` (`/^[a-zA-Z0-9._-]+$/`) while
+ * the old objective namespaces were owned by `obj:<id>`. The colon
+ * failed the pattern, so the SDK rejected its own server's output for
+ * every path under that namespace: `/fs/stat` returned 200 with a
+ * correct entry and the SDK could not parse it. The break was
+ * client-side, viewer-independent, and invisible to a test that reads
+ * JSON directly — it was found only when an agent happened to list one
+ * of those directories.
  *
  * These tests parse real responses through the published schemas, so the
  * contract is checked rather than assumed.
@@ -103,7 +106,6 @@ import {
   AppendSpineEventResponseSchema,
   FsEntryResponseSchema,
   FsListResponseSchema,
-  GetObjectiveResponseSchema,
   GetSpineCheckResponseSchema,
   GetSpineContractResponseSchema,
   GetSpineEventResponseSchema,
@@ -112,7 +114,6 @@ import {
   InstructionsResponseSchema,
   ListChannelsResponseSchema,
   ListMembersResponseSchema,
-  ListObjectivesResponseSchema,
   ListSpineChecksResponseSchema,
   ListSpineContractsResponseSchema,
   ListSpineEventsResponseSchema,
@@ -124,14 +125,13 @@ import {
   RosterResponseSchema,
   SpineCuratorConfigResponseSchema,
 } from 'csuite-sdk/schemas';
-import type { Objective, Team } from 'csuite-sdk/types';
+import type { Team } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../../src/app.js';
 import { createSqliteChannelStore } from '../../src/channels.js';
 import { openDatabase } from '../../src/db.js';
 import { createSqliteFilesystemStore, LocalBlobStore } from '../../src/files/index.js';
 import { createMemberStore } from '../../src/members.js';
-import { createSqliteObjectivesStore } from '../../src/objectives.js';
 import { SessionStore } from '../../src/sessions.js';
 import {
   createAnnexWritePath,
@@ -164,19 +164,13 @@ function makeApp() {
     {
       name: 'alice',
       role: { title: 'admin', description: 'runs the team' },
-      permissions: [
-        'members.manage',
-        'objectives.create',
-        'objectives.watch',
-        'activity.read',
-        'spine.author',
-      ],
+      permissions: ['members.manage', 'activity.read', 'spine.author'],
       token: ALICE,
     },
     {
       name: 'bob',
       role: { title: 'engineer', description: '' },
-      permissions: ['objectives.create'],
+      permissions: ['spine.author'],
       token: BOB,
     },
   ]);
@@ -186,25 +180,12 @@ function makeApp() {
   const tokens = createTokenStoreFromMembers(db, members);
   const blobDir = mkdtempSync(join(tmpdir(), 'csuite-contract-'));
   tmpDirs.push(blobDir);
-  const objectives = createSqliteObjectivesStore(db);
   const channels = createSqliteChannelStore(db);
   const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
   const spine = createAnnexWritePath({ db, logger });
   const spineCurator = createSqliteCuratorStore(db);
   const spineChecks = createSqliteCheckStore(db);
-  const files = createSqliteFilesystemStore({
-    db,
-    blobs: new LocalBlobStore(blobDir),
-    objectiveAcl: {
-      isMember(objectiveId, viewerName) {
-        const obj = objectives.get(objectiveId);
-        if (obj === null) return false;
-        if (obj.originator === viewerName) return true;
-        if (obj.assignee === viewerName) return true;
-        return obj.watchers.includes(viewerName);
-      },
-    },
-  });
+  const files = createSqliteFilesystemStore({ db, blobs: new LocalBlobStore(blobDir) });
   for (const m of members.members()) files.ensureHome(m.name);
   const { app } = createApp({
     broker,
@@ -212,7 +193,6 @@ function makeApp() {
     tokens,
     sessions,
     teamStore: mockTeamStore(TEAM),
-    objectives,
     channels,
     spine,
     spineCurator,
@@ -288,27 +268,17 @@ async function expectMatchesContract(
   ).toEqual([]);
 }
 
-/** Seed one objective with a mirrored attachment, returning its id. */
-async function seedObjectiveWithFile(app: App): Promise<Objective> {
+/** Seed one file in bob's home, so the `/fs/*` cases have something to read. */
+async function seedFile(app: App): Promise<void> {
   // `/fs/write` takes the path and mime as query params with the file
   // bytes as the raw body — not a JSON envelope.
   const write = await app.request(
     `/fs/write?path=${encodeURIComponent('/bob/spec.txt')}&mime=${encodeURIComponent('text/plain')}`,
     { method: 'POST', headers: { Authorization: `Bearer ${BOB}` }, body: 'spec' },
   );
+  // Assert the fixture LANDED before anything reads it: an `/fs/ls` on
+  // an empty home is a perfectly good 200 against an empty schema.
   expect(write.status, 'fixture upload failed').toBe(200);
-  const created = await app.request(
-    '/objectives',
-    authed(BOB, {
-      title: 'Contract fixture',
-      outcome: 'schemas match',
-      body: '',
-      assignee: 'alice',
-      attachments: [{ path: '/bob/spec.txt', name: 'spec.txt', size: 4, mimeType: 'text/plain' }],
-    }),
-  );
-  expect(created.status).toBe(200);
-  return (await created.json()) as Objective;
 }
 
 /**
@@ -473,26 +443,9 @@ describe('SDK response contract', () => {
     await expectMatchesContract(app, '/channels', authed(ALICE), ListChannelsResponseSchema);
   });
 
-  it('GET /objectives matches ListObjectivesResponseSchema', async () => {
-    const { app } = makeApp();
-    await seedObjectiveWithFile(app);
-    await expectMatchesContract(app, '/objectives', authed(ALICE), ListObjectivesResponseSchema);
-  });
-
-  it('GET /objectives/:id matches GetObjectiveResponseSchema', async () => {
-    const { app } = makeApp();
-    const obj = await seedObjectiveWithFile(app);
-    await expectMatchesContract(
-      app,
-      `/objectives/${obj.id}`,
-      authed(ALICE),
-      GetObjectiveResponseSchema,
-    );
-  });
-
   it('GET /fs/ls on a member home matches FsListResponseSchema', async () => {
     const { app } = makeApp();
-    await seedObjectiveWithFile(app);
+    await seedFile(app);
     await expectMatchesContract(
       app,
       `/fs/ls?path=${encodeURIComponent('/bob')}`,
@@ -503,7 +456,7 @@ describe('SDK response contract', () => {
 
   it('GET /fs/stat on a member-home file matches FsEntryResponseSchema', async () => {
     const { app } = makeApp();
-    await seedObjectiveWithFile(app);
+    await seedFile(app);
     await expectMatchesContract(
       app,
       `/fs/stat?path=${encodeURIComponent('/bob/spec.txt')}`,
@@ -728,30 +681,5 @@ describe('SDK response contract', () => {
       ReportSpineSignalResponseSchema,
       200,
     );
-  });
-
-  // Converted from a pinned KNOWN DIVERGENCE on 2026-07-30, which is
-  // what the inverted assertion existed to force. `FsEntrySchema.owner`
-  // is now `FsOwnerSchema` — a member name OR `obj:<objective-id>` —
-  // so the namespace entry parses and this joins every other endpoint
-  // here as an ordinary contract check.
-  //
-  // Keeping the history because the failure mode was unusual: the
-  // server always responded correctly and the SDK client threw parsing
-  // that successful response, so the break was client-side and
-  // viewer-independent. Validation ran after the write had committed.
-  it('GET /fs/stat on an objective namespace path matches the published contract', async () => {
-    const { app } = makeApp();
-    const obj = await seedObjectiveWithFile(app);
-    const path = `/fs/stat?path=${encodeURIComponent(`/objectives/${obj.id}/spec.txt`)}`;
-
-    await expectMatchesContract(app, path, authed(ALICE), FsEntryResponseSchema);
-
-    // The owner really is the objective form — otherwise this would
-    // pass by never exercising the widened branch at all.
-    const body = (await (await app.request(path, authed(ALICE))).json()) as {
-      entry: { owner: string };
-    };
-    expect(body.entry.owner, 'fixture should produce an obj: owner').toBe(`obj:${obj.id}`);
   });
 });

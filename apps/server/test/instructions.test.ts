@@ -233,72 +233,6 @@ describe('composeInstructions', () => {
     expect(packet.instructions).toContain('Your own sends are suppressed by the link');
   });
 
-  it('returns open objectives on the response but does NOT render them into instructions', () => {
-    // The instructions prose is frozen per session, so we deliberately
-    // keep the live list out of it — it would go stale the moment a
-    // new objective was assigned mid-session. Live state reaches the
-    // agent as message traffic (channel events + the runner's
-    // `context_refresh` re-briefs) instead.
-    const packet = composeInstructions({
-      self: ALPHA_1,
-      team: TEAM,
-      teammates: TEAMMATES,
-      openObjectives: [
-        {
-          id: 'obj-1',
-          title: 'Fix the login redirect bug',
-          body: '',
-          outcome: 'Users hitting /login while authenticated land on /dashboard.',
-          status: 'active',
-          assignee: 'engineer-1',
-          originator: 'director-1',
-          watchers: [],
-          createdAt: 1,
-          updatedAt: 1,
-          completedAt: null,
-          result: null,
-          blockReason: null,
-          attachments: [],
-          outcomeVersion: 1,
-          amendments: [],
-        },
-      ],
-      processDocument: null,
-    });
-    // openObjectives surfaces on the response body for non-packet callers.
-    expect(packet.openObjectives).toHaveLength(1);
-    expect(packet.openObjectives[0]?.id).toBe('obj-1');
-    // But the ID / title / outcome never land in the prose.
-    expect(packet.instructions).not.toContain('obj-1');
-    expect(packet.instructions).not.toContain('Fix the login redirect bug');
-    expect(packet.instructions).not.toContain('Objectives on your plate');
-  });
-
-  it('teaches the objective mechanism in instructions regardless of current plate', () => {
-    const packet = composeInstructions({
-      self: ALPHA_1,
-      team: TEAM,
-      teammates: TEAMMATES,
-      openObjectives: [],
-      processDocument: null,
-    });
-    expect(packet.instructions).toContain('── Objectives ──');
-    expect(packet.instructions).toContain('kind="objective"');
-    expect(packet.instructions).toContain('objectives_list');
-    expect(packet.instructions).toContain('objectives_discuss');
-    expect(packet.instructions).toContain('objectives_update');
-    expect(packet.instructions).toContain('objectives_complete');
-    expect(packet.instructions).toContain('required `outcome`');
-    // objectives_update is state-transitions only — the prose must not
-    // teach a `note=` parameter the tool rejects (regression: it used
-    // to, and the first progress report of every session burned a
-    // failed call).
-    expect(packet.instructions).not.toContain('note=');
-    // No stale promise of live tool descriptions — state freshness
-    // comes from message traffic, not tool metadata.
-    expect(packet.instructions).not.toContain('tool description refreshes');
-  });
-
   /**
    * The spine section is short by design and carries exactly three
    * things a frozen prompt has to hold: where to go when context is
@@ -352,10 +286,16 @@ describe('composeInstructions', () => {
     expect(packet.instructions).toMatch(/returns the events you missed IN FULL/);
   });
 
-  it('leaves the objectives section untouched while the spine runs beside it', () => {
-    // Cut-over is a later phase. Until then both surfaces are taught,
-    // and an edit that quietly replaced one with the other would be a
-    // fleet-wide behaviour change delivered as a prose tweak.
+  it('teaches the spine and NOTHING about objectives — the cut-over', () => {
+    // This test used to hold both sections present and in order, while
+    // the two surfaces ran side by side. The cut-over is that phase,
+    // so it now holds the spine section ALONE.
+    //
+    // The negative half is the load-bearing half and it is asserted on
+    // the composed string rather than on the source: an agent's whole
+    // model of the team comes from this prose, and a leftover sentence
+    // teaching a tool that no longer exists spends the first call of
+    // every session on a refusal.
     const packet = composeInstructions({
       self: ALPHA_1,
       team: TEAM,
@@ -363,14 +303,13 @@ describe('composeInstructions', () => {
       openObjectives: [],
       processDocument: null,
     });
-    expect(packet.instructions).toContain('── Objectives ──');
     expect(packet.instructions).toContain('── Spine ──');
-    expect(packet.instructions.indexOf('── Objectives ──')).toBeLessThan(
-      packet.instructions.indexOf('── Spine ──'),
-    );
+    expect(packet.instructions).not.toContain('── Objectives ──');
+    expect(packet.instructions).not.toContain('objectives_');
+    expect(packet.instructions.toLowerCase()).not.toContain('objective');
   });
 
-  it('teaches all three channel thread types and the context_refresh re-brief', () => {
+  it('teaches all three channel thread types, and no re-brief that no longer fires', () => {
     const packet = composeInstructions({
       self: ALPHA_1,
       team: TEAM,
@@ -383,6 +322,11 @@ describe('composeInstructions', () => {
     expect(packet.instructions).toContain('thread="channel"');
     expect(packet.instructions).toContain('channel_slug');
     expect(packet.instructions).toContain('channels_post');
-    expect(packet.instructions).toContain('context_refresh');
+    // The `context_refresh` re-brief was the runner recomposing the
+    // open-objectives plate and pushing it. It went with the
+    // subsystem, and `orient` — which the spine section teaches —
+    // replaced it. Promising a block that will never arrive teaches an
+    // agent to wait for one.
+    expect(packet.instructions).not.toContain('context_refresh');
   });
 });
