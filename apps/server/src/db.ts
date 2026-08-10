@@ -61,23 +61,24 @@ export function openDatabase(path: string): DatabaseSyncInstance {
   // activity store on its own DB file — benefits from consistent
   // timeout semantics).
   db.exec('PRAGMA busy_timeout = 5000');
-  // recursive_triggers: OFF by default, and the default silently
-  // disarms one of the annex's two append-only guards.
+  // recursive_triggers: OFF by default, which makes SQLite's delete
+  // triggers SILENTLY PARTIAL — they do not fire for rows removed by
+  // REPLACE conflict resolution unless this is on.
   //
-  // `spine_events` has a BEFORE DELETE trigger enforcing that nothing
-  // ever removes an event — the gapless stream is the whole recovery
-  // story, and a delete-and-reinsert is how somebody would otherwise
-  // rewrite a row's provenance while preserving its id and seq.
-  // SQLite fires delete triggers for rows removed by REPLACE conflict
-  // resolution IF AND ONLY IF this is on, so with the default an
-  // `INSERT OR REPLACE` walks straight past that trigger. Measured
-  // both ways before setting it.
+  // NO LONGER LOAD-BEARING, and saying so is the point. It was once the
+  // only thing standing between a raw handle and a rewritten
+  // `spine_events` row, because the delete trigger was the sole guard
+  // behind REPLACE. It is not any more: the append-only rule is carried
+  // by a BEFORE INSERT trigger on all three unique keys, which fires
+  // whatever this pragma says, because REPLACE is an insert. Deleting
+  // this line breaks no test — measured, not assumed.
   //
-  // Connection-scoped, not stored in the file, so it has to be set on
-  // every handle — which is why it lives here, at the one place a
-  // handle is opened, rather than next to the trigger it arms.
-  // Nothing else in the schema uses triggers, so there is no recursion
-  // for it to deepen.
+  // Kept anyway, for the next person rather than for the current rule:
+  // "I added a delete trigger and it does not fire for REPLACE" is a
+  // genuinely surprising default, and a database whose delete triggers
+  // mean what they say is worth one line. That is a different claim
+  // from "this is a security control", which is what it used to be and
+  // is no longer.
   db.exec('PRAGMA recursive_triggers = ON');
   return db;
 }

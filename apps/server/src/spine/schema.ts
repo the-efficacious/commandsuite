@@ -219,95 +219,72 @@ export const SPINE_SCHEMA = `
     event_id TEXT NOT NULL
   );
 
-  -- ─── The provenance rule, as a constraint rather than a claim ────
+  -- ─── The annex is append-only, as constraints rather than a claim ─
   --
-  -- §13: legacy projections NEVER acquire native status. Nobody ever
-  -- took that photograph, and no amount of later work makes it so.
+  -- §13: legacy projections NEVER acquire native status. §10: a photo
+  -- is never removed and never rewritten. Both were true of this module
+  -- and unenforced against anything else — and the caller they have to
+  -- survive is a MIGRATION: code that opens this file, is not this
+  -- module, and has read neither §10 nor §13. The objectives import is
+  -- proof such code exists and will be written again.
   --
-  -- The header above says nothing updates a truth row and no code path
-  -- can. That was true and it was a CLAIM ABOUT THIS MODULE, which is
-  -- the wrong scope for this particular rule: the case it has to
-  -- survive is a MIGRATION — code that opens this database, is not this
-  -- module, and is written by someone who has read neither the comment
-  -- nor §13. The whole point of the import is that such code exists and
-  -- will be written again. The same reasoning already put the revision
-  -- table's NOT NULLs in the DDL: "a store is reachable by a migration
-  -- that is not".
+  -- THE SHAPE OF THIS SET WAS FOUND BY ENUMERATION, NOT BY REASONING.
+  -- Three earlier versions each looked complete and each left a route
+  -- open, every one of which preserved the row's identity so nothing
+  -- downstream could tell afterwards:
   --
-  -- So the rule lives where SQLite enforces it against every writer of
-  -- this file, including one holding a raw handle. 'UPDATE OF
-  -- provenance' is scoped to the column rather than the row, because
-  -- refusing every update to 'spine_events' would be a different (and
-  -- broader) claim than the one §13 makes, and a constraint that
-  -- refuses more than its stated rule is one somebody eventually
-  -- disables wholesale.
+  --   'UPDATE OF provenance' alone   -> DELETE, and every REPLACE form
+  --   + BEFORE DELETE                -> REPLACE, unless the connection
+  --                                     happens to have recursive
+  --                                     triggers on (it defaults off)
+  --   + id-reuse on INSERT           -> REPLACE colliding on seq or on
+  --                                     op_id; and ANY update that
+  --                                     simply omits provenance from
+  --                                     its SET list
   --
-  -- A CORRECTION TO A LEGACY FACT IS STILL AVAILABLE, and is the only
-  -- honest form it can take: a NEW native event citing or stapling to
-  -- the legacy one. That path is untouched here — cites and staples are
-  -- inserts — which is what keeps this a rule about laundering rather
-  -- than a rule against fixing the record.
-  CREATE TRIGGER IF NOT EXISTS spine_events_provenance_is_permanent
-  BEFORE UPDATE OF provenance ON spine_events
+  -- So these are written against the TABLE'S OWN INVARIANTS rather
+  -- than against the attacks that were thought of:
+  --
+  --   * a row is never updated       -> BEFORE UPDATE, unconditional
+  --   * a row is never deleted       -> BEFORE DELETE
+  --   * no unique key is ever reused -> BEFORE INSERT, all three keys
+  --
+  -- 'spine_events' has THREE unique keys — 'seq' (INTEGER PRIMARY KEY),
+  -- 'id', and 'op_id' — and REPLACE resolves a conflict on ANY of them
+  -- by deleting the row it hit. Guarding one key is guarding one third
+  -- of the door, and the weakest third at that: 'op_id' is NULL on
+  -- every ambient event, so an op_id collision cannot reach a
+  -- discussion post at all, while a seq collision reaches every row and
+  -- needs no knowledge of anything.
+  --
+  -- WHY 'BEFORE UPDATE' IS UNCONDITIONAL. Checked before writing it:
+  -- nothing in this repository updates 'spine_events'. Every UPDATE in
+  -- the spine targets a PROJECTION ('spine_contracts', 'spine_asks',
+  -- 'spine_leases', 'spine_checks'), and 'rebuildProjections' deletes
+  -- from projection tables only — folds write projections, never
+  -- events. A column allowlist would have to be maintained against a
+  -- schema that grows, and the version of it that only named
+  -- 'provenance' is exactly how the body/actor rewrite got through.
+  -- The invariant is simpler than any list: the annex is append-only,
+  -- so an UPDATE to it is a defect whatever column it names.
+  --
+  -- WHAT REMAINS, and it is the same for any schema-resident
+  -- constraint: a caller willing to DROP these triggers, or to write
+  -- through 'PRAGMA writable_schema', defeats them. They survive
+  -- 'ALTER TABLE ... RENAME TO' and 'RENAME COLUMN' (measured).
+  --
+  -- CORRECTIONS ARE UNTOUCHED, and remain the only way a record
+  -- changes: a NEW event that cites or staples to the one it corrects,
+  -- which is an INSERT of a new id and passes all three.
+  CREATE TRIGGER IF NOT EXISTS spine_events_are_never_updated
+  BEFORE UPDATE ON spine_events
   BEGIN
     SELECT RAISE(
       ABORT,
-      'provenance is permanent: a legacy_projection event never acquires native status, and a native one is never rewritten as legacy. Correct a legacy fact with a NEW native event that cites or staples to it.'
+      'spine_events is append-only: no column of a committed event is ever updated. Nothing in this server updates this table — folds write projections, never events. Correct a fact with a NEW event that cites or staples to the one it corrects.'
     );
   END;
 
-  -- AND THE OTHER TWO, because an UPDATE trigger alone did not hold
-  -- the rule it was written for, and a DELETE trigger alone did not
-  -- either. Each was added after MEASURING that the previous set left
-  -- the named caller a way through.
-  --
-  -- Scoping to 'UPDATE OF provenance' left two routes, and both
-  -- PRESERVE the row's id AND its seq, so nothing downstream can tell
-  -- the difference afterwards:
-  --
-  --   INSERT OR REPLACE INTO spine_events (...) VALUES (..., 'native')
-  --   DELETE FROM spine_events WHERE id = ?;  then a fresh INSERT
-  --
-  -- Neither is an UPDATE, so neither fired anything. A delete-and-
-  -- reinsert migration is not an exotic attack; it is how people
-  -- routinely change a column they cannot ALTER.
-  --
-  -- The DELETE trigger closes the second, and closes the first too —
-  -- but ONLY on a connection with 'PRAGMA recursive_triggers' set,
-  -- because SQLite fires delete triggers for rows removed by REPLACE
-  -- conflict resolution if and only if that pragma is on. It defaults
-  -- OFF. 'db.ts' sets it on every handle this server opens.
-  --
-  -- A PRAGMA IS CONNECTION-SCOPED AND THIS PROPERTY IS FILE-SCOPED,
-  -- which is the gap the third trigger exists for. The caller this
-  -- whole rule names is "a migration holding a raw handle" — and a raw
-  -- 'new DatabaseSync(path)' has recursive_triggers = 0, so REPLACE
-  -- walked past the delete trigger and flipped provenance to native
-  -- with id and seq intact. Measured, not reasoned about.
-  --
-  -- An INSERT trigger has no such dependency: REPLACE is an INSERT
-  -- whatever the pragma says, so refusing id reuse fires on a raw
-  -- handle. It is also the narrower and more honest statement — event
-  -- ids are ULIDs minted per append and are never reused, so this
-  -- forbids something no legitimate caller does, rather than a shape
-  -- that merely looks suspicious.
-  --
-  -- WHAT IS STILL OPEN, stated rather than glossed:
-  --
-  --   * On a RAW handle, an 'INSERT OR REPLACE' that conflicts on a
-  --     DIFFERENT unique key — 'op_id' — still deletes the row it
-  --     collides with. The id-reuse trigger does not fire (the id is
-  --     new) and the delete trigger needs the pragma. Measured;
-  --     refused on any handle 'openDatabase' returns.
-  --   * Any caller that DROPs these triggers, or copies the table and
-  --     renames it over this one, defeats them. No schema-resident
-  --     constraint survives DROP, and claiming otherwise would be the
-  --     same overstatement this comment replaced.
-  --
-  -- So the accurate claim is: through this server's own handles, every
-  -- route is closed; on a foreign raw handle, everything but the
-  -- op_id-collision REPLACE is closed; and nothing survives a caller
-  -- willing to drop the constraint itself.
   CREATE TRIGGER IF NOT EXISTS spine_events_are_append_only
   BEFORE DELETE ON spine_events
   BEGIN
@@ -317,14 +294,21 @@ export const SPINE_SCHEMA = `
     );
   END;
 
-  -- The file-resident half, which needs no pragma to fire.
-  CREATE TRIGGER IF NOT EXISTS spine_events_id_is_never_reused
+  -- ALL THREE UNIQUE KEYS. An INSERT trigger fires for REPLACE whatever
+  -- 'recursive_triggers' says, because REPLACE is an insert — which is
+  -- what makes this half FILE-resident rather than connection-resident.
+  CREATE TRIGGER IF NOT EXISTS spine_events_never_reuse_a_key
   BEFORE INSERT ON spine_events
-  WHEN EXISTS (SELECT 1 FROM spine_events WHERE id = NEW.id)
+  WHEN EXISTS (
+    SELECT 1 FROM spine_events
+     WHERE id = NEW.id
+        OR seq = NEW.seq
+        OR (NEW.op_id IS NOT NULL AND op_id = NEW.op_id)
+  )
   BEGIN
     SELECT RAISE(
       ABORT,
-      'an event id is never reused: ids are minted per append and an insert carrying one that already exists is a rewrite wearing an insert''s clothes. Corrections staple to the event they correct; they never replace it.'
+      'spine_events never reuses a key: seq, id and op_id are each unique and an insert carrying one that already exists is a rewrite wearing an insert''s clothes — REPLACE resolves such a conflict by deleting the row it hit. Corrections staple to the event they correct; they never replace it.'
     );
   END;
 `;

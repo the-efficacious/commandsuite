@@ -98,23 +98,47 @@ become nine. The `operator` preset becomes `spine.author` +
   resolution if and only if it is set, so without it `INSERT OR
   REPLACE` walks straight past the trigger. Measured both ways, and the
   fixture drives that exact statement rather than trusting the reading.
-- **The provenance guard is file-resident, not connection-resident.** A
-  pragma is scoped to a CONNECTION and this property is scoped to a
-  FILE, so against the caller the rule names — a migration holding a
-  raw `new DatabaseSync(path)`, where `recursive_triggers` defaults to
-  0 — `INSERT OR REPLACE` still flipped provenance to native with the
-  row's id and seq intact. A third trigger refuses **id reuse on
-  INSERT**, which fires for REPLACE whatever the pragma says, because
-  REPLACE is an insert. It is also the narrower statement: event ids
-  are ULIDs minted per append and never reused, so it forbids something
-  no legitimate caller does. **Stated residuals**, because the previous
-  version of this claim was an overstatement: on a foreign raw handle,
-  an `INSERT OR REPLACE` colliding on `op_id` rather than on `id` still
-  deletes the row it hits (the id guard does not fire, and the delete
-  guard needs the pragma) — refused on every handle this server opens;
-  and nothing survives a caller willing to `DROP` the triggers or copy
-  the table over itself, which is true of any schema-resident
-  constraint.
+- **The annex is append-only, enforced in the file.** Three triggers on
+  `spine_events`: no row is ever updated, no row is ever deleted, and no
+  unique key is ever reused. **What they do NOT cover, first, because
+  the previous three versions of this claim each led with a guarantee
+  and each was false:** a caller willing to `DROP` the triggers, or to
+  copy the table and rename it over this one, defeats them — no
+  schema-resident constraint survives that, and neither does any
+  database's. Everything else is closed. Enumerated across 21 write
+  routes on both a raw `new DatabaseSync(path)` and a handle this
+  server opens — every UPDATE form, both DELETE forms, every REPLACE
+  collision on each of the three unique keys, `INSERT OR IGNORE`, the
+  `ON CONFLICT DO UPDATE` upsert — all refused on both, with an
+  ordinary append still succeeding on both.
+
+  Getting there took three wrong versions, and the shape of the error
+  was the same each time: guarding the attack that had been thought of
+  rather than the table's invariant. `UPDATE OF provenance` alone
+  missed DELETE and every REPLACE. Adding `BEFORE DELETE` missed
+  REPLACE on any connection without `PRAGMA recursive_triggers`, which
+  is the default. Adding an id-reuse guard missed REPLACE colliding on
+  `seq` or `op_id` — `spine_events` has THREE unique keys and REPLACE
+  resolves a conflict on any of them by deleting the row it hit — and
+  missed **every update that simply omits `provenance` from its SET
+  list**, which is a forged `body` under an untouched
+  `legacy_projection` caption. The `seq` route was the most capable of
+  the three and the last one found: `op_id` is NULL on every ambient
+  event, so an op_id collision cannot reach a discussion post at all,
+  while a seq collision reaches every row and needs no knowledge of
+  anything.
+
+  The guards are now written against the invariant instead: nothing in
+  this repository updates `spine_events` (checked — every UPDATE in the
+  spine targets a projection, and `rebuildProjections` deletes from
+  projection tables only), so the UPDATE guard is unconditional rather
+  than a column allowlist that would need maintaining against a schema
+  that grows. `PRAGMA recursive_triggers` is kept but is **no longer
+  load-bearing** — removing it now breaks no test, and its comment says
+  so rather than continuing to claim it is a security control.
+  Corrections are untouched and remain the only way a record changes: a
+  new event citing or stapling to the one it corrects is an insert of a
+  new key, and passes all three.
 - **A correction of a legacy `assigned` event no longer vanishes.**
   `assigned` is the one legacy kind that produces no event of its own —
   its content *is* the specification — and it was recorded in the
@@ -178,6 +202,12 @@ become nine. The `operator` preset becomes `spine.author` +
   have fixtures. The importer's file-level exemption is gone: it bought
   nothing (the scan is clean without it) and permanently blinded the
   one module most likely to regrow the surface.
+
+**Operator note.** Hand-written migrations against `spine_events` are
+refused — every update, every delete, and every insert reusing a `seq`,
+an `id` or an `op_id` — on any handle, including one that is not this
+server's. Correct a fact by appending an event that cites or staples to
+the one it corrects.
 
 **What is documented as GONE rather than replaced,** because it is:
 watchers (subscription is reader-side now — `all` / `lifecycle` /

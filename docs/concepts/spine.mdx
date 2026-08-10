@@ -174,11 +174,19 @@ Every event records how the record obtained it:
   subsystem the spine replaced.
 
 A legacy projection **never acquires native status**, and the store
-enforces that rather than promising it: `spine_events` refuses any
-update to `provenance` and refuses deletion outright, so a row cannot be
-relabelled — nor rewritten by deleting and re-inserting it. Correcting a
-legacy fact is done the same way as any other: a new native event that
-cites or staples to it.
+enforces that rather than promising it. `spine_events` carries three
+constraints: no row is ever updated, no row is ever deleted, and no
+unique key (`seq`, `id`, `op_id`) is ever reused. Between them a row
+cannot be relabelled, cannot be rewritten in place, and cannot be
+replaced by deleting and re-inserting it — including through an
+`INSERT OR REPLACE`, which resolves a conflict by deleting the row it
+hit. They hold against a hand-written migration on its own database
+handle, not only against this server.
+
+They do **not** hold against a caller willing to drop the constraints
+themselves, which is true of any database. Correcting a legacy fact is
+done the same way as any other fact: a new native event that cites or
+staples to the one it corrects.
 
 Imported work carries no revision and no verdict, because the old system
 recorded neither. That absence is the honest state, not a gap waiting to
