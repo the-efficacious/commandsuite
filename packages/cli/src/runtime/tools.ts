@@ -2499,6 +2499,25 @@ function buildSpineTools(instructions: InstructionsResponse): Tool[] {
     });
   }
 
+  // THE READ IS BASELINE, and it is outside the `spine.focus` block on
+  // purpose. D9's claim is that agents PLAN against the focus set, and
+  // an agent that cannot see the team's plate cannot plan against it —
+  // it can only be silenced by it. `orient` marks a member's own
+  // bindings, which answers "am I in the push"; this answers "what is
+  // the push", which is the question anyone deciding what to pick up
+  // next is actually asking. Changing the set still takes the leaf.
+  tools.push({
+    name: 'focus_set',
+    description:
+      'Read the team FOCUS SET — every contract lit for travel right now, whoever holds it. ' +
+      'This is the shared boundary the team is working inside: work outside it generates no ' +
+      'ambient traffic, so reading this is how you tell what the current push IS rather than ' +
+      'only whether your own work is in it (`orient` marks that). A contract that ends leaves ' +
+      'the set by ending — the read is what is lit AND still travelable, never a graveyard. ' +
+      'Reading takes no permission; changing the set takes `spine.focus`.',
+    inputSchema: { type: 'object', properties: {} },
+  });
+
   // The gate, and its wording follows `process_document_write`: the
   // description says the leaf out loud so a member without it does not
   // discover the boundary by eating a 403 mid-task. Everything above is
@@ -2931,6 +2950,7 @@ export async function handleToolCall(
       case 'promote':
       case 'subscribe':
       case 'focus':
+      case 'focus_set':
         return await handleSpineTool(name, args, brokerClient, instructions);
       case 'objectives_amend':
         return await handleObjectivesAmend(args, brokerClient);
@@ -3864,6 +3884,8 @@ async function dispatchSpineTool(
       return await handleSubscribe(args, brokerClient);
     case 'focus':
       return await handleFocus(args, brokerClient);
+    case 'focus_set':
+      return await handleFocusSet(brokerClient);
     default:
       return await handlePromote(args, brokerClient);
   }
@@ -4492,6 +4514,34 @@ async function handleFocus(
     result,
     args.lit ? `lit ${contract} into the focus set` : `unlit ${contract} from the focus set`,
   );
+}
+
+/**
+ * The team's plate, for an agent deciding what to pick up.
+ *
+ * Renders the whole set rather than a count, because a count answers a
+ * question nobody has. An empty set is stated as a real state — the
+ * team has not adopted focus, or the last thing finished — and not as
+ * an empty list the reader has to interpret.
+ */
+async function handleFocusSet(brokerClient: BrokerClient): Promise<CallToolResult> {
+  const contracts = await brokerClient.spineContracts({ focus: true });
+  if (contracts.length === 0) {
+    return textResult(
+      'The team focus set is EMPTY. Nothing is lit for travel, which means focus is not ' +
+        'currently narrowing anyone’s attention — ambient traffic flows for every contract.',
+    );
+  }
+  const lines = [`The team focus set — ${contracts.length} contract(s) lit for travel:`];
+  for (const c of contracts) {
+    lines.push(
+      '',
+      `${c.id} [${c.state}, state_rev ${c.stateRev}] ${c.title}`,
+      `  assignee: ${c.assignee}${c.verifier === null ? '' : ` · verifier: ${c.verifier}`}`,
+      `  subject: ${c.subject}${c.stale ? ' (STALE — the room moved under it)' : ''}`,
+    );
+  }
+  return textResult(lines.join('\n'));
 }
 
 async function handlePromote(

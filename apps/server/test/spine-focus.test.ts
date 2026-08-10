@@ -378,3 +378,45 @@ describe('the focus projection rebuilds identically from the stream', () => {
     expect(annex.contracts()).toEqual(contractsBefore);
   });
 });
+
+describe('the reason is required, and one character is a reason', () => {
+  /**
+   * `reason` is what makes membership AUTHORED rather than derived — it
+   * is the sentence whoever reads the set later gets instead of guessing
+   * why this was the push. So an empty one must be refused.
+   *
+   * And the nearest valid thing must still be accepted, which is the
+   * half a refusal test cannot see: a check that rejects `''` is one
+   * typo from a check that rejects everything, and a suite made only of
+   * refusals passes happily against it.
+   */
+  it('refuses an empty reason and accepts a one-character one', () => {
+    const c = authorContract();
+    // Refused by the SCHEMA rather than the fold — the shape is the law
+    // here, so it never reaches the store's own rules. Asserted on the
+    // field it names, not on "it threw": a bare throw is satisfied by a
+    // typo in the fixture just as happily as by the check under test.
+    expect(() =>
+      annex.append(
+        {
+          kind: 'focus',
+          opId: 'op-empty-reason',
+          expectedStateRev: 1,
+          body: { contract: c, lit: true, reason: '' },
+        },
+        { actor: 'andrewjon', now: tick() },
+      ),
+    ).toThrow(/reason/);
+    // NEAREST VALID THING: one character is a reason, and it lands whole.
+    const on = annex.append(
+      {
+        kind: 'focus',
+        opId: 'op-short-reason',
+        expectedStateRev: 1,
+        body: { contract: c, lit: true, reason: 'x' },
+      },
+      { actor: 'andrewjon', now: tick() },
+    );
+    expect(on.contract?.inFocus).toBe(true);
+  });
+});

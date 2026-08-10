@@ -153,6 +153,7 @@ describeIfBuilt('csuite claude end-to-end', () => {
       'channels_post',
       'contract_complete',
       'discuss',
+      'focus_set',
       'fs_ls',
       'fs_mkdir',
       'fs_mv',

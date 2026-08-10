@@ -130,6 +130,8 @@ export const fakeBrokerSpine: {
   events: Array<Record<string, unknown>>;
   eventsById: Record<string, Record<string, unknown>>;
   contracts: Record<string, Record<string, unknown>>;
+  /** What `GET /spine/contracts?focus=true` answers — the team's lit plate. */
+  focusSet: Array<Record<string, unknown>>;
   subjects: Array<Record<string, unknown>>;
   refuseNext: { status: number; body: Record<string, unknown> } | null;
   /** Answer the next append as an idempotent replay of an existing event. */
@@ -169,6 +171,7 @@ export const fakeBrokerSpine: {
   events: [],
   eventsById: {},
   contracts: {},
+  focusSet: [],
   subjects: [],
   refuseNext: null,
   replayNext: false,
@@ -529,6 +532,18 @@ export async function startFakeBroker(): Promise<FakeBroker> {
       }
       res.writeHead(200, jsonHeaders);
       res.end(JSON.stringify({ event }));
+      return;
+    }
+
+    if (url.pathname === '/spine/contracts' && req.method === 'GET') {
+      // The listing, with the one query the tool surface uses. The
+      // server applies the effective (lit AND non-terminal) narrowing;
+      // the fake serves whatever the fixture staged, so a test can stage
+      // exactly the set it means to measure.
+      const all = Object.values(fakeBrokerSpine.contracts);
+      const contracts = url.searchParams.get('focus') === 'true' ? fakeBrokerSpine.focusSet : all;
+      res.writeHead(200, jsonHeaders);
+      res.end(JSON.stringify({ contracts }));
       return;
     }
 

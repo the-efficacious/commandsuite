@@ -82,6 +82,7 @@ beforeEach(() => {
   fakeBrokerSpine.events.length = 0;
   fakeBrokerSpine.eventsById = {};
   fakeBrokerSpine.contracts = {};
+  fakeBrokerSpine.focusSet.length = 0;
   fakeBrokerSpine.orient = {};
   fakeBrokerSpine.refuseNext = null;
   fakeBrokerSpine.replayNext = false;
@@ -1585,5 +1586,85 @@ describe('subscribe is the reader-side control, and says what it cannot silence'
     const good = await call('subscribe', { contract: CONTRACT, level: 'lifecycle' });
     expect(good.isError).toBe(false);
     expect(fakeBrokerSpine.curatorWrites).toHaveLength(1);
+  });
+});
+
+describe('focus_set — the team plate, for an agent deciding what to pick up', () => {
+  it('is offered to everyone, because reading the boundary is not curating it', () => {
+    // D9's claim is that agents PLAN against the focus set. An agent that
+    // can only be SILENCED by a boundary it cannot read is not planning
+    // against it. Changing the set still takes the leaf; this is the read.
+    for (const packet of [PACKET, AUTHOR, CURATOR]) {
+      expect(defineTools(packet).map((t) => t.name)).toContain('focus_set');
+    }
+  });
+
+  it('renders the whole plate — every lit contract, with who holds it', async () => {
+    // Built off the same full shape the server sends — a thin fixture
+    // would be refused by the response schema, which is the SDK doing
+    // its job, and a test that staged less than the wire carries would
+    // be measuring a contract that cannot exist.
+    const lit = (over: Record<string, unknown>): Record<string, unknown> => ({
+      id: 'evt_x',
+      title: 'Ship something',
+      state: 'active',
+      stateRev: 3,
+      version: 1,
+      subject: 'repo:acme',
+      revision: null,
+      criteria: [{ id: 'c1', text: 'it returns 200' }],
+      assignee: 'rune',
+      verifier: 'lea',
+      authority: 'andrewjon',
+      constraints: [],
+      createdBy: 'lea',
+      createdAt: '2026-08-09T09:00:00.000Z',
+      updatedAt: '2026-08-09T09:00:00.000Z',
+      waitingOn: null,
+      waitingFor: null,
+      preemptedBy: null,
+      result: null,
+      reason: null,
+      successor: null,
+      stale: false,
+      head: null,
+      inFocus: true,
+      ...over,
+    });
+    fakeBrokerSpine.focusSet = [
+      lit({ id: 'evt_a', title: 'Ship the queue read', assignee: 'rune' }),
+      lit({
+        id: 'evt_b',
+        title: 'Land the egress guard',
+        state: 'waiting_on',
+        stateRev: 5,
+        assignee: 'cora',
+        verifier: null,
+        subject: 'pr:acme/12',
+        stale: true,
+        waitingOn: 'lea',
+      }),
+    ];
+    const { text } = await call('focus_set', {});
+    // The whole set reaches the page: both ids, both titles, both
+    // holders. A renderer that summarised would be deciding for the
+    // reader which of the team's work counts as the push.
+    expect(text).toContain('evt_a');
+    expect(text).toContain('Ship the queue read');
+    expect(text).toContain('rune');
+    expect(text).toContain('evt_b');
+    expect(text).toContain('Land the egress guard');
+    expect(text).toContain('cora');
+    // Staleness rides along — a lit contract whose room moved is the one
+    // an allocator most needs to see.
+    expect(text).toContain('STALE');
+  });
+
+  it('says an empty set is empty, and what that MEANS', async () => {
+    fakeBrokerSpine.focusSet.length = 0;
+    const { text } = await call('focus_set', {});
+    // Not an empty list to interpret: the state, and its consequence.
+    expect(text).toContain('EMPTY');
+    expect(text).toMatch(/ambient traffic flows for every contract/);
   });
 });
