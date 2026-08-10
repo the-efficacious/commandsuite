@@ -67,6 +67,7 @@ import type {
   SpineEvent,
   SpineEventKind,
   SpineFloorSignal,
+  SpineFocusBody,
   SpineInjection,
   SpineLifecycleBody,
   SpineProceedingBody,
@@ -75,7 +76,7 @@ import type {
   SpineSubscription,
   SpineSubscriptionLevel,
 } from 'csuite-sdk/types';
-import { SPINE_EVENT_CLASSES } from 'csuite-sdk/types';
+import { SPINE_EVENT_CLASSES, SPINE_TERMINAL_STATES } from 'csuite-sdk/types';
 import type { Logger } from '../logger.js';
 import type { CuratorStore, LeaseRecord, ReceiptVia } from './curator-store.js';
 import type { AnnexStore, AppendResult } from './store.js';
@@ -92,6 +93,14 @@ import type { AnnexStore, AppendResult } from './store.js';
  * which was not terminal.
  */
 const SILENT_STATES: ReadonlySet<SpineContractState> = new Set(['parked', 'waiting_for']);
+
+/**
+ * The states that take a contract out of the EFFECTIVE focus set, since
+ * the set is what is lit for TRAVEL and a finished contract is not
+ * travel. The same narrowing `AnnexStore.focusSet()` applies, restated
+ * here because the sweep rolls its own copy of the set forward.
+ */
+const TERMINAL_STATES: ReadonlySet<SpineContractState> = new Set(SPINE_TERMINAL_STATES);
 
 /**
  * The lifecycle transitions that ADDRESS the people carrying the work,
@@ -547,18 +556,25 @@ class SpineCurator implements Curator {
     const events = this.drainNewEvents();
     if (events.length === 0) return;
 
-    // The team's focus set, as it stands at this tick — the third arm of
-    // class-3 silence (parked ∪ waiting_for ∪ OUT-OF-FOCUS), the hole
-    // phase 3 left open now closed. It is INERT when nothing is lit: an
-    // empty set means the team has not adopted focus, so class 2 flows
-    // for every contract exactly as before — which is why every phase-3
-    // guarantee is preserved unchanged. Once anything is lit, the focus
-    // set is the boundary: a contract outside it goes parked-shaped for
-    // attention, generating no class-2 traffic while staying fully in
-    // the annex. Class 1 is not touched here and never consults focus —
+    // THE FOCUS SET AS OF ARRIVAL, rolled forward through the window —
+    // the third arm of class-3 silence (parked ∪ waiting_for ∪
+    // OUT-OF-FOCUS), and the hole phase 3 left open now closed.
+    //
+    // AT ARRIVAL, not as of the tick, for exactly the reason
+    // `stateAtArrival` exists two lines below. A set read once per sweep
+    // and applied to the whole window answers a question about the END
+    // of the tick that the events in it were not asked: an attempt that
+    // landed while nothing was lit was retroactively swallowed when
+    // something was lit later in the same ten seconds, and the event
+    // that TOOK a contract out of the set was silenced by its own
+    // effect. Both are the batching window leaking into the semantics.
+    //
+    // It is INERT while nothing is lit: an empty set means the team has
+    // not adopted focus, so class 2 flows for every contract exactly as
+    // before — which is why every phase-3 guarantee is preserved
+    // unchanged. Class 1 is not touched here and never consults focus:
     // an ask that names you reaches you out of focus.
-    const focusSet = new Set(this.annex.focusSet());
-    const focusActive = focusSet.size > 0;
+    const focusSet = this.focusSetBefore(events[0]?.seq ?? 0);
 
     // Contract → its state as of the last event BEFORE this window.
     // Silence is about the state a contract was sitting in when an
@@ -580,10 +596,28 @@ class SpineCurator implements Curator {
         state = this.stateBefore(contractId, event.seq);
         stateAtArrival.set(contractId, state);
       }
-      const outOfFocus = focusActive && !focusSet.has(contractId);
+      // A FOCUS EVENT IS NEVER SILENCED BY THE MEMBERSHIP IT CHANGES.
+      //
+      // The same shape as the parking lifecycle: the event that moves
+      // the boundary is delivered, and everything after it obeys the new
+      // value. A focus event always flips membership (the store refuses
+      // one that would not), so it is always news for a subscriber —
+      // this contract entered the team's push, or left it. Silencing the
+      // leaving event because the contract has just left is the record
+      // announcing only half of what it did.
+      const outOfFocus = event.kind !== 'focus' && focusSet.size > 0 && !focusSet.has(contractId);
       const silenced = SILENT_STATES.has(state) || outOfFocus;
       if (event.kind === 'lifecycle') {
-        stateAtArrival.set(contractId, (event.body as SpineLifecycleBody).state);
+        const next = (event.body as SpineLifecycleBody).state;
+        stateAtArrival.set(contractId, next);
+        // A lit contract that ends leaves the EFFECTIVE set at the moment
+        // it ends — the same narrowing `focusSet()` applies — so events
+        // after it on this contract are out of focus.
+        if (TERMINAL_STATES.has(next)) focusSet.delete(contractId);
+      }
+      if (event.kind === 'focus') {
+        if ((event.body as SpineFocusBody).lit) focusSet.add(contractId);
+        else focusSet.delete(contractId);
       }
       if (silenced) continue;
 
@@ -862,6 +896,61 @@ class SpineCurator implements Curator {
     }
     this.sweptSeq = cursor;
     return collected;
+  }
+
+  /**
+   * The EFFECTIVE focus set as of immediately before `seq` — lit by the
+   * last focus event below `seq`, and not terminal at that point.
+   *
+   * Read off the event stream rather than off the projection, because
+   * the projection is "now" and this asks about a moment in the past.
+   * `focus` events are rare by construction (curation is a deliberate,
+   * occasional act), so one indexed page over the kind is the same shape
+   * and the same bound as `stateBefore`'s page over `lifecycle`.
+   *
+   * Returned MUTABLE on purpose: the sweep rolls it forward as focus and
+   * terminal-lifecycle events pass through the window, so that every
+   * event is judged against the membership that existed when it landed.
+   */
+  private focusSetBefore(seq: number): Set<string> {
+    // PAGED TO EXHAUSTION, not one page. `events()` walks seq ASC from
+    // the beginning, so a single page is the OLDEST focus events: a team
+    // that has curated more than a page's worth would have computed
+    // silence against membership frozen at its first sprints, and the
+    // break below would never reach the recent ones. `stateBefore` gets
+    // away with one page because it is scoped to a single contract's
+    // lifecycle, which is bounded; focus is team-wide and grows for as
+    // long as the team curates.
+    const lit = new Map<string, boolean>();
+    let cursor = 0;
+    let reached = false;
+    for (let page = 0; page < SWEEP_MAX_PAGES && !reached; page++) {
+      const result = this.annex.events({
+        since_seq: cursor,
+        kind: 'focus',
+        limit: SWEEP_PAGE_SIZE,
+      });
+      for (const event of result.events) {
+        if (event.seq >= seq) {
+          reached = true;
+          break;
+        }
+        if (event.contract === null) continue;
+        lit.set(event.contract, (event.body as SpineFocusBody).lit);
+      }
+      if (result.nextCursor === null) break;
+      cursor = result.nextCursor;
+    }
+    const set = new Set<string>();
+    for (const [contractId, isLit] of lit) {
+      if (!isLit) continue;
+      // Terminal AT THAT POINT, from the same lifecycle history the
+      // state-at-arrival map reads — a contract that ended before this
+      // window was already out of the effective set.
+      if (TERMINAL_STATES.has(this.stateBefore(contractId, seq))) continue;
+      set.add(contractId);
+    }
+    return set;
   }
 
   /** A contract's state immediately before `seq`, from its own lifecycle history. */
