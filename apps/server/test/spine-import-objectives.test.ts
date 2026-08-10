@@ -400,10 +400,18 @@ describe('what the import carries, and what it refuses to invent', () => {
   it('replays an amendment chain onto the text the row actually holds', async () => {
     await runImport();
     const doc = contractsByTitle().get('Document the webhook inbox') as SpineContract;
-    // THE ROUND TRIP. The specification is authored at the ORIGINAL
-    // text and each amendment carries it forward, so the projection
-    // has to land on exactly the title and outcome the legacy row
-    // holds today. Anything else means the unroll lost a step.
+    // THE PROJECTION LANDS ON THE ROW'S CURRENT TEXT — and this pair
+    // alone does NOT constrain the unroll, which is worth saying
+    // plainly because the comment here used to claim it did.
+    //
+    // The unroll walks backwards from the current row and the replay
+    // walks forwards from the original; they are inverses, so an error
+    // in one is cancelled by the same error in the other and the round
+    // trip closes anyway. Measured: dropping `prev.title ??` from the
+    // fold leaves these two assertions GREEN. What actually catches it
+    // is the ORIGINAL-text check below — the only assertion here that
+    // reads a point the fold had to reconstruct rather than a point
+    // both directions pass through.
     expect(doc.title).toBe('Document the webhook inbox');
     expect(doc.criteria).toEqual([
       { id: 'outcome', text: 'the reference page documents every field and the retry policy' },
@@ -804,6 +812,79 @@ describe('provenance is permanent', () => {
     expect(allEvents()).toEqual(before);
   });
 
+  it('refuses INSERT OR REPLACE, which is a delete-and-reinsert underneath', async () => {
+    await runImport();
+    const before = allEvents();
+    const legacy = before[0] as SpineEvent;
+    const row = db.prepare('SELECT * FROM spine_events WHERE id = ?').get(legacy.id) as Record<
+      string,
+      unknown
+    >;
+
+    // THE CALLER THE RULE EXISTS FOR, spelled the way they would spell
+    // it. This is not an exotic attack — it is how somebody changes a
+    // column they cannot ALTER — and it preserves the row's id AND its
+    // seq, so nothing downstream can tell afterwards. An `UPDATE OF
+    // provenance` trigger alone did not see it, because it is not an
+    // UPDATE.
+    expect(() =>
+      db
+        .prepare(
+          `INSERT OR REPLACE INTO spine_events
+             (seq, id, kind, class, subject_id, revision_id, actor, authored_by, at,
+              provenance, op_id, cites, staples_to, body)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'native', ?, ?, ?, ?)`,
+        )
+        .run(
+          row.seq as number,
+          row.id as string,
+          row.kind as string,
+          row.class as string,
+          row.subject_id as string | null,
+          row.revision_id as string | null,
+          row.actor as string,
+          row.authored_by as string | null,
+          row.at as string,
+          row.op_id as string | null,
+          row.cites as string,
+          row.staples_to as string | null,
+          row.body as string,
+        ),
+    ).toThrow(/append-only/);
+
+    // The whole stream, not a spot check: a REPLACE that got halfway
+    // would leave the row changed and the caller merely informed.
+    expect(allEvents()).toEqual(before);
+    expect(spine.store.event(legacy.id)?.provenance).toBe('legacy_projection');
+  });
+
+  it('refuses a bare DELETE — the other half of the same rewrite', async () => {
+    await runImport();
+    const before = allEvents();
+    const legacy = before[0] as SpineEvent;
+
+    // Delete-then-insert reaches the same place as REPLACE by two
+    // statements instead of one. Both have to be closed or neither is.
+    expect(() => db.prepare('DELETE FROM spine_events WHERE id = ?').run(legacy.id)).toThrow(
+      /append-only/,
+    );
+    expect(() => db.prepare('DELETE FROM spine_events').run()).toThrow(/append-only/);
+    expect(allEvents()).toEqual(before);
+  });
+
+  it('still admits an ordinary append — the positive control on both triggers', async () => {
+    await runImport();
+    const before = allEvents().length;
+    // Four refusals above are equally satisfied by a table nothing can
+    // be written to at all.
+    const added = await spine.append(
+      { kind: 'discussion', body: { body: 'the annex still takes writes' } },
+      { actor: 'lea', now: T0 + 70 * DAY },
+    );
+    expect(added.event.provenance).toBe('native');
+    expect(allEvents().length).toBe(before + 1);
+  });
+
   it('refuses to rewrite a native event as legacy, the other direction', async () => {
     await runImport();
     spine.store.registerSubject({ id: 'repo:acme', type: 'repo' }, 'lea', T0);
@@ -856,5 +937,217 @@ describe('provenance is permanent', () => {
     const stillThere = spine.store.event(legacyDone.id) as SpineEvent;
     expect(stillThere.provenance, 'the legacy event did not move').toBe('legacy_projection');
     expect((stillThere.body as { result: string }).result).toBe('reference page published');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+
+describe('a correction never loses the text it carries', () => {
+  /**
+   * THE ONE THING THE DESIGN SAYS MUST NEVER HAPPEN: member-authored
+   * text disappearing.
+   *
+   * Legacy `correctEvent` explicitly permits correcting an `assigned`
+   * event, and `assigned` is the one legacy kind that produces no event
+   * of its own — its content IS the specification. Recording it only in
+   * the ledger and not in the in-memory map made its correction resolve
+   * to nothing, land in `unimported` under a reason that was FALSE
+   * about it ("which was not imported" — it was, as the spec), and drop
+   * the member's correction text out of the annex entirely.
+   */
+  it('staples a correction of `assigned` to the specification it became', async () => {
+    legacyEvent('ev-1-fix', 'obj-1', T0 + 5 * DAY, 'lea', 'event_corrected', {
+      target: 'event',
+      ts: T0 + 5 * DAY,
+      actor: 'lea',
+      reason: 'the assignment named the wrong outcome',
+      eventId: 'ev-1-a',
+      eventKind: 'assigned',
+      eventTs: T0,
+      correction: 'the Retry-After header was always in scope, the original text omitted it',
+    });
+
+    const summary = await runImport();
+
+    const shipped = contractsByTitle().get('Ship the rate limiter') as SpineContract;
+    const correction = eventsOn(shipped.id).find((e) => e.kind === 'correction') as SpineEvent;
+    expect(correction, 'the correction landed').toBeDefined();
+    // Stapled to the SPECIFICATION, because that is where the corrected
+    // event's content went.
+    expect(correction.staplesTo).toBe(shipped.id);
+    expect((correction.body as { correction: string }).correction).toContain(
+      'the Retry-After header was always in scope',
+    );
+    // …and it is not reported as unimported under a false reason.
+    expect(summary.unimported.map((r) => r.id)).not.toContain('ev-1-fix');
+    // The member's words are IN THE ANNEX, which is the property.
+    expect(JSON.stringify(allEvents())).toContain('the original text omitted it');
+  });
+
+  it('resolves a correction added AFTER the run that imported its target', async () => {
+    // `produced` is per-run and is never populated for rows the ledger
+    // already covers, so a correction arriving on a later run found an
+    // empty map and reported its target unimported. The ledger is the
+    // durable half of the same mapping; this is why it is consulted.
+    await runImport();
+    const shipped = contractsByTitle().get('Ship the rate limiter') as SpineContract;
+    const doneBefore = eventsOn(shipped.id).find((e) => e.kind === 'lifecycle') as SpineEvent;
+
+    legacyEvent('ev-1-late', 'obj-1', T0 + 9 * DAY, 'lea', 'event_corrected', {
+      target: 'event',
+      ts: T0 + 9 * DAY,
+      actor: 'lea',
+      reason: 'the result named the wrong release',
+      eventId: 'ev-1-b',
+      eventKind: 'completed',
+      eventTs: T0 + 4 * DAY,
+      correction: 'it shipped in 0.4.3, not 0.4.2',
+    });
+
+    const second = await runImport();
+
+    const correction = eventsOn(shipped.id).find((e) => e.kind === 'correction');
+    expect(correction, 'a correction on a later run still lands').toBeDefined();
+    expect(correction?.staplesTo).toBe(doneBefore.id);
+    expect(second.unimported.map((r) => r.id)).not.toContain('ev-1-late');
+    expect(JSON.stringify(allEvents())).toContain('it shipped in 0.4.3, not 0.4.2');
+  });
+
+  it('still refuses a correction of something genuinely absent — the control', async () => {
+    // The nearest INVALID thing: the two fixes above must not turn the
+    // refusal into "staple it anywhere".
+    legacyEvent('ev-1-ghost', 'obj-1', T0 + 5 * DAY, 'lea', 'event_corrected', {
+      target: 'event',
+      ts: T0 + 5 * DAY,
+      actor: 'lea',
+      reason: 'correcting a watcher row, which is never imported',
+      eventId: 'ev-does-not-exist',
+      eventKind: 'watcher_added',
+      eventTs: T0,
+      correction: 'this has nothing to staple to',
+    });
+
+    const summary = await runImport();
+
+    const dropped = summary.unimported.find((r) => r.id === 'ev-1-ghost');
+    expect(dropped?.reason).toContain('was not imported');
+    expect(JSON.stringify(allEvents())).not.toContain('this has nothing to staple to');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+
+describe('an amendment is paired with its own record, not its neighbour', () => {
+  it('does not shift later amendments when one payload is unreadable', async () => {
+    // The list of amendments is built by FILTERING the event rows, and
+    // a filter compacts. Indexed by an ordinal incremented per
+    // `amended` row, one dropped payload pairs every later amendment
+    // with the previous one's — producing an event dated and attributed
+    // to one member carrying ANOTHER member's reason and another
+    // member's recorded prior text. That is a claim nobody made wearing
+    // a member's name, generated by the error handler.
+    objective({
+      id: 'obj-drift',
+      title: 'C-title',
+      outcome: 'C-outcome',
+      status: 'active',
+      assignee: 'rune',
+      originator: 'lea',
+      createdAt: T0 + 10 * DAY,
+      outcomeVersion: 3,
+    });
+    // A: readable.
+    legacyEvent('ev-A', 'obj-drift', T0 + 11 * DAY, 'lea', 'amended', {
+      target: 'contract',
+      version: 2,
+      ts: T0 + 11 * DAY,
+      actor: 'lea',
+      disposition: 'correction',
+      reason: "LEA's reason",
+      fields: ['title'],
+      previous: { title: 'A-title' },
+    });
+    // B: unreadable payload — the drop branch that makes the shift
+    // reachable. It is a handled case, so it must not mis-handle.
+    db.prepare(
+      'INSERT INTO objective_events (event_id, objective_id, ts, actor, kind, payload) VALUES (?, ?, ?, ?, ?, ?)',
+    ).run('ev-B', 'obj-drift', T0 + 12 * DAY, 'cora', 'amended', '{ this is not json');
+    // C: readable, and the one that used to inherit A's record.
+    legacyEvent('ev-C', 'obj-drift', T0 + 13 * DAY, 'turner', 'amended', {
+      target: 'contract',
+      version: 3,
+      ts: T0 + 13 * DAY,
+      actor: 'turner',
+      disposition: 'scope_change',
+      reason: "TURNER's reason",
+      fields: ['title'],
+      previous: { title: 'B-title' },
+    });
+
+    const summary = await runImport();
+
+    const drift = contractsByTitle().get('C-title') as SpineContract;
+    const amendments = eventsOn(drift.id).filter((e) => e.kind === 'amendment');
+    expect(amendments, 'A and C land; B is dropped').toHaveLength(2);
+
+    const byActor = new Map(
+      amendments.map((a) => [a.actor, a.body as unknown as Record<string, string>]),
+    );
+    // Each carries ITS OWN reason and ITS OWN recorded prior text.
+    expect(byActor.get('lea')?.reason).toBe("LEA's reason");
+    expect(byActor.get('lea')?.disclosure).toContain('A-title');
+    expect(byActor.get('turner')?.reason).toBe("TURNER's reason");
+    expect(byActor.get('turner')?.disclosure).toContain('B-title');
+    // Nobody carries somebody else's.
+    expect(byActor.get('turner')?.disclosure).not.toContain('A-title');
+    expect(byActor.get('turner')?.reason).not.toBe("LEA's reason");
+
+    // And the row reported unimported is the one that actually was.
+    expect(summary.unimported.map((r) => r.id)).toContain('ev-B');
+    expect(summary.unimported.map((r) => r.id)).not.toContain('ev-C');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+
+describe('the crash window between the annex write and the ledger write', () => {
+  it('does not duplicate a thread post when the ledger row is missing', async () => {
+    // The two writes are separate autocommit statements and cannot be
+    // made one — the store opens its own transaction and SQLite refuses
+    // a transaction inside a transaction. So a kill between them leaves
+    // the event in the annex with no ledger row. Deleting the ledger
+    // row IS that state, exactly.
+    await runImport();
+    const race = contractsByTitle().get('Audit the session middleware') as SpineContract;
+    const before = bodiesOn(race.id).filter((b) => b.includes('Three files'));
+    expect(before, 'the post is in once to begin with').toHaveLength(1);
+
+    db.prepare('DELETE FROM spine_legacy_import WHERE legacy_kind = ? AND legacy_id = ?').run(
+      'message',
+      'msg-race',
+    );
+
+    await runImport();
+
+    // Still once. Authoritative kinds are covered by op_id; ambient
+    // ones carry none, which is why the annex itself is asked.
+    expect(bodiesOn(race.id).filter((b) => b.includes('Three files'))).toHaveLength(1);
+  });
+
+  it('still imports a genuinely new post at the same instant — the control', async () => {
+    // The nearest VALID thing the dedupe must not swallow: a different
+    // post. Identity is contract + author + instant + text, all four,
+    // so same author and same instant with different words is a
+    // different post and must land.
+    await runImport();
+    const race = contractsByTitle().get('Audit the session middleware') as SpineContract;
+    const before = bodiesOn(race.id).length;
+
+    discussPost('msg-race-2', 'obj-race', T0 + 5 * DAY, 'cora', 'and one more file: admin.ts');
+    await runImport();
+
+    const after = bodiesOn(race.id);
+    expect(after).toHaveLength(before + 1);
+    expect(after.some((b) => b.includes('admin.ts'))).toBe(true);
   });
 });

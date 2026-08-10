@@ -19,13 +19,26 @@
  *
  * COMMENTS ARE EXEMPT, AND THE EXEMPTION IS BOUNDED. Several files
  * explain what was removed and why — the files ACL that used to hang
- * off `/objectives/<id>/`, the `obj:` owner arm the SDK schema keeps
- * for rows still in deployed databases, the class of defect a tool
- * description once carried. Those sentences are the record of a
+ * off the objectives namespace, the `obj:` owner arm the SDK schema
+ * keeps for rows still in deployed databases, the class of defect a
+ * tool description once carried. Those sentences are the record of a
  * decision and deleting them to satisfy a grep would trade a real
- * explanation for a green check. So the scan reads CODE, and there is
- * a fixture below asserting the exemption is deliberate rather than a
- * hole someone can hide a live call in.
+ * explanation for a green check. So the scan reads CODE.
+ *
+ * IT STRIPS COMMENTS RATHER THAN SKIPPING COMMENT-LOOKING LINES, and
+ * the difference was a hole that got measured rather than reasoned
+ * about. The first version asked whether a line STARTED with `//`, `*`
+ * or `/*`. A tool description is a multi-line template literal, and a
+ * continuation line inside one very often starts with `*` — a markdown
+ * bullet. So a tool name planted inside a template literal, on a line
+ * beginning with `*`, scored ZERO hits: exactly the "tool name in a
+ * description string" case this exists to catch, exempted for looking
+ * like prose. The same shape mis-fired the other way too, flagging a
+ * trailing comment written after real code.
+ *
+ * So it tracks block comments, line comments, strings and template
+ * literals, and blanks out only what is genuinely a comment. Both
+ * directions have fixtures below.
  *
  * BOTH DIRECTIONS. A scanner pointed at nothing reports no violations
  * exactly as cheerfully as a clean tree, and that is the failure this
@@ -69,17 +82,67 @@ const FORBIDDEN = [
 ];
 
 /**
- * `true` for a line that is entirely comment.
+ * Blank out every comment, leaving code and its line structure intact.
  *
- * Line-based, and that is a choice with a cost worth naming: an
- * occurrence in a trailing comment after real code on the same line is
- * missed. It buys not having to parse TypeScript to run a grep, and the
- * planted-occurrence fixtures below are what establish the scan still
- * finds the forms that matter.
+ * One pass tracking the four states that decide whether a `//` or a
+ * `/*` opens a comment at all: inside a string, inside a template
+ * literal, inside a line comment, inside a block comment. Comment
+ * characters become spaces rather than vanishing, so line numbers
+ * still point where a reader expects.
+ *
+ * Regex literals are NOT tracked, and that is the one known gap. A
+ * quote character inside a regex could desynchronise the string state
+ * — and the failure direction is a FALSE POSITIVE (code read as
+ * string, or a comment read as code), which is noisy and visible,
+ * rather than a false negative, which is silent. That is the right way
+ * round for a guard.
  */
-function isCommentLine(line) {
-  const t = line.trim();
-  return t.startsWith('//') || t.startsWith('*') || t.startsWith('/*') || t.startsWith('*/');
+function stripComments(source) {
+  let out = '';
+  let state = 'code';
+  let quote = '';
+  for (let i = 0; i < source.length; i++) {
+    const c = source[i];
+    const next = source[i + 1];
+    if (state === 'code') {
+      if (c === '/' && next === '/') {
+        state = 'line';
+        out += '  ';
+        i++;
+      } else if (c === '/' && next === '*') {
+        state = 'block';
+        out += '  ';
+        i++;
+      } else if (c === "'" || c === '"' || c === '`') {
+        state = c === '`' ? 'template' : 'string';
+        quote = c;
+        out += c;
+      } else {
+        out += c;
+      }
+    } else if (state === 'line') {
+      if (c === '\n') {
+        state = 'code';
+        out += c;
+      } else out += ' ';
+    } else if (state === 'block') {
+      if (c === '*' && next === '/') {
+        state = 'code';
+        out += '  ';
+        i++;
+      } else out += c === '\n' ? c : ' ';
+    } else {
+      out += c;
+      if (c === '\\') {
+        out += source[i + 1] ?? '';
+        i++;
+      } else if (c === quote) {
+        state = 'code';
+        quote = '';
+      }
+    }
+  }
+  return out;
 }
 
 function walk(dir, prefix, files) {
@@ -106,17 +169,19 @@ function scan(roots = SRC_ROOTS, base = REPO) {
   let scanned = 0;
   for (const root of roots) {
     for (const rel of walk(join(base, root), '', [])) {
-      // The importer READS the legacy tables by name; it is the one
-      // module whose whole job is the surface's removal, and its own
-      // path contains the word.
-      if (rel.includes('import-objectives')) continue;
       scanned += 1;
-      const lines = readFileSync(join(base, root, rel), 'utf8').split('\n');
+      // NO FILE IS EXEMPT. An earlier version skipped the importer,
+      // whose own path contains the word — removed after measuring
+      // that the scan is clean without the exemption. It bought
+      // nothing and blinded a whole module permanently, which is a
+      // standing invitation for the surface to come back inside the
+      // one file nobody is watching.
+      const lines = stripComments(readFileSync(join(base, root, rel), 'utf8')).split('\n');
       lines.forEach((line, i) => {
-        if (isCommentLine(line)) return;
         for (const { id, re } of FORBIDDEN) {
-          if (re.test(line))
+          if (re.test(line)) {
             hits.push({ file: `${root}/${rel}`, line: i + 1, id, text: line.trim() });
+          }
         }
       });
     }
@@ -200,6 +265,51 @@ describe('the scanner can fail — one planted occurrence per form', () => {
       ].join('\n'),
     );
     expect(hits).toEqual([]);
+  });
+
+  it('finds a tool name inside a TEMPLATE LITERAL, on a line that looks like prose', () => {
+    // THE HOLE THAT WAS MEASURED. A tool description is a multi-line
+    // template literal and its continuation lines routinely start with
+    // `*` — a markdown bullet. The line-based comment test exempted
+    // them, so a tool name in a description string — the single case
+    // this scanner exists for — scored zero hits.
+    const { hits } = plant(
+      [
+        'export const tool = {',
+        '  description: `Your current plate.',
+        '',
+        '   * call objectives_list to see it',
+        '   * it is cheap',
+        '  `,',
+        '};',
+      ].join('\n'),
+    );
+    expect(hits.map((h) => h.id)).toEqual(['tool name']);
+    expect(hits[0]?.line, 'and it points at the right line').toBe(4);
+  });
+
+  it('does NOT flag a trailing comment written after real code', () => {
+    // The other direction of the same defect: the line-based version
+    // flagged this, because the line does not START with a comment
+    // marker. A false positive trains people to widen the exemption.
+    const { hits } = plant('export const x = 1; // objectives_list is gone\n');
+    expect(hits).toEqual([]);
+  });
+
+  it('scans the importer too — no file is exempt', () => {
+    // The file exemption was removed after measuring that the real
+    // scan is clean without it. A permanently blinded module is a
+    // standing invitation for the surface to come back inside the one
+    // file nobody is watching.
+    const dir = mkdtempSync(join(tmpdir(), 'objectives-scan-'));
+    tmpDirs.push(dir);
+    mkdirSync(join(dir, 'pkg/src/spine'), { recursive: true });
+    writeFileSync(
+      join(dir, 'pkg/src/spine/import-objectives.ts'),
+      "const t = 'objectives_list';\n",
+    );
+    const { hits } = scan(['pkg/src'], dir);
+    expect(hits.map((h) => h.id)).toEqual(['tool name']);
   });
 
   it('flags a live call on the line BELOW a comment about it', () => {

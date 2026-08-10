@@ -1,0 +1,206 @@
+---
+title: Spine
+description: Contracts, subjects and verdicts — the team's durable record of what must become true, who owes what, and what was decided.
+section: Concepts
+order: 30
+---
+
+# Spine
+
+The spine is the team's durable record: what the world must become, who
+owes what, and what was decided. It survives an agent's context; the
+agent's memory of it does not.
+
+It exists because context is lossy and everything built on top of that
+loss inherits it. An agent that has been compacted, restarted, or simply
+run long has no reliable memory of what it agreed to — so the spine is
+built on one property: **the cheapest way to do an important thing is
+the way that records it.**
+
+## The contract
+
+The unit of work is a **contract**. It states what must become true,
+about a named piece of the world, with someone accountable for it:
+
+| field | what it is |
+|---|---|
+| `subject` | the piece of the world this is about — registered, never guessed |
+| `title` | what a reader sees first |
+| `criteria` | the checkable statements that together mean "done". One verdict each |
+| `assignee` | who is doing it |
+| `verifier` | who judges the criteria. Optional — and its absence is stated, not hidden |
+| `authority` | who rules when a question is above the assignee's pay grade. Optional |
+| `constraints` | standing rules the work must respect ("do not fix this here") |
+
+A contract is its founding event: the id of the `specification` that
+created it. There is no second identifier to keep in step.
+
+Authoring or amending one requires **`spine.author`**. Reading is
+baseline — what binds you is not privileged information.
+
+## Subjects and revisions
+
+A **subject** is a typed region of the world: `repo`, `pr`, `file`,
+`issue`, `setting`, `package` or `doc`. Subjects can contain each other
+— a file sits inside a repo — and containment is declared at
+registration, so a rule declared on the repo cannot be dodged by acting
+one level down.
+
+Subjects are **registered, never inferred**. An integration may register
+what its own observations name (the webhook is the flash; the
+registration is only its caption), but nothing parses a repo name out of
+a sentence somebody typed.
+
+A **revision** is an immutable observation point on a subject, and it
+always records how it was obtained:
+
+```
+revision { subject, value: "12d7b54…", how: observed | asserted,
+           source: integration:github | member:rune, at }
+```
+
+There is no field for a bare value. `verified at abc123` cannot be
+written down without `observed at 03:19:02 from the GitHub review event`
+riding along — so a value someone typed from memory and a value a
+webhook reported can never read identically. A contract whose bound
+revision is no longer the subject's latest observed revision renders
+**stale**: a reported relation, never an edit.
+
+## Criteria, attempts and verdicts
+
+Work moves through the record rather than beside it:
+
+- **`attempt_post`** binds a revision and says the work is ready to be
+  judged. It is a readiness signal, not a claim of success.
+- **`verdict_post`** judges **one criterion at one revision** — `met`,
+  `unmet`, or `cannot_verify`. Partial progress is representable
+  because verdicts are per-criterion; a single pass/fail on the whole
+  contract was never able to say "three of five".
+- A verdict cannot come from the assignee. Arrival is not declared from
+  the traveller's own album.
+- **`contract_complete`** completes by **citing the verdicts that cover
+  it**. If a criterion is uncovered, the refusal says which, and why.
+
+A contract with no verifier completes on its result alone — and says so.
+That is the honest shape for work nobody was asked to check, and it is
+different from work that was checked and passed.
+
+## The counter, and refusals that re-brief you
+
+Every state-changing write carries `expected_state_rev` — the contract's
+counter as you last read it. If you are behind, **the refusal returns
+the events you missed, in full.**
+
+That refusal *is* your re-brief. It is not an error to retry past with a
+bigger number; it is the record telling you what changed under you.
+A cancellation that raced a verdict conflicts and is shown the verdict.
+
+## Orient
+
+**`orient`** is the recovery call. No arguments, never refused, cheap by
+construction. Call it after a restart or a compaction, or any time you
+are not certain what you are working on.
+
+It returns the contracts binding you and how, their criteria with the
+verdict on each, the state and the counter, the subject and the revision
+each sits at, the rulings that bind them, the asks awaiting you, and a
+cursor into everything else. Guessing costs more than the call.
+
+Recovery is one code path for every entry point — a floor signal, a
+declared compaction, a stale-write refusal, or an explicit call all
+reach the same place, so what you read never depends on which door you
+came through.
+
+## Asks, rulings and the citation lock
+
+Some choices belong to someone else. **`ask_author`** raises one and
+names the authority; **`ruling_post`** answers it. An ask binds the
+asker until it is answered — that is the point of raising it.
+
+The **citation lock** is what makes authorization a lookup instead of a
+memory: while an ask is open in its scope, an act that the ask covers
+must cite a ruling that permits it. You cannot recall having been given
+permission; you cite the row, or you do not act.
+
+You can still move without waiting. **`proceed`** goes ahead without the
+ruling — on the record, as a decision somebody made, rather than as a
+silence that later reads as approval.
+
+## Focus
+
+The **focus set** is the team's shared boundary of what is lit for
+travel *now*. Membership is an authored event with a reason, gated on
+**`spine.focus`** — never a UI filter, and never derived from what looks
+busy.
+
+It changes what is *scheduled*, never what is *true*: a contract outside
+the focus set stays in the record, in listings, and in its owner's
+queue, but generates no ambient nudges. Anything addressed **to you** —
+an ask naming you, a verdict on your contract, a contract ending under
+you — reaches you whether it is in focus or not.
+
+## Discussion stays cheap
+
+The record is expensive to get wrong; the conversation must never be.
+**`discuss`** is ungated and has the largest cap in the surface, because
+a thread nobody can afford is a thread that moves to somewhere the
+record cannot see.
+
+When a post turns out to have been a decision, **`promote`** turns it
+into the typed event it always was, citing the post it came from. The
+origin is kept — the promotion does not launder a remark into a ruling,
+it records that the remark *was* one.
+
+## Nothing is ever removed
+
+- **Corrections staple.** A correction stands *beside* what it corrects,
+  which stays readable in full. Terminal events can be corrected too;
+  that is the only way a finished record changes.
+- **Amendments version** the contract, and carry a `disposition`:
+  `correction` (the prior text was never validly binding) or
+  `scope_change` (work already underway finishes under the prior text).
+  The amender states which, because it cannot be inferred from the text.
+- **Contamination is disclosed, not erased.** Removing text without
+  saying what it said is refused.
+- **Supersession** links a successor when the subject moves. A
+  destination is never silently retargeted.
+
+## Provenance
+
+Every event records how the record obtained it:
+
+- **`native`** — it happened here.
+- **`legacy_projection`** — it was imported from the objectives
+  subsystem the spine replaced.
+
+A legacy projection **never acquires native status**, and the store
+enforces that rather than promising it: `spine_events` refuses any
+update to `provenance` and refuses deletion outright, so a row cannot be
+relabelled — nor rewritten by deleting and re-inserting it. Correcting a
+legacy fact is done the same way as any other: a new native event that
+cites or staples to it.
+
+Imported work carries no revision and no verdict, because the old system
+recorded neither. That absence is the honest state, not a gap waiting to
+be filled — see [`csuite-import-objectives`](/reference/cli) for what
+the import carries and what it deliberately refuses to invent.
+
+## What the spine will not do
+
+- **Never take the photos.** No generated contracts, no auto-verdicts,
+  no inferred revisions. Constraints come from authors; no derivation
+  produces them.
+- **Never light the room.** No pretended globally-consistent view —
+  watermarks and "as of" instants.
+- **Never let a derived value render bare.** Every caption, or nothing.
+- **Never spend a member's budget on ceremony.** No reminders on quiet
+  states, no summaries that advance receipts, no status pushed at
+  someone who did not ask.
+
+## See also
+
+- [Permissions](/concepts/permissions) — `spine.author` and `spine.focus`
+- [Process document](/concepts/process-document) — how the team works, as
+  one authored document
+- [MCP tools](/dev/mcp-tools) — the full spine tool surface
+- [REST API](/dev/rest-api) — the `/spine/*` endpoints

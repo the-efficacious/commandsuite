@@ -43,6 +43,7 @@ import {
   basenameOf,
   dedupeBasename,
   isAncestorPath,
+  isFrozenLegacyPath,
   joinPath,
   normalizePath,
   ownerOf,
@@ -276,6 +277,13 @@ class SqliteFilesystemStore implements FilesystemStore {
 
   private ownsPath(path: string, viewer: ViewerContext): boolean {
     if (path === ROOT_PATH) return false;
+    // The frozen legacy tree is owned by nobody by NAME. Its rows carry
+    // `owner = 'obj:<id>'`, which no member name can equal, but
+    // ownership here is computed from the PATH — and the path's first
+    // segment is `objectives`, which is a perfectly legal member name.
+    // Without this a member called that would read and write the whole
+    // legacy tree while the assignee it was created for could not.
+    if (isFrozenLegacyPath(path)) return false;
     return ownerOf(path) === viewer.name;
   }
 

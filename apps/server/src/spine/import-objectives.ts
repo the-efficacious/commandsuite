@@ -236,6 +236,25 @@ function reasonOf(err: unknown): string {
 }
 
 /**
+ * The legacy row's durable identity.
+ *
+ * `event_id` when it is there, the SQLite rowid when it is not — the
+ * column was added later and rows written before it carry NULL. One
+ * function, because the id is used as a ledger key, an op_id and a
+ * correction target, and three spellings of it would eventually be two.
+ */
+/** The instant, spelled exactly as the store spells it on a row. */
+function iso(now: number): string {
+  return new Date(now).toISOString();
+}
+
+function legacyIdOf(event: EventRow): string {
+  return event.event_id !== null && event.event_id !== undefined
+    ? event.event_id
+    : `row:${event.rowid}`;
+}
+
+/**
  * Walk the amendment chain BACKWARDS from the current row to recover the
  * text at every point, including the original.
  *
@@ -247,27 +266,38 @@ function reasonOf(err: unknown): string {
  * OVER RECORDED VALUES, not an inference: every string it produces was
  * written down by somebody, either in the row or in a `previous` map.
  *
- * Returns the text BEFORE each amendment, indexed alongside the
- * amendment list, plus the original text at index 0.
+ * KEYED BY LEGACY EVENT ID, NOT BY ORDINAL, and that is a correctness
+ * property rather than a style choice. The amendment list is built by
+ * filtering the event rows, and a filter COMPACTS: one unreadable
+ * payload and every later amendment shifts down a slot. Indexing it by
+ * a counter incremented per `amended` row then pairs each event with
+ * its NEIGHBOUR's amendment — an event dated and attributed to one
+ * member carrying another member's reason and another member's
+ * recorded prior text. That is a claim nobody made wearing a member's
+ * name, which is the exact failure class this whole import exists to
+ * refuse, and it would be produced BY the code handling the error.
+ *
+ * The drop branch that makes it reachable is deliberate and stays, so
+ * the pairing has to be by identity.
  */
 function unrollAmendments(
   current: ContractText,
-  amendments: readonly LegacyContractAmendment[],
-): { original: ContractText; before: ContractText[]; after: ContractText[] } {
-  const after: ContractText[] = new Array(amendments.length);
-  const before: ContractText[] = new Array(amendments.length);
+  amendments: readonly { legacyId: string; amendment: LegacyContractAmendment }[],
+): { original: ContractText; after: Map<string, ContractText> } {
+  const after = new Map<string, ContractText>();
   let cursor: ContractText = { ...current };
   for (let i = amendments.length - 1; i >= 0; i--) {
-    after[i] = { ...cursor };
-    const prev = amendments[i]?.previous ?? {};
+    const entry = amendments[i];
+    if (entry === undefined) continue;
+    after.set(entry.legacyId, { ...cursor });
+    const prev = entry.amendment.previous ?? {};
     cursor = {
       title: prev.title ?? cursor.title,
       outcome: prev.outcome ?? cursor.outcome,
       body: prev.body ?? cursor.body,
     };
-    before[i] = { ...cursor };
   }
-  return { original: cursor, before, after };
+  return { original: cursor, after };
 }
 
 /** One unit of work: a mapped append, in legacy order. */
@@ -275,6 +305,12 @@ interface Step {
   /** Legacy row identity, for the ledger. */
   source: 'objective' | 'objective_event' | 'message';
   id: string;
+  /**
+   * Present on AMBIENT steps only — the identity the annex can be asked
+   * about, since an ambient event carries no `op_id` for the store to
+   * recognise a replay by.
+   */
+  ambient?: { contract: string; actor: string; body: string };
   kind: string;
   ts: number;
   run: () => Promise<AppendResult>;
@@ -321,6 +357,62 @@ class ObjectivesImporter {
     this.summary.appended[kind] = (this.summary.appended[kind] ?? 0) + 1;
   }
 
+  /**
+   * The spine event a legacy row became, WHENEVER it was imported.
+   *
+   * `produced` only holds rows this process appended, so a correction
+   * imported on a later run than the event it corrects found nothing
+   * there and reported itself unimported — with a reason that was false
+   * about the target ("which was not imported"). The ledger is the
+   * durable half of the same mapping and survives across runs, so it is
+   * consulted second. The in-memory map stays because it is also
+   * populated mid-run, before the ledger row for a step is visible to a
+   * later step in the same sorted pass.
+   */
+  private resolveProduced(legacyId: string): string | undefined {
+    return this.produced.get(legacyId) ?? this.ledgerGet('objective_event', legacyId) ?? undefined;
+  }
+
+  /**
+   * The event an AMBIENT step already produced, if it did.
+   *
+   * THE CRASH WINDOW THIS CLOSES. The annex write and the ledger write
+   * are two autocommit statements and cannot be made one: the store
+   * opens its own transaction, and SQLite refuses a transaction inside
+   * a transaction, so there is no outer BEGIN to wrap them in. A kill
+   * between them leaves an event in the annex with no ledger row, and
+   * the next run re-appends it. Authoritative kinds are safe — their
+   * `op_id` makes the store return the original event instead of
+   * writing a second one — but `discussion` is ambient and the schema
+   * gives ambient kinds no `op_id` at all. Measured: a discussion post
+   * duplicated 1 → 2 across the window while a lifecycle event stayed
+   * at 1.
+   *
+   * So the ambient step's identity is made recoverable from the ANNEX
+   * rather than only from the ledger: same contract, same author, same
+   * instant, same text is the same post, and all four together are not
+   * a heuristic — no second post can share them. That is strictly
+   * stronger than a transaction would have been, because it also
+   * survives the ledger being lost or rebuilt.
+   */
+  private ambientAlreadyIn(
+    contract: string,
+    actor: string,
+    at: number,
+    body: string,
+  ): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT e.id AS id
+           FROM spine_events e JOIN spine_event_index i ON i.seq = e.seq
+          WHERE i.contract_id = ? AND e.kind = 'discussion'
+            AND e.actor = ? AND e.at = ? AND json_extract(e.body, '$.body') = ?
+          LIMIT 1`,
+      )
+      .get(contract, actor, iso(at), body) as { id: string } | undefined;
+    return row?.id ?? null;
+  }
+
   private drop(source: string, id: string, kind: string, reason: string): void {
     this.summary.unimported.push({ source, id, kind, reason });
   }
@@ -335,6 +427,22 @@ class ObjectivesImporter {
    */
   private async step(s: Step): Promise<AppendResult | null> {
     if (this.ledgerGet(s.source, s.id) !== null) return null;
+    // An ambient step carries no op_id, so the store cannot recognise a
+    // replay. Ask the annex whether this exact post is already in it —
+    // see `ambientAlreadyIn` for the window that makes this necessary.
+    if (s.ambient !== undefined) {
+      const already = this.ambientAlreadyIn(
+        s.ambient.contract,
+        s.ambient.actor,
+        s.ts,
+        s.ambient.body,
+      );
+      if (already !== null) {
+        this.ledgerPut(s.source, s.id, already, s.ts);
+        this.produced.set(s.id, already);
+        return null;
+      }
+    }
     try {
       const result = await s.run();
       this.ledgerPut(s.source, s.id, result.event.id, s.ts);
@@ -380,9 +488,16 @@ class ObjectivesImporter {
 
     const amendments = events
       .filter((e) => e.kind === 'amended')
-      .map((e) => parseJson<LegacyContractAmendment | null>(e.payload, null))
-      .filter((a): a is LegacyContractAmendment => a !== null && a.target === 'contract');
+      .map((e) => ({
+        legacyId: legacyIdOf(e),
+        amendment: parseJson<LegacyContractAmendment | null>(e.payload, null),
+      }))
+      .filter(
+        (x): x is { legacyId: string; amendment: LegacyContractAmendment } =>
+          x.amendment !== null && x.amendment.target === 'contract',
+      );
 
+    const byLegacyId = new Map(amendments.map((a) => [a.legacyId, a.amendment]));
     const { original, after } = unrollAmendments(
       { title: row.title, outcome: row.outcome, body: row.body },
       amendments,
@@ -468,32 +583,24 @@ class ObjectivesImporter {
     // The original body: free prose, with no typed home on a spine
     // specification, so it stays prose and keeps its instant.
     if (original.body.trim().length > 0) {
+      const text = `${IMPORT_NOTE} the objective's body, as recorded:\n\n${original.body}`;
       steps.push({
         source: 'objective_event',
         id: `body:${row.id}`,
         kind: 'body',
         ts: row.created_at,
+        ambient: { contract, actor: row.originator, body: text },
         run: () =>
           this.spine.append(
-            {
-              kind: 'discussion',
-              body: {
-                contract,
-                body: `${IMPORT_NOTE} the objective's body, as recorded:\n\n${original.body}`,
-              },
-            },
+            { kind: 'discussion', body: { contract, body: text } },
             { actor: row.originator, provenance: 'legacy_projection', now: row.created_at },
           ),
       });
     }
 
     // ── Every typed event, in recorded order ────────────────────────
-    let amendIndex = 0;
     for (const event of events) {
-      const legacyId =
-        event.event_id !== null && event.event_id !== undefined
-          ? event.event_id
-          : `row:${event.rowid}`;
+      const legacyId = legacyIdOf(event);
       const opId = `legacy:event:${legacyId}`;
       const payload = parseJson<Record<string, unknown>>(event.payload, {});
       switch (event.kind) {
@@ -502,6 +609,25 @@ class ObjectivesImporter {
           // title, outcome and assignee, all of which are on the spec.
           // A second event stating the same three facts would be the
           // record saying one thing twice.
+          //
+          // BUT IT IS STILL AN IMPORTED ROW, and it is recorded as one,
+          // because legacy `correctEvent` explicitly permits correcting
+          // an `assigned` event. Resolving that correction is what
+          // tells it where to staple, and the answer is the
+          // specification, which is where that event's content went.
+          // Recording nothing for it made a correction of an `assigned`
+          // event report itself unimported "because the event it
+          // corrects was not imported" — false, it was, as the spec —
+          // and dropped a member's correction text out of the annex.
+          //
+          // THE LEDGER ROW ALONE, and that is a MEASURED decision. An
+          // in-memory `produced.set` beside it reads like belt and
+          // braces, and is exactly the line mutation testing exists to
+          // find: deleting it left all 33 fixtures green, because
+          // `resolveProduced` already falls back to this ledger row —
+          // which is also what carries the mapping ACROSS runs. Two
+          // mechanisms where one is load-bearing is one mechanism plus
+          // one line nobody can tell is broken.
           this.ledgerPut('objective_event', legacyId, contract, event.ts);
           break;
 
@@ -619,9 +745,10 @@ class ObjectivesImporter {
           break;
 
         case 'amended': {
-          const index = amendIndex++;
-          const amendment = amendments[index];
-          const next = after[index];
+          // BY IDENTITY. An ordinal into the filtered list pairs a
+          // dropped payload's successors with the wrong amendment.
+          const amendment = byLegacyId.get(legacyId);
+          const next = after.get(legacyId);
           if (amendment === undefined || next === undefined) {
             this.drop('objective_event', legacyId, event.kind, 'unreadable amendment payload');
             break;
@@ -662,20 +789,16 @@ class ObjectivesImporter {
           // A changed body has no typed home either, so the new text
           // lands as prose, dated when it was written.
           if (changed.includes('body') && next.body.trim().length > 0) {
+            const text = `${IMPORT_NOTE} the body, as amended here:\n\n${next.body}`;
             steps.push({
               source: 'objective_event',
               id: `body:${legacyId}`,
               kind: 'body',
               ts: event.ts,
+              ambient: { contract, actor: event.actor, body: text },
               run: () =>
                 this.spine.append(
-                  {
-                    kind: 'discussion',
-                    body: {
-                      contract,
-                      body: `${IMPORT_NOTE} the body, as amended here:\n\n${next.body}`,
-                    },
-                  },
+                  { kind: 'discussion', body: { contract, body: text } },
                   { actor: event.actor, provenance: 'legacy_projection', now: event.ts },
                 ),
             });
@@ -699,7 +822,7 @@ class ObjectivesImporter {
             // an earlier step in the same sorted run, so at build time
             // it does not exist yet.
             run: () => {
-              const target = this.produced.get(correction.eventId);
+              const target = this.resolveProduced(correction.eventId);
               if (target === undefined) {
                 throw new SpineError(
                   'not_found',
@@ -786,6 +909,7 @@ class ObjectivesImporter {
         id: message.id,
         kind: 'objective_discuss',
         ts: message.ts,
+        ambient: { contract, actor: author, body: message.body },
         run: () =>
           this.spine.append(
             // Carried WHOLE and unwrapped — this one is a member's own
@@ -805,6 +929,7 @@ class ObjectivesImporter {
       id: legacyId,
       kind: event.kind,
       ts: event.ts,
+      ambient: { contract, actor: event.actor, body },
       run: () =>
         this.spine.append(
           { kind: 'discussion', body: { contract, body } },

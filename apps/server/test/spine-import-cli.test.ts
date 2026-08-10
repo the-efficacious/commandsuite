@@ -18,7 +18,7 @@
  * own, and a correct command nobody can invoke has not shipped.
  */
 
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -140,12 +140,33 @@ describe('csuite-import-objectives', () => {
     expect(s.stdout()).toBe(IMPORT_CLI_USAGE);
   });
 
-  it('reports a failure as a failure', async () => {
+  it('refuses a path that does not exist rather than creating one and exiting 0', async () => {
     const s = streams();
-    const code = await runImportCli(['--db', join(dir, 'nope', 'missing.db')], s.io);
+    const missing = join(dir, 'typo.db');
+    const code = await runImportCli(['--db', missing], s.io);
 
-    // The SPECIFIC failure: a non-zero code AND the sentence on stderr.
-    // An import that cannot open its database must not exit 0.
+    // `openDatabase` CREATES the file, so this used to import the zero
+    // objectives in a brand-new database and exit 0 printing
+    // "objectives read: 0". For a migration an operator is told to run
+    // before upgrading, a clean-looking success is the worst possible
+    // answer: the real database is still unimported when the upgrade
+    // takes away its only reader.
+    expect(code).toBe(2);
+    expect(s.stdout()).toBe('');
+    expect(s.stderr()).toContain('no database at');
+    // And it did not leave one behind.
+    expect(existsSync(missing), 'must not create the database it refused').toBe(false);
+  });
+
+  it('reports a failure as a failure', async () => {
+    // A path that EXISTS but is not a database — past the
+    // does-it-exist guard, into the open. Exit 1 (a failure) rather
+    // than 2 (a usage error), and the sentence on stderr.
+    const s = streams();
+    const notADb = join(dir, 'notes.txt');
+    writeFileSync(notADb, 'this is not a sqlite file');
+    const code = await runImportCli(['--db', notADb], s.io);
+
     expect(code).toBe(1);
     expect(s.stdout()).toBe('');
     expect(s.stderr()).toContain('csuite-import-objectives:');

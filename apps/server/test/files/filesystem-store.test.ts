@@ -41,6 +41,102 @@ describe('SqliteFilesystemStore', () => {
     return createSqliteFilesystemStore({ db, blobs });
   }
 
+  /**
+   * THE FROZEN LEGACY TREE.
+   *
+   * `/objectives/<id>/` was a scope owned by an objective's member set
+   * rather than by a person, and it went with the objectives
+   * subsystem. Its ROWS did not: they are still in deployed databases
+   * carrying `owner = 'obj:<id>'`, and `fs_entries` has no migration
+   * that rewrites them.
+   *
+   * Deleting the namespace special case made `ownerOf` return
+   * `objectives` for those paths — a legal member name — so ownership
+   * of the whole legacy tree became a question of who happens to be
+   * called what. These pin the boundary as structural: nobody owns it
+   * by name, directors still reach it, grants still work, and the
+   * ordinary member-home rule is untouched.
+   */
+  describe('the frozen legacy tree at /objectives', () => {
+    /** Seed a row exactly as the removed namespace wrote it. */
+    function seedLegacyRow(store: FilesystemStore): void {
+      // Written by a director, because nobody else can write there now.
+      const admin = viewer('root', ['members.manage']);
+      store.mkdir('/objectives', admin, { recursive: true });
+      store.mkdir('/objectives/o-1', admin, { recursive: true });
+    }
+
+    it('is not owned by a member who happens to be named `objectives`', async () => {
+      const store = makeStore();
+      seedLegacyRow(store);
+      // The absurd name is the point: this must not depend on it.
+      const impostor = viewer('objectives');
+
+      expect(() => store.list('/objectives/o-1', impostor)).toThrow();
+      expect(() => store.stat('/objectives/o-1', impostor)).toThrow();
+      await expect(
+        store.writeFile({
+          path: '/objectives/o-1/planted.txt',
+          mimeType: 'text/plain',
+          writer: impostor,
+          source: Buffer.from('should not land'),
+        }),
+      ).rejects.toThrow();
+    });
+
+    it('is not owned by the member it was originally created for either', async () => {
+      const store = makeStore();
+      seedLegacyRow(store);
+      // The old assignee. The membership set that governed this tree no
+      // longer exists, so they reach it the same way anyone else does:
+      // through a grant, or not at all.
+      expect(() => store.list('/objectives/o-1', viewer('rune'))).toThrow();
+    });
+
+    it('is still reachable by a director — the positive control', () => {
+      const store = makeStore();
+      seedLegacyRow(store);
+      const admin = viewer('root', ['members.manage']);
+      // Four refusals above are equally satisfied by a tree nobody can
+      // read at all, which would strand the rows for good.
+      expect(store.stat('/objectives/o-1', admin)?.kind).toBe('directory');
+      expect(store.list('/objectives', admin).map((e) => e.name)).toEqual(['o-1']);
+    });
+
+    it('is still reachable through an explicit grant — the other control', async () => {
+      const store = makeStore();
+      const admin = viewer('root', ['members.manage']);
+      seedLegacyRow(store);
+      await store.writeFile({
+        path: '/objectives/o-1/spec.txt',
+        mimeType: 'text/plain',
+        writer: admin,
+        source: Buffer.from('spec'),
+      });
+      store.grant('/objectives/o-1/spec.txt', 'cora', 'msg-1');
+
+      // A grant names a viewer and a path, which is the mechanism that
+      // survived the namespace.
+      expect(store.stat('/objectives/o-1/spec.txt', viewer('cora'))?.name).toBe('spec.txt');
+      expect(() => store.stat('/objectives/o-1/spec.txt', viewer('turner'))).toThrow();
+    });
+
+    it('leaves the ordinary member-home rule alone — the nearest valid thing', async () => {
+      const store = makeStore();
+      const alice = viewer('alice');
+      // The reservation must not have turned into "nobody owns
+      // anything". A member still owns their own home.
+      const result = await store.writeFile({
+        path: '/alice/notes.txt',
+        mimeType: 'text/plain',
+        writer: alice,
+        source: Buffer.from('mine'),
+      });
+      expect(result.entry.owner).toBe('alice');
+      expect(store.stat('/alice/notes.txt', alice)?.name).toBe('notes.txt');
+    });
+  });
+
   describe('writeFile', () => {
     it('auto-creates ancestor directories under the owner home', async () => {
       const store = makeStore();

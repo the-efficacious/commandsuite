@@ -17,6 +17,22 @@
  * grant-based now, which is the mechanism that survived: a grant names
  * a viewer and a path, so a shared file has a reader you can name.
  *
+ * THAT TREE IS FROZEN, NOT ERASED, and `/objectives` is therefore a
+ * RESERVED top-level segment. Rows written under it are still in
+ * deployed databases carrying `owner = 'obj:<id>'`, a value no member
+ * name can equal. When the namespace special case was deleted,
+ * `ownerOf('/objectives/o-1/f.txt')` started returning `objectives` —
+ * which IS a legal member name — so a member who happened to be called
+ * that acquired read AND write over the whole legacy tree, while the
+ * assignee it was created for correctly could not. A structural
+ * boundary had quietly become a name-dependent one.
+ *
+ * So no member owns this segment by name, ever. `isFrozenLegacyPath`
+ * is what `ownsPath` consults, and the consequence is stated rather
+ * than hidden: a member named `objectives` has no home directory. That
+ * is a worse outcome for one absurd name than for every deployed
+ * database, which is the trade being made.
+ *
  * The root `/` has no owner and is implicit (no DB row represents it).
  */
 
@@ -26,6 +42,24 @@ export const ROOT_PATH = '/' as const;
 
 export const MAX_PATH_LENGTH = 1024;
 export const MAX_SEGMENT_LENGTH = 255;
+
+/**
+ * The frozen legacy tree. Reserved: no member owns it by name.
+ *
+ * Kept as a constant rather than a literal because it is read in two
+ * places — here and the ACL — and two spellings of a reserved word is
+ * how a reservation stops being one.
+ */
+export const FROZEN_LEGACY_SEGMENT = 'objectives';
+
+/**
+ * Whether `path` sits in the frozen legacy tree, INCLUDING its bare
+ * root. Reads reach it only through `members.manage` or an explicit
+ * grant; writes only through `members.manage`.
+ */
+export function isFrozenLegacyPath(path: string): boolean {
+  return splitPath(path)[0] === FROZEN_LEGACY_SEGMENT;
+}
 
 const SEGMENT_RE = /^[a-zA-Z0-9._\- ]+$/;
 

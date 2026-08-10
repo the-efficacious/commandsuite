@@ -61,5 +61,23 @@ export function openDatabase(path: string): DatabaseSyncInstance {
   // activity store on its own DB file — benefits from consistent
   // timeout semantics).
   db.exec('PRAGMA busy_timeout = 5000');
+  // recursive_triggers: OFF by default, and the default silently
+  // disarms one of the annex's two append-only guards.
+  //
+  // `spine_events` has a BEFORE DELETE trigger enforcing that nothing
+  // ever removes an event — the gapless stream is the whole recovery
+  // story, and a delete-and-reinsert is how somebody would otherwise
+  // rewrite a row's provenance while preserving its id and seq.
+  // SQLite fires delete triggers for rows removed by REPLACE conflict
+  // resolution IF AND ONLY IF this is on, so with the default an
+  // `INSERT OR REPLACE` walks straight past that trigger. Measured
+  // both ways before setting it.
+  //
+  // Connection-scoped, not stored in the file, so it has to be set on
+  // every handle — which is why it lives here, at the one place a
+  // handle is opened, rather than next to the trigger it arms.
+  // Nothing else in the schema uses triggers, so there is no recursion
+  // for it to deepen.
+  db.exec('PRAGMA recursive_triggers = ON');
   return db;
 }

@@ -24,6 +24,7 @@
  * version of working.
  */
 
+import { existsSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { openDatabase } from '../db.js';
 import { createAnnexWritePath } from './append.js';
@@ -83,6 +84,24 @@ export async function runImportCli(argv: string[], io: ImportCliIO): Promise<num
   }
   if (typeof values.db !== 'string' || values.db.length === 0) {
     io.err(`csuite-import-objectives: --db is required\n\n${IMPORT_CLI_USAGE}`);
+    return 2;
+  }
+
+  // A NONEXISTENT PATH IS A TYPO, NOT A REQUEST.
+  //
+  // `openDatabase` creates the file, so a mistyped `--db` produced an
+  // empty database, imported the zero objectives in it, and exited 0
+  // printing "objectives read: 0". For a one-shot migration an operator
+  // is told to run BEFORE upgrading, that reads as clean success — and
+  // the real database is still unimported when the upgrade removes its
+  // only reader. There is no legitimate reason to import into a
+  // database that does not exist yet.
+  if (!existsSync(values.db)) {
+    io.err(
+      `csuite-import-objectives: no database at ${values.db}\n` +
+        '  This command reads an EXISTING csuite database; it does not create one.\n' +
+        '  Check the path — a typo here imports nothing and would exit 0.\n',
+    );
     return 2;
   }
 

@@ -255,6 +255,43 @@ export const SPINE_SCHEMA = `
       'provenance is permanent: a legacy_projection event never acquires native status, and a native one is never rewritten as legacy. Correct a legacy fact with a NEW native event that cites or staples to it.'
     );
   END;
+
+  -- AND THE OTHER HALF, because an UPDATE trigger alone did not hold
+  -- the rule it was written for.
+  --
+  -- Scoping to 'UPDATE OF provenance' left the caller this exists to
+  -- survive — a migration holding a raw handle — two ways through, and
+  -- both PRESERVE the row's id AND its seq, so nothing downstream can
+  -- tell the difference afterwards:
+  --
+  --   INSERT OR REPLACE INTO spine_events (...) VALUES (..., 'native')
+  --   DELETE FROM spine_events WHERE id = ?;  then a fresh INSERT
+  --
+  -- Neither is an UPDATE, so neither fired anything. A delete-and-
+  -- reinsert migration is not an exotic attack; it is how people
+  -- routinely change a column they cannot ALTER.
+  --
+  -- This closes both without widening the claim, because the table's
+  -- own header already asserts exactly this: "Nothing ever deletes, so
+  -- the stream is gapless and a reader that has seen seq N has seen
+  -- everything up to N. That property is the entire recovery story."
+  -- It was true of this module and unenforced against anything else.
+  --
+  -- REPLACE NEEDS 'PRAGMA recursive_triggers', and this is the part
+  -- that is easy to get wrong: SQLite fires delete triggers for rows
+  -- removed by REPLACE conflict resolution IF AND ONLY IF recursive
+  -- triggers are enabled. With the default (off), 'INSERT OR REPLACE'
+  -- walks straight past this trigger. 'db.ts' sets the pragma, and
+  -- 'spine-annex.test.ts' drives that exact statement rather than
+  -- trusting the reading.
+  CREATE TRIGGER IF NOT EXISTS spine_events_are_append_only
+  BEFORE DELETE ON spine_events
+  BEGIN
+    SELECT RAISE(
+      ABORT,
+      'spine_events is append-only: the stream is gapless and recovery depends on it, so no row is ever deleted — not to correct one, and not to rewrite one by deleting and re-inserting it. Corrections staple; they never replace.'
+    );
+  END;
 `;
 
 /**

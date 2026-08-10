@@ -201,7 +201,7 @@ function makeApp() {
     version: '0.0.0',
     logger,
   });
-  return { app };
+  return { app, db };
 }
 
 function authed(token: string, body?: unknown, method?: string): RequestInit {
@@ -452,6 +452,53 @@ describe('SDK response contract', () => {
       authed(BOB),
       FsListResponseSchema,
     );
+  });
+
+  /**
+   * THE `obj:<id>` OWNER ARM, which outlived the subsystem that
+   * produced it.
+   *
+   * `FsOwnerSchema` is a union — a member name, or a legacy
+   * `obj:<objective-id>` — and the second arm is kept deliberately:
+   * rows written under the removed objectives namespace are still in
+   * deployed databases and `fs_entries` has no migration that rewrites
+   * them. `/fs/stat` will hand one to a client running this schema.
+   *
+   * The only case exercising that arm was deleted with the objectives
+   * endpoints, which left a live schema branch with no guard. Narrowing
+   * it is a defect that ALREADY SHIPPED ONCE: `NameSchema`'s pattern
+   * excludes `:`, so the server answered 200 and the SDK threw parsing
+   * its own server's correct response — invisible to any test reading
+   * JSON directly, and, because validation runs on the RESPONSE, the
+   * write had already committed when the caller was told it failed.
+   *
+   * So the row is seeded the way the removed code wrote it — straight
+   * into `fs_entries`, since nothing produces that owner any more.
+   */
+  it('GET /fs/stat parses a legacy obj: owner left in the database', async () => {
+    const { app, db } = makeApp();
+    const now = 1_700_000_000_000;
+    for (const [path, parent, name, kind] of [
+      ['/objectives', '/', 'objectives', 'directory'],
+      ['/objectives/o-1', '/objectives', 'o-1', 'directory'],
+    ] as const) {
+      db.prepare(
+        `INSERT INTO fs_entries
+           (path, parent_path, name, kind, owner, content_hash, size, mime_type,
+            created_at, created_by, updated_at)
+         VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, ?, 'alice', ?)`,
+      ).run(path, parent, name, kind, 'obj:o-1', now, now);
+    }
+
+    const path = `/fs/stat?path=${encodeURIComponent('/objectives/o-1')}`;
+    await expectMatchesContract(app, path, authed(ALICE), FsEntryResponseSchema);
+
+    // The owner really is the legacy form — otherwise this would pass
+    // by never exercising the widened branch at all.
+    const body = (await (await app.request(path, authed(ALICE))).json()) as {
+      entry: { owner: string };
+    };
+    expect(body.entry.owner, 'fixture must produce an obj: owner').toBe('obj:o-1');
   });
 
   it('GET /fs/stat on a member-home file matches FsEntryResponseSchema', async () => {
