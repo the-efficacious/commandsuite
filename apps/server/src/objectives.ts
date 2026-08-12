@@ -519,14 +519,12 @@ class SqliteObjectivesStore implements ObjectivesStore {
     let nextBlockReason: string | null = current.blockReason;
 
     if (input.status === 'blocked') {
-      if (!input.blockReason || input.blockReason.trim().length === 0) {
-        throw new ObjectivesError(
-          'invalid_input',
-          'blockReason is required when transitioning to blocked',
-        );
-      }
+      // A reason is encouraged (the tool description nudges for one)
+      // but not enforced — field data showed real blocks carried in
+      // prose because the ceremony was heavier than the signal.
       nextStatus = 'blocked';
-      nextBlockReason = input.blockReason.trim();
+      const trimmed = input.blockReason?.trim() ?? '';
+      nextBlockReason = trimmed.length > 0 ? trimmed : null;
     } else if (input.status === 'active') {
       nextStatus = 'active';
       nextBlockReason = null;

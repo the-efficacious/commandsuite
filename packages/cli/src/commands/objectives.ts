@@ -10,10 +10,10 @@
  *   csuite objectives cancel <id> [--reason <r>]
  *   csuite objectives reassign <id> --to <slot> [--note <n>]
  *
- * Create / cancel / reassign each require the matching `objectives.*`
- * permission (`objectives.create`, `objectives.cancel`,
- * `objectives.reassign`) server-side. List / view / update / complete
- * work from any slot (with appropriate scoping server-side).
+ * Create / cancel-anyone's / reassign require `objectives.manage`
+ * server-side; an originator can always cancel their own. List / view
+ * / update / complete work from any slot (with appropriate scoping
+ * server-side).
  */
 
 import { parseArgs } from 'node:util';
@@ -200,8 +200,10 @@ async function runReassign(client: Client, args: string[]): Promise<Objective> {
   });
   const to = typeof values.to === 'string' ? values.to : '';
   if (!to) throw new UsageError('objectives reassign: --to <name> is required');
-  return client.reassignObjective(id, {
-    to,
+  // The subcommand survives as terminal UX; on the wire an assignee
+  // change is just an update.
+  return client.updateObjective(id, {
+    assignee: to,
     ...(typeof values.note === 'string' ? { note: values.note } : {}),
   });
 }

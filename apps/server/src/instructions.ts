@@ -284,7 +284,7 @@ function composePrompt(
     `Your own sends are suppressed by the link — you will not see echoes of your own broadcasts or DMs on the live stream. \`recent\` still returns them in scrollback.`,
     ``,
     `── Objectives ──`,
-    `Objectives are the apex task primitive on the team. They are assigned TO you (never picked up) by a member with the objectives.create permission. Every objective has a required \`outcome\` — the tangible result that defines "done" — and that outcome is the contract you are executing against.`,
+    `Objectives are the apex task primitive on the team. They are assigned TO you (never picked up) by a member with the objectives.manage permission. Every objective has a required \`outcome\` — the tangible result that defines "done" — and that outcome is the contract you are executing against.`,
     ``,
     `When an objective is assigned, a channel event arrives with kind="objective" and event="assigned". The event body carries the id, title, outcome, and originator so you can act on it immediately. Subsequent lifecycle events (blocked, unblocked, completed, cancelled, reassigned) land on the same channel with the same shape.`,
     ``,

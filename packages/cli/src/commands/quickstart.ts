@@ -8,7 +8,7 @@
  *   1. Health-check the broker at the configured URL. If it's not up,
  *      print a clear "start `csuite serve` first" message and exit 1.
  *   2. Resolve an assignee for a demo objective. Defaults to the first
- *      teammate on the roster without `objectives.create` permission
+ *      teammate on the roster without `objectives.manage` permission
  *      (the execution-flavored role a demo objective suits); falls
  *      back to the first teammate if everyone can create objectives.
  *   3. Create the demo objective ("summarize this repository in 3
@@ -85,7 +85,7 @@ export async function runQuickstartCommand(
     );
   }
 
-  // 2. Resolve an assignee. Prefer a teammate without `objectives.create`
+  // 2. Resolve an assignee. Prefer a teammate without `objectives.manage`
   //    permission because the demo objective is execution-flavored work
   //    (do a task); fall back to the first teammate if everyone on the
   //    roster can create objectives.
@@ -97,7 +97,7 @@ export async function runQuickstartCommand(
   }
   const assignee =
     input.assignee ??
-    rosterResp.teammates.find((t) => !t.permissions.includes('objectives.create'))?.name ??
+    rosterResp.teammates.find((t) => !t.permissions.includes('objectives.manage'))?.name ??
     rosterResp.teammates[0]?.name;
   if (!assignee) {
     // Unreachable given the length check above, but keeps the types honest.
@@ -139,7 +139,7 @@ export async function runQuickstartCommand(
       const ce = err as ClientError;
       throw new QuickstartError(
         `failed to create demo objective: ${ce.message ?? String(err)}\n` +
-          `  (creating objectives requires the \`objectives.create\` permission; ` +
+          `  (creating objectives requires the \`objectives.manage\` permission; ` +
           `check your permissions with \`csuite roster\`)`,
       );
     }

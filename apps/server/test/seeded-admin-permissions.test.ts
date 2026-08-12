@@ -44,10 +44,6 @@ describe('the seeded admin preset', () => {
    * particular must not pick up `process.manage` by accident.
    */
   it('leaves the operator preset scoped', () => {
-    expect(DEFAULT_PERMISSION_PRESETS.operator).toEqual([
-      'objectives.create',
-      'objectives.cancel',
-      'objectives.reassign',
-    ]);
+    expect(DEFAULT_PERMISSION_PRESETS.operator).toEqual(['objectives.manage']);
   });
 });

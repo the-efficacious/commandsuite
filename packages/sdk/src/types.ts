@@ -76,17 +76,21 @@ export const PERMISSIONS = [
    * ELSE.
    */
   'members.context',
-  'objectives.create',
-  'objectives.cancel',
-  'objectives.reassign',
-  'objectives.watch',
+  /**
+   * Direct the team's work: create objectives for others, cancel or
+   * reassign anyone's, manage any objective's watchers. One leaf where
+   * four used to be — no deployment ever granted the finer keys
+   * separately, and the assignee/originator self-rights below never
+   * needed a permission at all.
+   */
+  'objectives.manage',
   'activity.read',
   'tools.manage',
   'secrets.manage',
   'notifications.manage',
   /**
    * Edit the team's process document. A DEDICATED leaf rather than a
-   * reuse of `objectives.create`: under this design the permission is
+   * reuse of `objectives.manage`: under this design the permission is
    * the entire authority — whoever holds it can rewrite what binds the
    * team — and "can create an objective" is not a comparable power.
    */
@@ -94,6 +98,19 @@ export const PERMISSIONS = [
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
+
+/**
+ * Retired permission keys, mapped to what replaced them. Team configs
+ * and stored presets written before the consolidation carry these;
+ * every permission parse and resolution path maps them forward so an
+ * existing team loads unchanged.
+ */
+export const LEGACY_PERMISSION_ALIASES: Readonly<Record<string, Permission>> = {
+  'objectives.create': 'objectives.manage',
+  'objectives.cancel': 'objectives.manage',
+  'objectives.reassign': 'objectives.manage',
+  'objectives.watch': 'objectives.manage',
+};
 
 /**
  * Team-level named bundles of permissions. Members reference them by
@@ -1484,7 +1501,7 @@ export interface Objective {
    * Additional names that have been explicitly added to the
    * objective's discussion thread. Watchers receive every lifecycle
    * event and every discussion post on their SSE streams without
-   * being the assignee. Members with `objectives.watch` can add
+   * being the assignee. Members with `objectives.manage` can add
    * themselves or others; originators can manage their own
    * objectives' watchers. Members with `members.manage` are implicit
    * observers regardless and do NOT appear in this list.
@@ -1668,6 +1685,13 @@ export interface UpdateWatchersRequest {
 export interface UpdateObjectiveRequest {
   status?: 'active' | 'blocked';
   blockReason?: string;
+  /** Change the assignee. Requires `objectives.manage`. */
+  assignee?: string;
+  /** Handover context for an assignee change; ignored otherwise. */
+  note?: string;
+  /** Watcher changes. Originator or `objectives.manage`. */
+  addWatchers?: string[];
+  removeWatchers?: string[];
 }
 
 export interface CompleteObjectiveRequest {

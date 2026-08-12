@@ -175,16 +175,16 @@ export function ObjectiveDetail({ id, viewer }: ObjectiveDetailProps) {
   const isAssignee = current.assignee === viewer;
   const isOriginator = current.originator === viewer;
   const isAdmin = b.permissions.includes('members.manage');
-  const canCancelPerm = b.permissions.includes('objectives.cancel');
-  const canReassignPerm = b.permissions.includes('objectives.reassign');
-  const canWatchPerm = b.permissions.includes('objectives.watch');
+  const canCancelPerm = b.permissions.includes('objectives.manage');
+  const canReassignPerm = b.permissions.includes('objectives.manage');
+  const canWatchPerm = b.permissions.includes('objectives.manage');
   const isWatching = current.watchers.includes(viewer);
   const isTerminal = current.status === 'done' || current.status === 'cancelled';
   // Mirrors the server's PATCH /objectives/:id gate exactly: the
-  // assignee, or a member holding `objectives.cancel`. This previously
+  // assignee, or a member holding `objectives.manage`. This previously
   // used `isAdmin` (`members.manage`), which is a DIFFERENT permission —
   // `hasPermission` is a plain `includes`, with no hierarchy — so it
-  // diverged in both directions: an `objectives.cancel` holder was shown
+  // diverged in both directions: an `objectives.manage` holder was shown
   // no control, and a `members.manage` holder was shown one that 403s.
   const canUpdateStatus = !isTerminal && (isAssignee || canCancelPerm);
   const canComplete = !isTerminal && isAssignee;

@@ -79,7 +79,10 @@ export async function reassignObjective(
   id: string,
   req: ReassignObjectiveRequest,
 ): Promise<Objective> {
-  const updated = await getClient().reassignObjective(id, req);
+  const updated = await getClient().updateObjective(id, {
+    assignee: req.to,
+    ...(req.note !== undefined ? { note: req.note } : {}),
+  });
   upsertLocal(updated);
   return updated;
 }
@@ -88,7 +91,10 @@ export async function updateObjectiveWatchers(
   id: string,
   req: UpdateWatchersRequest,
 ): Promise<Objective> {
-  const updated = await getClient().updateObjectiveWatchers(id, req);
+  const updated = await getClient().updateObjective(id, {
+    ...(req.add !== undefined ? { addWatchers: req.add } : {}),
+    ...(req.remove !== undefined ? { removeWatchers: req.remove } : {}),
+  });
   upsertLocal(updated);
   return updated;
 }

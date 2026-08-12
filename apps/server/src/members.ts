@@ -22,8 +22,8 @@
  *       "name": "demo-team",
  *       "context": "Ship the payment service. We own the full lifecycle...",
  *       "permissionPresets": {
- *         "admin":    ["team.manage", "members.manage", "objectives.create", "objectives.cancel", "objectives.reassign", "objectives.watch", "activity.read"],
- *         "operator": ["objectives.create", "objectives.cancel", "objectives.reassign"]
+ *         "admin":    ["team.manage", "members.manage", "objectives.manage", "activity.read"],
+ *         "operator": ["objectives.manage"]
  *       }
  *     },
  *     "members": [
@@ -46,7 +46,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Member, Permission, Role, Teammate } from 'csuite-sdk/types';
-import { PERMISSIONS } from 'csuite-sdk/types';
+import { LEGACY_PERMISSION_ALIASES, PERMISSIONS } from 'csuite-sdk/types';
 import { z } from 'zod';
 
 export const TOKEN_HASH_PREFIX = 'sha256:';
@@ -298,13 +298,21 @@ export function resolvePermissions(
 ): Permission[] {
   const set = new Set<Permission>();
   for (const entry of raw) {
-    if ((PERMISSIONS as readonly string[]).includes(entry)) {
-      set.add(entry as Permission);
+    // Configs written under the old vocabulary keep loading: a
+    // retired leaf resolves to its modern replacement before the
+    // unknown-name check can reject it.
+    const canonical = LEGACY_PERMISSION_ALIASES[entry] ?? entry;
+    if ((PERMISSIONS as readonly string[]).includes(canonical)) {
+      set.add(canonical as Permission);
       continue;
     }
     const presetLeaves = presets[entry];
     if (presetLeaves) {
-      for (const leaf of presetLeaves) set.add(leaf);
+      // Stored presets can predate the consolidation too — map each
+      // leaf, not only direct entries.
+      for (const leaf of presetLeaves) {
+        set.add((LEGACY_PERMISSION_ALIASES[leaf] ?? leaf) as Permission);
+      }
       continue;
     }
     throw new MemberLoadError(

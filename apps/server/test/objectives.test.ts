@@ -186,14 +186,20 @@ describe('ObjectivesStore.update', () => {
     expect(result.events[0]?.payload).toMatchObject({ reason: 'waiting on Bob' });
   });
 
-  it('rejects blocked transition without a reason', () => {
+  it('blocks without a reason, storing null rather than refusing', () => {
     const { store, objective } = basicCreate();
-    expect(() => store.update(objective.id, { status: 'blocked' }, 'alice', LATER)).toThrow(
-      ObjectivesError,
+    const { objective: bare } = store.update(objective.id, { status: 'blocked' }, 'alice', LATER);
+    expect(bare.status).toBe('blocked');
+    expect(bare.blockReason).toBeNull();
+    // A whitespace-only reason is the same as none, not a stored blank.
+    store.update(objective.id, { status: 'active' }, 'alice', LATER);
+    const { objective: padded } = store.update(
+      objective.id,
+      { status: 'blocked', blockReason: '   ' },
+      'alice',
+      LATER,
     );
-    expect(() =>
-      store.update(objective.id, { status: 'blocked', blockReason: '   ' }, 'alice', LATER),
-    ).toThrow(ObjectivesError);
+    expect(padded.blockReason).toBeNull();
   });
 
   it('transitions blocked → active and clears the reason', () => {

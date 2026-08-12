@@ -10,17 +10,9 @@ import {
   summarizePermissions,
 } from '../src/lib/permissions.js';
 
-const ADMIN: Permission[] = [
-  'team.manage',
-  'members.manage',
-  'objectives.create',
-  'objectives.cancel',
-  'objectives.reassign',
-  'objectives.watch',
-  'activity.read',
-];
+const ADMIN: Permission[] = ['team.manage', 'members.manage', 'objectives.manage', 'activity.read'];
 
-const OPERATOR: Permission[] = ['objectives.create', 'objectives.cancel'];
+const OPERATOR: Permission[] = ['objectives.manage', 'activity.read'];
 
 const PRESETS: PermissionPresets = {
   admin: ADMIN,
@@ -29,18 +21,18 @@ const PRESETS: PermissionPresets = {
 
 describe('matchesPreset', () => {
   it('returns true for same leaves in any order', () => {
-    expect(matchesPreset(['objectives.create', 'objectives.cancel'], OPERATOR)).toBe(true);
-    expect(matchesPreset(['objectives.cancel', 'objectives.create'], OPERATOR)).toBe(true);
+    expect(matchesPreset(['objectives.manage', 'activity.read'], OPERATOR)).toBe(true);
+    expect(matchesPreset(['activity.read', 'objectives.manage'], OPERATOR)).toBe(true);
   });
   it('returns false when the leaves differ', () => {
-    expect(matchesPreset(['objectives.create'], OPERATOR)).toBe(false);
-    expect(matchesPreset(['objectives.create', 'activity.read'], OPERATOR)).toBe(false);
+    expect(matchesPreset(['objectives.manage'], OPERATOR)).toBe(false);
+    expect(matchesPreset(['objectives.manage', 'tools.manage'], OPERATOR)).toBe(false);
   });
 });
 
 describe('findExactPreset', () => {
   it('returns the preset name for an exact match', () => {
-    expect(findExactPreset(['objectives.create', 'objectives.cancel'], PRESETS)).toBe('operator');
+    expect(findExactPreset(['objectives.manage', 'activity.read'], PRESETS)).toBe('operator');
   });
   it('returns null when no preset matches', () => {
     expect(findExactPreset(['activity.read'], PRESETS)).toBeNull();
@@ -57,7 +49,7 @@ describe('summarizePermissions', () => {
   });
 
   it('preset match produces the preset label', () => {
-    const s = summarizePermissions(['objectives.create', 'objectives.cancel'], PRESETS);
+    const s = summarizePermissions(['objectives.manage', 'activity.read'], PRESETS);
     expect(s.kind).toBe('preset');
     expect(s.label).toBe('operator');
     expect(s.isAdmin).toBe(false);
@@ -88,7 +80,7 @@ describe('privilegeTag', () => {
     expect(privilegeTag(s)).toBe('OP');
   });
   it('returns "C" for a non-admin custom mix', () => {
-    const s = summarizePermissions(['activity.read', 'objectives.watch'], PRESETS);
+    const s = summarizePermissions(['activity.read', 'tools.manage'], PRESETS);
     expect(privilegeTag(s)).toBe('C');
   });
   it('returns null for baseline', () => {
@@ -99,9 +91,9 @@ describe('privilegeTag', () => {
 
 describe('sortLeaves', () => {
   it('emits leaves in the canonical PERMISSIONS order regardless of input order', () => {
-    expect(sortLeaves(['activity.read', 'team.manage', 'objectives.create'])).toEqual([
+    expect(sortLeaves(['activity.read', 'team.manage', 'objectives.manage'])).toEqual([
       'team.manage',
-      'objectives.create',
+      'objectives.manage',
       'activity.read',
     ]);
   });

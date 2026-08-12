@@ -24,16 +24,14 @@
  * Objective tools:
  *   - objectives_list     — the caller's active plate
  *   - objectives_view     — full detail on one objective
- *   - objectives_update   — state transitions (block / resume)
+ *   - objectives_update   — status, assignee and watcher changes
  *   - objectives_discuss  — post into the objective thread
  *   - objectives_complete — mark done with required result
  *
  * Permission-gated objective tools (only appear in the toolbox when the
- * caller holds the matching leaf permission):
- *   - objectives_create   — requires `objectives.create`
- *   - objectives_cancel   — requires `objectives.cancel` (or being the objective's originator)
- *   - objectives_watchers — requires `objectives.watch` (or being the objective's originator)
- *   - objectives_reassign — requires `objectives.reassign`
+ * caller holds `objectives.manage`):
+ *   - objectives_create   — assign work to teammates
+ *   - objectives_cancel   — cancel anyone's (an originator can always cancel their own via the server)
  */
 
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
@@ -304,13 +302,15 @@ export function defineTools(
     {
       name: 'objectives_update',
       description:
-        `Transition an objective's status. Use status='blocked' + blockReason when you're ` +
-        `stuck and need a director to intervene. Use status='active' to resume after a ` +
-        `block. This tool is for STATE transitions only — for progress notes, questions, ` +
-        `intermediate findings, or any conversation about the objective, use ` +
-        `\`objectives_discuss\` to post into the objective's discussion thread. This tool ` +
-        `never transitions to 'done' — call \`objectives_complete\` for that. Returns the ` +
-        `updated objective.`,
+        `Update an objective's live state. Status: use status='blocked' (ideally with a ` +
+        `short blockReason) when you're stuck or sequenced behind other work, and ` +
+        `status='active' to resume. Assignee: pass \`assignee\` to hand the work to a ` +
+        `different teammate (requires objectives.manage; the previous assignee stays on ` +
+        `the thread as a watcher). Watchers: pass \`addWatchers\`/\`removeWatchers\` to ` +
+        `change who follows the thread (originator or objectives.manage). This tool is ` +
+        `for STATE, not conversation — progress notes and questions go in ` +
+        `\`objectives_discuss\` — and it never transitions to 'done'; call ` +
+        `\`objectives_complete\` for that. Returns the updated objective.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -318,17 +318,36 @@ export function defineTools(
           status: {
             type: 'string',
             enum: ['active', 'blocked'],
-            description:
-              "Required new status. Use 'blocked' + blockReason when stuck; 'active' to resume.",
+            description: "Use 'blocked' when stuck; 'active' to resume.",
           },
           blockReason: {
             type: 'string',
             description:
-              'Required when status=blocked. Concisely describe what is blocking you. ' +
+              'Recommended with status=blocked — one line on what is blocking you. ' +
               'Max 2048 characters.',
           },
+          assignee: {
+            type: 'string',
+            description:
+              'New assignee. Both the previous and new assignee are notified. ' +
+              'Requires objectives.manage.',
+          },
+          note: {
+            type: 'string',
+            description: 'Handover context when changing the assignee.',
+          },
+          addWatchers: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Teammate names to add as watchers. Max 64.',
+          },
+          removeWatchers: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Teammate names to remove from watchers. Max 64.',
+          },
         },
-        required: ['id', 'status'],
+        required: ['id'],
       },
     },
     {
@@ -433,14 +452,12 @@ export function defineTools(
     // request 403s — but keeping them out of the tool list is the
     // first line of defense and the natural UX.
     //
-    //   objectives.create:   objectives_create
-    //   objectives.cancel:   objectives_cancel (plus the objective's own originator)
-    //   objectives.watch:    objectives_watchers (plus the objective's own originator)
-    //   objectives.reassign: objectives_reassign
+    //   objectives.manage: objectives_create, objectives_cancel
+    //   (an originator can always cancel their own via the server)
     //
-    // For members without the broader permission, the `cancel` and
-    // `watchers` descriptions call out the "only objectives you
-    // originated" rule so the agent doesn't try to touch someone
+    // For members without the broader permission, the descriptions
+    // call out the "only objectives you originated" rule so the
+    // agent doesn't try to touch someone
     // else's objective and eat a 403.
     ...buildAuthorityTools(instructions),
     // The team's process document. Reading it is not how an agent
@@ -615,7 +632,7 @@ function buildAdminTools(instructions: InstructionsResponse): Tool[] {
             type: 'array',
             items: { type: 'string' },
             description:
-              'Leaf permissions, e.g. ["objectives.create","objectives.cancel"]. Unknown leaves are rejected.',
+              'Leaf permissions, e.g. ["objectives.manage","activity.read"]. Unknown leaves are rejected.',
           },
         },
         required: ['name', 'permissions'],
@@ -1697,9 +1714,9 @@ function buildFilesystemTools(name: string): Tool[] {
  * carry: the superseded text behind each edit, and the write path.
  *
  * The write gate is `process.manage`, a DEDICATED leaf rather than a
- * reuse of `objectives.create`. Under this design the permission IS
+ * reuse of `objectives.manage`. Under this design the permission IS
  * the authority — whoever holds it can rewrite what binds the team —
- * and "can create an objective" is not a comparable power.
+ * and "can direct the team's objectives" is not a comparable power.
  */
 function buildProcessDocumentTools(instructions: InstructionsResponse): Tool[] {
   const tools: Tool[] = [
@@ -1782,20 +1799,17 @@ function buildProcessDocumentTools(instructions: InstructionsResponse): Tool[] {
 
 function buildAuthorityTools(instructions: InstructionsResponse): Tool[] {
   const { permissions } = instructions;
-  const canCreate = permissions.includes('objectives.create');
-  const canCancel = permissions.includes('objectives.cancel');
-  const canWatch = permissions.includes('objectives.watch');
-  const canReassign = permissions.includes('objectives.reassign');
+  const canManage = permissions.includes('objectives.manage');
   const canManageMembers = permissions.includes('members.manage');
-  if (!canCreate && !canCancel && !canWatch && !canReassign && !canManageMembers) {
+  if (!canManage && !canManageMembers) {
     return [];
   }
 
   const tools: Tool[] = [];
 
-  if (!canCreate) return tools;
+  if (!canManage) return tools;
 
-  // objectives_create — requires objectives.create
+  // objectives_create — requires objectives.manage
   tools.push({
     name: 'objectives_create',
     description:
@@ -1845,10 +1859,8 @@ function buildAuthorityTools(instructions: InstructionsResponse): Tool[] {
     },
   });
 
-  // objectives_cancel — originator always, or members with objectives.cancel
-  const cancelScope = canCancel
-    ? 'You can cancel any non-terminal objective on the team.'
-    : "You can cancel objectives you originated (created). Attempting to cancel someone else's objective will be refused by the server.";
+  // objectives_cancel — originator always, or members with objectives.manage
+  const cancelScope = 'You can cancel any non-terminal objective on the team.';
   tools.push({
     name: 'objectives_cancel',
     description:
@@ -1870,66 +1882,6 @@ function buildAuthorityTools(instructions: InstructionsResponse): Tool[] {
       required: ['id'],
     },
   });
-
-  // objectives_watchers — originator always, or members with objectives.watch
-  const watchersScope = canWatch
-    ? 'You can manage watchers on any objective on the team.'
-    : "You can manage watchers on objectives you originated. Attempting to modify watchers on someone else's objective will be refused by the server.";
-  tools.push({
-    name: 'objectives_watchers',
-    description:
-      `Add or remove watchers on an objective's discussion thread. Watchers receive every ` +
-      `lifecycle event and every discussion post on the objective — use this to loop in a ` +
-      `reviewer, a subject-matter expert, or anyone who should have awareness without ` +
-      `being the assignee. Directors are implicit members and never need to be added. ` +
-      `${watchersScope} Pass \`add\` and/or \`remove\` as arrays of names. Returns the ` +
-      `updated objective with its new watcher list.`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        id: { type: 'string', description: 'The objective id.' },
-        add: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Optional list of teammate names to add as watchers. Max 64.',
-        },
-        remove: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Optional list of teammate names to remove from watchers. Max 64.',
-        },
-      },
-      required: ['id'],
-    },
-  });
-
-  // objectives_reassign — requires objectives.reassign
-  if (canReassign) {
-    tools.push({
-      name: 'objectives_reassign',
-      description:
-        `Reassign a non-terminal objective to a different teammate. Both the previous and ` +
-        `new assignee receive channel pushes — the previous one so they know the ` +
-        `objective left their plate, the new one so they know they now own it. Use this ` +
-        `when the initial assignee is overwhelmed, the wrong skill match, or unavailable. ` +
-        `Returns the reassigned objective.`,
-      inputSchema: {
-        type: 'object',
-        properties: {
-          id: { type: 'string', description: 'The objective id.' },
-          to: {
-            type: 'string',
-            description: 'Name of the new assignee.',
-          },
-          note: {
-            type: 'string',
-            description: 'Optional note explaining the reassignment.',
-          },
-        },
-        required: ['id', 'to'],
-      },
-    });
-  }
 
   return tools;
 }
@@ -1976,10 +1928,6 @@ export async function handleToolCall(
         return await handleProcessDocumentWrite(args, brokerClient);
       case 'objectives_cancel':
         return await handleObjectivesCancel(args, brokerClient, instructions);
-      case 'objectives_watchers':
-        return await handleObjectivesWatchers(args, brokerClient, instructions);
-      case 'objectives_reassign':
-        return await handleObjectivesReassign(args, brokerClient, instructions);
       case 'fs_ls':
         return await handleFsLs(args, brokerClient, instructions);
       case 'fs_stat':
@@ -2134,7 +2082,7 @@ async function handleRoster(
         : `no report ${activityWindow} (idle, lapsed, or never reported)`;
     const auth = t.permissions.includes('members.manage')
       ? ' [admin]'
-      : t.permissions.includes('objectives.create')
+      : t.permissions.includes('objectives.manage')
         ? ' [operator]'
         : '';
     return `- ${t.name}${self} [${t.role.title}]${auth} ${state}; activity=${activity}`;
@@ -2384,7 +2332,7 @@ async function handleObjectivesList(
 
   // `related`, not `assignee` — this tool promises "objectives you have
   // a relationship with", and pinning `assignee` collapsed that to the
-  // assignee-only view for any caller holding `objectives.create`,
+  // assignee-only view for any caller holding `objectives.manage`,
   // hiding everything they originated or watch.
   //
   // `open` spans two statuses and the server's `status` takes one, so it
@@ -2402,7 +2350,7 @@ async function handleObjectivesList(
   // `assignee` is applied HERE rather than sent to the server, which
   // honours it on exactly one of three branches: it is silently dropped
   // whenever `related` is also present, and a caller without
-  // `objectives.create` always gets the whole relationship union no
+  // `objectives.manage` always gets the whole relationship union no
   // matter what they asked for. Sending it would return a superset with
   // nothing saying so. Narrowing the related set is also self-scoping by
   // construction — the result can only ever be a subset of what this
@@ -2570,23 +2518,41 @@ async function handleObjectivesUpdate(
   const id = typeof args.id === 'string' ? args.id : '';
   if (!id) return errorResult('objectives_update: `id` is required');
   const statusArg = typeof args.status === 'string' ? args.status : undefined;
-  if (statusArg !== 'active' && statusArg !== 'blocked') {
+  if (statusArg !== undefined && statusArg !== 'active' && statusArg !== 'blocked') {
     return errorResult(
-      `objectives_update: status is required and must be 'active' or 'blocked' (use objectives_complete for 'done' and objectives_discuss for progress notes)`,
+      `objectives_update: status must be 'active' or 'blocked' (use objectives_complete for 'done' and objectives_discuss for progress notes)`,
     );
   }
   const blockReason = typeof args.blockReason === 'string' ? args.blockReason : undefined;
-  if (statusArg === 'blocked' && (!blockReason || blockReason.trim().length === 0)) {
-    return errorResult('objectives_update: blockReason is required when status=blocked');
+  const assignee = typeof args.assignee === 'string' ? args.assignee : undefined;
+  const note = typeof args.note === 'string' ? args.note : undefined;
+  const names = (v: unknown): string[] | undefined =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : undefined;
+  const addWatchers = names(args.addWatchers);
+  const removeWatchers = names(args.removeWatchers);
+  if (
+    statusArg === undefined &&
+    blockReason === undefined &&
+    assignee === undefined &&
+    (addWatchers === undefined || addWatchers.length === 0) &&
+    (removeWatchers === undefined || removeWatchers.length === 0)
+  ) {
+    return errorResult(
+      'objectives_update: include at least one of status, blockReason, assignee, addWatchers, removeWatchers',
+    );
   }
   const updated = await brokerClient.updateObjective(id, {
-    status: statusArg,
+    ...(statusArg !== undefined ? { status: statusArg } : {}),
     ...(blockReason !== undefined ? { blockReason } : {}),
+    ...(assignee !== undefined ? { assignee } : {}),
+    ...(note !== undefined ? { note } : {}),
+    ...(addWatchers !== undefined && addWatchers.length > 0 ? { addWatchers } : {}),
+    ...(removeWatchers !== undefined && removeWatchers.length > 0 ? { removeWatchers } : {}),
   });
   return textResult(
-    `updated ${updated.id}: status=${updated.status}${
-      updated.blockReason ? ` blockReason="${updated.blockReason}"` : ''
-    }`,
+    `updated ${updated.id}: status=${updated.status} assignee=${updated.assignee}` +
+      `${updated.blockReason ? ` blockReason="${updated.blockReason}"` : ''}` +
+      `${updated.watchers.length > 0 ? ` watchers=${updated.watchers.join(',')}` : ''}`,
   );
 }
 
@@ -2643,8 +2609,7 @@ async function handleObjectivesCreate(
 ): Promise<CallToolResult> {
   if (
     !instructions.permissions.includes('members.manage') &&
-    !instructions.permissions.includes('objectives.create') &&
-    !instructions.permissions.includes('objectives.create')
+    !instructions.permissions.includes('objectives.manage')
   ) {
     return errorResult('objectives_create: you do not have the required permission on this team');
   }
@@ -2692,8 +2657,7 @@ async function handleObjectivesCancel(
 ): Promise<CallToolResult> {
   if (
     !instructions.permissions.includes('members.manage') &&
-    !instructions.permissions.includes('objectives.create') &&
-    !instructions.permissions.includes('objectives.create')
+    !instructions.permissions.includes('objectives.manage')
   ) {
     return errorResult('objectives_cancel: you do not have the required permission on this team');
   }
@@ -2702,59 +2666,6 @@ async function handleObjectivesCancel(
   const reason = typeof args.reason === 'string' ? args.reason : undefined;
   const updated = await brokerClient.cancelObjective(id, reason ? { reason } : {});
   return textResult(`cancelled ${updated.id}: ${updated.title}`);
-}
-
-async function handleObjectivesWatchers(
-  args: Record<string, unknown>,
-  brokerClient: BrokerClient,
-  instructions: InstructionsResponse,
-): Promise<CallToolResult> {
-  if (
-    !instructions.permissions.includes('members.manage') &&
-    !instructions.permissions.includes('objectives.create') &&
-    !instructions.permissions.includes('objectives.create')
-  ) {
-    return errorResult('objectives_watchers: you do not have the required permission on this team');
-  }
-  const id = typeof args.id === 'string' ? args.id : '';
-  if (!id) return errorResult('objectives_watchers: `id` is required');
-  const add = Array.isArray(args.add)
-    ? args.add.filter((v): v is string => typeof v === 'string')
-    : undefined;
-  const remove = Array.isArray(args.remove)
-    ? args.remove.filter((v): v is string => typeof v === 'string')
-    : undefined;
-  if ((!add || add.length === 0) && (!remove || remove.length === 0)) {
-    return errorResult('objectives_watchers: must include at least one of `add` or `remove`');
-  }
-  const updated = await brokerClient.updateObjectiveWatchers(id, {
-    ...(add && add.length > 0 ? { add } : {}),
-    ...(remove && remove.length > 0 ? { remove } : {}),
-  });
-  return textResult(
-    `updated ${updated.id} watchers: ${
-      updated.watchers.length > 0 ? updated.watchers.join(', ') : '(none)'
-    }`,
-  );
-}
-
-async function handleObjectivesReassign(
-  args: Record<string, unknown>,
-  brokerClient: BrokerClient,
-  instructions: InstructionsResponse,
-): Promise<CallToolResult> {
-  if (!instructions.permissions.includes('members.manage')) {
-    return errorResult('objectives_reassign: you do not have the required permission on this team');
-  }
-  const id = typeof args.id === 'string' ? args.id : '';
-  const to = typeof args.to === 'string' ? args.to : '';
-  if (!id || !to) return errorResult('objectives_reassign: both `id` and `to` are required');
-  const note = typeof args.note === 'string' ? args.note : undefined;
-  const updated = await brokerClient.reassignObjective(id, {
-    to,
-    ...(note ? { note } : {}),
-  });
-  return textResult(`reassigned ${updated.id} to ${updated.assignee}: ${updated.title}`);
 }
 
 // ── Admin handlers (team / presets / members) ─────────────────────

@@ -76,7 +76,7 @@ describe('the write tool is gated on process.manage', () => {
   it('withholds it from a holder of objectives.create', () => {
     const other: InstructionsResponse = {
       ...PACKET,
-      permissions: ['objectives.create', 'members.manage', 'team.manage'],
+      permissions: ['objectives.manage', 'members.manage', 'team.manage'],
     };
     expect(defineTools(other).map((t) => t.name)).not.toContain('process_document_write');
   });

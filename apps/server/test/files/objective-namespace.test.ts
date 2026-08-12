@@ -67,13 +67,13 @@ function makeApp() {
     {
       name: 'alice',
       role: { title: 'admin', description: '' },
-      permissions: ['members.manage', 'objectives.create', 'objectives.watch'],
+      permissions: ['members.manage', 'objectives.manage'],
       token: ALICE,
     },
     {
       name: 'bob',
       role: { title: 'engineer', description: '' },
-      permissions: ['objectives.create'],
+      permissions: ['objectives.manage'],
       token: BOB,
     },
     {
@@ -348,8 +348,8 @@ describe('/objectives/<id>/ namespace', () => {
 
     // Remove dave from watchers.
     const watchers = await app.request(
-      `/objectives/${obj.id}/watchers`,
-      authed(BOB, { remove: ['dave'] }),
+      `/objectives/${obj.id}`,
+      authed(BOB, { removeWatchers: ['dave'] }, 'PATCH'),
     );
     expect(watchers.status).toBe(200);
 

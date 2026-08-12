@@ -79,7 +79,6 @@ import {
   PendingEnrollmentSchema,
   PushPayloadSchema,
   PushSubscriptionPayloadSchema,
-  ReassignObjectiveRequestSchema,
   RejectEnrollmentRequestSchema,
   RenameChannelRequestSchema,
   SetCustomToolRequestSchema,
@@ -95,7 +94,6 @@ import {
   UpdateSecretRequestSchema,
   UpdateToolSourceRequestSchema,
   UpdateVariableRequestSchema,
-  UpdateWatchersRequestSchema,
   UploadActivityRequestSchema,
 } from 'csuite-sdk/schemas';
 import type {
@@ -3926,14 +3924,14 @@ export function createApp(options: AppOptions): CreatedApp {
           .list(filter.status ? { status: filter.status } : {})
           .filter((o) => o.assignee === name || o.originator === name || o.watchers.includes(name));
 
-      const canListAny = hasPermission(member.permissions, 'objectives.create');
+      const canListAny = hasPermission(member.permissions, 'objectives.manage');
       if (!canListAny) {
         if (
           (filter.assignee && filter.assignee !== member.name) ||
           (filter.related && filter.related !== member.name)
         ) {
           return c.json(
-            { error: 'members without objectives.create may only list their own objectives' },
+            { error: 'members without objectives.manage may only list their own objectives' },
             403,
           );
         }
@@ -3952,7 +3950,7 @@ export function createApp(options: AppOptions): CreatedApp {
     // GET /objectives/:id
     //
     // A thread participant (assignee, originator, watcher) can always
-    // view. Anyone with `objectives.create` can view any.
+    // view. Anyone with `objectives.manage` can view any.
     app.get(`${PATHS.objectives}/:id`, auth, (c) => {
       const member = c.get('member');
       const id = c.req.param('id');
@@ -3962,21 +3960,21 @@ export function createApp(options: AppOptions): CreatedApp {
         obj.assignee === member.name ||
         obj.originator === member.name ||
         obj.watchers.includes(member.name);
-      if (!isParticipant && !hasPermission(member.permissions, 'objectives.create')) {
+      if (!isParticipant && !hasPermission(member.permissions, 'objectives.manage')) {
         return c.json(
-          { error: 'not a thread participant; viewing requires objectives.create' },
+          { error: 'not a thread participant; viewing requires objectives.manage' },
           403,
         );
       }
       return c.json({ objective: obj, events: objectives.events(id) });
     });
 
-    // POST /objectives — requires `objectives.create`.
+    // POST /objectives — requires `objectives.manage`.
     app.post(PATHS.objectives, auth, async (c) => {
       const member = c.get('member');
-      if (!hasPermission(member.permissions, 'objectives.create')) {
+      if (!hasPermission(member.permissions, 'objectives.manage')) {
         return c.json(
-          { error: 'creating objectives requires the objectives.create permission' },
+          { error: 'creating objectives requires the objectives.manage permission' },
           403,
         );
       }
@@ -4063,36 +4061,89 @@ export function createApp(options: AppOptions): CreatedApp {
       }
     });
 
-    // PATCH /objectives/:id — assignee, or a member with `objectives.cancel`.
+    // PATCH /objectives/:id — one mutation surface, gated per field
+    // group rather than per route:
+    //   status / blockReason — the assignee, or `objectives.manage`
+    //   assignee (reassign)  — `objectives.manage`
+    //   watcher changes      — the originator, or `objectives.manage`
+    // A payload touching several groups must satisfy every gate it
+    // touches, and is applied atomically-enough: gates are all checked
+    // before any store call runs.
     app.patch(`${PATHS.objectives}/:id`, auth, async (c) => {
       const member = c.get('member');
       const id = c.req.param('id');
       const current = objectives.get(id);
       if (!current) return c.json({ error: `no such objective: ${id}` }, 404);
-      if (
-        current.assignee !== member.name &&
-        !hasPermission(member.permissions, 'objectives.cancel')
-      ) {
-        return c.json(
-          {
-            error: 'only the assignee or a member with objectives.cancel may update this objective',
-          },
-          403,
-        );
-      }
       const raw = await c.req.json().catch(() => null);
       const parsed = UpdateObjectiveRequestSchema.safeParse(raw);
       if (!parsed.success) {
         return c.json({ error: 'invalid update payload', details: parsed.error.issues }, 400);
       }
+      const input = parsed.data;
+      const canManage = hasPermission(member.permissions, 'objectives.manage');
+      const isOriginator = current.originator === member.name;
+
+      const touchesStatus = input.status !== undefined || input.blockReason !== undefined;
+      const touchesAssignee = input.assignee !== undefined;
+      const touchesWatchers = input.addWatchers !== undefined || input.removeWatchers !== undefined;
+
+      if (touchesStatus && current.assignee !== member.name && !canManage) {
+        return c.json(
+          { error: 'only the assignee or a member with objectives.manage may update status' },
+          403,
+        );
+      }
+      if (touchesAssignee && !canManage) {
+        return c.json({ error: 'changing the assignee requires objectives.manage' }, 403);
+      }
+      if (touchesWatchers && !isOriginator && !canManage) {
+        return c.json({ error: 'watcher changes require originator or objectives.manage' }, 403);
+      }
+      if (touchesAssignee && !members.findByName(input.assignee as string)) {
+        return c.json({ error: `unknown assignee: ${input.assignee}` }, 400);
+      }
+      for (const cs of [...(input.addWatchers ?? []), ...(input.removeWatchers ?? [])]) {
+        if (!members.findByName(cs)) {
+          return c.json({ error: `unknown watcher: ${cs}` }, 400);
+        }
+      }
+
       try {
-        const { objective: updated, events } = objectives.update(id, parsed.data, member.name);
-        // `events` can have 0-2 entries: 0 for a no-op (status=current,
-        // no note), 1 for a single status transition or a note-only
-        // update, 2 for a status transition + note in the same call.
-        // Publish each one individually so each landing push carries
-        // its own structured body — the note's note, the block's
-        // block reason, etc.
+        let updated = current;
+        const events: ObjectiveEvent[] = [];
+        if (touchesAssignee && input.assignee !== current.assignee) {
+          // Attachment access for the new assignee comes "for free"
+          // from the objective-namespace ACL — they're now a thread
+          // member, so `canRead('/objectives/<id>/...')` returns true
+          // via `isObjectiveMember`. No grant backfill needed.
+          const res = objectives.reassign(
+            id,
+            {
+              to: input.assignee as string,
+              ...(input.note !== undefined ? { note: input.note } : {}),
+            },
+            member.name,
+          );
+          updated = res.objective;
+          events.push(...res.events);
+        }
+        if (touchesWatchers) {
+          const res = objectives.updateWatchers(
+            id,
+            {
+              ...(input.addWatchers !== undefined ? { add: input.addWatchers } : {}),
+              ...(input.removeWatchers !== undefined ? { remove: input.removeWatchers } : {}),
+            },
+            member.name,
+          );
+          updated = res.objective;
+          events.push(...res.events);
+        }
+        if (touchesStatus) {
+          const res = objectives.update(id, input, member.name);
+          updated = res.objective;
+          events.push(...res.events);
+        }
         queueMicrotask(() => {
           for (const ev of events) {
             void publishObjectiveEvent(updated, ev, member.name);
@@ -4133,15 +4184,15 @@ export function createApp(options: AppOptions): CreatedApp {
       }
     });
 
-    // POST /objectives/:id/cancel — originator, or any member with `objectives.cancel`.
+    // POST /objectives/:id/cancel — originator, or any member with `objectives.manage`.
     app.post(`${PATHS.objectives}/:id/cancel`, auth, async (c) => {
       const member = c.get('member');
       const id = c.req.param('id');
       const current = objectives.get(id);
       if (!current) return c.json({ error: `no such objective: ${id}` }, 404);
       const isOriginator = current.originator === member.name;
-      if (!(isOriginator || hasPermission(member.permissions, 'objectives.cancel'))) {
-        return c.json({ error: 'cancel requires originator or objectives.cancel permission' }, 403);
+      if (!(isOriginator || hasPermission(member.permissions, 'objectives.manage'))) {
+        return c.json({ error: 'cancel requires originator or objectives.manage permission' }, 403);
       }
       const raw = await c.req.json().catch(() => ({}));
       const parsed = CancelObjectiveRequestSchema.safeParse(raw);
@@ -4150,105 +4201,6 @@ export function createApp(options: AppOptions): CreatedApp {
       }
       try {
         const { objective: updated, events } = objectives.cancel(id, parsed.data, member.name);
-        queueMicrotask(() => {
-          for (const ev of events) {
-            void publishObjectiveEvent(updated, ev, member.name);
-          }
-        });
-        return c.json(updated);
-      } catch (err) {
-        const mapped = mapObjectivesError(err);
-        return c.json(mapped.body, mapped.status as 400 | 404 | 409 | 500);
-      }
-    });
-
-    // POST /objectives/:id/reassign — requires `objectives.reassign`.
-    app.post(`${PATHS.objectives}/:id/reassign`, auth, async (c) => {
-      const member = c.get('member');
-      if (!hasPermission(member.permissions, 'objectives.reassign')) {
-        return c.json({ error: 'reassign requires the objectives.reassign permission' }, 403);
-      }
-      const id = c.req.param('id');
-      const raw = await c.req.json().catch(() => null);
-      const parsed = ReassignObjectiveRequestSchema.safeParse(raw);
-      if (!parsed.success) {
-        return c.json({ error: 'invalid reassign payload', details: parsed.error.issues }, 400);
-      }
-      if (!members.findByName(parsed.data.to)) {
-        return c.json({ error: `unknown assignee: ${parsed.data.to}` }, 400);
-      }
-      try {
-        const { objective: updated, events } = objectives.reassign(id, parsed.data, member.name);
-        // Attachment access for the new assignee comes "for free" from
-        // the objective-namespace ACL — they're now a thread member,
-        // so `canRead('/objectives/<id>/...')` returns true via
-        // `isObjectiveMember`. No grant backfill needed.
-        queueMicrotask(() => {
-          for (const ev of events) {
-            void publishObjectiveEvent(updated, ev, member.name);
-          }
-        });
-        return c.json(updated);
-      } catch (err) {
-        const mapped = mapObjectivesError(err);
-        return c.json(mapped.body, mapped.status as 400 | 404 | 409 | 500);
-      }
-    });
-
-    // POST /objectives/:id/watchers
-    //
-    // Add and/or remove watchers on an objective. Permitted to:
-    //   - any admin (team-wide)
-    //   - the originating operator / lead-agent (they own the
-    //     objective they made)
-    // Every name in both `add` and `remove` must resolve to a known
-    // user. Watcher mutations produce `watcher_added` and
-    // `watcher_removed` audit events that fan out to the full
-    // post-change thread membership (plus removed parties so they
-    // get the exit notification).
-    app.post(`${PATHS.objectives}/:id/watchers`, auth, async (c) => {
-      const member = c.get('member');
-      const id = c.req.param('id');
-      const current = objectives.get(id);
-      if (!current) return c.json({ error: `no such objective: ${id}` }, 404);
-
-      const isOriginator = current.originator === member.name;
-      if (!(isOriginator || hasPermission(member.permissions, 'objectives.watch'))) {
-        return c.json(
-          { error: 'watcher changes require originator or objectives.watch permission' },
-          403,
-        );
-      }
-
-      const raw = await c.req.json().catch(() => null);
-      const parsed = UpdateWatchersRequestSchema.safeParse(raw);
-      if (!parsed.success) {
-        return c.json({ error: 'invalid watchers payload', details: parsed.error.issues }, 400);
-      }
-
-      // Validate every name in both lists.
-      for (const cs of parsed.data.add ?? []) {
-        if (!members.findByName(cs)) {
-          return c.json({ error: `unknown watcher: ${cs}` }, 400);
-        }
-      }
-      for (const cs of parsed.data.remove ?? []) {
-        if (!members.findByName(cs)) {
-          return c.json({ error: `unknown watcher: ${cs}` }, 400);
-        }
-      }
-
-      try {
-        const { objective: updated, events } = objectives.updateWatchers(
-          id,
-          parsed.data,
-          member.name,
-        );
-        // Watcher membership changes have no FS-side bookkeeping to do:
-        // attachment access flows from `isObjectiveMember` in the
-        // namespace ACL, so adding a watcher grants access at the
-        // moment the membership lands and removing one revokes it the
-        // moment they're gone. No grant rows to backfill or sweep.
         queueMicrotask(() => {
           for (const ev of events) {
             void publishObjectiveEvent(updated, ev, member.name);

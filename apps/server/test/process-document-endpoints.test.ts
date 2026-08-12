@@ -50,8 +50,8 @@ function makeApp() {
       permissions: [
         'team.manage',
         'members.manage',
-        'objectives.create',
-        'objectives.cancel',
+        'objectives.manage',
+        'objectives.manage',
         'secrets.manage',
         'tools.manage',
       ],
