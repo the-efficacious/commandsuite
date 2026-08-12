@@ -106,9 +106,8 @@ describe('the write description carries the two things an agent will otherwise g
     expect(write()?.description).toMatch(/NOT pushed into a running session/);
   });
 
-  it('names disposition as the same field and meaning as objectives_amend', () => {
+  it('explains both dispositions and what each binds', () => {
     const props = write()?.inputSchema.properties as Record<string, { description?: string }>;
-    expect(props.disposition?.description).toMatch(/objectives_amend/);
     expect(props.disposition?.description).toMatch(/retroactive/i);
     expect(props.disposition?.description).toMatch(/forward-only/i);
   });

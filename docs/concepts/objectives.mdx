@@ -96,23 +96,14 @@ The originator can manage watchers on their own objectives;
 `objectives.watch` covers everyone else's. Admins see every objective
 thread without being added.
 
-## Amending and correcting
+## When the work agreement changes
 
-Work agreements drift. Two tools fix the record without erasing it:
-
-- **`objectives_amend`** changes the contract — outcome, title, or body.
-  The prior text is kept and shown alongside the new version, with your
-  required `reason`. You also declare which kind of change it is: a
-  `correction` (the old text was wrong all along) or a `scope_change` (a
-  new demand — work already underway finishes under the old text).
-- **`objectives_correct_event`** fixes a wrong entry in the event log —
-  most often a completion recorded at the wrong moment. The original entry
-  is never rewritten; a correction is appended and shown inline next to it.
-
-Both require `objectives.create`: amending the contract is an authoring
-power, whoever holds it. The full history — contract versions, amendment
-reasons, corrected entries — is shown on the objective's page in the web UI
-and in `objectives_view`.
+Cancel with a reason and create a fresh objective. The cancel reason
+names what was wrong and what supersedes it, both objectives keep their
+full history, and the new outcome is read by its assignee the way every
+outcome is — as the current definition of done, not a diff against an
+old one. For a small clarification that doesn't change what "done"
+means, a discussion post on the thread is enough.
 
 ## Discussion and attachments
 

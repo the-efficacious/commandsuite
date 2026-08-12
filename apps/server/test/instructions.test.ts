@@ -259,8 +259,6 @@ describe('composeInstructions', () => {
           result: null,
           blockReason: null,
           attachments: [],
-          outcomeVersion: 1,
-          amendments: [],
         },
       ],
       processDocument: null,

@@ -30,7 +30,6 @@ import {
 import {
   ActivityReportSchema,
   AddChannelMemberRequestSchema,
-  AmendObjectiveRequestSchema,
   ApproveEnrollmentRequestSchema,
   ApproveEnrollmentResponseSchema,
   BindSecretRequestSchema,
@@ -38,7 +37,6 @@ import {
   BindVariableRequestSchema,
   ChannelSchema,
   ContextControlResponseSchema,
-  CorrectObjectiveEventRequestSchema,
   CreateChannelRequestSchema,
   CreateMemberResponseSchema,
   CreateNotificationEndpointRequestSchema,
@@ -122,7 +120,6 @@ import type {
   ActivityReport,
   ActivityRow,
   AddChannelMemberRequest,
-  AmendObjectiveRequest,
   ApproveEnrollmentRequest,
   ApproveEnrollmentResponse,
   BindSecretRequest,
@@ -133,7 +130,6 @@ import type {
   ChannelSummary,
   ContextControlRequest,
   ContextControlResponse,
-  CorrectObjectiveEventRequest,
   CreateChannelRequest,
   CreateMemberRequest,
   CreateMemberResponse,
@@ -558,38 +554,6 @@ export class Client {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
-    });
-    return ObjectiveSchema.parse(await this.json(resp));
-  }
-
-  /**
-   * Amend an objective's contract text. Requires `objectives.create`.
-   * The prior text stays recoverable in the amendment record; the
-   * response carries the current contract and its version.
-   */
-  async amendObjective(id: string, payload: AmendObjectiveRequest): Promise<Objective> {
-    const validated = AmendObjectiveRequestSchema.parse(payload);
-    const resp = await this.request(OBJECTIVE_PATHS.amend(id), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(validated),
-    });
-    return ObjectiveSchema.parse(await this.json(resp));
-  }
-
-  /**
-   * Correct an earlier lifecycle event. Requires `objectives.create`.
-   * The target event is superseded, never rewritten.
-   */
-  async correctObjectiveEvent(
-    id: string,
-    payload: CorrectObjectiveEventRequest,
-  ): Promise<Objective> {
-    const validated = CorrectObjectiveEventRequestSchema.parse(payload);
-    const resp = await this.request(OBJECTIVE_PATHS.correctEvent(id), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(validated),
     });
     return ObjectiveSchema.parse(await this.json(resp));
   }
