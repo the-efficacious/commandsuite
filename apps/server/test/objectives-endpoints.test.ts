@@ -159,6 +159,24 @@ describe('POST /objectives', () => {
     expect(obj.status).toBe('active');
   });
 
+  it('creation with watchers lands as ONE push, naming them all', async () => {
+    const { app, broker } = makeApp();
+    const received: string[] = [];
+    broker.subscribe('carol', async (m) => {
+      received.push(m.body);
+    });
+    await createOne(app, ALICE, { assignee: 'carol', watchers: ['bob', 'dave'] });
+    await vi.waitFor(() => expect(received.length).toBeGreaterThan(0));
+
+    // One `assigned` push carries the whole creation. Before this,
+    // each initial watcher re-broadcast the full contract to every
+    // thread member — four near-identical payloads on a live team's
+    // 4-watcher objective before any work happened.
+    expect(received).toHaveLength(1);
+    expect(received[0]).toContain('[objective assigned]');
+    expect(received[0]).toContain('outcome:');
+  });
+
   it('rejects callers without objectives.create with 403', async () => {
     const { app } = makeApp();
     const res = await app.request(
@@ -592,6 +610,27 @@ describe('POST /objectives/:id/reassign', () => {
 // ─── POST /objectives/:id/watchers ───────────────────────────────────
 
 describe('POST /objectives/:id/watchers', () => {
+  it('a later watcher add pushes the name, not the whole contract', async () => {
+    const { app, broker } = makeApp();
+    const obj = await createOne(app, ALICE, { assignee: 'carol' });
+    const received: string[] = [];
+    broker.subscribe('carol', async (m) => {
+      received.push(m.body);
+    });
+    await app.request(`/objectives/${obj.id}/watchers`, authed(ALICE, { add: ['dave'] }));
+    await vi.waitFor(() =>
+      expect(received.some((b) => b.includes('[objective watcher_added]'))).toBe(true),
+    );
+
+    const push = received.find((b) => b.includes('[objective watcher_added]'));
+    // The joiner is named and can pull the contract with
+    // `objectives_view`; the full outcome is NOT re-broadcast to every
+    // thread member on each watcher change.
+    expect(push).toContain('watcher:  dave');
+    expect(push).toContain('title:');
+    expect(push).not.toContain('PR merged to main');
+  });
+
   it('lets the originator add a watcher to their own objective', async () => {
     const { app } = makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'carol' });

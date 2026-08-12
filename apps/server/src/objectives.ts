@@ -539,6 +539,15 @@ class SqliteObjectivesStore implements ObjectivesStore {
         now,
         JSON.stringify(attachments),
       );
+      // ONE event for the whole creation. The `assigned` payload names
+      // every initial watcher, and the app layer fans one push out to
+      // the full thread membership — so a per-watcher `watcher_added`
+      // event at creation only re-broadcast the same contract N more
+      // times into the same contexts. (Measured on a live team: a
+      // 4-watcher objective pushed four near-identical payloads before
+      // any work happened.) Post-creation watcher changes still emit
+      // individually via `updateWatchers`, where each is a fact of its
+      // own.
       events.push(
         this.appendEvent(id, now, originator, 'assigned', {
           title,
@@ -547,12 +556,6 @@ class SqliteObjectivesStore implements ObjectivesStore {
           ...(watchers.length > 0 ? { watchers } : {}),
         }),
       );
-      // Emit one `watcher_added` per initial watcher so the audit log
-      // records each addition individually. Fanout happens at the app
-      // layer, which loops over events.
-      for (const w of watchers) {
-        events.push(this.appendEvent(id, now, originator, 'watcher_added', { name: w }));
-      }
       commit.run();
     } catch (err) {
       rollback.run();

@@ -97,10 +97,11 @@ describe('ObjectivesStore.create', () => {
       NOW,
     );
     expect(objective.watchers).toEqual(['bob', 'carol']);
-    // One assigned + one watcher_added per net-new watcher.
-    expect(events.map((e) => e.kind)).toEqual(['assigned', 'watcher_added', 'watcher_added']);
-    const watcherEvents = events.filter((e) => e.kind === 'watcher_added');
-    expect(watcherEvents.map((e) => e.payload.name)).toEqual(['bob', 'carol']);
+    // ONE event for the whole creation. The watcher list rides the
+    // `assigned` payload; a per-watcher event here became a per-watcher
+    // re-broadcast of the full contract at the app layer.
+    expect(events.map((e) => e.kind)).toEqual(['assigned']);
+    expect(events[0]?.payload.watchers).toEqual(['bob', 'carol']);
   });
 
   it('assigns unique ids across rapid creates', () => {

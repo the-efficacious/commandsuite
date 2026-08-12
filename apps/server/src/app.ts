@@ -6336,10 +6336,14 @@ function systemMessageForEvent(
     }
     case 'watcher_added': {
       const cs = typeof event?.payload.name === 'string' ? event.payload.name : '(unknown)';
+      // Title + name only. The new watcher joined the thread and can
+      // pull the contract with `objectives_view`; re-broadcasting the
+      // full outcome to EVERY thread member on each watcher change is
+      // how one objective's contract ended up pushed four times before
+      // any work happened.
       return [
         header,
         `title:    ${objective.title}`,
-        `outcome:  ${objective.outcome}`,
         `watcher:  ${cs}`,
         `status:   ${objective.status}`,
       ].join('\n');

@@ -476,38 +476,41 @@ describe('criterion 2 — the two writes are one transaction', () => {
 
 describe('a correction names one event by durable id, never by timestamp', () => {
   it('distinguishes two events emitted in the SAME millisecond', () => {
-    // Found by Rune. `create` emits `assigned` and `watcher_added` at
+    // Found by Rune. A watcher batch emits several `watcher_added` at
     // one `now`, so a timestamp selector would silently correct
     // whichever came first and report success. Deterministic here via a
     // fixed clock rather than hoping the wall clock collides.
     const { objectives } = makeApp();
     const AT = 1_700_000_000_000;
     const { objective } = objectives.create(
-      { title: 't', outcome: STRUCK_CRITERION, assignee: 'carol', watchers: ['rune'] },
+      { title: 't', outcome: STRUCK_CRITERION, assignee: 'carol' },
       'lea',
       AT,
     );
+    objectives.updateWatchers(objective.id, { add: ['rune', 'seamus'] }, 'lea', AT);
     const events = objectives.events(objective.id);
     const atAT = events.filter((e) => e.ts === AT);
     expect(atAT.length).toBeGreaterThan(1);
     // Every event carries a distinct id despite the shared timestamp.
     expect(new Set(atAT.map((e) => e.id)).size).toBe(atAT.length);
 
-    const assigned = events.find((e) => e.kind === 'assigned');
-    const watcher = events.find((e) => e.kind === 'watcher_added');
-    if (!assigned || !watcher) throw new Error('expected both events');
+    const watchers = events.filter((e) => e.kind === 'watcher_added');
+    const rune = watchers.find((e) => e.payload.name === 'rune');
+    const seamus = watchers.find((e) => e.payload.name === 'seamus');
+    if (!rune || !seamus) throw new Error('expected both watcher events');
 
     const { objective: fixed } = objectives.correctEvent(
       objective.id,
-      { eventId: watcher.id, correction: 'x', reason: 'y' },
+      { eventId: rune.id, correction: 'x', reason: 'y' },
       'lea',
     );
     const corr = fixed.amendments.find((a) => a.target === 'event');
     if (corr?.target !== 'event') throw new Error('expected an event correction');
-    // The one named, not the one that happened to sort first.
-    expect(corr.eventId).toBe(watcher.id);
+    // The one named, not the one that happened to sort first — its
+    // same-kind sibling at the same timestamp stays untouched.
+    expect(corr.eventId).toBe(rune.id);
     expect(corr.eventKind).toBe('watcher_added');
-    expect(corr.eventId).not.toBe(assigned.id);
+    expect(corr.eventId).not.toBe(seamus.id);
   });
 
   it('refuses an unknown event id', () => {
