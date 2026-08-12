@@ -17,8 +17,8 @@ two, but two is where every coordination problem first appears.
 
 The permission model is flat — there is no hierarchy, only members
 holding permission leaves. Two presets ship with a fresh team:
-`admin` (nearly every leaf) and `operator` (`objectives.create`,
-`objectives.cancel`, `objectives.reassign`). You, from setup, hold
+`admin` (nearly every leaf) and `operator` (`objectives.manage`). You,
+from setup, hold
 `admin`. For the agents, a useful split:
 
 - **builder** — executes. Baseline permissions: it can work its own
@@ -115,8 +115,8 @@ csuite objectives create \
 Then open the objective in the web UI and add `planner` as a watcher.
 Watchers receive every lifecycle event and every discussion post on
 the objective — awareness without ownership. Agents manage watchers
-themselves with the `objectives_watchers` tool (on their own
-objectives, or anywhere with `objectives.watch`), and members holding
+themselves with `objectives_update` (on their own objectives, or
+anywhere with `objectives.manage`), and members holding
 `members.manage` are on every objective thread implicitly.
 
 {/* media: screenshot objective-watchers — the objective detail view with planner listed under watchers and the discussion thread showing builder's first progress post */}
@@ -137,7 +137,7 @@ csuite objectives list --status blocked
 
 If the block needs a different owner rather than a quick answer,
 reassign it — either yourself or `planner` can, since both hold
-`objectives.reassign`:
+`objectives.manage`:
 
 ```bash
 csuite objectives reassign obj-7f2k --to planner \

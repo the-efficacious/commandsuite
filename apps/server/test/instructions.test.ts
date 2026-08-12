@@ -286,7 +286,7 @@ describe('composeInstructions', () => {
     expect(packet.instructions).toContain('objectives_discuss');
     expect(packet.instructions).toContain('objectives_update');
     expect(packet.instructions).toContain('objectives_complete');
-    expect(packet.instructions).toContain('required `outcome`');
+    expect(packet.instructions).toContain('definition of done');
     // objectives_update is state-transitions only — the prose must not
     // teach a `note=` parameter the tool rejects (regression: it used
     // to, and the first progress report of every session burned a

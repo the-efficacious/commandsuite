@@ -1815,12 +1815,12 @@ function buildAuthorityTools(instructions: InstructionsResponse): Tool[] {
     description:
       `Create and assign a new objective. You can direct work ` +
       `to any teammate — the assignee receives an immediate channel push with the title, ` +
-      `outcome, and originator stamped as you. The \`outcome\` field is ` +
-      `contractual: it must state the tangible, verifiable result that defines "done", not ` +
-      `just a vague intent. Optionally include a \`body\` for additional context and ` +
-      `\`watchers\` (a list of names) to loop other teammates into the discussion thread ` +
-      `from the start. Use \`roster\` for available assignees. Returns the new objective ` +
-      `with its generated id.`,
+      `outcome, and originator stamped as you. Write the \`outcome\` as the definition of ` +
+      `done: SHORT and CHECKABLE, naming who verifies. A long outcome with many clauses ` +
+      `costs the team real work to interpret — put background in \`body\` instead. ` +
+      `Optionally include \`watchers\` (a list of names) to loop other teammates into the ` +
+      `discussion thread from the start. Use \`roster\` for available assignees. Returns ` +
+      `the new objective with its generated id.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -2381,7 +2381,6 @@ async function handleObjectivesList(
     // cannot tell work it owns from work it merely watches, which is the
     // whole reason assignee is rendered.
     const own = o.assignee === instructions.name ? ' (you)' : '';
-    // The contract version belongs HERE, not only on `objectives_view`.
     return (
       `- ${o.id} [${o.status}] ${o.title}\n` +
       `    assignee: ${o.assignee}${own}  originator: ${o.originator}\n` +

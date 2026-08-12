@@ -87,8 +87,7 @@ The response also names what was composed, by content hash:
 - `blocks` — one `{ kind, sha256 }` descriptor per operator-authored
   instruction block actually present in this packet. Kinds are
   `team_context`, `role_description`, `personal_instructions`, and
-  `process_document` (the wire strings are pinned — they double as
-  the context watchdog's telemetry vocabulary). Empty blocks are
+  `process_document` (the wire strings are pinned). Empty blocks are
   omitted rather than descriptor'd.
 - `composedSha256` — sha256 of the **canonical** composition: the
   composed `instructions` prose with the transient broker/runner
@@ -483,10 +482,10 @@ next read.
 | **Auth** | dual |
 | **Returns** | `ListObjectivesResponse` — `{ objectives: Objective[] }` |
 
-Callers **without** `objectives.create` are scoped to their own
+Callers **without** `objectives.manage` are scoped to their own
 relationship union — objectives they are assigned, originated, or
 watch — and may only pass their own name in `assignee` / `related`
-(403 otherwise). Callers **with** `objectives.create` get the
+(403 otherwise). Callers **with** `objectives.manage` get the
 team-wide list; `related=<name>` narrows it to one member's
 relationship union, `assignee=<name>` to one member's plate. The
 MCP `objectives_list` tool sits on top of this route.
@@ -495,7 +494,7 @@ MCP `objectives_list` tool sits on top of this route.
 
 | | |
 |---|---|
-| **Auth** | dual; requires `objectives.create` |
+| **Auth** | dual; requires `objectives.manage` |
 | **Body** | `CreateObjectiveRequest` — `{ title, outcome, assignee, body?, watchers?, attachments? }` |
 | **Returns** | `Objective` |
 
@@ -509,7 +508,7 @@ caller has read access to each path.
 
 | | |
 |---|---|
-| **Auth** | dual; thread participant (assignee, originator, watcher) OR `objectives.create` |
+| **Auth** | dual; thread participant (assignee, originator, watcher) OR `objectives.manage` |
 | **Returns** | `GetObjectiveResponse` — `{ objective: Objective, events: ObjectiveEvent[] }` |
 
 Full state plus the append-only event log.
@@ -518,12 +517,20 @@ Full state plus the append-only event log.
 
 | | |
 |---|---|
-| **Auth** | dual; assignee OR `objectives.cancel` |
-| **Body** | `UpdateObjectiveRequest` — `{ status?: 'active'\|'blocked', blockReason? }` |
+| **Auth** | dual; gated per field group — see below |
+| **Body** | `UpdateObjectiveRequest` — `{ status?: 'active'\|'blocked', blockReason?, assignee?, note?, addWatchers?, removeWatchers? }` (at least one field) |
 | **Returns** | `Objective` |
 
-Round-trip transition. Use `complete` / `cancel` for terminal
-states. `blockReason` is required when `status: 'blocked'`.
+One mutation surface, gated per field group: `status`/`blockReason`
+require the assignee or `objectives.manage`; `assignee` (a
+reassignment — the previous assignee is promoted to watcher, both
+parties notified, `note` carries handover context) requires
+`objectives.manage`; watcher changes require the originator or
+`objectives.manage`. A payload touching several groups must satisfy
+every gate it touches, and all gates are checked before any change
+applies. `blockReason` is optional; setting `assignee` to the current
+assignee is an idempotent no-op. Use `complete` / `cancel` for
+terminal states.
 
 ### `POST /objectives/:id/complete`
 
@@ -540,58 +547,11 @@ audit log and is the "what was actually delivered" summary.
 
 | | |
 |---|---|
-| **Auth** | dual; `objectives.cancel` OR originator |
+| **Auth** | dual; `objectives.manage` OR originator |
 | **Body** | `CancelObjectiveRequest` — `{ reason? }` |
 | **Returns** | `Objective` |
 
 Terminal transition to `cancelled`.
-
-### `POST /objectives/:id/amend`
-
-| | |
-|---|---|
-| **Auth** | dual; `objectives.create` |
-| **Body** | `AmendObjectiveRequest` — `{ title?, outcome?, body?, reason: <required>, disposition: 'correction'\|'scope_change' }` (at least one contract field) |
-| **Returns** | `Objective` (with bumped `outcomeVersion`) |
-
-Amend the objective's contract — title, outcome and/or body. The
-gate is the permission, not the role: an assignee holding
-`objectives.create` may amend their own contract. Prior text is
-retained in the event log (rendered by `objectives_view`), so this
-corrects the record rather than silently replacing it. A no-op
-amendment (no field actually differs) is rejected rather than
-recorded as a version bump. `disposition` states whether the change
-is retroactive (`correction` — the prior text was wrong) or
-forward-only (`scope_change` — work already underway finishes under
-the prior text).
-
-### `POST /objectives/:id/correct-event`
-
-| | |
-|---|---|
-| **Auth** | dual; `objectives.create` |
-| **Body** | `CorrectObjectiveEventRequest` — `{ eventId, correction, reason }` |
-| **Returns** | `Objective` |
-
-Correct an earlier lifecycle event (e.g. a completion recorded at
-the wrong moment). The target event is never rewritten — this
-appends a superseding record naming it by `eventId` (a durable id;
-timestamps are not identities because creation emits two events in
-the same millisecond). Does not change the contract version.
-
-### `POST /objectives/:id/reassign`
-
-| | |
-|---|---|
-| **Auth** | dual; `objectives.reassign` |
-| **Body** | `ReassignObjectiveRequest` — `{ to: <name>, note? }` |
-| **Returns** | `Objective` |
-
-Moves to a new assignee. Both old and new assignees receive
-channel events. Activity stream gets `objective_close` (with
-`result: 'reassigned'`) for old, `objective_open` for new. The new
-assignee's attachment access follows from the objective-namespace
-ACL — no grant backfill.
 
 ### `POST /objectives/:id/discuss`
 
@@ -603,19 +563,6 @@ ACL — no grant backfill.
 
 Posts into the `obj:<id>` thread. Members include originator,
 assignee, watchers, plus members with `members.manage` (implicit).
-
-### `POST /objectives/:id/watchers`
-
-| | |
-|---|---|
-| **Auth** | dual; `objectives.watch` OR originator |
-| **Body** | `UpdateWatchersRequest` — `{ add?: string[], remove?: string[] }` (must include at least one) |
-| **Returns** | `Objective` |
-
-POST, not PATCH. Names must resolve to known members. Adding a
-watcher fires a `watcher_added` audit event; removing fires
-`watcher_removed` (fanned out to the removed watcher too, so they
-get the exit notification).
 
 ## Process document
 

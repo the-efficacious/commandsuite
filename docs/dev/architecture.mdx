@@ -129,11 +129,8 @@ bypass such as self or objective originator:
 | Permission | What it permits |
 |---|---|
 | `team.manage` | Edit team name / context / presets |
-| `members.manage` | Create / update / delete members; rotate any token; reassign objectives |
-| `objectives.create` | Create + assign objectives |
-| `objectives.cancel` | Cancel any non-terminal (originator-bypass) |
-| `objectives.reassign` | Reassign any non-terminal (originator-bypass) |
-| `objectives.watch` | Manage watchers (originator-bypass) |
+| `members.manage` | Create / update / delete members; rotate any token |
+| `objectives.manage` | Direct the team's work: create + assign, cancel any non-terminal (originator-bypass), reassign, manage watchers (originator-bypass) |
 | `activity.read` | View captured traces (self-bypass) |
 | `tools.manage` | Administer the tool-source registry (external tools) |
 | `secrets.manage` | Administer the secrets registry (env secrets for agents) |
@@ -250,7 +247,7 @@ HTTP → broker → web-push library → push service → service worker
 
 ## How an objective flows
 
-1. A member with `objectives.create` calls `objectives_create`
+1. A member with `objectives.manage` calls `objectives_create`
    (MCP tool) or runs `csuite objectives create`.
 2. The store inserts the row, appends an `assigned` audit event
    in the same transaction, and the app layer publishes an
