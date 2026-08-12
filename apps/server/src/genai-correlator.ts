@@ -411,7 +411,6 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
         responseBody = JSON.parse(p.responseText);
       } catch (err) {
         diag?.correlatorBodyJsonParseFailed(who, p.requestText.length + p.responseText.length);
-        diag?.contextInstructionsCheckUnavailable(who, 1);
         log('genai-correlator: body JSON parse failed', {
           error: err instanceof Error ? err.message : String(err),
         });
@@ -461,7 +460,10 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
         gaps++;
       }
     }
-    if (gaps > 0) diag?.contextInstructionsCheckUnavailable(who, gaps);
+    if (gaps > 0) {
+      diag?.correlatorPendingExchangeDropped(who, gaps);
+      log('genai-correlator: evicted stale pending exchanges', { gaps });
+    }
   }
 
   function ingest(records: TelemetryRecord[]): GenAiInferenceInput[] {
@@ -486,7 +488,8 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
             });
             while (fifo.length > maxPending) {
               fifo.shift();
-              diag?.contextInstructionsCheckUnavailable(who, 1);
+              diag?.correlatorPendingExchangeDropped(who, 1);
+              log('genai-correlator: pending-request cap hit — dropped oldest exchange', {});
             }
             break;
           }
@@ -560,7 +563,6 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
         }
       } catch (err) {
         diag?.correlatorMalformedRecordSkipped(who);
-        diag?.contextInstructionsCheckUnavailable(who, 1);
         log('genai-correlator: skipped malformed record', {
           error: err instanceof Error ? err.message : String(err),
         });

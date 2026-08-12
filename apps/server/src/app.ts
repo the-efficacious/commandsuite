@@ -101,7 +101,6 @@ import {
   UploadActivityRequestSchema,
 } from 'csuite-sdk/schemas';
 import type {
-  ActivityEvent,
   ActivityKind,
   Attachment,
   ChannelSummary,
@@ -136,11 +135,6 @@ import {
 import { type AuthBindings, createAuthMiddleware } from './auth.js';
 import type { CaptureHealthStore } from './capture-health.js';
 import { type ChannelStore, ChannelsError, GENERAL_CHANNEL_ID, validateSlug } from './channels.js';
-import {
-  contextResendBody,
-  contextResendKey,
-  inspectInstructionContext,
-} from './context-watchdog.js';
 import type { DiagnosticStore } from './diagnostics.js';
 import { type EnrollmentStore, formatUserCode, normalizeUserCode } from './enrollments.js';
 import {
@@ -626,20 +620,12 @@ export function createApp(options: AppOptions): CreatedApp {
   // this member. Keep prior session values too: a runner's prompt is
   // frozen, while an operator may edit the live team/member record.
   const instructionExemptions = new Map<string, Set<string>>();
-  const instructionBlockVersions = new Map<
-    string,
-    Map<ReturnType<typeof instructionBlocks>[number]['kind'], Set<string>>
-  >();
-  const contextLastResentAt = new Map<string, number>();
-  const contextAwaitingConfirmation = new Set<string>();
   // Per member, the canonical composed hash served on their last
   // /instructions fetch — the proxy for "what their
   // live session runs", since a runner fetches immediately before
   // starting a session. In-memory deliberately: a broker restart
   // forgets what was issued, and unknown is reported as unknown (the
-  // member is NOT listed restart-pending), never guessed. The capture
-  // watchdog's `stale` observation is the independent capture-verified
-  // signal that survives broker restarts.
+  // member is NOT listed restart-pending), never guessed.
   const instructionsIssued = new Map<string, string>();
   const exemptionsFor = (memberName: string): readonly string[] => {
     const exemptions = new Set(instructionExemptions.get(memberName) ?? []);
@@ -686,100 +672,6 @@ export function createApp(options: AppOptions): CreatedApp {
     }
     return corr;
   };
-  const inspectCapturedInstructions = (
-    memberName: string,
-    inference: Parameters<typeof inspectInstructionContext>[0]['inference'],
-    systemProjectionObservable: boolean,
-  ): void => {
-    const current = members.findByName(memberName);
-    if (!current) return;
-    const composeInput = {
-      self: current,
-      team: teamStore.getTeam(),
-      teammates: teammatesFromMembers(members),
-      openObjectives: [],
-      // The watchdog's own input. Omitting the document here does not
-      // degrade the feature — it removes it, because this is what
-      // decides which blocks are looked for at all.
-      processDocument: processDocument ? processDocument.get() : null,
-    };
-    const blocks = instructionBlocks(composeInput);
-    const observedAt = now();
-    const observations = inspectInstructionContext({
-      memberName,
-      inference,
-      systemProjectionObservable,
-      blocks,
-      now: observedAt,
-      lastResentAt: contextLastResentAt,
-      awaitingConfirmation: contextAwaitingConfirmation,
-      knownPriorVersions: instructionBlockVersions.get(memberName),
-    });
-    if (telemetryStore !== undefined && observations.length > 0) {
-      try {
-        telemetryStore.append(
-          memberName,
-          observations.map((item) => item.telemetry),
-        );
-        diagnostics?.emit.contextPresenceTelemetryStored(memberName);
-      } catch (err) {
-        diagnostics?.emit.contextPresenceTelemetryFailed(memberName, observations.length);
-        logger.warn('context watchdog telemetry append failed', {
-          member: memberName,
-          count: observations.length,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-    const unobservable = observations.filter((item) => !item.observable);
-    if (unobservable.length > 0) {
-      diagnostics?.emit.contextInstructionsCheckUnavailable(memberName, unobservable.length);
-    } else {
-      diagnostics?.emit.contextInstructionsCheckSucceeded(memberName);
-    }
-    if (observations.some((item) => item.deliveryUnconfirmed)) {
-      diagnostics?.emit.contextBlockResendUnconfirmed(
-        memberName,
-        observations.filter((item) => item.deliveryUnconfirmed).length,
-      );
-    } else {
-      diagnostics?.emit.contextBlockDeliveryConfirmed(memberName);
-    }
-    for (const item of observations) {
-      const key = contextResendKey(memberName, item.block);
-      if (item.present === true) contextAwaitingConfirmation.delete(key);
-    }
-    const firing = observations.filter((item) => item.resendFired);
-    if (firing.length === 0) return;
-    for (const item of firing) {
-      const key = contextResendKey(memberName, item.block);
-      contextLastResentAt.set(key, observedAt);
-      contextAwaitingConfirmation.add(key);
-    }
-    void broker
-      .push(
-        {
-          to: memberName,
-          title: 'persistent context restored',
-          level: 'notice',
-          body: contextResendBody(firing),
-        },
-        { from: 'csuite' },
-      )
-      .catch((err: unknown) => {
-        diagnostics?.emit.contextBlockResendUnconfirmed(memberName, firing.length);
-        logger.warn('context watchdog resend failed', {
-          member: memberName,
-          blocks: firing.map((item) => item.block.kind),
-          error: err instanceof Error ? err.message : String(err),
-        });
-      });
-    logger.info('context watchdog re-sent missing instruction blocks', {
-      member: memberName,
-      blocks: firing.map((item) => item.block.kind),
-    });
-  };
-
   // ─── Instruction versioning: restart-pending + edit fanout ─────────
 
   // Enabled external-notification endpoints that can reach a member —
@@ -1240,19 +1132,6 @@ export function createApp(options: AppOptions): CreatedApp {
       instructionExemptions.set(member.name, remembered);
     }
     for (const block of instructionCaptureExemptions(composeInput)) remembered.add(block);
-    let versions = instructionBlockVersions.get(member.name);
-    if (!versions) {
-      versions = new Map();
-      instructionBlockVersions.set(member.name, versions);
-    }
-    for (const block of instructionBlocks(composeInput, packet.instructions)) {
-      let values = versions.get(block.kind);
-      if (!values) {
-        values = new Set();
-        versions.set(block.kind, values);
-      }
-      values.add(block.text);
-    }
     // The canonical hash is computed WITHOUT the transient version
     // line (composedInstructionsSha256 strips it), so two fetches that
     // differ only in reported runner version share a hash — a runner
@@ -1793,9 +1672,6 @@ export function createApp(options: AppOptions): CreatedApp {
           const inferences = getGenAiCorrelator(member.name).ingest(genaiRecords);
           for (const inf of inferences) {
             genaiStore.append(member.name, inf);
-            // Claude declares the structured system projection conformant:
-            // empty means genuinely absent, not unavailable capture.
-            inspectCapturedInstructions(member.name, inf, true);
           }
           // ONLY when an append actually happened. A body-only or
           // correlation-pending batch yields zero inferences and
@@ -2063,12 +1939,12 @@ export function createApp(options: AppOptions): CreatedApp {
           // model-only record rather than vanishing (raw already captured).
           let requestBody: unknown = null;
           let responseBody: unknown = null;
-          let requestParsed = false;
           try {
             requestBody = JSON.parse(reqBytes.toString('utf8'));
-            requestParsed = true;
           } catch {
-            diagnostics?.emit.contextInstructionsCheckUnavailable(member.name, 1);
+            logger.warn('codex genai request body parse failed — storing model-only record', {
+              member: member.name,
+            });
           }
           try {
             responseBody = JSON.parse(respBytes.toString('utf8'));
@@ -2086,12 +1962,6 @@ export function createApp(options: AppOptions): CreatedApp {
             ts: envelope.eventTs ?? undefined,
           });
           gStore.append(name, { ...rec, requestSha256, responseSha256 });
-          if (requestParsed) {
-            // #118: Codex does not yet populate instructions on chained
-            // Responses turns. Declare that projection unavailable instead
-            // of letting a provider name decide observability forever.
-            inspectCapturedInstructions(member.name, rec, rec.systemInstructions.length > 0);
-          }
           accepted++;
           diagnostics?.emit.codexGenaiIngestEntrySucceeded(member.name);
         } catch (err) {
@@ -4780,15 +4650,6 @@ export function createApp(options: AppOptions): CreatedApp {
       }
       try {
         const rows = activityStore.append(name, parsed.data.events);
-
-        // Objective context watchdog: after appending, check whether
-        // any llm_exchange events are missing active objective IDs
-        // from their context. If so, push a reminder so the agent
-        // picks the objective back up.
-        if (objectives) {
-          checkObjectiveContext(parsed.data.events, name, objectives, broker, logger);
-        }
-
         // Same rule: an empty accepted set exercises no write.
         if (rows.length > 0) diagnostics?.emit.activityAppended(name);
         return c.json({ accepted: rows.length }, 201);
@@ -5351,12 +5212,11 @@ export function createApp(options: AppOptions): CreatedApp {
   // member signal is: a typed push on the member stream, which the
   // runner's forwarder routes on `data.kind`.
   //
-  // The broker is authoritative about a team and can already observe
-  // context drift (see context-watchdog) — but every mechanism it had
-  // was additive. It could make a member's context LARGER and could
-  // measure that it had drifted; it had no verb for making it smaller,
-  // and the only reset available was a full restart that drops the
-  // runner's MCP wiring and takes the member off the net.
+  // The broker is authoritative about a team, but every mechanism it
+  // had was additive. It could make a member's context LARGER; it had
+  // no verb for making it smaller, and the only reset available was a
+  // full restart that drops the runner's MCP wiring and takes the
+  // member off the net.
   //
   // This endpoint answers on PUSH, never on effect. Whether the agent
   // honoured it arrives later as a `context_control` activity row on
@@ -6182,77 +6042,6 @@ export function createApp(options: AppOptions): CreatedApp {
     injectWebSocket,
     ...(notificationDispatcher !== undefined ? { notificationDispatcher } : {}),
   };
-}
-
-/**
- * Objective context watchdog — scans uploaded LLM exchanges for
- * active objective IDs. If an objective is active for this user but
- * its ID doesn't appear anywhere in the exchange's system prompt or
- * messages, the agent has lost context (compaction, long session).
- * Pushes a reminder through the broker so the agent picks it back up.
- *
- * Debounced per user: only fires once per batch of uploads, and
- * only for the most recent exchange (checking every exchange in a
- * batch would spam on fast-uploading agents).
- */
-const watchdogLastFired = new Map<string, number>();
-const WATCHDOG_COOLDOWN_MS = 5 * 60 * 1000;
-
-function checkObjectiveContext(
-  events: ActivityEvent[],
-  name: string,
-  objectivesStore: ObjectivesStore,
-  broker: Broker,
-  logger: Logger,
-): void {
-  // Only inspect the most recent llm_exchange in this batch.
-  const llmEvent = events.findLast((e) => e.kind === 'llm_exchange');
-  if (llmEvent?.kind !== 'llm_exchange') return;
-
-  const active = [
-    ...objectivesStore.list({ assignee: name, status: 'active' }),
-    ...objectivesStore.list({ assignee: name, status: 'blocked' }),
-  ];
-  if (active.length === 0) return;
-
-  // Build a string from the full request context the agent sent to
-  // the LLM: system prompt + all text content blocks.
-  const entry = llmEvent.entry;
-  const parts: string[] = [];
-  if (entry.request.system) parts.push(entry.request.system);
-  for (const m of entry.request.messages) {
-    for (const block of m.content) {
-      if ('text' in block && typeof block.text === 'string') {
-        parts.push(block.text);
-      }
-    }
-  }
-  const contextText = parts.join(' ');
-
-  const now = Date.now();
-  const missing = active.filter((o) => {
-    if (contextText.includes(o.id)) return false;
-    const key = `${name}:${o.id}`;
-    const last = watchdogLastFired.get(key) ?? 0;
-    return now - last > WATCHDOG_COOLDOWN_MS;
-  });
-  if (missing.length === 0) return;
-
-  const lines = missing.map((o) => `  ${o.id}: ${o.title}\n    outcome: ${o.outcome}`);
-  const body =
-    `You have ${missing.length} active objective(s) that are no longer in your context. ` +
-    `Here they are — call \`objectives_view\` for full details:\n${lines.join('\n')}`;
-
-  for (const o of missing) watchdogLastFired.set(`${name}:${o.id}`, now);
-
-  void broker.push(
-    { to: name, body, title: 'objective context reminder', level: 'notice' },
-    { from: 'csuite' },
-  );
-  logger.info('objective context watchdog fired', {
-    name,
-    missing: missing.map((o) => o.id),
-  });
 }
 
 /** Re-export so `LoadedMember` consumers don't have to dig into members.ts. */

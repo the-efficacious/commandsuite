@@ -496,13 +496,20 @@ describe('genai correlator raw capture', () => {
     expect(rawStore.count()).toBe(2);
     expect(rawStore.getBlob(sha256(badBytes))?.equals(badBytes)).toBe(true);
     expect(existsSync(badRef)).toBe(false);
-    expect(diagnostics.unresolved('alice')).toContainEqual({
-      cause: 'context.briefing_check_unavailable',
-      since: expect.any(Number),
-    });
+    // The parse failure is a point fact about that body — recorded,
+    // never latched as unresolved health.
+    expect(
+      diagnostics.query({
+        member: 'alice',
+        cause: 'correlator.body_json_parse_failed',
+        from: 0,
+        to: Number.MAX_SAFE_INTEGER,
+      }).count,
+    ).toBe(1);
+    expect(diagnostics.unresolved('alice')).toEqual([]);
   });
 
-  it('surfaces an incomplete captured exchange as current context-check health', () => {
+  it('records a stale-evicted pending exchange as a capture-loss point fact', () => {
     const db = openDatabase(':memory:');
     const diagnostics = createDiagnosticStore(db);
     const corr = createGenAiCorrelator({
@@ -518,10 +525,18 @@ describe('genai correlator raw capture', () => {
     ]);
     corr.sweep(1_700_000_000_100);
 
-    expect(diagnostics.unresolved('alice')).toContainEqual({
-      cause: 'context.briefing_check_unavailable',
-      since: expect.any(Number),
-    });
+    // The dropped exchange is a fact, not an ongoing condition: it is
+    // queryable as an event and creates no unresolved health for a
+    // later success to have to clear.
+    expect(
+      diagnostics.query({
+        member: 'alice',
+        cause: 'correlator.pending_exchange_dropped',
+        from: 0,
+        to: Number.MAX_SAFE_INTEGER,
+      }).count,
+    ).toBe(1);
+    expect(diagnostics.unresolved('alice')).toEqual([]);
   });
 
   it('still emits the inference when the raw store throws (failure isolation)', () => {

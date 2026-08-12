@@ -21,7 +21,13 @@ import {
 import type { JsonRpcClient } from '../../../src/runtime/agents/codex/json-rpc.js';
 import { METHODS, NOTIFICATIONS } from '../../../src/runtime/agents/codex/protocol.js';
 
-function harness(opts: { threadId?: string | null; requestImpl?: () => Promise<unknown> } = {}) {
+function harness(
+  opts: {
+    threadId?: string | null;
+    requestImpl?: () => Promise<unknown>;
+    onCompacted?: () => void;
+  } = {},
+) {
   const requests: Array<{ method: string; params: unknown }> = [];
   const logs: string[] = [];
   let itemCompleted: ((params: unknown) => void) | null = null;
@@ -48,6 +54,7 @@ function harness(opts: { threadId?: string | null; requestImpl?: () => Promise<u
     rpc,
     getThreadId: () => (opts.threadId === undefined ? 't_test' : opts.threadId),
     log: (msg) => logs.push(msg),
+    ...(opts.onCompacted !== undefined ? { onCompacted: opts.onCompacted } : {}),
   });
 
   return {
@@ -127,6 +134,60 @@ describe('request and acknowledgement', () => {
     const outcome = await pending;
     expect(outcome).toEqual({ applied: true });
     expect(outcome).not.toHaveProperty('tokensBefore');
+  });
+});
+
+describe('the compaction observer', () => {
+  // The observer is how an AUTO-compaction — one codex decided on by
+  // itself, with no request in flight — reaches the runner's re-brief.
+  // A correlation-only compactor drops that datapoint on the floor,
+  // and the agent's plate silently vanishes with the summary.
+
+  it('fires for a compaction nobody requested', () => {
+    const onCompacted = vi.fn();
+    const h = harness({ onCompacted });
+
+    h.complete('contextCompaction');
+    expect(onCompacted).toHaveBeenCalledTimes(1);
+  });
+
+  it('fires for a requested compaction too — the context shrank either way', async () => {
+    const onCompacted = vi.fn();
+    const h = harness({ onCompacted });
+    const pending = h.compactor.request(1000);
+    await tick();
+
+    h.complete('contextCompaction');
+    await expect(pending).resolves.toEqual({ applied: true });
+    expect(onCompacted).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not fire for unrelated item types', () => {
+    const onCompacted = vi.fn();
+    const h = harness({ onCompacted });
+
+    h.complete('agentMessage');
+    h.complete('commandExecution');
+    expect(onCompacted).not.toHaveBeenCalled();
+
+    // Positive control — the observer is live, not absent.
+    h.complete('contextCompaction');
+    expect(onCompacted).toHaveBeenCalledTimes(1);
+  });
+
+  it('a throwing observer does not break the request correlation', async () => {
+    const onCompacted = vi.fn(() => {
+      throw new Error('observer exploded');
+    });
+    const h = harness({ onCompacted });
+    const pending = h.compactor.request(1000);
+    await tick();
+
+    h.complete('contextCompaction');
+    // The ack still settles — the observer rides along, it does not
+    // gate the acknowledgement path.
+    await expect(pending).resolves.toEqual({ applied: true });
+    expect(h.logs.some((l) => l.includes('onCompacted observer threw'))).toBe(true);
   });
 });
 

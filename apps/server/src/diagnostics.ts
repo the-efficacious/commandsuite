@@ -79,7 +79,7 @@ import type { DatabaseSyncInstance, StatementInstance } from './db.js';
  * module grows a completeness warning that is not registered here.
  */
 export const DIAGNOSTIC_CAUSES = [
-  // genai-correlator (8)
+  // genai-correlator (9)
   'correlator.body_ref_unreadable',
   'correlator.body_length_mismatch',
   'correlator.unlink_after_capture_failed',
@@ -88,13 +88,7 @@ export const DIAGNOSTIC_CAUSES = [
   'correlator.inference_build_failed',
   'correlator.request_id_assign_failed',
   'correlator.malformed_record_skipped',
-  // persistent-context watchdog (3)
-  // Persisted cause id — pinned to its original spelling. Stored rows
-  // and wire consumers key on the string; code identifiers around it
-  // say "instructions", the id must not follow them.
-  'context.briefing_check_unavailable',
-  'context.block_resend_unconfirmed',
-  'context.presence_telemetry_failed',
+  'correlator.pending_exchange_dropped',
   // raw-body-store (2)
   'rawstore.blob_gunzip_failed',
   'rawstore.blob_hash_mismatch',
@@ -216,18 +210,8 @@ const CAUSE_SPEC: Record<DiagnosticCause, CauseSpec> = {
     attribution: 'producer',
     fields: ['none'],
   },
-  'context.briefing_check_unavailable': {
-    mode: 'incident',
-    attribution: 'producer',
-    fields: ['count'],
-  },
-  'context.block_resend_unconfirmed': {
-    mode: 'incident',
-    attribution: 'producer',
-    fields: ['count'],
-  },
-  'context.presence_telemetry_failed': {
-    mode: 'incident',
+  'correlator.pending_exchange_dropped': {
+    mode: 'point',
     attribution: 'producer',
     fields: ['count'],
   },
@@ -511,9 +495,13 @@ export interface DiagnosticEmitter {
   correlatorInferenceBuildFailed(member: string, err: unknown): void;
   correlatorRequestIdAssignFailed(member: string, err: unknown): void;
   correlatorMalformedRecordSkipped(member: string): void;
-  contextInstructionsCheckUnavailable(member: string, records: number): void;
-  contextBlockResendUnconfirmed(member: string, blocks: number): void;
-  contextPresenceTelemetryFailed(member: string, records: number): void;
+  /**
+   * A pending exchange left correlation without becoming an inference —
+   * evicted stale or displaced by the pending-request cap. Point cause:
+   * the loss is a fact about that exchange, not an ongoing condition a
+   * later success could clear.
+   */
+  correlatorPendingExchangeDropped(member: string, dropped: number): void;
   rawstoreBlobGunzipFailed(hash: string): void;
   rawstoreBlobHashMismatch(hash: string): void;
   genaistoreUnserializableRecordSkipped(member: string): void;
@@ -539,9 +527,6 @@ export interface DiagnosticEmitter {
   // create unresolved state, so "recovering" one is meaningless.
   correlatorBodyRefRead(member: string): void;
   correlatorRawCaptureSucceeded(member: string): void;
-  contextInstructionsCheckSucceeded(member: string): void;
-  contextBlockDeliveryConfirmed(member: string): void;
-  contextPresenceTelemetryStored(member: string): void;
   otlpLogsStored(member: string): void;
   otlpGenaiIngested(member: string): void;
   otlpMetricsStored(member: string): void;
@@ -669,6 +654,19 @@ function buildStore(
   resolve(cause: DiagnosticCause, member: string | null): void;
 } {
   db.exec(SCHEMA);
+
+  // Unresolved state whose cause this build no longer emits can never
+  // be cleared — its clearing emit is gone with the mechanism — so it
+  // would latch in every health view forever. Sweep it at open.
+  // Historical `diagnostic_event`/`diagnostic_bucket` rows keep their
+  // retired causes: they are the record of what happened, and reads
+  // treat cause as data, not as a member of the live enum.
+  {
+    const placeholders = DIAGNOSTIC_CAUSES.map(() => '?').join(',');
+    db.prepare(`DELETE FROM diagnostic_state WHERE cause NOT IN (${placeholders})`).run(
+      ...DIAGNOSTIC_CAUSES,
+    );
+  }
 
   const now = options.now ?? (() => Date.now());
   const detailMs = options.detailMs ?? DEFAULT_DETAIL_MS;
@@ -994,25 +992,11 @@ function buildStore(
     correlatorMalformedRecordSkipped(member) {
       record({ cause: 'correlator.malformed_record_skipped', members: [member] });
     },
-    contextInstructionsCheckUnavailable(member, records) {
+    correlatorPendingExchangeDropped(member, dropped) {
       record({
-        cause: 'context.briefing_check_unavailable',
+        cause: 'correlator.pending_exchange_dropped',
         members: [member],
-        fields: safeCount(records),
-      });
-    },
-    contextBlockResendUnconfirmed(member, blocks) {
-      record({
-        cause: 'context.block_resend_unconfirmed',
-        members: [member],
-        fields: safeCount(blocks),
-      });
-    },
-    contextPresenceTelemetryFailed(member, records) {
-      record({
-        cause: 'context.presence_telemetry_failed',
-        members: [member],
-        fields: safeCount(records),
+        fields: safeCount(dropped),
       });
     },
     rawstoreBlobGunzipFailed(hash) {
@@ -1072,15 +1056,6 @@ function buildStore(
     },
     correlatorRawCaptureSucceeded(member) {
       clearState.run('correlator.raw_capture_failed', member);
-    },
-    contextInstructionsCheckSucceeded(member) {
-      clearState.run('context.briefing_check_unavailable', member);
-    },
-    contextBlockDeliveryConfirmed(member) {
-      clearState.run('context.block_resend_unconfirmed', member);
-    },
-    contextPresenceTelemetryStored(member) {
-      clearState.run('context.presence_telemetry_failed', member);
     },
     otlpLogsStored(member) {
       clearState.run('otlp.logs_store_failed', member);

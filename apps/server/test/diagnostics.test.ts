@@ -153,16 +153,30 @@ describe('attribution', () => {
 });
 
 describe('current health vs historical presence', () => {
-  it('keeps a packet-check gap current until a later captured request is evaluated', () => {
+  it('keeps a store failure current until a later store succeeds', () => {
     const h = store();
-    h.s.emit.contextInstructionsCheckUnavailable('rune', 1);
-    expect(h.s.unresolved('rune')).toEqual([
-      { cause: 'context.briefing_check_unavailable', since: T0 },
-    ]);
+    h.s.emit.otlpLogsStoreFailed('rune', 1);
+    expect(h.s.unresolved('rune')).toEqual([{ cause: 'otlp.logs_store_failed', since: T0 }]);
 
-    h.s.emit.contextInstructionsCheckSucceeded('rune');
+    h.s.emit.otlpLogsStored('rune');
     expect(h.s.unresolved('rune')).toEqual([]);
     expect(h.s.query({ member: 'rune', from: T0 - HOUR, to: T0 + HOUR }).count).toBe(1);
+  });
+
+  it('sweeps unresolved state for causes this build no longer emits, at open', () => {
+    // A retired cause has no clearing emit left, so state carrying it
+    // would latch in every health view forever. The store deletes such
+    // state when it opens — and ONLY such state: the live-cause row
+    // seeded beside it is the positive control that the sweep does not
+    // clear real incidents.
+    const h = store();
+    h.s.emit.otlpLogsStoreFailed('rune', 1);
+    h.db
+      .prepare(`INSERT INTO diagnostic_state (cause, member_name, since) VALUES (?, ?, ?)`)
+      .run('context.briefing_check_unavailable', 'rune', T0);
+
+    const reopened = createDiagnosticStoreInternalForTests(h.db, { now: () => T0 });
+    expect(reopened.unresolved('rune')).toEqual([{ cause: 'otlp.logs_store_failed', since: T0 }]);
   });
 
   it('a recovered member is currently healthy while the failure stays queryable', () => {
@@ -310,7 +324,7 @@ describe('cause enum', () => {
     // being closed, criterion 4's bound stops being true.
     const set = new Set(DIAGNOSTIC_CAUSES);
     expect(set.size).toBe(DIAGNOSTIC_CAUSES.length);
-    expect(DIAGNOSTIC_CAUSES.length).toBe(27); // 24 sites/conditions + 3 retention facts
+    expect(DIAGNOSTIC_CAUSES.length).toBe(25); // 22 sites/conditions + 3 retention facts
   });
 });
 
