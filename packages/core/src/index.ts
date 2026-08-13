@@ -82,6 +82,12 @@ export {
   SECRET_THREAD_PREFIX,
 } from './event-log.js';
 export {
+  decryptFieldPortable,
+  ENCRYPTED_FIELD_PREFIX,
+  EncryptedFieldError,
+  encryptFieldPortable,
+} from './field-crypto.js';
+export {
   createGenAiStore,
   type GenAiInferenceInput,
   type GenAiInferenceRow,
@@ -116,7 +122,7 @@ export {
   type PushSubscriptionRow,
   type PushSubscriptionStore,
 } from './push-subscription-store.js';
-export { randomBase64Url, toBase64Url } from './random-id.js';
+export { fromBase64Url, randomBase64Url, toBase64Url } from './random-id.js';
 export {
   PresenceIdentityError,
   PresenceRegistry,

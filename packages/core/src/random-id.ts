@@ -23,6 +23,26 @@ export function toBase64Url(bytes: Uint8Array): string {
   return out;
 }
 
+/** Decode base64url (padding optional) back to bytes. Throws on any character outside the alphabet. */
+export function fromBase64Url(text: string): Uint8Array {
+  const clean = text.replace(/=+$/, '');
+  const out = new Uint8Array(Math.floor((clean.length * 3) / 4));
+  let acc = 0;
+  let bits = 0;
+  let j = 0;
+  for (const ch of clean) {
+    const v = B64URL.indexOf(ch);
+    if (v === -1) throw new Error(`invalid base64url character: ${JSON.stringify(ch)}`);
+    acc = (acc << 6) | v;
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      out[j++] = (acc >> bits) & 0xff;
+    }
+  }
+  return out.subarray(0, j);
+}
+
 /** `byteLength` random bytes from the runtime CSPRNG, base64url-encoded. */
 export function randomBase64Url(byteLength: number): string {
   const bytes = new Uint8Array(byteLength);
