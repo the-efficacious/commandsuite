@@ -2,7 +2,7 @@
  * Permissions — UI-side metadata and summary helpers.
  *
  * The server vocabulary is a set of composable leaves (`team.manage`,
- * `members.manage`, `objectives.create`, …) bundled by named presets
+ * `members.manage`, `objectives.manage`, …) bundled by named presets
  * like "admin" or "operator" on the team config. Earlier UI code
  * collapsed members into 3 fixed bins (admin / operator / baseline),
  * which hid arbitrary custom mixes. These helpers replace that
@@ -47,24 +47,10 @@ export const PERMISSION_META: readonly PermissionMeta[] = [
       "Ask another member's runner to compact or clear its agent context. Interrupts live work; controlling your own needs no permission.",
   },
   {
-    key: 'objectives.create',
-    label: 'Create objectives',
-    description: 'Post new objectives and assign them to teammates.',
-  },
-  {
-    key: 'objectives.cancel',
-    label: 'Cancel objectives',
-    description: "Cancel an objective that's mid-flight.",
-  },
-  {
-    key: 'objectives.reassign',
-    label: 'Reassign objectives',
-    description: 'Move an objective from one assignee to another.',
-  },
-  {
-    key: 'objectives.watch',
-    label: 'Manage watchers',
-    description: 'Add or remove watchers on any objective, not just your own.',
+    key: 'objectives.manage',
+    label: 'Manage objectives',
+    description:
+      "Direct the team's work: create objectives for others, cancel or reassign anyone's, manage any objective's watchers.",
   },
   {
     key: 'activity.read',

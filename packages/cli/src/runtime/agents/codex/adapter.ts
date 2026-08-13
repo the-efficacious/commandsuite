@@ -176,6 +176,13 @@ export interface CodexSpawnOptions {
    * 0↔busy transition contract.
    */
   busy?: BusySignal;
+  /**
+   * Fired on every observed `contextCompaction` item, requested or
+   * auto. The codex analogue of claude's SessionStart(source=compact)
+   * hook — the caller re-asserts live state that the summary may have
+   * dropped.
+   */
+  onCompacted?: () => void;
   /** Logger, structured JSON to stderr by default. */
   log: (msg: string, ctx?: Record<string, unknown>) => void;
 }
@@ -504,6 +511,7 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
     rpc,
     getThreadId: () => threadId,
     log: opts.log,
+    ...(opts.onCompacted !== undefined ? { onCompacted: opts.onCompacted } : {}),
   });
   // Tool-execution busy sniff (only when a busy signal is provided —
   // i.e., tracing is enabled). Subscribes to the same notifications

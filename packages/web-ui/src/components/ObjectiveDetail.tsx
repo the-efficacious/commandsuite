@@ -175,16 +175,16 @@ export function ObjectiveDetail({ id, viewer }: ObjectiveDetailProps) {
   const isAssignee = current.assignee === viewer;
   const isOriginator = current.originator === viewer;
   const isAdmin = b.permissions.includes('members.manage');
-  const canCancelPerm = b.permissions.includes('objectives.cancel');
-  const canReassignPerm = b.permissions.includes('objectives.reassign');
-  const canWatchPerm = b.permissions.includes('objectives.watch');
+  const canCancelPerm = b.permissions.includes('objectives.manage');
+  const canReassignPerm = b.permissions.includes('objectives.manage');
+  const canWatchPerm = b.permissions.includes('objectives.manage');
   const isWatching = current.watchers.includes(viewer);
   const isTerminal = current.status === 'done' || current.status === 'cancelled';
   // Mirrors the server's PATCH /objectives/:id gate exactly: the
-  // assignee, or a member holding `objectives.cancel`. This previously
+  // assignee, or a member holding `objectives.manage`. This previously
   // used `isAdmin` (`members.manage`), which is a DIFFERENT permission —
   // `hasPermission` is a plain `includes`, with no hierarchy — so it
-  // diverged in both directions: an `objectives.cancel` holder was shown
+  // diverged in both directions: an `objectives.manage` holder was shown
   // no control, and a `members.manage` holder was shown one that 403s.
   const canUpdateStatus = !isTerminal && (isAssignee || canCancelPerm);
   const canComplete = !isTerminal && isAssignee;
@@ -363,74 +363,11 @@ function OverviewTab({
       <section class="card">
         <div class="eyebrow" style="margin-bottom:10px">
           Outcome
-          {objective.outcomeVersion > 1 && (
-            <span style="margin-left:8px;color:var(--ef-text-muted);font-weight:400">
-              contract v{objective.outcomeVersion} — amended
-            </span>
-          )}
         </div>
         <div style="font-family:var(--ef-font-body);font-size:14.5px;color:var(--ef-text);white-space:pre-wrap;line-height:1.55">
           {objective.outcome}
         </div>
       </section>
-
-      {objective.amendments.length > 0 && (
-        <section class="card">
-          <div class="eyebrow" style="margin-bottom:10px">
-            Amendments
-          </div>
-          {/*
-            Rendered here, with the record, rather than left in the
-            discussion thread. A reader who sees `done` and a result
-            must not have to go find a chat message to learn the
-            contract moved or that the completion was recorded at the
-            wrong moment — the structured field is the one they trust,
-            and it is the one that used to be silently wrong.
-          */}
-          {objective.amendments.map((a) => (
-            <div
-              key={`${a.target}-${a.ts}`}
-              style="margin-bottom:14px;padding-left:10px;border-left:2px solid var(--ef-border-subtle)"
-            >
-              {a.target === 'contract' ? (
-                <>
-                  <div style="font-size:12.5px;color:var(--ef-text-muted)">
-                    v{a.version} · {a.actor} · changed {a.fields.join(', ')} ·{' '}
-                    <strong style="color:var(--ef-text)">{a.disposition}</strong>{' '}
-                    {a.disposition === 'correction'
-                      ? '(retroactive — work was never validly held to the prior text)'
-                      : '(forward-only — work already underway finishes under the prior text)'}
-                  </div>
-                  <div style="font-size:13.5px;color:var(--ef-text);margin-top:4px">{a.reason}</div>
-                  {Object.entries(a.previous).map(([field, prev]) => (
-                    <details key={field} style="margin-top:6px">
-                      <summary style="font-size:12.5px;color:var(--ef-text-muted);cursor:pointer">
-                        superseded {field}
-                      </summary>
-                      <div style="font-family:var(--ef-font-body);font-size:13px;color:var(--ef-text-muted);white-space:pre-wrap;line-height:1.5;margin-top:4px">
-                        {prev}
-                      </div>
-                    </details>
-                  ))}
-                </>
-              ) : (
-                <>
-                  <div style="font-size:12.5px;color:var(--ef-text-muted)">
-                    {a.actor} · corrects the{' '}
-                    <strong style="color:var(--ef-text)">{a.eventKind}</strong> event
-                  </div>
-                  <div style="font-size:13.5px;color:var(--ef-text);margin-top:4px">
-                    {a.correction}
-                  </div>
-                  <div style="font-size:12.5px;color:var(--ef-text-muted);margin-top:4px">
-                    {a.reason}
-                  </div>
-                </>
-              )}
-            </div>
-          ))}
-        </section>
-      )}
 
       {objective.body && (
         <section class="card">

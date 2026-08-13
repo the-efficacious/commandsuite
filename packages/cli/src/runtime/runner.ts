@@ -225,6 +225,16 @@ export interface RunnerHandle {
   /** Presence signal driven by the forwarder. */
   readonly presence: Presence;
   /**
+   * Re-assert the open-objectives plate as a `context_refresh` channel
+   * push. The runner fires this itself on session attach and on the
+   * Claude hooks' post-compaction signal; adapters whose frameworks
+   * report compaction elsewhere (codex's `contextCompaction` item)
+   * call it from that observation. Shares one cooldown with the
+   * runner's own triggers, so an adapter signal and an attach landing
+   * together still produce a single push. No-op on an empty plate.
+   */
+  rebrief(reason: 'session-start' | 'context-compaction'): void;
+  /**
    * Graceful shutdown. Aborts the SSE forwarder, closes the active
    * bridge connection (if any), closes the IPC server, and unlinks
    * the socket. Idempotent — calling twice is safe. Awaiting on
@@ -766,6 +776,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
       return instructions;
     },
     refreshInstructions,
+    rebrief: (reason) => sendRebrief(reason),
     captureHost,
     secretsEnv,
     presence,

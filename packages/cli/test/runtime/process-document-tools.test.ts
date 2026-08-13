@@ -76,7 +76,7 @@ describe('the write tool is gated on process.manage', () => {
   it('withholds it from a holder of objectives.create', () => {
     const other: InstructionsResponse = {
       ...PACKET,
-      permissions: ['objectives.create', 'members.manage', 'team.manage'],
+      permissions: ['objectives.manage', 'members.manage', 'team.manage'],
     };
     expect(defineTools(other).map((t) => t.name)).not.toContain('process_document_write');
   });
@@ -106,9 +106,8 @@ describe('the write description carries the two things an agent will otherwise g
     expect(write()?.description).toMatch(/NOT pushed into a running session/);
   });
 
-  it('names disposition as the same field and meaning as objectives_amend', () => {
+  it('explains both dispositions and what each binds', () => {
     const props = write()?.inputSchema.properties as Record<string, { description?: string }>;
-    expect(props.disposition?.description).toMatch(/objectives_amend/);
     expect(props.disposition?.description).toMatch(/retroactive/i);
     expect(props.disposition?.description).toMatch(/forward-only/i);
   });

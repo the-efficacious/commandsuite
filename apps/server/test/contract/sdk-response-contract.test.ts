@@ -140,13 +140,13 @@ function makeApp() {
     {
       name: 'alice',
       role: { title: 'admin', description: 'runs the team' },
-      permissions: ['members.manage', 'objectives.create', 'objectives.watch', 'activity.read'],
+      permissions: ['members.manage', 'objectives.manage', 'activity.read'],
       token: ALICE,
     },
     {
       name: 'bob',
       role: { title: 'engineer', description: '' },
-      permissions: ['objectives.create'],
+      permissions: ['objectives.manage'],
       token: BOB,
     },
   ]);

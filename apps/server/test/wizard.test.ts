@@ -102,7 +102,7 @@ describe('runFirstRunWizard', () => {
 
     expect(result.team.permissionPresets.admin).toBeDefined();
     expect(result.team.permissionPresets.admin).toContain('members.manage');
-    expect(result.team.permissionPresets.operator).toContain('objectives.create');
+    expect(result.team.permissionPresets.operator).toContain('objectives.manage');
   });
 
   it('stamps the default admin role without prompting for it', async () => {

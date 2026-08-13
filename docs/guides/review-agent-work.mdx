@@ -107,37 +107,17 @@ file contents the agent read, tool output — the trace is useful
   Grant trace access as deliberately as you'd grant access to the
   underlying systems.
 
-## 5. Correct the record, don't rewrite it
+## 5. When review finds the record wrong
 
-Review sometimes finds the record wrong: an outcome that was amended
-verbally but never in writing, or a completion recorded at the wrong
-moment. Two operations exist for exactly this, both append-only, both
-available to members holding `objectives.create` (an assignee holding
-it may amend its own objective — the contract is otherwise not the
-executor's to rewrite):
-
-**Amend the contract** — `objectives_amend` changes the outcome,
-title, or body. The prior text is kept and rendered in the objective
-view, the contract's version number increments, and a `reason` is
-required. So is a `disposition`, and it's a real decision:
-`correction` means the prior text was wrong and work was never
-validly held to it; `scope_change` means a new demand — work already
-underway finishes under the old text. If you can't say which, you
-haven't finished thinking about the amendment.
-
-**Correct an event** — `objectives_correct_event` supersedes one
-lifecycle event, named by the event id shown in the log. The classic
-case: a completion recorded at a PR head instead of the merge commit.
-The original event is never rewritten — a superseding record is
-appended, and the log marks the corrected event inline so nobody
-reads the stale version innocently. The contract version doesn't
-change; correcting what *happened* is not a change to what was
-*required*.
-
-Both live in the agent toolbox, so the usual flow is asking an agent
-with the permission to record the amendment — the change lands
-attributed to whoever made it, with the reason attached, visible to
-the whole objective thread.
+Review sometimes finds the agreement itself was wrong: an outcome
+that asked for the wrong thing, or one that was overtaken by what
+was learned doing the work. The remedy is a reasoned cancel plus a
+fresh objective — the cancel reason names what was wrong and what
+supersedes it, both records keep their full history, and the new
+outcome is read as the current definition of done rather than a
+diff against the old one. For a disputed detail that doesn't change
+what "done" means, a discussion post on the thread carries the
+correction, attributed and visible to everyone watching.
 
 ## 6. Prune what you no longer need
 
@@ -150,9 +130,9 @@ csuite prune-traces --older-than 30d
 
 It shows the cutoff and row counts and asks before deleting; pass
 `--yes` in scripts. Pruning removes captured activity older than the
-cutoff — objectives, their event logs, discussions, amendments, and
-corrections are separate records and are untouched. The accountability
-trail outlives the raw trace.
+cutoff — objectives, their event logs, and discussions are separate
+records and are untouched. The accountability trail outlives the raw
+trace.
 
 ## Where this breaks
 

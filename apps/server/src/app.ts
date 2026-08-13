@@ -48,7 +48,6 @@ import {
   ActivityKindSchema,
   ActivityReportSchema,
   AddChannelMemberRequestSchema,
-  AmendObjectiveRequestSchema,
   ApproveEnrollmentRequestSchema,
   BindSecretRequestSchema,
   BindToolSourceRequestSchema,
@@ -56,7 +55,6 @@ import {
   CancelObjectiveRequestSchema,
   CompleteObjectiveRequestSchema,
   ContextControlRequestSchema,
-  CorrectObjectiveEventRequestSchema,
   CreateChannelRequestSchema,
   CreateMemberRequestSchema,
   CreateNotificationEndpointRequestSchema,
@@ -81,7 +79,6 @@ import {
   PendingEnrollmentSchema,
   PushPayloadSchema,
   PushSubscriptionPayloadSchema,
-  ReassignObjectiveRequestSchema,
   RejectEnrollmentRequestSchema,
   RenameChannelRequestSchema,
   SetCustomToolRequestSchema,
@@ -97,11 +94,9 @@ import {
   UpdateSecretRequestSchema,
   UpdateToolSourceRequestSchema,
   UpdateVariableRequestSchema,
-  UpdateWatchersRequestSchema,
   UploadActivityRequestSchema,
 } from 'csuite-sdk/schemas';
 import type {
-  ActivityEvent,
   ActivityKind,
   Attachment,
   ChannelSummary,
@@ -136,11 +131,6 @@ import {
 import { type AuthBindings, createAuthMiddleware } from './auth.js';
 import type { CaptureHealthStore } from './capture-health.js';
 import { type ChannelStore, ChannelsError, GENERAL_CHANNEL_ID, validateSlug } from './channels.js';
-import {
-  contextResendBody,
-  contextResendKey,
-  inspectInstructionContext,
-} from './context-watchdog.js';
 import type { DiagnosticStore } from './diagnostics.js';
 import { type EnrollmentStore, formatUserCode, normalizeUserCode } from './enrollments.js';
 import {
@@ -626,20 +616,12 @@ export function createApp(options: AppOptions): CreatedApp {
   // this member. Keep prior session values too: a runner's prompt is
   // frozen, while an operator may edit the live team/member record.
   const instructionExemptions = new Map<string, Set<string>>();
-  const instructionBlockVersions = new Map<
-    string,
-    Map<ReturnType<typeof instructionBlocks>[number]['kind'], Set<string>>
-  >();
-  const contextLastResentAt = new Map<string, number>();
-  const contextAwaitingConfirmation = new Set<string>();
   // Per member, the canonical composed hash served on their last
   // /instructions fetch — the proxy for "what their
   // live session runs", since a runner fetches immediately before
   // starting a session. In-memory deliberately: a broker restart
   // forgets what was issued, and unknown is reported as unknown (the
-  // member is NOT listed restart-pending), never guessed. The capture
-  // watchdog's `stale` observation is the independent capture-verified
-  // signal that survives broker restarts.
+  // member is NOT listed restart-pending), never guessed.
   const instructionsIssued = new Map<string, string>();
   const exemptionsFor = (memberName: string): readonly string[] => {
     const exemptions = new Set(instructionExemptions.get(memberName) ?? []);
@@ -686,100 +668,6 @@ export function createApp(options: AppOptions): CreatedApp {
     }
     return corr;
   };
-  const inspectCapturedInstructions = (
-    memberName: string,
-    inference: Parameters<typeof inspectInstructionContext>[0]['inference'],
-    systemProjectionObservable: boolean,
-  ): void => {
-    const current = members.findByName(memberName);
-    if (!current) return;
-    const composeInput = {
-      self: current,
-      team: teamStore.getTeam(),
-      teammates: teammatesFromMembers(members),
-      openObjectives: [],
-      // The watchdog's own input. Omitting the document here does not
-      // degrade the feature — it removes it, because this is what
-      // decides which blocks are looked for at all.
-      processDocument: processDocument ? processDocument.get() : null,
-    };
-    const blocks = instructionBlocks(composeInput);
-    const observedAt = now();
-    const observations = inspectInstructionContext({
-      memberName,
-      inference,
-      systemProjectionObservable,
-      blocks,
-      now: observedAt,
-      lastResentAt: contextLastResentAt,
-      awaitingConfirmation: contextAwaitingConfirmation,
-      knownPriorVersions: instructionBlockVersions.get(memberName),
-    });
-    if (telemetryStore !== undefined && observations.length > 0) {
-      try {
-        telemetryStore.append(
-          memberName,
-          observations.map((item) => item.telemetry),
-        );
-        diagnostics?.emit.contextPresenceTelemetryStored(memberName);
-      } catch (err) {
-        diagnostics?.emit.contextPresenceTelemetryFailed(memberName, observations.length);
-        logger.warn('context watchdog telemetry append failed', {
-          member: memberName,
-          count: observations.length,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-    const unobservable = observations.filter((item) => !item.observable);
-    if (unobservable.length > 0) {
-      diagnostics?.emit.contextInstructionsCheckUnavailable(memberName, unobservable.length);
-    } else {
-      diagnostics?.emit.contextInstructionsCheckSucceeded(memberName);
-    }
-    if (observations.some((item) => item.deliveryUnconfirmed)) {
-      diagnostics?.emit.contextBlockResendUnconfirmed(
-        memberName,
-        observations.filter((item) => item.deliveryUnconfirmed).length,
-      );
-    } else {
-      diagnostics?.emit.contextBlockDeliveryConfirmed(memberName);
-    }
-    for (const item of observations) {
-      const key = contextResendKey(memberName, item.block);
-      if (item.present === true) contextAwaitingConfirmation.delete(key);
-    }
-    const firing = observations.filter((item) => item.resendFired);
-    if (firing.length === 0) return;
-    for (const item of firing) {
-      const key = contextResendKey(memberName, item.block);
-      contextLastResentAt.set(key, observedAt);
-      contextAwaitingConfirmation.add(key);
-    }
-    void broker
-      .push(
-        {
-          to: memberName,
-          title: 'persistent context restored',
-          level: 'notice',
-          body: contextResendBody(firing),
-        },
-        { from: 'csuite' },
-      )
-      .catch((err: unknown) => {
-        diagnostics?.emit.contextBlockResendUnconfirmed(memberName, firing.length);
-        logger.warn('context watchdog resend failed', {
-          member: memberName,
-          blocks: firing.map((item) => item.block.kind),
-          error: err instanceof Error ? err.message : String(err),
-        });
-      });
-    logger.info('context watchdog re-sent missing instruction blocks', {
-      member: memberName,
-      blocks: firing.map((item) => item.block.kind),
-    });
-  };
-
   // ─── Instruction versioning: restart-pending + edit fanout ─────────
 
   // Enabled external-notification endpoints that can reach a member —
@@ -1240,19 +1128,6 @@ export function createApp(options: AppOptions): CreatedApp {
       instructionExemptions.set(member.name, remembered);
     }
     for (const block of instructionCaptureExemptions(composeInput)) remembered.add(block);
-    let versions = instructionBlockVersions.get(member.name);
-    if (!versions) {
-      versions = new Map();
-      instructionBlockVersions.set(member.name, versions);
-    }
-    for (const block of instructionBlocks(composeInput, packet.instructions)) {
-      let values = versions.get(block.kind);
-      if (!values) {
-        values = new Set();
-        versions.set(block.kind, values);
-      }
-      values.add(block.text);
-    }
     // The canonical hash is computed WITHOUT the transient version
     // line (composedInstructionsSha256 strips it), so two fetches that
     // differ only in reported runner version share a hash — a runner
@@ -1793,9 +1668,6 @@ export function createApp(options: AppOptions): CreatedApp {
           const inferences = getGenAiCorrelator(member.name).ingest(genaiRecords);
           for (const inf of inferences) {
             genaiStore.append(member.name, inf);
-            // Claude declares the structured system projection conformant:
-            // empty means genuinely absent, not unavailable capture.
-            inspectCapturedInstructions(member.name, inf, true);
           }
           // ONLY when an append actually happened. A body-only or
           // correlation-pending batch yields zero inferences and
@@ -2063,12 +1935,12 @@ export function createApp(options: AppOptions): CreatedApp {
           // model-only record rather than vanishing (raw already captured).
           let requestBody: unknown = null;
           let responseBody: unknown = null;
-          let requestParsed = false;
           try {
             requestBody = JSON.parse(reqBytes.toString('utf8'));
-            requestParsed = true;
           } catch {
-            diagnostics?.emit.contextInstructionsCheckUnavailable(member.name, 1);
+            logger.warn('codex genai request body parse failed — storing model-only record', {
+              member: member.name,
+            });
           }
           try {
             responseBody = JSON.parse(respBytes.toString('utf8'));
@@ -2086,12 +1958,6 @@ export function createApp(options: AppOptions): CreatedApp {
             ts: envelope.eventTs ?? undefined,
           });
           gStore.append(name, { ...rec, requestSha256, responseSha256 });
-          if (requestParsed) {
-            // #118: Codex does not yet populate instructions on chained
-            // Responses turns. Declare that projection unavailable instead
-            // of letting a provider name decide observability forever.
-            inspectCapturedInstructions(member.name, rec, rec.systemInstructions.length > 0);
-          }
           accepted++;
           diagnostics?.emit.codexGenaiIngestEntrySucceeded(member.name);
         } catch (err) {
@@ -4058,14 +3924,14 @@ export function createApp(options: AppOptions): CreatedApp {
           .list(filter.status ? { status: filter.status } : {})
           .filter((o) => o.assignee === name || o.originator === name || o.watchers.includes(name));
 
-      const canListAny = hasPermission(member.permissions, 'objectives.create');
+      const canListAny = hasPermission(member.permissions, 'objectives.manage');
       if (!canListAny) {
         if (
           (filter.assignee && filter.assignee !== member.name) ||
           (filter.related && filter.related !== member.name)
         ) {
           return c.json(
-            { error: 'members without objectives.create may only list their own objectives' },
+            { error: 'members without objectives.manage may only list their own objectives' },
             403,
           );
         }
@@ -4084,7 +3950,7 @@ export function createApp(options: AppOptions): CreatedApp {
     // GET /objectives/:id
     //
     // A thread participant (assignee, originator, watcher) can always
-    // view. Anyone with `objectives.create` can view any.
+    // view. Anyone with `objectives.manage` can view any.
     app.get(`${PATHS.objectives}/:id`, auth, (c) => {
       const member = c.get('member');
       const id = c.req.param('id');
@@ -4094,21 +3960,21 @@ export function createApp(options: AppOptions): CreatedApp {
         obj.assignee === member.name ||
         obj.originator === member.name ||
         obj.watchers.includes(member.name);
-      if (!isParticipant && !hasPermission(member.permissions, 'objectives.create')) {
+      if (!isParticipant && !hasPermission(member.permissions, 'objectives.manage')) {
         return c.json(
-          { error: 'not a thread participant; viewing requires objectives.create' },
+          { error: 'not a thread participant; viewing requires objectives.manage' },
           403,
         );
       }
       return c.json({ objective: obj, events: objectives.events(id) });
     });
 
-    // POST /objectives — requires `objectives.create`.
+    // POST /objectives — requires `objectives.manage`.
     app.post(PATHS.objectives, auth, async (c) => {
       const member = c.get('member');
-      if (!hasPermission(member.permissions, 'objectives.create')) {
+      if (!hasPermission(member.permissions, 'objectives.manage')) {
         return c.json(
-          { error: 'creating objectives requires the objectives.create permission' },
+          { error: 'creating objectives requires the objectives.manage permission' },
           403,
         );
       }
@@ -4195,36 +4061,89 @@ export function createApp(options: AppOptions): CreatedApp {
       }
     });
 
-    // PATCH /objectives/:id — assignee, or a member with `objectives.cancel`.
+    // PATCH /objectives/:id — one mutation surface, gated per field
+    // group rather than per route:
+    //   status / blockReason — the assignee, or `objectives.manage`
+    //   assignee (reassign)  — `objectives.manage`
+    //   watcher changes      — the originator, or `objectives.manage`
+    // A payload touching several groups must satisfy every gate it
+    // touches, and is applied atomically-enough: gates are all checked
+    // before any store call runs.
     app.patch(`${PATHS.objectives}/:id`, auth, async (c) => {
       const member = c.get('member');
       const id = c.req.param('id');
       const current = objectives.get(id);
       if (!current) return c.json({ error: `no such objective: ${id}` }, 404);
-      if (
-        current.assignee !== member.name &&
-        !hasPermission(member.permissions, 'objectives.cancel')
-      ) {
-        return c.json(
-          {
-            error: 'only the assignee or a member with objectives.cancel may update this objective',
-          },
-          403,
-        );
-      }
       const raw = await c.req.json().catch(() => null);
       const parsed = UpdateObjectiveRequestSchema.safeParse(raw);
       if (!parsed.success) {
         return c.json({ error: 'invalid update payload', details: parsed.error.issues }, 400);
       }
+      const input = parsed.data;
+      const canManage = hasPermission(member.permissions, 'objectives.manage');
+      const isOriginator = current.originator === member.name;
+
+      const touchesStatus = input.status !== undefined || input.blockReason !== undefined;
+      const touchesAssignee = input.assignee !== undefined;
+      const touchesWatchers = input.addWatchers !== undefined || input.removeWatchers !== undefined;
+
+      if (touchesStatus && current.assignee !== member.name && !canManage) {
+        return c.json(
+          { error: 'only the assignee or a member with objectives.manage may update status' },
+          403,
+        );
+      }
+      if (touchesAssignee && !canManage) {
+        return c.json({ error: 'changing the assignee requires objectives.manage' }, 403);
+      }
+      if (touchesWatchers && !isOriginator && !canManage) {
+        return c.json({ error: 'watcher changes require originator or objectives.manage' }, 403);
+      }
+      if (touchesAssignee && !members.findByName(input.assignee as string)) {
+        return c.json({ error: `unknown assignee: ${input.assignee}` }, 400);
+      }
+      for (const cs of [...(input.addWatchers ?? []), ...(input.removeWatchers ?? [])]) {
+        if (!members.findByName(cs)) {
+          return c.json({ error: `unknown watcher: ${cs}` }, 400);
+        }
+      }
+
       try {
-        const { objective: updated, events } = objectives.update(id, parsed.data, member.name);
-        // `events` can have 0-2 entries: 0 for a no-op (status=current,
-        // no note), 1 for a single status transition or a note-only
-        // update, 2 for a status transition + note in the same call.
-        // Publish each one individually so each landing push carries
-        // its own structured body — the note's note, the block's
-        // block reason, etc.
+        let updated = current;
+        const events: ObjectiveEvent[] = [];
+        if (touchesAssignee && input.assignee !== current.assignee) {
+          // Attachment access for the new assignee comes "for free"
+          // from the objective-namespace ACL — they're now a thread
+          // member, so `canRead('/objectives/<id>/...')` returns true
+          // via `isObjectiveMember`. No grant backfill needed.
+          const res = objectives.reassign(
+            id,
+            {
+              to: input.assignee as string,
+              ...(input.note !== undefined ? { note: input.note } : {}),
+            },
+            member.name,
+          );
+          updated = res.objective;
+          events.push(...res.events);
+        }
+        if (touchesWatchers) {
+          const res = objectives.updateWatchers(
+            id,
+            {
+              ...(input.addWatchers !== undefined ? { add: input.addWatchers } : {}),
+              ...(input.removeWatchers !== undefined ? { remove: input.removeWatchers } : {}),
+            },
+            member.name,
+          );
+          updated = res.objective;
+          events.push(...res.events);
+        }
+        if (touchesStatus) {
+          const res = objectives.update(id, input, member.name);
+          updated = res.objective;
+          events.push(...res.events);
+        }
         queueMicrotask(() => {
           for (const ev of events) {
             void publishObjectiveEvent(updated, ev, member.name);
@@ -4265,15 +4184,15 @@ export function createApp(options: AppOptions): CreatedApp {
       }
     });
 
-    // POST /objectives/:id/cancel — originator, or any member with `objectives.cancel`.
+    // POST /objectives/:id/cancel — originator, or any member with `objectives.manage`.
     app.post(`${PATHS.objectives}/:id/cancel`, auth, async (c) => {
       const member = c.get('member');
       const id = c.req.param('id');
       const current = objectives.get(id);
       if (!current) return c.json({ error: `no such objective: ${id}` }, 404);
       const isOriginator = current.originator === member.name;
-      if (!(isOriginator || hasPermission(member.permissions, 'objectives.cancel'))) {
-        return c.json({ error: 'cancel requires originator or objectives.cancel permission' }, 403);
+      if (!(isOriginator || hasPermission(member.permissions, 'objectives.manage'))) {
+        return c.json({ error: 'cancel requires originator or objectives.manage permission' }, 403);
       }
       const raw = await c.req.json().catch(() => ({}));
       const parsed = CancelObjectiveRequestSchema.safeParse(raw);
@@ -4282,171 +4201,6 @@ export function createApp(options: AppOptions): CreatedApp {
       }
       try {
         const { objective: updated, events } = objectives.cancel(id, parsed.data, member.name);
-        queueMicrotask(() => {
-          for (const ev of events) {
-            void publishObjectiveEvent(updated, ev, member.name);
-          }
-        });
-        return c.json(updated);
-      } catch (err) {
-        const mapped = mapObjectivesError(err);
-        return c.json(mapped.body, mapped.status as 400 | 404 | 409 | 500);
-      }
-    });
-
-    // POST /objectives/:id/amend — requires `objectives.create`.
-    //
-    // The gate is the PERMISSION, not the role. An assignee who holds
-    // `objectives.create` may amend their own contract; that looks
-    // wrong at a glance and is right — the constraint is "can this
-    // member author contracts", not "is this member the executor".
-    app.post(`${PATHS.objectives}/:id/amend`, auth, async (c) => {
-      const member = c.get('member');
-      const id = c.req.param('id');
-      const current = objectives.get(id);
-      if (!current) return c.json({ error: `no such objective: ${id}` }, 404);
-      if (!hasPermission(member.permissions, 'objectives.create')) {
-        return c.json({ error: 'amend requires objectives.create permission' }, 403);
-      }
-      const raw = await c.req.json().catch(() => null);
-      const parsed = AmendObjectiveRequestSchema.safeParse(raw);
-      if (!parsed.success) {
-        return c.json({ error: 'invalid amend payload', details: parsed.error.issues }, 400);
-      }
-      try {
-        const { objective: updated, events } = objectives.amend(id, parsed.data, member.name);
-        queueMicrotask(() => {
-          for (const ev of events) {
-            void publishObjectiveEvent(updated, ev, member.name);
-          }
-        });
-        return c.json(updated);
-      } catch (err) {
-        const mapped = mapObjectivesError(err);
-        return c.json(mapped.body, mapped.status as 400 | 404 | 409 | 500);
-      }
-    });
-
-    // POST /objectives/:id/correct-event — requires `objectives.create`.
-    // Appends a superseding record; the target event is never rewritten.
-    app.post(`${PATHS.objectives}/:id/correct-event`, auth, async (c) => {
-      const member = c.get('member');
-      const id = c.req.param('id');
-      const current = objectives.get(id);
-      if (!current) return c.json({ error: `no such objective: ${id}` }, 404);
-      if (!hasPermission(member.permissions, 'objectives.create')) {
-        return c.json({ error: 'correcting an event requires objectives.create permission' }, 403);
-      }
-      const raw = await c.req.json().catch(() => null);
-      const parsed = CorrectObjectiveEventRequestSchema.safeParse(raw);
-      if (!parsed.success) {
-        return c.json({ error: 'invalid correction payload', details: parsed.error.issues }, 400);
-      }
-      try {
-        const { objective: updated, events } = objectives.correctEvent(
-          id,
-          parsed.data,
-          member.name,
-        );
-        queueMicrotask(() => {
-          for (const ev of events) {
-            void publishObjectiveEvent(updated, ev, member.name);
-          }
-        });
-        return c.json(updated);
-      } catch (err) {
-        const mapped = mapObjectivesError(err);
-        return c.json(mapped.body, mapped.status as 400 | 404 | 409 | 500);
-      }
-    });
-
-    // POST /objectives/:id/reassign — requires `objectives.reassign`.
-    app.post(`${PATHS.objectives}/:id/reassign`, auth, async (c) => {
-      const member = c.get('member');
-      if (!hasPermission(member.permissions, 'objectives.reassign')) {
-        return c.json({ error: 'reassign requires the objectives.reassign permission' }, 403);
-      }
-      const id = c.req.param('id');
-      const raw = await c.req.json().catch(() => null);
-      const parsed = ReassignObjectiveRequestSchema.safeParse(raw);
-      if (!parsed.success) {
-        return c.json({ error: 'invalid reassign payload', details: parsed.error.issues }, 400);
-      }
-      if (!members.findByName(parsed.data.to)) {
-        return c.json({ error: `unknown assignee: ${parsed.data.to}` }, 400);
-      }
-      try {
-        const { objective: updated, events } = objectives.reassign(id, parsed.data, member.name);
-        // Attachment access for the new assignee comes "for free" from
-        // the objective-namespace ACL — they're now a thread member,
-        // so `canRead('/objectives/<id>/...')` returns true via
-        // `isObjectiveMember`. No grant backfill needed.
-        queueMicrotask(() => {
-          for (const ev of events) {
-            void publishObjectiveEvent(updated, ev, member.name);
-          }
-        });
-        return c.json(updated);
-      } catch (err) {
-        const mapped = mapObjectivesError(err);
-        return c.json(mapped.body, mapped.status as 400 | 404 | 409 | 500);
-      }
-    });
-
-    // POST /objectives/:id/watchers
-    //
-    // Add and/or remove watchers on an objective. Permitted to:
-    //   - any admin (team-wide)
-    //   - the originating operator / lead-agent (they own the
-    //     objective they made)
-    // Every name in both `add` and `remove` must resolve to a known
-    // user. Watcher mutations produce `watcher_added` and
-    // `watcher_removed` audit events that fan out to the full
-    // post-change thread membership (plus removed parties so they
-    // get the exit notification).
-    app.post(`${PATHS.objectives}/:id/watchers`, auth, async (c) => {
-      const member = c.get('member');
-      const id = c.req.param('id');
-      const current = objectives.get(id);
-      if (!current) return c.json({ error: `no such objective: ${id}` }, 404);
-
-      const isOriginator = current.originator === member.name;
-      if (!(isOriginator || hasPermission(member.permissions, 'objectives.watch'))) {
-        return c.json(
-          { error: 'watcher changes require originator or objectives.watch permission' },
-          403,
-        );
-      }
-
-      const raw = await c.req.json().catch(() => null);
-      const parsed = UpdateWatchersRequestSchema.safeParse(raw);
-      if (!parsed.success) {
-        return c.json({ error: 'invalid watchers payload', details: parsed.error.issues }, 400);
-      }
-
-      // Validate every name in both lists.
-      for (const cs of parsed.data.add ?? []) {
-        if (!members.findByName(cs)) {
-          return c.json({ error: `unknown watcher: ${cs}` }, 400);
-        }
-      }
-      for (const cs of parsed.data.remove ?? []) {
-        if (!members.findByName(cs)) {
-          return c.json({ error: `unknown watcher: ${cs}` }, 400);
-        }
-      }
-
-      try {
-        const { objective: updated, events } = objectives.updateWatchers(
-          id,
-          parsed.data,
-          member.name,
-        );
-        // Watcher membership changes have no FS-side bookkeeping to do:
-        // attachment access flows from `isObjectiveMember` in the
-        // namespace ACL, so adding a watcher grants access at the
-        // moment the membership lands and removing one revokes it the
-        // moment they're gone. No grant rows to backfill or sweep.
         queueMicrotask(() => {
           for (const ev of events) {
             void publishObjectiveEvent(updated, ev, member.name);
@@ -4780,15 +4534,6 @@ export function createApp(options: AppOptions): CreatedApp {
       }
       try {
         const rows = activityStore.append(name, parsed.data.events);
-
-        // Objective context watchdog: after appending, check whether
-        // any llm_exchange events are missing active objective IDs
-        // from their context. If so, push a reminder so the agent
-        // picks the objective back up.
-        if (objectives) {
-          checkObjectiveContext(parsed.data.events, name, objectives, broker, logger);
-        }
-
         // Same rule: an empty accepted set exercises no write.
         if (rows.length > 0) diagnostics?.emit.activityAppended(name);
         return c.json({ accepted: rows.length }, 201);
@@ -5351,12 +5096,11 @@ export function createApp(options: AppOptions): CreatedApp {
   // member signal is: a typed push on the member stream, which the
   // runner's forwarder routes on `data.kind`.
   //
-  // The broker is authoritative about a team and can already observe
-  // context drift (see context-watchdog) — but every mechanism it had
-  // was additive. It could make a member's context LARGER and could
-  // measure that it had drifted; it had no verb for making it smaller,
-  // and the only reset available was a full restart that drops the
-  // runner's MCP wiring and takes the member off the net.
+  // The broker is authoritative about a team, but every mechanism it
+  // had was additive. It could make a member's context LARGER; it had
+  // no verb for making it smaller, and the only reset available was a
+  // full restart that drops the runner's MCP wiring and takes the
+  // member off the net.
   //
   // This endpoint answers on PUSH, never on effect. Whether the agent
   // honoured it arrives later as a `context_control` activity row on
@@ -6184,77 +5928,6 @@ export function createApp(options: AppOptions): CreatedApp {
   };
 }
 
-/**
- * Objective context watchdog — scans uploaded LLM exchanges for
- * active objective IDs. If an objective is active for this user but
- * its ID doesn't appear anywhere in the exchange's system prompt or
- * messages, the agent has lost context (compaction, long session).
- * Pushes a reminder through the broker so the agent picks it back up.
- *
- * Debounced per user: only fires once per batch of uploads, and
- * only for the most recent exchange (checking every exchange in a
- * batch would spam on fast-uploading agents).
- */
-const watchdogLastFired = new Map<string, number>();
-const WATCHDOG_COOLDOWN_MS = 5 * 60 * 1000;
-
-function checkObjectiveContext(
-  events: ActivityEvent[],
-  name: string,
-  objectivesStore: ObjectivesStore,
-  broker: Broker,
-  logger: Logger,
-): void {
-  // Only inspect the most recent llm_exchange in this batch.
-  const llmEvent = events.findLast((e) => e.kind === 'llm_exchange');
-  if (llmEvent?.kind !== 'llm_exchange') return;
-
-  const active = [
-    ...objectivesStore.list({ assignee: name, status: 'active' }),
-    ...objectivesStore.list({ assignee: name, status: 'blocked' }),
-  ];
-  if (active.length === 0) return;
-
-  // Build a string from the full request context the agent sent to
-  // the LLM: system prompt + all text content blocks.
-  const entry = llmEvent.entry;
-  const parts: string[] = [];
-  if (entry.request.system) parts.push(entry.request.system);
-  for (const m of entry.request.messages) {
-    for (const block of m.content) {
-      if ('text' in block && typeof block.text === 'string') {
-        parts.push(block.text);
-      }
-    }
-  }
-  const contextText = parts.join(' ');
-
-  const now = Date.now();
-  const missing = active.filter((o) => {
-    if (contextText.includes(o.id)) return false;
-    const key = `${name}:${o.id}`;
-    const last = watchdogLastFired.get(key) ?? 0;
-    return now - last > WATCHDOG_COOLDOWN_MS;
-  });
-  if (missing.length === 0) return;
-
-  const lines = missing.map((o) => `  ${o.id}: ${o.title}\n    outcome: ${o.outcome}`);
-  const body =
-    `You have ${missing.length} active objective(s) that are no longer in your context. ` +
-    `Here they are — call \`objectives_view\` for full details:\n${lines.join('\n')}`;
-
-  for (const o of missing) watchdogLastFired.set(`${name}:${o.id}`, now);
-
-  void broker.push(
-    { to: name, body, title: 'objective context reminder', level: 'notice' },
-    { from: 'csuite' },
-  );
-  logger.info('objective context watchdog fired', {
-    name,
-    missing: missing.map((o) => o.id),
-  });
-}
-
 /** Re-export so `LoadedMember` consumers don't have to dig into members.ts. */
 export type { LoadedMember };
 
@@ -6547,10 +6220,14 @@ function systemMessageForEvent(
     }
     case 'watcher_added': {
       const cs = typeof event?.payload.name === 'string' ? event.payload.name : '(unknown)';
+      // Title + name only. The new watcher joined the thread and can
+      // pull the contract with `objectives_view`; re-broadcasting the
+      // full outcome to EVERY thread member on each watcher change is
+      // how one objective's contract ended up pushed four times before
+      // any work happened.
       return [
         header,
         `title:    ${objective.title}`,
-        `outcome:  ${objective.outcome}`,
         `watcher:  ${cs}`,
         `status:   ${objective.status}`,
       ].join('\n');
@@ -6559,55 +6236,12 @@ function systemMessageForEvent(
       const cs = typeof event?.payload.name === 'string' ? event.payload.name : '(unknown)';
       return [header, `title:   ${objective.title}`, `watcher: ${cs}`].join('\n');
     }
-    case 'amended': {
-      // The agent executing the contract has to learn that it moved,
-      // and — because `disposition` decides whether work already done
-      // is still valid — has to learn which kind of change it was
-      // WITHOUT opening the objective. A `correction` means it was
-      // never validly held to the old text; a `scope_change` is a new
-      // demand on work already underway.
-      const fields = Array.isArray(event?.payload.fields)
-        ? (event.payload.fields as string[]).join(', ')
-        : '(unknown)';
-      const disposition =
-        typeof event?.payload.disposition === 'string' ? event.payload.disposition : '(unstated)';
-      const reason =
-        typeof event?.payload.reason === 'string' ? event.payload.reason : '(no reason given)';
-      const version =
-        typeof event?.payload.version === 'number'
-          ? event.payload.version
-          : objective.outcomeVersion;
-      return [
-        header,
-        `title:       ${objective.title}`,
-        `changed:     ${fields}`,
-        `disposition: ${disposition}${
-          disposition === 'correction'
-            ? ' (retroactive — work was never validly held to the prior text)'
-            : disposition === 'scope_change'
-              ? ' (forward-only — work already underway finishes under the prior text)'
-              : ''
-        }`,
-        `version:     ${version}`,
-        `reason:      ${reason}`,
-        `outcome:     ${objective.outcome}`,
-      ].join('\n');
-    }
-    case 'event_corrected': {
-      const correctedKind =
-        typeof event?.payload.eventKind === 'string' ? event.payload.eventKind : '(unknown)';
-      const correction =
-        typeof event?.payload.correction === 'string' ? event.payload.correction : '';
-      const reason =
-        typeof event?.payload.reason === 'string' ? event.payload.reason : '(no reason given)';
-      return [
-        header,
-        `title:      ${objective.title}`,
-        `corrects:   ${correctedKind}`,
-        `correction: ${correction}`,
-        `reason:     ${reason}`,
-      ].join('\n');
-    }
+    case 'amended':
+    case 'event_corrected':
+      // LEGACY kinds. No write path produces either, so this fanout
+      // can never fire for one — the cases exist only to keep the
+      // switch total over the read-tolerant kind union.
+      return header;
   }
 }
 

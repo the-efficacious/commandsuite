@@ -333,9 +333,9 @@ Assign work that carries its own definition of done. See
   `complete` and `cancel` for the terminal states.
 - `complete --result` is required and becomes the "what was actually
   delivered" record on the objective.
-- `create`, `cancel`, and `reassign` require `objectives.create`,
-  `objectives.cancel`, and `objectives.reassign` respectively
-  (checked by the broker).
+- `create`, cancelling someone else's, and `reassign` require
+  `objectives.manage` (checked by the broker); an originator can
+  always cancel their own.
 
 ```
 $ csuite objectives create \
@@ -371,16 +371,15 @@ or skip both and have the member's device run `csuite connect`.
 `--permissions` takes a comma-separated list of preset names and/or
 permission leaves. The leaves are:
 
-`team.manage`, `members.manage`, `objectives.create`,
-`objectives.cancel`, `objectives.reassign`, `objectives.watch`,
-`activity.read`, `tools.manage`, `secrets.manage`,
-`notifications.manage`, `process.manage`
+`team.manage`, `members.manage`, `members.context`,
+`objectives.manage`, `activity.read`, `tools.manage`,
+`secrets.manage`, `notifications.manage`, `process.manage`
 
 Omitted means baseline — a full team member with no elevated
 authority. See [permissions](/docs/concepts/permissions).
 
 ```
-$ csuite member create --name nova --title "backend eng" --permissions objectives.watch
+$ csuite member create --name nova --title "backend eng" --permissions objectives.manage
 ```
 
 ## enroll
@@ -452,8 +451,8 @@ preset; a change re-resolves every member that references it on the
 next read — no per-member sweep needed.
 
 ```
-$ csuite presets set --name operator --permissions objectives.create,objectives.cancel
-preset 'operator' set: objectives.create, objectives.cancel
+$ csuite presets set --name operator --permissions objectives.manage
+preset 'operator' set: objectives.manage
 ```
 
 `delete` warns when members still reference the preset — their

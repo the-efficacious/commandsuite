@@ -59,6 +59,8 @@ const REGISTERED = new Set([
   'genai-correlator: failed to build inference',
   'genai-correlator: raw request_id assign failed',
   'genai-correlator: skipped malformed record',
+  'genai-correlator: evicted stale pending exchanges',
+  'genai-correlator: pending-request cap hit — dropped oldest exchange',
   'raw-body-store: blob gunzip failed',
   'raw-body-store: blob hash mismatch',
   'genai-store: skipped unserializable record',
@@ -76,8 +78,6 @@ const APP_IN_SCOPE = [
   'agent activity append failed',
   'tool invoke audit append failed',
   'enrollment source label truncated',
-  'context watchdog telemetry append failed',
-  'context watchdog resend failed',
 ];
 
 /**
@@ -132,8 +132,18 @@ const APP_IN_SCOPE = [
  * `context_control` activity ACK, not by this log: a request that
  * produces no outcome event stays visibly outstanding, which is the
  * observable the feature is built around.
+ *
+ * 2026-08-12, −2 +3 = 57. The context watchdogs were removed and their
+ * two in-scope app.ts warnings went with them. The correlator sites
+ * that previously reported a dropped pending exchange THROUGH the
+ * watchdog's check-unavailable incident now carry their own point
+ * cause, `correlator.pending_exchange_dropped`, with two new in-scope
+ * log lines (stale eviction, pending-cap displacement). app.ts gained
+ * one OPERATIONAL warning, `codex genai request body parse failed` —
+ * the raw bytes are already captured and a model-only record is
+ * stored, so nothing captured is lost when it fires.
  */
-const TOTAL_SITES = 56;
+const TOTAL_SITES = 57;
 
 function messagesIn(file: string): string[] {
   const src = readFileSync(join(SRC, file), 'utf8');
@@ -240,8 +250,8 @@ describe('diagnostic census guard', () => {
   });
 
   it('the cause enum has one code per registered site plus overflow', () => {
-    // Capture/app sites plus three current context-watchdog conditions and
+    // Capture/app sites and
     // three retention facts (overflow, fanout_truncated, unavailable).
-    expect(DIAGNOSTIC_CAUSES.length).toBe(27);
+    expect(DIAGNOSTIC_CAUSES.length).toBe(25);
   });
 });

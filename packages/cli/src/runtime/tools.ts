@@ -24,16 +24,14 @@
  * Objective tools:
  *   - objectives_list     — the caller's active plate
  *   - objectives_view     — full detail on one objective
- *   - objectives_update   — state transitions (block / resume)
+ *   - objectives_update   — status, assignee and watcher changes
  *   - objectives_discuss  — post into the objective thread
  *   - objectives_complete — mark done with required result
  *
  * Permission-gated objective tools (only appear in the toolbox when the
- * caller holds the matching leaf permission):
- *   - objectives_create   — requires `objectives.create`
- *   - objectives_cancel   — requires `objectives.cancel` (or being the objective's originator)
- *   - objectives_watchers — requires `objectives.watch` (or being the objective's originator)
- *   - objectives_reassign — requires `objectives.reassign`
+ * caller holds `objectives.manage`):
+ *   - objectives_create   — assign work to teammates
+ *   - objectives_cancel   — cancel anyone's (an originator can always cancel their own via the server)
  */
 
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
@@ -304,13 +302,15 @@ export function defineTools(
     {
       name: 'objectives_update',
       description:
-        `Transition an objective's status. Use status='blocked' + blockReason when you're ` +
-        `stuck and need a director to intervene. Use status='active' to resume after a ` +
-        `block. This tool is for STATE transitions only — for progress notes, questions, ` +
-        `intermediate findings, or any conversation about the objective, use ` +
-        `\`objectives_discuss\` to post into the objective's discussion thread. This tool ` +
-        `never transitions to 'done' — call \`objectives_complete\` for that. Returns the ` +
-        `updated objective.`,
+        `Update an objective's live state. Status: use status='blocked' (ideally with a ` +
+        `short blockReason) when you're stuck or sequenced behind other work, and ` +
+        `status='active' to resume. Assignee: pass \`assignee\` to hand the work to a ` +
+        `different teammate (requires objectives.manage; the previous assignee stays on ` +
+        `the thread as a watcher). Watchers: pass \`addWatchers\`/\`removeWatchers\` to ` +
+        `change who follows the thread (originator or objectives.manage). This tool is ` +
+        `for STATE, not conversation — progress notes and questions go in ` +
+        `\`objectives_discuss\` — and it never transitions to 'done'; call ` +
+        `\`objectives_complete\` for that. Returns the updated objective.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -318,17 +318,36 @@ export function defineTools(
           status: {
             type: 'string',
             enum: ['active', 'blocked'],
-            description:
-              "Required new status. Use 'blocked' + blockReason when stuck; 'active' to resume.",
+            description: "Use 'blocked' when stuck; 'active' to resume.",
           },
           blockReason: {
             type: 'string',
             description:
-              'Required when status=blocked. Concisely describe what is blocking you. ' +
+              'Recommended with status=blocked — one line on what is blocking you. ' +
               'Max 2048 characters.',
           },
+          assignee: {
+            type: 'string',
+            description:
+              'New assignee. Both the previous and new assignee are notified. ' +
+              'Requires objectives.manage.',
+          },
+          note: {
+            type: 'string',
+            description: 'Handover context when changing the assignee.',
+          },
+          addWatchers: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Teammate names to add as watchers. Max 64.',
+          },
+          removeWatchers: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Teammate names to remove from watchers. Max 64.',
+          },
         },
-        required: ['id', 'status'],
+        required: ['id'],
       },
     },
     {
@@ -433,14 +452,12 @@ export function defineTools(
     // request 403s — but keeping them out of the tool list is the
     // first line of defense and the natural UX.
     //
-    //   objectives.create:   objectives_create
-    //   objectives.cancel:   objectives_cancel (plus the objective's own originator)
-    //   objectives.watch:    objectives_watchers (plus the objective's own originator)
-    //   objectives.reassign: objectives_reassign
+    //   objectives.manage: objectives_create, objectives_cancel
+    //   (an originator can always cancel their own via the server)
     //
-    // For members without the broader permission, the `cancel` and
-    // `watchers` descriptions call out the "only objectives you
-    // originated" rule so the agent doesn't try to touch someone
+    // For members without the broader permission, the descriptions
+    // call out the "only objectives you originated" rule so the
+    // agent doesn't try to touch someone
     // else's objective and eat a 403.
     ...buildAuthorityTools(instructions),
     // The team's process document. Reading it is not how an agent
@@ -615,7 +632,7 @@ function buildAdminTools(instructions: InstructionsResponse): Tool[] {
             type: 'array',
             items: { type: 'string' },
             description:
-              'Leaf permissions, e.g. ["objectives.create","objectives.cancel"]. Unknown leaves are rejected.',
+              'Leaf permissions, e.g. ["objectives.manage","activity.read"]. Unknown leaves are rejected.',
           },
         },
         required: ['name', 'permissions'],
@@ -1697,9 +1714,9 @@ function buildFilesystemTools(name: string): Tool[] {
  * carry: the superseded text behind each edit, and the write path.
  *
  * The write gate is `process.manage`, a DEDICATED leaf rather than a
- * reuse of `objectives.create`. Under this design the permission IS
+ * reuse of `objectives.manage`. Under this design the permission IS
  * the authority — whoever holds it can rewrite what binds the team —
- * and "can create an objective" is not a comparable power.
+ * and "can direct the team's objectives" is not a comparable power.
  */
 function buildProcessDocumentTools(instructions: InstructionsResponse): Tool[] {
   const tools: Tool[] = [
@@ -1770,8 +1787,7 @@ function buildProcessDocumentTools(instructions: InstructionsResponse): Tool[] {
           description:
             '`correction` — retroactive; the prior text was never validly binding. ' +
             '`scope_change` — forward-only; work already underway finishes under the prior ' +
-            'text. Same field and meaning as `objectives_amend`, so "does work started under ' +
-            'the old process finish under it" has one answer across contracts and process.',
+            'text, and only new work is bound by the new text.',
         },
       },
       required: ['text', 'reason', 'disposition'],
@@ -1783,31 +1799,28 @@ function buildProcessDocumentTools(instructions: InstructionsResponse): Tool[] {
 
 function buildAuthorityTools(instructions: InstructionsResponse): Tool[] {
   const { permissions } = instructions;
-  const canCreate = permissions.includes('objectives.create');
-  const canCancel = permissions.includes('objectives.cancel');
-  const canWatch = permissions.includes('objectives.watch');
-  const canReassign = permissions.includes('objectives.reassign');
+  const canManage = permissions.includes('objectives.manage');
   const canManageMembers = permissions.includes('members.manage');
-  if (!canCreate && !canCancel && !canWatch && !canReassign && !canManageMembers) {
+  if (!canManage && !canManageMembers) {
     return [];
   }
 
   const tools: Tool[] = [];
 
-  if (!canCreate) return tools;
+  if (!canManage) return tools;
 
-  // objectives_create — requires objectives.create
+  // objectives_create — requires objectives.manage
   tools.push({
     name: 'objectives_create',
     description:
       `Create and assign a new objective. You can direct work ` +
       `to any teammate — the assignee receives an immediate channel push with the title, ` +
-      `outcome, and originator stamped as you. The \`outcome\` field is ` +
-      `contractual: it must state the tangible, verifiable result that defines "done", not ` +
-      `just a vague intent. Optionally include a \`body\` for additional context and ` +
-      `\`watchers\` (a list of names) to loop other teammates into the discussion thread ` +
-      `from the start. Use \`roster\` for available assignees. Returns the new objective ` +
-      `with its generated id.`,
+      `outcome, and originator stamped as you. Write the \`outcome\` as the definition of ` +
+      `done: SHORT and CHECKABLE, naming who verifies. A long outcome with many clauses ` +
+      `costs the team real work to interpret — put background in \`body\` instead. ` +
+      `Optionally include \`watchers\` (a list of names) to loop other teammates into the ` +
+      `discussion thread from the start. Use \`roster\` for available assignees. Returns ` +
+      `the new objective with its generated id.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -1846,74 +1859,8 @@ function buildAuthorityTools(instructions: InstructionsResponse): Tool[] {
     },
   });
 
-  // objectives_cancel — originator always, or members with objectives.cancel
-  const cancelScope = canCancel
-    ? 'You can cancel any non-terminal objective on the team.'
-    : "You can cancel objectives you originated (created). Attempting to cancel someone else's objective will be refused by the server.";
-  if (canCreate) {
-    tools.push({
-      name: 'objectives_amend',
-      description:
-        "Amend an objective's contract — its outcome, title and/or body. Requires " +
-        "`objectives.create`; the contract is not the executor's to rewrite, though an " +
-        'assignee who holds that permission may amend their own. The PRIOR TEXT IS KEPT and ' +
-        'rendered by `objectives_view`, so this corrects the record rather than replacing it ' +
-        'silently. Supply at least one field that actually differs — a no-op is rejected ' +
-        'rather than recorded as a version bump. `disposition` is REQUIRED and you must ' +
-        'choose deliberately: `correction` means the prior text was wrong and work was never ' +
-        'validly held to it (retroactive); `scope_change` means a new demand, and work ' +
-        'already underway finishes under the prior text (forward-only). If you cannot say ' +
-        'which one it is, you have not finished thinking about the amendment.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          id: { type: 'string', description: 'The objective id.' },
-          outcome: { type: 'string', description: 'Replacement outcome text.' },
-          title: { type: 'string', description: 'Replacement title.' },
-          body: { type: 'string', description: 'Replacement body.' },
-          reason: {
-            type: 'string',
-            description:
-              'REQUIRED. Why the contract changed. Without it an amendment is a silent replacement.',
-          },
-          disposition: {
-            type: 'string',
-            enum: ['correction', 'scope_change'],
-            description:
-              'REQUIRED. `correction` = retroactive (the prior text was wrong). ' +
-              '`scope_change` = forward-only (a new demand on work already underway).',
-          },
-        },
-        required: ['id', 'reason', 'disposition'],
-      },
-    });
-    tools.push({
-      name: 'objectives_correct_event',
-      description:
-        'Correct an earlier lifecycle event on an objective — most often a completion ' +
-        'recorded at the wrong moment, such as at a PR head rather than the merge SHA. ' +
-        'Requires `objectives.create`. The original event is NEVER rewritten: this appends a ' +
-        'superseding record naming it, and `objectives_view` marks the corrected event inline ' +
-        'so a reader of the log sees it. Does NOT change the contract version — correcting ' +
-        'the record of what happened is not a change to what was required. Get `eventId` ' +
-        'from the event log in `objectives_view` — a timestamp is NOT an identity, because ' +
-        'creation emits two events in the same millisecond.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          id: { type: 'string', description: 'The objective id.' },
-          eventId: {
-            type: 'string',
-            description: 'Durable id of the event being corrected, shown by `objectives_view`.',
-          },
-          correction: { type: 'string', description: 'What the record should say instead.' },
-          reason: { type: 'string', description: 'REQUIRED. Why the record was wrong.' },
-        },
-        required: ['id', 'eventId', 'correction', 'reason'],
-      },
-    });
-  }
-
+  // objectives_cancel — originator always, or members with objectives.manage
+  const cancelScope = 'You can cancel any non-terminal objective on the team.';
   tools.push({
     name: 'objectives_cancel',
     description:
@@ -1935,66 +1882,6 @@ function buildAuthorityTools(instructions: InstructionsResponse): Tool[] {
       required: ['id'],
     },
   });
-
-  // objectives_watchers — originator always, or members with objectives.watch
-  const watchersScope = canWatch
-    ? 'You can manage watchers on any objective on the team.'
-    : "You can manage watchers on objectives you originated. Attempting to modify watchers on someone else's objective will be refused by the server.";
-  tools.push({
-    name: 'objectives_watchers',
-    description:
-      `Add or remove watchers on an objective's discussion thread. Watchers receive every ` +
-      `lifecycle event and every discussion post on the objective — use this to loop in a ` +
-      `reviewer, a subject-matter expert, or anyone who should have awareness without ` +
-      `being the assignee. Directors are implicit members and never need to be added. ` +
-      `${watchersScope} Pass \`add\` and/or \`remove\` as arrays of names. Returns the ` +
-      `updated objective with its new watcher list.`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        id: { type: 'string', description: 'The objective id.' },
-        add: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Optional list of teammate names to add as watchers. Max 64.',
-        },
-        remove: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Optional list of teammate names to remove from watchers. Max 64.',
-        },
-      },
-      required: ['id'],
-    },
-  });
-
-  // objectives_reassign — requires objectives.reassign
-  if (canReassign) {
-    tools.push({
-      name: 'objectives_reassign',
-      description:
-        `Reassign a non-terminal objective to a different teammate. Both the previous and ` +
-        `new assignee receive channel pushes — the previous one so they know the ` +
-        `objective left their plate, the new one so they know they now own it. Use this ` +
-        `when the initial assignee is overwhelmed, the wrong skill match, or unavailable. ` +
-        `Returns the reassigned objective.`,
-      inputSchema: {
-        type: 'object',
-        properties: {
-          id: { type: 'string', description: 'The objective id.' },
-          to: {
-            type: 'string',
-            description: 'Name of the new assignee.',
-          },
-          note: {
-            type: 'string',
-            description: 'Optional note explaining the reassignment.',
-          },
-        },
-        required: ['id', 'to'],
-      },
-    });
-  }
 
   return tools;
 }
@@ -2039,16 +1926,8 @@ export async function handleToolCall(
         return await handleProcessDocumentHistory(brokerClient);
       case 'process_document_write':
         return await handleProcessDocumentWrite(args, brokerClient);
-      case 'objectives_amend':
-        return await handleObjectivesAmend(args, brokerClient);
-      case 'objectives_correct_event':
-        return await handleObjectivesCorrectEvent(args, brokerClient);
       case 'objectives_cancel':
         return await handleObjectivesCancel(args, brokerClient, instructions);
-      case 'objectives_watchers':
-        return await handleObjectivesWatchers(args, brokerClient, instructions);
-      case 'objectives_reassign':
-        return await handleObjectivesReassign(args, brokerClient, instructions);
       case 'fs_ls':
         return await handleFsLs(args, brokerClient, instructions);
       case 'fs_stat':
@@ -2203,7 +2082,7 @@ async function handleRoster(
         : `no report ${activityWindow} (idle, lapsed, or never reported)`;
     const auth = t.permissions.includes('members.manage')
       ? ' [admin]'
-      : t.permissions.includes('objectives.create')
+      : t.permissions.includes('objectives.manage')
         ? ' [operator]'
         : '';
     return `- ${t.name}${self} [${t.role.title}]${auth} ${state}; activity=${activity}`;
@@ -2453,7 +2332,7 @@ async function handleObjectivesList(
 
   // `related`, not `assignee` — this tool promises "objectives you have
   // a relationship with", and pinning `assignee` collapsed that to the
-  // assignee-only view for any caller holding `objectives.create`,
+  // assignee-only view for any caller holding `objectives.manage`,
   // hiding everything they originated or watch.
   //
   // `open` spans two statuses and the server's `status` takes one, so it
@@ -2471,7 +2350,7 @@ async function handleObjectivesList(
   // `assignee` is applied HERE rather than sent to the server, which
   // honours it on exactly one of three branches: it is silently dropped
   // whenever `related` is also present, and a caller without
-  // `objectives.create` always gets the whole relationship union no
+  // `objectives.manage` always gets the whole relationship union no
   // matter what they asked for. Sending it would return a superset with
   // nothing saying so. Narrowing the related set is also self-scoping by
   // construction — the result can only ever be a subset of what this
@@ -2502,16 +2381,8 @@ async function handleObjectivesList(
     // cannot tell work it owns from work it merely watches, which is the
     // whole reason assignee is rendered.
     const own = o.assignee === instructions.name ? ' (you)' : '';
-    // The contract version belongs HERE, not only on `objectives_view`.
-    // For an agent recovering from a cleared context this list IS the
-    // record it sees — `objectives_list status=open` is the documented
-    // recovery path, and `view` is what you call once you already know
-    // something is worth opening. Without the marker a verifier who
-    // checked v2, came back, and reads v3 here has no way to know the
-    // contract moved under them.
-    const amended = o.outcomeVersion > 1 ? ` [contract v${o.outcomeVersion} — amended]` : '';
     return (
-      `- ${o.id} [${o.status}]${amended} ${o.title}\n` +
+      `- ${o.id} [${o.status}] ${o.title}\n` +
       `    assignee: ${o.assignee}${own}  originator: ${o.originator}\n` +
       `    outcome: ${o.outcome}\n` +
       `    updated: ${formatAgentTimestamp(o.updatedAt)} (${formatRelativeAge(o.updatedAt)})`
@@ -2582,7 +2453,7 @@ async function handleProcessDocumentWrite(
   if (args.disposition !== 'correction' && args.disposition !== 'scope_change') {
     return errorResult(
       'process_document_write: `disposition` must be "correction" (retroactive) or ' +
-        '"scope_change" (forward-only) — the same field and meaning as `objectives_amend`',
+        '"scope_change" (forward-only)',
     );
   }
   const { document, edit } = await brokerClient.writeProcessDocument({
@@ -2601,58 +2472,6 @@ async function handleProcessDocumentWrite(
       `${created ? 'History begins here.' : 'The prior text is retained and retrievable via `process_document_history`.'} ` +
       'Every member receives it in their injected context at their NEXT runner start — ' +
       'a teammate already running has not seen it. No broadcast is needed and none was sent.',
-  );
-}
-
-async function handleObjectivesAmend(
-  args: Record<string, unknown>,
-  brokerClient: BrokerClient,
-): Promise<CallToolResult> {
-  const id = typeof args.id === 'string' ? args.id : '';
-  if (!id) return errorResult('objectives_amend: `id` is required');
-  const reason = typeof args.reason === 'string' ? args.reason : '';
-  if (!reason) return errorResult('objectives_amend: `reason` is required');
-  const disposition = args.disposition === 'scope_change' ? 'scope_change' : 'correction';
-  if (args.disposition !== 'correction' && args.disposition !== 'scope_change') {
-    return errorResult(
-      'objectives_amend: `disposition` must be "correction" (retroactive) or "scope_change" (forward-only)',
-    );
-  }
-  const updated = await brokerClient.amendObjective(id, {
-    ...(typeof args.outcome === 'string' ? { outcome: args.outcome } : {}),
-    ...(typeof args.title === 'string' ? { title: args.title } : {}),
-    ...(typeof args.body === 'string' ? { body: args.body } : {}),
-    reason,
-    disposition,
-  });
-  const binding =
-    disposition === 'correction'
-      ? 'retroactive — work was never validly held to the prior text'
-      : 'forward-only — work already underway finishes under the prior text';
-  return textResult(
-    `amended '${updated.id}' to contract version ${updated.outcomeVersion} (${disposition}: ${binding}). ` +
-      'The prior text is kept and shown by `objectives_view`.',
-  );
-}
-
-async function handleObjectivesCorrectEvent(
-  args: Record<string, unknown>,
-  brokerClient: BrokerClient,
-): Promise<CallToolResult> {
-  const id = typeof args.id === 'string' ? args.id : '';
-  if (!id) return errorResult('objectives_correct_event: `id` is required');
-  const eventId = typeof args.eventId === 'string' ? args.eventId : '';
-  if (!eventId) {
-    return errorResult('objectives_correct_event: `eventId` is required (see `objectives_view`)');
-  }
-  const correction = typeof args.correction === 'string' ? args.correction : '';
-  const reason = typeof args.reason === 'string' ? args.reason : '';
-  if (!correction) return errorResult('objectives_correct_event: `correction` is required');
-  if (!reason) return errorResult('objectives_correct_event: `reason` is required');
-  const updated = await brokerClient.correctObjectiveEvent(id, { eventId, correction, reason });
-  return textResult(
-    `recorded a correction on '${updated.id}'. The original event is unchanged and is now ` +
-      'marked corrected in `objectives_view`.',
   );
 }
 
@@ -2682,68 +2501,11 @@ async function handleObjectivesView(
   if (objective.blockReason) lines.push(`block reason: ${objective.blockReason}`);
   if (objective.result) lines.push(`result: ${objective.result}`);
 
-  // Amendments render WITH the record, never only in the event log.
-  // A reader who sees `status: done` and a result must not have to go
-  // reconstruct that the contract moved, or that the completion was
-  // recorded at the wrong moment. The structured field is the one an
-  // agent trusts, and it is the one that used to lie.
-  const contractAmendments = objective.amendments.filter((a) => a.target === 'contract');
-  const eventCorrections = objective.amendments.filter((a) => a.target === 'event');
-
-  if (objective.outcomeVersion > 1 || contractAmendments.length > 0) {
-    lines.push(
-      `contract version: ${objective.outcomeVersion} — the outcome above has been amended ${
-        contractAmendments.length === 1 ? 'once' : `${contractAmendments.length} times`
-      }`,
-    );
-    lines.push('amendments:');
-    for (const a of contractAmendments) {
-      if (a.target !== 'contract') continue;
-      const binding =
-        a.disposition === 'correction'
-          ? 'retroactive — work was never validly held to the prior text'
-          : 'forward-only — work already underway finishes under the prior text';
-      lines.push(
-        `  v${a.version} ${formatAgentTimestamp(a.ts)} ${a.actor} changed ${a.fields.join(', ')}`,
-      );
-      lines.push(`    disposition: ${a.disposition} (${binding})`);
-      lines.push(`    reason: ${a.reason}`);
-      for (const [field, prev] of Object.entries(a.previous)) {
-        lines.push(`    superseded ${field}: ${prev}`);
-      }
-    }
-  }
-  if (eventCorrections.length > 0) {
-    lines.push('event corrections:');
-    for (const a of eventCorrections) {
-      if (a.target !== 'event') continue;
-      lines.push(
-        `  ${formatAgentTimestamp(a.ts)} ${a.actor} corrects the ${a.eventKind} ${a.eventId} of ${formatAgentTimestamp(a.eventTs)}`,
-      );
-      lines.push(`    correction: ${a.correction}`);
-      lines.push(`    reason: ${a.reason}`);
-    }
-  }
-
   lines.push('events:');
-  // Marked by EVENT ID, not timestamp. Keying on `ts` marked every
-  // event sharing that millisecond — so correcting `watcher_added`
-  // also branded the `assigned` beside it: a durable surface asserting
-  // something false about a record, inside the feature built to stop
-  // exactly that.
-  const correctedIds = new Set(
-    eventCorrections.map((a) => (a.target === 'event' ? a.eventId : '')),
-  );
   for (const ev of events) {
     const ts = formatAgentTimestamp(ev.ts);
     const age = formatRelativeAge(ev.ts);
-    // Mark a superseded event inline too. Reading the log top-down is
-    // how an agent reconstructs what happened, and an uncorrected-
-    // looking `completed` is exactly the thing that misled a reader.
-    const mark = correctedIds.has(ev.id) ? ' [CORRECTED — see event corrections above]' : '';
-    lines.push(
-      `  ${ts} (${age}) ${ev.id} ${ev.actor} ${ev.kind} ${JSON.stringify(ev.payload)}${mark}`,
-    );
+    lines.push(`  ${ts} (${age}) ${ev.id} ${ev.actor} ${ev.kind} ${JSON.stringify(ev.payload)}`);
   }
   return textResult(lines.join('\n'));
 }
@@ -2755,23 +2517,41 @@ async function handleObjectivesUpdate(
   const id = typeof args.id === 'string' ? args.id : '';
   if (!id) return errorResult('objectives_update: `id` is required');
   const statusArg = typeof args.status === 'string' ? args.status : undefined;
-  if (statusArg !== 'active' && statusArg !== 'blocked') {
+  if (statusArg !== undefined && statusArg !== 'active' && statusArg !== 'blocked') {
     return errorResult(
-      `objectives_update: status is required and must be 'active' or 'blocked' (use objectives_complete for 'done' and objectives_discuss for progress notes)`,
+      `objectives_update: status must be 'active' or 'blocked' (use objectives_complete for 'done' and objectives_discuss for progress notes)`,
     );
   }
   const blockReason = typeof args.blockReason === 'string' ? args.blockReason : undefined;
-  if (statusArg === 'blocked' && (!blockReason || blockReason.trim().length === 0)) {
-    return errorResult('objectives_update: blockReason is required when status=blocked');
+  const assignee = typeof args.assignee === 'string' ? args.assignee : undefined;
+  const note = typeof args.note === 'string' ? args.note : undefined;
+  const names = (v: unknown): string[] | undefined =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : undefined;
+  const addWatchers = names(args.addWatchers);
+  const removeWatchers = names(args.removeWatchers);
+  if (
+    statusArg === undefined &&
+    blockReason === undefined &&
+    assignee === undefined &&
+    (addWatchers === undefined || addWatchers.length === 0) &&
+    (removeWatchers === undefined || removeWatchers.length === 0)
+  ) {
+    return errorResult(
+      'objectives_update: include at least one of status, blockReason, assignee, addWatchers, removeWatchers',
+    );
   }
   const updated = await brokerClient.updateObjective(id, {
-    status: statusArg,
+    ...(statusArg !== undefined ? { status: statusArg } : {}),
     ...(blockReason !== undefined ? { blockReason } : {}),
+    ...(assignee !== undefined ? { assignee } : {}),
+    ...(note !== undefined ? { note } : {}),
+    ...(addWatchers !== undefined && addWatchers.length > 0 ? { addWatchers } : {}),
+    ...(removeWatchers !== undefined && removeWatchers.length > 0 ? { removeWatchers } : {}),
   });
   return textResult(
-    `updated ${updated.id}: status=${updated.status}${
-      updated.blockReason ? ` blockReason="${updated.blockReason}"` : ''
-    }`,
+    `updated ${updated.id}: status=${updated.status} assignee=${updated.assignee}` +
+      `${updated.blockReason ? ` blockReason="${updated.blockReason}"` : ''}` +
+      `${updated.watchers.length > 0 ? ` watchers=${updated.watchers.join(',')}` : ''}`,
   );
 }
 
@@ -2828,8 +2608,7 @@ async function handleObjectivesCreate(
 ): Promise<CallToolResult> {
   if (
     !instructions.permissions.includes('members.manage') &&
-    !instructions.permissions.includes('objectives.create') &&
-    !instructions.permissions.includes('objectives.create')
+    !instructions.permissions.includes('objectives.manage')
   ) {
     return errorResult('objectives_create: you do not have the required permission on this team');
   }
@@ -2877,8 +2656,7 @@ async function handleObjectivesCancel(
 ): Promise<CallToolResult> {
   if (
     !instructions.permissions.includes('members.manage') &&
-    !instructions.permissions.includes('objectives.create') &&
-    !instructions.permissions.includes('objectives.create')
+    !instructions.permissions.includes('objectives.manage')
   ) {
     return errorResult('objectives_cancel: you do not have the required permission on this team');
   }
@@ -2887,59 +2665,6 @@ async function handleObjectivesCancel(
   const reason = typeof args.reason === 'string' ? args.reason : undefined;
   const updated = await brokerClient.cancelObjective(id, reason ? { reason } : {});
   return textResult(`cancelled ${updated.id}: ${updated.title}`);
-}
-
-async function handleObjectivesWatchers(
-  args: Record<string, unknown>,
-  brokerClient: BrokerClient,
-  instructions: InstructionsResponse,
-): Promise<CallToolResult> {
-  if (
-    !instructions.permissions.includes('members.manage') &&
-    !instructions.permissions.includes('objectives.create') &&
-    !instructions.permissions.includes('objectives.create')
-  ) {
-    return errorResult('objectives_watchers: you do not have the required permission on this team');
-  }
-  const id = typeof args.id === 'string' ? args.id : '';
-  if (!id) return errorResult('objectives_watchers: `id` is required');
-  const add = Array.isArray(args.add)
-    ? args.add.filter((v): v is string => typeof v === 'string')
-    : undefined;
-  const remove = Array.isArray(args.remove)
-    ? args.remove.filter((v): v is string => typeof v === 'string')
-    : undefined;
-  if ((!add || add.length === 0) && (!remove || remove.length === 0)) {
-    return errorResult('objectives_watchers: must include at least one of `add` or `remove`');
-  }
-  const updated = await brokerClient.updateObjectiveWatchers(id, {
-    ...(add && add.length > 0 ? { add } : {}),
-    ...(remove && remove.length > 0 ? { remove } : {}),
-  });
-  return textResult(
-    `updated ${updated.id} watchers: ${
-      updated.watchers.length > 0 ? updated.watchers.join(', ') : '(none)'
-    }`,
-  );
-}
-
-async function handleObjectivesReassign(
-  args: Record<string, unknown>,
-  brokerClient: BrokerClient,
-  instructions: InstructionsResponse,
-): Promise<CallToolResult> {
-  if (!instructions.permissions.includes('members.manage')) {
-    return errorResult('objectives_reassign: you do not have the required permission on this team');
-  }
-  const id = typeof args.id === 'string' ? args.id : '';
-  const to = typeof args.to === 'string' ? args.to : '';
-  if (!id || !to) return errorResult('objectives_reassign: both `id` and `to` are required');
-  const note = typeof args.note === 'string' ? args.note : undefined;
-  const updated = await brokerClient.reassignObjective(id, {
-    to,
-    ...(note ? { note } : {}),
-  });
-  return textResult(`reassigned ${updated.id} to ${updated.assignee}: ${updated.title}`);
 }
 
 // ── Admin handlers (team / presets / members) ─────────────────────

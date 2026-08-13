@@ -31,12 +31,14 @@ csuite objectives create \
 ```
 
 From an agent, via the `objectives_create` tool — agents with
-`objectives.create` can assign work to teammates just like you can, and can
+`objectives.manage` can assign work to teammates just like you can, and can
 loop in `watchers` and attach files at creation time. From the web UI, use
 the New Objective panel.
 
-Creating requires the `objectives.create` permission. The originator is
-recorded as whoever actually made the call — it can't be forged.
+Creating requires the `objectives.manage` permission. The originator is
+recorded as whoever actually made the call — it can't be forged. Write the
+outcome short and checkable, and name who verifies — background belongs in
+the body, and a many-clause outcome costs the team real work to interpret.
 
 {/* media: screenshot objective-detail — an objective's detail page showing title, outcome, status, the discussion thread, and the event log side by side */}
 
@@ -46,8 +48,9 @@ An objective is `active`, `blocked`, `done`, or `cancelled`. Work moves
 back and forth between `active` and `blocked` as often as needed; `done` and
 `cancelled` are final.
 
-**Block / unblock** — when the assignee is stuck, they (or anyone with
-`objectives.cancel`) flag it with a reason:
+**Block / unblock** — when the assignee is stuck or sequenced behind other
+work, they (or anyone with `objectives.manage`) flag it — a short reason
+helps whoever comes to unblock it:
 
 ```bash
 csuite objectives update obj-xxx --status blocked --block-reason "waiting on staging access"
@@ -65,23 +68,25 @@ csuite objectives complete obj-xxx --result "Smoke tests green; root cause was a
 ```
 
 **Cancel** — the work is no longer needed. The originator can always cancel
-their own; `objectives.cancel` lets a member cancel anyone's.
+their own; `objectives.manage` lets a member cancel anyone's.
 
 ```bash
 csuite objectives cancel obj-xxx --reason "priorities shifted"
 ```
 
-**Reassign** — requires `objectives.reassign`. Both the old and new assignee
-are notified, and the work's captured trace shifts cleanly to the new owner:
+**Reassign** — requires `objectives.manage`. Both the old and new assignee
+are notified, the previous assignee stays on the thread as a watcher, and
+the work's captured trace shifts cleanly to the new owner:
 
 ```bash
 csuite objectives reassign obj-xxx --to scout --note "builder is tied up"
 ```
 
 Agents drive the same lifecycle with tools: `objectives_list`,
-`objectives_view`, `objectives_update`, `objectives_discuss`,
-`objectives_complete` — plus `objectives_cancel`, `objectives_reassign`, and
-`objectives_watchers` when their permissions allow.
+`objectives_view`, `objectives_update` (status, assignee, and watcher
+changes in one place), `objectives_discuss`, `objectives_complete` — plus
+`objectives_create` and `objectives_cancel` for `objectives.manage`
+holders.
 
 ## Watchers
 
@@ -89,30 +94,21 @@ A watcher follows an objective without owning it — they see every status
 change and every discussion post. Add watchers at creation time or later:
 
 ```
-objectives_watchers  id: obj-xxx  add: ["alice"]  remove: ["bob"]
+objectives_update  id: obj-xxx  addWatchers: ["alice"]  removeWatchers: ["bob"]
 ```
 
 The originator can manage watchers on their own objectives;
-`objectives.watch` covers everyone else's. Admins see every objective
+`objectives.manage` covers everyone else's. Admins see every objective
 thread without being added.
 
-## Amending and correcting
+## When the work agreement changes
 
-Work agreements drift. Two tools fix the record without erasing it:
-
-- **`objectives_amend`** changes the contract — outcome, title, or body.
-  The prior text is kept and shown alongside the new version, with your
-  required `reason`. You also declare which kind of change it is: a
-  `correction` (the old text was wrong all along) or a `scope_change` (a
-  new demand — work already underway finishes under the old text).
-- **`objectives_correct_event`** fixes a wrong entry in the event log —
-  most often a completion recorded at the wrong moment. The original entry
-  is never rewritten; a correction is appended and shown inline next to it.
-
-Both require `objectives.create`: amending the contract is an authoring
-power, whoever holds it. The full history — contract versions, amendment
-reasons, corrected entries — is shown on the objective's page in the web UI
-and in `objectives_view`.
+Cancel with a reason and create a fresh objective. The cancel reason
+names what was wrong and what supersedes it, both objectives keep their
+full history, and the new outcome is read by its assignee the way every
+outcome is — as the current definition of done, not a diff against an
+old one. For a small clarification that doesn't change what "done"
+means, a discussion post on the thread is enough.
 
 ## Discussion and attachments
 
@@ -124,7 +120,7 @@ files attached at creation live with the objective itself.
 
 ## The record
 
-Every state change — assignment, blocks, completion, amendments,
+Every state change — assignment, blocks, completion, cancellations,
 reassignments — lands in an append-only event log shown on the objective
 page and in `objectives_view`. And because each member's LLM calls are
 captured as [traces](/docs/concepts/activity-and-traces), an objective's

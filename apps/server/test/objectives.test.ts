@@ -97,10 +97,11 @@ describe('ObjectivesStore.create', () => {
       NOW,
     );
     expect(objective.watchers).toEqual(['bob', 'carol']);
-    // One assigned + one watcher_added per net-new watcher.
-    expect(events.map((e) => e.kind)).toEqual(['assigned', 'watcher_added', 'watcher_added']);
-    const watcherEvents = events.filter((e) => e.kind === 'watcher_added');
-    expect(watcherEvents.map((e) => e.payload.name)).toEqual(['bob', 'carol']);
+    // ONE event for the whole creation. The watcher list rides the
+    // `assigned` payload; a per-watcher event here became a per-watcher
+    // re-broadcast of the full contract at the app layer.
+    expect(events.map((e) => e.kind)).toEqual(['assigned']);
+    expect(events[0]?.payload.watchers).toEqual(['bob', 'carol']);
   });
 
   it('assigns unique ids across rapid creates', () => {
@@ -185,14 +186,20 @@ describe('ObjectivesStore.update', () => {
     expect(result.events[0]?.payload).toMatchObject({ reason: 'waiting on Bob' });
   });
 
-  it('rejects blocked transition without a reason', () => {
+  it('blocks without a reason, storing null rather than refusing', () => {
     const { store, objective } = basicCreate();
-    expect(() => store.update(objective.id, { status: 'blocked' }, 'alice', LATER)).toThrow(
-      ObjectivesError,
+    const { objective: bare } = store.update(objective.id, { status: 'blocked' }, 'alice', LATER);
+    expect(bare.status).toBe('blocked');
+    expect(bare.blockReason).toBeNull();
+    // A whitespace-only reason is the same as none, not a stored blank.
+    store.update(objective.id, { status: 'active' }, 'alice', LATER);
+    const { objective: padded } = store.update(
+      objective.id,
+      { status: 'blocked', blockReason: '   ' },
+      'alice',
+      LATER,
     );
-    expect(() =>
-      store.update(objective.id, { status: 'blocked', blockReason: '   ' }, 'alice', LATER),
-    ).toThrow(ObjectivesError);
+    expect(padded.blockReason).toBeNull();
   });
 
   it('transitions blocked → active and clears the reason', () => {
@@ -308,13 +315,7 @@ describe('ObjectivesStore.cancel', () => {
   it('omits reason in the event payload when none provided', () => {
     const { store, objective } = basicCreate();
     const { events } = store.cancel(objective.id, {}, 'manager', LATER);
-    // Asserts the absence of `reason`, not an empty payload: every
-    // lifecycle event now also carries `contractVersion` so the record
-    // can say which contract the work was done against. Checking the
-    // whole object equals `{}` tested the stamping too, which is not
-    // what this test is about.
-    expect(events[0]?.payload).not.toHaveProperty('reason');
-    expect(events[0]?.payload.contractVersion).toBe(1);
+    expect(events[0]?.payload).toEqual({});
   });
 
   it('refuses to cancel a done objective', () => {

@@ -33,13 +33,13 @@ const TEAM: Team = {
     admin: [
       'team.manage',
       'members.manage',
-      'objectives.create',
-      'objectives.cancel',
-      'objectives.reassign',
-      'objectives.watch',
+      'objectives.manage',
+      'objectives.manage',
+      'objectives.manage',
+      'objectives.manage',
       'activity.read',
     ],
-    operator: ['objectives.create', 'objectives.cancel', 'objectives.reassign'],
+    operator: ['objectives.manage'],
   },
 };
 
@@ -66,7 +66,7 @@ function makeApp(): Harness {
     {
       name: 'bob',
       role: { title: 'manager', description: '' },
-      permissions: ['objectives.create', 'objectives.cancel', 'objectives.reassign'],
+      permissions: ['objectives.manage'],
       token: OPERATOR_TOKEN,
     },
     {
@@ -180,7 +180,7 @@ describe('POST /members', () => {
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { member: Teammate; token: string };
-    expect(body.member.permissions).toContain('objectives.create');
+    expect(body.member.permissions).toContain('objectives.manage');
   });
 
   it('rejects unknown preset names', async () => {
@@ -253,8 +253,8 @@ describe('PATCH /members/:name', () => {
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as Member;
-    expect(body.permissions).toContain('objectives.create');
-    expect(body.permissions).toContain('objectives.cancel');
+    expect(body.permissions).toContain('objectives.manage');
+    expect(body.permissions).toContain('objectives.manage');
   });
 
   it('rejects callers without members.manage', async () => {

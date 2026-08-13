@@ -4,9 +4,8 @@
  * Drives the `/objectives*` surface through the Hono request client
  * with three test members covering the relevant permission gates:
  *
- *   alice   — `members.manage` + `objectives.create` + `objectives.cancel` +
- *             `objectives.reassign` + `objectives.watch` (full admin)
- *   bob     — `objectives.create` + `objectives.cancel` (operator-ish)
+ *   alice   — `members.manage` + `objectives.manage` (full admin)
+ *   bob     — `objectives.manage` (operator-ish)
  *   carol   — no permissions (baseline member)
  *
  * Store-level state-machine semantics live in objectives.test.ts;
@@ -54,19 +53,13 @@ function makeApp() {
     {
       name: 'alice',
       role: { title: 'admin', description: '' },
-      permissions: [
-        'members.manage',
-        'objectives.create',
-        'objectives.cancel',
-        'objectives.reassign',
-        'objectives.watch',
-      ],
+      permissions: ['members.manage', 'objectives.manage'],
       token: ALICE,
     },
     {
       name: 'bob',
       role: { title: 'operator', description: '' },
-      permissions: ['objectives.create', 'objectives.cancel'],
+      permissions: ['objectives.manage'],
       token: BOB,
     },
     {
@@ -157,6 +150,24 @@ describe('POST /objectives', () => {
     expect(obj.assignee).toBe('carol');
     expect(obj.originator).toBe('alice');
     expect(obj.status).toBe('active');
+  });
+
+  it('creation with watchers lands as ONE push, naming them all', async () => {
+    const { app, broker } = makeApp();
+    const received: string[] = [];
+    broker.subscribe('carol', async (m) => {
+      received.push(m.body);
+    });
+    await createOne(app, ALICE, { assignee: 'carol', watchers: ['bob', 'dave'] });
+    await vi.waitFor(() => expect(received.length).toBeGreaterThan(0));
+
+    // One `assigned` push carries the whole creation. Before this,
+    // each initial watcher re-broadcast the full contract to every
+    // thread member — four near-identical payloads on a live team's
+    // 4-watcher objective before any work happened.
+    expect(received).toHaveLength(1);
+    expect(received[0]).toContain('[objective assigned]');
+    expect(received[0]).toContain('outcome:');
   });
 
   it('rejects callers without objectives.create with 403', async () => {
@@ -422,14 +433,17 @@ describe('PATCH /objectives/:id', () => {
     expect(res.status).toBe(403);
   });
 
-  it('returns 400 when blocking without a reason', async () => {
+  it('blocks without a reason — the reason is a nudge, not a gate', async () => {
     const { app } = makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'carol' });
     const res = await app.request(
       `/objectives/${obj.id}`,
       authed(CAROL, { status: 'blocked' }, 'PATCH'),
     );
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Objective;
+    expect(body.status).toBe('blocked');
+    expect(body.blockReason).toBeNull();
   });
 
   it('returns 409 (terminal) when patching a done objective', async () => {
@@ -551,66 +565,106 @@ describe('POST /objectives/:id/cancel', () => {
   });
 });
 
-// ─── POST /objectives/:id/reassign ───────────────────────────────────
+// ─── PATCH /objectives/:id — assignee changes ────────────────────────
 
-describe('POST /objectives/:id/reassign', () => {
-  it('reassigns to a different member when caller has objectives.reassign', async () => {
+describe('PATCH assignee (reassignment)', () => {
+  it('reassigns to a different member when caller has objectives.manage', async () => {
     const { app } = makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'carol' });
     const res = await app.request(
-      `/objectives/${obj.id}/reassign`,
-      authed(ALICE, { to: 'dave', note: 'context shift' }),
+      `/objectives/${obj.id}`,
+      authed(ALICE, { assignee: 'dave', note: 'context shift' }, 'PATCH'),
     );
     expect(res.status).toBe(200);
     const updated = (await res.json()) as Objective;
     expect(updated.assignee).toBe('dave');
   });
 
-  it('rejects callers without objectives.reassign with 403', async () => {
+  it('rejects callers without objectives.manage with 403 — even the assignee', async () => {
     const { app } = makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'carol' });
-    // bob has objectives.cancel but not objectives.reassign.
-    const res = await app.request(`/objectives/${obj.id}/reassign`, authed(BOB, { to: 'dave' }));
+    // carol is the assignee but holds no objectives.manage; she may
+    // update her own status, not hand the work to someone else.
+    const res = await app.request(
+      `/objectives/${obj.id}`,
+      authed(CAROL, { assignee: 'dave' }, 'PATCH'),
+    );
     expect(res.status).toBe(403);
   });
 
   it('rejects an unknown target assignee with 400', async () => {
     const { app } = makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'carol' });
-    const res = await app.request(`/objectives/${obj.id}/reassign`, authed(ALICE, { to: 'ghost' }));
+    const res = await app.request(
+      `/objectives/${obj.id}`,
+      authed(ALICE, { assignee: 'ghost' }, 'PATCH'),
+    );
     expect(res.status).toBe(400);
   });
 
-  it('returns 400 when reassigning to current assignee', async () => {
-    const { app } = makeApp();
+  it('setting the assignee to the current assignee is an idempotent no-op', async () => {
+    const { app, broker } = makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'carol' });
-    const res = await app.request(`/objectives/${obj.id}/reassign`, authed(ALICE, { to: 'carol' }));
-    expect(res.status).toBe(400);
+    const received: string[] = [];
+    broker.subscribe('carol', async (m) => {
+      received.push(m.body);
+    });
+    const res = await app.request(
+      `/objectives/${obj.id}`,
+      authed(ALICE, { assignee: 'carol' }, 'PATCH'),
+    );
+    expect(res.status).toBe(200);
+    const updated = (await res.json()) as Objective;
+    expect(updated.assignee).toBe('carol');
+    // No event, no push — nothing happened, so nothing is broadcast.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(received).toEqual([]);
   });
 });
 
-// ─── POST /objectives/:id/watchers ───────────────────────────────────
+// ─── PATCH /objectives/:id — watcher changes ─────────────────────────
 
-describe('POST /objectives/:id/watchers', () => {
+describe('PATCH watchers', () => {
+  it('a later watcher add pushes the name, not the whole contract', async () => {
+    const { app, broker } = makeApp();
+    const obj = await createOne(app, ALICE, { assignee: 'carol' });
+    const received: string[] = [];
+    broker.subscribe('carol', async (m) => {
+      received.push(m.body);
+    });
+    await app.request(`/objectives/${obj.id}`, authed(ALICE, { addWatchers: ['dave'] }, 'PATCH'));
+    await vi.waitFor(() =>
+      expect(received.some((b) => b.includes('[objective watcher_added]'))).toBe(true),
+    );
+
+    const push = received.find((b) => b.includes('[objective watcher_added]'));
+    // The joiner is named and can pull the contract with
+    // `objectives_view`; the full outcome is NOT re-broadcast to every
+    // thread member on each watcher change.
+    expect(push).toContain('watcher:  dave');
+    expect(push).toContain('title:');
+    expect(push).not.toContain('PR merged to main');
+  });
+
   it('lets the originator add a watcher to their own objective', async () => {
     const { app } = makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'carol' });
     const res = await app.request(
-      `/objectives/${obj.id}/watchers`,
-      authed(ALICE, { add: ['dave'] }),
+      `/objectives/${obj.id}`,
+      authed(ALICE, { addWatchers: ['dave'] }, 'PATCH'),
     );
     expect(res.status).toBe(200);
     const updated = (await res.json()) as Objective;
     expect(updated.watchers).toContain('dave');
   });
 
-  it('lets a member with objectives.watch add themselves', async () => {
+  it('lets a member with objectives.manage add themselves', async () => {
     const { app } = makeApp();
     const obj = await createOne(app, BOB, { assignee: 'dave' });
     // alice has objectives.watch, neither originator nor assignee.
     const res = await app.request(
-      `/objectives/${obj.id}/watchers`,
-      authed(ALICE, { add: ['alice'] }),
+      `/objectives/${obj.id}`,
+      authed(ALICE, { addWatchers: ['alice'] }, 'PATCH'),
     );
     expect(res.status).toBe(200);
   });
@@ -619,8 +673,8 @@ describe('POST /objectives/:id/watchers', () => {
     const { app } = makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'dave' });
     const res = await app.request(
-      `/objectives/${obj.id}/watchers`,
-      authed(CAROL, { add: ['carol'] }),
+      `/objectives/${obj.id}`,
+      authed(CAROL, { addWatchers: ['carol'] }, 'PATCH'),
     );
     expect(res.status).toBe(403);
   });
@@ -629,8 +683,8 @@ describe('POST /objectives/:id/watchers', () => {
     const { app } = makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'carol' });
     const res = await app.request(
-      `/objectives/${obj.id}/watchers`,
-      authed(ALICE, { add: ['ghost'] }),
+      `/objectives/${obj.id}`,
+      authed(ALICE, { addWatchers: ['ghost'] }, 'PATCH'),
     );
     expect(res.status).toBe(400);
   });
@@ -639,8 +693,8 @@ describe('POST /objectives/:id/watchers', () => {
     const { app } = makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'carol', watchers: ['bob'] });
     const res = await app.request(
-      `/objectives/${obj.id}/watchers`,
-      authed(ALICE, { add: ['dave'], remove: ['bob'] }),
+      `/objectives/${obj.id}`,
+      authed(ALICE, { addWatchers: ['dave'], removeWatchers: ['bob'] }, 'PATCH'),
     );
     expect(res.status).toBe(200);
     const updated = (await res.json()) as Objective;
@@ -710,7 +764,10 @@ describe('POST /objectives/:id/discuss', () => {
     );
     expect(before.status).toBe(200);
 
-    const re = await app.request(`/objectives/${obj.id}/reassign`, authed(ALICE, { to: 'dave' }));
+    const re = await app.request(
+      `/objectives/${obj.id}`,
+      authed(ALICE, { assignee: 'dave' }, 'PATCH'),
+    );
     expect(re.status).toBe(200);
 
     // The handover post — the whole point of the objective.
@@ -724,7 +781,7 @@ describe('POST /objectives/:id/discuss', () => {
   it('records the promoted watcher in the objective and its audit log', async () => {
     const { app } = makeApp();
     const obj = await createOne(app, BOB, { assignee: 'carol' });
-    await app.request(`/objectives/${obj.id}/reassign`, authed(ALICE, { to: 'dave' }));
+    await app.request(`/objectives/${obj.id}`, authed(ALICE, { assignee: 'dave' }, 'PATCH'));
 
     const view = await app.request(`/objectives/${obj.id}`, authed(ALICE));
     const body = (await view.json()) as {
@@ -745,7 +802,7 @@ describe('POST /objectives/:id/discuss', () => {
     const { app } = makeApp();
     // alice originates (and is admin), bob is assigned, carol watches.
     const obj = await createOne(app, ALICE, { assignee: 'bob', watchers: ['carol'] });
-    await app.request(`/objectives/${obj.id}/reassign`, authed(ALICE, { to: 'dave' }));
+    await app.request(`/objectives/${obj.id}`, authed(ALICE, { assignee: 'dave' }, 'PATCH'));
 
     for (const [token, who] of [
       [DAVE, 'new assignee'],
@@ -774,10 +831,10 @@ describe('POST /objectives/:id/discuss', () => {
     const { app } = makeApp();
     const obj = await createOne(app, BOB, { assignee: 'carol', watchers: ['dave'] });
     // Hand it to dave, who is both the incoming assignee and a watcher.
-    await app.request(`/objectives/${obj.id}/reassign`, authed(ALICE, { to: 'dave' }));
+    await app.request(`/objectives/${obj.id}`, authed(ALICE, { assignee: 'dave' }, 'PATCH'));
     // Then hand it back off dave — he is now the FORMER assignee and was
     // a watcher before he ever held it.
-    await app.request(`/objectives/${obj.id}/reassign`, authed(ALICE, { to: 'carol' }));
+    await app.request(`/objectives/${obj.id}`, authed(ALICE, { assignee: 'carol' }, 'PATCH'));
 
     const res = await app.request(
       `/objectives/${obj.id}/discuss`,
@@ -828,8 +885,8 @@ describe('end-to-end audit log via GET /objectives/:id', () => {
       authed(CAROL, { status: 'blocked', blockReason: 'waiting' }, 'PATCH'),
     );
     await app.request(`/objectives/${obj.id}`, authed(CAROL, { status: 'active' }, 'PATCH'));
-    await app.request(`/objectives/${obj.id}/watchers`, authed(ALICE, { add: ['dave'] }));
-    await app.request(`/objectives/${obj.id}/reassign`, authed(ALICE, { to: 'bob' }));
+    await app.request(`/objectives/${obj.id}`, authed(ALICE, { addWatchers: ['dave'] }, 'PATCH'));
+    await app.request(`/objectives/${obj.id}`, authed(ALICE, { assignee: 'bob' }, 'PATCH'));
     await app.request(`/objectives/${obj.id}/complete`, authed(BOB, { result: 'shipped' }));
     const detail = await app.request(`/objectives/${obj.id}`, authed(ALICE));
     const body = (await detail.json()) as GetObjectiveResponse;

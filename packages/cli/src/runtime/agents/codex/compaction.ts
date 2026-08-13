@@ -60,6 +60,14 @@ export function attachCodexCompactor(opts: {
   rpc: JsonRpcClient;
   getThreadId: () => string | null;
   log: AgentLog;
+  /**
+   * Fired on EVERY observed `contextCompaction` item — requested or
+   * codex's own auto-compaction. Either way the conversation just
+   * shrank to a summary, which is exactly when the open-objectives
+   * plate needs re-asserting; the runner's re-brief cooldown absorbs
+   * the requested case double-firing with the broker's own ack path.
+   */
+  onCompacted?: () => void;
   /** Test seam. Defaults to setTimeout/clearTimeout. */
   timers?: {
     set: (fn: () => void, ms: number) => unknown;
@@ -83,6 +91,16 @@ export function attachCodexCompactor(opts: {
   const unsubscribe = opts.rpc.onNotification(NOTIFICATIONS.itemCompleted, (params) => {
     const p = params as ItemCompletedNotification;
     if (p?.item?.type !== ITEM_TYPES.contextCompaction) return;
+    // Every compaction is reported outward, attributed or not — the
+    // context shrank either way, and the observer (the runner's
+    // re-brief) cares about the effect, not who asked for it.
+    try {
+      opts.onCompacted?.();
+    } catch (err) {
+      opts.log('codex: onCompacted observer threw', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
     if (pending === null) {
       // A compaction codex decided on by itself (auto-compaction), or
       // one whose request already timed out. Noted, not attributed —

@@ -30,7 +30,7 @@ export const PATHS = {
   // Web Push (browser) — VAPID public key + per-device subscriptions.
   pushVapidPublicKey: '/push/vapid-public-key',
   pushSubscriptions: '/push/subscriptions',
-  // Objectives — members with `objectives.create` post and assign,
+  // Objectives — members with `objectives.manage` post and assign,
   // assignees execute, watchers observe.
   objectives: '/objectives',
   // Channels — Slack-style named team threads. Anyone can create;
@@ -129,13 +129,7 @@ export const OBJECTIVE_PATHS = {
   one: (id: string) => `/objectives/${encodeURIComponent(id)}`,
   complete: (id: string) => `/objectives/${encodeURIComponent(id)}/complete`,
   cancel: (id: string) => `/objectives/${encodeURIComponent(id)}/cancel`,
-  reassign: (id: string) => `/objectives/${encodeURIComponent(id)}/reassign`,
   discuss: (id: string) => `/objectives/${encodeURIComponent(id)}/discuss`,
-  watchers: (id: string) => `/objectives/${encodeURIComponent(id)}/watchers`,
-  /** Amend the contract text. Requires `objectives.create`. */
-  amend: (id: string) => `/objectives/${encodeURIComponent(id)}/amend`,
-  /** Correct an earlier lifecycle event. Requires `objectives.create`. */
-  correctEvent: (id: string) => `/objectives/${encodeURIComponent(id)}/correct-event`,
 } as const;
 
 /**

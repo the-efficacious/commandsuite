@@ -62,8 +62,6 @@ const objective: Objective = {
   result: null,
   blockReason: null,
   attachments: [],
-  outcomeVersion: 1,
-  amendments: [],
 };
 
 const llmRow: ActivityRow = {

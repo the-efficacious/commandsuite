@@ -7,7 +7,7 @@
  */
 
 import { z } from 'zod';
-import { PERMISSIONS } from './types.js';
+import { LEGACY_PERMISSION_ALIASES, PERMISSIONS } from './types.js';
 
 export const LogLevelSchema = z.enum(['debug', 'info', 'notice', 'warning', 'error', 'critical']);
 
@@ -49,8 +49,20 @@ export const NameSchema = z
   .max(128)
   .regex(/^[a-zA-Z0-9._-]+$/, 'name must be alphanumeric with . _ - allowed');
 
-/** One of the gated permission leaves. Extend `PERMISSIONS` to grow. */
-export const PermissionSchema = z.enum(PERMISSIONS);
+/**
+ * One of the gated permission leaves. Extend `PERMISSIONS` to grow.
+ *
+ * Legacy keys are mapped forward BEFORE validation so a config or
+ * stored preset written under the old vocabulary parses to its modern
+ * leaf instead of failing the enum.
+ */
+export const PermissionSchema = z.preprocess(
+  (value) =>
+    typeof value === 'string' && value in LEGACY_PERMISSION_ALIASES
+      ? LEGACY_PERMISSION_ALIASES[value]
+      : value,
+  z.enum(PERMISSIONS),
+);
 
 /**
  * Team-level named permission bundles. Keys are preset names
@@ -238,60 +250,15 @@ export const ObjectiveEventKindSchema = z.enum([
   'reassigned',
   'watcher_added',
   'watcher_removed',
+  // LEGACY READ-ONLY KINDS. No write path produces these; databases
+  // written while the contract-amendment layer existed contain them,
+  // and `events()` schema-parses every stored kind — removing the
+  // values would make exactly those historical logs throw on read.
   'amended',
   'event_corrected',
 ]);
 
 export const AmendmentDispositionSchema = z.enum(['correction', 'scope_change']);
-export const AmendableFieldSchema = z.enum(['title', 'outcome', 'body']);
-
-export const ObjectiveAmendmentSchema = z.discriminatedUnion('target', [
-  z.object({
-    target: z.literal('contract'),
-    version: z.number().int().positive(),
-    ts: z.number().int().nonnegative(),
-    actor: NameSchema,
-    disposition: AmendmentDispositionSchema,
-    reason: z.string().min(1).max(2048),
-    fields: z.array(AmendableFieldSchema).min(1),
-    previous: z
-      .object({
-        title: z.string().optional(),
-        outcome: z.string().optional(),
-        body: z.string().optional(),
-      })
-      .default({}),
-  }),
-  z.object({
-    target: z.literal('event'),
-    ts: z.number().int().nonnegative(),
-    actor: NameSchema,
-    reason: z.string().min(1).max(2048),
-    eventId: z.string().min(1),
-    eventKind: ObjectiveEventKindSchema,
-    eventTs: z.number().int().nonnegative(),
-    correction: z.string().min(1).max(4096),
-  }),
-]);
-
-/**
- * At least one contract field, and `reason`/`disposition` are
- * required. An amendment that supplies no field is rejected upstream
- * rather than recorded as a no-op version bump.
- */
-export const AmendObjectiveRequestSchema = z.object({
-  title: z.string().min(1).max(200).optional(),
-  outcome: z.string().min(1).max(2048).optional(),
-  body: z.string().max(4096).optional(),
-  reason: z.string().min(1).max(2048),
-  disposition: AmendmentDispositionSchema,
-});
-
-export const CorrectObjectiveEventRequestSchema = z.object({
-  eventId: z.string().min(1),
-  correction: z.string().min(1).max(4096),
-  reason: z.string().min(1).max(2048),
-});
 
 export const ObjectiveSchema = z.object({
   id: z.string().min(1),
@@ -308,11 +275,6 @@ export const ObjectiveSchema = z.object({
   result: z.string().nullable(),
   blockReason: z.string().nullable(),
   attachments: z.array(AttachmentSchema).default([]),
-  // Defaulted so a client reading an older broker's response still
-  // parses: absent means "never amended, version 1", which is the
-  // truth for every objective created before amendment existed.
-  outcomeVersion: z.number().int().positive().default(1),
-  amendments: z.array(ObjectiveAmendmentSchema).default([]),
 });
 
 export const ObjectiveEventSchema = z.object({
@@ -347,10 +309,22 @@ export const UpdateObjectiveRequestSchema = z
   .object({
     status: z.enum(['active', 'blocked']).optional(),
     blockReason: z.string().max(2048).optional(),
+    /** Change the assignee. Requires `objectives.manage`. */
+    assignee: NameSchema.optional(),
+    /** Handover context for an assignee change; ignored otherwise. */
+    note: z.string().max(2048).optional(),
+    /** Watcher changes. Originator or `objectives.manage`. */
+    addWatchers: z.array(NameSchema).max(64).optional(),
+    removeWatchers: z.array(NameSchema).max(64).optional(),
   })
   .refine(
-    (v) => v.status !== undefined || v.blockReason !== undefined,
-    'update must include at least one of: status, blockReason',
+    (v) =>
+      v.status !== undefined ||
+      v.blockReason !== undefined ||
+      v.assignee !== undefined ||
+      v.addWatchers !== undefined ||
+      v.removeWatchers !== undefined,
+    'update must include at least one of: status, blockReason, assignee, addWatchers, removeWatchers',
   );
 
 export const DiscussObjectiveRequestSchema = z.object({
@@ -391,7 +365,7 @@ export const ListObjectivesQuerySchema = z.object({
    * assigned, originated, or watching. Distinct from `assignee`, which
    * is the narrower "on their plate" question: a member who originates
    * or watches without being assigned matches `related` and not
-   * `assignee`. Members without `objectives.create` may only pass their
+   * `assignee`. Members without `objectives.manage` may only pass their
    * own name.
    */
   related: NameSchema.optional(),

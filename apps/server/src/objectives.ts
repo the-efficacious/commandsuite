@@ -15,14 +15,18 @@
  *   back-and-forth. The store enforces every transition so callers
  *   can't sneak an illegal state through.
  *
- * - **Outcome is contractual.** Every objective has a non-empty
- *   `outcome` field at creation — the tangible definition of done. The
- *   instructions composer and tool-description builder both surface it so
- *   the agent sees its acceptance criteria on every turn.
+ * - **Outcome is the definition of done.** Every objective has a
+ *   non-empty `outcome` field at creation. The instructions composer
+ *   and tool-description builder both surface it so the agent sees its
+ *   acceptance criteria on every turn.
  *
  * - **Audit log via `objective_events`.** Every mutating call appends
  *   an event row in the same transaction as the state change. The
- *   table is append-only — there is no delete or update path.
+ *   table is append-only — there is no delete or update path. A
+ *   changed mind is a cancel-with-reason plus a fresh objective, not
+ *   an edit; the log may still CONTAIN legacy `amended` /
+ *   `event_corrected` rows from the retired contract-amendment layer,
+ *   and reads keep tolerating those kinds.
  *
  * - **Discussion piggybacks on threads.** The store itself doesn't
  *   manage the auto-thread-per-objective; it just emits events that
@@ -32,15 +36,11 @@
 
 import { ObjectiveEventKindSchema, ObjectiveStatusSchema } from 'csuite-sdk/schemas';
 import type {
-  AmendableField,
-  AmendObjectiveRequest,
   Attachment,
   CancelObjectiveRequest,
   CompleteObjectiveRequest,
-  CorrectObjectiveEventRequest,
   CreateObjectiveRequest,
   Objective,
-  ObjectiveAmendment,
   ObjectiveEvent,
   ObjectiveEventKind,
   ObjectiveStatus,
@@ -66,11 +66,8 @@ const CREATE_SCHEMA = `
     result TEXT,
     block_reason TEXT,
     attachments TEXT NOT NULL DEFAULT '[]',
-    -- The contract version the title/outcome/body columns represent.
-    -- 1 on creation; each contract amendment increments it. Every
-    -- lifecycle event records the version current when it fired, so
-    -- "which contract was this built against" is a stored fact rather
-    -- than a reconstruction from timestamps.
+    -- LEGACY, unread. Written by the retired contract-amendment layer;
+    -- kept so old and new databases share one shape.
     outcome_version INTEGER NOT NULL DEFAULT 1
   );
   CREATE INDEX IF NOT EXISTS objectives_assignee_idx ON objectives (assignee);
@@ -78,11 +75,10 @@ const CREATE_SCHEMA = `
   CREATE INDEX IF NOT EXISTS objectives_created_idx ON objectives (created_at);
 
   CREATE TABLE IF NOT EXISTS objective_events (
-    -- Durable, unique per event. A timestamp is NOT an identity: create
-    -- emits assigned and watcher_added in the same millisecond, and a
-    -- watcher batch emits several of one kind. A correction has to name
-    -- exactly one event, and a selector that is only USUALLY unique is
-    -- the shape this store exists to remove.
+    -- Durable, unique per event. A timestamp is NOT an identity: a
+    -- watcher batch emits several events of one kind in the same
+    -- millisecond, and anything that needs to name one event (UI keys,
+    -- external references) needs a selector that is unique by storage.
     event_id TEXT,
     objective_id TEXT NOT NULL,
     ts INTEGER NOT NULL,
@@ -155,7 +151,7 @@ function parsePayload(raw: string): Record<string, unknown> {
   return {};
 }
 
-function rowToObjective(row: ObjectiveRow, amendments: ObjectiveAmendment[] = []): Objective {
+function rowToObjective(row: ObjectiveRow): Objective {
   const status = ObjectiveStatusSchema.parse(row.status);
   return {
     id: row.id,
@@ -172,10 +168,6 @@ function rowToObjective(row: ObjectiveRow, amendments: ObjectiveAmendment[] = []
     result: row.result,
     blockReason: row.block_reason,
     attachments: parseAttachments(row.attachments ?? '[]'),
-    // Rows written before this column existed are version 1 by
-    // definition: they have never been amended.
-    outcomeVersion: row.outcome_version ?? 1,
-    amendments,
   };
 }
 
@@ -256,32 +248,6 @@ export interface ObjectivesStore {
   cancel(
     id: string,
     input: CancelObjectiveRequest,
-    actor: string,
-    now?: number,
-  ): ObjectivesMutationResult;
-  /**
-   * Amend the contract text. The caller must hold `objectives.create`
-   * (enforced upstream) — the contract is not the executor's to
-   * rewrite, and the gate is the permission rather than the role.
-   *
-   * Rewrites the row and appends an `amended` event carrying the
-   * superseded values. Rejects an amendment that changes nothing.
-   */
-  amend(
-    id: string,
-    input: AmendObjectiveRequest,
-    actor: string,
-    now?: number,
-  ): ObjectivesMutationResult;
-  /**
-   * Correct an earlier lifecycle event by superseding it. The target
-   * event stays in the log unrewritten; the contract version is
-   * untouched, because correcting the record of what happened is not
-   * a change to the contract work was built against.
-   */
-  correctEvent(
-    id: string,
-    input: CorrectObjectiveEventRequest,
     actor: string,
     now?: number,
   ): ObjectivesMutationResult;
@@ -431,40 +397,6 @@ class SqliteObjectivesStore implements ObjectivesStore {
     );
   }
 
-  /**
-   * Amendment record for a set of objectives, read from the event log.
-   *
-   * Derived rather than cached: the events ARE the append-only record,
-   * and a materialised column could drift from them. Batched so
-   * `list()` costs one extra query rather than one per row.
-   */
-  private amendmentsFor(ids: string[]): Map<string, ObjectiveAmendment[]> {
-    const out = new Map<string, ObjectiveAmendment[]>();
-    if (ids.length === 0) return out;
-    const placeholders = ids.map(() => '?').join(',');
-    const rows = this.db
-      .prepare(
-        `SELECT objective_id, ts, actor, kind, payload FROM objective_events
-          WHERE objective_id IN (${placeholders})
-            AND kind IN ('amended', 'event_corrected')
-          ORDER BY ts ASC`,
-      )
-      .all(...ids) as unknown as ObjectiveEventRow[];
-    for (const row of rows) {
-      let payload: Record<string, unknown>;
-      try {
-        payload = JSON.parse(row.payload) as Record<string, unknown>;
-      } catch {
-        // A malformed payload must not take out the whole read path.
-        continue;
-      }
-      const list = out.get(row.objective_id) ?? [];
-      list.push(payload as unknown as ObjectiveAmendment);
-      out.set(row.objective_id, list);
-    }
-    return out;
-  }
-
   list(filter: { assignee?: string; status?: ObjectiveStatus } = {}): Objective[] {
     let rows: ObjectiveRow[];
     if (filter.assignee && filter.status) {
@@ -479,14 +411,13 @@ class SqliteObjectivesStore implements ObjectivesStore {
     } else {
       rows = this.listAllStmt.all() as unknown as ObjectiveRow[];
     }
-    const amendments = this.amendmentsFor(rows.map((r) => r.id));
-    return rows.map((r) => rowToObjective(r, amendments.get(r.id) ?? []));
+    return rows.map((r) => rowToObjective(r));
   }
 
   get(id: string): Objective | null {
     const row = this.getStmt.get(id) as unknown as ObjectiveRow | undefined;
     if (!row) return null;
-    return rowToObjective(row, this.amendmentsFor([row.id]).get(row.id) ?? []);
+    return rowToObjective(row);
   }
 
   events(id: string): ObjectiveEvent[] {
@@ -539,6 +470,15 @@ class SqliteObjectivesStore implements ObjectivesStore {
         now,
         JSON.stringify(attachments),
       );
+      // ONE event for the whole creation. The `assigned` payload names
+      // every initial watcher, and the app layer fans one push out to
+      // the full thread membership — so a per-watcher `watcher_added`
+      // event at creation only re-broadcast the same contract N more
+      // times into the same contexts. (Measured on a live team: a
+      // 4-watcher objective pushed four near-identical payloads before
+      // any work happened.) Post-creation watcher changes still emit
+      // individually via `updateWatchers`, where each is a fact of its
+      // own.
       events.push(
         this.appendEvent(id, now, originator, 'assigned', {
           title,
@@ -547,12 +487,6 @@ class SqliteObjectivesStore implements ObjectivesStore {
           ...(watchers.length > 0 ? { watchers } : {}),
         }),
       );
-      // Emit one `watcher_added` per initial watcher so the audit log
-      // records each addition individually. Fanout happens at the app
-      // layer, which loops over events.
-      for (const w of watchers) {
-        events.push(this.appendEvent(id, now, originator, 'watcher_added', { name: w }));
-      }
       commit.run();
     } catch (err) {
       rollback.run();
@@ -585,14 +519,12 @@ class SqliteObjectivesStore implements ObjectivesStore {
     let nextBlockReason: string | null = current.blockReason;
 
     if (input.status === 'blocked') {
-      if (!input.blockReason || input.blockReason.trim().length === 0) {
-        throw new ObjectivesError(
-          'invalid_input',
-          'blockReason is required when transitioning to blocked',
-        );
-      }
+      // A reason is encouraged (the tool description nudges for one)
+      // but not enforced — field data showed real blocks carried in
+      // prose because the ceremony was heavier than the signal.
       nextStatus = 'blocked';
-      nextBlockReason = input.blockReason.trim();
+      const trimmed = input.blockReason?.trim() ?? '';
+      nextBlockReason = trimmed.length > 0 ? trimmed : null;
     } else if (input.status === 'active') {
       nextStatus = 'active';
       nextBlockReason = null;
@@ -889,159 +821,6 @@ class SqliteObjectivesStore implements ObjectivesStore {
     return updated;
   }
 
-  /**
-   * Amend the contract. Requires `objectives.create` upstream.
-   *
-   * Writes the new text to the row AND appends an `amended` event
-   * carrying the superseded values. One write satisfies two criteria:
-   * a reader gets current text directly from the row, and prior
-   * versions stay recoverable from the append-only log — with no diff
-   * to replay for either.
-   *
-   * An amendment that changes nothing is REJECTED rather than
-   * recorded. A no-op version bump would make the record say a
-   * contract moved when it did not, which is the same class of lie
-   * this exists to remove.
-   */
-  amend(
-    id: string,
-    input: AmendObjectiveRequest,
-    actor: string,
-    now: number = Date.now(),
-  ): ObjectivesMutationResult {
-    const row = this.getStmt.get(id) as unknown as ObjectiveRow | undefined;
-    if (!row) throw new ObjectivesError('not_found', `objective ${id} not found`);
-
-    const fields: AmendableField[] = [];
-    const previous: Partial<Record<AmendableField, string>> = {};
-    const next = { title: row.title, outcome: row.outcome, body: row.body };
-    if (input.title !== undefined && input.title !== row.title) {
-      fields.push('title');
-      previous.title = row.title;
-      next.title = input.title;
-    }
-    if (input.outcome !== undefined && input.outcome !== row.outcome) {
-      fields.push('outcome');
-      previous.outcome = row.outcome;
-      next.outcome = input.outcome;
-    }
-    if (input.body !== undefined && input.body !== row.body) {
-      fields.push('body');
-      previous.body = row.body;
-      next.body = input.body;
-    }
-    if (fields.length === 0) {
-      throw new ObjectivesError(
-        'invalid_input',
-        'amendment changes nothing — supply a title, outcome or body that differs',
-      );
-    }
-
-    const version = (row.outcome_version ?? 1) + 1;
-    const amendment: ObjectiveAmendment = {
-      target: 'contract',
-      version,
-      ts: now,
-      actor,
-      disposition: input.disposition,
-      reason: input.reason,
-      fields,
-      previous,
-    };
-
-    // ONE TRANSACTION, and it is the whole invariant. Two writes:
-    // the row moves to the new text, and the append-only log gains the
-    // superseded text. If the second fails and the first stands, the
-    // contract has changed and its prior text and reason are
-    // unrecoverable — precisely the state this store exists to make
-    // impossible, and worse than the immutability it replaces.
-    //
-    // The caller also sees a 500 in that case, so they are told the
-    // amendment failed while the contract actually moved.
-    let event: ObjectiveEvent;
-    this.db.prepare('BEGIN').run();
-    try {
-      this.db
-        .prepare(
-          `UPDATE objectives SET title = ?, outcome = ?, body = ?, outcome_version = ?, updated_at = ?
-            WHERE id = ?`,
-        )
-        .run(next.title, next.outcome, next.body, version, now, id);
-      event = this.appendEvent(id, now, actor, 'amended', {
-        ...amendment,
-      } as unknown as Record<string, unknown>);
-      this.db.prepare('COMMIT').run();
-    } catch (err) {
-      try {
-        this.db.prepare('ROLLBACK').run();
-      } catch {
-        /* rollback of a failed tx can itself fail — nothing to do */
-      }
-      throw err;
-    }
-
-    return { objective: this.get(id) as Objective, events: [event] };
-  }
-
-  /**
-   * Correct an earlier lifecycle event.
-   *
-   * The target event is NEVER rewritten — this appends a superseding
-   * record naming it by timestamp. The motivating case is a
-   * completion recorded at a PR head rather than the merge SHA, where
-   * the author could only mark it "provisional" in prose.
-   *
-   * Does not touch `outcome_version`: correcting the record of what
-   * happened is not a change to the contract that work was built
-   * against.
-   */
-  correctEvent(
-    id: string,
-    input: CorrectObjectiveEventRequest,
-    actor: string,
-    now: number = Date.now(),
-  ): ObjectivesMutationResult {
-    const row = this.getStmt.get(id) as unknown as ObjectiveRow | undefined;
-    if (!row) throw new ObjectivesError('not_found', `objective ${id} not found`);
-
-    // Selected by durable id, so the target is unambiguous by
-    // construction rather than by validation. The ambiguity guard below
-    // should be unreachable; it is kept because a guard on an
-    // unreachable state is cheap and fails loudly if the assumption
-    // stops holding.
-    const candidates = (this.listEventsStmt.all(id) as unknown as ObjectiveEventRow[]).filter(
-      (e) => e.event_id === input.eventId && e.kind !== 'event_corrected',
-    );
-    if (candidates.length === 0) {
-      throw new ObjectivesError(
-        'not_found',
-        `no correctable event '${input.eventId}' on objective ${id}`,
-      );
-    }
-    if (candidates.length > 1) {
-      throw new ObjectivesError(
-        'invalid_transition',
-        `event id '${input.eventId}' matches ${candidates.length} events on objective ${id}`,
-      );
-    }
-    const target = candidates[0] as ObjectiveEventRow;
-
-    const amendment: ObjectiveAmendment = {
-      target: 'event',
-      ts: now,
-      actor,
-      reason: input.reason,
-      eventId: input.eventId,
-      eventKind: ObjectiveEventKindSchema.parse(target.kind),
-      eventTs: target.ts,
-      correction: input.correction,
-    };
-    const event = this.appendEvent(id, now, actor, 'event_corrected', {
-      ...amendment,
-    } as unknown as Record<string, unknown>);
-    return { objective: this.get(id) as Objective, events: [event] };
-  }
-
   private appendEvent(
     id: string,
     ts: number,
@@ -1049,19 +828,7 @@ class SqliteObjectivesStore implements ObjectivesStore {
     kind: ObjectiveEventKind,
     payload: Record<string, unknown>,
   ): ObjectiveEvent {
-    // Stamp the contract version current at emission onto every
-    // lifecycle event. This is what makes "which contract was this
-    // work built against" a field on the completion rather than a
-    // reconstruction from timestamps — and it is what stops an
-    // amendment landing mid-flight from silently moving goalposts.
-    //
-    // Amendment records carry their own `version`, so they are left
-    // alone.
-    let stamped = payload;
-    if (kind !== 'amended' && kind !== 'event_corrected') {
-      const row = this.getStmt.get(id) as unknown as ObjectiveRow | undefined;
-      stamped = { ...payload, contractVersion: row?.outcome_version ?? 1 };
-    }
+    const stamped = payload;
     const eventId = `ev-${globalThis.crypto.randomUUID()}`;
     this.insertEventStmt.run(eventId, id, ts, actor, kind, JSON.stringify(stamped));
     return { id: eventId, objectiveId: id, ts, actor, kind, payload: stamped };

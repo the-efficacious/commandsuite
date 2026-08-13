@@ -30,7 +30,6 @@ import {
 import {
   ActivityReportSchema,
   AddChannelMemberRequestSchema,
-  AmendObjectiveRequestSchema,
   ApproveEnrollmentRequestSchema,
   ApproveEnrollmentResponseSchema,
   BindSecretRequestSchema,
@@ -38,7 +37,6 @@ import {
   BindVariableRequestSchema,
   ChannelSchema,
   ContextControlResponseSchema,
-  CorrectObjectiveEventRequestSchema,
   CreateChannelRequestSchema,
   CreateMemberResponseSchema,
   CreateNotificationEndpointRequestSchema,
@@ -122,7 +120,6 @@ import type {
   ActivityReport,
   ActivityRow,
   AddChannelMemberRequest,
-  AmendObjectiveRequest,
   ApproveEnrollmentRequest,
   ApproveEnrollmentResponse,
   BindSecretRequest,
@@ -133,7 +130,6 @@ import type {
   ChannelSummary,
   ContextControlRequest,
   ContextControlResponse,
-  CorrectObjectiveEventRequest,
   CreateChannelRequest,
   CreateMemberRequest,
   CreateMemberResponse,
@@ -185,7 +181,6 @@ import type {
   PushResult,
   PushSubscriptionPayload,
   PushSubscriptionResponse,
-  ReassignObjectiveRequest,
   RefreshToolSourceResponse,
   RejectEnrollmentRequest,
   RenameChannelRequest,
@@ -212,7 +207,6 @@ import type {
   UpdateSecretRequest,
   UpdateToolSourceRequest,
   UpdateVariableRequest,
-  UpdateWatchersRequest,
   UploadActivityRequest,
   UploadActivityResponse,
   VapidPublicKeyResponse,
@@ -469,7 +463,7 @@ export class Client {
   // ─────────────────────── Objectives ───────────────────────
 
   /**
-   * List objectives. Members without `objectives.create` see only
+   * List objectives. Members without `objectives.manage` see only
    * their own; members with that permission can filter by any
    * `assignee` name. Pass `status` to scope to a single lifecycle
    * state; omit to see all.
@@ -498,7 +492,7 @@ export class Client {
 
   /**
    * Create (and atomically assign) an objective. Requires the caller
-   * to hold the `objectives.create` permission.
+   * to hold the `objectives.manage` permission.
    */
   async createObjective(payload: CreateObjectiveRequest): Promise<Objective> {
     const resp = await this.request(PATHS.objectives, {
@@ -538,58 +532,13 @@ export class Client {
 
   /**
    * Terminally cancel an objective. Originator, or any member with
-   * `objectives.cancel`.
+   * `objectives.manage`.
    */
   async cancelObjective(id: string, payload: CancelObjectiveRequest = {}): Promise<Objective> {
     const resp = await this.request(OBJECTIVE_PATHS.cancel(id), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
-    });
-    return ObjectiveSchema.parse(await this.json(resp));
-  }
-
-  /**
-   * Reassign an objective to a different member. Requires
-   * `objectives.reassign`. Pushes to both old and new assignee.
-   */
-  async reassignObjective(id: string, payload: ReassignObjectiveRequest): Promise<Objective> {
-    const resp = await this.request(OBJECTIVE_PATHS.reassign(id), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    return ObjectiveSchema.parse(await this.json(resp));
-  }
-
-  /**
-   * Amend an objective's contract text. Requires `objectives.create`.
-   * The prior text stays recoverable in the amendment record; the
-   * response carries the current contract and its version.
-   */
-  async amendObjective(id: string, payload: AmendObjectiveRequest): Promise<Objective> {
-    const validated = AmendObjectiveRequestSchema.parse(payload);
-    const resp = await this.request(OBJECTIVE_PATHS.amend(id), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(validated),
-    });
-    return ObjectiveSchema.parse(await this.json(resp));
-  }
-
-  /**
-   * Correct an earlier lifecycle event. Requires `objectives.create`.
-   * The target event is superseded, never rewritten.
-   */
-  async correctObjectiveEvent(
-    id: string,
-    payload: CorrectObjectiveEventRequest,
-  ): Promise<Objective> {
-    const validated = CorrectObjectiveEventRequestSchema.parse(payload);
-    const resp = await this.request(OBJECTIVE_PATHS.correctEvent(id), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(validated),
     });
     return ObjectiveSchema.parse(await this.json(resp));
   }
@@ -649,21 +598,6 @@ export class Client {
       document: ProcessDocumentSchema.parse(body.document),
       edit: ProcessDocumentEditSchema.parse(body.edit),
     };
-  }
-
-  /**
-   * Add and/or remove watchers on an objective. Originator or any
-   * member with `objectives.watch`. Every name must resolve to a
-   * known team member. Empty add/remove arrays are no-ops; the
-   * server still returns the updated objective for sync purposes.
-   */
-  async updateObjectiveWatchers(id: string, payload: UpdateWatchersRequest): Promise<Objective> {
-    const resp = await this.request(OBJECTIVE_PATHS.watchers(id), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    return ObjectiveSchema.parse(await this.json(resp));
   }
 
   /**

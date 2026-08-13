@@ -235,6 +235,11 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
         // notifications feed the same observable claude's hooks drive.
         // Undefined when --no-trace.
         busy: runner.captureHost?.busy,
+        // Codex reports compaction (requested or auto) as a
+        // contextCompaction item; that is this framework's equivalent
+        // of claude's SessionStart(source=compact) hook, so it drives
+        // the same plate re-assertion.
+        onCompacted: () => runner.rebrief('context-compaction'),
         log,
       });
 
