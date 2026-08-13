@@ -137,7 +137,7 @@ export function ObjectiveCreate() {
 
   return (
     <div
-      class="flex-1 overflow-y-auto"
+      class="flex-1 overflow-y-auto measured record"
       style="padding:20px max(1rem,env(safe-area-inset-right)) 32px max(1rem,env(safe-area-inset-left))"
     >
       <nav aria-label="Breadcrumb" class="crumbs" style="margin-bottom:14px">
@@ -158,7 +158,7 @@ export function ObjectiveCreate() {
         Create + assign
       </h1>
 
-      <form onSubmit={onSubmit} style="display:flex;flex-direction:column;gap:18px;max-width:680px">
+      <form onSubmit={onSubmit} style="display:flex;flex-direction:column;gap:18px">
         <div class="field">
           <label class="field-label" for="obj-title">
             Title
@@ -182,8 +182,8 @@ export function ObjectiveCreate() {
             Outcome <span class="req">*</span>
           </label>
           <div class="field-help">
-            The tangible result that defines "done". Propagates to the assignee's tool descriptions
-            and is surfaced when they go to mark complete.
+            The definition of done — short and checkable, naming who verifies. The assignee reads
+            their result against it when they mark complete; background belongs in the body below.
           </div>
           <textarea
             id="obj-outcome"

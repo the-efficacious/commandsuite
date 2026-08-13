@@ -1,28 +1,42 @@
 /**
- * Objectives list view — the full plate for a user (or team-wide for
- * admins). Click a row to open `ObjectiveDetail`. Admins, operators,
- * and lead-agents get a "+ New" button at the top (agents cannot
- * create objectives).
+ * Objectives ledger — the full record for a user (or team-wide for
+ * admins), grouped by whether the work is still live.
  *
- * Each row is a `.card` with status badge + title + assignee + outcome.
- * Status uses canonical `.badge` variants so Done / Cancelled don't
- * collide visually.
+ *   ┌───────────────────────────────────────────────┐
+ *   │ OBJECTIVES                          [+ New]   │
+ *   │ 4 live · 1 blocked          [ All │ Mine ]    │
+ *   ├───────────────────────────────────────────────┤
+ *   │ LIVE — 4                                      │
+ *   │ [blocked] Ship the thing   ⓶   → rune · 2h    │  blocked floats up
+ *   │ [active]  Fix the login…       (you) · 40m    │
+ *   ├───────────────────────────────────────────────┤
+ *   │ ▸ Closed — 59 done · 16 cancelled             │  collapsed ledger
+ *   └───────────────────────────────────────────────┘
+ *
+ * Live rows sort blocked-first (they need attention), then by last
+ * activity. Closed rows keep the record without crowding the working
+ * set. The count-badge is the objective thread's unread count — the
+ * "what moved since you last looked" signal, fed by the same
+ * machinery as the chat sidebar.
  */
 
 import { signal } from '@preact/signals';
-import type { Objective, ObjectiveStatus } from 'csuite-sdk/types';
+import type { Message, Objective } from 'csuite-sdk/types';
 import { useEffect } from 'preact/hooks';
 import { instructions } from '../lib/instructions.js';
+import { messagesByThread, objectiveThreadKey } from '../lib/messages.js';
 import { loadObjectives, objectives, objectivesLoaded } from '../lib/objectives.js';
+import { absoluteTime, relativeTime } from '../lib/time.js';
+import { lastReadByThread, unreadCount } from '../lib/unread.js';
 import { selectObjectiveCreate, selectObjectiveDetail } from '../lib/view.js';
-import { AlertTriangle } from './icons/index.js';
+import { AlertTriangle, ChevronDown, ChevronRight } from './icons/index.js';
 import { EmptyState, ErrorCallout, PageHeader } from './ui/index.js';
 
 export interface ObjectivesPanelProps {
   viewer: string;
 }
 
-const STATUS_BADGE: Record<ObjectiveStatus, string> = {
+const STATUS_BADGE: Record<Objective['status'], string> = {
   active: 'badge solid',
   blocked: 'badge caution solid',
   done: 'badge soft',
@@ -30,12 +44,25 @@ const STATUS_BADGE: Record<ObjectiveStatus, string> = {
 };
 
 const panelError = signal<string | null>(null);
+const scopeFilter = signal<'all' | 'mine'>('all');
+const closedOpen = signal(false);
+
+/** Last movement on an objective: lifecycle change or, when the
+ * viewer's message store has the thread, its latest discussion post
+ * (discussion doesn't bump `updatedAt` server-side). */
+function lastActivity(o: Objective, msgMap: Map<string, Message[]>): number {
+  const msgs = msgMap.get(objectiveThreadKey(o.id)) ?? [];
+  const lastMsg = msgs.length > 0 ? (msgs[msgs.length - 1]?.ts ?? 0) : 0;
+  return Math.max(o.updatedAt, lastMsg);
+}
 
 export function ObjectivesPanel({ viewer }: ObjectivesPanelProps) {
   const b = instructions.value;
   const list = objectives.value;
   const loaded = objectivesLoaded.value;
   const err = panelError.value;
+  const lastReadMap = lastReadByThread.value;
+  const msgMap = messagesByThread.value;
 
   useEffect(() => {
     if (!loaded) {
@@ -52,7 +79,7 @@ export function ObjectivesPanel({ viewer }: ObjectivesPanelProps) {
     // Skeleton rows hold the final row height so arrival doesn't reflow.
     return (
       <div
-        class="flex-1 overflow-y-auto"
+        class="flex-1 overflow-y-auto measured"
         style="padding:24px max(1rem,env(safe-area-inset-right)) 24px max(1rem,env(safe-area-inset-left))"
         aria-busy="true"
       >
@@ -70,14 +97,35 @@ export function ObjectivesPanel({ viewer }: ObjectivesPanelProps) {
     });
   };
 
+  const scoped = scopeFilter.value === 'mine' ? list.filter((o) => o.assignee === viewer) : list;
+  const hasOthers = list.some((o) => o.assignee !== viewer);
+
+  const live = scoped
+    .filter((o) => o.status === 'active' || o.status === 'blocked')
+    .sort((a, z) => {
+      if (a.status !== z.status) return a.status === 'blocked' ? -1 : 1;
+      return lastActivity(z, msgMap) - lastActivity(a, msgMap);
+    });
+  const closed = scoped
+    .filter((o) => o.status === 'done' || o.status === 'cancelled')
+    .sort((a, z) => (z.completedAt ?? z.updatedAt) - (a.completedAt ?? a.updatedAt));
+  const blockedCount = live.filter((o) => o.status === 'blocked').length;
+  const doneCount = closed.filter((o) => o.status === 'done').length;
+  const cancelledCount = closed.length - doneCount;
+
+  const title =
+    live.length === 0
+      ? 'All quiet'
+      : `${live.length} live${blockedCount > 0 ? ` · ${blockedCount} blocked` : ''}`;
+
   return (
     <div
-      class="flex-1 overflow-y-auto"
+      class="flex-1 overflow-y-auto measured"
       style="padding:24px max(1rem,env(safe-area-inset-right)) 24px max(1rem,env(safe-area-inset-left))"
     >
       <PageHeader
         eyebrow="Objectives"
-        title={`${list.length} on the board`}
+        title={title}
         actions={
           canCreate && (
             <button type="button" onClick={selectObjectiveCreate} class="btn btn-primary">
@@ -96,17 +144,98 @@ export function ObjectivesPanel({ viewer }: ObjectivesPanelProps) {
         />
       )}
 
-      {list.length === 0 ? (
+      {hasOthers && (
+        // Block wrapper: `.measured > *` centres fit-content children,
+        // and `.segmented` is inline-flex — the wrapper keeps it
+        // aligned to the column like everything else.
+        <div style="margin-bottom:18px">
+          <div class="segmented">
+            <button
+              type="button"
+              aria-pressed={scopeFilter.value === 'all'}
+              onClick={() => {
+                scopeFilter.value = 'all';
+              }}
+            >
+              All
+            </button>
+            <button
+              type="button"
+              aria-pressed={scopeFilter.value === 'mine'}
+              onClick={() => {
+                scopeFilter.value = 'mine';
+              }}
+            >
+              Mine
+            </button>
+          </div>
+        </div>
+      )}
+
+      {scoped.length === 0 ? (
         <EmptyState
           title="No objectives yet"
           message={canCreate ? 'Click "+ New" to assign one.' : 'Nothing on your plate right now.'}
         />
       ) : (
-        <ul style="display:flex;flex-direction:column;gap:10px;list-style:none;padding:0;margin:0">
-          {list.map((o) => (
-            <ObjectiveRow key={o.id} objective={o} viewer={viewer} />
-          ))}
-        </ul>
+        <>
+          {live.length > 0 ? (
+            <section aria-label="Live objectives">
+              <div class="eyebrow" style="margin-bottom:10px">
+                Live — {live.length}
+              </div>
+              <ul style="display:flex;flex-direction:column;gap:10px;list-style:none;padding:0;margin:0">
+                {live.map((o) => (
+                  <ObjectiveRow
+                    key={o.id}
+                    objective={o}
+                    viewer={viewer}
+                    unread={unreadCount(objectiveThreadKey(o.id), viewer, lastReadMap, msgMap)}
+                    activityTs={lastActivity(o, msgMap)}
+                  />
+                ))}
+              </ul>
+            </section>
+          ) : (
+            <div style="font-family:var(--ef-font-mono);font-size:11.5px;letter-spacing:.14em;color:var(--ef-text-muted);text-transform:uppercase;padding:6px 0 2px">
+              ◇ Nothing live — the board is clear
+            </div>
+          )}
+
+          {closed.length > 0 && (
+            <section aria-label="Closed objectives" style="margin-top:22px">
+              <button
+                type="button"
+                class="btn btn-ghost btn-sm"
+                aria-expanded={closedOpen.value}
+                onClick={() => {
+                  closedOpen.value = !closedOpen.value;
+                }}
+              >
+                {closedOpen.value ? (
+                  <ChevronDown size={13} aria-hidden="true" />
+                ) : (
+                  <ChevronRight size={13} aria-hidden="true" />
+                )}
+                Closed — {doneCount} done
+                {cancelledCount > 0 ? ` · ${cancelledCount} cancelled` : ''}
+              </button>
+              {closedOpen.value && (
+                <ul style="display:flex;flex-direction:column;gap:10px;list-style:none;padding:0;margin:12px 0 0">
+                  {closed.map((o) => (
+                    <ObjectiveRow
+                      key={o.id}
+                      objective={o}
+                      viewer={viewer}
+                      unread={0}
+                      activityTs={o.completedAt ?? o.updatedAt}
+                    />
+                  ))}
+                </ul>
+              )}
+            </section>
+          )}
+        </>
       )}
     </div>
   );
@@ -114,17 +243,30 @@ export function ObjectivesPanel({ viewer }: ObjectivesPanelProps) {
 
 export function __resetObjectivesPanelForTests(): void {
   panelError.value = null;
+  scopeFilter.value = 'all';
+  closedOpen.value = false;
 }
 
-function ObjectiveRow({ objective, viewer }: { objective: Objective; viewer: string }) {
+function ObjectiveRow({
+  objective,
+  viewer,
+  unread,
+  activityTs,
+}: {
+  objective: Objective;
+  viewer: string;
+  unread: number;
+  activityTs: number;
+}) {
   const isMine = objective.assignee === viewer;
+  const terminal = objective.status === 'done' || objective.status === 'cancelled';
   return (
     <li>
       <button
         type="button"
         onClick={() => selectObjectiveDetail(objective.id)}
         class="card hover-card w-full"
-        style="text-align:left;padding:16px;display:block;cursor:pointer"
+        style={`text-align:left;padding:14px 16px;display:block;cursor:pointer${terminal ? ';opacity:.72' : ''}`}
       >
         <div class="flex items-start justify-between gap-3 min-w-0">
           <div class="flex items-center gap-3 min-w-0 flex-wrap">
@@ -135,13 +277,26 @@ function ObjectiveRow({ objective, viewer }: { objective: Objective; viewer: str
             >
               {objective.title}
             </span>
+            {unread > 0 && (
+              // aria-hidden like the nav's UnreadBadge — the count is a
+              // sighted-scan affordance; the row button names the work.
+              <span
+                class="count-badge"
+                aria-hidden="true"
+                title={`${unread} unread ${unread === 1 ? 'post' : 'posts'}`}
+              >
+                {unread}
+              </span>
+            )}
           </div>
-          {/* Assignee — hidden on narrow viewports; secondary line below on small. */}
           <span
-            class="hidden sm:inline flex-shrink-0"
-            style="font-family:var(--ef-font-mono);font-size:11px;letter-spacing:.08em;color:var(--ef-text-muted);text-transform:uppercase;margin-top:2px"
+            class="hidden sm:flex items-center flex-shrink-0"
+            style="font-family:var(--ef-font-mono);font-size:11px;letter-spacing:.08em;color:var(--ef-text-muted);text-transform:uppercase;margin-top:2px;gap:10px"
           >
-            {isMine ? '(you)' : `→ ${objective.assignee}`}
+            <span>{isMine ? '(you)' : `→ ${objective.assignee}`}</span>
+            <span title={`last activity ${absoluteTime(activityTs)}`}>
+              {relativeTime(activityTs)}
+            </span>
           </span>
         </div>
         <div
@@ -154,15 +309,18 @@ function ObjectiveRow({ objective, viewer }: { objective: Objective; viewer: str
           class="sm:hidden"
           style="font-family:var(--ef-font-mono);font-size:11px;letter-spacing:.08em;color:var(--ef-text-muted);text-transform:uppercase;margin-top:6px"
         >
-          {isMine ? '(you)' : `→ ${objective.assignee}`}
+          {isMine ? '(you)' : `→ ${objective.assignee}`} ·{' '}
+          <span title={`last activity ${absoluteTime(activityTs)}`}>
+            {relativeTime(activityTs)}
+          </span>
         </div>
-        {objective.blockReason && (
+        {objective.status === 'blocked' && (
           <div
             class="flex items-center"
             style="font-family:var(--ef-font-body);font-size:13px;color:var(--ef-lamp-caution);margin-top:6px;font-weight:500;gap:6px"
           >
             <AlertTriangle size={13} aria-hidden="true" class="flex-shrink-0" />
-            <span>blocked: {objective.blockReason}</span>
+            <span>{objective.blockReason ? `blocked: ${objective.blockReason}` : 'blocked'}</span>
           </div>
         )}
       </button>
