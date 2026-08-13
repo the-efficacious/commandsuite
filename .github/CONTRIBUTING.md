@@ -77,6 +77,22 @@ certainly `web-ui`; only auth/boot/host chrome belongs in `web-host`. The rest:
 `csuite-core` (broker logic), `csuite-server` (Node broker), `csuite-sdk` (wire
 client), `csuite-cli` (terminal).
 
+### Broker code is runtime-neutral by charter
+
+Broker features live in `csuite-core` and are written against its
+ports and store interfaces — never against `node:*` APIs directly.
+Core's `src/` is checked in CI for `node:*` import specifiers
+(`scripts/check-runtime-neutral.mjs`, wired into its `typecheck`); if
+a feature needs a capability no port provides, extend a port — with
+contract tests in `csuite-core/conformance` and a reference
+implementation in `csuite-server` — rather than reaching for a Node
+built-in. This keeps the broker testable against in-memory
+implementations and keeps every store swappable. Web standards
+(`crypto.subtle`, `crypto.getRandomValues`, `TextEncoder`,
+`ReadableStream`, `CompressionStream`) are the substitution of first
+resort; anything they can't express becomes a port on the Node
+binding's side of the seam.
+
 ## Contribution workflow
 
 1. **Fork** the repo and create a topic branch from `main`:

@@ -10,7 +10,10 @@ SQL-backed store (now generic over an injected synchronous
 the team filesystem, and the notifications pipeline — with ports for
 the capabilities a host supplies: blob storage (web streams), push
 delivery, WebSocket upgrades, field encryption, and gen-ai capture.
-Each seam keeps a reference implementation and its existing tests.
+Each seam keeps a reference implementation and its existing tests,
+and `csuite-core/conformance` exports the behavioral contract suites
+(SqlDriver, BlobStore, FieldCipher, and a wire-level broker check)
+that the Node binding runs in its own CI.
 `csuite-server` is unchanged in behavior: it is now the Node binding
 of the shared application — `node:sqlite` driver, filesystem blob
 store, `web-push` sender, `@hono/node-ws` upgrades, KEK-based field
