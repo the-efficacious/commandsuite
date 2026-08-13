@@ -25,7 +25,12 @@ export function toBase64Url(bytes: Uint8Array): string {
 
 /** Decode base64url (padding optional) back to bytes. Throws on any character outside the alphabet. */
 export function fromBase64Url(text: string): Uint8Array {
-  const clean = text.replace(/=+$/, '');
+  // Trailing-padding trim as a linear scan — the obvious /=+$/ regex
+  // backtracks quadratically on adversarial inputs (CodeQL
+  // js/polynomial-redos), and these strings can arrive off the wire.
+  let end = text.length;
+  while (end > 0 && text[end - 1] === '=') end--;
+  const clean = text.slice(0, end);
   const out = new Uint8Array(Math.floor((clean.length * 3) / 4));
   let acc = 0;
   let bits = 0;
