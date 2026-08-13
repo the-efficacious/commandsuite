@@ -1,5 +1,12 @@
 # csuite-core
 
+## 0.6.0
+
+### Patch Changes
+
+- Updated dependencies [[`c9e4a85`](https://github.com/the-efficacious/commandsuite/commit/c9e4a85707581d4325a24a17d4fbd880ea88136d), [`1dd4d23`](https://github.com/the-efficacious/commandsuite/commit/1dd4d23eb112f703d04ffcd985246145ded50f6b), [`c9e4a85`](https://github.com/the-efficacious/commandsuite/commit/c9e4a85707581d4325a24a17d4fbd880ea88136d)]:
+  - csuite-sdk@0.6.0
+
 ## 0.5.1
 
 ### Patch Changes

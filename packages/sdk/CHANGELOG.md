@@ -1,5 +1,69 @@
 # csuite-sdk
 
+## 0.6.0
+
+### Minor Changes
+
+- [#185](https://github.com/the-efficacious/commandsuite/pull/185) [`c9e4a85`](https://github.com/the-efficacious/commandsuite/commit/c9e4a85707581d4325a24a17d4fbd880ea88136d) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - One objective permission and one mutation surface. `objectives.manage`
+  replaces the four-way `objectives.create` / `.cancel` / `.reassign` /
+  `.watch` split — no deployment ever granted those separately — and
+  existing configs and stored presets written under the old vocabulary
+  load unchanged through a legacy-alias map. `objectives_reassign` and
+  `objectives_watchers` fold into `objectives_update` (and their routes
+  into `PATCH /objectives/:id`, gated per field group): agents see seven
+  objective tools instead of nine. `blockReason` is now optional when
+  blocking — field data showed real blocks carried in prose because the
+  ceremony was heavier than the signal.
+
+- [#181](https://github.com/the-efficacious/commandsuite/pull/181) [`1dd4d23`](https://github.com/the-efficacious/commandsuite/commit/1dd4d23eb112f703d04ffcd985246145ded50f6b) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - Let the broker compact or clear a member's agent context without
+  restarting it, and report what actually happened.
+
+  The broker could already see a member's context drift — the context
+  watchdog distinguishes present from missing from stale — but every
+  mechanism it had was additive. It could make a context larger and
+  measure that it had gone wrong; it had no verb for making it smaller.
+  A degraded member had two remedies: the agent deciding to compact on
+  its own, or a full restart that drops the runner's MCP wiring and
+  takes the member off the net.
+
+  - **`POST /members/:name/context`** with `verb: 'compact' | 'clear'`,
+    delivered on the member stream the same way instruction edits are.
+    Neither verb ends the session: the broker subscription, the IPC
+    socket the MCP bridge reconnects to, the objectives tracker and the
+    capture host all outlive both.
+  - **`clear` re-uses the drain-and-restart path** — wait for the turn
+    to finish, detach ambient input so events buffer for the successor,
+    refetch instructions, respawn — and differs in exactly one input:
+    the successor does not resume. Adapters previously treated a null
+    session id as "resume the most recent session anyway", so respawn
+    now takes an explicit `RespawnPosture` and starting cold is no
+    longer expressible by accident.
+  - **`compact` is cooperative and says so.** The agent does the
+    summarising, so the request can be declined. Every request produces
+    exactly one `context_control` activity event: `applied`, `declined`
+    (with the framework's own reason, verbatim), `unsupported`, or
+    `failed`. A request that produces no outcome stays visibly
+    outstanding rather than aging into a success nobody observed.
+    Both runners implement both verbs — claude by injecting the slash
+    command and reading the compaction status, codex via
+    `thread/compact/start` acked by its `contextCompaction` item. Only
+    claude reports token deltas; codex's completion item carries no
+    accounting, so those are omitted rather than invented.
+  - **New `members.context` permission**, separate from
+    `members.manage`: interrupting a teammate's live work is a
+    different power from administering the roster. Controlling your own
+    context needs no permission at all.
+
+- [#185](https://github.com/the-efficacious/commandsuite/pull/185) [`c9e4a85`](https://github.com/the-efficacious/commandsuite/commit/c9e4a85707581d4325a24a17d4fbd880ea88136d) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - Remove the objective contract-versioning layer: `objectives_amend`,
+  `objectives_correct_event`, their routes and SDK methods, contract
+  version stamping, and the amendments record on the objective. Built in
+  response to a single run's incidents, never used since — and that run
+  itself served the same need with a reasoned cancel plus a fresh
+  objective, which is now the documented remedy. Old databases keep
+  reading cleanly: `amended` / `event_corrected` stay in the event-kind
+  schema as legacy read-only kinds, and `objectives_view` renders such
+  historical rows as ordinary log lines.
+
 ## 0.5.1
 
 ## 0.5.0
