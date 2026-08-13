@@ -342,6 +342,7 @@ export type {
   SqlStatement,
   SqlValue,
 } from './sql-driver.js';
+export { runInTransaction } from './sql-driver.js';
 export { SqliteEventLog } from './sqlite-event-log.js';
 export { SqlitePushSubscriptionStore } from './sqlite-push-subscription-store.js';
 export { SqliteSessionStore } from './sqlite-session-store.js';

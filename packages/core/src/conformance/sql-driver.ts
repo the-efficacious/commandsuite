@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { SqlDriver } from '../sql-driver.js';
+import { runInTransaction, type SqlDriver } from '../sql-driver.js';
 
 /**
  * Behavioral contract for a `SqlDriver`.
@@ -60,6 +60,23 @@ export function sqlDriverConformance(makeDriver: () => SqlDriver): void {
       const insert = db.prepare('INSERT INTO u (id) VALUES (?)');
       insert.run('same');
       expect(() => insert.run('same')).toThrow();
+    });
+
+    it('commits and rolls back through runInTransaction', () => {
+      const db = makeDriver();
+      db.exec('CREATE TABLE tx (id TEXT PRIMARY KEY)');
+      const insert = db.prepare('INSERT INTO tx (id) VALUES (?)');
+      runInTransaction(db, () => {
+        insert.run('kept');
+      });
+      expect(() =>
+        runInTransaction(db, () => {
+          insert.run('discarded');
+          throw new Error('abort');
+        }),
+      ).toThrow('abort');
+      const ids = db.prepare('SELECT id FROM tx').all() as Array<{ id: string }>;
+      expect(ids).toEqual([{ id: 'kept' }]);
     });
 
     it('reports lastInsertRowid for AUTOINCREMENT tables', () => {

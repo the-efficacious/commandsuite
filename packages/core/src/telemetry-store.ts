@@ -36,7 +36,7 @@
 
 import type { DiagnosticEmitter } from './diagnostics.js';
 import { logger as defaultLogger, type Logger } from './logger.js';
-import type { SqlDriver, SqlStatement } from './sql-driver.js';
+import { runInTransaction, type SqlDriver, type SqlStatement } from './sql-driver.js';
 
 const CREATE_SCHEMA = `
   CREATE TABLE IF NOT EXISTS telemetry (
@@ -206,23 +206,13 @@ class SqliteTelemetryStore implements TelemetryStore {
     }
     if (rows.length === 0) return;
 
-    // Transaction: either every row lands or none. node:sqlite has no
-    // high-level transaction API — BEGIN/COMMIT via exec is the pattern
-    // the activity store uses.
-    this.db.exec('BEGIN');
-    try {
+    // Transaction: either every row lands or none — atomicity goes
+    // through the driver seam (runInTransaction).
+    runInTransaction(this.db, () => {
       for (const r of rows) {
         this.insertStmt.run(...r);
       }
-      this.db.exec('COMMIT');
-    } catch (err) {
-      try {
-        this.db.exec('ROLLBACK');
-      } catch {
-        /* ignore */
-      }
-      throw err;
-    }
+    });
   }
 
   count(): number {

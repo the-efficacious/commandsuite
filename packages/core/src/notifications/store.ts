@@ -40,7 +40,7 @@ import type {
   NotificationTarget,
 } from 'csuite-sdk/types';
 import type { GetFieldCipher } from '../field-crypto.js';
-import type { SqlDriver, SqlStatement } from '../sql-driver.js';
+import { runInTransaction, type SqlDriver, type SqlStatement } from '../sql-driver.js';
 import { validateSourceSlug } from '../tool-sources/store.js';
 
 export class NotificationsError extends Error {
@@ -448,10 +448,6 @@ function encryptSecret(secret: string, getCipher: GetFieldCipher): string {
 class SqliteNotificationsStore implements NotificationsStore {
   private readonly db: SqlDriver;
 
-  private readonly beginStmt: SqlStatement;
-  private readonly commitStmt: SqlStatement;
-  private readonly rollbackStmt: SqlStatement;
-
   private readonly insertProfileStmt: SqlStatement;
   private readonly updateProfileStmt: SqlStatement;
   private readonly deleteProfileStmt: SqlStatement;
@@ -491,10 +487,6 @@ class SqliteNotificationsStore implements NotificationsStore {
   ) {
     this.db = db;
     this.db.exec(CREATE_SCHEMA);
-
-    this.beginStmt = db.prepare('BEGIN');
-    this.commitStmt = db.prepare('COMMIT');
-    this.rollbackStmt = db.prepare('ROLLBACK');
 
     const PROFILE_COLS =
       'id, slug, description, auth_kind, auth_header, auth_prefix, secret_enc, created_by, created_at, updated_at';
@@ -806,20 +798,11 @@ class SqliteNotificationsStore implements NotificationsStore {
     if (!existing) throw new NotificationsError('not_found', `endpoint ${id} not found`);
     // FK cascades aren't enforced — delete children explicitly, all
     // or nothing.
-    this.beginStmt.run();
-    try {
+    runInTransaction(this.db, () => {
       this.deletePendingForEndpointStmt.run(id);
       this.deleteDeliveriesForEndpointStmt.run(id);
       this.deleteEndpointStmt.run(id);
-      this.commitStmt.run();
-    } catch (err) {
-      try {
-        this.rollbackStmt.run();
-      } catch {
-        /* rollback of a failed tx can itself fail — nothing to do */
-      }
-      throw err;
-    }
+    });
   }
 
   setSecret(id: string, secret: string, now: number = Date.now()): void {

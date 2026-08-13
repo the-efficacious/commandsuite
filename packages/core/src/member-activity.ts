@@ -30,7 +30,7 @@ import type {
   ListActivityFilter as CoreListActivityFilter,
 } from './activity-store.js';
 import { logger as defaultLogger, type Logger } from './logger.js';
-import type { SqlDriver, SqlStatement } from './sql-driver.js';
+import { runInTransaction, type SqlDriver, type SqlStatement } from './sql-driver.js';
 
 const CREATE_SCHEMA = `
   CREATE TABLE IF NOT EXISTS member_activity (
@@ -114,11 +114,9 @@ class SqliteActivityStore implements CoreActivityStore {
     const now = Date.now();
     const inserted: ActivityRow[] = [];
 
-    // Transaction: either all rows land or none. node:sqlite doesn't
-    // expose a high-level transaction API; BEGIN/COMMIT via exec is
-    // the standard pattern.
-    this.db.exec('BEGIN');
-    try {
+    // Transaction: either every row lands or none — atomicity goes
+    // through the driver seam (runInTransaction).
+    runInTransaction(this.db, () => {
       for (const event of events) {
         const result = this.insertStmt.run(
           memberName,
@@ -135,15 +133,7 @@ class SqliteActivityStore implements CoreActivityStore {
           createdAt: now,
         });
       }
-      this.db.exec('COMMIT');
-    } catch (err) {
-      try {
-        this.db.exec('ROLLBACK');
-      } catch {
-        /* ignore */
-      }
-      throw err;
-    }
+    });
 
     // Snapshot listeners before iterating — a handler may unsubscribe
     // itself (or others) mid-fire. Mirrors InMemoryActivityStore.

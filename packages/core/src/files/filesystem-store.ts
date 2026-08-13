@@ -40,7 +40,7 @@
  */
 
 import type { FsEntry, Permission } from 'csuite-sdk/types';
-import type { SqlDriver, SqlStatement } from '../sql-driver.js';
+import { runInTransaction, type SqlDriver, type SqlStatement } from '../sql-driver.js';
 import type { BlobStore } from './blob-store.js';
 import { FsError } from './errors.js';
 import {
@@ -875,18 +875,7 @@ class SqliteFilesystemStore implements FilesystemStore {
   }
 
   private withTx<T>(fn: () => T): T {
-    const begin = this.db.prepare('BEGIN');
-    const commit = this.db.prepare('COMMIT');
-    const rollback = this.db.prepare('ROLLBACK');
-    begin.run();
-    try {
-      const out = fn();
-      commit.run();
-      return out;
-    } catch (err) {
-      rollback.run();
-      throw err;
-    }
+    return runInTransaction(this.db, fn);
   }
 
   private decrementAndMaybeDropBlob(hash: string): void {

@@ -48,7 +48,7 @@ import type {
   UpdateObjectiveRequest,
   UpdateWatchersRequest,
 } from 'csuite-sdk/types';
-import type { SqlDriver, SqlStatement } from './sql-driver.js';
+import { runInTransaction, type SqlDriver, type SqlStatement } from './sql-driver.js';
 
 const CREATE_SCHEMA = `
   CREATE TABLE IF NOT EXISTS objectives (
@@ -334,8 +334,7 @@ class SqliteObjectivesStore implements ObjectivesStore {
     //
     // ROWID is stable for an append-only table that never deletes, so
     // the backfill is deterministic and runs once.
-    this.db.prepare('BEGIN').run();
-    try {
+    runInTransaction(this.db, () => {
       this.db.exec(
         "UPDATE objective_events SET event_id = 'ev-' || ROWID WHERE event_id IS NULL OR event_id = ''",
       );
@@ -352,15 +351,7 @@ class SqliteObjectivesStore implements ObjectivesStore {
       this.db.exec(
         'CREATE UNIQUE INDEX IF NOT EXISTS objective_events_event_id_idx ON objective_events (event_id)',
       );
-      this.db.prepare('COMMIT').run();
-    } catch (err) {
-      try {
-        this.db.prepare('ROLLBACK').run();
-      } catch {
-        /* rollback of a failed tx can itself fail — nothing to do */
-      }
-      throw err;
-    }
+    });
     this.listAllStmt = db.prepare('SELECT * FROM objectives ORDER BY created_at DESC, id DESC');
     this.listByAssigneeStmt = db.prepare(
       'SELECT * FROM objectives WHERE assignee = ? ORDER BY created_at DESC, id DESC',
@@ -451,11 +442,7 @@ class SqliteObjectivesStore implements ObjectivesStore {
 
     const id = generateObjectiveId();
     const events: ObjectiveEvent[] = [];
-    const tx = this.db.prepare('BEGIN');
-    const commit = this.db.prepare('COMMIT');
-    const rollback = this.db.prepare('ROLLBACK');
-    tx.run();
-    try {
+    runInTransaction(this.db, () => {
       const attachments = Array.isArray(input.attachments) ? input.attachments : [];
       this.insertStmt.run(
         id,
@@ -487,11 +474,7 @@ class SqliteObjectivesStore implements ObjectivesStore {
           ...(watchers.length > 0 ? { watchers } : {}),
         }),
       );
-      commit.run();
-    } catch (err) {
-      rollback.run();
-      throw err;
-    }
+    });
 
     const created = this.get(id);
     if (!created) {
@@ -543,11 +526,7 @@ class SqliteObjectivesStore implements ObjectivesStore {
     }
 
     const events: ObjectiveEvent[] = [];
-    const tx = this.db.prepare('BEGIN');
-    const commit = this.db.prepare('COMMIT');
-    const rollback = this.db.prepare('ROLLBACK');
-    tx.run();
-    try {
+    runInTransaction(this.db, () => {
       this.updateRowStmt.run(
         nextStatus,
         current.assignee,
@@ -562,11 +541,7 @@ class SqliteObjectivesStore implements ObjectivesStore {
       } else if (input.status === 'active' && current.status === 'blocked') {
         events.push(this.appendEvent(id, now, actor, 'unblocked', {}));
       }
-      commit.run();
-    } catch (err) {
-      rollback.run();
-      throw err;
-    }
+    });
 
     const updated = this.get(id);
     if (!updated) throw new ObjectivesError('not_found', `objective ${id} not found`);
@@ -590,18 +565,10 @@ class SqliteObjectivesStore implements ObjectivesStore {
     }
 
     const events: ObjectiveEvent[] = [];
-    const tx = this.db.prepare('BEGIN');
-    const commit = this.db.prepare('COMMIT');
-    const rollback = this.db.prepare('ROLLBACK');
-    tx.run();
-    try {
+    runInTransaction(this.db, () => {
       this.updateRowStmt.run('done', current.assignee, now, now, result, null, id);
       events.push(this.appendEvent(id, now, actor, 'completed', { result }));
-      commit.run();
-    } catch (err) {
-      rollback.run();
-      throw err;
-    }
+    });
 
     const updated = this.get(id);
     if (!updated) throw new ObjectivesError('not_found', `objective ${id} not found`);
@@ -622,11 +589,7 @@ class SqliteObjectivesStore implements ObjectivesStore {
     const reason = input.reason?.trim() || null;
 
     const events: ObjectiveEvent[] = [];
-    const tx = this.db.prepare('BEGIN');
-    const commit = this.db.prepare('COMMIT');
-    const rollback = this.db.prepare('ROLLBACK');
-    tx.run();
-    try {
+    runInTransaction(this.db, () => {
       this.updateRowStmt.run(
         'cancelled',
         current.assignee,
@@ -637,11 +600,7 @@ class SqliteObjectivesStore implements ObjectivesStore {
         id,
       );
       events.push(this.appendEvent(id, now, actor, 'cancelled', reason ? { reason } : {}));
-      commit.run();
-    } catch (err) {
-      rollback.run();
-      throw err;
-    }
+    });
 
     const updated = this.get(id);
     if (!updated) throw new ObjectivesError('not_found', `objective ${id} not found`);
@@ -694,11 +653,7 @@ class SqliteObjectivesStore implements ObjectivesStore {
       : current.watchers;
 
     const events: ObjectiveEvent[] = [];
-    const tx = this.db.prepare('BEGIN');
-    const commit = this.db.prepare('COMMIT');
-    const rollback = this.db.prepare('ROLLBACK');
-    tx.run();
-    try {
+    runInTransaction(this.db, () => {
       this.updateRowStmt.run(
         current.status,
         input.to,
@@ -724,11 +679,7 @@ class SqliteObjectivesStore implements ObjectivesStore {
           }),
         );
       }
-      commit.run();
-    } catch (err) {
-      rollback.run();
-      throw err;
-    }
+    });
 
     const updated = this.get(id);
     if (!updated) throw new ObjectivesError('not_found', `objective ${id} not found`);
@@ -789,11 +740,7 @@ class SqliteObjectivesStore implements ObjectivesStore {
     for (const w of toAdd) nextWatchers.push(w);
 
     const events: ObjectiveEvent[] = [];
-    const tx = this.db.prepare('BEGIN');
-    const commit = this.db.prepare('COMMIT');
-    const rollback = this.db.prepare('ROLLBACK');
-    tx.run();
-    try {
+    runInTransaction(this.db, () => {
       this.updateWatchersStmt.run(JSON.stringify(nextWatchers), now, id);
       for (const w of toAdd) {
         events.push(this.appendEvent(id, now, actor, 'watcher_added', { name: w }));
@@ -801,11 +748,7 @@ class SqliteObjectivesStore implements ObjectivesStore {
       for (const w of toRemove) {
         events.push(this.appendEvent(id, now, actor, 'watcher_removed', { name: w }));
       }
-      commit.run();
-    } catch (err) {
-      rollback.run();
-      throw err;
-    }
+    });
 
     const updated = this.get(id);
     if (!updated) throw new ObjectivesError('not_found', `objective ${id} not found`);

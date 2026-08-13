@@ -51,7 +51,7 @@ import {
 import type { GetFieldCipher } from './field-crypto.js';
 import type { Logger } from './logger.js';
 import { SecretsError, validateEnvName } from './secrets.js';
-import type { SqlDriver, SqlStatement } from './sql-driver.js';
+import { runInTransaction, type SqlDriver, type SqlStatement } from './sql-driver.js';
 
 /**
  * Variables raise the same error type as secrets. Callers map one error
@@ -131,10 +131,6 @@ const VARIABLE_COLS =
 class SqliteVariablesStore implements VariablesStore {
   private readonly db: SqlDriver;
 
-  private readonly beginStmt: SqlStatement;
-  private readonly commitStmt: SqlStatement;
-  private readonly rollbackStmt: SqlStatement;
-
   private readonly insertStmt: SqlStatement;
   private readonly updateStmt: SqlStatement;
   private readonly deleteStmt: SqlStatement;
@@ -156,10 +152,6 @@ class SqliteVariablesStore implements VariablesStore {
   constructor(db: SqlDriver) {
     this.db = db;
     ensureEnvNamespaceSchema(db);
-
-    this.beginStmt = db.prepare('BEGIN');
-    this.commitStmt = db.prepare('COMMIT');
-    this.rollbackStmt = db.prepare('ROLLBACK');
 
     this.insertStmt = db.prepare(
       `INSERT INTO variables
@@ -332,20 +324,11 @@ class SqliteVariablesStore implements VariablesStore {
   delete(id: string): void {
     const existing = this.get(id);
     if (!existing) throw new SecretsError('not_found', `variable ${id} not found`);
-    this.beginStmt.run();
-    try {
+    runInTransaction(this.db, () => {
       this.deleteBindingsStmt.run(id);
       this.deleteValueStmt.run(id);
       this.deleteStmt.run(id);
-      this.commitStmt.run();
-    } catch (err) {
-      try {
-        this.rollbackStmt.run();
-      } catch {
-        /* rollback of a failed tx can itself fail — nothing to do */
-      }
-      throw err;
-    }
+    });
   }
 
   isBound(variableId: string, memberName: string): boolean {
@@ -596,51 +579,46 @@ export function migrateIdentityToVariables(
   // store API, because the rows being moved are already validated and
   // the cross-store collision check is satisfied by construction: each
   // secret is deleted in the same transaction that inserts its variable.
-  db.prepare('BEGIN').run();
   try {
-    const now = Date.now();
-    const insertVariable = db.prepare(
-      `INSERT INTO variables
+    runInTransaction(db, () => {
+      const now = Date.now();
+      const insertVariable = db.prepare(
+        `INSERT INTO variables
         (id, slug, env_name, description, enabled, all_members, created_by, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    );
-    const insertValue = db.prepare(
-      'INSERT INTO variable_values (variable_id, value, created_at, updated_at) VALUES (?, ?, ?, ?)',
-    );
-    const insertBinding = db.prepare(
-      'INSERT OR IGNORE INTO variable_bindings (variable_id, member_name, created_at) VALUES (?, ?, ?)',
-    );
-    const deleteSecretBindings = db.prepare('DELETE FROM secret_bindings WHERE secret_id = ?');
-    const deleteSecretValue = db.prepare('DELETE FROM secret_values WHERE secret_id = ?');
-    const deleteSecret = db.prepare('DELETE FROM secrets WHERE id = ?');
-
-    for (const { secret, value, bindings } of pending) {
-      const id = `var_${now.toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
-      insertVariable.run(
-        id,
-        secret.slug,
-        secret.envName,
-        secret.description,
-        secret.enabled ? 1 : 0,
-        secret.allMembers ? 1 : 0,
-        secret.createdBy,
-        now,
-        now,
       );
-      insertValue.run(id, value, now, now);
-      for (const member of bindings) insertBinding.run(id, member, now);
-      deleteSecretBindings.run(secret.id);
-      deleteSecretValue.run(secret.id);
-      deleteSecret.run(secret.id);
-      result.migrated.push(secret.slug);
-    }
-    db.prepare('COMMIT').run();
+      const insertValue = db.prepare(
+        'INSERT INTO variable_values (variable_id, value, created_at, updated_at) VALUES (?, ?, ?, ?)',
+      );
+      const insertBinding = db.prepare(
+        'INSERT OR IGNORE INTO variable_bindings (variable_id, member_name, created_at) VALUES (?, ?, ?)',
+      );
+      const deleteSecretBindings = db.prepare('DELETE FROM secret_bindings WHERE secret_id = ?');
+      const deleteSecretValue = db.prepare('DELETE FROM secret_values WHERE secret_id = ?');
+      const deleteSecret = db.prepare('DELETE FROM secrets WHERE id = ?');
+
+      for (const { secret, value, bindings } of pending) {
+        const id = `var_${now.toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+        insertVariable.run(
+          id,
+          secret.slug,
+          secret.envName,
+          secret.description,
+          secret.enabled ? 1 : 0,
+          secret.allMembers ? 1 : 0,
+          secret.createdBy,
+          now,
+          now,
+        );
+        insertValue.run(id, value, now, now);
+        for (const member of bindings) insertBinding.run(id, member, now);
+        deleteSecretBindings.run(secret.id);
+        deleteSecretValue.run(secret.id);
+        deleteSecret.run(secret.id);
+        result.migrated.push(secret.slug);
+      }
+    });
   } catch (err) {
-    try {
-      db.prepare('ROLLBACK').run();
-    } catch {
-      /* rollback of a failed tx can itself fail — nothing to do */
-    }
     // Rolled back: every identity row is exactly where it was. The
     // broker keeps booting, identity keeps being redacted, and this
     // line is the only thing that says so — so it is a warning, not

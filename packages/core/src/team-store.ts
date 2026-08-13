@@ -45,7 +45,7 @@ import {
   validateTeamName,
   validateTotpSecret,
 } from './members-domain.js';
-import type { SqlDriver, SqlStatement } from './sql-driver.js';
+import { runInTransaction, type SqlDriver, type SqlStatement } from './sql-driver.js';
 
 const CREATE_SCHEMA = `
   CREATE TABLE IF NOT EXISTS team (
@@ -133,16 +133,16 @@ function migrateDirectiveIntoContext(db: SqlDriver): void {
     name: string;
   }>;
   if (!columns.some((c) => c.name === 'directive')) return;
-  db.exec(`
-    BEGIN;
-    UPDATE team SET context = directive || CASE
-      WHEN length(context) > 0 THEN char(10) || char(10) || context
-      ELSE ''
-    END
-    WHERE id = 1 AND length(directive) > 0;
-    ALTER TABLE team DROP COLUMN directive;
-    COMMIT;
-  `);
+  runInTransaction(db, () => {
+    db.exec(`
+      UPDATE team SET context = directive || CASE
+        WHEN length(context) > 0 THEN char(10) || char(10) || context
+        ELSE ''
+      END
+      WHERE id = 1 AND length(directive) > 0;
+      ALTER TABLE team DROP COLUMN directive;
+    `);
+  });
 }
 
 function decryptTotpSecret(stored: string | null, getCipher: GetFieldCipher): string | null {

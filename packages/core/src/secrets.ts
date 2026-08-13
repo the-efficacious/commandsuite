@@ -61,7 +61,7 @@ import {
   findEnvRivalForMember,
 } from './env-namespace.js';
 import type { GetFieldCipher } from './field-crypto.js';
-import type { SqlDriver, SqlStatement } from './sql-driver.js';
+import { runInTransaction, type SqlDriver, type SqlStatement } from './sql-driver.js';
 import { validateSourceSlug } from './tool-sources/store.js';
 
 export class SecretsError extends Error {
@@ -167,10 +167,6 @@ export interface SecretsStore {
 class SqliteSecretsStore implements SecretsStore {
   private readonly db: SqlDriver;
 
-  private readonly beginStmt: SqlStatement;
-  private readonly commitStmt: SqlStatement;
-  private readonly rollbackStmt: SqlStatement;
-
   private readonly insertSecretStmt: SqlStatement;
   private readonly updateSecretStmt: SqlStatement;
   private readonly deleteSecretStmt: SqlStatement;
@@ -195,10 +191,6 @@ class SqliteSecretsStore implements SecretsStore {
   ) {
     this.db = db;
     ensureEnvNamespaceSchema(db);
-
-    this.beginStmt = db.prepare('BEGIN');
-    this.commitStmt = db.prepare('COMMIT');
-    this.rollbackStmt = db.prepare('ROLLBACK');
 
     const SECRET_COLS =
       'id, slug, env_name, description, enabled, all_members, created_by, created_at, updated_at';
@@ -390,20 +382,11 @@ class SqliteSecretsStore implements SecretsStore {
     if (!existing) throw new SecretsError('not_found', `secret ${id} not found`);
     // FK cascades aren't enforced — delete children explicitly, all
     // or nothing.
-    this.beginStmt.run();
-    try {
+    runInTransaction(this.db, () => {
       this.deleteBindingsStmt.run(id);
       this.deleteValueStmt.run(id);
       this.deleteSecretStmt.run(id);
-      this.commitStmt.run();
-    } catch (err) {
-      try {
-        this.rollbackStmt.run();
-      } catch {
-        /* rollback of a failed tx can itself fail — nothing to do */
-      }
-      throw err;
-    }
+    });
   }
 
   isBound(secretId: string, memberName: string): boolean {

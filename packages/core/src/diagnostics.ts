@@ -69,7 +69,7 @@
  */
 
 import { sha256Hex } from './hashing.js';
-import type { SqlDriver, SqlStatement } from './sql-driver.js';
+import { runInTransaction, type SqlDriver, type SqlStatement } from './sql-driver.js';
 
 /**
  * The finite cause enum. One code per in-scope site.
@@ -786,20 +786,15 @@ function buildStore(
       const cut = db
         .prepare(`SELECT MAX(ts) AS t FROM (SELECT ts FROM diagnostic_event ORDER BY ts LIMIT ?)`)
         .get(over) as { t: number | null };
-      db.exec('BEGIN IMMEDIATE');
-      try {
+      runInTransaction(db, () => {
         db.prepare(
           `DELETE FROM diagnostic_event WHERE id IN
-             (SELECT id FROM diagnostic_event ORDER BY ts LIMIT ?)`,
+           (SELECT id FROM diagnostic_event ORDER BY ts LIMIT ?)`,
         ).run(over);
         // +1: the removed instant itself is NOT covered.
         if (cut.t !== null) raiseFloor(Number(cut.t) + 1);
         recordOverflow();
-        db.exec('COMMIT');
-      } catch (err) {
-        db.exec('ROLLBACK');
-        throw err;
-      }
+      });
     }
 
     const bucket = db.prepare(`SELECT COUNT(*) AS n FROM diagnostic_bucket`).get() as { n: number };
@@ -819,19 +814,14 @@ function buildStore(
              (SELECT bucket_end FROM diagnostic_bucket ORDER BY bucket_start LIMIT ?)`,
         )
         .get(over) as { t: number | null };
-      db.exec('BEGIN IMMEDIATE');
-      try {
+      runInTransaction(db, () => {
         db.prepare(
           `DELETE FROM diagnostic_bucket WHERE rowid IN
-             (SELECT rowid FROM diagnostic_bucket ORDER BY bucket_start LIMIT ?)`,
+           (SELECT rowid FROM diagnostic_bucket ORDER BY bucket_start LIMIT ?)`,
         ).run(over);
         if (cut.t !== null) raiseFloor(Number(cut.t));
         recordOverflow();
-        db.exec('COMMIT');
-      } catch (err) {
-        db.exec('ROLLBACK');
-        throw err;
-      }
+      });
     }
 
     // Unresolved state was the remaining unbounded axis: events and
@@ -842,11 +832,10 @@ function buildStore(
     const st = db.prepare(`SELECT COUNT(*) AS n FROM diagnostic_state`).get() as { n: number };
     if (Number(st.n) > maxStateRows) {
       const over = Number(st.n) - maxStateRows;
-      db.exec('BEGIN IMMEDIATE');
-      try {
+      runInTransaction(db, () => {
         db.prepare(
           `DELETE FROM diagnostic_state WHERE rowid IN
-             (SELECT rowid FROM diagnostic_state ORDER BY since LIMIT ?)`,
+           (SELECT rowid FROM diagnostic_state ORDER BY since LIMIT ?)`,
         ).run(over);
         recordOverflow();
         // PERSISTENT, not ageing. Evicting unresolved state destroys
@@ -856,11 +845,7 @@ function buildStore(
         // be the cap that exists to prevent reading clean, reading
         // clean.
         setMeta.run('state_evicted', '1');
-        db.exec('COMMIT');
-      } catch (err) {
-        db.exec('ROLLBACK');
-        throw err;
-      }
+      });
     }
   }
 
@@ -891,19 +876,14 @@ function buildStore(
 
     // ATOMIC. A throw between the event insert and the state upsert
     // would leave an event with no unresolved state, or the reverse.
-    db.exec('BEGIN IMMEDIATE');
-    try {
+    runInTransaction(db, () => {
       for (const m of members) {
         insertEvent.run(input.cause, m, attribution, ts, fields);
         // Only incidents create unresolved state. A point event is
         // history the instant it happens.
         if (mode === 'incident') upsertState.run(input.cause, m, ts);
       }
-      db.exec('COMMIT');
-    } catch (err) {
-      db.exec('ROLLBACK');
-      throw err;
-    }
+    });
     // Truncation is LOSS and must say so. `slice()` alone dropped
     // members 257..N with no fact and no unknown attribution, so the
     // stored set looked like the complete affected set.
@@ -1302,13 +1282,12 @@ function buildStore(
       // rows again and double the count. Running a successful sweep
       // three times cannot establish this property; only wrapping it
       // can.
-      db.exec('BEGIN IMMEDIATE');
-      try {
+      runInTransaction(db, () => {
         const detailCut = t - detailMs;
         const rows = db
           .prepare(
             `SELECT cause, member_name, ts FROM diagnostic_event
-            WHERE ts < ?`,
+          WHERE ts < ?`,
           )
           .all(detailCut) as Array<{ cause: string; member_name: string | null; ts: number }>;
         for (const r of rows) {
@@ -1330,8 +1309,8 @@ function buildStore(
         const hourRows = db
           .prepare(
             `SELECT cause, member_name, bucket_start, n, first_ts, last_ts
-             FROM diagnostic_bucket
-            WHERE resolution = 'hour' AND bucket_start < ?`,
+           FROM diagnostic_bucket
+          WHERE resolution = 'hour' AND bucket_start < ?`,
           )
           .all(hourCut) as Array<{
           cause: string;
@@ -1356,7 +1335,7 @@ function buildStore(
         }
         db.prepare(
           `DELETE FROM diagnostic_bucket
-          WHERE resolution = 'hour' AND bucket_start < ?`,
+        WHERE resolution = 'hour' AND bucket_start < ?`,
         ).run(hourCut);
 
         // Past the day horizon evidence genuinely goes. The floor moves
@@ -1365,7 +1344,7 @@ function buildStore(
         const dropped = db
           .prepare(
             `SELECT COUNT(*) AS n FROM diagnostic_bucket
-            WHERE resolution = 'day' AND bucket_start < ?`,
+          WHERE resolution = 'day' AND bucket_start < ?`,
           )
           .get(dayCut) as { n: number };
         if (Number(dropped.n) > 0) {
@@ -1376,7 +1355,7 @@ function buildStore(
           const removedEnd = db
             .prepare(
               `SELECT MAX(bucket_end) AS t FROM diagnostic_bucket
-              WHERE resolution = 'day' AND bucket_start < ?`,
+            WHERE resolution = 'day' AND bucket_start < ?`,
             )
             .get(dayCut) as { t: number | null };
           db.prepare(
@@ -1384,11 +1363,7 @@ function buildStore(
           ).run(dayCut);
           raiseFloor(removedEnd.t === null ? dayCut : Number(removedEnd.t));
         }
-        db.exec('COMMIT');
-      } catch (err) {
-        db.exec('ROLLBACK');
-        throw err;
-      }
+      });
       enforceCaps();
     },
 
