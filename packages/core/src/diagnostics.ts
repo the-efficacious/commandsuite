@@ -68,8 +68,8 @@
  * exists to remove.
  */
 
-import { createHash } from 'node:crypto';
-import type { DatabaseSyncInstance, StatementInstance } from './db.js';
+import { sha256Hex } from './hashing.js';
+import type { SqlDriver, SqlStatement } from './sql-driver.js';
 
 /**
  * The finite cause enum. One code per in-scope site.
@@ -347,10 +347,10 @@ export function classifyError(err: unknown): string {
  *
  * The ONLY way to obtain a `pathDigest` the store will accept.
  */
-export function digestPath(path: string): SafeFields {
+export async function digestPath(path: string): Promise<SafeFields> {
   return {
-    pathDigest: createHash('sha256').update(path, 'utf8').digest('hex').slice(0, 16),
-    pathLength: Buffer.byteLength(path, 'utf8'),
+    pathDigest: (await sha256Hex(path)).slice(0, 16),
+    pathLength: new TextEncoder().encode(path).length,
   } as SafeFields;
 }
 
@@ -487,9 +487,14 @@ export interface DiagnosticWindowResult {
  * whoever happened to read it.
  */
 export interface DiagnosticEmitter {
-  correlatorBodyRefUnreadable(member: string, path: string, err: unknown): void;
+  /**
+   * `pathFields` comes from `digestPath` (async, Web Crypto) or a
+   * host-supplied sync equivalent — the caller hashes so this method
+   * stays synchronous and records land in call order.
+   */
+  correlatorBodyRefUnreadable(member: string, pathFields: SafeFields, err: unknown): void;
   correlatorBodyLengthMismatch(member: string, expected: number, actual: number): void;
-  correlatorUnlinkAfterCaptureFailed(member: string, path: string, err: unknown): void;
+  correlatorUnlinkAfterCaptureFailed(member: string, pathFields: SafeFields, err: unknown): void;
   correlatorRawCaptureFailed(member: string, err: unknown): void;
   correlatorBodyJsonParseFailed(member: string, bytes: number): void;
   correlatorInferenceBuildFailed(member: string, err: unknown): void;
@@ -630,7 +635,7 @@ const SCHEMA = `
  * production: `createDiagnosticStore` returns the narrow interface.
  */
 export function createDiagnosticStoreInternalForTests(
-  db: DatabaseSyncInstance,
+  db: SqlDriver,
   options: DiagnosticOptions = {},
 ): DiagnosticStore & {
   record(input: DiagnosticInput): void;
@@ -640,14 +645,14 @@ export function createDiagnosticStoreInternalForTests(
 }
 
 export function createDiagnosticStore(
-  db: DatabaseSyncInstance,
+  db: SqlDriver,
   options: DiagnosticOptions = {},
 ): DiagnosticStore {
   return buildStore(db, options);
 }
 
 function buildStore(
-  db: DatabaseSyncInstance,
+  db: SqlDriver,
   options: DiagnosticOptions = {},
 ): DiagnosticStore & {
   record(input: DiagnosticInput): void;
@@ -676,25 +681,25 @@ function buildStore(
   const maxBucketRows = options.maxBucketRows ?? DEFAULT_MAX_BUCKET_ROWS;
   const maxStateRows = options.maxStateRows ?? DEFAULT_MAX_STATE_ROWS;
 
-  const insertEvent: StatementInstance = db.prepare(
+  const insertEvent: SqlStatement = db.prepare(
     `INSERT INTO diagnostic_event (cause, member_name, attribution, ts, fields)
      VALUES (?, ?, ?, ?, ?)`,
   );
-  const upsertState: StatementInstance = db.prepare(
+  const upsertState: SqlStatement = db.prepare(
     `INSERT INTO diagnostic_state (cause, member_name, since) VALUES (?, ?, ?)
      ON CONFLICT (cause, member_name) DO NOTHING`,
   );
-  const clearState: StatementInstance = db.prepare(
+  const clearState: SqlStatement = db.prepare(
     `DELETE FROM diagnostic_state WHERE cause = ? AND member_name = ?`,
   );
-  const getMeta: StatementInstance = db.prepare(`SELECT value FROM diagnostic_meta WHERE key = ?`);
-  const setMeta: StatementInstance = db.prepare(
+  const getMeta: SqlStatement = db.prepare(`SELECT value FROM diagnostic_meta WHERE key = ?`);
+  const setMeta: SqlStatement = db.prepare(
     `INSERT INTO diagnostic_meta (key, value) VALUES (?, ?)
      ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
   );
 
   /** Fold a set of rows into a bucket row, accumulating deterministically. */
-  const foldBucket: StatementInstance = db.prepare(
+  const foldBucket: SqlStatement = db.prepare(
     `INSERT INTO diagnostic_bucket (cause, member_name, bucket_start, bucket_end, resolution, n, first_ts, last_ts)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (cause, member_name, bucket_start, resolution) DO UPDATE SET
@@ -940,11 +945,11 @@ function buildStore(
   let writeFailed = false;
 
   const rawEmit: DiagnosticEmitter = {
-    correlatorBodyRefUnreadable(member, path, err) {
+    correlatorBodyRefUnreadable(member, pathFields, err) {
       record({
         cause: 'correlator.body_ref_unreadable',
         members: [member],
-        fields: safeFields(digestPath(path), safeError(err)),
+        fields: safeFields(pathFields, safeError(err)),
       });
     },
     correlatorBodyLengthMismatch(member, expected, actual) {
@@ -954,11 +959,11 @@ function buildStore(
         fields: safeCount(Math.abs(expected - actual)),
       });
     },
-    correlatorUnlinkAfterCaptureFailed(member, path, err) {
+    correlatorUnlinkAfterCaptureFailed(member, pathFields, err) {
       record({
         cause: 'correlator.unlink_after_capture_failed',
         members: [member],
-        fields: safeFields(digestPath(path), safeError(err)),
+        fields: safeFields(pathFields, safeError(err)),
       });
     },
     correlatorRawCaptureFailed(member, err) {

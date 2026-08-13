@@ -21,12 +21,11 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { dirname, join } from 'node:path';
 import { parseArgs } from 'node:util';
-import { SqliteTokenStore, type TokenStore } from 'csuite-core';
+import { logger, SqliteTokenStore, type TokenStore } from 'csuite-core';
 import { DEFAULT_PORT, ENV } from 'csuite-sdk/protocol';
 import type { Team } from 'csuite-sdk/types';
 import { type DatabaseSyncInstance, openDatabase } from './db.js';
 import { encryptField, KekResolutionError, resolveKek } from './kek.js';
-import { logger } from './logger.js';
 import {
   ConfigNotFoundError,
   defaultConfigPath,

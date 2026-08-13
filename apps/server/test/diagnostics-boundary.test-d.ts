@@ -22,7 +22,7 @@
  * Type-only: no runtime assertions, checked by `tsc --noEmit`.
  */
 
-import { createDiagnosticStore } from '../src/diagnostics.js';
+import { createDiagnosticStore } from 'csuite-core';
 
 declare const db: Parameters<typeof createDiagnosticStore>[0];
 const store = createDiagnosticStore(db);

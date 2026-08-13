@@ -77,9 +77,10 @@
  */
 
 import { readFileSync, statSync, unlinkSync } from 'node:fs';
+import type { DiagnosticEmitter } from 'csuite-core';
 import { anthropicToGenAi } from 'csuite-core';
-import type { DiagnosticEmitter } from './diagnostics.js';
 import type { GenAiInferenceInput } from './genai-store.js';
+import { digestPathSync } from './path-digest.js';
 import type { RawBodyStore } from './raw-body-store.js';
 import type { TelemetryRecord } from './telemetry-store.js';
 
@@ -315,7 +316,7 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
         // Observed recovery: this member's body_ref reads are working.
         diag?.correlatorBodyRefRead(who);
       } catch (err) {
-        diag?.correlatorBodyRefUnreadable(who, bodyRef, err);
+        diag?.correlatorBodyRefUnreadable(who, digestPathSync(bodyRef), err);
         log('genai-correlator: body_ref unreadable', {
           body_ref: bodyRef,
           error: err instanceof Error ? err.message : String(err),
@@ -374,7 +375,7 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
           try {
             unlinkSync(bodyRef);
           } catch (err) {
-            diag?.correlatorUnlinkAfterCaptureFailed(who, bodyRef, err);
+            diag?.correlatorUnlinkAfterCaptureFailed(who, digestPathSync(bodyRef), err);
             log('genai-correlator: unlink after capture failed', {
               body_ref: bodyRef,
               error: err instanceof Error ? err.message : String(err),

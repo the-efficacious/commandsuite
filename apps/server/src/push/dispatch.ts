@@ -14,12 +14,11 @@
  *                      a push failure to bubble into the main request)
  */
 
-import type { PushSubscriptionRow, PushSubscriptionStore } from 'csuite-core';
+import type { Logger, PushSubscriptionRow, PushSubscriptionStore } from 'csuite-core';
 import type { Message } from 'csuite-sdk/types';
 import pLimit from 'p-limit';
 // Default-import for the same CJS reason as vapid.ts.
 import webpush from 'web-push';
-import type { Logger } from '../logger.js';
 import type { MemberStore } from '../members.js';
 import { shouldPush } from './policy.js';
 

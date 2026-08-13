@@ -41,6 +41,7 @@
  * one transaction.
  */
 
+import type { Logger } from 'csuite-core';
 import type { Variable } from 'csuite-sdk/types';
 import type { DatabaseSyncInstance, StatementInstance } from './db.js';
 import {
@@ -50,7 +51,6 @@ import {
   findEnvRivalForMember,
 } from './env-namespace.js';
 import { decryptField } from './kek.js';
-import type { Logger } from './logger.js';
 import { getKek } from './members.js';
 import { SecretsError, validateEnvName } from './secrets.js';
 

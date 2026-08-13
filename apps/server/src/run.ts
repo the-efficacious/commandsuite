@@ -26,9 +26,12 @@ import { serve } from '@hono/node-server';
 import {
   Broker,
   createCaptureHealthStore,
+  createDiagnosticStore,
   createSqliteChannelStore,
   createSqliteObjectivesStore,
   createSqliteProcessDocumentStore,
+  logger as defaultLogger,
+  type Logger,
   registerSecretValues,
   SqliteEventLog,
   SqlitePushSubscriptionStore,
@@ -37,7 +40,6 @@ import {
 } from 'csuite-core';
 import { createApp } from './app.js';
 import { type DatabaseSyncInstance, openDatabase } from './db.js';
-import { createDiagnosticStore } from './diagnostics.js';
 import { EnrollmentStore } from './enrollments.js';
 import { createSqliteFilesystemStore, LocalBlobStore } from './files/index.js';
 import { createGenAiStore, type GenAiStore } from './genai-store.js';
@@ -50,7 +52,6 @@ import {
 } from './https/store.js';
 import { createJwtVerifier, type JwtConfig } from './jwt.js';
 import { decryptField, ENCRYPTED_FIELD_PREFIX, encryptField } from './kek.js';
-import { logger as defaultLogger, type Logger } from './logger.js';
 import { type ActivityStore, createSqliteActivityStore } from './member-activity.js';
 import {
   defaultHttpsConfig,

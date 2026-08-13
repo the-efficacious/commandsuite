@@ -28,7 +28,12 @@ import { existsSync } from 'node:fs';
 import { Readable } from 'node:stream';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { createNodeWebSocket } from '@hono/node-ws';
-import type { CaptureHealthStore, PushSubscriptionStore } from 'csuite-core';
+import type {
+  CaptureHealthStore,
+  DiagnosticStore,
+  Logger,
+  PushSubscriptionStore,
+} from 'csuite-core';
 import {
   type Broker,
   type ChannelStore,
@@ -143,7 +148,6 @@ import {
   createActivityTracker,
 } from './activity-tracker.js';
 import { type AuthBindings, createAuthMiddleware } from './auth.js';
-import type { DiagnosticStore } from './diagnostics.js';
 import { type EnrollmentStore, formatUserCode, normalizeUserCode } from './enrollments.js';
 import {
   basenameOf,
@@ -166,7 +170,6 @@ import {
   sha256Hex,
 } from './instructions.js';
 import type { JwtVerifier } from './jwt.js';
-import type { Logger } from './logger.js';
 import type { ActivityStore } from './member-activity.js';
 import {
   type LoadedMember,

@@ -41,6 +41,33 @@ export {
   validateSlug,
 } from './channels.js';
 export {
+  type Attribution,
+  type CauseSpec,
+  type Coverage,
+  causeSpec,
+  classifyError,
+  createDiagnosticStore,
+  createDiagnosticStoreInternalForTests,
+  DIAGNOSTIC_CAUSES,
+  type DiagnosticCause,
+  type DiagnosticEmitter,
+  type DiagnosticInput,
+  type DiagnosticOptions,
+  type DiagnosticStore,
+  type DiagnosticWindowResult,
+  digestPath,
+  type FieldPolicy,
+  type HealthMode,
+  healthMode,
+  type RetentionHealth,
+  type SafeFields,
+  safeCount,
+  safeError,
+  safeFields,
+  safeHash,
+} from './diagnostics.js';
+export { parseDurationMs } from './duration.js';
+export {
   CHANNEL_THREAD_PREFIX,
   channelThreadTag,
   clampQueryLimit,
@@ -55,6 +82,7 @@ export {
   SECRET_THREAD_PREFIX,
 } from './event-log.js';
 export { constantTimeEqual, sha256Hex } from './hashing.js';
+export { type LogContext, type Logger, logger } from './logger.js';
 export {
   createSqliteObjectivesStore,
   ObjectivesError,

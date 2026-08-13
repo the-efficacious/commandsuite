@@ -55,9 +55,9 @@
 
 import { createHash } from 'node:crypto';
 import { gunzipSync, gzipSync } from 'node:zlib';
+import type { DiagnosticEmitter } from 'csuite-core';
+import { logger as defaultLogger, type Logger } from 'csuite-core';
 import type { DatabaseSyncInstance, StatementInstance } from './db.js';
-import type { DiagnosticEmitter } from './diagnostics.js';
-import { logger as defaultLogger, type Logger } from './logger.js';
 
 const CREATE_SCHEMA = `
   CREATE TABLE IF NOT EXISTS raw_blob (

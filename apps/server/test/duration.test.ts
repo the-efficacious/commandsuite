@@ -1,5 +1,5 @@
+import { parseDurationMs } from 'csuite-core';
 import { describe, expect, it } from 'vitest';
-import { parseDurationMs } from '../src/duration.js';
 
 describe('parseDurationMs', () => {
   it('parses ms, s, m, h, d', () => {

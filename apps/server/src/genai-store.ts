@@ -26,10 +26,10 @@
  * needed (unlike the nanosecond telemetry store).
  */
 
+import type { DiagnosticEmitter } from 'csuite-core';
+import { logger as defaultLogger, type Logger } from 'csuite-core';
 import type { GenAiInference } from 'csuite-sdk/types';
 import type { DatabaseSyncInstance, StatementInstance } from './db.js';
-import type { DiagnosticEmitter } from './diagnostics.js';
-import { logger as defaultLogger, type Logger } from './logger.js';
 
 const CREATE_SCHEMA = `
   CREATE TABLE IF NOT EXISTS gen_ai_inference (

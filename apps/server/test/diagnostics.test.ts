@@ -15,8 +15,6 @@
  * each has a test below asserting the interaction rather than the part.
  */
 
-import { afterEach, describe, expect, it } from 'vitest';
-import { openDatabase } from '../src/db.js';
 import {
   causeSpec,
   classifyError,
@@ -25,7 +23,10 @@ import {
   DIAGNOSTIC_CAUSES,
   digestPath,
   safeHash,
-} from '../src/diagnostics.js';
+} from 'csuite-core';
+import { afterEach, describe, expect, it } from 'vitest';
+import { openDatabase } from '../src/db.js';
+import { digestPathSync } from '../src/path-digest.js';
 
 const T0 = 1_800_000_000_000;
 const HOUR = 3_600_000;
@@ -67,12 +68,12 @@ function store(opts: Parameters<typeof createDiagnosticStore>[1] = {}) {
 }
 
 describe('safe context', () => {
-  it('never retains a path, only a digest and a length', () => {
+  it('never retains a path, only a digest and a length', async () => {
     // These sites carry OTLP `body_ref` values — attacker-influenced
     // filesystem paths. A durable, agent-queryable store must not become
     // the place they are archived.
     const secret = '/tmp/csuite-otel-bodies-Turner-1495904/req-abc123.json';
-    const d = digestPath(secret);
+    const d = await digestPath(secret);
 
     expect(d.pathDigest).toHaveLength(16);
     expect(d.pathLength).toBe(secret.length);
@@ -95,7 +96,7 @@ describe('safe context', () => {
     expect(classifyError(weird)).toBe('unclassified');
   });
 
-  it('keeps only the fields the CAUSE permits, and no unknown keys', () => {
+  it('keeps only the fields the CAUSE permits, and no unknown keys', async () => {
     // Truncating a value is not refusing it. The policy is a property
     // of the cause, so a hash offered to a path-only cause is dropped
     // rather than stored at 64 characters.
@@ -104,7 +105,11 @@ describe('safe context', () => {
       cause: 'correlator.body_ref_unreadable', // policy: ['path']
       members: ['turner'],
       // biome-ignore lint/suspicious/noExplicitAny: deliberately hostile input
-      fields: { ...digestPath('/tmp/x'), hash: 'a'.repeat(64), secret: '/etc/shadow' } as any,
+      fields: {
+        ...(await digestPath('/tmp/x')),
+        hash: 'a'.repeat(64),
+        secret: '/etc/shadow',
+      } as any,
     });
     const row = db.prepare('SELECT fields FROM diagnostic_event').get() as { fields: string };
     expect(row.fields).toContain('pathDigest'); // permitted
@@ -620,10 +625,14 @@ describe('checkpoint regressions', () => {
     expect(row.fields).toBe('{}');
   });
 
-  it('a real digest from the constructor IS persisted', () => {
+  it('a real digest from the constructor IS persisted', async () => {
     // The other direction: validation must not reject legitimate values.
     const { s, db } = store();
-    s.record({ cause: 'correlator.body_ref_unreadable', members: ['m'], fields: digestPath('/x') });
+    s.record({
+      cause: 'correlator.body_ref_unreadable',
+      members: ['m'],
+      fields: await digestPath('/x'),
+    });
     const row = db.prepare('SELECT fields FROM diagnostic_event').get() as { fields: string };
     expect(row.fields).toContain('pathDigest');
   });
@@ -672,7 +681,7 @@ describe('typed emitter', () => {
     const { s, db } = store();
     s.emit.correlatorBodyRefUnreadable(
       'turner',
-      '/tmp/csuite-otel-bodies-Turner-1495904/req.json',
+      digestPathSync('/tmp/csuite-otel-bodies-Turner-1495904/req.json'),
       Object.assign(new Error('x'), { code: 'ENOENT' }),
     );
     const row = db.prepare('SELECT fields, member_name FROM diagnostic_event').get() as {
@@ -736,9 +745,9 @@ describe('typed emitter', () => {
     // unregistered would write a row the census guard never sees.
     const { s, db } = store();
     const e = s.emit;
-    e.correlatorBodyRefUnreadable('m', '/p', new Error('x'));
+    e.correlatorBodyRefUnreadable('m', digestPathSync('/p'), new Error('x'));
     e.correlatorBodyLengthMismatch('m', 10, 4);
-    e.correlatorUnlinkAfterCaptureFailed('m', '/p', new Error('x'));
+    e.correlatorUnlinkAfterCaptureFailed('m', digestPathSync('/p'), new Error('x'));
     e.correlatorRawCaptureFailed('m', new Error('x'));
     e.correlatorBodyJsonParseFailed('m', 12);
     e.correlatorInferenceBuildFailed('m', new Error('x'));

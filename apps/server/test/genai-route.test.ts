@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto';
 import {
   Broker,
   clearRegisteredSecretValues,
+  createDiagnosticStore,
   createTokenStoreFromMembers,
   InMemoryEventLog,
   REDACTED,
@@ -20,7 +21,6 @@ import type { Permission, Team } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
-import { createDiagnosticStore } from '../src/diagnostics.js';
 import { createGenAiStore } from '../src/genai-store.js';
 import { createMemberStore } from '../src/members.js';
 import { createRawBodyStore } from '../src/raw-body-store.js';

@@ -14,6 +14,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import {
   Broker,
+  createDiagnosticStore,
   createTokenStoreFromMembers,
   InMemoryEventLog,
   SqliteSessionStore,
@@ -22,7 +23,6 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { z } from 'zod';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
-import { createDiagnosticStore } from '../src/diagnostics.js';
 import { testKek } from '../src/kek.js';
 import { createSqliteActivityStore } from '../src/member-activity.js';
 import { createMemberStore, setKek } from '../src/members.js';

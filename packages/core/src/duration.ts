@@ -9,10 +9,8 @@
  * surface a usage error with a suggested shape rather than silently
  * defaulting.
  *
- * Lives in its own file (rather than alongside the SQLite activity
- * store) so tests can exercise it under any Node version — the rest
- * of the server module graph transitively depends on `node:sqlite`,
- * which requires Node ≥22.
+ * Lives in its own file so it can be exercised and reused without
+ * dragging in any store machinery.
  */
 
 export function parseDurationMs(input: string): number | null {

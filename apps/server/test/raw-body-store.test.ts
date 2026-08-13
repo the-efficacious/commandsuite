@@ -11,9 +11,9 @@
 
 import { createHash } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
+import type { Logger } from 'csuite-core';
 import { describe, expect, it } from 'vitest';
 import { openDatabase } from '../src/db.js';
-import type { Logger } from '../src/logger.js';
 import { createRawBodyStore } from '../src/raw-body-store.js';
 
 function sha256(bytes: Buffer): string {

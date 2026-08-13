@@ -20,6 +20,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   Broker,
+  createDiagnosticStore,
   createTokenStoreFromMembers,
   InMemoryEventLog,
   SqliteSessionStore,
@@ -28,11 +29,11 @@ import type { Team } from 'csuite-sdk/types';
 import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
-import { createDiagnosticStore } from '../src/diagnostics.js';
 import { createGenAiCorrelator } from '../src/genai-correlator.js';
 import { createGenAiStore } from '../src/genai-store.js';
 import { createSqliteActivityStore } from '../src/member-activity.js';
 import { createMemberStore } from '../src/members.js';
+import { digestPathSync } from '../src/path-digest.js';
 import { createRawBodyStore } from '../src/raw-body-store.js';
 import { createTelemetryStore } from '../src/telemetry-store.js';
 import { mockTeamStore } from './helpers/test-stores.js';
@@ -268,7 +269,11 @@ describe('correlator recovery — positive controls', () => {
   it('a readable body_ref clears the unreadable incident', () => {
     const db = openDatabase(':memory:');
     const diagnostics = createDiagnosticStore(db);
-    diagnostics.emit.correlatorBodyRefUnreadable('turner', '/gone.json', new Error('x'));
+    diagnostics.emit.correlatorBodyRefUnreadable(
+      'turner',
+      digestPathSync('/gone.json'),
+      new Error('x'),
+    );
     expect(diagnostics.unresolved('turner').map((u) => u.cause)).toContain(
       'correlator.body_ref_unreadable',
     );

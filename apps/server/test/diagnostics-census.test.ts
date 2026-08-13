@@ -36,8 +36,8 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DIAGNOSTIC_CAUSES } from 'csuite-core';
 import { describe, expect, it } from 'vitest';
-import { DIAGNOSTIC_CAUSES } from '../src/diagnostics.js';
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '../src');
 

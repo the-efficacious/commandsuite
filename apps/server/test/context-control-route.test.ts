@@ -20,6 +20,7 @@
 
 import {
   Broker,
+  createDiagnosticStore,
   createTokenStoreFromMembers,
   InMemoryEventLog,
   SqliteSessionStore,
@@ -28,7 +29,6 @@ import type { Message, Permission, Team } from 'csuite-sdk/types';
 import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
-import { createDiagnosticStore } from '../src/diagnostics.js';
 import { createGenAiStore } from '../src/genai-store.js';
 import { createMemberStore } from '../src/members.js';
 import { createRawBodyStore } from '../src/raw-body-store.js';

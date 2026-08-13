@@ -28,10 +28,10 @@ import type {
   ActivityStore as CoreActivityStore,
   ListActivityFilter as CoreListActivityFilter,
 } from 'csuite-core';
+import { logger as defaultLogger, type Logger } from 'csuite-core';
 import { ActivityEventSchema } from 'csuite-sdk/schemas';
 import type { ActivityEvent, ActivityRow } from 'csuite-sdk/types';
 import type { DatabaseSyncInstance, StatementInstance } from './db.js';
-import { logger as defaultLogger, type Logger } from './logger.js';
 
 const CREATE_SCHEMA = `
   CREATE TABLE IF NOT EXISTS member_activity (
@@ -239,4 +239,4 @@ export function pruneActivityDb(db: DatabaseSyncInstance, cutoffTs: number): num
   return Number(result.changes ?? 0);
 }
 
-export { parseDurationMs } from './duration.js';
+export { parseDurationMs } from 'csuite-core';

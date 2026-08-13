@@ -31,7 +31,7 @@
  * arrives looking like a teammate.
  */
 
-import type { Broker } from 'csuite-core';
+import type { Broker, Logger } from 'csuite-core';
 import { type ChannelStore, GENERAL_CHANNEL_ID } from 'csuite-core';
 import type {
   ActivityState,
@@ -41,7 +41,6 @@ import type {
   NotificationOverrides,
 } from 'csuite-sdk/types';
 import type { ActivityTracker } from '../activity-tracker.js';
-import type { Logger } from '../logger.js';
 import type { MemberStore } from '../members.js';
 import {
   applyFilters,

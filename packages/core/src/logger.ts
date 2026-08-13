@@ -1,9 +1,11 @@
 /**
- * Minimal structured logger for the csuite server.
+ * Minimal structured logger.
  *
- * Writes one JSON line per event to stderr so it can be piped straight
- * into journald / a log shipper. Stdout is left clean for the server's
- * startup banner.
+ * The default implementation writes one JSON line per event to the
+ * runtime's error stream via `console.error` — on a server that is
+ * stderr, pipeable straight into journald / a log shipper, leaving
+ * stdout clean for startup banners. Hosts with their own log fabric
+ * inject a `Logger` of their own instead.
  */
 
 export interface LogContext {
@@ -19,7 +21,7 @@ export interface Logger {
 
 function emit(level: string, msg: string, ctx: LogContext = {}): void {
   const record = { ts: new Date().toISOString(), level, msg, ...ctx };
-  process.stderr.write(`${JSON.stringify(record)}\n`);
+  console.error(JSON.stringify(record));
 }
 
 export const logger: Logger = {
