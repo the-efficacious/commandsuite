@@ -21,12 +21,12 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { TelemetryRecord } from 'csuite-core';
 import { createDiagnosticStore } from 'csuite-core';
 import { afterAll, describe, expect, it } from 'vitest';
 import { openDatabase } from '../src/db.js';
 import { createGenAiCorrelator, isGenAiLogRecord } from '../src/genai-correlator.js';
 import { createRawBodyStore, type RawBodyStore } from '../src/raw-body-store.js';
-import type { TelemetryRecord } from '../src/telemetry-store.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'genai-corr-'));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));

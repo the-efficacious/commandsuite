@@ -29,10 +29,13 @@ import { Readable } from 'node:stream';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { createNodeWebSocket } from '@hono/node-ws';
 import type {
+  ActivityStore,
   CaptureHealthStore,
   DiagnosticStore,
+  GenAiStore,
   Logger,
   PushSubscriptionStore,
+  TelemetryStore,
 } from 'csuite-core';
 import {
   type Broker,
@@ -161,7 +164,6 @@ import {
   type GenAiCorrelator,
   isGenAiLogRecord,
 } from './genai-correlator.js';
-import type { GenAiStore } from './genai-store.js';
 import {
   composedInstructionsSha256,
   composeInstructions,
@@ -170,7 +172,6 @@ import {
   sha256Hex,
 } from './instructions.js';
 import type { JwtVerifier } from './jwt.js';
-import type { ActivityStore } from './member-activity.js';
 import {
   type LoadedMember,
   MemberLoadError,
@@ -191,7 +192,6 @@ import { parseOtlpLogs, parseOtlpMetrics } from './otlp-parse.js';
 import type { RawBodyStore } from './raw-body-store.js';
 import { SecretsError, type SecretsStore } from './secrets.js';
 import type { TeamStore } from './team-store.js';
-import type { TelemetryStore } from './telemetry-store.js';
 import {
   executeCustomTool,
   type McpToolManager,

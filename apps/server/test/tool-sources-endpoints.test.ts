@@ -10,6 +10,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import {
   Broker,
+  createSqliteActivityStore,
   createTokenStoreFromMembers,
   InMemoryEventLog,
   SqliteSessionStore,
@@ -19,7 +20,6 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { testKek } from '../src/kek.js';
-import { createSqliteActivityStore } from '../src/member-activity.js';
 import { createMemberStore, setKek } from '../src/members.js';
 import { createSqliteToolSourceStore } from '../src/tool-sources/index.js';
 import { mockTeamStore } from './helpers/test-stores.js';

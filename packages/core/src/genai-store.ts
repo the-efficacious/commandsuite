@@ -10,8 +10,8 @@
  *
  * This is deliberately independent of both the operational telemetry
  * sink (`telemetry-store.ts`) and the member-activity stream: its own
- * `gen_ai_inference` table, its own append path, no EventEmitter. It can
- * share the dedicated activity `DatabaseSyncInstance` with the telemetry
+ * `gen_ai_inference` table, its own append path, no listeners. It can
+ * share the dedicated activity `SqlDriver` with the telemetry
  * store — both are heavy-write, per-member operational streams we keep
  * off the main broker write lock — without any coupling.
  *
@@ -26,10 +26,10 @@
  * needed (unlike the nanosecond telemetry store).
  */
 
-import type { DiagnosticEmitter } from 'csuite-core';
-import { logger as defaultLogger, type Logger } from 'csuite-core';
 import type { GenAiInference } from 'csuite-sdk/types';
-import type { DatabaseSyncInstance, StatementInstance } from './db.js';
+import type { DiagnosticEmitter } from './diagnostics.js';
+import { logger as defaultLogger, type Logger } from './logger.js';
+import type { SqlDriver, SqlStatement } from './sql-driver.js';
 
 const CREATE_SCHEMA = `
   CREATE TABLE IF NOT EXISTS gen_ai_inference (
@@ -136,12 +136,12 @@ const DEFAULT_LIMIT = 500;
 const MAX_LIMIT = 5000;
 
 class SqliteGenAiStore implements GenAiStore {
-  private readonly db: DatabaseSyncInstance;
-  private readonly insertStmt: StatementInstance;
+  private readonly db: SqlDriver;
+  private readonly insertStmt: SqlStatement;
   private readonly log: Logger;
   private readonly diag: DiagnosticEmitter | undefined;
 
-  constructor(db: DatabaseSyncInstance, log: Logger, diag?: DiagnosticEmitter) {
+  constructor(db: SqlDriver, log: Logger, diag?: DiagnosticEmitter) {
     this.db = db;
     this.log = log;
     this.diag = diag;
@@ -302,9 +302,6 @@ class SqliteGenAiStore implements GenAiStore {
   }
 }
 
-export function createGenAiStore(
-  db: DatabaseSyncInstance,
-  opts: GenAiStoreOptions = {},
-): GenAiStore {
+export function createGenAiStore(db: SqlDriver, opts: GenAiStoreOptions = {}): GenAiStore {
   return new SqliteGenAiStore(db, opts.logger ?? defaultLogger, opts.diagnostics);
 }

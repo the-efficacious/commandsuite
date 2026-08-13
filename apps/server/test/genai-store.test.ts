@@ -8,10 +8,10 @@
  * migration), and the `model` / `from`-`to` filters.
  */
 
+import { createGenAiStore, type GenAiInferenceInput } from 'csuite-core';
 import type { GenAiInference } from 'csuite-sdk/types';
 import { describe, expect, it } from 'vitest';
 import { openDatabase } from '../src/db.js';
-import { createGenAiStore, type GenAiInferenceInput } from '../src/genai-store.js';
 
 function inference(extra?: Partial<GenAiInferenceInput>): GenAiInferenceInput {
   const base: GenAiInference = {

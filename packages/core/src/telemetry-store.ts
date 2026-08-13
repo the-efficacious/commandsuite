@@ -21,8 +21,8 @@
  * `otlp-parse.ts` — this module is a dumb, transactional writer.
  *
  * This store is intentionally independent of the member-activity
- * stream: separate table, no EventEmitter, no shared append path. It
- * can share a `DatabaseSyncInstance` with the activity store (both are
+ * stream: separate table, no listener registry, no shared append path. It
+ * can share a `SqlDriver` with the activity store (both are
  * heavy-write operational streams kept off the main broker write lock)
  * without any coupling.
  *
@@ -34,9 +34,9 @@
  * matching the OTLP-parse layer, which already coerces via `Number()`).
  */
 
-import type { DiagnosticEmitter } from 'csuite-core';
-import { logger as defaultLogger, type Logger } from 'csuite-core';
-import type { DatabaseSyncInstance, StatementInstance } from './db.js';
+import type { DiagnosticEmitter } from './diagnostics.js';
+import { logger as defaultLogger, type Logger } from './logger.js';
+import type { SqlDriver, SqlStatement } from './sql-driver.js';
 
 const CREATE_SCHEMA = `
   CREATE TABLE IF NOT EXISTS telemetry (
@@ -140,12 +140,12 @@ const DEFAULT_LIMIT = 500;
 const MAX_LIMIT = 5000;
 
 class SqliteTelemetryStore implements TelemetryStore {
-  private readonly db: DatabaseSyncInstance;
-  private readonly insertStmt: StatementInstance;
+  private readonly db: SqlDriver;
+  private readonly insertStmt: SqlStatement;
   private readonly log: Logger;
   private readonly diag: DiagnosticEmitter | undefined;
 
-  constructor(db: DatabaseSyncInstance, log: Logger, diag?: DiagnosticEmitter) {
+  constructor(db: SqlDriver, log: Logger, diag?: DiagnosticEmitter) {
     this.db = db;
     this.log = log;
     this.diag = diag;
@@ -262,6 +262,11 @@ class SqliteTelemetryStore implements TelemetryStore {
     // Nanosecond timestamps overflow JS-number safe range; read INTEGER
     // columns as BigInt to avoid node:sqlite's out-of-range throw, then
     // narrow to number at the boundary.
+    if (!stmt.setReadBigInts) {
+      throw new Error(
+        'telemetry store requires a SqlDriver with setReadBigInts — nanosecond timestamps exceed Number.MAX_SAFE_INTEGER',
+      );
+    }
     stmt.setReadBigInts(true);
     params.push(limit);
     const rows = stmt.all(...params) as unknown as TelemetryRowRaw[];
@@ -300,7 +305,7 @@ class SqliteTelemetryStore implements TelemetryStore {
 }
 
 export function createTelemetryStore(
-  db: DatabaseSyncInstance,
+  db: SqlDriver,
   opts: TelemetryStoreOptions = {},
 ): TelemetryStore {
   return new SqliteTelemetryStore(db, opts.logger ?? defaultLogger, opts.diagnostics);

@@ -23,6 +23,7 @@
 
 import {
   Broker,
+  createSqliteActivityStore,
   createTokenStoreFromMembers,
   InMemoryEventLog,
   SqliteSessionStore,
@@ -32,7 +33,6 @@ import type { ActivityEvent, ListActivityResponse, Team } from 'csuite-sdk/types
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
-import { createSqliteActivityStore } from '../src/member-activity.js';
 import { createMemberStore } from '../src/members.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 

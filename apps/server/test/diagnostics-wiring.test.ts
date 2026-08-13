@@ -12,12 +12,10 @@
  * survives in the store, attributed, with the raw material converted.
  */
 
-import { createDiagnosticStore } from 'csuite-core';
+import { createDiagnosticStore, createGenAiStore, createTelemetryStore } from 'csuite-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { openDatabase } from '../src/db.js';
-import { createGenAiStore } from '../src/genai-store.js';
 import { createRawBodyStore } from '../src/raw-body-store.js';
-import { createTelemetryStore } from '../src/telemetry-store.js';
 
 const dbs: ReturnType<typeof openDatabase>[] = [];
 afterEach(() => {

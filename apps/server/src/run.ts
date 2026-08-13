@@ -24,25 +24,30 @@ import { dirname, resolve as pathResolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { serve } from '@hono/node-server';
 import {
+  type ActivityStore,
   Broker,
   createCaptureHealthStore,
   createDiagnosticStore,
+  createGenAiStore,
+  createSqliteActivityStore,
   createSqliteChannelStore,
   createSqliteObjectivesStore,
   createSqliteProcessDocumentStore,
+  createTelemetryStore,
   logger as defaultLogger,
+  type GenAiStore,
   type Logger,
   registerSecretValues,
   SqliteEventLog,
   SqlitePushSubscriptionStore,
   SqliteSessionStore,
   SqliteTokenStore,
+  type TelemetryStore,
 } from 'csuite-core';
 import { createApp } from './app.js';
 import { type DatabaseSyncInstance, openDatabase } from './db.js';
 import { EnrollmentStore } from './enrollments.js';
 import { createSqliteFilesystemStore, LocalBlobStore } from './files/index.js';
-import { createGenAiStore, type GenAiStore } from './genai-store.js';
 import { createHttp2ServerFactory } from './https/server.js';
 import {
   HttpsConfigError,
@@ -52,7 +57,6 @@ import {
 } from './https/store.js';
 import { createJwtVerifier, type JwtConfig } from './jwt.js';
 import { decryptField, ENCRYPTED_FIELD_PREFIX, encryptField } from './kek.js';
-import { type ActivityStore, createSqliteActivityStore } from './member-activity.js';
 import {
   defaultHttpsConfig,
   getKek,
@@ -68,24 +72,37 @@ import { createRawBodyStore, type RawBodyStore } from './raw-body-store.js';
 import { createSqliteSecretsStore } from './secrets.js';
 import { updateServerConfigFile } from './server-config.js';
 import { openTeamAndMembers, type TeamStore } from './team-store.js';
-import { createTelemetryStore, type TelemetryStore } from './telemetry-store.js';
 import { createMcpClientManager, createSqliteToolSourceStore } from './tool-sources/index.js';
 import { createSqliteVariablesStore, migrateIdentityToVariables } from './variables.js';
 import { SERVER_VERSION } from './version.js';
 
 export {
+  type ActivityStore,
+  createGenAiStore,
+  createSqliteActivityStore,
   createSqliteObjectivesStore,
+  createTelemetryStore,
+  type GenAiInferenceInput,
+  type GenAiInferenceRow,
+  type GenAiQuery,
+  type GenAiStore,
   generateBearerToken,
   hashRawToken,
   type InsertTokenInput,
   type InternalTokenRow,
   ObjectivesError,
   type ObjectivesStore,
+  parseDurationMs,
+  pruneActivityDb,
   SESSION_COOKIE_NAME,
   SESSION_TTL_MS,
   type SessionStore,
   SqliteSessionStore,
   SqliteTokenStore,
+  type TelemetryQuery,
+  type TelemetryRecord,
+  type TelemetryRow,
+  type TelemetryStore,
   TOKEN_HASH_PREFIX,
   type TokenStore,
 } from 'csuite-core';
@@ -103,13 +120,6 @@ export {
   type GenAiCorrelatorOptions,
   isGenAiLogRecord,
 } from './genai-correlator.js';
-export {
-  createGenAiStore,
-  type GenAiInferenceInput,
-  type GenAiInferenceRow,
-  type GenAiQuery,
-  type GenAiStore,
-} from './genai-store.js';
 export { HttpsConfigError, type LoadedCert } from './https/store.js';
 export {
   composedInstructionsSha256,
@@ -129,12 +139,6 @@ export {
   KekResolutionError,
   resolveKek,
 } from './kek.js';
-export {
-  type ActivityStore,
-  createSqliteActivityStore,
-  parseDurationMs,
-  pruneActivityDb,
-} from './member-activity.js';
 export {
   type AddMemberInput,
   ConfigNotFoundError,
@@ -188,13 +192,6 @@ export {
   openTeamAndMembers,
   type TeamStore,
 } from './team-store.js';
-export {
-  createTelemetryStore,
-  type TelemetryQuery,
-  type TelemetryRecord,
-  type TelemetryRow,
-  type TelemetryStore,
-} from './telemetry-store.js';
 export {
   currentCode as currentTotpCode,
   generateSecret as generateTotpSecret,

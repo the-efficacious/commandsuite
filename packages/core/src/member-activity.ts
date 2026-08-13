@@ -10,7 +10,7 @@
  * markers for a given objectiveId.
  *
  * The store is a thin wrapper around SQLite plus an in-process
- * `EventEmitter` that the SSE endpoint subscribes to for live tail.
+ * listener registry that the SSE endpoint subscribes to for live tail.
  * Appends fire the emitter synchronously after the insert commits,
  * so a subscriber attached during an append never misses a row — and
  * a subscriber that attaches AFTER an append can pull the tail via
@@ -22,16 +22,15 @@
  * app layer; everything else is the SDK's responsibility.
  */
 
-import { EventEmitter } from 'node:events';
+import { ActivityEventSchema } from 'csuite-sdk/schemas';
+import type { ActivityEvent, ActivityRow } from 'csuite-sdk/types';
 import type {
   ActivityListener,
   ActivityStore as CoreActivityStore,
   ListActivityFilter as CoreListActivityFilter,
-} from 'csuite-core';
-import { logger as defaultLogger, type Logger } from 'csuite-core';
-import { ActivityEventSchema } from 'csuite-sdk/schemas';
-import type { ActivityEvent, ActivityRow } from 'csuite-sdk/types';
-import type { DatabaseSyncInstance, StatementInstance } from './db.js';
+} from './activity-store.js';
+import { logger as defaultLogger, type Logger } from './logger.js';
+import type { SqlDriver, SqlStatement } from './sql-driver.js';
 
 const CREATE_SCHEMA = `
   CREATE TABLE IF NOT EXISTS member_activity (
@@ -95,12 +94,12 @@ const DEFAULT_LIMIT = 200;
 const MAX_LIMIT = 1000;
 
 class SqliteActivityStore implements CoreActivityStore {
-  private readonly db: DatabaseSyncInstance;
-  private readonly insertStmt: StatementInstance;
-  private readonly emitter = new EventEmitter();
+  private readonly db: SqlDriver;
+  private readonly insertStmt: SqlStatement;
+  private readonly listenersByMember = new Map<string, Set<ActivityListener>>();
   private readonly log: Logger;
 
-  constructor(db: DatabaseSyncInstance, log: Logger) {
+  constructor(db: SqlDriver, log: Logger) {
     this.db = db;
     this.log = log;
     this.db.exec(CREATE_SCHEMA);
@@ -108,10 +107,6 @@ class SqliteActivityStore implements CoreActivityStore {
       `INSERT INTO member_activity (member_name, ts, kind, event_json, created_at)
        VALUES (?, ?, ?, ?, ?)`,
     );
-    // An admin with the web UI open + the member itself tailing its
-    // own stream can realistically hit 2-3 listeners per member; 50
-    // gives plenty of headroom.
-    this.emitter.setMaxListeners(50);
   }
 
   append(memberName: string, events: readonly ActivityEvent[]): ActivityRow[] {
@@ -150,8 +145,15 @@ class SqliteActivityStore implements CoreActivityStore {
       throw err;
     }
 
-    for (const row of inserted) {
-      this.emitter.emit(`row:${memberName}`, row);
+    // Snapshot listeners before iterating — a handler may unsubscribe
+    // itself (or others) mid-fire. Mirrors InMemoryActivityStore.
+    const listeners = this.listenersByMember.get(memberName);
+    if (listeners) {
+      for (const row of inserted) {
+        for (const listener of [...listeners]) {
+          listener(row);
+        }
+      }
     }
 
     return inserted;
@@ -198,10 +200,17 @@ class SqliteActivityStore implements CoreActivityStore {
   }
 
   subscribe(memberName: string, listener: ActivityListener): () => void {
-    const key = `row:${memberName}`;
-    this.emitter.on(key, listener);
+    let set = this.listenersByMember.get(memberName);
+    if (!set) {
+      set = new Set();
+      this.listenersByMember.set(memberName, set);
+    }
+    set.add(listener);
     return () => {
-      this.emitter.off(key, listener);
+      const current = this.listenersByMember.get(memberName);
+      if (!current) return;
+      current.delete(listener);
+      if (current.size === 0) this.listenersByMember.delete(memberName);
     };
   }
 
@@ -222,7 +231,7 @@ class SqliteActivityStore implements CoreActivityStore {
 export type SqliteActivityStoreHandle = SqliteActivityStore;
 
 export function createSqliteActivityStore(
-  db: DatabaseSyncInstance,
+  db: SqlDriver,
   log: Logger = defaultLogger,
 ): SqliteActivityStoreHandle {
   return new SqliteActivityStore(db, log);
@@ -232,11 +241,11 @@ export function createSqliteActivityStore(
  * Stand-alone helper for `csuite prune-traces` that opens the activity
  * DB, prunes, and closes — without spinning up a full `runServer`.
  */
-export function pruneActivityDb(db: DatabaseSyncInstance, cutoffTs: number): number {
+export function pruneActivityDb(db: SqlDriver, cutoffTs: number): number {
   db.exec(CREATE_SCHEMA);
   const stmt = db.prepare('DELETE FROM member_activity WHERE ts < ?');
   const result = stmt.run(cutoffTs);
   return Number(result.changes ?? 0);
 }
 
-export { parseDurationMs } from 'csuite-core';
+export { parseDurationMs } from './duration.js';

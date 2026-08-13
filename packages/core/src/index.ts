@@ -81,8 +81,21 @@ export {
   MAX_QUERY_LIMIT,
   SECRET_THREAD_PREFIX,
 } from './event-log.js';
+export {
+  createGenAiStore,
+  type GenAiInferenceInput,
+  type GenAiInferenceRow,
+  type GenAiQuery,
+  type GenAiStore,
+  type GenAiStoreOptions,
+} from './genai-store.js';
 export { constantTimeEqual, sha256Hex } from './hashing.js';
 export { type LogContext, type Logger, logger } from './logger.js';
+export {
+  createSqliteActivityStore,
+  pruneActivityDb,
+  type SqliteActivityStoreHandle,
+} from './member-activity.js';
 export {
   createSqliteObjectivesStore,
   ObjectivesError,
@@ -132,6 +145,14 @@ export {
   SqliteTokenStore,
   type TokenSeedMemberSource,
 } from './sqlite-token-store.js';
+export {
+  createTelemetryStore,
+  type TelemetryQuery,
+  type TelemetryRecord,
+  type TelemetryRow,
+  type TelemetryStore,
+  type TelemetryStoreOptions,
+} from './telemetry-store.js';
 export {
   generateBearerToken,
   hashRawToken,

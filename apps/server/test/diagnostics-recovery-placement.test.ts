@@ -21,6 +21,9 @@ import { join } from 'node:path';
 import {
   Broker,
   createDiagnosticStore,
+  createGenAiStore,
+  createSqliteActivityStore,
+  createTelemetryStore,
   createTokenStoreFromMembers,
   InMemoryEventLog,
   SqliteSessionStore,
@@ -30,12 +33,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createGenAiCorrelator } from '../src/genai-correlator.js';
-import { createGenAiStore } from '../src/genai-store.js';
-import { createSqliteActivityStore } from '../src/member-activity.js';
 import { createMemberStore } from '../src/members.js';
 import { digestPathSync } from '../src/path-digest.js';
 import { createRawBodyStore } from '../src/raw-body-store.js';
-import { createTelemetryStore } from '../src/telemetry-store.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const TOKEN = 'csuite_test_member_secret';

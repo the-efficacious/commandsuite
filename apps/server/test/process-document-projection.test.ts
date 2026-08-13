@@ -20,7 +20,9 @@
 import {
   Broker,
   clearRegisteredSecretValues,
+  createGenAiStore,
   createSqliteProcessDocumentStore,
+  createTelemetryStore,
   createTokenStoreFromMembers,
   InMemoryEventLog,
   registerSecretValues,
@@ -30,7 +32,6 @@ import type { Member, ProcessDocument, Team, Teammate } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
-import { createGenAiStore } from '../src/genai-store.js';
 import {
   composeInstructions,
   instructionBlocks,
@@ -38,7 +39,6 @@ import {
 } from '../src/instructions.js';
 import { createMemberStore } from '../src/members.js';
 import { createRawBodyStore } from '../src/raw-body-store.js';
-import { createTelemetryStore } from '../src/telemetry-store.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const TEAM: Team = {

@@ -77,12 +77,10 @@
  */
 
 import { readFileSync, statSync, unlinkSync } from 'node:fs';
-import type { DiagnosticEmitter } from 'csuite-core';
+import type { DiagnosticEmitter, GenAiInferenceInput, TelemetryRecord } from 'csuite-core';
 import { anthropicToGenAi } from 'csuite-core';
-import type { GenAiInferenceInput } from './genai-store.js';
 import { digestPathSync } from './path-digest.js';
 import type { RawBodyStore } from './raw-body-store.js';
-import type { TelemetryRecord } from './telemetry-store.js';
 
 const NANOS_PER_MS = 1_000_000;
 

@@ -15,6 +15,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import {
   Broker,
   createDiagnosticStore,
+  createSqliteActivityStore,
   createTokenStoreFromMembers,
   InMemoryEventLog,
   SqliteSessionStore,
@@ -24,7 +25,6 @@ import { z } from 'zod';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { testKek } from '../src/kek.js';
-import { createSqliteActivityStore } from '../src/member-activity.js';
 import { createMemberStore, setKek } from '../src/members.js';
 import {
   createMcpClientManager,
