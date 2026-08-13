@@ -1,7 +1,7 @@
 {
   "name": "csuite-core",
   "version": "0.6.0",
-  "description": "Runtime-agnostic broker logic for csuite — agent registry, push fanout, SSE, event log.",
+  "description": "Runtime-agnostic broker logic for csuite \u2014 agent registry, push fanout, SSE, event log.",
   "license": "Apache-2.0",
   "author": "Efficacious, Inc.",
   "homepage": "https://github.com/the-efficacious/commandsuite#readme",
@@ -43,7 +43,8 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
-    "csuite-sdk": "workspace:*"
+    "csuite-sdk": "workspace:*",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "tsup": "^8.0.0",

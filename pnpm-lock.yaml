@@ -206,6 +206,9 @@ importers:
       csuite-sdk:
         specifier: workspace:*
         version: link:../sdk
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
     devDependencies:
       tsup:
         specifier: ^8.0.0

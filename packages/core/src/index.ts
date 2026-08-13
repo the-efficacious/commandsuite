@@ -103,6 +103,22 @@ export {
   type SqliteActivityStoreHandle,
 } from './member-activity.js';
 export {
+  type AddMemberInput,
+  type LoadedMember,
+  MemberLoadError,
+  type MemberStore,
+  resolvePermissions,
+  type UpdateMemberPatch,
+  validateMemberInstructions,
+  validateMemberName,
+  validatePermissionPreset,
+  validateRawPermissions,
+  validateRole,
+  validateTeamContext,
+  validateTeamName,
+  validateTotpSecret,
+} from './members-domain.js';
+export {
   createSqliteObjectivesStore,
   ObjectivesError,
   type ObjectivesMutationResult,
