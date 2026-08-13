@@ -1,18 +1,12 @@
-export { type BlobStore, LocalBlobStore, type PutOptions, type PutResult } from './blob-store.js';
-export { FsError, type FsErrorCode } from './errors.js';
 export {
+  type BlobStore,
+  basenameOf,
   type CopyByBlobRefInput,
   createSqliteFilesystemStore,
-  type FilesystemStore,
-  type ObjectiveAclProvider,
-  type ViewerContext,
-  type WriteCollisionStrategy,
-  type WriteFileInput,
-  type WriteFileResult,
-} from './filesystem-store.js';
-export {
-  basenameOf,
   dedupeBasename,
+  type FilesystemStore,
+  FsError,
+  type FsErrorCode,
   isAncestorPath,
   joinPath,
   MAX_PATH_LENGTH,
@@ -20,10 +14,18 @@ export {
   normalizePath,
   OBJECTIVE_NAMESPACE_SEGMENT,
   OBJECTIVE_OWNER_PREFIX,
+  type ObjectiveAclProvider,
   objectiveNamespacePath,
   ownerOf,
+  type PutOptions,
+  type PutResult,
   parentOf,
   parseObjectiveNamespacePath,
   ROOT_PATH,
   splitPath,
-} from './paths.js';
+  type ViewerContext,
+  type WriteCollisionStrategy,
+  type WriteFileInput,
+  type WriteFileResult,
+} from 'csuite-core';
+export { LocalBlobStore } from './blob-store.js';

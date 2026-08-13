@@ -18,25 +18,10 @@ import { mkdir, rename, rm, stat } from 'node:fs/promises';
 import * as path from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { FsError } from './errors.js';
+import type { BlobStore, PutOptions, PutResult } from 'csuite-core';
+import { FsError } from 'csuite-core';
 
-export interface PutResult {
-  hash: string;
-  size: number;
-}
-
-export interface PutOptions {
-  /** Reject uploads larger than this many bytes. Default unlimited. */
-  maxSize?: number;
-}
-
-export interface BlobStore {
-  putFromStream(stream: Readable, opts?: PutOptions): Promise<PutResult>;
-  putFromBuffer(buffer: Buffer, opts?: PutOptions): Promise<PutResult>;
-  openReadStream(hash: string): Readable;
-  exists(hash: string): Promise<boolean>;
-  delete(hash: string): Promise<void>;
-}
+export type { BlobStore, PutOptions, PutResult };
 
 const HASH_RE = /^[a-f0-9]{64}$/;
 
@@ -58,7 +43,17 @@ export class LocalBlobStore implements BlobStore {
     return path.join(this.baseDir, hash.slice(0, 2), hash.slice(2));
   }
 
-  async putFromStream(stream: Readable, opts: PutOptions = {}): Promise<PutResult> {
+  async putFromStream(
+    stream: ReadableStream<Uint8Array>,
+    opts: PutOptions = {},
+  ): Promise<PutResult> {
+    return this.putFromNodeStream(
+      Readable.fromWeb(stream as unknown as import('node:stream/web').ReadableStream<Uint8Array>),
+      opts,
+    );
+  }
+
+  private async putFromNodeStream(stream: Readable, opts: PutOptions = {}): Promise<PutResult> {
     const tmpName = `${Date.now()}-${randomBytes(8).toString('hex')}`;
     const tmpPath = path.join(this.tmpDir, tmpName);
     const hasher = createHash('sha256');
@@ -99,16 +94,18 @@ export class LocalBlobStore implements BlobStore {
     return { hash, size };
   }
 
-  async putFromBuffer(buffer: Buffer, opts: PutOptions = {}): Promise<PutResult> {
+  async putFromBuffer(bytes: Uint8Array, opts: PutOptions = {}): Promise<PutResult> {
     const maxSize = opts.maxSize ?? Number.POSITIVE_INFINITY;
-    if (buffer.length > maxSize) {
+    if (bytes.length > maxSize) {
       throw new FsError('too_large', `file exceeds max size ${maxSize}`);
     }
-    return this.putFromStream(Readable.from(buffer), opts);
+    return this.putFromNodeStream(Readable.from(Buffer.from(bytes)), opts);
   }
 
-  openReadStream(hash: string): Readable {
-    return fs.createReadStream(this.pathFor(hash));
+  openReadStream(hash: string): ReadableStream<Uint8Array> {
+    return Readable.toWeb(
+      fs.createReadStream(this.pathFor(hash)),
+    ) as unknown as ReadableStream<Uint8Array>;
   }
 
   async exists(hash: string): Promise<boolean> {

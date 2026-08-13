@@ -2,9 +2,9 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
+import { FsError } from 'csuite-core';
 import { afterEach, describe, expect, it } from 'vitest';
 import { LocalBlobStore } from '../../src/files/blob-store.js';
-import { FsError } from '../../src/files/errors.js';
 
 describe('LocalBlobStore', () => {
   const dirsToClean: string[] = [];
@@ -48,7 +48,7 @@ describe('LocalBlobStore', () => {
     const store = makeStore();
     const chunk = Buffer.alloc(64 * 1024, 0x41); // "A"*64KB
     const chunks = Array.from({ length: 4 }, () => chunk);
-    const src = Readable.from(chunks);
+    const src = Readable.toWeb(Readable.from(chunks)) as unknown as ReadableStream<Uint8Array>;
     const { hash, size } = await store.putFromStream(src);
     expect(size).toBe(chunk.length * 4);
     expect(await store.exists(hash)).toBe(true);

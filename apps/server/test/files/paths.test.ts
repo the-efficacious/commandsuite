@@ -1,8 +1,7 @@
-import { describe, expect, it } from 'vitest';
-import { FsError } from '../../src/files/errors.js';
 import {
   basenameOf,
   dedupeBasename,
+  FsError,
   isAncestorPath,
   joinPath,
   normalizePath,
@@ -10,7 +9,8 @@ import {
   parentOf,
   ROOT_PATH,
   splitPath,
-} from '../../src/files/paths.js';
+} from 'csuite-core';
+import { describe, expect, it } from 'vitest';
 
 describe('paths', () => {
   describe('normalizePath', () => {

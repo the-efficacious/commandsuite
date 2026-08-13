@@ -25,7 +25,6 @@
 
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { Readable } from 'node:stream';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { createNodeWebSocket } from '@hono/node-ws';
 import type {
@@ -5801,8 +5800,7 @@ export function createApp(options: AppOptions): CreatedApp {
           parsedPath.data,
           toViewer(c.get('member')),
         );
-        const webStream = nodeStreamToWebStream(stream);
-        return new Response(webStream, {
+        return new Response(stream, {
           status: 200,
           headers: {
             'Content-Type': entry.mimeType ?? 'application/octet-stream',
@@ -5850,15 +5848,12 @@ export function createApp(options: AppOptions): CreatedApp {
       }
       const body = c.req.raw.body;
       if (!body) return c.json({ error: 'empty upload body' }, 400);
-      const nodeStream = Readable.fromWeb(
-        body as unknown as import('node:stream/web').ReadableStream<Uint8Array>,
-      );
       try {
         const result = await fsStore.writeFile({
           path: parsedPath.data,
           mimeType: mime,
           writer: toViewer(c.get('member')),
-          source: nodeStream,
+          source: body as ReadableStream<Uint8Array>,
           collision: parsedCollide.data,
           maxSize: maxFileSize,
         });
@@ -6130,16 +6125,6 @@ function mapFsError(c: Context<AppBindings>, err: unknown): Response {
     return c.json({ error: err.message, code: err.code }, status as 400 | 403 | 404 | 409 | 413);
   }
   return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
-}
-
-/**
- * Wrap a Node `Readable` into a web `ReadableStream<Uint8Array>` so
- * we can hand it to `new Response(...)`. `Readable.toWeb` returns a
- * loosely-typed stream; we narrow it at the boundary since every
- * value on the wire is a Uint8Array chunk.
- */
-function nodeStreamToWebStream(stream: Readable): ReadableStream<Uint8Array> {
-  return Readable.toWeb(stream) as unknown as ReadableStream<Uint8Array>;
 }
 
 /**

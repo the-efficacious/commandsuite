@@ -39,9 +39,8 @@
  * as directories if they don't exist yet.
  */
 
-import type { Readable } from 'node:stream';
 import type { FsEntry, Permission } from 'csuite-sdk/types';
-import type { DatabaseSyncInstance, StatementInstance } from '../db.js';
+import type { SqlDriver, SqlStatement } from '../sql-driver.js';
 import type { BlobStore } from './blob-store.js';
 import { FsError } from './errors.js';
 import {
@@ -132,7 +131,7 @@ export interface WriteFileInput {
   path: string;
   mimeType: string;
   writer: ViewerContext;
-  source: Readable | Buffer;
+  source: ReadableStream<Uint8Array> | Uint8Array;
   collision?: WriteCollisionStrategy;
   /** Reject uploads larger than this many bytes. */
   maxSize?: number;
@@ -181,7 +180,10 @@ export interface FilesystemStore {
    */
   copyByBlobRef(input: CopyByBlobRefInput): FsEntry;
 
-  openReadStream(path: string, viewer: ViewerContext): { entry: FsEntry; stream: Readable };
+  openReadStream(
+    path: string,
+    viewer: ViewerContext,
+  ): { entry: FsEntry; stream: ReadableStream<Uint8Array> };
 
   writeFile(input: WriteFileInput): Promise<WriteFileResult>;
   mkdir(path: string, writer: ViewerContext, opts?: { recursive?: boolean }): FsEntry;
@@ -215,7 +217,7 @@ export interface CopyByBlobRefInput {
 }
 
 interface SqliteFilesystemStoreOptions {
-  db: DatabaseSyncInstance;
+  db: SqlDriver;
   blobs: BlobStore;
   /**
    * ACL provider for the `/objectives/<id>/...` namespace. Injected
@@ -227,27 +229,27 @@ interface SqliteFilesystemStoreOptions {
 }
 
 class SqliteFilesystemStore implements FilesystemStore {
-  private readonly db: DatabaseSyncInstance;
+  private readonly db: SqlDriver;
   private readonly blobs: BlobStore;
   private readonly objectiveAcl: ObjectiveAclProvider | null;
 
-  private readonly getEntryStmt: StatementInstance;
-  private readonly listChildrenStmt: StatementInstance;
-  private readonly listDescendantsStmt: StatementInstance;
-  private readonly listSharedStmt: StatementInstance;
-  private readonly insertEntryStmt: StatementInstance;
-  private readonly updateEntryContentStmt: StatementInstance;
-  private readonly deleteEntryStmt: StatementInstance;
-  private readonly deleteGrantsForPathStmt: StatementInstance;
-  private readonly upsertBlobStmt: StatementInstance;
-  private readonly incRefStmt: StatementInstance;
-  private readonly decRefStmt: StatementInstance;
-  private readonly deleteZeroBlobStmt: StatementInstance;
-  private readonly insertGrantStmt: StatementInstance;
-  private readonly hasGrantStmt: StatementInstance;
-  private readonly movePathStmt: StatementInstance;
-  private readonly listHomesStmt: StatementInstance;
-  private readonly listAllFilesStmt: StatementInstance;
+  private readonly getEntryStmt: SqlStatement;
+  private readonly listChildrenStmt: SqlStatement;
+  private readonly listDescendantsStmt: SqlStatement;
+  private readonly listSharedStmt: SqlStatement;
+  private readonly insertEntryStmt: SqlStatement;
+  private readonly updateEntryContentStmt: SqlStatement;
+  private readonly deleteEntryStmt: SqlStatement;
+  private readonly deleteGrantsForPathStmt: SqlStatement;
+  private readonly upsertBlobStmt: SqlStatement;
+  private readonly incRefStmt: SqlStatement;
+  private readonly decRefStmt: SqlStatement;
+  private readonly deleteZeroBlobStmt: SqlStatement;
+  private readonly insertGrantStmt: SqlStatement;
+  private readonly hasGrantStmt: SqlStatement;
+  private readonly movePathStmt: SqlStatement;
+  private readonly listHomesStmt: SqlStatement;
+  private readonly listAllFilesStmt: SqlStatement;
 
   constructor(opts: SqliteFilesystemStoreOptions) {
     this.db = opts.db;
@@ -434,7 +436,10 @@ class SqliteFilesystemStore implements FilesystemStore {
     return rows.map((r) => this.withCapability(rowToEntry(r), viewer));
   }
 
-  openReadStream(path: string, viewer: ViewerContext): { entry: FsEntry; stream: Readable } {
+  openReadStream(
+    path: string,
+    viewer: ViewerContext,
+  ): { entry: FsEntry; stream: ReadableStream<Uint8Array> } {
     const entry = this.stat(path, viewer);
     if (!entry) throw new FsError('not_found', `no such path: ${path}`);
     if (entry.kind !== 'file') throw new FsError('is_a_directory', `not a file: ${entry.path}`);
@@ -462,9 +467,10 @@ class SqliteFilesystemStore implements FilesystemStore {
     // Blob write happens before the metadata transaction. If the
     // transaction fails, the blob becomes a zero-refcount orphan —
     // harmless (GC-eligible), never observable by a user.
-    const { hash, size } = Buffer.isBuffer(input.source)
-      ? await this.blobs.putFromBuffer(input.source, { maxSize: input.maxSize })
-      : await this.blobs.putFromStream(input.source, { maxSize: input.maxSize });
+    const { hash, size } =
+      input.source instanceof Uint8Array
+        ? await this.blobs.putFromBuffer(input.source, { maxSize: input.maxSize })
+        : await this.blobs.putFromStream(input.source, { maxSize: input.maxSize });
 
     // Collision resolution happens inside the metadata txn so two
     // concurrent writers at the same path don't both succeed.

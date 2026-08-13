@@ -124,6 +124,42 @@ export {
   type FieldCipher,
   type GetFieldCipher,
 } from './field-crypto.js';
+export type {
+  BlobStore,
+  PutOptions,
+  PutResult,
+} from './files/blob-store.js';
+export {
+  FsError,
+  type FsErrorCode,
+} from './files/errors.js';
+export {
+  type CopyByBlobRefInput,
+  createSqliteFilesystemStore,
+  type FilesystemStore,
+  type ObjectiveAclProvider,
+  type ViewerContext,
+  type WriteCollisionStrategy,
+  type WriteFileInput,
+  type WriteFileResult,
+} from './files/filesystem-store.js';
+export {
+  basenameOf,
+  dedupeBasename,
+  isAncestorPath,
+  joinPath,
+  MAX_PATH_LENGTH,
+  MAX_SEGMENT_LENGTH,
+  normalizePath,
+  OBJECTIVE_NAMESPACE_SEGMENT,
+  OBJECTIVE_OWNER_PREFIX,
+  objectiveNamespacePath,
+  ownerOf,
+  parentOf,
+  parseObjectiveNamespacePath,
+  ROOT_PATH,
+  splitPath,
+} from './files/paths.js';
 export {
   createGenAiStore,
   type GenAiInferenceInput,
