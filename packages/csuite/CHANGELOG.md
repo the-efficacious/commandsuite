@@ -1,5 +1,15 @@
 # csuite
 
+## 0.7.0
+
+### Patch Changes
+
+- Updated dependencies [[`4f09779`](https://github.com/the-efficacious/commandsuite/commit/4f0977937266b445265ded29af8deb3a0c16896f)]:
+  - csuite-core@0.7.0
+  - csuite-server@0.7.0
+  - csuite-cli@0.7.0
+  - csuite-sdk@0.7.0
+
 ## 0.6.0
 
 ### Patch Changes
