@@ -28,7 +28,7 @@ import { existsSync } from 'node:fs';
 import { Readable } from 'node:stream';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { createNodeWebSocket } from '@hono/node-ws';
-import type { CaptureHealthStore } from 'csuite-core';
+import type { CaptureHealthStore, PushSubscriptionStore } from 'csuite-core';
 import {
   type Broker,
   type ChannelStore,
@@ -183,7 +183,6 @@ import {
   toWireDelivery,
 } from './notifications/index.js';
 import { parseOtlpLogs, parseOtlpMetrics } from './otlp-parse.js';
-import type { PushSubscriptionStore } from './push/store.js';
 import type { RawBodyStore } from './raw-body-store.js';
 import { SecretsError, type SecretsStore } from './secrets.js';
 import type { TeamStore } from './team-store.js';
@@ -1582,7 +1581,7 @@ export function createApp(options: AppOptions): CreatedApp {
       }
       const member = c.get('member');
       const userAgent = c.req.header('User-Agent') ?? null;
-      const row = pushStore.upsert({
+      const row = await pushStore.upsert({
         memberName: member.name,
         endpoint: parsed.data.endpoint,
         p256dh: parsed.data.keys.p256dh,
@@ -1596,14 +1595,14 @@ export function createApp(options: AppOptions): CreatedApp {
       return c.json({ id: row.id, endpoint: row.endpoint, createdAt: row.createdAt });
     });
 
-    app.delete(`${PATHS.pushSubscriptions}/:id`, auth, (c) => {
+    app.delete(`${PATHS.pushSubscriptions}/:id`, auth, async (c) => {
       const idParam = c.req.param('id');
       const id = Number.parseInt(idParam, 10);
       if (!Number.isFinite(id) || id < 1) {
         return c.json({ error: 'invalid subscription id' }, 400);
       }
       const member = c.get('member');
-      pushStore.deleteForMember(id, member.name);
+      await pushStore.deleteForMember(id, member.name);
       return c.body(null, 204);
     });
   }

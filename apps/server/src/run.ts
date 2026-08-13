@@ -31,6 +31,7 @@ import {
   createSqliteProcessDocumentStore,
   registerSecretValues,
   SqliteEventLog,
+  SqlitePushSubscriptionStore,
   SqliteSessionStore,
 } from 'csuite-core';
 import { createApp } from './app.js';
@@ -60,7 +61,6 @@ import {
 } from './members.js';
 import { createSqliteNotificationsStore } from './notifications/index.js';
 import { dispatchPush } from './push/dispatch.js';
-import { PushSubscriptionStore } from './push/store.js';
 import { configureVapid, generateVapidKeys } from './push/vapid.js';
 import { createRawBodyStore, type RawBodyStore } from './raw-body-store.js';
 import { createSqliteSecretsStore } from './secrets.js';
@@ -417,7 +417,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   // (`apps/server/src/index.ts`) refuses to boot without a KEK so
   // production never hits that path.
   const enrollments = new EnrollmentStore(db, { kek: getKek() });
-  const pushStore = new PushSubscriptionStore(db);
+  const pushStore = new SqlitePushSubscriptionStore(db);
   const objectivesStore = createSqliteObjectivesStore(db);
   const channelStore = createSqliteChannelStore(db);
   // Tool-source registry — config-class, low write volume, main DB.

@@ -96,6 +96,7 @@ export type {
   SqlValue,
 } from './sql-driver.js';
 export { SqliteEventLog } from './sqlite-event-log.js';
+export { SqlitePushSubscriptionStore } from './sqlite-push-subscription-store.js';
 export { SqliteSessionStore } from './sqlite-session-store.js';
 // Pure trace parsers — relocated here from the cli so both the cli
 // native-capture adapters and the server can import them without the
