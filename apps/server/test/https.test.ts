@@ -243,7 +243,7 @@ describe('secureCookies option', () => {
     const tokens = await createTokenStoreFromMembers(db, members);
     // Dynamically import TOTP helpers so we don't ship them into
     // the stable part of the test fixtures.
-    const { currentCode } = await import('../src/totp.js');
+    const { currentCode } = await import('csuite-core');
     const now = 1_700_000_000_000;
     const code = currentCode('JBSWY3DPEHPK3PXP', now);
 

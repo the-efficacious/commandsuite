@@ -32,8 +32,8 @@
  * the same `Number()`-level precision the record contract already uses.
  */
 
-import type { TelemetryRecord } from 'csuite-core';
-import { type RedactionOptions, redactJson } from 'csuite-core';
+import type { TelemetryRecord } from './index.js';
+import { type RedactionOptions, redactJson } from './index.js';
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);

@@ -15,6 +15,16 @@ export {
   type ListActivityFilter,
 } from './activity-store.js';
 export {
+  ACTIVITY_TTL_MS,
+  type ActivityTracker,
+  createActivityTracker,
+} from './activity-tracker.js';
+export {
+  type AuthBindings,
+  type AuthDependencies,
+  createAuthMiddleware,
+} from './auth.js';
+export {
   Broker,
   type BrokerLogger,
   type BrokerOptions,
@@ -123,6 +133,23 @@ export {
   type GenAiStoreOptions,
 } from './genai-store.js';
 export { constantTimeEqual, sha256Hex } from './hashing.js';
+export {
+  type ComposeInstructionsInput,
+  composedInstructionsSha256,
+  composeInstructions,
+  type InstructionBlock,
+  type InstructionBlockKind,
+  instructionBlocks,
+  instructionCaptureExemptions,
+} from './instructions.js';
+export {
+  createJwtVerifier,
+  JwtClaimError,
+  type JwtConfig,
+  type JwtVerifier,
+  looksLikeJwt,
+  type VerifiedClaims,
+} from './jwt.js';
 export { type LogContext, type Logger, logger } from './logger.js';
 export {
   createSqliteActivityStore,
@@ -165,6 +192,12 @@ export {
   type ObjectivesMutationResult,
   type ObjectivesStore,
 } from './objectives.js';
+export {
+  anyValueToJs,
+  flattenAttributes,
+  parseOtlpLogs,
+  parseOtlpMetrics,
+} from './otlp-parse.js';
 export {
   assertDocumentInvariants,
   createSqliteProcessDocumentStore,
@@ -257,6 +290,16 @@ export {
   validateBinding,
   walkResultPath,
 } from './tool-sources/template.js';
+export {
+  currentCode,
+  generateSecret,
+  otpauthUri,
+  TOTP_DIGITS,
+  TOTP_PERIOD_SECONDS,
+  TOTP_WINDOW,
+  type VerifyResult,
+  verifyCode,
+} from './totp.js';
 // Pure trace parsers — relocated here from the cli so both the cli
 // native-capture adapters and the server can import them without the
 // server depending on packages/cli. No `node:` imports; safe to run

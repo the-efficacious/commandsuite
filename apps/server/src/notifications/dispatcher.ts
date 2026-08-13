@@ -31,7 +31,7 @@
  * arrives looking like a teammate.
  */
 
-import type { Broker, Logger } from 'csuite-core';
+import type { ActivityTracker, Broker, Logger } from 'csuite-core';
 import {
   type ChannelStore,
   type DeliveryRecord,
@@ -47,7 +47,6 @@ import type {
   NotificationEndpoint,
   NotificationOverrides,
 } from 'csuite-sdk/types';
-import type { ActivityTracker } from '../activity-tracker.js';
 import type { MemberStore } from '../members.js';
 import {
   applyFilters,

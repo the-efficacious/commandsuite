@@ -16,19 +16,22 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import {
   Broker,
+  createJwtVerifier,
   createTokenStoreFromMembers,
+  currentCode,
+  generateSecret,
   InMemoryEventLog,
+  type JwtConfig,
   SESSION_COOKIE_NAME,
   SqliteSessionStore,
+  verifyCode,
 } from 'csuite-core';
 import type { SessionResponse, Team } from 'csuite-sdk/types';
 import { calculateJwkThumbprint, exportJWK, generateKeyPair, type JWK, SignJWT } from 'jose';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
-import { createJwtVerifier, type JwtConfig } from '../src/jwt.js';
 import { createMemberStore } from '../src/members.js';
-import { currentCode, generateSecret, verifyCode } from '../src/totp.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const OP_TOKEN = 'csuite_auth_test_operator_token';

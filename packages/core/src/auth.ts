@@ -29,12 +29,12 @@
  * is the member.
  */
 
-import type { Logger, TokenStore } from 'csuite-core';
-import { SESSION_COOKIE_NAME, type SessionStore } from 'csuite-core';
 import type { MiddlewareHandler } from 'hono';
 import { getCookie } from 'hono/cookie';
+import type { Logger, TokenStore } from './index.js';
+import { SESSION_COOKIE_NAME, type SessionStore } from './index.js';
 import { type JwtVerifier, looksLikeJwt } from './jwt.js';
-import type { LoadedMember, MemberStore } from './members.js';
+import type { LoadedMember, MemberStore } from './members-domain.js';
 
 export interface AuthDependencies {
   members: MemberStore;

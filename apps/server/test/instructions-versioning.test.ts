@@ -20,6 +20,7 @@
 import { createHash } from 'node:crypto';
 import {
   Broker,
+  composedInstructionsSha256,
   createSqliteProcessDocumentStore,
   createTokenStoreFromMembers,
   InMemoryEventLog,
@@ -30,7 +31,6 @@ import type { InstructionBlockDescriptor } from 'csuite-sdk/types';
 import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
-import { composedInstructionsSha256 } from '../src/instructions.js';
 import { createMemberStore } from '../src/members.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
@@ -173,7 +173,7 @@ describe('GET /instructions is the only path that serves the packet', () => {
 // in directly, so only the strip can make it pass.
 
 describe('composedInstructionsSha256 canonicalization', () => {
-  it('ignores broker and runner versions a caller passes in', () => {
+  it('ignores broker and runner versions a caller passes in', async () => {
     const base = {
       self: {
         name: 'cora',
@@ -186,8 +186,8 @@ describe('composedInstructionsSha256 canonicalization', () => {
       openObjectives: [],
       processDocument: null,
     };
-    const bare = composedInstructionsSha256(base);
-    const versioned = composedInstructionsSha256({
+    const bare = await composedInstructionsSha256(base);
+    const versioned = await composedInstructionsSha256({
       ...base,
       brokerVersion: '9.9.9',
       runnerVersion: '0.3.4',
@@ -195,7 +195,7 @@ describe('composedInstructionsSha256 canonicalization', () => {
     expect(versioned).toBe(bare);
     // Positive control: something that IS composed must move the hash,
     // or an implementation returning a constant satisfies the above.
-    const edited = composedInstructionsSha256({
+    const edited = await composedInstructionsSha256({
       ...base,
       team: { ...base.team, context: 'different ctx' },
     });

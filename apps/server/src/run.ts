@@ -29,6 +29,7 @@ import {
   createCaptureHealthStore,
   createDiagnosticStore,
   createGenAiStore,
+  createJwtVerifier,
   createSqliteActivityStore,
   createSqliteChannelStore,
   createSqliteObjectivesStore,
@@ -39,6 +40,7 @@ import {
   logger as defaultLogger,
   EnrollmentStore,
   type GenAiStore,
+  type JwtConfig,
   type Logger,
   migrateIdentityToVariables,
   openTeamAndMembers,
@@ -60,7 +62,6 @@ import {
   loadCustomCert,
   loadOrGenerateSelfSigned,
 } from './https/store.js';
-import { createJwtVerifier, type JwtConfig } from './jwt.js';
 import { decryptField, ENCRYPTED_FIELD_PREFIX, encryptField, kekFieldCipher } from './kek.js';
 import {
   defaultHttpsConfig,
@@ -80,13 +81,17 @@ import { SERVER_VERSION } from './version.js';
 
 export {
   type ActivityStore,
+  composedInstructionsSha256,
+  composeInstructions,
   createGenAiStore,
+  createJwtVerifier,
   createSqliteActivityStore,
   createSqliteMemberStore,
   createSqliteObjectivesStore,
   createSqliteSecretsStore,
   createSqliteVariablesStore,
   createTelemetryStore,
+  currentCode as currentTotpCode,
   DEFAULT_POLL_INTERVAL_S,
   ENROLLMENT_TTL_MS,
   EnrollmentStore,
@@ -96,16 +101,22 @@ export {
   type GenAiQuery,
   type GenAiStore,
   generateBearerToken,
+  generateSecret as generateTotpSecret,
   hashRawToken,
   IDENTITY_ENV_NAMES,
   type IdentityMigrationResult,
   type InsertTokenInput,
   type InternalTokenRow,
+  instructionCaptureExemptions,
+  type JwtConfig,
+  type JwtVerifier,
+  looksLikeJwt,
   migrateIdentityToVariables,
   normalizeUserCode,
   ObjectivesError,
   type ObjectivesStore,
   openTeamAndMembers,
+  otpauthUri,
   parseDurationMs,
   pruneActivityDb,
   SESSION_COOKIE_NAME,
@@ -123,7 +134,9 @@ export {
   TOKEN_HASH_PREFIX,
   type TokenStore,
   type VariablesStore,
+  type VerifiedClaims,
   validateEnvName,
+  verifyCode as verifyTotpCode,
 } from 'csuite-core';
 export { type DatabaseSyncInstance, openDatabase } from './db.js';
 export {
@@ -133,18 +146,6 @@ export {
   isGenAiLogRecord,
 } from './genai-correlator.js';
 export { HttpsConfigError, type LoadedCert } from './https/store.js';
-export {
-  composedInstructionsSha256,
-  composeInstructions,
-  instructionCaptureExemptions,
-} from './instructions.js';
-export {
-  createJwtVerifier,
-  type JwtConfig,
-  type JwtVerifier,
-  looksLikeJwt,
-  type VerifiedClaims,
-} from './jwt.js';
 export {
   ENCRYPTED_FIELD_PREFIX,
   EncryptedFieldError,
@@ -193,12 +194,6 @@ export {
   updateServerConfigFile,
   writeServerConfigFile,
 } from './server-config.js';
-export {
-  currentCode as currentTotpCode,
-  generateSecret as generateTotpSecret,
-  otpauthUri,
-  verifyCode as verifyTotpCode,
-} from './totp.js';
 export {
   createTtyWizardIO,
   type RunWizardOptions,

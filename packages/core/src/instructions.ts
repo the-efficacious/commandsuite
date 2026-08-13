@@ -24,7 +24,6 @@
  * non-prose consumers (the web UI + the runner's re-brief composer).
  */
 
-import { createHash } from 'node:crypto';
 import type {
   InstructionBlockKind,
   InstructionsResponse,
@@ -34,6 +33,7 @@ import type {
   Team,
   Teammate,
 } from 'csuite-sdk/types';
+import { sha256Hex } from './hashing.js';
 
 export type { InstructionBlockKind } from 'csuite-sdk/types';
 
@@ -153,11 +153,6 @@ export interface InstructionBlock {
   text: string;
 }
 
-/** sha256 hex of exact text — the block-descriptor identifier. */
-export function sha256Hex(value: string): string {
-  return createHash('sha256').update(value).digest('hex');
-}
-
 /**
  * sha256 of the CANONICAL composition — the instruction-version
  * identifier the broker tracks restart-pending against.
@@ -180,16 +175,12 @@ export function sha256Hex(value: string): string {
  * own response field but is rendered into the same fixed context by
  * the runner), separated by a NUL line no authored text can contain.
  */
-export function composedInstructionsSha256(input: ComposeInstructionsInput): string {
+export async function composedInstructionsSha256(input: ComposeInstructionsInput): Promise<string> {
   const canonical: ComposeInstructionsInput = { ...input };
   delete canonical.brokerVersion;
   delete canonical.runnerVersion;
   const composed = composeInstructions(canonical);
-  return createHash('sha256')
-    .update(composed.instructions)
-    .update('\n\u0000\n')
-    .update(input.processDocument?.text ?? '')
-    .digest('hex');
+  return sha256Hex(`${composed.instructions}\n\u0000\n${input.processDocument?.text ?? ''}`);
 }
 
 /**

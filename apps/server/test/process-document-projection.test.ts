@@ -20,11 +20,14 @@
 import {
   Broker,
   clearRegisteredSecretValues,
+  composeInstructions,
   createGenAiStore,
   createSqliteProcessDocumentStore,
   createTelemetryStore,
   createTokenStoreFromMembers,
   InMemoryEventLog,
+  instructionBlocks,
+  instructionCaptureExemptions,
   registerSecretValues,
   SqliteSessionStore,
 } from 'csuite-core';
@@ -32,11 +35,6 @@ import type { Member, ProcessDocument, Team, Teammate } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
-import {
-  composeInstructions,
-  instructionBlocks,
-  instructionCaptureExemptions,
-} from '../src/instructions.js';
 import { createMemberStore } from '../src/members.js';
 import { createRawBodyStore } from '../src/raw-body-store.js';
 import { mockTeamStore } from './helpers/test-stores.js';

@@ -19,9 +19,9 @@
 
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { createJwtVerifier, JwtClaimError, looksLikeJwt } from 'csuite-core';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createJwtVerifier, JwtClaimError, looksLikeJwt } from '../src/jwt.js';
 
 type KeyPair = Awaited<ReturnType<typeof generateKeyPair>>;
 type SigningKey = KeyPair['privateKey'];

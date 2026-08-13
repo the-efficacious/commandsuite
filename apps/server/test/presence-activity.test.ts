@@ -15,6 +15,7 @@
  */
 
 import {
+  ACTIVITY_TTL_MS,
   Broker,
   createTokenStoreFromMembers,
   InMemoryEventLog,
@@ -22,7 +23,6 @@ import {
 } from 'csuite-core';
 import type { RosterResponse, Team } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ACTIVITY_TTL_MS } from '../src/activity-tracker.js';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';

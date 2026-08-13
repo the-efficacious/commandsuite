@@ -33,6 +33,7 @@ import type {
   CaptureHealthStore,
   DiagnosticStore,
   GenAiStore,
+  JwtVerifier,
   Logger,
   PushSubscriptionStore,
   TeamStore,
@@ -40,21 +41,34 @@ import type {
   VariablesStore,
 } from 'csuite-core';
 import {
+  ACTIVITY_TTL_MS,
+  type ActivityTracker,
+  type AuthBindings,
   type Broker,
   type ChannelStore,
   ChannelsError,
   clampQueryLimit,
+  composedInstructionsSha256,
+  composeInstructions,
   containsRegisteredSecretValue,
+  createActivityTracker,
+  createAuthMiddleware,
   type EnrollmentStore,
   formatUserCode,
   GENERAL_CHANNEL_ID,
   generateBearerToken,
+  generateSecret,
+  instructionBlocks,
+  instructionCaptureExemptions,
   normalizeUserCode,
   ObjectivesError,
   type ObjectivesStore,
   openaiResponsesToGenAi,
+  otpauthUri,
   ProcessDocumentError,
   type ProcessDocumentStore,
+  parseOtlpLogs,
+  parseOtlpMetrics,
   redactJson,
   redactSecrets,
   registerSecretValues,
@@ -63,8 +77,10 @@ import {
   SecretsError,
   type SecretsStore,
   type SessionStore,
+  sha256Hex,
   type TokenStore,
   validateSlug,
+  verifyCode as verifyTotpCode,
 } from 'csuite-core';
 import {
   PATHS,
@@ -153,12 +169,6 @@ import { hasPermission } from 'csuite-sdk/types';
 import { type Context, Hono } from 'hono';
 import { deleteCookie, setCookie } from 'hono/cookie';
 import {
-  ACTIVITY_TTL_MS,
-  type ActivityTracker,
-  createActivityTracker,
-} from './activity-tracker.js';
-import { type AuthBindings, createAuthMiddleware } from './auth.js';
-import {
   basenameOf,
   type FilesystemStore,
   FsError,
@@ -170,14 +180,6 @@ import {
   type GenAiCorrelator,
   isGenAiLogRecord,
 } from './genai-correlator.js';
-import {
-  composedInstructionsSha256,
-  composeInstructions,
-  instructionBlocks,
-  instructionCaptureExemptions,
-  sha256Hex,
-} from './instructions.js';
-import type { JwtVerifier } from './jwt.js';
 import {
   type LoadedMember,
   MemberLoadError,
@@ -194,7 +196,6 @@ import {
   type NotificationsStore,
   toWireDelivery,
 } from './notifications/index.js';
-import { parseOtlpLogs, parseOtlpMetrics } from './otlp-parse.js';
 import type { RawBodyStore } from './raw-body-store.js';
 import {
   executeCustomTool,
@@ -203,7 +204,6 @@ import {
   type ToolSourceStore,
   ToolSourcesError,
 } from './tool-sources/index.js';
-import { generateSecret, otpauthUri, verifyCode as verifyTotpCode } from './totp.js';
 
 export interface AppOptions {
   broker: Broker;
@@ -704,7 +704,7 @@ export function createApp(options: AppOptions): CreatedApp {
     return slugs;
   };
 
-  const composedHashFor = (self: Member): string =>
+  const composedHashFor = (self: Member): Promise<string> =>
     composedInstructionsSha256({
       self,
       team: teamStore.getTeam(),
@@ -716,9 +716,9 @@ export function createApp(options: AppOptions): CreatedApp {
       externalNotificationEndpoints: externalEndpointsFor(self.name),
     });
 
-  const allComposedHashes = (): Map<string, string> => {
+  const allComposedHashes = async (): Promise<Map<string, string>> => {
     const hashes = new Map<string, string>();
-    for (const m of members.members()) hashes.set(m.name, composedHashFor(m));
+    for (const m of members.members()) hashes.set(m.name, await composedHashFor(m));
     return hashes;
   };
 
@@ -726,12 +726,12 @@ export function createApp(options: AppOptions): CreatedApp {
   // issued and it differs from the current composition. Unknown issued
   // (broker restarted since their fetch) is not pending — unknown is
   // not a claim.
-  const restartPendingMembers = (): string[] => {
+  const restartPendingMembers = async (): Promise<string[]> => {
     const pending: string[] = [];
     for (const [name, issued] of instructionsIssued) {
       const current = members.findByName(name);
       if (!current) continue;
-      if (issued !== composedHashFor(current)) pending.push(name);
+      if (issued !== (await composedHashFor(current))) pending.push(name);
     }
     return pending.sort();
   };
@@ -748,7 +748,7 @@ export function createApp(options: AppOptions): CreatedApp {
     actor: string,
     before: ReadonlyMap<string, string>,
   ): Promise<void> => {
-    const after = allComposedHashes();
+    const after = await allComposedHashes();
     const affected = [...after.keys()]
       .filter((name) => before.get(name) !== after.get(name))
       .sort();
@@ -1076,7 +1076,7 @@ export function createApp(options: AppOptions): CreatedApp {
 
   // ─── Team endpoints (tri-auth) ────────────────────────────────
 
-  app.get(PATHS.instructions, auth, (c) => {
+  app.get(PATHS.instructions, auth, async (c) => {
     const member = c.get('member');
     const reportedRunnerVersion = c.req.header(RUNNER_VERSION_HEADER);
     let runnerVersion: string | undefined;
@@ -1145,19 +1145,21 @@ export function createApp(options: AppOptions): CreatedApp {
     // line (composedInstructionsSha256 strips it), so two fetches that
     // differ only in reported runner version share a hash — a runner
     // upgrade must not read as an instruction edit.
-    const composedSha256 = composedHashFor(member);
+    const composedSha256 = await composedHashFor(member);
     instructionsIssued.set(member.name, composedSha256);
     return c.json({
       ...packet,
-      blocks: instructionBlocks(composeInput, packet.instructions).map((block) => ({
-        kind: block.kind,
-        sha256: sha256Hex(block.text),
-      })),
+      blocks: await Promise.all(
+        instructionBlocks(composeInput, packet.instructions).map(async (block) => ({
+          kind: block.kind,
+          sha256: await sha256Hex(block.text),
+        })),
+      ),
       composedSha256,
     });
   });
 
-  app.get(PATHS.roster, auth, (c) => {
+  app.get(PATHS.roster, auth, async (c) => {
     // Decorate the live presence list with each member's ACTIVITY state
     // (idle/working/blocked). Both `activity` and the back-compat `busy`
     // mirror default to absent for members the tracker resolves as idle
@@ -1224,7 +1226,7 @@ export function createApp(options: AppOptions): CreatedApp {
       teammates: teammatesFromMembers(members),
       connected: presences,
       activityWindowMs: ACTIVITY_TTL_MS,
-      restartPending: restartPendingMembers(),
+      restartPending: await restartPendingMembers(),
     });
   });
 
@@ -2932,7 +2934,7 @@ export function createApp(options: AppOptions): CreatedApp {
         // Snapshot before the write; an edit that stores the same text
         // (version bumps, text identical) moves no hashes and fans out
         // to no one.
-        const before = allComposedHashes();
+        const before = await allComposedHashes();
         const { document, edit } = processDocument.write(parsed.data, c.get('member').name);
         await publishInstructionsEvent(['process_document'], c.get('member').name, before);
         return c.json({ document, edit }, existed ? 200 : 201);
@@ -4767,7 +4769,7 @@ export function createApp(options: AppOptions): CreatedApp {
       // whoever's composed hash this edit moves. A name-only patch
       // also moves every composition (the team line), so the snapshot
       // is unconditional; `changed` names only authored block kinds.
-      const before = allComposedHashes();
+      const before = await allComposedHashes();
       const updated = teamStore.updateTeam(patch, member.name);
       logger.info('team updated', { fields: Object.keys(patch), updatedBy: member.name });
       await publishInstructionsEvent(
@@ -4991,7 +4993,7 @@ export function createApp(options: AppOptions): CreatedApp {
     const changedKinds: InstructionBlockKind[] = [];
     if (parsed.data.role !== undefined) changedKinds.push('role_description');
     if (parsed.data.instructions !== undefined) changedKinds.push('personal_instructions');
-    const before = changedKinds.length > 0 ? allComposedHashes() : null;
+    const before = changedKinds.length > 0 ? await allComposedHashes() : null;
     try {
       members.updateMember(parsedName.data, patch);
     } catch (err) {
