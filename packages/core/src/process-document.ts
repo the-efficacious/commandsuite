@@ -61,7 +61,7 @@ import type {
   ProcessDocument,
   ProcessDocumentEdit,
 } from 'csuite-sdk/types';
-import type { SqlDriver, SqlStatement } from './sql-driver.js';
+import { runInTransaction, type SqlDriver, type SqlStatement } from './sql-driver.js';
 
 export class ProcessDocumentError extends Error {
   readonly code: 'not_found' | 'invalid_input' | 'corrupt_history';
@@ -237,14 +237,13 @@ class SqliteProcessDocumentStore implements ProcessDocumentStore {
     // version recorded is unrecoverable, and worse than immutability —
     // this is the defect the predecessor shipped and a partner caught
     // by driving a failing history append through the real route.
-    this.db.prepare('BEGIN').run();
-    try {
+    runInTransaction(this.db, () => {
       if (current === null) {
         this.db
           .prepare(
             `INSERT INTO process_document
-               (id, text, version, created_by, created_at, updated_by, updated_at)
-             VALUES (1, ?, ?, ?, ?, ?, ?)`,
+             (id, text, version, created_by, created_at, updated_by, updated_at)
+           VALUES (1, ?, ?, ?, ?, ?, ?)`,
           )
           .run(next.text, version, actor, now, actor, now);
       } else {
@@ -257,8 +256,8 @@ class SqliteProcessDocumentStore implements ProcessDocumentStore {
       this.db
         .prepare(
           `INSERT INTO process_document_edits
-             (version, ts, actor, reason, disposition, fields, previous)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+           (version, ts, actor, reason, disposition, fields, previous)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           version,
@@ -269,11 +268,7 @@ class SqliteProcessDocumentStore implements ProcessDocumentStore {
           JSON.stringify(fields),
           JSON.stringify(previous),
         );
-      this.db.prepare('COMMIT').run();
-    } catch (err) {
-      this.db.prepare('ROLLBACK').run();
-      throw err;
-    }
+    });
 
     return { document: this.get() as ProcessDocument, edit };
   }

@@ -52,4 +52,35 @@ export interface SqlDriver {
   exec(sql: string): void;
   /** Compile a statement for repeated execution. */
   prepare(sql: string): SqlStatement;
+  /**
+   * Optional capability: run `fn` atomically — commit on return, roll
+   * back on throw. Engines that forbid SQL-level BEGIN/COMMIT (they
+   * manage atomicity above the SQL text) MUST provide this; when
+   * absent, `runInTransaction` drives the standard SQL statements
+   * through `exec` instead. Store code never issues BEGIN directly.
+   */
+  transaction?<T>(fn: () => T): T;
+}
+
+/**
+ * Run `fn` atomically on `db` — through the driver's `transaction`
+ * capability when present, else via SQL-level BEGIN/COMMIT/ROLLBACK.
+ * The single entry point for store transactions; see
+ * `SqlDriver.transaction` for why the indirection exists.
+ */
+export function runInTransaction<T>(db: SqlDriver, fn: () => T): T {
+  if (db.transaction) return db.transaction(fn);
+  db.exec('BEGIN');
+  try {
+    const out = fn();
+    db.exec('COMMIT');
+    return out;
+  } catch (err) {
+    try {
+      db.exec('ROLLBACK');
+    } catch {
+      /* rollback of a failed tx can itself fail — nothing to do */
+    }
+    throw err;
+  }
 }

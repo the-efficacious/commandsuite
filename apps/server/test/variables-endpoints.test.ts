@@ -380,7 +380,13 @@ describe('identity migration', () => {
     let inserts = 0;
     const failing = new Proxy(db, {
       get(target, prop, receiver) {
-        if (prop !== 'prepare') return Reflect.get(target, prop, receiver);
+        if (prop !== 'prepare') {
+          // Bind natives to the real handle — reflecting through the
+          // proxy hands methods a Proxy `this`, and DatabaseSync
+          // natives throw "Illegal invocation" on that.
+          const v = Reflect.get(target, prop, receiver);
+          return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+        }
         return (sql: string) => {
           const stmt = target.prepare(sql);
           if (!sql.includes('INSERT INTO variables')) return stmt;

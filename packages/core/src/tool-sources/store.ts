@@ -38,7 +38,7 @@ import type {
   ToolSourceKind,
 } from 'csuite-sdk/types';
 import type { GetFieldCipher } from '../field-crypto.js';
-import type { SqlDriver, SqlStatement } from '../sql-driver.js';
+import { runInTransaction, type SqlDriver, type SqlStatement } from '../sql-driver.js';
 import { validateBinding } from './template.js';
 
 export class ToolSourcesError extends Error {
@@ -252,10 +252,6 @@ export interface ToolSourceStore {
 class SqliteToolSourceStore implements ToolSourceStore {
   private readonly db: SqlDriver;
 
-  private readonly beginStmt: SqlStatement;
-  private readonly commitStmt: SqlStatement;
-  private readonly rollbackStmt: SqlStatement;
-
   private readonly insertSourceStmt: SqlStatement;
   private readonly updateSourceStmt: SqlStatement;
   private readonly deleteSourceStmt: SqlStatement;
@@ -294,10 +290,6 @@ class SqliteToolSourceStore implements ToolSourceStore {
   ) {
     this.db = db;
     this.db.exec(CREATE_SCHEMA);
-
-    this.beginStmt = db.prepare('BEGIN');
-    this.commitStmt = db.prepare('COMMIT');
-    this.rollbackStmt = db.prepare('ROLLBACK');
 
     this.insertSourceStmt = db.prepare(
       `INSERT INTO tool_sources
@@ -522,22 +514,13 @@ class SqliteToolSourceStore implements ToolSourceStore {
     if (!existing) throw new ToolSourcesError('not_found', `tool source ${id} not found`);
     // FK cascades aren't enforced — delete children explicitly, all
     // or nothing.
-    this.beginStmt.run();
-    try {
+    runInTransaction(this.db, () => {
       this.deleteBindingsStmt.run(id);
       this.deleteCredentialsStmt.run(id);
       this.deleteCustomToolsStmt.run(id);
       this.deleteMcpToolsStmt.run(id);
       this.deleteSourceStmt.run(id);
-      this.commitStmt.run();
-    } catch (err) {
-      try {
-        this.rollbackStmt.run();
-      } catch {
-        /* rollback of a failed tx can itself fail — nothing to do */
-      }
-      throw err;
-    }
+    });
   }
 
   isBound(sourceId: string, memberName: string): boolean {
@@ -695,8 +678,7 @@ class SqliteToolSourceStore implements ToolSourceStore {
           .map((t) => [t.name, t.description, JSON.stringify(t.inputSchema)]),
       );
     const changed = fingerprint(before) !== fingerprint(tools);
-    this.beginStmt.run();
-    try {
+    runInTransaction(this.db, () => {
       this.deleteMcpToolsStmt.run(sourceId);
       for (const tool of tools) {
         this.insertMcpToolStmt.run(
@@ -708,15 +690,7 @@ class SqliteToolSourceStore implements ToolSourceStore {
           now,
         );
       }
-      this.commitStmt.run();
-    } catch (err) {
-      try {
-        this.rollbackStmt.run();
-      } catch {
-        /* ignore */
-      }
-      throw err;
-    }
+    });
     return { changed };
   }
 
