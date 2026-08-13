@@ -18,7 +18,7 @@
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Broker, InMemoryEventLog } from 'csuite-core';
+import { Broker, InMemoryEventLog, SqliteSessionStore } from 'csuite-core';
 import type { Team } from 'csuite-sdk/types';
 import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
@@ -29,7 +29,6 @@ import { createGenAiStore } from '../src/genai-store.js';
 import { createSqliteActivityStore } from '../src/member-activity.js';
 import { createMemberStore } from '../src/members.js';
 import { createRawBodyStore } from '../src/raw-body-store.js';
-import { SessionStore } from '../src/sessions.js';
 import { createTelemetryStore } from '../src/telemetry-store.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
@@ -49,7 +48,7 @@ function makeApp() {
     broker: new Broker({ eventLog: new InMemoryEventLog(), now: () => 1, idFactory: () => 'm' }),
     members,
     tokens: createTokenStoreFromMembers(db, members),
-    sessions: new SessionStore(db),
+    sessions: new SqliteSessionStore(db),
     teamStore: mockTeamStore(TEAM),
     version: '0.0.0',
     logger: quiet,

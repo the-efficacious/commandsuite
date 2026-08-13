@@ -13,10 +13,10 @@
  * a DELETE in the auth hot path).
  *
  * Core depends only on this interface; the concrete implementation is
- * injected by the runtime adapter (Node server uses SQLite, tests use
- * the in-memory variant below, Cloudflare platform uses DO storage).
- * IO is async in the interface even when an impl could be sync, so
- * async-only runtimes aren't forced to lie.
+ * injected by the host runtime — `SqliteSessionStore` over a
+ * `SqlDriver`, or the in-memory variant below for tests. IO is async
+ * in the interface even when an impl could be sync, so async-only
+ * runtimes aren't forced to lie.
  */
 export const SESSION_COOKIE_NAME = 'csuite_session';
 
@@ -38,9 +38,8 @@ export interface SessionStore {
    * caller can put the `id` in a `Set-Cookie` header and return the
    * `expiresAt` to the SPA. The implementation is responsible for
    * generating a cryptographically random `id` of at least 128 bits of
-   * entropy — the interface does not take one as input because the
-   * choice of random source is runtime-specific (`node:crypto` for the
-   * Node server, Web Crypto for Workers).
+   * entropy — the interface does not take one as input so the
+   * implementation stays free to use the runtime's own CSPRNG.
    */
   create(memberName: string, userAgent: string | null): Promise<SessionRow>;
 
@@ -77,8 +76,8 @@ export interface SessionStore {
  *
  * ID generation uses `Math.random()` + a timestamp suffix — **not**
  * cryptographically suitable for production; in-memory is a test
- * fixture. Real impls should generate from `node:crypto.randomBytes`
- * (server) or `crypto.getRandomValues` (Workers).
+ * fixture. Real impls generate from the runtime's CSPRNG
+ * (`crypto.getRandomValues`).
  */
 export interface InMemorySessionStoreOptions {
   /** Inject a deterministic clock for tests. Defaults to `Date.now`. */

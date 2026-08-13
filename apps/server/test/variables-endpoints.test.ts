@@ -20,6 +20,7 @@ import {
   InMemoryEventLog,
   REDACTED,
   redactSecrets,
+  SqliteSessionStore,
 } from 'csuite-core';
 import type { VariableSummary } from 'csuite-sdk/types';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -28,7 +29,6 @@ import { openDatabase } from '../src/db.js';
 import { testKek } from '../src/kek.js';
 import { createMemberStore, setKek } from '../src/members.js';
 import { createSqliteSecretsStore } from '../src/secrets.js';
-import { SessionStore } from '../src/sessions.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { createSqliteVariablesStore, migrateIdentityToVariables } from '../src/variables.js';
 import { mockTeamStore } from './helpers/test-stores.js';
@@ -62,7 +62,7 @@ function makeApp() {
     },
   ]);
   const db = openDatabase(':memory:');
-  const sessions = new SessionStore(db);
+  const sessions = new SqliteSessionStore(db);
   const tokens = createTokenStoreFromMembers(db, members);
   const secrets = createSqliteSecretsStore(db);
   const variables = createSqliteVariablesStore(db);

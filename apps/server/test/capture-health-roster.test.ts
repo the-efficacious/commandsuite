@@ -14,14 +14,13 @@
  */
 
 import type { CaptureHealth, CaptureHealthStore } from 'csuite-core';
-import { Broker, InMemoryEventLog } from 'csuite-core';
+import { Broker, InMemoryEventLog, SqliteSessionStore } from 'csuite-core';
 import type { RosterResponse, Team } from 'csuite-sdk/types';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
-import { SessionStore } from '../src/sessions.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
@@ -49,7 +48,7 @@ function makeApp(captureHealth?: CaptureHealthStore) {
     },
   ]);
   const db = openDatabase(':memory:');
-  const sessions = new SessionStore(db);
+  const sessions = new SqliteSessionStore(db);
   const tokens = createTokenStoreFromMembers(db, members);
   const { app } = createApp({
     broker,

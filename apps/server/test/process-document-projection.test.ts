@@ -23,6 +23,7 @@ import {
   createSqliteProcessDocumentStore,
   InMemoryEventLog,
   registerSecretValues,
+  SqliteSessionStore,
 } from 'csuite-core';
 import type { Member, ProcessDocument, Team, Teammate } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -36,7 +37,6 @@ import {
 } from '../src/instructions.js';
 import { createMemberStore } from '../src/members.js';
 import { createRawBodyStore } from '../src/raw-body-store.js';
-import { SessionStore } from '../src/sessions.js';
 import { createTelemetryStore } from '../src/telemetry-store.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
@@ -263,7 +263,7 @@ describe('the cold-broker rebuild carries the document', () => {
       broker,
       members,
       tokens: createTokenStoreFromMembers(db, members),
-      sessions: new SessionStore(db),
+      sessions: new SqliteSessionStore(db),
       teamStore: mockTeamStore(TEAM),
       processDocument,
       genaiStore,

@@ -14,13 +14,12 @@
  * caller is.
  */
 
-import { Broker, InMemoryEventLog } from 'csuite-core';
+import { Broker, InMemoryEventLog, SqliteSessionStore } from 'csuite-core';
 import type { Team } from 'csuite-sdk/types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
-import { SessionStore } from '../src/sessions.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
@@ -47,7 +46,7 @@ function makeApp(options: { now?: () => number } = {}) {
     },
   ]);
   const db = openDatabase(':memory:');
-  const sessions = new SessionStore(db, { now: options.now });
+  const sessions = new SqliteSessionStore(db, { now: options.now });
   const tokens = createTokenStoreFromMembers(db, members, { now: options.now });
   const { app } = createApp({
     broker,

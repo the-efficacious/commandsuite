@@ -98,6 +98,7 @@ import {
   createSqliteChannelStore,
   createSqliteObjectivesStore,
   InMemoryEventLog,
+  SqliteSessionStore,
 } from 'csuite-core';
 import {
   FsEntryResponseSchema,
@@ -116,7 +117,6 @@ import { createApp } from '../../src/app.js';
 import { openDatabase } from '../../src/db.js';
 import { createSqliteFilesystemStore, LocalBlobStore } from '../../src/files/index.js';
 import { createMemberStore } from '../../src/members.js';
-import { SessionStore } from '../../src/sessions.js';
 import { createTokenStoreFromMembers } from '../../src/tokens.js';
 import { mockTeamStore } from '../helpers/test-stores.js';
 
@@ -155,7 +155,7 @@ function makeApp() {
   ]);
   broker.seedMembers(members.members());
   const db = openDatabase(':memory:');
-  const sessions = new SessionStore(db);
+  const sessions = new SqliteSessionStore(db);
   const tokens = createTokenStoreFromMembers(db, members);
   const blobDir = mkdtempSync(join(tmpdir(), 'csuite-contract-'));
   tmpDirs.push(blobDir);

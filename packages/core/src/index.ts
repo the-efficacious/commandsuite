@@ -74,6 +74,7 @@ export {
   type PushSubscriptionRow,
   type PushSubscriptionStore,
 } from './push-subscription-store.js';
+export { randomBase64Url, toBase64Url } from './random-id.js';
 export {
   PresenceIdentityError,
   PresenceRegistry,
@@ -95,6 +96,7 @@ export type {
   SqlValue,
 } from './sql-driver.js';
 export { SqliteEventLog } from './sqlite-event-log.js';
+export { SqliteSessionStore } from './sqlite-session-store.js';
 // Pure trace parsers — relocated here from the cli so both the cli
 // native-capture adapters and the server can import them without the
 // server depending on packages/cli. No `node:` imports; safe to run

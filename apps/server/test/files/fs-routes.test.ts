@@ -10,14 +10,13 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Broker, InMemoryEventLog } from 'csuite-core';
+import { Broker, InMemoryEventLog, SqliteSessionStore } from 'csuite-core';
 import type { FsEntry, Team } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../../src/app.js';
 import { openDatabase } from '../../src/db.js';
 import { createSqliteFilesystemStore, LocalBlobStore } from '../../src/files/index.js';
 import { createMemberStore } from '../../src/members.js';
-import { SessionStore } from '../../src/sessions.js';
 import { createTokenStoreFromMembers } from '../../src/tokens.js';
 import { mockTeamStore } from '../helpers/test-stores.js';
 
@@ -61,7 +60,7 @@ function makeApp() {
   // on `broker.hasMember`.
   broker.seedMembers(members.members());
   const db = openDatabase(':memory:');
-  const sessions = new SessionStore(db);
+  const sessions = new SqliteSessionStore(db);
   const tokens = createTokenStoreFromMembers(db, members);
   const blobDir = mkdtempSync(join(tmpdir(), 'csuite-fsroute-'));
   tmpDirs.push(blobDir);

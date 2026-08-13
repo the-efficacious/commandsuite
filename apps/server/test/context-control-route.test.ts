@@ -18,7 +18,7 @@
  *     request permanently unresolvable.
  */
 
-import { Broker, InMemoryEventLog } from 'csuite-core';
+import { Broker, InMemoryEventLog, SqliteSessionStore } from 'csuite-core';
 import type { Message, Permission, Team } from 'csuite-sdk/types';
 import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
@@ -27,7 +27,6 @@ import { createDiagnosticStore } from '../src/diagnostics.js';
 import { createGenAiStore } from '../src/genai-store.js';
 import { createMemberStore } from '../src/members.js';
 import { createRawBodyStore } from '../src/raw-body-store.js';
-import { SessionStore } from '../src/sessions.js';
 import { createTelemetryStore } from '../src/telemetry-store.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
@@ -59,7 +58,7 @@ function makeApp(directorPermissions: Permission[] = ['members.context']) {
     broker,
     members,
     tokens,
-    sessions: new SessionStore(db),
+    sessions: new SqliteSessionStore(db),
     genaiStore: createGenAiStore(db, { logger }),
     rawBodyStore: createRawBodyStore(db, { logger }),
     telemetryStore: createTelemetryStore(db, { logger }),

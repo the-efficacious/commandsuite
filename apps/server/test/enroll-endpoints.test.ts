@@ -15,7 +15,7 @@
  * surface correctness, multi-token semantics after approval.
  */
 
-import { Broker, InMemoryEventLog } from 'csuite-core';
+import { Broker, InMemoryEventLog, SqliteSessionStore } from 'csuite-core';
 import type {
   DeviceAuthorizationResponse,
   PendingEnrollment,
@@ -27,7 +27,6 @@ import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { EnrollmentStore } from '../src/enrollments.js';
 import { createMemberStore } from '../src/members.js';
-import { SessionStore } from '../src/sessions.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
@@ -72,7 +71,10 @@ function makeApp(options: { now?: () => number } = {}): Harness {
   ]);
   broker.seedMembers(members.members());
   const db = openDatabase(':memory:');
-  const sessions = new SessionStore(db, options.now !== undefined ? { now: options.now } : {});
+  const sessions = new SqliteSessionStore(
+    db,
+    options.now !== undefined ? { now: options.now } : {},
+  );
   const tokens = createTokenStoreFromMembers(
     db,
     members,

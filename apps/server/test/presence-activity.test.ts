@@ -14,14 +14,13 @@
  *   - Member deletion forgets any pending activity entry.
  */
 
-import { Broker, InMemoryEventLog } from 'csuite-core';
+import { Broker, InMemoryEventLog, SqliteSessionStore } from 'csuite-core';
 import type { RosterResponse, Team } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ACTIVITY_TTL_MS } from '../src/activity-tracker.js';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
-import { SessionStore } from '../src/sessions.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
@@ -40,7 +39,7 @@ function silentLogger() {
 
 interface Harness {
   app: ReturnType<typeof createApp>['app'];
-  sessions: SessionStore;
+  sessions: SqliteSessionStore;
   advance: (ms: number) => void;
 }
 
@@ -68,7 +67,7 @@ function makeApp(): Harness {
   // Register so /roster sees them as recognized presences.
   for (const name of ['alice', 'scout']) void broker.register(name);
   const db = openDatabase(':memory:');
-  const sessions = new SessionStore(db);
+  const sessions = new SqliteSessionStore(db);
   const tokens = createTokenStoreFromMembers(db, members);
   const persistMembers = vi.fn();
   const { app } = createApp({
@@ -175,7 +174,7 @@ describe('POST /presence/activity', () => {
 
   it('rejects a session-cookie caller with 403 (runner-only)', async () => {
     const { app, sessions } = makeApp();
-    const session = sessions.create('alice', null);
+    const session = await sessions.create('alice', null);
     const res = await app.request('/presence/activity', {
       method: 'POST',
       headers: {

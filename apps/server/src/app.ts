@@ -44,6 +44,9 @@ import {
   redactJson,
   redactSecrets,
   registerSecretValues,
+  SESSION_COOKIE_NAME,
+  SESSION_TTL_MS,
+  type SessionStore,
   validateSlug,
 } from 'csuite-core';
 import {
@@ -183,7 +186,6 @@ import { parseOtlpLogs, parseOtlpMetrics } from './otlp-parse.js';
 import type { PushSubscriptionStore } from './push/store.js';
 import type { RawBodyStore } from './raw-body-store.js';
 import { SecretsError, type SecretsStore } from './secrets.js';
-import { SESSION_COOKIE_NAME, SESSION_TTL_MS, type SessionStore } from './sessions.js';
 import type { TeamStore } from './team-store.js';
 import type { TelemetryStore } from './telemetry-store.js';
 import { generateBearerToken, type TokenStore } from './tokens.js';
@@ -1017,7 +1019,7 @@ export function createApp(options: AppOptions): CreatedApp {
     }
 
     const userAgent = c.req.header('User-Agent') ?? null;
-    const session = sessions.create(matchedName, userAgent);
+    const session = await sessions.create(matchedName, userAgent);
 
     setCookie(c, SESSION_COOKIE_NAME, session.id, {
       httpOnly: true,
@@ -1040,23 +1042,23 @@ export function createApp(options: AppOptions): CreatedApp {
     });
   });
 
-  app.post(PATHS.sessionLogout, auth, (c) => {
+  app.post(PATHS.sessionLogout, auth, async (c) => {
     const sessionId = c.get('sessionId');
     if (sessionId) {
-      sessions.delete(sessionId);
+      await sessions.delete(sessionId);
     }
     deleteCookie(c, SESSION_COOKIE_NAME, { path: '/' });
     return c.body(null, 204);
   });
 
-  app.get(PATHS.session, auth, (c) => {
+  app.get(PATHS.session, auth, async (c) => {
     const member = c.get('member');
     const sessionId = c.get('sessionId');
     // Cookie-auth requests have a sessionId so we can return expiresAt;
     // bearer-auth requests (machine plane) do not, and we report the
     // far future so clients don't infer a misleading expiry.
     const expiresAt = sessionId
-      ? (sessions.get(sessionId)?.expiresAt ?? now() + SESSION_TTL_MS)
+      ? ((await sessions.get(sessionId))?.expiresAt ?? now() + SESSION_TTL_MS)
       : Number.MAX_SAFE_INTEGER;
     return c.json({
       member: member.name,

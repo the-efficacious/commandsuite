@@ -31,6 +31,7 @@ import {
   createSqliteProcessDocumentStore,
   registerSecretValues,
   SqliteEventLog,
+  SqliteSessionStore,
 } from 'csuite-core';
 import { createApp } from './app.js';
 import { type DatabaseSyncInstance, openDatabase } from './db.js';
@@ -64,7 +65,6 @@ import { configureVapid, generateVapidKeys } from './push/vapid.js';
 import { createRawBodyStore, type RawBodyStore } from './raw-body-store.js';
 import { createSqliteSecretsStore } from './secrets.js';
 import { updateServerConfigFile } from './server-config.js';
-import { SessionStore } from './sessions.js';
 import { openTeamAndMembers, type TeamStore } from './team-store.js';
 import { createTelemetryStore, type TelemetryStore } from './telemetry-store.js';
 import { TokenStore } from './tokens.js';
@@ -76,6 +76,10 @@ export {
   createSqliteObjectivesStore,
   ObjectivesError,
   type ObjectivesStore,
+  SESSION_COOKIE_NAME,
+  SESSION_TTL_MS,
+  type SessionStore,
+  SqliteSessionStore,
 } from 'csuite-core';
 export { type DatabaseSyncInstance, openDatabase } from './db.js';
 export {
@@ -171,7 +175,6 @@ export {
   updateServerConfigFile,
   writeServerConfigFile,
 } from './server-config.js';
-export { SESSION_COOKIE_NAME, SESSION_TTL_MS, SessionStore } from './sessions.js';
 export {
   createSqliteMemberStore,
   openTeamAndMembers,
@@ -402,7 +405,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   const teamStore: TeamStore = stores.team;
 
   const eventLog = new SqliteEventLog(db);
-  const sessions = new SessionStore(db);
+  const sessions = new SqliteSessionStore(db);
   const tokens = new TokenStore(db);
 
   // Pending-enrollment store for the device-code (`csuite connect`)
@@ -539,7 +542,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
     filesStore.ensureHome(s.name);
   }
 
-  sessions.purgeExpired();
+  void sessions.purgeExpired();
   enrollments.purgeExpired();
   tokens.purgeExpired();
 

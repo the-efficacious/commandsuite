@@ -18,7 +18,12 @@
  */
 
 import { createHash } from 'node:crypto';
-import { Broker, createSqliteProcessDocumentStore, InMemoryEventLog } from 'csuite-core';
+import {
+  Broker,
+  createSqliteProcessDocumentStore,
+  InMemoryEventLog,
+  SqliteSessionStore,
+} from 'csuite-core';
 import { RUNNER_VERSION_HEADER } from 'csuite-sdk/protocol';
 import type { InstructionBlockDescriptor } from 'csuite-sdk/types';
 import { describe, expect, it, vi } from 'vitest';
@@ -26,7 +31,6 @@ import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { composedInstructionsSha256 } from '../src/instructions.js';
 import { createMemberStore } from '../src/members.js';
-import { SessionStore } from '../src/sessions.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
@@ -62,7 +66,7 @@ function makeApp() {
     broker,
     members,
     tokens: createTokenStoreFromMembers(db, members),
-    sessions: new SessionStore(db),
+    sessions: new SqliteSessionStore(db),
     teamStore: mockTeamStore({
       name: 'demo-team',
       context: 'We ship small and verify by mutating.',

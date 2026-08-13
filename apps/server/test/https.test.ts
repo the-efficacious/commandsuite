@@ -9,7 +9,7 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node
 import { connect as http2Connect } from 'node:http2';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Broker, InMemoryEventLog } from 'csuite-core';
+import { Broker, InMemoryEventLog, SqliteSessionStore } from 'csuite-core';
 import type { Team } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
@@ -19,7 +19,6 @@ import { createHttp2ServerFactory } from '../src/https/server.js';
 import { HttpsConfigError, loadCustomCert, loadOrGenerateSelfSigned } from '../src/https/store.js';
 import { createMemberStore } from '../src/members.js';
 import { type RunningServer, runServer } from '../src/run.js';
-import { SessionStore } from '../src/sessions.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore, seedStores } from './helpers/test-stores.js';
 
@@ -236,7 +235,7 @@ describe('secureCookies option', () => {
       idFactory: () => 'msg-fixed',
     });
     const db = openDatabase(':memory:');
-    const sessions = new SessionStore(db);
+    const sessions = new SqliteSessionStore(db);
     const tokens = createTokenStoreFromMembers(db, members);
     // Dynamically import TOTP helpers so we don't ship them into
     // the stable part of the test fixtures.

@@ -12,7 +12,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { Broker, InMemoryEventLog } from 'csuite-core';
+import { Broker, InMemoryEventLog, SqliteSessionStore } from 'csuite-core';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { createApp } from '../src/app.js';
@@ -21,7 +21,6 @@ import { createDiagnosticStore } from '../src/diagnostics.js';
 import { testKek } from '../src/kek.js';
 import { createSqliteActivityStore } from '../src/member-activity.js';
 import { createMemberStore, setKek } from '../src/members.js';
-import { SessionStore } from '../src/sessions.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
 import {
   createMcpClientManager,
@@ -92,7 +91,7 @@ function makeApp() {
     { name: 'bound', role: { title: 'engineer', description: '' }, permissions: [], token: BOUND },
   ]);
   const db = openDatabase(':memory:');
-  const sessions = new SessionStore(db);
+  const sessions = new SqliteSessionStore(db);
   const tokens = createTokenStoreFromMembers(db, members);
   const toolSources = createSqliteToolSourceStore(db);
   const mcpManager: McpToolManager = createMcpClientManager({

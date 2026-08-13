@@ -14,14 +14,13 @@
  * `roster` is that surface, and `captureHealth` is the precedent.
  */
 
-import { Broker, InMemoryEventLog } from 'csuite-core';
+import { Broker, InMemoryEventLog, SqliteSessionStore } from 'csuite-core';
 import type { RosterResponse, Team } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createDiagnosticStore, type DiagnosticStore } from '../src/diagnostics.js';
 import { createMemberStore } from '../src/members.js';
-import { SessionStore } from '../src/sessions.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
@@ -53,7 +52,7 @@ async function makeApp(withDiagnostics = true) {
     broker,
     members,
     tokens: createTokenStoreFromMembers(db, members),
-    sessions: new SessionStore(db),
+    sessions: new SqliteSessionStore(db),
     teamStore: mockTeamStore(TEAM),
     version: '0.0.0',
     logger: quiet,

@@ -13,6 +13,7 @@ import {
   InMemoryEventLog,
   REDACTED,
   registerSecretValues,
+  SqliteSessionStore,
 } from 'csuite-core';
 import type { Permission, Team } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -22,7 +23,6 @@ import { createDiagnosticStore } from '../src/diagnostics.js';
 import { createGenAiStore } from '../src/genai-store.js';
 import { createMemberStore } from '../src/members.js';
 import { createRawBodyStore } from '../src/raw-body-store.js';
-import { SessionStore } from '../src/sessions.js';
 import { createTelemetryStore } from '../src/telemetry-store.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
@@ -51,7 +51,7 @@ function makeApp(team: Team = TEAM, permissions: Permission[] = []) {
     broker,
     members,
     tokens,
-    sessions: new SessionStore(db),
+    sessions: new SqliteSessionStore(db),
     genaiStore,
     rawBodyStore,
     telemetryStore,
@@ -444,7 +444,7 @@ function makeReadApp() {
     broker,
     members,
     tokens,
-    sessions: new SessionStore(db),
+    sessions: new SqliteSessionStore(db),
     genaiStore,
     teamStore: mockTeamStore(TEAM),
     version: '0.0.0',

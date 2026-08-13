@@ -21,7 +21,7 @@
  * full stream path.
  */
 
-import { Broker, InMemoryEventLog } from 'csuite-core';
+import { Broker, InMemoryEventLog, SqliteSessionStore } from 'csuite-core';
 import { MEMBER_PATHS } from 'csuite-sdk/protocol';
 import type { ActivityEvent, ListActivityResponse, Team } from 'csuite-sdk/types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -29,7 +29,6 @@ import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createSqliteActivityStore } from '../src/member-activity.js';
 import { createMemberStore } from '../src/members.js';
-import { SessionStore } from '../src/sessions.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
@@ -76,7 +75,7 @@ function makeApp() {
     broker,
     members,
     tokens,
-    sessions: new SessionStore(db),
+    sessions: new SqliteSessionStore(db),
     activityStore,
     teamStore: mockTeamStore(TEAM),
     version: '0.0.0',

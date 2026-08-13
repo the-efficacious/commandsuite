@@ -29,12 +29,12 @@
  * is the member.
  */
 
+import { SESSION_COOKIE_NAME, type SessionStore } from 'csuite-core';
 import type { MiddlewareHandler } from 'hono';
 import { getCookie } from 'hono/cookie';
 import { type JwtVerifier, looksLikeJwt } from './jwt.js';
 import type { Logger } from './logger.js';
 import type { LoadedMember, MemberStore } from './members.js';
-import { SESSION_COOKIE_NAME, type SessionStore } from './sessions.js';
 import type { TokenStore } from './tokens.js';
 
 export interface AuthDependencies {
@@ -170,7 +170,7 @@ export function createAuthMiddleware(deps: AuthDependencies): MiddlewareHandler<
     // Session cookie path — human web UI.
     const sessionId = getCookie(c, SESSION_COOKIE_NAME);
     if (sessionId) {
-      const session = sessions.get(sessionId);
+      const session = await sessions.get(sessionId);
       if (!session) {
         // Expired or revoked. Return a distinct error so the SPA knows
         // to drop its session signal and redirect to /login.
@@ -184,10 +184,10 @@ export function createAuthMiddleware(deps: AuthDependencies): MiddlewareHandler<
           sessionId,
           name: session.memberName,
         });
-        sessions.delete(sessionId);
+        await sessions.delete(sessionId);
         return c.json({ error: 'session member no longer exists' }, 401);
       }
-      sessions.touch(sessionId);
+      await sessions.touch(sessionId);
       c.set('member', member);
       c.set('sessionId', sessionId);
       c.set('tokenId', null);

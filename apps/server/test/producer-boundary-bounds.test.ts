@@ -53,7 +53,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Broker, InMemoryEventLog } from 'csuite-core';
+import { Broker, InMemoryEventLog, SqliteSessionStore } from 'csuite-core';
 import { FsEntrySchema, PendingEnrollmentSchema } from 'csuite-sdk/schemas';
 import type { FsEntry, PendingEnrollment, Team } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -62,7 +62,6 @@ import { openDatabase } from '../src/db.js';
 import { EnrollmentStore } from '../src/enrollments.js';
 import { createSqliteFilesystemStore, LocalBlobStore } from '../src/files/index.js';
 import { createMemberStore } from '../src/members.js';
-import { SessionStore } from '../src/sessions.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
@@ -96,7 +95,7 @@ function makeApp() {
   ]);
   broker.seedMembers(members.members());
   const db = openDatabase(':memory:');
-  const sessions = new SessionStore(db);
+  const sessions = new SqliteSessionStore(db);
   const tokens = createTokenStoreFromMembers(db, members);
   const blobDir = mkdtempSync(join(tmpdir(), 'csuite-bounds-'));
   tmpDirs.push(blobDir);

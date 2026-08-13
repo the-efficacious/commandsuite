@@ -1,10 +1,14 @@
-import { Broker, createSqliteChannelStore, InMemoryEventLog } from 'csuite-core';
+import {
+  Broker,
+  createSqliteChannelStore,
+  InMemoryEventLog,
+  SqliteSessionStore,
+} from 'csuite-core';
 import type { Channel, ChannelSummary, GetChannelResponse, Team } from 'csuite-sdk/types';
 import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
-import { SessionStore } from '../src/sessions.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
@@ -48,7 +52,7 @@ function makeApp() {
     },
   ]);
   const db = openDatabase(':memory:');
-  const sessions = new SessionStore(db);
+  const sessions = new SqliteSessionStore(db);
   const tokens = createTokenStoreFromMembers(db, members);
   const channels = createSqliteChannelStore(db);
   const { app } = createApp({

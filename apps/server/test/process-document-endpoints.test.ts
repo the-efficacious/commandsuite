@@ -13,13 +13,17 @@
  * holding every OTHER permission is refused.
  */
 
-import { Broker, createSqliteProcessDocumentStore, InMemoryEventLog } from 'csuite-core';
+import {
+  Broker,
+  createSqliteProcessDocumentStore,
+  InMemoryEventLog,
+  SqliteSessionStore,
+} from 'csuite-core';
 import type { ProcessDocument, ProcessDocumentEdit } from 'csuite-sdk/types';
 import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
-import { SessionStore } from '../src/sessions.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
@@ -63,7 +67,7 @@ function makeApp() {
     broker,
     members,
     tokens: createTokenStoreFromMembers(db, members),
-    sessions: new SessionStore(db),
+    sessions: new SqliteSessionStore(db),
     teamStore: mockTeamStore({ name: 'demo-team', context: '', permissionPresets: {} }),
     processDocument,
     version: '0.0.0',

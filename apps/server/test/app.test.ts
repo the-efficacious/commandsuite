@@ -1,11 +1,10 @@
-import { Broker, InMemoryEventLog } from 'csuite-core';
+import { Broker, InMemoryEventLog, SqliteSessionStore } from 'csuite-core';
 import { PROTOCOL_HEADER, RUNNER_VERSION_HEADER } from 'csuite-sdk/protocol';
 import type { InstructionsResponse, Message, RosterResponse, Team } from 'csuite-sdk/types';
 import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
-import { SessionStore } from '../src/sessions.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
@@ -41,7 +40,7 @@ function makeApp(options: { instructions?: string; context?: string } = {}) {
   ]);
   // Tests run with an in-memory SQLite for sessions + tokens tables.
   const db = openDatabase(':memory:');
-  const sessions = new SessionStore(db);
+  const sessions = new SqliteSessionStore(db);
   const tokens = createTokenStoreFromMembers(db, members);
   const logger = {
     debug: vi.fn(),

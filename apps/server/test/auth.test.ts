@@ -4,7 +4,7 @@
  * middleware resolves to one `LoadedMember`.
  *
  * These tests exercise the /session/* routes end-to-end through the Hono
- * app, plus the TOTP + SessionStore primitives directly. Existing
+ * app, plus the TOTP + SqliteSessionStore primitives directly. Existing
  * /roster identity/auth coverage lives in app.test.ts.
  *
  * Note the `dual auth (bearer OR cookie)` describe below is named
@@ -14,7 +14,7 @@
 
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { Broker, InMemoryEventLog } from 'csuite-core';
+import { Broker, InMemoryEventLog, SESSION_COOKIE_NAME, SqliteSessionStore } from 'csuite-core';
 import type { SessionResponse, Team } from 'csuite-sdk/types';
 import { calculateJwkThumbprint, exportJWK, generateKeyPair, type JWK, SignJWT } from 'jose';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -22,7 +22,6 @@ import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createJwtVerifier, type JwtConfig } from '../src/jwt.js';
 import { createMemberStore } from '../src/members.js';
-import { SESSION_COOKIE_NAME, SessionStore } from '../src/sessions.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { currentCode, generateSecret, verifyCode } from '../src/totp.js';
 import { mockTeamStore } from './helpers/test-stores.js';
@@ -60,7 +59,7 @@ function makeApp(options: { now?: () => number; totpSecret?: string } = {}) {
     },
   ]);
   const db = openDatabase(':memory:');
-  const sessions = new SessionStore(db, { now: options.now });
+  const sessions = new SqliteSessionStore(db, { now: options.now });
   const tokens = createTokenStoreFromMembers(db, members, { now: options.now });
   const { app } = createApp({
     broker,
@@ -145,34 +144,34 @@ describe('verifyCode', () => {
 
 // ─── Session store ──────────────────────────────────────────────────
 
-describe('SessionStore', () => {
-  it('creates, looks up, touches, and deletes sessions', () => {
+describe('SqliteSessionStore', () => {
+  it('creates, looks up, touches, and deletes sessions', async () => {
     const db = openDatabase(':memory:');
-    const store = new SessionStore(db);
-    const created = store.create('director-1', 'test-ua');
+    const store = new SqliteSessionStore(db);
+    const created = await store.create('director-1', 'test-ua');
     expect(created.memberName).toBe('director-1');
 
-    const found = store.get(created.id);
+    const found = await store.get(created.id);
     expect(found?.memberName).toBe('director-1');
 
-    store.touch(created.id);
-    const touched = store.get(created.id);
+    await store.touch(created.id);
+    const touched = await store.get(created.id);
     expect(touched).not.toBeNull();
     if (touched) expect(touched.lastSeen).toBeGreaterThanOrEqual(created.lastSeen);
 
-    store.delete(created.id);
-    expect(store.get(created.id)).toBeNull();
+    await store.delete(created.id);
+    expect(await store.get(created.id)).toBeNull();
   });
 
-  it('treats expired sessions as missing and purges them', () => {
+  it('treats expired sessions as missing and purges them', async () => {
     let clock = 1_000_000;
     const db = openDatabase(':memory:');
-    const store = new SessionStore(db, { now: () => clock });
-    const created = store.create('director-1', null);
+    const store = new SqliteSessionStore(db, { now: () => clock });
+    const created = await store.create('director-1', null);
     // Jump past the 7d TTL.
     clock += 8 * 24 * 60 * 60 * 1000;
-    expect(store.get(created.id)).toBeNull();
-    expect(store.purgeExpired()).toBe(1);
+    expect(await store.get(created.id)).toBeNull();
+    expect(await store.purgeExpired()).toBe(1);
   });
 });
 
@@ -528,7 +527,7 @@ function makeJwtApp(fixture: JwtFixture) {
     },
   ]);
   const db = openDatabase(':memory:');
-  const sessions = new SessionStore(db);
+  const sessions = new SqliteSessionStore(db);
   const tokens = createTokenStoreFromMembers(db, members);
   const { app } = createApp({
     broker,

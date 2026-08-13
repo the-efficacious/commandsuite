@@ -12,13 +12,13 @@ import {
   clearRegisteredSecretValues,
   InMemoryEventLog,
   registerSecretValues,
+  SqliteSessionStore,
 } from 'csuite-core';
 import type { Member, Team, Teammate } from 'csuite-sdk/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
-import { SessionStore } from '../src/sessions.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
@@ -78,7 +78,7 @@ function makeApp(): Harness {
   ]);
   broker.seedMembers(members.members());
   const db = openDatabase(':memory:');
-  const sessions = new SessionStore(db);
+  const sessions = new SqliteSessionStore(db);
   const tokens = createTokenStoreFromMembers(db, members);
   const persistMembers = vi.fn();
   const { app } = createApp({
