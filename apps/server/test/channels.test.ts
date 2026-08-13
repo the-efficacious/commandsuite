@@ -51,11 +51,11 @@ describe('ChannelStore', () => {
       expect(store.listAll().some((c) => c.id === GENERAL_CHANNEL_ID)).toBe(true);
     });
 
-    it('appears for any member in listForMember even without a row', () => {
+    it('appears for any member in listForMember even without a row', async () => {
       const store = makeStore();
-      expect(store.listForMember('nobody-special').some((c) => c.id === GENERAL_CHANNEL_ID)).toBe(
-        true,
-      );
+      expect(
+        await store.listForMember('nobody-special').some((c) => c.id === GENERAL_CHANNEL_ID),
+      ).toBe(true);
     });
 
     it('isMember(general, ...) is always true', () => {
@@ -239,11 +239,11 @@ describe('ChannelStore', () => {
       expect(store.listMembers(ch.id)).toEqual([]);
     });
 
-    it('listForMember returns general + joined channels', () => {
+    it('listForMember returns general + joined channels', async () => {
       const store = makeStore();
       const ch = store.create({ slug: 'ops', creator: 'alice' });
       store.create({ slug: 'eng', creator: 'bob' });
-      const aliceList = store.listForMember('alice');
+      const aliceList = await store.listForMember('alice');
       expect(aliceList.map((c) => c.slug).sort()).toEqual(['general', 'ops']);
       expect(aliceList.find((c) => c.slug === 'eng')).toBeUndefined();
       expect(ch.archivedAt).toBeNull();

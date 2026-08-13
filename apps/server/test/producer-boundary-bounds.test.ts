@@ -53,7 +53,12 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Broker, InMemoryEventLog, SqliteSessionStore } from 'csuite-core';
+import {
+  Broker,
+  createTokenStoreFromMembers,
+  InMemoryEventLog,
+  SqliteSessionStore,
+} from 'csuite-core';
 import { FsEntrySchema, PendingEnrollmentSchema } from 'csuite-sdk/schemas';
 import type { FsEntry, PendingEnrollment, Team } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -62,7 +67,6 @@ import { openDatabase } from '../src/db.js';
 import { EnrollmentStore } from '../src/enrollments.js';
 import { createSqliteFilesystemStore, LocalBlobStore } from '../src/files/index.js';
 import { createMemberStore } from '../src/members.js';
-import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const ADMIN_TOKEN = 'csuite_bounds_admin_token';
@@ -83,7 +87,7 @@ afterEach(() => {
   for (const d of tmpDirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
-function makeApp() {
+async function makeApp() {
   const broker = new Broker({ eventLog: new InMemoryEventLog() });
   const members = createMemberStore([
     {
@@ -96,7 +100,7 @@ function makeApp() {
   broker.seedMembers(members.members());
   const db = openDatabase(':memory:');
   const sessions = new SqliteSessionStore(db);
-  const tokens = createTokenStoreFromMembers(db, members);
+  const tokens = await createTokenStoreFromMembers(db, members);
   const blobDir = mkdtempSync(join(tmpdir(), 'csuite-bounds-'));
   tmpDirs.push(blobDir);
   const files = createSqliteFilesystemStore({ db, blobs: new LocalBlobStore(blobDir) });
@@ -118,14 +122,14 @@ function makeApp() {
 
 const authed = { Authorization: `Bearer ${ADMIN_TOKEN}` };
 
-function write(app: ReturnType<typeof makeApp>['app'], path: string, mime: string) {
+function write(app: Awaited<ReturnType<typeof makeApp>>['app'], path: string, mime: string) {
   return app.request(
     `/fs/write?path=${encodeURIComponent(path)}&mime=${encodeURIComponent(mime)}`,
     { method: 'POST', headers: authed, body: 'payload-bytes' },
   );
 }
 
-function enroll(app: ReturnType<typeof makeApp>['app'], headers: Record<string, string>) {
+function enroll(app: Awaited<ReturnType<typeof makeApp>>['app'], headers: Record<string, string>) {
   return app.request('/enroll', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...headers },
@@ -133,7 +137,9 @@ function enroll(app: ReturnType<typeof makeApp>['app'], headers: Record<string, 
   });
 }
 
-async function pendingRows(app: ReturnType<typeof makeApp>['app']): Promise<PendingEnrollment[]> {
+async function pendingRows(
+  app: Awaited<ReturnType<typeof makeApp>>['app'],
+): Promise<PendingEnrollment[]> {
   const res = await app.request('/enroll/pending', { headers: authed });
   expect(res.status).toBe(200);
   return ((await res.json()) as { enrollments: PendingEnrollment[] }).enrollments;
@@ -145,7 +151,7 @@ async function pendingRows(app: ReturnType<typeof makeApp>['app']): Promise<Pend
 
 describe('POST /fs/write — an out-of-bounds `mime` is REFUSED, never truncated', () => {
   it('refuses a mime the SDK could not parse back, and persists nothing', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const longMime = `text/${'x'.repeat(MIME_MAX - 4)}`;
     expect(longMime.length).toBeGreaterThan(MIME_MAX);
 
@@ -173,7 +179,7 @@ describe('POST /fs/write — an out-of-bounds `mime` is REFUSED, never truncated
   });
 
   it('does NOT store a truncated mime — the shortened claim was never made', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     // The failure this guards against is a "fix" that clamps to the limit:
     // the write would succeed, the schema would parse, every other
     // assertion here would pass, and the file would be stored under a
@@ -191,7 +197,7 @@ describe('POST /fs/write — an out-of-bounds `mime` is REFUSED, never truncated
   });
 
   it('accepts a mime exactly at the limit, and refuses one character past it', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     // Without both sides, an over-strict bound (rejecting everything, or
     // off-by-one at the boundary) would pass the rejection tests above
     // while breaking ordinary uploads.
@@ -202,7 +208,7 @@ describe('POST /fs/write — an out-of-bounds `mime` is REFUSED, never truncated
   });
 
   it('still accepts an ordinary mime', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await write(app, '/alice/plain.txt', 'text/plain');
     expect(res.status).toBe(200);
     const { entry } = (await res.json()) as { entry: FsEntry };
@@ -216,7 +222,7 @@ describe('POST /fs/write — an out-of-bounds `mime` is REFUSED, never truncated
     // label the enrolling user did not choose. See this file's header before
     // reconciling them — making these two agree is the regression, not the
     // cleanup.
-    const { app } = makeApp();
+    const { app } = await makeApp();
 
     expect(
       (await write(app, '/alice/x.txt', `text/${'x'.repeat(MIME_MAX)}`)).status,
@@ -236,7 +242,7 @@ describe('POST /fs/write — an out-of-bounds `mime` is REFUSED, never truncated
 
 describe('POST /enroll — source labels are TRUNCATED to schema bounds, never refused', () => {
   it('accepts an oversize User-Agent and stores a row the SDK can parse', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     expect((await enroll(app, { 'User-Agent': 'M'.repeat(UA_MAX + 88) })).status).toBe(200);
 
     const rows = await pendingRows(app);
@@ -250,7 +256,7 @@ describe('POST /enroll — source labels are TRUNCATED to schema bounds, never r
   });
 
   it('marks the stored value as cut, so it is distinguishable from a real one at the limit', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await enroll(app, { 'User-Agent': 'M'.repeat(UA_MAX + 1) });
 
     const [row] = await pendingRows(app);
@@ -262,7 +268,7 @@ describe('POST /enroll — source labels are TRUNCATED to schema bounds, never r
   });
 
   it('records the truncation with the field and the original length', async () => {
-    const { app, logger } = makeApp();
+    const { app, logger } = await makeApp();
     await enroll(app, { 'User-Agent': 'M'.repeat(900) });
 
     // Truncation that nobody can observe is silent data loss. The stored
@@ -274,7 +280,7 @@ describe('POST /enroll — source labels are TRUNCATED to schema bounds, never r
   });
 
   it('bounds sourceIp from a spoofable forwarding header too', async () => {
-    const { app, logger } = makeApp();
+    const { app, logger } = await makeApp();
     // sourceIp is header-derived: `X-Real-IP` is returned verbatim by
     // ipKey(), so it is unbounded from outside exactly like the UA.
     await enroll(app, { 'X-Real-IP': '9'.repeat(IP_MAX + 40) });
@@ -290,7 +296,7 @@ describe('POST /enroll — source labels are TRUNCATED to schema bounds, never r
   });
 
   it('leaves an in-bounds label byte-identical', async () => {
-    const { app, logger } = makeApp();
+    const { app, logger } = await makeApp();
     const ua = 'csuite-cli/0.3.1 (linux; x64)';
     await enroll(app, { 'User-Agent': ua });
 
@@ -303,7 +309,7 @@ describe('POST /enroll — source labels are TRUNCATED to schema bounds, never r
   });
 
   it('truncates the STORED ip without merging rate-limit buckets', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     // The bound is applied to the recorded label only, never to the
     // rate-limit key. Two distinct clients sharing a long forwarded prefix
     // must stay in separate buckets — otherwise one client could exhaust
@@ -326,7 +332,7 @@ describe('POST /enroll — source labels are TRUNCATED to schema bounds, never r
     // Mirror of the cross-reference in the /fs/write block. Both directions
     // are stated so the inversion is visible from whichever half a future
     // reader opens first.
-    const { app } = makeApp();
+    const { app } = await makeApp();
 
     expect(
       (await enroll(app, { 'User-Agent': 'M'.repeat(UA_MAX + 5) })).status,

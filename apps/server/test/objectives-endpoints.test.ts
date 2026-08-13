@@ -16,6 +16,7 @@
 import {
   Broker,
   createSqliteObjectivesStore,
+  createTokenStoreFromMembers,
   InMemoryEventLog,
   SqliteSessionStore,
 } from 'csuite-core';
@@ -29,7 +30,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
-import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const ALICE = 'csuite_test_alice_secret_token';
@@ -43,7 +43,7 @@ const TEAM: Team = {
   permissionPresets: {},
 };
 
-function makeApp() {
+async function makeApp() {
   const broker = new Broker({
     eventLog: new InMemoryEventLog(),
     now: () => 1_700_000_000_000,
@@ -83,7 +83,7 @@ function makeApp() {
   }
   const db = openDatabase(':memory:');
   const sessions = new SqliteSessionStore(db);
-  const tokens = createTokenStoreFromMembers(db, members);
+  const tokens = await createTokenStoreFromMembers(db, members);
   const objectives = createSqliteObjectivesStore(db);
   const { app } = createApp({
     broker,
@@ -119,7 +119,7 @@ function authed(token: string, body?: unknown, method?: string): RequestInit {
 }
 
 async function createOne(
-  app: ReturnType<typeof makeApp>['app'],
+  app: Awaited<ReturnType<typeof makeApp>>['app'],
   token: string,
   payload: Partial<{
     title: string;
@@ -147,7 +147,7 @@ async function createOne(
 
 describe('POST /objectives', () => {
   it('creates an objective when caller has objectives.create', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'carol' });
     expect(obj.id).toMatch(/^obj-/);
     expect(obj.assignee).toBe('carol');
@@ -156,7 +156,7 @@ describe('POST /objectives', () => {
   });
 
   it('creation with watchers lands as ONE push, naming them all', async () => {
-    const { app, broker } = makeApp();
+    const { app, broker } = await makeApp();
     const received: string[] = [];
     broker.subscribe('carol', async (m) => {
       received.push(m.body);
@@ -174,7 +174,7 @@ describe('POST /objectives', () => {
   });
 
   it('rejects callers without objectives.create with 403', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request(
       '/objectives',
       authed(CAROL, {
@@ -187,7 +187,7 @@ describe('POST /objectives', () => {
   });
 
   it('rejects unauthenticated requests', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/objectives', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -197,7 +197,7 @@ describe('POST /objectives', () => {
   });
 
   it('rejects an unknown assignee with 400', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request(
       '/objectives',
       authed(ALICE, { title: 't', outcome: 'o', assignee: 'ghost' }),
@@ -208,7 +208,7 @@ describe('POST /objectives', () => {
   });
 
   it('rejects an unknown initial watcher with 400', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request(
       '/objectives',
       authed(ALICE, {
@@ -224,7 +224,7 @@ describe('POST /objectives', () => {
   });
 
   it('rejects a malformed payload with 400', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/objectives', authed(ALICE, { title: 't' }));
     expect(res.status).toBe(400);
   });
@@ -234,7 +234,7 @@ describe('POST /objectives', () => {
 
 describe('GET /objectives', () => {
   it('returns team-wide list for callers with objectives.create', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await createOne(app, ALICE, { assignee: 'carol' });
     await createOne(app, BOB, { assignee: 'dave' });
     const res = await app.request('/objectives', authed(ALICE));
@@ -244,7 +244,7 @@ describe('GET /objectives', () => {
   });
 
   it('scopes plain members to objectives where they participate', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     // carol is the assignee of one, irrelevant to the other.
     await createOne(app, ALICE, { assignee: 'carol' });
     await createOne(app, ALICE, { assignee: 'dave' });
@@ -256,7 +256,7 @@ describe('GET /objectives', () => {
   });
 
   it('includes objectives where a plain member is a watcher', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await createOne(app, ALICE, { assignee: 'dave', watchers: ['carol'] });
     const res = await app.request('/objectives', authed(CAROL));
     const body = (await res.json()) as ListObjectivesResponse;
@@ -264,14 +264,14 @@ describe('GET /objectives', () => {
   });
 
   it('rejects a plain member fishing with assignee filter for someone else', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await createOne(app, ALICE, { assignee: 'dave' });
     const res = await app.request('/objectives?assignee=dave', authed(CAROL));
     expect(res.status).toBe(403);
   });
 
   it('accepts a self-scoped assignee filter from a plain member', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await createOne(app, ALICE, { assignee: 'carol' });
     const res = await app.request('/objectives?assignee=carol', authed(CAROL));
     expect(res.status).toBe(200);
@@ -280,7 +280,7 @@ describe('GET /objectives', () => {
   });
 
   it('rejects an invalid status filter with 400', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/objectives?status=garbage', authed(ALICE));
     expect(res.status).toBe(400);
   });
@@ -292,7 +292,7 @@ describe('GET /objectives', () => {
   // PRIVILEGED and assigned NOTHING — a plain-member fixture passes
   // against the bug, because the union already covers that path.
   it('related returns originated and watched objectives for a privileged caller assigned none', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     // alice originates both and is the assignee of neither.
     const originatedA = await createOne(app, ALICE, { assignee: 'carol' });
     const originatedB = await createOne(app, ALICE, { assignee: 'dave' });
@@ -323,7 +323,7 @@ describe('GET /objectives', () => {
   });
 
   it('related composes with a status filter', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await createOne(app, ALICE, { assignee: 'carol' });
     const res = await app.request('/objectives?related=alice&status=active', authed(ALICE));
     expect(res.status).toBe(200);
@@ -335,7 +335,7 @@ describe('GET /objectives', () => {
   // listObjectives() with no arguments and relies on a privileged caller
   // seeing team-wide. Folding the union in as the default would regress it.
   it('a privileged caller without related still sees team-wide', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await createOne(app, BOB, { assignee: 'carol' });
     await createOne(app, BOB, { assignee: 'dave' });
     const res = await app.request('/objectives', authed(ALICE));
@@ -345,14 +345,14 @@ describe('GET /objectives', () => {
   });
 
   it('rejects a plain member passing related for someone else', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await createOne(app, ALICE, { assignee: 'dave' });
     const res = await app.request('/objectives?related=dave', authed(CAROL));
     expect(res.status).toBe(403);
   });
 
   it('accepts a self-scoped related filter from a plain member', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await createOne(app, ALICE, { assignee: 'dave', watchers: ['carol'] });
     const res = await app.request('/objectives?related=carol', authed(CAROL));
     expect(res.status).toBe(200);
@@ -365,7 +365,7 @@ describe('GET /objectives', () => {
 
 describe('GET /objectives/:id', () => {
   it('returns the objective + event log to a thread participant', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'carol' });
     const res = await app.request(`/objectives/${obj.id}`, authed(CAROL));
     expect(res.status).toBe(200);
@@ -375,7 +375,7 @@ describe('GET /objectives/:id', () => {
   });
 
   it('returns the objective to anyone with objectives.create', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'carol' });
     // bob is not a thread participant (alice originated, carol is
     // the assignee). bob has objectives.create so the gate passes.
@@ -384,7 +384,7 @@ describe('GET /objectives/:id', () => {
   });
 
   it('rejects a non-participant without objectives.create with 403', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'carol' });
     // dave is not a participant and has no objectives.create.
     const res = await app.request(`/objectives/${obj.id}`, authed(DAVE));
@@ -392,7 +392,7 @@ describe('GET /objectives/:id', () => {
   });
 
   it('returns 404 for unknown ids', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/objectives/obj-nope', authed(ALICE));
     expect(res.status).toBe(404);
   });
@@ -402,7 +402,7 @@ describe('GET /objectives/:id', () => {
 
 describe('PATCH /objectives/:id', () => {
   it('lets the assignee transition active → blocked with a reason', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'carol' });
     const res = await app.request(
       `/objectives/${obj.id}`,
@@ -415,7 +415,7 @@ describe('PATCH /objectives/:id', () => {
   });
 
   it('lets a member with objectives.cancel update someone else’s', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'dave' });
     // bob has objectives.cancel, isn't the assignee.
     const res = await app.request(
@@ -426,7 +426,7 @@ describe('PATCH /objectives/:id', () => {
   });
 
   it('rejects non-assignee, non-cancel members with 403', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'dave' });
     // carol has no permissions and isn't the assignee.
     const res = await app.request(
@@ -437,7 +437,7 @@ describe('PATCH /objectives/:id', () => {
   });
 
   it('blocks without a reason — the reason is a nudge, not a gate', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'carol' });
     const res = await app.request(
       `/objectives/${obj.id}`,
@@ -450,7 +450,7 @@ describe('PATCH /objectives/:id', () => {
   });
 
   it('returns 409 (terminal) when patching a done objective', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'carol' });
     await app.request(`/objectives/${obj.id}/complete`, authed(CAROL, { result: 'shipped' }));
     const res = await app.request(
@@ -461,7 +461,7 @@ describe('PATCH /objectives/:id', () => {
   });
 
   it('returns 404 for unknown ids', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request(
       '/objectives/obj-nope',
       authed(ALICE, { status: 'active' }, 'PATCH'),
@@ -474,7 +474,7 @@ describe('PATCH /objectives/:id', () => {
 
 describe('POST /objectives/:id/complete', () => {
   it('lets the assignee complete with a result', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'carol' });
     const res = await app.request(
       `/objectives/${obj.id}/complete`,
@@ -487,7 +487,7 @@ describe('POST /objectives/:id/complete', () => {
   });
 
   it('rejects non-assignee with 403, even an admin', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'carol' });
     const res = await app.request(
       `/objectives/${obj.id}/complete`,
@@ -497,14 +497,14 @@ describe('POST /objectives/:id/complete', () => {
   });
 
   it('rejects a missing result with 400', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'carol' });
     const res = await app.request(`/objectives/${obj.id}/complete`, authed(CAROL, {}));
     expect(res.status).toBe(400);
   });
 
   it('returns 409 on double-complete', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'carol' });
     await app.request(`/objectives/${obj.id}/complete`, authed(CAROL, { result: 'r' }));
     const res = await app.request(
@@ -519,7 +519,7 @@ describe('POST /objectives/:id/complete', () => {
 
 describe('POST /objectives/:id/cancel', () => {
   it('lets the originator cancel their own objective', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const obj = await createOne(app, BOB, { assignee: 'dave' });
     const res = await app.request(
       `/objectives/${obj.id}/cancel`,
@@ -531,7 +531,7 @@ describe('POST /objectives/:id/cancel', () => {
   });
 
   it('lets a member with objectives.cancel cancel someone else’s', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const obj = await createOne(app, BOB, { assignee: 'dave' });
     const res = await app.request(
       `/objectives/${obj.id}/cancel`,
@@ -541,7 +541,7 @@ describe('POST /objectives/:id/cancel', () => {
   });
 
   it('rejects assignee-without-permission cancelling not-their-own', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'carol' });
     // carol is the assignee but has no objectives.cancel permission
     // and is not the originator (alice is).
@@ -553,14 +553,14 @@ describe('POST /objectives/:id/cancel', () => {
   });
 
   it('accepts an empty body (reason is optional)', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const obj = await createOne(app, BOB, { assignee: 'dave' });
     const res = await app.request(`/objectives/${obj.id}/cancel`, authed(BOB, {}));
     expect(res.status).toBe(200);
   });
 
   it('returns 409 on cancelling a done objective', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'carol' });
     await app.request(`/objectives/${obj.id}/complete`, authed(CAROL, { result: 'r' }));
     const res = await app.request(`/objectives/${obj.id}/cancel`, authed(ALICE, {}));
@@ -572,7 +572,7 @@ describe('POST /objectives/:id/cancel', () => {
 
 describe('PATCH assignee (reassignment)', () => {
   it('reassigns to a different member when caller has objectives.manage', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'carol' });
     const res = await app.request(
       `/objectives/${obj.id}`,
@@ -584,7 +584,7 @@ describe('PATCH assignee (reassignment)', () => {
   });
 
   it('rejects callers without objectives.manage with 403 — even the assignee', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'carol' });
     // carol is the assignee but holds no objectives.manage; she may
     // update her own status, not hand the work to someone else.
@@ -596,7 +596,7 @@ describe('PATCH assignee (reassignment)', () => {
   });
 
   it('rejects an unknown target assignee with 400', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'carol' });
     const res = await app.request(
       `/objectives/${obj.id}`,
@@ -606,7 +606,7 @@ describe('PATCH assignee (reassignment)', () => {
   });
 
   it('setting the assignee to the current assignee is an idempotent no-op', async () => {
-    const { app, broker } = makeApp();
+    const { app, broker } = await makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'carol' });
     const received: string[] = [];
     broker.subscribe('carol', async (m) => {
@@ -629,7 +629,7 @@ describe('PATCH assignee (reassignment)', () => {
 
 describe('PATCH watchers', () => {
   it('a later watcher add pushes the name, not the whole contract', async () => {
-    const { app, broker } = makeApp();
+    const { app, broker } = await makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'carol' });
     const received: string[] = [];
     broker.subscribe('carol', async (m) => {
@@ -650,7 +650,7 @@ describe('PATCH watchers', () => {
   });
 
   it('lets the originator add a watcher to their own objective', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'carol' });
     const res = await app.request(
       `/objectives/${obj.id}`,
@@ -662,7 +662,7 @@ describe('PATCH watchers', () => {
   });
 
   it('lets a member with objectives.manage add themselves', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const obj = await createOne(app, BOB, { assignee: 'dave' });
     // alice has objectives.watch, neither originator nor assignee.
     const res = await app.request(
@@ -673,7 +673,7 @@ describe('PATCH watchers', () => {
   });
 
   it('rejects callers without watch permission and not the originator', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'dave' });
     const res = await app.request(
       `/objectives/${obj.id}`,
@@ -683,7 +683,7 @@ describe('PATCH watchers', () => {
   });
 
   it('rejects unknown names in add or remove with 400', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'carol' });
     const res = await app.request(
       `/objectives/${obj.id}`,
@@ -693,7 +693,7 @@ describe('PATCH watchers', () => {
   });
 
   it('combined add + remove returns the new watcher list', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'carol', watchers: ['bob'] });
     const res = await app.request(
       `/objectives/${obj.id}`,
@@ -709,7 +709,7 @@ describe('PATCH watchers', () => {
 
 describe('POST /objectives/:id/discuss', () => {
   it('lets a thread member post discussion', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'carol' });
     const res = await app.request(
       `/objectives/${obj.id}/discuss`,
@@ -722,7 +722,7 @@ describe('POST /objectives/:id/discuss', () => {
   });
 
   it('lets an admin post even if not an explicit watcher', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     // alice has members.manage so is an implicit thread participant
     // by way of `objectiveThreadMembers`.
     const obj = await createOne(app, BOB, { assignee: 'dave' });
@@ -734,7 +734,7 @@ describe('POST /objectives/:id/discuss', () => {
   });
 
   it('rejects a non-thread-member with 403', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const obj = await createOne(app, BOB, { assignee: 'dave' });
     // carol is neither originator, assignee, watcher, nor admin.
     const res = await app.request(
@@ -745,7 +745,7 @@ describe('POST /objectives/:id/discuss', () => {
   });
 
   it('rejects an empty body with 400', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'carol' });
     const res = await app.request(`/objectives/${obj.id}/discuss`, authed(CAROL, { body: '' }));
     expect(res.status).toBe(400);
@@ -757,7 +757,7 @@ describe('POST /objectives/:id/discuss', () => {
   // when they need to hand over. `reassign` now promotes them to
   // watcher, which is the only durable grant the model can express.
   it('lets the previous assignee post after a reassignment', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     // bob originates, carol is assigned. carol is NOT the originator and
     // NOT an admin, so her only claim on the thread is being assignee.
     const obj = await createOne(app, BOB, { assignee: 'carol' });
@@ -782,7 +782,7 @@ describe('POST /objectives/:id/discuss', () => {
   });
 
   it('records the promoted watcher in the objective and its audit log', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const obj = await createOne(app, BOB, { assignee: 'carol' });
     await app.request(`/objectives/${obj.id}`, authed(ALICE, { assignee: 'dave' }, 'PATCH'));
 
@@ -802,7 +802,7 @@ describe('POST /objectives/:id/discuss', () => {
   // Turner's mirror case: a fix that grants the ex-assignee access while
   // quietly revoking someone else's would pass the test above.
   it('reassignment strips nobody else from the thread', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     // alice originates (and is admin), bob is assigned, carol watches.
     const obj = await createOne(app, ALICE, { assignee: 'bob', watchers: ['carol'] });
     await app.request(`/objectives/${obj.id}`, authed(ALICE, { assignee: 'dave' }, 'PATCH'));
@@ -831,7 +831,7 @@ describe('POST /objectives/:id/discuss', () => {
   // watcher keeps access either way — which proves nothing is revoked,
   // and that the old 403 was a derivation that stopped deriving.
   it('a former assignee who was already a watcher is unaffected and not double-added', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const obj = await createOne(app, BOB, { assignee: 'carol', watchers: ['dave'] });
     // Hand it to dave, who is both the incoming assignee and a watcher.
     await app.request(`/objectives/${obj.id}`, authed(ALICE, { assignee: 'dave' }, 'PATCH'));
@@ -851,13 +851,13 @@ describe('POST /objectives/:id/discuss', () => {
   });
 
   it('returns 404 for unknown ids', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/objectives/obj-nope/discuss', authed(ALICE, { body: 'hi' }));
     expect(res.status).toBe(404);
   });
 
   it('posts one message to the whole thread, not one per member', async () => {
-    const { app, broker } = makeApp();
+    const { app, broker } = await makeApp();
     // Thread members: carol (assignee), alice (originator + admin),
     // dave (watcher) — three connected members.
     const obj = await createOne(app, ALICE, { assignee: 'carol', watchers: ['dave'] });
@@ -881,7 +881,7 @@ describe('POST /objectives/:id/discuss', () => {
 
 describe('end-to-end audit log via GET /objectives/:id', () => {
   it('records every transition, watcher mutation, and reassignment', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'carol' });
     await app.request(
       `/objectives/${obj.id}`,

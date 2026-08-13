@@ -21,6 +21,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { dirname, join } from 'node:path';
 import { parseArgs } from 'node:util';
+import { SqliteTokenStore, type TokenStore } from 'csuite-core';
 import { DEFAULT_PORT, ENV } from 'csuite-sdk/protocol';
 import type { Team } from 'csuite-sdk/types';
 import { type DatabaseSyncInstance, openDatabase } from './db.js';
@@ -45,7 +46,6 @@ import {
   writeServerConfigFile,
 } from './server-config.js';
 import { openTeamAndMembers } from './team-store.js';
-import { TokenStore } from './tokens.js';
 import { createTtyWizardIO, runFirstRunWizard, type WizardResult } from './wizard.js';
 
 const USAGE = `csuite-server
@@ -205,13 +205,13 @@ async function runWizardOrFail(configPath: string): Promise<WizardResult> {
  * the admin insert will throw if the member already exists, which is
  * the right behavior — we should never overwrite an existing admin.
  */
-function seedFromWizard(
+async function seedFromWizard(
   db: DatabaseSyncInstance,
   team: Team,
   members: MemberStore,
   tokens: TokenStore,
   wizard: WizardResult,
-): void {
+): Promise<void> {
   // The team store was already constructed; we re-import here to keep
   // index.ts independent of the store object in the call graph above.
   // Pull `team` projection out of the wizard, then write it back.
@@ -232,7 +232,7 @@ function seedFromWizard(
     permissions: wizard.admin.permissions,
     totpSecret: wizard.admin.totpSecret,
   });
-  tokens.insert({
+  await tokens.insert({
     memberName: wizard.admin.name,
     rawToken: wizard.admin.token,
     label: 'wizard',
@@ -284,7 +284,7 @@ async function main(): Promise<void> {
   // creates its tables on construction; the member store reuses them.
   const db = openDatabase(dbPath);
   const stores = openTeamAndMembers(db);
-  const tokens = new TokenStore(db);
+  const tokens = new SqliteTokenStore(db);
 
   // First-boot path: wizard ran, DB is fresh — seed it now and write
   // the slim infra-only config file alongside.
@@ -296,7 +296,7 @@ async function main(): Promise<void> {
     for (const [name, leaves] of Object.entries(wizard.team.permissionPresets)) {
       stores.team.setPreset(name, leaves);
     }
-    seedFromWizard(db, wizard.team, stores.members, tokens, wizard);
+    await seedFromWizard(db, wizard.team, stores.members, tokens, wizard);
     writeServerConfigFile(configPath, serverConfig);
     process.stdout.write(
       `csuite-server: wrote slim config to ${configPath} and seeded team '${wizard.team.name}' ` +

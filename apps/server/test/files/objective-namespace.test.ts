@@ -25,6 +25,7 @@ import { join } from 'node:path';
 import {
   Broker,
   createSqliteObjectivesStore,
+  createTokenStoreFromMembers,
   InMemoryEventLog,
   SqliteSessionStore,
 } from 'csuite-core';
@@ -35,7 +36,6 @@ import { createApp } from '../../src/app.js';
 import { openDatabase } from '../../src/db.js';
 import { createSqliteFilesystemStore, LocalBlobStore } from '../../src/files/index.js';
 import { createMemberStore } from '../../src/members.js';
-import { createTokenStoreFromMembers } from '../../src/tokens.js';
 import { mockTeamStore } from '../helpers/test-stores.js';
 
 const ALICE = 'csuite_test_alice_secret';
@@ -57,7 +57,7 @@ afterEach(() => {
   }
 });
 
-function makeApp() {
+async function makeApp() {
   const broker = new Broker({
     eventLog: new InMemoryEventLog(),
     now: () => 1_700_000_000_000,
@@ -95,7 +95,7 @@ function makeApp() {
   broker.seedMembers(members.members());
   const db = openDatabase(':memory:');
   const sessions = new SqliteSessionStore(db);
-  const tokens = createTokenStoreFromMembers(db, members);
+  const tokens = await createTokenStoreFromMembers(db, members);
   const blobDir = mkdtempSync(join(tmpdir(), 'csuite-objfs-'));
   tmpDirs.push(blobDir);
   const blobs = new LocalBlobStore(blobDir);
@@ -143,7 +143,7 @@ function authed(token: string, body?: unknown, method?: string): RequestInit {
 }
 
 async function uploadToHome(
-  app: ReturnType<typeof makeApp>['app'],
+  app: Awaited<ReturnType<typeof makeApp>>['app'],
   token: string,
   path: string,
   body: string,
@@ -161,7 +161,7 @@ async function uploadToHome(
 
 describe('/objectives/<id>/ namespace', () => {
   it('mirrors create-time attachments into the namespace and points the objective there', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     // Bob uploads a spec to his home, then creates an objective with it.
     await uploadToHome(app, BOB, '/bob/specs/payment.md', '# Payment service\n');
     const res = await app.request(
@@ -190,7 +190,7 @@ describe('/objectives/<id>/ namespace', () => {
   });
 
   it('lets every objective member read AND write under the namespace, and 403s non-members', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await uploadToHome(app, BOB, '/bob/notes.txt', 'context');
     const createRes = await app.request(
       '/objectives',
@@ -252,7 +252,7 @@ describe('/objectives/<id>/ namespace', () => {
     // entry the owner is `obj:<id>`, so that inference is false for
     // EVERY member including the assignee — which is why the web UI hid
     // Delete on files its viewer was entitled to remove.
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await uploadToHome(app, BOB, '/bob/spec.md', 'spec');
     const createRes = await app.request(
       '/objectives',
@@ -301,7 +301,7 @@ describe('/objectives/<id>/ namespace', () => {
     // the rule — canRead() consults hasGrant, canWrite() deliberately
     // does not. So the viewer can see the entry at all, and still must
     // not be told they may change it.
-    const { app, files } = makeApp();
+    const { app, files } = await makeApp();
     await uploadToHome(app, BOB, '/bob/spec.md', 'spec');
     files.grant('/bob/spec.md', 'dave', 'test-grant');
 
@@ -322,7 +322,7 @@ describe('/objectives/<id>/ namespace', () => {
   });
 
   it('drops namespace read access for a watcher the moment they are removed', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     // Set up an objective with dave as a watcher, plus an attachment
     // mirrored into the namespace.
     await uploadToHome(app, BOB, '/bob/draft.md', 'draft');
@@ -372,7 +372,7 @@ describe('/objectives/<id>/ namespace', () => {
     // member of the objective — including its assignee. Directors got
     // through only via `members.manage`, which is why this read as a
     // permissions problem rather than a missing branch.
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await uploadToHome(app, BOB, '/bob/notes.txt', 'context');
     const createRes = await app.request(
       '/objectives',
@@ -412,7 +412,7 @@ describe('/objectives/<id>/ namespace', () => {
     // `FsEntrySchema.owner` was `NameSchema` and `obj:<id>` contains a
     // colon. Parsing the real response body here is what makes this a
     // contract test rather than a shape assertion.
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await uploadToHome(app, BOB, '/bob/notes.txt', 'context');
     const createRes = await app.request(
       '/objectives',

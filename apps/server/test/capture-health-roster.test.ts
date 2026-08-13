@@ -14,14 +14,18 @@
  */
 
 import type { CaptureHealth, CaptureHealthStore } from 'csuite-core';
-import { Broker, InMemoryEventLog, SqliteSessionStore } from 'csuite-core';
+import {
+  Broker,
+  createTokenStoreFromMembers,
+  InMemoryEventLog,
+  SqliteSessionStore,
+} from 'csuite-core';
 import type { RosterResponse, Team } from 'csuite-sdk/types';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
-import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const TOKEN = 'csuite_test_member_secret';
@@ -32,7 +36,7 @@ function fixedHealth(byMember: Record<string, CaptureHealth>): CaptureHealthStor
   return { forMember: (name) => byMember[name] ?? { state: 'ok' } };
 }
 
-function makeApp(captureHealth?: CaptureHealthStore) {
+async function makeApp(captureHealth?: CaptureHealthStore) {
   const broker = new Broker({
     eventLog: new InMemoryEventLog(),
     now: () => 1_700_000_000_000,
@@ -49,7 +53,7 @@ function makeApp(captureHealth?: CaptureHealthStore) {
   ]);
   const db = openDatabase(':memory:');
   const sessions = new SqliteSessionStore(db);
-  const tokens = createTokenStoreFromMembers(db, members);
+  const tokens = await createTokenStoreFromMembers(db, members);
   const { app } = createApp({
     broker,
     members,
@@ -65,13 +69,13 @@ function makeApp(captureHealth?: CaptureHealthStore) {
 
 /** Presence only appears once a member is registered. */
 async function withPresence(captureHealth?: CaptureHealthStore) {
-  const made = makeApp(captureHealth);
+  const made = await makeApp(captureHealth);
   await made.broker.register('turner');
   await made.broker.register('seamus');
   return made;
 }
 
-async function roster(app: ReturnType<typeof makeApp>['app']): Promise<RosterResponse> {
+async function roster(app: Awaited<ReturnType<typeof makeApp>>['app']): Promise<RosterResponse> {
   const res = await app.request('/roster', { headers: { Authorization: `Bearer ${TOKEN}` } });
   expect(res.status).toBe(200);
   return (await res.json()) as RosterResponse;

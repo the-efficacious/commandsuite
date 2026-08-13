@@ -10,6 +10,7 @@
 import {
   Broker,
   clearRegisteredSecretValues,
+  createTokenStoreFromMembers,
   InMemoryEventLog,
   registerSecretValues,
   SqliteSessionStore,
@@ -19,7 +20,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
-import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const ADMIN_TOKEN = 'csuite_members_test_admin_token';
@@ -47,10 +47,10 @@ interface Harness {
   app: ReturnType<typeof createApp>['app'];
   persistMembers: ReturnType<typeof vi.fn>;
   broker: Broker;
-  tokens: ReturnType<typeof createTokenStoreFromMembers>;
+  tokens: Awaited<ReturnType<typeof createTokenStoreFromMembers>>;
 }
 
-function makeApp(): Harness {
+async function makeApp(): Promise<Harness> {
   const broker = new Broker({
     eventLog: new InMemoryEventLog(),
     now: () => 1_700_000_000_000,
@@ -79,7 +79,7 @@ function makeApp(): Harness {
   broker.seedMembers(members.members());
   const db = openDatabase(':memory:');
   const sessions = new SqliteSessionStore(db);
-  const tokens = createTokenStoreFromMembers(db, members);
+  const tokens = await createTokenStoreFromMembers(db, members);
   const persistMembers = vi.fn();
   const { app } = createApp({
     broker,
@@ -109,7 +109,7 @@ afterEach(() => {
 
 describe('GET /members', () => {
   it('returns a Member[] (with instructions) when the caller has members.manage', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/members', { headers: authed(ADMIN_TOKEN) });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { members: Member[] };
@@ -118,7 +118,7 @@ describe('GET /members', () => {
   });
 
   it('returns the public Teammate[] projection for non-admins', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/members', { headers: authed(AGENT_TOKEN) });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { members: Teammate[] };
@@ -126,7 +126,7 @@ describe('GET /members', () => {
   });
 
   it('401s without auth', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/members');
     expect(res.status).toBe(401);
   });
@@ -134,7 +134,7 @@ describe('GET /members', () => {
 
 describe('POST /members', () => {
   it('creates a member and returns the plaintext token (admin only)', async () => {
-    const { app, persistMembers, broker } = makeApp();
+    const { app, persistMembers, broker } = await makeApp();
     const res = await app.request('/members', {
       method: 'POST',
       headers: { ...authed(ADMIN_TOKEN), 'Content-Type': 'application/json' },
@@ -153,7 +153,7 @@ describe('POST /members', () => {
   });
 
   it('rejects non-admins', async () => {
-    const { app, persistMembers } = makeApp();
+    const { app, persistMembers } = await makeApp();
     const res = await app.request('/members', {
       method: 'POST',
       headers: { ...authed(OPERATOR_TOKEN), 'Content-Type': 'application/json' },
@@ -168,7 +168,7 @@ describe('POST /members', () => {
   });
 
   it('resolves preset names in the permissions field', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/members', {
       method: 'POST',
       headers: { ...authed(ADMIN_TOKEN), 'Content-Type': 'application/json' },
@@ -184,7 +184,7 @@ describe('POST /members', () => {
   });
 
   it('rejects unknown preset names', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/members', {
       method: 'POST',
       headers: { ...authed(ADMIN_TOKEN), 'Content-Type': 'application/json' },
@@ -200,7 +200,7 @@ describe('POST /members', () => {
 
 describe('PATCH /members/:name', () => {
   it('updates role title and description', async () => {
-    const { app, persistMembers } = makeApp();
+    const { app, persistMembers } = await makeApp();
     const res = await app.request('/members/scout', {
       method: 'PATCH',
       headers: { ...authed(ADMIN_TOKEN), 'Content-Type': 'application/json' },
@@ -216,7 +216,7 @@ describe('PATCH /members/:name', () => {
   });
 
   it('updates instructions', async () => {
-    const { app, persistMembers } = makeApp();
+    const { app, persistMembers } = await makeApp();
     const res = await app.request('/members/scout', {
       method: 'PATCH',
       headers: { ...authed(ADMIN_TOKEN), 'Content-Type': 'application/json' },
@@ -230,7 +230,7 @@ describe('PATCH /members/:name', () => {
 
   it('warns but stores intact when instructions contain a registered secret', async () => {
     registerSecretValues(['registered-instruction-secret']);
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const instructions = 'Refer to registered-instruction-secret by environment variable name.';
     const res = await app.request('/members/scout', {
       method: 'PATCH',
@@ -245,7 +245,7 @@ describe('PATCH /members/:name', () => {
   });
 
   it('updates permissions via preset names', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/members/scout', {
       method: 'PATCH',
       headers: { ...authed(ADMIN_TOKEN), 'Content-Type': 'application/json' },
@@ -258,7 +258,7 @@ describe('PATCH /members/:name', () => {
   });
 
   it('rejects callers without members.manage', async () => {
-    const { app, persistMembers } = makeApp();
+    const { app, persistMembers } = await makeApp();
     const res = await app.request('/members/scout', {
       method: 'PATCH',
       headers: { ...authed(OPERATOR_TOKEN), 'Content-Type': 'application/json' },
@@ -269,7 +269,7 @@ describe('PATCH /members/:name', () => {
   });
 
   it('rejects an unknown preset name with 400', async () => {
-    const { app, persistMembers } = makeApp();
+    const { app, persistMembers } = await makeApp();
     const res = await app.request('/members/scout', {
       method: 'PATCH',
       headers: { ...authed(ADMIN_TOKEN), 'Content-Type': 'application/json' },
@@ -280,7 +280,7 @@ describe('PATCH /members/:name', () => {
   });
 
   it('returns 404 for an unknown member', async () => {
-    const { app, persistMembers } = makeApp();
+    const { app, persistMembers } = await makeApp();
     const res = await app.request('/members/ghost', {
       method: 'PATCH',
       headers: { ...authed(ADMIN_TOKEN), 'Content-Type': 'application/json' },
@@ -291,7 +291,7 @@ describe('PATCH /members/:name', () => {
   });
 
   it('returns 400 on a malformed payload', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/members/scout', {
       method: 'PATCH',
       headers: { ...authed(ADMIN_TOKEN), 'Content-Type': 'application/json' },
@@ -301,7 +301,7 @@ describe('PATCH /members/:name', () => {
   });
 
   it('refuses to strip members.manage from the last admin (409)', async () => {
-    const { app, persistMembers } = makeApp();
+    const { app, persistMembers } = await makeApp();
     const res = await app.request('/members/alice', {
       method: 'PATCH',
       headers: { ...authed(ADMIN_TOKEN), 'Content-Type': 'application/json' },
@@ -312,7 +312,7 @@ describe('PATCH /members/:name', () => {
   });
 
   it('allows stripping members.manage when another admin exists', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     // Promote bob to admin first.
     await app.request('/members/bob', {
       method: 'PATCH',
@@ -331,7 +331,7 @@ describe('PATCH /members/:name', () => {
 
 describe('DELETE /members/:name', () => {
   it('refuses to delete the last admin', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/members/alice', {
       method: 'DELETE',
       headers: authed(ADMIN_TOKEN),
@@ -340,7 +340,7 @@ describe('DELETE /members/:name', () => {
   });
 
   it('returns 404 for an unknown member', async () => {
-    const { app, persistMembers } = makeApp();
+    const { app, persistMembers } = await makeApp();
     const res = await app.request('/members/ghost', {
       method: 'DELETE',
       headers: authed(ADMIN_TOKEN),
@@ -350,7 +350,7 @@ describe('DELETE /members/:name', () => {
   });
 
   it('rejects callers without members.manage', async () => {
-    const { app, persistMembers } = makeApp();
+    const { app, persistMembers } = await makeApp();
     const res = await app.request('/members/scout', {
       method: 'DELETE',
       headers: authed(OPERATOR_TOKEN),
@@ -360,22 +360,22 @@ describe('DELETE /members/:name', () => {
   });
 
   it('deletes a non-admin and revokes their tokens (cascade)', async () => {
-    const { app, persistMembers, tokens } = makeApp();
-    expect(tokens.listForMember('scout').length).toBe(1);
+    const { app, persistMembers, tokens } = await makeApp();
+    expect((await tokens.listForMember('scout')).length).toBe(1);
     const res = await app.request('/members/scout', {
       method: 'DELETE',
       headers: authed(ADMIN_TOKEN),
     });
     expect(res.status).toBe(204);
     expect(persistMembers).toHaveBeenCalledTimes(1);
-    expect(tokens.listForMember('scout')).toEqual([]);
+    (await expect(await tokens.listForMember('scout'))).toEqual([]);
     // Their old bearer token is now unusable end-to-end.
     const followup = await app.request('/roster', { headers: authed(AGENT_TOKEN) });
     expect(followup.status).toBe(401);
   });
 
   it('lets a non-last admin be deleted', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     // Promote bob to admin so alice → admin → 2 admins.
     await app.request('/members/bob', {
       method: 'PATCH',

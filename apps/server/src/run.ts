@@ -33,6 +33,7 @@ import {
   SqliteEventLog,
   SqlitePushSubscriptionStore,
   SqliteSessionStore,
+  SqliteTokenStore,
 } from 'csuite-core';
 import { createApp } from './app.js';
 import { type DatabaseSyncInstance, openDatabase } from './db.js';
@@ -67,19 +68,25 @@ import { createSqliteSecretsStore } from './secrets.js';
 import { updateServerConfigFile } from './server-config.js';
 import { openTeamAndMembers, type TeamStore } from './team-store.js';
 import { createTelemetryStore, type TelemetryStore } from './telemetry-store.js';
-import { TokenStore } from './tokens.js';
 import { createMcpClientManager, createSqliteToolSourceStore } from './tool-sources/index.js';
 import { createSqliteVariablesStore, migrateIdentityToVariables } from './variables.js';
 import { SERVER_VERSION } from './version.js';
 
 export {
   createSqliteObjectivesStore,
+  generateBearerToken,
+  hashRawToken,
+  type InsertTokenInput,
+  type InternalTokenRow,
   ObjectivesError,
   type ObjectivesStore,
   SESSION_COOKIE_NAME,
   SESSION_TTL_MS,
   type SessionStore,
   SqliteSessionStore,
+  SqliteTokenStore,
+  TOKEN_HASH_PREFIX,
+  type TokenStore,
 } from 'csuite-core';
 export { type DatabaseSyncInstance, openDatabase } from './db.js';
 export {
@@ -187,14 +194,6 @@ export {
   type TelemetryRow,
   type TelemetryStore,
 } from './telemetry-store.js';
-export {
-  generateBearerToken,
-  hashRawToken,
-  type InsertTokenInput,
-  type InternalTokenRow,
-  TOKEN_HASH_PREFIX,
-  TokenStore,
-} from './tokens.js';
 export {
   currentCode as currentTotpCode,
   generateSecret as generateTotpSecret,
@@ -406,7 +405,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
 
   const eventLog = new SqliteEventLog(db);
   const sessions = new SqliteSessionStore(db);
-  const tokens = new TokenStore(db);
+  const tokens = new SqliteTokenStore(db);
 
   // Pending-enrollment store for the device-code (`csuite connect`)
   // flow. KEK is the same one that wraps TOTP secrets and VAPID
@@ -544,7 +543,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
 
   void sessions.purgeExpired();
   enrollments.purgeExpired();
-  tokens.purgeExpired();
+  void (await tokens.purgeExpired());
 
   // VAPID lifecycle: keys come from the team config file (loaded by the
   // caller into `options.webPush`) or are freshly generated on first

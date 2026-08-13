@@ -18,7 +18,12 @@
  *     request permanently unresolvable.
  */
 
-import { Broker, InMemoryEventLog, SqliteSessionStore } from 'csuite-core';
+import {
+  Broker,
+  createTokenStoreFromMembers,
+  InMemoryEventLog,
+  SqliteSessionStore,
+} from 'csuite-core';
 import type { Message, Permission, Team } from 'csuite-sdk/types';
 import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
@@ -28,14 +33,13 @@ import { createGenAiStore } from '../src/genai-store.js';
 import { createMemberStore } from '../src/members.js';
 import { createRawBodyStore } from '../src/raw-body-store.js';
 import { createTelemetryStore } from '../src/telemetry-store.js';
-import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const TEAM: Team = { name: 'demo-team', context: '', permissionPresets: {} };
 const DIRECTOR_TOKEN = 'csuite_test_director';
 const WORKER_TOKEN = 'csuite_test_worker';
 
-function makeApp(directorPermissions: Permission[] = ['members.context']) {
+async function makeApp(directorPermissions: Permission[] = ['members.context']) {
   const broker = new Broker({ eventLog: new InMemoryEventLog() });
   const members = createMemberStore([
     {
@@ -53,7 +57,7 @@ function makeApp(directorPermissions: Permission[] = ['members.context']) {
   ]);
   const db = openDatabase(':memory:');
   const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
-  const tokens = createTokenStoreFromMembers(db, members);
+  const tokens = await createTokenStoreFromMembers(db, members);
   const { app } = createApp({
     broker,
     members,
@@ -71,7 +75,7 @@ function makeApp(directorPermissions: Permission[] = ['members.context']) {
 }
 
 function post(
-  app: ReturnType<typeof makeApp>['app'],
+  app: Awaited<ReturnType<typeof makeApp>>['app'],
   target: string,
   body: unknown,
   token: string,
@@ -109,7 +113,7 @@ async function capturePush(
 
 describe('authority', () => {
   it('lets a member control its OWN context with no permission at all', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     // The positive control for the 403 below. Self-care must not be a
     // privilege — this is the case a permission-only suite loses.
     const res = await post(app, 'worker', { verb: 'compact' }, WORKER_TOKEN);
@@ -120,14 +124,14 @@ describe('authority', () => {
   });
 
   it('refuses a member reaching into someone ELSE without members.context', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await post(app, 'director', { verb: 'clear' }, WORKER_TOKEN);
     expect(res.status).toBe(403);
     expect((await res.json()).error).toContain('members.context');
   });
 
   it('allows the cross-member control once members.context is held', async () => {
-    const { app } = makeApp(['members.context']);
+    const { app } = await makeApp(['members.context']);
     const res = await post(app, 'worker', { verb: 'clear' }, DIRECTOR_TOKEN);
     expect(res.status).toBe(200);
   });
@@ -136,13 +140,13 @@ describe('authority', () => {
     // The roster-and-credential authority is a different power over a
     // different object. If this ever starts passing, the dedicated leaf
     // has been quietly collapsed into the general admin one.
-    const { app } = makeApp(['members.manage']);
+    const { app } = await makeApp(['members.manage']);
     const res = await post(app, 'worker', { verb: 'compact' }, DIRECTOR_TOKEN);
     expect(res.status).toBe(403);
   });
 
   it('401s without auth and 404s for an unknown member', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const unauthed = await app.request('/members/worker/context', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -157,7 +161,7 @@ describe('authority', () => {
 
 describe('validation', () => {
   it('rejects an unknown verb but accepts both real ones', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const bad = await post(app, 'worker', { verb: 'shutdown' }, WORKER_TOKEN);
     expect(bad.status).toBe(400);
 
@@ -171,7 +175,7 @@ describe('validation', () => {
   });
 
   it('rejects a missing body and an over-long reason, but accepts a normal one', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     expect((await post(app, 'worker', {}, WORKER_TOKEN)).status).toBe(400);
     expect(
       (await post(app, 'worker', { verb: 'compact', reason: 'x'.repeat(501) }, WORKER_TOKEN))
@@ -186,7 +190,7 @@ describe('validation', () => {
 
 describe('the push the runner acts on', () => {
   it('fans out a correlatable control carrying every field the ack needs', async () => {
-    const { app, broker } = makeApp(['members.context']);
+    const { app, broker } = await makeApp(['members.context']);
     const { res, messages } = await capturePush(broker, 'worker', () =>
       post(app, 'worker', { verb: 'clear', reason: 'stuck for two hours' }, DIRECTOR_TOKEN),
     );
@@ -217,7 +221,7 @@ describe('the push the runner acts on', () => {
     // A recipient-list push leaves `to` null, so `data.target` is the
     // only statement of who a control is for. The runner checks it
     // before executing; this asserts the broker actually supplies it.
-    const { app, broker } = makeApp(['members.context']);
+    const { app, broker } = await makeApp(['members.context']);
     const { messages } = await capturePush(broker, 'worker', () =>
       post(app, 'worker', { verb: 'compact' }, DIRECTOR_TOKEN),
     );
@@ -236,7 +240,7 @@ describe('the push the runner acts on', () => {
     // alternative — a director's agent executing the control it issued
     // against a teammate — is silent and severe, and because this is
     // the property the runner's target check is a backstop for.
-    const { app, broker } = makeApp(['members.context']);
+    const { app, broker } = await makeApp(['members.context']);
     const { messages } = await capturePush(broker, 'director', () =>
       post(app, 'worker', { verb: 'compact' }, DIRECTOR_TOKEN),
     );
@@ -246,7 +250,7 @@ describe('the push the runner acts on', () => {
   });
 
   it('omits `reason` from the push rather than stamping it undefined', async () => {
-    const { app, broker } = makeApp(['members.context']);
+    const { app, broker } = await makeApp(['members.context']);
     const { messages } = await capturePush(broker, 'worker', () =>
       post(app, 'worker', { verb: 'compact' }, DIRECTOR_TOKEN),
     );
@@ -257,7 +261,7 @@ describe('the push the runner acts on', () => {
   });
 
   it('issues a distinct requestId per control', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const seen = new Set<string>();
     for (let i = 0; i < 3; i++) {
       const res = await post(app, 'worker', { verb: 'compact' }, WORKER_TOKEN);
@@ -268,7 +272,7 @@ describe('the push the runner acts on', () => {
   });
 
   it('reports delivered=false when nothing is subscribed, true when something is', async () => {
-    const { app, broker } = makeApp(['members.context']);
+    const { app, broker } = await makeApp(['members.context']);
 
     const offline = await post(app, 'worker', { verb: 'compact' }, DIRECTOR_TOKEN);
     expect((await offline.json()).delivered).toBe(false);

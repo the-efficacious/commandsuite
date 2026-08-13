@@ -8,6 +8,7 @@
 import {
   Broker,
   clearRegisteredSecretValues,
+  createTokenStoreFromMembers,
   InMemoryEventLog,
   REDACTED,
   redactSecrets,
@@ -20,7 +21,6 @@ import { openDatabase } from '../src/db.js';
 import { testKek } from '../src/kek.js';
 import { createMemberStore, setKek } from '../src/members.js';
 import { createSqliteSecretsStore } from '../src/secrets.js';
-import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const ADMIN = 'csuite_test_admin_secret';
@@ -29,7 +29,7 @@ const OUTSIDER = 'csuite_test_outsider_secret';
 
 const noopLog = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 
-function makeApp() {
+async function makeApp() {
   const broker = new Broker({
     eventLog: new InMemoryEventLog(),
     now: () => 1_700_000_000_000,
@@ -60,7 +60,7 @@ function makeApp() {
   ]);
   const db = openDatabase(':memory:');
   const sessions = new SqliteSessionStore(db);
-  const tokens = createTokenStoreFromMembers(db, members);
+  const tokens = await createTokenStoreFromMembers(db, members);
   const secrets = createSqliteSecretsStore(db);
   const { app } = createApp({
     broker,
@@ -105,7 +105,7 @@ afterEach(() => {
 
 describe('registry CRUD + gating', () => {
   it('create requires secrets.manage', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const denied = await app.request(
       '/secrets',
       authed(BOUND, { slug: 'gh', envName: 'GITHUB_TOKEN' }),
@@ -127,7 +127,7 @@ describe('registry CRUD + gating', () => {
     // The per-agent pattern the product runs on: every member holds
     // their own GITHUB_TOKEN under a different slug. This used to 409
     // on the second one because env_name carried a global unique index.
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/secrets', authed(ADMIN, { slug: 'cora-gh', envName: 'GITHUB_TOKEN' }));
 
     const dupeSlug = await app.request(
@@ -146,7 +146,7 @@ describe('registry CRUD + gating', () => {
   it('refuses to give ONE member two secrets for the same variable', async () => {
     // The invariant that actually matters, enforced where it can first
     // be violated: binding.
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/secrets', authed(ADMIN, { slug: 'gh-a', envName: 'GITHUB_TOKEN' }));
     await app.request('/secrets', authed(ADMIN, { slug: 'gh-b', envName: 'GITHUB_TOKEN' }));
 
@@ -167,7 +167,7 @@ describe('registry CRUD + gating', () => {
   it('refuses an all-members secret that collides with a bound one', async () => {
     // all-members reaches everyone without a binding, so it is the one
     // case that can still collide at create time.
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/secrets', authed(ADMIN, { slug: 'gh-a', envName: 'GITHUB_TOKEN' }));
     await app.request('/secrets/gh-a/bindings', authed(ADMIN, { member: 'bound' }));
 
@@ -179,7 +179,7 @@ describe('registry CRUD + gating', () => {
   });
 
   it('rejects malformed and reserved env names with 400', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     for (const envName of [
       'lowercase',
       '1STARTS_WITH_DIGIT',
@@ -198,7 +198,7 @@ describe('registry CRUD + gating', () => {
   });
 
   it('any member can list; bound flag is per-viewer; values never appear', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/secrets', authed(ADMIN, { slug: 'gh', envName: 'GITHUB_TOKEN' }));
     await app.request('/secrets/gh/bindings', authed(ADMIN, { member: 'bound' }));
     await app.request('/secrets/gh/value', authed(ADMIN, { value: 'ghp_supersecretvalue' }, 'PUT'));
@@ -216,7 +216,7 @@ describe('registry CRUD + gating', () => {
   });
 
   it('detail exposes bindings to secrets.manage only', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/secrets', authed(ADMIN, { slug: 'gh', envName: 'GITHUB_TOKEN' }));
     await app.request('/secrets/gh/bindings', authed(ADMIN, { member: 'bound' }));
 
@@ -232,7 +232,7 @@ describe('registry CRUD + gating', () => {
   });
 
   it('update validates envName changes and delete cascades', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/secrets', authed(ADMIN, { slug: 'gh', envName: 'GITHUB_TOKEN' }));
     await app.request('/secrets', authed(ADMIN, { slug: 'np', envName: 'NPM_TOKEN' }));
 
@@ -266,7 +266,7 @@ describe('registry CRUD + gating', () => {
 
 describe('value write-only + KEK', () => {
   it('set/delete value gates on secrets.manage and flips hasValue', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/secrets', authed(ADMIN, { slug: 'gh', envName: 'GITHUB_TOKEN' }));
 
     const denied = await app.request(
@@ -289,7 +289,7 @@ describe('value write-only + KEK', () => {
   });
 
   it('value is stored encrypted, not in plaintext', async () => {
-    const { secrets } = makeApp();
+    const { secrets } = await makeApp();
     const created = secrets.create({
       slug: 'gh',
       envName: 'GITHUB_TOKEN',
@@ -303,7 +303,7 @@ describe('value write-only + KEK', () => {
   });
 
   it('fails closed with 503 when no KEK is active', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/secrets', authed(ADMIN, { slug: 'gh', envName: 'GITHUB_TOKEN' }));
     setKek(null);
     try {
@@ -318,7 +318,7 @@ describe('value write-only + KEK', () => {
   });
 
   it('registers the value with the trace redactor on write', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/secrets', authed(ADMIN, { slug: 'gh', envName: 'GITHUB_TOKEN' }));
     await app.request(
       '/secrets/gh/value',
@@ -329,7 +329,7 @@ describe('value write-only + KEK', () => {
 });
 
 describe('resolve scoping', () => {
-  async function seed(app: ReturnType<typeof makeApp>['app']) {
+  async function seed(app: Awaited<ReturnType<typeof makeApp>>['app']) {
     await app.request('/secrets', authed(ADMIN, { slug: 'gh', envName: 'GITHUB_TOKEN' }));
     await app.request('/secrets/gh/value', authed(ADMIN, { value: 'ghp_boundonly' }, 'PUT'));
     await app.request('/secrets/gh/bindings', authed(ADMIN, { member: 'bound' }));
@@ -349,7 +349,7 @@ describe('resolve scoping', () => {
   }
 
   it('delivers only the caller-bound, enabled, valued secrets', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await seed(app);
 
     const asBound = (await (await app.request('/secrets/resolve', authed(BOUND))).json()) as {
@@ -367,7 +367,7 @@ describe('resolve scoping', () => {
   });
 
   it('disabling a secret stops delivery', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await seed(app);
     await app.request('/secrets/gh', authed(ADMIN, { enabled: false }, 'PATCH'));
     const asBound = (await (await app.request('/secrets/resolve', authed(BOUND))).json()) as {
@@ -377,7 +377,7 @@ describe('resolve scoping', () => {
   });
 
   it('requires auth', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const resp = await app.request('/secrets/resolve');
     expect(resp.status).toBe(401);
   });
@@ -385,7 +385,7 @@ describe('resolve scoping', () => {
 
 describe('change events', () => {
   it('fans out to delivery set + secrets.manage holders and never carries the value', async () => {
-    const { app, broker } = makeApp();
+    const { app, broker } = await makeApp();
     const pushSpy = vi.spyOn(broker, 'push');
     await app.request('/secrets', authed(ADMIN, { slug: 'gh', envName: 'GITHUB_TOKEN' }));
     await app.request('/secrets/gh/bindings', authed(ADMIN, { member: 'bound' }));
@@ -417,7 +417,7 @@ describe('change events', () => {
   });
 
   it('unbound events still reach the removed member', async () => {
-    const { app, broker } = makeApp();
+    const { app, broker } = await makeApp();
     await app.request('/secrets', authed(ADMIN, { slug: 'gh', envName: 'GITHUB_TOKEN' }));
     await app.request('/secrets/gh/bindings', authed(ADMIN, { member: 'bound' }));
     await settle();

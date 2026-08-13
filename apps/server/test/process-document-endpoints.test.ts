@@ -16,6 +16,7 @@
 import {
   Broker,
   createSqliteProcessDocumentStore,
+  createTokenStoreFromMembers,
   InMemoryEventLog,
   SqliteSessionStore,
 } from 'csuite-core';
@@ -24,7 +25,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
-import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const EDITOR = 'csuite_test_editor_processdoc_token';
@@ -34,7 +34,7 @@ const ADMIN = 'csuite_test_admin_processdoc_token';
 const V1 = 'Keep a conversation running before action.\nSquash-merge to main.';
 const V2 = 'Keep a conversation running before action.\nMerge commits to main.';
 
-function makeApp() {
+async function makeApp() {
   const broker = new Broker({ eventLog: new InMemoryEventLog(), now: () => 1_700_000_000_000 });
   const members = createMemberStore([
     // Holds the authority and nothing else.
@@ -66,7 +66,7 @@ function makeApp() {
   const { app } = createApp({
     broker,
     members,
-    tokens: createTokenStoreFromMembers(db, members),
+    tokens: await createTokenStoreFromMembers(db, members),
     sessions: new SqliteSessionStore(db),
     teamStore: mockTeamStore({ name: 'demo-team', context: '', permissionPresets: {} }),
     processDocument,
@@ -95,7 +95,7 @@ const write = (text: string, reason = 'because') => ({
 
 describe('the write gate is process.manage and nothing else', () => {
   it('refuses a member the document binds but who lacks the leaf', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/process-document', authed(BOUND, write(V1)));
     expect(res.status).toBe(403);
     expect((await res.json()) as { error: string }).toMatchObject({
@@ -109,19 +109,19 @@ describe('the write gate is process.manage and nothing else', () => {
    * used as this gate — still cannot rewrite the team's process.
    */
   it('refuses a member holding every other permission, including objectives.create', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/process-document', authed(ADMIN, write(V1)));
     expect(res.status).toBe(403);
   });
 
   it('allows the holder of the leaf', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/process-document', authed(EDITOR, write(V1)));
     expect(res.status).toBe(201);
   });
 
   it('lets a bound member READ the document that binds them', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/process-document', authed(EDITOR, write(V1)));
     const res = await app.request('/process-document', authed(BOUND));
     expect(res.status).toBe(200);
@@ -134,21 +134,21 @@ describe('the write gate is process.manage and nothing else', () => {
 
 describe('a team with no document', () => {
   it('serves document: null with 200, not 404', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/process-document', authed(BOUND));
     expect(res.status).toBe(200);
     expect((await res.json()) as { document: null }).toEqual({ document: null });
   });
 
   it('serves an empty history rather than 404', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/process-document/history', authed(BOUND));
     expect(res.status).toBe(200);
     expect((await res.json()) as { edits: [] }).toEqual({ edits: [] });
   });
 
   it('carries null on the packet, so the field is present and explicit', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/instructions', authed(BOUND));
     const body = (await res.json()) as { processDocument: unknown };
     // Present-and-null, never absent: an absent field is what an older
@@ -168,7 +168,7 @@ describe('a team with no document', () => {
 
 describe('criterion 1 — the document is injected as current state', () => {
   it('reaches a member on the next fetch, and the edit announces itself once', async () => {
-    const { app, broker } = makeApp();
+    const { app, broker } = await makeApp();
     await app.request('/process-document', authed(EDITOR, write(V1)));
 
     const before = (await (await app.request('/instructions', authed(BOUND))).json()) as {
@@ -223,13 +223,13 @@ describe('criterion 1 — the document is injected as current state', () => {
 
 describe('history over the wire', () => {
   it('returns 201 on create and 200 on edit, so a caller can tell them apart', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     expect((await app.request('/process-document', authed(EDITOR, write(V1)))).status).toBe(201);
     expect((await app.request('/process-document', authed(EDITOR, write(V2)))).status).toBe(200);
   });
 
   it('carries the full prior text, so the diff is derivable client-side', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/process-document', authed(EDITOR, write(V1)));
     await app.request('/process-document', authed(EDITOR, write(V2, 'reversed the merge model')));
 
@@ -243,7 +243,7 @@ describe('history over the wire', () => {
   });
 
   it('keeps the injected document free of superseded text as edits accumulate', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/process-document', authed(EDITOR, write('revision 0')));
     for (let i = 1; i <= 4; i++) {
       await app.request('/process-document', authed(EDITOR, write(`revision ${i}`)));

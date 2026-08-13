@@ -54,6 +54,7 @@ export {
   MAX_QUERY_LIMIT,
   SECRET_THREAD_PREFIX,
 } from './event-log.js';
+export { constantTimeEqual, sha256Hex } from './hashing.js';
 export {
   createSqliteObjectivesStore,
   ObjectivesError,
@@ -98,6 +99,20 @@ export type {
 export { SqliteEventLog } from './sqlite-event-log.js';
 export { SqlitePushSubscriptionStore } from './sqlite-push-subscription-store.js';
 export { SqliteSessionStore } from './sqlite-session-store.js';
+export {
+  createTokenStoreFromMembers,
+  SqliteTokenStore,
+  type TokenSeedMemberSource,
+} from './sqlite-token-store.js';
+export {
+  generateBearerToken,
+  hashRawToken,
+  type InsertHashedTokenInput,
+  type InsertTokenInput,
+  type InternalTokenRow,
+  TOKEN_HASH_PREFIX,
+  type TokenStore,
+} from './token-store.js';
 // Pure trace parsers — relocated here from the cli so both the cli
 // native-capture adapters and the server can import them without the
 // server depending on packages/cli. No `node:` imports; safe to run

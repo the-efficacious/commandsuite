@@ -47,19 +47,21 @@ function tmpConfig(initial: Record<string, unknown>): string {
   return path;
 }
 
-function seededDb() {
-  return seedStores({
-    team: TEAM,
-    members: [
-      {
-        name: 'alice',
-        role: { title: 'admin', description: '' },
-        rawPermissions: ['members.manage'],
-        permissions: ['members.manage'],
-        token: ADMIN_TOKEN,
-      },
-    ],
-  }).db;
+async function seededDb() {
+  return (
+    await seedStores({
+      team: TEAM,
+      members: [
+        {
+          name: 'alice',
+          role: { title: 'admin', description: '' },
+          rawPermissions: ['members.manage'],
+          permissions: ['members.manage'],
+          token: ADMIN_TOKEN,
+        },
+      ],
+    })
+  ).db;
 }
 
 function silentLogger() {
@@ -68,7 +70,7 @@ function silentLogger() {
 
 async function boot(configPath: string, webPush: WebPushConfig | null): Promise<RunningServer> {
   const running = await runServer({
-    db: seededDb(),
+    db: await seededDb(),
     https: { ...defaultHttpsConfig(), mode: 'off' },
     webPush,
     configPath,

@@ -1,6 +1,7 @@
 import {
   Broker,
   createSqliteChannelStore,
+  createTokenStoreFromMembers,
   InMemoryEventLog,
   SqliteSessionStore,
 } from 'csuite-core';
@@ -9,7 +10,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
-import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const ALICE = 'csuite_test_alice_secret';
@@ -22,7 +22,7 @@ const TEAM: Team = {
   permissionPresets: {},
 };
 
-function makeApp() {
+async function makeApp() {
   const broker = new Broker({
     eventLog: new InMemoryEventLog(),
     now: () => 1_700_000_000_000,
@@ -53,7 +53,7 @@ function makeApp() {
   ]);
   const db = openDatabase(':memory:');
   const sessions = new SqliteSessionStore(db);
-  const tokens = createTokenStoreFromMembers(db, members);
+  const tokens = await createTokenStoreFromMembers(db, members);
   const channels = createSqliteChannelStore(db);
   const { app } = createApp({
     broker,
@@ -94,7 +94,7 @@ function authed(token: string, body?: unknown, method?: string): RequestInit {
 
 describe('GET /channels', () => {
   it('lists the synthetic general channel for any caller', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/channels', authed(ALICE));
     expect(res.status).toBe(200);
     const body = (await res.json()) as { channels: ChannelSummary[] };
@@ -102,7 +102,7 @@ describe('GET /channels', () => {
   });
 
   it('marks `joined: false` for channels the caller is not in', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/channels', authed(ALICE, { slug: 'ops' }));
     const res = await app.request('/channels', authed(BOB));
     const body = (await res.json()) as { channels: ChannelSummary[] };
@@ -115,7 +115,7 @@ describe('GET /channels', () => {
 
 describe('POST /channels', () => {
   it('creates a channel; caller becomes admin', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/channels', authed(ALICE, { slug: 'eng' }));
     expect(res.status).toBe(201);
     const ch = (await res.json()) as Channel;
@@ -127,20 +127,20 @@ describe('POST /channels', () => {
   });
 
   it('rejects an invalid slug', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/channels', authed(ALICE, { slug: 'BAD UPPER' }));
     expect(res.status).toBe(400);
   });
 
   it('409s on slug collision', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/channels', authed(ALICE, { slug: 'ops' }));
     const res = await app.request('/channels', authed(BOB, { slug: 'ops' }));
     expect(res.status).toBe(409);
   });
 
   it('refuses to create with the reserved general slug', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/channels', authed(ALICE, { slug: 'general' }));
     expect(res.status).toBe(403);
   });
@@ -148,7 +148,7 @@ describe('POST /channels', () => {
 
 describe('PATCH /channels/:slug', () => {
   it('admin can rename', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/channels', authed(ALICE, { slug: 'ops' }));
     const res = await app.request('/channels/ops', authed(ALICE, { slug: 'ops-team' }, 'PATCH'));
     expect(res.status).toBe(200);
@@ -157,7 +157,7 @@ describe('PATCH /channels/:slug', () => {
   });
 
   it('non-admin gets 403', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/channels', authed(ALICE, { slug: 'ops' }));
     await app.request('/channels/ops/members', authed(BOB, undefined, 'POST')); // bob self-joins
     const res = await app.request('/channels/ops', authed(BOB, { slug: 'ops-team' }, 'PATCH'));
@@ -167,7 +167,7 @@ describe('PATCH /channels/:slug', () => {
 
 describe('DELETE /channels/:slug (archive)', () => {
   it('admin can archive; channel disappears from list', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/channels', authed(ALICE, { slug: 'ops' }));
     const res = await app.request('/channels/ops', authed(ALICE, undefined, 'DELETE'));
     expect(res.status).toBe(200);
@@ -177,7 +177,7 @@ describe('DELETE /channels/:slug (archive)', () => {
   });
 
   it('refuses to archive general', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/channels/general', authed(ALICE, undefined, 'DELETE'));
     expect(res.status).toBe(403);
   });
@@ -185,7 +185,7 @@ describe('DELETE /channels/:slug (archive)', () => {
 
 describe('POST /channels/:slug/members (self-join + admin-add)', () => {
   it('self-join with empty body', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/channels', authed(ALICE, { slug: 'ops' }));
     const res = await app.request('/channels/ops/members', authed(BOB, undefined, 'POST'));
     expect(res.status).toBe(200);
@@ -194,14 +194,14 @@ describe('POST /channels/:slug/members (self-join + admin-add)', () => {
   });
 
   it('admin can add a different member', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/channels', authed(ALICE, { slug: 'ops' }));
     const res = await app.request('/channels/ops/members', authed(ALICE, { member: 'bob' }));
     expect(res.status).toBe(200);
   });
 
   it('non-admin cannot add a different member', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/channels', authed(ALICE, { slug: 'ops' }));
     await app.request('/channels/ops/members', authed(BOB, undefined, 'POST')); // bob joins as member
     const res = await app.request('/channels/ops/members', authed(BOB, { member: 'carol' }));
@@ -209,7 +209,7 @@ describe('POST /channels/:slug/members (self-join + admin-add)', () => {
   });
 
   it('returns 404 for an unknown team member', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/channels', authed(ALICE, { slug: 'ops' }));
     const res = await app.request('/channels/ops/members', authed(ALICE, { member: 'ghost' }));
     expect(res.status).toBe(404);
@@ -218,7 +218,7 @@ describe('POST /channels/:slug/members (self-join + admin-add)', () => {
 
 describe('DELETE /channels/:slug/members/:name (leave / remove)', () => {
   it('member can self-leave', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/channels', authed(ALICE, { slug: 'ops' }));
     await app.request('/channels/ops/members', authed(BOB, undefined, 'POST'));
     const res = await app.request('/channels/ops/members/bob', authed(BOB, undefined, 'DELETE'));
@@ -226,7 +226,7 @@ describe('DELETE /channels/:slug/members/:name (leave / remove)', () => {
   });
 
   it('non-admin cannot remove others', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/channels', authed(ALICE, { slug: 'ops' }));
     await app.request('/channels/ops/members', authed(BOB, undefined, 'POST'));
     await app.request('/channels/ops/members', authed(CAROL, undefined, 'POST'));
@@ -235,7 +235,7 @@ describe('DELETE /channels/:slug/members/:name (leave / remove)', () => {
   });
 
   it('refuses to remove the last admin while members remain', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/channels', authed(ALICE, { slug: 'ops' }));
     await app.request('/channels/ops/members', authed(BOB, undefined, 'POST'));
     const res = await app.request(
@@ -249,7 +249,7 @@ describe('DELETE /channels/:slug/members/:name (leave / remove)', () => {
 
 describe('GET /history?channel=...', () => {
   it('filters to channel-tagged messages for members', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/channels', authed(ALICE, { slug: 'ops' }));
     const listRes = await app.request('/channels', authed(ALICE));
     const list = (await listRes.json()) as { channels: ChannelSummary[] };
@@ -270,14 +270,14 @@ describe('GET /history?channel=...', () => {
   });
 
   it('403s for non-members on non-general channel', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/channels', authed(ALICE, { slug: 'ops' }));
     const res = await app.request('/history?channel=ops', authed(BOB));
     expect(res.status).toBe(403);
   });
 
   it('general is reachable without explicit membership', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/push', authed(ALICE, { body: 'hi everyone' }));
     const res = await app.request('/history?channel=general', authed(BOB));
     expect(res.status).toBe(200);

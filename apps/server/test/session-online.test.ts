@@ -25,6 +25,7 @@ import type { AddressInfo } from 'node:net';
 import {
   Broker,
   createSqliteObjectivesStore,
+  createTokenStoreFromMembers,
   InMemoryEventLog,
   SqliteSessionStore,
 } from 'csuite-core';
@@ -35,7 +36,6 @@ import { composeSessionOnlineMessage, createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
 import { type RunningServer, runServer } from '../src/run.js';
-import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore, seedStores } from './helpers/test-stores.js';
 
 // ─── unit: composeSessionOnlineMessage ──────────────────────────────
@@ -93,7 +93,7 @@ interface BootedServer {
 }
 
 async function bootServer(): Promise<BootedServer> {
-  const seeded = seedStores({
+  const seeded = await seedStores({
     team: TEAM,
     members: [
       {
@@ -227,7 +227,7 @@ describe('session-online gate — cookie subscriber receives nothing', () => {
     ]);
     const db = openDatabase(':memory:');
     const sessions = new SqliteSessionStore(db);
-    const tokens = createTokenStoreFromMembers(db, members);
+    const tokens = await createTokenStoreFromMembers(db, members);
     const objectives = createSqliteObjectivesStore(db);
     const { app, injectWebSocket } = createApp({
       broker,

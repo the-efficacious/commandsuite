@@ -36,6 +36,7 @@ import {
   clampQueryLimit,
   containsRegisteredSecretValue,
   GENERAL_CHANNEL_ID,
+  generateBearerToken,
   ObjectivesError,
   type ObjectivesStore,
   openaiResponsesToGenAi,
@@ -47,6 +48,7 @@ import {
   SESSION_COOKIE_NAME,
   SESSION_TTL_MS,
   type SessionStore,
+  type TokenStore,
   validateSlug,
 } from 'csuite-core';
 import {
@@ -187,7 +189,6 @@ import type { RawBodyStore } from './raw-body-store.js';
 import { SecretsError, type SecretsStore } from './secrets.js';
 import type { TeamStore } from './team-store.js';
 import type { TelemetryStore } from './telemetry-store.js';
-import { generateBearerToken, type TokenStore } from './tokens.js';
 import {
   executeCustomTool,
   type McpToolManager,
@@ -4889,7 +4890,7 @@ export function createApp(options: AppOptions): CreatedApp {
     // would match its hash. `origin = 'bootstrap'` matches the JSON-
     // initiated path; the row is labeled 'initial' so directors
     // listing tokens can see this is the one created at member-add.
-    tokens.insert({
+    await tokens.insert({
       memberName: parsed.data.name,
       rawToken: token,
       label: 'initial',
@@ -5004,7 +5005,7 @@ export function createApp(options: AppOptions): CreatedApp {
     return c.json({ ...loadedToMember(updated), ...(warning ? { warning } : {}) });
   });
 
-  app.delete(`${PATHS.members}/:name`, auth, (c) => {
+  app.delete(`${PATHS.members}/:name`, auth, async (c) => {
     const member = c.get('member');
     if (!hasPermission(member.permissions, 'members.manage')) {
       return c.json({ error: 'deleting members requires the members.manage permission' }, 403);
@@ -5036,7 +5037,7 @@ export function createApp(options: AppOptions): CreatedApp {
     // authenticating as a now-orphaned identity. Auth middleware
     // would catch this anyway (member not found → 401), but
     // proactive deletion keeps the table clean.
-    const revoked = tokens.revokeAllForMember(parsedName.data);
+    const revoked = await tokens.revokeAllForMember(parsedName.data);
     activityTracker.forget(parsedName.data);
     persistMembers();
     logger.info('member deleted', {
@@ -5047,7 +5048,7 @@ export function createApp(options: AppOptions): CreatedApp {
     return c.body(null, 204);
   });
 
-  app.post(`${PATHS.members}/:name/rotate-token`, auth, (c) => {
+  app.post(`${PATHS.members}/:name/rotate-token`, auth, async (c) => {
     const member = c.get('member');
     if (!persistMembers) {
       return c.json({ error: 'rotate-token is not available (persistMembers missing)' }, 501);
@@ -5069,11 +5070,11 @@ export function createApp(options: AppOptions): CreatedApp {
     // device-code flow (`csuite connect` → director approve) which
     // calls `tokens.insert` on its own.
     const token = generateBearerToken();
-    const before = tokens.listForMember(parsedName.data);
+    const before = await tokens.listForMember(parsedName.data);
     for (const t of before) {
-      tokens.revoke(t.id);
+      await tokens.revoke(t.id);
     }
-    const newRow = tokens.insert({
+    const newRow = await tokens.insert({
       memberName: parsedName.data,
       rawToken: token,
       label: 'rotated',
@@ -5214,7 +5215,7 @@ export function createApp(options: AppOptions): CreatedApp {
   // token they don't recognize before it's used, and revoke a
   // specific device's binding without nuking the rest.
 
-  app.get(`${PATHS.members}/:name/tokens`, auth, (c) => {
+  app.get(`${PATHS.members}/:name/tokens`, auth, async (c) => {
     const caller = c.get('member');
     const targetRaw = c.req.param('name');
     const parsedName = NameSchema.safeParse(targetRaw);
@@ -5224,11 +5225,11 @@ export function createApp(options: AppOptions): CreatedApp {
     if (!hasPermission(caller.permissions, 'members.manage') && caller.name !== target.name) {
       return c.json({ error: 'listing tokens requires members.manage, or self' }, 403);
     }
-    const list = tokens.listForMember(parsedName.data);
+    const list = await tokens.listForMember(parsedName.data);
     return c.json({ tokens: list });
   });
 
-  app.delete(`${PATHS.members}/:name/tokens/:id`, auth, (c) => {
+  app.delete(`${PATHS.members}/:name/tokens/:id`, auth, async (c) => {
     const caller = c.get('member');
     const targetRaw = c.req.param('name');
     const tokenIdRaw = c.req.param('id');
@@ -5239,7 +5240,7 @@ export function createApp(options: AppOptions): CreatedApp {
     if (!hasPermission(caller.permissions, 'members.manage') && caller.name !== target.name) {
       return c.json({ error: 'revoking tokens requires members.manage, or self' }, 403);
     }
-    const row = tokens.findById(tokenIdRaw);
+    const row = await tokens.findById(tokenIdRaw);
     if (!row || row.memberName !== parsedName.data) {
       // Don't leak whether the id exists for a different member; just
       // 404 either way.
@@ -5251,7 +5252,7 @@ export function createApp(options: AppOptions): CreatedApp {
     // still revoke their own last token (they'd just rely on TOTP /
     // device-code re-issue afterward). The strict-loss case mirrors
     // the existing last-admin guard on member delete.
-    const remaining = tokens.listForMember(parsedName.data).filter((t) => t.id !== row.id);
+    const remaining = (await tokens.listForMember(parsedName.data)).filter((t) => t.id !== row.id);
     if (
       remaining.length === 0 &&
       target.permissions.includes('members.manage') &&
@@ -5265,7 +5266,7 @@ export function createApp(options: AppOptions): CreatedApp {
         409,
       );
     }
-    tokens.revoke(row.id);
+    await tokens.revoke(row.id);
     logger.info('token revoked', {
       name: parsedName.data,
       tokenId: row.id,
@@ -5486,7 +5487,7 @@ export function createApp(options: AppOptions): CreatedApp {
               tokenId: outcome.tokenId,
             });
             // Best-effort: revoke the orphan token.
-            tokens.revoke(outcome.tokenId);
+            await tokens.revoke(outcome.tokenId);
             return c.json({ error: 'expired_token' as const }, 400);
           }
           logger.info('enrollment poll resolved', {
@@ -5618,7 +5619,7 @@ export function createApp(options: AppOptions): CreatedApp {
       // enrollment row for the device-side poll to consume. The
       // plaintext is KEK-wrapped at rest by the EnrollmentStore.
       const plaintext = generateBearerToken();
-      const tokenRow = tokens.insert({
+      const tokenRow = await tokens.insert({
         memberName: boundMember.name,
         rawToken: plaintext,
         label: parsed.data.label ?? lookup.row.labelHint ?? 'connected device',
@@ -5637,7 +5638,7 @@ export function createApp(options: AppOptions): CreatedApp {
         // Race: someone else mutated this row between lookup and
         // approve. Roll back the token we just inserted so we don't
         // leave an orphan.
-        tokens.revoke(tokenRow.id);
+        await tokens.revoke(tokenRow.id);
         return c.json({ error: 'enrollment changed state during approval — try again' }, 409);
       }
       // Persist member-store changes only if we mutated it.

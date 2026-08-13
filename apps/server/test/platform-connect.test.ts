@@ -14,13 +14,17 @@
  * caller is.
  */
 
-import { Broker, InMemoryEventLog, SqliteSessionStore } from 'csuite-core';
+import {
+  Broker,
+  createTokenStoreFromMembers,
+  InMemoryEventLog,
+  SqliteSessionStore,
+} from 'csuite-core';
 import type { Team } from 'csuite-sdk/types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
-import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const OP_TOKEN = 'csuite_platform_connect_op_token';
@@ -31,7 +35,7 @@ const TEAM: Team = {
   permissionPresets: {},
 };
 
-function makeApp(options: { now?: () => number } = {}) {
+async function makeApp(options: { now?: () => number } = {}) {
   const broker = new Broker({
     eventLog: new InMemoryEventLog(),
     now: () => 1_700_000_000_000,
@@ -47,7 +51,7 @@ function makeApp(options: { now?: () => number } = {}) {
   ]);
   const db = openDatabase(':memory:');
   const sessions = new SqliteSessionStore(db, { now: options.now });
-  const tokens = createTokenStoreFromMembers(db, members, { now: options.now });
+  const tokens = await createTokenStoreFromMembers(db, members, { now: options.now });
   const { app } = createApp({
     broker,
     members,
@@ -68,7 +72,7 @@ function makeApp(options: { now?: () => number } = {}) {
 
 describe('POST /platform-connect/bind', () => {
   it('binds a code to the authenticated member', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/platform-connect/bind', {
       method: 'POST',
       headers: {
@@ -84,7 +88,7 @@ describe('POST /platform-connect/bind', () => {
   });
 
   it('rejects unauthenticated callers', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/platform-connect/bind', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -94,7 +98,7 @@ describe('POST /platform-connect/bind', () => {
   });
 
   it('rejects missing or oversized code', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const empty = await app.request('/platform-connect/bind', {
       method: 'POST',
       headers: {
@@ -119,7 +123,7 @@ describe('POST /platform-connect/bind', () => {
 
 describe('GET /platform-connect/lookup', () => {
   it('returns the bound memberName, then 404s on replay', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     // Bind first.
     const bind = await app.request('/platform-connect/bind', {
       method: 'POST',
@@ -143,19 +147,19 @@ describe('GET /platform-connect/lookup', () => {
   });
 
   it('returns 404 for unknown codes', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/platform-connect/lookup?code=NEVERMINTED');
     expect(res.status).toBe(404);
   });
 
   it('requires the code query param', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/platform-connect/lookup');
     expect(res.status).toBe(400);
   });
 
   it('does not require authentication (platform calls this server-to-server)', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     // Bind with auth; look up without.
     await app.request('/platform-connect/bind', {
       method: 'POST',
@@ -174,7 +178,7 @@ describe('TTL', () => {
   it('sweeps expired bindings before lookup', async () => {
     // Freeze time at T=1000, bind, then jump forward past the 10-min TTL.
     let now = 1_000_000;
-    const { app } = makeApp({ now: () => now });
+    const { app } = await makeApp({ now: () => now });
     await app.request('/platform-connect/bind', {
       method: 'POST',
       headers: {
@@ -191,7 +195,7 @@ describe('TTL', () => {
 
 describe('GET /setup/connect-platform', () => {
   it('renders HTML with the code embedded in the inline script', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/setup/connect-platform?code=PAIR1234');
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toContain('text/html');
@@ -206,7 +210,7 @@ describe('GET /setup/connect-platform', () => {
   });
 
   it('escapes HTML-unsafe characters in the code', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     // Realistic codes never contain these, but defense-in-depth: if
     // the code format changes we don't want to ship an injection.
     const res = await app.request(
@@ -221,7 +225,7 @@ describe('GET /setup/connect-platform', () => {
 
 describe('GET /setup/connect-platform — iframe mode', () => {
   it('injects mode=iframe + parentOrigin when valid query params are present', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const parent = 'https://app.example.com';
     const res = await app.request(
       `/setup/connect-platform?code=ABCD1234&mode=iframe&parentOrigin=${encodeURIComponent(parent)}`,
@@ -238,7 +242,7 @@ describe('GET /setup/connect-platform — iframe mode', () => {
   });
 
   it('falls back to tab mode when parentOrigin is missing', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/setup/connect-platform?code=ABCD1234&mode=iframe');
     expect(res.status).toBe(200);
     const body = await res.text();
@@ -248,7 +252,7 @@ describe('GET /setup/connect-platform — iframe mode', () => {
   });
 
   it('rejects garbage parentOrigin values (no wildcard postMessage)', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request(
       `/setup/connect-platform?code=ABCD1234&mode=iframe&parentOrigin=${encodeURIComponent('not a url')}`,
     );

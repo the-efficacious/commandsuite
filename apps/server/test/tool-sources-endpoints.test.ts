@@ -8,7 +8,12 @@
 
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { Broker, InMemoryEventLog, SqliteSessionStore } from 'csuite-core';
+import {
+  Broker,
+  createTokenStoreFromMembers,
+  InMemoryEventLog,
+  SqliteSessionStore,
+} from 'csuite-core';
 import type { InstructionsResponse, ToolSourceSummary } from 'csuite-sdk/types';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
@@ -16,7 +21,6 @@ import { openDatabase } from '../src/db.js';
 import { testKek } from '../src/kek.js';
 import { createSqliteActivityStore } from '../src/member-activity.js';
 import { createMemberStore, setKek } from '../src/members.js';
-import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { createSqliteToolSourceStore } from '../src/tool-sources/index.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
@@ -26,7 +30,7 @@ const OUTSIDER = 'csuite_test_outsider_secret';
 
 const noopLog = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 
-function makeApp(opts: { withActivity?: boolean } = {}) {
+async function makeApp(opts: { withActivity?: boolean } = {}) {
   const broker = new Broker({
     eventLog: new InMemoryEventLog(),
     now: () => 1_700_000_000_000,
@@ -57,7 +61,7 @@ function makeApp(opts: { withActivity?: boolean } = {}) {
   ]);
   const db = openDatabase(':memory:');
   const sessions = new SqliteSessionStore(db);
-  const tokens = createTokenStoreFromMembers(db, members);
+  const tokens = await createTokenStoreFromMembers(db, members);
   const toolSources = createSqliteToolSourceStore(db);
   const activityStore = opts.withActivity
     ? createSqliteActivityStore(openDatabase(':memory:'), noopLog)
@@ -102,7 +106,7 @@ afterAll(() => {
 
 describe('registry CRUD + gating', () => {
   it('create requires tools.manage', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const denied = await app.request(
       '/tool-sources',
       authed(BOUND, { slug: 'jira', kind: 'custom' }),
@@ -120,7 +124,7 @@ describe('registry CRUD + gating', () => {
   });
 
   it('rejects duplicate slugs with 409 and bad kinds with 400', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/tool-sources', authed(ADMIN, { slug: 'jira', kind: 'custom' }));
     const dupe = await app.request(
       '/tool-sources',
@@ -132,7 +136,7 @@ describe('registry CRUD + gating', () => {
   });
 
   it('mcp sources require config.url', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const missing = await app.request('/tool-sources', authed(ADMIN, { slug: 'up', kind: 'mcp' }));
     expect(missing.status).toBe(400);
     const ok = await app.request(
@@ -143,7 +147,7 @@ describe('registry CRUD + gating', () => {
   });
 
   it('any member can list; bound flag is per-viewer', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/tool-sources', authed(ADMIN, { slug: 'jira', kind: 'custom' }));
     await app.request('/tool-sources/jira/bindings', authed(ADMIN, { member: 'bound' }));
 
@@ -157,7 +161,7 @@ describe('registry CRUD + gating', () => {
   });
 
   it('binding list is admin-only on detail', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/tool-sources', authed(ADMIN, { slug: 'jira', kind: 'custom' }));
     await app.request('/tool-sources/jira/bindings', authed(ADMIN, { member: 'bound' }));
 
@@ -174,7 +178,7 @@ describe('registry CRUD + gating', () => {
 
 describe('credentials', () => {
   it('is write-only: set succeeds, no endpoint returns the secret', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/tool-sources', authed(ADMIN, { slug: 'jira', kind: 'custom' }));
     const set = await app.request(
       '/tool-sources/jira/credential',
@@ -192,7 +196,7 @@ describe('credentials', () => {
   it('fails closed (503) when no KEK is active', async () => {
     setKek(null);
     try {
-      const { app } = makeApp();
+      const { app } = await makeApp();
       await app.request('/tool-sources', authed(ADMIN, { slug: 'jira', kind: 'custom' }));
       const set = await app.request(
         '/tool-sources/jira/credential',
@@ -205,7 +209,7 @@ describe('credentials', () => {
   });
 
   it('stores the secret encrypted at rest', async () => {
-    const { app, toolSources } = makeApp();
+    const { app, toolSources } = await makeApp();
     await app.request('/tool-sources', authed(ADMIN, { slug: 'jira', kind: 'custom' }));
     await app.request(
       '/tool-sources/jira/credential',
@@ -257,7 +261,7 @@ describe('invoke — custom executor end-to-end', () => {
     respondWith = { status: 200, body: '{}' };
   });
 
-  async function setupSource(app: Awaited<ReturnType<typeof makeApp>>['app']) {
+  async function setupSource(app: Awaited<Awaited<ReturnType<typeof makeApp>>>['app']) {
     await app.request('/tool-sources', authed(ADMIN, { slug: 'jira', kind: 'custom' }));
     await app.request(
       '/tool-sources/jira/credential',
@@ -284,7 +288,7 @@ describe('invoke — custom executor end-to-end', () => {
   }
 
   it('403s unbound members before revealing anything', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await setupSource(app);
     const res = await app.request(
       '/tool-sources/jira/tools/get_issue/invoke',
@@ -295,7 +299,7 @@ describe('invoke — custom executor end-to-end', () => {
   });
 
   it('injects the credential, templates the URL, extracts resultPath', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await setupSource(app);
     respondWith = {
       status: 200,
@@ -314,7 +318,7 @@ describe('invoke — custom executor end-to-end', () => {
   });
 
   it('returns template errors as isError results without any I/O', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await setupSource(app);
     const res = await app.request(
       '/tool-sources/jira/tools/get_issue/invoke',
@@ -328,7 +332,7 @@ describe('invoke — custom executor end-to-end', () => {
   });
 
   it('maps upstream non-2xx to isError with the response body', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await setupSource(app);
     respondWith = { status: 404, body: '{"errorMessages":["Issue does not exist"]}' };
     const res = await app.request(
@@ -343,7 +347,7 @@ describe('invoke — custom executor end-to-end', () => {
   });
 
   it('truncates oversized responses with a visible marker', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await setupSource(app);
     respondWith = {
       status: 200,
@@ -361,7 +365,7 @@ describe('invoke — custom executor end-to-end', () => {
   });
 
   it('409s a disabled source for bound members but 403s outsiders first', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await setupSource(app);
     await app.request('/tool-sources/jira', authed(ADMIN, { enabled: false }, 'PATCH'));
     const boundRes = await app.request(
@@ -377,7 +381,7 @@ describe('invoke — custom executor end-to-end', () => {
   });
 
   it('appends a tool_action audit row on invoke', async () => {
-    const { app, activityStore } = makeApp({ withActivity: true });
+    const { app, activityStore } = await makeApp({ withActivity: true });
     await setupSource(app);
     respondWith = { status: 200, body: '{"fields":{"summary":"ok"}}' };
     await app.request(
@@ -395,7 +399,7 @@ describe('invoke — custom executor end-to-end', () => {
 
 describe('change events', () => {
   it('fans out registry changes to bound members + tools.manage holders', async () => {
-    const { app, broker } = makeApp();
+    const { app, broker } = await makeApp();
     const pushSpy = vi.spyOn(broker, 'push');
     await app.request('/tool-sources', authed(ADMIN, { slug: 'jira', kind: 'custom' }));
     await app.request('/tool-sources/jira/bindings', authed(ADMIN, { member: 'bound' }));
@@ -419,7 +423,7 @@ describe('change events', () => {
   });
 
   it('unbound events still reach the removed member', async () => {
-    const { app, broker } = makeApp();
+    const { app, broker } = await makeApp();
     await app.request('/tool-sources', authed(ADMIN, { slug: 'jira', kind: 'custom' }));
     await app.request('/tool-sources/jira/bindings', authed(ADMIN, { member: 'bound' }));
     await settle();
@@ -437,7 +441,7 @@ describe('change events', () => {
 
 describe('packet integration', () => {
   it('resolves tools only for visible sources', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/tool-sources', authed(ADMIN, { slug: 'jira', kind: 'custom' }));
     await app.request('/tool-sources/jira/bindings', authed(ADMIN, { member: 'bound' }));
     await app.request(
@@ -467,7 +471,7 @@ describe('packet integration', () => {
   });
 
   it('allMembers sources reach everyone without bindings', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request(
       '/tool-sources',
       authed(ADMIN, { slug: 'shared', kind: 'custom', allMembers: true }),

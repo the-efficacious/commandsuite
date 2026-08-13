@@ -50,6 +50,7 @@
 import {
   Broker,
   createSqliteChannelStore,
+  createTokenStoreFromMembers,
   InMemoryEventLog,
   SqliteSessionStore,
 } from 'csuite-core';
@@ -58,7 +59,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
-import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const ADMIN = 'csuite_test_admin_general_secret';
@@ -66,7 +66,7 @@ const PLAIN = 'csuite_test_plain_general_secret';
 
 const TEAM: Team = { name: 'demo-team', context: '', permissionPresets: {} };
 
-function makeApp() {
+async function makeApp() {
   const broker = new Broker({
     eventLog: new InMemoryEventLog(),
     now: () => 1_700_000_000_000,
@@ -96,7 +96,7 @@ function makeApp() {
   const { app } = createApp({
     broker,
     members,
-    tokens: createTokenStoreFromMembers(db, members),
+    tokens: await createTokenStoreFromMembers(db, members),
     sessions: new SqliteSessionStore(db),
     teamStore: mockTeamStore(TEAM),
     channels,
@@ -117,7 +117,7 @@ function authed(token: string, body?: unknown): RequestInit {
 
 describe('the primary channel is readable by every member, with no membership gate', () => {
   it('serves general history to a member holding no permissions and no channel membership', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/push', authed(ADMIN, { body: 'a decision stated to the team' }));
 
     const res = await app.request('/history?channel=general', authed(PLAIN));
@@ -132,7 +132,7 @@ describe('the primary channel is readable by every member, with no membership ga
    * no channel access control at all, and would be evidence of nothing.
    */
   it('still refuses a named channel to a non-member, so the test above means something', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const created = await app.request(
       '/channels',
       authed(ADMIN, { slug: 'private-thing', description: '' }),
@@ -150,7 +150,7 @@ describe('the primary channel is readable by every member, with no membership ga
    * under the guarantee.
    */
   it('does not consult the channel store for the primary channel', async () => {
-    const { app, channels } = makeApp();
+    const { app, channels } = await makeApp();
     const isMember = vi.spyOn(channels, 'isMember');
     await app.request('/push', authed(ADMIN, { body: 'hello' }));
 
@@ -169,8 +169,8 @@ describe('the primary channel is readable by every member, with no membership ga
    * guarantee with no assertion behind it, and it is the half that
    * would be load-bearing the moment the route stopped short-circuiting.
    */
-  it('treats every member as a member of the primary channel at the store', () => {
-    const { channels } = makeApp();
+  it('treats every member as a member of the primary channel at the store', async () => {
+    const { channels } = await makeApp();
     expect(channels.isMember('general', 'plain')).toBe(true);
     expect(channels.isMember('general', 'admin')).toBe(true);
     // Not a member of the team at all — general membership is not a

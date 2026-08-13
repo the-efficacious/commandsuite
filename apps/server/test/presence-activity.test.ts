@@ -14,14 +14,18 @@
  *   - Member deletion forgets any pending activity entry.
  */
 
-import { Broker, InMemoryEventLog, SqliteSessionStore } from 'csuite-core';
+import {
+  Broker,
+  createTokenStoreFromMembers,
+  InMemoryEventLog,
+  SqliteSessionStore,
+} from 'csuite-core';
 import type { RosterResponse, Team } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ACTIVITY_TTL_MS } from '../src/activity-tracker.js';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
-import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const ADMIN_TOKEN = 'csuite_activity_test_admin_token';
@@ -43,7 +47,7 @@ interface Harness {
   advance: (ms: number) => void;
 }
 
-function makeApp(): Harness {
+async function makeApp(): Promise<Harness> {
   let now = 1_700_000_000_000;
   const broker = new Broker({
     eventLog: new InMemoryEventLog(),
@@ -68,7 +72,7 @@ function makeApp(): Harness {
   for (const name of ['alice', 'scout']) void broker.register(name);
   const db = openDatabase(':memory:');
   const sessions = new SqliteSessionStore(db);
-  const tokens = createTokenStoreFromMembers(db, members);
+  const tokens = await createTokenStoreFromMembers(db, members);
   const persistMembers = vi.fn();
   const { app } = createApp({
     broker,
@@ -118,7 +122,7 @@ afterEach(() => vi.restoreAllMocks());
 
 describe('POST /presence/activity', () => {
   it('accepts a working report and surfaces activity + busy on /roster', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
 
     const post = await app.request(
       '/presence/activity',
@@ -143,7 +147,7 @@ describe('POST /presence/activity', () => {
   });
 
   it('surfaces blocked distinctly and as NOT busy', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/presence/activity', authBearer(AGENT_TOKEN, { state: 'blocked' }));
     const scout = await rosterScout(app);
     expect(scout?.activity).toBe('blocked');
@@ -151,7 +155,7 @@ describe('POST /presence/activity', () => {
   });
 
   it('ignores the optional busy mirror and derives busy from state', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     // Runner lies: state blocked but busy:true. Server trusts state.
     await app.request(
       '/presence/activity',
@@ -163,7 +167,7 @@ describe('POST /presence/activity', () => {
   });
 
   it('clears immediately on `state: "idle"`', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/presence/activity', authBearer(AGENT_TOKEN, { state: 'working' }));
     await app.request('/presence/activity', authBearer(AGENT_TOKEN, { state: 'idle' }));
 
@@ -173,7 +177,7 @@ describe('POST /presence/activity', () => {
   });
 
   it('rejects a session-cookie caller with 403 (runner-only)', async () => {
-    const { app, sessions } = makeApp();
+    const { app, sessions } = await makeApp();
     const session = await sessions.create('alice', null);
     const res = await app.request('/presence/activity', {
       method: 'POST',
@@ -189,7 +193,7 @@ describe('POST /presence/activity', () => {
   });
 
   it('rejects unauthenticated callers with 401', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/presence/activity', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -199,7 +203,7 @@ describe('POST /presence/activity', () => {
   });
 
   it('rejects a malformed payload with 400', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     // Missing `state`.
     const missing = await app.request(
       '/presence/activity',
@@ -215,7 +219,7 @@ describe('POST /presence/activity', () => {
   });
 
   it('TTL resolves stale entries to idle on the next roster read', async () => {
-    const { app, advance } = makeApp();
+    const { app, advance } = await makeApp();
     await app.request('/presence/activity', authBearer(AGENT_TOKEN, { state: 'working' }));
 
     // Advance past the TTL without a heartbeat.
@@ -227,7 +231,7 @@ describe('POST /presence/activity', () => {
   });
 
   it('member delete forgets any pending activity entry', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     // scout (the agent) reports working.
     await app.request('/presence/activity', authBearer(AGENT_TOKEN, { state: 'working' }));
     // alice deletes scout.

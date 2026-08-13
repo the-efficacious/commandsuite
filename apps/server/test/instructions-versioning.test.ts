@@ -21,6 +21,7 @@ import { createHash } from 'node:crypto';
 import {
   Broker,
   createSqliteProcessDocumentStore,
+  createTokenStoreFromMembers,
   InMemoryEventLog,
   SqliteSessionStore,
 } from 'csuite-core';
@@ -31,14 +32,13 @@ import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { composedInstructionsSha256 } from '../src/instructions.js';
 import { createMemberStore } from '../src/members.js';
-import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const ADMIN = 'csuite_test_admin_instrver_token';
 const CORA = 'csuite_test_cora_instrver_token';
 const RUNE = 'csuite_test_rune_instrver_token';
 
-function makeApp() {
+async function makeApp() {
   const broker = new Broker({ eventLog: new InMemoryEventLog(), now: () => 1_700_000_000_000 });
   const members = createMemberStore([
     {
@@ -65,7 +65,7 @@ function makeApp() {
   const { app } = createApp({
     broker,
     members,
-    tokens: createTokenStoreFromMembers(db, members),
+    tokens: await createTokenStoreFromMembers(db, members),
     sessions: new SqliteSessionStore(db),
     teamStore: mockTeamStore({
       name: 'demo-team',
@@ -111,7 +111,7 @@ const instructionEvents = (
 
 describe('GET /instructions is the only path that serves the packet', () => {
   it('answers on /instructions and nothing else', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     // Positive control first: the canonical path answers…
     const canonical = await app.request('/instructions', authed(CORA));
     expect(canonical.status).toBe(200);
@@ -124,7 +124,7 @@ describe('GET /instructions is the only path that serves the packet', () => {
   });
 
   it('names each composed block by the sha256 of its exact text', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const body = (await (await app.request('/instructions', authed(CORA))).json()) as {
       blocks: InstructionBlockDescriptor[];
       composedSha256: string;
@@ -143,7 +143,7 @@ describe('GET /instructions is the only path that serves the packet', () => {
   });
 
   it('keeps composedSha256 identical across different reported runner versions', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const withVersion = (v: string): RequestInit => ({
       headers: { Authorization: `Bearer ${CORA}`, [RUNNER_VERSION_HEADER]: v },
     });
@@ -207,7 +207,7 @@ describe('composedInstructionsSha256 canonicalization', () => {
 
 describe('instruction edit fanout', () => {
   it('reaches every member on a team-context edit', async () => {
-    const { app, pushed } = makeApp();
+    const { app, pushed } = await makeApp();
     await app.request('/team', authed(ADMIN, { context: 'New shared context.' }));
     const events = instructionEvents(pushed);
     expect(events).toHaveLength(1);
@@ -216,7 +216,7 @@ describe('instruction edit fanout', () => {
   });
 
   it('reaches exactly one member on a personal-instructions edit', async () => {
-    const { app, pushed } = makeApp();
+    const { app, pushed } = await makeApp();
     await app.request('/members/cora', authed(ADMIN, { instructions: 'New personal rules.' }));
     const events = instructionEvents(pushed);
     expect(events).toHaveLength(1);
@@ -225,7 +225,7 @@ describe('instruction edit fanout', () => {
   });
 
   it('ripples a role edit to every teammate whose roster line moved', async () => {
-    const { app, pushed } = makeApp();
+    const { app, pushed } = await makeApp();
     await app.request(
       '/members/cora',
       authed(ADMIN, { role: { title: 'engineer', description: 'Now also owns the runner.' } }),
@@ -240,13 +240,13 @@ describe('instruction edit fanout', () => {
   });
 
   it('fans out nothing when an edit rewrites a block to its existing text', async () => {
-    const { app, pushed } = makeApp();
+    const { app, pushed } = await makeApp();
     await app.request('/team', authed(ADMIN, { context: 'We ship small and verify by mutating.' }));
     expect(instructionEvents(pushed)).toHaveLength(0);
   });
 
   it('fans out nothing on a permissions-only member patch', async () => {
-    const { app, pushed } = makeApp();
+    const { app, pushed } = await makeApp();
     await app.request('/members/cora', authed(ADMIN, { permissions: ['team.manage'] }));
     expect(instructionEvents(pushed)).toHaveLength(0);
   });
@@ -255,13 +255,15 @@ describe('instruction edit fanout', () => {
 // ─── restart-pending: issued vs current, and unknown is not pending ──
 
 describe('restart-pending on the roster', () => {
-  const rosterPending = async (app: ReturnType<typeof makeApp>['app']): Promise<string[]> => {
+  const rosterPending = async (
+    app: Awaited<ReturnType<typeof makeApp>>['app'],
+  ): Promise<string[]> => {
     const res = await app.request('/roster', authed(CORA));
     return ((await res.json()) as { restartPending: string[] }).restartPending;
   };
 
   it('lists a fetched member after an edit, and clears them on refetch', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     // Nothing issued yet → nothing pending (and the field EXISTS as an
     // explicit empty answer, not an absent one).
     expect(await rosterPending(app)).toEqual([]);
@@ -280,7 +282,7 @@ describe('restart-pending on the roster', () => {
   });
 
   it('marks a teammate pending when a role edit moves their roster line', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/instructions', authed(RUNE));
     await app.request(
       '/members/cora',

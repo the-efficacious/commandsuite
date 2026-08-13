@@ -30,7 +30,7 @@ describe('runServer shutdown with live SSE subscriber', () => {
   let client: Client;
 
   beforeAll(async () => {
-    const seeded = seedStores({
+    const seeded = await seedStores({
       team: TEAM,
       members: [
         {

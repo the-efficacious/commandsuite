@@ -29,13 +29,13 @@
  * is the member.
  */
 
+import type { TokenStore } from 'csuite-core';
 import { SESSION_COOKIE_NAME, type SessionStore } from 'csuite-core';
 import type { MiddlewareHandler } from 'hono';
 import { getCookie } from 'hono/cookie';
 import { type JwtVerifier, looksLikeJwt } from './jwt.js';
 import type { Logger } from './logger.js';
 import type { LoadedMember, MemberStore } from './members.js';
-import type { TokenStore } from './tokens.js';
 
 export interface AuthDependencies {
   members: MemberStore;
@@ -142,7 +142,7 @@ export function createAuthMiddleware(deps: AuthDependencies): MiddlewareHandler<
       // member name; the member must still exist in the loaded store
       // (the member could have been removed since this token was
       // issued — fail closed).
-      const tokenRow = tokens.resolve(raw);
+      const tokenRow = await tokens.resolve(raw);
       if (!tokenRow) {
         return c.json({ error: 'unknown token' }, 401);
       }
@@ -154,12 +154,12 @@ export function createAuthMiddleware(deps: AuthDependencies): MiddlewareHandler<
         });
         // Auto-clean: a stale token whose member was deleted should
         // not silently keep authenticating until the next purge.
-        tokens.revoke(tokenRow.id);
+        await tokens.revoke(tokenRow.id);
         return c.json({ error: 'token references unknown member' }, 401);
       }
       // Bump last_used_at (debounced internally — we don't write on
       // every request).
-      tokens.touch(tokenRow.id);
+      await tokens.touch(tokenRow.id);
       c.set('member', member);
       c.set('sessionId', null);
       c.set('tokenId', tokenRow.id);

@@ -5,6 +5,7 @@
 
 import {
   Broker,
+  createTokenStoreFromMembers,
   InMemoryEventLog,
   SqlitePushSubscriptionStore,
   SqliteSessionStore,
@@ -17,7 +18,6 @@ import { createMemberStore } from '../src/members.js';
 import { dispatchPush } from '../src/push/dispatch.js';
 import { shouldPush } from '../src/push/policy.js';
 import { generateVapidKeys } from '../src/push/vapid.js';
-import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 // Mock web-push sendNotification so no real network traffic happens.
@@ -405,7 +405,7 @@ describe('dispatchPush', () => {
 // ─── HTTP endpoints ─────────────────────────────────────────────────
 
 describe('push HTTP endpoints', () => {
-  function makeApp(withPush: boolean) {
+  async function makeApp(withPush: boolean) {
     const broker = new Broker({
       eventLog: new InMemoryEventLog(),
       now: () => 1_700_000_000_000,
@@ -427,7 +427,7 @@ describe('push HTTP endpoints', () => {
     ]);
     const db = openDatabase(':memory:');
     const sessions = new SqliteSessionStore(db);
-    const tokens = createTokenStoreFromMembers(db, members);
+    const tokens = await createTokenStoreFromMembers(db, members);
     const pushStore = new SqlitePushSubscriptionStore(db);
     const { app } = createApp({
       broker,
@@ -444,7 +444,7 @@ describe('push HTTP endpoints', () => {
   }
 
   it('GET /push/vapid-public-key returns the key anonymously when push is enabled', async () => {
-    const { app } = makeApp(true);
+    const { app } = await makeApp(true);
     const res = await app.request('/push/vapid-public-key');
     expect(res.status).toBe(200);
     const body = (await res.json()) as { publicKey: string };
@@ -452,7 +452,7 @@ describe('push HTTP endpoints', () => {
   });
 
   it('/push/vapid-public-key is absent (falls through to SPA 404) when push disabled', async () => {
-    const { app } = makeApp(false);
+    const { app } = await makeApp(false);
     const res = await app.request('/push/vapid-public-key');
     // Without push config, the route isn't registered. No SPA public
     // root in this test setup either, so it's a plain 404 from Hono.
@@ -460,7 +460,7 @@ describe('push HTTP endpoints', () => {
   });
 
   it('POST /push/subscriptions registers a subscription for the authed slot', async () => {
-    const { app, pushStore } = makeApp(true);
+    const { app, pushStore } = await makeApp(true);
     const res = await app.request('/push/subscriptions', {
       method: 'POST',
       headers: {
@@ -479,7 +479,7 @@ describe('push HTTP endpoints', () => {
   });
 
   it('POST /push/subscriptions rejects unauthenticated callers', async () => {
-    const { app } = makeApp(true);
+    const { app } = await makeApp(true);
     const res = await app.request('/push/subscriptions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -492,7 +492,7 @@ describe('push HTTP endpoints', () => {
   });
 
   it('POST /push/subscriptions rejects invalid payloads', async () => {
-    const { app } = makeApp(true);
+    const { app } = await makeApp(true);
     const res = await app.request('/push/subscriptions', {
       method: 'POST',
       headers: {
@@ -505,7 +505,7 @@ describe('push HTTP endpoints', () => {
   });
 
   it('DELETE /push/subscriptions/:id scoped by authed slot', async () => {
-    const { app, pushStore } = makeApp(true);
+    const { app, pushStore } = await makeApp(true);
     const row = await pushStore.upsert({
       memberName: 'director-1',
       endpoint: 'https://fcm.example/toDel',

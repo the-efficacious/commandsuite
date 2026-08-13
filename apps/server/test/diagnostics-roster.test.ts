@@ -14,14 +14,18 @@
  * `roster` is that surface, and `captureHealth` is the precedent.
  */
 
-import { Broker, InMemoryEventLog, SqliteSessionStore } from 'csuite-core';
+import {
+  Broker,
+  createTokenStoreFromMembers,
+  InMemoryEventLog,
+  SqliteSessionStore,
+} from 'csuite-core';
 import type { RosterResponse, Team } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createDiagnosticStore, type DiagnosticStore } from '../src/diagnostics.js';
 import { createMemberStore } from '../src/members.js';
-import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const TOKEN = 'csuite_test_member_secret';
@@ -51,7 +55,7 @@ async function makeApp(withDiagnostics = true) {
   const { app } = createApp({
     broker,
     members,
-    tokens: createTokenStoreFromMembers(db, members),
+    tokens: await createTokenStoreFromMembers(db, members),
     sessions: new SqliteSessionStore(db),
     teamStore: mockTeamStore(TEAM),
     version: '0.0.0',
@@ -61,7 +65,7 @@ async function makeApp(withDiagnostics = true) {
   return { app, diagnostics };
 }
 
-async function roster(app: Awaited<ReturnType<typeof makeApp>>['app']) {
+async function roster(app: Awaited<Awaited<ReturnType<typeof makeApp>>>['app']) {
   const res = await app.request('/roster', { headers: { Authorization: `Bearer ${TOKEN}` } });
   expect(res.status).toBe(200); // the precondition this test's meaning rests on
   return (await res.json()) as RosterResponse;

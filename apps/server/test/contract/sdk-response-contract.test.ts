@@ -97,6 +97,7 @@ import {
   Broker,
   createSqliteChannelStore,
   createSqliteObjectivesStore,
+  createTokenStoreFromMembers,
   InMemoryEventLog,
   SqliteSessionStore,
 } from 'csuite-core';
@@ -117,7 +118,6 @@ import { createApp } from '../../src/app.js';
 import { openDatabase } from '../../src/db.js';
 import { createSqliteFilesystemStore, LocalBlobStore } from '../../src/files/index.js';
 import { createMemberStore } from '../../src/members.js';
-import { createTokenStoreFromMembers } from '../../src/tokens.js';
 import { mockTeamStore } from '../helpers/test-stores.js';
 
 const ALICE = 'csuite_contract_alice_secret';
@@ -130,7 +130,7 @@ afterEach(() => {
   for (const d of tmpDirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
-function makeApp() {
+async function makeApp() {
   const broker = new Broker({
     eventLog: new InMemoryEventLog(),
     now: () => 1_700_000_000_000,
@@ -156,7 +156,7 @@ function makeApp() {
   broker.seedMembers(members.members());
   const db = openDatabase(':memory:');
   const sessions = new SqliteSessionStore(db);
-  const tokens = createTokenStoreFromMembers(db, members);
+  const tokens = await createTokenStoreFromMembers(db, members);
   const blobDir = mkdtempSync(join(tmpdir(), 'csuite-contract-'));
   tmpDirs.push(blobDir);
   const objectives = createSqliteObjectivesStore(db);
@@ -199,7 +199,7 @@ function authed(token: string, body?: unknown, method?: string): RequestInit {
   return init;
 }
 
-type App = ReturnType<typeof makeApp>['app'];
+type App = Awaited<ReturnType<typeof makeApp>>['app'];
 
 function findUndeclaredResponseFields(raw: unknown, parsed: unknown, path = '$'): string[] {
   if (Array.isArray(raw) && Array.isArray(parsed)) {
@@ -283,38 +283,38 @@ async function seedObjectiveWithFile(app: App): Promise<Objective> {
 
 describe('SDK response contract', () => {
   it('GET /healthz matches HealthResponseSchema', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await expectMatchesContract(app, '/healthz', {}, HealthResponseSchema);
   });
 
   it('GET /instructions matches InstructionsResponseSchema', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await expectMatchesContract(app, '/instructions', authed(ALICE), InstructionsResponseSchema);
   });
 
   it('GET /roster matches RosterResponseSchema', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await expectMatchesContract(app, '/roster', authed(ALICE), RosterResponseSchema);
   });
 
   it('GET /members matches ListMembersResponseSchema', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await expectMatchesContract(app, '/members', authed(ALICE), ListMembersResponseSchema);
   });
 
   it('GET /channels matches ListChannelsResponseSchema', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await expectMatchesContract(app, '/channels', authed(ALICE), ListChannelsResponseSchema);
   });
 
   it('GET /objectives matches ListObjectivesResponseSchema', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await seedObjectiveWithFile(app);
     await expectMatchesContract(app, '/objectives', authed(ALICE), ListObjectivesResponseSchema);
   });
 
   it('GET /objectives/:id matches GetObjectiveResponseSchema', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const obj = await seedObjectiveWithFile(app);
     await expectMatchesContract(
       app,
@@ -325,7 +325,7 @@ describe('SDK response contract', () => {
   });
 
   it('GET /fs/ls on a member home matches FsListResponseSchema', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await seedObjectiveWithFile(app);
     await expectMatchesContract(
       app,
@@ -336,7 +336,7 @@ describe('SDK response contract', () => {
   });
 
   it('GET /fs/stat on a member-home file matches FsEntryResponseSchema', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await seedObjectiveWithFile(app);
     await expectMatchesContract(
       app,
@@ -357,7 +357,7 @@ describe('SDK response contract', () => {
   // that successful response, so the break was client-side and
   // viewer-independent. Validation ran after the write had committed.
   it('GET /fs/stat on an objective namespace path matches the published contract', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const obj = await seedObjectiveWithFile(app);
     const path = `/fs/stat?path=${encodeURIComponent(`/objectives/${obj.id}/spec.txt`)}`;
 

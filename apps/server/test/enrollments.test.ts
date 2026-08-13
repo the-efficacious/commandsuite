@@ -184,13 +184,13 @@ describe('EnrollmentStore lifecycle', () => {
     void c;
   });
 
-  it('purgeExpired sweeps stale rows', () => {
+  it('purgeExpired sweeps stale rows', async () => {
     let clock = 1_700_000_000_000;
     const store = makeStore(() => clock);
     store.mint({ sourceIp: null, sourceUa: null });
     store.mint({ sourceIp: null, sourceUa: null });
     clock += ENROLLMENT_TTL_MS + 1;
-    expect(store.purgeExpired()).toBe(2);
+    expect(await store.purgeExpired()).toBe(2);
     expect(store.listPending()).toHaveLength(0);
   });
 });
