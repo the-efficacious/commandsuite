@@ -38,6 +38,7 @@ import {
   createSqliteVariablesStore,
   createTelemetryStore,
   logger as defaultLogger,
+  dispatchPush,
   EnrollmentStore,
   type GenAiStore,
   type JwtConfig,
@@ -72,8 +73,8 @@ import {
   type WebPushConfig,
 } from './members.js';
 import { createSqliteNotificationsStore } from './notifications/index.js';
-import { dispatchPush } from './push/dispatch.js';
 import { configureVapid, generateVapidKeys } from './push/vapid.js';
+import { createWebPushSender } from './push/web-push-sender.js';
 import { createRawBodyStore, type RawBodyStore } from './raw-body-store.js';
 import { updateServerConfigFile } from './server-config.js';
 import { createMcpClientManager, createSqliteToolSourceStore } from './tool-sources/index.js';
@@ -665,6 +666,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
         void dispatchPush(message, {
           sessions: pushStore,
           members: memberStore,
+          sender: createWebPushSender(),
           logger: log,
           isLive,
         }).catch((err) => {

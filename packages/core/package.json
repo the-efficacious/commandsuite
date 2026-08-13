@@ -47,6 +47,7 @@
     "hono": "^4.12.31",
     "jose": "^6.2.4",
     "otpauth": "^9.5.1",
+    "p-limit": "^7.3.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {

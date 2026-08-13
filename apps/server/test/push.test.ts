@@ -6,18 +6,19 @@
 import {
   Broker,
   createTokenStoreFromMembers,
+  dispatchPush,
   InMemoryEventLog,
   SqlitePushSubscriptionStore,
   SqliteSessionStore,
+  shouldPush,
 } from 'csuite-core';
 import type { Message, Team } from 'csuite-sdk/types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
-import { dispatchPush } from '../src/push/dispatch.js';
-import { shouldPush } from '../src/push/policy.js';
 import { generateVapidKeys } from '../src/push/vapid.js';
+import { createWebPushSender } from '../src/push/web-push-sender.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 // Mock web-push sendNotification so no real network traffic happens.
@@ -281,6 +282,7 @@ describe('dispatchPush', () => {
     await dispatchPush(msg, {
       sessions: store,
       members,
+      sender: createWebPushSender(),
       logger: noopLogger(),
       isLive: () => false,
     });
@@ -321,6 +323,7 @@ describe('dispatchPush', () => {
     await dispatchPush(msg, {
       sessions: store,
       members,
+      sender: createWebPushSender(),
       logger: noopLogger(),
       isLive: () => false,
     });
@@ -358,6 +361,7 @@ describe('dispatchPush', () => {
     await dispatchPush(mkMsg({ from: 'build-bot', to: 'director-1' }), {
       sessions: store,
       members,
+      sender: createWebPushSender(),
       logger: noopLogger(),
       isLive: () => false,
     });
@@ -394,6 +398,7 @@ describe('dispatchPush', () => {
     await dispatchPush(mkMsg({ from: 'build-bot', to: 'director-1' }), {
       sessions: store,
       members,
+      sender: createWebPushSender(),
       logger: noopLogger(),
       isLive: (cs) => cs === 'director-1',
     });

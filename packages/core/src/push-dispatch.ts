@@ -14,15 +14,14 @@
  *                      a push failure to bubble into the main request)
  */
 
-import type { Logger, PushSubscriptionRow, PushSubscriptionStore } from 'csuite-core';
 import type { Message } from 'csuite-sdk/types';
 import pLimit from 'p-limit';
+import type { Logger } from './logger.js';
 // Default-import for the same CJS reason as vapid.ts.
-import webpush from 'web-push';
-import type { MemberStore } from '../members.js';
-import { shouldPush } from './policy.js';
-
-const { sendNotification, WebPushError } = webpush;
+import type { MemberStore } from './members-domain.js';
+import { shouldPush } from './push-policy.js';
+import type { PushSender } from './push-sender.js';
+import type { PushSubscriptionRow, PushSubscriptionStore } from './push-subscription-store.js';
 
 const PARALLEL_SENDS = 20;
 
@@ -44,6 +43,7 @@ export interface PushPayload {
 export interface DispatchDeps {
   sessions: PushSubscriptionStore;
   members: MemberStore;
+  sender: PushSender;
   logger: Logger;
   /** Returns true if `name` currently has at least one live SSE subscriber. */
   isLive: (name: string) => boolean;
@@ -77,7 +77,7 @@ export async function dispatchPush(message: Message, deps: DispatchDeps): Promis
     for (const sub of subs) {
       tasks.push(
         limit(async () => {
-          await sendOne(sub, payload, store, logger);
+          await sendOne(sub, payload, deps.sender, store, logger);
         }),
       );
     }
@@ -113,39 +113,34 @@ function truncate(text: string, max: number): string {
 async function sendOne(
   sub: PushSubscriptionRow,
   payload: PushPayload,
+  sender: PushSender,
   store: PushSubscriptionStore,
   logger: Logger,
 ): Promise<void> {
   try {
-    await sendNotification(
-      {
-        endpoint: sub.endpoint,
-        keys: { p256dh: sub.p256dh, auth: sub.auth },
-      },
+    const outcome = await sender.send(
+      { endpoint: sub.endpoint, p256dh: sub.p256dh, auth: sub.auth },
       JSON.stringify(payload),
-      {
-        TTL: 60 * 60, // drop on the push service if not delivered within 1h
-      },
+      { ttlSeconds: 60 * 60 }, // drop on the push service if not delivered within 1h
     );
-    await store.markSuccess(sub.id);
-  } catch (err) {
-    if (err instanceof WebPushError) {
-      const status = err.statusCode;
-      if (status === 404 || status === 410) {
-        await store.deleteByEndpoint(sub.endpoint);
-        logger.info('push subscription expired, removed', {
-          endpoint: redactEndpoint(sub.endpoint),
-          status,
-        });
-        return;
-      }
-      await store.markError(sub.id, status);
-      logger.warn('push send failed', {
+    if (outcome.kind === 'ok') {
+      await store.markSuccess(sub.id);
+      return;
+    }
+    if (outcome.kind === 'gone') {
+      await store.deleteByEndpoint(sub.endpoint);
+      logger.info('push subscription expired, removed', {
         endpoint: redactEndpoint(sub.endpoint),
-        status,
+        status: outcome.status,
       });
       return;
     }
+    await store.markError(sub.id, outcome.status);
+    logger.warn('push send failed', {
+      endpoint: redactEndpoint(sub.endpoint),
+      status: outcome.status,
+    });
+  } catch (err) {
     logger.error('push send crashed', {
       endpoint: redactEndpoint(sub.endpoint),
       error: err instanceof Error ? err.message : String(err),

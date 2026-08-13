@@ -206,6 +206,17 @@ export {
   type ProcessDocumentStore,
 } from './process-document.js';
 export {
+  type DispatchDeps,
+  dispatchPush,
+  type PushPayload,
+} from './push-dispatch.js';
+export { shouldPush } from './push-policy.js';
+export type {
+  PushSender,
+  PushSenderSubscription,
+  PushSendOutcome,
+} from './push-sender.js';
+export {
   InMemoryPushSubscriptionStore,
   type InMemoryPushSubscriptionStoreOptions,
   type PushSubscriptionInput,
