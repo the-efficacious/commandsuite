@@ -23,7 +23,7 @@ import { createServer as createHttpServer, type Server as HttpServer } from 'nod
 import { dirname, resolve as pathResolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { serve } from '@hono/node-server';
-import { Broker, registerSecretValues } from 'csuite-core';
+import { Broker, registerSecretValues, SqliteEventLog } from 'csuite-core';
 import { createApp } from './app.js';
 import { createCaptureHealthStore } from './capture-health.js';
 import { createSqliteChannelStore } from './channels.js';
@@ -61,7 +61,6 @@ import { createRawBodyStore, type RawBodyStore } from './raw-body-store.js';
 import { createSqliteSecretsStore } from './secrets.js';
 import { updateServerConfigFile } from './server-config.js';
 import { SessionStore } from './sessions.js';
-import { SqliteEventLog } from './sqlite-event-log.js';
 import { openTeamAndMembers, type TeamStore } from './team-store.js';
 import { createTelemetryStore, type TelemetryStore } from './telemetry-store.js';
 import { TokenStore } from './tokens.js';

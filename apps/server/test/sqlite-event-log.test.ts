@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { Message } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it } from 'vitest';
 import { type DatabaseSyncInstance, openDatabase } from '../src/db.js';
-import { SqliteEventLog } from '../src/sqlite-event-log.js';
+import { SqliteEventLog } from 'csuite-core';
 
 describe('SqliteEventLog', () => {
   const dirsToClean: string[] = [];

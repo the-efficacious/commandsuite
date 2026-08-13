@@ -58,6 +58,13 @@ export {
   type SessionRow,
   type SessionStore,
 } from './session-store.js';
+export {
+  type SqlDriver,
+  type SqlRunResult,
+  type SqlStatement,
+  type SqlValue,
+} from './sql-driver.js';
+export { SqliteEventLog } from './sqlite-event-log.js';
 // Pure trace parsers — relocated here from the cli so both the cli
 // native-capture adapters and the server can import them without the
 // server depending on packages/cli. No `node:` imports; safe to run

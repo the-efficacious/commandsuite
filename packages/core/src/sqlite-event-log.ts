@@ -1,20 +1,10 @@
 /**
- * SQLite-backed implementation of `csuite-core`'s EventLog using
- * Node's built-in `node:sqlite` module.
+ * SQL-backed implementation of `EventLog` over the `SqlDriver` seam.
  *
- * Why `node:sqlite` over `better-sqlite3`:
- *   - Zero native addons in the install graph — no node-gyp, no prebuild
- *     download, no C++ toolchain requirement. Alpine/minimal containers
- *     and future Bun-compile paths just work.
- *   - Same synchronous API shape as `better-sqlite3`, so the SqliteEventLog
- *     surface is essentially a rename.
- *
- * Connection ownership: this class does NOT own its DatabaseSync
- * handle. The caller (runServer) opens one DB via `openDatabase()` and
- * passes it to every module that needs it (event log, session store,
- * push-subscription store). Shutdown closes the DB at the caller, not
- * here. This is a single-connection-per-process model — `node:sqlite`
- * doesn't like two handles on the same file.
+ * Connection ownership: this class does NOT own its driver. The caller
+ * opens one database and hands the same driver to every store that
+ * needs it (event log, session store, push-subscription store, …).
+ * Shutdown closes the database at the caller, not here.
  *
  * Schema evolution note: the `from_name` column was added alongside
  * named-token auth. Opening an older database file without the column
@@ -23,6 +13,7 @@
  * IS NULL`, which rowToMessage maps to `from: null`.
  */
 
+import type { Attachment, LogLevel, Message } from 'csuite-sdk/types';
 import {
   channelThreadTag,
   clampQueryLimit,
@@ -31,9 +22,8 @@ import {
   type EventLogQueryOptions,
   type EventLogTailOptions,
   GENERAL_CHANNEL_ID,
-} from 'csuite-core';
-import type { Attachment, LogLevel, Message } from 'csuite-sdk/types';
-import type { DatabaseSyncInstance, StatementInstance } from './db.js';
+} from './event-log.js';
+import type { SqlDriver, SqlStatement } from './sql-driver.js';
 
 interface EventRow {
   id: string;
@@ -63,15 +53,15 @@ const CREATE_SCHEMA = `
 `;
 
 export class SqliteEventLog implements EventLog {
-  private readonly db: DatabaseSyncInstance;
-  private readonly insertStmt: StatementInstance;
-  private readonly tailSinceStmt: StatementInstance;
-  private readonly queryFeedStmt: StatementInstance;
-  private readonly queryDmStmt: StatementInstance;
-  private readonly queryChannelStmt: StatementInstance;
-  private readonly queryGeneralStmt: StatementInstance;
+  private readonly db: SqlDriver;
+  private readonly insertStmt: SqlStatement;
+  private readonly tailSinceStmt: SqlStatement;
+  private readonly queryFeedStmt: SqlStatement;
+  private readonly queryDmStmt: SqlStatement;
+  private readonly queryChannelStmt: SqlStatement;
+  private readonly queryGeneralStmt: SqlStatement;
 
-  constructor(db: DatabaseSyncInstance) {
+  constructor(db: SqlDriver) {
     this.db = db;
     this.db.exec(CREATE_SCHEMA);
     // Best-effort migration for databases created by an earlier version
@@ -101,9 +91,9 @@ export class SqliteEventLog implements EventLog {
       'SELECT id, ts, to_name, from_name, title, body, level, data, attachments FROM events WHERE ts >= ? ORDER BY ts DESC LIMIT ?',
     );
     // Default feed. The `secret:` exclusion mirrors `matchesViewer` in
-    // `csuite-core`'s in-memory log and must stay in step with it —
-    // the two implementations answer the same question and a test in
-    // each asserts this row is absent.
+    // the in-memory log and must stay in step with it — the two
+    // implementations answer the same question and a test in each
+    // asserts this row is absent.
     //
     // Why it is needed: secret events are pushed to an explicit
     // recipient set, but a fan-out push persists `to_name = NULL`, and
@@ -135,7 +125,7 @@ export class SqliteEventLog implements EventLog {
     );
     // Channel filter: rows whose JSON `data.thread` matches the
     // expected `chan:<id>` tag. Uses SQLite's JSON1 extension
-    // (`json_extract`); shipped with `node:sqlite` by default.
+    // (`json_extract`); part of the driver's required dialect.
     this.queryChannelStmt = this.db.prepare(
       `SELECT id, ts, to_name, from_name, title, body, level, data, attachments
        FROM events
@@ -145,7 +135,7 @@ export class SqliteEventLog implements EventLog {
     );
     // General channel: include both the explicit-tag variant AND
     // any untagged broadcast (`to_name IS NULL` with no `data.thread`).
-    // Mirrors `matchesChannel` in `csuite-core`'s in-memory log.
+    // Mirrors `matchesChannel` in the in-memory log.
     this.queryGeneralStmt = this.db.prepare(
       `SELECT id, ts, to_name, from_name, title, body, level, data, attachments
        FROM events
