@@ -11,8 +11,8 @@
  * make external bytes read as a teammate speaking.
  */
 
-import type { DeliveryRecord } from 'csuite-core';
 import type { NotificationFilterRule } from 'csuite-sdk/types';
+import type { DeliveryRecord } from './store.js';
 
 /** Rendered-content cap (per delivery). */
 const RENDERED_MAX = 8 * 1024;

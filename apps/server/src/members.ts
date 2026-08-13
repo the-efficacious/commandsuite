@@ -52,7 +52,7 @@ import {
   type MemberStore,
   type UpdateMemberPatch,
 } from 'csuite-core';
-import type { Permission, Role, Teammate } from 'csuite-sdk/types';
+import type { Permission, Role } from 'csuite-sdk/types';
 import { z } from 'zod';
 
 export {
@@ -61,6 +61,7 @@ export {
   MemberLoadError,
   type MemberStore,
   resolvePermissions,
+  teammatesFromMembers,
   type UpdateMemberPatch,
   validateMemberInstructions,
   validateMemberName,
@@ -389,23 +390,4 @@ export function platformOverlayPathFor(configPath: string): string {
  */
 export function generateMemberToken(): string {
   return `csuite_${randomBytes(32).toString('base64url')}`;
-}
-
-/**
- * Project the loaded members into a teammate list suitable for the
- * roster and instructions responses. Preserves config ordering. Drops
- * the private `instructions` field (teammates don't see each other's
- * personal instructions).
- */
-export function teammatesFromMembers(store: MemberStore): Teammate[] {
-  return store.members().map((m) => ({
-    name: m.name,
-    role: m.role,
-    permissions: m.permissions,
-    // The auth plane is the only person/agent signal we have: humans
-    // enroll TOTP for the web UI, agents authenticate by bearer token
-    // alone. No TOTP ⇒ unknown, and the field is omitted so the UI
-    // renders the neutral treatment instead of guessing.
-    ...(m.totpSecret ? { kind: 'person' as const } : {}),
-  }));
 }

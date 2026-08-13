@@ -31,15 +31,6 @@
  * arrives looking like a teammate.
  */
 
-import type { ActivityTracker, Broker, Logger } from 'csuite-core';
-import {
-  type ChannelStore,
-  type DeliveryRecord,
-  GENERAL_CHANNEL_ID,
-  NotificationsError,
-  type NotificationsStore,
-  type PendingRecord,
-} from 'csuite-core';
 import type {
   ActivityState,
   LogLevel,
@@ -47,7 +38,12 @@ import type {
   NotificationEndpoint,
   NotificationOverrides,
 } from 'csuite-sdk/types';
-import type { MemberStore } from '../members.js';
+import type { ActivityTracker } from '../activity-tracker.js';
+import type { Broker } from '../broker.js';
+import type { ChannelStore } from '../channels.js';
+import { GENERAL_CHANNEL_ID } from '../event-log.js';
+import type { Logger } from '../logger.js';
+import type { MemberStore } from '../members-domain.js';
 import {
   applyFilters,
   composeBody,
@@ -55,6 +51,12 @@ import {
   parsePayload,
   renderTemplate,
 } from './render.js';
+import {
+  type DeliveryRecord,
+  NotificationsError,
+  type NotificationsStore,
+  type PendingRecord,
+} from './store.js';
 import { verifyInbound } from './verify.js';
 
 /** Per-endpoint ingress rate limit (sliding window). */
@@ -63,7 +65,7 @@ const RATE_LIMIT_WINDOW_MS = 60_000;
 
 export interface IngestInput {
   endpoint: NotificationEndpoint;
-  rawBody: Buffer;
+  rawBody: Uint8Array;
   contentType: string | null;
   getHeader: (name: string) => string | undefined;
   overrides: NotificationOverrides | null;
@@ -419,7 +421,7 @@ export function createNotificationDispatcher(
       let verifyReason: string | null = null;
       try {
         const verification = store.resolveVerification(endpoint.id);
-        const result = verifyInbound(verification, input.rawBody, input.getHeader);
+        const result = await verifyInbound(verification, input.rawBody, input.getHeader);
         if (!result.ok) verifyReason = result.reason;
       } catch (err) {
         verifyReason =
@@ -428,7 +430,7 @@ export function createNotificationDispatcher(
             : `verification error: ${err instanceof Error ? err.message : String(err)}`;
       }
 
-      const bodyText = input.rawBody.toString('utf8');
+      const bodyText = new TextDecoder().decode(input.rawBody);
       const level = input.overrides?.level ?? endpoint.level;
       const title = endpoint.title ?? (endpoint.displayName || endpoint.slug);
 

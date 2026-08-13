@@ -9,7 +9,7 @@
  *   - `header-secret` — the shared secret carried verbatim in a
  *     header (default `x-hook-secret`), for senders that can't sign.
  *
- * Both compare in constant time via `timingSafeEqual`. HMAC is
+ * Both compare in constant time. HMAC is
  * computed over the exact received bytes — callers MUST pass the raw
  * body, never a re-serialized parse. Failure reasons are recorded on
  * the delivery receipt but never returned to the caller (the HTTP
@@ -17,8 +17,8 @@
  * attackers).
  */
 
-import { createHmac, timingSafeEqual } from 'node:crypto';
-import type { ResolvedVerification } from 'csuite-core';
+import { constantTimeEqual } from '../hashing.js';
+import type { ResolvedVerification } from './store.js';
 
 export const DEFAULT_HMAC_HEADER = 'x-hub-signature-256';
 export const DEFAULT_HMAC_PREFIX = 'sha256=';
@@ -26,17 +26,25 @@ export const DEFAULT_HEADER_SECRET_HEADER = 'x-hook-secret';
 
 export type VerifyResult = { ok: true } | { ok: false; reason: string };
 
-/** Constant-time equality that tolerates length mismatches. */
-function safeEqual(a: Buffer, b: Buffer): boolean {
-  if (a.length !== b.length) return false;
-  return timingSafeEqual(a, b);
+async function hmacSha256Hex(secret: string, bytes: Uint8Array): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const mac = new Uint8Array(await crypto.subtle.sign('HMAC', key, bytes as BufferSource));
+  let out = '';
+  for (const b of mac) out += b.toString(16).padStart(2, '0');
+  return out;
 }
 
-export function verifyInbound(
+export async function verifyInbound(
   verification: ResolvedVerification,
-  rawBody: Buffer,
+  rawBody: Uint8Array,
   getHeader: (name: string) => string | undefined,
-): VerifyResult {
+): Promise<VerifyResult> {
   if (verification.secret === null) {
     // Fail closed: an endpoint without a secret accepts nothing.
     return { ok: false, reason: 'no signing secret configured' };
@@ -56,8 +64,8 @@ export function verifyInbound(
     if (!/^[0-9a-f]{64}$/.test(provided)) {
       return { ok: false, reason: 'signature is not a sha256 hex digest' };
     }
-    const expected = createHmac('sha256', verification.secret).update(rawBody).digest('hex');
-    if (!safeEqual(Buffer.from(provided, 'utf8'), Buffer.from(expected, 'utf8'))) {
+    const expected = await hmacSha256Hex(verification.secret, rawBody);
+    if (!constantTimeEqual(provided, expected)) {
       return { ok: false, reason: 'signature mismatch' };
     }
     return { ok: true };
@@ -69,7 +77,7 @@ export function verifyInbound(
   if (headerValue === undefined) {
     return { ok: false, reason: `missing secret header ${headerName}` };
   }
-  if (!safeEqual(Buffer.from(headerValue, 'utf8'), Buffer.from(verification.secret, 'utf8'))) {
+  if (!constantTimeEqual(headerValue, verification.secret)) {
     return { ok: false, reason: 'secret mismatch' };
   }
   return { ok: true };

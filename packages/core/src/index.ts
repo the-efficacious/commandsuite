@@ -198,6 +198,7 @@ export {
   MemberLoadError,
   type MemberStore,
   resolvePermissions,
+  teammatesFromMembers,
   type UpdateMemberPatch,
   validateMemberInstructions,
   validateMemberName,
@@ -208,6 +209,25 @@ export {
   validateTeamName,
   validateTotpSecret,
 } from './members-domain.js';
+export {
+  createNotificationDispatcher,
+  type IngestInput,
+  type IngestResult,
+  type NotificationDispatcher,
+  type NotificationDispatcherOptions,
+} from './notifications/dispatcher.js';
+export {
+  applyFilters,
+  type ComposeOptions,
+  composeBody,
+  defaultRender,
+  type FilterResult,
+  formatDuration,
+  formatUtc,
+  getPath,
+  parsePayload,
+  renderTemplate,
+} from './notifications/render.js';
 export {
   type CreateEndpointInput,
   createSqliteNotificationsStore,
@@ -222,6 +242,13 @@ export {
   toWireDelivery,
   type UpdateEndpointInput,
 } from './notifications/store.js';
+export {
+  DEFAULT_HEADER_SECRET_HEADER,
+  DEFAULT_HMAC_HEADER,
+  DEFAULT_HMAC_PREFIX,
+  type VerifyResult as InboundVerifyResult,
+  verifyInbound,
+} from './notifications/verify.js';
 export {
   createSqliteObjectivesStore,
   ObjectivesError,
@@ -316,6 +343,17 @@ export {
   TOKEN_HASH_PREFIX,
   type TokenStore,
 } from './token-store.js';
+export {
+  type ExecuteCustomToolInput,
+  executeCustomTool,
+  TOOL_RESULT_MAX_BYTES,
+  type ToolCallResult,
+} from './tool-sources/custom-executor.js';
+export {
+  type McpClientManagerOptions,
+  type McpToolManager,
+  McpUnavailableError,
+} from './tool-sources/mcp-manager.js';
 export {
   createSqliteToolSourceStore,
   type DecryptedCredential,

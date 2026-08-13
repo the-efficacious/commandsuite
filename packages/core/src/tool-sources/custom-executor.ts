@@ -23,8 +23,13 @@
  * appended AFTER capping so it is always visible.
  */
 
-import type { DecryptedCredential } from 'csuite-core';
-import { type CustomToolBinding, expandBinding, TemplateError, walkResultPath } from 'csuite-core';
+import type { DecryptedCredential } from './store.js';
+import {
+  type CustomToolBinding,
+  expandBinding,
+  TemplateError,
+  walkResultPath,
+} from './template.js';
 
 export const TOOL_RESULT_MAX_BYTES = 65_536;
 const TRUNCATION_MARKER = (cap: number): string => `\n[csuite: response truncated at ${cap} bytes]`;
