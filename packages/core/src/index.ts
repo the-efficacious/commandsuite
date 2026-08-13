@@ -161,6 +161,18 @@ export {
   splitPath,
 } from './files/paths.js';
 export {
+  EV_API_ERROR,
+  EV_API_REQUEST,
+  EV_API_REQUEST_BODY,
+  EV_API_RESPONSE_BODY,
+  GENAI_EVENT_NAMES,
+  type GenAiCorrelator,
+  type GenAiCorrelatorFactory,
+  type GenAiCorrelatorOptions,
+  isGenAiLogRecord,
+  shortName,
+} from './genai-capture.js';
+export {
   createGenAiStore,
   type GenAiInferenceInput,
   type GenAiInferenceRow,
@@ -287,6 +299,15 @@ export {
   type PushSubscriptionStore,
 } from './push-subscription-store.js';
 export { fromBase64Url, randomBase64Url, toBase64Url } from './random-id.js';
+export type {
+  AppendBodyInput,
+  AppendBodyResult,
+  RawBodyEnvelope,
+  RawBodyQuery,
+  RawBodyStats,
+  RawBodyStore,
+  RawExchangeRow,
+} from './raw-body-types.js';
 export {
   PresenceIdentityError,
   PresenceRegistry,

@@ -58,7 +58,7 @@ describe('raw body store', () => {
     expect(hash).toBe(sha256(REQUEST_BYTES));
     expect(exchangeId).toBeGreaterThan(0);
     // getBlob gunzips and re-verifies the content address.
-    expect(store.getBlob(hash)?.equals(REQUEST_BYTES)).toBe(true);
+    expect(Buffer.from(store.getBlob(hash) ?? []).equals(REQUEST_BYTES)).toBe(true);
 
     const [row] = store.list();
     expect(row).toMatchObject({
@@ -201,6 +201,6 @@ describe('raw body store', () => {
     });
     const second = createRawBodyStore(db);
     expect(second.count()).toBe(1);
-    expect(second.getBlob(hash)?.equals(REQUEST_BYTES)).toBe(true);
+    expect(Buffer.from(second.getBlob(hash) ?? []).equals(REQUEST_BYTES)).toBe(true);
   });
 });

@@ -77,119 +77,25 @@
  */
 
 import { readFileSync, statSync, unlinkSync } from 'node:fs';
-import type { DiagnosticEmitter, GenAiInferenceInput, TelemetryRecord } from 'csuite-core';
+import type { GenAiCorrelator, GenAiCorrelatorOptions } from 'csuite-core';
+import {
+  EV_API_ERROR,
+  EV_API_REQUEST,
+  EV_API_REQUEST_BODY,
+  EV_API_RESPONSE_BODY,
+  GENAI_EVENT_NAMES,
+  isGenAiLogRecord,
+  shortName,
+} from 'csuite-core';
+
+export type { GenAiCorrelator, GenAiCorrelatorOptions };
+export { isGenAiLogRecord };
+
+import type { GenAiInferenceInput, TelemetryRecord } from 'csuite-core';
 import { anthropicToGenAi } from 'csuite-core';
 import { digestPathSync } from './path-digest.js';
-import type { RawBodyStore } from './raw-body-store.js';
 
 const NANOS_PER_MS = 1_000_000;
-
-const EV_API_REQUEST_BODY = 'api_request_body';
-const EV_API_REQUEST = 'api_request';
-const EV_API_RESPONSE_BODY = 'api_response_body';
-const EV_API_ERROR = 'api_error';
-
-const GENAI_EVENT_NAMES: ReadonlySet<string> = new Set([
-  EV_API_REQUEST_BODY,
-  EV_API_REQUEST,
-  EV_API_RESPONSE_BODY,
-  EV_API_ERROR,
-]);
-
-/** Strip the fully-qualified `claude_code.` prefix the producer may add. */
-function shortName(name: string): string {
-  return name.startsWith('claude_code.') ? name.slice('claude_code.'.length) : name;
-}
-
-/**
- * True for the four api-body log records this correlator owns. The route
- * uses this to split the OTLP log batch: matching records go here,
- * everything else stays on the operational telemetry sink.
- */
-export function isGenAiLogRecord(name: string): boolean {
-  return GENAI_EVENT_NAMES.has(shortName(name));
-}
-
-export interface GenAiCorrelatorOptions {
-  /** Exact instruction packet blocks issued to this member, read at emission time. */
-  getRedactionExemptions?: () => readonly string[];
-  /** Structured logger for skip/continue diagnostics. Optional. */
-  log?: (msg: string, ctx?: Record<string, unknown>) => void;
-  /**
-   * Retained completeness diagnostics. Optional so a correlator can be
-   * constructed without one (tests, and a broker with retention
-   * unwired), but every completeness failure below reports to it when
-   * present — the stderr line stays for live tailing and is no longer
-   * the only record.
-   */
-  diagnostics?: DiagnosticEmitter;
-  /** Clock, injectable for tests. Last-resort ts when a record has none. */
-  now?: () => number;
-  /**
-   * Reads a `body_ref` file path to its raw bytes. The default is a
-   * size-guarded `readFileSync` (throws on a file larger than
-   * `maxBodyBytes`, which the caller treats as a skip). Injectable so
-   * tests never touch fs.
-   */
-  readBodyRef?: (path: string) => Buffer;
-  /** Max body_ref file size in bytes before it is treated as oversized. */
-  maxBodyBytes?: number;
-  /**
-   * Content-addressed raw-body store. When set, every resolved body is
-   * captured (sha256 + gzip) the moment its record arrives — before THIS
-   * layer parses it, unconditionally — and the emitted inference carries
-   * both body hashes. Omit to skip raw capture.
-   *
-   * "Before redaction" is NOT among the guarantees: the OTLP records this
-   * correlator consumes have already passed `parseOtlpLogs` attribute
-   * redaction. Verbatim here means with respect to the record's `body`
-   * attribute as received, not to what the provider sent.
-   */
-  rawStore?: RawBodyStore;
-  /**
-   * Member the raw exchanges are recorded under. Only meaningful with
-   * `rawStore` (the caller holds one correlator per member).
-   */
-  memberName?: string;
-  /**
-   * Unlink the body_ref spill file after a SUCCESSFUL raw capture
-   * (default true). The broker consuming the file is the designed
-   * lifecycle — Claude Code never deletes them itself. Best-effort:
-   * an unlink failure is logged and never thrown. No `rawStore` → no
-   * capture → never unlinks.
-   */
-  unlinkAfterCapture?: boolean;
-  /**
-   * TTL (ms) after which an incomplete entry (unclaimed request body, or
-   * a pending exchange still missing a body) is evicted. Measured against
-   * the newest record ts the correlator has seen.
-   */
-  ttlMs?: number;
-  /** Hard cap on retained unclaimed request bodies per correlator. */
-  maxPending?: number;
-}
-
-const DEFAULT_MAX_BODY_BYTES = 64 * 1024 * 1024;
-const DEFAULT_TTL_MS = 120_000;
-const DEFAULT_MAX_PENDING = 256;
-
-export interface GenAiCorrelator {
-  /**
-   * Feed a batch of gen-ai api-body TelemetryRecords (non-matching
-   * records are ignored). Returns the `GenAiInference` records that
-   * COMPLETED in this batch, ascending by ts. Never throws.
-   */
-  ingest(records: TelemetryRecord[]): GenAiInferenceInput[];
-  /**
-   * Evict every incomplete entry older than the TTL (measured against
-   * `nowMs`, default = newest record ts seen). Returns `[]` — an
-   * incomplete call can never produce a record. Exposed for a caller
-   * holding the map to evict on its own cadence.
-   */
-  sweep(nowMs?: number): GenAiInferenceInput[];
-  /** Count of unclaimed request bodies currently retained. */
-  pendingCount(): number;
-}
 
 /**
  * A body resolved (and, with a rawStore, captured) at record-arrival
@@ -240,6 +146,10 @@ interface Normalized {
   ts: number;
   seq: number;
 }
+
+const DEFAULT_MAX_BODY_BYTES = 64 * 1024 * 1024;
+const DEFAULT_TTL_MS = 120_000;
+const DEFAULT_MAX_PENDING = 256;
 
 export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiCorrelator {
   const log = opts.log ?? (() => {});
@@ -307,7 +217,7 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
   ): CapturedBody {
     const bodyRef = asStr(attrs.body_ref);
     const inline = asStr(attrs.body);
-    let bytes: Buffer | null = null;
+    let bytes: Uint8Array | null = null;
     if (bodyRef) {
       try {
         bytes = readBodyRef(bodyRef);
@@ -392,7 +302,7 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
       }
     }
 
-    return { text: bytes.toString('utf8'), bodyRef, hash, exchangeId };
+    return { text: new TextDecoder().decode(bytes), bodyRef, hash, exchangeId };
   }
 
   /** Build + push a completed exchange. Skips (logs) on any parse failure. */

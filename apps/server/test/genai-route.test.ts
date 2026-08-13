@@ -173,9 +173,9 @@ describe('POST /members/:name/genai', () => {
     expect(rawBodyStore.count()).toBe(2);
     const reqExchange = rawBodyStore.list({ memberName: 'engineer-1', kind: 'request' })[0];
     expect(reqExchange).toBeDefined();
-    expect(rawBodyStore.getBlob(reqExchange?.hash ?? '')?.toString('base64')).toBe(
-      inference().requestBase64,
-    );
+    expect(
+      Buffer.from(rawBodyStore.getBlob(reqExchange?.hash ?? '') ?? []).toString('base64'),
+    ).toBe(inference().requestBase64);
 
     // Derived record: provider openai, linked to the raw bytes by sha256.
     expect(genaiStore.count()).toBe(1);
@@ -222,7 +222,7 @@ describe('POST /members/:name/genai', () => {
     expect(JSON.stringify(stored?.inputMessages)).not.toContain(secret);
     const rawRequest = rawBodyStore.list({ memberName: 'engineer-1', kind: 'request' })[0];
     const rawBody = JSON.parse(
-      rawBodyStore.getBlob(rawRequest?.hash ?? '')?.toString('utf8') ?? '{}',
+      Buffer.from(rawBodyStore.getBlob(rawRequest?.hash ?? '') ?? []).toString('utf8') ?? '{}',
     );
     const rawSystem = String(rawBody.instructions ?? '');
     const sha = (text: string) => createHash('sha256').update(text).digest('hex');
@@ -249,7 +249,8 @@ describe('POST /members/:name/genai', () => {
 
     for (const kind of ['request', 'response'] as const) {
       const exchange = rawBodyStore.list({ memberName: 'engineer-1', kind })[0];
-      const stored = rawBodyStore.getBlob(exchange?.hash ?? '')?.toString('utf8') ?? '';
+      const stored =
+        Buffer.from(rawBodyStore.getBlob(exchange?.hash ?? '') ?? []).toString('utf8') ?? '';
       expect(stored, `${kind} raw body`).toContain(REDACTED);
       expect(stored, `${kind} raw body`).not.toContain(secret);
     }
@@ -271,7 +272,7 @@ describe('POST /members/:name/genai', () => {
     // Raw bytes landed; the derived record is model-only (no messages).
     expect(rawBodyStore.count()).toBe(2);
     const request = rawBodyStore.list({ memberName: 'engineer-1', kind: 'request' })[0];
-    expect(rawBodyStore.getBlob(request?.hash ?? '')?.toString('utf8')).toBe(
+    expect(Buffer.from(rawBodyStore.getBlob(request?.hash ?? '') ?? []).toString('utf8')).toBe(
       `not json ${REDACTED}`,
     );
     const [rec] = genaiStore.list({ memberName: 'engineer-1' });
@@ -345,7 +346,7 @@ describe('POST /otlp/v1/logs runner-relay acknowledgement', () => {
     expect(JSON.stringify(stored?.inputMessages)).not.toContain(secret);
     const rawRequest = rawBodyStore.list({ memberName: 'engineer-1', kind: 'request' })[0];
     const rawBody = JSON.parse(
-      rawBodyStore.getBlob(rawRequest?.hash ?? '')?.toString('utf8') ?? '{}',
+      Buffer.from(rawBodyStore.getBlob(rawRequest?.hash ?? '') ?? []).toString('utf8') ?? '{}',
     );
     expect(JSON.stringify(rawBody.messages)).toContain(`stdout: ${REDACTED}`);
     expect(JSON.stringify(rawBody.messages)).not.toContain(secret);
@@ -391,10 +392,10 @@ describe('POST /otlp/v1/logs runner-relay acknowledgement', () => {
     expect(rawBodyStore.count()).toBe(2);
     const requestRow = rawBodyStore.list({ memberName: 'engineer-1', kind: 'request' })[0];
     const responseRow = rawBodyStore.list({ memberName: 'engineer-1', kind: 'response' })[0];
-    expect(rawBodyStore.getBlob(requestRow?.hash ?? '')?.toString('utf8')).toBe(
+    expect(Buffer.from(rawBodyStore.getBlob(requestRow?.hash ?? '') ?? []).toString('utf8')).toBe(
       JSON.stringify(request),
     );
-    expect(rawBodyStore.getBlob(responseRow?.hash ?? '')?.toString('utf8')).toBe(
+    expect(Buffer.from(rawBodyStore.getBlob(responseRow?.hash ?? '') ?? []).toString('utf8')).toBe(
       JSON.stringify(response),
     );
     const [derived] = genaiStore.list({ memberName: 'engineer-1' });

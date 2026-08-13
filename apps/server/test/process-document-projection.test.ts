@@ -230,7 +230,7 @@ describe('the cold-broker rebuild carries the document', () => {
   function readAllStoredText(store: ReturnType<typeof createRawBodyStore>): string {
     return store
       .list()
-      .map((row) => store.getBlob(row.hash)?.toString('utf8') ?? '')
+      .map((row) => new TextDecoder().decode(store.getBlob(row.hash) ?? new Uint8Array()))
       .join('\n');
   }
 
