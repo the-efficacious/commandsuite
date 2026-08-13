@@ -37,7 +37,7 @@
   "scripts": {
     "build": "tsup && node ../../scripts/dist-stamp.mjs",
     "dev": "tsup --watch",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "node ../../scripts/check-runtime-neutral.mjs . && tsc --noEmit",
     "test": "vitest run",
     "prepublishOnly": "node ../../scripts/publish-gate.mjs check",
     "clean": "rm -rf dist .turbo"
