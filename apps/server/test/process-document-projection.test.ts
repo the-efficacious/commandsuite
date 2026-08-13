@@ -21,6 +21,7 @@ import {
   Broker,
   clearRegisteredSecretValues,
   composeInstructions,
+  createApp,
   createGenAiStore,
   createSqliteProcessDocumentStore,
   createTelemetryStore,
@@ -33,8 +34,8 @@ import {
 } from 'csuite-core';
 import type { Member, ProcessDocument, Team, Teammate } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
+import { createGenAiCorrelator } from '../src/genai-correlator.js';
 import { createMemberStore } from '../src/members.js';
 import { createRawBodyStore } from '../src/raw-body-store.js';
 import { mockTeamStore } from './helpers/test-stores.js';
@@ -258,6 +259,7 @@ describe('the cold-broker rebuild carries the document', () => {
       );
     }
     const { app } = createApp({
+      createGenAiCorrelator,
       broker,
       members,
       tokens: await createTokenStoreFromMembers(db, members),

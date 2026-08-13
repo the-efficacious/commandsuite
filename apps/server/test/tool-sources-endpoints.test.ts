@@ -10,6 +10,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import {
   Broker,
+  createApp,
   createSqliteActivityStore,
   createTokenStoreFromMembers,
   InMemoryEventLog,
@@ -17,7 +18,6 @@ import {
 } from 'csuite-core';
 import type { InstructionsResponse, ToolSourceSummary } from 'csuite-sdk/types';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { kekFieldCipher, testKek } from '../src/kek.js';
 import { createMemberStore, getKek, setKek } from '../src/members.js';

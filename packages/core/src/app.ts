@@ -23,64 +23,6 @@
  * the header is present.
  */
 
-import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { serveStatic } from '@hono/node-server/serve-static';
-import { createNodeWebSocket } from '@hono/node-ws';
-import type {
-  ActivityStore,
-  CaptureHealthStore,
-  DiagnosticStore,
-  GenAiStore,
-  JwtVerifier,
-  Logger,
-  PushSubscriptionStore,
-  TeamStore,
-  TelemetryStore,
-  VariablesStore,
-} from 'csuite-core';
-import {
-  ACTIVITY_TTL_MS,
-  type ActivityTracker,
-  type AuthBindings,
-  type Broker,
-  type ChannelStore,
-  ChannelsError,
-  clampQueryLimit,
-  composedInstructionsSha256,
-  composeInstructions,
-  containsRegisteredSecretValue,
-  createActivityTracker,
-  createAuthMiddleware,
-  type EnrollmentStore,
-  formatUserCode,
-  GENERAL_CHANNEL_ID,
-  generateBearerToken,
-  generateSecret,
-  instructionBlocks,
-  instructionCaptureExemptions,
-  normalizeUserCode,
-  ObjectivesError,
-  type ObjectivesStore,
-  openaiResponsesToGenAi,
-  otpauthUri,
-  ProcessDocumentError,
-  type ProcessDocumentStore,
-  parseOtlpLogs,
-  parseOtlpMetrics,
-  redactJson,
-  redactSecrets,
-  registerSecretValues,
-  SESSION_COOKIE_NAME,
-  SESSION_TTL_MS,
-  SecretsError,
-  type SecretsStore,
-  type SessionStore,
-  sha256Hex,
-  type TokenStore,
-  validateSlug,
-  verifyCode as verifyTotpCode,
-} from 'csuite-core';
 import {
   PATHS,
   PROCESS_DOCUMENT_PATHS,
@@ -167,18 +109,68 @@ import type {
 import { hasPermission } from 'csuite-sdk/types';
 import { type Context, Hono } from 'hono';
 import { deleteCookie, setCookie } from 'hono/cookie';
+import type { UpgradeWebSocket } from 'hono/ws';
+import { FsError } from './files/errors.js';
+import type { FilesystemStore, ViewerContext } from './files/filesystem-store.js';
+import { basenameOf, objectiveNamespacePath } from './files/paths.js';
+import type {
+  ActivityStore,
+  CaptureHealthStore,
+  DiagnosticStore,
+  GenAiStore,
+  JwtVerifier,
+  Logger,
+  PushSubscriptionStore,
+  TeamStore,
+  TelemetryStore,
+  VariablesStore,
+} from './index.js';
 import {
-  basenameOf,
-  type FilesystemStore,
-  FsError,
-  objectiveNamespacePath,
-  type ViewerContext,
-} from './files/index.js';
-import {
-  createGenAiCorrelator,
+  ACTIVITY_TTL_MS,
+  type ActivityTracker,
+  type AuthBindings,
+  type Broker,
+  type ChannelStore,
+  ChannelsError,
+  clampQueryLimit,
+  composedInstructionsSha256,
+  composeInstructions,
+  containsRegisteredSecretValue,
+  createActivityTracker,
+  createAuthMiddleware,
+  type EnrollmentStore,
+  formatUserCode,
+  GENERAL_CHANNEL_ID,
   type GenAiCorrelator,
+  type GenAiCorrelatorFactory,
+  generateBearerToken,
+  generateSecret,
+  instructionBlocks,
+  instructionCaptureExemptions,
   isGenAiLogRecord,
-} from './genai-correlator.js';
+  normalizeUserCode,
+  ObjectivesError,
+  type ObjectivesStore,
+  openaiResponsesToGenAi,
+  otpauthUri,
+  ProcessDocumentError,
+  type ProcessDocumentStore,
+  parseOtlpLogs,
+  parseOtlpMetrics,
+  redactJson,
+  redactSecrets,
+  registerSecretValues,
+  SESSION_COOKIE_NAME,
+  SESSION_TTL_MS,
+  SecretsError,
+  type SecretsStore,
+  type SessionStore,
+  sha256Hex,
+  type TokenStore,
+  validateSlug,
+  verifyCode as verifyTotpCode,
+} from './index.js';
+
 import {
   type LoadedMember,
   MemberLoadError,
@@ -186,23 +178,21 @@ import {
   resolvePermissions,
   teammatesFromMembers,
   type UpdateMemberPatch,
-} from './members.js';
+} from './members-domain.js';
 import {
   createNotificationDispatcher,
-  HOOK_BODY_MAX,
   type NotificationDispatcher,
+} from './notifications/dispatcher.js';
+import {
+  HOOK_BODY_MAX,
   NotificationsError,
   type NotificationsStore,
   toWireDelivery,
-} from './notifications/index.js';
-import type { RawBodyStore } from './raw-body-store.js';
-import {
-  executeCustomTool,
-  type McpToolManager,
-  McpUnavailableError,
-  type ToolSourceStore,
-  ToolSourcesError,
-} from './tool-sources/index.js';
+} from './notifications/store.js';
+import type { RawBodyStore } from './raw-body-types.js';
+import { executeCustomTool } from './tool-sources/custom-executor.js';
+import { type McpToolManager, McpUnavailableError } from './tool-sources/mcp-manager.js';
+import { type ToolSourceStore, ToolSourcesError } from './tool-sources/store.js';
 
 export interface AppOptions {
   broker: Broker;
@@ -369,7 +359,18 @@ export interface AppOptions {
    * for tests and for the machine-only auth plane where the web UI
    * isn't built.
    */
-  publicRoot?: string;
+  /**
+   * Provide the runtime's WebSocket upgrade helper, given the app
+   * instance (some runtimes need it to construct the helper). The
+   * `/subscribe` and activity-stream routes register iff present.
+   */
+  webSocket?: (app: Hono<AppBindings>) => { upgradeWebSocket: UpgradeWebSocket };
+  /**
+   * Factory for the per-member gen-ai correlator (see genai-capture).
+   * OTLP gen-ai records are correlated iff present; without it they
+   * are dropped from capture (operational telemetry is unaffected).
+   */
+  createGenAiCorrelator?: GenAiCorrelatorFactory;
   /**
    * Web Push subscription store + VAPID public key. When both are
    * present, the `/push/vapid-public-key` and `/push/subscriptions`
@@ -422,7 +423,7 @@ export interface AppOptions {
   now?: () => number;
 }
 
-type AppBindings = AuthBindings;
+export type AppBindings = AuthBindings;
 
 /**
  * Rate-limit bucket for TOTP login attempts. Keyed by user name —
@@ -457,7 +458,7 @@ const CODELESS_LOCKOUT_KEY = '__codeless__';
 
 /**
  * The set of request paths we treat as "API." Any GET outside this
- * set falls through to the SPA fallback when `publicRoot` is set, so
+ * set falls through to the host's SPA fallback when one is mounted, so
  * client-side routes like `/login` or `/dm/build-bot` resolve to
  * `index.html` instead of 404. Keep in sync with `PATHS` + the
  * session endpoints.
@@ -505,7 +506,7 @@ const HARD_CAP_MAX_FILE_SIZE = 1024 * 1024 * 1024;
 const SOURCE_IP_MAX = PendingEnrollmentSchema.shape.sourceIp.unwrap().maxLength ?? 64;
 const SOURCE_UA_MAX = PendingEnrollmentSchema.shape.sourceUa.unwrap().maxLength ?? 512;
 
-function isApiPath(pathname: string): boolean {
+export function isApiPath(pathname: string): boolean {
   for (const p of API_PATH_PREFIXES) {
     if (pathname === p || pathname.startsWith(`${p}/`) || pathname.startsWith(p)) {
       return true;
@@ -517,12 +518,6 @@ function isApiPath(pathname: string): boolean {
 export interface CreatedApp {
   /** The Hono application. Use `app.request(...)` in tests, or `app.fetch` as the server handler. */
   app: Hono<AppBindings>;
-  /**
-   * Wire WebSocket upgrade handling into the underlying Node HTTP
-   * server so `/subscribe` and `/members/:name/activity/stream` can
-   * upgrade. Call after `serve(...)` returns the server instance.
-   */
-  injectWebSocket: ReturnType<typeof createNodeWebSocket>['injectWebSocket'];
   /**
    * External Notifications dispatcher, present iff
    * `options.notifications` was wired. Exposed so tests can drive
@@ -557,7 +552,6 @@ export function createApp(options: AppOptions): CreatedApp {
     logger,
     shutdownSignal,
     secureCookies = false,
-    publicRoot,
     pushStore,
     vapidPublicKey,
     onPushed,
@@ -659,10 +653,12 @@ export function createApp(options: AppOptions): CreatedApp {
     }
     return [...exemptions];
   };
-  const getGenAiCorrelator = (memberName: string): GenAiCorrelator => {
+  const createCorrelator = options.createGenAiCorrelator ?? null;
+  const getGenAiCorrelator = (memberName: string): GenAiCorrelator | null => {
+    if (createCorrelator === null) return null;
     let corr = genaiCorrelators.get(memberName);
     if (!corr) {
-      corr = createGenAiCorrelator({
+      corr = createCorrelator({
         log: (msg, ctx) => logger.warn(msg, ctx),
         // Per-member correlator, so its diagnostics carry that member
         // as producer without the call sites having to say so.
@@ -779,9 +775,9 @@ export function createApp(options: AppOptions): CreatedApp {
   const app = new Hono<AppBindings>();
   // WebSocket upgrade helper, bound to this app. Used by `/subscribe`
   // and `/members/:name/activity/stream`. The returned
-  // `injectWebSocket` gets called by the server after `serve()` so
+  // The host wires upgrade handling into its own server transport, so
   // Node's HTTP server routes upgrade events to Hono.
-  const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
+  const upgradeWebSocket = options.webSocket?.(app).upgradeWebSocket ?? null;
 
   const auth = createAuthMiddleware({
     members,
@@ -1679,7 +1675,7 @@ export function createApp(options: AppOptions): CreatedApp {
 
       if (genaiStore !== undefined && genaiRecords.length > 0) {
         try {
-          const inferences = getGenAiCorrelator(member.name).ingest(genaiRecords);
+          const inferences = getGenAiCorrelator(member.name)?.ingest(genaiRecords) ?? [];
           for (const inf of inferences) {
             genaiStore.append(member.name, inf);
           }
@@ -4356,99 +4352,101 @@ export function createApp(options: AppOptions): CreatedApp {
       }
       await next();
     },
-    upgradeWebSocket((c) => {
-      // Pre-check middleware guaranteed a valid `name` and identity match.
-      const targetName = c.req.query('name') as string;
-      const member = c.get('member');
-      let unsubscribe: (() => void) | null = null;
-      let onShutdown: (() => void) | null = null;
+    upgradeWebSocket === null
+      ? (c) => c.json({ error: 'websocket upgrades are not available on this host' }, 426)
+      : upgradeWebSocket((c) => {
+          // Pre-check middleware guaranteed a valid `name` and identity match.
+          const targetName = c.req.query('name') as string;
+          const member = c.get('member');
+          let unsubscribe: (() => void) | null = null;
+          let onShutdown: (() => void) | null = null;
 
-      return {
-        onOpen: (_evt, ws) => {
-          unsubscribe = broker.subscribe(
-            targetName,
-            (message) => {
-              try {
-                ws.send(JSON.stringify(message));
-              } catch (err) {
-                logger.warn('ws send failed', {
-                  targetName,
-                  messageId: message.id,
-                  error: err instanceof Error ? err.message : String(err),
+          return {
+            onOpen: (_evt, ws) => {
+              unsubscribe = broker.subscribe(
+                targetName,
+                (message) => {
+                  try {
+                    ws.send(JSON.stringify(message));
+                  } catch (err) {
+                    logger.warn('ws send failed', {
+                      targetName,
+                      messageId: message.id,
+                      error: err instanceof Error ? err.message : String(err),
+                    });
+                  }
+                },
+                { role: member.role, name: member.name },
+              );
+
+              // Shutdown fan-out: server.close() needs every live socket
+              // to close before it returns. Without this, SIGTERM would
+              // hang indefinitely on idle connections.
+              onShutdown = () => {
+                try {
+                  ws.close(1001, 'server shutting down');
+                } catch {
+                  /* already closed */
+                }
+              };
+              shutdownSignal?.addEventListener('abort', onShutdown, { once: true });
+
+              logger.info('ws subscribe opened', { targetName, by: member.name });
+
+              // Session-online notice — pushed only to runner-authenticated
+              // subscribers so the agent's first turn carries enough
+              // context to decide whether to resume something or stand by.
+              // Excluded from web UI sessions (they get presence + the
+              // dashboard, no channel push needed) and from JWT-auth
+              // subscribers (federated; the runner-context-restoration use
+              // case doesn't apply). The auth plane is the only signal we
+              // have that a subscriber is the runner — `tokenId !== null`
+              // means opaque-bearer auth, which is the runner's auth path.
+              //
+              // The message used to be titled "comms check," which agents
+              // read as "respond to verify you're alive" and dutifully
+              // started messaging teammates. The reframed version is
+              // explicit that it's a system notice, not a ping.
+              const tokenId = c.get('tokenId');
+              if (objectives && tokenId !== null) {
+                const active = [
+                  ...objectives.list({ assignee: member.name, status: 'active' }),
+                  ...objectives.list({ assignee: member.name, status: 'blocked' }),
+                ];
+                const notice = composeSessionOnlineMessage(member.name, active.length);
+                void broker.push(
+                  { to: member.name, body: notice.body, title: notice.title, level: 'info' },
+                  { from: 'csuite' },
+                );
+              }
+              // Runner attach is the `if_offline: queue` wake signal —
+              // flush external notifications queued while this member
+              // was offline (and any busy-waits; a fresh attach is idle).
+              if (notificationDispatcher && tokenId !== null) {
+                const dispatcher = notificationDispatcher;
+                void dispatcher.onWake(member.name).catch((err) => {
+                  logger.warn('notification wake-flush failed', {
+                    member: member.name,
+                    error: err instanceof Error ? err.message : String(err),
+                  });
                 });
               }
             },
-            { role: member.role, name: member.name },
-          );
-
-          // Shutdown fan-out: server.close() needs every live socket
-          // to close before it returns. Without this, SIGTERM would
-          // hang indefinitely on idle connections.
-          onShutdown = () => {
-            try {
-              ws.close(1001, 'server shutting down');
-            } catch {
-              /* already closed */
-            }
-          };
-          shutdownSignal?.addEventListener('abort', onShutdown, { once: true });
-
-          logger.info('ws subscribe opened', { targetName, by: member.name });
-
-          // Session-online notice — pushed only to runner-authenticated
-          // subscribers so the agent's first turn carries enough
-          // context to decide whether to resume something or stand by.
-          // Excluded from web UI sessions (they get presence + the
-          // dashboard, no channel push needed) and from JWT-auth
-          // subscribers (federated; the runner-context-restoration use
-          // case doesn't apply). The auth plane is the only signal we
-          // have that a subscriber is the runner — `tokenId !== null`
-          // means opaque-bearer auth, which is the runner's auth path.
-          //
-          // The message used to be titled "comms check," which agents
-          // read as "respond to verify you're alive" and dutifully
-          // started messaging teammates. The reframed version is
-          // explicit that it's a system notice, not a ping.
-          const tokenId = c.get('tokenId');
-          if (objectives && tokenId !== null) {
-            const active = [
-              ...objectives.list({ assignee: member.name, status: 'active' }),
-              ...objectives.list({ assignee: member.name, status: 'blocked' }),
-            ];
-            const notice = composeSessionOnlineMessage(member.name, active.length);
-            void broker.push(
-              { to: member.name, body: notice.body, title: notice.title, level: 'info' },
-              { from: 'csuite' },
-            );
-          }
-          // Runner attach is the `if_offline: queue` wake signal —
-          // flush external notifications queued while this member
-          // was offline (and any busy-waits; a fresh attach is idle).
-          if (notificationDispatcher && tokenId !== null) {
-            const dispatcher = notificationDispatcher;
-            void dispatcher.onWake(member.name).catch((err) => {
-              logger.warn('notification wake-flush failed', {
-                member: member.name,
-                error: err instanceof Error ? err.message : String(err),
+            onClose: () => {
+              unsubscribe?.();
+              if (onShutdown) {
+                shutdownSignal?.removeEventListener('abort', onShutdown);
+              }
+              logger.info('ws subscribe closed', { targetName, by: member.name });
+            },
+            onError: (evt) => {
+              logger.warn('ws subscribe error', {
+                targetName,
+                error: evt instanceof Error ? evt.message : 'ws error',
               });
-            });
-          }
-        },
-        onClose: () => {
-          unsubscribe?.();
-          if (onShutdown) {
-            shutdownSignal?.removeEventListener('abort', onShutdown);
-          }
-          logger.info('ws subscribe closed', { targetName, by: member.name });
-        },
-        onError: (evt) => {
-          logger.warn('ws subscribe error', {
-            targetName,
-            error: evt instanceof Error ? evt.message : 'ws error',
-          });
-        },
-      };
-    }),
+            },
+          };
+        }),
   );
 
   app.get(PATHS.history, auth, async (c) => {
@@ -4659,50 +4657,52 @@ export function createApp(options: AppOptions): CreatedApp {
         }
         await next();
       },
-      upgradeWebSocket((c) => {
-        const member = c.get('member');
-        const name = NameSchema.parse(c.req.param('name'));
-        let unsubscribe: (() => void) | null = null;
-        let onShutdown: (() => void) | null = null;
+      upgradeWebSocket === null
+        ? (c) => c.json({ error: 'websocket upgrades are not available on this host' }, 426)
+        : upgradeWebSocket((c) => {
+            const member = c.get('member');
+            const name = NameSchema.parse(c.req.param('name'));
+            let unsubscribe: (() => void) | null = null;
+            let onShutdown: (() => void) | null = null;
 
-        return {
-          onOpen: (_evt, ws) => {
-            unsubscribe = activity.subscribe(name, (row) => {
-              try {
-                ws.send(JSON.stringify(row));
-              } catch (err) {
-                logger.warn('activity ws send failed', {
-                  name,
-                  id: row.id,
-                  error: err instanceof Error ? err.message : String(err),
+            return {
+              onOpen: (_evt, ws) => {
+                unsubscribe = activity.subscribe(name, (row) => {
+                  try {
+                    ws.send(JSON.stringify(row));
+                  } catch (err) {
+                    logger.warn('activity ws send failed', {
+                      name,
+                      id: row.id,
+                      error: err instanceof Error ? err.message : String(err),
+                    });
+                  }
                 });
-              }
-            });
-            onShutdown = () => {
-              try {
-                ws.close(1001, 'server shutting down');
-              } catch {
-                /* already closed */
-              }
+                onShutdown = () => {
+                  try {
+                    ws.close(1001, 'server shutting down');
+                  } catch {
+                    /* already closed */
+                  }
+                };
+                shutdownSignal?.addEventListener('abort', onShutdown, { once: true });
+                logger.info('activity ws opened', { name, by: member.name });
+              },
+              onClose: () => {
+                unsubscribe?.();
+                if (onShutdown) {
+                  shutdownSignal?.removeEventListener('abort', onShutdown);
+                }
+                logger.info('activity ws closed', { name, by: member.name });
+              },
+              onError: (evt) => {
+                logger.warn('activity ws error', {
+                  name,
+                  error: evt instanceof Error ? evt.message : 'ws error',
+                });
+              },
             };
-            shutdownSignal?.addEventListener('abort', onShutdown, { once: true });
-            logger.info('activity ws opened', { name, by: member.name });
-          },
-          onClose: () => {
-            unsubscribe?.();
-            if (onShutdown) {
-              shutdownSignal?.removeEventListener('abort', onShutdown);
-            }
-            logger.info('activity ws closed', { name, by: member.name });
-          },
-          onError: (evt) => {
-            logger.warn('activity ws error', {
-              name,
-              error: evt instanceof Error ? evt.message : 'ws error',
-            });
-          },
-        };
-      }),
+          }),
     );
   }
 
@@ -5150,7 +5150,7 @@ export function createApp(options: AppOptions): CreatedApp {
       return c.json({ error: `invalid context control: ${parsed.error.issues[0]?.message}` }, 400);
     }
 
-    const requestId = randomUUID();
+    const requestId = crypto.randomUUID();
     // `connected` counts SUBSCRIBERS, not runners — a web client
     // watching this member is indistinguishable here. False is a firm
     // "nothing was listening"; true is only "something was". The
@@ -5910,36 +5910,13 @@ export function createApp(options: AppOptions): CreatedApp {
     });
   }
 
-  // ─── Static SPA serving (registered LAST so API routes match first) ─
-
-  if (publicRoot && existsSync(publicRoot)) {
-    // Absolute root works despite serveStatic's docstring — the
-    // implementation uses `path.join(root, filename)` which handles
-    // absolute `root` correctly. We guard `existsSync` up front so
-    // a stale `publicRoot` prints a Hono warning at startup rather
-    // than 404ing every request silently.
-    //
-    // Two-phase serving:
-    //   1. Direct file match (assets, manifest, icons, the root index)
-    //   2. SPA fallback — for any GET that isn't an API path AND
-    //      wasn't a direct file hit, serve index.html so client-side
-    //      routing (preact-iso) can take over.
-    app.use('*', serveStatic({ root: publicRoot }));
-    app.get('*', async (c, next) => {
-      if (isApiPath(c.req.path)) return next();
-      return serveStatic({ root: publicRoot, path: 'index.html' })(c, next);
-    });
-  }
-
   return {
     app,
-    injectWebSocket,
     ...(notificationDispatcher !== undefined ? { notificationDispatcher } : {}),
   };
 }
 
 /** Re-export so `LoadedMember` consumers don't have to dig into members.ts. */
-export type { LoadedMember };
 
 /**
  * Validate + canonicalize a list of attachment claims. Server

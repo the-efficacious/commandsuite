@@ -17,13 +17,13 @@
 import {
   ACTIVITY_TTL_MS,
   Broker,
+  createApp,
   createTokenStoreFromMembers,
   InMemoryEventLog,
   SqliteSessionStore,
 } from 'csuite-core';
 import type { RosterResponse, Team } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
 import { mockTeamStore } from './helpers/test-stores.js';

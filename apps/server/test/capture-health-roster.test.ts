@@ -16,6 +16,7 @@
 import type { CaptureHealth, CaptureHealthStore } from 'csuite-core';
 import {
   Broker,
+  createApp,
   createTokenStoreFromMembers,
   InMemoryEventLog,
   SqliteSessionStore,
@@ -23,7 +24,6 @@ import {
 import type { RosterResponse, Team } from 'csuite-sdk/types';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
 import { mockTeamStore } from './helpers/test-stores.js';

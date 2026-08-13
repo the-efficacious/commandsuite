@@ -14,6 +14,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import {
   Broker,
+  createApp,
   createDiagnosticStore,
   createSqliteActivityStore,
   createTokenStoreFromMembers,
@@ -22,7 +23,6 @@ import {
 } from 'csuite-core';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { kekFieldCipher, testKek } from '../src/kek.js';
 import { createMemberStore, getKek, setKek } from '../src/members.js';

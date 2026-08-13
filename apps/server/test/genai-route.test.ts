@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto';
 import {
   Broker,
   clearRegisteredSecretValues,
+  createApp,
   createDiagnosticStore,
   createGenAiStore,
   createTelemetryStore,
@@ -21,8 +22,8 @@ import {
 } from 'csuite-core';
 import type { Permission, Team } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
+import { createGenAiCorrelator } from '../src/genai-correlator.js';
 import { createMemberStore } from '../src/members.js';
 import { createRawBodyStore } from '../src/raw-body-store.js';
 import { mockTeamStore } from './helpers/test-stores.js';
@@ -48,6 +49,7 @@ async function makeApp(team: Team = TEAM, permissions: Permission[] = []) {
   const diagnostics = createDiagnosticStore(db);
   const tokens = await createTokenStoreFromMembers(db, members);
   const { app } = createApp({
+    createGenAiCorrelator,
     broker,
     members,
     tokens,
@@ -442,6 +444,7 @@ async function makeReadApp() {
   const genaiStore = createGenAiStore(db, { logger });
   const tokens = await createTokenStoreFromMembers(db, members);
   const { app } = await createApp({
+    createGenAiCorrelator,
     broker,
     members,
     tokens,

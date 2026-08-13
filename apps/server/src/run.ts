@@ -23,9 +23,12 @@ import { createServer as createHttpServer, type Server as HttpServer } from 'nod
 import { dirname, resolve as pathResolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { serve } from '@hono/node-server';
+import { serveStatic } from '@hono/node-server/serve-static';
+import { createNodeWebSocket } from '@hono/node-ws';
 import {
   type ActivityStore,
   Broker,
+  createApp,
   createCaptureHealthStore,
   createDiagnosticStore,
   createGenAiStore,
@@ -53,7 +56,6 @@ import {
   type TeamStore,
   type TelemetryStore,
 } from 'csuite-core';
-import { createApp } from './app.js';
 import { type DatabaseSyncInstance, openDatabase } from './db.js';
 import { createSqliteFilesystemStore, LocalBlobStore } from './files/index.js';
 import { createHttp2ServerFactory } from './https/server.js';
@@ -139,6 +141,12 @@ export {
   validateEnvName,
   verifyCode as verifyTotpCode,
 } from 'csuite-core';
+
+import { existsSync } from 'node:fs';
+import { isApiPath } from 'csuite-core';
+import type { UpgradeWebSocket } from 'hono/ws';
+import { createGenAiCorrelator } from './genai-correlator.js';
+
 export { type DatabaseSyncInstance, openDatabase } from './db.js';
 export {
   createGenAiCorrelator,
@@ -693,7 +701,14 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   // next unknown-kid it sees.
   const jwtVerifier = options.jwt ? createJwtVerifier(options.jwt) : undefined;
 
-  const { app, injectWebSocket } = createApp({
+  let injectWebSocket: ReturnType<typeof createNodeWebSocket>['injectWebSocket'] | null = null;
+  const { app } = createApp({
+    webSocket: (a) => {
+      const ws = createNodeWebSocket({ app: a });
+      injectWebSocket = ws.injectWebSocket;
+      return { upgradeWebSocket: ws.upgradeWebSocket as unknown as UpgradeWebSocket };
+    },
+    createGenAiCorrelator,
     broker,
     members: memberStore,
     tokens,
@@ -721,7 +736,6 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
     logger: log,
     secureCookies,
     shutdownSignal: shutdownController.signal,
-    ...(publicRoot !== undefined ? { publicRoot } : {}),
     ...(webPush !== null
       ? {
           pushStore,
@@ -731,6 +745,19 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
     ...(onPushed !== undefined ? { onPushed } : {}),
     ...(jwtVerifier !== undefined ? { jwt: jwtVerifier } : {}),
   });
+
+  // ─── Static SPA serving (registered LAST so API routes match first) ─
+  //
+  // Mounted by the binding, not the app factory: which directory (if
+  // any) holds a built SPA is a deployment concern, and the fallback
+  // must register after every API route.
+  if (publicRoot !== undefined && existsSync(publicRoot)) {
+    app.use('*', serveStatic({ root: publicRoot }));
+    app.get('*', async (c, next) => {
+      if (isApiPath(c.req.path)) return next();
+      return serveStatic({ root: publicRoot, path: 'index.html' })(c, next);
+    });
+  }
 
   // Optional HTTP→HTTPS redirect listener. Only spun up when HTTPS
   // is active AND the user hasn't disabled it. Kept deliberately tiny
@@ -791,7 +818,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
       // Must happen after `serve()` returns the server instance but
       // before any client can try to upgrade — the onListen callback
       // is the safe point.
-      injectWebSocket(server);
+      injectWebSocket?.(server);
       if (cert !== null) listenInfo.cert = cert;
       if (redirectServer !== null) {
         listenInfo.redirectHttpPort = https.bindHttp;

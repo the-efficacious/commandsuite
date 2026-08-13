@@ -20,6 +20,14 @@ export {
   createActivityTracker,
 } from './activity-tracker.js';
 export {
+  type AppBindings,
+  type AppOptions,
+  type CreatedApp,
+  composeSessionOnlineMessage,
+  createApp,
+  isApiPath,
+} from './app.js';
+export {
   type AuthBindings,
   type AuthDependencies,
   createAuthMiddleware,

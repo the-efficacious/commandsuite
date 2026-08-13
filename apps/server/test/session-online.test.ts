@@ -22,17 +22,20 @@
 
 import { createServer as createHttpServer, type IncomingMessage, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { createNodeWebSocket } from '@hono/node-ws';
 import {
   Broker,
+  composeSessionOnlineMessage,
+  createApp,
   createSqliteObjectivesStore,
   createTokenStoreFromMembers,
   InMemoryEventLog,
   SqliteSessionStore,
 } from 'csuite-core';
 import type { Message, Team } from 'csuite-sdk/types';
+import type { UpgradeWebSocket } from 'hono/ws';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
-import { composeSessionOnlineMessage, createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
 import { type RunningServer, runServer } from '../src/run.js';
@@ -229,7 +232,13 @@ describe('session-online gate — cookie subscriber receives nothing', () => {
     const sessions = new SqliteSessionStore(db);
     const tokens = await createTokenStoreFromMembers(db, members);
     const objectives = createSqliteObjectivesStore(db);
-    const { app, injectWebSocket } = createApp({
+    let injectWebSocket!: ReturnType<typeof createNodeWebSocket>['injectWebSocket'];
+    const { app } = createApp({
+      webSocket: (a) => {
+        const ws = createNodeWebSocket({ app: a });
+        injectWebSocket = ws.injectWebSocket;
+        return { upgradeWebSocket: ws.upgradeWebSocket as unknown as UpgradeWebSocket };
+      },
       broker,
       members,
       tokens,

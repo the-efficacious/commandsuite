@@ -16,6 +16,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import {
   Broker,
+  createApp,
   createJwtVerifier,
   createTokenStoreFromMembers,
   currentCode,
@@ -29,8 +30,8 @@ import {
 import type { SessionResponse, Team } from 'csuite-sdk/types';
 import { calculateJwkThumbprint, exportJWK, generateKeyPair, type JWK, SignJWT } from 'jose';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
+import { createGenAiCorrelator } from '../src/genai-correlator.js';
 import { createMemberStore } from '../src/members.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
@@ -70,6 +71,7 @@ async function makeApp(options: { now?: () => number; totpSecret?: string } = {}
   const sessions = new SqliteSessionStore(db, { now: options.now });
   const tokens = await createTokenStoreFromMembers(db, members, { now: options.now });
   const { app } = createApp({
+    createGenAiCorrelator,
     broker,
     members,
     tokens,
@@ -538,6 +540,7 @@ async function makeJwtApp(fixture: JwtFixture) {
   const sessions = new SqliteSessionStore(db);
   const tokens = await createTokenStoreFromMembers(db, members);
   const { app } = createApp({
+    createGenAiCorrelator,
     broker,
     members,
     tokens,

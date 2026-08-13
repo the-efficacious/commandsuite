@@ -5,6 +5,7 @@
 
 import {
   Broker,
+  createApp,
   createTokenStoreFromMembers,
   dispatchPush,
   InMemoryEventLog,
@@ -14,7 +15,6 @@ import {
 } from 'csuite-core';
 import type { Message, Team } from 'csuite-sdk/types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
 import { generateVapidKeys } from '../src/push/vapid.js';

@@ -10,6 +10,7 @@
 import {
   Broker,
   clearRegisteredSecretValues,
+  createApp,
   createTokenStoreFromMembers,
   InMemoryEventLog,
   registerSecretValues,
@@ -17,7 +18,6 @@ import {
 } from 'csuite-core';
 import type { Member, Team, Teammate } from 'csuite-sdk/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
 import { mockTeamStore } from './helpers/test-stores.js';

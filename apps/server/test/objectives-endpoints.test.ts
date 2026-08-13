@@ -15,6 +15,7 @@
 
 import {
   Broker,
+  createApp,
   createSqliteObjectivesStore,
   createTokenStoreFromMembers,
   InMemoryEventLog,
@@ -27,7 +28,6 @@ import type {
   Team,
 } from 'csuite-sdk/types';
 import { describe, expect, it, vi } from 'vitest';
-import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
 import { mockTeamStore } from './helpers/test-stores.js';

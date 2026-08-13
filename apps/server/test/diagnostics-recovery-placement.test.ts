@@ -20,6 +20,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   Broker,
+  createApp,
   createDiagnosticStore,
   createGenAiStore,
   createSqliteActivityStore,
@@ -30,7 +31,6 @@ import {
 } from 'csuite-core';
 import type { Team } from 'csuite-sdk/types';
 import { describe, expect, it, vi } from 'vitest';
-import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createGenAiCorrelator } from '../src/genai-correlator.js';
 import { createMemberStore } from '../src/members.js';
@@ -50,6 +50,7 @@ async function makeApp() {
     { name: 'turner', role: { title: 'e', description: '' }, permissions: [], token: TOKEN },
   ]);
   const { app } = createApp({
+    createGenAiCorrelator,
     broker: new Broker({ eventLog: new InMemoryEventLog(), now: () => 1, idFactory: () => 'm' }),
     members,
     tokens: await createTokenStoreFromMembers(db, members),

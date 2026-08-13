@@ -226,7 +226,7 @@ describe('diagnostic census guard', () => {
     // app.ts is mixed, so the guard pins the known in-scope messages by
     // exact text — a rename or removal is caught even though a blanket
     // rule cannot apply here.
-    const src = readFileSync(join(SRC, 'app.ts'), 'utf8');
+    const src = readFileSync(join(CORE_SRC, 'app.ts'), 'utf8');
     const missing = APP_IN_SCOPE.filter((m) => !src.includes(m));
     expect(missing).toEqual([]);
   });
@@ -262,10 +262,11 @@ describe('diagnostic census guard', () => {
       'activityAppended',
       'toolinvokeAuditAppended',
     ];
-    const production = (readdirSync(SRC, { recursive: true }) as string[])
-      .filter((f) => f.endsWith('.ts') && !f.endsWith('diagnostics.ts'))
-      .map((f) => readFileSync(join(SRC, f), 'utf8'))
-      .join('\n');
+    const production = ROOTS.flatMap((root) =>
+      (readdirSync(root, { recursive: true }) as string[])
+        .filter((f) => f.endsWith('.ts') && !f.endsWith('diagnostics.ts'))
+        .map((f) => readFileSync(join(root, f), 'utf8')),
+    ).join('\n');
     const unwired = RECOVERIES.filter((m) => !production.includes(`.${m}(`));
     expect(unwired).toEqual([]);
   });

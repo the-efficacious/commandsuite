@@ -16,6 +16,7 @@
 
 import {
   Broker,
+  createApp,
   createDiagnosticStore,
   createTokenStoreFromMembers,
   type DiagnosticStore,
@@ -24,7 +25,6 @@ import {
 } from 'csuite-core';
 import type { RosterResponse, Team } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
 import { mockTeamStore } from './helpers/test-stores.js';

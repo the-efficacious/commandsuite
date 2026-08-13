@@ -20,6 +20,7 @@
 
 import {
   Broker,
+  createApp,
   createDiagnosticStore,
   createGenAiStore,
   createTelemetryStore,
@@ -29,7 +30,6 @@ import {
 } from 'csuite-core';
 import type { Message, Permission, Team } from 'csuite-sdk/types';
 import { describe, expect, it, vi } from 'vitest';
-import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
 import { createRawBodyStore } from '../src/raw-body-store.js';

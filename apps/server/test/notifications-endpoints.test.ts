@@ -10,6 +10,7 @@
 import { createHmac } from 'node:crypto';
 import {
   Broker,
+  createApp,
   createSqliteChannelStore,
   createTokenStoreFromMembers,
   InMemoryEventLog,
@@ -17,7 +18,6 @@ import {
 } from 'csuite-core';
 import type { Message, NotificationEndpoint } from 'csuite-sdk/types';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { kekFieldCipher, testKek } from '../src/kek.js';
 import { createMemberStore, getKek, setKek } from '../src/members.js';

@@ -17,6 +17,7 @@
 import {
   Broker,
   clearRegisteredSecretValues,
+  createApp,
   createSqliteSecretsStore,
   createSqliteVariablesStore,
   createTokenStoreFromMembers,
@@ -28,7 +29,6 @@ import {
 } from 'csuite-core';
 import type { VariableSummary } from 'csuite-sdk/types';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { kekFieldCipher, testKek } from '../src/kek.js';
 import { createMemberStore, getKek, setKek } from '../src/members.js';

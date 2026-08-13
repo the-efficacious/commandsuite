@@ -24,6 +24,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   Broker,
+  createApp,
   createSqliteObjectivesStore,
   createTokenStoreFromMembers,
   InMemoryEventLog,
@@ -32,7 +33,6 @@ import {
 import { FsEntryResponseSchema, FsEntrySchema } from 'csuite-sdk/schemas';
 import type { Objective, Team } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createApp } from '../../src/app.js';
 import { openDatabase } from '../../src/db.js';
 import { createSqliteFilesystemStore, LocalBlobStore } from '../../src/files/index.js';
 import { createMemberStore } from '../../src/members.js';

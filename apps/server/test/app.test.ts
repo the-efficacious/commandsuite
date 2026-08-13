@@ -1,5 +1,6 @@
 import {
   Broker,
+  createApp,
   createTokenStoreFromMembers,
   InMemoryEventLog,
   SqliteSessionStore,
@@ -7,8 +8,8 @@ import {
 import { PROTOCOL_HEADER, RUNNER_VERSION_HEADER } from 'csuite-sdk/protocol';
 import type { InstructionsResponse, Message, RosterResponse, Team } from 'csuite-sdk/types';
 import { describe, expect, it, vi } from 'vitest';
-import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
+import { createGenAiCorrelator } from '../src/genai-correlator.js';
 import { createMemberStore } from '../src/members.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
@@ -53,6 +54,7 @@ async function makeApp(options: { instructions?: string; context?: string } = {}
     error: vi.fn(),
   };
   const { app } = createApp({
+    createGenAiCorrelator,
     broker,
     members,
     tokens,
