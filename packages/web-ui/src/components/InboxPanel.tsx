@@ -15,6 +15,7 @@
 
 import { type InboxItem, inboxItems } from '../lib/inbox.js';
 import { isObjectiveThread, OBJ_PREFIX } from '../lib/messages.js';
+import { relativeTime } from '../lib/time.js';
 import { selectObjectiveDetail, selectThread } from '../lib/view.js';
 import { EmptyState, PageHeader } from './ui/index.js';
 
@@ -131,12 +132,4 @@ function statusBadgeClass(status: string): string {
   if (status === 'blocked') return 'badge caution solid';
   if (status === 'done' || status === 'cancelled') return 'badge soft';
   return 'badge solid';
-}
-
-function relativeTime(ts: number): string {
-  const diff = Date.now() - ts;
-  if (diff < 60_000) return 'now';
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h`;
-  return `${Math.floor(diff / 86_400_000)}d`;
 }

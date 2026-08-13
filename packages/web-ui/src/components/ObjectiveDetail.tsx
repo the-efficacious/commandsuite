@@ -1,20 +1,30 @@
 /**
- * Objective detail view — full state, action buttons, inline
- * discussion thread, trace review, and the lifecycle event log,
- * organized as a tabbed interface so each concern owns its own pane.
+ * Objective detail — one page, no tabs, ordered the way the work
+ * actually reads:
  *
  *   ┌────────────────────────────────────────────┐
  *   │  ← Objectives › obj-123                    │  breadcrumb (.crumbs)
- *   │  Title                                      │  display h1
- *   │  [status] · assignee · originator           │  badge + meta
+ *   │  Title                          [status]   │  display h1
+ *   │  assignee → originator · created 3d ago    │  meta line
+ *   │  [● Complete…] [Block…] [Reassign…] [◇…]   │  action bar
  *   ├────────────────────────────────────────────┤
- *   │  Overview · Actions · Discussion · …        │  .tabs .tab
- *   ├────────────────────────────────────────────┤
- *   │   tab content — scrolls independently       │
+ *   │  OUTCOME            │  RESULT              │  the contract, and —
+ *   │  definition of done │  (gold assert bar)   │  once done — the claim
+ *   │                     │  or the result editor│  argued against it
+ *   │  body · attachments · watchers             │
+ *   │  ── Thread ─────────────────────────────── │  lifecycle events and
+ *   │  ◆ director-1 assigned to engineer-1       │  discussion merged into
+ *   │  [engineer-1] on it, repro found           │  one chronological story
+ *   │  ◆ engineer-1 blocked — waiting on keys    │
+ *   │  [composer]                                │
  *   └────────────────────────────────────────────┘
  *
- * All buttons / inputs / cards / tabs use canonical theme.css classes.
- * Action groups only render when the viewer can take them.
+ * Actions live in the header as verbs, not as a place: Complete opens
+ * the result editor NEXT TO the outcome (the result is read against
+ * it), Block/Reassign/Cancel open one inline form at a time — cancel
+ * commits on a second, explicit verb press, never on the first click.
+ * Trace review (admin) stays a separate heavy surface behind a
+ * disclosure at the bottom.
  */
 
 import { signal } from '@preact/signals';
@@ -34,6 +44,7 @@ import {
   updateObjectiveWatchers,
 } from '../lib/objectives.js';
 import { roster } from '../lib/roster.js';
+import { absoluteTime, relativeTime } from '../lib/time.js';
 import { selectObjectivesList } from '../lib/view.js';
 import {
   AlertCircle,
@@ -42,12 +53,11 @@ import {
   ArrowRight,
   ChevronDown,
   ChevronRight,
-  ChevronUp,
   Send,
   X,
 } from './icons/index.js';
 import { MessageAttachments } from './MessageAttachments.js';
-import { MessageLine } from './MessageLine.js';
+import { isContinuationOf, MessageLine } from './MessageLine.js';
 import { TracePanel } from './TracePanel.js';
 import { Mention } from './ui/Mention.js';
 
@@ -56,18 +66,19 @@ export interface ObjectiveDetailProps {
   viewer: string;
 }
 
-type Tab = 'overview' | 'actions' | 'discussion' | 'trace' | 'audit';
+type OpenForm = 'none' | 'complete' | 'block' | 'reassign' | 'cancel';
 
 const detailLoading = signal(true);
 const detailError = signal<string | null>(null);
 const detailObjective = signal<Objective | null>(null);
 const detailEvents = signal<ObjectiveEvent[]>([]);
-const activeTab = signal<Tab>('overview');
-const auditExpanded = signal(false);
+const openForm = signal<OpenForm>('none');
+const traceOpen = signal(false);
 
 const actionResult = signal('');
 const actionBlockReason = signal('');
 const actionReassignTo = signal('');
+const actionReassignNote = signal('');
 const actionCancelReason = signal('');
 const actionWatcherAdd = signal('');
 const actionBusy = signal(false);
@@ -95,6 +106,7 @@ function resetInputs(): void {
   actionResult.value = '';
   actionBlockReason.value = '';
   actionReassignTo.value = '';
+  actionReassignNote.value = '';
   actionCancelReason.value = '';
   actionWatcherAdd.value = '';
   actionError.value = null;
@@ -108,9 +120,13 @@ function resetDetailState(): void {
   detailError.value = null;
   detailObjective.value = null;
   detailEvents.value = [];
-  activeTab.value = 'overview';
-  auditExpanded.value = false;
+  openForm.value = 'none';
+  traceOpen.value = false;
   resetInputs();
+}
+
+function toggleForm(form: Exclude<OpenForm, 'none'>): void {
+  openForm.value = openForm.value === form ? 'none' : form;
 }
 
 export function ObjectiveDetail({ id, viewer }: ObjectiveDetailProps) {
@@ -119,7 +135,6 @@ export function ObjectiveDetail({ id, viewer }: ObjectiveDetailProps) {
   const events = detailEvents.value;
   const loading = detailLoading.value;
   const err = detailError.value;
-  const tab = activeTab.value;
 
   useEffect(() => {
     resetDetailState();
@@ -132,17 +147,21 @@ export function ObjectiveDetail({ id, viewer }: ObjectiveDetailProps) {
   if (loading) {
     return (
       <div
-        class="flex-1 flex items-center justify-center"
-        style="color:var(--ef-text-muted);font-size:14px"
+        class="flex-1 overflow-y-auto measured record"
+        style="padding:20px max(1rem,env(safe-area-inset-right)) 20px max(1rem,env(safe-area-inset-left))"
+        aria-busy="true"
       >
-        loading objective…
+        <Breadcrumb id={id} />
+        <div class="ef-skeleton" style="height:36px;margin-top:14px" />
+        <div class="ef-skeleton" style="height:120px;margin-top:14px" />
+        <div class="ef-skeleton" style="height:220px;margin-top:14px" />
       </div>
     );
   }
   if (err !== null) {
     return (
       <div
-        class="flex-1 overflow-y-auto"
+        class="flex-1 overflow-y-auto measured record"
         style="padding:20px max(1rem,env(safe-area-inset-right)) 20px max(1rem,env(safe-area-inset-left))"
       >
         <Breadcrumb id={id} />
@@ -160,7 +179,7 @@ export function ObjectiveDetail({ id, viewer }: ObjectiveDetailProps) {
   if (!current || !b) {
     return (
       <div
-        class="flex-1 overflow-y-auto"
+        class="flex-1 overflow-y-auto measured record"
         style="padding:20px max(1rem,env(safe-area-inset-right)) 20px max(1rem,env(safe-area-inset-left))"
       >
         <Breadcrumb id={id} />
@@ -175,25 +194,17 @@ export function ObjectiveDetail({ id, viewer }: ObjectiveDetailProps) {
   const isAssignee = current.assignee === viewer;
   const isOriginator = current.originator === viewer;
   const isAdmin = b.permissions.includes('members.manage');
-  const canCancelPerm = b.permissions.includes('objectives.manage');
-  const canReassignPerm = b.permissions.includes('objectives.manage');
-  const canWatchPerm = b.permissions.includes('objectives.manage');
+  const canManagePerm = b.permissions.includes('objectives.manage');
   const isWatching = current.watchers.includes(viewer);
   const isTerminal = current.status === 'done' || current.status === 'cancelled';
   // Mirrors the server's PATCH /objectives/:id gate exactly: the
-  // assignee, or a member holding `objectives.manage`. This previously
-  // used `isAdmin` (`members.manage`), which is a DIFFERENT permission —
-  // `hasPermission` is a plain `includes`, with no hierarchy — so it
-  // diverged in both directions: an `objectives.manage` holder was shown
-  // no control, and a `members.manage` holder was shown one that 403s.
-  const canUpdateStatus = !isTerminal && (isAssignee || canCancelPerm);
+  // assignee, or a member holding `objectives.manage`.
+  const canUpdateStatus = !isTerminal && (isAssignee || canManagePerm);
   const canComplete = !isTerminal && isAssignee;
-  const canCancel = !isTerminal && (canCancelPerm || isOriginator);
-  const canReassign = !isTerminal && canReassignPerm;
-  const canManageWatchers = canWatchPerm || isOriginator;
+  const canCancel = !isTerminal && (canManagePerm || isOriginator);
+  const canReassign = !isTerminal && canManagePerm;
+  const canManageWatchers = canManagePerm || isOriginator;
   const canDiscuss = isAssignee || isOriginator || isAdmin || isWatching;
-  const hasAnyAction =
-    canUpdateStatus || canComplete || canCancel || canReassign || canManageWatchers;
 
   async function run<T>(fn: () => Promise<T>): Promise<T | null> {
     if (actionBusy.value) return null;
@@ -213,78 +224,184 @@ export function ObjectiveDetail({ id, viewer }: ObjectiveDetailProps) {
   }
 
   return (
-    <div class="flex-1 flex flex-col min-h-0">
-      {/* Header — non-scrolling, breadcrumb + title + status + meta */}
-      <div
-        class="flex-shrink-0"
-        style="padding:18px max(1rem,env(safe-area-inset-right)) 16px max(1rem,env(safe-area-inset-left));border-bottom:1px solid var(--ef-border)"
-      >
+    // Single scroller at the record measure, like the sibling detail
+    // views (NotificationDetail, ToolSourceDetail). The thread panel
+    // keeps its own internal scroll for the sticky-bottom behavior.
+    <div
+      class="flex-1 overflow-y-auto measured record"
+      style="padding:18px max(1rem,env(safe-area-inset-right)) 24px max(1rem,env(safe-area-inset-left))"
+    >
+      {/* Header — breadcrumb, title, meta, verbs */}
+      <div style="padding-bottom:16px;border-bottom:1px solid var(--ef-border)">
         <Breadcrumb id={current.id} />
         <div class="flex items-start gap-3 flex-wrap" style="margin-top:8px">
           <h1
-            class="font-display flex-1 min-w-0"
+            class={`font-display flex-1 min-w-0${current.status === 'cancelled' ? ' struck' : ''}`}
             style="font-size:30px;font-weight:700;letter-spacing:-0.02em;color:var(--ef-text);line-height:1.15"
           >
             {current.title}
           </h1>
           <StatusBadge status={current.status} />
         </div>
-        <div
-          class="flex flex-wrap"
-          style="gap:4px 14px;margin-top:10px;font-family:var(--ef-font-body);font-size:13.5px;color:var(--ef-text-faint)"
-        >
-          <span>
-            assignee: <Mention name={current.assignee} plain />
-          </span>
-          <span class="hidden sm:inline" style="color:var(--ef-border-strong)">
-            ·
-          </span>
-          <span>
-            originator: <Mention name={current.originator} plain />
-          </span>
-        </div>
+        <MetaLine objective={current} />
+        {(canComplete || canUpdateStatus || canReassign || canCancel) && (
+          <div class="flex flex-wrap items-center" style="gap:8px;margin-top:12px">
+            {canComplete && current.status !== 'blocked' && (
+              <button
+                type="button"
+                onClick={() => toggleForm('complete')}
+                aria-expanded={openForm.value === 'complete'}
+                class="btn btn-primary btn-sm"
+              >
+                ● Complete…
+              </button>
+            )}
+            {canUpdateStatus && current.status === 'active' && (
+              <button
+                type="button"
+                onClick={() => toggleForm('block')}
+                aria-expanded={openForm.value === 'block'}
+                class="btn btn-secondary btn-sm flex items-center"
+                style="gap:6px"
+              >
+                <AlertTriangle size={13} aria-hidden="true" />
+                Block…
+              </button>
+            )}
+            {canUpdateStatus && current.status === 'blocked' && (
+              <button
+                type="button"
+                disabled={actionBusy.value}
+                onClick={() => void run(() => updateObjective(id, { status: 'active' }))}
+                class="btn btn-secondary btn-sm"
+              >
+                ● Unblock
+              </button>
+            )}
+            {canReassign && (
+              <button
+                type="button"
+                onClick={() => toggleForm('reassign')}
+                aria-expanded={openForm.value === 'reassign'}
+                class="btn btn-ghost btn-sm flex items-center"
+                style="gap:6px"
+              >
+                <ArrowRight size={13} aria-hidden="true" />
+                Reassign…
+              </button>
+            )}
+            {canCancel && (
+              <button
+                type="button"
+                onClick={() => toggleForm('cancel')}
+                aria-expanded={openForm.value === 'cancel'}
+                class="btn btn-ghost btn-sm"
+                style="color:var(--ef-lamp-alarm)"
+              >
+                ◇ Cancel…
+              </button>
+            )}
+          </div>
+        )}
+        {actionError.value && (
+          <div class="callout err" role="alert" style="margin-top:12px">
+            <div class="icon" aria-hidden="true">
+              <AlertCircle size={16} />
+            </div>
+            <div class="body">
+              <div class="msg">{actionError.value}</div>
+            </div>
+          </div>
+        )}
+        {openForm.value === 'block' && <BlockForm id={id} run={run} />}
+        {openForm.value === 'reassign' && (
+          <ReassignForm id={id} assignee={current.assignee} run={run} />
+        )}
+        {openForm.value === 'cancel' && <CancelForm id={id} run={run} />}
       </div>
 
-      {/* Tabs row */}
-      <div
-        class="flex-shrink-0 overflow-x-auto"
-        style="padding:0 max(0.5rem,env(safe-area-inset-right)) 0 max(0.5rem,env(safe-area-inset-left));background:var(--ef-surface)"
-      >
-        <div class="tabs" style="border-bottom:1px solid var(--ef-border);min-width:fit-content">
-          <Tabs
-            active={tab}
-            onChange={(t) => {
-              activeTab.value = t;
-            }}
-            show={{ trace: isAdmin, actions: hasAnyAction }}
-          />
-        </div>
-      </div>
+      <div style="margin-top:18px;display:flex;flex-direction:column;gap:14px">
+        <OutcomeSection
+          objective={current}
+          events={events}
+          completing={openForm.value === 'complete' && canComplete}
+          run={run}
+        />
 
-      {/* Tab content — only scrolling region */}
-      <div
-        class="flex-1 overflow-y-auto"
-        style="padding:18px max(1rem,env(safe-area-inset-right)) 24px max(1rem,env(safe-area-inset-left));display:flex;flex-direction:column;gap:14px"
-      >
-        {tab === 'overview' && (
-          <OverviewTab objective={current} canManageWatchers={canManageWatchers} run={run} />
+        {current.status === 'blocked' && (
+          <div class="callout warn" role="status">
+            <div class="icon" aria-hidden="true">
+              <AlertTriangle size={16} />
+            </div>
+            <div class="body">
+              <div class="title">Blocked</div>
+              <div class="msg" style="white-space:pre-wrap;line-height:1.55">
+                {current.blockReason ?? 'No reason given.'}
+              </div>
+            </div>
+          </div>
         )}
-        {tab === 'actions' && hasAnyAction && (
-          <ActionsTab
-            objective={current}
-            id={id}
-            canUpdateStatus={canUpdateStatus}
-            canComplete={canComplete}
-            canCancel={canCancel}
-            canReassign={canReassign}
-            run={run}
-          />
+
+        {current.body && (
+          <section class="card">
+            <div class="eyebrow" style="margin-bottom:10px">
+              Body
+            </div>
+            <div style="font-family:var(--ef-font-body);font-size:14.5px;color:var(--ef-text);white-space:pre-wrap;line-height:1.55">
+              {current.body}
+            </div>
+          </section>
         )}
-        {tab === 'discussion' && (
-          <DiscussionTab id={id} viewer={viewer} canPost={canDiscuss} terminal={isTerminal} />
+
+        {current.attachments.length > 0 && (
+          <section class="card">
+            <div class="eyebrow" style="margin-bottom:10px">
+              Attachments ({current.attachments.length})
+            </div>
+            <MessageAttachments attachments={current.attachments} />
+          </section>
         )}
-        {tab === 'trace' && isAdmin && <TracePanel objective={current} />}
-        {tab === 'audit' && <AuditTab events={events} />}
+
+        <WatchersSection
+          objectiveId={current.id}
+          watchers={current.watchers}
+          canManage={canManageWatchers}
+          run={run}
+        />
+
+        <ThreadSection
+          id={id}
+          viewer={viewer}
+          events={events}
+          canPost={canDiscuss}
+          terminal={isTerminal}
+          status={current.status}
+        />
+
+        {isAdmin && (
+          <section>
+            <button
+              type="button"
+              class="btn btn-ghost btn-sm"
+              aria-expanded={traceOpen.value}
+              onClick={() => {
+                traceOpen.value = !traceOpen.value;
+              }}
+            >
+              {traceOpen.value ? (
+                <ChevronDown size={13} aria-hidden="true" />
+              ) : (
+                <ChevronRight size={13} aria-hidden="true" />
+              )}
+              Trace review
+            </button>
+            {traceOpen.value && (
+              <div style="margin-top:12px">
+                <TracePanel objective={current} />
+              </div>
+            )}
+          </section>
+        )}
       </div>
     </div>
   );
@@ -307,323 +424,452 @@ function Breadcrumb({ id }: { id: string }) {
   );
 }
 
-function Tabs({
-  active,
-  onChange,
-  show,
-}: {
-  active: Tab;
-  onChange: (t: Tab) => void;
-  show: { trace: boolean; actions: boolean };
-}) {
-  const entries: Array<{ id: Tab; label: string; visible: boolean }> = [
-    { id: 'overview', label: 'Overview', visible: true },
-    { id: 'actions', label: 'Actions', visible: show.actions },
-    { id: 'discussion', label: 'Discussion', visible: true },
-    { id: 'trace', label: 'Trace', visible: show.trace },
-    { id: 'audit', label: 'Audit', visible: true },
-  ];
+/** "just now" / "5m ago" — relativeTime with prose-safe zero case. */
+function ago(ts: number): string {
+  const rel = relativeTime(ts);
+  return rel === 'now' ? 'just now' : `${rel} ago`;
+}
+
+function MetaLine({ objective }: { objective: Objective }) {
+  const sep = (
+    <span class="hidden sm:inline" style="color:var(--ef-border-strong)">
+      ·
+    </span>
+  );
   return (
-    <>
-      {entries
-        .filter((e) => e.visible)
-        .map((e) => {
-          const isActive = e.id === active;
-          return (
-            <button
-              key={e.id}
-              type="button"
-              role="tab"
-              aria-selected={isActive}
-              onClick={() => onChange(e.id)}
-              class={`tab${isActive ? ' active' : ''}`}
-              style="white-space:nowrap"
-            >
-              {e.label}
-            </button>
-          );
-        })}
-    </>
+    <div
+      class="flex flex-wrap items-baseline"
+      style="gap:4px 14px;margin-top:10px;font-family:var(--ef-font-body);font-size:13.5px;color:var(--ef-text-faint)"
+    >
+      <span>
+        assignee: <Mention name={objective.assignee} plain />
+      </span>
+      {sep}
+      <span>
+        originator: <Mention name={objective.originator} plain />
+      </span>
+      {sep}
+      <span title={absoluteTime(objective.createdAt)}>created {ago(objective.createdAt)}</span>
+      {objective.status === 'done' && objective.completedAt !== null && (
+        <>
+          {sep}
+          <span title={absoluteTime(objective.completedAt)}>done {ago(objective.completedAt)}</span>
+        </>
+      )}
+      {objective.status === 'cancelled' && (
+        <>
+          {sep}
+          <span title={absoluteTime(objective.updatedAt)}>
+            cancelled {ago(objective.updatedAt)}
+          </span>
+        </>
+      )}
+    </div>
   );
 }
 
-// ─────────────────────────── Tab content ───────────────────────────
+// ─────────────────────────── Inline action forms ───────────────────────────
 
-function OverviewTab({
-  objective,
-  canManageWatchers,
+function BlockForm({
+  id,
   run,
 }: {
-  objective: Objective;
-  canManageWatchers: boolean;
+  id: string;
   run: <T>(fn: () => Promise<T>) => Promise<T | null>;
 }) {
   return (
-    <>
-      <section class="card">
-        <div class="eyebrow" style="margin-bottom:10px">
-          Outcome
-        </div>
-        <div style="font-family:var(--ef-font-body);font-size:14.5px;color:var(--ef-text);white-space:pre-wrap;line-height:1.55">
-          {objective.outcome}
-        </div>
-      </section>
-
-      {objective.body && (
-        <section class="card">
-          <div class="eyebrow" style="margin-bottom:10px">
-            Body
-          </div>
-          <div style="font-family:var(--ef-font-body);font-size:14.5px;color:var(--ef-text);white-space:pre-wrap;line-height:1.55">
-            {objective.body}
-          </div>
-        </section>
-      )}
-
-      {objective.attachments.length > 0 && (
-        <section class="card">
-          <div class="eyebrow" style="margin-bottom:10px">
-            Attachments ({objective.attachments.length})
-          </div>
-          <MessageAttachments attachments={objective.attachments} />
-        </section>
-      )}
-
-      {objective.blockReason && (
-        <div class="callout warn" role="status">
-          <div class="icon" aria-hidden="true">
-            <AlertTriangle size={16} />
-          </div>
-          <div class="body">
-            <div class="title">Blocked</div>
-            <div class="msg" style="white-space:pre-wrap;line-height:1.55">
-              {objective.blockReason}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {objective.result && (
-        <div class="callout success">
-          <div class="icon" aria-hidden="true">
-            ●
-          </div>
-          <div class="body">
-            <div class="title">Result</div>
-            <div class="msg" style="white-space:pre-wrap;line-height:1.55">
-              {objective.result}
-            </div>
-          </div>
-        </div>
-      )}
-
-      <WatchersSection
-        objectiveId={objective.id}
-        watchers={objective.watchers}
-        canManage={canManageWatchers}
-        run={run}
+    <div class="flex flex-col sm:flex-row gap-2 sm:items-center" style="margin-top:12px">
+      <input
+        type="text"
+        value={actionBlockReason.value}
+        onInput={(e) => {
+          actionBlockReason.value = (e.currentTarget as HTMLInputElement).value;
+        }}
+        placeholder="what is it waiting on? (optional)"
+        class="input flex-1 min-w-0"
       />
-    </>
+      <button
+        type="button"
+        disabled={actionBusy.value}
+        onClick={() => {
+          const reason = actionBlockReason.value.trim();
+          void run(() =>
+            updateObjective(id, {
+              status: 'blocked',
+              ...(reason ? { blockReason: reason } : {}),
+            }),
+          ).then((r) => {
+            if (r !== null) openForm.value = 'none';
+          });
+        }}
+        class="btn btn-secondary flex-shrink-0 flex items-center"
+        style="gap:6px"
+      >
+        <AlertTriangle size={14} aria-hidden="true" />
+        Mark blocked
+      </button>
+    </div>
   );
 }
 
-function ActionsTab({
-  objective,
+function ReassignForm({
   id,
-  canUpdateStatus,
-  canComplete,
-  canCancel,
-  canReassign,
+  assignee,
   run,
 }: {
-  objective: Objective;
   id: string;
-  canUpdateStatus: boolean;
-  canComplete: boolean;
-  canCancel: boolean;
-  canReassign: boolean;
+  assignee: string;
   run: <T>(fn: () => Promise<T>) => Promise<T | null>;
 }) {
   const teammates = roster.value?.teammates ?? [];
   return (
-    <section style="display:flex;flex-direction:column;gap:18px">
-      {actionError.value && (
-        <div class="callout err" role="alert">
-          <div class="icon" aria-hidden="true">
-            <AlertCircle size={16} />
-          </div>
-          <div class="body">
-            <div class="msg">{actionError.value}</div>
-          </div>
-        </div>
-      )}
+    <div class="flex flex-col sm:flex-row gap-2 sm:items-center" style="margin-top:12px">
+      <select
+        value={actionReassignTo.value}
+        onChange={(e) => {
+          actionReassignTo.value = (e.currentTarget as HTMLSelectElement).value;
+        }}
+        class="select flex-shrink-0"
+      >
+        <option value="">Reassign to…</option>
+        {teammates
+          .filter((t) => t.name !== assignee)
+          .map((t) => (
+            <option key={t.name} value={t.name}>
+              {t.name} ({t.role.title})
+            </option>
+          ))}
+      </select>
+      <input
+        type="text"
+        value={actionReassignNote.value}
+        onInput={(e) => {
+          actionReassignNote.value = (e.currentTarget as HTMLInputElement).value;
+        }}
+        placeholder="why? goes in the thread (optional)"
+        class="input flex-1 min-w-0"
+      />
+      <button
+        type="button"
+        disabled={actionBusy.value || actionReassignTo.value.length === 0}
+        onClick={() => {
+          const note = actionReassignNote.value.trim();
+          void run(() =>
+            reassignObjective(id, {
+              to: actionReassignTo.value,
+              ...(note ? { note } : {}),
+            }),
+          ).then((r) => {
+            if (r !== null) openForm.value = 'none';
+          });
+        }}
+        class="btn btn-secondary flex-shrink-0"
+      >
+        <ArrowRight size={14} aria-hidden="true" />
+        Reassign
+      </button>
+    </div>
+  );
+}
 
-      {canUpdateStatus && objective.status === 'active' && (
-        <div class="card">
-          <div class="eyebrow" style="margin-bottom:10px">
-            Block this objective
-          </div>
-          <div class="flex flex-col sm:flex-row gap-2 sm:items-center">
-            <input
-              type="text"
-              value={actionBlockReason.value}
-              onInput={(e) => {
-                actionBlockReason.value = (e.currentTarget as HTMLInputElement).value;
-              }}
-              placeholder="block reason"
-              class="input flex-1 min-w-0"
-            />
-            <button
-              type="button"
-              disabled={actionBusy.value || actionBlockReason.value.trim().length === 0}
-              onClick={() =>
-                void run(() =>
-                  updateObjective(id, {
-                    status: 'blocked',
-                    blockReason: actionBlockReason.value.trim(),
-                  }),
-                )
-              }
-              class="btn btn-destructive flex-shrink-0 flex items-center"
-              style="gap:6px"
-            >
-              <AlertTriangle size={14} aria-hidden="true" />
-              Mark blocked
-            </button>
-          </div>
-        </div>
-      )}
+/**
+ * Cancel is two-step by construction: the header verb only opens this
+ * form; nothing is destroyed until the explicit destructive verb here.
+ */
+function CancelForm({
+  id,
+  run,
+}: {
+  id: string;
+  run: <T>(fn: () => Promise<T>) => Promise<T | null>;
+}) {
+  return (
+    <div class="flex flex-col sm:flex-row gap-2 sm:items-center" style="margin-top:12px">
+      <input
+        type="text"
+        value={actionCancelReason.value}
+        onInput={(e) => {
+          actionCancelReason.value = (e.currentTarget as HTMLInputElement).value;
+        }}
+        placeholder="cancel reason — lands in the thread (optional)"
+        class="input flex-1 min-w-0"
+      />
+      <button
+        type="button"
+        onClick={() => {
+          openForm.value = 'none';
+        }}
+        class="btn btn-ghost flex-shrink-0"
+      >
+        Belay
+      </button>
+      <button
+        type="button"
+        disabled={actionBusy.value}
+        onClick={() =>
+          void run(() =>
+            cancelObjective(id, {
+              ...(actionCancelReason.value.trim()
+                ? { reason: actionCancelReason.value.trim() }
+                : {}),
+            }),
+          ).then((r) => {
+            if (r !== null) openForm.value = 'none';
+          })
+        }
+        class="btn btn-destructive flex-shrink-0"
+      >
+        ◇ Cancel objective
+      </button>
+    </div>
+  );
+}
 
-      {canUpdateStatus && objective.status === 'blocked' && (
-        <div class="card">
-          <div class="eyebrow" style="margin-bottom:10px">
-            Unblock
-          </div>
-          <button
-            type="button"
-            disabled={actionBusy.value}
-            onClick={() => void run(() => updateObjective(id, { status: 'active' }))}
-            class="btn btn-secondary"
-          >
-            ● Unblock
-          </button>
-        </div>
-      )}
+// ─────────────────────────── Outcome / result ───────────────────────────
 
-      {canComplete && (
-        <div class="card">
+/**
+ * The contract block. Alone while the work is live; once the
+ * objective is done — or while the assignee is writing the result —
+ * it pairs with the result side-by-side, because the result is read
+ * AGAINST the outcome. The done result carries the view's one gold
+ * assert bar: a verified claim, the page's assertion.
+ */
+function OutcomeSection({
+  objective,
+  events,
+  completing,
+  run,
+}: {
+  objective: Objective;
+  events: ObjectiveEvent[];
+  completing: boolean;
+  run: <T>(fn: () => Promise<T>) => Promise<T | null>;
+}) {
+  const paired = completing || (objective.status === 'done' && objective.result !== null);
+  const cancelReason = cancelReasonFor(objective, events);
+
+  const outcomeCard = (
+    <section class="card" style="margin:0">
+      <div class="eyebrow" style="margin-bottom:10px">
+        Outcome
+      </div>
+      <div style="font-family:var(--ef-font-body);font-size:14.5px;color:var(--ef-text);white-space:pre-wrap;line-height:1.55">
+        {objective.outcome}
+      </div>
+    </section>
+  );
+
+  if (!paired) {
+    return (
+      <>
+        {outcomeCard}
+        {objective.status === 'cancelled' && (
+          <div class="callout" role="status">
+            <div class="icon" aria-hidden="true">
+              ◇
+            </div>
+            <div class="body">
+              <div class="title">Cancelled</div>
+              <div class="msg" style="white-space:pre-wrap;line-height:1.55">
+                {cancelReason ?? 'No reason recorded.'}
+              </div>
+            </div>
+          </div>
+        )}
+      </>
+    );
+  }
+
+  return (
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;align-items:stretch">
+      {outcomeCard}
+      {completing ? (
+        <section class="card" style="margin:0">
           <div class="eyebrow" style="margin-bottom:10px">
-            Complete
+            Result
+          </div>
+          <div class="field-help" style="margin-bottom:8px">
+            How was the outcome met? Argue it against the definition of done on the left — this is
+            what gets verified.
           </div>
           <textarea
-            rows={3}
+            rows={4}
             value={actionResult.value}
             onInput={(e) => {
               actionResult.value = (e.currentTarget as HTMLTextAreaElement).value;
             }}
-            placeholder="result — how was the outcome met? (required)"
+            placeholder="what was delivered, and how it meets the outcome (required)"
             class="textarea"
-            style="margin-bottom:10px;min-height:84px"
+            style="margin-bottom:10px;min-height:96px"
           />
-          <button
-            type="button"
-            disabled={actionBusy.value || actionResult.value.trim().length === 0}
-            onClick={() => void run(() => completeObjective(id, actionResult.value.trim()))}
-            class="btn btn-primary"
-          >
-            ● Mark complete
-          </button>
-        </div>
-      )}
-
-      {canReassign && (
-        <div class="card">
-          <div class="eyebrow" style="margin-bottom:10px">
-            Reassign
-          </div>
-          <div class="flex flex-col sm:flex-row gap-2 sm:items-center">
-            <select
-              value={actionReassignTo.value}
-              onChange={(e) => {
-                actionReassignTo.value = (e.currentTarget as HTMLSelectElement).value;
-              }}
-              class="select flex-1 min-w-0"
-            >
-              <option value="">Reassign to…</option>
-              {teammates
-                .filter((t) => t.name !== objective.assignee)
-                .map((t) => (
-                  <option key={t.name} value={t.name}>
-                    {t.name} ({t.role.title})
-                  </option>
-                ))}
-            </select>
+          <div class="flex items-center" style="gap:8px">
             <button
               type="button"
-              disabled={actionBusy.value || actionReassignTo.value.length === 0}
-              onClick={() => void run(() => reassignObjective(id, { to: actionReassignTo.value }))}
-              class="btn btn-secondary flex-shrink-0"
-            >
-              <ArrowRight size={14} aria-hidden="true" />
-              Reassign
-            </button>
-          </div>
-        </div>
-      )}
-
-      {canCancel && (
-        <div class="card" style="border-color:var(--ef-lamp-alarm-edge)">
-          <div class="eyebrow" style="margin-bottom:10px;color:var(--ef-lamp-alarm)">
-            Cancel objective
-          </div>
-          <div class="flex flex-col sm:flex-row gap-2 sm:items-center">
-            <input
-              type="text"
-              value={actionCancelReason.value}
-              onInput={(e) => {
-                actionCancelReason.value = (e.currentTarget as HTMLInputElement).value;
-              }}
-              placeholder="cancel reason (optional)"
-              class="input flex-1 min-w-0"
-            />
-            <button
-              type="button"
-              disabled={actionBusy.value}
+              disabled={actionBusy.value || actionResult.value.trim().length === 0}
               onClick={() =>
-                void run(() =>
-                  cancelObjective(id, {
-                    ...(actionCancelReason.value.trim()
-                      ? { reason: actionCancelReason.value.trim() }
-                      : {}),
-                  }),
+                void run(() => completeObjective(objective.id, actionResult.value.trim())).then(
+                  (r) => {
+                    if (r !== null) openForm.value = 'none';
+                  },
                 )
               }
-              class="btn btn-destructive flex-shrink-0"
+              class="btn btn-primary"
             >
-              ◇ Cancel
+              ● Mark complete
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                openForm.value = 'none';
+              }}
+              class="btn btn-ghost"
+            >
+              Belay
             </button>
           </div>
-        </div>
+        </section>
+      ) : (
+        <section class="card" style="margin:0;box-shadow:inset 3px 0 0 var(--ef-assert)">
+          <div class="eyebrow" style="margin-bottom:10px">
+            Result
+          </div>
+          <div style="font-family:var(--ef-font-body);font-size:14.5px;color:var(--ef-text);white-space:pre-wrap;line-height:1.55">
+            {objective.result}
+          </div>
+        </section>
       )}
-    </section>
+    </div>
   );
 }
 
-function DiscussionTab({
+/** Cancelled objectives carry their reason in the event log, not on
+ * the record — dig out the last `cancelled` event's payload. */
+function cancelReasonFor(objective: Objective, events: ObjectiveEvent[]): string | null {
+  if (objective.status !== 'cancelled') return null;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i];
+    if (ev && ev.kind === 'cancelled') {
+      const reason = ev.payload.reason;
+      return typeof reason === 'string' && reason.length > 0 ? reason : null;
+    }
+  }
+  return null;
+}
+
+// ─────────────────────────── Thread ───────────────────────────
+
+type StreamEntry =
+  | { kind: 'message'; ts: number; message: Message; previous?: Message }
+  | { kind: 'event'; ts: number; event: ObjectiveEvent };
+
+/**
+ * Merge lifecycle events and discussion messages into one ascending
+ * stream — the objective as its participants experienced it. Ties go
+ * to the event (the assignment precedes the first post about it). A
+ * message only renders as a continuation when it directly follows
+ * another message; an interleaved event breaks the group.
+ */
+export function buildStream(events: ObjectiveEvent[], messages: Message[]): StreamEntry[] {
+  const entries: StreamEntry[] = [
+    ...events.map((event): StreamEntry => ({ kind: 'event', ts: event.ts, event })),
+    ...messages.map((message): StreamEntry => ({ kind: 'message', ts: message.ts, message })),
+  ].sort((a, z) => {
+    if (a.ts !== z.ts) return a.ts - z.ts;
+    if (a.kind !== z.kind) return a.kind === 'event' ? -1 : 1;
+    return 0;
+  });
+  for (let i = 1; i < entries.length; i++) {
+    const entry = entries[i];
+    const prev = entries[i - 1];
+    if (entry?.kind === 'message' && prev?.kind === 'message') {
+      if (isContinuationOf(entry.message, prev.message)) entry.previous = prev.message;
+    }
+  }
+  return entries;
+}
+
+/** One line of story per lifecycle event — humanized, never raw JSON. */
+export function describeEvent(ev: ObjectiveEvent): string {
+  const p = ev.payload;
+  const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+  switch (ev.kind) {
+    case 'assigned': {
+      const watchers = Array.isArray(p.watchers) ? (p.watchers as string[]) : [];
+      return `assigned to ${str(p.assignee)}${
+        watchers.length > 0 ? ` · watching: ${watchers.join(', ')}` : ''
+      }`;
+    }
+    case 'blocked':
+      return str(p.reason) ? `blocked — ${str(p.reason)}` : 'blocked';
+    case 'unblocked':
+      return 'unblocked';
+    case 'completed':
+      return 'completed — result recorded';
+    case 'cancelled':
+      return str(p.reason) ? `cancelled — ${str(p.reason)}` : 'cancelled';
+    case 'reassigned':
+      return `reassigned ${str(p.from)} → ${str(p.to)}${str(p.note) ? ` — ${str(p.note)}` : ''}`;
+    case 'watcher_added':
+      return p.reason === 'reassigned-from'
+        ? `${str(p.name)} stays on as watcher`
+        : `watcher added: ${str(p.name)}`;
+    case 'watcher_removed':
+      return `watcher removed: ${str(p.name)}`;
+    default:
+      // Legacy kinds (`amended`, `event_corrected`) from old databases.
+      return ev.kind.replace(/_/g, ' ');
+  }
+}
+
+function EventLine({ event }: { event: ObjectiveEvent }) {
+  const d = new Date(event.ts);
+  const hhmm = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+  return (
+    <div
+      style="display:grid;grid-template-columns:34px 1fr;gap:0 12px;padding:5px 0"
+      title={absoluteTime(event.ts)}
+    >
+      <span
+        class="tabular-nums"
+        style="color:var(--ef-text-faint);font-family:var(--ef-font-mono);font-size:10px;text-align:right;align-self:baseline;margin-top:2px"
+      >
+        {hhmm}
+      </span>
+      <div
+        class="min-w-0 break-words"
+        style="font-family:var(--ef-font-mono);font-size:11.5px;letter-spacing:.04em;color:var(--ef-text-muted)"
+      >
+        <span aria-hidden="true" style="color:var(--ef-border-strong)">
+          ◆{' '}
+        </span>
+        <span style="color:var(--ef-text-secondary);font-weight:600">{event.actor}</span>{' '}
+        {describeEvent(event)}
+      </div>
+    </div>
+  );
+}
+
+function ThreadSection({
   id,
   viewer,
+  events,
   canPost,
   terminal,
+  status,
 }: {
   id: string;
   viewer: string;
+  events: ObjectiveEvent[];
   canPost: boolean;
   terminal: boolean;
+  status: Objective['status'];
 }) {
   const threadKey = objectiveThreadKey(id);
   const _map = messagesByThread.value;
   void _map;
   const messages = threadMessages(threadKey);
+  const stream = buildStream(events, messages);
+  const postCount = messages.length;
 
   const stickyRef = useRef(true);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -641,7 +887,7 @@ function DiscussionTab({
     const el = containerRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [messages.length, threadKey]);
+  }, [stream.length, threadKey]);
 
   const onInput = (event: JSX.TargetedInputEvent<HTMLTextAreaElement>) => {
     discussDraft.value = event.currentTarget.value;
@@ -681,11 +927,13 @@ function DiscussionTab({
     <section style="display:flex;flex-direction:column;gap:12px">
       <div
         class="panel"
-        style="display:flex;flex-direction:column;min-height:240px;max-height:60vh"
+        style="display:flex;flex-direction:column;min-height:260px;max-height:60vh"
       >
         <div class="panel-head">
-          <span>Discussion</span>
-          <span>{messages.length} posts</span>
+          <span>Thread</span>
+          <span>
+            {postCount} {postCount === 1 ? 'post' : 'posts'}
+          </span>
         </div>
         <div
           ref={containerRef}
@@ -695,22 +943,26 @@ function DiscussionTab({
           class="panel-body overflow-y-auto"
           style="background:var(--ef-surface-raised);padding:12px 14px;flex:1;min-height:0"
         >
-          {messages.length === 0 ? (
+          {stream.length === 0 ? (
             <div class="min-h-full flex items-center justify-center" style="padding:24px 0">
               <div class="empty" style="border:none;background:transparent;padding:12px">
-                <p>◇ No discussion yet — the objective thread is quiet</p>
+                <p>◇ Nothing yet — the objective thread is quiet</p>
               </div>
             </div>
           ) : (
             <div style="display:flex;flex-direction:column;gap:1px">
-              {messages.map((m: Message, i: number) => (
-                <MessageLine
-                  key={m.id}
-                  message={m}
-                  viewer={viewer}
-                  {...(i > 0 && messages[i - 1] ? { previousMessage: messages[i - 1] } : {})}
-                />
-              ))}
+              {stream.map((entry) =>
+                entry.kind === 'event' ? (
+                  <EventLine key={entry.event.id} event={entry.event} />
+                ) : (
+                  <MessageLine
+                    key={entry.message.id}
+                    message={entry.message}
+                    viewer={viewer}
+                    {...(entry.previous ? { previousMessage: entry.previous } : {})}
+                  />
+                ),
+              )}
             </div>
           )}
         </div>
@@ -754,88 +1006,11 @@ function DiscussionTab({
       )}
       {canPost && terminal && (
         <div style="font-family:var(--ef-font-mono);font-size:11.5px;letter-spacing:.14em;color:var(--ef-text-muted);text-transform:uppercase">
-          ◇ Discussion closed — objective is {detailObjective.value?.status}
+          ◇ Thread closed — objective is {status}
         </div>
       )}
     </section>
   );
-}
-
-function AuditTab({ events }: { events: ObjectiveEvent[] }) {
-  const expanded = auditExpanded.value;
-  const summary = summarizeEvents(events);
-  const visibleEvents = expanded ? events : events.slice(-5);
-
-  return (
-    <section style="display:flex;flex-direction:column;gap:12px">
-      <div class="flex flex-wrap items-center justify-between gap-2">
-        <div class="eyebrow">Lifecycle log</div>
-        <div style="font-family:var(--ef-font-mono);font-size:11px;letter-spacing:.08em;color:var(--ef-text-muted);text-transform:uppercase">
-          {summary}
-        </div>
-      </div>
-      {events.length === 0 ? (
-        <div class="empty">
-          <p>(no events)</p>
-        </div>
-      ) : (
-        <>
-          {!expanded && events.length > 5 && (
-            <div style="font-family:var(--ef-font-body);font-size:13px;color:var(--ef-text-muted);font-style:italic">
-              showing last 5 of {events.length} — click expand to see all
-            </div>
-          )}
-          <ol
-            class="audit-log"
-            style="display:flex;flex-direction:column;gap:4px;list-style:none;padding:0;margin:0"
-          >
-            {visibleEvents.map((ev, i) => (
-              <li
-                key={`${ev.ts}-${i}`}
-                style="font-family:var(--ef-font-mono);font-size:12px;color:var(--ef-text-faint);border-left:2px solid var(--ef-border);padding:6px 12px;word-break:break-word;transition:border-color .15s var(--ef-motion-ease)"
-              >
-                <span style="color:var(--ef-text-muted)">
-                  {new Date(ev.ts).toISOString().replace('T', ' ').slice(0, 19)}
-                </span>{' '}
-                <span style="color:var(--ef-text-secondary);font-weight:600">{ev.actor}</span>{' '}
-                <span style="color:var(--ef-text)">{ev.kind}</span>{' '}
-                {Object.keys(ev.payload).length > 0 && (
-                  <span style="color:var(--ef-text-muted)">{JSON.stringify(ev.payload)}</span>
-                )}
-              </li>
-            ))}
-          </ol>
-          {events.length > 5 && (
-            <div>
-              <button
-                type="button"
-                onClick={() => {
-                  auditExpanded.value = !expanded;
-                }}
-                class="btn btn-ghost btn-sm"
-              >
-                {expanded ? (
-                  <ChevronUp size={13} aria-hidden="true" />
-                ) : (
-                  <ChevronDown size={13} aria-hidden="true" />
-                )}
-                {expanded ? 'Collapse' : 'Expand full log'}
-              </button>
-            </div>
-          )}
-        </>
-      )}
-    </section>
-  );
-}
-
-function summarizeEvents(events: ObjectiveEvent[]): string {
-  if (events.length === 0) return '';
-  const counts = new Map<string, number>();
-  for (const ev of events) {
-    counts.set(ev.kind, (counts.get(ev.kind) ?? 0) + 1);
-  }
-  return [...counts.entries()].map(([k, n]) => `${k}:${n}`).join(' · ');
 }
 
 // ─────────────────────────── Watchers ───────────────────────────
