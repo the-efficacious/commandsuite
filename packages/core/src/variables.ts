@@ -41,18 +41,17 @@
  * one transaction.
  */
 
-import type { Logger } from 'csuite-core';
 import type { Variable } from 'csuite-sdk/types';
-import type { DatabaseSyncInstance, StatementInstance } from './db.js';
 import {
   ensureEnvNamespaceSchema,
   envRivalMessage,
   findEnvRivalAnyone,
   findEnvRivalForMember,
 } from './env-namespace.js';
-import { decryptField } from './kek.js';
-import { getKek } from './members.js';
+import type { GetFieldCipher } from './field-crypto.js';
+import type { Logger } from './logger.js';
 import { SecretsError, validateEnvName } from './secrets.js';
+import type { SqlDriver, SqlStatement } from './sql-driver.js';
 
 /**
  * Variables raise the same error type as secrets. Callers map one error
@@ -130,31 +129,31 @@ const VARIABLE_COLS =
   'id, slug, env_name, description, enabled, all_members, created_by, created_at, updated_at';
 
 class SqliteVariablesStore implements VariablesStore {
-  private readonly db: DatabaseSyncInstance;
+  private readonly db: SqlDriver;
 
-  private readonly beginStmt: StatementInstance;
-  private readonly commitStmt: StatementInstance;
-  private readonly rollbackStmt: StatementInstance;
+  private readonly beginStmt: SqlStatement;
+  private readonly commitStmt: SqlStatement;
+  private readonly rollbackStmt: SqlStatement;
 
-  private readonly insertStmt: StatementInstance;
-  private readonly updateStmt: StatementInstance;
-  private readonly deleteStmt: StatementInstance;
-  private readonly selectByIdStmt: StatementInstance;
-  private readonly selectBySlugStmt: StatementInstance;
-  private readonly selectAllStmt: StatementInstance;
-  private readonly selectForMemberStmt: StatementInstance;
+  private readonly insertStmt: SqlStatement;
+  private readonly updateStmt: SqlStatement;
+  private readonly deleteStmt: SqlStatement;
+  private readonly selectByIdStmt: SqlStatement;
+  private readonly selectBySlugStmt: SqlStatement;
+  private readonly selectAllStmt: SqlStatement;
+  private readonly selectForMemberStmt: SqlStatement;
 
-  private readonly insertBindingStmt: StatementInstance;
-  private readonly deleteBindingStmt: StatementInstance;
-  private readonly deleteBindingsStmt: StatementInstance;
-  private readonly selectBindingStmt: StatementInstance;
-  private readonly selectBindingsStmt: StatementInstance;
+  private readonly insertBindingStmt: SqlStatement;
+  private readonly deleteBindingStmt: SqlStatement;
+  private readonly deleteBindingsStmt: SqlStatement;
+  private readonly selectBindingStmt: SqlStatement;
+  private readonly selectBindingsStmt: SqlStatement;
 
-  private readonly upsertValueStmt: StatementInstance;
-  private readonly selectValueStmt: StatementInstance;
-  private readonly deleteValueStmt: StatementInstance;
+  private readonly upsertValueStmt: SqlStatement;
+  private readonly selectValueStmt: SqlStatement;
+  private readonly deleteValueStmt: SqlStatement;
 
-  constructor(db: DatabaseSyncInstance) {
+  constructor(db: SqlDriver) {
     this.db = db;
     ensureEnvNamespaceSchema(db);
 
@@ -450,7 +449,7 @@ function rowToVariable(row: VariableRow): Variable {
   };
 }
 
-export function createSqliteVariablesStore(db: DatabaseSyncInstance): VariablesStore {
+export function createSqliteVariablesStore(db: SqlDriver): VariablesStore {
   return new SqliteVariablesStore(db);
 }
 
@@ -506,7 +505,8 @@ export interface IdentityMigrationResult {
  * migration only takes effect after the NEXT restart.
  */
 export function migrateIdentityToVariables(
-  db: DatabaseSyncInstance,
+  db: SqlDriver,
+  getCipher: GetFieldCipher,
   secrets: {
     list(): Array<{
       id: string;
@@ -548,7 +548,7 @@ export function migrateIdentityToVariables(
   // Reading the row directly is also consistent with how the move
   // itself is done below: this is a storage-level operation on rows
   // whose values were already validated when they were written.
-  const kek = getKek();
+  const cipher = getCipher();
   const selectValue = db.prepare('SELECT value_enc FROM secret_values WHERE secret_id = ?');
   const pending: Array<{
     secret: (typeof candidates)[number];
@@ -563,11 +563,11 @@ export function migrateIdentityToVariables(
     let reason: string | undefined;
     if (!row) {
       reason = 'no stored value';
-    } else if (kek === null) {
+    } else if (cipher === null) {
       reason = 'no encryption key is active; the value cannot be decrypted';
     } else {
       try {
-        value = decryptField(row.value_enc, kek) ?? undefined;
+        value = cipher.decrypt(row.value_enc) ?? undefined;
         if (value === undefined) reason = 'value decrypted to nothing';
       } catch (err) {
         reason = `value unreadable (${err instanceof Error ? err.message : String(err)})`;

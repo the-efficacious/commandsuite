@@ -18,6 +18,7 @@
 import {
   Broker,
   createTokenStoreFromMembers,
+  EnrollmentStore,
   InMemoryEventLog,
   SqliteSessionStore,
 } from 'csuite-core';
@@ -30,7 +31,6 @@ import type {
 import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
-import { EnrollmentStore } from '../src/enrollments.js';
 import { createMemberStore } from '../src/members.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 

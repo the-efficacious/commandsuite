@@ -18,7 +18,7 @@
  */
 
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import type { ResolvedVerification } from './store.js';
+import type { ResolvedVerification } from 'csuite-core';
 
 export const DEFAULT_HMAC_HEADER = 'x-hub-signature-256';
 export const DEFAULT_HMAC_PREFIX = 'sha256=';

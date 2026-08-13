@@ -5,15 +5,15 @@
  * args control over where a credentialed request goes.
  */
 
-import type { CustomToolBinding } from 'csuite-sdk/types';
-import { describe, expect, it } from 'vitest';
 import {
   BindingValidationError,
   expandBinding,
   TemplateError,
   validateBinding,
   walkResultPath,
-} from '../src/tool-sources/template.js';
+} from 'csuite-core';
+import type { CustomToolBinding } from 'csuite-sdk/types';
+import { describe, expect, it } from 'vitest';
 
 const base = (overrides: Partial<CustomToolBinding> = {}): CustomToolBinding => ({
   method: 'GET',

@@ -28,11 +28,9 @@
  */
 
 import type { Permission, PermissionPresets, Team } from 'csuite-sdk/types';
-import type { DatabaseSyncInstance, StatementInstance } from './db.js';
-import { decryptField, encryptField } from './kek.js';
+import type { GetFieldCipher } from './field-crypto.js';
 import {
   type AddMemberInput,
-  getKek,
   type LoadedMember,
   MemberLoadError,
   type MemberStore,
@@ -46,7 +44,8 @@ import {
   validateTeamContext,
   validateTeamName,
   validateTotpSecret,
-} from './members.js';
+} from './members-domain.js';
+import type { SqlDriver, SqlStatement } from './sql-driver.js';
 
 const CREATE_SCHEMA = `
   CREATE TABLE IF NOT EXISTS team (
@@ -129,7 +128,7 @@ function parseJsonArray(s: string, where: string): string[] {
  * `context` (blank-line separated) and drop the column. Runs inside
  * a transaction; a no-op when the column is already gone.
  */
-function migrateDirectiveIntoContext(db: DatabaseSyncInstance): void {
+function migrateDirectiveIntoContext(db: SqlDriver): void {
   const columns = db.prepare('PRAGMA table_info(team)').all() as unknown as Array<{
     name: string;
   }>;
@@ -146,18 +145,18 @@ function migrateDirectiveIntoContext(db: DatabaseSyncInstance): void {
   `);
 }
 
-function decryptTotpSecret(stored: string | null): string | null {
+function decryptTotpSecret(stored: string | null, getCipher: GetFieldCipher): string | null {
   if (stored === null) return null;
-  const kek = getKek();
-  if (kek === null) return stored;
-  return decryptField(stored, kek);
+  const cipher = getCipher();
+  if (cipher === null) return stored;
+  return cipher.decrypt(stored);
 }
 
-function encryptTotpSecret(plaintext: string | null): string | null {
+function encryptTotpSecret(plaintext: string | null, getCipher: GetFieldCipher): string | null {
   if (plaintext === null) return null;
-  const kek = getKek();
-  if (kek === null) return plaintext;
-  return encryptField(plaintext, kek);
+  const cipher = getCipher();
+  if (cipher === null) return plaintext;
+  return cipher.encrypt(plaintext);
 }
 
 /**
@@ -168,15 +167,15 @@ function encryptTotpSecret(plaintext: string | null): string | null {
  * cached projection they hold; the store always returns a fresh copy.
  */
 export class TeamStore {
-  private readonly db: DatabaseSyncInstance;
-  private readonly getTeamStmt: StatementInstance;
-  private readonly upsertTeamStmt: StatementInstance;
-  private readonly listPresetsStmt: StatementInstance;
-  private readonly upsertPresetStmt: StatementInstance;
-  private readonly deletePresetStmt: StatementInstance;
+  private readonly db: SqlDriver;
+  private readonly getTeamStmt: SqlStatement;
+  private readonly upsertTeamStmt: SqlStatement;
+  private readonly listPresetsStmt: SqlStatement;
+  private readonly upsertPresetStmt: SqlStatement;
+  private readonly deletePresetStmt: SqlStatement;
   private readonly now: () => number;
 
-  constructor(db: DatabaseSyncInstance, options: { now?: () => number } = {}) {
+  constructor(db: SqlDriver, options: { now?: () => number; getCipher?: GetFieldCipher } = {}) {
     this.db = db;
     this.now = options.now ?? Date.now;
     this.db.exec(CREATE_SCHEMA);
@@ -300,26 +299,29 @@ export class TeamStore {
 }
 
 class SqliteMemberStore implements MemberStore {
-  private readonly db: DatabaseSyncInstance;
+  private readonly db: SqlDriver;
   private readonly teamStore: TeamStore;
-  private readonly listAllStmt: StatementInstance;
-  private readonly findByNameStmt: StatementInstance;
-  private readonly insertStmt: StatementInstance;
-  private readonly deleteStmt: StatementInstance;
-  private readonly updateStmt: StatementInstance;
-  private readonly setTotpStmt: StatementInstance;
-  private readonly bumpTotpCounterStmt: StatementInstance;
-  private readonly nextOrderStmt: StatementInstance;
+  private readonly listAllStmt: SqlStatement;
+  private readonly findByNameStmt: SqlStatement;
+  private readonly insertStmt: SqlStatement;
+  private readonly deleteStmt: SqlStatement;
+  private readonly updateStmt: SqlStatement;
+  private readonly setTotpStmt: SqlStatement;
+  private readonly bumpTotpCounterStmt: SqlStatement;
+  private readonly nextOrderStmt: SqlStatement;
   private readonly now: () => number;
 
+  private readonly getCipher: GetFieldCipher;
+
   constructor(
-    db: DatabaseSyncInstance,
+    db: SqlDriver,
     teamStore: TeamStore,
-    options: { now?: () => number } = {},
+    options: { now?: () => number; getCipher?: GetFieldCipher } = {},
   ) {
     this.db = db;
     this.teamStore = teamStore;
     this.now = options.now ?? Date.now;
+    this.getCipher = options.getCipher ?? (() => null);
     this.db.exec(CREATE_SCHEMA);
     this.listAllStmt = this.db.prepare(
       `SELECT name, role_title, role_description, instructions, raw_permissions,
@@ -370,7 +372,7 @@ class SqliteMemberStore implements MemberStore {
       instructions: row.instructions,
       permissions,
       rawPermissions,
-      totpSecret: decryptTotpSecret(row.totp_secret),
+      totpSecret: decryptTotpSecret(row.totp_secret, this.getCipher),
       totpLastCounter: row.totp_last_counter,
     };
   }
@@ -399,7 +401,7 @@ class SqliteMemberStore implements MemberStore {
         instructions: row.instructions,
         permissions: resolvePermissions(rawPermissions, presets, `member '${row.name}'`),
         rawPermissions,
-        totpSecret: decryptTotpSecret(row.totp_secret),
+        totpSecret: decryptTotpSecret(row.totp_secret, this.getCipher),
         totpLastCounter: row.totp_last_counter,
       };
     });
@@ -445,7 +447,7 @@ class SqliteMemberStore implements MemberStore {
       input.role.description,
       input.instructions,
       JSON.stringify(input.rawPermissions),
-      encryptTotpSecret(input.totpSecret ?? null),
+      encryptTotpSecret(input.totpSecret ?? null, this.getCipher),
       next,
       t,
       t,
@@ -495,7 +497,7 @@ class SqliteMemberStore implements MemberStore {
     const row = this.findByNameStmt.get(name) as RawMemberRow | undefined;
     if (!row) throw new MemberLoadError(`no such member: '${name}'`);
     if (secret !== null) validateTotpSecret(secret);
-    this.setTotpStmt.run(encryptTotpSecret(secret), this.now(), name);
+    this.setTotpStmt.run(encryptTotpSecret(secret, this.getCipher), this.now(), name);
     const loaded = this.findByName(name);
     if (!loaded) {
       throw new MemberLoadError(`setTotpSecret: row vanished mid-update (name='${name}')`);
@@ -551,8 +553,8 @@ class SqliteMemberStore implements MemberStore {
  * Open both stores on a shared database handle. Boot-time helper.
  */
 export function openTeamAndMembers(
-  db: DatabaseSyncInstance,
-  options: { now?: () => number } = {},
+  db: SqlDriver,
+  options: { now?: () => number; getCipher?: GetFieldCipher } = {},
 ): { team: TeamStore; members: MemberStore } {
   const team = new TeamStore(db, options);
   const members = new SqliteMemberStore(db, team, options);
@@ -565,9 +567,9 @@ export function openTeamAndMembers(
  * shared.
  */
 export function createSqliteMemberStore(
-  db: DatabaseSyncInstance,
+  db: SqlDriver,
   teamStore: TeamStore,
-  options: { now?: () => number } = {},
+  options: { now?: () => number; getCipher?: GetFieldCipher } = {},
 ): MemberStore {
   return new SqliteMemberStore(db, teamStore, options);
 }

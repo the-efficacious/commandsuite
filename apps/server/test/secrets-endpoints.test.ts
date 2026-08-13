@@ -8,6 +8,7 @@
 import {
   Broker,
   clearRegisteredSecretValues,
+  createSqliteSecretsStore,
   createTokenStoreFromMembers,
   InMemoryEventLog,
   REDACTED,
@@ -18,9 +19,8 @@ import type { SecretSummary } from 'csuite-sdk/types';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
-import { testKek } from '../src/kek.js';
-import { createMemberStore, setKek } from '../src/members.js';
-import { createSqliteSecretsStore } from '../src/secrets.js';
+import { kekFieldCipher, testKek } from '../src/kek.js';
+import { createMemberStore, getKek, setKek } from '../src/members.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const ADMIN = 'csuite_test_admin_secret';
@@ -61,7 +61,7 @@ async function makeApp() {
   const db = openDatabase(':memory:');
   const sessions = new SqliteSessionStore(db);
   const tokens = await createTokenStoreFromMembers(db, members);
-  const secrets = createSqliteSecretsStore(db);
+  const secrets = createSqliteSecretsStore(db, () => kekFieldCipher(getKek()));
   const { app } = createApp({
     broker,
     members,

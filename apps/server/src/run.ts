@@ -33,20 +33,25 @@ import {
   createSqliteChannelStore,
   createSqliteObjectivesStore,
   createSqliteProcessDocumentStore,
+  createSqliteSecretsStore,
+  createSqliteVariablesStore,
   createTelemetryStore,
   logger as defaultLogger,
+  EnrollmentStore,
   type GenAiStore,
   type Logger,
+  migrateIdentityToVariables,
+  openTeamAndMembers,
   registerSecretValues,
   SqliteEventLog,
   SqlitePushSubscriptionStore,
   SqliteSessionStore,
   SqliteTokenStore,
+  type TeamStore,
   type TelemetryStore,
 } from 'csuite-core';
 import { createApp } from './app.js';
 import { type DatabaseSyncInstance, openDatabase } from './db.js';
-import { EnrollmentStore } from './enrollments.js';
 import { createSqliteFilesystemStore, LocalBlobStore } from './files/index.js';
 import { createHttp2ServerFactory } from './https/server.js';
 import {
@@ -56,7 +61,7 @@ import {
   loadOrGenerateSelfSigned,
 } from './https/store.js';
 import { createJwtVerifier, type JwtConfig } from './jwt.js';
-import { decryptField, ENCRYPTED_FIELD_PREFIX, encryptField } from './kek.js';
+import { decryptField, ENCRYPTED_FIELD_PREFIX, encryptField, kekFieldCipher } from './kek.js';
 import {
   defaultHttpsConfig,
   getKek,
@@ -69,51 +74,58 @@ import { createSqliteNotificationsStore } from './notifications/index.js';
 import { dispatchPush } from './push/dispatch.js';
 import { configureVapid, generateVapidKeys } from './push/vapid.js';
 import { createRawBodyStore, type RawBodyStore } from './raw-body-store.js';
-import { createSqliteSecretsStore } from './secrets.js';
 import { updateServerConfigFile } from './server-config.js';
-import { openTeamAndMembers, type TeamStore } from './team-store.js';
 import { createMcpClientManager, createSqliteToolSourceStore } from './tool-sources/index.js';
-import { createSqliteVariablesStore, migrateIdentityToVariables } from './variables.js';
 import { SERVER_VERSION } from './version.js';
 
 export {
   type ActivityStore,
   createGenAiStore,
   createSqliteActivityStore,
+  createSqliteMemberStore,
   createSqliteObjectivesStore,
+  createSqliteSecretsStore,
+  createSqliteVariablesStore,
   createTelemetryStore,
+  DEFAULT_POLL_INTERVAL_S,
+  ENROLLMENT_TTL_MS,
+  EnrollmentStore,
+  formatUserCode,
   type GenAiInferenceInput,
   type GenAiInferenceRow,
   type GenAiQuery,
   type GenAiStore,
   generateBearerToken,
   hashRawToken,
+  IDENTITY_ENV_NAMES,
+  type IdentityMigrationResult,
   type InsertTokenInput,
   type InternalTokenRow,
+  migrateIdentityToVariables,
+  normalizeUserCode,
   ObjectivesError,
   type ObjectivesStore,
+  openTeamAndMembers,
   parseDurationMs,
   pruneActivityDb,
   SESSION_COOKIE_NAME,
   SESSION_TTL_MS,
+  SecretsError,
+  type SecretsStore,
   type SessionStore,
   SqliteSessionStore,
   SqliteTokenStore,
+  type TeamStore,
   type TelemetryQuery,
   type TelemetryRecord,
   type TelemetryRow,
   type TelemetryStore,
   TOKEN_HASH_PREFIX,
   type TokenStore,
+  type VariablesStore,
+  validateEnvName,
 } from 'csuite-core';
 export { type DatabaseSyncInstance, openDatabase } from './db.js';
-export {
-  DEFAULT_POLL_INTERVAL_S,
-  ENROLLMENT_TTL_MS,
-  EnrollmentStore,
-  formatUserCode,
-  normalizeUserCode,
-} from './enrollments.js';
 export {
   createGenAiCorrelator,
   type GenAiCorrelator,
@@ -174,12 +186,6 @@ export {
   type RawExchangeRow,
 } from './raw-body-store.js';
 export {
-  createSqliteSecretsStore,
-  SecretsError,
-  type SecretsStore,
-  validateEnvName,
-} from './secrets.js';
-export {
   loadServerConfigFromFile,
   resolveConfigPath,
   type ServerConfig,
@@ -188,23 +194,11 @@ export {
   writeServerConfigFile,
 } from './server-config.js';
 export {
-  createSqliteMemberStore,
-  openTeamAndMembers,
-  type TeamStore,
-} from './team-store.js';
-export {
   currentCode as currentTotpCode,
   generateSecret as generateTotpSecret,
   otpauthUri,
   verifyCode as verifyTotpCode,
 } from './totp.js';
-export {
-  createSqliteVariablesStore,
-  IDENTITY_ENV_NAMES,
-  type IdentityMigrationResult,
-  migrateIdentityToVariables,
-  type VariablesStore,
-} from './variables.js';
 export {
   createTtyWizardIO,
   type RunWizardOptions,
@@ -402,6 +396,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   const teamStore: TeamStore = stores.team;
 
   const eventLog = new SqliteEventLog(db);
+  const getCipher = () => kekFieldCipher(getKek());
   const sessions = new SqliteSessionStore(db);
   const tokens = new SqliteTokenStore(db);
 
@@ -413,18 +408,18 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   // and the device's poll; the existing audit-completion path
   // (`apps/server/src/index.ts`) refuses to boot without a KEK so
   // production never hits that path.
-  const enrollments = new EnrollmentStore(db, { kek: getKek() });
+  const enrollments = new EnrollmentStore(db, { cipher: kekFieldCipher(getKek()) });
   const pushStore = new SqlitePushSubscriptionStore(db);
   const objectivesStore = createSqliteObjectivesStore(db);
   const channelStore = createSqliteChannelStore(db);
   // Tool-source registry — config-class, low write volume, main DB.
-  const toolSourceStore = createSqliteToolSourceStore(db);
+  const toolSourceStore = createSqliteToolSourceStore(db, getCipher);
   // Secrets registry — config-class, KEK-encrypted values, main DB.
   // Register every stored value with the core trace redactor so
   // broker-side ingest (OTLP bodies, genai bundles) scrubs any secret
   // an agent echoed into its context. The app layer registers new
   // values as they're written; this covers pre-existing rows at boot.
-  const secretsStore = createSqliteSecretsStore(db);
+  const secretsStore = createSqliteSecretsStore(db, getCipher);
   // Variables registry — runner env vars that are NOT secrets, in the
   // same main DB and the same env namespace. Constructed before the
   // redactor registration below so the identity migration has already
@@ -435,7 +430,13 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   // are still in `secrets` when that call happens stay registered for
   // the life of the process, and the migration would appear to have
   // done nothing until the next restart.
-  const identityMigration = migrateIdentityToVariables(db, secretsStore, variablesStore, log);
+  const identityMigration = migrateIdentityToVariables(
+    db,
+    getCipher,
+    secretsStore,
+    variablesStore,
+    log,
+  );
   if (identityMigration.skipped.length > 0) {
     // Named rather than swallowed: a skipped row is identity that is
     // still a secret, and is still being scrubbed from traces.
@@ -446,7 +447,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   // External Notifications registry — endpoints/profiles are
   // config-class; delivery receipts are bounded by the per-endpoint
   // ingress rate limit. Main DB.
-  const notificationsStore = createSqliteNotificationsStore(db);
+  const notificationsStore = createSqliteNotificationsStore(db, getCipher);
   try {
     registerSecretValues(secretsStore.allDecryptedValues());
   } catch (err) {

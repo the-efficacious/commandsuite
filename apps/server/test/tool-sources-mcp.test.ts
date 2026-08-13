@@ -24,8 +24,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { z } from 'zod';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
-import { testKek } from '../src/kek.js';
-import { createMemberStore, setKek } from '../src/members.js';
+import { kekFieldCipher, testKek } from '../src/kek.js';
+import { createMemberStore, getKek, setKek } from '../src/members.js';
 import {
   createMcpClientManager,
   createSqliteToolSourceStore,
@@ -97,7 +97,7 @@ async function makeApp() {
   const db = openDatabase(':memory:');
   const sessions = new SqliteSessionStore(db);
   const tokens = await createTokenStoreFromMembers(db, members);
-  const toolSources = createSqliteToolSourceStore(db);
+  const toolSources = createSqliteToolSourceStore(db, () => kekFieldCipher(getKek()));
   const mcpManager: McpToolManager = createMcpClientManager({
     store: toolSources,
     version: '0.0.0',

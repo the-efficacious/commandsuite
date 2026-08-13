@@ -1,4 +1,18 @@
 export {
+  BindingValidationError,
+  type CustomToolBinding,
+  createSqliteToolSourceStore,
+  type DecryptedCredential,
+  expandBinding,
+  type McpCachedTool,
+  TemplateError,
+  type ToolSourceStore,
+  ToolSourcesError,
+  validateBinding,
+  validateSourceSlug,
+  walkResultPath,
+} from 'csuite-core';
+export {
   executeCustomTool,
   TOOL_RESULT_MAX_BYTES,
   type ToolCallResult,
@@ -9,19 +23,3 @@ export {
   type McpToolManager,
   McpUnavailableError,
 } from './mcp-manager.js';
-export {
-  createSqliteToolSourceStore,
-  type DecryptedCredential,
-  type McpCachedTool,
-  type ToolSourceStore,
-  ToolSourcesError,
-  validateSourceSlug,
-} from './store.js';
-export {
-  BindingValidationError,
-  type CustomToolBinding,
-  expandBinding,
-  TemplateError,
-  validateBinding,
-  walkResultPath,
-} from './template.js';

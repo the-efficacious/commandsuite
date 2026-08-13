@@ -8,9 +8,9 @@
  * Tests substitute a fake implementing the same surface.
  */
 
+import type { McpCachedTool, ToolSourceStore } from 'csuite-core';
 import type { ToolSource } from 'csuite-sdk/types';
 import type { ToolCallResult } from './custom-executor.js';
-import type { McpCachedTool, ToolSourceStore } from './store.js';
 
 /**
  * Upstream MCP server unreachable after the single reconnect retry.

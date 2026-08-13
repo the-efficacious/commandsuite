@@ -19,8 +19,8 @@ import type { InstructionsResponse, ToolSourceSummary } from 'csuite-sdk/types';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
-import { testKek } from '../src/kek.js';
-import { createMemberStore, setKek } from '../src/members.js';
+import { kekFieldCipher, testKek } from '../src/kek.js';
+import { createMemberStore, getKek, setKek } from '../src/members.js';
 import { createSqliteToolSourceStore } from '../src/tool-sources/index.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
@@ -62,7 +62,7 @@ async function makeApp(opts: { withActivity?: boolean } = {}) {
   const db = openDatabase(':memory:');
   const sessions = new SqliteSessionStore(db);
   const tokens = await createTokenStoreFromMembers(db, members);
-  const toolSources = createSqliteToolSourceStore(db);
+  const toolSources = createSqliteToolSourceStore(db, () => kekFieldCipher(getKek()));
   const activityStore = opts.withActivity
     ? createSqliteActivityStore(openDatabase(':memory:'), noopLog)
     : undefined;

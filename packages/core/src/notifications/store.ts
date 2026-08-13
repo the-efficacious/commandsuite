@@ -39,10 +39,9 @@ import type {
   NotificationProfile,
   NotificationTarget,
 } from 'csuite-sdk/types';
-import type { DatabaseSyncInstance, StatementInstance } from '../db.js';
-import { decryptField, encryptField } from '../kek.js';
-import { getKek } from '../members.js';
-import { validateSourceSlug } from '../tool-sources/index.js';
+import type { GetFieldCipher } from '../field-crypto.js';
+import type { SqlDriver, SqlStatement } from '../sql-driver.js';
+import { validateSourceSlug } from '../tool-sources/store.js';
 
 export class NotificationsError extends Error {
   readonly code:
@@ -427,19 +426,19 @@ function normalizeAuth(input?: {
   };
 }
 
-function encryptSecret(secret: string): string {
+function encryptSecret(secret: string, getCipher: GetFieldCipher): string {
   if (typeof secret !== 'string' || secret.length === 0) {
     throw new NotificationsError('invalid_input', 'secret is required');
   }
   if (secret.length > SECRET_MAX) {
     throw new NotificationsError('invalid_input', `secret too long (max ${SECRET_MAX})`);
   }
-  const kek = getKek();
-  if (kek === null) {
+  const cipher = getCipher();
+  if (cipher === null) {
     // Fail closed — never store a signing secret in plaintext.
     throw new NotificationsError('no_kek', 'no encryption key is active; cannot store a secret');
   }
-  const encrypted = encryptField(secret, kek);
+  const encrypted = cipher.encrypt(secret);
   if (encrypted === null) {
     throw new NotificationsError('invalid_input', 'secret is required');
   }
@@ -447,46 +446,49 @@ function encryptSecret(secret: string): string {
 }
 
 class SqliteNotificationsStore implements NotificationsStore {
-  private readonly db: DatabaseSyncInstance;
+  private readonly db: SqlDriver;
 
-  private readonly beginStmt: StatementInstance;
-  private readonly commitStmt: StatementInstance;
-  private readonly rollbackStmt: StatementInstance;
+  private readonly beginStmt: SqlStatement;
+  private readonly commitStmt: SqlStatement;
+  private readonly rollbackStmt: SqlStatement;
 
-  private readonly insertProfileStmt: StatementInstance;
-  private readonly updateProfileStmt: StatementInstance;
-  private readonly deleteProfileStmt: StatementInstance;
-  private readonly selectProfileByIdStmt: StatementInstance;
-  private readonly selectProfileBySlugStmt: StatementInstance;
-  private readonly selectProfilesStmt: StatementInstance;
-  private readonly setProfileSecretStmt: StatementInstance;
-  private readonly countEndpointsForProfileStmt: StatementInstance;
+  private readonly insertProfileStmt: SqlStatement;
+  private readonly updateProfileStmt: SqlStatement;
+  private readonly deleteProfileStmt: SqlStatement;
+  private readonly selectProfileByIdStmt: SqlStatement;
+  private readonly selectProfileBySlugStmt: SqlStatement;
+  private readonly selectProfilesStmt: SqlStatement;
+  private readonly setProfileSecretStmt: SqlStatement;
+  private readonly countEndpointsForProfileStmt: SqlStatement;
 
-  private readonly insertEndpointStmt: StatementInstance;
-  private readonly updateEndpointStmt: StatementInstance;
-  private readonly deleteEndpointStmt: StatementInstance;
-  private readonly selectEndpointByIdStmt: StatementInstance;
-  private readonly selectEndpointBySlugStmt: StatementInstance;
-  private readonly selectEndpointsStmt: StatementInstance;
-  private readonly setEndpointSecretStmt: StatementInstance;
+  private readonly insertEndpointStmt: SqlStatement;
+  private readonly updateEndpointStmt: SqlStatement;
+  private readonly deleteEndpointStmt: SqlStatement;
+  private readonly selectEndpointByIdStmt: SqlStatement;
+  private readonly selectEndpointBySlugStmt: SqlStatement;
+  private readonly selectEndpointsStmt: SqlStatement;
+  private readonly setEndpointSecretStmt: SqlStatement;
 
-  private readonly insertDeliveryStmt: StatementInstance;
-  private readonly selectDeliveryByIdStmt: StatementInstance;
-  private readonly selectDeliveryByDedupeStmt: StatementInstance;
-  private readonly updateDeliveryStmt: StatementInstance;
-  private readonly selectDeliveriesStmt: StatementInstance;
-  private readonly selectDeliveriesBeforeStmt: StatementInstance;
-  private readonly selectStrandedDebounceStmt: StatementInstance;
-  private readonly deleteDeliveriesForEndpointStmt: StatementInstance;
+  private readonly insertDeliveryStmt: SqlStatement;
+  private readonly selectDeliveryByIdStmt: SqlStatement;
+  private readonly selectDeliveryByDedupeStmt: SqlStatement;
+  private readonly updateDeliveryStmt: SqlStatement;
+  private readonly selectDeliveriesStmt: SqlStatement;
+  private readonly selectDeliveriesBeforeStmt: SqlStatement;
+  private readonly selectStrandedDebounceStmt: SqlStatement;
+  private readonly deleteDeliveriesForEndpointStmt: SqlStatement;
 
-  private readonly insertPendingStmt: StatementInstance;
-  private readonly selectPendingForMemberStmt: StatementInstance;
-  private readonly selectPendingForMemberReasonStmt: StatementInstance;
-  private readonly selectPendingDueStmt: StatementInstance;
-  private readonly deletePendingStmt: StatementInstance;
-  private readonly deletePendingForEndpointStmt: StatementInstance;
+  private readonly insertPendingStmt: SqlStatement;
+  private readonly selectPendingForMemberStmt: SqlStatement;
+  private readonly selectPendingForMemberReasonStmt: SqlStatement;
+  private readonly selectPendingDueStmt: SqlStatement;
+  private readonly deletePendingStmt: SqlStatement;
+  private readonly deletePendingForEndpointStmt: SqlStatement;
 
-  constructor(db: DatabaseSyncInstance) {
+  constructor(
+    db: SqlDriver,
+    private readonly getCipher: GetFieldCipher,
+  ) {
     this.db = db;
     this.db.exec(CREATE_SCHEMA);
 
@@ -694,7 +696,7 @@ class SqliteNotificationsStore implements NotificationsStore {
 
   setProfileSecret(id: string, secret: string, now: number = Date.now()): void {
     if (!this.getProfile(id)) throw new NotificationsError('not_found', `profile ${id} not found`);
-    this.setProfileSecretStmt.run(encryptSecret(secret), now, id);
+    this.setProfileSecretStmt.run(encryptSecret(secret, this.getCipher), now, id);
   }
 
   deleteProfileSecret(id: string): void {
@@ -822,7 +824,7 @@ class SqliteNotificationsStore implements NotificationsStore {
 
   setSecret(id: string, secret: string, now: number = Date.now()): void {
     if (!this.get(id)) throw new NotificationsError('not_found', `endpoint ${id} not found`);
-    this.setEndpointSecretStmt.run(encryptSecret(secret), now, id);
+    this.setEndpointSecretStmt.run(encryptSecret(secret, this.getCipher), now, id);
   }
 
   deleteSecret(id: string): void {
@@ -859,14 +861,14 @@ class SqliteNotificationsStore implements NotificationsStore {
     }
 
     if (secretEnc === null) return { kind, headerName, prefix, secret: null };
-    const kek = getKek();
-    if (kek === null) {
+    const cipher = this.getCipher();
+    if (cipher === null) {
       throw new NotificationsError(
         'no_kek',
         'no encryption key is active; cannot verify inbound signatures',
       );
     }
-    return { kind, headerName, prefix, secret: decryptField(secretEnc, kek) };
+    return { kind, headerName, prefix, secret: cipher.decrypt(secretEnc) };
   }
 
   // ── Deliveries ──
@@ -1132,6 +1134,9 @@ function rowToPending(row: PendingDbRow): PendingRecord {
   };
 }
 
-export function createSqliteNotificationsStore(db: DatabaseSyncInstance): NotificationsStore {
-  return new SqliteNotificationsStore(db);
+export function createSqliteNotificationsStore(
+  db: SqlDriver,
+  getCipher: GetFieldCipher,
+): NotificationsStore {
+  return new SqliteNotificationsStore(db, getCipher);
 }

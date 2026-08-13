@@ -37,9 +37,8 @@ import type {
   ToolSourceConfig,
   ToolSourceKind,
 } from 'csuite-sdk/types';
-import type { DatabaseSyncInstance, StatementInstance } from '../db.js';
-import { decryptField, encryptField } from '../kek.js';
-import { getKek } from '../members.js';
+import type { GetFieldCipher } from '../field-crypto.js';
+import type { SqlDriver, SqlStatement } from '../sql-driver.js';
 import { validateBinding } from './template.js';
 
 export class ToolSourcesError extends Error {
@@ -251,45 +250,48 @@ export interface ToolSourceStore {
 }
 
 class SqliteToolSourceStore implements ToolSourceStore {
-  private readonly db: DatabaseSyncInstance;
+  private readonly db: SqlDriver;
 
-  private readonly beginStmt: StatementInstance;
-  private readonly commitStmt: StatementInstance;
-  private readonly rollbackStmt: StatementInstance;
+  private readonly beginStmt: SqlStatement;
+  private readonly commitStmt: SqlStatement;
+  private readonly rollbackStmt: SqlStatement;
 
-  private readonly insertSourceStmt: StatementInstance;
-  private readonly updateSourceStmt: StatementInstance;
-  private readonly deleteSourceStmt: StatementInstance;
-  private readonly selectByIdStmt: StatementInstance;
-  private readonly selectBySlugStmt: StatementInstance;
-  private readonly selectAllStmt: StatementInstance;
-  private readonly selectForMemberStmt: StatementInstance;
+  private readonly insertSourceStmt: SqlStatement;
+  private readonly updateSourceStmt: SqlStatement;
+  private readonly deleteSourceStmt: SqlStatement;
+  private readonly selectByIdStmt: SqlStatement;
+  private readonly selectBySlugStmt: SqlStatement;
+  private readonly selectAllStmt: SqlStatement;
+  private readonly selectForMemberStmt: SqlStatement;
 
-  private readonly insertBindingStmt: StatementInstance;
-  private readonly deleteBindingStmt: StatementInstance;
-  private readonly deleteBindingsStmt: StatementInstance;
-  private readonly selectBindingStmt: StatementInstance;
-  private readonly selectBindingsStmt: StatementInstance;
+  private readonly insertBindingStmt: SqlStatement;
+  private readonly deleteBindingStmt: SqlStatement;
+  private readonly deleteBindingsStmt: SqlStatement;
+  private readonly selectBindingStmt: SqlStatement;
+  private readonly selectBindingsStmt: SqlStatement;
 
-  private readonly upsertCredentialStmt: StatementInstance;
-  private readonly selectCredentialStmt: StatementInstance;
-  private readonly deleteCredentialStmt: StatementInstance;
-  private readonly deleteCredentialsStmt: StatementInstance;
+  private readonly upsertCredentialStmt: SqlStatement;
+  private readonly selectCredentialStmt: SqlStatement;
+  private readonly deleteCredentialStmt: SqlStatement;
+  private readonly deleteCredentialsStmt: SqlStatement;
 
-  private readonly upsertCustomToolStmt: StatementInstance;
-  private readonly deleteCustomToolStmt: StatementInstance;
-  private readonly deleteCustomToolsStmt: StatementInstance;
-  private readonly selectCustomToolsStmt: StatementInstance;
-  private readonly selectCustomToolStmt: StatementInstance;
-  private readonly countCustomToolsStmt: StatementInstance;
+  private readonly upsertCustomToolStmt: SqlStatement;
+  private readonly deleteCustomToolStmt: SqlStatement;
+  private readonly deleteCustomToolsStmt: SqlStatement;
+  private readonly selectCustomToolsStmt: SqlStatement;
+  private readonly selectCustomToolStmt: SqlStatement;
+  private readonly countCustomToolsStmt: SqlStatement;
 
-  private readonly insertMcpToolStmt: StatementInstance;
-  private readonly deleteMcpToolsStmt: StatementInstance;
-  private readonly selectMcpToolsStmt: StatementInstance;
-  private readonly selectMcpToolStmt: StatementInstance;
-  private readonly countMcpToolsStmt: StatementInstance;
+  private readonly insertMcpToolStmt: SqlStatement;
+  private readonly deleteMcpToolsStmt: SqlStatement;
+  private readonly selectMcpToolsStmt: SqlStatement;
+  private readonly selectMcpToolStmt: SqlStatement;
+  private readonly countMcpToolsStmt: SqlStatement;
 
-  constructor(db: DatabaseSyncInstance) {
+  constructor(
+    db: SqlDriver,
+    private readonly getCipher: GetFieldCipher,
+  ) {
     this.db = db;
     this.db.exec(CREATE_SCHEMA);
 
@@ -571,15 +573,15 @@ class SqliteToolSourceStore implements ToolSourceStore {
     if (input.kind === 'header' && !input.headerName) {
       throw new ToolSourcesError('invalid_input', 'headerName is required when kind=header');
     }
-    const kek = getKek();
-    if (kek === null) {
+    const cipher = this.getCipher();
+    if (cipher === null) {
       // Fail closed — never store a third-party secret in plaintext.
       throw new ToolSourcesError(
         'no_kek',
         'no encryption key is active; cannot store a credential',
       );
     }
-    const encrypted = encryptField(input.secret, kek);
+    const encrypted = cipher.encrypt(input.secret);
     if (encrypted === null) {
       throw new ToolSourcesError('invalid_input', 'secret is required');
     }
@@ -597,13 +599,13 @@ class SqliteToolSourceStore implements ToolSourceStore {
   getCredential(sourceId: string): DecryptedCredential | null {
     const row = this.selectCredentialStmt.get(sourceId) as CredentialRow | undefined;
     if (!row) return null;
-    const kek = getKek();
-    if (kek === null) {
+    const cipher = this.getCipher();
+    if (cipher === null) {
       throw new ToolSourcesError('no_kek', 'no encryption key is active; cannot read credential');
     }
     // decryptField throws EncryptedFieldError on KEK mismatch — let
     // it propagate; the app layer maps it to a 500 without detail.
-    const secret = decryptField(row.secret_enc, kek);
+    const secret = cipher.decrypt(row.secret_enc);
     if (secret === null) return null;
     return {
       kind: row.kind === 'header' ? 'header' : 'bearer',
@@ -809,6 +811,9 @@ function parseJsonObject(json: string): Record<string, unknown> {
   return {};
 }
 
-export function createSqliteToolSourceStore(db: DatabaseSyncInstance): ToolSourceStore {
-  return new SqliteToolSourceStore(db);
+export function createSqliteToolSourceStore(
+  db: SqlDriver,
+  getCipher: GetFieldCipher,
+): ToolSourceStore {
+  return new SqliteToolSourceStore(db, getCipher);
 }

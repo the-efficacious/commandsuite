@@ -32,7 +32,14 @@
  */
 
 import type { Broker, Logger } from 'csuite-core';
-import { type ChannelStore, GENERAL_CHANNEL_ID } from 'csuite-core';
+import {
+  type ChannelStore,
+  type DeliveryRecord,
+  GENERAL_CHANNEL_ID,
+  NotificationsError,
+  type NotificationsStore,
+  type PendingRecord,
+} from 'csuite-core';
 import type {
   ActivityState,
   LogLevel,
@@ -49,12 +56,6 @@ import {
   parsePayload,
   renderTemplate,
 } from './render.js';
-import {
-  type DeliveryRecord,
-  NotificationsError,
-  type NotificationsStore,
-  type PendingRecord,
-} from './store.js';
 import { verifyInbound } from './verify.js';
 
 /** Per-endpoint ingress rate limit (sliding window). */

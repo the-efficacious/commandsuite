@@ -21,7 +21,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { dirname, join } from 'node:path';
 import { parseArgs } from 'node:util';
-import { logger, SqliteTokenStore, type TokenStore } from 'csuite-core';
+import { logger, openTeamAndMembers, SqliteTokenStore, type TokenStore } from 'csuite-core';
 import { DEFAULT_PORT, ENV } from 'csuite-sdk/protocol';
 import type { Team } from 'csuite-sdk/types';
 import { type DatabaseSyncInstance, openDatabase } from './db.js';
@@ -44,7 +44,6 @@ import {
   type ServerConfig,
   writeServerConfigFile,
 } from './server-config.js';
-import { openTeamAndMembers } from './team-store.js';
 import { createTtyWizardIO, runFirstRunWizard, type WizardResult } from './wizard.js';
 
 const USAGE = `csuite-server

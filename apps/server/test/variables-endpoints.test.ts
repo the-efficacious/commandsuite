@@ -17,8 +17,11 @@
 import {
   Broker,
   clearRegisteredSecretValues,
+  createSqliteSecretsStore,
+  createSqliteVariablesStore,
   createTokenStoreFromMembers,
   InMemoryEventLog,
+  migrateIdentityToVariables,
   REDACTED,
   redactSecrets,
   SqliteSessionStore,
@@ -27,10 +30,8 @@ import type { VariableSummary } from 'csuite-sdk/types';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
-import { testKek } from '../src/kek.js';
-import { createMemberStore, setKek } from '../src/members.js';
-import { createSqliteSecretsStore } from '../src/secrets.js';
-import { createSqliteVariablesStore, migrateIdentityToVariables } from '../src/variables.js';
+import { kekFieldCipher, testKek } from '../src/kek.js';
+import { createMemberStore, getKek, setKek } from '../src/members.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const ADMIN = 'csuite_test_admin_variable';
@@ -64,7 +65,7 @@ async function makeApp() {
   const db = openDatabase(':memory:');
   const sessions = new SqliteSessionStore(db);
   const tokens = await createTokenStoreFromMembers(db, members);
-  const secrets = createSqliteSecretsStore(db);
+  const secrets = createSqliteSecretsStore(db, () => kekFieldCipher(getKek()));
   const variables = createSqliteVariablesStore(db);
   const { app } = createApp({
     broker,
@@ -247,7 +248,13 @@ describe('identity migration', () => {
     const { db, secrets, variables } = await makeApp();
     identitySeed(secrets);
 
-    const result = migrateIdentityToVariables(db, secrets, variables, noopLog);
+    const result = migrateIdentityToVariables(
+      db,
+      () => kekFieldCipher(getKek()),
+      secrets,
+      variables,
+      noopLog,
+    );
 
     expect(result.migrated).toEqual(['turner-git-author-name']);
     expect(secrets.getBySlug('turner-git-author-name')).toBeNull();
@@ -262,8 +269,14 @@ describe('identity migration', () => {
   it('is idempotent — a second run moves nothing and breaks nothing', async () => {
     const { db, secrets, variables } = await makeApp();
     identitySeed(secrets);
-    migrateIdentityToVariables(db, secrets, variables, noopLog);
-    const second = migrateIdentityToVariables(db, secrets, variables, noopLog);
+    migrateIdentityToVariables(db, () => kekFieldCipher(getKek()), secrets, variables, noopLog);
+    const second = migrateIdentityToVariables(
+      db,
+      () => kekFieldCipher(getKek()),
+      secrets,
+      variables,
+      noopLog,
+    );
     expect(second.migrated).toEqual([]);
     expect(second.noop).toBe(true);
     const moved = variables.getBySlug('turner-git-author-name');
@@ -277,7 +290,7 @@ describe('identity migration', () => {
     secrets.setValue(gh.id, 'ghp_realsecret');
     secrets.bind(gh.id, 'bound');
 
-    migrateIdentityToVariables(db, secrets, variables, noopLog);
+    migrateIdentityToVariables(db, () => kekFieldCipher(getKek()), secrets, variables, noopLog);
 
     expect(secrets.getBySlug('gh')).not.toBeNull();
     expect(variables.getBySlug('gh')).toBeNull();
@@ -301,7 +314,13 @@ describe('identity migration', () => {
     secrets.setValue(s.id, 'Nobody');
     expect(secrets.allDecryptedValues()).toContain('Nobody');
 
-    const result = migrateIdentityToVariables(db, secrets, variables, noopLog);
+    const result = migrateIdentityToVariables(
+      db,
+      () => kekFieldCipher(getKek()),
+      secrets,
+      variables,
+      noopLog,
+    );
 
     expect(result.migrated).toEqual(['orphan-git-author-name']);
     expect(secrets.allDecryptedValues()).not.toContain('Nobody');
@@ -321,7 +340,13 @@ describe('identity migration', () => {
       creator: 'admin',
     });
 
-    const result = migrateIdentityToVariables(db, secrets, variables, noopLog);
+    const result = migrateIdentityToVariables(
+      db,
+      () => kekFieldCipher(getKek()),
+      secrets,
+      variables,
+      noopLog,
+    );
 
     expect(result.migrated).toEqual([]);
     expect(result.skipped).toEqual([
@@ -375,6 +400,7 @@ describe('identity migration', () => {
 
     const result = migrateIdentityToVariables(
       failing as unknown as typeof db,
+      () => kekFieldCipher(getKek()),
       secrets,
       variables,
       noopLog,
@@ -402,7 +428,7 @@ describe('identity migration', () => {
     identitySeed(secrets);
     expect(secrets.allDecryptedValues()).toContain('Turner');
 
-    migrateIdentityToVariables(db, secrets, variables, noopLog);
+    migrateIdentityToVariables(db, () => kekFieldCipher(getKek()), secrets, variables, noopLog);
 
     expect(secrets.allDecryptedValues()).not.toContain('Turner');
   });

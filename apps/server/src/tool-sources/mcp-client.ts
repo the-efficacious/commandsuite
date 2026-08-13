@@ -36,11 +36,11 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
+import type { McpCachedTool } from 'csuite-core';
 import type { ToolSource } from 'csuite-sdk/types';
 import { TOOL_RESULT_MAX_BYTES, type ToolCallResult } from './custom-executor.js';
 import type { McpClientManagerOptions, McpToolManager } from './mcp-manager.js';
 import { McpUnavailableError } from './mcp-manager.js';
-import type { McpCachedTool } from './store.js';
 
 const IDLE_TTL_MS = 5 * 60_000;
 const CONNECT_TIMEOUT_MS = 15_000;

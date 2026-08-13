@@ -54,16 +54,15 @@
 
 import { isReservedEnvName } from 'csuite-sdk/schemas';
 import type { Secret } from 'csuite-sdk/types';
-import type { DatabaseSyncInstance, StatementInstance } from './db.js';
 import {
   ensureEnvNamespaceSchema,
   envRivalMessage,
   findEnvRivalAnyone,
   findEnvRivalForMember,
 } from './env-namespace.js';
-import { decryptField, encryptField } from './kek.js';
-import { getKek } from './members.js';
-import { validateSourceSlug } from './tool-sources/index.js';
+import type { GetFieldCipher } from './field-crypto.js';
+import type { SqlDriver, SqlStatement } from './sql-driver.js';
+import { validateSourceSlug } from './tool-sources/store.js';
 
 export class SecretsError extends Error {
   readonly code: 'not_found' | 'invalid_input' | 'slug_taken' | 'env_taken' | 'no_kek';
@@ -166,31 +165,34 @@ export interface SecretsStore {
 }
 
 class SqliteSecretsStore implements SecretsStore {
-  private readonly db: DatabaseSyncInstance;
+  private readonly db: SqlDriver;
 
-  private readonly beginStmt: StatementInstance;
-  private readonly commitStmt: StatementInstance;
-  private readonly rollbackStmt: StatementInstance;
+  private readonly beginStmt: SqlStatement;
+  private readonly commitStmt: SqlStatement;
+  private readonly rollbackStmt: SqlStatement;
 
-  private readonly insertSecretStmt: StatementInstance;
-  private readonly updateSecretStmt: StatementInstance;
-  private readonly deleteSecretStmt: StatementInstance;
-  private readonly selectByIdStmt: StatementInstance;
-  private readonly selectBySlugStmt: StatementInstance;
-  private readonly selectAllStmt: StatementInstance;
-  private readonly selectForMemberStmt: StatementInstance;
+  private readonly insertSecretStmt: SqlStatement;
+  private readonly updateSecretStmt: SqlStatement;
+  private readonly deleteSecretStmt: SqlStatement;
+  private readonly selectByIdStmt: SqlStatement;
+  private readonly selectBySlugStmt: SqlStatement;
+  private readonly selectAllStmt: SqlStatement;
+  private readonly selectForMemberStmt: SqlStatement;
 
-  private readonly insertBindingStmt: StatementInstance;
-  private readonly deleteBindingStmt: StatementInstance;
-  private readonly deleteBindingsStmt: StatementInstance;
-  private readonly selectBindingStmt: StatementInstance;
-  private readonly selectBindingsStmt: StatementInstance;
+  private readonly insertBindingStmt: SqlStatement;
+  private readonly deleteBindingStmt: SqlStatement;
+  private readonly deleteBindingsStmt: SqlStatement;
+  private readonly selectBindingStmt: SqlStatement;
+  private readonly selectBindingsStmt: SqlStatement;
 
-  private readonly upsertValueStmt: StatementInstance;
-  private readonly selectValueStmt: StatementInstance;
-  private readonly deleteValueStmt: StatementInstance;
+  private readonly upsertValueStmt: SqlStatement;
+  private readonly selectValueStmt: SqlStatement;
+  private readonly deleteValueStmt: SqlStatement;
 
-  constructor(db: DatabaseSyncInstance) {
+  constructor(
+    db: SqlDriver,
+    private readonly getCipher: GetFieldCipher,
+  ) {
     this.db = db;
     ensureEnvNamespaceSchema(db);
 
@@ -263,13 +265,13 @@ class SqliteSecretsStore implements SecretsStore {
     for (const secret of this.listForMember(memberName)) {
       const row = this.selectValueStmt.get(secret.id) as { value_enc: string } | undefined;
       if (!row) continue;
-      const kek = getKek();
-      if (kek === null) {
+      const cipher = this.getCipher();
+      if (cipher === null) {
         throw new SecretsError('no_kek', 'no encryption key is active; cannot resolve secrets');
       }
       // decryptField throws EncryptedFieldError on KEK mismatch — let
       // it propagate; the app layer maps it to a 500 without detail.
-      const value = decryptField(row.value_enc, kek);
+      const value = cipher.decrypt(row.value_enc);
       if (value === null) continue;
       env[secret.envName] = value;
     }
@@ -449,12 +451,12 @@ class SqliteSecretsStore implements SecretsStore {
     if (value.length > VALUE_MAX) {
       throw new SecretsError('invalid_input', `value too long (max ${VALUE_MAX})`);
     }
-    const kek = getKek();
-    if (kek === null) {
+    const cipher = this.getCipher();
+    if (cipher === null) {
       // Fail closed — never store a secret in plaintext.
       throw new SecretsError('no_kek', 'no encryption key is active; cannot store a secret value');
     }
-    const encrypted = encryptField(value, kek);
+    const encrypted = cipher.encrypt(value);
     if (encrypted === null) {
       throw new SecretsError('invalid_input', 'value is required');
     }
@@ -470,14 +472,14 @@ class SqliteSecretsStore implements SecretsStore {
   }
 
   allDecryptedValues(): string[] {
-    const kek = getKek();
-    if (kek === null) return [];
+    const cipher = this.getCipher();
+    if (cipher === null) return [];
     const values: string[] = [];
     for (const secret of this.list()) {
       const row = this.selectValueStmt.get(secret.id) as { value_enc: string } | undefined;
       if (!row) continue;
       try {
-        const value = decryptField(row.value_enc, kek);
+        const value = cipher.decrypt(row.value_enc);
         if (value !== null) values.push(value);
       } catch {
         /* KEK mismatch on one row must not block the rest */
@@ -501,6 +503,6 @@ function rowToSecret(row: SecretRow): Secret {
   };
 }
 
-export function createSqliteSecretsStore(db: DatabaseSyncInstance): SecretsStore {
-  return new SqliteSecretsStore(db);
+export function createSqliteSecretsStore(db: SqlDriver, getCipher: GetFieldCipher): SecretsStore {
+  return new SqliteSecretsStore(db, getCipher);
 }

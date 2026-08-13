@@ -1,4 +1,15 @@
 export {
+  createSqliteNotificationsStore,
+  DEFAULT_POLICY,
+  type DeliveryRecord,
+  HOOK_BODY_MAX,
+  NotificationsError,
+  type NotificationsStore,
+  type PendingRecord,
+  type ResolvedVerification,
+  toWireDelivery,
+} from 'csuite-core';
+export {
   createNotificationDispatcher,
   type IngestInput,
   type IngestResult,
@@ -15,17 +26,6 @@ export {
   parsePayload,
   renderTemplate,
 } from './render.js';
-export {
-  createSqliteNotificationsStore,
-  DEFAULT_POLICY,
-  type DeliveryRecord,
-  HOOK_BODY_MAX,
-  NotificationsError,
-  type NotificationsStore,
-  type PendingRecord,
-  type ResolvedVerification,
-  toWireDelivery,
-} from './store.js';
 export {
   DEFAULT_HEADER_SECRET_HEADER,
   DEFAULT_HMAC_HEADER,

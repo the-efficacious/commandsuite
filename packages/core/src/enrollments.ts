@@ -34,9 +34,10 @@
  * DatabaseSync handle; runServer passes the shared handle in.
  */
 
-import { createHash, randomBytes } from 'node:crypto';
-import type { DatabaseSyncInstance, StatementInstance } from './db.js';
-import { decryptField, ENCRYPTED_FIELD_PREFIX, encryptField } from './kek.js';
+import { ENCRYPTED_FIELD_PREFIX, type FieldCipher } from './field-crypto.js';
+import { sha256Hex } from './hashing.js';
+import { randomBase64Url } from './random-id.js';
+import type { SqlDriver, SqlStatement } from './sql-driver.js';
 
 /**
  * The KEK is just a 32-byte Buffer; aliasing it here keeps the
@@ -271,7 +272,8 @@ function generateUserCode(): string {
   const out = new Array<string>(USER_CODE_LEN);
   let written = 0;
   while (written < USER_CODE_LEN) {
-    const bytes = randomBytes(16);
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
     for (let i = 0; i < bytes.length && written < USER_CODE_LEN; i++) {
       const byte = bytes[i] as number;
       const idx = byte & 0b11111;
@@ -284,11 +286,11 @@ function generateUserCode(): string {
 }
 
 function generateDeviceCode(): string {
-  return `${DEVICE_CODE_PREFIX}${randomBytes(DEVICE_CODE_BYTES).toString('base64url')}`;
+  return `${DEVICE_CODE_PREFIX}${randomBase64Url(DEVICE_CODE_BYTES)}`;
 }
 
-function hashDeviceCode(deviceCode: string): string {
-  return createHash('sha256').update(deviceCode, 'utf8').digest('hex');
+function hashDeviceCode(deviceCode: string): Promise<string> {
+  return sha256Hex(deviceCode);
 }
 
 export interface EnrollmentStoreOptions {
@@ -300,27 +302,27 @@ export interface EnrollmentStoreOptions {
    * is then stored as-is. The migration path should ensure a KEK
    * exists before this store handles real traffic.
    */
-  kek?: Kek | null;
+  cipher?: FieldCipher | null;
 }
 
 export class EnrollmentStore {
-  private readonly db: DatabaseSyncInstance;
-  private readonly insertStmt: StatementInstance;
-  private readonly findByCodeStmt: StatementInstance;
-  private readonly findByDeviceHashStmt: StatementInstance;
-  private readonly approveStmt: StatementInstance;
-  private readonly rejectStmt: StatementInstance;
-  private readonly deleteByDeviceHashStmt: StatementInstance;
-  private readonly listPendingStmt: StatementInstance;
-  private readonly touchPollStmt: StatementInstance;
-  private readonly purgeStmt: StatementInstance;
+  private readonly db: SqlDriver;
+  private readonly insertStmt: SqlStatement;
+  private readonly findByCodeStmt: SqlStatement;
+  private readonly findByDeviceHashStmt: SqlStatement;
+  private readonly approveStmt: SqlStatement;
+  private readonly rejectStmt: SqlStatement;
+  private readonly deleteByDeviceHashStmt: SqlStatement;
+  private readonly listPendingStmt: SqlStatement;
+  private readonly touchPollStmt: SqlStatement;
+  private readonly purgeStmt: SqlStatement;
   private readonly now: () => number;
-  private readonly kek: Kek | null;
+  private readonly cipher: FieldCipher | null;
 
-  constructor(db: DatabaseSyncInstance, options: EnrollmentStoreOptions = {}) {
+  constructor(db: SqlDriver, options: EnrollmentStoreOptions = {}) {
     this.db = db;
     this.now = options.now ?? Date.now;
-    this.kek = options.kek ?? null;
+    this.cipher = options.cipher ?? null;
     this.db.exec(CREATE_SCHEMA);
     this.insertStmt = this.db.prepare(
       `INSERT INTO pending_enrollments
@@ -373,7 +375,7 @@ export class EnrollmentStore {
    * practice, but the retry path keeps boot-time test failures from
    * flaking on absurdly unlucky seed values).
    */
-  mint(input: MintInput): MintResult {
+  async mint(input: MintInput): Promise<MintResult> {
     const createdAt = this.now();
     const expiresAt = createdAt + ENROLLMENT_TTL_MS;
     const labelHint = (input.labelHint ?? '').slice(0, 64);
@@ -381,7 +383,7 @@ export class EnrollmentStore {
     for (let attempt = 0; attempt < 5; attempt++) {
       const deviceCode = generateDeviceCode();
       const userCode = generateUserCode();
-      const deviceCodeHash = hashDeviceCode(deviceCode);
+      const deviceCodeHash = await hashDeviceCode(deviceCode);
       try {
         this.insertStmt.run(
           deviceCodeHash,
@@ -443,8 +445,8 @@ export class EnrollmentStore {
    * clearer error).
    */
   approve(input: ApproveInput): boolean {
-    const ct = this.kek
-      ? (encryptField(input.issuedTokenPlaintext, this.kek) ?? input.issuedTokenPlaintext)
+    const ct = this.cipher
+      ? (this.cipher.encrypt(input.issuedTokenPlaintext) ?? input.issuedTokenPlaintext)
       : input.issuedTokenPlaintext;
     const result = this.approveStmt.run(
       input.approvedBy,
@@ -477,8 +479,8 @@ export class EnrollmentStore {
    * CLI is supposed to back off by `interval += 5` seconds on this
    * response.
    */
-  pollByDeviceCode(deviceCode: string): PollOutcome {
-    const hash = hashDeviceCode(deviceCode);
+  async pollByDeviceCode(deviceCode: string): Promise<PollOutcome> {
+    const hash = await hashDeviceCode(deviceCode);
     const raw = this.findByDeviceHashStmt.get(hash) as RawRow | undefined;
     if (!raw) return { kind: 'expired_token' };
     const row = rawToRow(raw);
@@ -502,7 +504,7 @@ export class EnrollmentStore {
         return { kind: 'expired_token' };
       }
       const plaintext =
-        this.kek && ct.startsWith(ENCRYPTED_FIELD_PREFIX) ? decryptField(ct, this.kek) : ct;
+        this.cipher && ct.startsWith(ENCRYPTED_FIELD_PREFIX) ? this.cipher.decrypt(ct) : ct;
       if (plaintext === null) {
         this.deleteByDeviceHashStmt.run(hash);
         return { kind: 'expired_token' };

@@ -30,7 +30,7 @@
  * to remember, and it would be remembered wrong.
  */
 
-import type { DatabaseSyncInstance } from './db.js';
+import type { SqlDriver } from './sql-driver.js';
 
 /**
  * Schema for both halves of the namespace. Idempotent, and created by
@@ -125,14 +125,14 @@ const ENV_NAMESPACE_SCHEMA = `
   );
 `;
 
-let ensured: WeakSet<DatabaseSyncInstance> | null = null;
+let ensured: WeakSet<SqlDriver> | null = null;
 
 /**
  * Create both halves of the namespace if absent. Safe to call from
  * every store constructor; the statements are all `IF NOT EXISTS` and
  * the per-handle guard keeps repeat construction cheap.
  */
-export function ensureEnvNamespaceSchema(db: DatabaseSyncInstance): void {
+export function ensureEnvNamespaceSchema(db: SqlDriver): void {
   if (ensured === null) ensured = new WeakSet();
   if (ensured.has(db)) return;
   db.exec(ENV_NAMESPACE_SCHEMA);
@@ -157,7 +157,7 @@ export interface EnvRival {
  * happens to share its id.
  */
 export function findEnvRivalForMember(
-  db: DatabaseSyncInstance,
+  db: SqlDriver,
   envName: string,
   excludeKind: EnvRivalKind,
   excludeId: string,
@@ -192,7 +192,7 @@ export function findEnvRivalForMember(
  * rival collides by definition.
  */
 export function findEnvRivalAnyone(
-  db: DatabaseSyncInstance,
+  db: SqlDriver,
   envName: string,
   excludeKind: EnvRivalKind,
   excludeId: string,

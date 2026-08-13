@@ -68,6 +68,31 @@ export {
 } from './diagnostics.js';
 export { parseDurationMs } from './duration.js';
 export {
+  type ApproveInput,
+  DEFAULT_POLL_INTERVAL_S,
+  ENROLLMENT_TTL_MS,
+  type EnrollmentRow,
+  type EnrollmentStatus,
+  EnrollmentStore,
+  type EnrollmentStoreOptions,
+  formatUserCode,
+  type Kek,
+  type LookupOutcome,
+  type MintInput,
+  type MintResult,
+  normalizeUserCode,
+  type PollOutcome,
+  type RejectInput,
+} from './enrollments.js';
+export {
+  type EnvRival,
+  type EnvRivalKind,
+  ensureEnvNamespaceSchema,
+  envRivalMessage,
+  findEnvRivalAnyone,
+  findEnvRivalForMember,
+} from './env-namespace.js';
+export {
   CHANNEL_THREAD_PREFIX,
   channelThreadTag,
   clampQueryLimit,
@@ -86,6 +111,8 @@ export {
   ENCRYPTED_FIELD_PREFIX,
   EncryptedFieldError,
   encryptFieldPortable,
+  type FieldCipher,
+  type GetFieldCipher,
 } from './field-crypto.js';
 export {
   createGenAiStore,
@@ -119,6 +146,20 @@ export {
   validateTotpSecret,
 } from './members-domain.js';
 export {
+  type CreateEndpointInput,
+  createSqliteNotificationsStore,
+  DEFAULT_POLICY,
+  type DeliveryRecord,
+  HOOK_BODY_MAX,
+  type InsertDeliveryInput,
+  NotificationsError,
+  type NotificationsStore,
+  type PendingRecord,
+  type ResolvedVerification,
+  toWireDelivery,
+  type UpdateEndpointInput,
+} from './notifications/store.js';
+export {
   createSqliteObjectivesStore,
   ObjectivesError,
   type ObjectivesMutationResult,
@@ -146,6 +187,12 @@ export {
   type Subscriber,
 } from './registry.js';
 export {
+  createSqliteSecretsStore,
+  SecretsError,
+  type SecretsStore,
+  validateEnvName,
+} from './secrets.js';
+export {
   InMemorySessionStore,
   type InMemorySessionStoreOptions,
   SESSION_COOKIE_NAME,
@@ -168,6 +215,11 @@ export {
   type TokenSeedMemberSource,
 } from './sqlite-token-store.js';
 export {
+  createSqliteMemberStore,
+  openTeamAndMembers,
+  TeamStore,
+} from './team-store.js';
+export {
   createTelemetryStore,
   type TelemetryQuery,
   type TelemetryRecord,
@@ -184,6 +236,27 @@ export {
   TOKEN_HASH_PREFIX,
   type TokenStore,
 } from './token-store.js';
+export {
+  createSqliteToolSourceStore,
+  type DecryptedCredential,
+  type McpCachedTool,
+  type ToolSourceStore,
+  ToolSourcesError,
+  validateSourceSlug,
+} from './tool-sources/store.js';
+export {
+  BindingValidationError,
+  type CustomToolBinding,
+  DEFAULT_TIMEOUT_MS,
+  type ExpandedRequest,
+  expandBinding,
+  MAX_TIMEOUT_MS,
+  MIN_TIMEOUT_MS,
+  staticOriginOf,
+  TemplateError,
+  validateBinding,
+  walkResultPath,
+} from './tool-sources/template.js';
 // Pure trace parsers — relocated here from the cli so both the cli
 // native-capture adapters and the server can import them without the
 // server depending on packages/cli. No `node:` imports; safe to run
@@ -225,5 +298,12 @@ export {
   parseTranscriptLine,
   type TranscriptEntry,
 } from './trace/transcript.js';
-
+export {
+  createSqliteVariablesStore,
+  IDENTITY_ENV_NAMES,
+  type IdentityMigrationResult,
+  migrateIdentityToVariables,
+  type VariablesStore,
+  validateVariableSlug,
+} from './variables.js';
 export { CORE_VERSION } from './version.js';

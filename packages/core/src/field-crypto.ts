@@ -120,3 +120,19 @@ export async function decryptFieldPortable(
     );
   }
 }
+
+/**
+ * Synchronous field cipher a store receives from its host. The stores
+ * read/write the `enc-v1:` wrapper through this seam so the choice of
+ * key management — and of sync primitive — stays with the binding.
+ * A host returns null from its getter when no key is active; stores
+ * surface that per their own error vocabulary (or pass values through
+ * unchanged where plaintext-at-rest is the documented degraded mode).
+ */
+export interface FieldCipher {
+  encrypt(plaintext: string | null | undefined): string | null;
+  decrypt(value: string | null | undefined): string | null;
+}
+
+/** A cipher getter — read per operation so late key installation is seen. */
+export type GetFieldCipher = () => FieldCipher | null;

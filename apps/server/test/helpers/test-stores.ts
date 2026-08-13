@@ -5,12 +5,11 @@
  * enough to fit in a test setup function.
  */
 
-import { SqliteTokenStore, type TokenStore } from 'csuite-core';
+import type { TeamStore } from 'csuite-core';
+import { openTeamAndMembers, SqliteTokenStore, type TokenStore } from 'csuite-core';
 import type { Permission, PermissionPresets, Role, Team } from 'csuite-sdk/types';
 import { type DatabaseSyncInstance, openDatabase } from '../../src/db.js';
 import type { MemberStore } from '../../src/members.js';
-import type { TeamStore } from '../../src/team-store.js';
-import { openTeamAndMembers } from '../../src/team-store.js';
 
 /**
  * Lightweight `TeamStore` stand-in for tests that exercise `createApp`

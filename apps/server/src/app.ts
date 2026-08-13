@@ -35,7 +35,9 @@ import type {
   GenAiStore,
   Logger,
   PushSubscriptionStore,
+  TeamStore,
   TelemetryStore,
+  VariablesStore,
 } from 'csuite-core';
 import {
   type Broker,
@@ -43,8 +45,11 @@ import {
   ChannelsError,
   clampQueryLimit,
   containsRegisteredSecretValue,
+  type EnrollmentStore,
+  formatUserCode,
   GENERAL_CHANNEL_ID,
   generateBearerToken,
+  normalizeUserCode,
   ObjectivesError,
   type ObjectivesStore,
   openaiResponsesToGenAi,
@@ -55,6 +60,8 @@ import {
   registerSecretValues,
   SESSION_COOKIE_NAME,
   SESSION_TTL_MS,
+  SecretsError,
+  type SecretsStore,
   type SessionStore,
   type TokenStore,
   validateSlug,
@@ -151,7 +158,6 @@ import {
   createActivityTracker,
 } from './activity-tracker.js';
 import { type AuthBindings, createAuthMiddleware } from './auth.js';
-import { type EnrollmentStore, formatUserCode, normalizeUserCode } from './enrollments.js';
 import {
   basenameOf,
   type FilesystemStore,
@@ -190,8 +196,6 @@ import {
 } from './notifications/index.js';
 import { parseOtlpLogs, parseOtlpMetrics } from './otlp-parse.js';
 import type { RawBodyStore } from './raw-body-store.js';
-import { SecretsError, type SecretsStore } from './secrets.js';
-import type { TeamStore } from './team-store.js';
 import {
   executeCustomTool,
   type McpToolManager,
@@ -200,7 +204,6 @@ import {
   ToolSourcesError,
 } from './tool-sources/index.js';
 import { generateSecret, otpauthUri, verifyCode as verifyTotpCode } from './totp.js';
-import type { VariablesStore } from './variables.js';
 
 export interface AppOptions {
   broker: Broker;
@@ -5436,7 +5439,7 @@ export function createApp(options: AppOptions): CreatedApp {
         c.req.header('User-Agent') ?? null,
         SOURCE_UA_MAX,
       );
-      const minted = enrollmentsStore.mint({
+      const minted = await enrollmentsStore.mint({
         sourceIp,
         sourceUa,
         ...(parsed.data.labelHint !== undefined ? { labelHint: parsed.data.labelHint } : {}),
@@ -5463,7 +5466,7 @@ export function createApp(options: AppOptions): CreatedApp {
       if (!parsed.success) {
         return c.json({ error: 'invalid poll payload', details: parsed.error.issues }, 400);
       }
-      const outcome = enrollmentsStore.pollByDeviceCode(parsed.data.deviceCode);
+      const outcome = await enrollmentsStore.pollByDeviceCode(parsed.data.deviceCode);
       switch (outcome.kind) {
         case 'authorization_pending':
           return c.json({ error: 'authorization_pending' as const }, 400);
