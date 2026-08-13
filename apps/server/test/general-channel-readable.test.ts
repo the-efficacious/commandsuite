@@ -47,11 +47,10 @@
  * quietly changing meaning.
  */
 
-import { Broker, InMemoryEventLog } from 'csuite-core';
+import { Broker, createSqliteChannelStore, InMemoryEventLog } from 'csuite-core';
 import type { Team } from 'csuite-sdk/types';
 import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
-import { createSqliteChannelStore } from '../src/channels.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
 import { SessionStore } from '../src/sessions.js';

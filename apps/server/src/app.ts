@@ -28,14 +28,23 @@ import { existsSync } from 'node:fs';
 import { Readable } from 'node:stream';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { createNodeWebSocket } from '@hono/node-ws';
+import type { CaptureHealthStore } from 'csuite-core';
 import {
   type Broker,
+  type ChannelStore,
+  ChannelsError,
   clampQueryLimit,
   containsRegisteredSecretValue,
+  GENERAL_CHANNEL_ID,
+  ObjectivesError,
+  type ObjectivesStore,
   openaiResponsesToGenAi,
+  ProcessDocumentError,
+  type ProcessDocumentStore,
   redactJson,
   redactSecrets,
   registerSecretValues,
+  validateSlug,
 } from 'csuite-core';
 import {
   PATHS,
@@ -129,8 +138,6 @@ import {
   createActivityTracker,
 } from './activity-tracker.js';
 import { type AuthBindings, createAuthMiddleware } from './auth.js';
-import type { CaptureHealthStore } from './capture-health.js';
-import { type ChannelStore, ChannelsError, GENERAL_CHANNEL_ID, validateSlug } from './channels.js';
 import type { DiagnosticStore } from './diagnostics.js';
 import { type EnrollmentStore, formatUserCode, normalizeUserCode } from './enrollments.js';
 import {
@@ -172,9 +179,7 @@ import {
   type NotificationsStore,
   toWireDelivery,
 } from './notifications/index.js';
-import { ObjectivesError, type ObjectivesStore } from './objectives.js';
 import { parseOtlpLogs, parseOtlpMetrics } from './otlp-parse.js';
-import { ProcessDocumentError, type ProcessDocumentStore } from './process-document.js';
 import type { PushSubscriptionStore } from './push/store.js';
 import type { RawBodyStore } from './raw-body-store.js';
 import { SecretsError, type SecretsStore } from './secrets.js';

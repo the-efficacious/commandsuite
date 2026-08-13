@@ -61,7 +61,7 @@ import type {
   ProcessDocument,
   ProcessDocumentEdit,
 } from 'csuite-sdk/types';
-import type { DatabaseSyncInstance, StatementInstance } from './db.js';
+import type { SqlDriver, SqlStatement } from './sql-driver.js';
 
 export class ProcessDocumentError extends Error {
   readonly code: 'not_found' | 'invalid_input' | 'corrupt_history';
@@ -163,11 +163,11 @@ export interface ProcessDocumentStore {
 }
 
 class SqliteProcessDocumentStore implements ProcessDocumentStore {
-  private readonly db: DatabaseSyncInstance;
-  private readonly selectStmt: StatementInstance;
-  private readonly selectHistoryStmt: StatementInstance;
+  private readonly db: SqlDriver;
+  private readonly selectStmt: SqlStatement;
+  private readonly selectHistoryStmt: SqlStatement;
 
-  constructor(db: DatabaseSyncInstance) {
+  constructor(db: SqlDriver) {
     this.db = db;
     db.exec(CREATE_SCHEMA);
     this.selectStmt = db.prepare('SELECT * FROM process_document WHERE id = 1');
@@ -408,6 +408,6 @@ function parseColumn<T>(raw: string, version: number, column: string): T {
   }
 }
 
-export function createSqliteProcessDocumentStore(db: DatabaseSyncInstance): ProcessDocumentStore {
+export function createSqliteProcessDocumentStore(db: SqlDriver): ProcessDocumentStore {
   return new SqliteProcessDocumentStore(db);
 }

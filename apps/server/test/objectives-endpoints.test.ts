@@ -13,7 +13,7 @@
  * and the audit-log surfacing through `GET /objectives/:id`.
  */
 
-import { Broker, InMemoryEventLog } from 'csuite-core';
+import { Broker, createSqliteObjectivesStore, InMemoryEventLog } from 'csuite-core';
 import type {
   GetObjectiveResponse,
   ListObjectivesResponse,
@@ -24,7 +24,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
-import { createSqliteObjectivesStore } from '../src/objectives.js';
 import { SessionStore } from '../src/sessions.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';

@@ -13,12 +13,12 @@
  * here in the first place.
  */
 
+import type { CaptureHealth, CaptureHealthStore } from 'csuite-core';
 import { Broker, InMemoryEventLog } from 'csuite-core';
 import type { RosterResponse, Team } from 'csuite-sdk/types';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { createApp } from '../src/app.js';
-import type { CaptureHealth, CaptureHealthStore } from '../src/capture-health.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
 import { SessionStore } from '../src/sessions.js';

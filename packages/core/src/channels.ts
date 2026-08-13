@@ -39,9 +39,8 @@
  * already async — no value in faking promise returns here.
  */
 
-import type { DatabaseSyncInstance, StatementInstance } from './db.js';
-
-export const GENERAL_CHANNEL_ID = 'general';
+import { GENERAL_CHANNEL_ID } from './event-log.js';
+import type { SqlDriver, SqlStatement } from './sql-driver.js';
 export const GENERAL_CHANNEL_SLUG = 'general';
 const SYSTEM_ACTOR = '__system__';
 
@@ -187,21 +186,21 @@ export interface ChannelStore {
 }
 
 class SqliteChannelStore implements ChannelStore {
-  private readonly db: DatabaseSyncInstance;
-  private readonly insertChannelStmt: StatementInstance;
-  private readonly updateSlugStmt: StatementInstance;
-  private readonly archiveStmt: StatementInstance;
-  private readonly selectByIdStmt: StatementInstance;
-  private readonly selectBySlugStmt: StatementInstance;
-  private readonly selectAllActiveStmt: StatementInstance;
-  private readonly selectForMemberStmt: StatementInstance;
+  private readonly db: SqlDriver;
+  private readonly insertChannelStmt: SqlStatement;
+  private readonly updateSlugStmt: SqlStatement;
+  private readonly archiveStmt: SqlStatement;
+  private readonly selectByIdStmt: SqlStatement;
+  private readonly selectBySlugStmt: SqlStatement;
+  private readonly selectAllActiveStmt: SqlStatement;
+  private readonly selectForMemberStmt: SqlStatement;
 
-  private readonly insertMemberStmt: StatementInstance;
-  private readonly deleteMemberStmt: StatementInstance;
-  private readonly selectMembersStmt: StatementInstance;
-  private readonly selectMemberStmt: StatementInstance;
+  private readonly insertMemberStmt: SqlStatement;
+  private readonly deleteMemberStmt: SqlStatement;
+  private readonly selectMembersStmt: SqlStatement;
+  private readonly selectMemberStmt: SqlStatement;
 
-  constructor(db: DatabaseSyncInstance) {
+  constructor(db: SqlDriver) {
     this.db = db;
     this.db.exec(CREATE_SCHEMA);
 
@@ -429,7 +428,7 @@ function rowToMember(row: MemberRow): ChannelMember {
   };
 }
 
-export function createSqliteChannelStore(db: DatabaseSyncInstance): ChannelStore {
+export function createSqliteChannelStore(db: SqlDriver): ChannelStore {
   return new SqliteChannelStore(db);
 }
 

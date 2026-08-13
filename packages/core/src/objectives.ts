@@ -48,7 +48,7 @@ import type {
   UpdateObjectiveRequest,
   UpdateWatchersRequest,
 } from 'csuite-sdk/types';
-import type { DatabaseSyncInstance, StatementInstance } from './db.js';
+import type { SqlDriver, SqlStatement } from './sql-driver.js';
 
 const CREATE_SCHEMA = `
   CREATE TABLE IF NOT EXISTS objectives (
@@ -282,20 +282,20 @@ export interface ObjectivesStore {
 }
 
 class SqliteObjectivesStore implements ObjectivesStore {
-  private readonly db: DatabaseSyncInstance;
-  private readonly listAllStmt: StatementInstance;
-  private readonly listByAssigneeStmt: StatementInstance;
-  private readonly listByStatusStmt: StatementInstance;
-  private readonly listByAssigneeAndStatusStmt: StatementInstance;
-  private readonly getStmt: StatementInstance;
-  private readonly insertStmt: StatementInstance;
-  private readonly updateRowStmt: StatementInstance;
-  private readonly updateWatchersStmt: StatementInstance;
-  private readonly updateAttachmentsStmt: StatementInstance;
-  private readonly insertEventStmt: StatementInstance;
-  private readonly listEventsStmt: StatementInstance;
+  private readonly db: SqlDriver;
+  private readonly listAllStmt: SqlStatement;
+  private readonly listByAssigneeStmt: SqlStatement;
+  private readonly listByStatusStmt: SqlStatement;
+  private readonly listByAssigneeAndStatusStmt: SqlStatement;
+  private readonly getStmt: SqlStatement;
+  private readonly insertStmt: SqlStatement;
+  private readonly updateRowStmt: SqlStatement;
+  private readonly updateWatchersStmt: SqlStatement;
+  private readonly updateAttachmentsStmt: SqlStatement;
+  private readonly insertEventStmt: SqlStatement;
+  private readonly listEventsStmt: SqlStatement;
 
-  constructor(db: DatabaseSyncInstance) {
+  constructor(db: SqlDriver) {
     this.db = db;
     this.db.exec(CREATE_SCHEMA);
     // Best-effort schema migrations for databases that predate the
@@ -835,7 +835,7 @@ class SqliteObjectivesStore implements ObjectivesStore {
   }
 }
 
-export function createSqliteObjectivesStore(db: DatabaseSyncInstance): ObjectivesStore {
+export function createSqliteObjectivesStore(db: SqlDriver): ObjectivesStore {
   return new SqliteObjectivesStore(db);
 }
 

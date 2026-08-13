@@ -8,9 +8,9 @@
  * behaviour, and the input-normalization rules.
  */
 
+import { createSqliteObjectivesStore, ObjectivesError } from 'csuite-core';
 import { describe, expect, it } from 'vitest';
 import { openDatabase } from '../src/db.js';
-import { createSqliteObjectivesStore, ObjectivesError } from '../src/objectives.js';
 
 function newStore() {
   return createSqliteObjectivesStore(openDatabase(':memory:'));

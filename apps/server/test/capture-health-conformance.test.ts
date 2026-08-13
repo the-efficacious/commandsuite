@@ -29,8 +29,8 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createCaptureHealthStore } from 'csuite-core';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createCaptureHealthStore } from '../src/capture-health.js';
 import { openDatabase } from '../src/db.js';
 
 const CORPUS_PATH = join(

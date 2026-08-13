@@ -8,11 +8,10 @@
  */
 
 import { createHmac } from 'node:crypto';
-import { Broker, InMemoryEventLog } from 'csuite-core';
+import { Broker, createSqliteChannelStore, InMemoryEventLog } from 'csuite-core';
 import type { Message, NotificationEndpoint } from 'csuite-sdk/types';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
-import { createSqliteChannelStore } from '../src/channels.js';
 import { openDatabase } from '../src/db.js';
 import { testKek } from '../src/kek.js';
 import { createMemberStore, setKek } from '../src/members.js';

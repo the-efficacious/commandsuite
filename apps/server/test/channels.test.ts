@@ -1,7 +1,6 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
 import {
   type ChannelStore,
   ChannelsError,
@@ -9,7 +8,8 @@ import {
   GENERAL_CHANNEL_ID,
   GENERAL_CHANNEL_SLUG,
   validateSlug,
-} from '../src/channels.js';
+} from 'csuite-core';
+import { afterEach, describe, expect, it } from 'vitest';
 import { type DatabaseSyncInstance, openDatabase } from '../src/db.js';
 
 describe('ChannelStore', () => {

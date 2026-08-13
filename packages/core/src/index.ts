@@ -24,6 +24,23 @@ export {
   type RegistrationResult,
 } from './broker.js';
 export {
+  CAPTURE_GRACE_MS,
+  type CaptureHealth,
+  type CaptureHealthOptions,
+  type CaptureHealthStore,
+  createCaptureHealthStore,
+} from './capture-health.js';
+export {
+  type Channel,
+  type ChannelMember,
+  type ChannelMemberRole,
+  type ChannelStore,
+  ChannelsError,
+  createSqliteChannelStore,
+  GENERAL_CHANNEL_SLUG,
+  validateSlug,
+} from './channels.js';
+export {
   CHANNEL_THREAD_PREFIX,
   channelThreadTag,
   clampQueryLimit,
@@ -37,6 +54,19 @@ export {
   MAX_QUERY_LIMIT,
   SECRET_THREAD_PREFIX,
 } from './event-log.js';
+export {
+  createSqliteObjectivesStore,
+  ObjectivesError,
+  type ObjectivesMutationResult,
+  type ObjectivesStore,
+} from './objectives.js';
+export {
+  assertDocumentInvariants,
+  createSqliteProcessDocumentStore,
+  type EditableFields,
+  ProcessDocumentError,
+  type ProcessDocumentStore,
+} from './process-document.js';
 export {
   InMemoryPushSubscriptionStore,
   type InMemoryPushSubscriptionStoreOptions,
@@ -58,11 +88,11 @@ export {
   type SessionRow,
   type SessionStore,
 } from './session-store.js';
-export {
-  type SqlDriver,
-  type SqlRunResult,
-  type SqlStatement,
-  type SqlValue,
+export type {
+  SqlDriver,
+  SqlRunResult,
+  SqlStatement,
+  SqlValue,
 } from './sql-driver.js';
 export { SqliteEventLog } from './sqlite-event-log.js';
 // Pure trace parsers — relocated here from the cli so both the cli

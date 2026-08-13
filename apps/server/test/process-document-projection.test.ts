@@ -20,6 +20,7 @@
 import {
   Broker,
   clearRegisteredSecretValues,
+  createSqliteProcessDocumentStore,
   InMemoryEventLog,
   registerSecretValues,
 } from 'csuite-core';
@@ -34,7 +35,6 @@ import {
   instructionCaptureExemptions,
 } from '../src/instructions.js';
 import { createMemberStore } from '../src/members.js';
-import { createSqliteProcessDocumentStore } from '../src/process-document.js';
 import { createRawBodyStore } from '../src/raw-body-store.js';
 import { SessionStore } from '../src/sessions.js';
 import { createTelemetryStore } from '../src/telemetry-store.js';

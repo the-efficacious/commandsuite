@@ -22,14 +22,13 @@
 
 import { createServer as createHttpServer, type IncomingMessage, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { Broker, InMemoryEventLog } from 'csuite-core';
+import { Broker, createSqliteObjectivesStore, InMemoryEventLog } from 'csuite-core';
 import type { Message, Team } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import { composeSessionOnlineMessage, createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
-import { createSqliteObjectivesStore } from '../src/objectives.js';
 import { type RunningServer, runServer } from '../src/run.js';
 import { SessionStore } from '../src/sessions.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';

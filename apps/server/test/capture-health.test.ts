@@ -26,8 +26,8 @@
  * normally produce, like a purged blob — is the point.
  */
 
+import { createCaptureHealthStore } from 'csuite-core';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createCaptureHealthStore } from '../src/capture-health.js';
 import { openDatabase } from '../src/db.js';
 
 const NOW = 1_800_000_000_000;

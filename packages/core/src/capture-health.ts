@@ -61,7 +61,7 @@
  * verify availability behind an already-matched gen_ai row.
  */
 
-import type { DatabaseSyncInstance, StatementInstance } from './db.js';
+import type { SqlDriver, SqlStatement } from './sql-driver.js';
 
 /** Marker age below which an unmatched marker is not yet evidence. */
 export const CAPTURE_GRACE_MS = 15_000;
@@ -206,16 +206,16 @@ export interface CaptureHealthStore {
 }
 
 export function createCaptureHealthStore(
-  db: DatabaseSyncInstance,
+  db: SqlDriver,
   options: CaptureHealthOptions = {},
 ): CaptureHealthStore {
   const now = options.now ?? (() => Date.now());
   const graceMs = options.graceMs ?? CAPTURE_GRACE_MS;
 
-  const sessionStmt: StatementInstance = db.prepare(SESSION_START_SQL);
-  const unmatchedStmt: StatementInstance = db.prepare(UNMATCHED_SQL);
-  const pendingStmt: StatementInstance = db.prepare(PENDING_UNMATCHED_SQL);
-  const censusStmt: StatementInstance = db.prepare(CENSUS_SQL);
+  const sessionStmt: SqlStatement = db.prepare(SESSION_START_SQL);
+  const unmatchedStmt: SqlStatement = db.prepare(UNMATCHED_SQL);
+  const pendingStmt: SqlStatement = db.prepare(PENDING_UNMATCHED_SQL);
+  const censusStmt: SqlStatement = db.prepare(CENSUS_SQL);
 
   return {
     forMember(name: string): CaptureHealth {

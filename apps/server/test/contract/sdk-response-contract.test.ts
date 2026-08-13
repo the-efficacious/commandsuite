@@ -93,7 +93,12 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Broker, InMemoryEventLog } from 'csuite-core';
+import {
+  Broker,
+  createSqliteChannelStore,
+  createSqliteObjectivesStore,
+  InMemoryEventLog,
+} from 'csuite-core';
 import {
   FsEntryResponseSchema,
   FsListResponseSchema,
@@ -108,11 +113,9 @@ import {
 import type { Objective, Team } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../../src/app.js';
-import { createSqliteChannelStore } from '../../src/channels.js';
 import { openDatabase } from '../../src/db.js';
 import { createSqliteFilesystemStore, LocalBlobStore } from '../../src/files/index.js';
 import { createMemberStore } from '../../src/members.js';
-import { createSqliteObjectivesStore } from '../../src/objectives.js';
 import { SessionStore } from '../../src/sessions.js';
 import { createTokenStoreFromMembers } from '../../src/tokens.js';
 import { mockTeamStore } from '../helpers/test-stores.js';

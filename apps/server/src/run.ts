@@ -23,10 +23,16 @@ import { createServer as createHttpServer, type Server as HttpServer } from 'nod
 import { dirname, resolve as pathResolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { serve } from '@hono/node-server';
-import { Broker, registerSecretValues, SqliteEventLog } from 'csuite-core';
+import {
+  Broker,
+  createCaptureHealthStore,
+  createSqliteChannelStore,
+  createSqliteObjectivesStore,
+  createSqliteProcessDocumentStore,
+  registerSecretValues,
+  SqliteEventLog,
+} from 'csuite-core';
 import { createApp } from './app.js';
-import { createCaptureHealthStore } from './capture-health.js';
-import { createSqliteChannelStore } from './channels.js';
 import { type DatabaseSyncInstance, openDatabase } from './db.js';
 import { createDiagnosticStore } from './diagnostics.js';
 import { EnrollmentStore } from './enrollments.js';
@@ -52,8 +58,6 @@ import {
   type WebPushConfig,
 } from './members.js';
 import { createSqliteNotificationsStore } from './notifications/index.js';
-import { createSqliteObjectivesStore } from './objectives.js';
-import { createSqliteProcessDocumentStore } from './process-document.js';
 import { dispatchPush } from './push/dispatch.js';
 import { PushSubscriptionStore } from './push/store.js';
 import { configureVapid, generateVapidKeys } from './push/vapid.js';
@@ -68,6 +72,11 @@ import { createMcpClientManager, createSqliteToolSourceStore } from './tool-sour
 import { createSqliteVariablesStore, migrateIdentityToVariables } from './variables.js';
 import { SERVER_VERSION } from './version.js';
 
+export {
+  createSqliteObjectivesStore,
+  ObjectivesError,
+  type ObjectivesStore,
+} from 'csuite-core';
 export { type DatabaseSyncInstance, openDatabase } from './db.js';
 export {
   DEFAULT_POLL_INTERVAL_S,
@@ -138,11 +147,6 @@ export {
   NotificationsError,
   type NotificationsStore,
 } from './notifications/index.js';
-export {
-  createSqliteObjectivesStore,
-  ObjectivesError,
-  type ObjectivesStore,
-} from './objectives.js';
 export {
   type AppendBodyInput,
   type AppendBodyResult,
