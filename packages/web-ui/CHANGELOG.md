@@ -1,5 +1,154 @@
 # csuite-web-ui
 
+## 0.6.0
+
+### Minor Changes
+
+- [#185](https://github.com/the-efficacious/commandsuite/pull/185) [`c9e4a85`](https://github.com/the-efficacious/commandsuite/commit/c9e4a85707581d4325a24a17d4fbd880ea88136d) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - One objective permission and one mutation surface. `objectives.manage`
+  replaces the four-way `objectives.create` / `.cancel` / `.reassign` /
+  `.watch` split — no deployment ever granted those separately — and
+  existing configs and stored presets written under the old vocabulary
+  load unchanged through a legacy-alias map. `objectives_reassign` and
+  `objectives_watchers` fold into `objectives_update` (and their routes
+  into `PATCH /objectives/:id`, gated per field group): agents see seven
+  objective tools instead of nine. `blockReason` is now optional when
+  blocking — field data showed real blocks carried in prose because the
+  ceremony was heavier than the signal.
+
+- [#181](https://github.com/the-efficacious/commandsuite/pull/181) [`1dd4d23`](https://github.com/the-efficacious/commandsuite/commit/1dd4d23eb112f703d04ffcd985246145ded50f6b) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - Let the broker compact or clear a member's agent context without
+  restarting it, and report what actually happened.
+
+  The broker could already see a member's context drift — the context
+  watchdog distinguishes present from missing from stale — but every
+  mechanism it had was additive. It could make a context larger and
+  measure that it had gone wrong; it had no verb for making it smaller.
+  A degraded member had two remedies: the agent deciding to compact on
+  its own, or a full restart that drops the runner's MCP wiring and
+  takes the member off the net.
+
+  - **`POST /members/:name/context`** with `verb: 'compact' | 'clear'`,
+    delivered on the member stream the same way instruction edits are.
+    Neither verb ends the session: the broker subscription, the IPC
+    socket the MCP bridge reconnects to, the objectives tracker and the
+    capture host all outlive both.
+  - **`clear` re-uses the drain-and-restart path** — wait for the turn
+    to finish, detach ambient input so events buffer for the successor,
+    refetch instructions, respawn — and differs in exactly one input:
+    the successor does not resume. Adapters previously treated a null
+    session id as "resume the most recent session anyway", so respawn
+    now takes an explicit `RespawnPosture` and starting cold is no
+    longer expressible by accident.
+  - **`compact` is cooperative and says so.** The agent does the
+    summarising, so the request can be declined. Every request produces
+    exactly one `context_control` activity event: `applied`, `declined`
+    (with the framework's own reason, verbatim), `unsupported`, or
+    `failed`. A request that produces no outcome stays visibly
+    outstanding rather than aging into a success nobody observed.
+    Both runners implement both verbs — claude by injecting the slash
+    command and reading the compaction status, codex via
+    `thread/compact/start` acked by its `contextCompaction` item. Only
+    claude reports token deltas; codex's completion item carries no
+    accounting, so those are omitted rather than invented.
+  - **New `members.context` permission**, separate from
+    `members.manage`: interrupting a teammate's live work is a
+    different power from administering the roster. Controlling your own
+    context needs no permission at all.
+
+- [#179](https://github.com/the-efficacious/commandsuite/pull/179) [`69c250a`](https://github.com/the-efficacious/commandsuite/commit/69c250adae48a280c6cc5f1c029e003f3155b1c6) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - Give the web UI a runner-environment surface, so the identity rows that
+  moved out of the secrets store stop being invisible to humans.
+
+  Splitting variables from secrets fixed the trace-redaction defect and
+  left the web UI showing only half the runner environment: `SecretsPanel`
+  listed secrets, the migrated `GIT_AUTHOR_*` / `GIT_COMMITTER_*` rows
+  were reachable on the API, CLI and MCP surfaces, and an operator opening
+  the panel saw a shorter list with nothing to say where the rest went.
+
+  - **Secrets nav → Environment**, one panel over both stores. They share
+    one env-var namespace and the broker enforces it across both, so a
+    collision raised while editing a secret names a _variable_ — an error
+    a secrets-only panel could not display.
+  - Separate labelled sections rather than one merged list, because which
+    store a value lives in decides whether it is scrubbed from captured
+    traces. Creating an entry requires picking a kind, with no default,
+    and each choice states its trace consequence.
+  - A variable's value is shown; a secret's is still write-only. "Set but
+    not shown" renders differently from "not set", so a configured
+    variable can never read as missing.
+  - Every view lives under `/environment`, including the per-kind detail
+    routes (`/environment/secrets/:slug`, `/environment/variables/:slug`).
+    They stay per-kind because a slug is unique per store, not across the
+    pair. The prefix is not cosmetic: the broker registers its REST routes
+    before the SPA fallback, so the obvious `/secrets/:slug` is answered by
+    the API and returns 401 JSON on a reload or a shared link. That was
+    already true of the old secret detail route; it is fixed here.
+
+  Classification is carried by the design system's lamp signals rather
+  than by a badge — a secret reads `nominal` (contained), a variable reads
+  `caution` (recorded verbatim) — on the section heading, the create form's
+  kind choice, and the detail banner. Content is held to a readable
+  measure, and controls are sized to the data they hold rather than to the
+  window.
+
+  There is no convert action between the stores, and the secret detail
+  view says so: a secret's value is write-only, so a delete-and-recreate
+  needs the original value to hand.
+
+- [#185](https://github.com/the-efficacious/commandsuite/pull/185) [`c9e4a85`](https://github.com/the-efficacious/commandsuite/commit/c9e4a85707581d4325a24a17d4fbd880ea88136d) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - Remove the objective contract-versioning layer: `objectives_amend`,
+  `objectives_correct_event`, their routes and SDK methods, contract
+  version stamping, and the amendments record on the objective. Built in
+  response to a single run's incidents, never used since — and that run
+  itself served the same need with a reasoned cancel plus a fresh
+  objective, which is now the documented remedy. Old databases keep
+  reading cleanly: `amended` / `event_corrected` stay in the event-kind
+  schema as legacy read-only kinds, and `objectives_view` renders such
+  historical rows as ordinary log lines.
+
+### Patch Changes
+
+- [#186](https://github.com/the-efficacious/commandsuite/pull/186) [`42aeb5f`](https://github.com/the-efficacious/commandsuite/commit/42aeb5f73c8033e8245bd5f4dba6e94ef4e768ef) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - Redesign the objectives UI around how the work actually reads. The
+  list is now a grouped ledger: live work on top (blocked first, sorted
+  by last activity, with per-row age and unread-post badges), closed
+  work collapsed behind a disclosure, an All/Mine filter, and a header
+  that counts live work instead of the whole record. The detail page
+  drops its five tabs for one page: the outcome leads, and once the
+  objective is done it pairs side-by-side with the result — the result
+  card carrying the view's one gold assert bar. Lifecycle events and
+  discussion now merge into a single chronological thread with humanized
+  event lines instead of a raw JSON audit log. Actions are verbs in the
+  header: completing opens the result editor next to the outcome it
+  answers, blocking no longer demands a reason (matching the server),
+  and cancelling takes a second explicit press. Trace review stays
+  admin-only behind a disclosure. All three objective views now sit on
+  the same page measure as the rest of the product — the ledger at the
+  panel measure, the detail and create form at the record measure.
+
+- [#179](https://github.com/the-efficacious/commandsuite/pull/179) [`69c250a`](https://github.com/the-efficacious/commandsuite/commit/69c250adae48a280c6cc5f1c029e003f3155b1c6) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - Hold Home, Inbox, Members, Tools and Notifications to a readable
+  measure, so panel content stops stretching to the window on a wide
+  display.
+
+  The runner-environment views took a measure when they landed; every
+  other panel still ran edge to edge, which on a wide monitor left stat
+  tiles a third of a screen apart and help lines running past 1600px.
+
+  The constraint lands on the scroll container's children rather than on
+  a wrapper, because the scroller owns the scrollbar and the page
+  background. It is opt-in per panel — the nav rail uses the same
+  scroller and its items are meant to fill it.
+
+  Two widths, chosen by what the view is: an INDEX (1080px) earns its
+  width from rows that carry data to the right edge; a RECORD (780px) is
+  one entity's fields, where the widest control is a name. Tool-source
+  and notification detail take the record measure.
+
+  `MemberProfile` is deliberately excluded. Its header sits outside the
+  scroller and its tab content is a fit-content card, so centring the
+  children strands the card mid-window instead of aligning it to a
+  column. It needs a real wrapper element, which is a structural change
+  rather than this one.
+
+- Updated dependencies [[`c9e4a85`](https://github.com/the-efficacious/commandsuite/commit/c9e4a85707581d4325a24a17d4fbd880ea88136d), [`1dd4d23`](https://github.com/the-efficacious/commandsuite/commit/1dd4d23eb112f703d04ffcd985246145ded50f6b), [`c9e4a85`](https://github.com/the-efficacious/commandsuite/commit/c9e4a85707581d4325a24a17d4fbd880ea88136d)]:
+  - csuite-sdk@0.6.0
+
 ## 0.5.1
 
 ### Patch Changes

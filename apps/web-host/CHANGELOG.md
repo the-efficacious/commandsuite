@@ -1,5 +1,26 @@
 # csuite-web-host
 
+## 0.6.0
+
+### Minor Changes
+
+- [#185](https://github.com/the-efficacious/commandsuite/pull/185) [`c9e4a85`](https://github.com/the-efficacious/commandsuite/commit/c9e4a85707581d4325a24a17d4fbd880ea88136d) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - One objective permission and one mutation surface. `objectives.manage`
+  replaces the four-way `objectives.create` / `.cancel` / `.reassign` /
+  `.watch` split — no deployment ever granted those separately — and
+  existing configs and stored presets written under the old vocabulary
+  load unchanged through a legacy-alias map. `objectives_reassign` and
+  `objectives_watchers` fold into `objectives_update` (and their routes
+  into `PATCH /objectives/:id`, gated per field group): agents see seven
+  objective tools instead of nine. `blockReason` is now optional when
+  blocking — field data showed real blocks carried in prose because the
+  ceremony was heavier than the signal.
+
+### Patch Changes
+
+- Updated dependencies [[`c9e4a85`](https://github.com/the-efficacious/commandsuite/commit/c9e4a85707581d4325a24a17d4fbd880ea88136d), [`42aeb5f`](https://github.com/the-efficacious/commandsuite/commit/42aeb5f73c8033e8245bd5f4dba6e94ef4e768ef), [`1dd4d23`](https://github.com/the-efficacious/commandsuite/commit/1dd4d23eb112f703d04ffcd985246145ded50f6b), [`69c250a`](https://github.com/the-efficacious/commandsuite/commit/69c250adae48a280c6cc5f1c029e003f3155b1c6), [`c9e4a85`](https://github.com/the-efficacious/commandsuite/commit/c9e4a85707581d4325a24a17d4fbd880ea88136d), [`69c250a`](https://github.com/the-efficacious/commandsuite/commit/69c250adae48a280c6cc5f1c029e003f3155b1c6)]:
+  - csuite-sdk@0.6.0
+  - csuite-web-ui@0.6.0
+
 ## 0.5.1
 
 ### Patch Changes
