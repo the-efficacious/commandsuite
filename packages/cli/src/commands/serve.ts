@@ -194,8 +194,8 @@ async function runWizardOrFail(
         permissions: wizard.admin.permissions,
         totpSecret: wizard.admin.totpSecret,
       });
-      const tokens = new server.TokenStore(db);
-      tokens.insert({
+      const tokens = new server.SqliteTokenStore(db);
+      await tokens.insert({
         memberName: wizard.admin.name,
         rawToken: wizard.admin.token,
         label: 'wizard',

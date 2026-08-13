@@ -9,15 +9,19 @@
  *     200 success shape and actually persists rows.
  */
 
-import { Broker, InMemoryEventLog } from 'csuite-core';
+import {
+  Broker,
+  createApp,
+  createTelemetryStore,
+  createTokenStoreFromMembers,
+  InMemoryEventLog,
+  SqliteSessionStore,
+  type TelemetryRecord,
+} from 'csuite-core';
 import type { Team } from 'csuite-sdk/types';
 import { describe, expect, it, vi } from 'vitest';
-import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
-import { SessionStore } from '../src/sessions.js';
-import { createTelemetryStore, type TelemetryRecord } from '../src/telemetry-store.js';
-import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 function logRecord(
@@ -110,7 +114,7 @@ const TEAM: Team = {
 
 const TOKEN = 'csuite_test_telemetry';
 
-function makeApp() {
+async function makeApp() {
   const broker = new Broker({ eventLog: new InMemoryEventLog() });
   const members = createMemberStore([
     {
@@ -122,12 +126,12 @@ function makeApp() {
   ]);
   const db = openDatabase(':memory:');
   const telemetryStore = createTelemetryStore(db);
-  const tokens = createTokenStoreFromMembers(db, members);
+  const tokens = await createTokenStoreFromMembers(db, members);
   const { app } = createApp({
     broker,
     members,
     tokens,
-    sessions: new SessionStore(db),
+    sessions: new SqliteSessionStore(db),
     telemetryStore,
     teamStore: mockTeamStore(TEAM),
     version: '0.0.0',
@@ -161,7 +165,7 @@ const OTLP_LOGS_BODY = {
 
 describe('POST /otlp/v1/logs', () => {
   it('accepts a bearer-authed OTLP batch and stores rows', async () => {
-    const { app, telemetryStore } = makeApp();
+    const { app, telemetryStore } = await makeApp();
     const res = await app.request('/otlp/v1/logs', {
       method: 'POST',
       headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
@@ -176,7 +180,7 @@ describe('POST /otlp/v1/logs', () => {
   });
 
   it('accepts the OTEL Bearer%20 header form', async () => {
-    const { app, telemetryStore } = makeApp();
+    const { app, telemetryStore } = await makeApp();
     const res = await app.request('/otlp/v1/logs', {
       method: 'POST',
       headers: { Authorization: `Bearer%20${TOKEN}`, 'Content-Type': 'application/json' },
@@ -187,7 +191,7 @@ describe('POST /otlp/v1/logs', () => {
   });
 
   it('401s an unauthenticated post', async () => {
-    const { app, telemetryStore } = makeApp();
+    const { app, telemetryStore } = await makeApp();
     const res = await app.request('/otlp/v1/logs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

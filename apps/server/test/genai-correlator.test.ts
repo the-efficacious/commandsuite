@@ -21,12 +21,12 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { TelemetryRecord } from 'csuite-core';
+import { createDiagnosticStore } from 'csuite-core';
 import { afterAll, describe, expect, it } from 'vitest';
 import { openDatabase } from '../src/db.js';
-import { createDiagnosticStore } from '../src/diagnostics.js';
 import { createGenAiCorrelator, isGenAiLogRecord } from '../src/genai-correlator.js';
 import { createRawBodyStore, type RawBodyStore } from '../src/raw-body-store.js';
-import type { TelemetryRecord } from '../src/telemetry-store.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'genai-corr-'));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -421,8 +421,8 @@ describe('genai correlator raw capture', () => {
     });
 
     // The stored bytes are the exact wire bytes.
-    expect(rawStore.getBlob(sha256(reqBytes))?.equals(reqBytes)).toBe(true);
-    expect(rawStore.getBlob(sha256(resBytes))?.equals(resBytes)).toBe(true);
+    expect(Buffer.from(rawStore.getBlob(sha256(reqBytes)) ?? []).equals(reqBytes)).toBe(true);
+    expect(Buffer.from(rawStore.getBlob(sha256(resBytes)) ?? []).equals(resBytes)).toBe(true);
 
     // Spill files consumed — the broker deleting them IS the lifecycle.
     expect(existsSync(reqRef)).toBe(false);
@@ -494,7 +494,7 @@ describe('genai correlator raw capture', () => {
     // …but the raw bytes were captured BEFORE the parse, verbatim,
     // and the consumed file was still unlinked.
     expect(rawStore.count()).toBe(2);
-    expect(rawStore.getBlob(sha256(badBytes))?.equals(badBytes)).toBe(true);
+    expect(Buffer.from(rawStore.getBlob(sha256(badBytes)) ?? []).equals(badBytes)).toBe(true);
     expect(existsSync(badRef)).toBe(false);
     // The parse failure is a point fact about that body — recorded,
     // never latched as unresolved health.
@@ -612,7 +612,7 @@ describe('genai correlator raw capture', () => {
     expect(out).toHaveLength(1);
     const reqHash = sha256(Buffer.from(reqText, 'utf8'));
     expect(out[0]?.requestSha256).toBe(reqHash);
-    expect(rawStore.getBlob(reqHash)?.toString('utf8')).toBe(reqText);
+    expect(Buffer.from(rawStore.getBlob(reqHash) ?? []).toString('utf8')).toBe(reqText);
     expect(rawStore.stats()).toMatchObject({ blobs: 2, exchanges: 2 });
   });
 });

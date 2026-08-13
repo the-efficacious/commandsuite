@@ -9,14 +9,16 @@
  *     survive the round trip into a flat record.
  */
 
-import { clearRegisteredSecretValues, REDACTED, registerSecretValues } from 'csuite-core';
-import { afterEach, describe, expect, it } from 'vitest';
 import {
   anyValueToJs,
+  clearRegisteredSecretValues,
   flattenAttributes,
   parseOtlpLogs,
   parseOtlpMetrics,
-} from '../src/otlp-parse.js';
+  REDACTED,
+  registerSecretValues,
+} from 'csuite-core';
+import { afterEach, describe, expect, it } from 'vitest';
 
 const LOGS_PAYLOAD = {
   resourceLogs: [

@@ -8,17 +8,20 @@
  */
 
 import { createHmac } from 'node:crypto';
-import { Broker, InMemoryEventLog } from 'csuite-core';
+import {
+  Broker,
+  createApp,
+  createSqliteChannelStore,
+  createTokenStoreFromMembers,
+  InMemoryEventLog,
+  SqliteSessionStore,
+} from 'csuite-core';
 import type { Message, NotificationEndpoint } from 'csuite-sdk/types';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createApp } from '../src/app.js';
-import { createSqliteChannelStore } from '../src/channels.js';
 import { openDatabase } from '../src/db.js';
-import { testKek } from '../src/kek.js';
-import { createMemberStore, setKek } from '../src/members.js';
+import { kekFieldCipher, testKek } from '../src/kek.js';
+import { createMemberStore, getKek, setKek } from '../src/members.js';
 import { createSqliteNotificationsStore } from '../src/notifications/index.js';
-import { SessionStore } from '../src/sessions.js';
-import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const ADMIN = 'csuite_test_admin_notif';
@@ -28,9 +31,9 @@ const SECRET = 'hook-signing-secret';
 
 const noopLog = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 
-function makeApp() {
+async function makeApp() {
   let clock = 1_700_000_000_000;
-  const advance = (ms: number) => {
+  const advance = async (ms: number) => {
     clock += ms;
   };
   const now = () => clock;
@@ -62,9 +65,9 @@ function makeApp() {
   ]);
   broker.seedMembers(members.members());
   const db = openDatabase(':memory:');
-  const sessions = new SessionStore(db);
-  const tokens = createTokenStoreFromMembers(db, members);
-  const notifications = createSqliteNotificationsStore(db);
+  const sessions = new SqliteSessionStore(db);
+  const tokens = await createTokenStoreFromMembers(db, members);
+  const notifications = createSqliteNotificationsStore(db, () => kekFieldCipher(getKek()));
   const channels = createSqliteChannelStore(db);
   const created = createApp({
     broker,
@@ -128,7 +131,7 @@ afterAll(() => {
   setKek(null);
 });
 
-type Ctx = ReturnType<typeof makeApp>;
+type Ctx = Awaited<ReturnType<typeof makeApp>>;
 
 async function createEndpoint(
   ctx: Ctx,
@@ -155,7 +158,7 @@ async function createEndpoint(
 
 describe('registry CRUD + gating', () => {
   it('create requires notifications.manage; slug conflicts 409', async () => {
-    const ctx = makeApp();
+    const ctx = await makeApp();
     const denied = await ctx.app.request(
       '/notifications/endpoints',
       authed(BUILDER, { slug: 'x', targets: [{ member: 'builder' }] }),
@@ -171,7 +174,7 @@ describe('registry CRUD + gating', () => {
   });
 
   it('rejects unknown members, unknown channels, unknown profiles', async () => {
-    const ctx = makeApp();
+    const ctx = await makeApp();
     const badMember = await ctx.app.request(
       '/notifications/endpoints',
       authed(ADMIN, { slug: 'a', targets: [{ member: 'ghost' }] }),
@@ -190,7 +193,7 @@ describe('registry CRUD + gating', () => {
   });
 
   it('non-manage members see only endpoints targeting them', async () => {
-    const ctx = makeApp();
+    const ctx = await makeApp();
     await createEndpoint(ctx);
     const asBuilder = await ctx.app.request('/notifications/endpoints', authed(BUILDER));
     const builderList = (await asBuilder.json()) as { endpoints: NotificationEndpoint[] };
@@ -208,7 +211,7 @@ describe('registry CRUD + gating', () => {
   });
 
   it('profiles: shared auth, in-use delete guard, rotation point', async () => {
-    const ctx = makeApp();
+    const ctx = await makeApp();
     const profile = await ctx.app.request(
       '/notifications/profiles',
       authed(ADMIN, { slug: 'gh-org', auth: { kind: 'hmac-sha256' } }),
@@ -245,13 +248,13 @@ describe('registry CRUD + gating', () => {
 
 describe('ingress verification', () => {
   it('404 unknown slug, 409 disabled, 413 oversized', async () => {
-    const ctx = makeApp();
+    const ctx = await makeApp();
     expect((await ctx.app.request('/hooks/ghost', hookPost('{}'))).status).toBe(404);
 
     await createEndpoint(ctx, { enabled: false });
     expect((await ctx.app.request('/hooks/ci-alerts', hookPost('{}'))).status).toBe(409);
 
-    const ctx2 = makeApp();
+    const ctx2 = await makeApp();
     await createEndpoint(ctx2);
     const huge = 'x'.repeat(256 * 1024 + 1);
     expect(
@@ -265,7 +268,7 @@ describe('ingress verification', () => {
   });
 
   it('fails closed without a secret and rejects bad signatures — with receipts', async () => {
-    const ctx = makeApp();
+    const ctx = await makeApp();
     const resp = await ctx.app.request(
       '/notifications/endpoints',
       authed(ADMIN, { slug: 'no-secret', targets: [{ member: 'builder' }] }),
@@ -295,12 +298,12 @@ describe('ingress verification', () => {
   });
 
   it('delivers a verified request as a wrapped DM with hook:<slug> provenance', async () => {
-    const ctx = makeApp();
+    const ctx = await makeApp();
     await createEndpoint(ctx, {
       template: 'CI {{payload.state}} on {{payload.branch}}',
       level: 'warning',
     });
-    const { messages } = capture(ctx.broker, 'builder');
+    const { messages } = await capture(ctx.broker, 'builder');
     const body = '{"state":"failed","branch":"main"}';
     const accepted = await ctx.app.request(
       '/hooks/ci-alerts',
@@ -322,9 +325,9 @@ describe('ingress verification', () => {
   });
 
   it('dedupes provider retries on the configured header', async () => {
-    const ctx = makeApp();
+    const ctx = await makeApp();
     await createEndpoint(ctx, { dedupeHeader: 'x-github-delivery' });
-    const { messages } = capture(ctx.broker, 'builder');
+    const { messages } = await capture(ctx.broker, 'builder');
     const body = '{"n":1}';
     const post = () =>
       ctx.app.request(
@@ -340,11 +343,11 @@ describe('ingress verification', () => {
   });
 
   it('drop-filters non-matching payloads', async () => {
-    const ctx = makeApp();
+    const ctx = await makeApp();
     await createEndpoint(ctx, {
       filters: [{ path: 'branch', op: 'eq', value: 'main' }],
     });
-    const { messages } = capture(ctx.broker, 'builder');
+    const { messages } = await capture(ctx.broker, 'builder');
     const offBranch = '{"branch":"feature-x"}';
     const filtered = await ctx.app.request(
       '/hooks/ci-alerts',
@@ -355,7 +358,7 @@ describe('ingress verification', () => {
   });
 
   it('routes channel targets to channel members with a chan: thread tag', async () => {
-    const ctx = makeApp();
+    const ctx = await makeApp();
     const channel = ctx.channels.create({ slug: 'ops', creator: 'admin' });
     ctx.channels.addMember({ channelId: channel.id, memberName: 'builder' });
     const resp = await ctx.app.request(
@@ -372,8 +375,8 @@ describe('ingress verification', () => {
       authed(ADMIN, { secret: SECRET }, 'PUT'),
     );
 
-    const builder = capture(ctx.broker, 'builder');
-    const outsider = capture(ctx.broker, 'outsider');
+    const builder = await capture(ctx.broker, 'builder');
+    const outsider = await capture(ctx.broker, 'outsider');
     const body = '{"msg":"deploy done"}';
     const hookResp = await ctx.app.request(
       '/hooks/ops-feed',
@@ -386,7 +389,7 @@ describe('ingress verification', () => {
   });
 
   it('rejects malformed query overrides', async () => {
-    const ctx = makeApp();
+    const ctx = await makeApp();
     await createEndpoint(ctx);
     const body = '{}';
     const bad = await ctx.app.request(
@@ -399,7 +402,7 @@ describe('ingress verification', () => {
 
 describe('delivery policy', () => {
   it('offline + default policy drops with an honest receipt', async () => {
-    const ctx = makeApp();
+    const ctx = await makeApp();
     await createEndpoint(ctx);
     const body = '{"n":1}';
     const resp = await ctx.app.request(
@@ -411,7 +414,7 @@ describe('delivery policy', () => {
   });
 
   it('offline + queue holds until wake, then delivers with a staleness note', async () => {
-    const ctx = makeApp();
+    const ctx = await makeApp();
     await createEndpoint(ctx, { policy: { ifOffline: 'queue' } });
     const body1 = '{"n":1}';
     const body2 = '{"n":2}';
@@ -424,7 +427,7 @@ describe('delivery policy', () => {
     }
 
     ctx.advance(10 * 60_000); // 10 minutes offline
-    const { messages } = capture(ctx.broker, 'builder');
+    const { messages } = await capture(ctx.broker, 'builder');
     await ctx.dispatcher.onWake('builder');
 
     // One coalesced message per endpoint, not one per held delivery.
@@ -445,7 +448,7 @@ describe('delivery policy', () => {
   });
 
   it('queued deliveries expire past the TTL', async () => {
-    const ctx = makeApp();
+    const ctx = await makeApp();
     await createEndpoint(ctx, { policy: { ifOffline: 'queue', queueTtlMs: 60_000 } });
     const body = '{"n":1}';
     await ctx.app.request(
@@ -468,9 +471,9 @@ describe('delivery policy', () => {
   });
 
   it('busy + wait holds until idle; critical punches through', async () => {
-    const ctx = makeApp();
+    const ctx = await makeApp();
     await createEndpoint(ctx, { policy: { ifBusy: 'wait' } });
-    const { messages } = capture(ctx.broker, 'builder');
+    const { messages } = await capture(ctx.broker, 'builder');
 
     // Builder reports working (bearer → runner plane).
     const report = await ctx.app.request(
@@ -507,9 +510,9 @@ describe('delivery policy', () => {
   });
 
   it('starved busy-waits force-deliver after maxWaitMs', async () => {
-    const ctx = makeApp();
+    const ctx = await makeApp();
     await createEndpoint(ctx, { policy: { ifBusy: 'wait', maxWaitMs: 30_000 } });
-    const { messages } = capture(ctx.broker, 'builder');
+    const { messages } = await capture(ctx.broker, 'builder');
     await ctx.app.request('/presence/activity', authed(BUILDER, { state: 'working' }));
 
     const body = '{"n":1}';
@@ -525,10 +528,10 @@ describe('delivery policy', () => {
   });
 
   it('debounce coalesces a burst into one message', async () => {
-    const ctx = makeApp();
+    const ctx = await makeApp();
     // Window far beyond the test; debounceMax=3 forces the flush.
     await createEndpoint(ctx, { policy: { debounceMs: 60_000, debounceMax: 3 } });
-    const { messages } = capture(ctx.broker, 'builder');
+    const { messages } = await capture(ctx.broker, 'builder');
 
     for (const n of [1, 2, 3]) {
       const body = `{"n":${n}}`;
@@ -545,9 +548,9 @@ describe('delivery policy', () => {
   });
 
   it('replay re-runs a stored delivery through the pipeline', async () => {
-    const ctx = makeApp();
+    const ctx = await makeApp();
     await createEndpoint(ctx, { template: 'run {{payload.n}}' });
-    const { messages } = capture(ctx.broker, 'builder');
+    const { messages } = await capture(ctx.broker, 'builder');
     const body = '{"n":42}';
     const resp = await ctx.app.request(
       '/hooks/ci-alerts',
@@ -570,7 +573,7 @@ describe('delivery policy', () => {
   });
 
   it('rate-limits an endpoint flood without recording receipts', async () => {
-    const ctx = makeApp();
+    const ctx = await makeApp();
     await createEndpoint(ctx);
     const body = '{}';
     const headers = { 'X-Hub-Signature-256': sign(body) };

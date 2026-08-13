@@ -22,17 +22,23 @@
 
 import { createServer as createHttpServer, type IncomingMessage, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { Broker, InMemoryEventLog } from 'csuite-core';
+import { createNodeWebSocket } from '@hono/node-ws';
+import {
+  Broker,
+  composeSessionOnlineMessage,
+  createApp,
+  createSqliteObjectivesStore,
+  createTokenStoreFromMembers,
+  InMemoryEventLog,
+  SqliteSessionStore,
+} from 'csuite-core';
 import type { Message, Team } from 'csuite-sdk/types';
+import type { UpgradeWebSocket } from 'hono/ws';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
-import { composeSessionOnlineMessage, createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
-import { createSqliteObjectivesStore } from '../src/objectives.js';
 import { type RunningServer, runServer } from '../src/run.js';
-import { SessionStore } from '../src/sessions.js';
-import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore, seedStores } from './helpers/test-stores.js';
 
 // ─── unit: composeSessionOnlineMessage ──────────────────────────────
@@ -90,7 +96,7 @@ interface BootedServer {
 }
 
 async function bootServer(): Promise<BootedServer> {
-  const seeded = seedStores({
+  const seeded = await seedStores({
     team: TEAM,
     members: [
       {
@@ -211,7 +217,7 @@ describe('session-online gate — cookie subscriber receives nothing', () => {
 
   it('a cookie-auth WS subscribe yields no session-online push within 1s', async () => {
     // Build createApp with everything wired except objectives gating.
-    // Mint a session cookie directly via the SessionStore, then do a
+    // Mint a session cookie directly via the SqliteSessionStore, then do a
     // raw WS upgrade against the live HTTP server using that cookie.
     const broker = new Broker({ eventLog: new InMemoryEventLog() });
     const members = createMemberStore([
@@ -223,10 +229,16 @@ describe('session-online gate — cookie subscriber receives nothing', () => {
       },
     ]);
     const db = openDatabase(':memory:');
-    const sessions = new SessionStore(db);
-    const tokens = createTokenStoreFromMembers(db, members);
+    const sessions = new SqliteSessionStore(db);
+    const tokens = await createTokenStoreFromMembers(db, members);
     const objectives = createSqliteObjectivesStore(db);
-    const { app, injectWebSocket } = createApp({
+    let injectWebSocket!: ReturnType<typeof createNodeWebSocket>['injectWebSocket'];
+    const { app } = createApp({
+      webSocket: (a) => {
+        const ws = createNodeWebSocket({ app: a });
+        injectWebSocket = ws.injectWebSocket;
+        return { upgradeWebSocket: ws.upgradeWebSocket as unknown as UpgradeWebSocket };
+      },
       broker,
       members,
       tokens,
@@ -238,7 +250,7 @@ describe('session-online gate — cookie subscriber receives nothing', () => {
     });
 
     // Mint a session for alice without going through TOTP.
-    const session = sessions.create('alice', null);
+    const session = await sessions.create('alice', null);
 
     // Boot the app on a free port + inject the WS handler so the
     // upgrade fires on incoming WS requests.

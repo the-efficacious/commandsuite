@@ -21,12 +21,12 @@
 
 import { randomBytes } from 'node:crypto';
 import { createInterface } from 'node:readline/promises';
+import { generateSecret, otpauthUri, verifyCode } from 'csuite-core';
 import type { Permission, PermissionPresets, Role, Team } from 'csuite-sdk/types';
 import { PERMISSIONS } from 'csuite-sdk/types';
 // qrcode-terminal is CJS; default-import the namespace and destructure.
 import qrcodeTerminal from 'qrcode-terminal';
 import { MemberLoadError } from './members.js';
-import { generateSecret, otpauthUri, verifyCode } from './totp.js';
 
 const { generate: generateQrCode, setErrorLevel } = qrcodeTerminal;
 

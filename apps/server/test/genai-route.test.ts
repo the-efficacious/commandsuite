@@ -10,27 +10,28 @@ import { createHash } from 'node:crypto';
 import {
   Broker,
   clearRegisteredSecretValues,
+  createApp,
+  createDiagnosticStore,
+  createGenAiStore,
+  createTelemetryStore,
+  createTokenStoreFromMembers,
   InMemoryEventLog,
   REDACTED,
   registerSecretValues,
+  SqliteSessionStore,
 } from 'csuite-core';
 import type { Permission, Team } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
-import { createDiagnosticStore } from '../src/diagnostics.js';
-import { createGenAiStore } from '../src/genai-store.js';
+import { createGenAiCorrelator } from '../src/genai-correlator.js';
 import { createMemberStore } from '../src/members.js';
 import { createRawBodyStore } from '../src/raw-body-store.js';
-import { SessionStore } from '../src/sessions.js';
-import { createTelemetryStore } from '../src/telemetry-store.js';
-import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const TEAM: Team = { name: 'demo-team', context: '', permissionPresets: {} };
 const TOKEN = 'csuite_test_genai';
 
-function makeApp(team: Team = TEAM, permissions: Permission[] = []) {
+async function makeApp(team: Team = TEAM, permissions: Permission[] = []) {
   const broker = new Broker({ eventLog: new InMemoryEventLog() });
   const members = createMemberStore([
     {
@@ -46,12 +47,13 @@ function makeApp(team: Team = TEAM, permissions: Permission[] = []) {
   const rawBodyStore = createRawBodyStore(db, { logger });
   const telemetryStore = createTelemetryStore(db, { logger });
   const diagnostics = createDiagnosticStore(db);
-  const tokens = createTokenStoreFromMembers(db, members);
+  const tokens = await createTokenStoreFromMembers(db, members);
   const { app } = createApp({
+    createGenAiCorrelator,
     broker,
     members,
     tokens,
-    sessions: new SessionStore(db),
+    sessions: new SqliteSessionStore(db),
     genaiStore,
     rawBodyStore,
     telemetryStore,
@@ -69,7 +71,7 @@ describe('instruction write warnings', () => {
   it('warns and stores team context intact when it contains a registered value', async () => {
     const secret = 'registered-team-write';
     registerSecretValues([secret]);
-    const { app } = makeApp(TEAM, ['team.manage']);
+    const { app } = await makeApp(TEAM, ['team.manage']);
     const context = `Reference ${secret} by environment variable name.`;
     const res = await app.request('/team', {
       method: 'PATCH',
@@ -150,7 +152,7 @@ function otlpInlineClaudeCall(requestBody: unknown, responseBody: unknown) {
 }
 
 async function post(
-  app: ReturnType<typeof makeApp>['app'],
+  app: Awaited<ReturnType<typeof makeApp>>['app'],
   name: string,
   body: unknown,
   token = TOKEN,
@@ -164,7 +166,7 @@ async function post(
 
 describe('POST /members/:name/genai', () => {
   it('content-addresses raw bytes and stores a mapped GenAiInference', async () => {
-    const { app, genaiStore, rawBodyStore } = makeApp();
+    const { app, genaiStore, rawBodyStore } = await makeApp();
     const res = await post(app, 'engineer-1', { inferences: [inference()] });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ accepted: 1 });
@@ -173,9 +175,9 @@ describe('POST /members/:name/genai', () => {
     expect(rawBodyStore.count()).toBe(2);
     const reqExchange = rawBodyStore.list({ memberName: 'engineer-1', kind: 'request' })[0];
     expect(reqExchange).toBeDefined();
-    expect(rawBodyStore.getBlob(reqExchange?.hash ?? '')?.toString('base64')).toBe(
-      inference().requestBase64,
-    );
+    expect(
+      Buffer.from(rawBodyStore.getBlob(reqExchange?.hash ?? '') ?? []).toString('base64'),
+    ).toBe(inference().requestBase64);
 
     // Derived record: provider openai, linked to the raw bytes by sha256.
     expect(genaiStore.count()).toBe(1);
@@ -196,7 +198,7 @@ describe('POST /members/:name/genai', () => {
     const secret = 'registered-route-value';
     const context = `The exact team context contains ${secret}.`;
     registerSecretValues([secret]);
-    const { app, genaiStore, rawBodyStore } = makeApp({ ...TEAM, context });
+    const { app, genaiStore, rawBodyStore } = await makeApp({ ...TEAM, context });
 
     const briefingRes = await app.request('/instructions', {
       headers: { Authorization: `Bearer ${TOKEN}` },
@@ -222,7 +224,7 @@ describe('POST /members/:name/genai', () => {
     expect(JSON.stringify(stored?.inputMessages)).not.toContain(secret);
     const rawRequest = rawBodyStore.list({ memberName: 'engineer-1', kind: 'request' })[0];
     const rawBody = JSON.parse(
-      rawBodyStore.getBlob(rawRequest?.hash ?? '')?.toString('utf8') ?? '{}',
+      Buffer.from(rawBodyStore.getBlob(rawRequest?.hash ?? '') ?? []).toString('utf8') ?? '{}',
     );
     const rawSystem = String(rawBody.instructions ?? '');
     const sha = (text: string) => createHash('sha256').update(text).digest('hex');
@@ -238,7 +240,7 @@ describe('POST /members/:name/genai', () => {
   it('redacts a registered literal from both codex raw bodies before content-addressing', async () => {
     const secret = 'registered-codex-raw-value';
     registerSecretValues([secret]);
-    const { app, rawBodyStore } = makeApp();
+    const { app, rawBodyStore } = await makeApp();
     const item = inference();
     item.requestBase64 = b64({ input: [{ text: `request ${secret}` }] });
     item.responseBase64 = b64({ output_items: [{ text: `response ${secret}` }] });
@@ -249,7 +251,8 @@ describe('POST /members/:name/genai', () => {
 
     for (const kind of ['request', 'response'] as const) {
       const exchange = rawBodyStore.list({ memberName: 'engineer-1', kind })[0];
-      const stored = rawBodyStore.getBlob(exchange?.hash ?? '')?.toString('utf8') ?? '';
+      const stored =
+        Buffer.from(rawBodyStore.getBlob(exchange?.hash ?? '') ?? []).toString('utf8') ?? '';
       expect(stored, `${kind} raw body`).toContain(REDACTED);
       expect(stored, `${kind} raw body`).not.toContain(secret);
     }
@@ -258,7 +261,7 @@ describe('POST /members/:name/genai', () => {
   it('captures raw bytes even when a body is not valid JSON (model-only record)', async () => {
     const secret = 'registered-malformed-body';
     registerSecretValues([secret]);
-    const { app, genaiStore, rawBodyStore } = makeApp();
+    const { app, genaiStore, rawBodyStore } = await makeApp();
     const bad = {
       requestBase64: Buffer.from(`not json ${secret}`, 'utf8').toString('base64'),
       responseBase64: Buffer.from('also not json', 'utf8').toString('base64'),
@@ -271,7 +274,7 @@ describe('POST /members/:name/genai', () => {
     // Raw bytes landed; the derived record is model-only (no messages).
     expect(rawBodyStore.count()).toBe(2);
     const request = rawBodyStore.list({ memberName: 'engineer-1', kind: 'request' })[0];
-    expect(rawBodyStore.getBlob(request?.hash ?? '')?.toString('utf8')).toBe(
+    expect(Buffer.from(rawBodyStore.getBlob(request?.hash ?? '') ?? []).toString('utf8')).toBe(
       `not json ${REDACTED}`,
     );
     const [rec] = genaiStore.list({ memberName: 'engineer-1' });
@@ -280,14 +283,14 @@ describe('POST /members/:name/genai', () => {
   });
 
   it('403s an upload for another member', async () => {
-    const { app, genaiStore } = makeApp();
+    const { app, genaiStore } = await makeApp();
     const res = await post(app, 'someone-else', { inferences: [inference()] });
     expect(res.status).toBe(403);
     expect(genaiStore.count()).toBe(0);
   });
 
   it('401s an unauthenticated upload', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/members/engineer-1/genai', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -297,7 +300,7 @@ describe('POST /members/:name/genai', () => {
   });
 
   it('accepts an empty batch as a no-op', async () => {
-    const { app, genaiStore } = makeApp();
+    const { app, genaiStore } = await makeApp();
     const res = await post(app, 'engineer-1', { inferences: [] });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ accepted: 0 });
@@ -310,7 +313,7 @@ describe('POST /otlp/v1/logs runner-relay acknowledgement', () => {
     const secret = 'registered-claude-route';
     const context = secret;
     registerSecretValues([secret]);
-    const { app, genaiStore, rawBodyStore } = makeApp({ ...TEAM, context });
+    const { app, genaiStore, rawBodyStore } = await makeApp({ ...TEAM, context });
     const request = {
       model: 'claude-opus-4-6',
       // Deliberately do not call /packet first: this is the broker-restarted
@@ -345,7 +348,7 @@ describe('POST /otlp/v1/logs runner-relay acknowledgement', () => {
     expect(JSON.stringify(stored?.inputMessages)).not.toContain(secret);
     const rawRequest = rawBodyStore.list({ memberName: 'engineer-1', kind: 'request' })[0];
     const rawBody = JSON.parse(
-      rawBodyStore.getBlob(rawRequest?.hash ?? '')?.toString('utf8') ?? '{}',
+      Buffer.from(rawBodyStore.getBlob(rawRequest?.hash ?? '') ?? []).toString('utf8') ?? '{}',
     );
     expect(JSON.stringify(rawBody.messages)).toContain(`stdout: ${REDACTED}`);
     expect(JSON.stringify(rawBody.messages)).not.toContain(secret);
@@ -359,7 +362,7 @@ describe('POST /otlp/v1/logs runner-relay acknowledgement', () => {
   });
 
   it('acknowledges both byte-exact Claude bodies and preserves the derived record', async () => {
-    const { app, genaiStore, rawBodyStore } = makeApp();
+    const { app, genaiStore, rawBodyStore } = await makeApp();
     const request = {
       model: 'claude-opus-4-6',
       system: [{ type: 'text', text: 'Be exact.' }],
@@ -391,10 +394,10 @@ describe('POST /otlp/v1/logs runner-relay acknowledgement', () => {
     expect(rawBodyStore.count()).toBe(2);
     const requestRow = rawBodyStore.list({ memberName: 'engineer-1', kind: 'request' })[0];
     const responseRow = rawBodyStore.list({ memberName: 'engineer-1', kind: 'response' })[0];
-    expect(rawBodyStore.getBlob(requestRow?.hash ?? '')?.toString('utf8')).toBe(
+    expect(Buffer.from(rawBodyStore.getBlob(requestRow?.hash ?? '') ?? []).toString('utf8')).toBe(
       JSON.stringify(request),
     );
-    expect(rawBodyStore.getBlob(responseRow?.hash ?? '')?.toString('utf8')).toBe(
+    expect(Buffer.from(rawBodyStore.getBlob(responseRow?.hash ?? '') ?? []).toString('utf8')).toBe(
       JSON.stringify(response),
     );
     const [derived] = genaiStore.list({ memberName: 'engineer-1' });
@@ -414,7 +417,7 @@ describe('POST /otlp/v1/logs runner-relay acknowledgement', () => {
 const READER_TOKEN = 'csuite_test_genai_reader';
 const OUTSIDER_TOKEN = 'csuite_test_genai_outsider';
 
-function makeReadApp() {
+async function makeReadApp() {
   const broker = new Broker({ eventLog: new InMemoryEventLog() });
   const members = createMemberStore([
     {
@@ -439,12 +442,13 @@ function makeReadApp() {
   const db = openDatabase(':memory:');
   const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
   const genaiStore = createGenAiStore(db, { logger });
-  const tokens = createTokenStoreFromMembers(db, members);
-  const { app } = createApp({
+  const tokens = await createTokenStoreFromMembers(db, members);
+  const { app } = await createApp({
+    createGenAiCorrelator,
     broker,
     members,
     tokens,
-    sessions: new SessionStore(db),
+    sessions: new SqliteSessionStore(db),
     genaiStore,
     teamStore: mockTeamStore(TEAM),
     version: '0.0.0',
@@ -488,7 +492,7 @@ function authGet(token: string, path: string): Promise<Response> {
 }
 
 // One shared app across the GET tests — rows are additive per test.
-const makeReadAppSingleton = makeReadApp();
+const makeReadAppSingleton = await makeReadApp();
 
 describe('GET /members/:name/genai', () => {
   it('403s a member without activity.read reading another member', async () => {

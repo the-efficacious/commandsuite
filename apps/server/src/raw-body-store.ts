@@ -54,10 +54,30 @@
  */
 
 import { createHash } from 'node:crypto';
+import type {
+  AppendBodyInput,
+  AppendBodyResult,
+  RawBodyEnvelope,
+  RawBodyQuery,
+  RawBodyStats,
+  RawBodyStore,
+  RawExchangeRow,
+} from 'csuite-core';
+
+export type {
+  AppendBodyInput,
+  AppendBodyResult,
+  RawBodyEnvelope,
+  RawBodyQuery,
+  RawBodyStats,
+  RawBodyStore,
+  RawExchangeRow,
+};
+
 import { gunzipSync, gzipSync } from 'node:zlib';
+import type { DiagnosticEmitter } from 'csuite-core';
+import { logger as defaultLogger, type Logger } from 'csuite-core';
 import type { DatabaseSyncInstance, StatementInstance } from './db.js';
-import type { DiagnosticEmitter } from './diagnostics.js';
-import { logger as defaultLogger, type Logger } from './logger.js';
 
 const CREATE_SCHEMA = `
   CREATE TABLE IF NOT EXISTS raw_blob (
@@ -92,110 +112,6 @@ const CREATE_SCHEMA = `
  * a request body's OTEL record carries NO request_id (it is bridged in
  * later via `assignRequestId` when the api_request event claims it).
  */
-export interface RawBodyEnvelope {
-  requestId?: string | null;
-  promptId?: string | null;
-  sessionId?: string | null;
-  querySource?: string | null;
-  agentName?: string | null;
-  model?: string | null;
-  /** Epoch ms of the producing OTEL record. */
-  eventTs?: number | null;
-}
-
-export interface AppendBodyInput {
-  memberName: string;
-  kind: 'request' | 'response';
-  /**
-   * The bytes the caller hands this store, verbatim — hashed and gzipped
-   * here, never rewritten.
-   *
-   * NOT necessarily the provider's wire bytes, and the caller decides
-   * which: codex bundle uploads pass member-scoped redaction in app.ts,
-   * while claude OTLP bodies pass attribute redaction in otlp-parse.ts.
-   * This field is the subject of the store's byte-exactness claim, so
-   * naming it "wire bytes" here would assert something only one of the two
-   * callers can supply. See the file header.
-   */
-  bytes: Buffer;
-  envelope?: RawBodyEnvelope;
-}
-
-export interface AppendBodyResult {
-  /** sha256 hex of the original (pre-gzip) bytes. */
-  hash: string;
-  /** Rowid of the raw_exchange row recording this capture event. */
-  exchangeId: number;
-}
-
-/** A raw_exchange row decoded for reads (tests, downstream queries). */
-export interface RawExchangeRow {
-  id: number;
-  memberName: string;
-  kind: 'request' | 'response';
-  hash: string;
-  bodyLength: number;
-  requestId: string | null;
-  promptId: string | null;
-  sessionId: string | null;
-  querySource: string | null;
-  agentName: string | null;
-  model: string | null;
-  eventTs: number | null;
-  receivedAt: number;
-}
-
-/** Optional filters for `list`. `from`/`to` bound on `event_ts`. */
-export interface RawBodyQuery {
-  memberName?: string;
-  kind?: 'request' | 'response';
-  requestId?: string;
-  hash?: string;
-  from?: number;
-  to?: number;
-  limit?: number;
-}
-
-/** Dedup + compression visibility: raw vs stored byte totals. */
-export interface RawBodyStats {
-  blobs: number;
-  exchanges: number;
-  /** Sum of original byte lengths across distinct blobs. */
-  rawBytes: number;
-  /** Sum of gzipped lengths across distinct blobs. */
-  storedBytes: number;
-}
-
-export interface RawBodyStore {
-  /**
-   * Store one captured body: content-addressed blob (dedup on hash)
-   * plus one exchange row carrying the envelope. Returns the hash and
-   * the exchange rowid so the caller can bridge the request_id later.
-   */
-  appendBody(input: AppendBodyInput): AppendBodyResult;
-  /**
-   * Bridge the request_id (and thread attribution) onto an exchange
-   * row after the fact — the api_request accounting event is the first
-   * record carrying it. Fills only NULL fields; never overwrites.
-   */
-  assignRequestId(
-    exchangeId: number,
-    patch: { requestId: string; querySource?: string | null; agentName?: string | null },
-  ): void;
-  /**
-   * Read a blob's ORIGINAL bytes back (gunzip + sha256 re-verify).
-   * Returns null — logged — when the hash is unknown or the stored
-   * bytes fail verification.
-   */
-  getBlob(hash: string): Buffer | null;
-  /** Read exchange rows, oldest-first, with optional filters. */
-  list(filter?: RawBodyQuery): RawExchangeRow[];
-  /** Total exchange-row count. */
-  count(): number;
-  /** Blob/exchange counts + raw-vs-stored byte totals. */
-  stats(): RawBodyStats;
-}
-
 export interface RawBodyStoreOptions {
   logger?: Logger;
   /**
@@ -268,7 +184,7 @@ class SqliteRawBodyStore implements RawBodyStore {
   appendBody(input: AppendBodyInput): AppendBodyResult {
     const { memberName, kind, bytes } = input;
     const env = input.envelope ?? {};
-    const hash = sha256Hex(bytes);
+    const hash = sha256Hex(Buffer.from(bytes));
     const gz = gzipSync(bytes);
     // INSERT OR IGNORE on the content hash: a byte-identical body seen
     // again (e.g. an unchanged request re-sent next turn) dedups here.

@@ -232,3 +232,17 @@ export function decryptField(value: string | null | undefined, kek: Buffer): str
 export function testKek(): Buffer {
   return randomBytes(KEK_BYTES);
 }
+
+/**
+ * Build csuite-core's sync `FieldCipher` over this module's
+ * primitives. `null` when no KEK is active — stores map that to their
+ * own no-key semantics (fail closed for secrets, passthrough for
+ * TOTP at rest).
+ */
+export function kekFieldCipher(kek: Buffer | null): import('csuite-core').FieldCipher | null {
+  if (kek === null) return null;
+  return {
+    encrypt: (plaintext) => encryptField(plaintext, kek),
+    decrypt: (value) => decryptField(value, kek),
+  };
+}

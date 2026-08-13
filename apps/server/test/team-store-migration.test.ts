@@ -6,9 +6,9 @@
  * standing prose when upgrading.
  */
 
+import { openTeamAndMembers } from 'csuite-core';
 import { describe, expect, it } from 'vitest';
 import { type DatabaseSyncInstance, openDatabase } from '../src/db.js';
-import { openTeamAndMembers } from '../src/team-store.js';
 
 const LEGACY_SCHEMA = `
   CREATE TABLE team (

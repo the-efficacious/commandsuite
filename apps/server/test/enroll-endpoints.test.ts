@@ -15,7 +15,14 @@
  * surface correctness, multi-token semantics after approval.
  */
 
-import { Broker, InMemoryEventLog } from 'csuite-core';
+import {
+  Broker,
+  createApp,
+  createTokenStoreFromMembers,
+  EnrollmentStore,
+  InMemoryEventLog,
+  SqliteSessionStore,
+} from 'csuite-core';
 import type {
   DeviceAuthorizationResponse,
   PendingEnrollment,
@@ -23,12 +30,8 @@ import type {
   TokenInfo,
 } from 'csuite-sdk/types';
 import { describe, expect, it, vi } from 'vitest';
-import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
-import { EnrollmentStore } from '../src/enrollments.js';
 import { createMemberStore } from '../src/members.js';
-import { SessionStore } from '../src/sessions.js';
-import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const ADMIN_TOKEN = 'csuite_enroll_admin_token';
@@ -46,11 +49,11 @@ const TEAM: Team = {
 interface Harness {
   app: ReturnType<typeof createApp>['app'];
   enrollments: EnrollmentStore;
-  tokens: ReturnType<typeof createTokenStoreFromMembers>;
+  tokens: Awaited<Awaited<ReturnType<typeof createTokenStoreFromMembers>>>;
   persistMembers: ReturnType<typeof vi.fn>;
 }
 
-function makeApp(options: { now?: () => number } = {}): Harness {
+async function makeApp(options: { now?: () => number } = {}): Promise<Harness> {
   const broker = new Broker({
     eventLog: new InMemoryEventLog(),
     now: () => 1_700_000_000_000,
@@ -72,8 +75,11 @@ function makeApp(options: { now?: () => number } = {}): Harness {
   ]);
   broker.seedMembers(members.members());
   const db = openDatabase(':memory:');
-  const sessions = new SessionStore(db, options.now !== undefined ? { now: options.now } : {});
-  const tokens = createTokenStoreFromMembers(
+  const sessions = new SqliteSessionStore(
+    db,
+    options.now !== undefined ? { now: options.now } : {},
+  );
+  const tokens = await createTokenStoreFromMembers(
     db,
     members,
     options.now !== undefined ? { now: options.now } : {},
@@ -107,7 +113,7 @@ function bearer(token: string): HeadersInit {
 
 describe('POST /enroll', () => {
   it('mints (deviceCode, userCode) without auth', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/enroll', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -124,7 +130,7 @@ describe('POST /enroll', () => {
   });
 
   it('rejects malformed payload', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/enroll', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -136,7 +142,7 @@ describe('POST /enroll', () => {
 
 describe('POST /enroll/poll', () => {
   it('returns authorization_pending while waiting', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const mintRes = await app.request('/enroll', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -154,7 +160,7 @@ describe('POST /enroll/poll', () => {
   });
 
   it('returns expired_token for unknown device codes (no existence leak)', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     // 43 base64url chars — same length the server mints, but no row exists.
     const fakeCode = `csuite-dc_${'A'.repeat(43)}`;
     const res = await app.request('/enroll/poll', {
@@ -170,7 +176,7 @@ describe('POST /enroll/poll', () => {
 
 describe('POST /enroll/approve', () => {
   it('requires members.manage', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const mintRes = await app.request('/enroll', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -190,7 +196,7 @@ describe('POST /enroll/approve', () => {
   });
 
   it('approves a bind request, then a poll resolves with the token', async () => {
-    const { app, tokens } = makeApp();
+    const { app, tokens } = await makeApp();
     const mintRes = await app.request('/enroll', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -218,7 +224,7 @@ describe('POST /enroll/approve', () => {
 
     // Engineer-1's token list now has TWO tokens — the legacy
     // bootstrap one plus the freshly-issued enrollment one.
-    expect(tokens.listForMember('engineer-1')).toHaveLength(2);
+    (await expect(await tokens.listForMember('engineer-1'))).toHaveLength(2);
 
     const pollRes = await app.request('/enroll/poll', {
       method: 'POST',
@@ -251,7 +257,7 @@ describe('POST /enroll/approve', () => {
   });
 
   it('approves a create request, instantiating a new member', async () => {
-    const { app, persistMembers } = makeApp();
+    const { app, persistMembers } = await makeApp();
     const mintRes = await app.request('/enroll', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -291,7 +297,7 @@ describe('POST /enroll/approve', () => {
   });
 
   it('rejects a create request that collides with an existing member', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const mintRes = await app.request('/enroll', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -315,7 +321,7 @@ describe('POST /enroll/approve', () => {
 
 describe('POST /enroll/reject', () => {
   it('marks rejected, poll resolves with access_denied + reason', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const mintRes = await app.request('/enroll', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -345,7 +351,7 @@ describe('POST /enroll/reject', () => {
 
 describe('GET /enroll/pending', () => {
   it('lists pending rows for admins, denies non-admins', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/enroll', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -371,7 +377,7 @@ describe('GET /enroll/pending', () => {
 
 describe('member CRUD ↔ token store', () => {
   it('member create issues a SQLite token row for the new bearer', async () => {
-    const { app, tokens } = makeApp();
+    const { app, tokens } = await makeApp();
     const res = await app.request('/members', {
       method: 'POST',
       headers: bearer(ADMIN_TOKEN),
@@ -384,7 +390,7 @@ describe('member CRUD ↔ token store', () => {
     expect(res.status).toBe(200);
     const { token } = (await res.json()) as { token: string };
     // The freshly-created token authenticates immediately.
-    expect(tokens.resolve(token)).not.toBeNull();
+    (await expect(await tokens.resolve(token))).not.toBeNull();
     const packet = await app.request('/instructions', {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -392,7 +398,7 @@ describe('member CRUD ↔ token store', () => {
   });
 
   it('member delete revokes every active token', async () => {
-    const { app, tokens } = makeApp();
+    const { app, tokens } = await makeApp();
     // Issue a second token via device-code so engineer-1 has 2 tokens.
     const mintRes = await app.request('/enroll', {
       method: 'POST',
@@ -409,13 +415,13 @@ describe('member CRUD ↔ token store', () => {
         memberName: 'engineer-1',
       }),
     });
-    expect(tokens.listForMember('engineer-1').length).toBeGreaterThanOrEqual(1);
+    expect((await tokens.listForMember('engineer-1')).length).toBeGreaterThanOrEqual(1);
 
     await app.request('/members/engineer-1', {
       method: 'DELETE',
       headers: bearer(ADMIN_TOKEN),
     });
-    expect(tokens.listForMember('engineer-1')).toHaveLength(0);
+    (await expect(await tokens.listForMember('engineer-1'))).toHaveLength(0);
 
     // Original bearer no longer authenticates.
     const res = await app.request('/roster', {
@@ -425,7 +431,7 @@ describe('member CRUD ↔ token store', () => {
   });
 
   it('rotate-token nukes all peer tokens and issues a fresh one', async () => {
-    const { app, tokens } = makeApp();
+    const { app, tokens } = await makeApp();
     // Add a peer token via enrollment first.
     const mintRes = await app.request('/enroll', {
       method: 'POST',
@@ -442,7 +448,7 @@ describe('member CRUD ↔ token store', () => {
         memberName: 'engineer-1',
       }),
     });
-    const beforeCount = tokens.listForMember('engineer-1').length;
+    const beforeCount = (await tokens.listForMember('engineer-1')).length;
     expect(beforeCount).toBeGreaterThanOrEqual(2);
 
     const rotateRes = await app.request('/members/engineer-1/rotate-token', {
@@ -453,8 +459,8 @@ describe('member CRUD ↔ token store', () => {
     const { token: newToken } = (await rotateRes.json()) as { token: string };
 
     // After rotation, engineer-1 has exactly one token (the new one).
-    expect(tokens.listForMember('engineer-1')).toHaveLength(1);
-    expect(tokens.resolve(newToken)).not.toBeNull();
-    expect(tokens.resolve(NON_ADMIN_TOKEN)).toBeNull();
+    (await expect(await tokens.listForMember('engineer-1'))).toHaveLength(1);
+    (await expect(await tokens.resolve(newToken))).not.toBeNull();
+    (await expect(await tokens.resolve(NON_ADMIN_TOKEN))).toBeNull();
   });
 });

@@ -16,9 +16,9 @@
  * The tests below are written to fail if either returns.
  */
 
+import { createSqliteProcessDocumentStore, ProcessDocumentError } from 'csuite-core';
 import { describe, expect, it } from 'vitest';
 import { openDatabase } from '../src/db.js';
-import { createSqliteProcessDocumentStore, ProcessDocumentError } from '../src/process-document.js';
 
 const AT = 1_700_000_000_000;
 

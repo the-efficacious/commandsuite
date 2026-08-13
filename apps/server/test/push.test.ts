@@ -3,18 +3,22 @@
  * with web-push mocked.
  */
 
-import { Broker, InMemoryEventLog } from 'csuite-core';
+import {
+  Broker,
+  createApp,
+  createTokenStoreFromMembers,
+  dispatchPush,
+  InMemoryEventLog,
+  SqlitePushSubscriptionStore,
+  SqliteSessionStore,
+  shouldPush,
+} from 'csuite-core';
 import type { Message, Team } from 'csuite-sdk/types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
-import { dispatchPush } from '../src/push/dispatch.js';
-import { shouldPush } from '../src/push/policy.js';
-import { PushSubscriptionStore } from '../src/push/store.js';
 import { generateVapidKeys } from '../src/push/vapid.js';
-import { SessionStore } from '../src/sessions.js';
-import { createTokenStoreFromMembers } from '../src/tokens.js';
+import { createWebPushSender } from '../src/push/web-push-sender.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 // Mock web-push sendNotification so no real network traffic happens.
@@ -102,14 +106,14 @@ function mkMsg(overrides: Partial<Message>): Message {
 // ─── VAPID ──────────────────────────────────────────────────────────
 
 describe('generateVapidKeys', () => {
-  it('returns a WebPushConfig shape with the subject default', () => {
+  it('returns a WebPushConfig shape with the subject default', async () => {
     const keys = generateVapidKeys();
     expect(keys.vapidPublicKey).toMatch(/^BK/);
     expect(keys.vapidPrivateKey).toBeTruthy();
     expect(keys.vapidSubject).toBe('mailto:admin@csuite.local');
   });
 
-  it('honors a custom subject', () => {
+  it('honors a custom subject', async () => {
     const keys = generateVapidKeys('https://example.com');
     expect(keys.vapidSubject).toBe('https://example.com');
   });
@@ -118,9 +122,9 @@ describe('generateVapidKeys', () => {
 // ─── PushSubscriptionStore ──────────────────────────────────────────
 
 describe('PushSubscriptionStore', () => {
-  it('upserts a subscription and lists it by slot', () => {
-    const store = new PushSubscriptionStore(openDatabase(':memory:'));
-    const row = store.upsert({
+  it('upserts a subscription and lists it by slot', async () => {
+    const store = new SqlitePushSubscriptionStore(openDatabase(':memory:'));
+    const row = await store.upsert({
       memberName: 'director-1',
       endpoint: 'https://fcm.example/abc',
       p256dh: 'pk-data',
@@ -128,33 +132,33 @@ describe('PushSubscriptionStore', () => {
       userAgent: 'test-ua',
     });
     expect(row.id).toBeGreaterThan(0);
-    expect(store.listForMember('director-1')).toHaveLength(1);
+    expect(await store.listForMember('director-1')).toHaveLength(1);
   });
 
-  it('idempotently replaces on duplicate endpoint', () => {
-    const store = new PushSubscriptionStore(openDatabase(':memory:'));
-    store.upsert({
+  it('idempotently replaces on duplicate endpoint', async () => {
+    const store = new SqlitePushSubscriptionStore(openDatabase(':memory:'));
+    await store.upsert({
       memberName: 'director-1',
       endpoint: 'https://fcm.example/same',
       p256dh: 'v1',
       auth: 'v1',
       userAgent: null,
     });
-    store.upsert({
+    await store.upsert({
       memberName: 'director-1',
       endpoint: 'https://fcm.example/same',
       p256dh: 'v2',
       auth: 'v2',
       userAgent: null,
     });
-    const subs = store.listForMember('director-1');
+    const subs = await store.listForMember('director-1');
     expect(subs).toHaveLength(1);
     expect(subs[0]?.p256dh).toBe('v2');
   });
 
-  it('deleteForUser scopes by name', () => {
-    const store = new PushSubscriptionStore(openDatabase(':memory:'));
-    const row = store.upsert({
+  it('deleteForUser scopes by name', async () => {
+    const store = new SqlitePushSubscriptionStore(openDatabase(':memory:'));
+    const row = await store.upsert({
       memberName: 'director-1',
       endpoint: 'https://fcm.example/only',
       p256dh: 'x',
@@ -162,28 +166,28 @@ describe('PushSubscriptionStore', () => {
       userAgent: null,
     });
     // Try to delete as a different slot — should not remove the row.
-    store.deleteForMember(row.id, 'build-bot');
-    expect(store.listForMember('director-1')).toHaveLength(1);
+    await store.deleteForMember(row.id, 'build-bot');
+    expect(await store.listForMember('director-1')).toHaveLength(1);
 
-    store.deleteForMember(row.id, 'director-1');
-    expect(store.listForMember('director-1')).toHaveLength(0);
+    await store.deleteForMember(row.id, 'director-1');
+    expect(await store.listForMember('director-1')).toHaveLength(0);
   });
 
-  it('markSuccess and markError update timestamps', () => {
-    const store = new PushSubscriptionStore(openDatabase(':memory:'), { now: () => 1234 });
-    const row = store.upsert({
+  it('markSuccess and markError update timestamps', async () => {
+    const store = new SqlitePushSubscriptionStore(openDatabase(':memory:'), { now: () => 1234 });
+    const row = await store.upsert({
       memberName: 'director-1',
       endpoint: 'https://fcm.example/err',
       p256dh: 'x',
       auth: 'x',
       userAgent: null,
     });
-    store.markSuccess(row.id);
-    const afterSuccess = store.listForMember('director-1')[0];
+    await store.markSuccess(row.id);
+    const afterSuccess = (await store.listForMember('director-1'))[0];
     expect(afterSuccess?.lastSuccessAt).toBe(1234);
 
-    store.markError(row.id, 429);
-    const afterErr = store.listForMember('director-1')[0];
+    await store.markError(row.id, 429);
+    const afterErr = (await store.listForMember('director-1'))[0];
     expect(afterErr?.lastErrorCode).toBe(429);
   });
 });
@@ -191,35 +195,35 @@ describe('PushSubscriptionStore', () => {
 // ─── shouldPush policy ──────────────────────────────────────────────
 
 describe('shouldPush', () => {
-  it('rejects self-echo', () => {
+  it('rejects self-echo', async () => {
     const msg = mkMsg({ from: 'director-1', to: 'director-1' });
     expect(shouldPush({ message: msg, recipient: 'director-1', recipientIsLive: false })).toBe(
       false,
     );
   });
 
-  it('rejects when recipient has a live SSE tab', () => {
+  it('rejects when recipient has a live SSE tab', async () => {
     const msg = mkMsg({ from: 'build-bot', to: 'director-1' });
     expect(shouldPush({ message: msg, recipient: 'director-1', recipientIsLive: true })).toBe(
       false,
     );
   });
 
-  it('accepts direct DMs when offline', () => {
+  it('accepts direct DMs when offline', async () => {
     const msg = mkMsg({ from: 'build-bot', to: 'director-1' });
     expect(shouldPush({ message: msg, recipient: 'director-1', recipientIsLive: false })).toBe(
       true,
     );
   });
 
-  it('accepts high-severity broadcasts', () => {
+  it('accepts high-severity broadcasts', async () => {
     const msg = mkMsg({ from: 'build-bot', to: null, level: 'warning' });
     expect(shouldPush({ message: msg, recipient: 'director-1', recipientIsLive: false })).toBe(
       true,
     );
   });
 
-  it('accepts info broadcasts that mention the recipient', () => {
+  it('accepts info broadcasts that mention the recipient', async () => {
     const msg = mkMsg({
       from: 'build-bot',
       to: null,
@@ -230,14 +234,14 @@ describe('shouldPush', () => {
     );
   });
 
-  it('rejects info broadcasts with no mention', () => {
+  it('rejects info broadcasts with no mention', async () => {
     const msg = mkMsg({ from: 'build-bot', to: null, body: 'status update' });
     expect(shouldPush({ message: msg, recipient: 'director-1', recipientIsLive: false })).toBe(
       false,
     );
   });
 
-  it('rejects DMs addressed to someone else', () => {
+  it('rejects DMs addressed to someone else', async () => {
     const msg = mkMsg({ from: 'director-1', to: 'other-bot' });
     expect(shouldPush({ message: msg, recipient: 'director-1', recipientIsLive: false })).toBe(
       false,
@@ -251,7 +255,7 @@ describe('dispatchPush', () => {
   it('sends to subscribers for recipients approved by policy', async () => {
     sendNotification.mockResolvedValue({ statusCode: 201 });
     const db = openDatabase(':memory:');
-    const store = new PushSubscriptionStore(db);
+    const store = new SqlitePushSubscriptionStore(db);
     const members = createMemberStore([
       {
         name: 'director-1',
@@ -266,7 +270,7 @@ describe('dispatchPush', () => {
         token: BOT_TOKEN,
       },
     ]);
-    store.upsert({
+    await store.upsert({
       memberName: 'director-1',
       endpoint: 'https://fcm.example/actual',
       p256dh: 'x',
@@ -278,12 +282,13 @@ describe('dispatchPush', () => {
     await dispatchPush(msg, {
       sessions: store,
       members,
+      sender: createWebPushSender(),
       logger: noopLogger(),
       isLive: () => false,
     });
 
     expect(sendNotification).toHaveBeenCalledTimes(1);
-    const after = store.listForMember('director-1');
+    const after = await store.listForMember('director-1');
     expect(after[0]?.lastSuccessAt).toBeGreaterThan(0);
   });
 
@@ -291,7 +296,7 @@ describe('dispatchPush', () => {
     sendNotification.mockRejectedValue(
       new MockWebPushError('gone', 410, {}, 'body', 'https://fcm.example/actual'),
     );
-    const store = new PushSubscriptionStore(openDatabase(':memory:'));
+    const store = new SqlitePushSubscriptionStore(openDatabase(':memory:'));
     const members = createMemberStore([
       {
         name: 'director-1',
@@ -306,7 +311,7 @@ describe('dispatchPush', () => {
         token: BOT_TOKEN,
       },
     ]);
-    store.upsert({
+    await store.upsert({
       memberName: 'director-1',
       endpoint: 'https://fcm.example/actual',
       p256dh: 'x',
@@ -318,18 +323,19 @@ describe('dispatchPush', () => {
     await dispatchPush(msg, {
       sessions: store,
       members,
+      sender: createWebPushSender(),
       logger: noopLogger(),
       isLive: () => false,
     });
 
-    expect(store.listForMember('director-1')).toHaveLength(0);
+    expect(await store.listForMember('director-1')).toHaveLength(0);
   });
 
   it('marks subscription with last_error_code on non-terminal failures', async () => {
     sendNotification.mockRejectedValue(
       new MockWebPushError('too many', 429, {}, 'body', 'https://fcm.example/actual'),
     );
-    const store = new PushSubscriptionStore(openDatabase(':memory:'));
+    const store = new SqlitePushSubscriptionStore(openDatabase(':memory:'));
     const members = createMemberStore([
       {
         name: 'director-1',
@@ -344,7 +350,7 @@ describe('dispatchPush', () => {
         token: BOT_TOKEN,
       },
     ]);
-    store.upsert({
+    await store.upsert({
       memberName: 'director-1',
       endpoint: 'https://fcm.example/actual',
       p256dh: 'x',
@@ -355,17 +361,18 @@ describe('dispatchPush', () => {
     await dispatchPush(mkMsg({ from: 'build-bot', to: 'director-1' }), {
       sessions: store,
       members,
+      sender: createWebPushSender(),
       logger: noopLogger(),
       isLive: () => false,
     });
 
-    const sub = store.listForMember('director-1')[0];
+    const sub = (await store.listForMember('director-1'))[0];
     expect(sub?.lastErrorCode).toBe(429);
   });
 
   it('skips recipients with live SSE tabs (no redundant buzz)', async () => {
     sendNotification.mockResolvedValue({ statusCode: 201 });
-    const store = new PushSubscriptionStore(openDatabase(':memory:'));
+    const store = new SqlitePushSubscriptionStore(openDatabase(':memory:'));
     const members = createMemberStore([
       {
         name: 'director-1',
@@ -380,7 +387,7 @@ describe('dispatchPush', () => {
         token: BOT_TOKEN,
       },
     ]);
-    store.upsert({
+    await store.upsert({
       memberName: 'director-1',
       endpoint: 'https://fcm.example/actual',
       p256dh: 'x',
@@ -391,6 +398,7 @@ describe('dispatchPush', () => {
     await dispatchPush(mkMsg({ from: 'build-bot', to: 'director-1' }), {
       sessions: store,
       members,
+      sender: createWebPushSender(),
       logger: noopLogger(),
       isLive: (cs) => cs === 'director-1',
     });
@@ -402,7 +410,7 @@ describe('dispatchPush', () => {
 // ─── HTTP endpoints ─────────────────────────────────────────────────
 
 describe('push HTTP endpoints', () => {
-  function makeApp(withPush: boolean) {
+  async function makeApp(withPush: boolean) {
     const broker = new Broker({
       eventLog: new InMemoryEventLog(),
       now: () => 1_700_000_000_000,
@@ -423,9 +431,9 @@ describe('push HTTP endpoints', () => {
       },
     ]);
     const db = openDatabase(':memory:');
-    const sessions = new SessionStore(db);
-    const tokens = createTokenStoreFromMembers(db, members);
-    const pushStore = new PushSubscriptionStore(db);
+    const sessions = new SqliteSessionStore(db);
+    const tokens = await createTokenStoreFromMembers(db, members);
+    const pushStore = new SqlitePushSubscriptionStore(db);
     const { app } = createApp({
       broker,
       members,
@@ -441,7 +449,7 @@ describe('push HTTP endpoints', () => {
   }
 
   it('GET /push/vapid-public-key returns the key anonymously when push is enabled', async () => {
-    const { app } = makeApp(true);
+    const { app } = await makeApp(true);
     const res = await app.request('/push/vapid-public-key');
     expect(res.status).toBe(200);
     const body = (await res.json()) as { publicKey: string };
@@ -449,7 +457,7 @@ describe('push HTTP endpoints', () => {
   });
 
   it('/push/vapid-public-key is absent (falls through to SPA 404) when push disabled', async () => {
-    const { app } = makeApp(false);
+    const { app } = await makeApp(false);
     const res = await app.request('/push/vapid-public-key');
     // Without push config, the route isn't registered. No SPA public
     // root in this test setup either, so it's a plain 404 from Hono.
@@ -457,7 +465,7 @@ describe('push HTTP endpoints', () => {
   });
 
   it('POST /push/subscriptions registers a subscription for the authed slot', async () => {
-    const { app, pushStore } = makeApp(true);
+    const { app, pushStore } = await makeApp(true);
     const res = await app.request('/push/subscriptions', {
       method: 'POST',
       headers: {
@@ -472,11 +480,11 @@ describe('push HTTP endpoints', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { id: number; endpoint: string };
     expect(body.id).toBeGreaterThan(0);
-    expect(pushStore.listForMember('director-1')).toHaveLength(1);
+    expect(await pushStore.listForMember('director-1')).toHaveLength(1);
   });
 
   it('POST /push/subscriptions rejects unauthenticated callers', async () => {
-    const { app } = makeApp(true);
+    const { app } = await makeApp(true);
     const res = await app.request('/push/subscriptions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -489,7 +497,7 @@ describe('push HTTP endpoints', () => {
   });
 
   it('POST /push/subscriptions rejects invalid payloads', async () => {
-    const { app } = makeApp(true);
+    const { app } = await makeApp(true);
     const res = await app.request('/push/subscriptions', {
       method: 'POST',
       headers: {
@@ -502,8 +510,8 @@ describe('push HTTP endpoints', () => {
   });
 
   it('DELETE /push/subscriptions/:id scoped by authed slot', async () => {
-    const { app, pushStore } = makeApp(true);
-    const row = pushStore.upsert({
+    const { app, pushStore } = await makeApp(true);
+    const row = await pushStore.upsert({
       memberName: 'director-1',
       endpoint: 'https://fcm.example/toDel',
       p256dh: 'x',
@@ -517,7 +525,7 @@ describe('push HTTP endpoints', () => {
       headers: { Authorization: `Bearer ${BOT_TOKEN}` },
     });
     expect(wrongRes.status).toBe(204);
-    expect(pushStore.listForMember('director-1')).toHaveLength(1);
+    expect(await pushStore.listForMember('director-1')).toHaveLength(1);
 
     // director-1 can.
     const rightRes = await app.request(`/push/subscriptions/${row.id}`, {
@@ -525,6 +533,6 @@ describe('push HTTP endpoints', () => {
       headers: { Authorization: `Bearer ${OP_TOKEN}` },
     });
     expect(rightRes.status).toBe(204);
-    expect(pushStore.listForMember('director-1')).toHaveLength(0);
+    expect(await pushStore.listForMember('director-1')).toHaveLength(0);
   });
 });

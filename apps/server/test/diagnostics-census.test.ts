@@ -36,10 +36,14 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DIAGNOSTIC_CAUSES } from 'csuite-core';
 import { describe, expect, it } from 'vitest';
-import { DIAGNOSTIC_CAUSES } from '../src/diagnostics.js';
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '../src');
+// Capture modules migrated into csuite-core with the runtime-neutral
+// refactor; the census follows the code, not the package boundary.
+const CORE_SRC = join(dirname(fileURLToPath(import.meta.url)), '../../../packages/core/src');
+const ROOTS = [SRC, CORE_SRC];
 
 /** Modules whose every diagnostic is a completeness claim. */
 const CAPTURE_MODULES = [
@@ -142,11 +146,27 @@ const APP_IN_SCOPE = [
  * one OPERATIONAL warning, `codex genai request body parse failed` —
  * the raw bytes are already captured and a model-only record is
  * stored, so nothing captured is lost when it fires.
+ *
+ * 2026-08-13, +1 = 58. The census roots extended to csuite-core when
+ * the capture stores migrated there (runtime-neutral refactor). The
+ * whole-tree scan now sees core's one pre-existing broker.ts
+ * logger.warn — an OPERATIONAL site (push fanout diagnostics via the
+ * injected BrokerLogger), not a capture-completeness claim. No new
+ * sites were written; the fence moved to keep enclosing the same code.
  */
-const TOTAL_SITES = 57;
+const TOTAL_SITES = 58;
 
 function messagesIn(file: string): string[] {
-  const src = readFileSync(join(SRC, file), 'utf8');
+  let src: string | null = null;
+  for (const root of ROOTS) {
+    try {
+      src = readFileSync(join(root, file), 'utf8');
+      break;
+    } catch {
+      /* try the next root */
+    }
+  }
+  if (src === null) throw new Error(`census module not found in any root: ${file}`);
   const out: string[] = [];
   for (const pat of [/this\.log\.warn\(/g, /(?<!\.)\blog\(\s*'/g]) {
     for (const m of src.matchAll(pat)) {
@@ -163,19 +183,20 @@ function countAllSites(): number {
   // thought of rather than the ones that exist, and a new module with a
   // completeness warning would be invisible to it.
   let n = 0;
-  for (const file of readdirSync(SRC, { recursive: true }) as string[]) {
-    if (!file.endsWith('.ts')) continue;
-    let src: string;
-    try {
-      src = readFileSync(join(SRC, file), 'utf8');
-    } catch {
-      continue;
+  for (const root of ROOTS)
+    for (const file of readdirSync(root, { recursive: true }) as string[]) {
+      if (!file.endsWith('.ts')) continue;
+      let src: string;
+      try {
+        src = readFileSync(join(root, file), 'utf8');
+      } catch {
+        continue;
+      }
+      n += (src.match(/\blogger\.warn\(/g) ?? []).length;
+      n += (src.match(/\blogger\.error\(/g) ?? []).length;
+      n += (src.match(/(?<!\.)\blog\(\s*'genai-correlator/g) ?? []).length;
+      n += (src.match(/this\.log\.warn\(/g) ?? []).length;
     }
-    n += (src.match(/\blogger\.warn\(/g) ?? []).length;
-    n += (src.match(/\blogger\.error\(/g) ?? []).length;
-    n += (src.match(/(?<!\.)\blog\(\s*'genai-correlator/g) ?? []).length;
-    n += (src.match(/this\.log\.warn\(/g) ?? []).length;
-  }
   return n;
 }
 
@@ -205,7 +226,7 @@ describe('diagnostic census guard', () => {
     // app.ts is mixed, so the guard pins the known in-scope messages by
     // exact text — a rename or removal is caught even though a blanket
     // rule cannot apply here.
-    const src = readFileSync(join(SRC, 'app.ts'), 'utf8');
+    const src = readFileSync(join(CORE_SRC, 'app.ts'), 'utf8');
     const missing = APP_IN_SCOPE.filter((m) => !src.includes(m));
     expect(missing).toEqual([]);
   });
@@ -241,10 +262,11 @@ describe('diagnostic census guard', () => {
       'activityAppended',
       'toolinvokeAuditAppended',
     ];
-    const production = (readdirSync(SRC, { recursive: true }) as string[])
-      .filter((f) => f.endsWith('.ts') && !f.endsWith('diagnostics.ts'))
-      .map((f) => readFileSync(join(SRC, f), 'utf8'))
-      .join('\n');
+    const production = ROOTS.flatMap((root) =>
+      (readdirSync(root, { recursive: true }) as string[])
+        .filter((f) => f.endsWith('.ts') && !f.endsWith('diagnostics.ts'))
+        .map((f) => readFileSync(join(root, f), 'utf8')),
+    ).join('\n');
     const unwired = RECOVERIES.filter((m) => !production.includes(`.${m}(`));
     expect(unwired).toEqual([]);
   });

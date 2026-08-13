@@ -12,17 +12,20 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { Broker, InMemoryEventLog } from 'csuite-core';
+import {
+  Broker,
+  createApp,
+  createDiagnosticStore,
+  createSqliteActivityStore,
+  createTokenStoreFromMembers,
+  InMemoryEventLog,
+  SqliteSessionStore,
+} from 'csuite-core';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
-import { createDiagnosticStore } from '../src/diagnostics.js';
-import { testKek } from '../src/kek.js';
-import { createSqliteActivityStore } from '../src/member-activity.js';
-import { createMemberStore, setKek } from '../src/members.js';
-import { SessionStore } from '../src/sessions.js';
-import { createTokenStoreFromMembers } from '../src/tokens.js';
+import { kekFieldCipher, testKek } from '../src/kek.js';
+import { createMemberStore, getKek, setKek } from '../src/members.js';
 import {
   createMcpClientManager,
   createSqliteToolSourceStore,
@@ -73,7 +76,7 @@ async function startUpstream(): Promise<{ url: string; close: () => Promise<void
   };
 }
 
-function makeApp() {
+async function makeApp() {
   const broker = new Broker({
     eventLog: new InMemoryEventLog(),
     now: () => 1_700_000_000_000,
@@ -92,9 +95,9 @@ function makeApp() {
     { name: 'bound', role: { title: 'engineer', description: '' }, permissions: [], token: BOUND },
   ]);
   const db = openDatabase(':memory:');
-  const sessions = new SessionStore(db);
-  const tokens = createTokenStoreFromMembers(db, members);
-  const toolSources = createSqliteToolSourceStore(db);
+  const sessions = new SqliteSessionStore(db);
+  const tokens = await createTokenStoreFromMembers(db, members);
+  const toolSources = createSqliteToolSourceStore(db, () => kekFieldCipher(getKek()));
   const mcpManager: McpToolManager = createMcpClientManager({
     store: toolSources,
     version: '0.0.0',
@@ -152,7 +155,7 @@ afterEach(async () => {
   managers.length = 0;
 });
 
-async function setupMcpSource(app: ReturnType<typeof makeApp>['app'], url = upstream.url) {
+async function setupMcpSource(app: Awaited<ReturnType<typeof makeApp>>['app'], url = upstream.url) {
   const created = await app.request(
     '/tool-sources',
     authed(ADMIN, { slug: 'up', kind: 'mcp', config: { url } }),
@@ -167,7 +170,7 @@ async function setupMcpSource(app: ReturnType<typeof makeApp>['app'], url = upst
 
 describe('mcp tool sources', () => {
   it('refresh discovers upstream tools into the cache (changed only on diff)', async () => {
-    const { app, mcpManager } = makeApp();
+    const { app, mcpManager } = await makeApp();
     managers.push(mcpManager);
     await setupMcpSource(app);
 
@@ -191,7 +194,7 @@ describe('mcp tool sources', () => {
   });
 
   it('relays tools/call through the credentialed upstream connection', async () => {
-    const { app, mcpManager } = makeApp();
+    const { app, mcpManager } = await makeApp();
     managers.push(mcpManager);
     await setupMcpSource(app);
     await app.request('/tool-sources/up/refresh', authed(ADMIN, undefined, 'POST'));
@@ -218,7 +221,7 @@ describe('mcp tool sources', () => {
     // What it establishes: the recovery call sits in the branch that
     // runs when the broker-side audit append SUCCEEDS. It does not
     // re-test the invoke relay itself, which the test above covers.
-    const { app, mcpManager, diagnostics } = makeApp();
+    const { app, mcpManager, diagnostics } = await makeApp();
     managers.push(mcpManager);
     await setupMcpSource(app);
     await app.request('/tool-sources/up/refresh', authed(ADMIN, undefined, 'POST'));
@@ -244,7 +247,7 @@ describe('mcp tool sources', () => {
   });
 
   it('404s tools missing from the cache with a refresh hint', async () => {
-    const { app, mcpManager } = makeApp();
+    const { app, mcpManager } = await makeApp();
     managers.push(mcpManager);
     await setupMcpSource(app);
     // No refresh — cache is empty.
@@ -257,7 +260,7 @@ describe('mcp tool sources', () => {
   });
 
   it('502s refresh when the upstream is unreachable', async () => {
-    const { app, mcpManager } = makeApp();
+    const { app, mcpManager } = await makeApp();
     managers.push(mcpManager);
     // Point at a dead port (bind + close to guarantee it's free-ish).
     await setupMcpSource(app, 'http://127.0.0.1:1/mcp');
@@ -267,7 +270,7 @@ describe('mcp tool sources', () => {
   });
 
   it('surfaces upstream tool errors as isError results, not HTTP errors', async () => {
-    const { app, mcpManager } = makeApp();
+    const { app, mcpManager } = await makeApp();
     managers.push(mcpManager);
     await setupMcpSource(app);
     await app.request('/tool-sources/up/refresh', authed(ADMIN, undefined, 'POST'));

@@ -1,7 +1,7 @@
 {
   "name": "csuite-core",
   "version": "0.6.0",
-  "description": "Runtime-agnostic broker logic for csuite — agent registry, push fanout, SSE, event log.",
+  "description": "Runtime-agnostic broker logic for csuite \u2014 agent registry, push fanout, SSE, event log.",
   "license": "Apache-2.0",
   "author": "Efficacious, Inc.",
   "homepage": "https://github.com/the-efficacious/commandsuite#readme",
@@ -28,6 +28,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./conformance": {
+      "types": "./dist/conformance/index.d.ts",
+      "import": "./dist/conformance/index.js"
     }
   },
   "files": [
@@ -37,13 +41,18 @@
   "scripts": {
     "build": "tsup && node ../../scripts/dist-stamp.mjs",
     "dev": "tsup --watch",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "node ../../scripts/check-runtime-neutral.mjs . && tsc --noEmit",
     "test": "vitest run",
     "prepublishOnly": "node ../../scripts/publish-gate.mjs check",
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
-    "csuite-sdk": "workspace:*"
+    "csuite-sdk": "workspace:*",
+    "hono": "^4.12.31",
+    "jose": "^6.2.4",
+    "otpauth": "^9.5.1",
+    "p-limit": "^7.3.1",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "tsup": "^8.0.0",
@@ -52,5 +61,13 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "peerDependencies": {
+    "vitest": ">=4"
+  },
+  "peerDependenciesMeta": {
+    "vitest": {
+      "optional": true
+    }
   }
 }

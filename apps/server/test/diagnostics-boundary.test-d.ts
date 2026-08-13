@@ -22,7 +22,7 @@
  * Type-only: no runtime assertions, checked by `tsc --noEmit`.
  */
 
-import { createDiagnosticStore } from '../src/diagnostics.js';
+import { createDiagnosticStore } from 'csuite-core';
 
 declare const db: Parameters<typeof createDiagnosticStore>[0];
 const store = createDiagnosticStore(db);
@@ -41,7 +41,7 @@ store.emit.recovered('correlator.body_ref_unreadable', 'someone-else');
 // Door 3 — raw resolve on the store. Same capability, third route, and
 // it survived both previous closures.
 // @ts-expect-error resolve is not on the production interface
-store.resolve('genaistore.malformed_row_skipped', 'm');
+await store.resolve('genaistore.malformed_row_skipped', 'm');
 
 // Point causes have no recovery method at all: they never create
 // unresolved state, so recovering one is meaningless.

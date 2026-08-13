@@ -18,27 +18,31 @@
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Broker, InMemoryEventLog } from 'csuite-core';
+import {
+  Broker,
+  createApp,
+  createDiagnosticStore,
+  createGenAiStore,
+  createSqliteActivityStore,
+  createTelemetryStore,
+  createTokenStoreFromMembers,
+  InMemoryEventLog,
+  SqliteSessionStore,
+} from 'csuite-core';
 import type { Team } from 'csuite-sdk/types';
 import { describe, expect, it, vi } from 'vitest';
-import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
-import { createDiagnosticStore } from '../src/diagnostics.js';
 import { createGenAiCorrelator } from '../src/genai-correlator.js';
-import { createGenAiStore } from '../src/genai-store.js';
-import { createSqliteActivityStore } from '../src/member-activity.js';
 import { createMemberStore } from '../src/members.js';
+import { digestPathSync } from '../src/path-digest.js';
 import { createRawBodyStore } from '../src/raw-body-store.js';
-import { SessionStore } from '../src/sessions.js';
-import { createTelemetryStore } from '../src/telemetry-store.js';
-import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const TOKEN = 'csuite_test_member_secret';
 const TEAM: Team = { name: 't', context: '', permissionPresets: {} };
 const quiet = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 
-function makeApp() {
+async function makeApp() {
   const db = openDatabase(':memory:');
   const activityDb = openDatabase(':memory:');
   const diagnostics = createDiagnosticStore(activityDb);
@@ -46,10 +50,11 @@ function makeApp() {
     { name: 'turner', role: { title: 'e', description: '' }, permissions: [], token: TOKEN },
   ]);
   const { app } = createApp({
+    createGenAiCorrelator,
     broker: new Broker({ eventLog: new InMemoryEventLog(), now: () => 1, idFactory: () => 'm' }),
     members,
-    tokens: createTokenStoreFromMembers(db, members),
-    sessions: new SessionStore(db),
+    tokens: await createTokenStoreFromMembers(db, members),
+    sessions: new SqliteSessionStore(db),
     teamStore: mockTeamStore(TEAM),
     version: '0.0.0',
     logger: quiet,
@@ -66,7 +71,7 @@ function makeApp() {
   return { app, diagnostics, db, activityDb };
 }
 
-function post(app: ReturnType<typeof makeApp>['app'], path: string, body: unknown) {
+function post(app: Awaited<ReturnType<typeof makeApp>>['app'], path: string, body: unknown) {
   return app.request(path, {
     method: 'POST',
     headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
@@ -74,7 +79,7 @@ function post(app: ReturnType<typeof makeApp>['app'], path: string, body: unknow
   });
 }
 
-function causes(d: ReturnType<typeof makeApp>['diagnostics']) {
+function causes(d: Awaited<ReturnType<typeof makeApp>>['diagnostics']) {
   return d.unresolved('turner').map((u) => u.cause);
 }
 
@@ -104,7 +109,7 @@ describe('recovery placement', () => {
     // Rune's exact case. The correlator holds the body waiting for its
     // pair, so the append loop runs zero times — and the incident must
     // survive, because nothing succeeded.
-    const { app, diagnostics } = makeApp();
+    const { app, diagnostics } = await makeApp();
     diagnostics.emit.otlpGenaiIngestFailed('turner', 5);
     expect(causes(diagnostics)).toContain('otlp.genai_ingest_failed');
 
@@ -115,7 +120,7 @@ describe('recovery placement', () => {
   });
 
   it('an empty metrics batch does NOT clear a metrics incident', async () => {
-    const { app, diagnostics } = makeApp();
+    const { app, diagnostics } = await makeApp();
     diagnostics.emit.otlpMetricsStoreFailed('turner', 1);
 
     await post(app, '/otlp/v1/metrics', { resourceMetrics: [] });
@@ -124,7 +129,7 @@ describe('recovery placement', () => {
   });
 
   it('an empty activity batch does NOT clear an activity incident', async () => {
-    const { app, diagnostics } = makeApp();
+    const { app, diagnostics } = await makeApp();
     diagnostics.emit.activityAppendFailed('turner', 3);
 
     await post(app, '/members/turner/activity', { events: [] });
@@ -138,7 +143,7 @@ describe('recovery placement', () => {
     // FAILURE branch, because an empty batch succeeds and never
     // reaches it — a mutation moving the call there left that test
     // green. This drives the failure path itself.
-    const { app, diagnostics, activityDb } = makeApp();
+    const { app, diagnostics, activityDb } = await makeApp();
     activityDb.exec('DROP TABLE IF EXISTS member_activity');
     activityDb.exec('CREATE TABLE member_activity (broken INTEGER)');
 
@@ -168,7 +173,7 @@ describe('recovery placement', () => {
  */
 describe('recovery placement — positive controls', () => {
   it('a successful activity append clears the incident and keeps the history', async () => {
-    const { app, diagnostics } = makeApp();
+    const { app, diagnostics } = await makeApp();
     diagnostics.emit.activityAppendFailed('turner', 3);
     expect(causes(diagnostics)).toContain('activity.append_failed');
 
@@ -184,7 +189,7 @@ describe('recovery placement — positive controls', () => {
   });
 
   it('a successful metrics store clears the metrics incident', async () => {
-    const { app, diagnostics } = makeApp();
+    const { app, diagnostics } = await makeApp();
     diagnostics.emit.otlpMetricsStoreFailed('turner', 1);
 
     const res = await post(app, '/otlp/v1/metrics', {
@@ -213,7 +218,7 @@ describe('recovery placement — positive controls', () => {
   });
 
   it('a successful telemetry log store clears the logs incident', async () => {
-    const { app, diagnostics } = makeApp();
+    const { app, diagnostics } = await makeApp();
     diagnostics.emit.otlpLogsStoreFailed('turner', 1);
 
     // A plain (non-api-body) log record goes to the telemetry store.
@@ -265,7 +270,11 @@ describe('correlator recovery — positive controls', () => {
   it('a readable body_ref clears the unreadable incident', () => {
     const db = openDatabase(':memory:');
     const diagnostics = createDiagnosticStore(db);
-    diagnostics.emit.correlatorBodyRefUnreadable('turner', '/gone.json', new Error('x'));
+    diagnostics.emit.correlatorBodyRefUnreadable(
+      'turner',
+      digestPathSync('/gone.json'),
+      new Error('x'),
+    );
     expect(diagnostics.unresolved('turner').map((u) => u.cause)).toContain(
       'correlator.body_ref_unreadable',
     );
@@ -373,7 +382,7 @@ function claudeCallBatch() {
 
 describe('recovery placement — the remaining families', () => {
   it('a batch that DOES produce an inference clears the genai incident', async () => {
-    const { app, diagnostics } = makeApp();
+    const { app, diagnostics } = await makeApp();
     diagnostics.emit.otlpGenaiIngestFailed('turner', 5);
     expect(causes(diagnostics)).toContain('otlp.genai_ingest_failed');
 
@@ -388,7 +397,7 @@ describe('recovery placement — the remaining families', () => {
   });
 
   it('an accepted codex bundle clears the codex incident', async () => {
-    const { app, diagnostics } = makeApp();
+    const { app, diagnostics } = await makeApp();
     diagnostics.emit.codexGenaiIngestEntryFailed('turner');
     expect(causes(diagnostics)).toContain('codex.genai_ingest_entry_failed');
 

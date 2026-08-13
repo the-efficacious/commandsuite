@@ -23,15 +23,41 @@ import { createServer as createHttpServer, type Server as HttpServer } from 'nod
 import { dirname, resolve as pathResolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { serve } from '@hono/node-server';
-import { Broker, registerSecretValues } from 'csuite-core';
-import { createApp } from './app.js';
-import { createCaptureHealthStore } from './capture-health.js';
-import { createSqliteChannelStore } from './channels.js';
+import { serveStatic } from '@hono/node-server/serve-static';
+import { createNodeWebSocket } from '@hono/node-ws';
+import {
+  type ActivityStore,
+  Broker,
+  createApp,
+  createCaptureHealthStore,
+  createDiagnosticStore,
+  createGenAiStore,
+  createJwtVerifier,
+  createSqliteActivityStore,
+  createSqliteChannelStore,
+  createSqliteObjectivesStore,
+  createSqliteProcessDocumentStore,
+  createSqliteSecretsStore,
+  createSqliteVariablesStore,
+  createTelemetryStore,
+  logger as defaultLogger,
+  dispatchPush,
+  EnrollmentStore,
+  type GenAiStore,
+  type JwtConfig,
+  type Logger,
+  migrateIdentityToVariables,
+  openTeamAndMembers,
+  registerSecretValues,
+  SqliteEventLog,
+  SqlitePushSubscriptionStore,
+  SqliteSessionStore,
+  SqliteTokenStore,
+  type TeamStore,
+  type TelemetryStore,
+} from 'csuite-core';
 import { type DatabaseSyncInstance, openDatabase } from './db.js';
-import { createDiagnosticStore } from './diagnostics.js';
-import { EnrollmentStore } from './enrollments.js';
 import { createSqliteFilesystemStore, LocalBlobStore } from './files/index.js';
-import { createGenAiStore, type GenAiStore } from './genai-store.js';
 import { createHttp2ServerFactory } from './https/server.js';
 import {
   HttpsConfigError,
@@ -39,10 +65,7 @@ import {
   loadCustomCert,
   loadOrGenerateSelfSigned,
 } from './https/store.js';
-import { createJwtVerifier, type JwtConfig } from './jwt.js';
-import { decryptField, ENCRYPTED_FIELD_PREFIX, encryptField } from './kek.js';
-import { logger as defaultLogger, type Logger } from './logger.js';
-import { type ActivityStore, createSqliteActivityStore } from './member-activity.js';
+import { decryptField, ENCRYPTED_FIELD_PREFIX, encryptField, kekFieldCipher } from './kek.js';
 import {
   defaultHttpsConfig,
   getKek,
@@ -52,69 +75,92 @@ import {
   type WebPushConfig,
 } from './members.js';
 import { createSqliteNotificationsStore } from './notifications/index.js';
-import { createSqliteObjectivesStore } from './objectives.js';
-import { createSqliteProcessDocumentStore } from './process-document.js';
-import { dispatchPush } from './push/dispatch.js';
-import { PushSubscriptionStore } from './push/store.js';
 import { configureVapid, generateVapidKeys } from './push/vapid.js';
+import { createWebPushSender } from './push/web-push-sender.js';
 import { createRawBodyStore, type RawBodyStore } from './raw-body-store.js';
-import { createSqliteSecretsStore } from './secrets.js';
 import { updateServerConfigFile } from './server-config.js';
-import { SessionStore } from './sessions.js';
-import { SqliteEventLog } from './sqlite-event-log.js';
-import { openTeamAndMembers, type TeamStore } from './team-store.js';
-import { createTelemetryStore, type TelemetryStore } from './telemetry-store.js';
-import { TokenStore } from './tokens.js';
 import { createMcpClientManager, createSqliteToolSourceStore } from './tool-sources/index.js';
-import { createSqliteVariablesStore, migrateIdentityToVariables } from './variables.js';
 import { SERVER_VERSION } from './version.js';
 
-export { type DatabaseSyncInstance, openDatabase } from './db.js';
 export {
+  type ActivityStore,
+  composedInstructionsSha256,
+  composeInstructions,
+  createGenAiStore,
+  createJwtVerifier,
+  createSqliteActivityStore,
+  createSqliteMemberStore,
+  createSqliteObjectivesStore,
+  createSqliteSecretsStore,
+  createSqliteVariablesStore,
+  createTelemetryStore,
+  currentCode as currentTotpCode,
   DEFAULT_POLL_INTERVAL_S,
   ENROLLMENT_TTL_MS,
   EnrollmentStore,
   formatUserCode,
+  type GenAiInferenceInput,
+  type GenAiInferenceRow,
+  type GenAiQuery,
+  type GenAiStore,
+  generateBearerToken,
+  generateSecret as generateTotpSecret,
+  hashRawToken,
+  IDENTITY_ENV_NAMES,
+  type IdentityMigrationResult,
+  type InsertTokenInput,
+  type InternalTokenRow,
+  instructionCaptureExemptions,
+  type JwtConfig,
+  type JwtVerifier,
+  looksLikeJwt,
+  migrateIdentityToVariables,
   normalizeUserCode,
-} from './enrollments.js';
+  ObjectivesError,
+  type ObjectivesStore,
+  openTeamAndMembers,
+  otpauthUri,
+  parseDurationMs,
+  pruneActivityDb,
+  SESSION_COOKIE_NAME,
+  SESSION_TTL_MS,
+  SecretsError,
+  type SecretsStore,
+  type SessionStore,
+  SqliteSessionStore,
+  SqliteTokenStore,
+  type TeamStore,
+  type TelemetryQuery,
+  type TelemetryRecord,
+  type TelemetryRow,
+  type TelemetryStore,
+  TOKEN_HASH_PREFIX,
+  type TokenStore,
+  type VariablesStore,
+  type VerifiedClaims,
+  validateEnvName,
+  verifyCode as verifyTotpCode,
+} from 'csuite-core';
+
+import { existsSync } from 'node:fs';
+import { isApiPath } from 'csuite-core';
+import type { UpgradeWebSocket } from 'hono/ws';
+import { createGenAiCorrelator } from './genai-correlator.js';
+
+export { type DatabaseSyncInstance, openDatabase } from './db.js';
 export {
   createGenAiCorrelator,
   type GenAiCorrelator,
   type GenAiCorrelatorOptions,
   isGenAiLogRecord,
 } from './genai-correlator.js';
-export {
-  createGenAiStore,
-  type GenAiInferenceInput,
-  type GenAiInferenceRow,
-  type GenAiQuery,
-  type GenAiStore,
-} from './genai-store.js';
 export { HttpsConfigError, type LoadedCert } from './https/store.js';
-export {
-  composedInstructionsSha256,
-  composeInstructions,
-  instructionCaptureExemptions,
-} from './instructions.js';
-export {
-  createJwtVerifier,
-  type JwtConfig,
-  type JwtVerifier,
-  looksLikeJwt,
-  type VerifiedClaims,
-} from './jwt.js';
 export {
   ENCRYPTED_FIELD_PREFIX,
   EncryptedFieldError,
   KekResolutionError,
   resolveKek,
 } from './kek.js';
-export {
-  type ActivityStore,
-  createSqliteActivityStore,
-  parseDurationMs,
-  pruneActivityDb,
-} from './member-activity.js';
 export {
   type AddMemberInput,
   ConfigNotFoundError,
@@ -140,11 +186,6 @@ export {
   type NotificationsStore,
 } from './notifications/index.js';
 export {
-  createSqliteObjectivesStore,
-  ObjectivesError,
-  type ObjectivesStore,
-} from './objectives.js';
-export {
   type AppendBodyInput,
   type AppendBodyResult,
   createRawBodyStore,
@@ -155,12 +196,6 @@ export {
   type RawExchangeRow,
 } from './raw-body-store.js';
 export {
-  createSqliteSecretsStore,
-  SecretsError,
-  type SecretsStore,
-  validateEnvName,
-} from './secrets.js';
-export {
   loadServerConfigFromFile,
   resolveConfigPath,
   type ServerConfig,
@@ -168,40 +203,6 @@ export {
   updateServerConfigFile,
   writeServerConfigFile,
 } from './server-config.js';
-export { SESSION_COOKIE_NAME, SESSION_TTL_MS, SessionStore } from './sessions.js';
-export {
-  createSqliteMemberStore,
-  openTeamAndMembers,
-  type TeamStore,
-} from './team-store.js';
-export {
-  createTelemetryStore,
-  type TelemetryQuery,
-  type TelemetryRecord,
-  type TelemetryRow,
-  type TelemetryStore,
-} from './telemetry-store.js';
-export {
-  generateBearerToken,
-  hashRawToken,
-  type InsertTokenInput,
-  type InternalTokenRow,
-  TOKEN_HASH_PREFIX,
-  TokenStore,
-} from './tokens.js';
-export {
-  currentCode as currentTotpCode,
-  generateSecret as generateTotpSecret,
-  otpauthUri,
-  verifyCode as verifyTotpCode,
-} from './totp.js';
-export {
-  createSqliteVariablesStore,
-  IDENTITY_ENV_NAMES,
-  type IdentityMigrationResult,
-  migrateIdentityToVariables,
-  type VariablesStore,
-} from './variables.js';
 export {
   createTtyWizardIO,
   type RunWizardOptions,
@@ -399,8 +400,9 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   const teamStore: TeamStore = stores.team;
 
   const eventLog = new SqliteEventLog(db);
-  const sessions = new SessionStore(db);
-  const tokens = new TokenStore(db);
+  const getCipher = () => kekFieldCipher(getKek());
+  const sessions = new SqliteSessionStore(db);
+  const tokens = new SqliteTokenStore(db);
 
   // Pending-enrollment store for the device-code (`csuite connect`)
   // flow. KEK is the same one that wraps TOTP secrets and VAPID
@@ -410,18 +412,18 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   // and the device's poll; the existing audit-completion path
   // (`apps/server/src/index.ts`) refuses to boot without a KEK so
   // production never hits that path.
-  const enrollments = new EnrollmentStore(db, { kek: getKek() });
-  const pushStore = new PushSubscriptionStore(db);
+  const enrollments = new EnrollmentStore(db, { cipher: kekFieldCipher(getKek()) });
+  const pushStore = new SqlitePushSubscriptionStore(db);
   const objectivesStore = createSqliteObjectivesStore(db);
   const channelStore = createSqliteChannelStore(db);
   // Tool-source registry — config-class, low write volume, main DB.
-  const toolSourceStore = createSqliteToolSourceStore(db);
+  const toolSourceStore = createSqliteToolSourceStore(db, getCipher);
   // Secrets registry — config-class, KEK-encrypted values, main DB.
   // Register every stored value with the core trace redactor so
   // broker-side ingest (OTLP bodies, genai bundles) scrubs any secret
   // an agent echoed into its context. The app layer registers new
   // values as they're written; this covers pre-existing rows at boot.
-  const secretsStore = createSqliteSecretsStore(db);
+  const secretsStore = createSqliteSecretsStore(db, getCipher);
   // Variables registry — runner env vars that are NOT secrets, in the
   // same main DB and the same env namespace. Constructed before the
   // redactor registration below so the identity migration has already
@@ -432,7 +434,13 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   // are still in `secrets` when that call happens stay registered for
   // the life of the process, and the migration would appear to have
   // done nothing until the next restart.
-  const identityMigration = migrateIdentityToVariables(db, secretsStore, variablesStore, log);
+  const identityMigration = migrateIdentityToVariables(
+    db,
+    getCipher,
+    secretsStore,
+    variablesStore,
+    log,
+  );
   if (identityMigration.skipped.length > 0) {
     // Named rather than swallowed: a skipped row is identity that is
     // still a secret, and is still being scrubbed from traces.
@@ -443,7 +451,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   // External Notifications registry — endpoints/profiles are
   // config-class; delivery receipts are bounded by the per-endpoint
   // ingress rate limit. Main DB.
-  const notificationsStore = createSqliteNotificationsStore(db);
+  const notificationsStore = createSqliteNotificationsStore(db, getCipher);
   try {
     registerSecretValues(secretsStore.allDecryptedValues());
   } catch (err) {
@@ -536,9 +544,9 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
     filesStore.ensureHome(s.name);
   }
 
-  sessions.purgeExpired();
+  void sessions.purgeExpired();
   enrollments.purgeExpired();
-  tokens.purgeExpired();
+  void (await tokens.purgeExpired());
 
   // VAPID lifecycle: keys come from the team config file (loaded by the
   // caller into `options.webPush`) or are freshly generated on first
@@ -666,6 +674,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
         void dispatchPush(message, {
           sessions: pushStore,
           members: memberStore,
+          sender: createWebPushSender(),
           logger: log,
           isLive,
         }).catch((err) => {
@@ -692,7 +701,14 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   // next unknown-kid it sees.
   const jwtVerifier = options.jwt ? createJwtVerifier(options.jwt) : undefined;
 
-  const { app, injectWebSocket } = createApp({
+  let injectWebSocket: ReturnType<typeof createNodeWebSocket>['injectWebSocket'] | null = null;
+  const { app } = createApp({
+    webSocket: (a) => {
+      const ws = createNodeWebSocket({ app: a });
+      injectWebSocket = ws.injectWebSocket;
+      return { upgradeWebSocket: ws.upgradeWebSocket as unknown as UpgradeWebSocket };
+    },
+    createGenAiCorrelator,
     broker,
     members: memberStore,
     tokens,
@@ -720,7 +736,6 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
     logger: log,
     secureCookies,
     shutdownSignal: shutdownController.signal,
-    ...(publicRoot !== undefined ? { publicRoot } : {}),
     ...(webPush !== null
       ? {
           pushStore,
@@ -730,6 +745,19 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
     ...(onPushed !== undefined ? { onPushed } : {}),
     ...(jwtVerifier !== undefined ? { jwt: jwtVerifier } : {}),
   });
+
+  // ─── Static SPA serving (registered LAST so API routes match first) ─
+  //
+  // Mounted by the binding, not the app factory: which directory (if
+  // any) holds a built SPA is a deployment concern, and the fallback
+  // must register after every API route.
+  if (publicRoot !== undefined && existsSync(publicRoot)) {
+    app.use('*', serveStatic({ root: publicRoot }));
+    app.get('*', async (c, next) => {
+      if (isApiPath(c.req.path)) return next();
+      return serveStatic({ root: publicRoot, path: 'index.html' })(c, next);
+    });
+  }
 
   // Optional HTTP→HTTPS redirect listener. Only spun up when HTTPS
   // is active AND the user hasn't disabled it. Kept deliberately tiny
@@ -790,7 +818,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
       // Must happen after `serve()` returns the server instance but
       // before any client can try to upgrade — the onListen callback
       // is the safe point.
-      injectWebSocket(server);
+      injectWebSocket?.(server);
       if (cert !== null) listenInfo.cert = cert;
       if (redirectServer !== null) {
         listenInfo.redirectHttpPort = https.bindHttp;

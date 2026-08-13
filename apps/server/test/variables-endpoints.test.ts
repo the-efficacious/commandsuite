@@ -17,20 +17,21 @@
 import {
   Broker,
   clearRegisteredSecretValues,
+  createApp,
+  createSqliteSecretsStore,
+  createSqliteVariablesStore,
+  createTokenStoreFromMembers,
   InMemoryEventLog,
+  migrateIdentityToVariables,
   REDACTED,
   redactSecrets,
+  SqliteSessionStore,
 } from 'csuite-core';
 import type { VariableSummary } from 'csuite-sdk/types';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
-import { testKek } from '../src/kek.js';
-import { createMemberStore, setKek } from '../src/members.js';
-import { createSqliteSecretsStore } from '../src/secrets.js';
-import { SessionStore } from '../src/sessions.js';
-import { createTokenStoreFromMembers } from '../src/tokens.js';
-import { createSqliteVariablesStore, migrateIdentityToVariables } from '../src/variables.js';
+import { kekFieldCipher, testKek } from '../src/kek.js';
+import { createMemberStore, getKek, setKek } from '../src/members.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const ADMIN = 'csuite_test_admin_variable';
@@ -38,7 +39,7 @@ const BOUND = 'csuite_test_bound_variable';
 
 const noopLog = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 
-function makeApp() {
+async function makeApp() {
   const broker = new Broker({
     eventLog: new InMemoryEventLog(),
     now: () => 1_700_000_000_000,
@@ -62,9 +63,9 @@ function makeApp() {
     },
   ]);
   const db = openDatabase(':memory:');
-  const sessions = new SessionStore(db);
-  const tokens = createTokenStoreFromMembers(db, members);
-  const secrets = createSqliteSecretsStore(db);
+  const sessions = new SqliteSessionStore(db);
+  const tokens = await createTokenStoreFromMembers(db, members);
+  const secrets = createSqliteSecretsStore(db, () => kekFieldCipher(getKek()));
   const variables = createSqliteVariablesStore(db);
   const { app } = createApp({
     broker,
@@ -95,7 +96,7 @@ afterEach(() => clearRegisteredSecretValues());
 
 describe('a variable value is readable, a secret value is not', () => {
   it('returns the value to a secrets.manage holder and withholds it from others', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request(
       '/variables',
       authed(ADMIN, { slug: 'author-name', envName: 'GIT_AUTHOR_NAME' }),
@@ -117,7 +118,7 @@ describe('a variable value is readable, a secret value is not', () => {
   });
 
   it('never returns a secret value on the equivalent secrets route', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/secrets', authed(ADMIN, { slug: 'gh', envName: 'GITHUB_TOKEN' }));
     await app.request('/secrets/gh/value', authed(ADMIN, { value: 'ghp_realsecret' }, 'PUT'));
     const body = (await (await app.request('/secrets/gh', authed(ADMIN))).json()) as Record<
@@ -130,7 +131,7 @@ describe('a variable value is readable, a secret value is not', () => {
 
 describe('variables are never registered for redaction', () => {
   it('setting a variable value leaves it verbatim, while a secret value scrubs', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/variables', authed(ADMIN, { slug: 'an', envName: 'GIT_AUTHOR_NAME' }));
     await app.request('/variables/an/value', authed(ADMIN, { value: 'Turner' }, 'PUT'));
 
@@ -147,8 +148,8 @@ describe('variables are never registered for redaction', () => {
     expect(redacted).toContain(REDACTED);
   });
 
-  it('a variable value is absent from allDecryptedValues, which is what boot registers', () => {
-    const { secrets, variables } = makeApp();
+  it('a variable value is absent from allDecryptedValues, which is what boot registers', async () => {
+    const { secrets, variables } = await makeApp();
     const v = variables.create({ slug: 'an', envName: 'GIT_AUTHOR_NAME', creator: 'admin' });
     variables.setValue(v.id, 'Turner');
     const s = secrets.create({ slug: 'gh', envName: 'GITHUB_TOKEN', creator: 'admin' });
@@ -162,7 +163,7 @@ describe('variables are never registered for redaction', () => {
 
 describe('the two stores share one environment namespace', () => {
   it('rejects a variable that collides with a secret for the same member', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/secrets', authed(ADMIN, { slug: 's-name', envName: 'GIT_AUTHOR_NAME' }));
     await app.request('/secrets/s-name/bindings', authed(ADMIN, { member: 'bound' }));
 
@@ -178,7 +179,7 @@ describe('the two stores share one environment namespace', () => {
   });
 
   it('rejects a secret that collides with a variable for the same member', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/variables', authed(ADMIN, { slug: 'v-name', envName: 'GIT_AUTHOR_NAME' }));
     await app.request('/variables/v-name/bindings', authed(ADMIN, { member: 'bound' }));
 
@@ -192,7 +193,7 @@ describe('the two stores share one environment namespace', () => {
   });
 
   it('allows the same env name in both stores when they reach different members', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/secrets', authed(ADMIN, { slug: 's-name', envName: 'GIT_AUTHOR_NAME' }));
     const boundSecret = await app.request(
       '/secrets/s-name/bindings',
@@ -211,7 +212,7 @@ describe('the two stores share one environment namespace', () => {
 
 describe('/secrets/resolve merges both stores and marks which are secret', () => {
   it('returns variables in env but omits them from secretEnvNames', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await app.request('/secrets', authed(ADMIN, { slug: 'gh', envName: 'GITHUB_TOKEN' }));
     await app.request('/secrets/gh/value', authed(ADMIN, { value: 'ghp_realsecret' }, 'PUT'));
     await app.request('/secrets/gh/bindings', authed(ADMIN, { member: 'bound' }));
@@ -231,7 +232,7 @@ describe('/secrets/resolve merges both stores and marks which are secret', () =>
 });
 
 describe('identity migration', () => {
-  const identitySeed = (secrets: ReturnType<typeof makeApp>['secrets']) => {
+  const identitySeed = (secrets: Awaited<ReturnType<typeof makeApp>>['secrets']) => {
     const s = secrets.create({
       slug: 'turner-git-author-name',
       envName: 'GIT_AUTHOR_NAME',
@@ -243,11 +244,17 @@ describe('identity migration', () => {
     return s;
   };
 
-  it('moves identity to variables with value and bindings intact', () => {
-    const { db, secrets, variables } = makeApp();
+  it('moves identity to variables with value and bindings intact', async () => {
+    const { db, secrets, variables } = await makeApp();
     identitySeed(secrets);
 
-    const result = migrateIdentityToVariables(db, secrets, variables, noopLog);
+    const result = migrateIdentityToVariables(
+      db,
+      () => kekFieldCipher(getKek()),
+      secrets,
+      variables,
+      noopLog,
+    );
 
     expect(result.migrated).toEqual(['turner-git-author-name']);
     expect(secrets.getBySlug('turner-git-author-name')).toBeNull();
@@ -259,11 +266,17 @@ describe('identity migration', () => {
     expect(moved.envName).toBe('GIT_AUTHOR_NAME');
   });
 
-  it('is idempotent — a second run moves nothing and breaks nothing', () => {
-    const { db, secrets, variables } = makeApp();
+  it('is idempotent — a second run moves nothing and breaks nothing', async () => {
+    const { db, secrets, variables } = await makeApp();
     identitySeed(secrets);
-    migrateIdentityToVariables(db, secrets, variables, noopLog);
-    const second = migrateIdentityToVariables(db, secrets, variables, noopLog);
+    migrateIdentityToVariables(db, () => kekFieldCipher(getKek()), secrets, variables, noopLog);
+    const second = migrateIdentityToVariables(
+      db,
+      () => kekFieldCipher(getKek()),
+      secrets,
+      variables,
+      noopLog,
+    );
     expect(second.migrated).toEqual([]);
     expect(second.noop).toBe(true);
     const moved = variables.getBySlug('turner-git-author-name');
@@ -271,20 +284,20 @@ describe('identity migration', () => {
     expect(variables.getValue(moved.id)).toBe('Turner');
   });
 
-  it('leaves a non-identity secret alone', () => {
-    const { db, secrets, variables } = makeApp();
+  it('leaves a non-identity secret alone', async () => {
+    const { db, secrets, variables } = await makeApp();
     const gh = secrets.create({ slug: 'gh', envName: 'GITHUB_TOKEN', creator: 'admin' });
     secrets.setValue(gh.id, 'ghp_realsecret');
     secrets.bind(gh.id, 'bound');
 
-    migrateIdentityToVariables(db, secrets, variables, noopLog);
+    migrateIdentityToVariables(db, () => kekFieldCipher(getKek()), secrets, variables, noopLog);
 
     expect(secrets.getBySlug('gh')).not.toBeNull();
     expect(variables.getBySlug('gh')).toBeNull();
     expect(secrets.allDecryptedValues()).toContain('ghp_realsecret');
   });
 
-  it('migrates an identity row bound to nobody, because it is registered anyway', () => {
+  it('migrates an identity row bound to nobody, because it is registered anyway', async () => {
     // Found on the live team database: exactly one identity secret had
     // no binding. Reading values through `resolveFor` (per-member)
     // could not recover it, so it stayed a secret — and
@@ -292,7 +305,7 @@ describe('identity migration', () => {
     // binding, so that one row went on scrubbing that member's name
     // from EVERY member's captured bodies. "Reaches no runner" is not
     // the same as "is not registered".
-    const { db, secrets, variables } = makeApp();
+    const { db, secrets, variables } = await makeApp();
     const s = secrets.create({
       slug: 'orphan-git-author-name',
       envName: 'GIT_AUTHOR_NAME',
@@ -301,7 +314,13 @@ describe('identity migration', () => {
     secrets.setValue(s.id, 'Nobody');
     expect(secrets.allDecryptedValues()).toContain('Nobody');
 
-    const result = migrateIdentityToVariables(db, secrets, variables, noopLog);
+    const result = migrateIdentityToVariables(
+      db,
+      () => kekFieldCipher(getKek()),
+      secrets,
+      variables,
+      noopLog,
+    );
 
     expect(result.migrated).toEqual(['orphan-git-author-name']);
     expect(secrets.allDecryptedValues()).not.toContain('Nobody');
@@ -311,8 +330,8 @@ describe('identity migration', () => {
     expect(variables.listBindings(moved.id)).toEqual([]);
   });
 
-  it('reports a row it cannot move rather than dropping it silently', () => {
-    const { db, secrets, variables } = makeApp();
+  it('reports a row it cannot move rather than dropping it silently', async () => {
+    const { db, secrets, variables } = await makeApp();
     // A row with no stored value at all: nothing to migrate, and the
     // reason is named rather than the row vanishing from the report.
     secrets.create({
@@ -321,7 +340,13 @@ describe('identity migration', () => {
       creator: 'admin',
     });
 
-    const result = migrateIdentityToVariables(db, secrets, variables, noopLog);
+    const result = migrateIdentityToVariables(
+      db,
+      () => kekFieldCipher(getKek()),
+      secrets,
+      variables,
+      noopLog,
+    );
 
     expect(result.migrated).toEqual([]);
     expect(result.skipped).toEqual([
@@ -330,7 +355,7 @@ describe('identity migration', () => {
     expect(secrets.getBySlug('valueless-git-author-name')).not.toBeNull();
   });
 
-  it('rolls back whole when a row fails mid-migration, leaving nothing half-moved', () => {
+  it('rolls back whole when a row fails mid-migration, leaving nothing half-moved', async () => {
     // Criterion 3 says a half-migrated state is the outcome to refuse:
     // a secret deleted before its variable exists loses a value that
     // cannot be regenerated, and a variable created without deleting
@@ -339,7 +364,7 @@ describe('identity migration', () => {
     // start. That was a decision stated before building, and a decision
     // settled in argument but unpinned in code is one the next edit
     // reverses silently.
-    const { db, secrets, variables } = makeApp();
+    const { db, secrets, variables } = await makeApp();
     for (const [slug, env] of [
       ['a-git-author-name', 'GIT_AUTHOR_NAME'],
       ['b-git-author-email', 'GIT_AUTHOR_EMAIL'],
@@ -375,6 +400,7 @@ describe('identity migration', () => {
 
     const result = migrateIdentityToVariables(
       failing as unknown as typeof db,
+      () => kekFieldCipher(getKek()),
       secrets,
       variables,
       noopLog,
@@ -397,12 +423,12 @@ describe('identity migration', () => {
     );
   });
 
-  it('after migration the identity value is no longer registered at boot', () => {
-    const { db, secrets, variables } = makeApp();
+  it('after migration the identity value is no longer registered at boot', async () => {
+    const { db, secrets, variables } = await makeApp();
     identitySeed(secrets);
     expect(secrets.allDecryptedValues()).toContain('Turner');
 
-    migrateIdentityToVariables(db, secrets, variables, noopLog);
+    migrateIdentityToVariables(db, () => kekFieldCipher(getKek()), secrets, variables, noopLog);
 
     expect(secrets.allDecryptedValues()).not.toContain('Turner');
   });

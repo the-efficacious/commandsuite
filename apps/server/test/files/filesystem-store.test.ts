@@ -1,15 +1,11 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createSqliteFilesystemStore, type FilesystemStore, type ViewerContext } from 'csuite-core';
 import type { Permission } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it } from 'vitest';
 import { type DatabaseSyncInstance, openDatabase } from '../../src/db.js';
 import { LocalBlobStore } from '../../src/files/blob-store.js';
-import {
-  createSqliteFilesystemStore,
-  type FilesystemStore,
-  type ViewerContext,
-} from '../../src/files/filesystem-store.js';
 
 function viewer(name: string, permissions: Permission[] = []): ViewerContext {
   return { name, permissions };

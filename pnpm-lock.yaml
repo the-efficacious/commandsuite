@@ -206,6 +206,21 @@ importers:
       csuite-sdk:
         specifier: workspace:*
         version: link:../sdk
+      hono:
+        specifier: ^4.12.31
+        version: 4.12.31
+      jose:
+        specifier: ^6.2.4
+        version: 6.2.4
+      otpauth:
+        specifier: ^9.5.1
+        version: 9.5.1
+      p-limit:
+        specifier: ^7.3.1
+        version: 7.3.1
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
     devDependencies:
       tsup:
         specifier: ^8.0.0

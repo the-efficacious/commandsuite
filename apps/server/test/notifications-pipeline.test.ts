@@ -31,9 +31,9 @@ function headers(map: Record<string, string>): (name: string) => string | undefi
 describe('verifyInbound — hmac-sha256', () => {
   const auth = { kind: 'hmac-sha256' as const, headerName: null, prefix: null, secret: SECRET };
 
-  it('accepts a GitHub-style signature on the default header', () => {
+  it('accepts a GitHub-style signature on the default header', async () => {
     const body = '{"action":"opened"}';
-    const result = verifyInbound(
+    const result = await verifyInbound(
       auth,
       Buffer.from(body),
       headers({ 'X-Hub-Signature-256': `sha256=${sign(body)}` }),
@@ -41,8 +41,8 @@ describe('verifyInbound — hmac-sha256', () => {
     expect(result.ok).toBe(true);
   });
 
-  it('rejects a bad signature', () => {
-    const result = verifyInbound(
+  it('rejects a bad signature', async () => {
+    const result = await verifyInbound(
       auth,
       Buffer.from('{"a":1}'),
       headers({ 'X-Hub-Signature-256': `sha256=${sign('{"a":2}')}` }),
@@ -50,36 +50,39 @@ describe('verifyInbound — hmac-sha256', () => {
     expect(result.ok).toBe(false);
   });
 
-  it('rejects a missing header and a missing prefix', () => {
+  it('rejects a missing header and a missing prefix', async () => {
     const body = '{}';
-    expect(verifyInbound(auth, Buffer.from(body), headers({})).ok).toBe(false);
+    expect((await verifyInbound(auth, Buffer.from(body), headers({}))).ok).toBe(false);
     expect(
-      verifyInbound(auth, Buffer.from(body), headers({ 'X-Hub-Signature-256': sign(body) })).ok,
+      (await verifyInbound(auth, Buffer.from(body), headers({ 'X-Hub-Signature-256': sign(body) })))
+        .ok,
     ).toBe(false);
   });
 
-  it('honors a custom header and empty prefix', () => {
+  it('honors a custom header and empty prefix', async () => {
     const custom = { ...auth, headerName: 'x-sig', prefix: '' };
     const body = 'raw text body';
-    expect(verifyInbound(custom, Buffer.from(body), headers({ 'X-Sig': sign(body) })).ok).toBe(
-      true,
-    );
+    expect(
+      (await verifyInbound(custom, Buffer.from(body), headers({ 'X-Sig': sign(body) }))).ok,
+    ).toBe(true);
   });
 
-  it('verifies over the exact bytes — a reserialized body fails', () => {
+  it('verifies over the exact bytes — a reserialized body fails', async () => {
     const sent = '{"a": 1}';
     const reserialized = '{"a":1}';
     expect(
-      verifyInbound(
-        auth,
-        Buffer.from(reserialized),
-        headers({ 'X-Hub-Signature-256': `sha256=${sign(sent)}` }),
+      (
+        await verifyInbound(
+          auth,
+          Buffer.from(reserialized),
+          headers({ 'X-Hub-Signature-256': `sha256=${sign(sent)}` }),
+        )
       ).ok,
     ).toBe(false);
   });
 
-  it('fails closed with no secret', () => {
-    const result = verifyInbound({ ...auth, secret: null }, Buffer.from('{}'), headers({}));
+  it('fails closed with no secret', async () => {
+    const result = await verifyInbound({ ...auth, secret: null }, Buffer.from('{}'), headers({}));
     expect(result.ok).toBe(false);
   });
 });
@@ -87,17 +90,17 @@ describe('verifyInbound — hmac-sha256', () => {
 describe('verifyInbound — header-secret', () => {
   const auth = { kind: 'header-secret' as const, headerName: null, prefix: null, secret: SECRET };
 
-  it('accepts the shared secret on the default header', () => {
-    expect(verifyInbound(auth, Buffer.from('x'), headers({ 'X-Hook-Secret': SECRET })).ok).toBe(
-      true,
-    );
+  it('accepts the shared secret on the default header', async () => {
+    expect(
+      (await verifyInbound(auth, Buffer.from('x'), headers({ 'X-Hook-Secret': SECRET }))).ok,
+    ).toBe(true);
   });
 
-  it('rejects a wrong or absent secret', () => {
-    expect(verifyInbound(auth, Buffer.from('x'), headers({ 'X-Hook-Secret': 'nope' })).ok).toBe(
-      false,
-    );
-    expect(verifyInbound(auth, Buffer.from('x'), headers({})).ok).toBe(false);
+  it('rejects a wrong or absent secret', async () => {
+    expect(
+      (await verifyInbound(auth, Buffer.from('x'), headers({ 'X-Hook-Secret': 'nope' }))).ok,
+    ).toBe(false);
+    expect((await verifyInbound(auth, Buffer.from('x'), headers({}))).ok).toBe(false);
   });
 });
 
@@ -108,12 +111,12 @@ describe('filters', () => {
     labels: ['bug', 'p1'],
   };
 
-  it('getPath resolves dot-paths', () => {
+  it('getPath resolves dot-paths', async () => {
     expect(getPath(payload, 'check_run.conclusion')).toBe('failure');
     expect(getPath(payload, 'check_run.missing')).toBeUndefined();
   });
 
-  it('eq / ne / in / exists / contains', () => {
+  it('eq / ne / in / exists / contains', async () => {
     expect(applyFilters([{ path: 'action', op: 'eq', value: 'opened' }], payload).pass).toBe(true);
     expect(applyFilters([{ path: 'action', op: 'ne', value: 'closed' }], payload).pass).toBe(true);
     expect(
@@ -126,7 +129,7 @@ describe('filters', () => {
     expect(applyFilters([{ path: 'action', op: 'eq', value: 'closed' }], payload).pass).toBe(false);
   });
 
-  it('ANDs rules and fails non-JSON bodies when rules exist', () => {
+  it('ANDs rules and fails non-JSON bodies when rules exist', async () => {
     expect(
       applyFilters(
         [
@@ -142,7 +145,7 @@ describe('filters', () => {
 });
 
 describe('templates', () => {
-  it('substitutes dot-paths, whole payload, and missing → empty', () => {
+  it('substitutes dot-paths, whole payload, and missing → empty', async () => {
     const payload = { repo: 'csuite', run: { status: 'failed', num: 7 } };
     expect(
       renderTemplate('CI {{payload.run.status}} on {{payload.repo}} #{{payload.run.num}}', payload),
@@ -151,7 +154,7 @@ describe('templates', () => {
     expect(renderTemplate('{{payload}}', { a: 1 })).toBe('{"a":1}');
   });
 
-  it('defaultRender pretty-prints JSON and passes raw text through', () => {
+  it('defaultRender pretty-prints JSON and passes raw text through', async () => {
     expect(defaultRender('{"a":1}', { a: 1 })).toBe('{\n  "a": 1\n}');
     expect(defaultRender('plain text', undefined)).toBe('plain text');
   });
@@ -180,7 +183,7 @@ function delivery(partial: Partial<DeliveryRecord>): DeliveryRecord {
 }
 
 describe('composeBody — the provenance wrap', () => {
-  it('frames a single delivery with endpoint, delivery id, and the untrusted-input contract', () => {
+  it('frames a single delivery with endpoint, delivery id, and the untrusted-input contract', async () => {
     const body = composeBody({
       endpointSlug: 'ci-alerts',
       displayName: 'CI Alerts',
@@ -194,7 +197,7 @@ describe('composeBody — the provenance wrap', () => {
     expect(body).toContain('</external_content>');
   });
 
-  it('states queue and coalesce facts in the preamble', () => {
+  it('states queue and coalesce facts in the preamble', async () => {
     const body = composeBody({
       endpointSlug: 'ci-alerts',
       displayName: '',
@@ -212,7 +215,7 @@ describe('composeBody — the provenance wrap', () => {
     expect(body.indexOf('RENDERED-NEW')).toBeLessThan(body.indexOf('RENDERED-OLD'));
   });
 
-  it('omits older deliveries past the size cap with a receipt pointer', () => {
+  it('omits older deliveries past the size cap with a receipt pointer', async () => {
     const deliveries = Array.from({ length: 30 }, (_, i) =>
       delivery({
         id: `d-${i}`,

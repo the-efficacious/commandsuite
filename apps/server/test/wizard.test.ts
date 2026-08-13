@@ -16,9 +16,9 @@
  * returned data shape and the conversation flow, not on file IO.
  */
 
+import { currentCode } from 'csuite-core';
 import { afterEach, describe, expect, it } from 'vitest';
 import { MemberLoadError } from '../src/members.js';
-import { currentCode } from '../src/totp.js';
 import { type RunWizardOptions, runFirstRunWizard, type WizardIO } from '../src/wizard.js';
 
 interface MockIO extends WizardIO {

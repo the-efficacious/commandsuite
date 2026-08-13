@@ -5,12 +5,11 @@
  * enough to fit in a test setup function.
  */
 
+import type { TeamStore } from 'csuite-core';
+import { openTeamAndMembers, SqliteTokenStore, type TokenStore } from 'csuite-core';
 import type { Permission, PermissionPresets, Role, Team } from 'csuite-sdk/types';
 import { type DatabaseSyncInstance, openDatabase } from '../../src/db.js';
 import type { MemberStore } from '../../src/members.js';
-import type { TeamStore } from '../../src/team-store.js';
-import { openTeamAndMembers } from '../../src/team-store.js';
-import { TokenStore } from '../../src/tokens.js';
 
 /**
  * Lightweight `TeamStore` stand-in for tests that exercise `createApp`
@@ -92,7 +91,10 @@ export interface SeedTeamInput {
   permissionPresets?: Record<string, Permission[]>;
 }
 
-export function seedStores(input: { team: SeedTeamInput; members: SeedMember[] }): SeededStores {
+export async function seedStores(input: {
+  team: SeedTeamInput;
+  members: SeedMember[];
+}): Promise<SeededStores> {
   const db = openDatabase(':memory:');
   const stores = openTeamAndMembers(db);
   stores.team.setTeam({
@@ -102,7 +104,7 @@ export function seedStores(input: { team: SeedTeamInput; members: SeedMember[] }
   for (const [name, leaves] of Object.entries(input.team.permissionPresets ?? {})) {
     stores.team.setPreset(name, leaves);
   }
-  const tokens = new TokenStore(db);
+  const tokens = new SqliteTokenStore(db);
   for (const m of input.members) {
     stores.members.addMember({
       name: m.name,
@@ -112,7 +114,7 @@ export function seedStores(input: { team: SeedTeamInput; members: SeedMember[] }
       permissions: m.permissions ?? [],
       totpSecret: m.totpSecret ?? null,
     });
-    tokens.insert({
+    await tokens.insert({
       memberName: m.name,
       rawToken: m.token,
       label: 'test',

@@ -4,7 +4,7 @@
  * middleware resolves to one `LoadedMember`.
  *
  * These tests exercise the /session/* routes end-to-end through the Hono
- * app, plus the TOTP + SessionStore primitives directly. Existing
+ * app, plus the TOTP + SqliteSessionStore primitives directly. Existing
  * /roster identity/auth coverage lives in app.test.ts.
  *
  * Note the `dual auth (bearer OR cookie)` describe below is named
@@ -14,17 +14,25 @@
 
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { Broker, InMemoryEventLog } from 'csuite-core';
+import {
+  Broker,
+  createApp,
+  createJwtVerifier,
+  createTokenStoreFromMembers,
+  currentCode,
+  generateSecret,
+  InMemoryEventLog,
+  type JwtConfig,
+  SESSION_COOKIE_NAME,
+  SqliteSessionStore,
+  verifyCode,
+} from 'csuite-core';
 import type { SessionResponse, Team } from 'csuite-sdk/types';
 import { calculateJwkThumbprint, exportJWK, generateKeyPair, type JWK, SignJWT } from 'jose';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
-import { createJwtVerifier, type JwtConfig } from '../src/jwt.js';
+import { createGenAiCorrelator } from '../src/genai-correlator.js';
 import { createMemberStore } from '../src/members.js';
-import { SESSION_COOKIE_NAME, SessionStore } from '../src/sessions.js';
-import { createTokenStoreFromMembers } from '../src/tokens.js';
-import { currentCode, generateSecret, verifyCode } from '../src/totp.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const OP_TOKEN = 'csuite_auth_test_operator_token';
@@ -37,7 +45,7 @@ const TEAM: Team = {
 };
 
 /** Minimum helpers — each test gets its own app instance, no shared state. */
-function makeApp(options: { now?: () => number; totpSecret?: string } = {}) {
+async function makeApp(options: { now?: () => number; totpSecret?: string } = {}) {
   const secret = options.totpSecret ?? generateSecret();
   const broker = new Broker({
     eventLog: new InMemoryEventLog(),
@@ -60,9 +68,10 @@ function makeApp(options: { now?: () => number; totpSecret?: string } = {}) {
     },
   ]);
   const db = openDatabase(':memory:');
-  const sessions = new SessionStore(db, { now: options.now });
-  const tokens = createTokenStoreFromMembers(db, members, { now: options.now });
+  const sessions = new SqliteSessionStore(db, { now: options.now });
+  const tokens = await createTokenStoreFromMembers(db, members, { now: options.now });
   const { app } = createApp({
+    createGenAiCorrelator,
     broker,
     members,
     tokens,
@@ -145,34 +154,34 @@ describe('verifyCode', () => {
 
 // ─── Session store ──────────────────────────────────────────────────
 
-describe('SessionStore', () => {
-  it('creates, looks up, touches, and deletes sessions', () => {
+describe('SqliteSessionStore', () => {
+  it('creates, looks up, touches, and deletes sessions', async () => {
     const db = openDatabase(':memory:');
-    const store = new SessionStore(db);
-    const created = store.create('director-1', 'test-ua');
+    const store = new SqliteSessionStore(db);
+    const created = await store.create('director-1', 'test-ua');
     expect(created.memberName).toBe('director-1');
 
-    const found = store.get(created.id);
+    const found = await store.get(created.id);
     expect(found?.memberName).toBe('director-1');
 
-    store.touch(created.id);
-    const touched = store.get(created.id);
+    await store.touch(created.id);
+    const touched = await store.get(created.id);
     expect(touched).not.toBeNull();
     if (touched) expect(touched.lastSeen).toBeGreaterThanOrEqual(created.lastSeen);
 
-    store.delete(created.id);
-    expect(store.get(created.id)).toBeNull();
+    await store.delete(created.id);
+    expect(await store.get(created.id)).toBeNull();
   });
 
-  it('treats expired sessions as missing and purges them', () => {
+  it('treats expired sessions as missing and purges them', async () => {
     let clock = 1_000_000;
     const db = openDatabase(':memory:');
-    const store = new SessionStore(db, { now: () => clock });
-    const created = store.create('director-1', null);
+    const store = new SqliteSessionStore(db, { now: () => clock });
+    const created = await store.create('director-1', null);
     // Jump past the 7d TTL.
     clock += 8 * 24 * 60 * 60 * 1000;
-    expect(store.get(created.id)).toBeNull();
-    expect(store.purgeExpired()).toBe(1);
+    expect(await store.get(created.id)).toBeNull();
+    expect(await store.purgeExpired()).toBe(1);
   });
 });
 
@@ -181,7 +190,7 @@ describe('SessionStore', () => {
 describe('POST /session/totp', () => {
   it('issues a session cookie for a valid code and lets subsequent cookie-auth requests succeed', async () => {
     const now = 1_700_000_000_000;
-    const { app, secret } = makeApp({ now: () => now });
+    const { app, secret } = await makeApp({ now: () => now });
     const code = currentCode(secret, now);
 
     const res = await app.request('/session/totp', {
@@ -209,7 +218,7 @@ describe('POST /session/totp', () => {
 
   it('rejects the same code used twice (replay guard)', async () => {
     const now = 1_700_000_000_000;
-    const { app, secret } = makeApp({ now: () => now });
+    const { app, secret } = await makeApp({ now: () => now });
     const code = currentCode(secret, now);
 
     const first = await app.request('/session/totp', {
@@ -229,7 +238,7 @@ describe('POST /session/totp', () => {
 
   it('rejects an unknown/unenrolled slot with the same error shape (no enumeration)', async () => {
     const now = 1_700_000_000_000;
-    const { app } = makeApp({ now: () => now });
+    const { app } = await makeApp({ now: () => now });
 
     // build-bot has no TOTP enrollment; ghost doesn't exist at all.
     // Both should look identical to the caller.
@@ -251,7 +260,7 @@ describe('POST /session/totp', () => {
   });
 
   it('400s on malformed login payload', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/session/totp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -262,7 +271,7 @@ describe('POST /session/totp', () => {
 
   it('locks out a slot after 5 failed attempts and clears on success', async () => {
     let clock = 1_700_000_000_000;
-    const { app, secret } = makeApp({ now: () => clock });
+    const { app, secret } = await makeApp({ now: () => clock });
 
     for (let i = 0; i < 5; i++) {
       const res = await app.request('/session/totp', {
@@ -297,7 +306,7 @@ describe('POST /session/totp', () => {
 describe('session lifecycle', () => {
   it('logs out: cookie becomes invalid, subsequent requests 401', async () => {
     const now = 1_700_000_000_000;
-    const { app, secret } = makeApp({ now: () => now });
+    const { app, secret } = await makeApp({ now: () => now });
     const code = currentCode(secret, now);
 
     const loginRes = await app.request('/session/totp', {
@@ -324,7 +333,7 @@ describe('session lifecycle', () => {
 
   it('GET /session returns the current slot/role/expiresAt', async () => {
     const now = 1_700_000_000_000;
-    const { app, secret } = makeApp({ now: () => now });
+    const { app, secret } = await makeApp({ now: () => now });
     const loginRes = await app.request('/session/totp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -348,7 +357,7 @@ describe('session lifecycle', () => {
 
 describe('dual auth (bearer OR cookie)', () => {
   it('accepts /roster with bearer token', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/roster', {
       headers: { Authorization: `Bearer ${OP_TOKEN}` },
     });
@@ -357,7 +366,7 @@ describe('dual auth (bearer OR cookie)', () => {
 
   it('accepts /roster with session cookie', async () => {
     const now = 1_700_000_000_000;
-    const { app, secret } = makeApp({ now: () => now });
+    const { app, secret } = await makeApp({ now: () => now });
     const loginRes = await app.request('/session/totp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -373,14 +382,14 @@ describe('dual auth (bearer OR cookie)', () => {
   });
 
   it('rejects /roster with no credentials at all', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/roster');
     expect(res.status).toBe(401);
   });
 
   it('rejects /roster with a stale cookie even if the session was valid before', async () => {
     const now = 1_700_000_000_000;
-    const { app, sessions, secret } = makeApp({ now: () => now });
+    const { app, sessions, secret } = await makeApp({ now: () => now });
 
     const loginRes = await app.request('/session/totp', {
       method: 'POST',
@@ -405,7 +414,7 @@ describe('dual auth (bearer OR cookie)', () => {
 
   it('cookie-auth on /subscribe still enforces to === name', async () => {
     const now = 1_700_000_000_000;
-    const { app, secret } = makeApp({ now: () => now });
+    const { app, secret } = await makeApp({ now: () => now });
     const loginRes = await app.request('/session/totp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -507,7 +516,7 @@ async function mintTestToken(
     .sign(privateKey);
 }
 
-function makeJwtApp(fixture: JwtFixture) {
+async function makeJwtApp(fixture: JwtFixture) {
   const broker = new Broker({
     eventLog: new InMemoryEventLog(),
     now: () => 1_700_000_000_000,
@@ -528,9 +537,10 @@ function makeJwtApp(fixture: JwtFixture) {
     },
   ]);
   const db = openDatabase(':memory:');
-  const sessions = new SessionStore(db);
-  const tokens = createTokenStoreFromMembers(db, members);
+  const sessions = new SqliteSessionStore(db);
+  const tokens = await createTokenStoreFromMembers(db, members);
   const { app } = createApp({
+    createGenAiCorrelator,
     broker,
     members,
     tokens,
@@ -555,7 +565,7 @@ describe('JWT auth (federated)', () => {
   });
 
   it('accepts a well-formed JWT and resolves to the named member', async () => {
-    const { app } = makeJwtApp(fixture);
+    const { app } = await makeJwtApp(fixture);
     const token = await mintTestToken(fixture.privateKey, fixture.kid, {
       member: 'director-1',
     });
@@ -567,7 +577,7 @@ describe('JWT auth (federated)', () => {
   });
 
   it('rejects a JWT whose `member` claim names no one on the roster', async () => {
-    const { app } = makeJwtApp(fixture);
+    const { app } = await makeJwtApp(fixture);
     const token = await mintTestToken(fixture.privateKey, fixture.kid, {
       member: 'ghost-member',
     });
@@ -581,7 +591,7 @@ describe('JWT auth (federated)', () => {
   });
 
   it('rejects a JWT with a wrong issuer', async () => {
-    const { app } = makeJwtApp(fixture);
+    const { app } = await makeJwtApp(fixture);
     const token = await mintTestToken(fixture.privateKey, fixture.kid, {
       issuer: 'http://not-the-issuer.local',
     });
@@ -595,7 +605,7 @@ describe('JWT auth (federated)', () => {
   });
 
   it('rejects a JWT with a wrong audience', async () => {
-    const { app } = makeJwtApp(fixture);
+    const { app } = await makeJwtApp(fixture);
     const token = await mintTestToken(fixture.privateKey, fixture.kid, {
       audience: 'team:some-other-team',
     });
@@ -607,7 +617,7 @@ describe('JWT auth (federated)', () => {
   });
 
   it('rejects an expired JWT', async () => {
-    const { app } = makeJwtApp(fixture);
+    const { app } = await makeJwtApp(fixture);
     const token = await mintTestToken(fixture.privateKey, fixture.kid, {
       expSeconds: -60,
     });
@@ -619,7 +629,7 @@ describe('JWT auth (federated)', () => {
   });
 
   it('rejects a JWT with a tampered signature', async () => {
-    const { app } = makeJwtApp(fixture);
+    const { app } = await makeJwtApp(fixture);
     const token = await mintTestToken(fixture.privateKey, fixture.kid);
     // Swap the first char of the signature segment — base64url's final
     // char has "don't care" low bits for sig-length-256, so flipping
@@ -640,7 +650,7 @@ describe('JWT auth (federated)', () => {
   it('falls through to the opaque bearer path for non-JWT tokens', async () => {
     // With JWT config active, an opaque csuite_ token still works — the
     // structural check filters it out before verify runs.
-    const { app } = makeJwtApp(fixture);
+    const { app } = await makeJwtApp(fixture);
     const res = await app.request('/roster', {
       headers: { Authorization: `Bearer ${OP_TOKEN}` },
     });
@@ -651,7 +661,7 @@ describe('JWT auth (federated)', () => {
     // A forged JWT should 401, not leak into the opaque-token path.
     // Even if an attacker's forged JWT happens to collide with a valid
     // opaque token (pathological), it must still hard-fail here.
-    const { app } = makeJwtApp(fixture);
+    const { app } = await makeJwtApp(fixture);
     const forged = 'aaaa.bbbb.cccc'; // well-formed structure, garbage contents
     const res = await app.request('/roster', {
       headers: { Authorization: `Bearer ${forged}` },
@@ -662,7 +672,7 @@ describe('JWT auth (federated)', () => {
   });
 
   it('rejects a JWT missing the `member` claim', async () => {
-    const { app } = makeJwtApp(fixture);
+    const { app } = await makeJwtApp(fixture);
     // Mint without the member claim by hand.
     const nowSec = Math.floor(Date.now() / 1000);
     const token = await new SignJWT({})

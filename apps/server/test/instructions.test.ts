@@ -1,6 +1,6 @@
+import { composeInstructions, instructionCaptureExemptions } from 'csuite-core';
 import type { Member, Team, Teammate } from 'csuite-sdk/types';
 import { describe, expect, it } from 'vitest';
-import { composeInstructions, instructionCaptureExemptions } from '../src/instructions.js';
 
 const TEAM: Team = {
   name: 'demo-team',

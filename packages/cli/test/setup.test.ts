@@ -33,7 +33,10 @@ function tmpDir(): string {
   return dir;
 }
 
-describe('runSetupCommand', () => {
+// The dynamic import('csuite-server') these tests ride grew with the
+// runtime-neutral core refactor; under a parallel root test run the
+// module graph alone can eat most of vitest's 5s default.
+describe('runSetupCommand', { timeout: 20_000 }, () => {
   it('throws a friendly UsageError when stdin is not a TTY', async () => {
     // Vitest runs with stdin non-TTY, so the wizard's interactive
     // guard fires once we get past the "config exists" check.

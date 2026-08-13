@@ -13,9 +13,9 @@
  * device. `lastErrorCode` is kept for ops debugging on the happy path.
  *
  * Core depends only on this interface; the concrete implementation is
- * injected by the runtime adapter (Node server uses SQLite; Workers
- * platform uses D1 or Durable Object storage). IO is async in the
- * interface so async-only runtimes aren't forced to lie.
+ * injected by the host runtime — `SqlitePushSubscriptionStore` over a
+ * `SqlDriver`, or the in-memory variant below for tests. IO is async
+ * in the interface so async-only runtimes aren't forced to lie.
  */
 
 export interface PushSubscriptionRow {

@@ -20,25 +20,24 @@
 import {
   Broker,
   clearRegisteredSecretValues,
+  composeInstructions,
+  createApp,
+  createGenAiStore,
+  createSqliteProcessDocumentStore,
+  createTelemetryStore,
+  createTokenStoreFromMembers,
   InMemoryEventLog,
+  instructionBlocks,
+  instructionCaptureExemptions,
   registerSecretValues,
+  SqliteSessionStore,
 } from 'csuite-core';
 import type { Member, ProcessDocument, Team, Teammate } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
-import { createGenAiStore } from '../src/genai-store.js';
-import {
-  composeInstructions,
-  instructionBlocks,
-  instructionCaptureExemptions,
-} from '../src/instructions.js';
+import { createGenAiCorrelator } from '../src/genai-correlator.js';
 import { createMemberStore } from '../src/members.js';
-import { createSqliteProcessDocumentStore } from '../src/process-document.js';
 import { createRawBodyStore } from '../src/raw-body-store.js';
-import { SessionStore } from '../src/sessions.js';
-import { createTelemetryStore } from '../src/telemetry-store.js';
-import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const TEAM: Team = {
@@ -232,11 +231,11 @@ describe('the cold-broker rebuild carries the document', () => {
   function readAllStoredText(store: ReturnType<typeof createRawBodyStore>): string {
     return store
       .list()
-      .map((row) => store.getBlob(row.hash)?.toString('utf8') ?? '')
+      .map((row) => new TextDecoder().decode(store.getBlob(row.hash) ?? new Uint8Array()))
       .join('\n');
   }
 
-  function coldApp(withDocument: boolean, docText: string = DOC.text) {
+  async function coldApp(withDocument: boolean, docText: string = DOC.text) {
     const broker = new Broker({ eventLog: new InMemoryEventLog(), now: () => 1 });
     const members = createMemberStore([
       {
@@ -260,10 +259,11 @@ describe('the cold-broker rebuild carries the document', () => {
       );
     }
     const { app } = createApp({
+      createGenAiCorrelator,
       broker,
       members,
-      tokens: createTokenStoreFromMembers(db, members),
-      sessions: new SessionStore(db),
+      tokens: await createTokenStoreFromMembers(db, members),
+      sessions: new SqliteSessionStore(db),
       teamStore: mockTeamStore(TEAM),
       processDocument,
       genaiStore,
@@ -285,7 +285,7 @@ describe('the cold-broker rebuild carries the document', () => {
    * would pass and prove nothing. The document here contains one.
    */
   it('exempts the document on a broker that has served no packet', async () => {
-    const { app, rawBodyStore } = coldApp(true, SECRET_IN_DOC);
+    const { app, rawBodyStore } = await coldApp(true, SECRET_IN_DOC);
     registerSecretValues([SECRET_IN_DOC]);
     // A captured body containing the document verbatim. If the
     // exemption is missing, redaction rewrites the literal inside it
@@ -312,7 +312,7 @@ describe('the cold-broker rebuild carries the document', () => {
    * entirely, and proves nothing about the exemption.
    */
   it('still redacts a registered value that is not the document', async () => {
-    const { app, rawBodyStore } = coldApp(true, SECRET_IN_DOC);
+    const { app, rawBodyStore } = await coldApp(true, SECRET_IN_DOC);
     const unrelated = 'csuite_unrelated_secret_value_9f2a';
     registerSecretValues([SECRET_IN_DOC, unrelated]);
     await app.request('/otlp/v1/logs', {
@@ -326,16 +326,16 @@ describe('the cold-broker rebuild carries the document', () => {
     expect(stored).not.toContain(unrelated);
   });
 
-  it('has a document to rebuild from, independent of any packet fetch', () => {
-    const { processDocument } = coldApp(true);
+  it('has a document to rebuild from, independent of any packet fetch', async () => {
+    const { processDocument } = await coldApp(true);
     // The store is the authority the cold path reads. If this were
     // empty the rebuild would have nothing to carry and the test
     // above would pass for the wrong reason.
     expect(processDocument.get()?.text).toBe(DOC.text);
   });
 
-  it('rebuilds nothing for a team with no document', () => {
-    const { processDocument } = coldApp(false);
+  it('rebuilds nothing for a team with no document', async () => {
+    const { processDocument } = await coldApp(false);
     expect(processDocument.get()).toBeNull();
   });
 });

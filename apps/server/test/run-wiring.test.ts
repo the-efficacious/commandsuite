@@ -52,7 +52,7 @@ function silentLogger() {
 }
 
 async function bootHttp(): Promise<RunningServer> {
-  const seeded = seedStores({
+  const seeded = await seedStores({
     team: TEAM,
     members: [
       {

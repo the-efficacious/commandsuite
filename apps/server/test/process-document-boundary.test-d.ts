@@ -27,8 +27,8 @@
  * Type-only: no runtime assertions, checked by `tsc --noEmit`.
  */
 
+import { assertDocumentInvariants, type EditableFields } from 'csuite-core';
 import type { EditProcessDocumentRequest } from 'csuite-sdk/types';
-import { assertDocumentInvariants, type EditableFields } from '../src/process-document.js';
 
 // ─── the positive control ────────────────────────────────────────────
 // A fully constructed document is what the validator is for. If this

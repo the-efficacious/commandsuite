@@ -9,18 +9,21 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node
 import { connect as http2Connect } from 'node:http2';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Broker, InMemoryEventLog } from 'csuite-core';
+import {
+  Broker,
+  createApp,
+  createTokenStoreFromMembers,
+  InMemoryEventLog,
+  SqliteSessionStore,
+} from 'csuite-core';
 import type { Team } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { certExpiryMs, generateSelfSignedCert } from '../src/https/cert.js';
 import { createHttp2ServerFactory } from '../src/https/server.js';
 import { HttpsConfigError, loadCustomCert, loadOrGenerateSelfSigned } from '../src/https/store.js';
 import { createMemberStore } from '../src/members.js';
 import { type RunningServer, runServer } from '../src/run.js';
-import { SessionStore } from '../src/sessions.js';
-import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { mockTeamStore, seedStores } from './helpers/test-stores.js';
 
 const OP_TOKEN = 'csuite_https_test_operator_token';
@@ -236,11 +239,11 @@ describe('secureCookies option', () => {
       idFactory: () => 'msg-fixed',
     });
     const db = openDatabase(':memory:');
-    const sessions = new SessionStore(db);
-    const tokens = createTokenStoreFromMembers(db, members);
+    const sessions = new SqliteSessionStore(db);
+    const tokens = await createTokenStoreFromMembers(db, members);
     // Dynamically import TOTP helpers so we don't ship them into
     // the stable part of the test fixtures.
-    const { currentCode } = await import('../src/totp.js');
+    const { currentCode } = await import('csuite-core');
     const now = 1_700_000_000_000;
     const code = currentCode('JBSWY3DPEHPK3PXP', now);
 
@@ -300,7 +303,7 @@ describe('runServer with self-signed HTTPS', () => {
 
   it('boots on HTTP/2 and responds to /healthz', async () => {
     const configDir = tmpDir();
-    const seeded = seedAdmin();
+    const seeded = await seedAdmin();
     const running = await runServer({
       db: seeded.db,
       https: SELF_SIGNED_HTTPS,
@@ -340,7 +343,7 @@ describe('runServer with self-signed HTTPS', () => {
     const certPath = join(configDir, 'certs', 'server.crt');
 
     // First boot: generates + persists.
-    const s1 = seedAdmin();
+    const s1 = await seedAdmin();
     const r1 = await runServer({
       db: s1.db,
       https: SELF_SIGNED_HTTPS,
@@ -353,7 +356,7 @@ describe('runServer with self-signed HTTPS', () => {
     expect(cert1).toContain('-----BEGIN CERTIFICATE-----');
 
     // Second boot: reuses.
-    const s2 = seedAdmin();
+    const s2 = await seedAdmin();
     const r2 = await runServer({
       db: s2.db,
       https: SELF_SIGNED_HTTPS,

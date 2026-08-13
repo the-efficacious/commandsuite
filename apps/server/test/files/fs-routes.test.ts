@@ -10,15 +10,18 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Broker, InMemoryEventLog } from 'csuite-core';
+import {
+  Broker,
+  createApp,
+  createTokenStoreFromMembers,
+  InMemoryEventLog,
+  SqliteSessionStore,
+} from 'csuite-core';
 import type { FsEntry, Team } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createApp } from '../../src/app.js';
 import { openDatabase } from '../../src/db.js';
 import { createSqliteFilesystemStore, LocalBlobStore } from '../../src/files/index.js';
 import { createMemberStore } from '../../src/members.js';
-import { SessionStore } from '../../src/sessions.js';
-import { createTokenStoreFromMembers } from '../../src/tokens.js';
 import { mockTeamStore } from '../helpers/test-stores.js';
 
 const ALICE_TOKEN = 'csuite_test_alice_secret';
@@ -41,7 +44,7 @@ afterEach(() => {
   }
 });
 
-function makeApp() {
+async function makeApp() {
   const broker = new Broker({
     eventLog: new InMemoryEventLog(),
     now: () => 1_700_000_000_000,
@@ -61,8 +64,8 @@ function makeApp() {
   // on `broker.hasMember`.
   broker.seedMembers(members.members());
   const db = openDatabase(':memory:');
-  const sessions = new SessionStore(db);
-  const tokens = createTokenStoreFromMembers(db, members);
+  const sessions = new SqliteSessionStore(db);
+  const tokens = await createTokenStoreFromMembers(db, members);
   const blobDir = mkdtempSync(join(tmpdir(), 'csuite-fsroute-'));
   tmpDirs.push(blobDir);
   const blobs = new LocalBlobStore(blobDir);
@@ -90,7 +93,7 @@ function authed(token: string): HeadersInit {
 }
 
 async function writeFile(
-  app: ReturnType<typeof makeApp>['app'],
+  app: Awaited<ReturnType<typeof makeApp>>['app'],
   token: string,
   path: string,
   mime: string,
@@ -110,7 +113,7 @@ async function writeFile(
 
 describe('/fs/write', () => {
   it("uploads a file into the caller's home", async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const { status, data } = await writeFile(
       app,
       ALICE_TOKEN,
@@ -127,7 +130,7 @@ describe('/fs/write', () => {
   });
 
   it("refuses writes into someone else's home", async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const { status, data } = await writeFile(
       app,
       BOB_TOKEN,
@@ -140,7 +143,7 @@ describe('/fs/write', () => {
   });
 
   it('suffix strategy produces a non-colliding path', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await writeFile(app, ALICE_TOKEN, '/alice/dup.txt', 'text/plain', 'v1');
     const second = await writeFile(
       app,
@@ -159,7 +162,7 @@ describe('/fs/write', () => {
 
 describe('/fs/read/*', () => {
   it('streams the file body back with content-type + disposition', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await writeFile(
       app,
       ALICE_TOKEN,
@@ -178,14 +181,14 @@ describe('/fs/read/*', () => {
   });
 
   it('returns 403 when the caller lacks read access', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await writeFile(app, ALICE_TOKEN, '/alice/secret.txt', 'text/plain', 'secret');
     const res = await app.request('/fs/read/alice/secret.txt', { headers: authed(BOB_TOKEN) });
     expect(res.status).toBe(403);
   });
 
   it('serves files to directors regardless of owner', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await writeFile(app, ALICE_TOKEN, '/alice/vault.txt', 'text/plain', 'vault');
     const res = await app.request('/fs/read/alice/vault.txt', {
       headers: authed(DIRECTOR_TOKEN),
@@ -197,7 +200,7 @@ describe('/fs/read/*', () => {
 
 describe('/fs/ls', () => {
   it('lists the caller home', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await writeFile(app, ALICE_TOKEN, '/alice/a.txt', 'text/plain', 'a');
     await writeFile(app, ALICE_TOKEN, '/alice/b.txt', 'text/plain', 'b');
     const res = await app.request('/fs/ls?path=%2Falice', { headers: authed(ALICE_TOKEN) });
@@ -207,14 +210,14 @@ describe('/fs/ls', () => {
   });
 
   it("refuses to list another slot's home", async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await writeFile(app, ALICE_TOKEN, '/alice/a.txt', 'text/plain', 'a');
     const res = await app.request('/fs/ls?path=%2Falice', { headers: authed(BOB_TOKEN) });
     expect(res.status).toBe(403);
   });
 
   it('lists root as per-owner homes (director sees everyone)', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/fs/ls?path=%2F', { headers: authed(DIRECTOR_TOKEN) });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { entries: FsEntry[] };
@@ -224,7 +227,7 @@ describe('/fs/ls', () => {
 
 describe('/fs/mkdir + /fs/rm + /fs/mv', () => {
   it('mkdir creates a directory and rm removes it', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const mk = await app.request('/fs/mkdir', {
       method: 'POST',
       headers: { ...authed(ALICE_TOKEN), 'Content-Type': 'application/json' },
@@ -240,7 +243,7 @@ describe('/fs/mkdir + /fs/rm + /fs/mv', () => {
   });
 
   it('mv renames a file', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await writeFile(app, ALICE_TOKEN, '/alice/first.txt', 'text/plain', 'x');
     const res = await app.request('/fs/mv', {
       method: 'POST',
@@ -255,7 +258,7 @@ describe('/fs/mkdir + /fs/rm + /fs/mv', () => {
 
 describe('/push with attachments', () => {
   it('validates attachments exist and grants recipients read access', async () => {
-    const { app, files } = makeApp();
+    const { app, files } = await makeApp();
     await writeFile(app, ALICE_TOKEN, '/alice/share.txt', 'text/plain', 'for bob');
 
     const pushRes = await app.request('/push', {
@@ -287,7 +290,7 @@ describe('/push with attachments', () => {
   });
 
   it('rejects attachments on paths the sender cannot access', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     await writeFile(app, ALICE_TOKEN, '/alice/secret.txt', 'text/plain', 'nope');
     const pushRes = await app.request('/push', {
       method: 'POST',
@@ -303,7 +306,7 @@ describe('/push with attachments', () => {
   });
 
   it('rejects attachments that do not exist', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const pushRes = await app.request('/push', {
       method: 'POST',
       headers: { ...authed(ALICE_TOKEN), 'Content-Type': 'application/json' },

@@ -13,8 +13,8 @@
  * The clock is injectable so tests don't have to wait wall-clock time.
  */
 
+import { ACTIVITY_TTL_MS, createActivityTracker } from 'csuite-core';
 import { describe, expect, it } from 'vitest';
-import { ACTIVITY_TTL_MS, createActivityTracker } from '../src/activity-tracker.js';
 
 function makeClock(start = 1_000): { now: () => number; advance: (ms: number) => void } {
   let t = start;
