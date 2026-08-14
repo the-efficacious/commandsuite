@@ -44,6 +44,7 @@
  * The rendering is shared with the claude sink (`channel-format.ts`).
  */
 
+import { logger as defaultLogger, type Logger } from 'csuite-core';
 import type { ChannelEventSink } from '../../forwarder.js';
 import { formatChannelEvent } from '../channel-format.js';
 import type { JsonRpcClient } from './json-rpc.js';
@@ -59,7 +60,8 @@ export interface CodexChannelSinkOptions {
   getStatus(): ThreadStatus;
   /** Latest known active turn id. `null` when no turn is active. */
   getActiveTurnId(): string | null;
-  log: (msg: string, ctx?: Record<string, unknown>) => void;
+  /** Structured logger. Defaults to the shared logger's 'codex-channel-sink' child. */
+  logger?: Logger;
   /** Bundle window in milliseconds. Defaults to 200ms. */
   bundleWindowMs?: number;
 }
@@ -79,6 +81,7 @@ export interface CodexChannelSink extends ChannelEventSink {
 }
 
 export function createCodexChannelSink(opts: CodexChannelSinkOptions): CodexChannelSink {
+  const log = opts.logger ?? defaultLogger.child('codex-channel-sink');
   const bundleWindow = opts.bundleWindowMs ?? DEFAULT_BUNDLE_WINDOW_MS;
 
   const buffer: BufferedEvent[] = [];
@@ -108,7 +111,7 @@ export function createCodexChannelSink(opts: CodexChannelSinkOptions): CodexChan
 
     const status = opts.getStatus();
     if (status.type === 'systemError') {
-      opts.log('codex-channel-sink: dropping events — thread in systemError', {
+      log.warn('dropping events — thread in systemError', {
         dropped: events.length,
       });
       return;
@@ -128,7 +131,7 @@ export function createCodexChannelSink(opts: CodexChannelSinkOptions): CodexChan
           input,
         });
       } catch (err) {
-        opts.log('codex-channel-sink: turn/start failed', {
+        log.warn('turn/start failed', {
           error: err instanceof Error ? err.message : String(err),
           dropped: events.length,
         });
@@ -161,13 +164,13 @@ export function createCodexChannelSink(opts: CodexChannelSinkOptions): CodexChan
         msg.includes('no active turn') ||
         msg.includes('not steerable');
       if (!looksLikeRace) {
-        opts.log('codex-channel-sink: turn/steer failed (non-race)', {
+        log.warn('turn/steer failed (non-race)', {
           error: msg,
           dropped: events.length,
         });
         return;
       }
-      opts.log('codex-channel-sink: steer race — retrying', { reason: msg });
+      log.warn('steer race — retrying', { reason: msg });
       const retryStatus = opts.getStatus();
       if (retryStatus.type === 'idle') {
         try {
@@ -176,7 +179,7 @@ export function createCodexChannelSink(opts: CodexChannelSinkOptions): CodexChan
             input,
           });
         } catch (retryErr) {
-          opts.log('codex-channel-sink: retry turn/start failed', {
+          log.warn('retry turn/start failed', {
             error: retryErr instanceof Error ? retryErr.message : String(retryErr),
             dropped: events.length,
           });
@@ -187,7 +190,7 @@ export function createCodexChannelSink(opts: CodexChannelSinkOptions): CodexChan
         const retryTurnId = opts.getActiveTurnId();
         if (retryTurnId === null) {
           // Still racing; give up rather than spin.
-          opts.log('codex-channel-sink: retry skipped — no turn id yet', {
+          log.warn('retry skipped — no turn id yet', {
             dropped: events.length,
           });
           return;
@@ -199,7 +202,7 @@ export function createCodexChannelSink(opts: CodexChannelSinkOptions): CodexChan
             expectedTurnId: retryTurnId,
           });
         } catch (retryErr) {
-          opts.log('codex-channel-sink: retry turn/steer failed', {
+          log.warn('retry turn/steer failed', {
             error: retryErr instanceof Error ? retryErr.message : String(retryErr),
             dropped: events.length,
           });
@@ -210,7 +213,7 @@ export function createCodexChannelSink(opts: CodexChannelSinkOptions): CodexChan
       if (retryStatus.type === 'notLoaded') {
         buffer.unshift(...events);
       } else {
-        opts.log('codex-channel-sink: retry dropped — systemError', {
+        log.warn('retry dropped — systemError', {
           dropped: events.length,
         });
       }
@@ -243,7 +246,7 @@ export function createCodexChannelSink(opts: CodexChannelSinkOptions): CodexChan
     timer = setTimeout(() => {
       timer = null;
       void flush().catch((err) => {
-        opts.log('codex-channel-sink: scheduled flush threw', {
+        log.error('scheduled flush threw', {
           error: err instanceof Error ? err.message : String(err),
         });
       });
@@ -259,7 +262,7 @@ export function createCodexChannelSink(opts: CodexChannelSinkOptions): CodexChan
       // reach codex through the bridge's stdio MCP transport, not this
       // sink.
       const text = formatChannelEvent(event);
-      opts.log('codex-channel-sink: received channel event', {
+      log.debug('received channel event', {
         bytes: text.length,
         bufferDepth: buffer.length + 1,
         status: opts.getStatus().type,

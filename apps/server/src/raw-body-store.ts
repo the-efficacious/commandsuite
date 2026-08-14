@@ -226,7 +226,7 @@ class SqliteRawBodyStore implements RawBodyStore {
       bytes = gunzipSync(Buffer.from(row.bytes));
     } catch (err) {
       this.diag?.rawstoreBlobGunzipFailed(hash);
-      this.log.warn('raw-body-store: blob gunzip failed', {
+      this.log.warn('blob gunzip failed', {
         hash,
         error: err instanceof Error ? err.message : String(err),
       });
@@ -237,7 +237,7 @@ class SqliteRawBodyStore implements RawBodyStore {
     const actual = sha256Hex(bytes);
     if (actual !== hash) {
       this.diag?.rawstoreBlobHashMismatch(hash);
-      this.log.warn('raw-body-store: blob hash mismatch', { hash, actual });
+      this.log.warn('blob hash mismatch', { hash, actual });
       return null;
     }
     return bytes;
@@ -320,5 +320,9 @@ export function createRawBodyStore(
   db: DatabaseSyncInstance,
   opts: RawBodyStoreOptions = {},
 ): RawBodyStore {
-  return new SqliteRawBodyStore(db, opts.logger ?? defaultLogger, opts.diagnostics);
+  return new SqliteRawBodyStore(
+    db,
+    opts.logger ?? defaultLogger.child('raw-body-store'),
+    opts.diagnostics,
+  );
 }

@@ -12,6 +12,7 @@
  * explicit drain to avoid wedging the indicator.
  */
 
+import { logger as defaultLogger, type Logger } from 'csuite-core';
 import type { BusySignal } from '../../trace/busy.js';
 import type { JsonRpcClient } from './json-rpc.js';
 import {
@@ -41,7 +42,8 @@ export const TOOL_ITEM_TYPES: ReadonlySet<string> = new Set([
 export interface CodexBusySniffOptions {
   rpc: JsonRpcClient;
   busy: BusySignal;
-  log?: (msg: string, ctx?: Record<string, unknown>) => void;
+  /** Structured logger. Defaults to the shared logger's 'codex-busy-sniff' child. */
+  logger?: Logger;
 }
 
 export interface CodexBusySniff {
@@ -59,7 +61,7 @@ export interface CodexBusySniff {
 
 export function attachCodexBusySniff(options: CodexBusySniffOptions): CodexBusySniff {
   const { rpc, busy } = options;
-  const log = options.log ?? (() => {});
+  const log = options.logger ?? defaultLogger.child('codex-busy-sniff');
 
   // Per-item busy handles, keyed by item.id. Codex's `item/completed`
   // notifications are normally reliable, but a turn interrupt or
@@ -69,7 +71,7 @@ export function attachCodexBusySniff(options: CodexBusySniffOptions): CodexBusyS
 
   const drainAll = (reason: string): void => {
     if (toolHandles.size === 0) return;
-    log('codex-busy-sniff: draining tool handles', { count: toolHandles.size, reason });
+    log.info('draining tool handles', { count: toolHandles.size, reason });
     for (const handle of toolHandles.values()) handle.finish();
     toolHandles.clear();
   };

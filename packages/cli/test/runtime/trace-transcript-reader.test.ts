@@ -28,6 +28,7 @@ import {
   attachTranscriptReader,
   type TranscriptReader,
 } from '../../src/runtime/trace/transcript-reader.js';
+import { silentLogger } from '../helpers/logger.js';
 
 // Gate for the close()-races-an-in-flight-drain regression test: while
 // armed, any open() of the transcript parks until released, so the test
@@ -88,7 +89,7 @@ describe('TranscriptReader', () => {
     reader = attachTranscriptReader({
       getPath: () => path,
       enqueue: (e) => events.push(e),
-      log: () => {},
+      logger: silentLogger(),
       pollMs,
     });
   }
@@ -273,7 +274,7 @@ describe('TranscriptReader', () => {
     reader = attachTranscriptReader({
       getPath: () => known,
       enqueue: (e) => events.push(e),
-      log: () => {},
+      logger: silentLogger(),
       pollMs: 25,
     });
 

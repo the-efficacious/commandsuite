@@ -22,9 +22,10 @@ import {
   SqliteSessionStore,
 } from 'csuite-core';
 import type { Team } from 'csuite-sdk/types';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
+import { silentLogger } from './helpers/logger.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const OP_TOKEN = 'csuite_platform_connect_op_token';
@@ -59,12 +60,7 @@ async function makeApp(options: { now?: () => number } = {}) {
     sessions,
     teamStore: mockTeamStore(TEAM),
     version: '0.0.0',
-    logger: {
-      debug: vi.fn(),
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-    },
+    logger: silentLogger(),
     now: options.now,
   });
   return { app };

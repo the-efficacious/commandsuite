@@ -55,22 +55,20 @@ const CAPTURE_MODULES = [
 
 /** The registered in-scope messages, from the reconciled census. */
 const REGISTERED = new Set([
-  'genai-correlator: body_ref unreadable',
-  'genai-correlator: body length mismatch',
-  'genai-correlator: unlink after capture failed',
-  'genai-correlator: raw capture failed',
-  'genai-correlator: body JSON parse failed',
-  'genai-correlator: failed to build inference',
-  'genai-correlator: raw request_id assign failed',
-  'genai-correlator: skipped malformed record',
-  'genai-correlator: evicted stale pending exchanges',
-  'genai-correlator: pending-request cap hit — dropped oldest exchange',
-  'raw-body-store: blob gunzip failed',
-  'raw-body-store: blob hash mismatch',
-  'genai-store: skipped unserializable record',
-  'genai-store: skipped malformed row',
-  'telemetry-store: skipped unserializable record',
-  'telemetry-store: skipped malformed row',
+  'body_ref unreadable',
+  'body length mismatch',
+  'unlink after capture failed',
+  'raw capture failed',
+  'body JSON parse failed',
+  'failed to build inference',
+  'raw request_id assign failed',
+  'skipped malformed record',
+  'evicted stale pending exchanges',
+  'pending-request cap hit — dropped oldest exchange',
+  'blob gunzip failed',
+  'blob hash mismatch',
+  'skipped unserializable record',
+  'skipped malformed row',
 ]);
 
 /** In-scope messages that live in app.ts among operational ones. */
@@ -153,8 +151,43 @@ const APP_IN_SCOPE = [
  * logger.warn — an OPERATIONAL site (push fanout diagnostics via the
  * injected BrokerLogger), not a capture-completeness claim. No new
  * sites were written; the fence moved to keep enclosing the same code.
+ *
+ * 2026-08-14, 58 → 66. The logging overhaul. NO new diagnostic was
+ * written; the number moves for three mechanical reasons, each
+ * measured against `main` rather than reasoned about:
+ *
+ *   correlator  +10  its ten sites were a bare `log(msg, ctx)`
+ *                    callback and are now levelled `log.warn` /
+ *                    `log.error`. The old census saw them through a
+ *                    special-case pattern matching the literal
+ *                    `log('genai-correlator`; they are now the same
+ *                    shape as every other site and need no special
+ *                    case.
+ *   run.ts       −2  the `BrokerLogger` adapter shim is gone. Its two
+ *                    lines were forwarders (`warn: (m, c) =>
+ *                    log.warn(m, c)`), never diagnostics.
+ *   app.ts       −1  the correlator's severity-flattening shim
+ *                    (`log: (msg, ctx) => logger.warn(msg, ctx)`) is
+ *                    gone; the correlator now picks its own severity.
+ *
+ * The count under the NEW pattern was also taken against `main`: 59.
+ * That is 11 higher than the old pattern's 58 in the same tree, minus
+ * the 10 correlator sites the old pattern special-cased. Those 11 —
+ * eight in `run.ts`, two in `variables.ts`, one in `member-activity.ts`
+ * — are real log sites the old census could not see, because they call
+ * `log.warn` on a local logger const and the pattern looked for
+ * `logger.warn` or `this.log.warn`. They were never classified. All
+ * eleven are OPERATIONAL: boot/shutdown reporting and fanout failures
+ * in `run.ts`, identity-migration rollback in `variables.ts`, and the
+ * malformed-row skip in `member-activity.ts` — that last one is a
+ * completeness concern but is already registered as
+ * `activity.append_failed`'s read-side sibling under the
+ * `member_activity` decode path, which the capture-module rule covers.
+ * The blind spot is closed by construction now: one pattern, one call
+ * shape, and a new site cannot hide by choosing a different receiver
+ * name.
  */
-const TOTAL_SITES = 58;
+const TOTAL_SITES = 66;
 
 function messagesIn(file: string): string[] {
   let src: string | null = null;
@@ -167,12 +200,16 @@ function messagesIn(file: string): string[] {
     }
   }
   if (src === null) throw new Error(`census module not found in any root: ${file}`);
+  // Matches the levelled call shape every diagnostic now uses:
+  // `log.warn('…')`, `this.log.error('…')`, `logger.warn('…')`. The
+  // message no longer carries a module prefix — `component` is a field
+  // on the record — so there is nothing to filter on, and every
+  // warn/error in a capture module is in scope by construction. That
+  // is stronger than the old prefix filter, which selected messages
+  // that happened to be punctuated a certain way.
   const out: string[] = [];
-  for (const pat of [/this\.log\.warn\(/g, /(?<!\.)\blog\(\s*'/g]) {
-    for (const m of src.matchAll(pat)) {
-      const q = /'([^']+)'/.exec(src.slice(m.index, m.index + 200));
-      if (q?.[1]?.includes(': ') === true) out.push(q[1]);
-    }
+  for (const m of src.matchAll(/\b(?:this\.)?(?:log|logger)\.(?:warn|error)\(\s*'([^']+)'/g)) {
+    if (m[1] !== undefined) out.push(m[1]);
   }
   return out;
 }
@@ -192,10 +229,13 @@ function countAllSites(): number {
       } catch {
         continue;
       }
-      n += (src.match(/\blogger\.warn\(/g) ?? []).length;
-      n += (src.match(/\blogger\.error\(/g) ?? []).length;
-      n += (src.match(/(?<!\.)\blog\(\s*'genai-correlator/g) ?? []).length;
-      n += (src.match(/this\.log\.warn\(/g) ?? []).length;
+      // ONE pattern for one call shape. The four-pattern version this
+      // replaced could not see `log.warn(` on a local logger const,
+      // and was blind to 11 real sites in run.ts, variables.ts and
+      // member-activity.ts for exactly the reason its own header
+      // warns about: it matched the examples in front of it rather
+      // than the mechanism.
+      n += (src.match(/\b(?:this\.)?(?:log|logger)\.(?:warn|error)\(/g) ?? []).length;
     }
   return n;
 }

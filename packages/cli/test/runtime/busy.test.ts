@@ -12,6 +12,7 @@
 import type { ActivityState } from 'csuite-sdk/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createActivitySignal, DEFAULT_MAX_AGE_MS } from '../../src/runtime/trace/busy.js';
+import { recordingLogger } from '../helpers/logger.js';
 
 describe('createActivitySignal', () => {
   it('starts idle (count=0, busy=false, blocked=false, state=idle)', () => {
@@ -230,12 +231,12 @@ describe('createActivitySignal — handle max-age safety net', () => {
   });
 
   it('auto-finishes a handle that exceeds its max-age and emits the idle transition', () => {
-    const log = vi.fn();
-    const b = createActivitySignal({ log });
+    const rec = recordingLogger();
+    const b = createActivitySignal({ logger: rec.logger });
     const listener = vi.fn();
     b.subscribe(listener);
     listener.mockClear();
-    log.mockClear();
+    rec.records.length = 0;
 
     b.start('turn_active', { maxAgeMs: 1000 });
     expect(b.state()).toBe('working');
@@ -248,9 +249,12 @@ describe('createActivitySignal — handle max-age safety net', () => {
     expect(b.state()).toBe('idle');
     expect(listener).toHaveBeenLastCalledWith('idle');
     // Log carries the diagnostic context.
-    expect(log).toHaveBeenCalledWith(
-      'activity: handle auto-finished',
-      expect.objectContaining({ source: 'turn_active', reason: 'timeout' }),
+    expect(rec.records).toContainEqual(
+      expect.objectContaining({
+        msg: 'handle auto-finished',
+        source: 'turn_active',
+        reason: 'timeout',
+      }),
     );
   });
 
@@ -272,8 +276,8 @@ describe('createActivitySignal — handle max-age safety net', () => {
   });
 
   it('finish() before the deadline cancels the timer (no double-finish)', () => {
-    const log = vi.fn();
-    const b = createActivitySignal({ log });
+    const rec = recordingLogger();
+    const b = createActivitySignal({ logger: rec.logger });
     const h = b.start('turn_active', { maxAgeMs: 1000 });
     expect(b.getSourceCounts().turn_active).toBe(1);
 
@@ -282,7 +286,7 @@ describe('createActivitySignal — handle max-age safety net', () => {
 
     vi.advanceTimersByTime(5000);
     expect(b.getSourceCounts().turn_active).toBe(0);
-    expect(log).not.toHaveBeenCalledWith('activity: handle auto-finished', expect.anything());
+    expect(rec.messages()).not.toContain('handle auto-finished');
   });
 
   it('applies the per-source default when maxAgeMs is omitted', () => {
@@ -366,14 +370,16 @@ describe('createActivitySignal — forceFinishAll', () => {
   });
 
   it('logs the drain count for diagnostics', () => {
-    const log = vi.fn();
-    const b = createActivitySignal({ log });
+    const rec = recordingLogger();
+    const b = createActivitySignal({ logger: rec.logger });
     b.start('turn_active');
     b.start('tool_inflight');
     b.forceFinishAll();
-    expect(log).toHaveBeenCalledWith(
-      'activity: force-finished outstanding handles',
-      expect.objectContaining({ drained: 2 }),
+    expect(rec.records).toContainEqual(
+      expect.objectContaining({
+        msg: 'force-finished outstanding handles',
+        drained: 2,
+      }),
     );
   });
 });

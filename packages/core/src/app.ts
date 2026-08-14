@@ -488,7 +488,12 @@ const API_PATH_PREFIXES = [
   PATHS.presenceActivity,
   '/notifications',
   PATHS.hooks,
-  '/agents',
+  // `/members` and everything under it (activity, genai, telemetry,
+  // raw bodies) is API-only. Without it here, an unmatched member GET
+  // falls through to the SPA and answers `index.html` with a 200 — a
+  // client asking for JSON gets HTML and no error. `/agents` is the
+  // retired spelling of this prefix and no longer routes anything.
+  PATHS.members,
   '/fs',
   '/otlp',
 ] as const;
@@ -659,7 +664,9 @@ export function createApp(options: AppOptions): CreatedApp {
     let corr = genaiCorrelators.get(memberName);
     if (!corr) {
       corr = createCorrelator({
-        log: (msg, ctx) => logger.warn(msg, ctx),
+        // The correlator picks severity per site; flattening everything
+        // to warn here is exactly the shim this replaced.
+        logger: logger.child('genai-correlator'),
         // Per-member correlator, so its diagnostics carry that member
         // as producer without the call sites having to say so.
         ...(diagnostics !== undefined ? { diagnostics: diagnostics.emit } : {}),
@@ -930,7 +937,7 @@ export function createApp(options: AppOptions): CreatedApp {
       memberName: member.name,
       expiresAt: now() + PLATFORM_CONNECT_CODE_TTL_MS,
     });
-    logger.info('platform-connect: bind', { code, memberName: member.name });
+    logger.info('bind', { code, memberName: member.name });
     return c.json({ ok: true, memberName: member.name });
   });
 

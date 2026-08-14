@@ -31,6 +31,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
+import { logger as defaultLogger, type Logger } from 'csuite-core';
 import type { InstructionsResponse } from 'csuite-sdk/types';
 import { CLI_VERSION } from '../../../version.js';
 import { composeFixedContext } from '../../fixed-context.js';
@@ -183,8 +184,8 @@ export interface CodexSpawnOptions {
    * dropped.
    */
   onCompacted?: () => void;
-  /** Logger, structured JSON to stderr by default. */
-  log: (msg: string, ctx?: Record<string, unknown>) => void;
+  /** Structured logger. Defaults to the shared logger's 'codex' child. */
+  logger?: Logger;
 }
 
 export interface CodexSpawnResult {
@@ -253,6 +254,7 @@ export function findLatestThreadId(sessionsDir: string): string | null {
 }
 
 export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnResult> {
+  const log = opts.logger ?? defaultLogger.child('codex');
   const cwd = opts.cwd ?? process.cwd();
 
   // 0. Durable sessions + resume resolution. Sessions persist per
@@ -282,6 +284,7 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
     runnerSocketPath: opts.runnerSocketPath,
     otel: opts.captureHost ? opts.captureHost.otelLogsTarget() : undefined,
     sessionsDir,
+    logger: log.child('codex-home'),
   });
   if (resumeThreadId !== null && !codexHome.sessionsLinked) {
     // Without the durable link the fresh home's sessions/ is empty, so
@@ -294,9 +297,9 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
     );
   }
   if (!codexHome.authLinked) {
-    process.stderr.write(
-      'csuite codex: no codex auth.json found in ~/.codex — run `codex login` first ' +
-        'so the spawned codex can talk to OpenAI.\n',
+    log.warn(
+      'no codex auth.json found in ~/.codex — run `codex login` first ' +
+        'so the spawned codex can talk to OpenAI',
     );
   }
 
@@ -316,7 +319,7 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
     }
     const envNames = Object.keys(opts.secretsEnv);
     if (envNames.length > 0) {
-      opts.log('codex: broker secrets injected into agent env', { envNames });
+      log.info('broker secrets injected into agent env', { envNames });
     }
   }
   childEnv.CODEX_HOME = codexHome.path;
@@ -339,7 +342,7 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
   //    `app-server` (older builds reject unknown flags). User-supplied
   //    `codexArgs` are appended verbatim — the operator has chosen
   //    their codex version and accepts responsibility for compatibility.
-  opts.log('codex: spawning', {
+  log.info('spawning', {
     binary: opts.codexBinary,
     codexHome: codexHome.path,
     codexArgs: opts.codexArgs ?? [],
@@ -356,11 +359,11 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
   });
   child.on('exit', (code, signal) => {
     const resolved = code ?? (signal ? 128 + (signalNumber(signal) ?? 0) : 0);
-    opts.log('codex: child exited', { code: resolved, signal });
+    log.info('child exited', { code: resolved, signal });
     resolveExit(resolved);
   });
   child.on('error', (err) => {
-    opts.log('codex: spawn error', {
+    log.error('spawn error', {
       error: err instanceof Error ? err.message : String(err),
     });
   });
@@ -372,7 +375,7 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
 
   // 4. Wire the JSON-RPC client.
   const rpc: JsonRpcClient = createJsonRpcClient(child.stdout, child.stdin, {
-    log: opts.log,
+    logger: log.child('json-rpc'),
   });
 
   // Auto-deny any approval/elicitation server-request that fires.
@@ -381,7 +384,7 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
   // than silently waiting for a UI that doesn't exist.
   for (const method of Object.values(SERVER_REQUEST_METHODS)) {
     rpc.onRequest(method, async (params) => {
-      opts.log('codex: auto-denying server request', { method, params });
+      log.warn('auto-denying server request', { method, params });
       // Codex's response shape varies by method; an empty object
       // generally maps to "deny / cancel" semantics (the client
       // didn't pick a decision). For elicitations specifically we
@@ -408,14 +411,14 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
     getThreadId: () => threadId,
     getStatus: () => lastStatus,
     getActiveTurnId: () => activeTurnId,
-    log: opts.log,
+    logger: log.child('codex-channel-sink'),
   });
 
   rpc.onNotification(NOTIFICATIONS.threadStarted, (params) => {
     const p = params as ThreadStartedNotification;
     if (p?.thread?.id) {
       threadId = p.thread.id;
-      opts.log('codex: thread started', { threadId, status: p.thread.status?.type });
+      log.info('thread started', { threadId, status: p.thread.status?.type });
       if (p.thread.status) {
         applyStatus(p.thread.status);
       }
@@ -434,7 +437,7 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
    */
   function applyStatus(status: ThreadStatus): void {
     lastStatus = status;
-    opts.log('codex: status changed', { status: status.type });
+    log.info('status changed', { status: status.type });
     switch (status.type) {
       case 'idle':
       case 'active':
@@ -449,7 +452,7 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
     }
     if (status.type !== 'notLoaded') {
       void channelSink.flushNow().catch((err) => {
-        opts.log('codex: status-driven flush failed', {
+        log.warn('status-driven flush failed', {
           error: err instanceof Error ? err.message : String(err),
         });
       });
@@ -495,13 +498,13 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
   rpc.onNotification(NOTIFICATIONS.itemStarted, (params) => {
     const p = params as ItemStartedNotification;
     if (p?.item?.type) {
-      opts.log('codex: item started', { type: p.item.type, turnId: p.turnId });
+      log.debug('item started', { type: p.item.type, turnId: p.turnId });
     }
   });
   rpc.onNotification(NOTIFICATIONS.itemCompleted, (params) => {
     const p = params as ItemCompletedNotification;
     if (p?.item?.type) {
-      opts.log('codex: item completed', { type: p.item.type, turnId: p.turnId });
+      log.debug('item completed', { type: p.item.type, turnId: p.turnId });
     }
   });
 
@@ -510,7 +513,7 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
   const compactor = attachCodexCompactor({
     rpc,
     getThreadId: () => threadId,
-    log: opts.log,
+    log,
     ...(opts.onCompacted !== undefined ? { onCompacted: opts.onCompacted } : {}),
   });
   // Tool-execution busy sniff (only when a busy signal is provided —
@@ -518,7 +521,7 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
   // above; logging stays here, busy-counter ownership lives in the
   // shared helper so tests can exercise the same code path.
   const busySniff: CodexBusySniff | null = opts.busy
-    ? attachCodexBusySniff({ rpc, busy: opts.busy, log: opts.log })
+    ? attachCodexBusySniff({ rpc, busy: opts.busy, logger: log.child('codex-busy-sniff') })
     : null;
   // Rollout-primary content capture — tails codex's own durable rollout
   // JSONL under the ephemeral CODEX_HOME and feeds normalized
@@ -533,7 +536,7 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
         sessionsDir: join(codexHome.path, 'sessions'),
         getSessionId: () => threadId,
         enqueue: (event) => opts.captureHost?.enqueue(event),
-        log: opts.log,
+        logger: log.child('rollout-reader'),
         // Sessions are durable now: files present at attach are prior
         // runs' history (already captured then). Only the resumed
         // thread's file is tailed — from EOF, so just this run's turns
@@ -551,16 +554,18 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
       ? attachBundleReader({
           traceRoot,
           upload: (inferences) => opts.captureHost?.uploadGenai(inferences) ?? Promise.resolve(),
-          log: opts.log,
+          logger: log.child('bundle-reader'),
         })
       : null;
   // Activity printer — turn / item / delta notifications → readable
   // stderr lines for the operator. Subscribes alongside busy-sniff so
   // both observers see the same wire stream without ordering coupling.
   const activityPrinter: ActivityPrinter | null =
-    opts.printActivity === false ? null : attachCodexActivityPrinter({ rpc, log: opts.log });
+    opts.printActivity === false
+      ? null
+      : attachCodexActivityPrinter({ rpc, logger: log.child('codex-activity-printer') });
   rpc.onNotification(NOTIFICATIONS.error, (params) => {
-    opts.log('codex: error notification', params as Record<string, unknown>);
+    log.error('error notification', params as Record<string, unknown>);
   });
 
   // ─── Shutdown wiring ──────────────────────────────────────────
@@ -574,11 +579,11 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
   async function teardown(reason: string): Promise<void> {
     if (teardownReason !== null) return;
     teardownReason = reason;
-    opts.log('codex: tearing down', { reason });
+    log.info('tearing down', { reason });
     try {
       await channelSink.flushNow();
     } catch (err) {
-      opts.log('codex: final flush failed', {
+      log.warn('final flush failed', {
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -626,7 +631,7 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
       try {
         await rolloutReader.close();
       } catch (err) {
-        opts.log('codex: rollout reader close failed', {
+        log.warn('rollout reader close failed', {
           error: err instanceof Error ? err.message : String(err),
         });
       }
@@ -637,7 +642,7 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
       try {
         await bundleReader.close();
       } catch (err) {
-        opts.log('codex: bundle reader close failed', {
+        log.warn('bundle reader close failed', {
           error: err instanceof Error ? err.message : String(err),
         });
       }
@@ -657,7 +662,7 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
       `codex initialize failed: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
-  opts.log('codex: initialize ok');
+  log.info('initialize ok');
 
   // 8. Open the thread — `thread/start` fresh, or `thread/resume` when
   //    the caller named (or asked for the latest) persisted thread.
@@ -694,7 +699,7 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
         : await rpc.request<ThreadStartResponse>(METHODS.threadStart, threadPosture);
     if (resp?.thread?.id) {
       threadId = resp.thread.id;
-      opts.log(resumeThreadId !== null ? 'codex: thread/resume ok' : 'codex: thread/start ok', {
+      log.info(resumeThreadId !== null ? 'thread/resume ok' : 'thread/start ok', {
         threadId,
         status: resp.thread.status?.type,
       });

@@ -15,6 +15,7 @@
  * and HUD — lives in the adapter.
  */
 
+import type { Logger } from 'csuite-core';
 import { runAgentSession } from '../runtime/agent-session.js';
 import { createClaudeAdapter } from '../runtime/agents/claude-agent.js';
 import { UsageError } from './errors.js';
@@ -37,7 +38,7 @@ export interface ClaudeCommandInput {
    */
   cwd?: string;
   /** Optional logger override; defaults to a session log + stderr. */
-  log?: (msg: string, ctx?: Record<string, unknown>) => void;
+  logger?: Logger;
   /**
    * Override the `command` + `args` the SDK's MCP config uses for the
    * `csuite` server entry. Defaults to the node binary + CLI entry
@@ -75,7 +76,7 @@ export async function runClaudeCommand(input: ClaudeCommandInput): Promise<numbe
     url: input.url,
     token: input.token,
     cwd: input.cwd,
-    log: input.log,
+    logger: input.logger,
     noTrace: input.noTrace,
     noSecrets: input.noSecrets,
     bridgeCommand: input.bridgeCommand,

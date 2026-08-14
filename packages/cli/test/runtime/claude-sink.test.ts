@@ -12,8 +12,7 @@ import {
   ClaudeMessageQueue,
   createClaudeChannelSink,
 } from '../../src/runtime/agents/claude-sink.js';
-
-const noopLog = (): void => {};
+import { silentLogger } from '../helpers/logger.js';
 
 function channelEvent(body: string, meta: Record<string, string> = {}) {
   return { content: body, meta: { kind: 'chat', from: 'director', ...meta } };
@@ -63,7 +62,7 @@ describe('createClaudeChannelSink', () => {
     const queue = new ClaudeMessageQueue();
     const sink = createClaudeChannelSink({
       getQueue: () => queue,
-      log: noopLog,
+      log: silentLogger(),
       bundleWindowMs: 20,
     });
     await sink.deliver(channelEvent('first event'));
@@ -87,7 +86,7 @@ describe('createClaudeChannelSink', () => {
     const queue = new ClaudeMessageQueue();
     const sink = createClaudeChannelSink({
       getQueue: () => queue,
-      log: noopLog,
+      log: silentLogger(),
       bundleWindowMs: 5_000,
     });
     await sink.deliver(channelEvent('urgent'));

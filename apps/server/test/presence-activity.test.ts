@@ -26,6 +26,7 @@ import type { RosterResponse, Team } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
+import { silentLogger } from './helpers/logger.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const ADMIN_TOKEN = 'csuite_activity_test_admin_token';
@@ -36,10 +37,6 @@ const TEAM: Team = {
   context: '',
   permissionPresets: {},
 };
-
-function silentLogger() {
-  return { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
-}
 
 interface Harness {
   app: ReturnType<typeof createApp>['app'];

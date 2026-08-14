@@ -16,6 +16,7 @@ import type { Client as BrokerClient } from 'csuite-sdk/client';
 import type { ActivityEvent } from 'csuite-sdk/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ActivityUploader } from '../../src/runtime/trace/activity-uploader.js';
+import { silentLogger } from '../helpers/logger.js';
 
 function makeEvent(ts: number): ActivityEvent {
   return { kind: 'objective_open', ts, objectiveId: `obj-${ts}` };
@@ -63,7 +64,7 @@ describe('ActivityUploader', () => {
     const u = new ActivityUploader({
       brokerClient: client as unknown as BrokerClient,
       name: 'engineer-1',
-      log: () => {},
+      logger: silentLogger(),
       maxBatchEvents: 3,
     });
     u.enqueue(makeEvent(1));
@@ -82,7 +83,7 @@ describe('ActivityUploader', () => {
     const u = new ActivityUploader({
       brokerClient: client as unknown as BrokerClient,
       name: 'engineer-1',
-      log: () => {},
+      logger: silentLogger(),
       maxBatchEvents: 100,
       maxBatchAgeMs: 500,
     });
@@ -102,7 +103,7 @@ describe('ActivityUploader', () => {
     const u = new ActivityUploader({
       brokerClient: client as unknown as BrokerClient,
       name: 'engineer-1',
-      log: () => {},
+      logger: silentLogger(),
       maxBatchEvents: 1,
     });
     u.enqueue(makeEvent(1));
@@ -128,7 +129,7 @@ describe('ActivityUploader', () => {
     const u = new ActivityUploader({
       brokerClient: client as unknown as BrokerClient,
       name: 'engineer-1',
-      log: () => {},
+      logger: silentLogger(),
       maxBatchEvents: 100,
       maxBatchAgeMs: 60_000,
       maxQueueEvents: 3,
@@ -150,7 +151,7 @@ describe('ActivityUploader', () => {
     const u = new ActivityUploader({
       brokerClient: client as unknown as BrokerClient,
       name: 'engineer-1',
-      log: () => {},
+      logger: silentLogger(),
       maxBatchEvents: 100,
       maxBatchAgeMs: 60_000,
     });
@@ -193,7 +194,7 @@ describe('ActivityUploader', () => {
     const u = new ActivityUploader({
       brokerClient: client as unknown as BrokerClient,
       name: 'engineer-1',
-      log: () => {},
+      logger: silentLogger(),
       maxBatchEvents: 100,
       maxBatchBytes: 128 * 1024 * 1024,
       maxBatchAgeMs: 60_000,
@@ -224,7 +225,7 @@ describe('ActivityUploader', () => {
     const u = new ActivityUploader({
       brokerClient: client as unknown as BrokerClient,
       name: 'engineer-1',
-      log: () => {},
+      logger: silentLogger(),
       maxBatchEvents: 100,
       // The payload is below this threshold in code units and above it
       // in UTF-8 bytes, so only the promised byte measure flushes now.
@@ -253,7 +254,7 @@ describe('ActivityUploader', () => {
     const u = new ActivityUploader({
       brokerClient: client as unknown as BrokerClient,
       name: 'engineer-1',
-      log: () => {},
+      logger: silentLogger(),
       maxBatchEvents: 100,
       maxBatchBytes: 128 * 1024 * 1024,
       maxBatchAgeMs: 60_000,
@@ -276,7 +277,7 @@ describe('ActivityUploader', () => {
     const u = new ActivityUploader({
       brokerClient: client as unknown as BrokerClient,
       name: 'engineer-1',
-      log: () => {},
+      logger: silentLogger(),
       maxBatchEvents: 100,
       maxBatchAgeMs: 10_000, // so it won't flush on its own
     });
@@ -293,7 +294,7 @@ describe('ActivityUploader', () => {
     const u = new ActivityUploader({
       brokerClient: client as unknown as BrokerClient,
       name: 'engineer-1',
-      log: () => {},
+      logger: silentLogger(),
       maxBatchEvents: 1000,
       maxBatchBytes: 128 * 1024 * 1024, // don't trip the size-based flush
       maxBatchAgeMs: 60_000, // fake timers never advance → nothing flushes
@@ -310,7 +311,7 @@ describe('ActivityUploader', () => {
     const u = new ActivityUploader({
       brokerClient: client as unknown as BrokerClient,
       name: 'engineer-1',
-      log: () => {},
+      logger: silentLogger(),
       maxBatchEvents: 100,
       maxBatchBytes: 128 * 1024 * 1024,
       maxBatchAgeMs: 60_000,
@@ -344,7 +345,7 @@ describe('ActivityUploader', () => {
     const u = new ActivityUploader({
       brokerClient: client as unknown as BrokerClient,
       name: 'engineer-1',
-      log: () => {},
+      logger: silentLogger(),
       maxBatchEvents: 1, // first event flushes immediately
       maxBatchAgeMs: 10_000,
     });
@@ -393,7 +394,7 @@ describe('ActivityUploader', () => {
     const u = new ActivityUploader({
       brokerClient: client as unknown as BrokerClient,
       name: 'engineer-1',
-      log: () => {},
+      logger: silentLogger(),
       maxBatchEvents: 1,
       maxBatchAgeMs: 10_000,
     });
@@ -430,7 +431,7 @@ describe('ActivityUploader', () => {
     const u = new ActivityUploader({
       brokerClient: client as unknown as BrokerClient,
       name: 'engineer-1',
-      log: () => {},
+      logger: silentLogger(),
       maxBatchEvents: 1,
       maxBatchAgeMs: 10_000,
     });
@@ -456,7 +457,7 @@ describe('ActivityUploader', () => {
     const u = new ActivityUploader({
       brokerClient: client as unknown as BrokerClient,
       name: 'engineer-1',
-      log: () => {},
+      logger: silentLogger(),
       maxBatchAgeMs: 10_000,
     });
     u.enqueue(makeEvent(1));

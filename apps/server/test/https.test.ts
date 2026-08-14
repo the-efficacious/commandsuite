@@ -17,13 +17,14 @@ import {
   SqliteSessionStore,
 } from 'csuite-core';
 import type { Team } from 'csuite-sdk/types';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { openDatabase } from '../src/db.js';
 import { certExpiryMs, generateSelfSignedCert } from '../src/https/cert.js';
 import { createHttp2ServerFactory } from '../src/https/server.js';
 import { HttpsConfigError, loadCustomCert, loadOrGenerateSelfSigned } from '../src/https/store.js';
 import { createMemberStore } from '../src/members.js';
 import { type RunningServer, runServer } from '../src/run.js';
+import { silentLogger } from './helpers/logger.js';
 import { mockTeamStore, seedStores } from './helpers/test-stores.js';
 
 const OP_TOKEN = 'csuite_https_test_operator_token';
@@ -256,7 +257,7 @@ describe('secureCookies option', () => {
 
       version: '0.0.0',
       secureCookies: true,
-      logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      logger: silentLogger(),
       now: () => now,
     });
 
@@ -309,7 +310,7 @@ describe('runServer with self-signed HTTPS', () => {
       https: SELF_SIGNED_HTTPS,
       configDir,
       host: '127.0.0.1',
-      logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      logger: silentLogger(),
     });
     serversToStop.push(running);
 
@@ -349,7 +350,7 @@ describe('runServer with self-signed HTTPS', () => {
       https: SELF_SIGNED_HTTPS,
       configDir,
       host: '127.0.0.1',
-      logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      logger: silentLogger(),
     });
     await r1.stop();
     const cert1 = readFileSync(certPath, 'utf8');
@@ -362,7 +363,7 @@ describe('runServer with self-signed HTTPS', () => {
       https: SELF_SIGNED_HTTPS,
       configDir,
       host: '127.0.0.1',
-      logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      logger: silentLogger(),
     });
     serversToStop.push(r2);
     const cert2 = readFileSync(certPath, 'utf8');

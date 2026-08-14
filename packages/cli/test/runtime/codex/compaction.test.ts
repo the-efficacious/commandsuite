@@ -20,6 +20,7 @@ import {
 } from '../../../src/runtime/agents/codex/compaction.js';
 import type { JsonRpcClient } from '../../../src/runtime/agents/codex/json-rpc.js';
 import { METHODS, NOTIFICATIONS } from '../../../src/runtime/agents/codex/protocol.js';
+import { recordingLogger } from '../../helpers/logger.js';
 
 function harness(
   opts: {
@@ -29,7 +30,6 @@ function harness(
   } = {},
 ) {
   const requests: Array<{ method: string; params: unknown }> = [];
-  const logs: string[] = [];
   let itemCompleted: ((params: unknown) => void) | null = null;
   let unsubscribed = 0;
 
@@ -50,17 +50,20 @@ function harness(
     close: vi.fn(),
   } as unknown as JsonRpcClient;
 
+  const rec = recordingLogger();
   const compactor = attachCodexCompactor({
     rpc,
     getThreadId: () => (opts.threadId === undefined ? 't_test' : opts.threadId),
-    log: (msg) => logs.push(msg),
+    log: rec.logger,
     ...(opts.onCompacted !== undefined ? { onCompacted: opts.onCompacted } : {}),
   });
 
   return {
     compactor,
     requests,
-    logs,
+    get logs() {
+      return rec.messages();
+    },
     unsubscribedCount: () => unsubscribed,
     /** Emit an `item/completed` for the given item type. */
     complete(type: string) {
@@ -264,7 +267,7 @@ describe('compactions we did not ask for', () => {
     // request id came next would close out the wrong thing.
     h.complete('contextCompaction');
     await tick();
-    expect(h.logs).toContain('codex: observed a compaction we did not request');
+    expect(h.logs).toContain('observed a compaction we did not request');
 
     // And a subsequent real request is unaffected by it.
     const pending = h.compactor.request(1000);

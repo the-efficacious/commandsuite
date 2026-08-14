@@ -19,6 +19,7 @@ import type { Client as BrokerClient } from 'csuite-sdk/client';
 import type { ActivityEvent } from 'csuite-sdk/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { startCaptureHost } from '../../src/runtime/trace/host.js';
+import { recordingLogger, silentLogger } from '../helpers/logger.js';
 
 /** Poll until `pred()` is true or the deadline elapses. */
 async function waitFor(pred: () => boolean, timeoutMs = 2000): Promise<void> {
@@ -50,7 +51,7 @@ const BASE = {
   brokerUrl: 'http://127.0.0.1:8787',
   token: 'tok-abc123',
   name: 'TEST',
-  log: () => {},
+  logger: silentLogger(),
 };
 
 describe('CaptureHost', () => {
@@ -141,11 +142,11 @@ describe('CaptureHost', () => {
     writeFileSync(join(lateWriteDir, '.csuite-capture-complete'), '');
     writeFileSync(join(lateWriteDir, 'late.request.json'), '{"late":true}');
     writeFileSync(join(aliveDir, '.csuite-capture-complete'), '');
-    const logged: Array<{ msg: string; ctx?: Record<string, unknown> }> = [];
+    const rec = recordingLogger();
     try {
       host = await startCaptureHost({
         ...BASE,
-        log: (msg, ctx) => logged.push({ msg, ctx }),
+        logger: rec.logger,
         brokerClient: stubBrokerClient().client,
       });
       const ownDir = host.envVars().OTEL_LOG_RAW_API_BODIES?.slice('file:'.length) ?? '';
@@ -158,9 +159,10 @@ describe('CaptureHost', () => {
       expect(existsSync(lateWriteDir)).toBe(true);
       expect(existsSync(aliveDir)).toBe(true);
       expect(existsSync(ownDir)).toBe(true);
-      const sweepLog = logged.find((l) => l.msg === 'capture-host: swept stale raw-bodies dirs');
+      const sweepLog = rec.records.find((r) => r.msg === 'swept stale raw-bodies dirs');
       expect(sweepLog).toBeTruthy();
-      expect(sweepLog?.ctx?.swept).toBeGreaterThanOrEqual(1);
+      expect(sweepLog?.level).toBe('info');
+      expect(sweepLog?.swept).toBeGreaterThanOrEqual(1);
       await host.close();
       host = null;
       // Still there after close — only a future sweep (dead pid) removes it.
@@ -326,10 +328,10 @@ describe('CaptureHost', () => {
   });
 
   it('close() force-drains leaked busy handles as the final teardown safety net', async () => {
-    const logged: Array<{ msg: string; ctx?: Record<string, unknown> }> = [];
+    const rec = recordingLogger();
     host = await startCaptureHost({
       ...BASE,
-      log: (msg, ctx) => logged.push({ msg, ctx }),
+      logger: rec.logger,
       brokerClient: stubBrokerClient().client,
     });
 
@@ -344,27 +346,25 @@ describe('CaptureHost', () => {
 
     expect(host.busy.busy).toBe(false);
     expect(host.busy.getSourceCounts()).toEqual({ turn_active: 0, tool_inflight: 0 });
-    const drainLog = logged.find(
-      (l) => l.msg === 'capture-host: force-drained leaked busy handles at teardown',
+    const drainLog = rec.records.find(
+      (r) => r.msg === 'force-drained leaked busy handles at teardown',
     );
     expect(drainLog).toBeTruthy();
-    expect(drainLog?.ctx?.drained).toBe(2);
-    expect(drainLog?.ctx?.sourceCounts).toEqual({ turn_active: 1, tool_inflight: 1 });
+    expect(drainLog?.level).toBe('warn');
+    expect(drainLog?.drained).toBe(2);
+    expect(drainLog?.sourceCounts).toEqual({ turn_active: 1, tool_inflight: 1 });
     host = null;
   });
 
   it('close() does not log the drain message when no handles leaked', async () => {
-    const logged: Array<{ msg: string }> = [];
+    const rec = recordingLogger();
     host = await startCaptureHost({
       ...BASE,
-      log: (msg) => logged.push({ msg }),
+      logger: rec.logger,
       brokerClient: stubBrokerClient().client,
     });
     await host.close();
     host = null;
-    const drainLog = logged.find(
-      (l) => l.msg === 'capture-host: force-drained leaked busy handles at teardown',
-    );
-    expect(drainLog).toBeUndefined();
+    expect(rec.messages()).not.toContain('force-drained leaked busy handles at teardown');
   });
 });

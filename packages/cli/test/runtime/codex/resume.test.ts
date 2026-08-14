@@ -60,6 +60,7 @@ import {
   spawnCodex,
 } from '../../../src/runtime/agents/codex/adapter.js';
 import { composeFixedContext } from '../../../src/runtime/fixed-context.js';
+import { silentLogger } from '../../helpers/logger.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -109,7 +110,7 @@ const BASE_OPTS = {
     setOffline: vi.fn(),
     subscribe: vi.fn(() => () => {}),
   },
-  log: vi.fn(),
+  logger: silentLogger(),
 };
 
 const cleanups: Array<() => void> = [];

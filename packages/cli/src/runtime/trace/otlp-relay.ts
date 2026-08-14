@@ -30,18 +30,17 @@ import {
 } from 'node:fs';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { logger as defaultLogger, type Logger } from 'csuite-core';
 
 const MAX_OTLP_BYTES = 256 * 1024 * 1024;
 const MAX_BODY_BYTES = 64 * 1024 * 1024;
-
-type Log = (msg: string, ctx?: Record<string, unknown>) => void;
 
 export interface OtlpRelayOptions {
   brokerUrl: string;
   token: string;
   rawBodiesDir: string;
   fetch?: typeof fetch;
-  log?: Log;
+  logger?: Logger;
 }
 
 export interface OtlpRelay {
@@ -75,7 +74,7 @@ function quarantineDirFor(spoolDir: string): string {
   return `${spoolDir}.quarantine`;
 }
 
-function quarantineBodies(spoolDir: string, candidates: QuarantineCandidate[], log: Log): void {
+function quarantineBodies(spoolDir: string, candidates: QuarantineCandidate[], log: Logger): void {
   if (candidates.length === 0) return;
   const quarantineDir = quarantineDirFor(spoolDir);
   let quarantineReady = false;
@@ -115,7 +114,7 @@ function quarantineBodies(spoolDir: string, candidates: QuarantineCandidate[], l
         `${basename(candidate.path)}.${candidate.reason}.${Date.now()}.${randomUUID()}.quarantined`,
       );
       renameSync(candidate.path, target);
-      log('otlp-relay: quarantined unavailable raw body', {
+      log.warn('quarantined unavailable raw body', {
         source: candidate.path,
         quarantine: target,
         reason: candidate.reason,
@@ -123,7 +122,7 @@ function quarantineBodies(spoolDir: string, candidates: QuarantineCandidate[], l
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === 'ENOENT') continue;
-      log('otlp-relay: could not quarantine unavailable raw body', {
+      log.warn('could not quarantine unavailable raw body', {
         source: candidate.path,
         reason: candidate.reason,
         error: err instanceof Error ? err.message : String(err),
@@ -280,7 +279,7 @@ function readRequestBody(req: IncomingMessage): Promise<Buffer> {
 }
 
 export async function startOtlpRelay(options: OtlpRelayOptions): Promise<OtlpRelay> {
-  const log = options.log ?? (() => {});
+  const log = options.logger ?? defaultLogger.child('otlp-relay');
   const fetchImpl = options.fetch ?? globalThis.fetch;
   const brokerBase = options.brokerUrl.replace(/\/+$/, '');
   const spoolDir = resolve(options.rawBodiesDir);
@@ -321,7 +320,7 @@ export async function startOtlpRelay(options: OtlpRelayOptions): Promise<OtlpRel
         refs = transformed.refs;
         quarantine = transformed.quarantine;
         if (transformed.unresolved.length > 0) {
-          log('otlp-relay: raw body unavailable; forwarding record for broker-side skip', {
+          log.warn('raw body unavailable; forwarding record for broker-side skip', {
             count: transformed.unresolved.length,
             errors: transformed.unresolved,
           });
@@ -362,14 +361,14 @@ export async function startOtlpRelay(options: OtlpRelayOptions): Promise<OtlpRel
             // The broker already acknowledged these bytes. A concurrent
             // unlink must not strand unrelated degraded siblings or turn a
             // successful ingest into a retry of the whole batch.
-            log('otlp-relay: could not remove acknowledged raw body', {
+            log.warn('could not remove acknowledged raw body', {
               ref,
               error: err instanceof Error ? err.message : String(err),
             });
           }
         }
       } else if (refs.length > 0) {
-        log('otlp-relay: broker did not acknowledge every raw body', {
+        log.warn('broker did not acknowledge every raw body', {
           expected: refs.length,
           captured,
           status: upstream.status,
@@ -381,7 +380,7 @@ export async function startOtlpRelay(options: OtlpRelayOptions): Promise<OtlpRel
       });
       res.end(responseBytes);
     } catch (err) {
-      log('otlp-relay: forward failed', {
+      log.warn('forward failed', {
         error: err instanceof Error ? err.message : String(err),
       });
       res.writeHead(503, { 'Content-Type': 'application/json' });

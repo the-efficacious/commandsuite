@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import type { ActivityEvent } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it } from 'vitest';
 import { attachRolloutReader } from '../../../src/runtime/agents/codex/rollout-reader.js';
+import { silentLogger } from '../../helpers/logger.js';
 
 const cleanups: Array<() => void> = [];
 afterEach(() => {
@@ -104,7 +105,7 @@ describe('attachRolloutReader', () => {
     const reader = attachRolloutReader({
       sessionsDir,
       enqueue: (e) => events.push(e),
-      log: () => {},
+      logger: silentLogger(),
     });
     // Close does a guaranteed final drain, so we don't depend on poll timing.
     await reader.close();
@@ -122,7 +123,7 @@ describe('attachRolloutReader', () => {
     const reader = attachRolloutReader({
       sessionsDir,
       enqueue: (e) => events.push(e),
-      log: () => {},
+      logger: silentLogger(),
       pollMs: 15,
     });
     cleanups.push(() => void reader.close());
@@ -155,7 +156,7 @@ describe('attachRolloutReader', () => {
       sessionsDir,
       getSessionId: () => rootId,
       enqueue: (e) => events.push(e),
-      log: () => {},
+      logger: silentLogger(),
     });
     await reader.close();
 
@@ -183,7 +184,7 @@ describe('attachRolloutReader', () => {
     const reader = attachRolloutReader({
       sessionsDir,
       enqueue: (e) => events.push(e),
-      log: () => {},
+      logger: silentLogger(),
       pollMs: 15,
       preexisting: 'ignore',
     });
@@ -213,7 +214,7 @@ describe('attachRolloutReader', () => {
       sessionsDir,
       getSessionId: () => resumedId,
       enqueue: (e) => events.push(e),
-      log: () => {},
+      logger: silentLogger(),
       pollMs: 15,
       preexisting: 'ignore',
       resumeThreadId: resumedId,

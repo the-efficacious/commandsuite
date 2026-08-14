@@ -25,6 +25,7 @@
  * single refetch so a burst of updates doesn't N-queue round trips.
  */
 
+import { logger as defaultLogger, type Logger } from 'csuite-core';
 import type { Client as BrokerClient } from 'csuite-sdk/client';
 import type { Message, Objective } from 'csuite-sdk/types';
 
@@ -33,7 +34,8 @@ const DEBOUNCE_MS = 150;
 export interface ObjectivesTrackerOptions {
   brokerClient: BrokerClient;
   name: string;
-  log: (msg: string, ctx?: Record<string, unknown>) => void;
+  /** Structured logger. Defaults to the shared logger's `objectives-tracker` child. */
+  logger?: Logger;
   onRefresh: (openObjectives: Objective[]) => void;
 }
 
@@ -43,7 +45,8 @@ export interface ObjectivesTracker {
 }
 
 export function createObjectivesTracker(opts: ObjectivesTrackerOptions): ObjectivesTracker {
-  const { brokerClient, name, log, onRefresh } = opts;
+  const { brokerClient, name, onRefresh } = opts;
+  const log = opts.logger ?? defaultLogger.child('objectives-tracker');
   let pending: NodeJS.Timeout | null = null;
   let inflight = false;
 
@@ -57,7 +60,7 @@ export function createObjectivesTracker(opts: ObjectivesTrackerOptions): Objecti
       ]);
       onRefresh([...active, ...blocked]);
     } catch (err) {
-      log('objectives refresh failed', {
+      log.warn('objectives refresh failed', {
         error: err instanceof Error ? err.message : String(err),
       });
     } finally {

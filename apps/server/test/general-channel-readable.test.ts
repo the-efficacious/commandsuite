@@ -59,6 +59,7 @@ import type { Team } from 'csuite-sdk/types';
 import { describe, expect, it, vi } from 'vitest';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
+import { silentLogger } from './helpers/logger.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const ADMIN = 'csuite_test_admin_general_secret';
@@ -101,7 +102,7 @@ async function makeApp() {
     teamStore: mockTeamStore(TEAM),
     channels,
     version: '0.0.0',
-    logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    logger: silentLogger(),
   });
   return { app, channels };
 }

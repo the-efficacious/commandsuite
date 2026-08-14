@@ -31,13 +31,14 @@
  * uploader, so we don't need cross-instance coordination.
  */
 
+import { logger as defaultLogger, type Logger } from 'csuite-core';
 import type { Client as BrokerClient } from 'csuite-sdk/client';
 import type { ActivityEvent } from 'csuite-sdk/types';
 
 export interface ActivityUploaderOptions {
   brokerClient: BrokerClient;
   name: string;
-  log?: (msg: string, ctx?: Record<string, unknown>) => void;
+  logger?: Logger;
   /** Max events per POST. Default 50. */
   maxBatchEvents?: number;
   /** Max payload size per POST, in bytes. Default 64 KB. */
@@ -97,7 +98,7 @@ export interface ActivityUploaderStats {
 export class ActivityUploader {
   private readonly brokerClient: BrokerClient;
   private readonly name: string;
-  private readonly log: (msg: string, ctx?: Record<string, unknown>) => void;
+  private readonly log: Logger;
   private readonly maxBatchEvents: number;
   private readonly maxBatchBytes: number;
   private readonly maxBatchAgeMs: number;
@@ -123,7 +124,7 @@ export class ActivityUploader {
   constructor(options: ActivityUploaderOptions) {
     this.brokerClient = options.brokerClient;
     this.name = options.name;
-    this.log = options.log ?? (() => {});
+    this.log = options.logger ?? defaultLogger.child('activity-uploader');
     this.maxBatchEvents = options.maxBatchEvents ?? DEFAULT_MAX_BATCH_EVENTS;
     this.maxBatchBytes = options.maxBatchBytes ?? DEFAULT_MAX_BATCH_BYTES;
     this.maxBatchAgeMs = options.maxBatchAgeMs ?? DEFAULT_MAX_BATCH_AGE_MS;
@@ -139,7 +140,7 @@ export class ActivityUploader {
   enqueue(event: ActivityEvent): void {
     if (this.closed) {
       this.statDropped++;
-      this.log('activity-uploader: dropping event on closed uploader', { kind: event.kind });
+      this.log.warn('dropping event on closed uploader', { kind: event.kind });
       return;
     }
     this.statEnqueued++;
@@ -154,7 +155,7 @@ export class ActivityUploader {
       if (dropped) {
         this.queueBytes -= dropped.bytes;
         this.statDropped++;
-        this.log('activity-uploader: queue full, dropping oldest', {
+        this.log.warn('queue full, dropping oldest', {
           queued: this.queue.length,
           bytes: this.queueBytes,
         });
@@ -232,7 +233,7 @@ export class ActivityUploader {
     const dropped = this.queue.length;
     if (dropped > 0) {
       this.statDropped += dropped;
-      this.log('activity-uploader: close dropping events after final flush', {
+      this.log.error('close dropping events after final flush', {
         dropped,
       });
     }
@@ -325,7 +326,7 @@ export class ActivityUploader {
     try {
       const result = await this.brokerClient.uploadActivity(this.name, { events });
       this.statUploaded += result.accepted;
-      this.log('activity-uploader: flushed', {
+      this.log.debug('flushed', {
         accepted: result.accepted,
         remaining: this.queue.length,
       });
@@ -336,7 +337,7 @@ export class ActivityUploader {
       this.queueBytes += batchBytes;
       this.backoffMs =
         this.backoffMs === 0 ? BACKOFF_START_MS : Math.min(this.backoffMs * 2, BACKOFF_MAX_MS);
-      this.log('activity-uploader: upload failed, backing off', {
+      this.log.warn('upload failed, backing off', {
         error: err instanceof Error ? err.message : String(err),
         backoffMs: this.backoffMs,
         queued: this.queue.length,

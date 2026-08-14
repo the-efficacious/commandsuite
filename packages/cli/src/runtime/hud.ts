@@ -32,6 +32,7 @@
  */
 
 import { helm } from '@the-efficacious/brand';
+import type { Logger } from 'csuite-core';
 import type { Presence, PresenceState } from './presence.js';
 
 /** Number of rows reserved for the HUD (separator + status). */
@@ -168,7 +169,7 @@ export interface StartHudOptions {
    * Default false to keep that path byte-for-byte unchanged.
    */
   reserveBottomSpace?: boolean;
-  log?: (msg: string, ctx?: Record<string, unknown>) => void;
+  logger?: Logger;
 }
 
 export interface HudHandle {

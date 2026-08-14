@@ -17,6 +17,7 @@ import { Client } from 'csuite-sdk/client';
 import type { Team } from 'csuite-sdk/types';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type RunningServer, runServer } from '../src/run.js';
+import { silentLogger } from './helpers/logger.js';
 import { seedStores } from './helpers/test-stores.js';
 
 const OP_TOKEN = 'csuite_shutdown_test_op';
@@ -46,12 +47,7 @@ describe('runServer shutdown with live SSE subscriber', () => {
       db: seeded.db,
       port: 0,
       host: '127.0.0.1',
-      logger: {
-        debug: () => {},
-        info: () => {},
-        warn: () => {},
-        error: () => {},
-      },
+      logger: silentLogger(),
     });
     client = new Client({ url: `http://${server.host}:${server.port}`, token: OP_TOKEN });
   }, 10_000);

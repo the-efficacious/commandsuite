@@ -22,11 +22,12 @@ import {
   fieldCipherConformance,
   sqlDriverConformance,
 } from 'csuite-core/conformance';
-import { afterAll, vi } from 'vitest';
+import { afterAll } from 'vitest';
 import { openDatabase } from '../src/db.js';
 import { LocalBlobStore } from '../src/files/index.js';
 import { kekFieldCipher, testKek } from '../src/kek.js';
 import { createMemberStore } from '../src/members.js';
+import { silentLogger } from './helpers/logger.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const OPERATOR_TOKEN = 'csuite_conformance_operator_token';
@@ -76,7 +77,7 @@ brokerAppConformance(async () => {
       permissionPresets: {},
     }),
     version: '0.0.0',
-    logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    logger: silentLogger(),
   });
   return { created, bearerToken: OPERATOR_TOKEN, memberName: 'operator-1' };
 });

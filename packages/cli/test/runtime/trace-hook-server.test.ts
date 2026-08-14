@@ -19,6 +19,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createActivitySignal } from '../../src/runtime/trace/busy.js';
 import { type HookServer, startHookServer } from '../../src/runtime/trace/hook-server.js';
+import { silentLogger } from '../helpers/logger.js';
 
 async function postJson(url: string, body: unknown): Promise<{ status: number; text: string }> {
   const res = await fetch(url, {
@@ -41,7 +42,7 @@ describe('hook server', () => {
 
   it('PreToolUse bumps tool_inflight; PostToolUse drains it', async () => {
     const busy = createActivitySignal();
-    server = await startHookServer({ busy, log: () => {} });
+    server = await startHookServer({ busy, logger: silentLogger() });
 
     expect(busy.getSourceCounts().tool_inflight).toBe(0);
 
@@ -66,7 +67,7 @@ describe('hook server', () => {
 
   it('counts overlapping tool calls correctly', async () => {
     const busy = createActivitySignal();
-    server = await startHookServer({ busy, log: () => {} });
+    server = await startHookServer({ busy, logger: silentLogger() });
 
     await postJson(server.url, { hook_event_name: 'PreToolUse', tool_use_id: 'a' });
     await postJson(server.url, { hook_event_name: 'PreToolUse', tool_use_id: 'b' });
@@ -85,7 +86,7 @@ describe('hook server', () => {
 
   it('duplicate PreToolUse for the same id is a no-op', async () => {
     const busy = createActivitySignal();
-    server = await startHookServer({ busy, log: () => {} });
+    server = await startHookServer({ busy, logger: silentLogger() });
 
     await postJson(server.url, { hook_event_name: 'PreToolUse', tool_use_id: 'dup' });
     await postJson(server.url, { hook_event_name: 'PreToolUse', tool_use_id: 'dup' });
@@ -97,7 +98,7 @@ describe('hook server', () => {
 
   it('PostToolUse for an unknown id is silently ignored (no underflow)', async () => {
     const busy = createActivitySignal();
-    server = await startHookServer({ busy, log: () => {} });
+    server = await startHookServer({ busy, logger: silentLogger() });
 
     const res = await postJson(server.url, {
       hook_event_name: 'PostToolUse',
@@ -109,7 +110,7 @@ describe('hook server', () => {
 
   it('unhandled events (PreCompact, etc.) are accepted without changing state', async () => {
     const busy = createActivitySignal();
-    server = await startHookServer({ busy, log: () => {} });
+    server = await startHookServer({ busy, logger: silentLogger() });
 
     await postJson(server.url, { hook_event_name: 'PreCompact' });
     expect(busy.state()).toBe('idle');
@@ -121,7 +122,7 @@ describe('hook server', () => {
     const sources: string[] = [];
     server = await startHookServer({
       busy,
-      log: () => {},
+      logger: silentLogger(),
       onSessionStart: (source) => sources.push(source),
     });
 
@@ -138,7 +139,7 @@ describe('hook server', () => {
 
   it('rejects malformed bodies with 400', async () => {
     const busy = createActivitySignal();
-    server = await startHookServer({ busy, log: () => {} });
+    server = await startHookServer({ busy, logger: silentLogger() });
 
     const res = await fetch(server.url, {
       method: 'POST',
@@ -151,7 +152,7 @@ describe('hook server', () => {
 
   it('returns 200 with accepted=false when fields are missing (avoid retry storms)', async () => {
     const busy = createActivitySignal();
-    server = await startHookServer({ busy, log: () => {} });
+    server = await startHookServer({ busy, logger: silentLogger() });
 
     const res = await postJson(server.url, { hook_event_name: 'PreToolUse' });
     expect(res.status).toBe(200);
@@ -161,7 +162,7 @@ describe('hook server', () => {
 
   it('non-matching routes return 404', async () => {
     const busy = createActivitySignal();
-    server = await startHookServer({ busy, log: () => {} });
+    server = await startHookServer({ busy, logger: silentLogger() });
 
     const res = await fetch(server.url.replace('/hook/tool-event', '/something-else'));
     expect(res.status).toBe(404);
@@ -169,7 +170,7 @@ describe('hook server', () => {
 
   it('close() drains outstanding handles so busy unwedges', async () => {
     const busy = createActivitySignal();
-    server = await startHookServer({ busy, log: () => {} });
+    server = await startHookServer({ busy, logger: silentLogger() });
 
     await postJson(server.url, { hook_event_name: 'PreToolUse', tool_use_id: 'left-dangling' });
     expect(busy.busy).toBe(true);
@@ -192,7 +193,7 @@ describe('hook server — turn lifecycle (UserPromptSubmit / Stop)', () => {
 
   it('UserPromptSubmit opens turn_active (working); Stop closes it (idle)', async () => {
     const busy = createActivitySignal();
-    server = await startHookServer({ busy, log: () => {} });
+    server = await startHookServer({ busy, logger: silentLogger() });
 
     await postJson(server.url, {
       hook_event_name: 'UserPromptSubmit',
@@ -213,7 +214,7 @@ describe('hook server — turn lifecycle (UserPromptSubmit / Stop)', () => {
 
   it('duplicate UserPromptSubmit for the same prompt_id does not double-count', async () => {
     const busy = createActivitySignal();
-    server = await startHookServer({ busy, log: () => {} });
+    server = await startHookServer({ busy, logger: silentLogger() });
 
     await postJson(server.url, { hook_event_name: 'UserPromptSubmit', prompt_id: 'p-1' });
     await postJson(server.url, { hook_event_name: 'UserPromptSubmit', prompt_id: 'p-1' });
@@ -225,7 +226,7 @@ describe('hook server — turn lifecycle (UserPromptSubmit / Stop)', () => {
 
   it('Stop clears blocked even when no turn handle is open', async () => {
     const busy = createActivitySignal();
-    server = await startHookServer({ busy, log: () => {} });
+    server = await startHookServer({ busy, logger: silentLogger() });
 
     busy.setBlocked(true);
     expect(busy.state()).toBe('blocked');
@@ -237,7 +238,7 @@ describe('hook server — turn lifecycle (UserPromptSubmit / Stop)', () => {
 
   it('Stop with a mismatched key still drains open turn handles (no leak)', async () => {
     const busy = createActivitySignal();
-    server = await startHookServer({ busy, log: () => {} });
+    server = await startHookServer({ busy, logger: silentLogger() });
 
     await postJson(server.url, { hook_event_name: 'UserPromptSubmit', prompt_id: 'p-1' });
     expect(busy.getSourceCounts().turn_active).toBe(1);
@@ -250,7 +251,7 @@ describe('hook server — turn lifecycle (UserPromptSubmit / Stop)', () => {
 
   it('turn_active + tool_inflight overlap: still working until the turn ends', async () => {
     const busy = createActivitySignal();
-    server = await startHookServer({ busy, log: () => {} });
+    server = await startHookServer({ busy, logger: silentLogger() });
 
     await postJson(server.url, { hook_event_name: 'UserPromptSubmit', prompt_id: 'p-1' });
     await postJson(server.url, { hook_event_name: 'PreToolUse', tool_use_id: 't-1' });
@@ -265,7 +266,7 @@ describe('hook server — turn lifecycle (UserPromptSubmit / Stop)', () => {
 
   it('SubagentStop is informational — no top-level state change', async () => {
     const busy = createActivitySignal();
-    server = await startHookServer({ busy, log: () => {} });
+    server = await startHookServer({ busy, logger: silentLogger() });
 
     await postJson(server.url, { hook_event_name: 'UserPromptSubmit', prompt_id: 'p-1' });
     await postJson(server.url, { hook_event_name: 'SubagentStop', agent_id: 'sub-1' });
@@ -276,7 +277,7 @@ describe('hook server — turn lifecycle (UserPromptSubmit / Stop)', () => {
 
   it('close() drains a dangling turn_active handle', async () => {
     const busy = createActivitySignal();
-    server = await startHookServer({ busy, log: () => {} });
+    server = await startHookServer({ busy, logger: silentLogger() });
 
     await postJson(server.url, { hook_event_name: 'UserPromptSubmit', prompt_id: 'p-1' });
     expect(busy.state()).toBe('working');
@@ -302,7 +303,7 @@ describe('hook server — transcript path relay (onTranscriptPath)', () => {
     const busy = createActivitySignal();
     server = await startHookServer({
       busy,
-      log: () => {},
+      logger: silentLogger(),
       onTranscriptPath: (p) => paths.push(p),
     });
 
@@ -322,7 +323,7 @@ describe('hook server — transcript path relay (onTranscriptPath)', () => {
     const busy = createActivitySignal();
     server = await startHookServer({
       busy,
-      log: () => {},
+      logger: silentLogger(),
       onTranscriptPath: (p) => paths.push(p),
     });
 
@@ -341,7 +342,7 @@ describe('hook server — transcript path relay (onTranscriptPath)', () => {
     const busy = createActivitySignal();
     server = await startHookServer({
       busy,
-      log: () => {},
+      logger: silentLogger(),
       onTranscriptPath: (p) => paths.push(p),
     });
 
@@ -362,7 +363,7 @@ describe('hook server — transcript path relay (onTranscriptPath)', () => {
     const busy = createActivitySignal();
     server = await startHookServer({
       busy,
-      log: () => {},
+      logger: silentLogger(),
       onTranscriptPath: (p) => paths.push(p),
     });
 
@@ -385,7 +386,7 @@ describe('hook server — Notification (blocked flag)', () => {
     'blocking notification_type %s sets blocked',
     async (notification_type) => {
       const busy = createActivitySignal();
-      server = await startHookServer({ busy, log: () => {} });
+      server = await startHookServer({ busy, logger: silentLogger() });
 
       await postJson(server.url, { hook_event_name: 'Notification', notification_type });
       expect(busy.state()).toBe('blocked');
@@ -395,7 +396,7 @@ describe('hook server — Notification (blocked flag)', () => {
 
   it('idle_prompt clears blocked', async () => {
     const busy = createActivitySignal();
-    server = await startHookServer({ busy, log: () => {} });
+    server = await startHookServer({ busy, logger: silentLogger() });
 
     await postJson(server.url, {
       hook_event_name: 'Notification',
@@ -413,7 +414,7 @@ describe('hook server — Notification (blocked flag)', () => {
 
   it('unknown notification_type is ignored (no state change)', async () => {
     const busy = createActivitySignal();
-    server = await startHookServer({ busy, log: () => {} });
+    server = await startHookServer({ busy, logger: silentLogger() });
 
     await postJson(server.url, {
       hook_event_name: 'Notification',
@@ -425,7 +426,7 @@ describe('hook server — Notification (blocked flag)', () => {
 
   it('blocked wins over an active turn, then Stop clears both', async () => {
     const busy = createActivitySignal();
-    server = await startHookServer({ busy, log: () => {} });
+    server = await startHookServer({ busy, logger: silentLogger() });
 
     await postJson(server.url, { hook_event_name: 'UserPromptSubmit', prompt_id: 'p-1' });
     expect(busy.state()).toBe('working');

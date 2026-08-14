@@ -17,6 +17,7 @@ import type { AddressInfo } from 'node:net';
 import type { HookInput } from '@anthropic-ai/claude-agent-sdk';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildHookForwarders } from '../../src/runtime/agents/claude-agent.js';
+import { silentLogger } from '../helpers/logger.js';
 
 interface ReceivedBody {
   hook_event_name?: string;
@@ -64,7 +65,7 @@ describe('buildHookForwarders', () => {
   };
 
   it('registers the eight events the hook server routes on', () => {
-    const hooks = buildHookForwarders(url, () => {});
+    const hooks = buildHookForwarders(url, silentLogger());
     expect(Object.keys(hooks).sort()).toEqual([
       'Notification',
       'PostToolUse',
@@ -78,7 +79,7 @@ describe('buildHookForwarders', () => {
   });
 
   it('forwards payloads in order and merges the tool_use_id argument', async () => {
-    const hooks = buildHookForwarders(url, () => {});
+    const hooks = buildHookForwarders(url, silentLogger());
     const pre = hooks.PreToolUse?.[0]?.hooks[0];
     const post = hooks.PostToolUse?.[0]?.hooks[0];
     expect(pre).toBeDefined();
@@ -117,7 +118,7 @@ describe('buildHookForwarders', () => {
   });
 
   it('returns immediately even when the endpoint is dead', async () => {
-    const hooks = buildHookForwarders('http://127.0.0.1:1/hook/tool-event', () => {});
+    const hooks = buildHookForwarders('http://127.0.0.1:1/hook/tool-event', silentLogger());
     const stop = hooks.Stop?.[0]?.hooks[0];
     expect(stop).toBeDefined();
     if (!stop) return;

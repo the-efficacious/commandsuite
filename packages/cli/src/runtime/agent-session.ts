@@ -32,6 +32,7 @@
  */
 
 import { resolve } from 'node:path';
+import type { Logger } from 'csuite-core';
 import { DEFAULT_PORT, ENV } from 'csuite-sdk/protocol';
 import { UsageError } from '../commands/errors.js';
 import { CLI_VERSION } from '../version.js';
@@ -62,7 +63,7 @@ export interface AgentSessionInput {
   /** Working directory for the agent. Defaults to `process.cwd()`. */
   cwd?: string;
   /** Logger override. When absent the driver owns a session log. */
-  log?: AgentLog;
+  logger?: Logger;
   /** Disable the capture subsystem (no uploader, hooks, or OTEL env). */
   noTrace?: boolean;
   /** Skip resolving/injecting broker-held secrets. */
@@ -99,8 +100,8 @@ export async function runAgentSession(
   input: AgentSessionInput,
 ): Promise<number> {
   const meta = adapter.meta;
-  const ownedSessionLog = input.log ? null : createSessionLog({ component: meta.id });
-  const log = input.log ?? (ownedSessionLog as NonNullable<typeof ownedSessionLog>).log;
+  const ownedSessionLog = input.logger ? null : createSessionLog({ component: meta.id });
+  const log = input.logger ?? (ownedSessionLog as NonNullable<typeof ownedSessionLog>).logger;
 
   // Function declaration (not arrow) so TS control-flow analysis knows
   // calls to it never return — the try/catch blocks below rely on that.
@@ -165,7 +166,7 @@ export async function runAgentSession(
     runner = await startRunner({
       url,
       token,
-      log,
+      logger: log.child('runner'),
       presence,
       noTrace: input.noTrace,
       noSecrets: input.noSecrets,
@@ -184,7 +185,7 @@ export async function runAgentSession(
     if (err instanceof RunnerStartupError) throw new UsageError(err.message);
     throw err;
   }
-  log(`${meta.id}: runner started`, {
+  log.info('runner started', {
     socketPath: runner.socketPath,
     name: runner.instructions.name,
     role: runner.instructions.role.title,
@@ -216,7 +217,7 @@ export async function runAgentSession(
     prepared = await adapter.prepare(ctx);
   } catch (err) {
     await runner.shutdown('prepare-failed').catch((shutdownErr) => {
-      log(`${meta.id}: runner shutdown failed during prepare cleanup`, {
+      log.warn('runner shutdown failed during prepare cleanup', {
         error: shutdownErr instanceof Error ? shutdownErr.message : String(shutdownErr),
       });
     });
@@ -236,7 +237,7 @@ export async function runAgentSession(
   // Last-ditch restore if the node process itself is dying — the
   // operator's config files must be restored even on an unhandled crash.
   const onUncaught = (err: unknown): void => {
-    log(`${meta.id}: uncaught exception`, {
+    log.error('uncaught exception', {
       error: err instanceof Error ? (err.stack ?? err.message) : String(err),
     });
     try {
@@ -288,7 +289,7 @@ export async function runAgentSession(
       agentSessionId: null,
     });
     await runner.shutdown('spawn-failed').catch((shutdownErr) => {
-      log(`${meta.id}: runner shutdown failed after spawn failure`, {
+      log.warn('runner shutdown failed after spawn failure', {
         error: shutdownErr instanceof Error ? shutdownErr.message : String(shutdownErr),
       });
     });
@@ -318,7 +319,7 @@ export async function runAgentSession(
   const teardown = (reason: string): Promise<number> => {
     if (teardownPromise !== null) return teardownPromise;
     teardownPromise = (async (): Promise<number> => {
-      log(`${meta.id}: tearing down`, { reason });
+      log.info('tearing down', { reason });
       // A restart cycle past its drain point finishes before teardown
       // proceeds — a half-swapped agent is worse than a completed
       // swap, and settled() bounds the wait to the cycle in flight.
@@ -334,7 +335,7 @@ export async function runAgentSession(
       try {
         await currentProc.shutdown(reason);
       } catch (err) {
-        log(`${meta.id}: agent shutdown failed`, {
+        log.error('agent shutdown failed', {
           error: err instanceof Error ? err.message : String(err),
         });
       }
@@ -347,7 +348,7 @@ export async function runAgentSession(
       try {
         prepared.cleanup();
       } catch (err) {
-        log(`${meta.id}: prepared cleanup threw`, {
+        log.error('prepared cleanup threw', {
           error: err instanceof Error ? err.message : String(err),
         });
       }
@@ -361,7 +362,7 @@ export async function runAgentSession(
         agentSessionId: currentProc.sessionId(),
       });
       await runner.shutdown(reason).catch((err) => {
-        log(`${meta.id}: runner shutdown threw`, {
+        log.error('runner shutdown threw', {
           error: err instanceof Error ? err.message : String(err),
         });
       });
@@ -373,6 +374,7 @@ export async function runAgentSession(
         summary.capture = runner.captureHost.stats();
       }
       emitSummary(meta.id, summary, log, ctx.sessionLogPath);
+      // (session log closes after the summary lands in it)
       ownedSessionLog?.close();
       return exitCode;
     })();
@@ -430,7 +432,7 @@ export async function runAgentSession(
       },
       {
         onFailure: (err) => {
-          log(`${meta.id}: restart failed — ending session`, {
+          log.error('restart failed — ending session', {
             error: err instanceof Error ? err.message : String(err),
           });
           void teardown('restart-failed');
@@ -439,7 +441,7 @@ export async function runAgentSession(
     );
     if (instructionsEventBeforeSpawn) coordinator.request();
   } else if (instructionsEventBeforeSpawn) {
-    log(`${meta.id}: instructions changed before spawn — packet already current`);
+    log.info('instructions changed before spawn — packet already current');
   }
 
   // 8a-bis. Context control — the broker's compact/clear verbs.
@@ -497,7 +499,7 @@ export async function runAgentSession(
         try {
           await runner.refreshInstructions();
         } catch (err) {
-          log(`${meta.id}: instructions refetch failed during clear — using cached packet`, {
+          log.warn('instructions refetch failed during clear — using cached packet', {
             error: err instanceof Error ? err.message : String(err),
           });
         }
@@ -521,7 +523,7 @@ export async function runAgentSession(
         // second transport.
         runner.captureHost?.enqueue(event);
       },
-      log,
+      logger: log,
     });
     for (const pending of contextControlsBeforeSpawn) void contextControl.handle(pending);
     contextControlsBeforeSpawn.length = 0;
@@ -616,7 +618,7 @@ function emitSummary(
   log: AgentLog,
   sessionLogPath: string | null,
 ): void {
-  log(`${id}: run summary`, { ...summary });
+  log.info('run summary', { ...summary });
   const capturePart =
     summary.capture === null
       ? 'capture disabled'

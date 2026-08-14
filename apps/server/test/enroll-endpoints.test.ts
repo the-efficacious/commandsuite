@@ -32,6 +32,7 @@ import type {
 import { describe, expect, it, vi } from 'vitest';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
+import { silentLogger } from './helpers/logger.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const ADMIN_TOKEN = 'csuite_enroll_admin_token';
@@ -95,7 +96,7 @@ async function makeApp(options: { now?: () => number } = {}): Promise<Harness> {
     teamStore: mockTeamStore(TEAM),
     version: '0.0.0',
     persistMembers,
-    logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    logger: silentLogger(),
     ...(options.now !== undefined ? { now: options.now } : {}),
   });
   return { app, enrollments, tokens, persistMembers };

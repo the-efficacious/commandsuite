@@ -240,7 +240,7 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
         // of claude's SessionStart(source=compact) hook, so it drives
         // the same plate re-assertion.
         onCompacted: () => runner.rebrief('context-compaction'),
-        log,
+        logger: log,
       });
 
       // The compaction actuator follows the live generation: a restart
@@ -252,13 +252,13 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
       // while codex was cold-starting.
       liveSink = spawned.channelSink;
       if (pendingEvents.length > 0) {
-        log('codex: draining pre-attach broker queue', { queued: pendingEvents.length });
+        log.info('draining pre-attach broker queue', { queued: pendingEvents.length });
         const drain = pendingEvents.splice(0, pendingEvents.length);
         for (const event of drain) {
           try {
             await spawned.channelSink.deliver(event);
           } catch (err) {
-            log('codex: drain delivery failed', {
+            log.warn('drain delivery failed', {
               error: err instanceof Error ? err.message : String(err),
             });
           }
@@ -298,7 +298,7 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
         presence: ctx.presence,
         label: `csuite codex · ${runner.instructions.name}`,
         reserveBottomSpace: true,
-        log,
+        logger: log,
       });
       hud.redraw();
 
@@ -338,13 +338,13 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
         // is the opposite of what a clear wants and is exactly the trap
         // the RespawnPosture union exists to close.
         effectiveResume = undefined;
-        ctx.log('codex: respawning cold — conversation dropped by context clear');
+        ctx.log.info('respawning cold — conversation dropped by context clear');
         return adapter.spawn(ctx);
       }
       // `sessionId` is the codex thread id. `true` (most recent thread
       // on this machine) when the predecessor never revealed one.
       effectiveResume = prior.sessionId ?? true;
-      ctx.log('codex: respawning with refreshed instructions', {
+      ctx.log.info('respawning with refreshed instructions', {
         resume: effectiveResume,
       });
       return adapter.spawn(ctx);

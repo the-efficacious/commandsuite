@@ -14,8 +14,9 @@
 
 import type { Client as BrokerClient } from 'csuite-sdk/client';
 import type { Message } from 'csuite-sdk/types';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { runForwarder } from '../../src/runtime/forwarder.js';
+import { silentLogger } from '../helpers/logger.js';
 
 interface CapturedEvent {
   content: string;
@@ -90,7 +91,7 @@ async function captureNotifications(
     brokerClient: client,
     name: selfName,
     signal: ctrl.signal,
-    log: vi.fn(),
+    logger: silentLogger(),
   });
   return captured;
 }

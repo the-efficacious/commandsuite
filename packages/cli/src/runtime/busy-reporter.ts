@@ -20,6 +20,7 @@
  * until it reconnects.
  */
 
+import { logger as defaultLogger, type Logger } from 'csuite-core';
 import type { Client as BrokerClient } from 'csuite-sdk/client';
 import type { ActivityState } from 'csuite-sdk/types';
 import type { ActivitySignal } from './trace/busy.js';
@@ -29,7 +30,8 @@ export interface ActivityReporterOptions {
   activity: ActivitySignal;
   /** Cancellation. When aborted, the reporter stops heartbeating. */
   signal: AbortSignal;
-  log: (msg: string, ctx?: Record<string, unknown>) => void;
+  /** Structured logger. Defaults to the shared logger's `activity-reporter` child. */
+  logger?: Logger;
   /** Override the heartbeat interval. Default 10_000ms. */
   heartbeatMs?: number;
 }
@@ -37,7 +39,8 @@ export interface ActivityReporterOptions {
 export const DEFAULT_HEARTBEAT_MS = 10_000;
 
 export function startActivityReporter(opts: ActivityReporterOptions): void {
-  const { brokerClient, activity, signal, log } = opts;
+  const { brokerClient, activity, signal } = opts;
+  const log = opts.logger ?? defaultLogger.child('activity-reporter');
   const heartbeatMs = opts.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -46,7 +49,9 @@ export function startActivityReporter(opts: ActivityReporterOptions): void {
   // heartbeat call the abort-aware wrapper below.
   const postRaw = (state: ActivityState): void => {
     void brokerClient.setActivity({ state }).catch((err: unknown) => {
-      log('activity-reporter: setActivity failed', {
+      // Presence is a UI nicety, not an invariant — the next transition
+      // or heartbeat retries, so this stays at debug per the module doc.
+      log.debug('setActivity failed', {
         state,
         error: err instanceof Error ? err.message : String(err),
       });

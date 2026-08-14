@@ -69,6 +69,7 @@
  *     owns explicitly via `setBlocked`).
  */
 
+import { logger as defaultLogger, type Logger } from 'csuite-core';
 import type { ActivityState } from 'csuite-sdk/types';
 
 export type ActivitySource = 'turn_active' | 'tool_inflight';
@@ -108,7 +109,7 @@ export interface ActivitySignalOptions {
    * the max-age timer, handles drained via `forceFinishAll()`, etc.
    * The signal is normally silent on the happy path.
    */
-  log?: (msg: string, ctx?: Record<string, unknown>) => void;
+  logger?: Logger;
 }
 
 /** @deprecated Use {@link ActivitySignalOptions}. */
@@ -197,7 +198,7 @@ interface InternalHandle {
 }
 
 export function createActivitySignal(options: ActivitySignalOptions = {}): ActivitySignal {
-  const log = options.log ?? (() => {});
+  const log = options.logger ?? defaultLogger.child('activity');
   const counts = new Map<ActivitySource, number>();
   for (const source of ALL_SOURCES) counts.set(source, 0);
   const listeners = new Set<(state: ActivityState) => void>();
@@ -268,7 +269,7 @@ export function createActivitySignal(options: ActivitySignalOptions = {}): Activ
       counts.set(source, next);
       emitIfChanged();
       if (reason !== 'normal') {
-        log('activity: handle auto-finished', {
+        log.warn('handle auto-finished', {
           source,
           reason,
           ageMs: Date.now() - startedAt,
@@ -305,7 +306,7 @@ export function createActivitySignal(options: ActivitySignalOptions = {}): Activ
     for (const entry of [...liveHandles]) {
       entry.finish('force');
     }
-    log('activity: force-finished outstanding handles', { drained });
+    log.warn('force-finished outstanding handles', { drained });
     return drained;
   };
 

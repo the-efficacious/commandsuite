@@ -34,6 +34,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { RunnerHandle } from '../../src/runtime/runner.js';
 import { startRunner } from '../../src/runtime/runner.js';
+import { silentLogger } from '../helpers/logger.js';
 import {
   FAKE_BROKER_NAME,
   FAKE_BROKER_TEAM_NAME,
@@ -74,7 +75,7 @@ describeIfBuilt('runner + bridge end-to-end', () => {
       url: broker.url,
       token: FAKE_BROKER_TOKEN,
       // Silence the runner's internal logs so vitest output stays clean.
-      log: () => {},
+      logger: silentLogger(),
       noTrace: true,
     });
 

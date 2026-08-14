@@ -10,6 +10,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ActivityObservation, RestartHooks } from '../../src/runtime/restart.js';
 import { createRestartCoordinator } from '../../src/runtime/restart.js';
+import { silentLogger } from '../helpers/logger.js';
 
 type State = 'idle' | 'working' | 'blocked';
 
@@ -68,7 +69,7 @@ function harness(opts: { activity: ActivityObservation | null }) {
       calls.push(`respawn:${prior.sessionId}`);
       return h.onRespawn();
     },
-    log: () => {},
+    log: silentLogger(),
   };
   h.coordinator = createRestartCoordinator(hooks, {
     onFailure: (err) => failures.push(err),

@@ -9,6 +9,7 @@
  */
 
 import type { ToolSource } from 'csuite-sdk/types';
+import type { Logger } from '../logger.js';
 import type { ToolCallResult } from './custom-executor.js';
 import type { McpCachedTool, ToolSourceStore } from './store.js';
 
@@ -43,10 +44,7 @@ export interface McpToolManager {
 export interface McpClientManagerOptions {
   store: ToolSourceStore;
   version: string;
-  logger: {
-    warn(msg: string, ctx?: Record<string, unknown>): void;
-    info(msg: string, ctx?: Record<string, unknown>): void;
-  };
+  logger: Logger;
 }
 
 // The concrete `createMcpClientManager` lives in `mcp-client.ts`

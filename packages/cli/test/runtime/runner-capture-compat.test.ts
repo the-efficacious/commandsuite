@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { type RunnerHandle, startRunner } from '../../src/runtime/runner.js';
+import { silentLogger } from '../helpers/logger.js';
 import {
   FAKE_BROKER_TOKEN,
   type FakeBroker,
@@ -30,7 +31,7 @@ describe('runner capture compatibility', () => {
       startRunner({
         url: broker.url,
         token: FAKE_BROKER_TOKEN,
-        log: () => {},
+        logger: silentLogger(),
         noSecrets: true,
         requireRawBodyAck: true,
       }),
@@ -44,7 +45,7 @@ describe('runner capture compatibility', () => {
     runner = await startRunner({
       url: broker.url,
       token: FAKE_BROKER_TOKEN,
-      log: () => {},
+      logger: silentLogger(),
       noSecrets: true,
     });
 

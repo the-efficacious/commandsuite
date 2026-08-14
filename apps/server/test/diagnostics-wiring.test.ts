@@ -13,16 +13,17 @@
  */
 
 import { createDiagnosticStore, createGenAiStore, createTelemetryStore } from 'csuite-core';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { openDatabase } from '../src/db.js';
 import { createRawBodyStore } from '../src/raw-body-store.js';
+import { recordingLogger } from './helpers/logger.js';
 
 const dbs: ReturnType<typeof openDatabase>[] = [];
 afterEach(() => {
   for (const d of dbs.splice(0)) d.close();
 });
 
-const quiet = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+const quiet = recordingLogger().logger;
 
 function harness() {
   const db = openDatabase(':memory:');
@@ -122,9 +123,9 @@ describe('wiring: a real failure is retained', () => {
     // full or corrupt handle fails both together. That is precisely
     // when the product most needs its prior behaviour intact.
     const { db, diagnostics } = harness();
-    const warn = vi.fn();
+    const rec = recordingLogger();
     const store = createRawBodyStore(db, {
-      logger: { debug: vi.fn(), info: vi.fn(), warn, error: vi.fn() },
+      logger: rec.logger,
       diagnostics: diagnostics.emit,
     });
     const { hash } = store.appendBody({
@@ -137,7 +138,7 @@ describe('wiring: a real failure is retained', () => {
     db.exec('DROP TABLE diagnostic_event');
 
     expect(store.getBlob(hash)).toBeNull(); // original behaviour intact
-    expect(warn).toHaveBeenCalled(); // stderr line still fires
+    expect(rec.atLeast('warn').length).toBeGreaterThan(0); // the log line still fires
     // …and retention says so WITHOUT consulting the store that failed.
     expect(diagnostics.health()).toBe('unknown');
   });

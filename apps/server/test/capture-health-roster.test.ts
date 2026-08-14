@@ -22,10 +22,11 @@ import {
   SqliteSessionStore,
 } from 'csuite-core';
 import type { RosterResponse, Team } from 'csuite-sdk/types';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
+import { silentLogger } from './helpers/logger.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const TOKEN = 'csuite_test_member_secret';
@@ -62,7 +63,7 @@ async function makeApp(captureHealth?: CaptureHealthStore) {
     teamStore: mockTeamStore(TEAM),
     version: '0.0.0',
     ...(captureHealth !== undefined ? { captureHealth } : {}),
-    logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    logger: silentLogger(),
   });
   return { app, broker, db };
 }

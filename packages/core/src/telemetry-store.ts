@@ -178,7 +178,7 @@ class SqliteTelemetryStore implements TelemetryStore {
         payload = JSON.stringify(rec.payload ?? {});
       } catch (err) {
         this.diag?.telemetrystoreUnserializableRecordSkipped(memberName);
-        this.log.warn('telemetry-store: skipped unserializable record', {
+        this.log.warn('skipped unserializable record', {
           memberName,
           name: rec.name,
           signal: rec.signal,
@@ -285,7 +285,7 @@ class SqliteTelemetryStore implements TelemetryStore {
       };
     } catch (err) {
       this.diag?.telemetrystoreMalformedRowSkipped(Number(raw.id));
-      this.log.warn('telemetry-store: skipped malformed row', {
+      this.log.warn('skipped malformed row', {
         id: Number(raw.id),
         error: err instanceof Error ? err.message : String(err),
       });
@@ -298,5 +298,9 @@ export function createTelemetryStore(
   db: SqlDriver,
   opts: TelemetryStoreOptions = {},
 ): TelemetryStore {
-  return new SqliteTelemetryStore(db, opts.logger ?? defaultLogger, opts.diagnostics);
+  return new SqliteTelemetryStore(
+    db,
+    opts.logger ?? defaultLogger.child('telemetry-store'),
+    opts.diagnostics,
+  );
 }

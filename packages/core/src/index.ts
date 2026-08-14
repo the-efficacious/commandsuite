@@ -34,7 +34,6 @@ export {
 } from './auth.js';
 export {
   Broker,
-  type BrokerLogger,
   type BrokerOptions,
   type IdentityContext,
   InvalidRecipientError,
@@ -206,7 +205,17 @@ export {
   looksLikeJwt,
   type VerifiedClaims,
 } from './jwt.js';
-export { type LogContext, type Logger, logger } from './logger.js';
+export {
+  type CreateLoggerOptions,
+  createLogger,
+  envLogLevel,
+  LOG_LEVELS,
+  type LogContext,
+  type Logger,
+  type LogLevel,
+  type LogRecord,
+  logger,
+} from './logger.js';
 export {
   createSqliteActivityStore,
   pruneActivityDb,

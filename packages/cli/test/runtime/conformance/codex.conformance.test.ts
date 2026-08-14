@@ -29,7 +29,7 @@ describeRunnerConformance({
         url: broker.url,
         token: FAKE_BROKER_TOKEN,
         cwd: sandbox,
-        log,
+        logger: log,
         bridgeCommand: process.execPath,
         bridgeArgs: [CLI_BINARY, 'mcp-bridge'],
         noTrace: !trace,

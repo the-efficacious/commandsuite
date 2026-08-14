@@ -24,6 +24,7 @@
  * all.
  */
 
+import type { Logger, LogRecord } from 'csuite-core';
 import { describe, expect, it } from 'vitest';
 import type {
   AgentProcess,
@@ -32,6 +33,7 @@ import type {
 } from '../../src/runtime/agents/adapter.js';
 import { createClaudeAdapter } from '../../src/runtime/agents/claude-agent.js';
 import { createCodexAdapter } from '../../src/runtime/agents/codex/codex-agent.js';
+import { recordingLogger } from '../helpers/logger.js';
 
 function fakeProcess(): AgentProcess {
   return {
@@ -41,7 +43,7 @@ function fakeProcess(): AgentProcess {
   };
 }
 
-function fakeContext(logs: Array<{ msg: string; ctx?: Record<string, unknown> }>) {
+function fakeContext(logger: Logger) {
   return {
     runner: {
       instructions: {
@@ -60,7 +62,7 @@ function fakeContext(logs: Array<{ msg: string; ctx?: Record<string, unknown> }>
     bridgeCommand: 'node',
     bridgeArgs: [],
     sessionLogPath: null,
-    log: (msg: string, ctx?: Record<string, unknown>) => logs.push({ msg, ctx }),
+    log: logger,
   } as unknown as AgentSessionContext;
 }
 
@@ -72,15 +74,15 @@ function fakeContext(logs: Array<{ msg: string; ctx?: Record<string, unknown> }>
 async function respawnUnder(
   adapter: ReturnType<typeof createClaudeAdapter>,
   posture: RespawnPosture,
-): Promise<{ logs: Array<{ msg: string; ctx?: Record<string, unknown> }>; spawned: number }> {
-  const logs: Array<{ msg: string; ctx?: Record<string, unknown> }> = [];
+): Promise<{ logs: LogRecord[]; spawned: number }> {
+  const rec = recordingLogger();
   let spawned = 0;
   adapter.spawn = async () => {
     spawned += 1;
     return fakeProcess();
   };
-  await adapter.respawn?.(fakeContext(logs), posture);
-  return { logs, spawned };
+  await adapter.respawn?.(fakeContext(rec.logger), posture);
+  return { logs: rec.records, spawned };
 }
 
 const SUBJECTS = [
@@ -94,10 +96,10 @@ describe.each(SUBJECTS)('$id adapter respawn posture', ({ id, make }) => {
 
     expect(spawned).toBe(1);
     const messages = logs.map((l) => l.msg);
-    expect(messages).toContain(`${id}: respawning cold — conversation dropped by context clear`);
+    expect(messages).toContain('respawning cold — conversation dropped by context clear');
     // The mutation this guards: falling through to the resume branch.
     // That branch logs the other line, so its absence is the assertion.
-    expect(messages).not.toContain(`${id}: respawning with refreshed instructions`);
+    expect(messages).not.toContain('respawning with refreshed instructions');
   });
 
   it('takes the RESUMING branch on { resume: true } — the nearest valid opposite', async () => {
@@ -108,14 +110,12 @@ describe.each(SUBJECTS)('$id adapter respawn posture', ({ id, make }) => {
 
     expect(spawned).toBe(1);
     const messages = logs.map((l) => l.msg);
-    expect(messages).toContain(`${id}: respawning with refreshed instructions`);
-    expect(messages).not.toContain(
-      `${id}: respawning cold — conversation dropped by context clear`,
-    );
+    expect(messages).toContain('respawning with refreshed instructions');
+    expect(messages).not.toContain('respawning cold — conversation dropped by context clear');
     // And it carried the predecessor's conversation forward, which is
     // the entire difference between the two operations.
     expect(
-      logs.find((l) => l.msg.endsWith('respawning with refreshed instructions'))?.ctx,
+      logs.find((l) => l.msg.endsWith('respawning with refreshed instructions')),
     ).toMatchObject({ resume: 'sess-1' });
   });
 

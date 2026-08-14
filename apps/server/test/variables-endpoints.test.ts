@@ -28,16 +28,18 @@ import {
   SqliteSessionStore,
 } from 'csuite-core';
 import type { VariableSummary } from 'csuite-sdk/types';
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { openDatabase } from '../src/db.js';
 import { kekFieldCipher, testKek } from '../src/kek.js';
 import { createMemberStore, getKek, setKek } from '../src/members.js';
+import { recordingLogger } from './helpers/logger.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const ADMIN = 'csuite_test_admin_variable';
 const BOUND = 'csuite_test_bound_variable';
 
-const noopLog = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+const noopRec = recordingLogger();
+const noopLog = noopRec.logger;
 
 async function makeApp() {
   const broker = new Broker({
@@ -423,9 +425,12 @@ describe('identity migration', () => {
     expect(secrets.allDecryptedValues()).toContain('value-for-a-git-author-name');
     expect(secrets.allDecryptedValues()).toContain('value-for-b-git-author-email');
     // And it said so rather than reporting a clean run.
-    expect(noopLog.warn).toHaveBeenCalledWith(
-      'identity migration rolled back; identity remains registered for redaction',
-      expect.objectContaining({ error: 'disk full' }),
+    expect(noopRec.records).toContainEqual(
+      expect.objectContaining({
+        level: 'warn',
+        msg: 'identity migration rolled back; identity remains registered for redaction',
+        error: 'disk full',
+      }),
     );
   });
 

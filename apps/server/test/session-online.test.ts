@@ -34,11 +34,12 @@ import {
 } from 'csuite-core';
 import type { Message, Team } from 'csuite-sdk/types';
 import type { UpgradeWebSocket } from 'hono/ws';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
 import { type RunningServer, runServer } from '../src/run.js';
+import { silentLogger } from './helpers/logger.js';
 import { mockTeamStore, seedStores } from './helpers/test-stores.js';
 
 // ─── unit: composeSessionOnlineMessage ──────────────────────────────
@@ -84,10 +85,6 @@ const TEAM: Team = {
   context: '',
   permissionPresets: {},
 };
-
-function silentLogger() {
-  return { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
-}
 
 interface BootedServer {
   running: RunningServer;

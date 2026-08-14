@@ -19,6 +19,7 @@
  */
 
 import { existsSync } from 'node:fs';
+import { logger as defaultLogger, type Logger } from 'csuite-core';
 import { runAgentSession } from '../runtime/agent-session.js';
 import { createCodexAdapter } from '../runtime/agents/codex/codex-agent.js';
 import { UsageError } from './errors.js';
@@ -48,8 +49,8 @@ export interface CodexCommandInput {
    * everything the caller passes after `--` on the command line.
    */
   codexArgs?: string[];
-  /** Optional logger override; defaults to a session log + stderr. */
-  log?: (msg: string, ctx?: Record<string, unknown>) => void;
+  /** Optional logger override; defaults to the driver-owned session log. */
+  logger?: Logger;
   /** Override the bridge command (tests). */
   bridgeCommand?: string;
   /** Override the bridge args (tests). */
@@ -66,7 +67,7 @@ export async function runCodexCommand(input: CodexCommandInput): Promise<number>
     url: input.url,
     token: input.token,
     cwd: input.cwd,
-    log: input.log,
+    logger: input.logger,
     noTrace: input.noTrace,
     noSecrets: input.noSecrets,
     bridgeCommand: input.bridgeCommand,
@@ -78,7 +79,8 @@ export async function runCodexCommand(input: CodexCommandInput): Promise<number>
   // after teardown so a bad cwd still tears down cleanly.
   const cwd = input.cwd ?? process.cwd();
   if (!existsSync(cwd)) {
-    process.stderr.write(`csuite codex: warning — cwd ${cwd} did not exist at exit\n`);
+    const log = input.logger ?? defaultLogger.child('codex');
+    log.warn('cwd did not exist at exit', { cwd });
   }
 
   return exitCode;

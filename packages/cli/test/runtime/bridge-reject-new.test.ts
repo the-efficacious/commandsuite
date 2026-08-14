@@ -25,6 +25,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { RunnerHandle } from '../../src/runtime/runner.js';
 import { startRunner } from '../../src/runtime/runner.js';
+import { silentLogger } from '../helpers/logger.js';
 import {
   FAKE_BROKER_NAME,
   FAKE_BROKER_TOKEN,
@@ -158,7 +159,7 @@ describeIfBuilt('runner reject-new second-bridge policy', () => {
     runner = await startRunner({
       url: broker.url,
       token: FAKE_BROKER_TOKEN,
-      log: () => {},
+      logger: silentLogger(),
       noTrace: true,
       onSecondBridge: 'reject-new',
     });

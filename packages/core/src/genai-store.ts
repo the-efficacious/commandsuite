@@ -27,6 +27,7 @@
  */
 
 import type { GenAiInference } from 'csuite-sdk/types';
+import { clampListLimit } from './activity-store.js';
 import type { DiagnosticEmitter } from './diagnostics.js';
 import { logger as defaultLogger, type Logger } from './logger.js';
 import type { SqlDriver, SqlStatement } from './sql-driver.js';
@@ -185,7 +186,7 @@ class SqliteGenAiStore implements GenAiStore {
       outputMessages = JSON.stringify(rec.outputMessages ?? []);
     } catch (err) {
       this.diag?.genaistoreUnserializableRecordSkipped(memberName);
-      this.log.warn('genai-store: skipped unserializable record', {
+      this.log.warn('skipped unserializable record', {
         memberName,
         responseId: rec.responseId,
         error: err instanceof Error ? err.message : String(err),
@@ -222,6 +223,17 @@ class SqliteGenAiStore implements GenAiStore {
     return row ? Number(row.n) : 0;
   }
 
+  /**
+   * Page oldest-first, REFILLING past undecodable rows.
+   *
+   * A row that fails to decode is skipped, and a skip without a refill
+   * returns a short page — which every caller reads as "no more rows",
+   * silently truncating a trace and reporting it complete. So the loop
+   * keeps reading from a cursor advanced over the raw rows (bad ones
+   * included, or it would re-read the same row forever) until it has
+   * `limit` decoded rows or SQLite returns a short raw page. Only the
+   * latter is exhaustion.
+   */
   list(filter: GenAiQuery = {}): GenAiInferenceRow[] {
     const conditions: string[] = [];
     const params: Array<string | number> = [];
@@ -241,20 +253,37 @@ class SqliteGenAiStore implements GenAiStore {
       conditions.push('ts <= ?');
       params.push(filter.to);
     }
-    if (filter.after !== undefined) {
-      conditions.push('(ts > ? OR (ts = ? AND id > ?))');
-      params.push(filter.after.ts, filter.after.ts, filter.after.id);
-    }
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-    const limit = Math.min(filter.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
+    conditions.push('(ts > ? OR (ts = ? AND id > ?))');
+    const where = `WHERE ${conditions.join(' AND ')}`;
+    const limit = clampListLimit(filter.limit, MAX_LIMIT, DEFAULT_LIMIT);
     const sql = `SELECT * FROM gen_ai_inference ${where} ORDER BY ts ASC, id ASC LIMIT ?`;
     const stmt = this.db.prepare(sql);
-    params.push(limit);
-    const rows = stmt.all(...params) as unknown as GenAiRowRaw[];
+
+    // Open cursor: `after` when the caller paged, else before the
+    // oldest possible row.
+    let cursorTs = filter.after?.ts ?? Number.MIN_SAFE_INTEGER;
+    let cursorId = filter.after?.id ?? Number.MIN_SAFE_INTEGER;
+
     const out: GenAiInferenceRow[] = [];
-    for (const raw of rows) {
-      const decoded = this.decode(raw);
-      if (decoded !== null) out.push(decoded);
+    while (out.length < limit) {
+      const want = limit - out.length;
+      const rows = stmt.all(
+        ...params,
+        cursorTs,
+        cursorTs,
+        cursorId,
+        want,
+      ) as unknown as GenAiRowRaw[];
+      if (rows.length === 0) break;
+      for (const raw of rows) {
+        const decoded = this.decode(raw);
+        if (decoded !== null) out.push(decoded);
+      }
+      const last = rows[rows.length - 1];
+      if (last === undefined) break;
+      cursorTs = Number(last.ts);
+      cursorId = Number(last.id);
+      if (rows.length < want) break;
     }
     return out;
   }
@@ -293,7 +322,7 @@ class SqliteGenAiStore implements GenAiStore {
       };
     } catch (err) {
       this.diag?.genaistoreMalformedRowSkipped(Number(raw.id));
-      this.log.warn('genai-store: skipped malformed row', {
+      this.log.warn('skipped malformed row', {
         id: Number(raw.id),
         error: err instanceof Error ? err.message : String(err),
       });
@@ -303,5 +332,9 @@ class SqliteGenAiStore implements GenAiStore {
 }
 
 export function createGenAiStore(db: SqlDriver, opts: GenAiStoreOptions = {}): GenAiStore {
-  return new SqliteGenAiStore(db, opts.logger ?? defaultLogger, opts.diagnostics);
+  return new SqliteGenAiStore(
+    db,
+    opts.logger ?? defaultLogger.child('genai-store'),
+    opts.diagnostics,
+  );
 }

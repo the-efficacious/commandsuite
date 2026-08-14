@@ -27,6 +27,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { openDatabase } from '../src/db.js';
 import { createGenAiCorrelator, isGenAiLogRecord } from '../src/genai-correlator.js';
 import { createRawBodyStore, type RawBodyStore } from '../src/raw-body-store.js';
+import { recordingLogger } from './helpers/logger.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'genai-corr-'));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -573,11 +574,11 @@ describe('genai correlator raw capture', () => {
 
   it('warns on a body_length mismatch but still captures and emits', () => {
     const rawStore = createRawBodyStore(openDatabase(':memory:'));
-    const logs: string[] = [];
+    const rec = recordingLogger();
     const corr = createGenAiCorrelator({
       rawStore,
       memberName: 'alice',
-      log: (msg) => logs.push(msg),
+      logger: rec.logger,
     });
     const reqRef = writeBody(REQUEST_BODY);
     const resRef = writeBody(RESPONSE_BODY);
@@ -592,7 +593,11 @@ describe('genai correlator raw capture', () => {
       logRecord('api_response_body', 3, { body_ref: resRef, request_id: 'req_len' }),
     ]);
 
-    expect(logs.some((m) => m.includes('body length mismatch'))).toBe(true);
+    // The record, not just the message: a mismatch is a degraded
+    // capture, so it must carry warn severity for a shipper to route.
+    const mismatch = rec.records.find((r) => r.msg.includes('body length mismatch'));
+    expect(mismatch).toBeDefined();
+    expect(mismatch?.level).toBe('warn');
     expect(out).toHaveLength(1);
     expect(rawStore.stats().blobs).toBe(2);
   });
