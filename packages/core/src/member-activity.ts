@@ -256,15 +256,8 @@ export function createSqliteActivityStore(
   return new SqliteActivityStore(db, log);
 }
 
-/**
- * Stand-alone helper for `csuite prune-traces` that opens the activity
- * DB, prunes, and closes — without spinning up a full `runServer`.
- */
-export function pruneActivityDb(db: SqlDriver, cutoffTs: number): number {
-  db.exec(CREATE_SCHEMA);
-  const stmt = db.prepare('DELETE FROM member_activity WHERE ts < ?');
-  const result = stmt.run(cutoffTs);
-  return Number(result.changes ?? 0);
-}
+// Retention spans every table in the activity database, so it lives in
+// `activity-retention.ts` rather than here — this module owns one table.
+export { type PruneActivityResult, pruneActivityDb } from './activity-retention.js';
 
 export { parseDurationMs } from './duration.js';

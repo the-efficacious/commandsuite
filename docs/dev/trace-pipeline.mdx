@@ -291,4 +291,8 @@ SQLite file (`<dbPath>-activity.db`, override
 `CSUITE_ACTIVITY_DB_PATH`) so bursty trace writes never contend with
 the main broker DB's writer lock. Both databases run WAL with
 `busy_timeout=5000`. Retention is operator-owned via
-`csuite prune-traces` — see [tracing](/docs/tracing).
+`csuite prune-traces`, which spans all four tables and collects
+`raw_blob` rows by reference rather than by age (a deduped blob outlives
+the exchange that first stored it) — see [tracing](/docs/tracing).
+Broker-side diagnostics fold on their own hourly timer; the runner
+sweeps aged quarantine payloads and session logs at start.

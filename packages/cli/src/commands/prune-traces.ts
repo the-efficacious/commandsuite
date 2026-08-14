@@ -83,7 +83,8 @@ export async function runPruneTracesCommand(
 
   if (!input.yes) {
     const line = await prompt(
-      'prune-traces: delete every activity row older than the cutoff? [y/N] ',
+      'prune-traces: delete every captured row older than the cutoff ' +
+        '(activity, inferences, telemetry, raw bodies)? [y/N] ',
     );
     if (!/^y(es)?$/i.test(line.trim())) {
       stdout('prune-traces: aborted — no changes.');
@@ -92,9 +93,9 @@ export async function runPruneTracesCommand(
   }
 
   const db = server.openDatabase(activityDbPath);
-  let deleted = 0;
+  let result: ReturnType<typeof server.pruneActivityDb>;
   try {
-    deleted = server.pruneActivityDb(db, cutoffTs);
+    result = server.pruneActivityDb(db, cutoffTs);
   } finally {
     try {
       db.close();
@@ -103,7 +104,15 @@ export async function runPruneTracesCommand(
       // non-fatal for the member.
     }
   }
-  stdout(`prune-traces: deleted ${deleted} row(s).`);
+  // Per table, not just a total: the tables have wildly different row
+  // sizes, so "deleted 4 rows" over raw_blob and "deleted 4 rows" over
+  // member_activity describe very different amounts of disk. An
+  // operator sizing retention needs to see which one moved.
+  stdout(`prune-traces: deleted ${result.total} row(s).`);
+  stdout(`  activity    ${result.memberActivity}`);
+  stdout(`  inferences  ${result.genAiInference}`);
+  stdout(`  telemetry   ${result.telemetry}`);
+  stdout(`  raw bodies  ${result.rawExchange} exchange(s), ${result.rawBlob} blob(s) collected`);
 }
 
 /**

@@ -75,14 +75,37 @@ Prune old rows on a cadence:
 csuite prune-traces --older-than 30d
 ```
 
-This deletes every activity row older than the cutoff. It prints the
-database path and the cutoff timestamp and asks for confirmation
-first; pass `--yes` for cron jobs, and `--activity-db <path>` if the
-database is not in the default location. Durations take `ms`, `s`,
-`m`, `h`, or `d` — `30d`, `24h`, `60m`.
+This deletes everything captured before the cutoff, across all four
+things that file holds, and reports each separately:
+
+| | what it is |
+|---|---|
+| activity | the per-member timeline — turns, tool calls, prompts |
+| inferences | full-context model calls, including the request context |
+| telemetry | OTLP cost, token and lifecycle records |
+| raw bodies | the verbatim request/response bytes |
+
+The byte store is content-addressed and deduplicated, so a body sent
+on many turns is stored once. Those blobs are collected by
+**reference**, not by age: one goes when no retained exchange and no
+retained inference still points at it. Pruning therefore reclaims a
+blob on the pass that removes its last referrer, and never sooner —
+deleting by age would take the bytes out from under a trace you asked
+to keep.
+
+It prints the database path and the cutoff timestamp and asks for
+confirmation first; pass `--yes` for cron jobs, and `--activity-db
+<path>` if the database is not in the default location. Durations take
+`ms`, `s`, `m`, `h`, or `d` — `30d`, `24h`, `60m`.
 
 A daily cron with 30–90 day retention suits most teams; keep more if
 your audit requirements say so.
+
+Two runner-side directories are bounded automatically, swept at the
+start of the next run rather than by this command: quarantined raw
+bodies (payloads dropped after 14 days, each leaving a manifest line
+recording that the gap existed) and per-pid session logs (after a
+week).
 
 ## Opting out
 

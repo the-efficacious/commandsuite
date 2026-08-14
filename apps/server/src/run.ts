@@ -120,6 +120,7 @@ export {
   type ObjectivesStore,
   openTeamAndMembers,
   otpauthUri,
+  type PruneActivityResult,
   parseDurationMs,
   pruneActivityDb,
   SESSION_COOKIE_NAME,

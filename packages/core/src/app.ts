@@ -498,6 +498,14 @@ const API_PATH_PREFIXES = [
   '/otlp',
 ] as const;
 
+/**
+ * How often the diagnostics retention ladder folds. The ladder's own
+ * thresholds are days (detail 7d, hour buckets 30d), so anything under
+ * an hour is wasted work; anything much over risks a long-lived broker
+ * sitting on unfolded detail rows.
+ */
+const DIAGNOSTICS_SWEEP_MS = 3_600_000;
+
 const DEFAULT_MAX_FILE_SIZE = 25 * 1024 * 1024;
 const HARD_CAP_MAX_FILE_SIZE = 1024 * 1024 * 1024;
 
@@ -615,6 +623,36 @@ export function createApp(options: AppOptions): CreatedApp {
       },
       { once: true },
     );
+  }
+
+  // Diagnostics retention. The store implements a detail -> hour -> day
+  // compaction ladder and nothing ever called it, so the row caps were
+  // the only bound in production and the ladder was dead code. It runs
+  // on its own timer rather than the notification dispatcher's: the two
+  // are unrelated, and a deployment with notifications unwired still
+  // accumulates diagnostics.
+  //
+  // Once at startup as well as on the interval, because a broker that
+  // restarts more often than the interval would otherwise never fold.
+  if (diagnostics !== undefined) {
+    const sweepDiagnostics = (): void => {
+      try {
+        diagnostics.sweep();
+      } catch (err) {
+        // Retention failing must never take the broker with it — the
+        // observation it compacts is less important than the operation
+        // that produced it.
+        logger.warn('diagnostics retention sweep failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    };
+    sweepDiagnostics();
+    const diagnosticsSweepInterval = setInterval(sweepDiagnostics, DIAGNOSTICS_SWEEP_MS);
+    diagnosticsSweepInterval.unref?.();
+    shutdownSignal?.addEventListener('abort', () => clearInterval(diagnosticsSweepInterval), {
+      once: true,
+    });
   }
 
   // Per-member GenAI inference correlators. The api-body OTEL records for

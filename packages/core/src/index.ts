@@ -7,6 +7,11 @@
  */
 
 export {
+  ensureRetentionIndexes,
+  type PruneActivityResult,
+  pruneActivityDb,
+} from './activity-retention.js';
+export {
   type ActivityListener,
   type ActivityStore,
   clampListLimit,
@@ -218,7 +223,6 @@ export {
 } from './logger.js';
 export {
   createSqliteActivityStore,
-  pruneActivityDb,
   type SqliteActivityStoreHandle,
 } from './member-activity.js';
 export {

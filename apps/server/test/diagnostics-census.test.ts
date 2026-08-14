@@ -186,8 +186,22 @@ const APP_IN_SCOPE = [
  * The blind spot is closed by construction now: one pattern, one call
  * shape, and a new site cannot hide by choosing a different receiver
  * name.
+ *
+ * 2026-08-14, +1 = 67. `diagnostics retention sweep failed` in app.ts,
+ * added when the retention ladder was finally driven on a timer (it had
+ * been dead code — `sweep()` was implemented, unit-tested, and never
+ * called in production, so row caps were the only live bound).
+ *
+ * The decision this guard forces: it is OPERATIONAL. Nothing captured
+ * is lost when it fires — the rows are all still there, merely
+ * unfolded, and the caps still bound them. Retention's own
+ * completeness is already carried by the store rather than by this
+ * line: `retention.unavailable` plus the internal `writeFailed` latch
+ * make `health()` answer `unknown` instead of a confident number when
+ * the store cannot record. This site reports that the CALLER could not
+ * run the sweep, which is the operational half of the same story.
  */
-const TOTAL_SITES = 66;
+const TOTAL_SITES = 67;
 
 function messagesIn(file: string): string[] {
   let src: string | null = null;

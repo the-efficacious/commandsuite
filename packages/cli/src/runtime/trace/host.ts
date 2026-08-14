@@ -53,10 +53,11 @@ import process from 'node:process';
 import { logger as defaultLogger, type Logger } from 'csuite-core';
 import type { Client as BrokerClient, CodexGenaiInferenceUpload } from 'csuite-sdk/client';
 import type { ActivityEvent } from 'csuite-sdk/types';
+import { sweepStaleSessionLogs } from '../session-log.js';
 import { ActivityUploader, type ActivityUploaderStats } from './activity-uploader.js';
 import { type BusySignal, createBusySignal } from './busy.js';
 import { type HookServer, startHookServer } from './hook-server.js';
-import { type OtlpRelay, startOtlpRelay } from './otlp-relay.js';
+import { type OtlpRelay, startOtlpRelay, sweepQuarantine } from './otlp-relay.js';
 import { attachTranscriptReader, type TranscriptReader } from './transcript-reader.js';
 
 const CAPTURE_COMPLETE_MARKER = '.csuite-capture-complete';
@@ -193,6 +194,37 @@ export async function startCaptureHost(options: CaptureHostOptions): Promise<Cap
     if (swept > 0) log.info('swept stale raw-bodies dirs', { swept });
   } catch (err) {
     log.warn('stale raw-bodies sweep failed', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  // Quarantined payloads and per-pid session logs are the two runner
+  // artefacts that previously grew without any bound at all. Both are
+  // swept here, on the same best-effort footing as the spool sweep
+  // above: start is the one moment we know no live run owns them.
+  try {
+    let removed = 0;
+    let bytes = 0;
+    for (const entry of readdirSync(tmpdir())) {
+      if (!/^csuite-otel-bodies-.+-\d+$/.test(entry)) continue;
+      const result = sweepQuarantine(join(tmpdir(), entry));
+      removed += result.removed;
+      bytes += result.bytesReclaimed;
+    }
+    // Reported, not silent: the payloads are gone but the manifest
+    // entries recording each gap remain, and this says how many.
+    if (removed > 0) log.info('swept aged quarantined bodies', { removed, bytesReclaimed: bytes });
+  } catch (err) {
+    log.warn('quarantine sweep failed', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  try {
+    const { removed, failed } = sweepStaleSessionLogs();
+    if (removed > 0 || failed > 0) log.info('swept stale session logs', { removed, failed });
+  } catch (err) {
+    log.warn('session log sweep failed', {
       error: err instanceof Error ? err.message : String(err),
     });
   }
