@@ -1396,6 +1396,30 @@ export const GetGenaiInferenceResponseSchema = z.object({
   inference: GenAiInferenceRecordSchema,
 });
 
+/**
+ * A telemetry row as served. The four JSON columns are passthrough
+ * records rather than a closed shape on purpose: the store deliberately
+ * has no allowlist on record or metric names, so narrowing here would
+ * start dropping fields a newer agent emits.
+ */
+export const TelemetryRecordRowSchema = z.object({
+  id: z.number(),
+  memberName: z.string(),
+  signal: z.enum(['log', 'metric']),
+  name: z.string(),
+  tsUnixNano: z.number(),
+  tsMs: z.number(),
+  attributes: z.record(z.string(), z.unknown()),
+  resource: z.record(z.string(), z.unknown()),
+  scope: z.record(z.string(), z.unknown()).nullable(),
+  payload: z.record(z.string(), z.unknown()),
+  receivedAt: z.number(),
+});
+
+export const ListTelemetryResponseSchema = z.object({
+  telemetry: z.array(TelemetryRecordRowSchema),
+});
+
 // ───────────────────────── Activity stream ──────────────────────
 
 export const ActivityKindSchema = z.enum([

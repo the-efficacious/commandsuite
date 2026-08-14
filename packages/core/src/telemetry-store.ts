@@ -34,6 +34,7 @@
  * matching the OTLP-parse layer, which already coerces via `Number()`).
  */
 
+import { clampListLimit } from './activity-store.js';
 import type { DiagnosticEmitter } from './diagnostics.js';
 import { logger as defaultLogger, type Logger } from './logger.js';
 import { runInTransaction, type SqlDriver, type SqlStatement } from './sql-driver.js';
@@ -104,6 +105,8 @@ export interface TelemetryQuery {
   from?: number;
   to?: number;
   limit?: number;
+  /** Exclusive composite cursor for oldest-first paging. */
+  after?: { ts: number; id: number };
 }
 
 export interface TelemetryStore {
@@ -245,8 +248,9 @@ class SqliteTelemetryStore implements TelemetryStore {
       conditions.push('ts_ms <= ?');
       params.push(filter.to);
     }
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-    const limit = Math.min(filter.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
+    conditions.push('(ts_ms > ? OR (ts_ms = ? AND id > ?))');
+    const where = `WHERE ${conditions.join(' AND ')}`;
+    const limit = clampListLimit(filter.limit, MAX_LIMIT, DEFAULT_LIMIT);
     const sql = `SELECT * FROM telemetry ${where} ORDER BY ts_ms ASC, id ASC LIMIT ?`;
     const stmt = this.db.prepare(sql);
     // Nanosecond timestamps overflow JS-number safe range; read INTEGER
@@ -258,12 +262,35 @@ class SqliteTelemetryStore implements TelemetryStore {
       );
     }
     stmt.setReadBigInts(true);
-    params.push(limit);
-    const rows = stmt.all(...params) as unknown as TelemetryRowRaw[];
+
+    // Refill past undecodable rows so a short page means exhausted and
+    // nothing else — every pager in the tree stops on a short page, so
+    // skipping without refilling silently truncates the range and
+    // reports it complete. The cursor advances over the RAW rows, bad
+    // ones included, or the loop would re-read the same row forever.
+    let cursorTs = filter.after?.ts ?? Number.MIN_SAFE_INTEGER;
+    let cursorId = filter.after?.id ?? Number.MIN_SAFE_INTEGER;
+
     const out: TelemetryRow[] = [];
-    for (const raw of rows) {
-      const decoded = this.decode(raw);
-      if (decoded !== null) out.push(decoded);
+    while (out.length < limit) {
+      const want = limit - out.length;
+      const rows = stmt.all(
+        ...params,
+        cursorTs,
+        cursorTs,
+        cursorId,
+        want,
+      ) as unknown as TelemetryRowRaw[];
+      if (rows.length === 0) break;
+      for (const raw of rows) {
+        const decoded = this.decode(raw);
+        if (decoded !== null) out.push(decoded);
+      }
+      const last = rows[rows.length - 1];
+      if (last === undefined) break;
+      cursorTs = Number(last.ts_ms);
+      cursorId = Number(last.id);
+      if (rows.length < want) break;
     }
     return out;
   }

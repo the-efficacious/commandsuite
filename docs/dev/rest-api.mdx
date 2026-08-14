@@ -409,6 +409,53 @@ of a `view=summary` row, fetched by the timeline when a viewer
 expands a call. An id that doesn't exist or belongs to a different
 member is a 404 (indistinguishable, so ids don't leak ownership).
 
+### `GET /members/:name/genai/:id/raw?kind=request|response`
+
+| | |
+|---|---|
+| **Auth** | read OR self |
+| **Returns** | `application/octet-stream` — the stored bytes, with `X-CSuite-Body-Sha256` |
+
+The verbatim source the parsed record was mapped from, byte-exact
+with respect to what was stored after redaction.
+
+Addressed through the inference rather than by content hash on
+purpose. The blob store is deduplicated into one global content
+space, so byte-identical bodies from two members are a single row;
+a hash-addressed read would cross member boundaries as a matter of
+routine rather than as an edge case. Routing through the record
+keeps the ownership check in front of the bytes.
+
+Three absences are distinguished, because they are different facts
+about capture coverage: **404** for no such inference, **404** with
+a `no raw <kind> captured` message for a record whose raw side was
+never captured, and **410** for a record that outlived its bytes
+(retention collects a blob once nothing references it; a blob whose
+bytes fail their own hash check on read reports the same way rather
+than serving corrupt content).
+
+### `GET /members/:name/telemetry?signal=<log|metric>&event=<name>&from=<ts>&to=<ts>&limit=<n>&cursor_ts=<ts>&cursor_id=<id>`
+
+| | |
+|---|---|
+| **Auth** | read OR self |
+| **Returns** | `ListTelemetryResponse` — `{ telemetry: TelemetryRecordRow[] }` |
+
+The operational accounting behind a trace: one row per OTLP log
+record or metric data point the member's agent exported — cost,
+tokens, durations, errors, lifecycle. Oldest-first within the
+window, paged with the same composite cursor as the activity and
+gen_ai endpoints.
+
+Deliberately unfiltered at ingest: there is no allowlist on record
+or metric names, so a newer agent's signals appear here without a
+broker change. `attributes`, `resource`, `scope` and `payload` are
+passthrough objects for the same reason.
+
+This is separate from `GET /members/:name/genai` because the two
+answer different questions — this is the accounting, that is the
+content.
+
 ## Team
 
 Team-level config is the name and shared context. Reads are open to every

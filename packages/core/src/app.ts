@@ -1767,6 +1767,79 @@ export function createApp(options: AppOptions): CreatedApp {
     });
   }
 
+  // Telemetry read path.
+  //
+  // The store was write-only for its whole life: `append` was called on
+  // every OTLP ingest and `list` had no caller anywhere — no route, no
+  // SDK method, no UI. Every cost, token and lifecycle record an agent
+  // exported landed in SQLite and could only be read by opening the
+  // database by hand, while the docs advertised cost and token
+  // telemetry as a feature.
+  //
+  // Same visibility rule as activity and gen_ai: self OR
+  // `activity.read`. Oldest-first with a composite cursor, so a caller
+  // paging a window gets the same contract it already knows.
+  if (telemetryStore !== undefined) {
+    const tStore = telemetryStore;
+    app.get('/members/:name/telemetry', auth, (c) => {
+      const member = c.get('member');
+      const parsedName = NameSchema.safeParse(c.req.param('name'));
+      if (!parsedName.success) return c.json({ error: 'invalid name' }, 400);
+      const name = parsedName.data;
+      const isSelf = name === member.name;
+      if (!isSelf && !hasPermission(member.permissions, 'activity.read')) {
+        return c.json(
+          { error: 'reading telemetry requires activity.read permission, or self' },
+          403,
+        );
+      }
+      const num = (raw: string | undefined): number | undefined =>
+        raw === undefined ? undefined : Number(raw);
+      const from = num(c.req.query('from'));
+      const to = num(c.req.query('to'));
+      const limit = num(c.req.query('limit'));
+      const cursorTs = num(c.req.query('cursor_ts'));
+      const cursorId = num(c.req.query('cursor_id'));
+      const signalRaw = c.req.query('signal');
+      const nameFilter = c.req.query('event');
+
+      for (const [label, value] of [
+        ['from', from],
+        ['to', to],
+        ['limit', limit],
+      ] as const) {
+        if (value !== undefined && !Number.isFinite(value)) {
+          return c.json({ error: `invalid \`${label}\` parameter` }, 400);
+        }
+      }
+      if (signalRaw !== undefined && signalRaw !== 'log' && signalRaw !== 'metric') {
+        return c.json({ error: 'invalid `signal` parameter — expected log or metric' }, 400);
+      }
+      // Both halves or neither: a cursor with one half is a caller bug
+      // that would silently read from the start of the range.
+      if (
+        (cursorTs === undefined) !== (cursorId === undefined) ||
+        (cursorTs !== undefined && (!Number.isInteger(cursorTs) || cursorTs < 0)) ||
+        (cursorId !== undefined && (!Number.isInteger(cursorId) || cursorId < 0))
+      ) {
+        return c.json({ error: 'invalid composite cursor' }, 400);
+      }
+
+      const rows = tStore.list({
+        memberName: name,
+        ...(signalRaw !== undefined ? { signal: signalRaw } : {}),
+        ...(nameFilter !== undefined ? { name: nameFilter } : {}),
+        ...(from !== undefined ? { from } : {}),
+        ...(to !== undefined ? { to } : {}),
+        ...(cursorTs !== undefined && cursorId !== undefined
+          ? { after: { ts: cursorTs, id: cursorId } }
+          : {}),
+        ...(limit !== undefined ? { limit } : {}),
+      });
+      return c.json({ telemetry: rows });
+    });
+  }
+
   // GenAI inference read path — the full-fidelity request layer
   // (system instructions + complete input context) behind the trace
   // viewer's enrichment join. Same visibility rule as the activity
@@ -1912,6 +1985,70 @@ export function createApp(options: AppOptions): CreatedApp {
         },
       });
     });
+
+    // Raw source bytes for one inference.
+    //
+    // The content-addressed store exists so a trace can be checked
+    // against what actually went over the wire, and until now nothing
+    // could read it: `getBlob` had no caller outside capture-health's
+    // SQL, so the fidelity layer was write-only and the sha256 columns
+    // on each inference pointed at bytes no client could fetch.
+    //
+    // Addressed by INFERENCE, not by bare hash. A hash-addressed route
+    // would be a lookup into a global content space where any member
+    // holding one hash could read another member's bytes — dedup makes
+    // that a real crossing, not a theoretical one. Going through the
+    // record keeps the existing ownership check in front of the bytes,
+    // and keeps the URL meaningful if the store behind it changes.
+    if (rawBodyStore !== undefined) {
+      const rStore = rawBodyStore;
+      app.get('/members/:name/genai/:id/raw', auth, (c) => {
+        const member = c.get('member');
+        const parsedName = NameSchema.safeParse(c.req.param('name'));
+        if (!parsedName.success) return c.json({ error: 'invalid name' }, 400);
+        const name = parsedName.data;
+        if (name !== member.name && !hasPermission(member.permissions, 'activity.read')) {
+          return c.json(
+            { error: 'reading raw bodies requires activity.read permission, or self' },
+            403,
+          );
+        }
+        const id = Number(c.req.param('id'));
+        if (!Number.isInteger(id) || id < 0) {
+          return c.json({ error: 'invalid `id` parameter' }, 400);
+        }
+        const kind = c.req.query('kind') ?? 'request';
+        if (kind !== 'request' && kind !== 'response') {
+          return c.json({ error: 'invalid `kind` parameter — expected request or response' }, 400);
+        }
+        const row = gStore.getById(id);
+        if (row === null || row.memberName !== name) {
+          return c.json({ error: 'inference not found' }, 404);
+        }
+        const hash = kind === 'request' ? row.requestSha256 : row.responseSha256;
+        if (hash === null) {
+          // The inference is real; these bytes were never captured for
+          // it. Distinguished from a missing inference so a caller can
+          // tell "no such record" from "that record has no raw side",
+          // which are different facts about capture coverage.
+          return c.json({ error: `no raw ${kind} captured for this inference` }, 404);
+        }
+        const bytes = rStore.getBlob(hash);
+        if (bytes === null) {
+          // Retention collects a blob once nothing references it, and
+          // `getBlob` also returns null when the stored bytes fail
+          // their own hash check. Either way the record outlived its
+          // bytes; say so rather than serving nothing with a 200.
+          return c.json({ error: `raw ${kind} bytes are no longer stored` }, 410);
+        }
+        // Served as bytes, not JSON: the point of this layer is that it
+        // is byte-exact with respect to what was stored, and
+        // re-encoding it through a JSON string would defeat that.
+        c.header('Content-Type', 'application/octet-stream');
+        c.header('X-CSuite-Body-Sha256', hash);
+        return c.body(new Uint8Array(bytes));
+      });
+    }
   }
 
   // Codex gen_ai ingest — the codex analogue of Claude's OTLP body_ref →

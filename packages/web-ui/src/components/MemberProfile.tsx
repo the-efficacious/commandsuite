@@ -28,7 +28,12 @@ import { instructions } from '../lib/instructions.js';
 import { memberActivityError, startMemberActivitySubscribe } from '../lib/member-activity.js';
 import { objectives as objectivesSignal } from '../lib/objectives.js';
 import { PERMISSION_META, sortLeaves, summarizePermissions } from '../lib/permissions.js';
-import { memberKind, presenceCaptureWarning, roster as rosterSignal } from '../lib/roster.js';
+import {
+  memberKind,
+  presenceCaptureWarning,
+  presenceDiagnostics,
+  roster as rosterSignal,
+} from '../lib/roster.js';
 import type { ProfileTab } from '../lib/routes.js';
 import {
   selectDmWith,
@@ -80,6 +85,7 @@ export function MemberProfile({ name, tab, viewer }: MemberProfileProps) {
   // nothing. Null on the healthy path and when the broker has no
   // opinion — absence is never rendered as health.
   const captureWarning = presenceCaptureWarning(presence);
+  const diagnostics = presenceDiagnostics(presence);
 
   const availableTabs = tabsFor({ canManageMembers, isSelf });
   const effectiveTab = availableTabs.includes(tab) ? tab : 'overview';
@@ -171,6 +177,22 @@ export function MemberProfile({ name, tab, viewer }: MemberProfileProps) {
               title="Turns are being recorded for this member but their request/response bodies are not reaching the broker."
             >
               NO CAPTURE
+            </span>
+          )}
+          {diagnostics !== null && diagnostics.unresolved > 0 && (
+            <span
+              class="badge warn"
+              title="Capture failures recorded for this member that have not cleared. Retention keeps them until the condition recovers."
+            >
+              {diagnostics.unresolved} UNRESOLVED
+            </span>
+          )}
+          {diagnostics !== null && diagnostics.retention !== 'healthy' && (
+            <span
+              class="badge soft"
+              title="The diagnostics store cannot fully record right now, so an absence of incidents is not evidence there were none."
+            >
+              DIAGNOSTICS {diagnostics.retention.toUpperCase()}
             </span>
           )}
           {captureWarning === 'unevaluated' && (

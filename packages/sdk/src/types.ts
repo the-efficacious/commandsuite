@@ -1989,6 +1989,43 @@ export interface ListGenaiQuery {
 }
 
 /**
+ * One operational telemetry record — an OTLP log record or a metric
+ * data point exported by a member's agent. This is the cost, token and
+ * lifecycle accounting behind a trace, kept separate from the content
+ * so a burst of either never distorts the other.
+ *
+ * `tsUnixNano` is the producer's own nanosecond stamp, narrowed to a
+ * JS number at the wire boundary; `tsMs` is the millisecond value
+ * everything queries and sorts on.
+ */
+export interface TelemetryRecordRow {
+  id: number;
+  memberName: string;
+  signal: 'log' | 'metric';
+  name: string;
+  tsUnixNano: number;
+  tsMs: number;
+  attributes: Record<string, unknown>;
+  resource: Record<string, unknown>;
+  scope: Record<string, unknown> | null;
+  payload: Record<string, unknown>;
+  receivedAt: number;
+}
+
+/** Filters for `listTelemetry`. All AND-combined. */
+export interface ListTelemetryQuery {
+  /** Only `log` records or only `metric` data points. */
+  signal?: 'log' | 'metric';
+  /** Exact OTLP record / metric name, e.g. `api_request`. */
+  event?: string;
+  from?: number;
+  to?: number;
+  /** Exclusive composite cursor for oldest-first traversal. */
+  cursor?: { ts: number; id: number };
+  limit?: number;
+}
+
+/**
  * Activity event — one entry in the append-only timeline a member
  * streams to the server while their connection is alive. Humans
  * rarely emit these (no MCP runner); agents produce the bulk from
