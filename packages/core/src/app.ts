@@ -519,11 +519,19 @@ const HARD_CAP_MAX_FILE_SIZE = 1024 * 1024 * 1024;
 const SOURCE_IP_MAX = PendingEnrollmentSchema.shape.sourceIp.unwrap().maxLength ?? 64;
 const SOURCE_UA_MAX = PendingEnrollmentSchema.shape.sourceUa.unwrap().maxLength ?? 512;
 
+/**
+ * Whether a request path belongs to the API, and so must answer a JSON
+ * 404 rather than falling through to the host's SPA.
+ *
+ * Matches on whole path segments only. The bare `startsWith(p)` this
+ * replaced also claimed anything that merely began with a prefix's
+ * letters — `/membership` read as `/members` — which would shadow a
+ * client-side route with a JSON 404. Every entry in the list is a
+ * clean segment, so nothing needs the looser form.
+ */
 export function isApiPath(pathname: string): boolean {
   for (const p of API_PATH_PREFIXES) {
-    if (pathname === p || pathname.startsWith(`${p}/`) || pathname.startsWith(p)) {
-      return true;
-    }
+    if (pathname === p || pathname.startsWith(`${p}/`)) return true;
   }
   return false;
 }

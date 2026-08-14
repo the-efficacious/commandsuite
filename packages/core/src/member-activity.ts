@@ -46,6 +46,13 @@ const CREATE_SCHEMA = `
     ON member_activity (member_name, ts);
   CREATE INDEX IF NOT EXISTS member_activity_member_kind_ts_idx
     ON member_activity (member_name, kind, ts);
+  -- Capture health bounds on created_at, not ts, and runs per connected
+  -- member on every roster poll (the web UI polls every 10s per client).
+  -- Without this the created_at bound was a per-row filter over every
+  -- llm_exchange the member ever recorded; with it the planner seeks the
+  -- range. Measured with EXPLAIN QUERY PLAN, not assumed.
+  CREATE INDEX IF NOT EXISTS member_activity_member_kind_created_idx
+    ON member_activity (member_name, kind, created_at);
 `;
 
 interface ActivityRowRaw {

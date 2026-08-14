@@ -50,6 +50,21 @@ const CREATE_SCHEMA = `
     attachments TEXT
   );
   CREATE INDEX IF NOT EXISTS events_ts_idx ON events (ts);
+  -- Every read here is \`WHERE ts < ? AND <filter> ORDER BY ts DESC\`, and
+  -- with only the ts index the filter was applied per row: a DM or
+  -- channel read walked every event newer than the cursor to find its
+  -- own. These two make the filter a seek, measured with EXPLAIN QUERY
+  -- PLAN rather than assumed (see event-log-query-plan.test.ts, which
+  -- asserts the planner still picks them).
+  --
+  -- The DM index costs a temp b-tree for the ORDER BY, because the OR
+  -- of the two directions is satisfied as a multi-index union that
+  -- cannot come back in ts order. That trade is right for this shape:
+  -- one pair's messages are a small slice of a team's whole event log,
+  -- so sorting the slice beats scanning the log.
+  CREATE INDEX IF NOT EXISTS events_from_to_ts_idx ON events (from_name, to_name, ts);
+  CREATE INDEX IF NOT EXISTS events_thread_ts_idx
+    ON events (json_extract(data, '$.thread'), ts);
 `;
 
 export class SqliteEventLog implements EventLog {
