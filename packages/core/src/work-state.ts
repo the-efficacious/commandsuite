@@ -2,7 +2,7 @@
  * Server-side member ACTIVITY tracker — the broker's hold of each
  * member's live 3-state activity (idle / working / blocked). This is
  * orthogonal to CONNECTION presence (online/connecting/offline), which
- * the broker's SSE registry owns; here we only track "what is the agent
+ * the broker's presence registry owns; here we only track "what is the agent
  * doing right now on that link".
  *
  * The runner POSTs `{state}` to `POST /presence/activity` on each
@@ -25,31 +25,31 @@
  * The clock is injectable so tests can advance time without sleeping.
  */
 
-import type { ActivityState } from 'csuite-sdk/types';
+import type { WorkState } from 'csuite-sdk/types';
 
 /** How long a non-idle report stays "valid" without a refresh. */
-export const ACTIVITY_TTL_MS = 30_000;
+export const WORK_STATE_TTL_MS = 30_000;
 
 interface ActivityEntry {
   /** Last reported non-idle state (`working` | `blocked`). */
-  state: Exclude<ActivityState, 'idle'>;
+  state: Exclude<WorkState, 'idle'>;
   /** Wall-clock at which this report was filed. */
   reportedAt: number;
   /** Wall-clock past which a non-idle report auto-expires to `idle`. */
   expiresAt: number;
 }
 
-export interface ActivityTracker {
+export interface WorkStateTracker {
   /**
    * Record a runner's report. A non-idle state (`working`/`blocked`)
    * extends the expiry window; `idle` clears the entry immediately.
    */
-  report(name: string, state: ActivityState): void;
+  report(name: string, state: WorkState): void;
   /**
    * Resolve the current activity for a member. Returns `idle` for
    * unknown members and for stale non-idle entries past their TTL.
    */
-  getActivity(name: string): ActivityState;
+  getActivity(name: string): WorkState;
   /**
    * Back-compat convenience: `true` iff the member's activity is
    * `working`. `blocked` is NOT busy — it means a person should look.
@@ -64,12 +64,12 @@ export interface ActivityTracker {
   purgeStale(): void;
 }
 
-export function createActivityTracker(now: () => number = Date.now): ActivityTracker {
+export function createWorkStateTracker(now: () => number = Date.now): WorkStateTracker {
   const reports = new Map<string, ActivityEntry>();
 
   // Resolve-with-eviction: a lapsed entry is deleted on read so the
   // map self-cleans even without an explicit purge pass.
-  const resolve = (name: string): ActivityState => {
+  const resolve = (name: string): WorkState => {
     const entry = reports.get(name);
     if (!entry) return 'idle';
     if (entry.expiresAt <= now()) {
@@ -89,7 +89,7 @@ export function createActivityTracker(now: () => number = Date.now): ActivityTra
       reports.set(name, {
         state,
         reportedAt: ts,
-        expiresAt: ts + ACTIVITY_TTL_MS,
+        expiresAt: ts + WORK_STATE_TTL_MS,
       });
     },
     getActivity: resolve,

@@ -16,7 +16,7 @@
  */
 
 import { signal } from '@preact/signals';
-import type { ActivityState, Presence, RosterResponse } from 'csuite-sdk/types';
+import type { Presence, RosterResponse, WorkState } from 'csuite-sdk/types';
 import { getClient } from './client.js';
 
 export const roster = signal<RosterResponse | null>(null);
@@ -35,7 +35,7 @@ export const roster = signal<RosterResponse | null>(null);
  * offline), which callers derive from `Presence.connected` separately.
  * A `blocked` or `working` member is, by definition, online.
  */
-export function presenceActivity(p: Presence | undefined): ActivityState {
+export function presenceActivity(p: Presence | undefined): WorkState {
   if (!p) return 'idle';
   if (p.activity) return p.activity;
   return p.busy === true ? 'working' : 'idle';

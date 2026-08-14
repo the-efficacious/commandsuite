@@ -9,7 +9,7 @@
  * /presence/activity traffic to thrash on parallel tool fan-outs.
  */
 
-import type { ActivityState } from 'csuite-sdk/types';
+import type { WorkState } from 'csuite-sdk/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createActivitySignal, DEFAULT_MAX_AGE_MS } from '../../src/runtime/trace/busy.js';
 import { recordingLogger } from '../helpers/logger.js';
@@ -25,7 +25,7 @@ describe('createActivitySignal', () => {
 
   it('flips to working on the first start, back to idle on the matching finish', () => {
     const b = createActivitySignal();
-    const observed: ActivityState[] = [];
+    const observed: WorkState[] = [];
     b.subscribe((s) => observed.push(s));
     const h = b.start();
     expect(b.state()).toBe('working');
@@ -70,7 +70,7 @@ describe('createActivitySignal', () => {
   it('fires the current state on subscribe even mid-burst', () => {
     const b = createActivitySignal();
     b.start();
-    const observed: ActivityState[] = [];
+    const observed: WorkState[] = [];
     b.subscribe((s) => observed.push(s));
     expect(observed).toEqual(['working']);
   });
@@ -163,7 +163,7 @@ describe('createActivitySignal', () => {
 describe('createActivitySignal — blocked dimension', () => {
   it('setBlocked(true) transitions idle→blocked; setBlocked(false) back to idle', () => {
     const b = createActivitySignal();
-    const observed: ActivityState[] = [];
+    const observed: WorkState[] = [];
     b.subscribe((s) => observed.push(s));
     b.setBlocked(true);
     expect(b.state()).toBe('blocked');
@@ -176,7 +176,7 @@ describe('createActivitySignal — blocked dimension', () => {
 
   it('blocked wins over working (priority blocked > working > idle)', () => {
     const b = createActivitySignal();
-    const observed: ActivityState[] = [];
+    const observed: WorkState[] = [];
     b.subscribe((s) => observed.push(s));
     const h = b.start('turn_active');
     expect(b.state()).toBe('working');

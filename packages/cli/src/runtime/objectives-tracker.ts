@@ -73,7 +73,7 @@ export function createObjectivesTracker(opts: ObjectivesTrackerOptions): Objecti
       // Only react to objective-flavored channel events. The forwarder
       // already filters self-echoes (for chat); for objectives we
       // intentionally DO want to react to our own send-path responses
-      // when they cross back through SSE, because that's how the UI
+      // when they cross back through the subscription, because that's how the UI
       // refresh path for a locally-initiated update-via-tool fires.
       const data = message.data as Record<string, unknown> | undefined;
       if (data?.kind !== 'objective') return;

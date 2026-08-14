@@ -619,7 +619,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
             // Deliberately NOT flushed: delivering queued broker events
             // now would start a fresh turn in a session that is being
             // torn down. The broker still holds the messages; they
-            // replay on the next session's SSE subscribe.
+            // replay on the next session's subscribe.
             log.warn('dropping queued channel events at shutdown', { queued: queue.depth });
           }
           queue.close();

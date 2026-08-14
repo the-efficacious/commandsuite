@@ -1,6 +1,6 @@
 /**
  * Codex channel sink — implements `ChannelEventSink` so the runner
- * forwarder can deliver broker SSE events to us without knowing it's
+ * forwarder can deliver broker events to us without knowing it's
  * talking to codex instead of claude.
  *
  * Responsibility: turn each inbound channel event into either a

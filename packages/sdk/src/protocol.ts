@@ -80,7 +80,7 @@ export const PATHS = {
    */
   enrollVerify: '/enroll',
   // Runner-driven presence reports. `presenceActivity`: the runner
-  // POSTs `{state: ActivityState, busy?: bool}` on each activity
+  // POSTs `{state: WorkState, busy?: bool}` on each activity
   // transition (idle ↔ working ↔ blocked), plus a periodic heartbeat
   // while still working/blocked so the server's TTL doesn't lapse and
   // reset the member to idle mid-turn.

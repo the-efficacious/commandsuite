@@ -161,7 +161,7 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
   // JSON-RPC client. Events queue until the real sink is attached,
   // then drain in order.
   //
-  // Why a queue (not a drop): the broker's SSE subscription replays
+  // Why a queue (not a drop): the broker's subscription replays
   // any unread messages immediately on connect. Codex cold-start
   // (plugin sync, model refresh) takes 5-15s, and during that window
   // the forwarder is already receiving events. Dropping them silently

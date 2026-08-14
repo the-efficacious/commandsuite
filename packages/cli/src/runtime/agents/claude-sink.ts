@@ -1,6 +1,6 @@
 /**
  * Claude channel sink — implements `ChannelEventSink` so the runner
- * forwarder can deliver broker SSE events to the claude runner
+ * forwarder can deliver broker events to the claude runner
  * without knowing the agent runs on the Agent SDK.
  *
  * Broker events render as `<channel>` tagged text (shared format with

@@ -1,5 +1,5 @@
 /**
- * ActivityTracker tests.
+ * WorkStateTracker tests.
  *
  * Pins the in-memory activity-state semantics (idle/working/blocked):
  *   - `report(name, 'working'|'blocked')` extends the TTL window
@@ -13,7 +13,7 @@
  * The clock is injectable so tests don't have to wait wall-clock time.
  */
 
-import { ACTIVITY_TTL_MS, createActivityTracker } from 'csuite-core';
+import { createWorkStateTracker, WORK_STATE_TTL_MS } from 'csuite-core';
 import { describe, expect, it } from 'vitest';
 
 function makeClock(start = 1_000): { now: () => number; advance: (ms: number) => void } {
@@ -26,9 +26,9 @@ function makeClock(start = 1_000): { now: () => number; advance: (ms: number) =>
   };
 }
 
-describe('createActivityTracker', () => {
+describe('createWorkStateTracker', () => {
   it('starts with no entries — every name reads idle / not busy', () => {
-    const t = createActivityTracker(() => 1);
+    const t = createWorkStateTracker(() => 1);
     expect(t.getActivity('alice')).toBe('idle');
     expect(t.isBusy('alice')).toBe(false);
     expect(t.getActivity('bob')).toBe('idle');
@@ -36,17 +36,17 @@ describe('createActivityTracker', () => {
 
   it('flips to working on `report(name, "working")` within the TTL window', () => {
     const clock = makeClock();
-    const t = createActivityTracker(clock.now);
+    const t = createWorkStateTracker(clock.now);
     t.report('alice', 'working');
     expect(t.getActivity('alice')).toBe('working');
     expect(t.isBusy('alice')).toBe(true);
-    clock.advance(ACTIVITY_TTL_MS - 1);
+    clock.advance(WORK_STATE_TTL_MS - 1);
     expect(t.getActivity('alice')).toBe('working');
   });
 
   it('holds blocked distinctly and reports it as NOT busy', () => {
     const clock = makeClock();
-    const t = createActivityTracker(clock.now);
+    const t = createWorkStateTracker(clock.now);
     t.report('alice', 'blocked');
     expect(t.getActivity('alice')).toBe('blocked');
     // blocked means "an operator should look", not "working".
@@ -55,7 +55,7 @@ describe('createActivityTracker', () => {
 
   it('clears immediately on `report(name, "idle")`', () => {
     const clock = makeClock();
-    const t = createActivityTracker(clock.now);
+    const t = createWorkStateTracker(clock.now);
     t.report('alice', 'working');
     t.report('alice', 'idle');
     expect(t.getActivity('alice')).toBe('idle');
@@ -64,7 +64,7 @@ describe('createActivityTracker', () => {
 
   it('transitions working → blocked → working in place', () => {
     const clock = makeClock();
-    const t = createActivityTracker(clock.now);
+    const t = createWorkStateTracker(clock.now);
     t.report('alice', 'working');
     expect(t.getActivity('alice')).toBe('working');
     t.report('alice', 'blocked');
@@ -77,28 +77,28 @@ describe('createActivityTracker', () => {
     // Regression: this is the safety net. A runner that crashes mid-turn
     // would otherwise leave the member stuck "working"/"blocked" forever.
     const clock = makeClock();
-    const t = createActivityTracker(clock.now);
+    const t = createWorkStateTracker(clock.now);
     t.report('alice', 'working');
-    clock.advance(ACTIVITY_TTL_MS + 1);
+    clock.advance(WORK_STATE_TTL_MS + 1);
     expect(t.getActivity('alice')).toBe('idle');
     expect(t.isBusy('alice')).toBe(false);
   });
 
   it('refreshing with another non-idle report extends the window', () => {
     const clock = makeClock();
-    const t = createActivityTracker(clock.now);
+    const t = createWorkStateTracker(clock.now);
     t.report('alice', 'working');
-    clock.advance(ACTIVITY_TTL_MS - 1_000);
+    clock.advance(WORK_STATE_TTL_MS - 1_000);
     // Heartbeat — runner re-asserts working.
     t.report('alice', 'working');
-    clock.advance(ACTIVITY_TTL_MS - 1_000);
+    clock.advance(WORK_STATE_TTL_MS - 1_000);
     // Without refresh this would have lapsed; with refresh it's still live.
     expect(t.getActivity('alice')).toBe('working');
   });
 
   it('isolates per-name state', () => {
     const clock = makeClock();
-    const t = createActivityTracker(clock.now);
+    const t = createWorkStateTracker(clock.now);
     t.report('alice', 'working');
     expect(t.getActivity('alice')).toBe('working');
     expect(t.getActivity('bob')).toBe('idle');
@@ -109,7 +109,7 @@ describe('createActivityTracker', () => {
   });
 
   it('forget() drops the entry', () => {
-    const t = createActivityTracker(() => 1);
+    const t = createWorkStateTracker(() => 1);
     t.report('alice', 'working');
     t.forget('alice');
     expect(t.getActivity('alice')).toBe('idle');
@@ -117,11 +117,11 @@ describe('createActivityTracker', () => {
 
   it('purgeStale() removes only expired entries', () => {
     const clock = makeClock();
-    const t = createActivityTracker(clock.now);
+    const t = createWorkStateTracker(clock.now);
     t.report('alice', 'working');
-    clock.advance(ACTIVITY_TTL_MS / 2);
+    clock.advance(WORK_STATE_TTL_MS / 2);
     t.report('bob', 'blocked');
-    clock.advance(ACTIVITY_TTL_MS / 2 + 1); // alice has lapsed, bob hasn't
+    clock.advance(WORK_STATE_TTL_MS / 2 + 1); // alice has lapsed, bob hasn't
     t.purgeStale();
     expect(t.getActivity('alice')).toBe('idle');
     expect(t.getActivity('bob')).toBe('blocked');

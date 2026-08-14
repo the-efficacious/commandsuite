@@ -9,7 +9,8 @@ export type LogLevel = 'debug' | 'info' | 'notice' | 'warning' | 'error' | 'crit
 
 /**
  * Live activity of a member — orthogonal to the connection dimension
- * (online/connecting/offline) that presence tracks over SSE. Where
+ * (online/connecting/offline) that presence tracks over the live
+ * WebSocket. Where
  * connection answers "is the link alive", activity answers "what is the
  * agent doing right now on that link":
  *
@@ -24,7 +25,7 @@ export type LogLevel = 'debug' | 'info' | 'notice' | 'warning' | 'error' | 'crit
  * else idle. The runner reports transitions; the broker holds the last
  * reported state per member and surfaces it on `/roster`.
  */
-export type ActivityState = 'idle' | 'working' | 'blocked';
+export type WorkState = 'idle' | 'working' | 'blocked';
 
 /**
  * Whether a member's verbatim capture is reaching the broker.
@@ -210,7 +211,7 @@ export interface Member extends Teammate {
  */
 export interface Presence {
   name: string;
-  /** Number of live SSE subscribers currently attached. */
+  /** Number of live WebSocket subscribers currently attached. */
   connected: number;
   createdAt: number;
   lastSeen: number;
@@ -225,7 +226,7 @@ export interface Presence {
    * members the server has no recent activity report for (treat as
    * `idle`).
    */
-  activity?: ActivityState;
+  activity?: WorkState;
   /**
    * Back-compat mirror of `activity === 'working'`. Older UIs that only
    * understand the boolean keep working; new UIs should prefer
@@ -282,7 +283,7 @@ export interface Presence {
  * (= `state === 'working'`) when omitted.
  */
 export interface ActivityReport {
-  state: ActivityState;
+  state: WorkState;
   /** Optional back-compat mirror; server derives `state === 'working'` if absent. */
   busy?: boolean;
 }
@@ -1496,7 +1497,7 @@ export interface Objective {
   /**
    * Additional names that have been explicitly added to the
    * objective's discussion thread. Watchers receive every lifecycle
-   * event and every discussion post on their SSE streams without
+   * event and every discussion post on their live streams without
    * being the assignee. Members with `objectives.watch` can add
    * themselves or others; originators can manage their own
    * objectives' watchers. Members with `members.manage` are implicit
@@ -1706,7 +1707,7 @@ export interface ReassignObjectiveRequest {
 /**
  * Post a discussion message into an objective's thread. Members of the
  * thread (originator, assignee, watchers) all receive it via their
- * SSE streams. The post is a normal team `Message` with thread
+ * live streams. The post is a normal team `Message` with thread
  * key `obj:<id>`, not an event-log entry.
  */
 export interface DiscussObjectiveRequest {
@@ -2176,18 +2177,17 @@ export interface ActivityToolAction {
 }
 
 /**
- * The prompt that WOKE an agent turn — captured from the Claude Code
- * `UserPromptSubmit` hook (the same signal the runner already consumes
- * for presence). In csuite this is often an injected ambient broker
- * event rather than a human keystroke. Capturing it here gives a Claude
- * turn a real opener WITHOUT depending on request-body capture at all.
+ * The prompt that WOKE an agent turn. In csuite this is often an
+ * injected ambient broker event rather than a human keystroke, so the
+ * turn gets a real opener without depending on request-body capture at
+ * all.
  *
- * (The original rationale was that OTEL's INLINE body mode truncates
- * large prompts at ~60 KB. The runner no longer uses inline mode — it
- * sets `OTEL_LOG_RAW_API_BODIES=file:<dir>`, which writes complete
- * untruncated bodies — so that truncation no longer applies. The hook
- * remains the right source because it yields the opener directly rather
- * than requiring a body to be parsed for it.)
+ * Sourced from each agent's own durable record rather than from hooks:
+ * Claude's session transcript (`transcript-reader.ts`) and codex's
+ * rollout JSONL (`rollout-parser.ts`). An earlier design took it from
+ * the Claude Code `UserPromptSubmit` hook; hooks are now presence-only
+ * and emit no content, so this comment described a provenance that no
+ * longer existed.
  *
  * The text is redacted runner-side before it leaves the process, so the
  * schema only validates shape.
@@ -2343,7 +2343,8 @@ export interface ActivityRow {
 /**
  * Upload payload. Runners batch events and POST them in bursts of
  * up to a few dozen at a time. The server stamps each with an id
- * and broadcasts to any live SSE subscribers.
+ * and broadcasts to any live subscribers on the activity stream
+ * (`GET /members/:name/activity/stream`, a WebSocket upgrade).
  */
 export interface UploadActivityRequest {
   readonly events: ActivityEvent[];

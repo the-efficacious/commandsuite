@@ -126,8 +126,6 @@ import type {
   VariablesStore,
 } from './index.js';
 import {
-  ACTIVITY_TTL_MS,
-  type ActivityTracker,
   type AuthBindings,
   type Broker,
   type ChannelStore,
@@ -136,8 +134,8 @@ import {
   composedInstructionsSha256,
   composeInstructions,
   containsRegisteredSecretValue,
-  createActivityTracker,
   createAuthMiddleware,
+  createWorkStateTracker,
   type EnrollmentStore,
   formatUserCode,
   GENERAL_CHANNEL_ID,
@@ -169,6 +167,8 @@ import {
   type TokenStore,
   validateSlug,
   verifyCode as verifyTotpCode,
+  WORK_STATE_TTL_MS,
+  type WorkStateTracker,
 } from './index.js';
 
 import {
@@ -587,10 +587,10 @@ export function createApp(options: AppOptions): CreatedApp {
   // `POST /presence/activity`, read on roster GETs, and decayed via TTL
   // so a runner that crashes mid-turn doesn't leave the member stuck
   // "working"/"blocked" forever — stale state resolves back to idle.
-  // Orthogonal to connection presence (which the broker's SSE registry
+  // Orthogonal to connection presence (which the broker's presence registry
   // owns). Local helper, not exposed externally — it's behavioral state
   // of the running broker, not config or persisted truth.
-  const activityTracker: ActivityTracker = createActivityTracker(now);
+  const workState: WorkStateTracker = createWorkStateTracker(now);
 
   // External Notifications dispatcher — owned here (not by run.ts)
   // because the delivery policy reads the in-process activity
@@ -605,7 +605,7 @@ export function createApp(options: AppOptions): CreatedApp {
       broker,
       members,
       ...(channels !== undefined ? { channels } : {}),
-      activity: activityTracker,
+      activity: workState,
       logger,
       now,
     });
@@ -1226,7 +1226,7 @@ export function createApp(options: AppOptions): CreatedApp {
     // field as healthy is exactly the conflation this exists to remove,
     // and it is only absent when the store isn't wired at all.
     const presences = broker.listPresences().map((p) => {
-      const activity = activityTracker.getActivity(p.name);
+      const activity = workState.getActivity(p.name);
       const health = captureHealth?.forMember(p.name);
       // `pending` is internal — an aged-out marker hasn't earned a
       // claim yet, and healthy lag means every turn is briefly
@@ -1273,7 +1273,7 @@ export function createApp(options: AppOptions): CreatedApp {
     return c.json({
       teammates: teammatesFromMembers(members),
       connected: presences,
-      activityWindowMs: ACTIVITY_TTL_MS,
+      activityWindowMs: WORK_STATE_TTL_MS,
       restartPending: await restartPendingMembers(),
     });
   });
@@ -1284,12 +1284,12 @@ export function createApp(options: AppOptions): CreatedApp {
    * humans on the web UI never report this; the runner is the only
    * thing that knows.
    *
-   * Body: `{ state: ActivityState, busy?: bool }`. `state` is
+   * Body: `{ state: WorkState, busy?: bool }`. `state` is
    * authoritative; the optional `busy` mirror is ignored server-side
    * (the roster derives `busy = state === 'working'`). Response is 204.
    *
    * The tracker is internally TTL'd so a runner that drops mid-turn
-   * still gets reset to idle after ACTIVITY_TTL_MS. Runners are expected
+   * still gets reset to idle after WORK_STATE_TTL_MS. Runners are expected
    * to heartbeat (re-post the current non-idle state) every ~10s while
    * still working/blocked so the TTL stays fresh; on transition to idle
    * they post `state: 'idle'` once and drop the entry.
@@ -1306,7 +1306,7 @@ export function createApp(options: AppOptions): CreatedApp {
     if (!parsed.success) {
       return c.json({ error: 'invalid activity report', details: parsed.error.issues }, 400);
     }
-    activityTracker.report(member.name, parsed.data.state);
+    workState.report(member.name, parsed.data.state);
     // A transition out of `working` is the `if_busy: wait` flush
     // signal — deliver any external notifications held for this
     // member. Fire-and-forget; the report response never blocks on
@@ -3994,7 +3994,7 @@ export function createApp(options: AppOptions): CreatedApp {
   //
   // All mutations publish an `ObjectiveEvent` through the broker on
   // thread key `obj:<id>` so web clients + the link can react in
-  // real time. The publish is fire-and-forget so an SSE failure
+  // real time. The publish is fire-and-forget so a delivery failure
   // never blocks the HTTP response.
   if (objectives !== undefined) {
     /**
@@ -4440,7 +4440,7 @@ export function createApp(options: AppOptions): CreatedApp {
     // self-echo suppression DOES apply (agents won't see their own
     // objective-discussion posts on the live stream — same as
     // `broadcast`/`send`); the web client still renders its own posts
-    // because the web SSE handler does NOT suppress self-echoes.
+    // because the web subscribe handler does NOT suppress self-echoes.
     app.post(`${PATHS.objectives}/:id/discuss`, auth, async (c) => {
       const member = c.get('member');
       const id = c.req.param('id');
@@ -5186,7 +5186,7 @@ export function createApp(options: AppOptions): CreatedApp {
     // would catch this anyway (member not found → 401), but
     // proactive deletion keeps the table clean.
     const revoked = await tokens.revokeAllForMember(parsedName.data);
-    activityTracker.forget(parsedName.data);
+    workState.forget(parsedName.data);
     persistMembers();
     logger.info('member deleted', {
       name: parsedName.data,

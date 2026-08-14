@@ -6,7 +6,7 @@
  *   - the broker `Client` (authenticated to the csuite server)
  *   - the cached `InstructionsResponse` (name, role, permissions, team
  *     context, initial open objectives)
- *   - the live SSE forwarder (chat + objective events from the broker)
+ *   - the live event forwarder (chat + objective events from the broker)
  *   - the objectives tracker (keeps the "open objectives" snapshot
  *     fresh — it seeds the context re-brief pushed at session attach
  *     and after context compaction)
@@ -17,7 +17,7 @@
  * bridge connects, the runner waits for `mcp_request` frames and
  * dispatches them to the existing tool handlers (`handleToolCall` +
  * `defineTools`), then replies with `mcp_response` frames. Inbound
- * SSE events from the broker are delivered to the adapter-supplied
+ * Events from the broker are delivered to the adapter-supplied
  * channel sink (streaming input for claude, turn dispatches for
  * codex); the runner's own `context_refresh` re-briefs ride the same
  * sink. The only notification that crosses the bridge is a genuine
@@ -147,7 +147,7 @@ export interface RunnerOptions {
    */
   presence?: Presence;
   /**
-   * The channel sink the forwarder delivers broker SSE events into —
+   * The channel sink the forwarder delivers broker events into —
    * the per-framework piece that turns team traffic into the agent's
    * ambient input. The claude adapter renders events into the Agent
    * SDK's streaming input; the codex adapter converts each into a
@@ -236,7 +236,7 @@ export interface RunnerHandle {
    */
   rebrief(reason: 'session-start' | 'context-compaction'): void;
   /**
-   * Graceful shutdown. Aborts the SSE forwarder, closes the active
+   * Graceful shutdown. Aborts the event forwarder, closes the active
    * bridge connection (if any), closes the IPC server, and unlinks
    * the socket. Idempotent — calling twice is safe. Awaiting on
    * `waitClosed` after this resolves when teardown is done.
@@ -248,7 +248,7 @@ export interface RunnerHandle {
 
 /**
  * Start the runner: fetch instructions, bind the IPC socket, start the
- * SSE forwarder. Returns a handle the caller can use to wait for
+ * Event forwarder. Returns a handle the caller can use to wait for
  * completion or trigger a graceful shutdown. Throws
  * `RunnerStartupError` if required inputs are missing or the broker
  * instructions call fails.
@@ -286,7 +286,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
   }
 
   // Live open-objectives snapshot — mutated as the objectives tracker
-  // refreshes from SSE events. Tool descriptions deliberately do NOT
+  // refreshes from broker events. Tool descriptions deliberately do NOT
   // read it (static descriptions keep the model's prompt-prefix cache
   // intact); it seeds the context re-brief pushed as message traffic.
   let openObjectives: Objective[] = instructions.openObjectives;
@@ -519,7 +519,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
     version: CLI_VERSION,
   });
 
-  // Objectives tracker: refresh the open set when SSE objective
+  // Objectives tracker: refresh the open set when broker objective
   // events arrive. On every diff, emit objective_open/close
   // events into the agent's activity stream so the server can
   // slice traces by time range later. The refreshed snapshot also
@@ -579,7 +579,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
     });
   }
 
-  // Channel sink: where the forwarder delivers broker SSE events.
+  // Channel sink: where the forwarder delivers broker events.
   // Adapter-supplied (streaming input for claude, turn dispatches for
   // codex); without one, events are dropped with a log line — they
   // still land in server history and the agent catches up via

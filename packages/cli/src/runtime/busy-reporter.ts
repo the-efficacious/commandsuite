@@ -22,7 +22,7 @@
 
 import { logger as defaultLogger, type Logger } from 'csuite-core';
 import type { Client as BrokerClient } from 'csuite-sdk/client';
-import type { ActivityState } from 'csuite-sdk/types';
+import type { WorkState } from 'csuite-sdk/types';
 import type { ActivitySignal } from './trace/busy.js';
 
 export interface ActivityReporterOptions {
@@ -47,7 +47,7 @@ export function startActivityReporter(opts: ActivityReporterOptions): void {
   // Raw poster — ignores aborted state so we can fire one final
   // `idle` from the abort handler. Internal-only; the subscriber and
   // heartbeat call the abort-aware wrapper below.
-  const postRaw = (state: ActivityState): void => {
+  const postRaw = (state: WorkState): void => {
     void brokerClient.setActivity({ state }).catch((err: unknown) => {
       // Presence is a UI nicety, not an invariant — the next transition
       // or heartbeat retries, so this stays at debug per the module doc.
@@ -58,7 +58,7 @@ export function startActivityReporter(opts: ActivityReporterOptions): void {
     });
   };
 
-  const post = (state: ActivityState): void => {
+  const post = (state: WorkState): void => {
     if (signal.aborted) return;
     postRaw(state);
   };

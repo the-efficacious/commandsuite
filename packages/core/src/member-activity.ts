@@ -10,7 +10,8 @@
  * markers for a given objectiveId.
  *
  * The store is a thin wrapper around SQLite plus an in-process
- * listener registry that the SSE endpoint subscribes to for live tail.
+ * listener registry the live-tail endpoint subscribes to
+ * (`GET /members/:name/activity/stream`, a WebSocket upgrade).
  * Appends fire the emitter synchronously after the insert commits,
  * so a subscriber attached during an append never misses a row — and
  * a subscriber that attaches AFTER an append can pull the tail via

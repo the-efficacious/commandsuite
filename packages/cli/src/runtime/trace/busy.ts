@@ -2,14 +2,14 @@
  * "Agent activity" signal for the runner.
  *
  * Tracks what the agent is doing right now as a live 3-STATE model —
- * `idle | working | blocked` (see `ActivityState` in the SDK) — derived
+ * `idle | working | blocked` (see `WorkState` in the SDK) — derived
  * from multiple independent in-flight sources plus a `blocked` flag. The
  * runner reports the state to the broker, which surfaces it on `/roster`
  * so the web UI can render presence distinctly (a spinner while working,
  * an "operator should look" marker while blocked).
  *
  * This is ORTHOGONAL to connection presence (online/connecting/offline),
- * which the SSE forwarder tracks separately. Where connection answers
+ * which the event forwarder tracks separately. Where connection answers
  * "is the link alive", this answers "what is the agent doing on it".
  *
  * State derivation (priority `blocked > working > idle`):
@@ -41,7 +41,7 @@
  * hook that never decrements, a JSON-RPC stream that drops a
  * notification). With separate counters, a stuck source can't poison
  * the others — and `getSourceCounts()` lets diagnostics tell us which
- * one is wedged. The public observable stays a single ActivityState so
+ * one is wedged. The public observable stays a single WorkState so
  * the UI never has to merge sources.
  *
  * Why a count rather than a bool per source: many concurrent in-flight
@@ -70,7 +70,7 @@
  */
 
 import { logger as defaultLogger, type Logger } from 'csuite-core';
-import type { ActivityState } from 'csuite-sdk/types';
+import type { WorkState } from 'csuite-sdk/types';
 
 export type ActivitySource = 'turn_active' | 'tool_inflight';
 
@@ -147,7 +147,7 @@ export interface ActivitySignal {
   /** Whether a human-blocking signal is currently set. */
   readonly blocked: boolean;
   /** The derived 3-state activity: `blocked > working > idle`. */
-  state(): ActivityState;
+  state(): WorkState;
   /**
    * Set/clear the human-blocking flag. `true` when the agent is stuck
    * waiting on a person (needs input / an approval it can't self-resolve),
@@ -168,7 +168,7 @@ export interface ActivitySignal {
    * the current state, then on every transition (idle ↔ working ↔
    * blocked). Returns an unsubscribe function.
    */
-  subscribe(listener: (state: ActivityState) => void): () => void;
+  subscribe(listener: (state: WorkState) => void): () => void;
   /**
    * Diagnostics: read the live per-source counts. Useful when a
    * subscriber suspects one source is stuck — see which counter
@@ -201,7 +201,7 @@ export function createActivitySignal(options: ActivitySignalOptions = {}): Activ
   const log = options.logger ?? defaultLogger.child('activity');
   const counts = new Map<ActivitySource, number>();
   for (const source of ALL_SOURCES) counts.set(source, 0);
-  const listeners = new Set<(state: ActivityState) => void>();
+  const listeners = new Set<(state: WorkState) => void>();
   const liveHandles = new Set<InternalHandle>();
   let blocked = false;
 
@@ -211,13 +211,13 @@ export function createActivitySignal(options: ActivitySignalOptions = {}): Activ
     return total;
   };
 
-  const deriveState = (): ActivityState =>
+  const deriveState = (): WorkState =>
     blocked ? 'blocked' : totalCount() > 0 ? 'working' : 'idle';
 
   // Last state we told subscribers about. We only emit on genuine
   // transitions so the reporter's POST traffic doesn't thrash when a
   // source increments while the derived state is unchanged.
-  let lastState: ActivityState = deriveState();
+  let lastState: WorkState = deriveState();
 
   const emitIfChanged = (): void => {
     const next = deriveState();

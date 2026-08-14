@@ -15,12 +15,12 @@
  */
 
 import {
-  ACTIVITY_TTL_MS,
   Broker,
   createApp,
   createTokenStoreFromMembers,
   InMemoryEventLog,
   SqliteSessionStore,
+  WORK_STATE_TTL_MS,
 } from 'csuite-core';
 import type { RosterResponse, Team } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -136,7 +136,7 @@ describe('POST /presence/activity', () => {
       headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
     });
     const body = (await roster.json()) as RosterResponse;
-    expect(body.activityWindowMs).toBe(ACTIVITY_TTL_MS);
+    expect(body.activityWindowMs).toBe(WORK_STATE_TTL_MS);
     const alice = body.connected.find((p) => p.name === 'alice');
     // Never reported → idle → both fields absent.
     expect(alice?.activity).toBeUndefined();
@@ -220,7 +220,7 @@ describe('POST /presence/activity', () => {
     await app.request('/presence/activity', authBearer(AGENT_TOKEN, { state: 'working' }));
 
     // Advance past the TTL without a heartbeat.
-    advance(ACTIVITY_TTL_MS + 1);
+    advance(WORK_STATE_TTL_MS + 1);
 
     const scout = await rosterScout(app);
     expect(scout?.activity).toBeUndefined();

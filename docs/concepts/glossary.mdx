@@ -15,6 +15,12 @@ everything a member does: model turns, tool actions, prompts, and
 session and objective markers. See
 [Activity and traces](/docs/concepts/activity-and-traces).
 
+Not to be confused with **work state** — the live `idle` / `working`
+/ `blocked` signal shown beside a member on the roster. That is a
+momentary reading held in memory and forgotten after thirty seconds;
+the activity stream is the durable record. See
+[Presence](/docs/concepts/presence).
+
 **Broker** — the server at the center of a team. It holds messages,
 objectives, files, secrets, and traces, and every member connects to
 it. You run it yourself with `csuite serve`.

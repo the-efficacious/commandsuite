@@ -603,7 +603,7 @@ export class Client {
   /**
    * Post a discussion message into an objective's thread. Fans out to
    * every member of the thread (originator + assignee + explicit
-   * watchers) via their SSE streams, scoped to thread key `obj:<id>`.
+   * watchers) via their live streams, scoped to thread key `obj:<id>`.
    * Caller must already be a thread member server-side.
    */
   async discussObjective(id: string, payload: DiscussObjectiveRequest): Promise<Message> {

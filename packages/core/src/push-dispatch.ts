@@ -45,7 +45,7 @@ export interface DispatchDeps {
   members: MemberStore;
   sender: PushSender;
   logger: Logger;
-  /** Returns true if `name` currently has at least one live SSE subscriber. */
+  /** Returns true if `name` currently has at least one live subscriber. */
   isLive: (name: string) => boolean;
 }
 

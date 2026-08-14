@@ -10,7 +10,7 @@
  */
 
 import type { Client as BrokerClient } from 'csuite-sdk/client';
-import type { ActivityState } from 'csuite-sdk/types';
+import type { WorkState } from 'csuite-sdk/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { startActivityReporter } from '../../src/runtime/busy-reporter.js';
 import { createActivitySignal } from '../../src/runtime/trace/busy.js';
@@ -25,7 +25,7 @@ describe('startActivityReporter', () => {
   });
 
   it('POSTs the state once per transition (idle → working → idle)', async () => {
-    const setActivity = vi.fn(async (_: { state: ActivityState }) => {});
+    const setActivity = vi.fn(async (_: { state: WorkState }) => {});
     const broker = { setActivity } as unknown as BrokerClient;
     const activity = createActivitySignal();
     const ac = new AbortController();
@@ -51,7 +51,7 @@ describe('startActivityReporter', () => {
   });
 
   it('reports the blocked state on transition', async () => {
-    const setActivity = vi.fn(async (_: { state: ActivityState }) => {});
+    const setActivity = vi.fn(async (_: { state: WorkState }) => {});
     const broker = { setActivity } as unknown as BrokerClient;
     const activity = createActivitySignal();
     const ac = new AbortController();
@@ -73,7 +73,7 @@ describe('startActivityReporter', () => {
   });
 
   it('heartbeats the current non-idle state every heartbeatMs', async () => {
-    const setActivity = vi.fn(async (_: { state: ActivityState }) => {});
+    const setActivity = vi.fn(async (_: { state: WorkState }) => {});
     const broker = { setActivity } as unknown as BrokerClient;
     const activity = createActivitySignal();
     const ac = new AbortController();
@@ -99,7 +99,7 @@ describe('startActivityReporter', () => {
   });
 
   it('keeps heartbeating while blocked', async () => {
-    const setActivity = vi.fn(async (_: { state: ActivityState }) => {});
+    const setActivity = vi.fn(async (_: { state: WorkState }) => {});
     const broker = { setActivity } as unknown as BrokerClient;
     const activity = createActivitySignal();
     const ac = new AbortController();
@@ -120,7 +120,7 @@ describe('startActivityReporter', () => {
   });
 
   it('stops heartbeating after returning to idle', async () => {
-    const setActivity = vi.fn(async (_: { state: ActivityState }) => {});
+    const setActivity = vi.fn(async (_: { state: WorkState }) => {});
     const broker = { setActivity } as unknown as BrokerClient;
     const activity = createActivitySignal();
     const ac = new AbortController();
@@ -145,7 +145,7 @@ describe('startActivityReporter', () => {
   });
 
   it('on abort, posts a final `idle` to clear presence', async () => {
-    const setActivity = vi.fn(async (_: { state: ActivityState }) => {});
+    const setActivity = vi.fn(async (_: { state: WorkState }) => {});
     const broker = { setActivity } as unknown as BrokerClient;
     const activity = createActivitySignal();
     const ac = new AbortController();

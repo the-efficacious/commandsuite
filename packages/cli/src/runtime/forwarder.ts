@@ -1,7 +1,7 @@
 /**
  * Broker → channel-sink forwarder.
  *
- * Opens a long-lived SSE subscription to the broker for this slot's
+ * Opens a long-lived WebSocket subscription to the broker for this slot's
  * name and delivers every inbound message as a typed `ChannelEvent`
  * (content + flat string meta) to the runner's channel sink — the
  * per-framework adapter piece that turns team traffic into the
@@ -326,7 +326,7 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
 
         // Self-echo suppression (chat plane): the broker fans out every
         // push to all subscribers INCLUDING the sender, so our own
-        // sends come back on the SSE stream. Forwarding them would
+        // sends come back on the subscription stream. Forwarding them would
         // cost the agent a turn to recognise and discard its own
         // output. `recent` still returns self-sends for scrollback.
         if (message.from === name) continue;

@@ -32,18 +32,18 @@
  */
 
 import type {
-  ActivityState,
   LogLevel,
   NotificationDeliveryStatus,
   NotificationEndpoint,
   NotificationOverrides,
+  WorkState,
 } from 'csuite-sdk/types';
-import type { ActivityTracker } from '../activity-tracker.js';
 import type { Broker } from '../broker.js';
 import type { ChannelStore } from '../channels.js';
 import { GENERAL_CHANNEL_ID } from '../event-log.js';
 import type { Logger } from '../logger.js';
 import type { MemberStore } from '../members-domain.js';
+import type { WorkStateTracker } from '../work-state.js';
 import {
   applyFilters,
   composeBody,
@@ -85,7 +85,7 @@ export interface NotificationDispatcher {
   /** Runner attached — flush this member's queued + waiting deliveries. */
   onWake(memberName: string): Promise<void>;
   /** Presence report — a non-working state flushes this member's busy-waits. */
-  onActivityReport(memberName: string, state: ActivityState): Promise<void>;
+  onActivityReport(memberName: string, state: WorkState): Promise<void>;
   /** Expire stale queue rows, force starved waits, backstop debounce. */
   sweep(): Promise<void>;
   /** Re-dispatch deliveries stranded mid-debounce by a restart. */
@@ -99,7 +99,7 @@ export interface NotificationDispatcherOptions {
   broker: Broker;
   members: MemberStore;
   channels?: ChannelStore;
-  activity: ActivityTracker;
+  activity: WorkStateTracker;
   logger: Logger;
   now?: () => number;
 }
@@ -506,7 +506,7 @@ export function createNotificationDispatcher(
       await flushPendingFor(memberName);
     },
 
-    async onActivityReport(memberName: string, state: ActivityState): Promise<void> {
+    async onActivityReport(memberName: string, state: WorkState): Promise<void> {
       if (state === 'working') return;
       await flushPendingFor(memberName, 'busy');
     },

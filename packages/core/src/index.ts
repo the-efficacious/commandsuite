@@ -20,11 +20,6 @@ export {
   type ListActivityFilter,
 } from './activity-store.js';
 export {
-  ACTIVITY_TTL_MS,
-  type ActivityTracker,
-  createActivityTracker,
-} from './activity-tracker.js';
-export {
   type AppBindings,
   type AppOptions,
   type CreatedApp,
@@ -478,3 +473,8 @@ export {
   validateVariableSlug,
 } from './variables.js';
 export { CORE_VERSION } from './version.js';
+export {
+  createWorkStateTracker,
+  WORK_STATE_TTL_MS,
+  type WorkStateTracker,
+} from './work-state.js';

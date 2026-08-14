@@ -5,7 +5,7 @@
  * Rules (v1, intentionally simple):
  *
  *   1. Never push to the sender. Own sends are echoes — no self-buzz.
- *   2. Never push to a recipient who already has a live SSE
+ *   2. Never push to a recipient who already has a live
  *      subscription. They're looking at the app;
  *      another buzz is redundant.
  *   3. DMs addressed to the recipient always push (if rules 1+2 allow).
@@ -34,7 +34,7 @@ export interface ShouldPushOptions {
   /** Name we're considering notifying. */
   recipient: string;
   /**
-   * Whether `recipient` already has a live SSE subscriber attached.
+   * Whether `recipient` already has a live subscriber attached.
    * The broker's agent registry tracks this; the dispatcher queries
    * it per-recipient before calling us.
    */
@@ -47,7 +47,7 @@ export function shouldPush(opts: ShouldPushOptions): boolean {
   // Rule 1: no self-echo pushes.
   if (message.from === recipient) return false;
 
-  // Rule 2: if they have a live tab, they'll see it through SSE.
+  // Rule 2: if they have a live tab, the open stream delivers it.
   if (recipientIsLive) return false;
 
   // Rule 3: direct DMs always go through.
