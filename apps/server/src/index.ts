@@ -7,7 +7,7 @@
  *      secrets round-trip correctly.
  *   3. Load the slim `ServerConfig` (storage paths, HTTPS, webPush,
  *      JWT, files). If the file is missing AND stdin is a TTY, run
- *      the first-run wizard to gather the team + admin, open the DB,
+ *      the first-run wizard to gather the team + bootstrap member, open the DB,
  *      seed both stores, write the slim file, and continue.
  *   4. Open the main DB and the DB-backed team + member stores.
  *      Refuse to boot if no team singleton exists (operator likely
@@ -197,11 +197,10 @@ async function runWizardOrFail(configPath: string): Promise<WizardResult> {
 }
 
 /**
- * Apply wizard data to a fresh DB: seed permission presets, the team
- * singleton, the admin member, and the admin's bootstrap token.
- * Idempotent on `presets` (PUT semantics) and the team row (upsert);
- * the admin insert will throw if the member already exists, which is
- * the right behavior — we should never overwrite an existing admin.
+ * Apply wizard data to a fresh DB: seed legacy compatibility bundles,
+ * the team singleton, the bootstrap member, and its bootstrap token.
+ * The member insert will throw if that identity already exists, which
+ * is the right behavior — setup must never overwrite a member.
  */
 async function seedFromWizard(
   db: DatabaseSyncInstance,
@@ -215,24 +214,23 @@ async function seedFromWizard(
   // Pull `team` projection out of the wizard, then write it back.
   void team; // already used implicitly by the caller for the banner
   void db;
-  // Persist team row + presets first so addMember's permission
-  // resolution finds the 'admin' preset.
+  // The bootstrap member already carries explicit permission leaves.
   const teamStore = members as unknown as { teamStoreRef?: never }; // type guard placeholder
   void teamStore;
   // We rely on the caller to have constructed `members` against the
   // same DB-backed `TeamStore`. This function operates only via the
   // public surface.
   members.addMember({
-    name: wizard.admin.name,
-    role: wizard.admin.role,
-    instructions: wizard.admin.instructions,
-    rawPermissions: wizard.admin.rawPermissions,
-    permissions: wizard.admin.permissions,
-    totpSecret: wizard.admin.totpSecret,
+    name: wizard.bootstrapMember.name,
+    role: wizard.bootstrapMember.role,
+    instructions: wizard.bootstrapMember.instructions,
+    rawPermissions: wizard.bootstrapMember.rawPermissions,
+    permissions: wizard.bootstrapMember.permissions,
+    totpSecret: wizard.bootstrapMember.totpSecret,
   });
   await tokens.insert({
-    memberName: wizard.admin.name,
-    rawToken: wizard.admin.token,
+    memberName: wizard.bootstrapMember.name,
+    rawToken: wizard.bootstrapMember.token,
     label: 'wizard',
     origin: 'bootstrap',
     createdBy: null,
@@ -291,14 +289,11 @@ async function main(): Promise<void> {
       name: wizard.team.name,
       context: wizard.team.context,
     });
-    for (const [name, leaves] of Object.entries(wizard.team.permissionPresets)) {
-      stores.team.setPreset(name, leaves);
-    }
     await seedFromWizard(db, wizard.team, stores.members, tokens, wizard);
     writeServerConfigFile(configPath, serverConfig);
     process.stdout.write(
       `csuite-server: wrote slim config to ${configPath} and seeded team '${wizard.team.name}' ` +
-        `with admin '${wizard.admin.name}' in ${dbPath}\n`,
+        `with first member '${wizard.bootstrapMember.name}' in ${dbPath}\n`,
     );
   }
 

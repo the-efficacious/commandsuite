@@ -17,7 +17,7 @@ export type LogLevel = 'debug' | 'info' | 'notice' | 'warning' | 'error' | 'crit
  *   working  — actively processing a turn: model generation AND/OR tool
  *              execution, for the WHOLE turn (not just tool windows).
  *   blocked  — stuck waiting on a human (needs input / an approval it
- *              cannot self-resolve). An operator should look.
+ *              cannot self-resolve). A person should look.
  *
  * Derived runner-side with priority blocked > working > idle: a blocking
  * signal wins; else an active turn OR any in-flight tool means working;
@@ -76,21 +76,21 @@ export const PERMISSIONS = [
    * ELSE.
    */
   'members.context',
-  /**
-   * Direct the team's work: create objectives for others, cancel or
-   * reassign anyone's, manage any objective's watchers. One leaf where
-   * four used to be — no deployment ever granted the finer keys
-   * separately, and the assignee/originator self-rights below never
-   * needed a permission at all.
-   */
-  'objectives.manage',
+  /** Create objectives for others and inspect the team-wide objective ledger. */
+  'objectives.create',
+  /** Intervene in another assignee's status, or cancel an objective you did not originate. */
+  'objectives.cancel',
+  /** Move a non-terminal objective to a different assignee. */
+  'objectives.reassign',
+  /** Change the watchers on an objective you did not originate. */
+  'objectives.watch',
   'activity.read',
   'tools.manage',
   'secrets.manage',
   'notifications.manage',
   /**
    * Edit the team's process document. A DEDICATED leaf rather than a
-   * reuse of `objectives.manage`: under this design the permission is
+   * reuse of an objective permission: under this design the permission is
    * the entire authority — whoever holds it can rewrite what binds the
    * team — and "can create an objective" is not a comparable power.
    */
@@ -105,17 +105,18 @@ export type Permission = (typeof PERMISSIONS)[number];
  * every permission parse and resolution path maps them forward so an
  * existing team loads unchanged.
  */
-export const LEGACY_PERMISSION_ALIASES: Readonly<Record<string, Permission>> = {
-  'objectives.create': 'objectives.manage',
-  'objectives.cancel': 'objectives.manage',
-  'objectives.reassign': 'objectives.manage',
-  'objectives.watch': 'objectives.manage',
+export const LEGACY_PERMISSION_EXPANSIONS: Readonly<Record<string, readonly Permission[]>> = {
+  'objectives.manage': [
+    'objectives.create',
+    'objectives.cancel',
+    'objectives.reassign',
+    'objectives.watch',
+  ],
 };
 
 /**
- * Team-level named bundles of permissions. Members reference them by
- * name in the raw config — the server resolves to a flat `Permission[]`
- * at load time.
+ * Legacy named bundles retained only to read teams created by older
+ * versions. New member writes persist explicit leaves.
  */
 export type PermissionPresets = Record<string, Permission[]>;
 
@@ -134,7 +135,7 @@ export function hasPermission(permissions: readonly Permission[], required: Perm
 /**
  * A team is the top-level unit the server controls. One deployment
  * = one team. The team defines the standing context every member
- * inherits, plus any reusable permission presets.
+ * inherits.
  *
  * `context` here is the team-level standing context: what the team
  * is here to do plus any background every member should carry.
@@ -146,11 +147,10 @@ export interface Team {
   name: string;
   context: string;
   /**
-   * Named permission bundles members can reference instead of listing
-   * every leaf permission. Always present (may be empty). Common
-   * presets: `admin` (all permissions), `operator` (objectives-only).
+   * @deprecated Accepted when reading data from preset-era servers. Current
+   * servers omit this field and current clients must not present it.
    */
-  permissionPresets: PermissionPresets;
+  permissionPresets?: PermissionPresets;
 }
 
 /**
@@ -161,7 +161,7 @@ export interface Team {
  * the roster and instruction packet.
  */
 export interface Role {
-  /** Short freeform label ("director", "engineer", "qa-lead"). */
+  /** Short freeform label ("engineer", "qa-lead", "researcher"). */
   title: string;
   /** Prose describing what this role does on the team. */
   description: string;
@@ -171,7 +171,7 @@ export interface Role {
  * Public projection of a team member — the subset visible to other
  * members in the roster and instruction packet. Omits personal fields
  * (`instructions`) that belong only to the member themselves and to
- * admins managing membership.
+ * callers holding `members.manage`.
  */
 export interface Teammate {
   name: string;
@@ -189,7 +189,7 @@ export interface Teammate {
 }
 
 /**
- * Full member record — the shape an admin sees in the members admin
+ * Full member record — the shape a `members.manage` holder sees in the member-management
  * panel and the shape a member sees of themself in their instruction packet.
  * Adds `instructions` to the public `Teammate` projection.
  */
@@ -198,7 +198,7 @@ export interface Member extends Teammate {
    * Personal working directives + context for this member. Composed
    * into the member's own system prompt (for agents) or surfaced in
    * their instruction packet (for humans). Not visible to teammates — this is
-   * private to the member and to admins.
+   * private to the member and to `members.manage` holders.
    */
   instructions: string;
 }
@@ -1197,20 +1197,18 @@ export interface PushSubscriptionResponse {
  * enrolled separately via `POST /members/:name/enroll-totp` — it's
  * no longer gated by a type, anyone can enroll.
  *
- * `permissions` accepts either preset names or leaf permissions in a
- * flat array; the server resolves presets and validates every entry.
+ * `permissions` is the explicit set of leaves to store for the member.
  */
 export interface CreateMemberRequest {
   name: string;
   role: Role;
   instructions?: string;
-  /** Each entry: preset name (resolved by server) or leaf permission. */
-  permissions: string[];
+  permissions: Permission[];
 }
 
 /**
  * `POST /members` response. The plaintext `token` is shown to the
- * admin who created the member, then immediately hashed on disk.
+ * caller who created the member, then immediately hashed on disk.
  */
 export interface CreateMemberResponse {
   member: Teammate;
@@ -1225,8 +1223,7 @@ export interface CreateMemberResponse {
 export interface UpdateMemberRequest {
   role?: Role;
   instructions?: string;
-  /** Same preset-or-leaf shape as CreateMemberRequest. */
-  permissions?: string[];
+  permissions?: Permission[];
 }
 
 /** `GET /members` response — requires `members.manage`. */
@@ -1293,7 +1290,7 @@ export interface TokenInfo {
  * How a token came into existence. `bootstrap` covers tokens carried
  * across the first-boot config-file → SQLite migration; `rotate` is
  * `POST /members/:name/rotate-token`; `enroll` is the device-code
- * flow. Useful for filtering and audit — directors investigating a
+ * flow. Useful for filtering and audit — members investigating a
  * leak start from `enroll` rows because the metadata identifies the
  * device a token was bound to.
  */
@@ -1318,10 +1315,10 @@ export type RevokeTokenResponse = undefined;
 /**
  * `POST /enroll` body — anonymous (no auth). The CLI calls this from
  * the device that needs a token; `labelHint` proposes a friendly
- * label the approving director can accept or override.
+ * label the approving member can accept or override.
  */
 export interface DeviceAuthorizationRequest {
-  /** Suggested label the director can accept or override on approve. */
+  /** Suggested label the approving member can accept or override. */
   labelHint?: string;
 }
 
@@ -1384,7 +1381,7 @@ export interface DeviceTokenResponse {
  *   authorization_pending — keep polling, user hasn't approved yet
  *   slow_down             — back off; increment poll interval by 5s
  *   expired_token         — the device_code TTL elapsed; restart enrollment
- *   access_denied         — director rejected; abort
+ *   access_denied         — approving member rejected; abort
  */
 export type DeviceTokenErrorCode =
   | 'authorization_pending'
@@ -1394,18 +1391,18 @@ export type DeviceTokenErrorCode =
 
 export interface DeviceTokenErrorResponse {
   error: DeviceTokenErrorCode;
-  /** Free-form note (e.g. director's reject reason). Not machine-parsed. */
+  /** Free-form note (e.g. an approver's rejection reason). Not machine-parsed. */
   errorDescription?: string;
 }
 
 /**
- * Pending-enrollments listing for directors. Shows everything that's
+ * Pending-enrollments listing for members with `members.manage`. Shows everything that's
  * currently waiting for approval, with enough metadata that a
- * director can spot an unexpected request (different sourceIp, odd
+ * reviewer can spot an unexpected request (different sourceIp, odd
  * UA, etc.) before approving.
  *
  * `userCode` is the same code the device-side CLI is showing the
- * operator — directors rarely use it directly, but it lets the same
+ * client — reviewers rarely use it directly, but it lets the same
  * row be approved either by URL deep-link or by typing the code from
  * the device.
  */
@@ -1437,8 +1434,7 @@ export interface ListPendingEnrollmentsResponse {
  *            must not collide with an existing one.
  *
  * `label` is optional; absent means "leave whatever the device-side
- * suggested in labelHint." `permissions` follows the same preset-or-
- * leaf shape as `CreateMemberRequest`.
+ * suggested in labelHint. `permissions` is an explicit leaf list.
  */
 export type ApproveEnrollmentRequest =
   | {
@@ -1453,7 +1449,7 @@ export type ApproveEnrollmentRequest =
       memberName: string;
       role: Role;
       instructions?: string;
-      permissions: string[];
+      permissions: Permission[];
       label?: string;
     };
 
@@ -1461,7 +1457,7 @@ export type ApproveEnrollmentRequest =
  * `POST /enroll/approve` response — confirmation only. The plaintext
  * token is delivered to the device-side CLI on its next poll, NOT to
  * the approver. This keeps the secret entirely on the device the
- * operator is sitting at and out of the director's browser scrollback.
+ * person is sitting at and out of the approver's browser scrollback.
  */
 export interface ApproveEnrollmentResponse {
   member: Teammate;
@@ -1501,7 +1497,7 @@ export interface Objective {
    * Additional names that have been explicitly added to the
    * objective's discussion thread. Watchers receive every lifecycle
    * event and every discussion post on their SSE streams without
-   * being the assignee. Members with `objectives.manage` can add
+   * being the assignee. Members with `objectives.watch` can add
    * themselves or others; originators can manage their own
    * objectives' watchers. Members with `members.manage` are implicit
    * observers regardless and do NOT appear in this list.
@@ -1685,11 +1681,11 @@ export interface UpdateWatchersRequest {
 export interface UpdateObjectiveRequest {
   status?: 'active' | 'blocked';
   blockReason?: string;
-  /** Change the assignee. Requires `objectives.manage`. */
+  /** Change the assignee. Requires `objectives.reassign`. */
   assignee?: string;
   /** Handover context for an assignee change; ignored otherwise. */
   note?: string;
-  /** Watcher changes. Originator or `objectives.manage`. */
+  /** Watcher changes. Originator or `objectives.watch`. */
   addWatchers?: string[];
   removeWatchers?: string[];
 }

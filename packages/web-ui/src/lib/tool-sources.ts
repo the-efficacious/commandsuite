@@ -58,7 +58,7 @@ export function toolSourceBySlug(slug: string): ToolSourceSummary | null {
   return list.find((s) => s.slug === slug) ?? null;
 }
 
-/** Fetch (and cache) one source's detail — tools + admin bindings. */
+/** Fetch (and cache) one source's detail — tools + managed bindings. */
 export async function loadToolSourceDetail(slug: string): Promise<void> {
   const detail = await getClient().getToolSource(slug);
   toolSourceDetails.value = { ...toolSourceDetails.value, [slug]: detail };

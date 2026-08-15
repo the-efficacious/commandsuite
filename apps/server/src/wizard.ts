@@ -3,26 +3,26 @@
  *
  * Triggered when the server boots without a config file at the
  * expected path AND stdin is a TTY. Identity + auth only: the
- * operator picks a team name and their own name, saves a generated
- * bearer token, and enrolls in TOTP (admins need web UI login by
+ * the person running setup picks a team name and their own name, saves a generated
+ * bearer token, and enrolls in TOTP (the first member needs web UI login by
  * default). Standing context — team context, roles, per-member
  * instructions — is deliberately NOT collected here; it is
  * configured after boot via the web UI, CLI, or MCP tools.
  *
  * The wizard is I/O only: it returns the captured data and lets the
  * caller decide where to persist it. Today that caller is the boot
- * entry (`index.ts`), which inserts the team + admin into SQLite via
+ * entry (`index.ts`), which inserts the team + bootstrap member into SQLite via
  * the team/member/token stores and writes a slim infra-only
  * `csuite.json` to disk.
  *
- * Subsequent members are added by the admin through the web UI
- * (Members admin page) or the CLI (`csuite member create`).
+ * Subsequent members are added by a member holding `members.manage`
+ * through the web UI or CLI (`csuite member create`).
  */
 
 import { randomBytes } from 'node:crypto';
 import { createInterface } from 'node:readline/promises';
 import { generateSecret, otpauthUri, verifyCode } from 'csuite-core';
-import type { Permission, PermissionPresets, Role, Team } from 'csuite-sdk/types';
+import type { Permission, Role, Team } from 'csuite-sdk/types';
 import { PERMISSIONS } from 'csuite-sdk/types';
 // qrcode-terminal is CJS; default-import the namespace and destructure.
 import qrcodeTerminal from 'qrcode-terminal';
@@ -43,46 +43,11 @@ const TOTP_ISSUER = 'csuite';
 const TOTP_MAX_CONFIRM_ATTEMPTS = 3;
 
 /**
- * Role stamped on the first admin. The wizard no longer asks — the
- * title is a plain default the admin can edit later (Members page /
+ * Role stamped on the bootstrap member. The wizard no longer asks — the
+ * title is a plain default the member can edit later (Members page /
  * `csuite member update`) like any other member's role.
  */
-export const DEFAULT_ADMIN_ROLE_TITLE = 'director';
-
-/**
- * Leaves deliberately withheld from the seeded `admin` preset.
- *
- * `admin` is derived from `PERMISSIONS` on purpose, so a new leaf is
- * granted to the bootstrap admin without anyone remembering to add it.
- * Empty today; kept as the extension point for a leaf whose whole
- * point is that holding it is a decision. Adding here is genesis
- * behaviour — it is not a migration, so searching migrations would
- * not find it — and should be rare and say why.
- *
- * `process.manage` sat here from its introduction (#130) until
- * 2026-08-03, when Andrew reversed it: a leaf held by nobody made the
- * process document invisible on every fresh install, and the control
- * was judged not worth the discoverability loss. Existing teams are
- * untouched — presets seed once, at genesis.
- *
- * RESIDUAL, stated because the next person to hit it should find a
- * note rather than a surprise: THIS LIST IS A CONVENTION. A new
- * sensitive leaf auto-grants to the bootstrap admin unless someone
- * remembers to add it here, and nothing will remind you.
- */
-const WITHHELD_FROM_SEEDED_ADMIN: readonly Permission[] = [];
-
-/**
- * Default permission presets seeded with every new team. The operator
- * can edit them via the API/CLI/MCP after first boot.
- *
- * Still derived from `PERMISSIONS` minus the withheld set, so a future
- * leaf is included automatically and only the named exceptions are not.
- */
-export const DEFAULT_PERMISSION_PRESETS: PermissionPresets = {
-  admin: PERMISSIONS.filter((p) => !WITHHELD_FROM_SEEDED_ADMIN.includes(p)),
-  operator: ['objectives.manage'],
-};
+export const DEFAULT_MEMBER_ROLE_TITLE = 'member';
 
 export interface WizardIO {
   prompt(question: string): Promise<string>;
@@ -103,13 +68,13 @@ export interface RunWizardOptions {
 
 /**
  * Captured wizard data, ready to seed the DB-backed stores. The
- * caller is responsible for inserting the team + presets + admin into
+ * caller is responsible for inserting the team + bootstrap member into
  * SQLite (via `TeamStore` / `MemberStore` / `TokenStore`) and writing
  * the slim infra-only config file.
  */
 export interface WizardResult {
   team: Team;
-  admin: {
+  bootstrapMember: {
     name: string;
     role: Role;
     instructions: string;
@@ -159,22 +124,22 @@ export async function runFirstRunWizard(options: RunWizardOptions): Promise<Wiza
     v.length > 0 && v.length <= 128 ? null : 'must be 1-128 characters',
   );
 
-  // ── First admin member ─────────────────────────────────────
+  // ── Bootstrap member ───────────────────────────────────────
   io.println('');
-  io.println('-- first admin member --');
+  io.println('-- first member --');
   const name = await promptName(io);
-  const role: Role = { title: DEFAULT_ADMIN_ROLE_TITLE, description: '' };
+  const role: Role = { title: DEFAULT_MEMBER_ROLE_TITLE, description: '' };
   const token = mintToken();
   const bannerLines = printTokenBanner(io, name, role, token);
   await io.prompt('press enter once you have saved the token above ');
   io.redactLines?.(bannerLines + 1);
 
-  // TOTP is always-on for the first admin — no yes/no prompt. The
-  // wizard's whole point is to leave the operator with a working web
+  // TOTP is always-on for the bootstrap member — no yes/no prompt. The
+  // wizard's whole point is to leave the person setting up the team with a working web
   // UI login.
   io.println('');
   io.println('-- TOTP enrollment --');
-  io.println(`The admin signs into the web UI with a 6-digit code from an authenticator app.`);
+  io.println(`You sign into the web UI with a 6-digit code from an authenticator app.`);
   io.println('Scan the QR below and enter the current code to confirm pairing.');
   const totpSecret = await enrollTotp(io, name, {
     mintTotpSecret,
@@ -185,17 +150,16 @@ export async function runFirstRunWizard(options: RunWizardOptions): Promise<Wiza
   const team: Team = {
     name: teamName,
     context: '',
-    permissionPresets: DEFAULT_PERMISSION_PRESETS,
   };
 
   return {
     team,
-    admin: {
+    bootstrapMember: {
       name,
       role,
       instructions: '',
-      rawPermissions: ['admin'],
-      permissions: DEFAULT_PERMISSION_PRESETS.admin ?? [],
+      rawPermissions: [...PERMISSIONS],
+      permissions: [...PERMISSIONS],
       token,
       totpSecret,
     },
@@ -221,7 +185,7 @@ async function promptRequired(
 }
 
 async function promptName(io: WizardIO): Promise<string> {
-  const suggested = 'director-1';
+  const suggested = 'member-1';
   while (true) {
     const raw = (await io.prompt(`your name [${suggested}]: `)).trim();
     const candidate = raw.length === 0 ? suggested : raw;
@@ -262,7 +226,7 @@ function printTokenBanner(io: WizardIO, name: string, role: Role, token: string)
 
 async function enrollTotp(
   io: WizardIO,
-  adminName: string,
+  memberName: string,
   deps: {
     mintTotpSecret: () => string;
     now: () => number;
@@ -279,7 +243,7 @@ async function enrollTotp(
   const uri = otpauthUri({
     secret,
     issuer: TOTP_ISSUER,
-    label: `${TOTP_ISSUER}:${adminName}`,
+    label: `${TOTP_ISSUER}:${memberName}`,
   });
   const qr = deps.renderQr(uri);
 
@@ -298,7 +262,7 @@ async function enrollTotp(
     const result = verifyCode(secret, raw, 0, deps.now());
     if (result.ok) {
       io.redactLines?.(redactCount);
-      io.println(`  ✓ TOTP enrolled for ${adminName}`);
+      io.println(`  ✓ TOTP enrolled for ${memberName}`);
       return secret;
     }
     io.println(`  ${describeVerifyError(result.reason)} — try again`);
@@ -307,7 +271,7 @@ async function enrollTotp(
 
   io.redactLines?.(redactCount);
   throw new MemberLoadError(
-    'TOTP enrollment failed after 3 attempts. Re-run the wizard; the admin must ' +
+    'TOTP enrollment failed after 3 attempts. Re-run the wizard; the first member must ' +
       'enroll to sign into the web UI on first boot.',
   );
 }

@@ -12,7 +12,7 @@
  *
  * WHY THERE IS NO PROVENANCE HERE. Authority is the edit permission
  * and nothing else. The predecessor design carried per-rule
- * provenance, attribution and a disputed status so that "the director
+ * provenance, attribution and a disputed status so that "the process editor
  * said this" could not be laundered from "the lead proposed it and
  * nobody objected" — a real protection, but one that could only ever
  * check a field was non-null, never that anyone said anything. Under

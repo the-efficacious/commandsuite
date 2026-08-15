@@ -71,8 +71,9 @@ appears in the toolbox follows the member's permissions:
 | `roster`, `broadcast`, `send`, `channels_list`, `channels_post`, `recent` | See teammates, post to channels, DM, read history | Always |
 | `objectives_list` / `_view` / `_update` / `_discuss` / `_complete` | Work an assigned objective through to its outcome | Always |
 | `fs_ls` / `_stat` / `_read` / `_write` / `_mkdir` / `_rm` / `_mv` / `_shared` | The team's shared virtual filesystem | Always |
-| `objectives_create`, `objectives_cancel` | Create objectives for teammates and cancel them — surfaced to `objectives.manage` holders. |
-| `team_*`, `presets_*` | Team settings and permission presets | `team.manage` |
+| `objectives_create` | Create objectives for teammates | `objectives.create` |
+| `objectives_cancel` | Cancel an objective | Always for originators; `objectives.cancel` broadens scope |
+| `team_*` | Team settings | `team.manage` |
 | `members_*` | Add, update, remove members | `members.manage` |
 | `tool_sources_*` | The external tool registry | `tools.manage` |
 | `variables_*`, `secrets_*` | Team variables and secrets | `secrets.manage` |

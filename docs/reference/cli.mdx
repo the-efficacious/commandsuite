@@ -30,7 +30,7 @@ a fresh machine sets itself up.
 | Command | What it does |
 |---|---|
 | [`serve`](#serve) | Run the broker |
-| [`setup`](#setup) | First-run wizard — team, first admin, config |
+| [`setup`](#setup) | First-run wizard — team, first member, config |
 | [`connect`](#connect) | Enroll this device with a broker |
 | [`auth`](#auth) | Inspect the local auth store |
 | [`quickstart`](#quickstart) | Seed a demo objective, open the web UI |
@@ -43,7 +43,6 @@ a fresh machine sets itself up.
 | [`enroll`](#enroll) | (Re-)enroll a member for web UI login |
 | [`rotate`](#rotate) | Rotate a member's bearer tokens |
 | [`team`](#team) | Read or update team name and context |
-| [`presets`](#presets) | Manage permission presets |
 | [`tools`](#tools) | Manage tool sources |
 | [`secrets`](#secrets) | Manage broker-held secrets |
 | [`variables`](#variables) | Manage broker-held variables (alias: `vars`) |
@@ -90,15 +89,15 @@ and writes.
 csuite setup [--config-path <path>]
 ```
 
-The first-run wizard. Prompts for a team name and context, the first
-admin member, and the admin's authenticator (TOTP) enrollment. Then it:
+The first-run wizard. Prompts for a team name, the first member's name,
+and that member's authenticator (TOTP) enrollment. Then it:
 
-- seeds the database with the team, permission presets, and the admin,
+- seeds the database with the team and a first member holding every permission leaf,
 - writes the server config file,
-- prints the admin's bearer token **exactly once** — save it.
+- prints that member's bearer token **exactly once** — save it.
 
 Setup refuses to run when the config already points at a populated
-team, because re-running would mint a fresh admin and invalidate every
+team, because re-running would mint a fresh bootstrap member and invalidate every
 existing credential. The refusal message names the config and database
 files to remove if a reset is really what you want.
 
@@ -295,14 +294,14 @@ csuite roster
 csuite roster --reveal-token --member <name>
 ```
 
-Without flags: list members with role, privilege bucket, connected
-count, and last-seen time.
+Without flags: list members with role, explicit permission leaves,
+connected count, and last-seen time.
 
 ```
 $ csuite roster
-name                role              privilege   connected   last_seen
-alice               director          admin       1           2026-08-01T14:03:22.000Z
-nova                backend eng       member      1           2026-08-01T14:05:01.000Z
+name                role              permissions                 connected   last_seen
+alice               team lead         members.manage,team.manage  1           2026-08-01T14:03:22.000Z
+nova                backend eng       baseline                    1           2026-08-01T14:05:01.000Z
 ```
 
 `--reveal-token --member <name>` is an alias over `csuite rotate`: the
@@ -334,8 +333,8 @@ Assign work that carries its own definition of done. See
 - `complete --result` is required and becomes the "what was actually
   delivered" record on the objective.
 - `create`, cancelling someone else's, and `reassign` require
-  `objectives.manage` (checked by the broker); an originator can
-  always cancel their own.
+  `objectives.create`, `objectives.cancel`, and `objectives.reassign`
+  respectively; an originator can always cancel their own.
 
 ```
 $ csuite objectives create \
@@ -350,9 +349,9 @@ created obj_01j... [active] Fix the flaky login test
 ```
 csuite member list
 csuite member create --name <n> --title <t> [--description <d>]
-                     [--instructions <i>] [--permissions <preset|leaf,...>]
+                     [--instructions <i>] [--permissions <leaf,...>]
 csuite member update --name <n> [--title <t>] [--description <d>]
-                     [--instructions <i>] [--permissions <preset|leaf,...>]
+                     [--instructions <i>] [--permissions <leaf,...>]
 csuite member delete --name <n>
 ```
 
@@ -368,18 +367,18 @@ restarts, and resumes the same conversation under the new text.
 enable web UI login afterwards, run `csuite enroll --member <name>` —
 or skip both and have the member's device run `csuite connect`.
 
-`--permissions` takes a comma-separated list of preset names and/or
-permission leaves. The leaves are:
+`--permissions` takes a comma-separated list of permission leaves:
 
 `team.manage`, `members.manage`, `members.context`,
-`objectives.manage`, `activity.read`, `tools.manage`,
+`objectives.create`, `objectives.cancel`, `objectives.reassign`,
+`objectives.watch`, `activity.read`, `tools.manage`,
 `secrets.manage`, `notifications.manage`, `process.manage`
 
 Omitted means baseline — a full team member with no elevated
 authority. See [permissions](/docs/concepts/permissions).
 
 ```
-$ csuite member create --name nova --title "backend eng" --permissions objectives.manage
+$ csuite member create --name nova --title "backend eng" --permissions objectives.create,objectives.reassign
 ```
 
 ## enroll
@@ -435,28 +434,6 @@ $ csuite team set --context-file ./team-context.md
 updated team 'platform-eng'
   fields: context
 ```
-
-## presets
-
-```
-csuite presets list   [--json]
-csuite presets set    --name <n> --permissions <leaf,leaf,...>
-csuite presets delete --name <n>
-```
-
-Manage named permission bundles that members can reference instead of
-listing every leaf. Requires `team.manage`. `set` validates each leaf
-against the list under [member](#member) and creates or replaces the
-preset; a change re-resolves every member that references it on the
-next read — no per-member sweep needed.
-
-```
-$ csuite presets set --name operator --permissions objectives.manage
-preset 'operator' set: objectives.manage
-```
-
-`delete` warns when members still reference the preset — their
-resolved permissions drop those leaves.
 
 ## tools
 

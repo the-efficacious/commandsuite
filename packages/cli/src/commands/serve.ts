@@ -183,21 +183,18 @@ async function runWizardOrFail(
         name: wizard.team.name,
         context: wizard.team.context,
       });
-      for (const [name, leaves] of Object.entries(wizard.team.permissionPresets)) {
-        stores.team.setPreset(name, leaves);
-      }
       stores.members.addMember({
-        name: wizard.admin.name,
-        role: wizard.admin.role,
-        instructions: wizard.admin.instructions,
-        rawPermissions: wizard.admin.rawPermissions,
-        permissions: wizard.admin.permissions,
-        totpSecret: wizard.admin.totpSecret,
+        name: wizard.bootstrapMember.name,
+        role: wizard.bootstrapMember.role,
+        instructions: wizard.bootstrapMember.instructions,
+        rawPermissions: wizard.bootstrapMember.rawPermissions,
+        permissions: wizard.bootstrapMember.permissions,
+        totpSecret: wizard.bootstrapMember.totpSecret,
       });
       const tokens = new server.SqliteTokenStore(db);
       await tokens.insert({
-        memberName: wizard.admin.name,
-        rawToken: wizard.admin.token,
+        memberName: wizard.bootstrapMember.name,
+        rawToken: wizard.bootstrapMember.token,
         label: 'wizard',
         origin: 'bootstrap',
         createdBy: null,

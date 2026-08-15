@@ -4,14 +4,14 @@
  * Subcommands:
  *   csuite member list
  *   csuite member create --name <n> --title <t> [--description <d>] [--instructions <i>]
- *                     [--permissions <preset|leaf,...>]
+ *                     [--permissions <leaf,...>]
  *   csuite member update --name <n> [--title <t>] [--description <d>] [--instructions <i>]
- *                     [--permissions <preset|leaf,...>]
+ *                     [--permissions <leaf,...>]
  *   csuite member delete --name <n>
  *
  * All operations go through the HTTP API (`/members` endpoints), so the
  * broker must be running. Mutations require `members.manage`. The
- * "last admin" invariant is enforced server-side.
+ * sole-`members.manage`-holder invariant is enforced server-side.
  *
  * `create` prints the bearer token exactly once. To enable web UI
  * login, run `csuite enroll --user <name>` afterwards.
@@ -20,6 +20,7 @@
 import { parseArgs } from 'node:util';
 import type { Client } from 'csuite-sdk/client';
 import { formatTextMetrics } from 'csuite-sdk/text-metrics';
+import type { Permission } from 'csuite-sdk/types';
 import { UsageError } from './errors.js';
 
 const NAME_REGEX = /^[a-zA-Z0-9._-]+$/;
@@ -110,7 +111,7 @@ async function runCreate(
     name,
     role: { title, description },
     instructions,
-    permissions,
+    permissions: permissions as Permission[],
   });
 
   stdout('');
@@ -165,11 +166,11 @@ async function runUpdate(
   const patch: {
     role?: { title: string; description: string };
     instructions?: string;
-    permissions?: string[];
+    permissions?: Permission[];
   } = {};
   if (title !== undefined || description !== undefined) {
     // The server merges role atomically, so we pass whichever fields
-    // the operator supplied; missing values are filled in by the
+    // the caller supplied; missing values are filled in by the
     // server from the current row.
     patch.role = {
       title: title ?? '',
@@ -181,7 +182,7 @@ async function runUpdate(
     patch.permissions = permsRaw
       .split(',')
       .map((s) => s.trim())
-      .filter((s) => s.length > 0);
+      .filter((s) => s.length > 0) as Permission[];
   }
 
   const member = await client.updateMember(name, patch);

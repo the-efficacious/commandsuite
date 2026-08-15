@@ -66,6 +66,10 @@ export {
   toggleInspector,
 } from './lib/inspector.js';
 export {
+  MEMBER_CREATION_PERMISSION_TEMPLATES,
+  type PermissionTemplate,
+} from './lib/permissions.js';
+export {
   cycleThemeMode,
   type EffectiveTheme,
   effectiveTheme,

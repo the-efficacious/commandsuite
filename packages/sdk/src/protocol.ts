@@ -30,7 +30,7 @@ export const PATHS = {
   // Web Push (browser) — VAPID public key + per-device subscriptions.
   pushVapidPublicKey: '/push/vapid-public-key',
   pushSubscriptions: '/push/subscriptions',
-  // Objectives — members with `objectives.manage` post and assign,
+  // Objectives — members with `objectives.create` post and assign,
   // assignees execute, watchers observe.
   objectives: '/objectives',
   // Channels — Slack-style named team threads. Anyone can create;
@@ -43,16 +43,14 @@ export const PATHS = {
   // gate on the permission. The helpers below compose the `:name`
   // subpaths.
   members: '/members',
-  // Team — name, context, permission presets. `GET /team` is
+  // Team — name and context. `GET /team` is
   // tri-auth (every authenticated member sees the team they're on).
-  // `PATCH /team` requires `team.manage`. Permission-preset CRUD lives
-  // under `/team/presets` (same gate). Mutations apply immediately to
-  // the DB; instruction-bearing edits also fan out a
+  // `PATCH /team` requires `team.manage`. Mutations apply immediately
+  // to the DB; instruction-bearing edits also fan out a
   // `kind: 'instructions'` event to every member whose composed text
   // changed, and the roster lists them restart-pending until their
   // runner picks the change up in a fresh session.
   team: '/team',
-  teamPresets: '/team/presets',
   // Filesystem — per-member home directories with content-addressed
   // blob storage. The dedicated `read/*` catch-all supports friendly
   // URLs for <a href> and <img src>; other ops take path via query or body.
@@ -67,8 +65,8 @@ export const PATHS = {
   fsAll: '/fs/all',
   // Device-code enrollment (RFC 8628-shaped). `enroll` mints a
   // device_code/user_code pair; `enrollPoll` is the device-side poll;
-  // `enrollPending` lists requests waiting for director approval;
-  // `enrollApprove` and `enrollReject` are director actions.
+  // `enrollPending` lists requests waiting for a `members.manage` holder;
+  // `enrollApprove` and `enrollReject` require the same leaf.
   enroll: '/enroll',
   enrollPoll: '/enroll/poll',
   enrollPending: '/enroll/pending',

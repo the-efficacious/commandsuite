@@ -16,7 +16,7 @@
  *                     someone else.
  *
  * Permissions:
- *   admin             — full read/write/delete anywhere
+ *   members.manage    — full read/write/delete anywhere
  *   owner             — full read/write/delete under their home (first
  *                       path segment equals their user name)
  *   objective member  — full read/write/delete under
@@ -152,7 +152,7 @@ export interface WriteFileResult {
  * `isMember` returns true if `viewerName` is the originator, the
  * current assignee, or one of the watchers of `objectiveId`. The FS
  * store calls this whenever a path under `/objectives/<id>/...` is
- * read, written, or deleted by a non-admin viewer.
+ * read, written, or deleted by a viewer without `members.manage`.
  *
  * Optional at construction time — without a provider, the namespace
  * is silently treated as forbidden for non-admins (read/write 403),
@@ -166,7 +166,7 @@ export interface FilesystemStore {
   stat(path: string, viewer: ViewerContext): FsEntry | null;
   list(path: string, viewer: ViewerContext): FsEntry[];
   listShared(viewer: ViewerContext): FsEntry[];
-  /** Admin-only flat enumeration of every file across the team. */
+  /** `members.manage`-only flat enumeration of every file across the team. */
   listAllFiles(viewer: ViewerContext): FsEntry[];
 
   /**
@@ -377,7 +377,7 @@ class SqliteFilesystemStore implements FilesystemStore {
     const normalized = normalizePath(path);
 
     if (normalized === ROOT_PATH) {
-      // Root listing: directors see every home; everyone else sees only
+      // Root listing: `members.manage` holders see every home; everyone else sees only
       // their own. We query all top-level directories and filter rather
       // than eagerly materializing homes for every user on the team.
       const rows = this.listHomesStmt.all() as unknown as FsEntryRow[];
@@ -423,14 +423,14 @@ class SqliteFilesystemStore implements FilesystemStore {
   }
 
   /**
-   * Flat list of every file across every home, newest first. Admin-only —
+   * Flat list of every file across every home, newest first. `members.manage` only —
    * the existing tree navigation under `/<owner>/` is the right path
-   * for non-directors, who shouldn't see the global file list. Throws
+   * for callers without `members.manage`, who shouldn't see the global file list. Throws
    * `forbidden` if the caller lacks `members.manage`.
    */
   listAllFiles(viewer: ViewerContext): FsEntry[] {
     if (!viewer.permissions.includes('members.manage')) {
-      throw new FsError('forbidden', 'admin permission required to list all files');
+      throw new FsError('forbidden', 'members.manage is required to list all member files');
     }
     const rows = this.listAllFilesStmt.all() as unknown as FsEntryRow[];
     return rows.map((r) => this.withCapability(rowToEntry(r), viewer));

@@ -1,13 +1,13 @@
 /**
- * PendingEnrollments — admin view of every device-code enrollment
+ * PendingEnrollments — `members.manage` view of every device-code enrollment
  * currently waiting for approval.
  *
- * Designed to live under the Members admin panel so directors see
+ * Designed to live under member management so approvers see
  * "two operators are waiting for approval right now" the same place
  * they manage memberships. Each row links to `/enroll?code=…` for
  * the full approval flow (including bind-vs-create choice and
  * permission set), with an inline Reject button for the easy case
- * where a director recognizes the request as bogus.
+ * where an approver recognizes the request as bogus.
  *
  * Auto-refreshes every 5s while mounted — pending rows have a 5min
  * TTL, so directors notice expirations within one tick. Manual
@@ -80,7 +80,7 @@ export function PendingEnrollments({ style }: { style?: string }) {
   const err = error.value;
 
   // Don't render the section at all when there's nothing pending —
-  // a director shouldn't see an empty card for a feature they don't
+  // an approver shouldn't see an empty card for a feature they don't
   // currently need. Manual reload on the panel's main eyebrow row
   // refreshes the membership list, which calls this too.
   if (list !== null && list.length === 0 && err === null) {

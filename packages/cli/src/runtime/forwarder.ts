@@ -403,7 +403,7 @@ async function forwardMessage(
   if (message.title) meta.title = message.title;
   // `target` only makes sense for true DMs. On channel posts the
   // per-recipient `to` stamp is the agent itself, so surfacing it
-  // would be misleading ("from=director, target=me" reads like a DM).
+  // would be misleading ("from=sender, target=me" reads like a DM).
   if (thread === 'dm' && message.to) meta.target = message.to;
   if (channelId !== null) {
     meta.channel = channelId;

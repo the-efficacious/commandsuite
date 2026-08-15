@@ -4,12 +4,12 @@
  * RFC 8628 device authorization grant, adapted for csuite's identity
  * model (broker-as-IdP, members instead of OAuth scopes):
  *
- *   1. Operator runs `csuite connect` on the device; CLI POSTs /enroll.
+ *   1. A person runs `csuite connect` on the device; CLI POSTs /enroll.
  *      Server mints (deviceCode, userCode), inserts a pending row,
  *      returns both plus expires_in / interval.
  *   2. CLI displays the userCode + verification URI; polls
  *      /enroll/poll with deviceCode every `interval` seconds.
- *   3. Director, already logged in via TOTP/session, visits the
+ *   3. A `members.manage` holder, already logged in via TOTP/session, visits the
  *      verification URI, types the userCode, picks bind-or-create
  *      and any role/permission/label fields. Server marks the row
  *      `approved`, mints a token row, KEK-wraps the plaintext into
@@ -22,11 +22,11 @@
  *     can't replay enrollments
  *   - userCode in canonical 8-char Crockford-base32 uppercase form
  *   - source_ip / source_ua at /enroll time (display-only, helps
- *     a director spot an unexpected request)
+ *     an approver spot an unexpected request)
  *   - label_hint, then the actual label after approval
  *   - approve mode + creation args (JSON) so a `mode='create'`
  *     approval can re-derive the new member at poll-time without
- *     re-asking the director
+ *     re-asking the approver
  *   - issued_token_id (stable handle for revoke later) and
  *     issued_token_ct (KEK-wrapped plaintext for one-shot delivery)
  *
@@ -50,8 +50,8 @@ export type Kek = Buffer;
  * Enrollment-flow TTL. RFC 8628 §3.2 says expires_in is "RECOMMENDED"
  * — picked 5 min to match the GitHub `gh auth login` window, which
  * operators are already used to. The window covers the full flow:
- * mint → director approve → device poll once after approval. 5 min
- * is plenty for a director who's already in the broker UI.
+ * mint → member-manager approval → device poll once after approval. 5 min
+ * is plenty for an approver who's already in the broker UI.
  */
 export const ENROLLMENT_TTL_MS = 5 * 60 * 1000;
 
@@ -529,7 +529,7 @@ export class EnrollmentStore {
 
   /**
    * List all currently-pending (and not-yet-expired) enrollment
-   * rows, oldest first. Used by the director's pending-approvals
+   * rows, oldest first. Used by the pending-approvals
    * panel.
    */
   listPending(): EnrollmentRow[] {

@@ -9,7 +9,7 @@
  * tagged block so the model reads it as ambient team signal, not a
  * fresh operator request:
  *
- *   <channel kind="chat" from="director" thread="primary" ts="...">
+ *   <channel kind="chat" from="teammate" thread="primary" ts="...">
  *   ...body...
  *   </channel>
  */

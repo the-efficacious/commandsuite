@@ -1,10 +1,9 @@
 /**
  * Team config loading for the csuite server.
  *
- * A team config defines the team context, the permission presets, and
- * the members that make up the team. Each member carries a name, a
- * role (title + description), per-member permissions (preset name or
- * leaf), personal instructions, and a hashed bearer token. Humans vs
+ * The member model carries a name, a role (title + description),
+ * explicit permission leaves, personal instructions, and a hashed
+ * bearer token. Humans vs
  * agents is not a first-class distinction — members are just
  * members, and TOTP enrollment is optional for anyone.
  *
@@ -20,16 +19,12 @@
  *     "_comment": "...",
  *     "team": {
  *       "name": "demo-team",
- *       "context": "Ship the payment service. We own the full lifecycle...",
- *       "permissionPresets": {
- *         "admin":    ["team.manage", "members.manage", "objectives.manage", "activity.read"],
- *         "operator": ["objectives.manage"]
- *       }
+ *       "context": "Ship the payment service. We own the full lifecycle..."
  *     },
  *     "members": [
- *       { "name": "director-1",  "role": { "title": "director", "description": "Leads the team." },
+ *       { "name": "member-1",  "role": { "title": "member", "description": "Coordinates the team." },
  *         "instructions": "Approve objectives before they go to the team.",
- *         "permissions": ["admin"],
+ *         "permissions": ["team.manage", "members.manage", "objectives.create", "objectives.cancel", "objectives.reassign", "objectives.watch"],
  *         "tokenHash": "sha256:..." },
  *       { "name": "engineer-1", "role": { "title": "engineer", "description": "Ships code." },
  *         "instructions": "", "permissions": [],
@@ -37,9 +32,8 @@
  *     ]
  *   }
  *
- * `permissions` entries may be preset names (resolved via the team's
- * `permissionPresets`) or leaf permission strings; the server
- * validates each entry resolves.
+ * Current writes accept leaf permission strings. The database reader
+ * still resolves preset-era rows so upgrades do not strand members.
  */
 
 import { createHash, randomBytes } from 'node:crypto';
@@ -186,13 +180,6 @@ class MapMemberStore implements MemberStore {
 
   names(): string[] {
     return this.order.map((m) => m.name);
-  }
-
-  hasAdmin(): boolean {
-    for (const m of this.order) {
-      if (m.permissions.includes('members.manage')) return true;
-    }
-    return false;
   }
 
   addMember(input: AddMemberInput): LoadedMember {

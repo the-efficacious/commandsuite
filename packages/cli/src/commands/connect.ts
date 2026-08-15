@@ -10,7 +10,7 @@
  *   1. CLI POSTs /enroll → broker mints (deviceCode, userCode)
  *   2. CLI prints `userCode` + verification URL to the operator,
  *      then polls /enroll/poll every `interval` seconds
- *   3. Director, signed in via TOTP at the broker URL, types the
+ *   3. A `members.manage` holder, signed in via TOTP at the broker URL, types the
  *      code into the SPA and approves
  *   4. CLI's next poll resolves with the token; CLI persists it to the
  *      user-global auth store, scoped to the directory it ran in (or to
@@ -24,8 +24,8 @@
  *
  * Backward compatibility: `csuite connect` is additive. The existing
  * `--token` / `CSUITE_TOKEN` paths keep working unchanged. The wizard
- * still mints the first admin's bootstrap token directly (no
- * director exists yet to approve).
+ * still mints the first member's bootstrap token directly (no
+ * approver exists yet).
  */
 
 import { relative, resolve } from 'node:path';
@@ -38,7 +38,7 @@ export { UsageError };
 
 export interface ConnectCommandInput {
   url?: string;
-  /** Suggested label the director can accept or override on approve. */
+  /** Suggested label the approver can accept or override. */
   label?: string;
   /**
    * If true, skip writing `auth.json` and print the token to stdout
@@ -254,7 +254,7 @@ export async function runConnectCommand(
           );
         case 'access_denied': {
           const detail = outcome.description ? ` (${outcome.description})` : '';
-          throw new UsageError(`connect: rejected by director${detail}.`);
+          throw new UsageError(`connect: enrollment rejected${detail}.`);
         }
         case 'approved': {
           const { data } = outcome;
@@ -319,7 +319,7 @@ async function defaultPrompt(question: string): Promise<string> {
 /**
  * Default label hint when the operator didn't pass `--label`. Prefer
  * `$HOSTNAME` when set (the actual machine name); fall back to a
- * generic placeholder. The director can always override at approval.
+ * generic placeholder. The approver can always override it.
  */
 function defaultLabelHint(): string {
   const host = process.env.HOSTNAME?.trim();

@@ -1,5 +1,5 @@
 /**
- * TracePanel — admin-only view of captured LLM traces for an
+ * TracePanel — `activity.read`-gated view of captured LLM traces for a
  * objective.
  *
  * In the activity-stream architecture, an "objective trace" is a

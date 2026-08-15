@@ -59,7 +59,7 @@ bookkeeping, dispatch, monitoring, publishing. See
 npm install -g csuite
 
 csuite serve
-# First run walks you through setup: team name, your admin member,
+# First run walks you through setup: team name, your first member,
 # TOTP enrollment. Then → http://127.0.0.1:8717 — sign in with your
 # TOTP code.
 ```

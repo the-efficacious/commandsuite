@@ -1,9 +1,9 @@
 /**
- * MemberAdminForm — the per-member admin controls.
+ * MemberAdminForm — permission-gated controls for one member.
  *
- * Role title edit, perms preset, rotate token, enroll TOTP, delete.
+ * Role title edit, permission leaves, rotate token, enroll TOTP, delete.
  * Used inside MemberProfile's Manage tab and inside MembersPanel's
- * list rows — one source of truth for "how does an admin mutate a
+ * list rows — one source of truth for "how does a member manager mutate a
  * member."
  *
  * Mutations call the SDK directly; parents pass `onChanged` to refresh
@@ -14,7 +14,7 @@
  */
 
 import { signal } from '@preact/signals';
-import type { Member, Permission, PermissionPresets } from 'csuite-sdk/types';
+import type { Member, Permission } from 'csuite-sdk/types';
 import { useState } from 'preact/hooks';
 import { getClient } from '../../lib/client.js';
 import { confirmDialog } from '../../lib/confirm.js';
@@ -31,7 +31,7 @@ import type { Reveal } from './Reveal.js';
 //   - roster  (presence + Teammate[] everywhere in the sidebar)
 //   - instructions (teammates + the viewer's own permissions)
 // instructions especially — it was booted once at Shell mount and used
-// to be stale after every mutation, which broke isLastAdmin and any
+// to be stale after every mutation, which broke the sole-manager guard and any
 // other caller that read `instructions.value.teammates`.
 async function refreshSharedStores(): Promise<void> {
   await Promise.allSettled([loadRoster(), loadInstructions()]);
@@ -39,9 +39,8 @@ async function refreshSharedStores(): Promise<void> {
 
 export interface MemberAdminFormProps {
   member: Member;
-  presets: PermissionPresets;
-  /** Self-serve guard — true if this is the last admin on the team. Disables demote + delete. */
-  isLastAdmin: boolean;
+  /** True when this member is the sole holder of `members.manage`. */
+  isSoleMemberManager: boolean;
   /** True when viewer is this member. Delete gets an extra confirmation; no other restrictions. */
   isSelf: boolean;
   /** Called after any successful mutation so the parent refreshes its lists. */
@@ -66,8 +65,7 @@ async function withBusy<T>(key: string, fn: () => Promise<T>): Promise<T | null>
 
 export function MemberAdminForm({
   member,
-  presets,
-  isLastAdmin,
+  isSoleMemberManager,
   isSelf,
   onChanged,
   onReveal,
@@ -80,10 +78,8 @@ export function MemberAdminForm({
   const [instructions, setInstructions] = useState(member.instructions);
 
   async function onChangePermissions(next: Permission[]): Promise<void> {
-    if (isLastAdmin && !next.includes('members.manage')) {
-      alert(
-        'Cannot strip members.manage from the last admin. Promote another member to admin first.',
-      );
+    if (isSoleMemberManager && !next.includes('members.manage')) {
+      alert('Cannot remove members.manage from its sole holder. Grant it to another member first.');
       return;
     }
     await withBusy(`update:${rowKey}`, async () => {
@@ -181,8 +177,8 @@ export function MemberAdminForm({
   }
 
   async function onDelete(): Promise<void> {
-    if (isLastAdmin) {
-      alert('Cannot remove the last admin. Promote another member to admin first.');
+    if (isSoleMemberManager) {
+      alert('Cannot remove the sole members.manage holder. Grant it to another member first.');
       return;
     }
     if (isSelf) {
@@ -274,7 +270,7 @@ export function MemberAdminForm({
             into the agent's system prompt at session start. The broker
             versions the composed text and reports restart-pending on
             the roster, so this card shows the LIVE state for this
-            member rather than a standing warning an admin has to
+            member rather than a standing warning a manager has to
             evaluate themselves. */}
         {roster.value?.restartPending?.includes(member.name) === true ? (
           <div
@@ -300,7 +296,6 @@ export function MemberAdminForm({
           </span>
           <PermissionsEditor
             value={member.permissions}
-            presets={presets}
             onChange={(next) => void onChangePermissions(next)}
             disabled={disabled}
           />
@@ -331,9 +326,13 @@ export function MemberAdminForm({
             type="button"
             class="btn btn-ghost btn-sm"
             onClick={() => void onDelete()}
-            disabled={disabled || isLastAdmin}
+            disabled={disabled || isSoleMemberManager}
             style="color:var(--ef-lamp-alarm)"
-            title={isLastAdmin ? 'Cannot delete the last admin' : 'Delete this member'}
+            title={
+              isSoleMemberManager
+                ? 'Cannot delete the sole members.manage holder'
+                : 'Delete this member'
+            }
           >
             {busy === `delete:${rowKey}` ? '…' : 'Delete'}
           </button>

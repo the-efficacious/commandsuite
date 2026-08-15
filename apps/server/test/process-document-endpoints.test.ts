@@ -49,12 +49,14 @@ async function makeApp() {
     // Holds every OTHER permission. The gate is this leaf, not seniority.
     {
       name: 'andrewjon',
-      role: { title: 'director', description: '' },
+      role: { title: 'team lead', description: '' },
       permissions: [
         'team.manage',
         'members.manage',
-        'objectives.manage',
-        'objectives.manage',
+        'objectives.create',
+        'objectives.cancel',
+        'objectives.reassign',
+        'objectives.watch',
         'secrets.manage',
         'tools.manage',
       ],

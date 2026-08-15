@@ -1,5 +1,5 @@
 /**
- * End-to-end tests for the `/members/*` admin CRUD surface.
+ * End-to-end tests for the `members.manage` CRUD surface.
  *
  * Every test wires a fresh in-memory SQLite + stub `persistMembers`
  * through `createApp` so the full auth + schema + in-memory mutation
@@ -29,18 +29,7 @@ const AGENT_TOKEN = 'csuite_members_test_agent_token';
 const TEAM: Team = {
   name: 'members-team',
   context: '',
-  permissionPresets: {
-    admin: [
-      'team.manage',
-      'members.manage',
-      'objectives.manage',
-      'objectives.manage',
-      'objectives.manage',
-      'objectives.manage',
-      'activity.read',
-    ],
-    operator: ['objectives.manage'],
-  },
+  permissionPresets: {},
 };
 
 interface Harness {
@@ -48,6 +37,7 @@ interface Harness {
   persistMembers: ReturnType<typeof vi.fn>;
   broker: Broker;
   tokens: Awaited<ReturnType<typeof createTokenStoreFromMembers>>;
+  members: ReturnType<typeof createMemberStore>;
 }
 
 async function makeApp(): Promise<Harness> {
@@ -59,14 +49,14 @@ async function makeApp(): Promise<Harness> {
   const members = createMemberStore([
     {
       name: 'alice',
-      role: { title: 'director', description: '' },
+      role: { title: 'team lead', description: '' },
       permissions: ['members.manage'],
       token: ADMIN_TOKEN,
     },
     {
       name: 'bob',
       role: { title: 'manager', description: '' },
-      permissions: ['objectives.manage'],
+      permissions: ['objectives.create'],
       token: OPERATOR_TOKEN,
     },
     {
@@ -91,7 +81,7 @@ async function makeApp(): Promise<Harness> {
     persistMembers,
     logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   });
-  return { app, persistMembers, broker, tokens };
+  return { app, persistMembers, broker, tokens, members };
 }
 
 function authed(token: string): HeadersInit {
@@ -117,7 +107,7 @@ describe('GET /members', () => {
     expect(body.members.find((m) => m.name === 'alice')?.permissions).toContain('members.manage');
   });
 
-  it('returns the public Teammate[] projection for non-admins', async () => {
+  it('returns the public Teammate[] projection without members.manage', async () => {
     const { app } = await makeApp();
     const res = await app.request('/members', { headers: authed(AGENT_TOKEN) });
     expect(res.status).toBe(200);
@@ -133,7 +123,7 @@ describe('GET /members', () => {
 });
 
 describe('POST /members', () => {
-  it('creates a member and returns the plaintext token (admin only)', async () => {
+  it('creates a member and returns the plaintext token with members.manage', async () => {
     const { app, persistMembers, broker } = await makeApp();
     const res = await app.request('/members', {
       method: 'POST',
@@ -152,7 +142,7 @@ describe('POST /members', () => {
     expect(broker.hasMember('newbie')).toBe(true);
   });
 
-  it('rejects non-admins', async () => {
+  it('rejects callers without members.manage', async () => {
     const { app, persistMembers } = await makeApp();
     const res = await app.request('/members', {
       method: 'POST',
@@ -167,23 +157,34 @@ describe('POST /members', () => {
     expect(persistMembers).not.toHaveBeenCalled();
   });
 
-  it('resolves preset names in the permissions field', async () => {
-    const { app } = await makeApp();
+  it('stores an explicit copied leaf list', async () => {
+    const { app, members } = await makeApp();
     const res = await app.request('/members', {
       method: 'POST',
       headers: { ...authed(ADMIN_TOKEN), 'Content-Type': 'application/json' },
       body: JSON.stringify({
         name: 'helper',
         role: { title: 'manager', description: '' },
-        permissions: ['operator'],
+        permissions: [
+          'objectives.create',
+          'objectives.cancel',
+          'objectives.reassign',
+          'objectives.watch',
+        ],
       }),
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { member: Teammate; token: string };
-    expect(body.member.permissions).toContain('objectives.manage');
+    expect(body.member.permissions).toEqual([
+      'objectives.create',
+      'objectives.cancel',
+      'objectives.reassign',
+      'objectives.watch',
+    ]);
+    expect(members.findByName('helper')?.rawPermissions).toEqual(body.member.permissions);
   });
 
-  it('rejects unknown preset names', async () => {
+  it('rejects unknown permission names', async () => {
     const { app } = await makeApp();
     const res = await app.request('/members', {
       method: 'POST',
@@ -191,7 +192,7 @@ describe('POST /members', () => {
       body: JSON.stringify({
         name: 'broken',
         role: { title: 'engineer', description: '' },
-        permissions: ['nonexistent-preset'],
+        permissions: ['nonexistent.permission'],
       }),
     });
     expect(res.status).toBe(400);
@@ -244,17 +245,17 @@ describe('PATCH /members/:name', () => {
     expect(body.warning).toContain('use a secret reference');
   });
 
-  it('updates permissions via preset names', async () => {
-    const { app } = await makeApp();
+  it('updates permissions as explicit leaves', async () => {
+    const { app, members } = await makeApp();
     const res = await app.request('/members/scout', {
       method: 'PATCH',
       headers: { ...authed(ADMIN_TOKEN), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ permissions: ['operator'] }),
+      body: JSON.stringify({ permissions: ['objectives.watch'] }),
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as Member;
-    expect(body.permissions).toContain('objectives.manage');
-    expect(body.permissions).toContain('objectives.manage');
+    expect(body.permissions).toEqual(['objectives.watch']);
+    expect(members.findByName('scout')?.rawPermissions).toEqual(['objectives.watch']);
   });
 
   it('rejects callers without members.manage', async () => {
@@ -268,12 +269,12 @@ describe('PATCH /members/:name', () => {
     expect(persistMembers).not.toHaveBeenCalled();
   });
 
-  it('rejects an unknown preset name with 400', async () => {
+  it('rejects an unknown permission name with 400', async () => {
     const { app, persistMembers } = await makeApp();
     const res = await app.request('/members/scout', {
       method: 'PATCH',
       headers: { ...authed(ADMIN_TOKEN), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ permissions: ['ghost-preset'] }),
+      body: JSON.stringify({ permissions: ['ghost.permission'] }),
     });
     expect(res.status).toBe(400);
     expect(persistMembers).not.toHaveBeenCalled();
@@ -300,7 +301,7 @@ describe('PATCH /members/:name', () => {
     expect(res.status).toBe(400);
   });
 
-  it('refuses to strip members.manage from the last admin (409)', async () => {
+  it('refuses to strip members.manage from its sole holder (409)', async () => {
     const { app, persistMembers } = await makeApp();
     const res = await app.request('/members/alice', {
       method: 'PATCH',
@@ -311,15 +312,15 @@ describe('PATCH /members/:name', () => {
     expect(persistMembers).not.toHaveBeenCalled();
   });
 
-  it('allows stripping members.manage when another admin exists', async () => {
+  it('allows stripping members.manage when another holder exists', async () => {
     const { app } = await makeApp();
-    // Promote bob to admin first.
+    // Grant the exact capability to Bob first.
     await app.request('/members/bob', {
       method: 'PATCH',
       headers: { ...authed(ADMIN_TOKEN), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ permissions: ['admin'] }),
+      body: JSON.stringify({ permissions: ['members.manage'] }),
     });
-    // Now safely demote alice.
+    // Alice can now drop the capability safely.
     const res = await app.request('/members/alice', {
       method: 'PATCH',
       headers: { ...authed(ADMIN_TOKEN), 'Content-Type': 'application/json' },
@@ -330,7 +331,7 @@ describe('PATCH /members/:name', () => {
 });
 
 describe('DELETE /members/:name', () => {
-  it('refuses to delete the last admin', async () => {
+  it('refuses to delete the sole members.manage holder', async () => {
     const { app } = await makeApp();
     const res = await app.request('/members/alice', {
       method: 'DELETE',
@@ -359,7 +360,7 @@ describe('DELETE /members/:name', () => {
     expect(persistMembers).not.toHaveBeenCalled();
   });
 
-  it('deletes a non-admin and revokes their tokens (cascade)', async () => {
+  it('deletes a member without members.manage and revokes their tokens (cascade)', async () => {
     const { app, persistMembers, tokens } = await makeApp();
     expect((await tokens.listForMember('scout')).length).toBe(1);
     const res = await app.request('/members/scout', {
@@ -374,13 +375,13 @@ describe('DELETE /members/:name', () => {
     expect(followup.status).toBe(401);
   });
 
-  it('lets a non-last admin be deleted', async () => {
+  it('lets one of multiple members.manage holders be deleted', async () => {
     const { app } = await makeApp();
-    // Promote bob to admin so alice → admin → 2 admins.
+    // Grant Bob the leaf so two holders remain before deletion.
     await app.request('/members/bob', {
       method: 'PATCH',
       headers: { ...authed(ADMIN_TOKEN), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ permissions: ['admin'] }),
+      body: JSON.stringify({ permissions: ['members.manage'] }),
     });
     const res = await app.request('/members/bob', {
       method: 'DELETE',

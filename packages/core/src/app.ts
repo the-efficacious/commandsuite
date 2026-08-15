@@ -214,9 +214,9 @@ export interface AppOptions {
   enrollments?: EnrollmentStore;
   sessions: SessionStore;
   /**
-   * DB-backed team config + permission preset store. Replaces the
+   * DB-backed team config store. Replaces the
    * static `team: Team` snapshot — handlers that need fresh team data
-   * (instruction packet, role/preset resolution, permission-preset CRUD) call
+   * (instruction packet and legacy stored-permission resolution) call
    * `teamStore.getTeam()` so a `PATCH /team` from another caller is
    * reflected on the next read.
    */
@@ -2130,7 +2130,7 @@ export function createApp(options: AppOptions): CreatedApp {
       const member = c.get('member');
       const source = toolSources.getBySlug(c.req.param('slug'));
       if (!source) return c.json({ error: 'no such tool source' }, 404);
-      const isAdmin = hasPermission(member.permissions, 'tools.manage');
+      const canManageTools = hasPermission(member.permissions, 'tools.manage');
       const tools =
         source.kind === 'custom'
           ? toolSources.listCustomTools(source.id)
@@ -2142,7 +2142,7 @@ export function createApp(options: AppOptions): CreatedApp {
       return c.json({
         source: summarizeSource(source, member.name),
         tools,
-        ...(isAdmin ? { boundMembers: toolSources.listBindings(source.id) } : {}),
+        ...(canManageTools ? { boundMembers: toolSources.listBindings(source.id) } : {}),
       });
     });
 
@@ -2708,10 +2708,10 @@ export function createApp(options: AppOptions): CreatedApp {
       const member = c.get('member');
       const secret = secrets.getBySlug(c.req.param('slug'));
       if (!secret) return c.json({ error: 'no such secret' }, 404);
-      const isAdmin = hasPermission(member.permissions, 'secrets.manage');
+      const canManageSecrets = hasPermission(member.permissions, 'secrets.manage');
       return c.json({
         secret: summarizeSecret(secret, member.name),
-        ...(isAdmin ? { boundMembers: secrets.listBindings(secret.id) } : {}),
+        ...(canManageSecrets ? { boundMembers: secrets.listBindings(secret.id) } : {}),
       });
     });
 
@@ -3373,10 +3373,10 @@ export function createApp(options: AppOptions): CreatedApp {
     // surface is their business; the rest of the registry isn't).
     app.get(PATHS.notificationEndpoints, auth, (c) => {
       const member = c.get('member');
-      const isAdmin = hasPermission(member.permissions, 'notifications.manage');
+      const canManageNotifications = hasPermission(member.permissions, 'notifications.manage');
       const list = notifications
         .list()
-        .filter((e) => isAdmin || targetsMember(e, member.name))
+        .filter((e) => canManageNotifications || targetsMember(e, member.name))
         .map(summarizeEndpoint);
       return c.json({ endpoints: list });
     });
@@ -3438,8 +3438,8 @@ export function createApp(options: AppOptions): CreatedApp {
       const member = c.get('member');
       const endpoint = notifications.getBySlug(c.req.param('slug'));
       if (!endpoint) return c.json({ error: 'no such endpoint' }, 404);
-      const isAdmin = hasPermission(member.permissions, 'notifications.manage');
-      if (!isAdmin && !targetsMember(endpoint, member.name)) {
+      const canManageNotifications = hasPermission(member.permissions, 'notifications.manage');
+      if (!canManageNotifications && !targetsMember(endpoint, member.name)) {
         return c.json({ error: 'requires notifications.manage' }, 403);
       }
       return c.json({ endpoint: summarizeEndpoint(endpoint) });
@@ -3799,8 +3799,8 @@ export function createApp(options: AppOptions): CreatedApp {
   // Registered iff an ObjectivesStore is provided — keeps chat-only
   // tests clean. Permission guards enforce the following access matrix:
   //   agent                 — see/update/complete objectives assigned to self
-  //   operator / lead-agent — agent + create + cancel own-originated + see team
-  //   admin                 — any mutation, see everything
+  // Elevated objective powers are independent leaves; assignee and
+  // originator relationship bypasses remain baseline rights.
   //
   // All mutations publish an `ObjectiveEvent` through the broker on
   // thread key `obj:<id>` so web clients + the link can react in
@@ -3809,8 +3809,8 @@ export function createApp(options: AppOptions): CreatedApp {
   if (objectives !== undefined) {
     /**
      * The set of names that belong to an objective's thread.
-     * Originator + assignee + explicit watchers + every admin
-     * ("admins see everything in their team"). For a `reassigned`
+     * Originator + assignee + explicit watchers + every `members.manage`
+     * holder. For a `reassigned`
      * event, also include the previous assignee so they know the
      * objective left their plate. For a `watcher_removed` event,
      * also include the removed watcher so they get the exit
@@ -3827,7 +3827,7 @@ export function createApp(options: AppOptions): CreatedApp {
       const names = new Set<string>([objective.assignee, objective.originator]);
       for (const w of objective.watchers) names.add(w);
       // Members with `members.manage` are implicit thread participants
-      // on every objective (observable-by-default for admins).
+      // on every objective (observable-by-default for member managers).
       for (const m of members.members()) {
         if (m.permissions.includes('members.manage')) names.add(m.name);
       }
@@ -3906,8 +3906,8 @@ export function createApp(options: AppOptions): CreatedApp {
     // GET /objectives?assignee=&status=
     //
     // Agents see objectives they have any relationship with:
-    // assigned, originated, or watching. Admins / operators /
-    // lead-agents see team-wide. When an agent passes an explicit
+    // assigned, originated, or watching. `objectives.create` holders
+    // see team-wide so they can coordinate new work. When an agent passes an explicit
     // `assignee` filter, it must match their own name — they can't
     // fish for other agents' plates. The watching filter has no
     // equivalent explicit param today; watched objectives appear in
@@ -3934,14 +3934,14 @@ export function createApp(options: AppOptions): CreatedApp {
           .list(filter.status ? { status: filter.status } : {})
           .filter((o) => o.assignee === name || o.originator === name || o.watchers.includes(name));
 
-      const canListAny = hasPermission(member.permissions, 'objectives.manage');
+      const canListAny = hasPermission(member.permissions, 'objectives.create');
       if (!canListAny) {
         if (
           (filter.assignee && filter.assignee !== member.name) ||
           (filter.related && filter.related !== member.name)
         ) {
           return c.json(
-            { error: 'members without objectives.manage may only list their own objectives' },
+            { error: 'members without objectives.create may only list their own objectives' },
             403,
           );
         }
@@ -3950,7 +3950,7 @@ export function createApp(options: AppOptions): CreatedApp {
       }
       // `related` is the explicit relationship question and applies to
       // privileged callers too. Without it a privileged caller keeps the
-      // team-wide view the director dashboard depends on.
+      // team-wide view the objective-creation surface depends on.
       if (filter.related) {
         return c.json({ objectives: relatedTo(filter.related) });
       }
@@ -3960,7 +3960,7 @@ export function createApp(options: AppOptions): CreatedApp {
     // GET /objectives/:id
     //
     // A thread participant (assignee, originator, watcher) can always
-    // view. Anyone with `objectives.manage` can view any.
+    // view. Anyone with `objectives.create` can view any.
     app.get(`${PATHS.objectives}/:id`, auth, (c) => {
       const member = c.get('member');
       const id = c.req.param('id');
@@ -3970,21 +3970,21 @@ export function createApp(options: AppOptions): CreatedApp {
         obj.assignee === member.name ||
         obj.originator === member.name ||
         obj.watchers.includes(member.name);
-      if (!isParticipant && !hasPermission(member.permissions, 'objectives.manage')) {
+      if (!isParticipant && !hasPermission(member.permissions, 'objectives.create')) {
         return c.json(
-          { error: 'not a thread participant; viewing requires objectives.manage' },
+          { error: 'not a thread participant; viewing requires objectives.create' },
           403,
         );
       }
       return c.json({ objective: obj, events: objectives.events(id) });
     });
 
-    // POST /objectives — requires `objectives.manage`.
+    // POST /objectives — requires `objectives.create`.
     app.post(PATHS.objectives, auth, async (c) => {
       const member = c.get('member');
-      if (!hasPermission(member.permissions, 'objectives.manage')) {
+      if (!hasPermission(member.permissions, 'objectives.create')) {
         return c.json(
-          { error: 'creating objectives requires the objectives.manage permission' },
+          { error: 'creating objectives requires the objectives.create permission' },
           403,
         );
       }
@@ -4073,9 +4073,9 @@ export function createApp(options: AppOptions): CreatedApp {
 
     // PATCH /objectives/:id — one mutation surface, gated per field
     // group rather than per route:
-    //   status / blockReason — the assignee, or `objectives.manage`
-    //   assignee (reassign)  — `objectives.manage`
-    //   watcher changes      — the originator, or `objectives.manage`
+    //   status / blockReason — the assignee, or `objectives.cancel`
+    //   assignee (reassign)  — `objectives.reassign`
+    //   watcher changes      — the originator, or `objectives.watch`
     // A payload touching several groups must satisfy every gate it
     // touches, and is applied atomically-enough: gates are all checked
     // before any store call runs.
@@ -4090,24 +4090,31 @@ export function createApp(options: AppOptions): CreatedApp {
         return c.json({ error: 'invalid update payload', details: parsed.error.issues }, 400);
       }
       const input = parsed.data;
-      const canManage = hasPermission(member.permissions, 'objectives.manage');
       const isOriginator = current.originator === member.name;
 
       const touchesStatus = input.status !== undefined || input.blockReason !== undefined;
       const touchesAssignee = input.assignee !== undefined;
       const touchesWatchers = input.addWatchers !== undefined || input.removeWatchers !== undefined;
 
-      if (touchesStatus && current.assignee !== member.name && !canManage) {
+      if (
+        touchesStatus &&
+        current.assignee !== member.name &&
+        !hasPermission(member.permissions, 'objectives.cancel')
+      ) {
         return c.json(
-          { error: 'only the assignee or a member with objectives.manage may update status' },
+          { error: 'only the assignee or a member with objectives.cancel may update status' },
           403,
         );
       }
-      if (touchesAssignee && !canManage) {
-        return c.json({ error: 'changing the assignee requires objectives.manage' }, 403);
+      if (touchesAssignee && !hasPermission(member.permissions, 'objectives.reassign')) {
+        return c.json({ error: 'changing the assignee requires objectives.reassign' }, 403);
       }
-      if (touchesWatchers && !isOriginator && !canManage) {
-        return c.json({ error: 'watcher changes require originator or objectives.manage' }, 403);
+      if (
+        touchesWatchers &&
+        !isOriginator &&
+        !hasPermission(member.permissions, 'objectives.watch')
+      ) {
+        return c.json({ error: 'watcher changes require originator or objectives.watch' }, 403);
       }
       if (touchesAssignee && !members.findByName(input.assignee as string)) {
         return c.json({ error: `unknown assignee: ${input.assignee}` }, 400);
@@ -4194,15 +4201,15 @@ export function createApp(options: AppOptions): CreatedApp {
       }
     });
 
-    // POST /objectives/:id/cancel — originator, or any member with `objectives.manage`.
+    // POST /objectives/:id/cancel — originator, or any member with `objectives.cancel`.
     app.post(`${PATHS.objectives}/:id/cancel`, auth, async (c) => {
       const member = c.get('member');
       const id = c.req.param('id');
       const current = objectives.get(id);
       if (!current) return c.json({ error: `no such objective: ${id}` }, 404);
       const isOriginator = current.originator === member.name;
-      if (!(isOriginator || hasPermission(member.permissions, 'objectives.manage'))) {
-        return c.json({ error: 'cancel requires originator or objectives.manage permission' }, 403);
+      if (!(isOriginator || hasPermission(member.permissions, 'objectives.cancel'))) {
+        return c.json({ error: 'cancel requires originator or objectives.cancel permission' }, 403);
       }
       const raw = await c.req.json().catch(() => ({}));
       const parsed = CancelObjectiveRequestSchema.safeParse(raw);
@@ -4510,13 +4517,13 @@ export function createApp(options: AppOptions): CreatedApp {
   // markers here as they happen. Three endpoints:
   //
   //   POST /members/:name/activity          — self upload only
-  //   GET  /members/:name/activity          — self OR admin
-  //   GET  /members/:name/activity/stream   — WebSocket live tail, self OR admin
+  //   GET  /members/:name/activity          — self OR activity.read
+  //   GET  /members/:name/activity/stream   — WebSocket live tail, self OR activity.read
   //
   // The POST-self gate is strict: a user can only append its OWN
   // activity, regardless of permissions. Admins read via GET; they
   // don't write on behalf of other users. The GET gate allows
-  // self (so the user can introspect its own history) OR admin
+  // self (so the user can introspect its own history) OR activity.read
   // (for team-wide observability).
   if (activityStore) {
     // Note: `AGENT_PATHS.activity` URL-encodes its argument (for
@@ -4709,7 +4716,7 @@ export function createApp(options: AppOptions): CreatedApp {
   // ─── User management endpoints ───────────────────────────────
   //
   // `GET /users` is tri-auth — every teammate can see who's on the
-  // team. Mutating verbs are admin-only and require `persistMembers`
+  // team. Mutating verbs require `members.manage` and `persistMembers`
   // to be wired; without it, mutations would drift in-memory and lose
   // on restart so we 501 instead.
   //
@@ -4784,71 +4791,6 @@ export function createApp(options: AppOptions): CreatedApp {
     }
   });
 
-  // ─── Permission preset CRUD ──────────────────────────────────
-  //
-  // Presets are referenced by raw_permissions on members. A change
-  // here re-resolves all members that reference the preset on the
-  // next read — no admin re-resolve sweep required. Deleting a preset
-  // that members reference silently removes those leaves on next read;
-  // the response includes a `referencedBy` list so the caller can
-  // confirm the impact.
-
-  app.get(PATHS.teamPresets, auth, (c) => {
-    return c.json({ presets: teamStore.getPresets() });
-  });
-
-  app.put(`${PATHS.teamPresets}/:name`, auth, async (c) => {
-    const caller = c.get('member');
-    if (!hasPermission(caller.permissions, 'team.manage')) {
-      return c.json({ error: 'managing presets requires the team.manage permission' }, 403);
-    }
-    const presetName = c.req.param('name');
-    const body = (await c.req.json().catch(() => null)) as { permissions?: unknown } | null;
-    if (
-      body === null ||
-      !Array.isArray(body.permissions) ||
-      body.permissions.some((p) => typeof p !== 'string')
-    ) {
-      return c.json({ error: 'body must be `{ permissions: string[] }`' }, 400);
-    }
-    try {
-      // Validate each entry resolves to a known leaf permission. We
-      // run it through resolvePermissions with an empty preset map so
-      // preset-of-preset isn't a thing (intentional — keeps the
-      // resolution graph flat and free of cycles).
-      const leaves = resolvePermissions(body.permissions as string[], {}, `preset '${presetName}'`);
-      teamStore.setPreset(presetName, leaves, caller.name);
-      logger.info('preset updated', {
-        preset: presetName,
-        leaves,
-        updatedBy: caller.name,
-      });
-      return c.json({ preset: { name: presetName, permissions: leaves } });
-    } catch (err) {
-      if (err instanceof MemberLoadError) return c.json({ error: err.message }, 400);
-      throw err;
-    }
-  });
-
-  app.delete(`${PATHS.teamPresets}/:name`, auth, (c) => {
-    const caller = c.get('member');
-    if (!hasPermission(caller.permissions, 'team.manage')) {
-      return c.json({ error: 'managing presets requires the team.manage permission' }, 403);
-    }
-    const presetName = c.req.param('name');
-    const referencedBy = teamStore.membersReferencingPreset(presetName, members);
-    const removed = teamStore.deletePreset(presetName);
-    if (!removed) {
-      return c.json({ error: `no such preset: ${presetName}` }, 404);
-    }
-    logger.info('preset deleted', {
-      preset: presetName,
-      referencedBy,
-      deletedBy: caller.name,
-    });
-    return c.json({ deleted: presetName, referencedBy });
-  });
-
   app.post(PATHS.members, auth, async (c) => {
     const member = c.get('member');
     if (!hasPermission(member.permissions, 'members.manage')) {
@@ -4884,7 +4826,10 @@ export function createApp(options: AppOptions): CreatedApp {
         name: parsed.data.name,
         role: parsed.data.role,
         instructions: parsed.data.instructions ?? '',
-        rawPermissions: [...parsed.data.permissions],
+        // Preset names are accepted as compatibility/template input,
+        // but member authority is persisted as leaves. A later preset
+        // edit must not silently change an existing member.
+        rawPermissions: [...resolvedPerms],
         permissions: resolvedPerms,
         token,
       });
@@ -4895,7 +4840,7 @@ export function createApp(options: AppOptions): CreatedApp {
     // resolver finds it on the very next request. Without this the
     // newly-minted plaintext would 401 because nothing in `tokens`
     // would match its hash. `origin = 'bootstrap'` matches the JSON-
-    // initiated path; the row is labeled 'initial' so directors
+    // initiated path; the row is labeled 'initial' so reviewers
     // listing tokens can see this is the one created at member-add.
     await tokens.insert({
       memberName: parsed.data.name,
@@ -4939,7 +4884,7 @@ export function createApp(options: AppOptions): CreatedApp {
     if (!parsed.success) {
       return c.json({ error: 'invalid update payload', details: parsed.error.issues }, 400);
     }
-    // Guard the last-admin invariant when changing permissions.
+    // Preserve at least one holder of the membership-management capability.
     let nextPermissions: Permission[] | undefined;
     let nextRaw: string[] | undefined;
     if (parsed.data.permissions !== undefined) {
@@ -4952,19 +4897,19 @@ export function createApp(options: AppOptions): CreatedApp {
       } catch (err) {
         return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
       }
-      nextRaw = [...parsed.data.permissions];
+      nextRaw = [...nextPermissions];
       const losingManage =
         target.permissions.includes('members.manage') &&
         !nextPermissions.includes('members.manage');
       if (losingManage) {
-        const adminCount = members
+        const managerCount = members
           .members()
           .filter((m) => m.permissions.includes('members.manage')).length;
-        if (adminCount <= 1) {
+        if (managerCount <= 1) {
           return c.json(
             {
               error:
-                'cannot remove members.manage from the last admin — promote someone else first',
+                'cannot remove members.manage from its sole holder — grant it to another member first',
             },
             409,
           );
@@ -5026,11 +4971,17 @@ export function createApp(options: AppOptions): CreatedApp {
     const target = members.findByName(parsedName.data);
     if (!target) return c.json({ error: `no such member: ${parsedName.data}` }, 404);
     if (target.permissions.includes('members.manage')) {
-      const adminCount = members
+      const managerCount = members
         .members()
         .filter((m) => m.permissions.includes('members.manage')).length;
-      if (adminCount <= 1) {
-        return c.json({ error: 'cannot delete the last admin — promote someone else first' }, 409);
+      if (managerCount <= 1) {
+        return c.json(
+          {
+            error:
+              'cannot delete the sole members.manage holder — grant it to another member first',
+          },
+          409,
+        );
       }
     }
     try {
@@ -5074,7 +5025,7 @@ export function createApp(options: AppOptions): CreatedApp {
     // member" — the canonical break-glass posture for "I think a
     // token leaked, restart from a clean slate." Members who want
     // to add a token without nuking peers should use the
-    // device-code flow (`csuite connect` → director approve) which
+    // device-code flow (`csuite connect` → member-manager approval) which
     // calls `tokens.insert` on its own.
     const token = generateBearerToken();
     const before = await tokens.listForMember(parsedName.data);
@@ -5218,7 +5169,7 @@ export function createApp(options: AppOptions): CreatedApp {
   //
   // Both gate on `members.manage` OR self. Plaintext is never
   // surfaced — that lives only in the issuance responses (rotate /
-  // device-code approve). Listing is what lets a director spot a
+  // device-code approve). Listing is what lets a member manager spot a
   // token they don't recognize before it's used, and revoke a
   // specific device's binding without nuking the rest.
 
@@ -5254,11 +5205,11 @@ export function createApp(options: AppOptions): CreatedApp {
       return c.json({ error: 'no such token' }, 404);
     }
     // Last-token guard: if revoking would leave the member with zero
-    // active tokens AND the member is the last remaining admin, the
-    // team would be lockable. Members with any non-admin role can
+    // active tokens AND the member is the sole `members.manage` holder,
+    // the team would be lockable. Other members can
     // still revoke their own last token (they'd just rely on TOTP /
     // device-code re-issue afterward). The strict-loss case mirrors
-    // the existing last-admin guard on member delete.
+    // the equivalent capability-holder guard on member delete.
     const remaining = (await tokens.listForMember(parsedName.data)).filter((t) => t.id !== row.id);
     if (
       remaining.length === 0 &&
@@ -5268,7 +5219,7 @@ export function createApp(options: AppOptions): CreatedApp {
       return c.json(
         {
           error:
-            'cannot revoke the last token of the last admin — promote another member to admin first',
+            'cannot revoke the last token of the sole members.manage holder — grant it to another member first',
         },
         409,
       );
@@ -5284,16 +5235,16 @@ export function createApp(options: AppOptions): CreatedApp {
 
   // ─── Device-code enrollment (RFC 8628-shaped) ─────────────────
   //
-  // Five endpoints implement the gh-auth-style "operator types a
-  // short code, director approves" flow:
+  // Five endpoints implement the gh-auth-style "a person types a
+  // short code, a members.manage holder approves" flow:
   //
   //   POST   /enroll          — anonymous; mint device_code/user_code
   //   POST   /enroll/poll     — anonymous; CLI polls with device_code
-  //   GET    /enroll/pending  — director; list pending requests
-  //   POST   /enroll/approve  — director; approve a user_code
-  //   POST   /enroll/reject   — director; reject a user_code
+  //   GET    /enroll/pending  — members.manage; list pending requests
+  //   POST   /enroll/approve  — members.manage; approve a user_code
+  //   POST   /enroll/reject   — members.manage; reject a user_code
   //
-  // The director endpoints gate on `members.manage` (same as member
+  // The approval endpoints gate on `members.manage` (same as member
   // CRUD), since approval can mint a new member with arbitrary
   // role/permissions.
   //
@@ -5592,7 +5543,7 @@ export function createApp(options: AppOptions): CreatedApp {
             name: parsed.data.memberName,
             role: parsed.data.role,
             instructions: parsed.data.instructions,
-            rawPermissions: [...parsed.data.permissions],
+            rawPermissions: [...resolvedPerms],
             permissions: resolvedPerms,
             token: placeholder,
           });
@@ -5767,8 +5718,8 @@ export function createApp(options: AppOptions): CreatedApp {
       return c.json({ entries });
     });
 
-    // `/fs/all` — admin-only flat enumeration of every file in every
-    // home, newest-first. Non-admins use the per-home tree under
+    // `/fs/all` — `members.manage`-gated flat enumeration of every file in every
+    // home, newest-first. Other members use the per-home tree under
     // `/<owner>/...` for their own files and `/fs/shared` for the
     // grants other members have given them.
     app.get(PATHS.fsAll, auth, (c) => {

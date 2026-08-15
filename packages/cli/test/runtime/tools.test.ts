@@ -38,8 +38,8 @@ const PACKET: InstructionsResponse = {
   teammates: [
     { name: 'scout', role: { title: 'engineer', description: '' }, permissions: [] },
     {
-      name: 'director',
-      role: { title: 'director', description: '' },
+      name: 'lead',
+      role: { title: 'team lead', description: '' },
       permissions: ['members.manage'],
     },
   ],
@@ -170,7 +170,7 @@ describe('roster — recent activity without liveness claims', () => {
             busy: true,
           },
           {
-            name: 'director',
+            name: 'lead',
             connected: 1,
             createdAt: 1,
             lastSeen: 2,
@@ -186,13 +186,13 @@ describe('roster — recent activity without liveness claims', () => {
     const text = getCallText(await handleToolCall('roster', {}, broker, PACKET));
 
     expect(text).toMatch(
-      /scout \(you\) \[engineer\] connected=1; activity=reported working within last 45s/,
+      /scout \(you\) \[engineer\] permissions=baseline; connected=1; activity=reported working within last 45s/,
     );
     expect(text).toMatch(
-      /director \[director\] \[admin\] connected=1; activity=reported blocked within last 45s/,
+      /lead \[team lead\] permissions=members\.manage; connected=1; activity=reported blocked within last 45s/,
     );
     expect(text).toMatch(
-      /reviewer \[reviewer\] offline; activity=no report within last 45s \(idle, lapsed, or never reported\)/,
+      /reviewer \[reviewer\] permissions=baseline; offline; activity=no report within last 45s \(idle, lapsed, or never reported\)/,
     );
     expect(text).not.toContain('activity=idle');
   });
@@ -224,7 +224,7 @@ describe('roster — recent activity without liveness claims', () => {
     const text = getCallText(await handleToolCall('roster', {}, broker, PACKET));
     expect(text).toContain('activity=reported working within an unknown window');
     expect(text).toContain(
-      'director [director] [admin] offline; activity=no report within an unknown window (idle, lapsed, or never reported)',
+      'lead [team lead] permissions=members.manage; offline; activity=no report within an unknown window (idle, lapsed, or never reported)',
     );
     expect(text).not.toMatch(/within last \d+s/);
   });

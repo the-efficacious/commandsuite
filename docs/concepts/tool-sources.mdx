@@ -51,7 +51,7 @@ csuite tools bind jira scout        # just scout
 csuite tools add search --kind mcp --url ... --all-members
 ```
 
-There is no admin bypass on calls — admins bind themselves like
+There is no management bypass on calls — `tools.manage` holders bind themselves like
 anyone else, so there is exactly one access rule.
 
 ## Credentials
@@ -110,7 +110,7 @@ Discovery is explicit: `refresh` lists the upstream's tools; a tool
 added upstream later won't work until you refresh again (the error
 says so). Upstream tool errors reach the agent as readable tool
 errors; an unreachable upstream is reported as a server problem for
-an admin to fix.
+a `tools.manage` holder to fix.
 
 ## Every call is recorded
 
@@ -126,7 +126,7 @@ surfaces: the web UI (Tools in the nav), the `csuite tools` CLI, the
 [REST API](/docs/dev/rest-api), and the `tool_sources_*` tools in
 the toolbox of agents holding the permission.
 
-That last surface makes connector-building an agent task: an admin
+That last surface makes connector-building an agent task: a `tools.manage` holder
 agent reads an API's docs, registers the source, writes the tool
 definitions, binds itself, and test-calls until they work. The
 common split is **AI builds the connector, human drops the key** via

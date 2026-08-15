@@ -5,7 +5,7 @@
  */
 
 import type { Member, Permission, Role, Teammate } from 'csuite-sdk/types';
-import { LEGACY_PERMISSION_ALIASES, PERMISSIONS } from 'csuite-sdk/types';
+import { LEGACY_PERMISSION_EXPANSIONS, PERMISSIONS } from 'csuite-sdk/types';
 import { z } from 'zod';
 
 /**
@@ -145,7 +145,7 @@ export class MemberLoadError extends Error {
 
 /**
  * Expand a raw permissions list (preset names + leaves) against the
- * team's permission presets into a flat, deduplicated array of leaf
+ * preset-era named bundles into a flat, deduplicated array of leaf
  * permissions. Unknown names throw `MemberLoadError` with the
  * offending entry called out.
  */
@@ -156,20 +156,26 @@ export function resolvePermissions(
 ): Permission[] {
   const set = new Set<Permission>();
   for (const entry of raw) {
-    // Configs written under the old vocabulary keep loading: a
-    // retired leaf resolves to its modern replacement before the
-    // unknown-name check can reject it.
-    const canonical = LEGACY_PERMISSION_ALIASES[entry] ?? entry;
-    if ((PERMISSIONS as readonly string[]).includes(canonical)) {
-      set.add(canonical as Permission);
+    if ((PERMISSIONS as readonly string[]).includes(entry)) {
+      set.add(entry as Permission);
+      continue;
+    }
+    const expansion = LEGACY_PERMISSION_EXPANSIONS[entry];
+    if (expansion) {
+      for (const leaf of expansion) set.add(leaf);
       continue;
     }
     const presetLeaves = presets[entry];
     if (presetLeaves) {
-      // Stored presets can predate the consolidation too — map each
-      // leaf, not only direct entries.
+      // Stored presets can carry the short-lived aggregate too —
+      // expand each leaf, not only direct member entries.
       for (const leaf of presetLeaves) {
-        set.add((LEGACY_PERMISSION_ALIASES[leaf] ?? leaf) as Permission);
+        const presetExpansion = LEGACY_PERMISSION_EXPANSIONS[leaf];
+        if (presetExpansion) {
+          for (const expanded of presetExpansion) set.add(expanded);
+        } else {
+          set.add(leaf);
+        }
       }
       continue;
     }
@@ -188,7 +194,7 @@ export interface AddMemberInput {
   name: string;
   role: Role;
   instructions: string;
-  /** Raw form — preset names or leaf permissions. Resolved by caller. */
+  /** Stored leaf list. Legacy rows may still contain bundle names. */
   rawPermissions: string[];
   /** Resolved leaf permissions (derived from `rawPermissions` + presets). */
   permissions: Permission[];
@@ -225,9 +231,6 @@ export interface MemberStore {
   /** Snapshot of every member in insertion order. */
   members(): LoadedMember[];
   names(): string[];
-  /** True iff at least one member has the `members.manage` permission. */
-  hasAdmin(): boolean;
-
   // Mutation surface — each method mutates store state atomically and
   // throws `MemberLoadError` on validation failure without leaving
   // partial state. The DB-backed store persists immediately; the

@@ -212,7 +212,7 @@ csuite enroll --member <name>
 ```
 
 re-enrolls the member with a fresh secret. Any member holding
-`members.manage` can run it, so an admin can always recover a
+`members.manage` can run it, so a member holding that leaf can always recover a
 locked-out teammate.
 
 ## Token rotation
@@ -241,7 +241,7 @@ it, run rotate again.
 
 ### `setup: <path> already points to a populated team`
 
-Setup refuses to overwrite — running it would mint a fresh admin
+Setup refuses to overwrite — running it would mint a fresh bootstrap member
 and invalidate every existing token. Two options:
 
 - **You really want to reset:** remove both the config file and the

@@ -52,7 +52,7 @@ export interface ActivityTracker {
   getActivity(name: string): ActivityState;
   /**
    * Back-compat convenience: `true` iff the member's activity is
-   * `working`. `blocked` is NOT busy — it means an operator should look.
+   * `working`. `blocked` is NOT busy — it means a person should look.
    */
   isBusy(name: string): boolean;
   /**

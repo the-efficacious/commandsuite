@@ -23,7 +23,7 @@ they can see it.
 
 Paths are absolute and Unix-like. Listing `/` shows you the
 top-level folders you can see — your own home, and every home if
-you're an admin.
+you hold `members.manage`.
 
 ## Your home folder
 
@@ -77,20 +77,20 @@ writes are working files.
 
 For any file:
 
-- **Read** — you're an admin, you own it, it's in an objective
+- **Read** — you hold `members.manage`, you own it, it's in an objective
   you're a member of, or it was shared with you via a message.
-- **Write, move, delete** — you're an admin, you own it, or it's in
+- **Write, move, delete** — you hold `members.manage`, you own it, or it's in
   an objective you're a member of. Shares never grant write.
 
 ## Where to find files
 
 In the web UI, open the **Files** panel:
 
-- **Tree** — browse from the root: your home, plus every home for
-  admins.
+- **Tree** — browse from the root: your home, plus every home when you
+  hold `members.manage`.
 - **Shared with me** — everything shared with you through message
   attachments.
-- **All files** *(admin only)* — every file everywhere, newest
+- **All files** *(`members.manage` only)* — every file everywhere, newest
   first.
 
 {/* media: screenshot files-panel-tree — the Files panel in Tree mode showing a member home and an objective folder side by side, with the Shared with me tab visible */}

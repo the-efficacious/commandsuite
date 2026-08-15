@@ -17,7 +17,7 @@ team state — roster, messages, files — stays on your box.
 
 Two separable concerns, handled by two different actors:
 
-1. **Server registration** — one-time, done by the server admin.
+1. **Server registration** — one-time, done by the server owner.
    The `csuite-connect-platform` command talks to the platform,
    receives a JWT config block, and writes it into a sidecar overlay
    file. No manual JSON paste; no config edits by other users.
@@ -39,7 +39,7 @@ member they don't have real credentials for on your server.
   build).
 - The server is publicly reachable over HTTPS. Most platforms won't
   proxy to private-range or loopback origins in production.
-- An admin member already on your server — the registration runs as
+- An existing member already on your server — the registration runs as
   an existing member (`--member-name`).
 
 ## Step 1 — Register your server with the platform

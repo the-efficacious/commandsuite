@@ -1,19 +1,22 @@
 /**
- * MembersPanel — admin-only list of every team member with an
+ * MembersPanel — `members.manage`-gated list of every team member with an
  * entrypoint to create new ones.
  *
- * Per-member admin (role edit, rotate token, TOTP, delete) has moved
+ * Per-member management (role edit, rotate token, TOTP, delete) has moved
  * to the Manage tab on `/@:name`. This panel is just "who is on the
  * team" plus the Add Member flow. Rows link through to the profile.
  */
 
 import { signal } from '@preact/signals';
-import type { Member, Permission, PermissionPresets } from 'csuite-sdk/types';
+import type { Member, Permission } from 'csuite-sdk/types';
 import { hasPermission } from 'csuite-sdk/types';
 import { useEffect } from 'preact/hooks';
 import { getClient } from '../lib/client.js';
 import { instructions } from '../lib/instructions.js';
-import { summarizePermissions as summarize } from '../lib/permissions.js';
+import {
+  MEMBER_CREATION_PERMISSION_TEMPLATES,
+  summarizePermissions as summarize,
+} from '../lib/permissions.js';
 import { loadRoster } from '../lib/roster.js';
 import { selectMemberProfile } from '../lib/view.js';
 import { ArrowRight } from './icons/index.js';
@@ -133,7 +136,7 @@ export function MembersPanel() {
           />
         )}
 
-      {formOpen.value && <CreateMemberForm presets={b.team.permissionPresets} />}
+      {formOpen.value && <CreateMemberForm />}
 
       <PendingEnrollments style="margin-bottom:18px" />
 
@@ -152,7 +155,6 @@ export function MembersPanel() {
                 member={m}
                 isSelf={m.name === b.name}
                 isLast={idx === list.length - 1}
-                presets={b.team.permissionPresets}
               />
             ))}
           </ul>
@@ -166,15 +168,13 @@ function MemberListRow({
   member,
   isSelf,
   isLast,
-  presets,
 }: {
   member: Member;
   isSelf: boolean;
   isLast: boolean;
-  presets: PermissionPresets;
 }) {
   const border = isLast ? '' : 'border-bottom:1px solid var(--ef-border);';
-  const summary = summarize(member.permissions, presets);
+  const summary = summarize(member.permissions);
   return (
     <li>
       <button
@@ -210,16 +210,12 @@ function MemberListRow({
   );
 }
 
-function badgeVariantFor(summary: {
-  kind: 'baseline' | 'preset' | 'custom';
-  isAdmin: boolean;
-}): string {
-  if (summary.isAdmin) return 'solid';
-  if (summary.kind === 'custom' || summary.kind === 'preset') return 'caution solid';
+function badgeVariantFor(summary: { kind: 'baseline' | 'custom' }): string {
+  if (summary.kind === 'custom') return 'caution solid';
   return 'soft';
 }
 
-function CreateMemberForm({ presets }: { presets: PermissionPresets }) {
+function CreateMemberForm() {
   const err = formError.value;
   const busy = formBusy.value;
 
@@ -273,7 +269,7 @@ function CreateMemberForm({ presets }: { presets: PermissionPresets }) {
             placeholder="engineer-1"
           />
         </Labeled>
-        <Labeled label="Role title" hint="Freeform — director, engineer, qa-lead, …">
+        <Labeled label="Role title" hint="Freeform — engineer, qa-lead, researcher, …">
           <input
             class="input"
             value={formRoleTitle.value}
@@ -308,14 +304,14 @@ function CreateMemberForm({ presets }: { presets: PermissionPresets }) {
           <div class="eyebrow">Permissions</div>
           <PermissionsEditor
             value={formPermissions.value}
-            presets={presets}
+            templates={MEMBER_CREATION_PERMISSION_TEMPLATES}
             onChange={(next) => {
               formPermissions.value = next;
             }}
             disabled={busy}
           />
           <div style="font-family:var(--ef-font-body);font-size:11.5px;color:var(--ef-text-muted);font-style:italic;margin-top:2px">
-            Tick individual leaves or click a quick-apply preset above.
+            Tick individual leaves or copy a template above. Only the selected leaves are saved.
           </div>
         </div>
       </div>

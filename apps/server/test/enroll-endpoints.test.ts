@@ -40,10 +40,7 @@ const NON_ADMIN_TOKEN = 'csuite_enroll_engineer_token';
 const TEAM: Team = {
   name: 'enroll-team',
   context: '',
-  permissionPresets: {
-    admin: ['team.manage', 'members.manage', 'objectives.manage', 'activity.read'],
-    operator: ['objectives.manage'],
-  },
+  permissionPresets: {},
 };
 
 interface Harness {
@@ -61,8 +58,8 @@ async function makeApp(options: { now?: () => number } = {}): Promise<Harness> {
   });
   const members = createMemberStore([
     {
-      name: 'admin-1',
-      role: { title: 'director', description: '' },
+      name: 'lead-1',
+      role: { title: 'team lead', description: '' },
       permissions: ['members.manage'],
       token: ADMIN_TOKEN,
     },
@@ -189,7 +186,7 @@ describe('POST /enroll/approve', () => {
       body: JSON.stringify({
         userCode: mint.userCode,
         mode: 'bind',
-        memberName: 'admin-1',
+        memberName: 'lead-1',
       }),
     });
     expect(res.status).toBe(403);
@@ -273,7 +270,12 @@ describe('POST /enroll/approve', () => {
         memberName: 'newcomer',
         role: { title: 'engineer', description: 'fresh' },
         instructions: 'welcome to the team',
-        permissions: ['operator'],
+        permissions: [
+          'objectives.create',
+          'objectives.cancel',
+          'objectives.reassign',
+          'objectives.watch',
+        ],
       }),
     });
     expect(approveRes.status).toBe(200);

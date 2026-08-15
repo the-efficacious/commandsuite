@@ -23,7 +23,7 @@ import { Login } from './routes/Login.js';
  * Top-level routes that bypass TeamShell. The device-code enrollment
  * page is the only one today — operators land here from a CLI deep
  * link and the page handles its own auth gate (anonymous → Login,
- * non-admin → polite refusal, admin → approval form).
+ * no `members.manage` → polite refusal, capability holder → approval form).
  *
  * `pathname === '/enroll'` is the exact match; sub-paths (`/enroll/foo`)
  * fall through to TeamShell so the in-shell router can resolve them.

@@ -1,5 +1,5 @@
 /**
- * `csuite` — operator CLI for csuite.
+ * `csuite` — command-line interface for csuite.
  *
  * Subcommands:
  *   csuite setup       — first-run wizard: create team config + enroll TOTP
@@ -36,7 +36,6 @@ import { UsageError } from './commands/errors.js';
 import { runMemberCommand } from './commands/member.js';
 import { runNotificationsCommand } from './commands/notifications.js';
 import { runObjectivesCommand } from './commands/objectives.js';
-import { runPresetsCommand } from './commands/presets.js';
 import { runPruneTracesCommand } from './commands/prune-traces.js';
 import { type PushCommandInput, runPushCommand } from './commands/push.js';
 import { QuickstartError, runQuickstartCommand } from './commands/quickstart.js';
@@ -55,7 +54,7 @@ import { CLI_VERSION } from './version.js';
 const USAGE = `csuite cli v${CLI_VERSION}
 
 usage:
-  csuite setup       [--config-path <path>]                 first-run wizard (team + first admin + TOTP)
+  csuite setup       [--config-path <path>]                 first-run wizard (team + first member + TOTP)
   csuite member        list|create|update|delete [--config-path <path>]   offline member management (runs without the broker)
   csuite connect     [--url <broker>] [--label <hint>] [--workspace <dir>] [--global] [--no-write] [--quiet]
                                     enroll this device with the broker (device-code flow); saves to the user-global auth store, scoped to cwd (or --workspace / --global)
@@ -224,9 +223,6 @@ async function main(): Promise<void> {
       return;
     case 'team':
       await handleTeam(rest);
-      return;
-    case 'presets':
-      await handlePresets(rest);
       return;
     case 'tools':
       await handleTools(rest);
@@ -674,17 +670,6 @@ async function handleTeam(args: string[]): Promise<void> {
   }
 }
 
-async function handlePresets(args: string[]): Promise<void> {
-  const { clientOpts, passthrough } = splitClientOpts(args);
-  try {
-    const client = makeClient(clientOpts);
-    await runPresetsCommand(passthrough, client, (line) => log(line));
-  } catch (err) {
-    if (err instanceof UsageError) fail(err.message, 2);
-    fail(err instanceof Error ? err.message : String(err));
-  }
-}
-
 async function handleTools(args: string[]): Promise<void> {
   const { clientOpts, passthrough } = splitClientOpts(args);
   try {
@@ -764,7 +749,7 @@ function handleAuth(args: string[]): void {
  * SDK) as a csuite team member.
  *
  * No interactive TUI: the agent runs as an SDK-driven stream-json
- * subprocess under our control. The director communicates with the
+ * subprocess under our control. The invoking member communicates with the
  * agent through the broker (chat / DMs / objectives / `csuite push`);
  * channel events arrive as streaming-input user messages.
  *
@@ -903,7 +888,7 @@ async function handleClaude(args: string[]): Promise<void> {
  * `csuite codex` — spawn OpenAI Codex CLI as a headless team member.
  *
  * No interactive TUI: codex runs as `codex app-server` (a JSON-RPC
- * daemon) under our control. The director communicates with the
+ * daemon) under our control. The invoking member communicates with the
  * agent through the broker (chat / DMs / objectives / `csuite push`).
  * Channel events arrive at codex as `turn/start` (when idle) or
  * `turn/steer` (mid-turn) — the structural equivalent of claude's

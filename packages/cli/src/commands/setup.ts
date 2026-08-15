@@ -1,9 +1,9 @@
 /**
  * `csuite setup` — run the first-time wizard and seed the DB.
  *
- * Walks the operator through team + admin setup, opens the SQLite DB
- * at the resolved path, seeds the team singleton + permission presets
- * + admin member + admin bearer token, and writes the slim infra-only
+ * Walks the user through team + first-member setup, opens the SQLite DB
+ * at the resolved path, seeds the team singleton + bootstrap member
+ * + bearer token, and writes the slim infra-only
  * config file alongside.
  *
  * Resolution of the config path:
@@ -13,7 +13,7 @@
  *
  * Refuses to touch a setup that's already complete: if the config
  * file exists AND the referenced DB has a team singleton, we print a
- * diagnostic and exit. Re-running would mint a fresh admin token and
+ * diagnostic and exit. Re-running would mint a fresh bootstrap token and
  * invalidate every active credential — explicit `rm csuite.json && rm
  * csuite.db` is the way to start over.
  */
@@ -79,7 +79,7 @@ export async function runSetupCommand(
             `  team:    ${team.name}\n` +
             `  members: ${stores.members.size()} (${memberNames.join(', ')})\n` +
             `  db:      ${dbPath}\n\n` +
-            `  Running the wizard now would mint a fresh admin and invalidate all\n` +
+            `  Running the wizard now would mint a fresh bootstrap member and invalidate all\n` +
             `  existing tokens. If that is what you want, remove both first:\n` +
             `    rm ${configPath} ${dbPath}`,
         );
@@ -109,7 +109,7 @@ export async function runSetupCommand(
 
     const wizard = await server.runFirstRunWizard({ configPath, io });
 
-    // Seed DB with the wizard's captured team + admin.
+    // Seed DB with the wizard's captured team + bootstrap member.
     const db = server.openDatabase(dbPath);
     try {
       const stores = server.openTeamAndMembers(db);
@@ -117,21 +117,18 @@ export async function runSetupCommand(
         name: wizard.team.name,
         context: wizard.team.context,
       });
-      for (const [name, leaves] of Object.entries(wizard.team.permissionPresets)) {
-        stores.team.setPreset(name, leaves);
-      }
       stores.members.addMember({
-        name: wizard.admin.name,
-        role: wizard.admin.role,
-        instructions: wizard.admin.instructions,
-        rawPermissions: wizard.admin.rawPermissions,
-        permissions: wizard.admin.permissions,
-        totpSecret: wizard.admin.totpSecret,
+        name: wizard.bootstrapMember.name,
+        role: wizard.bootstrapMember.role,
+        instructions: wizard.bootstrapMember.instructions,
+        rawPermissions: wizard.bootstrapMember.rawPermissions,
+        permissions: wizard.bootstrapMember.permissions,
+        totpSecret: wizard.bootstrapMember.totpSecret,
       });
       const tokens = new server.SqliteTokenStore(db);
       await tokens.insert({
-        memberName: wizard.admin.name,
-        rawToken: wizard.admin.token,
+        memberName: wizard.bootstrapMember.name,
+        rawToken: wizard.bootstrapMember.token,
         label: 'wizard',
         origin: 'bootstrap',
         createdBy: null,
@@ -160,7 +157,7 @@ export async function runSetupCommand(
     stdout('');
     stdout('✓ setup complete');
     stdout(`  team:    ${wizard.team.name}`);
-    stdout(`  admin:   ${wizard.admin.name}`);
+    stdout(`  member:  ${wizard.bootstrapMember.name}`);
     stdout(`  config:  ${configPath}`);
     stdout(`  db:      ${dbPath}`);
     stdout('');

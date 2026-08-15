@@ -14,7 +14,7 @@
  *   └─────────────────────────────────────────┘
  *
  * Permissions follow the store: everyone sees their own home tree;
- * admins see every slot's home under `/`; non-owners see files
+ * `members.manage` holders see every slot's home under `/`; non-owners see files
  * shared with them via the "Shared with me" toggle which hits
  * `/fs/shared`.
  */
@@ -246,7 +246,7 @@ export function FilesPanel({ viewer, path }: FilesPanelProps) {
   }
 
   const entries = current.entries ?? [];
-  const isAdmin = instructions.value?.permissions.includes('members.manage') ?? false;
+  const canManageMembers = instructions.value?.permissions.includes('members.manage') ?? false;
 
   return (
     <div class="flex-1 flex flex-col min-h-0" style="padding:16px;overflow-y:auto">
@@ -257,7 +257,7 @@ export function FilesPanel({ viewer, path }: FilesPanelProps) {
             <Breadcrumb path={current.path} />
           ) : (
             <span style="font-family:var(--ef-font-mono);font-size:12.5px;color:var(--ef-text-muted)">
-              {current.mode === 'all' ? 'All files (admin)' : 'Shared with you'}
+              {current.mode === 'all' ? 'All member files' : 'Shared with you'}
             </span>
           )}
           <div style="margin-left:auto;display:flex;gap:8px">
@@ -296,11 +296,11 @@ export function FilesPanel({ viewer, path }: FilesPanelProps) {
             >
               {current.mode === 'shared' ? 'Browse tree' : 'Shared with me'}
             </button>
-            {/* All-files view is an admin-only convenience: every file
+            {/* All-files view is gated by `members.manage`: every file
                 across every home in one flat list. The server enforces
-                the same gate; this hides the toggle for non-admins
+                the same gate; this hides the toggle for other members
                 rather than letting them click and 403. */}
-            {isAdmin && (
+            {canManageMembers && (
               <button
                 type="button"
                 class={`btn${current.mode === 'all' ? ' btn-primary' : ''}`}
@@ -308,7 +308,7 @@ export function FilesPanel({ viewer, path }: FilesPanelProps) {
                 onClick={() =>
                   current.mode === 'all' ? void refreshTree(current.path) : void refreshAll()
                 }
-                title="Browse every file across every home (admin only)"
+                title="Browse every file across every home (requires members.manage)"
               >
                 {current.mode === 'all' ? 'Browse tree' : 'All files'}
               </button>

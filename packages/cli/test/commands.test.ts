@@ -123,7 +123,7 @@ describe('runRosterCommand', () => {
     expect(out).toContain('director-1');
     expect(out).toContain('engineer-1');
     expect(out).toContain('engineer');
-    expect(out).toContain('admin');
+    expect(out).toContain('members.manage');
   });
 
   it('renders a friendly message when empty', async () => {

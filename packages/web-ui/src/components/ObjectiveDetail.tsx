@@ -13,7 +13,7 @@
  *   │                     │  or the result editor│  argued against it
  *   │  body · attachments · watchers             │
  *   │  ── Thread ─────────────────────────────── │  lifecycle events and
- *   │  ◆ director-1 assigned to engineer-1       │  discussion merged into
+ *   │  ◆ lead-1 assigned to engineer-1           │  discussion merged into
  *   │  [engineer-1] on it, repro found           │  one chronological story
  *   │  ◆ engineer-1 blocked — waiting on keys    │
  *   │  [composer]                                │
@@ -23,7 +23,7 @@
  * the result editor NEXT TO the outcome (the result is read against
  * it), Block/Reassign/Cancel open one inline form at a time — cancel
  * commits on a second, explicit verb press, never on the first click.
- * Trace review (admin) stays a separate heavy surface behind a
+ * Trace review stays a separate heavy surface behind an explicit
  * disclosure at the bottom.
  */
 
@@ -193,18 +193,20 @@ export function ObjectiveDetail({ id, viewer }: ObjectiveDetailProps) {
 
   const isAssignee = current.assignee === viewer;
   const isOriginator = current.originator === viewer;
-  const isAdmin = b.permissions.includes('members.manage');
-  const canManagePerm = b.permissions.includes('objectives.manage');
+  const canManageMembers = b.permissions.includes('members.manage');
+  const canCancelPerm = b.permissions.includes('objectives.cancel');
+  const canReassignPerm = b.permissions.includes('objectives.reassign');
+  const canWatchPerm = b.permissions.includes('objectives.watch');
   const isWatching = current.watchers.includes(viewer);
   const isTerminal = current.status === 'done' || current.status === 'cancelled';
   // Mirrors the server's PATCH /objectives/:id gate exactly: the
-  // assignee, or a member holding `objectives.manage`.
-  const canUpdateStatus = !isTerminal && (isAssignee || canManagePerm);
+  // assignee, or a member holding `objectives.cancel`.
+  const canUpdateStatus = !isTerminal && (isAssignee || canCancelPerm);
   const canComplete = !isTerminal && isAssignee;
-  const canCancel = !isTerminal && (canManagePerm || isOriginator);
-  const canReassign = !isTerminal && canManagePerm;
-  const canManageWatchers = canManagePerm || isOriginator;
-  const canDiscuss = isAssignee || isOriginator || isAdmin || isWatching;
+  const canCancel = !isTerminal && (canCancelPerm || isOriginator);
+  const canReassign = !isTerminal && canReassignPerm;
+  const canManageWatchers = canWatchPerm || isOriginator;
+  const canDiscuss = isAssignee || isOriginator || canManageMembers || isWatching;
 
   async function run<T>(fn: () => Promise<T>): Promise<T | null> {
     if (actionBusy.value) return null;
@@ -378,7 +380,7 @@ export function ObjectiveDetail({ id, viewer }: ObjectiveDetailProps) {
           status={current.status}
         />
 
-        {isAdmin && (
+        {canManageMembers && (
           <section>
             <button
               type="button"
@@ -1038,7 +1040,9 @@ function WatchersSection({
       {watchers.length === 0 ? (
         <div style="font-family:var(--ef-font-body);font-size:13px;color:var(--ef-text-muted)">
           No explicit watchers{' '}
-          <span style="color:var(--ef-border-strong)">(admins see everything automatically)</span>
+          <span style="color:var(--ef-border-strong)">
+            (members.manage holders see everything automatically)
+          </span>
         </div>
       ) : (
         <div style="display:flex;flex-wrap:wrap;gap:6px">
@@ -1101,7 +1105,7 @@ function WatchersSection({
 }
 
 /**
- * Status badge — distinct visual states so an admin scanning the
+ * Status badge — distinct visual states so someone scanning the
  * detail can identify state without reading the label.
  */
 function StatusBadge({ status }: { status: Objective['status'] }) {

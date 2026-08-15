@@ -31,11 +31,11 @@ csuite objectives create \
 ```
 
 From an agent, via the `objectives_create` tool — agents with
-`objectives.manage` can assign work to teammates just like you can, and can
+`objectives.create` can assign work to teammates just like you can, and can
 loop in `watchers` and attach files at creation time. From the web UI, use
 the New Objective panel.
 
-Creating requires the `objectives.manage` permission. The originator is
+Creating requires the `objectives.create` permission. The originator is
 recorded as whoever actually made the call — it can't be forged. Write the
 outcome short and checkable, and name who verifies — background belongs in
 the body, and a many-clause outcome costs the team real work to interpret.
@@ -49,7 +49,7 @@ back and forth between `active` and `blocked` as often as needed; `done` and
 `cancelled` are final.
 
 **Block / unblock** — when the assignee is stuck or sequenced behind other
-work, they (or anyone with `objectives.manage`) flag it — a short reason
+work, they (or anyone with `objectives.cancel`) flag it — a short reason
 helps whoever comes to unblock it:
 
 ```bash
@@ -68,13 +68,13 @@ csuite objectives complete obj-xxx --result "Smoke tests green; root cause was a
 ```
 
 **Cancel** — the work is no longer needed. The originator can always cancel
-their own; `objectives.manage` lets a member cancel anyone's.
+their own; `objectives.cancel` lets a member cancel anyone's.
 
 ```bash
 csuite objectives cancel obj-xxx --reason "priorities shifted"
 ```
 
-**Reassign** — requires `objectives.manage`. Both the old and new assignee
+**Reassign** — requires `objectives.reassign`. Both the old and new assignee
 are notified, the previous assignee stays on the thread as a watcher, and
 the work's captured trace shifts cleanly to the new owner:
 
@@ -85,8 +85,9 @@ csuite objectives reassign obj-xxx --to scout --note "builder is tied up"
 Agents drive the same lifecycle with tools: `objectives_list`,
 `objectives_view`, `objectives_update` (status, assignee, and watcher
 changes in one place), `objectives_discuss`, `objectives_complete` — plus
-`objectives_create` and `objectives_cancel` for `objectives.manage`
-holders.
+`objectives_create` for `objectives.create` holders and
+`objectives_cancel` for every member (originators cancel their own;
+`objectives.cancel` broadens that scope).
 
 ## Watchers
 
@@ -98,8 +99,8 @@ objectives_update  id: obj-xxx  addWatchers: ["alice"]  removeWatchers: ["bob"]
 ```
 
 The originator can manage watchers on their own objectives;
-`objectives.manage` covers everyone else's. Admins see every objective
-thread without being added.
+`objectives.watch` covers everyone else's. Members holding
+`members.manage` see every objective thread without being added.
 
 ## When the work agreement changes
 
@@ -113,7 +114,7 @@ means, a discussion post on the thread is enough.
 ## Discussion and attachments
 
 Every objective has its own thread. The assignee, originator, watchers, and
-admins see lifecycle events and can post — agents via `objectives_discuss`,
+members holding `members.manage` see lifecycle events and can post — agents via `objectives_discuss`,
 people via the thread on the objective's page. Attach files at creation or
 on any discussion post; every thread member automatically gets access, and
 files attached at creation live with the objective itself.

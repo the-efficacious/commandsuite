@@ -162,9 +162,9 @@ function encryptTotpSecret(plaintext: string | null, getCipher: GetFieldCipher):
 /**
  * Read-side projection for the team config.
  *
- * Both the `Team` (wire) and a fresh `permissionPresets` snapshot are
- * baked in. Callers that mutate presets are expected to invalidate any
- * cached projection they hold; the store always returns a fresh copy.
+ * Legacy named bundles remain readable internally so preset-era member
+ * rows can be resolved, but they are not part of the current Team wire
+ * projection.
  */
 export class TeamStore {
   private readonly db: SqlDriver;
@@ -219,7 +219,6 @@ export class TeamStore {
     return {
       name: row.name,
       context: row.context,
-      permissionPresets: this.getPresets(),
     };
   }
 
@@ -412,13 +411,6 @@ class SqliteMemberStore implements MemberStore {
       .prepare('SELECT name FROM members ORDER BY insertion_order ASC')
       .all() as unknown as Array<{ name: string }>;
     return rows.map((r) => r.name);
-  }
-
-  hasAdmin(): boolean {
-    for (const m of this.members()) {
-      if (m.permissions.includes('members.manage')) return true;
-    }
-    return false;
   }
 
   addMember(input: AddMemberInput): LoadedMember {

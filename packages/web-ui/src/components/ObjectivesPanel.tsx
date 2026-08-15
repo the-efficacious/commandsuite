@@ -73,7 +73,7 @@ export function ObjectivesPanel({ viewer }: ObjectivesPanelProps) {
     }
   }, [loaded]);
 
-  const canCreate = b?.permissions.includes('objectives.manage') ?? false;
+  const canCreate = b?.permissions.includes('objectives.create') ?? false;
 
   if (!loaded && err === null) {
     // Skeleton rows hold the final row height so arrival doesn't reflow.

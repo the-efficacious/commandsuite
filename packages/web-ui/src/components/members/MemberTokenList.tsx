@@ -8,7 +8,7 @@
  * devices, auditing which `origin` (bootstrap / rotate / enroll)
  * each token came from.
  *
- * Permission: `members.manage` (admin) or self.
+ * Permission: `members.manage` or self.
  */
 
 import { signal } from '@preact/signals';

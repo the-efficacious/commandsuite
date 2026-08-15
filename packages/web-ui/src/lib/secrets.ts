@@ -54,7 +54,7 @@ export function secretBySlug(slug: string): SecretSummary | null {
   return list.find((s) => s.slug === slug) ?? null;
 }
 
-/** Fetch (and cache) one secret's detail — summary + admin bindings. */
+/** Fetch (and cache) one secret's detail — summary + managed bindings. */
 export async function loadSecretDetail(slug: string): Promise<void> {
   const detail = await getClient().getSecret(slug);
   secretDetails.value = { ...secretDetails.value, [slug]: detail };
