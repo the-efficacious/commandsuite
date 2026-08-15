@@ -30,17 +30,18 @@ import {
   SqliteSessionStore,
 } from 'csuite-core';
 import type { Team } from 'csuite-sdk/types';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { openDatabase } from '../src/db.js';
 import { createGenAiCorrelator } from '../src/genai-correlator.js';
 import { createMemberStore } from '../src/members.js';
 import { digestPathSync } from '../src/path-digest.js';
 import { createRawBodyStore } from '../src/raw-body-store.js';
+import { recordingLogger } from './helpers/logger.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const TOKEN = 'csuite_test_member_secret';
 const TEAM: Team = { name: 't', context: '', permissionPresets: {} };
-const quiet = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+const quiet = recordingLogger().logger;
 
 async function makeApp() {
   const db = openDatabase(':memory:');

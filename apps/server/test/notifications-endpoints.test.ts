@@ -17,11 +17,12 @@ import {
   SqliteSessionStore,
 } from 'csuite-core';
 import type { Message, NotificationEndpoint } from 'csuite-sdk/types';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { openDatabase } from '../src/db.js';
 import { kekFieldCipher, testKek } from '../src/kek.js';
 import { createMemberStore, getKek, setKek } from '../src/members.js';
 import { createSqliteNotificationsStore } from '../src/notifications/index.js';
+import { recordingLogger } from './helpers/logger.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const ADMIN = 'csuite_test_admin_notif';
@@ -29,7 +30,7 @@ const BUILDER = 'csuite_test_builder_notif';
 const OUTSIDER = 'csuite_test_outsider_notif';
 const SECRET = 'hook-signing-secret';
 
-const noopLog = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+const noopLog = recordingLogger().logger;
 
 async function makeApp() {
   let clock = 1_700_000_000_000;

@@ -22,6 +22,7 @@ import type { CompactAttempt, ContextControlHooks } from '../../src/runtime/cont
 import { createContextControlCoordinator } from '../../src/runtime/context-control.js';
 import type { ContextControlEvent } from '../../src/runtime/forwarder.js';
 import type { ActivityObservation } from '../../src/runtime/restart.js';
+import { silentLogger } from '../helpers/logger.js';
 
 type State = 'idle' | 'working' | 'blocked';
 
@@ -85,7 +86,7 @@ function harness(
       acks.push(event);
     },
     gate: (fn) => fn(),
-    log: () => {},
+    logger: silentLogger(),
     now: () => 1_700_000_000_000,
   };
   return {
@@ -256,7 +257,7 @@ describe('clear', () => {
         gated.push('exit');
         return out;
       },
-      log: () => {},
+      logger: silentLogger(),
     });
 
     await coordinator.handle(control({ verb: 'compact' }));
@@ -286,7 +287,7 @@ describe('serialization and shutdown', () => {
       },
       report: (e) => acks.push(e),
       gate: (fn) => fn(),
-      log: () => {},
+      logger: silentLogger(),
     });
 
     const a = coordinator.handle(control({ requestId: 'r1', verb: 'clear' }));

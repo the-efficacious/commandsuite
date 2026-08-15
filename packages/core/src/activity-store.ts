@@ -252,15 +252,25 @@ export class InMemoryActivityStore implements ActivityStore {
 
 /**
  * Normalize a caller-provided `limit` for `ActivityStore.list`.
- *   - undefined / non-finite  → half of `max` (same convention the SDK uses
- *     for page-size defaults).
- *   - `<= 0`                   → half of `max` (defensive: a zero limit is
- *     almost certainly a bad value, not an intent to query nothing).
+ *   - undefined / non-finite  → `defaultLimit` (half of `max` unless given).
+ *   - `<= 0`                   → `defaultLimit` (defensive: a zero limit is
+ *     almost certainly a bad value, not an intent to query nothing —
+ *     and `LIMIT 0` returns an empty page that every pager in the tree
+ *     reads as "no more rows").
  *   - `> max`                  → clamped to `max`.
+ *
+ * Every backend routes through this so the response to a bad limit is
+ * one behaviour, not one per store. `defaultLimit` is explicit because
+ * the page size a backend advertises is its own contract; what a bad
+ * value does is not.
  */
-export function clampListLimit(raw: number | undefined, max: number): number {
-  const defaultLimit = Math.max(1, Math.floor(max / 2));
-  if (raw === undefined) return defaultLimit;
-  if (!Number.isFinite(raw) || raw <= 0) return defaultLimit;
+export function clampListLimit(
+  raw: number | undefined,
+  max: number,
+  defaultLimit?: number,
+): number {
+  const fallback = Math.min(max, Math.max(1, defaultLimit ?? Math.floor(max / 2)));
+  if (raw === undefined) return fallback;
+  if (!Number.isFinite(raw) || raw <= 0) return fallback;
   return Math.min(Math.floor(raw), max);
 }

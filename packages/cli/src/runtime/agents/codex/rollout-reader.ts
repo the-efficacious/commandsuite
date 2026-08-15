@@ -40,6 +40,7 @@
 import { type FSWatcher, readdirSync, statSync, watch } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { basename, join } from 'node:path';
+import { logger as defaultLogger, type Logger } from 'csuite-core';
 import type { ActivityEvent } from 'csuite-sdk/types';
 import { createRolloutParser, type RolloutParser } from './rollout-parser.js';
 
@@ -61,7 +62,8 @@ export interface RolloutReaderOptions {
   getSessionId?: () => string | null | undefined;
   /** Sink for the mapped activity events (the capture host's uploader). */
   enqueue: (event: ActivityEvent) => void;
-  log?: (msg: string, ctx?: Record<string, unknown>) => void;
+  /** Structured logger. Defaults to the shared logger's 'rollout-reader' child. */
+  logger?: Logger;
   /** Poll interval in ms for the discover + drain fallback. Default 300. */
   pollMs?: number;
   /**
@@ -136,12 +138,7 @@ interface TrackedFile {
 }
 
 export function attachRolloutReader(options: RolloutReaderOptions): RolloutReader {
-  const log =
-    options.log ??
-    ((msg: string, ctx: Record<string, unknown> = {}): void => {
-      const record = { ts: new Date().toISOString(), component: 'rollout-reader', msg, ...ctx };
-      process.stderr.write(`${JSON.stringify(record)}\n`);
-    });
+  const log = options.logger ?? defaultLogger.child('rollout-reader');
   const pollMs = options.pollMs ?? DEFAULT_POLL_MS;
 
   // path → tracker. Each rollout file (thread) gets its own parser.
@@ -160,10 +157,10 @@ export function attachRolloutReader(options: RolloutReaderOptions): RolloutReade
         try {
           options.enqueue(event);
         } catch (err) {
-          log('rollout-reader: enqueue threw', { error: errMsg(err) });
+          log.warn('enqueue threw', { error: errMsg(err) });
         }
       },
-      log,
+      logger: log.child('codex-rollout'),
     });
 
   /** Begin tailing one rollout file from `offset`. */
@@ -175,14 +172,14 @@ export function attachRolloutReader(options: RolloutReaderOptions): RolloutReade
   ): void => {
     const tf: TrackedFile = { offset, parser: makeParser(source), source, watcher: null };
     tracked.set(full, tf);
-    log('rollout-reader: tailing rollout', { path: full, source, offset });
+    log.info('tailing rollout', { path: full, source, offset });
     if (!attachWatcher) return;
     try {
       tf.watcher = watch(full, () => {
         void drainAll();
       });
       tf.watcher.on('error', (err) => {
-        log('rollout-reader: watcher error, relying on poll', { error: errMsg(err) });
+        log.warn('watcher error, relying on poll', { error: errMsg(err) });
         try {
           tf.watcher?.close();
         } catch {
@@ -191,7 +188,7 @@ export function attachRolloutReader(options: RolloutReaderOptions): RolloutReade
         tf.watcher = null;
       });
     } catch (err) {
-      log('rollout-reader: watch failed, relying on poll', { error: errMsg(err) });
+      log.warn('watch failed, relying on poll', { error: errMsg(err) });
       tf.watcher = null;
     }
   };
@@ -299,7 +296,7 @@ export function attachRolloutReader(options: RolloutReaderOptions): RolloutReade
         try {
           await drainFile(path, tf);
         } catch (err) {
-          log('rollout-reader: drain error', { path, error: errMsg(err) });
+          log.warn('drain error', { path, error: errMsg(err) });
         }
       }
     } finally {
@@ -357,7 +354,7 @@ export function attachRolloutReader(options: RolloutReaderOptions): RolloutReade
         try {
           await drainFile(path, tf);
         } catch (err) {
-          log('rollout-reader: final drain error', { path, error: errMsg(err) });
+          log.warn('final drain error', { path, error: errMsg(err) });
         }
       }
     } finally {

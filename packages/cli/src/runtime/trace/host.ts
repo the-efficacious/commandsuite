@@ -50,12 +50,14 @@ import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import process from 'node:process';
+import { logger as defaultLogger, type Logger } from 'csuite-core';
 import type { Client as BrokerClient, CodexGenaiInferenceUpload } from 'csuite-sdk/client';
 import type { ActivityEvent } from 'csuite-sdk/types';
+import { sweepStaleSessionLogs } from '../session-log.js';
 import { ActivityUploader, type ActivityUploaderStats } from './activity-uploader.js';
 import { type BusySignal, createBusySignal } from './busy.js';
 import { type HookServer, startHookServer } from './hook-server.js';
-import { type OtlpRelay, startOtlpRelay } from './otlp-relay.js';
+import { type OtlpRelay, startOtlpRelay, sweepQuarantine } from './otlp-relay.js';
 import { attachTranscriptReader, type TranscriptReader } from './transcript-reader.js';
 
 const CAPTURE_COMPLETE_MARKER = '.csuite-capture-complete';
@@ -83,7 +85,7 @@ export interface CaptureHostOptions {
    * no hook server).
    */
   onSessionStart?: (source: string) => void;
-  log?: (msg: string, ctx?: Record<string, unknown>) => void;
+  logger?: Logger;
 }
 
 export interface CaptureHost {
@@ -152,12 +154,7 @@ export interface CaptureHost {
 }
 
 export async function startCaptureHost(options: CaptureHostOptions): Promise<CaptureHost> {
-  const log =
-    options.log ??
-    ((msg: string, ctx: Record<string, unknown> = {}): void => {
-      const record = { ts: new Date().toISOString(), component: 'capture-host', msg, ...ctx };
-      process.stderr.write(`${JSON.stringify(record)}\n`);
-    });
+  const log = options.logger ?? defaultLogger.child('capture-host');
 
   // Sweep only dirs carrying an explicit completed-capture marker.
   // PID death is NOT evidence that the spool was shipped: a crash or
@@ -194,9 +191,40 @@ export async function startCaptureHost(options: CaptureHostOptions): Promise<Cap
         // Best-effort per dir — a racing sweep or permissions issue is fine.
       }
     }
-    if (swept > 0) log('capture-host: swept stale raw-bodies dirs', { swept });
+    if (swept > 0) log.info('swept stale raw-bodies dirs', { swept });
   } catch (err) {
-    log('capture-host: stale raw-bodies sweep failed', {
+    log.warn('stale raw-bodies sweep failed', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  // Quarantined payloads and per-pid session logs are the two runner
+  // artefacts that previously grew without any bound at all. Both are
+  // swept here, on the same best-effort footing as the spool sweep
+  // above: start is the one moment we know no live run owns them.
+  try {
+    let removed = 0;
+    let bytes = 0;
+    for (const entry of readdirSync(tmpdir())) {
+      if (!/^csuite-otel-bodies-.+-\d+$/.test(entry)) continue;
+      const result = sweepQuarantine(join(tmpdir(), entry));
+      removed += result.removed;
+      bytes += result.bytesReclaimed;
+    }
+    // Reported, not silent: the payloads are gone but the manifest
+    // entries recording each gap remain, and this says how many.
+    if (removed > 0) log.info('swept aged quarantined bodies', { removed, bytesReclaimed: bytes });
+  } catch (err) {
+    log.warn('quarantine sweep failed', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  try {
+    const { removed, failed } = sweepStaleSessionLogs();
+    if (removed > 0 || failed > 0) log.info('swept stale session logs', { removed, failed });
+  } catch (err) {
+    log.warn('session log sweep failed', {
       error: err instanceof Error ? err.message : String(err),
     });
   }
@@ -224,14 +252,14 @@ export async function startCaptureHost(options: CaptureHostOptions): Promise<Cap
     brokerUrl: options.brokerUrl,
     token: options.token,
     rawBodiesDir,
-    log,
+    logger: log.child('otlp-relay'),
   });
 
   // Streaming activity uploader — batches events, ships to broker.
   const uploader = new ActivityUploader({
     brokerClient: options.brokerClient,
     name: options.name,
-    log,
+    logger: log.child('activity-uploader'),
   });
 
   // Agent ACTIVITY signal — driven by native instrumentation. Claude
@@ -240,7 +268,7 @@ export async function startCaptureHost(options: CaptureHostOptions): Promise<Cap
   // adapter bumps `turn_active` (turn/started·completed) and
   // `tool_inflight` (item stream). The runner reports the derived
   // idle/working/blocked state to the broker.
-  const busy = createBusySignal({ log });
+  const busy = createBusySignal({ logger: log.child('activity') });
 
   // Latest transcript path learned from a Claude Code hook body. Null
   // until the first hook fires; the transcript reader polls `getPath`
@@ -257,7 +285,7 @@ export async function startCaptureHost(options: CaptureHostOptions): Promise<Cap
   // content via the app-server stream.
   const hookServer: HookServer = await startHookServer({
     busy,
-    log,
+    logger: log.child('hook-server'),
     onTranscriptPath: (path) => {
       transcriptPath = path;
     },
@@ -272,10 +300,10 @@ export async function startCaptureHost(options: CaptureHostOptions): Promise<Cap
   const transcriptReader: TranscriptReader = attachTranscriptReader({
     getPath: () => transcriptPath,
     enqueue: (event) => uploader.enqueue(event),
-    log,
+    logger: log.child('transcript-reader'),
   });
 
-  log('capture-host: started', {
+  log.info('started', {
     hookUrl: hookServer.url,
     name: options.name,
     rawBodiesDir,
@@ -362,22 +390,22 @@ export async function startCaptureHost(options: CaptureHostOptions): Promise<Cap
       try {
         transcriptReader.close();
       } catch (err) {
-        log('capture-host: transcript reader close failed', {
+        log.warn('transcript reader close failed', {
           error: err instanceof Error ? err.message : String(err),
         });
       }
       await uploader.close().catch((err: unknown) => {
-        log('capture-host: uploader close failed', {
+        log.error('uploader close failed', {
           error: err instanceof Error ? err.message : String(err),
         });
       });
       await hookServer.close().catch((err: unknown) => {
-        log('capture-host: hook server close failed', {
+        log.warn('hook server close failed', {
           error: err instanceof Error ? err.message : String(err),
         });
       });
       await otlpRelay.close().catch((err: unknown) => {
-        log('capture-host: OTLP relay close failed', {
+        log.warn('OTLP relay close failed', {
           error: err instanceof Error ? err.message : String(err),
         });
       });
@@ -392,13 +420,13 @@ export async function startCaptureHost(options: CaptureHostOptions): Promise<Cap
         if (remaining.length === 0) {
           writeFileSync(join(rawBodiesDir, CAPTURE_COMPLETE_MARKER), '', { mode: 0o600 });
         } else {
-          log('capture-host: retaining unshipped raw-body spool', {
+          log.warn('retaining unshipped raw-body spool', {
             rawBodiesDir,
             remaining: remaining.length,
           });
         }
       } catch (err) {
-        log('capture-host: could not mark raw-body spool complete', {
+        log.warn('could not mark raw-body spool complete', {
           error: err instanceof Error ? err.message : String(err),
         });
       }
@@ -420,12 +448,12 @@ export async function startCaptureHost(options: CaptureHostOptions): Promise<Cap
       const leakedCounts = busy.getSourceCounts();
       const drained = busy.forceFinishAll();
       if (drained > 0) {
-        log('capture-host: force-drained leaked busy handles at teardown', {
+        log.warn('force-drained leaked busy handles at teardown', {
           drained,
           sourceCounts: leakedCounts,
         });
       }
-      log('capture-host: closed');
+      log.info('closed');
     },
   };
 }

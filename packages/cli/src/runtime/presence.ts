@@ -1,5 +1,5 @@
 /**
- * Tiny presence signal: is the SSE forwarder connected to the broker?
+ * Tiny presence signal: is the event forwarder connected to the broker?
  *
  * Used by the HUD strip at the bottom of `csuite claude` to flip a
  * dot between online / offline. Intentionally narrower than an event
@@ -14,7 +14,7 @@
  * A tiny debounce (250ms) on the `offline → online` transition
  * prevents flicker on clean reconnects after momentary blips —
  * otherwise the dot would flash ember every time the broker rotates
- * its SSE connection.
+ * its subscription.
  */
 
 export type PresenceState = 'connecting' | 'online' | 'offline';

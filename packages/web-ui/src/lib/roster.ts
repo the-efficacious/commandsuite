@@ -16,7 +16,7 @@
  */
 
 import { signal } from '@preact/signals';
-import type { ActivityState, Presence, RosterResponse } from 'csuite-sdk/types';
+import type { Presence, RosterResponse, WorkState } from 'csuite-sdk/types';
 import { getClient } from './client.js';
 
 export const roster = signal<RosterResponse | null>(null);
@@ -35,7 +35,7 @@ export const roster = signal<RosterResponse | null>(null);
  * offline), which callers derive from `Presence.connected` separately.
  * A `blocked` or `working` member is, by definition, online.
  */
-export function presenceActivity(p: Presence | undefined): ActivityState {
+export function presenceActivity(p: Presence | undefined): WorkState {
   if (!p) return 'idle';
   if (p.activity) return p.activity;
   return p.busy === true ? 'working' : 'idle';
@@ -64,6 +64,33 @@ export function presenceCaptureWarning(p: Presence | undefined): 'gap' | 'uneval
   if (p.captureHealth === 'gap') return 'gap';
   if (p.captureHealth === 'unevaluated') return 'unevaluated';
   return null;
+}
+
+/**
+ * Retained-diagnostics state for a member, or `null` when there is
+ * nothing to say.
+ *
+ * The broker has always computed `diagnosticsUnresolved` and
+ * `diagnosticsRetention` on every roster response and no surface read
+ * either one, so a member sitting on unresolved capture incidents
+ * looked identical to a clean one. The two are reported separately
+ * because they answer different questions: `unresolved` is a count of
+ * incidents that have not cleared, and `retention` is whether the
+ * store that would know is itself healthy.
+ *
+ * `degraded`/`unknown` retention matters even at zero unresolved — a
+ * store that cannot record is exactly the state in which a zero means
+ * nothing, and presenting that as "all clear" is the failure the
+ * diagnostics work exists to end.
+ */
+export function presenceDiagnostics(
+  p: Presence | undefined,
+): { unresolved: number; retention: 'healthy' | 'degraded' | 'unknown' } | null {
+  if (!p) return null;
+  const unresolved = p.diagnosticsUnresolved ?? 0;
+  const retention = p.diagnosticsRetention ?? null;
+  if (unresolved === 0 && (retention === null || retention === 'healthy')) return null;
+  return { unresolved, retention: retention ?? 'unknown' };
 }
 
 /**

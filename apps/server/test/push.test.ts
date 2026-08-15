@@ -19,6 +19,7 @@ import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
 import { generateVapidKeys } from '../src/push/vapid.js';
 import { createWebPushSender } from '../src/push/web-push-sender.js';
+import { recordingLogger } from './helpers/logger.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 // Mock web-push sendNotification so no real network traffic happens.
@@ -85,7 +86,7 @@ beforeEach(() => {
 });
 
 function noopLogger() {
-  return { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+  return recordingLogger().logger;
 }
 
 function mkMsg(overrides: Partial<Message>): Message {

@@ -6,7 +6,7 @@
  *   - the broker `Client` (authenticated to the csuite server)
  *   - the cached `InstructionsResponse` (name, role, permissions, team
  *     context, initial open objectives)
- *   - the live SSE forwarder (chat + objective events from the broker)
+ *   - the live event forwarder (chat + objective events from the broker)
  *   - the objectives tracker (keeps the "open objectives" snapshot
  *     fresh — it seeds the context re-brief pushed at session attach
  *     and after context compaction)
@@ -17,7 +17,7 @@
  * bridge connects, the runner waits for `mcp_request` frames and
  * dispatches them to the existing tool handlers (`handleToolCall` +
  * `defineTools`), then replies with `mcp_response` frames. Inbound
- * SSE events from the broker are delivered to the adapter-supplied
+ * Events from the broker are delivered to the adapter-supplied
  * channel sink (streaming input for claude, turn dispatches for
  * codex); the runner's own `context_refresh` re-briefs ride the same
  * sink. The only notification that crosses the bridge is a genuine
@@ -48,7 +48,7 @@ import { unlinkSync } from 'node:fs';
 import type { Socket } from 'node:net';
 import { createServer as createNetServer, type Server as NetServer } from 'node:net';
 import { createInterface } from 'node:readline';
-import { registerSecretValues } from 'csuite-core';
+import { logger as defaultLogger, type Logger, registerSecretValues } from 'csuite-core';
 import { Client as BrokerClient, ClientError } from 'csuite-sdk/client';
 import { isReservedEnvName } from 'csuite-sdk/schemas';
 import type {
@@ -97,11 +97,12 @@ export interface RunnerOptions {
    */
   socketPath?: string;
   /**
-   * Optional logger override. Defaults to structured JSON lines on
-   * stderr. The runner does NOT write to stdout — stdout is reserved
-   * for the bridge process to speak MCP cleanly.
+   * Optional logger override. Defaults to the shared structured logger
+   * scoped to the `runner` component (JSON lines on stderr). The
+   * runner does NOT write to stdout — stdout is reserved for the
+   * bridge process to speak MCP cleanly.
    */
-  log?: (msg: string, ctx?: Record<string, unknown>) => void;
+  logger?: Logger;
   /**
    * Controls how the runner behaves when a second bridge connects
    * while one is already attached.
@@ -146,7 +147,7 @@ export interface RunnerOptions {
    */
   presence?: Presence;
   /**
-   * The channel sink the forwarder delivers broker SSE events into —
+   * The channel sink the forwarder delivers broker events into —
    * the per-framework piece that turns team traffic into the agent's
    * ambient input. The claude adapter renders events into the Agent
    * SDK's streaming input; the codex adapter converts each into a
@@ -235,7 +236,7 @@ export interface RunnerHandle {
    */
   rebrief(reason: 'session-start' | 'context-compaction'): void;
   /**
-   * Graceful shutdown. Aborts the SSE forwarder, closes the active
+   * Graceful shutdown. Aborts the event forwarder, closes the active
    * bridge connection (if any), closes the IPC server, and unlinks
    * the socket. Idempotent — calling twice is safe. Awaiting on
    * `waitClosed` after this resolves when teardown is done.
@@ -245,20 +246,15 @@ export interface RunnerHandle {
   readonly waitClosed: Promise<void>;
 }
 
-function defaultLog(msg: string, ctx: Record<string, unknown> = {}): void {
-  const record = { ts: new Date().toISOString(), component: 'runner', msg, ...ctx };
-  process.stderr.write(`${JSON.stringify(record)}\n`);
-}
-
 /**
  * Start the runner: fetch instructions, bind the IPC socket, start the
- * SSE forwarder. Returns a handle the caller can use to wait for
+ * Event forwarder. Returns a handle the caller can use to wait for
  * completion or trigger a graceful shutdown. Throws
  * `RunnerStartupError` if required inputs are missing or the broker
  * instructions call fails.
  */
 export async function startRunner(options: RunnerOptions): Promise<RunnerHandle> {
-  const log = options.log ?? defaultLog;
+  const log = options.logger ?? defaultLogger.child('runner');
   if (!options.url || options.url.length === 0) {
     throw new RunnerStartupError('url is required');
   }
@@ -290,7 +286,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
   }
 
   // Live open-objectives snapshot — mutated as the objectives tracker
-  // refreshes from SSE events. Tool descriptions deliberately do NOT
+  // refreshes from broker events. Tool descriptions deliberately do NOT
   // read it (static descriptions keep the model's prompt-prefix cache
   // intact); it seeds the context re-brief pushed as message traffic.
   let openObjectives: Objective[] = instructions.openObjectives;
@@ -349,7 +345,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
         // a reserved or malformed name even if a (mis)configured
         // broker sends one.
         if (!/^[A-Z][A-Z0-9_]*$/.test(name) || isReservedEnvName(name)) {
-          log('runner: dropping secret with reserved/invalid env name', { name });
+          log.warn('dropping secret with reserved/invalid env name', { name });
           continue;
         }
         secretsEnv[name] = value;
@@ -375,16 +371,16 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
         // these will be scrubbed from this member's traces. Nothing
         // reported that before, which is why a redacted name surfaced
         // as a byte-count mystery instead of a log line.
-        log('runner: secrets resolved', {
+        log.info('secrets resolved', {
           envNames: Object.keys(secretsEnv),
           registeredEnvNames: registeredNames,
         });
       }
     } catch (err) {
       if (err instanceof ClientError && err.status === 404) {
-        log('runner: broker has no /secrets/resolve endpoint — skipping secrets');
+        log.warn('broker has no /secrets/resolve endpoint — skipping secrets');
       } else {
-        log('runner: secrets resolve failed — continuing without secrets', {
+        log.warn('secrets resolve failed — continuing without secrets', {
           error: err instanceof Error ? err.message : String(err),
         });
       }
@@ -421,7 +417,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
         name: instructions.name,
         brokerUrl: options.url,
         token: options.token,
-        log,
+        logger: log.child('capture-host'),
         onSessionStart: (source) => {
           // `compact` = post-compaction restart, `clear` = /clear —
           // both mean the prior conversation context is gone and the
@@ -433,7 +429,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
         },
       });
     } catch (err) {
-      log('runner: capture host failed to start — continuing without capture', {
+      log.warn('capture host failed to start — continuing without capture', {
         error: err instanceof Error ? err.message : String(err),
       });
       captureHost = null;
@@ -447,7 +443,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
     unlinkSync(socketPath);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-      log('runner: stale socket cleanup failed', {
+      log.warn('stale socket cleanup failed', {
         socketPath,
         error: err instanceof Error ? err.message : String(err),
       });
@@ -455,11 +451,11 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
   }
 
   const ipcServer: NetServer = createNetServer((socket) => {
-    log('runner: bridge connecting');
+    log.info('bridge connecting');
 
     if (activeBridge !== null) {
       if (secondBridgePolicy === 'reject-new') {
-        log('runner: rejecting second bridge (policy: reject-new)', {
+        log.warn('rejecting second bridge (policy: reject-new)', {
           note: 'root bridge stays pinned; extra bridge (e.g. a codex subagent thread) gets no csuite tools',
         });
         socket.write(
@@ -471,7 +467,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
         socket.end();
         return;
       }
-      log('runner: displacing previous bridge (policy: displace-old)');
+      log.info('displacing previous bridge (policy: displace-old)');
       activeBridge.close('displaced-by-new-bridge');
     }
 
@@ -492,12 +488,12 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
       },
       onClose: () => {
         if (activeBridge === conn) activeBridge = null;
-        log('runner: bridge disconnected');
+        log.info('bridge disconnected');
       },
-      log,
+      logger: log,
     });
     activeBridge = conn;
-    log('runner: bridge attached');
+    log.info('bridge attached');
   });
 
   const listening = new Promise<void>((resolve, reject) => {
@@ -515,7 +511,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
     );
   }
 
-  log('runner: IPC socket bound', {
+  log.info('IPC socket bound', {
     socketPath,
     name: instructions.name,
     role: instructions.role.title,
@@ -523,7 +519,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
     version: CLI_VERSION,
   });
 
-  // Objectives tracker: refresh the open set when SSE objective
+  // Objectives tracker: refresh the open set when broker objective
   // events arrive. On every diff, emit objective_open/close
   // events into the agent's activity stream so the server can
   // slice traces by time range later. The refreshed snapshot also
@@ -533,7 +529,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
   const tracker = createObjectivesTracker({
     brokerClient,
     name: instructions.name,
-    log,
+    logger: log.child('objectives-tracker'),
     onRefresh: (next) => {
       if (captureHost !== null) {
         const prevIds = new Set(openObjectives.map((o) => o.id));
@@ -541,7 +537,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
         for (const id of nextIds) {
           if (!prevIds.has(id)) {
             captureHost.noteObjectiveOpen(id);
-            log('runner: objective open recorded', { objectiveId: id });
+            log.debug('objective open recorded', { objectiveId: id });
           }
         }
         for (const id of prevIds) {
@@ -554,7 +550,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
             // the most common outcome and it's a hint, not a
             // source of truth.
             captureHost.noteObjectiveClose(id, 'done');
-            log('runner: objective close recorded', { objectiveId: id });
+            log.debug('objective close recorded', { objectiveId: id });
           }
         }
       }
@@ -579,18 +575,18 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
       brokerClient,
       activity: captureHost.busy,
       signal: abortController.signal,
-      log,
+      logger: log.child('activity-reporter'),
     });
   }
 
-  // Channel sink: where the forwarder delivers broker SSE events.
+  // Channel sink: where the forwarder delivers broker events.
   // Adapter-supplied (streaming input for claude, turn dispatches for
   // codex); without one, events are dropped with a log line — they
   // still land in server history and the agent catches up via
   // `recent`.
   const sink: ChannelEventSink = options.channelSink ?? {
     deliver: async (event) => {
-      log('runner: channel event dropped (no channel sink attached)', {
+      log.warn('channel event dropped (no channel sink attached)', {
         bytes: event.content.length,
         kind: event.meta.kind ?? null,
         from: event.meta.from ?? null,
@@ -607,7 +603,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
     const now = Date.now();
     if (now - lastRebriefMs < REBRIEF_COOLDOWN_MS) return;
     lastRebriefMs = now;
-    log('runner: sending context re-brief', {
+    log.info('sending context re-brief', {
       reason,
       openObjectives: openObjectives.length,
     });
@@ -624,7 +620,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
         },
       })
       .catch((err: unknown) => {
-        log('runner: context re-brief send failed', {
+        log.error('context re-brief send failed', {
           error: err instanceof Error ? err.message : String(err),
         });
       });
@@ -646,7 +642,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
       const next = fresh.toolSources;
       if (JSON.stringify(next) === JSON.stringify(externalTools)) return;
       externalTools = next;
-      log('runner: external tools changed', {
+      log.info('external tools changed', {
         sources: next.length,
         tools: next.reduce((n, s) => n + s.tools.length, 0),
       });
@@ -656,7 +652,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
         params: {},
       });
     } catch (err) {
-      log('runner: external tools refresh failed', {
+      log.warn('external tools refresh failed', {
         error: err instanceof Error ? err.message : String(err),
       });
     } finally {
@@ -685,7 +681,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
     const toolsChanged = JSON.stringify(fresh.toolSources) !== JSON.stringify(externalTools);
     instructions = fresh;
     externalTools = fresh.toolSources;
-    log('runner: instructions refreshed', {
+    log.info('instructions refreshed', {
       composedSha256: fresh.composedSha256 ?? null,
       toolsChanged,
     });
@@ -704,7 +700,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
     brokerClient,
     name: instructions.name,
     signal: abortController.signal,
-    log,
+    logger: log.child('forwarder'),
     presence,
     onObjectiveEvent: (message) => {
       tracker.refresh(message);
@@ -723,7 +719,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
   // just logs them. Attach a tail-catch anyway in case a refactor
   // breaks that invariant.
   forwarderPromise.catch((err) => {
-    log('runner: forwarder loop crashed', {
+    log.error('forwarder loop crashed', {
       error: err instanceof Error ? err.message : String(err),
     });
   });
@@ -737,7 +733,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
   const shutdown = async (reason?: string): Promise<void> => {
     if (closed) return;
     closed = true;
-    log('runner: shutdown requested', reason ? { reason } : {});
+    log.info('shutdown requested', reason ? { reason } : {});
     abortController.abort();
     if (activeBridge !== null) {
       activeBridge.close(reason ?? 'runner-shutdown');
@@ -753,13 +749,13 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
     }
     // Let the forwarder finish its wind-down (abort already fired).
     await forwarderPromise.catch((err) => {
-      log('runner: forwarder wind-down failed', {
+      log.warn('forwarder wind-down failed', {
         error: err instanceof Error ? err.message : String(err),
       });
     });
     if (captureHost !== null) {
       await captureHost.close().catch((err) => {
-        log('runner: capture host close failed', {
+        log.error('capture host close failed', {
           error: err instanceof Error ? err.message : String(err),
         });
       });
@@ -864,7 +860,7 @@ interface BridgeConnectionDeps {
     params: Record<string, unknown> | undefined;
   }) => Promise<IpcMcpResponse>;
   onClose: () => void;
-  log: (msg: string, ctx?: Record<string, unknown>) => void;
+  logger: Logger;
 }
 
 /**
@@ -880,7 +876,7 @@ function createBridgeConnection(socket: Socket, deps: BridgeConnectionDeps): Bri
   rl.on('line', (line) => {
     const frame = parseFrame(line);
     if (frame === null) {
-      deps.log('runner: dropped malformed IPC frame', { lineLength: line.length });
+      deps.logger.warn('dropped malformed IPC frame', { lineLength: line.length });
       return;
     }
     if (frame.kind === 'mcp_request') {
@@ -894,7 +890,7 @@ function createBridgeConnection(socket: Socket, deps: BridgeConnectionDeps): Bri
           send(response);
         })
         .catch((err) => {
-          deps.log('runner: handler rejected', {
+          deps.logger.error('handler rejected', {
             error: err instanceof Error ? err.message : String(err),
           });
           send({
@@ -909,17 +905,17 @@ function createBridgeConnection(socket: Socket, deps: BridgeConnectionDeps): Bri
       return;
     }
     if (frame.kind === 'shutdown') {
-      deps.log('runner: bridge sent shutdown', { reason: frame.reason });
+      deps.logger.info('bridge sent shutdown', { reason: frame.reason });
       cleanup();
       return;
     }
     if (frame.kind === 'error') {
-      deps.log('runner: bridge reported error', { message: frame.message });
+      deps.logger.error('bridge reported error', { message: frame.message });
       return;
     }
     // Responses and notifications from the bridge side aren't
     // expected on the runner side of the protocol for v1.
-    deps.log('runner: unexpected frame kind from bridge', { kind: frame.kind });
+    deps.logger.warn('unexpected frame kind from bridge', { kind: frame.kind });
   });
 
   const send = (frame: IpcFrame): void => {
@@ -927,7 +923,7 @@ function createBridgeConnection(socket: Socket, deps: BridgeConnectionDeps): Bri
     try {
       socket.write(encodeFrame(frame));
     } catch (err) {
-      deps.log('runner: write failed', {
+      deps.logger.error('write failed', {
         error: err instanceof Error ? err.message : String(err),
       });
       cleanup();
@@ -953,7 +949,7 @@ function createBridgeConnection(socket: Socket, deps: BridgeConnectionDeps): Bri
 
   socket.on('close', cleanup);
   socket.on('error', (err) => {
-    deps.log('runner: socket error', {
+    deps.logger.error('socket error', {
       error: err instanceof Error ? err.message : String(err),
     });
     cleanup();

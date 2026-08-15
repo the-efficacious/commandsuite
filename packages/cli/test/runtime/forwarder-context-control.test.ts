@@ -23,6 +23,7 @@ import type { Message } from 'csuite-sdk/types';
 import { describe, expect, it } from 'vitest';
 import type { ContextControlEvent } from '../../src/runtime/forwarder.js';
 import { parseContextControl, runForwarder } from '../../src/runtime/forwarder.js';
+import { recordingLogger } from '../helpers/logger.js';
 
 function makeMessage(overrides: Partial<Message>): Message {
   return {
@@ -62,7 +63,7 @@ async function drive(messages: Message[]): Promise<{
 }> {
   const controls: ContextControlEvent[] = [];
   const sinkEvents: Array<{ content: string; meta: Record<string, string> }> = [];
-  const logs: string[] = [];
+  const rec = recordingLogger();
   const ctrl = new AbortController();
   const client = {
     subscribe: (_name: string, signal: AbortSignal): AsyncIterable<Message> => ({
@@ -91,10 +92,10 @@ async function drive(messages: Message[]): Promise<{
     brokerClient: client,
     name: 'me',
     signal: ctrl.signal,
-    log: (msg) => logs.push(msg),
+    logger: rec.logger,
     onContextControlEvent: (control) => controls.push(control),
   });
-  return { controls, sinkEvents, logs };
+  return { controls, sinkEvents, logs: rec.messages() };
 }
 
 describe('context control routing', () => {
@@ -153,14 +154,14 @@ describe('context control routing', () => {
 
     expect(controls).toEqual([]);
     expect(sinkEvents).toEqual([]);
-    expect(logs.filter((l) => l === 'dropped malformed context control')).toHaveLength(2);
+    expect(logs.filter((m) => m === 'dropped malformed context control')).toHaveLength(2);
   });
 
   it('logs rather than silently swallowing when no handler is registered', async () => {
     // Same drive, minus the handler — a runner that cannot act must
     // leave the request visibly unanswered, not pretend.
     const ctrl = new AbortController();
-    const logs: string[] = [];
+    const rec = recordingLogger();
     const client = {
       subscribe: (_n: string, signal: AbortSignal): AsyncIterable<Message> => ({
         [Symbol.asyncIterator]: async function* () {
@@ -181,11 +182,11 @@ describe('context control routing', () => {
       brokerClient: client,
       name: 'me',
       signal: ctrl.signal,
-      log: (msg) => logs.push(msg),
+      logger: rec.logger,
     });
 
     expect(sinkEvents).toEqual([]);
-    expect(logs).toContain('context control received but this runner has no handler');
+    expect(rec.messages()).toContain('context control received but this runner has no handler');
   });
 });
 

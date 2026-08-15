@@ -63,10 +63,11 @@ import {
 } from 'csuite-core';
 import { FsEntrySchema, PendingEnrollmentSchema } from 'csuite-sdk/schemas';
 import type { FsEntry, PendingEnrollment, Team } from 'csuite-sdk/types';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { openDatabase } from '../src/db.js';
 import { createSqliteFilesystemStore, LocalBlobStore } from '../src/files/index.js';
 import { createMemberStore } from '../src/members.js';
+import { recordingLogger } from './helpers/logger.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const ADMIN_TOKEN = 'csuite_bounds_admin_token';
@@ -105,7 +106,7 @@ async function makeApp() {
   tmpDirs.push(blobDir);
   const files = createSqliteFilesystemStore({ db, blobs: new LocalBlobStore(blobDir) });
   for (const m of members.members()) files.ensureHome(m.name);
-  const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+  const log = recordingLogger();
   const { app } = createApp({
     broker,
     members,
@@ -115,9 +116,9 @@ async function makeApp() {
     teamStore: mockTeamStore(TEAM),
     files,
     version: '0.0.0',
-    logger,
+    logger: log.logger,
   });
-  return { app, logger };
+  return { app, log };
 }
 
 const authed = { Authorization: `Bearer ${ADMIN_TOKEN}` };
@@ -268,19 +269,24 @@ describe('POST /enroll — source labels are TRUNCATED to schema bounds, never r
   });
 
   it('records the truncation with the field and the original length', async () => {
-    const { app, logger } = await makeApp();
+    const { app, log } = await makeApp();
     await enroll(app, { 'User-Agent': 'M'.repeat(900) });
 
     // Truncation that nobody can observe is silent data loss. The stored
     // value says THAT it was cut; the log says by how much.
-    expect(logger.warn).toHaveBeenCalledWith(
-      'enrollment source label truncated',
-      expect.objectContaining({ field: 'sourceUa', originalLength: 900, max: UA_MAX }),
+    expect(log.records).toContainEqual(
+      expect.objectContaining({
+        level: 'warn',
+        msg: 'enrollment source label truncated',
+        field: 'sourceUa',
+        originalLength: 900,
+        max: UA_MAX,
+      }),
     );
   });
 
   it('bounds sourceIp from a spoofable forwarding header too', async () => {
-    const { app, logger } = await makeApp();
+    const { app, log } = await makeApp();
     // sourceIp is header-derived: `X-Real-IP` is returned verbatim by
     // ipKey(), so it is unbounded from outside exactly like the UA.
     await enroll(app, { 'X-Real-IP': '9'.repeat(IP_MAX + 40) });
@@ -289,23 +295,24 @@ describe('POST /enroll — source labels are TRUNCATED to schema bounds, never r
     expect(row?.sourceIp?.length).toBe(IP_MAX);
     expect(row?.sourceIp?.endsWith('…')).toBe(true);
     expect(PendingEnrollmentSchema.safeParse(row).success).toBe(true);
-    expect(logger.warn).toHaveBeenCalledWith(
-      'enrollment source label truncated',
-      expect.objectContaining({ field: 'sourceIp', originalLength: IP_MAX + 40 }),
+    expect(log.records).toContainEqual(
+      expect.objectContaining({
+        level: 'warn',
+        msg: 'enrollment source label truncated',
+        field: 'sourceIp',
+        originalLength: IP_MAX + 40,
+      }),
     );
   });
 
   it('leaves an in-bounds label byte-identical', async () => {
-    const { app, logger } = await makeApp();
+    const { app, log } = await makeApp();
     const ua = 'csuite-cli/0.3.1 (linux; x64)';
     await enroll(app, { 'User-Agent': ua });
 
     const [row] = await pendingRows(app);
     expect(row?.sourceUa).toBe(ua);
-    expect(logger.warn).not.toHaveBeenCalledWith(
-      'enrollment source label truncated',
-      expect.anything(),
-    );
+    expect(log.messages()).not.toContain('enrollment source label truncated');
   });
 
   it('truncates the STORED ip without merging rate-limit buckets', async () => {

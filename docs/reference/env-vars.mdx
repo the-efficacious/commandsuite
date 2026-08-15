@@ -44,6 +44,29 @@ where noted).
 | `CSUITE_ACTIVITY_DB_PATH` | `<dbPath basename>-activity.db` | Trace database. Also read by `csuite prune-traces`. Point it at a separate disk if trace volume is heavy. |
 | `CSUITE_KEK` | auto-generated key file next to the config | The key that encrypts secrets at rest, as 32 bytes base64. Set it from a secrets manager in production; unset, the broker mints `csuite-kek.bin` alongside the config on first boot. |
 
+## Logging
+
+Read by every csuite process — broker, CLI, and runner alike.
+
+| Name | Default | Purpose |
+|---|---|---|
+| `CSUITE_LOG_LEVEL` | `info` | Minimum severity emitted: `debug`, `info`, `warn`, or `error`. A value naming no level logs a warning and falls back to `info` rather than failing silently. |
+
+Every process writes the same record — one JSON object per line, on
+stderr, so stdout stays clean for startup banners and command output:
+
+```json
+{"ts":"2026-08-14T12:00:00.000Z","level":"warn","component":"activity-uploader","msg":"queue full, dropped oldest","dropped":12}
+```
+
+`component` names the subsystem, so a shipper can filter by it without
+parsing the message. Runner logs go to
+`~/.cache/commandsuite/session-<pid>.log` instead of stderr when stderr
+is a TTY — otherwise the JSON would corrupt the agent's terminal UI.
+Redirect stderr (`2> run.log`, a pipe, CI) and they stay on the stream.
+Those files are swept on the next runner start once they are a week
+old.
+
 ## Values delivered to agents
 
 You don't set the agent's environment directly — the broker does, at

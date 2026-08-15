@@ -21,11 +21,12 @@ import {
   SqliteSessionStore,
 } from 'csuite-core';
 import type { Permission, Team } from 'csuite-sdk/types';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { openDatabase } from '../src/db.js';
 import { createGenAiCorrelator } from '../src/genai-correlator.js';
 import { createMemberStore } from '../src/members.js';
 import { createRawBodyStore } from '../src/raw-body-store.js';
+import { recordingLogger } from './helpers/logger.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const TEAM: Team = { name: 'demo-team', context: '', permissionPresets: {} };
@@ -42,7 +43,7 @@ async function makeApp(team: Team = TEAM, permissions: Permission[] = []) {
     },
   ]);
   const db = openDatabase(':memory:');
-  const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+  const logger = recordingLogger().logger;
   const genaiStore = createGenAiStore(db, { logger });
   const rawBodyStore = createRawBodyStore(db, { logger });
   const telemetryStore = createTelemetryStore(db, { logger });
@@ -440,7 +441,7 @@ async function makeReadApp() {
     },
   ]);
   const db = openDatabase(':memory:');
-  const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+  const logger = recordingLogger().logger;
   const genaiStore = createGenAiStore(db, { logger });
   const tokens = await createTokenStoreFromMembers(db, members);
   const { app } = await createApp({

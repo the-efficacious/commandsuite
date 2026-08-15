@@ -18,30 +18,31 @@
 
 import { randomUUID } from 'node:crypto';
 import {
+  appendFileSync,
   closeSync,
   constants,
   fstatSync,
   lstatSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   renameSync,
   unlinkSync,
 } from 'node:fs';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { logger as defaultLogger, type Logger } from 'csuite-core';
 
 const MAX_OTLP_BYTES = 256 * 1024 * 1024;
 const MAX_BODY_BYTES = 64 * 1024 * 1024;
-
-type Log = (msg: string, ctx?: Record<string, unknown>) => void;
 
 export interface OtlpRelayOptions {
   brokerUrl: string;
   token: string;
   rawBodiesDir: string;
   fetch?: typeof fetch;
-  log?: Log;
+  logger?: Logger;
 }
 
 export interface OtlpRelay {
@@ -70,12 +71,84 @@ function ownedByRunner(uid: number): boolean {
 
 function quarantineDirFor(spoolDir: string): string {
   // The sibling name deliberately cannot match CaptureHost's active-spool
-  // sweep regex. Retention is unbounded here; a later retention policy must
-  // preserve durable gap metadata before it can remove the only copy.
+  // sweep regex.
   return `${spoolDir}.quarantine`;
 }
 
-function quarantineBodies(spoolDir: string, candidates: QuarantineCandidate[], log: Log): void {
+/** Quarantined payloads are deleted once older than this. */
+export const QUARANTINE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+
+/** Durable record of what a swept payload was, kept after its bytes go. */
+const QUARANTINE_MANIFEST = 'swept.jsonl';
+
+/**
+ * Bound the quarantine directory without erasing the evidence in it.
+ *
+ * A quarantined payload is the ONLY copy of a body the relay could not
+ * resolve, so deleting it by age would silently destroy the record that
+ * a gap existed — which is why this directory was left unbounded rather
+ * than swept naively. The resolution is to separate the two things the
+ * directory holds: the bytes, which are large and eventually stale, and
+ * the fact that a body went missing, which is small and permanent.
+ *
+ * Sweeping appends one manifest line per removed payload — name,
+ * reason, size, and both timestamps — then unlinks the bytes. The gap
+ * stays durably visible; only the payload is reclaimed.
+ *
+ * Best-effort throughout: an unreadable entry or a failed append leaves
+ * the payload in place rather than deleting evidence it could not
+ * record.
+ */
+export function sweepQuarantine(
+  spoolDir: string,
+  opts: { maxAgeMs?: number; now?: number } = {},
+): { removed: number; bytesReclaimed: number; failed: number } {
+  const dir = quarantineDirFor(spoolDir);
+  const maxAgeMs = opts.maxAgeMs ?? QUARANTINE_MAX_AGE_MS;
+  const now = opts.now ?? Date.now();
+  let removed = 0;
+  let bytesReclaimed = 0;
+  let failed = 0;
+
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return { removed, bytesReclaimed, failed };
+  }
+
+  for (const entry of entries) {
+    if (!entry.endsWith('.quarantined')) continue;
+    const full = join(dir, entry);
+    try {
+      const st = lstatSync(full);
+      if (!st.isFile()) continue;
+      if (now - st.mtimeMs < maxAgeMs) continue;
+      // Record BEFORE unlinking. If the append throws, the payload
+      // stays — losing bytes we failed to account for is the one
+      // outcome this sweep exists to prevent.
+      appendFileSync(
+        join(dir, QUARANTINE_MANIFEST),
+        `${JSON.stringify({
+          name: entry,
+          reason: entry.split('.').at(-4) ?? 'unknown',
+          bytes: st.size,
+          quarantinedAt: Math.round(st.mtimeMs),
+          sweptAt: now,
+        })}\n`,
+        { mode: 0o600 },
+      );
+      unlinkSync(full);
+      removed += 1;
+      bytesReclaimed += st.size;
+    } catch {
+      failed += 1;
+    }
+  }
+  return { removed, bytesReclaimed, failed };
+}
+
+function quarantineBodies(spoolDir: string, candidates: QuarantineCandidate[], log: Logger): void {
   if (candidates.length === 0) return;
   const quarantineDir = quarantineDirFor(spoolDir);
   let quarantineReady = false;
@@ -115,7 +188,7 @@ function quarantineBodies(spoolDir: string, candidates: QuarantineCandidate[], l
         `${basename(candidate.path)}.${candidate.reason}.${Date.now()}.${randomUUID()}.quarantined`,
       );
       renameSync(candidate.path, target);
-      log('otlp-relay: quarantined unavailable raw body', {
+      log.warn('quarantined unavailable raw body', {
         source: candidate.path,
         quarantine: target,
         reason: candidate.reason,
@@ -123,7 +196,7 @@ function quarantineBodies(spoolDir: string, candidates: QuarantineCandidate[], l
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === 'ENOENT') continue;
-      log('otlp-relay: could not quarantine unavailable raw body', {
+      log.warn('could not quarantine unavailable raw body', {
         source: candidate.path,
         reason: candidate.reason,
         error: err instanceof Error ? err.message : String(err),
@@ -280,7 +353,7 @@ function readRequestBody(req: IncomingMessage): Promise<Buffer> {
 }
 
 export async function startOtlpRelay(options: OtlpRelayOptions): Promise<OtlpRelay> {
-  const log = options.log ?? (() => {});
+  const log = options.logger ?? defaultLogger.child('otlp-relay');
   const fetchImpl = options.fetch ?? globalThis.fetch;
   const brokerBase = options.brokerUrl.replace(/\/+$/, '');
   const spoolDir = resolve(options.rawBodiesDir);
@@ -321,7 +394,7 @@ export async function startOtlpRelay(options: OtlpRelayOptions): Promise<OtlpRel
         refs = transformed.refs;
         quarantine = transformed.quarantine;
         if (transformed.unresolved.length > 0) {
-          log('otlp-relay: raw body unavailable; forwarding record for broker-side skip', {
+          log.warn('raw body unavailable; forwarding record for broker-side skip', {
             count: transformed.unresolved.length,
             errors: transformed.unresolved,
           });
@@ -362,14 +435,14 @@ export async function startOtlpRelay(options: OtlpRelayOptions): Promise<OtlpRel
             // The broker already acknowledged these bytes. A concurrent
             // unlink must not strand unrelated degraded siblings or turn a
             // successful ingest into a retry of the whole batch.
-            log('otlp-relay: could not remove acknowledged raw body', {
+            log.warn('could not remove acknowledged raw body', {
               ref,
               error: err instanceof Error ? err.message : String(err),
             });
           }
         }
       } else if (refs.length > 0) {
-        log('otlp-relay: broker did not acknowledge every raw body', {
+        log.warn('broker did not acknowledge every raw body', {
           expected: refs.length,
           captured,
           status: upstream.status,
@@ -381,7 +454,7 @@ export async function startOtlpRelay(options: OtlpRelayOptions): Promise<OtlpRel
       });
       res.end(responseBytes);
     } catch (err) {
-      log('otlp-relay: forward failed', {
+      log.warn('forward failed', {
         error: err instanceof Error ? err.message : String(err),
       });
       res.writeHead(503, { 'Content-Type': 'application/json' });

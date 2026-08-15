@@ -7,10 +7,11 @@ import {
 } from 'csuite-core';
 import { PROTOCOL_HEADER, RUNNER_VERSION_HEADER } from 'csuite-sdk/protocol';
 import type { InstructionsResponse, Message, RosterResponse, Team } from 'csuite-sdk/types';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { openDatabase } from '../src/db.js';
 import { createGenAiCorrelator } from '../src/genai-correlator.js';
 import { createMemberStore } from '../src/members.js';
+import { recordingLogger } from './helpers/logger.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const OP_TOKEN = 'csuite_test_operator_secret';
@@ -47,12 +48,7 @@ async function makeApp(options: { instructions?: string; context?: string } = {}
   const db = openDatabase(':memory:');
   const sessions = new SqliteSessionStore(db);
   const tokens = await createTokenStoreFromMembers(db, members);
-  const logger = {
-    debug: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  };
+  const log = recordingLogger();
   const { app } = createApp({
     createGenAiCorrelator,
     broker,
@@ -61,9 +57,9 @@ async function makeApp(options: { instructions?: string; context?: string } = {}
     sessions,
     teamStore: mockTeamStore({ ...TEAM, context: options.context ?? TEAM.context }),
     version: '0.0.0',
-    logger,
+    logger: log.logger,
   });
-  return { app, broker, members, sessions, db, tokens, logger };
+  return { app, broker, members, sessions, db, tokens, log };
 }
 
 function authed(token: string, body?: unknown): RequestInit {
@@ -121,16 +117,13 @@ describe('app GET /instructions', () => {
   });
 
   it('distinguishes an absent runner report from a rejected one without withholding packet', async () => {
-    const { app, logger } = await makeApp();
+    const { app, log } = await makeApp();
     const absent = await app.request('/instructions', authed(BOT_TOKEN));
     expect(absent.status).toBe(200);
     expect(((await absent.json()) as InstructionsResponse).instructions).toContain(
       'runner=unknown',
     );
-    expect(logger.warn).not.toHaveBeenCalledWith(
-      'instructions runner version rejected',
-      expect.anything(),
-    );
+    expect(log.messages()).not.toContain('instructions runner version rejected');
 
     const rejected = await app.request('/instructions', {
       headers: {
@@ -142,13 +135,18 @@ describe('app GET /instructions', () => {
     expect(((await rejected.json()) as InstructionsResponse).instructions).toContain(
       'runner=unknown',
     );
-    expect(logger.warn).toHaveBeenCalledWith('instructions runner version rejected', {
-      member: 'build-bot',
-    });
+    // The record, not the call: severity is what a shipper routes on.
+    expect(log.records).toContainEqual(
+      expect.objectContaining({
+        level: 'warn',
+        msg: 'instructions runner version rejected',
+        member: 'build-bot',
+      }),
+    );
   });
 
   it('renders a bounded opaque runner version reported by the runner', async () => {
-    const { app, logger } = await makeApp();
+    const { app, log } = await makeApp();
     const res = await app.request('/instructions', {
       headers: {
         Authorization: `Bearer ${BOT_TOKEN}`,
@@ -160,10 +158,7 @@ describe('app GET /instructions', () => {
     expect(instructions).toContain(
       'demo-team CommandSuite/csuite: broker=0.0.0 runner=0.5.0-rc…d.3',
     );
-    expect(logger.warn).not.toHaveBeenCalledWith(
-      'instructions runner version rejected',
-      expect.anything(),
-    );
+    expect(log.messages()).not.toContain('instructions runner version rejected');
   });
 
   it('serves an oversized composed packet whole — no cap, no warning', async () => {
@@ -171,14 +166,14 @@ describe('app GET /instructions', () => {
     // #129) and the legacy-runner warning that outlived it (removed
     // with zero deployed runners). This is the guard against either
     // quietly returning.
-    const { app, logger } = await makeApp({ instructions: 'x'.repeat(8_300) });
+    const { app, log } = await makeApp({ instructions: 'x'.repeat(8_300) });
     const res = await app.request('/instructions', authed(BOT_TOKEN));
     expect(res.status).toBe(200);
     const body = (await res.json()) as InstructionsResponse;
     expect(body.instructions.length).toBeGreaterThan(8_192);
     // Complete, not truncated at the old boundary.
     expect(body.instructions).toContain('x'.repeat(8_300));
-    expect(logger.warn).not.toHaveBeenCalled();
+    expect(log.atLeast('warn')).toEqual([]);
   });
 
   it('requires auth', async () => {

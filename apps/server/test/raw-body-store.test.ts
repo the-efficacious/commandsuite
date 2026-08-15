@@ -15,13 +15,14 @@ import type { Logger } from 'csuite-core';
 import { describe, expect, it } from 'vitest';
 import { openDatabase } from '../src/db.js';
 import { createRawBodyStore } from '../src/raw-body-store.js';
+import { silentLogger } from './helpers/logger.js';
 
 function sha256(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
 /** Silent logger — the corruption test warns on purpose. */
-const quiet: Logger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };
+const quiet: Logger = silentLogger();
 
 // Repetitive JSON compresses well — lets stats assert stored < raw.
 const REQUEST_BYTES = Buffer.from(

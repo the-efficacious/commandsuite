@@ -14,9 +14,9 @@ export const LogLevelSchema = z.enum(['debug', 'info', 'notice', 'warning', 'err
 /**
  * The 3-state activity model — orthogonal to connection presence.
  * `idle` (available), `working` (mid-turn: generation and/or tools),
- * `blocked` (waiting on a human). See `ActivityState` in types.ts.
+ * `blocked` (waiting on a human). See `WorkState` in types.ts.
  */
-export const ActivityStateSchema = z.enum(['idle', 'working', 'blocked']);
+export const WorkStateSchema = z.enum(['idle', 'working', 'blocked']);
 
 /**
  * Whether a member's VERBATIM capture is reaching the broker.
@@ -174,7 +174,7 @@ export const PresenceSchema = z.object({
   // Live 3-state activity. The server omits the field for members it
   // has no recent activity report for (treat absence as `idle`); older
   // clients that don't know about it ignore it and fall back to `busy`.
-  activity: ActivityStateSchema.optional(),
+  activity: WorkStateSchema.optional(),
   // Back-compat mirror of `activity === 'working'`. Omitted when
   // `activity` is; older UIs that only read the boolean keep working.
   busy: z.boolean().optional(),
@@ -216,7 +216,7 @@ export const PresenceSchema = z.object({
  * (= `state === 'working'`) when omitted.
  */
 export const ActivityReportSchema = z.object({
-  state: ActivityStateSchema,
+  state: WorkStateSchema,
   busy: z.boolean().optional(),
 });
 
@@ -1394,6 +1394,30 @@ export const ListGenaiSummariesResponseSchema = z.object({
 
 export const GetGenaiInferenceResponseSchema = z.object({
   inference: GenAiInferenceRecordSchema,
+});
+
+/**
+ * A telemetry row as served. The four JSON columns are passthrough
+ * records rather than a closed shape on purpose: the store deliberately
+ * has no allowlist on record or metric names, so narrowing here would
+ * start dropping fields a newer agent emits.
+ */
+export const TelemetryRecordRowSchema = z.object({
+  id: z.number(),
+  memberName: z.string(),
+  signal: z.enum(['log', 'metric']),
+  name: z.string(),
+  tsUnixNano: z.number(),
+  tsMs: z.number(),
+  attributes: z.record(z.string(), z.unknown()),
+  resource: z.record(z.string(), z.unknown()),
+  scope: z.record(z.string(), z.unknown()).nullable(),
+  payload: z.record(z.string(), z.unknown()),
+  receivedAt: z.number(),
+});
+
+export const ListTelemetryResponseSchema = z.object({
+  telemetry: z.array(TelemetryRecordRowSchema),
 });
 
 // ───────────────────────── Activity stream ──────────────────────

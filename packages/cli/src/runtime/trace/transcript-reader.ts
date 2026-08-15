@@ -49,7 +49,7 @@
 
 import { type FSWatcher, watch } from 'node:fs';
 import { open } from 'node:fs/promises';
-import { parseTranscriptLine } from 'csuite-core';
+import { logger as defaultLogger, type Logger, parseTranscriptLine } from 'csuite-core';
 import type { ActivityEvent, AnthropicMessage, AnthropicMessagesEntry } from 'csuite-sdk/types';
 
 export interface TranscriptReaderOptions {
@@ -61,7 +61,7 @@ export interface TranscriptReaderOptions {
   getPath: () => string | null | undefined;
   /** Sink for the mapped activity events (the capture host's uploader). */
   enqueue: (event: ActivityEvent) => void;
-  log?: (msg: string, ctx?: Record<string, unknown>) => void;
+  logger?: Logger;
   /** Poll interval in ms for the path-resolve + drain fallback. Default 300. */
   pollMs?: number;
 }
@@ -76,12 +76,7 @@ const DEFAULT_POLL_MS = 300;
 const NEWLINE = 0x0a;
 
 export function attachTranscriptReader(options: TranscriptReaderOptions): TranscriptReader {
-  const log =
-    options.log ??
-    ((msg: string, ctx: Record<string, unknown> = {}): void => {
-      const record = { ts: new Date().toISOString(), component: 'transcript-reader', msg, ...ctx };
-      process.stderr.write(`${JSON.stringify(record)}\n`);
-    });
+  const log = options.logger ?? defaultLogger.child('transcript-reader');
   const pollMs = options.pollMs ?? DEFAULT_POLL_MS;
 
   // The transcript path, resolved once from getPath() and then pinned.
@@ -111,7 +106,7 @@ export function attachTranscriptReader(options: TranscriptReaderOptions): Transc
     try {
       options.enqueue(event);
     } catch (err) {
-      log('transcript-reader: enqueue threw', {
+      log.error('enqueue threw', {
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -129,7 +124,7 @@ export function attachTranscriptReader(options: TranscriptReaderOptions): Transc
       // A truncated/garbage line (mid-write, or a Claude Code quirk). The
       // offset only advances past COMPLETE lines, so this is a whole line
       // that failed to parse — log + skip, never throw.
-      log('transcript-reader: skipping unparseable line', {
+      log.warn('skipping unparseable line', {
         error: err instanceof Error ? err.message : String(err),
       });
       return;
@@ -296,7 +291,7 @@ export function attachTranscriptReader(options: TranscriptReaderOptions): Transc
     } catch (err) {
       // Belt-and-suspenders: nothing above should throw, but if a read
       // races a truncation/rotation we log + swallow rather than crash.
-      log('transcript-reader: drain error', {
+      log.warn('drain error', {
         error: err instanceof Error ? err.message : String(err),
       });
     } finally {
@@ -314,7 +309,7 @@ export function attachTranscriptReader(options: TranscriptReaderOptions): Transc
     const p = options.getPath();
     if (typeof p !== 'string' || p.length === 0) return;
     path = p;
-    log('transcript-reader: tailing transcript', { path });
+    log.info('tailing transcript', { path });
     try {
       watcher = watch(path, () => {
         void drain();
@@ -322,7 +317,7 @@ export function attachTranscriptReader(options: TranscriptReaderOptions): Transc
       watcher.on('error', (err) => {
         // fs.watch died (rotation, platform quirk). Drop it; the poll
         // fallback keeps us live.
-        log('transcript-reader: watcher error, relying on poll', {
+        log.warn('watcher error, relying on poll', {
           error: err instanceof Error ? err.message : String(err),
         });
         try {
@@ -335,7 +330,7 @@ export function attachTranscriptReader(options: TranscriptReaderOptions): Transc
     } catch (err) {
       // Couldn't watch (file vanished between resolve and watch, etc.).
       // The poll covers us.
-      log('transcript-reader: watch failed, relying on poll', {
+      log.warn('watch failed, relying on poll', {
         error: err instanceof Error ? err.message : String(err),
       });
       watcher = null;

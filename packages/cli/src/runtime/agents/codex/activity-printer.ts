@@ -42,6 +42,7 @@
  */
 
 import { helm } from '@the-efficacious/brand';
+import { logger as defaultLogger, type Logger } from 'csuite-core';
 import type { JsonRpcClient } from './json-rpc.js';
 import {
   type AgentMessageDeltaNotification,
@@ -93,8 +94,11 @@ export interface ActivityPrinterOptions {
    * string comparison.
    */
   color?: boolean;
-  /** Diagnostic logger (session log). Defaults to a no-op. */
-  log?: (msg: string, ctx?: Record<string, unknown>) => void;
+  /**
+   * Diagnostic logger (session log). Defaults to the shared logger's
+   * 'codex-activity-printer' child.
+   */
+  logger?: Logger;
 }
 
 export interface ActivityPrinter {
@@ -113,7 +117,7 @@ interface TurnState {
 export function attachCodexActivityPrinter(options: ActivityPrinterOptions): ActivityPrinter {
   const stream = options.stream ?? process.stderr;
   const color = options.color ?? Boolean(stream.isTTY);
-  const log = options.log ?? (() => {});
+  const log = options.logger ?? defaultLogger.child('codex-activity-printer');
 
   // Wrap with color codes only when enabled. Wrapping inline keeps
   // each formatter readable instead of forking the whole function on
@@ -251,7 +255,7 @@ export function attachCodexActivityPrinter(options: ActivityPrinterOptions): Act
     const msg = strField(p.error, 'message') ?? strField(p, 'message') ?? '(no message)';
     closeDeltaLine();
     write(`${paint(PALETTE.alarm, '! error:')} ${msg}\n`);
-    log('codex-activity-printer: error notification surfaced', { message: msg });
+    log.debug('error notification surfaced', { message: msg });
   });
 
   options.rpc.onNotification(NOTIFICATIONS.warning, (params) => {

@@ -31,9 +31,10 @@ import {
 } from 'csuite-core';
 import { MEMBER_PATHS } from 'csuite-sdk/protocol';
 import type { ActivityEvent, ListActivityResponse, Team } from 'csuite-sdk/types';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
+import { recordingLogger, silentLogger } from './helpers/logger.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const CMD_TOKEN = 'csuite_test_director';
@@ -83,12 +84,7 @@ async function makeApp() {
     activityStore,
     teamStore: mockTeamStore(TEAM),
     version: '0.0.0',
-    logger: {
-      debug: vi.fn(),
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-    },
+    logger: silentLogger(),
   });
   return { app, activityStore, db, tokens };
 }
@@ -389,8 +385,8 @@ describe('agent activity store directly', () => {
 
   it('skips a malformed persisted row instead of fabricating a placeholder', () => {
     const db = openDatabase(':memory:');
-    const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
-    const store = createSqliteActivityStore(db, log);
+    const rec = recordingLogger();
+    const store = createSqliteActivityStore(db, rec.logger);
 
     // A real, valid row alongside a corrupt one persisted out-of-band
     // (event_json that no longer validates against ActivityEventSchema).
@@ -409,6 +405,6 @@ describe('agent activity store directly', () => {
     // corrupt row could only surface as a fabricated placeholder — the
     // length + kind assertions above prove it did not.
     // And the skip is logged, not silent.
-    expect(log.warn).toHaveBeenCalledTimes(1);
+    expect(rec.atLeast('warn')).toHaveLength(1);
   });
 });

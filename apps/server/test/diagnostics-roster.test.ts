@@ -24,14 +24,15 @@ import {
   SqliteSessionStore,
 } from 'csuite-core';
 import type { RosterResponse, Team } from 'csuite-sdk/types';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
+import { recordingLogger } from './helpers/logger.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const TOKEN = 'csuite_test_member_secret';
 const TEAM: Team = { name: 't', context: '', permissionPresets: {} };
-const quiet = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+const quiet = recordingLogger().logger;
 
 const dbs: ReturnType<typeof openDatabase>[] = [];
 afterEach(() => {

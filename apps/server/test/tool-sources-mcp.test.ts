@@ -21,7 +21,7 @@ import {
   InMemoryEventLog,
   SqliteSessionStore,
 } from 'csuite-core';
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { openDatabase } from '../src/db.js';
 import { kekFieldCipher, testKek } from '../src/kek.js';
@@ -31,13 +31,14 @@ import {
   createSqliteToolSourceStore,
   type McpToolManager,
 } from '../src/tool-sources/index.js';
+import { recordingLogger } from './helpers/logger.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const ADMIN = 'csuite_test_admin_secret';
 const BOUND = 'csuite_test_bound_secret';
 const UPSTREAM_SECRET = 'upstream-pat';
 
-const noopLog = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+const noopLog = recordingLogger().logger;
 
 /**
  * Stateless Streamable HTTP MCP upstream: a fresh SDK server +

@@ -77,6 +77,7 @@ import {
   ListObjectivesResponseSchema,
   ListPendingEnrollmentsResponseSchema,
   ListSecretsResponseSchema,
+  ListTelemetryResponseSchema,
   ListTokensResponseSchema,
   ListToolSourcesResponseSchema,
   ListVariablesResponseSchema,
@@ -163,6 +164,7 @@ import type {
   ListActivityQuery,
   ListGenaiQuery,
   ListObjectivesQuery,
+  ListTelemetryQuery,
   Member,
   Message,
   NotificationDelivery,
@@ -193,6 +195,7 @@ import type {
   SetToolCredentialRequest,
   SetVariableValueRequest,
   Team,
+  TelemetryRecordRow,
   TokenInfo,
   ToolSource,
   ToolSourceSummary,
@@ -600,7 +603,7 @@ export class Client {
   /**
    * Post a discussion message into an objective's thread. Fans out to
    * every member of the thread (originator + assignee + explicit
-   * watchers) via their SSE streams, scoped to thread key `obj:<id>`.
+   * watchers) via their live streams, scoped to thread key `obj:<id>`.
    * Caller must already be a thread member server-side.
    */
   async discussObjective(id: string, payload: DiscussObjectiveRequest): Promise<Message> {
@@ -752,6 +755,53 @@ export class Client {
     const parsed = GetGenaiInferenceResponseSchema.parse(await this.json(resp));
     // Same permissive-schema narrowing as `listGenaiInferences`.
     return parsed.inference as unknown as GenAiInferenceRecord;
+  }
+
+  /**
+   * Read this member's operational telemetry — the cost, token and
+   * lifecycle records their agent exported over OTLP. Oldest-first
+   * within the window; page with `cursor`.
+   *
+   * Separate from `listGenaiInferences` because the two answer
+   * different questions: this is the accounting, that is the content.
+   */
+  async listTelemetry(name: string, query: ListTelemetryQuery = {}): Promise<TelemetryRecordRow[]> {
+    const params = new URLSearchParams();
+    if (query.signal !== undefined) params.set('signal', query.signal);
+    if (query.event !== undefined) params.set('event', query.event);
+    if (query.from !== undefined) params.set('from', String(query.from));
+    if (query.to !== undefined) params.set('to', String(query.to));
+    if (query.cursor !== undefined) {
+      params.set('cursor_ts', String(query.cursor.ts));
+      params.set('cursor_id', String(query.cursor.id));
+    }
+    if (query.limit !== undefined) params.set('limit', String(query.limit));
+    const qs = params.toString();
+    const path = qs === '' ? MEMBER_PATHS.telemetry(name) : `${MEMBER_PATHS.telemetry(name)}?${qs}`;
+    const resp = await this.request(path, { method: 'GET' });
+    return ListTelemetryResponseSchema.parse(await this.json(resp)).telemetry;
+  }
+
+  /**
+   * Fetch the verbatim bytes behind one inference — the source the
+   * parsed record was mapped from, byte-exact with respect to what was
+   * stored after redaction.
+   *
+   * Addressed through the inference rather than by content hash: the
+   * blob store is deduped and global, so a hash-addressed read would
+   * cross member boundaries. 404 when the inference is absent or that
+   * side was never captured; 410 when the record outlived its bytes
+   * (retention collects a blob once nothing references it).
+   */
+  async getGenaiRawBody(
+    name: string,
+    id: number,
+    kind: 'request' | 'response' = 'request',
+  ): Promise<Uint8Array> {
+    const resp = await this.request(`${MEMBER_PATHS.genai(name)}/${id}/raw?kind=${kind}`, {
+      method: 'GET',
+    });
+    return new Uint8Array(await resp.arrayBuffer());
   }
 
   // ─────────────────────── Members ──────────────────────────────

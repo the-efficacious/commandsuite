@@ -42,6 +42,7 @@ import {
   ListToolsRequestSchema,
   type Tool,
 } from '@modelcontextprotocol/sdk/types.js';
+import { logger as defaultLogger } from 'csuite-core';
 import { CLI_VERSION } from '../version.js';
 import {
   encodeFrame,
@@ -58,10 +59,7 @@ export class BridgeStartupError extends Error {
   }
 }
 
-function log(msg: string, ctx: Record<string, unknown> = {}): void {
-  const record = { ts: new Date().toISOString(), component: 'bridge', msg, ...ctx };
-  process.stderr.write(`${JSON.stringify(record)}\n`);
-}
+const log = defaultLogger.child('bridge');
 
 /**
  * Bridge main entry. Blocks (by holding the stdio transport open)
@@ -114,13 +112,13 @@ export async function runBridge(): Promise<void> {
   rl.on('line', (line) => {
     const frame = parseFrame(line);
     if (frame === null) {
-      log('bridge: dropped malformed IPC frame', { lineLength: line.length });
+      log.warn('dropped malformed IPC frame', { lineLength: line.length });
       return;
     }
     if (frame.kind === 'mcp_response') {
       const pending = pendingRequests.get(frame.id);
       if (!pending) {
-        log('bridge: unmatched mcp_response', { id: frame.id });
+        log.warn('unmatched mcp_response', { id: frame.id });
         return;
       }
       pendingRequests.delete(frame.id);
@@ -136,7 +134,7 @@ export async function runBridge(): Promise<void> {
           params: frame.params ?? {},
         })
         .catch((err: unknown) =>
-          log('bridge: failed to emit MCP notification', {
+          log.warn('failed to emit MCP notification', {
             method: frame.method,
             error: err instanceof Error ? err.message : String(err),
           }),
@@ -144,12 +142,12 @@ export async function runBridge(): Promise<void> {
       return;
     }
     if (frame.kind === 'shutdown') {
-      log('bridge: runner sent shutdown', { reason: frame.reason });
+      log.info('runner sent shutdown', { reason: frame.reason });
       teardown('runner-shutdown');
       return;
     }
     if (frame.kind === 'error') {
-      log('bridge: runner reported error', { message: frame.message });
+      log.error('runner reported error', { message: frame.message });
       if (typeof frame.id === 'number') {
         const pending = pendingRequests.get(frame.id);
         if (pending) {
@@ -164,7 +162,7 @@ export async function runBridge(): Promise<void> {
       return;
     }
     // `mcp_request` frames don't flow from runner to bridge.
-    log('bridge: unexpected frame kind from runner', { kind: (frame as IpcFrame).kind });
+    log.warn('unexpected frame kind from runner', { kind: (frame as IpcFrame).kind });
   });
 
   // ── MCP request handlers — forward via IPC ────────────────────────
@@ -210,14 +208,14 @@ export async function runBridge(): Promise<void> {
   // ── Stdio transport ───────────────────────────────────────────────
   const transport = new StdioServerTransport();
   await mcpServer.connect(transport);
-  log('bridge: stdio + IPC connected', { socketPath });
+  log.info('stdio + IPC connected', { socketPath });
 
   // Hold the process alive until one of the two endpoints goes away.
   let teardownReason: string | null = null;
   const teardown = (reason: string): void => {
     if (teardownReason !== null) return;
     teardownReason = reason;
-    log('bridge: tearing down', { reason });
+    log.info('tearing down', { reason });
     try {
       rl.close();
     } catch {
@@ -234,7 +232,7 @@ export async function runBridge(): Promise<void> {
 
   ipcSocket.on('close', () => teardown('runner-socket-closed'));
   ipcSocket.on('error', (err) => {
-    log('bridge: IPC socket error', {
+    log.error('IPC socket error', {
       error: err instanceof Error ? err.message : String(err),
     });
     teardown('runner-socket-error');

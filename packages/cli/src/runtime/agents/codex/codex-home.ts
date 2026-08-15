@@ -34,6 +34,7 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { logger as defaultLogger, type Logger } from 'csuite-core';
 
 export interface CodexHomeOptions {
   /**
@@ -84,6 +85,8 @@ export interface CodexHomeOptions {
    * is unavailable for that run.
    */
   sessionsDir?: string;
+  /** Structured logger. Defaults to the shared logger's 'codex-home' child. */
+  logger?: Logger;
 }
 
 export interface CodexHomeHandle {
@@ -116,6 +119,7 @@ export class CodexHomeError extends Error {
 }
 
 export function setupCodexHome(options: CodexHomeOptions): CodexHomeHandle {
+  const log = options.logger ?? defaultLogger.child('codex-home');
   const realHome = options.realCodexHome ?? join(homedir(), '.codex');
   const parent =
     options.parentDir ??
@@ -134,8 +138,9 @@ export function setupCodexHome(options: CodexHomeOptions): CodexHomeHandle {
       // Symlink can fail on Windows without privileges or on some
       // FUSE mounts. We fall through and let codex attempt its own
       // login — the CLI surfaces a hint about this.
-      const msg = err instanceof Error ? err.message : String(err);
-      process.stderr.write(`csuite codex: warning — could not link auth.json: ${msg}\n`);
+      log.warn('could not link auth.json', {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
@@ -146,10 +151,9 @@ export function setupCodexHome(options: CodexHomeOptions): CodexHomeHandle {
       symlinkSync(options.sessionsDir, join(dir, 'sessions'));
       sessionsLinked = true;
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      process.stderr.write(
-        `csuite codex: warning — could not link sessions dir (resume across runs disabled): ${msg}\n`,
-      );
+      log.warn('could not link sessions dir — resume across runs disabled', {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 

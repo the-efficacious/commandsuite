@@ -18,10 +18,11 @@ import {
   SqliteSessionStore,
 } from 'csuite-core';
 import type { FsEntry, Team } from 'csuite-sdk/types';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { openDatabase } from '../../src/db.js';
 import { createSqliteFilesystemStore, LocalBlobStore } from '../../src/files/index.js';
 import { createMemberStore } from '../../src/members.js';
+import { silentLogger } from '../helpers/logger.js';
 import { mockTeamStore } from '../helpers/test-stores.js';
 
 const ALICE_TOKEN = 'csuite_test_alice_secret';
@@ -81,7 +82,7 @@ async function makeApp() {
     teamStore: mockTeamStore(TEAM),
     files,
     version: '0.0.0',
-    logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    logger: silentLogger(),
   });
   return { app, files };
 }

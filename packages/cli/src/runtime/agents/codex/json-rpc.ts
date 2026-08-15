@@ -27,6 +27,7 @@
 
 import { createInterface } from 'node:readline';
 import type { Readable, Writable } from 'node:stream';
+import { logger as defaultLogger, type Logger } from 'csuite-core';
 
 export class JsonRpcError extends Error {
   readonly code: number;
@@ -79,8 +80,9 @@ export interface JsonRpcClientOptions {
   /**
    * Optional structured logger. JSON-RPC layer is normally silent; this
    * fires only for off-path events (parse errors, unmatched ids, etc.).
+   * Defaults to the shared logger's 'json-rpc' child.
    */
-  log?: (msg: string, ctx?: Record<string, unknown>) => void;
+  logger?: Logger;
 }
 
 export interface JsonRpcClient {
@@ -98,7 +100,7 @@ export function createJsonRpcClient(
   stdin: Writable,
   options: JsonRpcClientOptions = {},
 ): JsonRpcClient {
-  const log = options.log ?? (() => {});
+  const log = options.logger ?? defaultLogger.child('json-rpc');
   let nextId = 1;
   const pending = new Map<number, Pending>();
   const notificationHandlers = new Map<string, Set<(params: unknown) => void>>();
@@ -115,7 +117,7 @@ export function createJsonRpcClient(
     try {
       stdin.write(`${JSON.stringify(msg)}\n`);
     } catch (err) {
-      log('json-rpc: write failed', {
+      log.error('write failed', {
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -125,7 +127,7 @@ export function createJsonRpcClient(
     const idNum = typeof msg.id === 'number' ? msg.id : Number(msg.id);
     const handler = pending.get(idNum);
     if (!handler) {
-      log('json-rpc: response for unknown id', { id: msg.id });
+      log.warn('response for unknown id', { id: msg.id });
       return;
     }
     pending.delete(idNum);
@@ -143,7 +145,7 @@ export function createJsonRpcClient(
       try {
         sub(msg.params);
       } catch (err) {
-        log('json-rpc: notification handler threw', {
+        log.warn('notification handler threw', {
           method: msg.method,
           error: err instanceof Error ? err.message : String(err),
         });
@@ -185,7 +187,7 @@ export function createJsonRpcClient(
     try {
       msg = JSON.parse(line);
     } catch {
-      log('json-rpc: parse error', { line: line.slice(0, 200) });
+      log.warn('parse error', { line: line.slice(0, 200) });
       return;
     }
     if (!msg || typeof msg !== 'object') return;
@@ -235,13 +237,13 @@ export function createJsonRpcClient(
 
   rl.on('close', () => cleanup('stdout-closed'));
   stdout.on('error', (err) => {
-    log('json-rpc: stdout error', {
+    log.error('stdout error', {
       error: err instanceof Error ? err.message : String(err),
     });
     cleanup('stdout-error');
   });
   stdin.on('error', (err) => {
-    log('json-rpc: stdin error', {
+    log.error('stdin error', {
       error: err instanceof Error ? err.message : String(err),
     });
     cleanup('stdin-error');

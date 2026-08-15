@@ -20,8 +20,9 @@
  * until it reconnects.
  */
 
+import { logger as defaultLogger, type Logger } from 'csuite-core';
 import type { Client as BrokerClient } from 'csuite-sdk/client';
-import type { ActivityState } from 'csuite-sdk/types';
+import type { WorkState } from 'csuite-sdk/types';
 import type { ActivitySignal } from './trace/busy.js';
 
 export interface ActivityReporterOptions {
@@ -29,7 +30,8 @@ export interface ActivityReporterOptions {
   activity: ActivitySignal;
   /** Cancellation. When aborted, the reporter stops heartbeating. */
   signal: AbortSignal;
-  log: (msg: string, ctx?: Record<string, unknown>) => void;
+  /** Structured logger. Defaults to the shared logger's `activity-reporter` child. */
+  logger?: Logger;
   /** Override the heartbeat interval. Default 10_000ms. */
   heartbeatMs?: number;
 }
@@ -37,23 +39,26 @@ export interface ActivityReporterOptions {
 export const DEFAULT_HEARTBEAT_MS = 10_000;
 
 export function startActivityReporter(opts: ActivityReporterOptions): void {
-  const { brokerClient, activity, signal, log } = opts;
+  const { brokerClient, activity, signal } = opts;
+  const log = opts.logger ?? defaultLogger.child('activity-reporter');
   const heartbeatMs = opts.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
   // Raw poster — ignores aborted state so we can fire one final
   // `idle` from the abort handler. Internal-only; the subscriber and
   // heartbeat call the abort-aware wrapper below.
-  const postRaw = (state: ActivityState): void => {
+  const postRaw = (state: WorkState): void => {
     void brokerClient.setActivity({ state }).catch((err: unknown) => {
-      log('activity-reporter: setActivity failed', {
+      // Presence is a UI nicety, not an invariant — the next transition
+      // or heartbeat retries, so this stays at debug per the module doc.
+      log.debug('setActivity failed', {
         state,
         error: err instanceof Error ? err.message : String(err),
       });
     });
   };
 
-  const post = (state: ActivityState): void => {
+  const post = (state: WorkState): void => {
     if (signal.aborted) return;
     postRaw(state);
   };

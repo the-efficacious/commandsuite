@@ -1,7 +1,7 @@
 /**
  * Broker → channel-sink forwarder.
  *
- * Opens a long-lived SSE subscription to the broker for this slot's
+ * Opens a long-lived WebSocket subscription to the broker for this slot's
  * name and delivers every inbound message as a typed `ChannelEvent`
  * (content + flat string meta) to the runner's channel sink — the
  * per-framework adapter piece that turns team traffic into the
@@ -10,6 +10,7 @@
  * error.
  */
 
+import { logger as defaultLogger, type Logger } from 'csuite-core';
 import type { Client as BrokerClient } from 'csuite-sdk/client';
 import type { Message } from 'csuite-sdk/types';
 import type { Presence } from './presence.js';
@@ -115,7 +116,8 @@ export interface ForwarderOptions {
   brokerClient: BrokerClient;
   name: string;
   signal: AbortSignal;
-  log: (msg: string, ctx?: Record<string, unknown>) => void;
+  /** Structured logger. Defaults to the shared logger's `forwarder` child. */
+  logger?: Logger;
   /**
    * Invoked for every message the forwarder observes whose `data.kind`
    * is `'objective'`. The tracker uses this to refresh the runner's
@@ -177,13 +179,13 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
     brokerClient,
     name,
     signal,
-    log,
     onObjectiveEvent,
     onToolSourceEvent,
     onInstructionsEvent,
     onContextControlEvent,
     presence,
   } = opts;
+  const log = opts.logger ?? defaultLogger.child('forwarder');
   let backoff = BACKOFF_START_MS;
 
   // Channel id → slug cache for the `channel_slug` meta key. Messages
@@ -203,7 +205,7 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
       for (const c of channels) channelSlugCache.set(c.id, c.slug);
       return channelSlugCache.get(id) ?? null;
     } catch (err) {
-      log('channel slug resolution failed', {
+      log.warn('channel slug resolution failed', {
         channelId: id,
         error: err instanceof Error ? err.message : String(err),
       });
@@ -213,7 +215,7 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
 
   while (!signal.aborted) {
     try {
-      log('subscribing to broker', { name });
+      log.info('subscribing to broker', { name });
       presence?.setConnecting();
       backoff = BACKOFF_START_MS;
 
@@ -227,7 +229,7 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
       // back to `offline`.
       presence?.setOnline();
       for await (const message of stream) {
-        log('broker message received', {
+        log.debug('broker message received', {
           msgId: message.id,
           from: message.from,
           to: message.to,
@@ -249,7 +251,7 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
           try {
             onObjectiveEvent(message);
           } catch (err) {
-            log('onObjectiveEvent handler threw', {
+            log.error('onObjectiveEvent handler threw', {
               error: err instanceof Error ? err.message : String(err),
             });
           }
@@ -262,7 +264,7 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
           try {
             onToolSourceEvent(message);
           } catch (err) {
-            log('onToolSourceEvent handler threw', {
+            log.error('onToolSourceEvent handler threw', {
               error: err instanceof Error ? err.message : String(err),
             });
           }
@@ -275,7 +277,7 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
           try {
             onInstructionsEvent(message);
           } catch (err) {
-            log('onInstructionsEvent handler threw', {
+            log.error('onInstructionsEvent handler threw', {
               error: err instanceof Error ? err.message : String(err),
             });
           }
@@ -295,13 +297,13 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
         if (dataKind === 'context_control') {
           const control = parseContextControl(message.data);
           if (control === null) {
-            log('dropped malformed context control', { msgId: message.id });
+            log.warn('dropped malformed context control', { msgId: message.id });
           } else if (control.target !== name) {
             // Addressed to a teammate. The broker does not currently
             // send us those, which is exactly why this is worth
             // keeping cheap and explicit rather than assumed: the cost
             // of being wrong is compacting somebody else's agent.
-            log('ignored context control addressed to another member', {
+            log.warn('ignored context control addressed to another member', {
               target: control.target,
               requestId: control.requestId,
             });
@@ -309,12 +311,12 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
             try {
               onContextControlEvent(control);
             } catch (err) {
-              log('onContextControlEvent handler threw', {
+              log.error('onContextControlEvent handler threw', {
                 error: err instanceof Error ? err.message : String(err),
               });
             }
           } else {
-            log('context control received but this runner has no handler', {
+            log.warn('context control received but this runner has no handler', {
               verb: control.verb,
               requestId: control.requestId,
             });
@@ -324,7 +326,7 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
 
         // Self-echo suppression (chat plane): the broker fans out every
         // push to all subscribers INCLUDING the sender, so our own
-        // sends come back on the SSE stream. Forwarding them would
+        // sends come back on the subscription stream. Forwarding them would
         // cost the agent a turn to recognise and discard its own
         // output. `recent` still returns self-sends for scrollback.
         if (message.from === name) continue;
@@ -332,12 +334,12 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
       }
 
       // If we get here, the stream ended cleanly — treat as a reconnect.
-      log('broker subscription stream ended, reconnecting');
+      log.info('broker subscription stream ended, reconnecting');
       presence?.setOffline();
     } catch (err) {
       if (signal.aborted) return;
       presence?.setOffline();
-      log('broker loop error', {
+      log.error('broker loop error', {
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -372,7 +374,7 @@ const RESERVED_META_KEYS: ReadonlySet<string> = new Set([
 async function forwardMessage(
   sink: ChannelEventSink,
   message: Message,
-  log: (msg: string, ctx?: Record<string, unknown>) => void,
+  log: Logger,
   resolveChannelSlug?: (id: string) => Promise<string | null>,
 ): Promise<void> {
   // Detect channel-routed messages. The broker fans out a non-general
@@ -433,7 +435,7 @@ async function forwardMessage(
   try {
     await sink.deliver({ content: message.body, meta });
   } catch (err) {
-    log('failed to deliver channel event', {
+    log.error('failed to deliver channel event', {
       messageId: message.id,
       error: err instanceof Error ? err.message : String(err),
     });

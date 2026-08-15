@@ -43,6 +43,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createLogger, type Logger } from 'csuite-core';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   FAKE_BROKER_NAME,
@@ -63,7 +64,7 @@ export interface ConformanceRunOptions {
   trace: boolean;
   /** Exit code the fake agent should exit with. */
   agentExitCode: number;
-  log: (msg: string, ctx?: Record<string, unknown>) => void;
+  log: Logger;
 }
 
 export interface ConformanceSubject {
@@ -86,9 +87,14 @@ export function describeRunnerConformance(subject: ConformanceSubject): void {
     let sandbox: string;
     let logs: CapturedLog[];
 
-    const log = (msg: string, ctx: Record<string, unknown> = {}): void => {
-      logs.push({ msg, ctx });
-    };
+    // A Logger whose sink appends to `logs`, so conformance assertions
+    // keep reading {msg, ctx} while the subject gets the real contract.
+    const log: Logger = createLogger({
+      level: 'debug',
+      emit: ({ ts: _ts, level: _level, component: _component, msg, ...ctx }) => {
+        logs.push({ msg, ctx });
+      },
+    });
 
     const run = async (opts?: Partial<ConformanceRunOptions>): Promise<number> =>
       subject.runSession({
@@ -124,7 +130,7 @@ export function describeRunnerConformance(subject: ConformanceSubject): void {
 
       // The runner logged its socket path at bind time; it must be
       // gone after teardown.
-      const bound = logs.find((l) => l.msg === 'runner: IPC socket bound');
+      const bound = logs.find((l) => l.msg === 'IPC socket bound');
       expect(bound, 'runner never logged its IPC socket bind').toBeDefined();
       const socketPath = bound?.ctx.socketPath as string;
       expect(typeof socketPath).toBe('string');
@@ -190,7 +196,7 @@ export function describeRunnerConformance(subject: ConformanceSubject): void {
       const exitCode = await run({ agentExitCode: 3 });
       expect(exitCode).toBe(3);
 
-      const summary = logs.find((l) => l.msg === `${subject.id}: run summary`);
+      const summary = logs.find((l) => l.msg === 'run summary');
       expect(summary, 'no run summary log line').toBeDefined();
       expect(summary?.ctx.runner).toBe(subject.id);
       expect(summary?.ctx.member).toBe(FAKE_BROKER_NAME);

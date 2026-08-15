@@ -1,6 +1,6 @@
 /**
  * Claude channel sink — implements `ChannelEventSink` so the runner
- * forwarder can deliver broker SSE events to the claude runner
+ * forwarder can deliver broker events to the claude runner
  * without knowing the agent runs on the Agent SDK.
  *
  * Broker events render as `<channel>` tagged text (shared format with
@@ -23,6 +23,7 @@
  */
 
 import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { Logger } from 'csuite-core';
 import type { ChannelEventSink } from '../forwarder.js';
 import { formatChannelEvent } from './channel-format.js';
 
@@ -83,7 +84,7 @@ export interface ClaudeChannelSinkOptions {
    * first spawn relies on) instead of dying with the predecessor.
    */
   getQueue: () => ClaudeMessageQueue;
-  log: (msg: string, ctx?: Record<string, unknown>) => void;
+  log: Logger;
   /** Bundle window in milliseconds. Defaults to 200ms. */
   bundleWindowMs?: number;
 }
@@ -115,7 +116,7 @@ export function createClaudeChannelSink(opts: ClaudeChannelSinkOptions): ClaudeC
       parent_tool_use_id: null,
     });
     if (!accepted) {
-      opts.log('claude-sink: dropped events — input stream closed', { bytes: body.length });
+      opts.log.warn('dropped events — input stream closed', { bytes: body.length });
     }
   };
 
@@ -136,7 +137,7 @@ export function createClaudeChannelSink(opts: ClaudeChannelSinkOptions): ClaudeC
       // (`tools/list_changed`) reach claude through the bridge's stdio
       // MCP transport, not this sink.
       const text = formatChannelEvent(event);
-      opts.log('claude-sink: received channel event', {
+      opts.log.debug('received channel event', {
         bytes: text.length,
         bufferDepth: buffer.length + 1,
         queueDepth: opts.getQueue().depth,

@@ -17,17 +17,13 @@
 import { NameSchema } from 'csuite-sdk/schemas';
 import type { Member, Message, Presence, PushPayload, PushResult, Role } from 'csuite-sdk/types';
 import type { EventLog } from './event-log.js';
+import { logger as defaultLogger, type Logger } from './logger.js';
 import {
   PresenceIdentityError,
   PresenceRegistry,
   type PresenceState,
   type Subscriber,
 } from './registry.js';
-
-export interface BrokerLogger {
-  warn(message: string, context?: Record<string, unknown>): void;
-  error(message: string, context?: Record<string, unknown>): void;
-}
 
 /**
  * `payload.to` was not a syntactically valid member name.
@@ -65,7 +61,7 @@ export interface BrokerOptions {
   /** ID factory. Defaults to `crypto.randomUUID`. */
   idFactory?: () => string;
   /** Logger for subscriber-side failures and diagnostics. */
-  logger?: BrokerLogger;
+  logger?: Logger;
   /**
    * Max subscribers invoked in parallel during a single `push`. Keeps
    * one slow WebSocket writer from head-of-line-blocking every other
@@ -119,11 +115,6 @@ export interface RegistrationResult {
   name: string;
   registeredAt: number;
 }
-
-const NOOP_LOGGER: BrokerLogger = {
-  warn: () => {},
-  error: () => {},
-};
 
 const EMPTY_IDENTITY: IdentityContext = {};
 
@@ -190,7 +181,7 @@ export class Broker {
   private readonly eventLog: EventLog;
   private readonly now: () => number;
   private readonly idFactory: () => string;
-  private readonly logger: BrokerLogger;
+  private readonly logger: Logger;
   private readonly fanoutConcurrency: number;
 
   constructor(options: BrokerOptions) {
@@ -204,7 +195,10 @@ export class Broker {
         }
         return globalThis.crypto.randomUUID();
       });
-    this.logger = options.logger ?? NOOP_LOGGER;
+    // Default to the real logger, not a no-op: a broker whose warnings
+    // vanish unless a host remembers to inject one is how subscriber
+    // failures went unobserved.
+    this.logger = options.logger ?? defaultLogger.child('broker');
     this.fanoutConcurrency = options.fanoutConcurrency ?? DEFAULT_FANOUT_CONCURRENCY;
   }
 

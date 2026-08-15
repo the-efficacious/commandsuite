@@ -92,7 +92,7 @@ export type { GenAiCorrelator, GenAiCorrelatorOptions };
 export { isGenAiLogRecord };
 
 import type { GenAiInferenceInput, TelemetryRecord } from 'csuite-core';
-import { anthropicToGenAi } from 'csuite-core';
+import { anthropicToGenAi, logger as defaultLogger } from 'csuite-core';
 import { digestPathSync } from './path-digest.js';
 
 const NANOS_PER_MS = 1_000_000;
@@ -152,7 +152,10 @@ const DEFAULT_TTL_MS = 120_000;
 const DEFAULT_MAX_PENDING = 256;
 
 export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiCorrelator {
-  const log = opts.log ?? (() => {});
+  // Never a no-op default: a correlator whose diagnostics vanish when a
+  // construction path forgets to wire one is indistinguishable from a
+  // correlator with nothing to say.
+  const log = opts.logger ?? defaultLogger.child('genai-correlator');
   const diag = opts.diagnostics;
   const now = opts.now ?? Date.now;
   const maxBodyBytes = opts.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
@@ -225,7 +228,7 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
         diag?.correlatorBodyRefRead(who);
       } catch (err) {
         diag?.correlatorBodyRefUnreadable(who, digestPathSync(bodyRef), err);
-        log('genai-correlator: body_ref unreadable', {
+        log.warn('body_ref unreadable', {
           body_ref: bodyRef,
           error: err instanceof Error ? err.message : String(err),
         });
@@ -242,7 +245,7 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
     const declared = Number(attrs.body_length);
     if (Number.isFinite(declared) && declared !== bytes.length) {
       diag?.correlatorBodyLengthMismatch(who, declared, bytes.length);
-      log('genai-correlator: body length mismatch', {
+      log.warn('body length mismatch', {
         kind,
         body_ref: bodyRef,
         declared,
@@ -284,7 +287,7 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
             unlinkSync(bodyRef);
           } catch (err) {
             diag?.correlatorUnlinkAfterCaptureFailed(who, digestPathSync(bodyRef), err);
-            log('genai-correlator: unlink after capture failed', {
+            log.warn('unlink after capture failed', {
               body_ref: bodyRef,
               error: err instanceof Error ? err.message : String(err),
             });
@@ -294,7 +297,7 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
         // Isolation: a raw-store failure must never break the gen_ai
         // path — the text below still flows to the correlation state.
         diag?.correlatorRawCaptureFailed(who, err);
-        log('genai-correlator: raw capture failed', {
+        log.error('raw capture failed', {
           kind,
           body_ref: bodyRef,
           error: err instanceof Error ? err.message : String(err),
@@ -320,7 +323,7 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
         responseBody = JSON.parse(p.responseText);
       } catch (err) {
         diag?.correlatorBodyJsonParseFailed(who, p.requestText.length + p.responseText.length);
-        log('genai-correlator: body JSON parse failed', {
+        log.warn('body JSON parse failed', {
           error: err instanceof Error ? err.message : String(err),
         });
         return;
@@ -342,7 +345,7 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
       });
     } catch (err) {
       diag?.correlatorInferenceBuildFailed(who, err);
-      log('genai-correlator: failed to build inference', {
+      log.error('failed to build inference', {
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -371,7 +374,7 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
     }
     if (gaps > 0) {
       diag?.correlatorPendingExchangeDropped(who, gaps);
-      log('genai-correlator: evicted stale pending exchanges', { gaps });
+      log.warn('evicted stale pending exchanges', { gaps });
     }
   }
 
@@ -398,7 +401,7 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
             while (fifo.length > maxPending) {
               fifo.shift();
               diag?.correlatorPendingExchangeDropped(who, 1);
-              log('genai-correlator: pending-request cap hit — dropped oldest exchange', {});
+              log.warn('pending-request cap hit — dropped oldest exchange', {});
             }
             break;
           }
@@ -428,7 +431,7 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
                   });
                 } catch (err) {
                   diag?.correlatorRequestIdAssignFailed(who, err);
-                  log('genai-correlator: raw request_id assign failed', {
+                  log.warn('raw request_id assign failed', {
                     request_id: realRequestId,
                     error: err instanceof Error ? err.message : String(err),
                   });
@@ -472,7 +475,7 @@ export function createGenAiCorrelator(opts: GenAiCorrelatorOptions = {}): GenAiC
         }
       } catch (err) {
         diag?.correlatorMalformedRecordSkipped(who);
-        log('genai-correlator: skipped malformed record', {
+        log.warn('skipped malformed record', {
           error: err instanceof Error ? err.message : String(err),
         });
       }

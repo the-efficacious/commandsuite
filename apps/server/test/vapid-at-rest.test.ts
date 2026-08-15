@@ -14,11 +14,12 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { decryptField, ENCRYPTED_FIELD_PREFIX, testKek } from '../src/kek.js';
 import { defaultHttpsConfig, setKek, type WebPushConfig } from '../src/members.js';
 import { generateVapidKeys } from '../src/push/vapid.js';
 import { type RunningServer, runServer } from '../src/run.js';
+import { silentLogger } from './helpers/logger.js';
 import { seedStores } from './helpers/test-stores.js';
 
 const TEAM = { name: 'vapid-team', context: '' };
@@ -62,10 +63,6 @@ async function seededDb() {
       ],
     })
   ).db;
-}
-
-function silentLogger() {
-  return { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 }
 
 async function boot(configPath: string, webPush: WebPushConfig | null): Promise<RunningServer> {

@@ -21,6 +21,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { RunnerHandle } from '../../src/runtime/runner.js';
 import { startRunner } from '../../src/runtime/runner.js';
 import { CLI_VERSION } from '../../src/version.js';
+import { silentLogger } from '../helpers/logger.js';
 import {
   FAKE_BROKER_NAME,
   FAKE_BROKER_TOKEN,
@@ -112,7 +113,7 @@ describe('runner external tools', () => {
     runner = await startRunner({
       url: broker.url,
       token: FAKE_BROKER_TOKEN,
-      log: () => {},
+      logger: silentLogger(),
       noTrace: true,
     });
     const bridge = await connectFakeBridge(runner.socketPath);
@@ -145,7 +146,7 @@ describe('runner external tools', () => {
     runner = await startRunner({
       url: broker.url,
       token: FAKE_BROKER_TOKEN,
-      log: () => {},
+      logger: silentLogger(),
       noTrace: true,
     });
     const bridge = await connectFakeBridge(runner.socketPath);
@@ -171,7 +172,7 @@ describe('runner external tools', () => {
     runner = await startRunner({
       url: broker.url,
       token: FAKE_BROKER_TOKEN,
-      log: () => {},
+      logger: silentLogger(),
       noTrace: true,
     });
     const bridge = await connectFakeBridge(runner.socketPath);
@@ -218,7 +219,7 @@ describe('runner external tools', () => {
     runner = await startRunner({
       url: broker.url,
       token: FAKE_BROKER_TOKEN,
-      log: () => {},
+      logger: silentLogger(),
       noTrace: true,
     });
     const bridge = await connectFakeBridge(runner.socketPath);

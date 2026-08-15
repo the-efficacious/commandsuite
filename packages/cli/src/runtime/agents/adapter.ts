@@ -6,7 +6,7 @@
  * A runner (`csuite claude`, `csuite codex`, ...) is the parent
  * process that owns one csuite session. Everything broker-side is
  * SHARED and lives in the driver + `startRunner`: auth, instructions, IPC
- * socket, SSE forwarder, objectives tracker, capture host, secrets,
+ * socket, event forwarder, objectives tracker, capture host, secrets,
  * presence, signal handling, teardown ordering, and the end-of-run
  * summary. An adapter implements ONLY what is specific to one agent
  * framework:
@@ -33,11 +33,18 @@
  * docs/runners/conformance.mdx for the written standard.
  */
 
+import type { Logger } from 'csuite-core';
 import type { CompactAttempt } from '../context-control.js';
 import type { Presence } from '../presence.js';
 import type { RunnerHandle, RunnerOptions } from '../runner.js';
 
-export type AgentLog = (msg: string, ctx?: Record<string, unknown>) => void;
+/**
+ * The logger every adapter receives. Aliased rather than inlined so
+ * adapters keep naming the concept they use; the shape is the shared
+ * `Logger` — levelled calls, one JSON record per line, `component`
+ * stamped by whoever created the child.
+ */
+export type AgentLog = Logger;
 
 /**
  * Base class for adapter-raised errors that should surface to the

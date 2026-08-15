@@ -186,6 +186,28 @@ type ThreadItem =
     }
   | {
       key: string;
+      variant: 'session-start';
+      ts: number;
+      runner: string;
+      runnerVersion: string | null;
+      captureTier: number | null;
+    }
+  | {
+      key: string;
+      variant: 'session-end';
+      ts: number;
+      runner: string;
+      reason: string;
+      exitCode: number | null;
+      durationMs: number | null;
+      capture: {
+        enqueued: number;
+        uploaded: number;
+        dropped: number;
+      } | null;
+    }
+  | {
+      key: string;
       variant: 'context-control';
       ts: number;
       verb: 'compact' | 'clear';
@@ -276,6 +298,34 @@ export function buildThread(
           ts: ev.ts,
           text: ev.text,
           agent: ev.agent ?? null,
+        });
+        break;
+      case 'session_start':
+        thread.push({
+          key: `r${row.id}-ss`,
+          variant: 'session-start',
+          ts: ev.ts,
+          runner: ev.runner,
+          runnerVersion: ev.runnerVersion ?? null,
+          captureTier: ev.captureTier ?? null,
+        });
+        break;
+      case 'session_end':
+        thread.push({
+          key: `r${row.id}-se`,
+          variant: 'session-end',
+          ts: ev.ts,
+          runner: ev.runner,
+          reason: ev.reason,
+          exitCode: ev.exitCode ?? null,
+          durationMs: ev.durationMs ?? null,
+          capture: ev.capture
+            ? {
+                enqueued: ev.capture.enqueued,
+                uploaded: ev.capture.uploaded,
+                dropped: ev.capture.dropped,
+              }
+            : null,
         });
         break;
       case 'objective_open':
@@ -726,6 +776,10 @@ function ThreadItemView({ item }: { item: ThreadItem }) {
           <span>closed ({item.result})</span>
         </div>
       );
+    case 'session-start':
+      return <SessionStartMarker item={item} />;
+    case 'session-end':
+      return <SessionEndMarker item={item} />;
     case 'context-control':
       return <ContextControlMarker item={item} />;
     case 'prompt':
@@ -743,6 +797,77 @@ function ThreadItemView({ item }: { item: ThreadItem }) {
  * A broker-issued compact/clear and what came of it.
  *
  * The outcome is the whole reason this row exists, so it is rendered
+/**
+ * The opening bracket of one runner session.
+ */
+function SessionStartMarker({ item }: { item: Extract<ThreadItem, { variant: 'session-start' }> }) {
+  return (
+    <div
+      class="flex items-center gap-3"
+      style="font-family:var(--ef-font-mono);font-size:12px;color:var(--ef-text-secondary);border-left:2px solid var(--ef-border-strong);padding:6px 12px"
+    >
+      <span>{formatTs(item.ts)}</span>
+      <span style="color:var(--ef-text)">session started</span>
+      <span style="color:var(--ef-text-muted)">
+        {item.runner}
+        {item.runnerVersion === null ? '' : ` ${item.runnerVersion}`}
+      </span>
+      {item.captureTier === null ? null : (
+        <span style="color:var(--ef-text-muted)">capture: {item.captureTier}</span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The closing bracket, and the ONLY place a member can see that a
+ * trace is short.
+ *
+ * `session_end.capture` counts what the runner enqueued, shipped and
+ * dropped. It was stored from the beginning and rendered nowhere, so a
+ * run that lost events under backpressure looked exactly like a run
+ * that lost none — and the broker's own capture-health signal cannot
+ * close that gap, because a drop shrinks its denominator and makes the
+ * member read HEALTHIER. This row is the counter-signal.
+ *
+ * A non-zero `dropped` therefore states the count in words rather than
+ * tinting the row: a colour-only warning is invisible to anyone not
+ * looking for it, and this is the one fact a reader must not miss.
+ */
+function SessionEndMarker({ item }: { item: Extract<ThreadItem, { variant: 'session-end' }> }) {
+  const dropped = item.capture?.dropped ?? 0;
+  const incomplete = dropped > 0;
+  return (
+    <div
+      class="flex items-center gap-3 flex-wrap"
+      style={`font-family:var(--ef-font-mono);font-size:12px;padding:6px 12px;border-left:2px solid ${
+        incomplete ? 'var(--ef-warning, #b0730f)' : 'var(--ef-border)'
+      };color:var(--ef-text-muted)`}
+    >
+      <span>{formatTs(item.ts)}</span>
+      <span style="color:var(--ef-text)">session ended</span>
+      <span>
+        {item.runner} · {item.reason}
+        {item.exitCode === null ? '' : ` (exit ${item.exitCode})`}
+      </span>
+      {item.durationMs === null ? null : <span>{Math.round(item.durationMs / 1000)}s</span>}
+      {item.capture === null ? (
+        // Distinct from "captured everything": an older runner reported
+        // no accounting at all, and saying so beats implying zero loss.
+        <span>capture not reported</span>
+      ) : incomplete ? (
+        <span style="color:var(--ef-warning, #b0730f);font-weight:600">
+          INCOMPLETE — {dropped} event{dropped === 1 ? '' : 's'} dropped of {item.capture.enqueued}
+        </span>
+      ) : (
+        <span>captured {item.capture.uploaded} events</span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A broker-issued compact/clear and what came of it. The outcome reads
  * as text and never as colour alone — `declined` and `applied` must
  * not be distinguishable only to someone who can see the difference
  * between two greys. The framework's own reason is shown verbatim

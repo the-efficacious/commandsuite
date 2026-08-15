@@ -15,6 +15,7 @@ import {
 } from '../../../src/runtime/agents/codex/channel-sink.js';
 import type { JsonRpcClient } from '../../../src/runtime/agents/codex/json-rpc.js';
 import { METHODS, type ThreadStatus } from '../../../src/runtime/agents/codex/protocol.js';
+import { recordingLogger } from '../../helpers/logger.js';
 
 interface MockState {
   threadId: string | null;
@@ -42,16 +43,17 @@ function makeSink(initial: Partial<MockState> = {}, requestImpl?: JsonRpcClient[
     closed: Promise.resolve(),
     close: vi.fn(),
   };
+  const rec = recordingLogger();
   const opts: CodexChannelSinkOptions = {
     rpc,
     getThreadId: () => state.threadId,
     getStatus: () => state.status,
     getActiveTurnId: () => state.activeTurnId,
-    log: () => {},
+    logger: rec.logger,
     bundleWindowMs: 5,
   };
   const sink = createCodexChannelSink(opts);
-  return { sink, state, requests, rpc };
+  return { sink, state, requests, rpc, rec };
 }
 
 async function tick(ms = 20): Promise<void> {
@@ -127,12 +129,21 @@ describe('createCodexChannelSink', () => {
   });
 
   it('drops events when status is systemError', async () => {
-    const { sink, requests } = makeSink({
+    const { sink, requests, rec } = makeSink({
       status: { type: 'systemError' },
     });
     await sink.deliver({ content: 'wasted', meta: {} });
     await tick();
     expect(requests).toHaveLength(0);
+    // The drop is deliberate and logged — a warn record distinguishes it
+    // from silent buffering, which would also produce zero requests.
+    expect(rec.records).toContainEqual(
+      expect.objectContaining({
+        level: 'warn',
+        msg: 'dropping events — thread in systemError',
+        dropped: 1,
+      }),
+    );
   });
 
   it('retries as turn/start when steer fails with expected-turn-mismatch and status is now idle', async () => {

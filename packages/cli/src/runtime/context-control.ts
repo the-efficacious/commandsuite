@@ -41,8 +41,8 @@
  * instructions has done half a clear's work.
  */
 
+import type { Logger } from 'csuite-core';
 import type { ActivityContextControl } from 'csuite-sdk/types';
-import type { AgentLog } from './agents/adapter.js';
 import type { ContextControlEvent } from './forwarder.js';
 import type { ActivityObservation } from './restart.js';
 
@@ -82,7 +82,7 @@ export interface ContextControlHooks {
    * instruction-restart can never swap the process concurrently.
    */
   gate<T>(fn: () => Promise<T>): Promise<T>;
-  log: AgentLog;
+  logger: Logger;
   /** Test seam. Defaults to `Date.now`. */
   now?: () => number;
 }
@@ -124,7 +124,7 @@ export function createContextControlCoordinator(
   const waitForIdle = async (): Promise<void> => {
     const activity = hooks.activity();
     if (activity === null) {
-      hooks.log('context-control: no activity signal — clearing after grace');
+      hooks.logger.info('no activity signal — clearing after grace');
       await delay(CLEAR_IDLE_GRACE_MS);
       return;
     }
@@ -155,7 +155,7 @@ export function createContextControlCoordinator(
       ...(extra.detail !== undefined ? { detail: extra.detail } : {}),
       ...(extra.tokens !== undefined ? { tokens: extra.tokens } : {}),
     });
-    hooks.log('context-control: reported outcome', {
+    hooks.logger.info('reported outcome', {
       requestId: control.requestId,
       verb: control.verb,
       outcome,
@@ -191,7 +191,7 @@ export function createContextControlCoordinator(
   const runClear = async (control: ContextControlEvent): Promise<void> => {
     await waitForIdle();
     if (closed) {
-      hooks.log('context-control: session ending — clear abandoned before swap');
+      hooks.logger.warn('session ending — clear abandoned before swap');
       ack(control, 'failed', { detail: 'session ended before the clear could be applied' });
       return;
     }
@@ -216,7 +216,7 @@ export function createContextControlCoordinator(
       await hooks.gate(() => runClear(control));
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
-      hooks.log('context-control: control failed', {
+      hooks.logger.error('control failed', {
         requestId: control.requestId,
         verb: control.verb,
         error: detail,

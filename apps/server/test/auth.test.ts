@@ -29,10 +29,11 @@ import {
 } from 'csuite-core';
 import type { SessionResponse, Team } from 'csuite-sdk/types';
 import { calculateJwkThumbprint, exportJWK, generateKeyPair, type JWK, SignJWT } from 'jose';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { openDatabase } from '../src/db.js';
 import { createGenAiCorrelator } from '../src/genai-correlator.js';
 import { createMemberStore } from '../src/members.js';
+import { silentLogger } from './helpers/logger.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const OP_TOKEN = 'csuite_auth_test_operator_token';
@@ -78,12 +79,7 @@ async function makeApp(options: { now?: () => number; totpSecret?: string } = {}
     sessions,
     teamStore: mockTeamStore(TEAM),
     version: '0.0.0',
-    logger: {
-      debug: vi.fn(),
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-    },
+    logger: silentLogger(),
     now: options.now,
   });
   return { app, members, sessions, tokens, secret };
@@ -547,7 +543,7 @@ async function makeJwtApp(fixture: JwtFixture) {
     sessions,
     teamStore: mockTeamStore(TEAM),
     version: '0.0.0',
-    logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    logger: silentLogger(),
     jwt: createJwtVerifier(fixture.config),
   });
   return { app, members };

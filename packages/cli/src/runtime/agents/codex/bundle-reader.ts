@@ -35,6 +35,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { join } from 'node:path';
+import { logger as defaultLogger, type Logger } from 'csuite-core';
 import type { CodexGenaiInferenceUpload } from 'csuite-sdk/client';
 
 export interface BundleReaderOptions {
@@ -42,7 +43,8 @@ export interface BundleReaderOptions {
   traceRoot: string;
   /** Upload a batch of completed inferences to the broker. */
   upload: (inferences: CodexGenaiInferenceUpload[]) => Promise<void>;
-  log?: (msg: string, ctx?: Record<string, unknown>) => void;
+  /** Structured logger. Defaults to the shared logger's 'bundle-reader' child. */
+  logger?: Logger;
   /** Drain interval in ms. Default 2000 — gen_ai isn't latency-sensitive. */
   pollMs?: number;
 }
@@ -65,12 +67,7 @@ interface StartedInfo {
 }
 
 export function attachBundleReader(options: BundleReaderOptions): BundleReader {
-  const log =
-    options.log ??
-    ((msg: string, ctx: Record<string, unknown> = {}): void => {
-      const record = { ts: new Date().toISOString(), component: 'bundle-reader', msg, ...ctx };
-      process.stderr.write(`${JSON.stringify(record)}\n`);
-    });
+  const log = options.logger ?? defaultLogger.child('bundle-reader');
   const pollMs = options.pollMs ?? DEFAULT_POLL_MS;
 
   let bundleDir: string | null = null;
@@ -133,7 +130,7 @@ export function attachBundleReader(options: BundleReaderOptions): BundleReader {
       requestBase64 = readFileSync(join(bundleDir, started.requestPath)).toString('base64');
       responseBase64 = readFileSync(join(bundleDir, completed.responsePath)).toString('base64');
     } catch (err) {
-      log('bundle-reader: payload read failed', {
+      log.warn('payload read failed', {
         error: err instanceof Error ? err.message : String(err),
       });
       return null;
@@ -202,7 +199,7 @@ export function attachBundleReader(options: BundleReaderOptions): BundleReader {
       if (bundleDir === null) {
         bundleDir = resolveBundle();
         if (bundleDir === null) return;
-        log('bundle-reader: reading bundle', { bundleDir });
+        log.info('reading bundle', { bundleDir });
       }
       loadManifest();
       const traceFile = join(bundleDir, 'trace.jsonl');
@@ -234,15 +231,15 @@ export function attachBundleReader(options: BundleReaderOptions): BundleReader {
       if (batch.length > 0) {
         try {
           await options.upload(batch);
-          log('bundle-reader: uploaded inferences', { count: batch.length });
+          log.debug('uploaded inferences', { count: batch.length });
         } catch (err) {
-          log('bundle-reader: upload failed', {
+          log.warn('upload failed', {
             error: err instanceof Error ? err.message : String(err),
           });
         }
       }
     } catch (err) {
-      log('bundle-reader: drain error', {
+      log.warn('drain error', {
         error: err instanceof Error ? err.message : String(err),
       });
     } finally {

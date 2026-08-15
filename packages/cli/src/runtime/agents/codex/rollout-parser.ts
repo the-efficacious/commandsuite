@@ -47,7 +47,7 @@
  */
 
 import type { AnthropicContentBlock, AnthropicMessagesEntry, AnthropicUsage } from 'csuite-core';
-import { redactJson } from 'csuite-core';
+import { logger as defaultLogger, type Logger, redactJson } from 'csuite-core';
 import type { ActivityEvent } from 'csuite-sdk/types';
 
 export interface RolloutParserOptions {
@@ -61,7 +61,8 @@ export interface RolloutParserOptions {
    * `querySource` and it's simply absent from the JSON.
    */
   querySource?: string;
-  log?: (msg: string, ctx?: Record<string, unknown>) => void;
+  /** Structured logger. Defaults to the shared logger's 'codex-rollout' child. */
+  logger?: Logger;
 }
 
 export interface RolloutParser {
@@ -101,7 +102,7 @@ interface RolloutUsage {
 
 export function createRolloutParser(options: RolloutParserOptions): RolloutParser {
   const { enqueue, querySource } = options;
-  const log = options.log ?? (() => {});
+  const log = options.logger ?? defaultLogger.child('codex-rollout');
 
   // The turn currently open (task_started → task_complete). Codex is
   // strictly sequential, so a single pointer suffices — there is never
@@ -190,7 +191,7 @@ export function createRolloutParser(options: RolloutParserOptions): RolloutParse
       querySource,
       entry,
     });
-    log('codex-rollout: emitted llm_exchange', {
+    log.debug('emitted llm_exchange', {
       turnId: accum.turnId,
       textBlocks: accum.assistantTexts.length,
       reasoningBlocks: accum.reasoningBlocks.length,
@@ -299,7 +300,7 @@ export function createRolloutParser(options: RolloutParserOptions): RolloutParse
       try {
         rec = JSON.parse(line);
       } catch (err) {
-        log('codex-rollout: skipping unparseable line', {
+        log.warn('skipping unparseable line', {
           error: err instanceof Error ? err.message : String(err),
         });
         return;

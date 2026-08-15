@@ -80,7 +80,7 @@ export const PATHS = {
    */
   enrollVerify: '/enroll',
   // Runner-driven presence reports. `presenceActivity`: the runner
-  // POSTs `{state: ActivityState, busy?: bool}` on each activity
+  // POSTs `{state: WorkState, busy?: bool}` on each activity
   // transition (idle ↔ working ↔ blocked), plus a periodic heartbeat
   // while still working/blocked so the server's TTL doesn't lapse and
   // reset the member to idle mid-turn.
@@ -161,7 +161,8 @@ export const CHANNEL_PATHS = {
  *   POST   /members/:name/enroll-totp       — (re-)enroll TOTP (members.manage or self)
  *   POST   /members/:name/activity          — append activity event (self only)
  *   GET    /members/:name/activity          — range query (self or activity.read)
- *   GET    /members/:name/activity/stream   — SSE live tail (self or activity.read)
+ *   GET    /members/:name/activity/stream   — WebSocket live tail (self or activity.read)
+ *   GET    /members/:name/telemetry         — OTLP cost/token records (self or activity.read)
  */
 export const MEMBER_PATHS = {
   one: (name: string) => `/members/${encodeURIComponent(name)}`,
@@ -171,6 +172,12 @@ export const MEMBER_PATHS = {
   activityStream: (name: string) => `/members/${encodeURIComponent(name)}/activity/stream`,
   /** POST — codex gen_ai inference upload (raw request/response bodies). Self-only. */
   genai: (name: string) => `/members/${encodeURIComponent(name)}/genai`,
+  /**
+   * GET — the operational telemetry this member's agent exported:
+   * cost, token and lifecycle records, one row per OTLP log record or
+   * metric data point. Self or `activity.read`.
+   */
+  telemetry: (name: string) => `/members/${encodeURIComponent(name)}/telemetry`,
   /** GET — list this member's active bearer tokens (members.manage or self). */
   tokens: (name: string) => `/members/${encodeURIComponent(name)}/tokens`,
   /** DELETE — revoke a specific token row by id (members.manage or self). */

@@ -136,7 +136,7 @@ export function createRestartCoordinator(
   const waitForIdle = async (): Promise<void> => {
     const activity = hooks.activity();
     if (activity === null) {
-      hooks.log('restart: no activity signal (--no-trace) — restarting after grace');
+      hooks.log.warn('no activity signal (--no-trace) — restarting after grace');
       await delay(NO_SIGNAL_GRACE_MS);
       return;
     }
@@ -156,14 +156,14 @@ export function createRestartCoordinator(
     // Until the refetch below completes, any request that arrives is
     // covered by this cycle — the fetch reads current broker state.
     covered = true;
-    hooks.log('restart: instruction edit observed — draining at next idle');
+    hooks.log.info('instruction edit observed — draining at next idle');
     // The idle wait sits OUTSIDE the lock deliberately: it can block
     // for the length of a turn, and holding the lifecycle lock while
     // merely waiting would stall a `clear` that is itself about to
     // wait for the same boundary.
     await waitForIdle();
     if (closed) {
-      hooks.log('restart: session ending — drained cycle abandoned before stop');
+      hooks.log.info('session ending — drained cycle abandoned before stop');
       return;
     }
     const gate = hooks.gate ?? (<T>(fn: () => Promise<T>): Promise<T> => fn());
@@ -172,7 +172,7 @@ export function createRestartCoordinator(
 
   const swap = async (): Promise<void> => {
     if (closed) {
-      hooks.log('restart: session ending — cycle abandoned at the lock');
+      hooks.log.info('session ending — cycle abandoned at the lock');
       return;
     }
     hooks.detach();
@@ -185,7 +185,7 @@ export function createRestartCoordinator(
       // pending edits (any picked up by earlier refetches) beats a
       // dead session. The broker still lists the member pending, so
       // nothing is silently marked resolved.
-      hooks.log('restart: instructions refetch failed — respawning on cached packet', {
+      hooks.log.warn('instructions refetch failed — respawning on cached packet', {
         error: err instanceof Error ? err.message : String(err),
       });
       // The edit that triggered us is NOT applied — keep the cycle
@@ -195,7 +195,7 @@ export function createRestartCoordinator(
     // Edits landing after this point missed the fetch; they re-arm.
     covered = false;
     await hooks.respawn({ resume: true, sessionId: prior.sessionId });
-    hooks.log('restart: agent respawned with current instructions', {
+    hooks.log.info('agent respawned with current instructions', {
       resumedSession: prior.sessionId,
     });
   };

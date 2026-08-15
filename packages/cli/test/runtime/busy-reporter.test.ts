@@ -10,10 +10,11 @@
  */
 
 import type { Client as BrokerClient } from 'csuite-sdk/client';
-import type { ActivityState } from 'csuite-sdk/types';
+import type { WorkState } from 'csuite-sdk/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { startActivityReporter } from '../../src/runtime/busy-reporter.js';
 import { createActivitySignal } from '../../src/runtime/trace/busy.js';
+import { recordingLogger, silentLogger } from '../helpers/logger.js';
 
 describe('startActivityReporter', () => {
   beforeEach(() => {
@@ -24,11 +25,16 @@ describe('startActivityReporter', () => {
   });
 
   it('POSTs the state once per transition (idle → working → idle)', async () => {
-    const setActivity = vi.fn(async (_: { state: ActivityState }) => {});
+    const setActivity = vi.fn(async (_: { state: WorkState }) => {});
     const broker = { setActivity } as unknown as BrokerClient;
     const activity = createActivitySignal();
     const ac = new AbortController();
-    startActivityReporter({ brokerClient: broker, activity, signal: ac.signal, log: () => {} });
+    startActivityReporter({
+      brokerClient: broker,
+      activity,
+      signal: ac.signal,
+      logger: silentLogger(),
+    });
     // Initial-state fire from subscribe — equals current state, idle.
     expect(setActivity).toHaveBeenCalledTimes(1);
     expect(setActivity).toHaveBeenLastCalledWith({ state: 'idle' });
@@ -45,11 +51,16 @@ describe('startActivityReporter', () => {
   });
 
   it('reports the blocked state on transition', async () => {
-    const setActivity = vi.fn(async (_: { state: ActivityState }) => {});
+    const setActivity = vi.fn(async (_: { state: WorkState }) => {});
     const broker = { setActivity } as unknown as BrokerClient;
     const activity = createActivitySignal();
     const ac = new AbortController();
-    startActivityReporter({ brokerClient: broker, activity, signal: ac.signal, log: () => {} });
+    startActivityReporter({
+      brokerClient: broker,
+      activity,
+      signal: ac.signal,
+      logger: silentLogger(),
+    });
     setActivity.mockClear();
 
     activity.setBlocked(true);
@@ -62,7 +73,7 @@ describe('startActivityReporter', () => {
   });
 
   it('heartbeats the current non-idle state every heartbeatMs', async () => {
-    const setActivity = vi.fn(async (_: { state: ActivityState }) => {});
+    const setActivity = vi.fn(async (_: { state: WorkState }) => {});
     const broker = { setActivity } as unknown as BrokerClient;
     const activity = createActivitySignal();
     const ac = new AbortController();
@@ -70,7 +81,7 @@ describe('startActivityReporter', () => {
       brokerClient: broker,
       activity,
       signal: ac.signal,
-      log: () => {},
+      logger: silentLogger(),
       heartbeatMs: 1_000,
     });
     setActivity.mockClear();
@@ -88,7 +99,7 @@ describe('startActivityReporter', () => {
   });
 
   it('keeps heartbeating while blocked', async () => {
-    const setActivity = vi.fn(async (_: { state: ActivityState }) => {});
+    const setActivity = vi.fn(async (_: { state: WorkState }) => {});
     const broker = { setActivity } as unknown as BrokerClient;
     const activity = createActivitySignal();
     const ac = new AbortController();
@@ -96,7 +107,7 @@ describe('startActivityReporter', () => {
       brokerClient: broker,
       activity,
       signal: ac.signal,
-      log: () => {},
+      logger: silentLogger(),
       heartbeatMs: 1_000,
     });
     activity.setBlocked(true);
@@ -109,7 +120,7 @@ describe('startActivityReporter', () => {
   });
 
   it('stops heartbeating after returning to idle', async () => {
-    const setActivity = vi.fn(async (_: { state: ActivityState }) => {});
+    const setActivity = vi.fn(async (_: { state: WorkState }) => {});
     const broker = { setActivity } as unknown as BrokerClient;
     const activity = createActivitySignal();
     const ac = new AbortController();
@@ -117,7 +128,7 @@ describe('startActivityReporter', () => {
       brokerClient: broker,
       activity,
       signal: ac.signal,
-      log: () => {},
+      logger: silentLogger(),
       heartbeatMs: 1_000,
     });
     setActivity.mockClear();
@@ -134,7 +145,7 @@ describe('startActivityReporter', () => {
   });
 
   it('on abort, posts a final `idle` to clear presence', async () => {
-    const setActivity = vi.fn(async (_: { state: ActivityState }) => {});
+    const setActivity = vi.fn(async (_: { state: WorkState }) => {});
     const broker = { setActivity } as unknown as BrokerClient;
     const activity = createActivitySignal();
     const ac = new AbortController();
@@ -142,7 +153,7 @@ describe('startActivityReporter', () => {
       brokerClient: broker,
       activity,
       signal: ac.signal,
-      log: () => {},
+      logger: silentLogger(),
       heartbeatMs: 1_000,
     });
     activity.start();
@@ -157,22 +168,22 @@ describe('startActivityReporter', () => {
       throw new Error('network');
     });
     const broker = { setActivity } as unknown as BrokerClient;
-    const log = vi.fn();
+    const rec = recordingLogger();
     const activity = createActivitySignal();
     const ac = new AbortController();
     startActivityReporter({
       brokerClient: broker,
       activity,
       signal: ac.signal,
-      log,
+      logger: rec.logger,
       heartbeatMs: 1_000,
     });
     activity.start();
     // Let the rejected promise settle.
     await Promise.resolve();
     await Promise.resolve();
-    expect(log).toHaveBeenCalled();
-    expect(log.mock.calls[0]?.[0]).toMatch(/setActivity failed/);
+    expect(rec.records.length).toBeGreaterThan(0);
+    expect(rec.messages()[0]).toMatch(/setActivity failed/);
 
     ac.abort();
   });

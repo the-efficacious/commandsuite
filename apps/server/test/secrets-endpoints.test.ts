@@ -21,13 +21,14 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { openDatabase } from '../src/db.js';
 import { kekFieldCipher, testKek } from '../src/kek.js';
 import { createMemberStore, getKek, setKek } from '../src/members.js';
+import { recordingLogger } from './helpers/logger.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
 const ADMIN = 'csuite_test_admin_secret';
 const BOUND = 'csuite_test_bound_secret';
 const OUTSIDER = 'csuite_test_outsider_secret';
 
-const noopLog = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+const noopLog = recordingLogger().logger;
 
 async function makeApp() {
   const broker = new Broker({

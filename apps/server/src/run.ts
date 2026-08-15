@@ -120,6 +120,7 @@ export {
   type ObjectivesStore,
   openTeamAndMembers,
   otpauthUri,
+  type PruneActivityResult,
   parseDurationMs,
   pruneActivityDb,
   SESSION_COOKIE_NAME,
@@ -464,7 +465,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   const mcpManager = createMcpClientManager({
     store: toolSourceStore,
     version: SERVER_VERSION,
-    logger: log,
+    logger: log.child('mcp-client'),
   });
 
   // Activity store runs on its own `DatabaseSyncInstance` so trace
@@ -485,7 +486,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   const diagnostics = createDiagnosticStore(activityDb);
 
   const telemetryStore: TelemetryStore = createTelemetryStore(activityDb, {
-    logger: log,
+    logger: log.child('telemetry-store'),
     diagnostics: diagnostics.emit,
   });
 
@@ -494,7 +495,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   // telemetry sink) but is otherwise independent — its own
   // `gen_ai_inference` table, its own append path.
   const genaiStore: GenAiStore = createGenAiStore(activityDb, {
-    logger: log,
+    logger: log.child('genai-store'),
     diagnostics: diagnostics.emit,
   });
 
@@ -505,7 +506,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   // Same activity-DB handle; the per-member correlators in app.ts do the
   // capture (and unlink the consumed spill files — the default).
   const rawBodyStore: RawBodyStore = createRawBodyStore(activityDb, {
-    logger: log,
+    logger: log.child('raw-body-store'),
     diagnostics: diagnostics.emit,
   });
 
@@ -605,10 +606,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
 
   const broker = new Broker({
     eventLog,
-    logger: {
-      warn: (msg, ctx) => log.warn(msg, ctx),
-      error: (msg, ctx) => log.error(msg, ctx),
-    },
+    logger: log.child('broker'),
   });
   broker.seedMembers(memberStore.members());
 
@@ -675,7 +673,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
           sessions: pushStore,
           members: memberStore,
           sender: createWebPushSender(),
-          logger: log,
+          logger: log.child('notifications'),
           isLive,
         }).catch((err) => {
           log.warn('push dispatch crashed', {

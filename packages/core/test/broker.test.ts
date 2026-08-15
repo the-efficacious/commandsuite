@@ -5,6 +5,7 @@ import {
   Broker,
   InMemoryEventLog,
   InvalidRecipientError,
+  type Logger,
   PresenceIdentityError,
 } from '../src/index.js';
 
@@ -358,12 +359,19 @@ describe('Broker.push targeted', () => {
 
   it('isolates a throwing subscriber from other subscribers on the same agent', async () => {
     const warn = vi.fn();
+    const testLogger: Logger = {
+      debug: () => {},
+      info: () => {},
+      warn,
+      error: () => {},
+      child: () => testLogger,
+    };
     const eventLog = new InMemoryEventLog();
     const broker = new Broker({
       eventLog,
       now: () => 1,
       idFactory: () => 'msg-1',
-      logger: { warn, error: () => {} },
+      logger: testLogger,
     });
     await broker.register('agent-1');
     const good: Message[] = [];

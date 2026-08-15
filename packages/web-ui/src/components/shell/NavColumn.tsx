@@ -24,7 +24,7 @@
  * whole column slides in driven by `isSidebarOpen`.
  */
 
-import type { ActivityState, ChannelSummary, Teammate } from 'csuite-sdk/types';
+import type { ChannelSummary, Teammate, WorkState } from 'csuite-sdk/types';
 import { hasPermission } from 'csuite-sdk/types';
 import type { ComponentChildren } from 'preact';
 import { channels, joinedChannels } from '../../lib/channels.js';
@@ -93,7 +93,7 @@ export function NavColumn({ viewer }: NavColumnProps) {
   const onlineByName = new Map<string, number>();
   // Live 3-state activity, orthogonal to the connection count above.
   // Only non-idle states are stored; a missing entry reads as idle.
-  const activityByName = new Map<string, ActivityState>();
+  const activityByName = new Map<string, WorkState>();
   if (r) {
     for (const a of r.connected) {
       onlineByName.set(a.name, a.connected);

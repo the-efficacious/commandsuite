@@ -17,9 +17,10 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { defaultHttpsConfig } from '../src/members.js';
 import { type RunningServer, runServer } from '../src/run.js';
+import { silentLogger } from './helpers/logger.js';
 import { seedStores } from './helpers/test-stores.js';
 
 const ADMIN_TOKEN = 'csuite_run_wiring_test_admin_token';
@@ -45,10 +46,6 @@ function tmpDir(): string {
   const dir = mkdtempSync(join(tmpdir(), 'csuite-run-wiring-'));
   dirsToClean.push(dir);
   return dir;
-}
-
-function silentLogger() {
-  return { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 }
 
 async function bootHttp(): Promise<RunningServer> {

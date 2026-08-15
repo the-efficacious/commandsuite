@@ -7,6 +7,11 @@
  */
 
 export {
+  ensureRetentionIndexes,
+  type PruneActivityResult,
+  pruneActivityDb,
+} from './activity-retention.js';
+export {
   type ActivityListener,
   type ActivityStore,
   clampListLimit,
@@ -14,11 +19,6 @@ export {
   type InMemoryActivityStoreOptions,
   type ListActivityFilter,
 } from './activity-store.js';
-export {
-  ACTIVITY_TTL_MS,
-  type ActivityTracker,
-  createActivityTracker,
-} from './activity-tracker.js';
 export {
   type AppBindings,
   type AppOptions,
@@ -34,7 +34,6 @@ export {
 } from './auth.js';
 export {
   Broker,
-  type BrokerLogger,
   type BrokerOptions,
   type IdentityContext,
   InvalidRecipientError,
@@ -206,10 +205,19 @@ export {
   looksLikeJwt,
   type VerifiedClaims,
 } from './jwt.js';
-export { type LogContext, type Logger, logger } from './logger.js';
+export {
+  type CreateLoggerOptions,
+  createLogger,
+  envLogLevel,
+  LOG_LEVELS,
+  type LogContext,
+  type Logger,
+  type LogLevel,
+  type LogRecord,
+  logger,
+} from './logger.js';
 export {
   createSqliteActivityStore,
-  pruneActivityDb,
   type SqliteActivityStoreHandle,
 } from './member-activity.js';
 export {
@@ -465,3 +473,8 @@ export {
   validateVariableSlug,
 } from './variables.js';
 export { CORE_VERSION } from './version.js';
+export {
+  createWorkStateTracker,
+  WORK_STATE_TTL_MS,
+  type WorkStateTracker,
+} from './work-state.js';

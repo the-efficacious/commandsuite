@@ -50,6 +50,7 @@ vi.mock('../../../src/runtime/agents/codex/channel-sink.js', () => ({
 
 import type { InstructionsResponse } from 'csuite-sdk/types';
 import { spawnCodex } from '../../../src/runtime/agents/codex/adapter.js';
+import { silentLogger } from '../../helpers/logger.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -99,7 +100,7 @@ const BASE_OPTS = {
     setOffline: vi.fn(),
     subscribe: vi.fn(() => () => {}),
   },
-  log: vi.fn(),
+  logger: silentLogger(),
 };
 
 // ── Tests ─────────────────────────────────────────────────────────────

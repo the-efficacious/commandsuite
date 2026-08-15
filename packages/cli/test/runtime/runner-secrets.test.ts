@@ -17,6 +17,7 @@ import { clearRegisteredSecretValues, REDACTED, redactSecrets } from 'csuite-cor
 import { afterEach, describe, expect, it } from 'vitest';
 import type { RunnerHandle } from '../../src/runtime/runner.js';
 import { startRunner } from '../../src/runtime/runner.js';
+import { silentLogger } from '../helpers/logger.js';
 import {
   FAKE_BROKER_TOKEN,
   type FakeBroker,
@@ -50,7 +51,7 @@ describe('runner secrets', () => {
     runner = await startRunner({
       url: broker.url,
       token: FAKE_BROKER_TOKEN,
-      log: () => {},
+      logger: silentLogger(),
       noTrace: true,
     });
     expect(runner.secretsEnv).toEqual({
@@ -73,7 +74,7 @@ describe('runner secrets', () => {
     runner = await startRunner({
       url: broker.url,
       token: FAKE_BROKER_TOKEN,
-      log: () => {},
+      logger: silentLogger(),
       noTrace: true,
     });
     expect(runner.secretsEnv).toEqual({ GOOD_ONE: 'a-perfectly-fine-value' });
@@ -85,7 +86,7 @@ describe('runner secrets', () => {
     runner = await startRunner({
       url: broker.url,
       token: FAKE_BROKER_TOKEN,
-      log: () => {},
+      logger: silentLogger(),
       noTrace: true,
     });
     expect(redactSecrets('stdout: ghx_should_be_scrubbed end')).toBe(`stdout: ${REDACTED} end`);
@@ -106,7 +107,7 @@ describe('runner secrets', () => {
     runner = await startRunner({
       url: broker.url,
       token: FAKE_BROKER_TOKEN,
-      log: () => {},
+      logger: silentLogger(),
       noTrace: true,
     });
 
@@ -138,7 +139,7 @@ describe('runner secrets', () => {
     runner = await startRunner({
       url: broker.url,
       token: FAKE_BROKER_TOKEN,
-      log: () => {},
+      logger: silentLogger(),
       noTrace: true,
     });
 
@@ -153,7 +154,7 @@ describe('runner secrets', () => {
     runner = await startRunner({
       url: broker.url,
       token: FAKE_BROKER_TOKEN,
-      log: () => {},
+      logger: silentLogger(),
       noTrace: true,
     });
     expect(runner.secretsEnv).toEqual({});
@@ -165,7 +166,7 @@ describe('runner secrets', () => {
     runner = await startRunner({
       url: broker.url,
       token: FAKE_BROKER_TOKEN,
-      log: () => {},
+      logger: silentLogger(),
       noTrace: true,
       noSecrets: true,
     });

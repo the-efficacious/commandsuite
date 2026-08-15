@@ -56,6 +56,7 @@
  */
 
 import { createServer, type Server } from 'node:http';
+import { logger as defaultLogger, type Logger } from 'csuite-core';
 import type { ActivitySignal } from './busy.js';
 
 export type ClaudeHookEventName =
@@ -146,16 +147,11 @@ export interface HookServerOptions {
    * context re-brief. Optional.
    */
   onSessionStart?: (source: string) => void;
-  log?: (msg: string, ctx?: Record<string, unknown>) => void;
+  logger?: Logger;
 }
 
 export async function startHookServer(options: HookServerOptions): Promise<HookServer> {
-  const log =
-    options.log ??
-    ((msg: string, ctx: Record<string, unknown> = {}): void => {
-      const record = { ts: new Date().toISOString(), component: 'hook-server', msg, ...ctx };
-      process.stderr.write(`${JSON.stringify(record)}\n`);
-    });
+  const log = options.logger ?? defaultLogger.child('hook-server');
 
   // Per-tool-use-id handles. The same id appears in PreToolUse and
   // PostToolUse, so the matching is exact when Claude Code is
@@ -225,7 +221,7 @@ export async function startHookServer(options: HookServerOptions): Promise<HookS
       }
       body = parsed as HookRequestBody;
     } catch (err) {
-      log('hook-server: bad request', {
+      log.warn('bad request', {
         error: err instanceof Error ? err.message : String(err),
       });
       res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -248,7 +244,7 @@ export async function startHookServer(options: HookServerOptions): Promise<HookS
         try {
           options.onTranscriptPath(body.transcript_path);
         } catch (err) {
-          log('hook-server: onTranscriptPath threw', {
+          log.warn('onTranscriptPath threw', {
             error: err instanceof Error ? err.message : String(err),
           });
         }
@@ -323,7 +319,7 @@ export async function startHookServer(options: HookServerOptions): Promise<HookS
         // opening UserPromptSubmit). One turn per session, so a Stop
         // ends every open turn — drain rather than leak until the
         // watchdog fires.
-        log('hook-server: Stop with no key match, draining turn handles', {
+        log.warn('Stop with no key match, draining turn handles', {
           open: turnHandles.size,
         });
         for (const h of turnHandles.values()) h.finish();
@@ -332,7 +328,7 @@ export async function startHookServer(options: HookServerOptions): Promise<HookS
     } else if (event === 'SubagentStop') {
       // A subagent finished; the MAIN turn is still active until Stop.
       // Informational only — no top-level state change.
-      log('hook-server: subagent stop', { stopHookActive: body.stop_hook_active === true });
+      log.debug('subagent stop', { stopHookActive: body.stop_hook_active === true });
     } else if (event === 'Notification') {
       // Route on notification_type. Blocking types → the agent is
       // waiting on a human; idle_prompt → it isn't; unknown → ignore
@@ -349,12 +345,12 @@ export async function startHookServer(options: HookServerOptions): Promise<HookS
       // the runner whether the agent's context just fell off (compact /
       // clear) and needs a re-brief.
       const source = typeof body.source === 'string' ? body.source : '';
-      log('hook-server: session start', { source });
+      log.info('session start', { source });
       if (options.onSessionStart) {
         try {
           options.onSessionStart(source);
         } catch (err) {
-          log('hook-server: onSessionStart threw', {
+          log.warn('onSessionStart threw', {
             error: err instanceof Error ? err.message : String(err),
           });
         }
@@ -379,7 +375,7 @@ export async function startHookServer(options: HookServerOptions): Promise<HookS
     throw new Error('hook-server: server.address() returned non-TCP binding');
   }
   const url = `http://127.0.0.1:${address.port}/hook/tool-event`;
-  log('hook-server: listening', { url });
+  log.info('listening', { url });
 
   return {
     url,
@@ -388,7 +384,7 @@ export async function startHookServer(options: HookServerOptions): Promise<HookS
     },
     async close(): Promise<void> {
       if (handles.size > 0 || turnHandles.size > 0) {
-        log('hook-server: draining handles at close', {
+        log.info('draining handles at close', {
           tools: handles.size,
           turns: turnHandles.size,
         });

@@ -19,6 +19,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { ChannelEvent } from '../../src/runtime/forwarder.js';
 import type { RunnerHandle } from '../../src/runtime/runner.js';
 import { startRunner } from '../../src/runtime/runner.js';
+import { silentLogger } from '../helpers/logger.js';
 import {
   FAKE_BROKER_NAME,
   FAKE_BROKER_TOKEN,
@@ -55,7 +56,7 @@ describe('runner → channel sink delivery', () => {
     runner = await startRunner({
       url: broker.url,
       token: FAKE_BROKER_TOKEN,
-      log: () => {},
+      logger: silentLogger(),
       noTrace: true,
       channelSink: {
         deliver: async (event) => {

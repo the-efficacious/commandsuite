@@ -8,6 +8,7 @@
 
 import type { DiagnosticEmitter } from './diagnostics.js';
 import type { GenAiInferenceInput } from './genai-store.js';
+import type { Logger } from './logger.js';
 import type { RawBodyStore } from './raw-body-types.js';
 import type { TelemetryRecord } from './telemetry-store.js';
 
@@ -40,8 +41,12 @@ export function isGenAiLogRecord(name: string): boolean {
 export interface GenAiCorrelatorOptions {
   /** Exact instruction packet blocks issued to this member, read at emission time. */
   getRedactionExemptions?: () => readonly string[];
-  /** Structured logger for skip/continue diagnostics. Optional. */
-  log?: (msg: string, ctx?: Record<string, unknown>) => void;
+  /**
+   * Structured logger for skip/continue diagnostics. Severity is the
+   * implementation's per-site call, not fixed here. Optional; the
+   * implementation defaults to the shared logger, never to a no-op.
+   */
+  logger?: Logger;
   /**
    * Retained completeness diagnostics. Optional so a correlator can be
    * constructed without one (tests, and a broker with retention

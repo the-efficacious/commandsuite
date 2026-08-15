@@ -29,6 +29,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { runClaudeCommand } from '../../src/commands/claude.js';
+import { silentLogger } from '../helpers/logger.js';
 import { writeFakeClaude } from './conformance/fake-agents.js';
 import {
   FAKE_BROKER_TOKEN,
@@ -80,7 +81,7 @@ describeIfBuilt('csuite claude end-to-end', () => {
         url: broker.url,
         token: FAKE_BROKER_TOKEN,
         cwd: sandbox,
-        log: () => {},
+        logger: silentLogger(),
         bridgeCommand: process.execPath,
         bridgeArgs: [CLI_BINARY, 'mcp-bridge'],
         noTrace: true,
@@ -113,7 +114,7 @@ describeIfBuilt('csuite claude end-to-end', () => {
         url: broker.url,
         token: FAKE_BROKER_TOKEN,
         cwd: sandbox,
-        log: () => {},
+        logger: silentLogger(),
         // Explicit bridge command because vitest's `process.argv[1]`
         // points at the vitest binary, not our cli — so the auto-
         // detection path in runClaudeCommand doesn't work in

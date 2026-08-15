@@ -126,8 +126,6 @@ import type {
   VariablesStore,
 } from './index.js';
 import {
-  ACTIVITY_TTL_MS,
-  type ActivityTracker,
   type AuthBindings,
   type Broker,
   type ChannelStore,
@@ -136,8 +134,8 @@ import {
   composedInstructionsSha256,
   composeInstructions,
   containsRegisteredSecretValue,
-  createActivityTracker,
   createAuthMiddleware,
+  createWorkStateTracker,
   type EnrollmentStore,
   formatUserCode,
   GENERAL_CHANNEL_ID,
@@ -169,6 +167,8 @@ import {
   type TokenStore,
   validateSlug,
   verifyCode as verifyTotpCode,
+  WORK_STATE_TTL_MS,
+  type WorkStateTracker,
 } from './index.js';
 
 import {
@@ -488,10 +488,23 @@ const API_PATH_PREFIXES = [
   PATHS.presenceActivity,
   '/notifications',
   PATHS.hooks,
-  '/agents',
+  // `/members` and everything under it (activity, genai, telemetry,
+  // raw bodies) is API-only. Without it here, an unmatched member GET
+  // falls through to the SPA and answers `index.html` with a 200 — a
+  // client asking for JSON gets HTML and no error. `/agents` is the
+  // retired spelling of this prefix and no longer routes anything.
+  PATHS.members,
   '/fs',
   '/otlp',
 ] as const;
+
+/**
+ * How often the diagnostics retention ladder folds. The ladder's own
+ * thresholds are days (detail 7d, hour buckets 30d), so anything under
+ * an hour is wasted work; anything much over risks a long-lived broker
+ * sitting on unfolded detail rows.
+ */
+const DIAGNOSTICS_SWEEP_MS = 3_600_000;
 
 const DEFAULT_MAX_FILE_SIZE = 25 * 1024 * 1024;
 const HARD_CAP_MAX_FILE_SIZE = 1024 * 1024 * 1024;
@@ -506,11 +519,19 @@ const HARD_CAP_MAX_FILE_SIZE = 1024 * 1024 * 1024;
 const SOURCE_IP_MAX = PendingEnrollmentSchema.shape.sourceIp.unwrap().maxLength ?? 64;
 const SOURCE_UA_MAX = PendingEnrollmentSchema.shape.sourceUa.unwrap().maxLength ?? 512;
 
+/**
+ * Whether a request path belongs to the API, and so must answer a JSON
+ * 404 rather than falling through to the host's SPA.
+ *
+ * Matches on whole path segments only. The bare `startsWith(p)` this
+ * replaced also claimed anything that merely began with a prefix's
+ * letters — `/membership` read as `/members` — which would shadow a
+ * client-side route with a JSON 404. Every entry in the list is a
+ * clean segment, so nothing needs the looser form.
+ */
 export function isApiPath(pathname: string): boolean {
   for (const p of API_PATH_PREFIXES) {
-    if (pathname === p || pathname.startsWith(`${p}/`) || pathname.startsWith(p)) {
-      return true;
-    }
+    if (pathname === p || pathname.startsWith(`${p}/`)) return true;
   }
   return false;
 }
@@ -566,10 +587,10 @@ export function createApp(options: AppOptions): CreatedApp {
   // `POST /presence/activity`, read on roster GETs, and decayed via TTL
   // so a runner that crashes mid-turn doesn't leave the member stuck
   // "working"/"blocked" forever — stale state resolves back to idle.
-  // Orthogonal to connection presence (which the broker's SSE registry
+  // Orthogonal to connection presence (which the broker's presence registry
   // owns). Local helper, not exposed externally — it's behavioral state
   // of the running broker, not config or persisted truth.
-  const activityTracker: ActivityTracker = createActivityTracker(now);
+  const workState: WorkStateTracker = createWorkStateTracker(now);
 
   // External Notifications dispatcher — owned here (not by run.ts)
   // because the delivery policy reads the in-process activity
@@ -584,7 +605,7 @@ export function createApp(options: AppOptions): CreatedApp {
       broker,
       members,
       ...(channels !== undefined ? { channels } : {}),
-      activity: activityTracker,
+      activity: workState,
       logger,
       now,
     });
@@ -610,6 +631,36 @@ export function createApp(options: AppOptions): CreatedApp {
       },
       { once: true },
     );
+  }
+
+  // Diagnostics retention. The store implements a detail -> hour -> day
+  // compaction ladder and nothing ever called it, so the row caps were
+  // the only bound in production and the ladder was dead code. It runs
+  // on its own timer rather than the notification dispatcher's: the two
+  // are unrelated, and a deployment with notifications unwired still
+  // accumulates diagnostics.
+  //
+  // Once at startup as well as on the interval, because a broker that
+  // restarts more often than the interval would otherwise never fold.
+  if (diagnostics !== undefined) {
+    const sweepDiagnostics = (): void => {
+      try {
+        diagnostics.sweep();
+      } catch (err) {
+        // Retention failing must never take the broker with it — the
+        // observation it compacts is less important than the operation
+        // that produced it.
+        logger.warn('diagnostics retention sweep failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    };
+    sweepDiagnostics();
+    const diagnosticsSweepInterval = setInterval(sweepDiagnostics, DIAGNOSTICS_SWEEP_MS);
+    diagnosticsSweepInterval.unref?.();
+    shutdownSignal?.addEventListener('abort', () => clearInterval(diagnosticsSweepInterval), {
+      once: true,
+    });
   }
 
   // Per-member GenAI inference correlators. The api-body OTEL records for
@@ -659,7 +710,9 @@ export function createApp(options: AppOptions): CreatedApp {
     let corr = genaiCorrelators.get(memberName);
     if (!corr) {
       corr = createCorrelator({
-        log: (msg, ctx) => logger.warn(msg, ctx),
+        // The correlator picks severity per site; flattening everything
+        // to warn here is exactly the shim this replaced.
+        logger: logger.child('genai-correlator'),
         // Per-member correlator, so its diagnostics carry that member
         // as producer without the call sites having to say so.
         ...(diagnostics !== undefined ? { diagnostics: diagnostics.emit } : {}),
@@ -930,7 +983,7 @@ export function createApp(options: AppOptions): CreatedApp {
       memberName: member.name,
       expiresAt: now() + PLATFORM_CONNECT_CODE_TTL_MS,
     });
-    logger.info('platform-connect: bind', { code, memberName: member.name });
+    logger.info('bind', { code, memberName: member.name });
     return c.json({ ok: true, memberName: member.name });
   });
 
@@ -1173,7 +1226,7 @@ export function createApp(options: AppOptions): CreatedApp {
     // field as healthy is exactly the conflation this exists to remove,
     // and it is only absent when the store isn't wired at all.
     const presences = broker.listPresences().map((p) => {
-      const activity = activityTracker.getActivity(p.name);
+      const activity = workState.getActivity(p.name);
       const health = captureHealth?.forMember(p.name);
       // `pending` is internal — an aged-out marker hasn't earned a
       // claim yet, and healthy lag means every turn is briefly
@@ -1220,7 +1273,7 @@ export function createApp(options: AppOptions): CreatedApp {
     return c.json({
       teammates: teammatesFromMembers(members),
       connected: presences,
-      activityWindowMs: ACTIVITY_TTL_MS,
+      activityWindowMs: WORK_STATE_TTL_MS,
       restartPending: await restartPendingMembers(),
     });
   });
@@ -1231,12 +1284,12 @@ export function createApp(options: AppOptions): CreatedApp {
    * humans on the web UI never report this; the runner is the only
    * thing that knows.
    *
-   * Body: `{ state: ActivityState, busy?: bool }`. `state` is
+   * Body: `{ state: WorkState, busy?: bool }`. `state` is
    * authoritative; the optional `busy` mirror is ignored server-side
    * (the roster derives `busy = state === 'working'`). Response is 204.
    *
    * The tracker is internally TTL'd so a runner that drops mid-turn
-   * still gets reset to idle after ACTIVITY_TTL_MS. Runners are expected
+   * still gets reset to idle after WORK_STATE_TTL_MS. Runners are expected
    * to heartbeat (re-post the current non-idle state) every ~10s while
    * still working/blocked so the TTL stays fresh; on transition to idle
    * they post `state: 'idle'` once and drop the entry.
@@ -1253,7 +1306,7 @@ export function createApp(options: AppOptions): CreatedApp {
     if (!parsed.success) {
       return c.json({ error: 'invalid activity report', details: parsed.error.issues }, 400);
     }
-    activityTracker.report(member.name, parsed.data.state);
+    workState.report(member.name, parsed.data.state);
     // A transition out of `working` is the `if_busy: wait` flush
     // signal — deliver any external notifications held for this
     // member. Fire-and-forget; the report response never blocks on
@@ -1722,6 +1775,79 @@ export function createApp(options: AppOptions): CreatedApp {
     });
   }
 
+  // Telemetry read path.
+  //
+  // The store was write-only for its whole life: `append` was called on
+  // every OTLP ingest and `list` had no caller anywhere — no route, no
+  // SDK method, no UI. Every cost, token and lifecycle record an agent
+  // exported landed in SQLite and could only be read by opening the
+  // database by hand, while the docs advertised cost and token
+  // telemetry as a feature.
+  //
+  // Same visibility rule as activity and gen_ai: self OR
+  // `activity.read`. Oldest-first with a composite cursor, so a caller
+  // paging a window gets the same contract it already knows.
+  if (telemetryStore !== undefined) {
+    const tStore = telemetryStore;
+    app.get('/members/:name/telemetry', auth, (c) => {
+      const member = c.get('member');
+      const parsedName = NameSchema.safeParse(c.req.param('name'));
+      if (!parsedName.success) return c.json({ error: 'invalid name' }, 400);
+      const name = parsedName.data;
+      const isSelf = name === member.name;
+      if (!isSelf && !hasPermission(member.permissions, 'activity.read')) {
+        return c.json(
+          { error: 'reading telemetry requires activity.read permission, or self' },
+          403,
+        );
+      }
+      const num = (raw: string | undefined): number | undefined =>
+        raw === undefined ? undefined : Number(raw);
+      const from = num(c.req.query('from'));
+      const to = num(c.req.query('to'));
+      const limit = num(c.req.query('limit'));
+      const cursorTs = num(c.req.query('cursor_ts'));
+      const cursorId = num(c.req.query('cursor_id'));
+      const signalRaw = c.req.query('signal');
+      const nameFilter = c.req.query('event');
+
+      for (const [label, value] of [
+        ['from', from],
+        ['to', to],
+        ['limit', limit],
+      ] as const) {
+        if (value !== undefined && !Number.isFinite(value)) {
+          return c.json({ error: `invalid \`${label}\` parameter` }, 400);
+        }
+      }
+      if (signalRaw !== undefined && signalRaw !== 'log' && signalRaw !== 'metric') {
+        return c.json({ error: 'invalid `signal` parameter — expected log or metric' }, 400);
+      }
+      // Both halves or neither: a cursor with one half is a caller bug
+      // that would silently read from the start of the range.
+      if (
+        (cursorTs === undefined) !== (cursorId === undefined) ||
+        (cursorTs !== undefined && (!Number.isInteger(cursorTs) || cursorTs < 0)) ||
+        (cursorId !== undefined && (!Number.isInteger(cursorId) || cursorId < 0))
+      ) {
+        return c.json({ error: 'invalid composite cursor' }, 400);
+      }
+
+      const rows = tStore.list({
+        memberName: name,
+        ...(signalRaw !== undefined ? { signal: signalRaw } : {}),
+        ...(nameFilter !== undefined ? { name: nameFilter } : {}),
+        ...(from !== undefined ? { from } : {}),
+        ...(to !== undefined ? { to } : {}),
+        ...(cursorTs !== undefined && cursorId !== undefined
+          ? { after: { ts: cursorTs, id: cursorId } }
+          : {}),
+        ...(limit !== undefined ? { limit } : {}),
+      });
+      return c.json({ telemetry: rows });
+    });
+  }
+
   // GenAI inference read path — the full-fidelity request layer
   // (system instructions + complete input context) behind the trace
   // viewer's enrichment join. Same visibility rule as the activity
@@ -1867,6 +1993,70 @@ export function createApp(options: AppOptions): CreatedApp {
         },
       });
     });
+
+    // Raw source bytes for one inference.
+    //
+    // The content-addressed store exists so a trace can be checked
+    // against what actually went over the wire, and until now nothing
+    // could read it: `getBlob` had no caller outside capture-health's
+    // SQL, so the fidelity layer was write-only and the sha256 columns
+    // on each inference pointed at bytes no client could fetch.
+    //
+    // Addressed by INFERENCE, not by bare hash. A hash-addressed route
+    // would be a lookup into a global content space where any member
+    // holding one hash could read another member's bytes — dedup makes
+    // that a real crossing, not a theoretical one. Going through the
+    // record keeps the existing ownership check in front of the bytes,
+    // and keeps the URL meaningful if the store behind it changes.
+    if (rawBodyStore !== undefined) {
+      const rStore = rawBodyStore;
+      app.get('/members/:name/genai/:id/raw', auth, (c) => {
+        const member = c.get('member');
+        const parsedName = NameSchema.safeParse(c.req.param('name'));
+        if (!parsedName.success) return c.json({ error: 'invalid name' }, 400);
+        const name = parsedName.data;
+        if (name !== member.name && !hasPermission(member.permissions, 'activity.read')) {
+          return c.json(
+            { error: 'reading raw bodies requires activity.read permission, or self' },
+            403,
+          );
+        }
+        const id = Number(c.req.param('id'));
+        if (!Number.isInteger(id) || id < 0) {
+          return c.json({ error: 'invalid `id` parameter' }, 400);
+        }
+        const kind = c.req.query('kind') ?? 'request';
+        if (kind !== 'request' && kind !== 'response') {
+          return c.json({ error: 'invalid `kind` parameter — expected request or response' }, 400);
+        }
+        const row = gStore.getById(id);
+        if (row === null || row.memberName !== name) {
+          return c.json({ error: 'inference not found' }, 404);
+        }
+        const hash = kind === 'request' ? row.requestSha256 : row.responseSha256;
+        if (hash === null) {
+          // The inference is real; these bytes were never captured for
+          // it. Distinguished from a missing inference so a caller can
+          // tell "no such record" from "that record has no raw side",
+          // which are different facts about capture coverage.
+          return c.json({ error: `no raw ${kind} captured for this inference` }, 404);
+        }
+        const bytes = rStore.getBlob(hash);
+        if (bytes === null) {
+          // Retention collects a blob once nothing references it, and
+          // `getBlob` also returns null when the stored bytes fail
+          // their own hash check. Either way the record outlived its
+          // bytes; say so rather than serving nothing with a 200.
+          return c.json({ error: `raw ${kind} bytes are no longer stored` }, 410);
+        }
+        // Served as bytes, not JSON: the point of this layer is that it
+        // is byte-exact with respect to what was stored, and
+        // re-encoding it through a JSON string would defeat that.
+        c.header('Content-Type', 'application/octet-stream');
+        c.header('X-CSuite-Body-Sha256', hash);
+        return c.body(new Uint8Array(bytes));
+      });
+    }
   }
 
   // Codex gen_ai ingest — the codex analogue of Claude's OTLP body_ref →
@@ -3804,7 +3994,7 @@ export function createApp(options: AppOptions): CreatedApp {
   //
   // All mutations publish an `ObjectiveEvent` through the broker on
   // thread key `obj:<id>` so web clients + the link can react in
-  // real time. The publish is fire-and-forget so an SSE failure
+  // real time. The publish is fire-and-forget so a delivery failure
   // never blocks the HTTP response.
   if (objectives !== undefined) {
     /**
@@ -4250,7 +4440,7 @@ export function createApp(options: AppOptions): CreatedApp {
     // self-echo suppression DOES apply (agents won't see their own
     // objective-discussion posts on the live stream — same as
     // `broadcast`/`send`); the web client still renders its own posts
-    // because the web SSE handler does NOT suppress self-echoes.
+    // because the web subscribe handler does NOT suppress self-echoes.
     app.post(`${PATHS.objectives}/:id/discuss`, auth, async (c) => {
       const member = c.get('member');
       const id = c.req.param('id');
@@ -4996,7 +5186,7 @@ export function createApp(options: AppOptions): CreatedApp {
     // would catch this anyway (member not found → 401), but
     // proactive deletion keeps the table clean.
     const revoked = await tokens.revokeAllForMember(parsedName.data);
-    activityTracker.forget(parsedName.data);
+    workState.forget(parsedName.data);
     persistMembers();
     logger.info('member deleted', {
       name: parsedName.data,

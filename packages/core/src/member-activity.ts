@@ -10,7 +10,8 @@
  * markers for a given objectiveId.
  *
  * The store is a thin wrapper around SQLite plus an in-process
- * listener registry that the SSE endpoint subscribes to for live tail.
+ * listener registry the live-tail endpoint subscribes to
+ * (`GET /members/:name/activity/stream`, a WebSocket upgrade).
  * Appends fire the emitter synchronously after the insert commits,
  * so a subscriber attached during an append never misses a row — and
  * a subscriber that attaches AFTER an append can pull the tail via
@@ -24,10 +25,11 @@
 
 import { ActivityEventSchema } from 'csuite-sdk/schemas';
 import type { ActivityEvent, ActivityRow } from 'csuite-sdk/types';
-import type {
-  ActivityListener,
-  ActivityStore as CoreActivityStore,
-  ListActivityFilter as CoreListActivityFilter,
+import {
+  type ActivityListener,
+  type ActivityStore as CoreActivityStore,
+  type ListActivityFilter as CoreListActivityFilter,
+  clampListLimit,
 } from './activity-store.js';
 import { logger as defaultLogger, type Logger } from './logger.js';
 import { runInTransaction, type SqlDriver, type SqlStatement } from './sql-driver.js';
@@ -45,6 +47,13 @@ const CREATE_SCHEMA = `
     ON member_activity (member_name, ts);
   CREATE INDEX IF NOT EXISTS member_activity_member_kind_ts_idx
     ON member_activity (member_name, kind, ts);
+  -- Capture health bounds on created_at, not ts, and runs per connected
+  -- member on every roster poll (the web UI polls every 10s per client).
+  -- Without this the created_at bound was a per-row filter over every
+  -- llm_exchange the member ever recorded; with it the planner seeks the
+  -- range. Measured with EXPLAIN QUERY PLAN, not assumed.
+  CREATE INDEX IF NOT EXISTS member_activity_member_kind_created_idx
+    ON member_activity (member_name, kind, created_at);
 `;
 
 interface ActivityRowRaw {
@@ -71,7 +80,7 @@ function rowToActivity(row: ActivityRowRaw, log: Logger): ActivityRow | null {
   try {
     event = ActivityEventSchema.parse(JSON.parse(row.event_json));
   } catch (err) {
-    log.warn('member-activity: skipped malformed activity row', {
+    log.warn('skipped malformed activity row', {
       id: row.id,
       memberName: row.member_name,
       kind: row.kind,
@@ -149,8 +158,22 @@ class SqliteActivityStore implements CoreActivityStore {
     return inserted;
   }
 
+  /**
+   * Page newest-first, REFILLING past malformed rows.
+   *
+   * Skipping a corrupt row without refilling returns a short page, and
+   * every caller in the tree reads "shorter than limit" as "no more
+   * rows" — so one bad row inside the window ends a trace early and
+   * reports it as complete. The refill loop keeps reading, from a
+   * cursor advanced over the raw rows (malformed ones included, or it
+   * would re-read the same row forever), until it has `limit` valid
+   * rows or SQLite returns a short raw page. Only the second case is
+   * exhaustion, which restores the invariant the callers rely on: a
+   * short page means there is nothing more to read.
+   */
   list(filter: ListActivityFilter): ActivityRow[] {
-    const limit = Math.min(filter.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
+    const limit = clampListLimit(filter.limit, MAX_LIMIT, DEFAULT_LIMIT);
+
     const conditions: string[] = ['member_name = ?'];
     const params: Array<string | number> = [filter.memberName];
     if (filter.from !== undefined) {
@@ -161,10 +184,6 @@ class SqliteActivityStore implements CoreActivityStore {
       conditions.push('ts <= ?');
       params.push(filter.to);
     }
-    if (filter.before !== undefined) {
-      conditions.push('(ts < ? OR (ts = ? AND id < ?))');
-      params.push(filter.before.ts, filter.before.ts, filter.before.id);
-    }
     if (filter.kinds && filter.kinds.length > 0) {
       const placeholders = filter.kinds.map(() => '?').join(',');
       conditions.push(`kind IN (${placeholders})`);
@@ -172,19 +191,37 @@ class SqliteActivityStore implements CoreActivityStore {
     }
     const sql =
       `SELECT * FROM member_activity WHERE ${conditions.join(' AND ')} ` +
-      `ORDER BY ts DESC, id DESC LIMIT ?`;
-    params.push(limit);
+      `AND (ts < ? OR (ts = ? AND id < ?)) ORDER BY ts DESC, id DESC LIMIT ?`;
     const stmt = this.db.prepare(sql);
-    const rows = stmt.all(...params) as unknown as ActivityRowRaw[];
-    // Malformed rows are skipped (logged + omitted), so a query may
-    // return fewer than `limit` rows when a corrupt row falls inside
-    // the window. That is honest: the cursor for "load older" is driven
-    // by the oldest REAL event.ts returned, so a skipped row is simply
-    // never surfaced — it can't double-count or desync paging.
+
+    // Open cursor: `before` when the caller paged, else past the newest
+    // possible row. Number.MAX_SAFE_INTEGER is the sentinel rather than
+    // a branch on two SQL shapes, so the statement is prepared once.
+    let cursorTs = filter.before?.ts ?? Number.MAX_SAFE_INTEGER;
+    let cursorId = filter.before?.id ?? Number.MAX_SAFE_INTEGER;
+
     const out: ActivityRow[] = [];
-    for (const raw of rows) {
-      const activity = rowToActivity(raw, this.log);
-      if (activity !== null) out.push(activity);
+    while (out.length < limit) {
+      const want = limit - out.length;
+      const rows = stmt.all(
+        ...params,
+        cursorTs,
+        cursorTs,
+        cursorId,
+        want,
+      ) as unknown as ActivityRowRaw[];
+      if (rows.length === 0) break;
+      for (const raw of rows) {
+        const activity = rowToActivity(raw, this.log);
+        if (activity !== null) out.push(activity);
+      }
+      const last = rows[rows.length - 1];
+      if (last === undefined) break;
+      cursorTs = last.ts;
+      cursorId = last.id;
+      // A short raw page is the only exhaustion signal — a full one
+      // that decoded short means corrupt rows, so keep refilling.
+      if (rows.length < want) break;
     }
     return out;
   }
@@ -222,20 +259,13 @@ export type SqliteActivityStoreHandle = SqliteActivityStore;
 
 export function createSqliteActivityStore(
   db: SqlDriver,
-  log: Logger = defaultLogger,
+  log: Logger = defaultLogger.child('member-activity'),
 ): SqliteActivityStoreHandle {
   return new SqliteActivityStore(db, log);
 }
 
-/**
- * Stand-alone helper for `csuite prune-traces` that opens the activity
- * DB, prunes, and closes — without spinning up a full `runServer`.
- */
-export function pruneActivityDb(db: SqlDriver, cutoffTs: number): number {
-  db.exec(CREATE_SCHEMA);
-  const stmt = db.prepare('DELETE FROM member_activity WHERE ts < ?');
-  const result = stmt.run(cutoffTs);
-  return Number(result.changes ?? 0);
-}
+// Retention spans every table in the activity database, so it lives in
+// `activity-retention.ts` rather than here — this module owns one table.
+export { type PruneActivityResult, pruneActivityDb } from './activity-retention.js';
 
 export { parseDurationMs } from './duration.js';

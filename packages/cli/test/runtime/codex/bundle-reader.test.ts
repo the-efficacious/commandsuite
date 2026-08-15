@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import type { CodexGenaiInferenceUpload } from 'csuite-sdk/client';
 import { afterEach, describe, expect, it } from 'vitest';
 import { attachBundleReader } from '../../../src/runtime/agents/codex/bundle-reader.js';
+import { silentLogger } from '../../helpers/logger.js';
 
 const cleanups: Array<() => void> = [];
 afterEach(() => {
@@ -103,7 +104,7 @@ async function readAll(traceRoot: string): Promise<CodexGenaiInferenceUpload[]> 
     upload: async (infs) => {
       uploaded.push(...infs);
     },
-    log: () => {},
+    logger: silentLogger(),
     pollMs: 20,
   });
   // close() does a guaranteed final drain, so timing isn't load-bearing.

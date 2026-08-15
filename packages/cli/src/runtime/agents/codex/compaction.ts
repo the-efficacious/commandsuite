@@ -97,7 +97,7 @@ export function attachCodexCompactor(opts: {
     try {
       opts.onCompacted?.();
     } catch (err) {
-      opts.log('codex: onCompacted observer threw', {
+      opts.log.warn('onCompacted observer threw', {
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -106,7 +106,7 @@ export function attachCodexCompactor(opts: {
       // one whose request already timed out. Noted, not attributed —
       // acking an unrequested compaction against a stale request id
       // would close out the wrong thing.
-      opts.log('codex: observed a compaction we did not request');
+      opts.log.info('observed a compaction we did not request');
       return;
     }
     const settle = pending;

@@ -44,6 +44,7 @@ import {
   type Options as SdkOptions,
   type SpawnedProcess,
 } from '@anthropic-ai/claude-agent-sdk';
+import { logger as defaultLogger } from 'csuite-core';
 import type { CompactAttempt } from '../context-control.js';
 import { composeFixedContext } from '../fixed-context.js';
 import { type HudHandle, startHud } from '../hud.js';
@@ -138,7 +139,7 @@ export function buildHookForwarders(
         // session log once per tool call.
         if (failuresLogged < 5) {
           failuresLogged++;
-          log('claude: hook forward failed (busy signal degraded)', {
+          log.warn('hook forward failed (busy signal degraded)', {
             error: err instanceof Error ? err.message : String(err),
           });
         }
@@ -371,14 +372,11 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
     runnerOptions() {
       sink = createClaudeChannelSink({
         getQueue: () => queueRef.current,
-        log: (msg, ctx) => {
-          // The session log isn't created yet when runnerOptions() is
-          // called; route through stderr-JSON like other pre-session
-          // components. Once spawn() runs, the sink is quiet anyway
-          // except for per-event debug lines.
-          const record = { ts: new Date().toISOString(), component: 'claude-sink', msg, ...ctx };
-          process.stderr.write(`${JSON.stringify(record)}\n`);
-        },
+        // The session log isn't created yet when runnerOptions() is
+        // called, so this goes to the shared default sink rather than
+        // the session file. Once spawn() runs the sink is quiet anyway
+        // except for per-event debug lines.
+        log: defaultLogger.child('claude-sink'),
       });
       return { channelSink: sink, requireRawBodyAck: true };
     },
@@ -400,11 +398,11 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
       const secretNames = Object.keys(runner.secretsEnv);
       if (secretNames.length > 0) {
         for (const [k, v] of Object.entries(runner.secretsEnv)) env[k] = v;
-        log('claude: broker secrets injected into agent env', { envNames: secretNames });
+        log.info('broker secrets injected into agent env', { envNames: secretNames });
       }
       if (runner.captureHost !== null) {
         for (const [k, v] of Object.entries(runner.captureHost.envVars())) env[k] = v;
-        log('claude: capture host armed (transcript capture)', {
+        log.info('capture host armed (transcript capture)', {
           hookUrl: runner.captureHost.hookEndpointUrl,
         });
       }
@@ -506,13 +504,13 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
         child = proc;
         proc.stderr?.on('data', (chunk: Buffer) => {
           const text = chunk.toString('utf8').trim();
-          if (text.length > 0) log('claude: cli stderr', { data: text.slice(0, 2000) });
+          if (text.length > 0) log.debug('cli stderr', { data: text.slice(0, 2000) });
         });
         proc.on('exit', (code, signal) => {
           settleExit(code ?? (signal ? 128 + (signalNumber(signal) ?? 0) : 0));
         });
         proc.on('error', (err) => {
-          log('claude: failed to spawn claude', {
+          log.error('failed to spawn claude', {
             error: err instanceof Error ? err.message : String(err),
           });
           settleExit(1);
@@ -531,7 +529,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
         sdkOptions.sessionId = sessionId;
       }
 
-      log('claude: starting agent sdk session', {
+      log.info('starting agent sdk session', {
         executable: executable?.path,
         model: options.model ?? null,
         resume: effectiveResume ?? null,
@@ -550,7 +548,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
               // `init` re-fires on /clear- or compact-style restarts
               // and may rotate the id — the latest one wins.
               sessionId = message.session_id;
-              log('claude: session initialized', {
+              log.info('session initialized', {
                 sessionId,
                 model: message.model,
                 apiKeySource: message.apiKeySource,
@@ -566,12 +564,12 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
             observeCompactionMessage(message);
             printer.handle(message);
           }
-          log('claude: message stream ended');
+          log.info('message stream ended');
         } catch (err) {
           // The stream ends with an error when the subprocess dies or
           // is torn down mid-iteration; the child's exit handler owns
           // the exit code, this is diagnostics only.
-          log('claude: message stream error', {
+          log.error('message stream error', {
             error: err instanceof Error ? err.message : String(err),
           });
         } finally {
@@ -603,7 +601,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
         presence: ctx.presence,
         label: `csuite claude · ${runner.instructions.name}`,
         reserveBottomSpace: true,
-        log,
+        logger: log,
       });
       hud.redraw();
 
@@ -621,8 +619,8 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
             // Deliberately NOT flushed: delivering queued broker events
             // now would start a fresh turn in a session that is being
             // torn down. The broker still holds the messages; they
-            // replay on the next session's SSE subscribe.
-            log('claude: dropping queued channel events at shutdown', { queued: queue.depth });
+            // replay on the next session's subscribe.
+            log.warn('dropping queued channel events at shutdown', { queued: queue.depth });
           }
           queue.close();
           try {
@@ -635,7 +633,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
           if (settled === null) {
             const proc = child;
             if (proc !== null && proc.exitCode === null && proc.signalCode === null) {
-              log('claude: force-killing agent subprocess', { reason });
+              log.warn('force-killing agent subprocess', { reason });
               try {
                 proc.kill('SIGKILL');
               } catch {
@@ -677,7 +675,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
         // successor is identifiable from t0.
         effectiveResume = undefined;
         delete sdkOptions.resume;
-        ctx.log('claude: respawning cold — conversation dropped by context clear', {
+        ctx.log.info('respawning cold — conversation dropped by context clear', {
           instructionChars: fresh.length,
         });
         return adapter.spawn(ctx);
@@ -693,7 +691,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
         delete sdkOptions.resume;
         sdkOptions.continue = true;
       }
-      ctx.log('claude: respawning with refreshed instructions', {
+      ctx.log.info('respawning with refreshed instructions', {
         instructionChars: fresh.length,
         resume: effectiveResume,
       });

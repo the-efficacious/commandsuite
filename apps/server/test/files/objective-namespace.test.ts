@@ -32,10 +32,11 @@ import {
 } from 'csuite-core';
 import { FsEntryResponseSchema, FsEntrySchema } from 'csuite-sdk/schemas';
 import type { Objective, Team } from 'csuite-sdk/types';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { openDatabase } from '../../src/db.js';
 import { createSqliteFilesystemStore, LocalBlobStore } from '../../src/files/index.js';
 import { createMemberStore } from '../../src/members.js';
+import { silentLogger } from '../helpers/logger.js';
 import { mockTeamStore } from '../helpers/test-stores.js';
 
 const ALICE = 'csuite_test_alice_secret';
@@ -136,7 +137,7 @@ async function makeApp() {
     objectives,
     files,
     version: '0.0.0',
-    logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    logger: silentLogger(),
   });
   return { app, files, objectives };
 }
