@@ -430,7 +430,7 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
    * Without the first two, codex's habit of only emitting status-changed
    * on transitions would leave us stuck at `notLoaded` indefinitely on a
    * fresh idle thread, and the channel sink would buffer every inbound
-   * director message forever.
+   * sender's message forever.
    */
   function applyStatus(status: ThreadStatus): void {
     lastStatus = status;

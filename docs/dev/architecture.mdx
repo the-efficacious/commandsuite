@@ -121,26 +121,29 @@ For the per-runner reference see
 
 ## Permission model
 
-csuite has no fixed director / manager / individual-contributor hierarchy. Every
+csuite has no fixed privilege hierarchy. Every
 member resolves to a flat set of leaf permissions. Elevated actions
 gate on a specific leaf or on an explicitly documented relationship
 bypass such as self or objective originator:
 
 | Permission | What it permits |
 |---|---|
-| `team.manage` | Edit team name / context / presets |
+| `team.manage` | Edit team name / context |
 | `members.manage` | Create / update / delete members; rotate any token |
-| `objectives.manage` | Direct the team's work: create + assign, cancel any non-terminal (originator-bypass), reassign, manage watchers (originator-bypass) |
+| `objectives.create` | Create + assign; inspect the team-wide ledger |
+| `objectives.cancel` | Intervene in another assignee's status; cancel with originator bypass |
+| `objectives.reassign` | Change a non-terminal objective's assignee |
+| `objectives.watch` | Manage watchers with originator bypass |
 | `activity.read` | View captured traces (self-bypass) |
 | `tools.manage` | Administer the tool-source registry (external tools) |
 | `secrets.manage` | Administer the secrets registry (env secrets for agents) |
 | `notifications.manage` | Administer inbound notification endpoints and delivery policy |
 | `process.manage` | Edit the team's process document (a dedicated leaf) |
 
-The team config defines named **presets** (e.g. `admin`,
-`operator`) that members reference instead of listing every leaf.
-The server resolves presets at config load time; what reaches the
-wire is always the flat list.
+Creation templates in the web UI copy leaf selections into the new
+member form. Members persist the leaves themselves; templates are not
+roles and are never referenced by a stored member. Legacy databases can
+still resolve historical named bundles during migration.
 
 For the full breakdown see [permissions](/docs/concepts/permissions).
 
@@ -209,7 +212,7 @@ For the wire format of those IPC frames, see
 | Concept | One-line summary | Doc |
 |---|---|---|
 | **Member** | A named seat on a team. Identity = name + role + permissions + bearer token(s). | [members](/docs/concepts/members) |
-| **Permissions** | Eleven leaf permissions; preset bundles; originator + self bypass rules. | [permissions](/docs/concepts/permissions) |
+| **Permissions** | Twelve leaf permissions; creation templates; originator + self bypass rules. | [permissions](/docs/concepts/permissions) |
 | **Objective** | Push-assigned, single-assignee, outcome-required, four-state work primitive with audit log + threaded discussion + attachments. | [objectives](/docs/concepts/objectives) |
 | **Channel** | Slack-style named team thread. Implicit `general` + named channels with admin/member roles. | [channels](/docs/concepts/channels) |
 | **Event / message** | Push-not-poll delivery. Routes by `data.thread`. Wraps as `<channel>` for the agent. | [events](/docs/concepts/events) |
@@ -247,7 +250,7 @@ HTTP → broker → web-push library → push service → service worker
 
 ## How an objective flows
 
-1. A member with `objectives.manage` calls `objectives_create`
+1. A member with `objectives.create` calls `objectives_create`
    (MCP tool) or runs `csuite objectives create`.
 2. The store inserts the row, appends an `assigned` audit event
    in the same transaction, and the app layer publishes an
@@ -275,7 +278,7 @@ HTTP → broker → web-push library → push service → service worker
    The uploader batches events and posts them while the runner is
    live; its bounded queue reports any drops under sustained broker
    unreachability.
-7. A director (or anyone with `activity.read`) opens the objective
+7. A member with `activity.read` opens the objective
    in the web UI. The TracePanel queries
    paged activity and gen_ai queries over the objective's
    `createdAt` through `completedAt` (or the current time when there

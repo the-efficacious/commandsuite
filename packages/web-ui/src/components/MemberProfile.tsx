@@ -1,9 +1,9 @@
 /**
  * MemberProfile — the one page that represents a team member.
  *
- * Replaces the admin-only AgentPage. Everyone can open a teammate's
- * profile (`/@:name`); progressive disclosure shows admins the extra
- * tabs (Activity, Manage). Non-admins see Overview / Objectives /
+ * Everyone can open a teammate's profile (`/@:name`); progressive
+ * disclosure shows members holding the relevant leaves the extra
+ * tabs (Activity, Manage). Other members see Overview / Objectives /
  * Files.
  *
  *   ← Home › @alice
@@ -12,7 +12,7 @@
  *   │      "ships the billing service"              │
  *   │                         [→ DM] [→ Files]      │
  *   ├───────────────────────────────────────────────┤
- *   │ Overview  Objectives  Activity*  Files  Manage*│  (*admin)
+ *   │ Overview  Objectives  Activity*  Files  Manage*│  (*permission-gated)
  *   ├───────────────────────────────────────────────┤
  *   │  tab content                                   │
  *   └───────────────────────────────────────────────┘
@@ -47,7 +47,7 @@ import { EmptyState, ErrorCallout, Loading, Mention } from './ui/index.js';
 const manageMember = signal<Member | null>(null);
 /**
  * Full team roster as returned by `/members`. Kept alongside
- * `manageMember` so the "is this the last admin?" guard reads from
+ * `manageMember` so the sole `members.manage` holder guard reads from
  * a fresh list fetched by the same call that hydrated the form —
  * `instructions.teammates` used to be the source here and was stale
  * between mount and the next instructions refresh, incorrectly blocking
@@ -68,7 +68,7 @@ export function MemberProfile({ name, tab, viewer }: MemberProfileProps) {
   const b = instructions.value;
   const rosterResp = rosterSignal.value;
   const objectives = objectivesSignal.value;
-  const isAdmin = b !== null && hasPermission(b.permissions, 'members.manage');
+  const canManageMembers = b !== null && hasPermission(b.permissions, 'members.manage');
   const isSelf = viewer === name;
 
   const teammate: Teammate | undefined =
@@ -81,7 +81,7 @@ export function MemberProfile({ name, tab, viewer }: MemberProfileProps) {
   // opinion — absence is never rendered as health.
   const captureWarning = presenceCaptureWarning(presence);
 
-  const availableTabs = tabsFor({ isAdmin, isSelf });
+  const availableTabs = tabsFor({ canManageMembers, isSelf });
   const effectiveTab = availableTabs.includes(tab) ? tab : 'overview';
 
   // Start/stop the activity subscription only while the Activity
@@ -89,9 +89,9 @@ export function MemberProfile({ name, tab, viewer }: MemberProfileProps) {
   // viewer isn't actively inspecting.
   useEffect(() => {
     if (effectiveTab !== 'activity') return;
-    if (!isAdmin) return;
+    if (!canManageMembers) return;
     return startMemberActivitySubscribe({ name });
-  }, [name, effectiveTab, isAdmin]);
+  }, [name, effectiveTab, canManageMembers]);
 
   if (!b) {
     return (
@@ -130,7 +130,7 @@ export function MemberProfile({ name, tab, viewer }: MemberProfileProps) {
   // roster may not include the viewer.
   const displayRole = teammate?.role ?? (isSelf ? b.role : { title: '—', description: '' });
   const displayPerms = teammate?.permissions ?? (isSelf ? b.permissions : []);
-  const permSummary = summarizePermissions(displayPerms, b.team.permissionPresets);
+  const permSummary = summarizePermissions(displayPerms);
 
   return (
     <div class="flex-1 flex flex-col min-h-0">
@@ -191,7 +191,7 @@ export function MemberProfile({ name, tab, viewer }: MemberProfileProps) {
         )}
 
         <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-          <span class="eyebrow" style="margin:0" title={`Permission preset: ${permSummary.label}`}>
+          <span class="eyebrow" style="margin:0" title={`Permissions: ${permSummary.label}`}>
             {permSummary.label}
           </span>
           <span style="color:var(--ef-border-strong)" aria-hidden="true">
@@ -269,9 +269,7 @@ export function MemberProfile({ name, tab, viewer }: MemberProfileProps) {
             }
           />
         )}
-        {effectiveTab === 'manage' && (
-          <ManageTab name={name} viewer={viewer} presets={b.team.permissionPresets} />
-        )}
+        {effectiveTab === 'manage' && <ManageTab name={name} viewer={viewer} />}
       </div>
     </div>
   );
@@ -348,9 +346,8 @@ function OverviewTab({
     (o) => o.assignee !== name && o.watchers.includes(name),
   ).length;
 
-  const b = instructions.value;
   const permsLabel = teammate
-    ? summarizePermissions(teammate.permissions, b?.team.permissionPresets ?? {}).label
+    ? summarizePermissions(teammate.permissions).label
     : isSelf && selfBrief
       ? 'self'
       : 'member';
@@ -458,15 +455,7 @@ function ActivityTab({ error }: { error: string | null }) {
   );
 }
 
-function ManageTab({
-  name,
-  viewer,
-  presets,
-}: {
-  name: string;
-  viewer: string;
-  presets: import('csuite-sdk/types').PermissionPresets;
-}) {
+function ManageTab({ name, viewer }: { name: string; viewer: string }) {
   const member = manageMember.value;
   const loading = manageLoading.value;
   const err = manageError.value;
@@ -513,12 +502,12 @@ function ManageTab({
   // `manageAllMembers` is the list the Manage tab just fetched itself,
   // so it reflects the permission state right now (not the stale
   // instructions snapshot that's only refreshed at Shell boot). The guard
-  // blocks "strip the last admin" when there's truly only one, but
-  // correctly allows an admin demoting a peer when ≥2 admins exist.
-  const totalAdmins = manageAllMembers.value.filter((m) =>
+  // Preserve at least one holder of the capability that can manage membership.
+  const memberManagerCount = manageAllMembers.value.filter((m) =>
     m.permissions.includes('members.manage'),
   ).length;
-  const isLastAdmin = member.permissions.includes('members.manage') && totalAdmins <= 1;
+  const isSoleMemberManager =
+    member.permissions.includes('members.manage') && memberManagerCount <= 1;
 
   return (
     <>
@@ -532,8 +521,7 @@ function ManageTab({
       )}
       <MemberAdminForm
         member={member}
-        presets={presets}
-        isLastAdmin={isLastAdmin}
+        isSoleMemberManager={isSoleMemberManager}
         isSelf={viewer === name}
         onChanged={refreshAfterChange}
         onReveal={(r) => {
@@ -560,16 +548,21 @@ const TAB_LABELS: Record<ProfileTab, string> = {
   manage: 'Manage',
 };
 
-function tabsFor({ isAdmin, isSelf }: { isAdmin: boolean; isSelf: boolean }): ProfileTab[] {
+function tabsFor({
+  canManageMembers,
+  isSelf,
+}: {
+  canManageMembers: boolean;
+  isSelf: boolean;
+}): ProfileTab[] {
   const tabs: ProfileTab[] = ['overview', 'objectives', 'files'];
-  if (isAdmin) tabs.splice(2, 0, 'activity');
-  if (isAdmin && !isSelf) tabs.push('manage');
+  if (canManageMembers) tabs.splice(2, 0, 'activity');
+  if (canManageMembers && !isSelf) tabs.push('manage');
   return tabs;
 }
 
 function badgeClassFor(summary: import('../lib/permissions.js').PermissionSummary): string {
-  if (summary.isAdmin) return 'solid';
-  if (summary.kind === 'preset' || summary.kind === 'custom') return 'caution';
+  if (summary.kind === 'custom') return 'caution';
   return 'soft';
 }
 

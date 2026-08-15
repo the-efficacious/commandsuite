@@ -85,7 +85,6 @@ import {
   NotificationEndpointSchema,
   NotificationProfileSchema,
   ObjectiveSchema,
-  PermissionPresetsSchema,
   ProcessDocumentEditSchema,
   ProcessDocumentHistoryResponseSchema,
   ProcessDocumentSchema,
@@ -173,8 +172,6 @@ import type {
   NotificationProfileSummary,
   Objective,
   PendingEnrollment,
-  Permission,
-  PermissionPresets,
   ProcessDocument,
   ProcessDocumentEdit,
   PushPayload,
@@ -463,7 +460,7 @@ export class Client {
   // ─────────────────────── Objectives ───────────────────────
 
   /**
-   * List objectives. Members without `objectives.manage` see only
+   * List objectives. Members without `objectives.create` see only
    * their own; members with that permission can filter by any
    * `assignee` name. Pass `status` to scope to a single lifecycle
    * state; omit to see all.
@@ -492,7 +489,7 @@ export class Client {
 
   /**
    * Create (and atomically assign) an objective. Requires the caller
-   * to hold the `objectives.manage` permission.
+   * to hold the `objectives.create` permission.
    */
   async createObjective(payload: CreateObjectiveRequest): Promise<Objective> {
     const resp = await this.request(PATHS.objectives, {
@@ -532,7 +529,7 @@ export class Client {
 
   /**
    * Terminally cancel an objective. Originator, or any member with
-   * `objectives.manage`.
+   * `objectives.cancel`.
    */
   async cancelObjective(id: string, payload: CancelObjectiveRequest = {}): Promise<Objective> {
     const resp = await this.request(OBJECTIVE_PATHS.cancel(id), {
@@ -761,7 +758,7 @@ export class Client {
 
   /**
    * List all members on the team — name, role, permissions,
-   * instructions. Requires `members.manage` (admin scope); non-admins
+   * instructions. Requires `members.manage`; callers without it
    * should use `roster()` for the public subset.
    */
   async listMembers(): Promise<Member[]> {
@@ -770,7 +767,7 @@ export class Client {
   }
 
   /**
-   * Read the current team config (name, context, presets).
+   * Read the current team config (name and context).
    * Authenticated; available to every member.
    */
   async getTeam(): Promise<Team> {
@@ -781,8 +778,7 @@ export class Client {
 
   /**
    * Update one or more team-level fields (name, context).
-   * Requires `team.manage`. Permission presets are managed separately
-   * via `setPreset` / `deletePreset` so the API surface stays narrow.
+   * Requires `team.manage`.
    */
   async updateTeam(patch: Partial<Pick<Team, 'name' | 'context'>>): Promise<Team> {
     const resp = await this.request(PATHS.team, {
@@ -792,39 +788,6 @@ export class Client {
     });
     const body = (await this.json(resp)) as { team: unknown };
     return TeamSchema.parse(body.team);
-  }
-
-  /** List the team's permission presets. Authenticated; readable to every member. */
-  async listPresets(): Promise<PermissionPresets> {
-    const resp = await this.request(PATHS.teamPresets, { method: 'GET' });
-    const body = (await this.json(resp)) as { presets: unknown };
-    return PermissionPresetsSchema.parse(body.presets);
-  }
-
-  /** Upsert a permission preset. Requires `team.manage`. */
-  async setPreset(
-    name: string,
-    permissions: Permission[],
-  ): Promise<{ name: string; permissions: Permission[] }> {
-    const resp = await this.request(`${PATHS.teamPresets}/${encodeURIComponent(name)}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ permissions }),
-    });
-    const body = (await this.json(resp)) as { preset: { name: string; permissions: Permission[] } };
-    return body.preset;
-  }
-
-  /**
-   * Delete a permission preset. Returns the names of members that
-   * still reference it in their `raw_permissions`; their resolved
-   * leaves drop those permissions on the next read.
-   */
-  async deletePreset(name: string): Promise<{ deleted: string; referencedBy: string[] }> {
-    const resp = await this.request(`${PATHS.teamPresets}/${encodeURIComponent(name)}`, {
-      method: 'DELETE',
-    });
-    return (await this.json(resp)) as { deleted: string; referencedBy: string[] };
   }
 
   /**
@@ -855,7 +818,7 @@ export class Client {
     return MemberSchema.parse(await this.json(resp));
   }
 
-  /** Delete a member. Requires `members.manage`. Enforces the last-admin invariant. */
+  /** Delete a member. Requires `members.manage`. Preserves at least one holder. */
   async deleteMember(name: string): Promise<void> {
     const resp = await this.request(MEMBER_PATHS.one(name), { method: 'DELETE' });
     if (!resp.ok) {
@@ -1023,13 +986,13 @@ export class Client {
     throw new ClientError(`poll failed: ${resp.status} ${resp.statusText}`, resp.status, text);
   }
 
-  /** List currently-pending enrollment requests (director scope). */
+  /** List currently-pending enrollment requests (`members.manage`). */
   async listPendingEnrollments(): Promise<PendingEnrollment[]> {
     const resp = await this.request(PATHS.enrollPending, { method: 'GET' });
     return ListPendingEnrollmentsResponseSchema.parse(await this.json(resp)).enrollments;
   }
 
-  /** Approve a pending enrollment by user code. Director scope. */
+  /** Approve a pending enrollment by user code (`members.manage`). */
   async approveEnrollment(payload: ApproveEnrollmentRequest): Promise<ApproveEnrollmentResponse> {
     const validated = ApproveEnrollmentRequestSchema.parse(payload);
     const resp = await this.request(PATHS.enrollApprove, {
@@ -1040,7 +1003,7 @@ export class Client {
     return ApproveEnrollmentResponseSchema.parse(await this.json(resp));
   }
 
-  /** Reject a pending enrollment by user code. Director scope. */
+  /** Reject a pending enrollment by user code (`members.manage`). */
   async rejectEnrollment(payload: RejectEnrollmentRequest): Promise<void> {
     const validated = RejectEnrollmentRequestSchema.parse(payload);
     const resp = await this.request(PATHS.enrollReject, {
@@ -1761,7 +1724,7 @@ export class Client {
   }
 
   /**
-   * Admin-only flat enumeration of every file in every home, newest
+   * `members.manage`-only flat enumeration of every file in every home, newest
    * first. The server gates on `members.manage` and 403s otherwise;
    * non-admins should keep using `fsList` per-home and `fsShared` for
    * cross-home grants. Returned entries always have `kind === 'file'`.

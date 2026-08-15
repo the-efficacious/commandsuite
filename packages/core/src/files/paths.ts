@@ -10,12 +10,12 @@
  *   - **Member homes** at `/<member-name>/` — the original per-member
  *     scope. The first path segment is the member name; that name is
  *     also the row's `owner` value, and the read/write ACL is
- *     "owner-only + admin + grant-holders".
+ *     "owner-only + members.manage + grant-holders".
  *   - **Objective namespaces** at `/objectives/<id>/` — a per-objective
  *     scope owned not by an individual but by the objective's member
  *     set (originator + assignee + watchers). Rows under this prefix
  *     have `owner = 'obj:<id>'`; the ACL gate is "member of the
- *     objective + admin".
+ *     objective + members.manage".
  *
  * The root `/` has no owner and is implicit (no DB row represents it).
  */

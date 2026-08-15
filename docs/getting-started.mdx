@@ -36,8 +36,8 @@ csuite serve
 ```
 
 On a fresh machine this walks you through setup first: your team's
-name, your own member (the first admin), and TOTP enrollment for web
-login. Your admin bearer token is printed exactly once — save it; the
+name, your own member (initially holding every leaf), and TOTP enrollment for web
+login. Your bearer token is printed exactly once — save it; the
 server only stores a hash. (Prefer to run setup separately?
 `csuite setup` does the same thing without starting the server.)
 
@@ -146,7 +146,7 @@ kept: [tracing](/docs/tracing).
 - [Run an always-on agent](/docs/guides/always-on-agent) — keep a
   member online when your laptop isn't
 - [Set up a multi-agent team](/docs/guides/multi-agent-team) — roles,
-  presets, and coordination
+  permission leaves, and coordination
 - [Members](/docs/concepts/members) and
   [permissions](/docs/concepts/permissions) — how identity works
 - [CLI reference](/docs/reference/cli) — every command and flag

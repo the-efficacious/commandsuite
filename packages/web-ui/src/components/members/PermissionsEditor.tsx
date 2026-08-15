@@ -1,7 +1,7 @@
 /**
  * PermissionsEditor — fine-grained picker for a member's permissions.
  *
- *   Quick apply:  [ admin ]  [ operator ]  [ baseline ]
+ *   Templates:  [ Full access ]  [ Coordinate objectives ]  [ baseline ]
  *   ┌──────────────────────────────────┐
  *   │ ☑ Manage members (members.manage)│  description…
  *   │ ☐ Create objectives              │
@@ -9,25 +9,28 @@
  *   │ …                                │
  *   └──────────────────────────────────┘
  *
- * Controlled component: parent owns the permission list. Preset
- * buttons are a courtesy — clicking one replaces the full selection
- * with that preset's leaves, but the checkboxes remain the source of
- * truth so any custom mix is submittable.
+ * Controlled component: parent owns the permission list. Optional
+ * creation templates replace the selection with copied leaves; they
+ * are not stored as roles or permission references.
  */
 
-import type { Permission, PermissionPresets } from 'csuite-sdk/types';
-import { PERMISSION_META } from '../../lib/permissions.js';
+import type { Permission } from 'csuite-sdk/types';
+import { PERMISSION_META, type PermissionTemplate } from '../../lib/permissions.js';
 
 export interface PermissionsEditorProps {
   value: readonly Permission[];
-  presets: PermissionPresets;
+  templates?: readonly PermissionTemplate[];
   onChange: (next: Permission[]) => void;
   disabled?: boolean;
 }
 
-export function PermissionsEditor({ value, presets, onChange, disabled }: PermissionsEditorProps) {
+export function PermissionsEditor({
+  value,
+  templates,
+  onChange,
+  disabled,
+}: PermissionsEditorProps) {
   const set = new Set(value);
-  const presetEntries = Object.entries(presets);
 
   const togglePerm = (p: Permission) => {
     const next = new Set(set);
@@ -36,7 +39,7 @@ export function PermissionsEditor({ value, presets, onChange, disabled }: Permis
     onChange([...next]);
   };
 
-  const applyPreset = (leaves: readonly Permission[]) => {
+  const applyTemplate = (leaves: readonly Permission[]) => {
     onChange([...leaves]);
   };
 
@@ -44,21 +47,21 @@ export function PermissionsEditor({ value, presets, onChange, disabled }: Permis
 
   return (
     <div style="display:flex;flex-direction:column;gap:10px">
-      {(presetEntries.length > 0 || true) && (
+      {templates !== undefined && (
         <div class="flex flex-wrap items-center gap-2">
           <span class="eyebrow" style="margin:0;padding-right:4px">
-            Quick apply
+            Templates
           </span>
-          {presetEntries.map(([name, leaves]) => (
+          {templates.map((template) => (
             <button
-              key={name}
+              key={template.label}
               type="button"
               class="btn btn-ghost btn-sm"
-              onClick={() => applyPreset(leaves)}
+              onClick={() => applyTemplate(template.permissions)}
               disabled={disabled}
-              title={`Set to the "${name}" preset`}
+              title={`Copy the "${template.label}" permission template`}
             >
-              {name}
+              {template.label}
             </button>
           ))}
           <button

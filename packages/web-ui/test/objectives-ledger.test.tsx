@@ -30,7 +30,7 @@ const VIEWER = 'director-1';
 const PACKET: InstructionsResponse = {
   name: VIEWER,
   role: { title: 'director', description: '' },
-  permissions: ['members.manage', 'objectives.manage'],
+  permissions: ['members.manage', 'objectives.create'],
   team: { name: 'demo-team', context: '', permissionPresets: {} },
   teammates: [
     { name: VIEWER, role: { title: 'director', description: '' }, permissions: [] },

@@ -1,6 +1,6 @@
 ---
 title: MCP tools reference
-description: Every MCP tool the runner exposes to the agent — chat, channels, objectives, filesystem, admin surfaces — with input schemas, broker effects, and permission gating.
+description: Every MCP tool the runner exposes to the agent — chat, channels, objectives, filesystem, and capability-gated management — with input schemas, broker effects, and permission gating.
 section: Development
 order: 50
 ---
@@ -28,8 +28,8 @@ The groups:
   text arrives by injection, not by calling these.
 - **Filesystem tools** — operate on the csuite virtual filesystem
   under the agent's own home (`/<name>/`).
-- **Admin tools** — permission-gated groups for team config and
-  presets (`team.manage`), member management (`members.manage`),
+- **Management tools** — permission-gated groups for team config
+  (`team.manage`), member management (`members.manage`),
   tool sources (`tools.manage`), secrets and variables
   (`secrets.manage`), and external notifications
   (`notifications.manage`).
@@ -50,7 +50,7 @@ activity.
 | | |
 |---|---|
 | **Input** | `{}` |
-| **Output** | Text block: `team <name> roster:` followed by per-line `- <name> (you)? [<role>] [admin\|operator]? connected=N\|offline; activity=<reported working\|blocked …\|no report …>` (activity is qualified by the broker's reporting window) |
+| **Output** | Text block: `team <name> roster:` followed by per-line `- <name> (you)? [<role>] permissions=<leaves\|baseline>; connected=N\|offline; activity=<reported working\|blocked …\|no report …>` (activity is qualified by the broker's reporting window) |
 | **Broker call** | `GET /roster` |
 
 ### broadcast
@@ -145,7 +145,7 @@ for the watcher list and audit log.
 |---|---|
 | **Input** | `{ status?: 'active' \| 'blocked' \| 'done' \| 'cancelled' \| 'open', assignee?: string }` |
 | **Output** | Per-objective: `- <id> [<status>] <title>` + assignee/originator + outcome line + relative-age update line |
-| **Broker call** | `GET /objectives?status=<filter>&assignee=<filter>` (the broker scopes non-`objectives.manage` callers to their own relationship union) |
+| **Broker call** | `GET /objectives?status=<filter>&assignee=<filter>` (the broker scopes callers without `objectives.create` to their own relationship union) |
 
 ### objectives_view
 
@@ -162,9 +162,9 @@ the append-only `objective_events` audit log.
 ### objectives_update
 
 Update live state: status (`active ↔ blocked`, with an optional
-`blockReason`), the assignee (requires `objectives.manage`; the
+`blockReason`), the assignee (requires `objectives.reassign`; the
 previous assignee stays on the thread as a watcher), and watchers
-(originator or `objectives.manage`). **This tool handles state, not
+(originator or `objectives.watch`). **This tool handles state, not
 conversation** — for progress notes or questions use
 `objectives_discuss`. For terminal `done` use `objectives_complete`.
 For `cancelled` use `objectives_cancel` (if you have permission).
@@ -207,20 +207,18 @@ permissions allow them. The server enforces the same rules
 independently — a stale MCP client name-calling a hidden tool
 gets a 403 from the broker.
 
-Note on the toolbox gate as registered today: the group surfaces
-only when the caller holds `objectives.manage`. The
-originator-bypass on `objectives_cancel` below is the **server's**
-rule — the broker honors it on the HTTP API regardless of what the
-toolbox shows.
+`objectives_create` appears only with `objectives.create`.
+`objectives_cancel` is always present because every originator can
+cancel their own objective; `objectives.cancel` broadens that scope.
 
 ### objectives_create
 
 Create and assign a new objective. Available when caller has
-`objectives.manage`. The originator is stamped as the caller.
+`objectives.create`. The originator is stamped as the caller.
 
 | | |
 |---|---|
-| **Required permission** | `objectives.manage` |
+| **Required permission** | `objectives.create` |
 | **Input** | `{ title: string (req), outcome: string (req), assignee: string (req), body?: string, watchers?: string[], attachments?: string[] }` |
 | **Output** | `created <id> assigned to <name>: <title>` + outcome + watchers + attachments lines |
 | **Broker call** | `POST /objectives` |
@@ -233,13 +231,13 @@ server is the authoritative gate.
 ### objectives_cancel
 
 Terminally cancel an objective. Available when caller has
-`objectives.manage`, OR is the originator (originators can always
+`objectives.cancel`, OR is the originator (originators can always
 cancel their own). Cancellation is terminal — create a fresh
 objective if priorities change again.
 
 | | |
 |---|---|
-| **Required permission** | `objectives.manage` (originator-bypass) |
+| **Required permission** | `objectives.cancel` (originator-bypass) |
 | **Input** | `{ id: string (req), reason?: string }` |
 | **Output** | `cancelled <id>: <title>` |
 | **Broker call** | `POST /objectives/:id/cancel` |
@@ -319,9 +317,9 @@ asserted and nothing is re-sent.
 A runner predating the field drops it silently: the member operates
 without the process document and is not told.
 
-## Team admin tools (gated on `team.manage`)
+## Team-management tools (gated on `team.manage`)
 
-Team-level config and permission presets. Reads are open on the
+Team-level name and shared context. Reads are open on the
 HTTP API, but the tools only surface to `team.manage` holders so the
 toolbox stays narrow — any agent can pull team data from its
 instructions. A `context` edit is instruction-bearing: the broker
@@ -332,28 +330,25 @@ text; the roster lists those members restart-pending until it does
 
 | Tool | Input | What it does |
 |---|---|---|
-| `team_get` | `{}` | Read the current team config: name, context (with size metrics), preset names. `GET /team`. |
+| `team_get` | `{}` | Read the current team config: name and context (with size metrics). `GET /team`. |
 | `team_update` | `{ name?, context? }` (at least one) | Update team-level fields. Returns the updated config. `PATCH /team`. |
-| `presets_list` | `{}` | List presets as `{ name, permissions[] }`. `GET /team/presets`. |
-| `presets_set` | `{ name (req), permissions: string[] (req, leaves only) }` | Create or replace a preset; members referencing it re-resolve on next read. Unknown leaves rejected. `PUT /team/presets/:name`. |
-| `presets_delete` | `{ name (req) }` | Delete a preset (no soft-delete). Returns the members still referencing it — their resolved permissions silently drop its leaves on next read. `DELETE /team/presets/:name`. |
 
-## Member admin tools (gated on `members.manage`)
+## Member-management tools (gated on `members.manage`)
 
 Live member management from the agent toolbox. The broker enforces
 the permission independently on every call.
 
 | Tool | Input | What it does |
 |---|---|---|
-| `members_add` | `{ name (req), title (req), description?, instructions?, permissions?: string[] }` | Create a member. `permissions` accepts preset names or leaves. Returns the member plus the plaintext bearer token — emitted exactly once. `POST /members`. |
+| `members_add` | `{ name (req), title (req), description?, instructions?, permissions?: string[] }` | Create a member with explicit leaves. Returns the member plus the plaintext bearer token — emitted exactly once. `POST /members`. |
 | `members_update` | `{ name (req), title?, description?, instructions?, permissions?: string[] }` | Update role, instructions, or permissions. Role and instructions edits fan out as an instructions event: the member's runner restarts its agent at the next idle boundary with the new composed text (a role edit also reaches teammates whose roster line changed). Enforces "at least one `members.manage` holder remains". `PATCH /members/:name`. |
 | `members_remove` | `{ name (req) }` | Delete a member; all bearer tokens revoked. Refused if it would leave zero `members.manage` holders. `DELETE /members/:name`. |
 
-## Tool-source admin tools (permission-gated)
+## Tool-source management tools (permission-gated)
 
 Members holding `tools.manage` get the connector-lifecycle group —
 the agent-authorship surface for
-[tool sources](/docs/concepts/tool-sources). An admin agent can read
+[tool sources](/docs/concepts/tool-sources). An agent holding `tools.manage` can read
 an API's docs, register a source, define its tools, bind members,
 set a write-only credential, and iterate on failures without leaving
 its toolbox. The broker enforces the permission independently on
@@ -379,9 +374,9 @@ upstream response) → redefine. Save-time validation failures name
 the exact problem (origin drift, header shadowing, malformed
 placeholders), so the loop converges fast.
 
-## Secrets admin tools (gated on `secrets.manage`)
+## Secrets management tools (gated on `secrets.manage`)
 
-These appear only for members holding `secrets.manage` — the admin
+These appear only for members holding `secrets.manage` — the management
 surface for [secrets](/docs/concepts/secrets), broker-held values
 injected as env vars on bound members' agent processes at runner
 start. Values are write-only end to end; no tool ever returns one.
@@ -400,7 +395,7 @@ start. Values are write-only end to end; no tool ever returns one.
 Delivery is spawn-time only: every mutation's response reminds the
 agent that members pick changes up on their next runner start.
 
-## Variables admin tools (gated on `secrets.manage`)
+## Variables management tools (gated on `secrets.manage`)
 
 The same gate and lifecycle as secrets, for the **non-secret** half
 of the runner environment — see
@@ -423,10 +418,10 @@ runner start.
 | `variables_delete_value` | `{ slug (req) }` | Remove the value; the variable delivers nothing until a new one is set. `DELETE /variables/:slug/value`. |
 | `variables_bindings` | `{ slug (req), add?: string[], remove?: string[] }` | Add/remove member bindings; 409 on env-name collision across the two stores. Returns the resulting bound set. `POST` / `DELETE /variables/:slug/bindings...`. |
 
-## External notification admin tools (gated on `notifications.manage`)
+## External notification management tools (gated on `notifications.manage`)
 
 These appear only for members holding `notifications.manage` — the
-admin surface for
+management surface for
 [external notifications](/docs/concepts/external-notifications),
 inbound webhooks/API calls verified at `POST /hooks/<slug>` and
 routed to members and channels as ambient input. This is the

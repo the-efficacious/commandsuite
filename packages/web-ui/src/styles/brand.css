@@ -225,7 +225,7 @@
   text-underline-offset: 3px;
 }
 
-/* Director-only "→ AGENT" sub-action on roster rows. */
+/* members.manage-only "→ AGENT" sub-action on roster rows. */
 .row-action {
   background: transparent;
   color: var(--ef-text-muted);

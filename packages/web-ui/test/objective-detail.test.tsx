@@ -37,7 +37,13 @@ const originalFetch = globalThis.fetch;
 const DIRECTOR_PACKET: InstructionsResponse = {
   name: 'director-1',
   role: { title: 'director', description: '' },
-  permissions: ['members.manage', 'objectives.manage'],
+  permissions: [
+    'members.manage',
+    'objectives.create',
+    'objectives.cancel',
+    'objectives.reassign',
+    'objectives.watch',
+  ],
   team: { name: 'demo-team', context: '', permissionPresets: {} },
   teammates: [
     { name: 'director-1', role: { title: 'director', description: '' }, permissions: [] },

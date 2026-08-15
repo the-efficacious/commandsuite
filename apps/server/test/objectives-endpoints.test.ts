@@ -4,8 +4,8 @@
  * Drives the `/objectives*` surface through the Hono request client
  * with three test members covering the relevant permission gates:
  *
- *   alice   — `members.manage` + `objectives.manage` (full admin)
- *   bob     — `objectives.manage` (operator-ish)
+ *   alice   — `members.manage` + all four objective leaves
+ *   bob     — all four objective leaves
  *   carol   — no permissions (baseline member)
  *
  * Store-level state-machine semantics live in objectives.test.ts;
@@ -55,14 +55,25 @@ async function makeApp() {
   const members = createMemberStore([
     {
       name: 'alice',
-      role: { title: 'admin', description: '' },
-      permissions: ['members.manage', 'objectives.manage'],
+      role: { title: 'coordinator', description: '' },
+      permissions: [
+        'members.manage',
+        'objectives.create',
+        'objectives.cancel',
+        'objectives.reassign',
+        'objectives.watch',
+      ],
       token: ALICE,
     },
     {
       name: 'bob',
-      role: { title: 'operator', description: '' },
-      permissions: ['objectives.manage'],
+      role: { title: 'planner', description: '' },
+      permissions: [
+        'objectives.create',
+        'objectives.cancel',
+        'objectives.reassign',
+        'objectives.watch',
+      ],
       token: BOB,
     },
     {
@@ -415,9 +426,13 @@ describe('PATCH /objectives/:id', () => {
   });
 
   it('lets a member with objectives.cancel update someone else’s', async () => {
-    const { app } = await makeApp();
+    const { app, members } = await makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'dave' });
-    // bob has objectives.cancel, isn't the assignee.
+    members.updateMember('bob', {
+      rawPermissions: ['objectives.cancel'],
+      permissions: ['objectives.cancel'],
+    });
+    // Bob has only objectives.cancel and isn't the assignee.
     const res = await app.request(
       `/objectives/${obj.id}`,
       authed(BOB, { status: 'blocked', blockReason: 'standdown' }, 'PATCH'),
@@ -531,8 +546,12 @@ describe('POST /objectives/:id/cancel', () => {
   });
 
   it('lets a member with objectives.cancel cancel someone else’s', async () => {
-    const { app } = await makeApp();
+    const { app, members } = await makeApp();
     const obj = await createOne(app, BOB, { assignee: 'dave' });
+    members.updateMember('alice', {
+      rawPermissions: ['members.manage', 'objectives.cancel'],
+      permissions: ['members.manage', 'objectives.cancel'],
+    });
     const res = await app.request(
       `/objectives/${obj.id}/cancel`,
       authed(ALICE, { reason: 'admin override' }),
@@ -571,9 +590,13 @@ describe('POST /objectives/:id/cancel', () => {
 // ─── PATCH /objectives/:id — assignee changes ────────────────────────
 
 describe('PATCH assignee (reassignment)', () => {
-  it('reassigns to a different member when caller has objectives.manage', async () => {
-    const { app } = await makeApp();
+  it('reassigns to a different member when caller has objectives.reassign', async () => {
+    const { app, members } = await makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'carol' });
+    members.updateMember('alice', {
+      rawPermissions: ['members.manage', 'objectives.reassign'],
+      permissions: ['members.manage', 'objectives.reassign'],
+    });
     const res = await app.request(
       `/objectives/${obj.id}`,
       authed(ALICE, { assignee: 'dave', note: 'context shift' }, 'PATCH'),
@@ -583,10 +606,10 @@ describe('PATCH assignee (reassignment)', () => {
     expect(updated.assignee).toBe('dave');
   });
 
-  it('rejects callers without objectives.manage with 403 — even the assignee', async () => {
+  it('rejects callers without objectives.reassign with 403 — even the assignee', async () => {
     const { app } = await makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'carol' });
-    // carol is the assignee but holds no objectives.manage; she may
+    // carol is the assignee but holds no objectives.reassign; she may
     // update her own status, not hand the work to someone else.
     const res = await app.request(
       `/objectives/${obj.id}`,
@@ -661,10 +684,14 @@ describe('PATCH watchers', () => {
     expect(updated.watchers).toContain('dave');
   });
 
-  it('lets a member with objectives.manage add themselves', async () => {
-    const { app } = await makeApp();
+  it('lets a member with objectives.watch add themselves', async () => {
+    const { app, members } = await makeApp();
     const obj = await createOne(app, BOB, { assignee: 'dave' });
-    // alice has objectives.watch, neither originator nor assignee.
+    members.updateMember('alice', {
+      rawPermissions: ['members.manage', 'objectives.watch'],
+      permissions: ['members.manage', 'objectives.watch'],
+    });
+    // Alice has only objectives.watch from the objective family and is neither originator nor assignee.
     const res = await app.request(
       `/objectives/${obj.id}`,
       authed(ALICE, { addWatchers: ['alice'] }, 'PATCH'),

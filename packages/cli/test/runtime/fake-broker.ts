@@ -192,15 +192,15 @@ export async function startFakeBroker(): Promise<FakeBroker> {
         JSON.stringify({
           name: FAKE_BROKER_NAME,
           role: { title: 'engineer', description: '' },
-          // Admin-level permissions so the link test exercises the
+          // Full permissions so the link test exercises the
           // full gated tool surface.
           permissions: [
             'team.manage',
             'members.manage',
-            'objectives.manage',
-            'objectives.manage',
-            'objectives.manage',
-            'objectives.manage',
+            'objectives.create',
+            'objectives.cancel',
+            'objectives.reassign',
+            'objectives.watch',
             'activity.read',
           ],
           instructions: fakeBrokerInstructions.value,

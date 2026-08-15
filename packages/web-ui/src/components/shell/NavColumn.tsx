@@ -9,7 +9,7 @@
  *   │  Inbox          ⓫     │
  *   │  Objectives     ⓷     │
  *   │  Files                │
- *   │  Members              │  admin only
+ *   │  Members              │  members.manage only
  *   ├───────────────────────┤
  *   │  ━━ CHAT              │
  *   │  # Team Chat    ⓶     │
@@ -114,7 +114,7 @@ export function NavColumn({ viewer }: NavColumnProps) {
   const notificationsActive = v.kind === 'notifications' || v.kind === 'notification-detail';
   const inbox = inboxCount.value;
   const drawerOpen = isSidebarOpen.value;
-  const isAdmin = b !== null && hasPermission(b.permissions, 'members.manage');
+  const canManageMembers = b !== null && hasPermission(b.permissions, 'members.manage');
   const canManageTools = b !== null && hasPermission(b.permissions, 'tools.manage');
   const canManageSecrets = b !== null && hasPermission(b.permissions, 'secrets.manage');
   const canManageNotifications = b !== null && hasPermission(b.permissions, 'notifications.manage');
@@ -180,7 +180,7 @@ export function NavColumn({ viewer }: NavColumnProps) {
           onClick={() => selectFiles(`/${viewer}`)}
           ariaLabel="Browse files"
         />
-        {isAdmin && (
+        {canManageMembers && (
           <NavItem
             label="Members"
             glyph={<Users size={15} aria-hidden="true" />}

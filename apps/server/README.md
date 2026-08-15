@@ -66,7 +66,7 @@ export CSUITE_DB_PATH=/var/lib/csuite/events.db
 csuite-server
 ```
 
-The team config file defines the team's name, context, permission presets, roles, slots, HTTPS settings, and VAPID keys. Each slot has a name, a role (a free-text title), a `permissions` list (preset names and/or individual leaf permissions), a secret token, and optional TOTP enrollment. See [`config.example.json`](./config.example.json) for the full schema.
+The slim config file contains infrastructure settings such as storage paths, HTTPS, and VAPID keys. Team identity, members, and each member's explicit permission leaves live in SQLite and are managed through the current UI, CLI, REST, or MCP surfaces.
 
 ## Environment
 

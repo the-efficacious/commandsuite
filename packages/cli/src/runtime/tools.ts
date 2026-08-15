@@ -28,10 +28,9 @@
  *   - objectives_discuss  — post into the objective thread
  *   - objectives_complete — mark done with required result
  *
- * Permission-gated objective tools (only appear in the toolbox when the
- * caller holds `objectives.manage`):
+ * Permission-gated objective tools:
  *   - objectives_create   — assign work to teammates
- *   - objectives_cancel   — cancel anyone's (an originator can always cancel their own via the server)
+ *   - objectives_cancel   — cancel your own-originated work, or anyone's with `objectives.cancel`
  */
 
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
@@ -187,7 +186,7 @@ export function defineTools(
         `Post a message into a specific named channel. Only members of ` +
         `that channel receive it; non-members do not. Use this for scoped conversations — ` +
         `e.g., a #frontend channel for frontend work — instead of broadcasting to the whole ` +
-        `team. You must already be a member of the channel; ask a director to add you if ` +
+        `team. You must already be a member of the channel; ask a channel manager to add you if ` +
         `not. Optionally attach files from your home; channel members ` +
         `receive read access to each attached path. To find available channels run ` +
         `\`channels_list\`. To post to the team-wide general channel use \`broadcast\`. ` +
@@ -305,9 +304,9 @@ export function defineTools(
         `Update an objective's live state. Status: use status='blocked' (ideally with a ` +
         `short blockReason) when you're stuck or sequenced behind other work, and ` +
         `status='active' to resume. Assignee: pass \`assignee\` to hand the work to a ` +
-        `different teammate (requires objectives.manage; the previous assignee stays on ` +
+        `different teammate (requires objectives.reassign; the previous assignee stays on ` +
         `the thread as a watcher). Watchers: pass \`addWatchers\`/\`removeWatchers\` to ` +
-        `change who follows the thread (originator or objectives.manage). This tool is ` +
+        `change who follows the thread (originator or objectives.watch). This tool is ` +
         `for STATE, not conversation — progress notes and questions go in ` +
         `\`objectives_discuss\` — and it never transitions to 'done'; call ` +
         `\`objectives_complete\` for that. Returns the updated objective.`,
@@ -330,7 +329,7 @@ export function defineTools(
             type: 'string',
             description:
               'New assignee. Both the previous and new assignee are notified. ' +
-              'Requires objectives.manage.',
+              'Requires objectives.reassign.',
           },
           note: {
             type: 'string',
@@ -409,7 +408,7 @@ export function defineTools(
     // Every slot has a home at `/<name>/` with full read/write access;
     // directors may also read/write anywhere. Reads outside your home
     // require either a grant (the file was attached to a message you
-    // can see) or director authority. See `fs_shared` for a list of
+    // can see) or `members.manage`. See `fs_shared` for a list of
     // files shared with you.
     //
     // Objective namespaces live at `/objectives/<id>/`. Files attached
@@ -452,8 +451,8 @@ export function defineTools(
     // request 403s — but keeping them out of the tool list is the
     // first line of defense and the natural UX.
     //
-    //   objectives.manage: objectives_create, objectives_cancel
-    //   (an originator can always cancel their own via the server)
+    //   objectives.create: objectives_create
+    //   objectives.cancel: cancel objectives originated by someone else
     //
     // For members without the broader permission, the descriptions
     // call out the "only objectives you originated" rule so the
@@ -465,13 +464,13 @@ export function defineTools(
     // context. These cover the edit history, which injection
     // deliberately leaves out, and the write path.
     ...buildProcessDocumentTools(instructions),
-    // Admin tools for live team/member/preset management. Each gated
+    // Live team/member management. Each tool is gated
     // on the corresponding `team.manage` or `members.manage`
-    // permission so non-admin agents don't see them in their toolbox.
+    // on its exact leaf so other members don't see it in their toolbox.
     // The broker enforces the same gates independently — these tools
     // exist for UX (don't offer what you can't do) and as a first line
     // of defense, not as the security boundary.
-    ...buildAdminTools(instructions),
+    ...buildManagementTools(instructions),
     // Tool-source registry administration, gated on `tools.manage`.
     // This is the agent-authorship surface: an admin agent can read an
     // API's docs, register a source, define its tools, bind members,
@@ -561,7 +560,7 @@ async function handleExternalToolCall(
   return result as CallToolResult;
 }
 
-function buildAdminTools(instructions: InstructionsResponse): Tool[] {
+function buildManagementTools(instructions: InstructionsResponse): Tool[] {
   const { permissions } = instructions;
   const canManageTeam = permissions.includes('team.manage');
   const canManageMembers = permissions.includes('members.manage');
@@ -571,15 +570,15 @@ function buildAdminTools(instructions: InstructionsResponse): Tool[] {
 
   // ─── Team config ──────────────────────────────────────────────
   // Read is allowed for anyone — same as `/team` on the HTTP API —
-  // but we only surface the tool to admins so the toolbox stays
-  // narrow for non-admin members. Any agent that needs team data can pull it from
+  // but we only surface the tool to `team.manage` holders so the toolbox stays
+  // narrow for other members. Any agent that needs team data can pull it from
   // the instructions on session start.
   if (canManageTeam) {
     tools.push({
       name: 'team_get',
       description:
-        'Read the current team config: returns name, context, and the named ' +
-        'permission presets. Use this to confirm team state before proposing edits, or ' +
+        'Read the current team config: returns its name and shared context. ' +
+        'Use this to confirm team state before proposing edits, or ' +
         'to check whether a previous `team_update` landed.',
       inputSchema: { type: 'object', properties: {} },
     });
@@ -606,52 +605,6 @@ function buildAdminTools(instructions: InstructionsResponse): Tool[] {
         },
       },
     });
-
-    // ─── Permission presets ──────────────────────────────────────
-    tools.push({
-      name: 'presets_list',
-      description:
-        "List the team's permission presets — named bundles of leaf permissions. " +
-        'Returns each preset as `{ name, permissions[] }`.',
-      inputSchema: { type: 'object', properties: {} },
-    });
-    tools.push({
-      name: 'presets_set',
-      description:
-        'Create or replace a permission preset. Members that reference this preset by ' +
-        'name in their raw permissions automatically pick up the new leaf set on the next ' +
-        'read — no member-by-member re-resolve required. Returns the upserted preset.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          name: {
-            type: 'string',
-            description: 'Preset name (alphanumeric + . _ -, ≤ 64 chars).',
-          },
-          permissions: {
-            type: 'array',
-            items: { type: 'string' },
-            description:
-              'Leaf permissions, e.g. ["objectives.manage","activity.read"]. Unknown leaves are rejected.',
-          },
-        },
-        required: ['name', 'permissions'],
-      },
-    });
-    tools.push({
-      name: 'presets_delete',
-      description:
-        'Delete a permission preset. Use this with intent — there is no soft-delete. ' +
-        'Returns the names of members that still reference the deleted preset (their ' +
-        'resolved permissions silently drop those leaves on the next read).',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          name: { type: 'string', description: 'Preset name to delete.' },
-        },
-        required: ['name'],
-      },
-    });
   }
 
   // ─── Member management ────────────────────────────────────────
@@ -659,8 +612,8 @@ function buildAdminTools(instructions: InstructionsResponse): Tool[] {
     tools.push({
       name: 'members_add',
       description:
-        'Create a new team member. `permissions` accepts preset names (e.g. "admin", ' +
-        '"operator") or leaf permissions. Returns the new member plus the plaintext ' +
+        'Create a new team member with an explicit list of permission leaves. ' +
+        'Returns the new member plus the plaintext ' +
         'bearer token (emitted exactly once — capture it from the response and deliver ' +
         'it to the operator/agent securely).',
       inputSchema: {
@@ -679,7 +632,7 @@ function buildAdminTools(instructions: InstructionsResponse): Tool[] {
           permissions: {
             type: 'array',
             items: { type: 'string' },
-            description: 'Preset names or leaf permissions. Defaults to no permissions.',
+            description: 'Permission leaves. Defaults to no permissions.',
           },
         },
         required: ['name', 'title'],
@@ -704,7 +657,7 @@ function buildAdminTools(instructions: InstructionsResponse): Tool[] {
             type: 'array',
             items: { type: 'string' },
             description:
-              'Replacement permission list (preset names or leaves). Enforces "at least one members.manage holder remains".',
+              'Replacement permission leaves. Enforces "at least one members.manage holder remains".',
           },
         },
         required: ['name'],
@@ -1616,7 +1569,7 @@ function buildFilesystemTools(name: string): Tool[] {
             type: 'string',
             description:
               `Absolute path to write. Allowed under ${home} (your home), anywhere ` +
-              `if you're a director, and under \`/objectives/<id>/\` if you are a ` +
+              `if you hold members.manage, and under \`/objectives/<id>/\` if you are a ` +
               `member of that objective — an objective namespace is the right place ` +
               `for work-scoped files, and its entries are owned by \`obj:<id>\` ` +
               `rather than by you.`,
@@ -1679,9 +1632,9 @@ function buildFilesystemTools(name: string): Tool[] {
       name: 'fs_mv',
       description:
         `Rename / move a file. Directory moves are not currently supported. ` +
-        `Both the source and destination must sit under a tree you own (or you must be a director). ` +
+        `Both the source and destination must sit under a tree you own (or you must hold members.manage). ` +
         `Returns the FsEntry at the destination path. A destination under ` +
-        `\`/objectives/<id>/\` works if you are a member of that objective, or a director.`,
+        `\`/objectives/<id>/\` works if you are a member of that objective, or hold members.manage.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -1714,7 +1667,7 @@ function buildFilesystemTools(name: string): Tool[] {
  * carry: the superseded text behind each edit, and the write path.
  *
  * The write gate is `process.manage`, a DEDICATED leaf rather than a
- * reuse of `objectives.manage`. Under this design the permission IS
+ * reuse of an objective permission. Under this design the permission IS
  * the authority — whoever holds it can rewrite what binds the team —
  * and "can direct the team's objectives" is not a comparable power.
  */
@@ -1799,68 +1752,66 @@ function buildProcessDocumentTools(instructions: InstructionsResponse): Tool[] {
 
 function buildAuthorityTools(instructions: InstructionsResponse): Tool[] {
   const { permissions } = instructions;
-  const canManage = permissions.includes('objectives.manage');
-  const canManageMembers = permissions.includes('members.manage');
-  if (!canManage && !canManageMembers) {
-    return [];
-  }
+  const canCreate = permissions.includes('objectives.create');
+  const canCancel = permissions.includes('objectives.cancel');
 
   const tools: Tool[] = [];
 
-  if (!canManage) return tools;
-
-  // objectives_create — requires objectives.manage
-  tools.push({
-    name: 'objectives_create',
-    description:
-      `Create and assign a new objective. You can direct work ` +
-      `to any teammate — the assignee receives an immediate channel push with the title, ` +
-      `outcome, and originator stamped as you. Write the \`outcome\` as the definition of ` +
-      `done: SHORT and CHECKABLE, naming who verifies. A long outcome with many clauses ` +
-      `costs the team real work to interpret — put background in \`body\` instead. ` +
-      `Optionally include \`watchers\` (a list of names) to loop other teammates into the ` +
-      `discussion thread from the start. Use \`roster\` for available assignees. Returns ` +
-      `the new objective with its generated id.`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        title: {
-          type: 'string',
-          description: 'Short, specific title for the objective. Max 200 characters.',
+  // objectives_create — requires objectives.create
+  if (canCreate)
+    tools.push({
+      name: 'objectives_create',
+      description:
+        `Create and assign a new objective. You can direct work ` +
+        `to any teammate — the assignee receives an immediate channel push with the title, ` +
+        `outcome, and originator stamped as you. Write the \`outcome\` as the definition of ` +
+        `done: SHORT and CHECKABLE, naming who verifies. A long outcome with many clauses ` +
+        `costs the team real work to interpret — put background in \`body\` instead. ` +
+        `Optionally include \`watchers\` (a list of names) to loop other teammates into the ` +
+        `discussion thread from the start. Use \`roster\` for available assignees. Returns ` +
+        `the new objective with its generated id.`,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          title: {
+            type: 'string',
+            description: 'Short, specific title for the objective. Max 200 characters.',
+          },
+          outcome: {
+            type: 'string',
+            description:
+              'Required. The tangible result that defines "done" — what specifically must be true for this objective to be marked complete. Max 2048 characters.',
+          },
+          body: {
+            type: 'string',
+            description:
+              'Optional longer context — constraints, scoping notes, links, reproductions. Max 4096 characters.',
+          },
+          assignee: {
+            type: 'string',
+            description: 'Name of the teammate who will execute this objective.',
+          },
+          watchers: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'Optional list of teammate names to add as watchers on the objective thread from the start. Max 64.',
+          },
+          attachments: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              "Optional list of file paths to attach to the objective. Max 64. Each is mirrored into the objective's namespace at `/objectives/<id>/<basename>` so the file lives with the objective rather than in your home; every thread member (originator, assignee, and watchers) gets read/write access via the namespace ACL. Use `fs_write` to upload a file first.",
+          },
         },
-        outcome: {
-          type: 'string',
-          description:
-            'Required. The tangible result that defines "done" — what specifically must be true for this objective to be marked complete. Max 2048 characters.',
-        },
-        body: {
-          type: 'string',
-          description:
-            'Optional longer context — constraints, scoping notes, links, reproductions. Max 4096 characters.',
-        },
-        assignee: {
-          type: 'string',
-          description: 'Name of the teammate who will execute this objective.',
-        },
-        watchers: {
-          type: 'array',
-          items: { type: 'string' },
-          description:
-            'Optional list of teammate names to add as watchers on the objective thread from the start. Max 64.',
-        },
-        attachments: {
-          type: 'array',
-          items: { type: 'string' },
-          description:
-            "Optional list of file paths to attach to the objective. Max 64. Each is mirrored into the objective's namespace at `/objectives/<id>/<basename>` so the file lives with the objective rather than in your home; every thread member (originator, assignee, watchers, directors) gets read/write access via the namespace ACL. Use `fs_write` to upload a file first.",
-        },
+        required: ['title', 'outcome', 'assignee'],
       },
-      required: ['title', 'outcome', 'assignee'],
-    },
-  });
+    });
 
-  // objectives_cancel — originator always, or members with objectives.manage
-  const cancelScope = 'You can cancel any non-terminal objective on the team.';
+  // objectives_cancel — originator always, or members with objectives.cancel
+  const cancelScope = canCancel
+    ? 'You can cancel any non-terminal objective on the team.'
+    : 'You can cancel objectives you originated; the server refuses other objectives.';
   tools.push({
     name: 'objectives_cancel',
     description:
@@ -1927,7 +1878,7 @@ export async function handleToolCall(
       case 'process_document_write':
         return await handleProcessDocumentWrite(args, brokerClient);
       case 'objectives_cancel':
-        return await handleObjectivesCancel(args, brokerClient, instructions);
+        return await handleObjectivesCancel(args, brokerClient);
       case 'fs_ls':
         return await handleFsLs(args, brokerClient, instructions);
       case 'fs_stat':
@@ -1948,12 +1899,6 @@ export async function handleToolCall(
         return await handleTeamGet(brokerClient);
       case 'team_update':
         return await handleTeamUpdate(args, brokerClient);
-      case 'presets_list':
-        return await handlePresetsList(brokerClient);
-      case 'presets_set':
-        return await handlePresetsSet(args, brokerClient);
-      case 'presets_delete':
-        return await handlePresetsDelete(args, brokerClient);
       case 'members_add':
         return await handleMembersAdd(args, brokerClient);
       case 'members_update':
@@ -2080,12 +2025,11 @@ async function handleRoster(
       presence?.activity === 'working' || presence?.activity === 'blocked'
         ? `reported ${presence.activity} ${activityWindow}`
         : `no report ${activityWindow} (idle, lapsed, or never reported)`;
-    const auth = t.permissions.includes('members.manage')
-      ? ' [admin]'
-      : t.permissions.includes('objectives.manage')
-        ? ' [operator]'
-        : '';
-    return `- ${t.name}${self} [${t.role.title}]${auth} ${state}; activity=${activity}`;
+    const permissions =
+      t.permissions.length > 0
+        ? ` permissions=${t.permissions.join(',')};`
+        : ' permissions=baseline;';
+    return `- ${t.name}${self} [${t.role.title}]${permissions} ${state}; activity=${activity}`;
   });
   return textResult(`team ${instructions.team.name} roster:\n${lines.join('\n')}`);
 }
@@ -2287,7 +2231,7 @@ async function handleChannelsPost(
     channelId = ch.channel.id;
     if (!ch.channel.joined) {
       return errorResult(
-        `channels_post: you are not a member of #${slug}. Ask a director to add you, or use \`broadcast\` for the general channel.`,
+        `channels_post: you are not a member of #${slug}. Ask a channel manager to add you, or use \`broadcast\` for the general channel.`,
       );
     }
   } catch (err) {
@@ -2332,7 +2276,7 @@ async function handleObjectivesList(
 
   // `related`, not `assignee` — this tool promises "objectives you have
   // a relationship with", and pinning `assignee` collapsed that to the
-  // assignee-only view for any caller holding `objectives.manage`,
+  // assignee-only view for a caller holding `objectives.create`,
   // hiding everything they originated or watch.
   //
   // `open` spans two statuses and the server's `status` takes one, so it
@@ -2350,7 +2294,7 @@ async function handleObjectivesList(
   // `assignee` is applied HERE rather than sent to the server, which
   // honours it on exactly one of three branches: it is silently dropped
   // whenever `related` is also present, and a caller without
-  // `objectives.manage` always gets the whole relationship union no
+  // `objectives.create` always gets the whole relationship union no
   // matter what they asked for. Sending it would return a superset with
   // nothing saying so. Narrowing the related set is also self-scoping by
   // construction — the result can only ever be a subset of what this
@@ -2606,10 +2550,7 @@ async function handleObjectivesCreate(
   brokerClient: BrokerClient,
   instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  if (
-    !instructions.permissions.includes('members.manage') &&
-    !instructions.permissions.includes('objectives.manage')
-  ) {
+  if (!instructions.permissions.includes('objectives.create')) {
     return errorResult('objectives_create: you do not have the required permission on this team');
   }
   const title = typeof args.title === 'string' ? args.title.trim() : '';
@@ -2652,14 +2593,7 @@ async function handleObjectivesCreate(
 async function handleObjectivesCancel(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
-  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
-  if (
-    !instructions.permissions.includes('members.manage') &&
-    !instructions.permissions.includes('objectives.manage')
-  ) {
-    return errorResult('objectives_cancel: you do not have the required permission on this team');
-  }
   const id = typeof args.id === 'string' ? args.id : '';
   if (!id) return errorResult('objectives_cancel: `id` is required');
   const reason = typeof args.reason === 'string' ? args.reason : undefined;
@@ -2667,16 +2601,14 @@ async function handleObjectivesCancel(
   return textResult(`cancelled ${updated.id}: ${updated.title}`);
 }
 
-// ── Admin handlers (team / presets / members) ─────────────────────
+// ── Team and member-management handlers ──────────────────────────
 
 async function handleTeamGet(brokerClient: BrokerClient): Promise<CallToolResult> {
   const team = await brokerClient.getTeam();
-  const presetNames = Object.keys(team.permissionPresets);
   const lines = [
     `team: ${team.name}`,
     `context size: ${formatTextMetrics(team.context)}`,
     `context: ${team.context.length === 0 ? '(empty)' : team.context}`,
-    `presets: ${presetNames.length === 0 ? '(none)' : presetNames.join(', ')}`,
   ];
   return textResult(lines.join('\n'));
 }
@@ -2699,45 +2631,6 @@ async function handleTeamUpdate(
   );
 }
 
-async function handlePresetsList(brokerClient: BrokerClient): Promise<CallToolResult> {
-  const presets = await brokerClient.listPresets();
-  const entries = Object.entries(presets);
-  if (entries.length === 0) return textResult('(no presets)');
-  const lines = entries.map(([name, leaves]) => `- ${name}: ${leaves.join(', ')}`);
-  return textResult(lines.join('\n'));
-}
-
-async function handlePresetsSet(
-  args: Record<string, unknown>,
-  brokerClient: BrokerClient,
-): Promise<CallToolResult> {
-  const name = typeof args.name === 'string' ? args.name : '';
-  const permissions = Array.isArray(args.permissions) ? args.permissions : null;
-  if (!name) return errorResult('presets_set: `name` is required');
-  if (permissions === null || permissions.some((p) => typeof p !== 'string')) {
-    return errorResult('presets_set: `permissions` must be an array of leaf strings');
-  }
-  const result = await brokerClient.setPreset(
-    name,
-    permissions as import('csuite-sdk/types').Permission[],
-  );
-  return textResult(`preset '${result.name}' set: ${result.permissions.join(', ')}`);
-}
-
-async function handlePresetsDelete(
-  args: Record<string, unknown>,
-  brokerClient: BrokerClient,
-): Promise<CallToolResult> {
-  const name = typeof args.name === 'string' ? args.name : '';
-  if (!name) return errorResult('presets_delete: `name` is required');
-  const result = await brokerClient.deletePreset(name);
-  const tail =
-    result.referencedBy.length > 0
-      ? `; still referenced by: ${result.referencedBy.join(', ')}`
-      : '';
-  return textResult(`preset '${result.deleted}' deleted${tail}`);
-}
-
 async function handleMembersAdd(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
@@ -2748,7 +2641,9 @@ async function handleMembersAdd(
   const description = typeof args.description === 'string' ? args.description : '';
   const instructions = typeof args.instructions === 'string' ? args.instructions : '';
   const permissions = Array.isArray(args.permissions)
-    ? (args.permissions.filter((p) => typeof p === 'string') as string[])
+    ? (args.permissions.filter(
+        (p) => typeof p === 'string',
+      ) as import('csuite-sdk/types').Permission[])
     : [];
   const result = await brokerClient.createMember({
     name,
@@ -2773,7 +2668,7 @@ async function handleMembersUpdate(
   const patch: {
     role?: { title: string; description: string };
     instructions?: string;
-    permissions?: string[];
+    permissions?: import('csuite-sdk/types').Permission[];
   } = {};
   if (typeof args.title === 'string' || typeof args.description === 'string') {
     patch.role = {
@@ -2783,7 +2678,9 @@ async function handleMembersUpdate(
   }
   if (typeof args.instructions === 'string') patch.instructions = args.instructions;
   if (Array.isArray(args.permissions)) {
-    patch.permissions = args.permissions.filter((p) => typeof p === 'string') as string[];
+    patch.permissions = args.permissions.filter(
+      (p) => typeof p === 'string',
+    ) as import('csuite-sdk/types').Permission[];
   }
   if (Object.keys(patch).length === 0) {
     return errorResult(

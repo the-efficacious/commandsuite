@@ -1,112 +1,71 @@
-import type { Permission, PermissionPresets } from 'csuite-sdk/types';
 import { PERMISSIONS } from 'csuite-sdk/types';
 import { describe, expect, it } from 'vitest';
 import {
-  findExactPreset,
-  matchesPreset,
+  MEMBER_CREATION_PERMISSION_TEMPLATES,
   PERMISSION_META,
   privilegeTag,
   sortLeaves,
   summarizePermissions,
 } from '../src/lib/permissions.js';
 
-const ADMIN: Permission[] = ['team.manage', 'members.manage', 'objectives.manage', 'activity.read'];
-
-const OPERATOR: Permission[] = ['objectives.manage', 'activity.read'];
-
-const PRESETS: PermissionPresets = {
-  admin: ADMIN,
-  operator: OPERATOR,
-};
-
-describe('matchesPreset', () => {
-  it('returns true for same leaves in any order', () => {
-    expect(matchesPreset(['objectives.manage', 'activity.read'], OPERATOR)).toBe(true);
-    expect(matchesPreset(['activity.read', 'objectives.manage'], OPERATOR)).toBe(true);
-  });
-  it('returns false when the leaves differ', () => {
-    expect(matchesPreset(['objectives.manage'], OPERATOR)).toBe(false);
-    expect(matchesPreset(['objectives.manage', 'tools.manage'], OPERATOR)).toBe(false);
-  });
-});
-
-describe('findExactPreset', () => {
-  it('returns the preset name for an exact match', () => {
-    expect(findExactPreset(['objectives.manage', 'activity.read'], PRESETS)).toBe('operator');
-  });
-  it('returns null when no preset matches', () => {
-    expect(findExactPreset(['activity.read'], PRESETS)).toBeNull();
-    expect(findExactPreset([], PRESETS)).toBeNull();
-  });
-});
-
 describe('summarizePermissions', () => {
-  it('baseline for empty permissions', () => {
-    const s = summarizePermissions([], PRESETS);
-    expect(s.kind).toBe('baseline');
-    expect(s.label).toBe('baseline');
-    expect(s.isAdmin).toBe(false);
+  it('labels empty permissions as baseline', () => {
+    expect(summarizePermissions([])).toEqual({ kind: 'baseline', label: 'baseline', count: 0 });
   });
 
-  it('preset match produces the preset label', () => {
-    const s = summarizePermissions(['objectives.manage', 'activity.read'], PRESETS);
-    expect(s.kind).toBe('preset');
-    expect(s.label).toBe('operator');
-    expect(s.isAdmin).toBe(false);
-  });
-
-  it('flags isAdmin when members.manage is present', () => {
-    const s = summarizePermissions(ADMIN, PRESETS);
-    expect(s.isAdmin).toBe(true);
-    expect(s.label).toBe('admin');
-  });
-
-  it('labels custom mixes with the leaf count', () => {
-    const s = summarizePermissions(['activity.read'], PRESETS);
-    expect(s.kind).toBe('custom');
-    expect(s.label).toBe('custom (1)');
-    expect(s.isAdmin).toBe(false);
-    expect(s.count).toBe(1);
+  it('describes authority by leaf count without inventing a category', () => {
+    expect(summarizePermissions(['activity.read'])).toEqual({
+      kind: 'custom',
+      label: '1 permission',
+      count: 1,
+    });
+    expect(summarizePermissions(['activity.read', 'tools.manage'])).toEqual({
+      kind: 'custom',
+      label: '2 permissions',
+      count: 2,
+    });
   });
 });
 
 describe('privilegeTag', () => {
-  it('returns "A" for admin', () => {
-    const s = summarizePermissions(ADMIN, PRESETS);
-    expect(privilegeTag(s)).toBe('A');
+  it('uses the explicit leaf count', () => {
+    expect(privilegeTag(summarizePermissions(['activity.read', 'tools.manage']))).toBe('2');
   });
-  it('returns the preset prefix for non-admin presets', () => {
-    const s = summarizePermissions(OPERATOR, PRESETS);
-    expect(privilegeTag(s)).toBe('OP');
-  });
-  it('returns "C" for a non-admin custom mix', () => {
-    const s = summarizePermissions(['activity.read', 'tools.manage'], PRESETS);
-    expect(privilegeTag(s)).toBe('C');
-  });
+
   it('returns null for baseline', () => {
-    const s = summarizePermissions([], PRESETS);
-    expect(privilegeTag(s)).toBeNull();
+    expect(privilegeTag(summarizePermissions([]))).toBeNull();
+  });
+});
+
+describe('member-creation templates', () => {
+  it('makes full access an exact copy of every canonical leaf', () => {
+    expect(MEMBER_CREATION_PERMISSION_TEMPLATES[0]?.label).toBe('Full access');
+    expect(MEMBER_CREATION_PERMISSION_TEMPLATES[0]?.permissions).toEqual(PERMISSIONS);
+  });
+
+  it('keeps objective coordination split into purpose-specific leaves', () => {
+    expect(MEMBER_CREATION_PERMISSION_TEMPLATES[1]).toEqual({
+      label: 'Coordinate objectives',
+      permissions: [
+        'objectives.create',
+        'objectives.cancel',
+        'objectives.reassign',
+        'objectives.watch',
+      ],
+    });
   });
 });
 
 describe('sortLeaves', () => {
-  it('emits leaves in the canonical PERMISSIONS order regardless of input order', () => {
-    expect(sortLeaves(['activity.read', 'team.manage', 'objectives.manage'])).toEqual([
+  it('emits leaves in canonical order regardless of input order', () => {
+    expect(sortLeaves(['activity.read', 'objectives.watch', 'team.manage'])).toEqual([
       'team.manage',
-      'objectives.manage',
+      'objectives.watch',
       'activity.read',
     ]);
   });
 });
 
-/**
- * PermissionsEditor builds its checkbox grid from PERMISSION_META, so a
- * leaf missing from the list is silently ungrantable from the UI — no
- * error, no checkbox, nothing. That happened: `process.manage` shipped
- * in the SDK vocabulary (#130) with no META entry, and for a month the
- * only grant path was the CLI. Parity in both directions, leaf-by-leaf
- * so a failure names the leaf.
- */
 describe('PERMISSION_META parity with the server vocabulary', () => {
   it('carries an entry for every leaf in PERMISSIONS', () => {
     const covered = new Set(PERMISSION_META.map((m) => m.key));

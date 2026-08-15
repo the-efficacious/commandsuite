@@ -63,8 +63,6 @@ async function runGet(
   } else {
     for (const line of team.context.split('\n')) stdout(`  ${line}`);
   }
-  const presetNames = Object.keys(team.permissionPresets);
-  stdout(`presets   ${presetNames.length === 0 ? '(none)' : presetNames.join(', ')}`);
 }
 
 async function runSet(

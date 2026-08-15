@@ -2,15 +2,12 @@
  * Permissions — UI-side metadata and summary helpers.
  *
  * The server vocabulary is a set of composable leaves (`team.manage`,
- * `members.manage`, `objectives.manage`, …) bundled by named presets
- * like "admin" or "operator" on the team config. Earlier UI code
- * collapsed members into 3 fixed bins (admin / operator / baseline),
- * which hid arbitrary custom mixes. These helpers replace that
- * collapse with a richer summary that still reduces cleanly for dense
- * sidebar rows but exposes the full set when space allows.
+ * `members.manage`, `objectives.create`, …). Permission templates are
+ * a create-form convenience only: applying one copies its leaves into
+ * the selection and creates no durable role or privilege category.
  */
 
-import type { Permission, PermissionPresets } from 'csuite-sdk/types';
+import type { Permission } from 'csuite-sdk/types';
 import { PERMISSIONS } from 'csuite-sdk/types';
 
 export interface PermissionMeta {
@@ -18,6 +15,25 @@ export interface PermissionMeta {
   label: string;
   description: string;
 }
+
+export interface PermissionTemplate {
+  label: string;
+  permissions: readonly Permission[];
+}
+
+/** One-shot helpers shown only while creating a member. */
+export const MEMBER_CREATION_PERMISSION_TEMPLATES: readonly PermissionTemplate[] = [
+  { label: 'Full access', permissions: [...PERMISSIONS] },
+  {
+    label: 'Coordinate objectives',
+    permissions: [
+      'objectives.create',
+      'objectives.cancel',
+      'objectives.reassign',
+      'objectives.watch',
+    ],
+  },
+];
 
 /**
  * Human copy for each leaf. Ordered roughly by blast-radius (most
@@ -28,7 +44,7 @@ export const PERMISSION_META: readonly PermissionMeta[] = [
   {
     key: 'team.manage',
     label: 'Team settings',
-    description: 'Edit team name, context, and permission presets.',
+    description: 'Edit the team name and shared context.',
   },
   {
     key: 'members.manage',
@@ -47,10 +63,24 @@ export const PERMISSION_META: readonly PermissionMeta[] = [
       "Ask another member's runner to compact or clear its agent context. Interrupts live work; controlling your own needs no permission.",
   },
   {
-    key: 'objectives.manage',
-    label: 'Manage objectives',
-    description:
-      "Direct the team's work: create objectives for others, cancel or reassign anyone's, manage any objective's watchers.",
+    key: 'objectives.create',
+    label: 'Create objectives',
+    description: 'Create and assign objectives, and inspect the team-wide objective ledger.',
+  },
+  {
+    key: 'objectives.cancel',
+    label: 'Intervene in objectives',
+    description: "Change another assignee's status or cancel objectives you did not originate.",
+  },
+  {
+    key: 'objectives.reassign',
+    label: 'Reassign objectives',
+    description: 'Move a non-terminal objective to a different assignee.',
+  },
+  {
+    key: 'objectives.watch',
+    label: 'Manage objective watchers',
+    description: 'Change watchers on objectives you did not originate.',
   },
   {
     key: 'activity.read',
@@ -83,80 +113,31 @@ export function sortLeaves(perms: readonly Permission[]): Permission[] {
   return PERMISSIONS.filter((p) => set.has(p));
 }
 
-/** True if `permissions` and `preset` contain the exact same leaves (order-independent). */
-export function matchesPreset(
-  permissions: readonly Permission[],
-  preset: readonly Permission[],
-): boolean {
-  if (permissions.length !== preset.length) return false;
-  const set = new Set(permissions);
-  for (const p of preset) if (!set.has(p)) return false;
-  return true;
-}
-
-/** Return the first preset name whose leaves exactly match `permissions`, or null. */
-export function findExactPreset(
-  permissions: readonly Permission[],
-  presets: PermissionPresets,
-): string | null {
-  for (const [name, leaves] of Object.entries(presets)) {
-    if (matchesPreset(permissions, leaves)) return name;
-  }
-  return null;
-}
-
 export interface PermissionSummary {
   /**
    * `baseline`: no permissions.
-   * `preset`:   exact match to a named preset on the team.
    * `custom`:   at least one leaf but doesn't match any preset.
    */
-  kind: 'baseline' | 'preset' | 'custom';
-  /** Human label — "baseline" / "admin" / "operator" / "custom (3)" etc. */
+  kind: 'baseline' | 'custom';
+  /** Human label based only on the resolved leaf count. */
   label: string;
-  /** True when `members.manage` is present. Used for the sidebar quick tag. */
-  isAdmin: boolean;
-  /** Preset name when kind === 'preset', else null. */
-  presetName: string | null;
   /** Leaf count (excludes preset-name expansion — just the resolved leaves). */
   count: number;
 }
 
-export function summarizePermissions(
-  permissions: readonly Permission[],
-  presets: PermissionPresets,
-): PermissionSummary {
-  const isAdmin = permissions.includes('members.manage');
+export function summarizePermissions(permissions: readonly Permission[]): PermissionSummary {
   if (permissions.length === 0) {
-    return { kind: 'baseline', label: 'baseline', isAdmin: false, presetName: null, count: 0 };
-  }
-  const preset = findExactPreset(permissions, presets);
-  if (preset !== null) {
-    return {
-      kind: 'preset',
-      label: preset,
-      isAdmin,
-      presetName: preset,
-      count: permissions.length,
-    };
+    return { kind: 'baseline', label: 'baseline', count: 0 };
   }
   return {
     kind: 'custom',
-    label: `custom (${permissions.length})`,
-    isAdmin,
-    presetName: null,
+    label: `${permissions.length} permission${permissions.length === 1 ? '' : 's'}`,
     count: permissions.length,
   };
 }
 
 /** Short privilege tag for dense rows. Returns `null` if nothing to show. */
 export function privilegeTag(summary: PermissionSummary): string | null {
-  if (summary.isAdmin) return 'A';
   if (summary.kind === 'baseline') return null;
-  // Non-admin preset or custom: take the first letter of the preset
-  // name if we have one, or a generic marker otherwise.
-  if (summary.kind === 'preset' && summary.presetName) {
-    return summary.presetName.slice(0, 2).toUpperCase();
-  }
-  return 'C';
+  return String(summary.count);
 }

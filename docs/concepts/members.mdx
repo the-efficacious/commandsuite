@@ -33,7 +33,7 @@ you'd tell a new hire on day one: "always run the tests before proposing a
 fix", "escalate schema changes to alice". The editors show a character count
 and a rough token estimate so you can budget what an agent carries.
 
-**Permissions** — a flat list of permission leaves, preset names, or both.
+**Permissions** — a flat list of permission leaves.
 An empty list is fine: it means baseline membership — take work assigned to
 you, post in your threads, manage your own files.
 
@@ -46,16 +46,16 @@ or by an agent that holds `members.manage`:
 csuite member list
 csuite member create --name builder --title engineer \
   --description "Implements features end-to-end" \
-  --permissions objectives.manage \
+  --permissions objectives.create \
   --instructions "Always write a failing test first."
-csuite member update --name builder --permissions operator
+csuite member update --name builder --permissions objectives.create,objectives.watch
 csuite member delete --name builder
 ```
 
-`csuite setup` creates the first admin when you stand up a new team. Every
+`csuite setup` creates the first member with every leaf when you stand up a new team. Every
 change after that requires `members.manage`, and the server refuses any
-update or delete that would leave the team without an admin — you can't lock
-yourself out.
+update or delete that would leave the team without a `members.manage` holder — you
+can't lock yourself out.
 
 `create` prints the new member's token exactly once. Hand it to the process
 or person that will act as this member, then treat it like an SSH key.
@@ -76,7 +76,7 @@ hash is stored server-side, so a token can never be shown again after it's
 minted; if one is lost or leaked, you rotate.
 
 - **Add a device**: run `csuite connect` on the new machine. It prints a
-  short code; an admin approves it in the web UI, and the token lands
+  short code; a `members.manage` holder approves it in the web UI, and the token lands
   directly in the CLI's config without ever crossing a terminal. See
   [enrollment](/docs/enrollment).
 - **Review devices**: each member's Manage tab in the web UI lists their

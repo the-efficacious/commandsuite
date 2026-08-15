@@ -1,20 +1,20 @@
 /**
  * Device-code enrollment approval page.
  *
- * The director-side counterpart to `csuite connect` on the operator's
+ * The approval-side counterpart to `csuite connect` on the requesting
  * VM. The flow:
  *
- *   1. Operator runs `csuite connect`, types out the URL+code shown.
- *   2. Director (this page) types the user code, looks up the
+ *   1. A member runs `csuite connect`, then shares the URL+code shown.
+ *   2. A member holding `members.manage` types the user code, looks up the
  *      pending request, sees the source IP / UA / labelHint.
- *   3. Director picks "bind to existing member" or "create a new
+ *   3. The approver picks "bind to existing member" or "create a new
  *      member with role X / permissions Y," then approves.
  *   4. Server marks the row approved, mints the bearer token,
  *      KEK-wraps the plaintext briefly until the device polls.
  *
  * Anonymous landing → bounce to /login with a notice. Authenticated
- * but lacks `members.manage` → friendly "ask an admin" message.
- * Authenticated admin → the full approve form.
+ * but lacks `members.manage` → a capability-specific message.
+ * A holder of `members.manage` → the full approve form.
  *
  * URL deep links: `?code=KQ4M-7P2H` prefills the user-code field
  * and clears the parameter from history (so a screenshot of the
@@ -26,10 +26,10 @@ import type {
   ApproveEnrollmentRequest,
   PendingEnrollment,
   Permission,
-  PermissionPresets,
   Teammate,
 } from 'csuite-sdk/types';
-import { TextMetrics, ToastContainer } from 'csuite-web-ui';
+import { PERMISSIONS } from 'csuite-sdk/types';
+import { MEMBER_CREATION_PERMISSION_TEMPLATES, TextMetrics, ToastContainer } from 'csuite-web-ui';
 import type { JSX } from 'preact';
 import { useEffect } from 'preact/hooks';
 import { getClient } from '../lib/client.js';
@@ -46,7 +46,7 @@ interface FormState {
   createName: string;
   createTitle: string;
   createDescription: string;
-  createPermissions: string[];
+  createPermissions: Permission[];
   createInstructions: string;
   label: string;
 }
@@ -73,14 +73,13 @@ const lookupResult = signal<
 >({ kind: 'idle' });
 
 const teammates = signal<Teammate[]>([]);
-const permissionPresets = signal<PermissionPresets>({});
 const submitting = signal<null | 'approve' | 'reject'>(null);
 const successInfo = signal<{ memberName: string; userCode: string } | null>(null);
 
 /**
  * Read `?code=` from the URL once, prefill the form, and clean up
  * history so the URL bar doesn't keep the code visible. Triggers
- * an automatic lookup so the director sees the pending row right
+ * an automatic lookup so the approver sees the pending row right
  * away.
  */
 function consumeCodeParam(): string | null {
@@ -96,10 +95,7 @@ function consumeCodeParam(): string | null {
 }
 
 /**
- * Reload the team roster and team config (for permission presets) on
- * mount. Both are needed for the approve form: the bind dropdown
- * lists teammates, the create form's permissions selector lists
- * presets + leaf permissions.
+ * Reload the team roster on mount for the bind dropdown.
  */
 async function loadTeamContext(): Promise<void> {
   try {
@@ -108,7 +104,6 @@ async function loadTeamContext(): Promise<void> {
       getClient().roster(),
     ]);
     teammates.value = roster.teammates;
-    permissionPresets.value = instructions.team.permissionPresets;
     // Default the bind dropdown to the first non-self teammate so
     // the form is approve-ready without an extra click.
     if (formState.value.bindMember === '') {
@@ -218,7 +213,7 @@ async function reject(): Promise<void> {
   try {
     await getClient().rejectEnrollment({
       userCode: f.userCode,
-      reason: 'rejected by director from web UI',
+      reason: 'rejected from web UI',
     });
     lookupResult.value = { kind: 'idle' };
     formState.value = { ...formState.value, userCode: '' };
@@ -232,20 +227,15 @@ async function reject(): Promise<void> {
   }
 }
 
-function permissionOptions(): string[] {
-  // Presets first, leaf permissions after — matches the create-member
-  // form's existing convention.
-  const presetNames = Object.keys(permissionPresets.value);
-  const leaves: Permission[] = [
-    'team.manage',
-    'members.manage',
-    'objectives.manage',
-    'activity.read',
-  ];
-  return [...presetNames, ...leaves];
+function permissionOptions(): Permission[] {
+  return [...PERMISSIONS];
 }
 
-function togglePermission(p: string): void {
+function applyPermissionTemplate(permissions: readonly Permission[]): void {
+  formState.value = { ...formState.value, createPermissions: [...permissions] };
+}
+
+function togglePermission(p: Permission): void {
   const current = formState.value.createPermissions;
   formState.value = {
     ...formState.value,
@@ -298,11 +288,11 @@ export function Enroll(): JSX.Element {
               class="font-display"
               style="font-size:22px;font-weight:700;color:var(--ef-text);margin-bottom:8px"
             >
-              Approval requires admin
+              Approval requires members.manage
             </div>
             <p style="color:var(--ef-text-muted);font-size:14px;margin-bottom:20px">
-              Your account doesn't have <code>members.manage</code>. Ask an admin to approve the
-              enrollment, or sign in as an admin.
+              Your account doesn't have <code>members.manage</code>. Ask a member who holds it to
+              approve the enrollment.
             </p>
             <button type="button" class="btn btn-ghost" onClick={() => void logout()}>
               Sign out
@@ -337,9 +327,9 @@ export function Enroll(): JSX.Element {
             Approve a connecting device
           </h1>
           <p style="color:var(--ef-text-muted);font-size:14px;margin:0">
-            An operator running <code>csuite connect</code> on a VM gets a short code. Enter it
-            here, pick who they're connecting as, and approve. The bearer token never leaves the
-            broker — it goes straight to the device on its next poll.
+            A person running <code>csuite connect</code> on a VM gets a short code. Enter it here,
+            pick who they're connecting as, and approve. The bearer token never leaves the broker —
+            it goes straight to the device on its next poll.
           </p>
         </header>
 
@@ -413,7 +403,7 @@ function CodeEntryCard({ onLookup }: { onLookup: (code: string) => void }): JSX.
           style="margin-top:14px;padding:10px 12px;font-size:13px"
         >
           No pending enrollment matches that code. It may have expired (5 min TTL) or been consumed
-          already. Ask the operator to run <code>csuite connect</code> again.
+          already. Ask them to run <code>csuite connect</code> again.
         </div>
       )}
       {result.kind === 'expired' && (
@@ -422,7 +412,7 @@ function CodeEntryCard({ onLookup }: { onLookup: (code: string) => void }): JSX.
           class="callout warn"
           style="margin-top:14px;padding:10px 12px;font-size:13px"
         >
-          That enrollment has expired. Ask the operator to run <code>csuite connect</code> again.
+          That enrollment has expired. Ask them to run <code>csuite connect</code> again.
         </div>
       )}
       {result.kind === 'error' && (
@@ -591,6 +581,25 @@ function ApprovalCard({
               <legend style="font-family:var(--ef-font-mono);font-size:11px;letter-spacing:.04em;color:var(--ef-text-muted);text-transform:uppercase;margin-bottom:4px">
                 permissions
               </legend>
+              <div style="display:flex;flex-wrap:wrap;gap:6px">
+                {MEMBER_CREATION_PERMISSION_TEMPLATES.map((template) => (
+                  <button
+                    key={template.label}
+                    type="button"
+                    class="btn btn-ghost btn-sm"
+                    onClick={() => applyPermissionTemplate(template.permissions)}
+                  >
+                    {template.label}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-sm"
+                  onClick={() => applyPermissionTemplate([])}
+                >
+                  Baseline
+                </button>
+              </div>
               <div style="display:flex;flex-wrap:wrap;gap:6px;font-family:var(--ef-font-mono);font-size:12px">
                 {permissionOptions().map((p) => (
                   <label
@@ -661,7 +670,6 @@ export function __resetEnrollStateForTests(): void {
   };
   lookupResult.value = { kind: 'idle' };
   teammates.value = [];
-  permissionPresets.value = {};
   submitting.value = null;
   successInfo.value = null;
 }

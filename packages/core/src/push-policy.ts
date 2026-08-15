@@ -58,7 +58,7 @@ export function shouldPush(opts: ShouldPushOptions): boolean {
     if (HIGH_PRIORITY_LEVELS.has(message.level)) return true;
     // Simple word-boundary match for @name. We don't care about
     // capitalization; names are case-sensitive but mentioning
-    // "@director-1" vs "@Director-1" should both notify.
+    // Mention matching is case-insensitive.
     const needle = `@${recipient}`.toLowerCase();
     if (message.body.toLowerCase().includes(needle)) return true;
     return false;

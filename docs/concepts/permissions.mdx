@@ -1,6 +1,6 @@
 ---
 title: Permissions
-description: Grant each member exactly the elevated actions they need — nine permission leaves, no hierarchy, everything else is baseline membership.
+description: Grant each member exactly the elevated actions they need — twelve permission leaves, no hierarchy, everything else is baseline membership.
 section: Concepts
 order: 20
 ---
@@ -9,7 +9,7 @@ order: 20
 
 You decide what each member can do by granting **permission leaves** — flat,
 independent grants with no ranking and no built-in hierarchy. There is no
-"manager" tier: a member with `objectives.manage` can assign work, a member
+"manager" tier: a member with `objectives.create` can assign work, a member
 with `activity.read` can review traces, and neither outranks the other.
 
 Everything not on the list below is baseline membership and needs no grant:
@@ -18,14 +18,17 @@ completing objectives assigned to you, discussing your own objectives,
 managing your own files, rotating your own token, reading your own traces,
 and asking your own runner to compact or clear your context.
 
-## The nine leaves
+## The twelve leaves
 
 | Permission | What it grants |
 |---|---|
-| `team.manage` | Edit the team name, the standing team context, and permission presets. |
+| `team.manage` | Edit the team name and standing team context. |
 | `members.manage` | Create, update, and delete members. Rotate any member's token. Approve or reject device enrollments. Read members' private instructions. Holders also see every objective thread. |
 | `members.context` | Ask **another** member's runner to compact or clear its agent context. Interrupts live work, so it is a separate leaf from `members.manage` rather than part of it. Doing it to yourself is baseline. |
-| `objectives.manage` | Direct the team's work: create objectives and assign them to any teammate, cancel anyone's, reassign, block or unblock objectives you aren't assigned to, and manage any objective's watchers. |
+| `objectives.create` | Create and assign objectives. Inspect the team-wide objective ledger so new work can be coordinated against work already in flight. |
+| `objectives.cancel` | Change another assignee's status, or cancel an objective you did not originate. Assignees manage their own status and originators cancel their own objectives without it. |
+| `objectives.reassign` | Move a non-terminal objective to a different assignee. |
+| `objectives.watch` | Change watchers on an objective you did not originate. Originators manage their own objective's watchers without it. |
 | `activity.read` | View any member's captured traces. Your own are always visible without it. |
 | `tools.manage` | Administer [tool sources](/docs/concepts/tool-sources): register sources, set credentials, bind members, define custom tools. |
 | `secrets.manage` | Administer [secrets](/docs/concepts/secrets): register secrets, set values, bind members. |
@@ -41,26 +44,17 @@ A member never needs elevated permissions to manage their own work:
 - Every member can always read their **own** activity and traces.
 
 Reassignment has no such exception — moving work between teammates always
-requires `objectives.manage`, even for objectives you created.
+requires `objectives.reassign`, even for objectives you created.
 
-## Presets
+## Creation templates
 
-Instead of listing leaves on every member, define named bundles once and
-reference them by name:
+The web UI offers shortcuts such as **Full access** and **Coordinate
+objectives** while you create a member. A shortcut only selects its current
+leaves in that form. The member stores those leaves directly: no title,
+category, or mutable bundle remains attached, and edit/list surfaces show
+the actual permissions.
 
-```bash
-csuite presets set --name operator --permissions objectives.manage
-csuite member update --name bob --permissions operator
-csuite presets list
-```
-
-A member's permission list can mix preset names and individual leaves.
-Changing a preset immediately updates every member that references it.
-Managing presets requires `team.manage`. Teams commonly keep a small set —
-`admin`, `operator`, `viewer` — and give members whatever role titles they
-like on top.
-
-{/* media: screenshot permissions-editor — the web UI member editor showing a preset selected plus individual leaves toggled on */}
+{/* media: screenshot permissions-editor — the web UI create-member form showing a creation template plus individual leaves */}
 
 ## Enforcement
 
@@ -70,7 +64,7 @@ tool list (tools they can't use are hidden), but that's a courtesy; the
 server's check is the boundary.
 
 One invariant is enforced for you: the last member holding `members.manage`
-can't be deleted or demoted. Promote someone else first.
+can't be deleted or have that leaf removed. Grant it to someone else first.
 
 ## Permissions and trust
 

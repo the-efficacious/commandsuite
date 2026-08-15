@@ -2,8 +2,8 @@
  * Boot-time server config — the slim file at `csuite.json`.
  *
  * This file holds ONLY infrastructure knobs that need to exist before
- * SQLite can open. Team identity, members, and permission presets
- * live in the database (see team-store.ts) and are mutated through
+ * SQLite can open. Team identity and members live in the database
+ * (see team-store.ts) and are mutated through
  * the API/CLI/MCP surface, not by hand-editing JSON.
  *
  * What's here:
@@ -14,7 +14,7 @@
  *   - files                              — upload caps + blob root
  *
  * What's NOT here:
- *   - team.name / context, permission presets              → DB
+ *   - team.name / context                                  → DB
  *   - members[]                                            → DB
  *   - tokenHash, totpSecret                                → DB
  *
@@ -71,9 +71,9 @@ export interface ServerConfig {
 }
 
 export const SERVER_CONFIG_FILE_COMMENT =
-  'csuite server config. Storage paths + HTTPS + Web Push + JWT only. Team, members, ' +
-  'and permission presets live in the database — manage them via `csuite team`, ' +
-  '`csuite member`, `csuite presets`, the REST API, or MCP tools. Hand-editing this ' +
+  'csuite server config. Storage paths + HTTPS + Web Push + JWT only. Team and members ' +
+  'live in the database — manage them via `csuite team`, `csuite member`, the REST API, ' +
+  'or MCP tools. Hand-editing this ' +
   'file is supported only as a rescue path for deployment plumbing.';
 
 /**

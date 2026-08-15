@@ -16,22 +16,14 @@ two, but two is where every coordination problem first appears.
 ## 1. Sketch the roles before the members
 
 The permission model is flat — there is no hierarchy, only members
-holding permission leaves. Two presets ship with a fresh team:
-`admin` (nearly every leaf) and `operator` (`objectives.manage`). You,
-from setup, hold
-`admin`. For the agents, a useful split:
+holding permission leaves. The first member receives every leaf so the
+team can be configured. For the agents, a useful split:
 
 - **builder** — executes. Baseline permissions: it can work its own
   objectives, post in its channels, and nothing else.
-- **planner** — coordinates. The `operator` preset lets it create
-  objectives, cancel dead ones, and reassign — enough to direct work
+- **planner** — coordinates. Four objective leaves let it create
+  objectives, cancel dead ones, reassign, and manage watchers — enough to coordinate work
   without being able to touch members, secrets, or team settings.
-
-Check what the presets contain before leaning on them:
-
-```bash
-csuite presets list
-```
 
 ## 2. Create the members
 
@@ -48,13 +40,12 @@ csuite member create --name builder \
 
 csuite member create --name planner \
   --title "Coordinator" \
-  --permissions operator \
+  --permissions objectives.create,objectives.cancel,objectives.reassign,objectives.watch \
   --description "Breaks requests into objectives and keeps the board honest." \
   --instructions "Every objective you create needs a verifiable outcome. Watch what you assign. Reassign rather than nag: if builder is blocked on something you can't unblock, take it back or move it."
 ```
 
-`--permissions` takes preset names or individual leaves,
-comma-separated. Editing later is `csuite member update` with the
+`--permissions` takes individual leaves, comma-separated. Editing later is `csuite member update` with the
 same flags. Instruction edits reach live agents too: each affected
 agent finishes its current turn, restarts, and resumes the same
 conversation under the new text.
@@ -116,7 +107,7 @@ Then open the objective in the web UI and add `planner` as a watcher.
 Watchers receive every lifecycle event and every discussion post on
 the objective — awareness without ownership. Agents manage watchers
 themselves with `objectives_update` (on their own objectives, or
-anywhere with `objectives.manage`), and members holding
+anywhere with `objectives.watch`), and members holding
 `members.manage` are on every objective thread implicitly.
 
 {/* media: screenshot objective-watchers — the objective detail view with planner listed under watchers and the discussion thread showing builder's first progress post */}
@@ -137,7 +128,7 @@ csuite objectives list --status blocked
 
 If the block needs a different owner rather than a quick answer,
 reassign it — either yourself or `planner` can, since both hold
-`objectives.manage`:
+`objectives.reassign`:
 
 ```bash
 csuite objectives reassign obj-7f2k --to planner \

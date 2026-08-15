@@ -7,7 +7,7 @@
  */
 
 import { z } from 'zod';
-import { LEGACY_PERMISSION_ALIASES, PERMISSIONS } from './types.js';
+import { LEGACY_PERMISSION_EXPANSIONS, PERMISSIONS } from './types.js';
 
 export const LogLevelSchema = z.enum(['debug', 'info', 'notice', 'warning', 'error', 'critical']);
 
@@ -52,28 +52,32 @@ export const NameSchema = z
 /**
  * One of the gated permission leaves. Extend `PERMISSIONS` to grow.
  *
- * Legacy keys are mapped forward BEFORE validation so a config or
- * stored preset written under the old vocabulary parses to its modern
- * leaf instead of failing the enum.
+ * This is one canonical leaf. Arrays use `PermissionsSchema`, which
+ * can expand a retired aggregate key into several current leaves.
  */
-export const PermissionSchema = z.preprocess(
+export const PermissionSchema = z.enum(PERMISSIONS);
+
+/**
+ * A resolved permission list. `objectives.manage` briefly shipped as
+ * an aggregate; accept it from those servers/configs and
+ * recover the four independent leaves it represented.
+ */
+export const PermissionsSchema = z.preprocess(
   (value) =>
-    typeof value === 'string' && value in LEGACY_PERMISSION_ALIASES
-      ? LEGACY_PERMISSION_ALIASES[value]
+    Array.isArray(value)
+      ? value.flatMap((entry) =>
+          typeof entry === 'string' && entry in LEGACY_PERMISSION_EXPANSIONS
+            ? LEGACY_PERMISSION_EXPANSIONS[entry]
+            : [entry],
+        )
       : value,
-  z.enum(PERMISSIONS),
+  z.array(PermissionSchema),
 );
 
 /**
- * Team-level named permission bundles. Keys are preset names
- * (short freeform strings), values are arrays of resolved leaf
- * permissions. Members reference preset names; the server resolves
- * at load time.
+ * Legacy named permission bundles retained for old team databases.
  */
-export const PermissionPresetsSchema = z.record(
-  z.string().min(1).max(64),
-  z.array(PermissionSchema),
-);
+export const PermissionPresetsSchema = z.record(z.string().min(1).max(64), PermissionsSchema);
 
 /**
  * A role is a short label + prose description, per-member. Unlike
@@ -88,7 +92,6 @@ export const RoleSchema = z.object({
 export const TeamSchema = z.object({
   name: z.string().min(1).max(128),
   context: z.string().default(''),
-  permissionPresets: PermissionPresetsSchema.default({}),
 });
 
 /**
@@ -98,7 +101,7 @@ export const TeamSchema = z.object({
 export const TeammateSchema = z.object({
   name: NameSchema,
   role: RoleSchema,
-  permissions: z.array(PermissionSchema),
+  permissions: PermissionsSchema,
   // Person vs agent for identity rendering. Optional — older servers
   // omit it, and consumers render the absent case as the neutral
   // (agent) treatment. Must stay in the schema or zod strips it.
@@ -107,7 +110,7 @@ export const TeammateSchema = z.object({
 
 /**
  * Full member record — includes the private `instructions` field.
- * Returned from self-scope instructions and admin-scope member listings.
+ * Returned from self-scope instructions and `members.manage` member listings.
  */
 export const MemberSchema = TeammateSchema.extend({
   instructions: z.string().default(''),
@@ -309,11 +312,11 @@ export const UpdateObjectiveRequestSchema = z
   .object({
     status: z.enum(['active', 'blocked']).optional(),
     blockReason: z.string().max(2048).optional(),
-    /** Change the assignee. Requires `objectives.manage`. */
+    /** Change the assignee. Requires `objectives.reassign`. */
     assignee: NameSchema.optional(),
     /** Handover context for an assignee change; ignored otherwise. */
     note: z.string().max(2048).optional(),
-    /** Watcher changes. Originator or `objectives.manage`. */
+    /** Watcher changes. Originator or `objectives.watch`. */
     addWatchers: z.array(NameSchema).max(64).optional(),
     removeWatchers: z.array(NameSchema).max(64).optional(),
   })
@@ -365,7 +368,7 @@ export const ListObjectivesQuerySchema = z.object({
    * assigned, originated, or watching. Distinct from `assignee`, which
    * is the narrower "on their plate" question: a member who originates
    * or watches without being assigned matches `related` and not
-   * `assignee`. Members without `objectives.manage` may only pass their
+   * `assignee`. Members without `objectives.create` may only pass their
    * own name.
    */
   related: NameSchema.optional(),
@@ -1555,24 +1558,23 @@ export const ListActivityQuerySchema = z.object({
 // ───────────────────────── Members ────────────────────────────
 
 /**
- * Permission list as sent over the wire — each entry is either a
- * preset name (resolved by the server) or a leaf permission. The
- * server validates every entry resolves.
+ * New member writes carry explicit leaves. The aggregate shipped by
+ * the dialback is expanded by `PermissionsSchema` for compatibility.
  */
-const PermissionRefListSchema = z.array(z.string().min(1).max(64)).max(32);
+const MemberPermissionListSchema = PermissionsSchema;
 
 export const CreateMemberRequestSchema = z.object({
   name: NameSchema,
   role: RoleSchema,
   instructions: z.string().default(''),
-  permissions: PermissionRefListSchema,
+  permissions: MemberPermissionListSchema,
 });
 
 export const UpdateMemberRequestSchema = z
   .object({
     role: RoleSchema.optional(),
     instructions: z.string().optional(),
-    permissions: PermissionRefListSchema.optional(),
+    permissions: MemberPermissionListSchema.optional(),
   })
   .refine(
     (v) => v.role !== undefined || v.instructions !== undefined || v.permissions !== undefined,
@@ -1747,7 +1749,7 @@ export const ApproveEnrollmentRequestSchema = z.discriminatedUnion('mode', [
     memberName: NameSchema,
     role: RoleSchema,
     instructions: z.string().default(''),
-    permissions: PermissionRefListSchema,
+    permissions: MemberPermissionListSchema,
     label: TokenLabelSchema.optional(),
   }),
 ]);
@@ -1839,7 +1841,7 @@ export const TotpLoginRequestSchema = z.object({
 export const SessionResponseSchema = z.object({
   member: NameSchema,
   role: RoleSchema,
-  permissions: z.array(PermissionSchema),
+  permissions: PermissionsSchema,
   expiresAt: z.number().int().positive(),
 });
 

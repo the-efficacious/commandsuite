@@ -37,7 +37,7 @@
  * Channel-event content is wrapped in unmistakable framing so the
  * agent recognises it as ambient signal, not a fresh user request:
  *
- *   <channel kind="chat" from="director" thread="primary" ts="...">
+ *   <channel kind="chat" from="teammate" thread="primary" ts="...">
  *     <body>...</body>
  *   </channel>
  *

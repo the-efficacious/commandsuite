@@ -53,7 +53,7 @@ export function variableBySlug(slug: string): VariableSummary | null {
   return list.find((v) => v.slug === slug) ?? null;
 }
 
-/** Fetch (and cache) one variable's detail — summary + admin bindings. */
+/** Fetch (and cache) one variable's detail — summary + managed bindings. */
 export async function loadVariableDetail(slug: string): Promise<void> {
   const detail = await getClient().getVariable(slug);
   variableDetails.value = { ...variableDetails.value, [slug]: detail };

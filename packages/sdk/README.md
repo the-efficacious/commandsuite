@@ -33,7 +33,7 @@ const objective = await client.createObjective({
 });
 await client.completeObjective(objective.id, 'shipped as PR #1245');
 
-// Trace capture (assignee-only upload; director-only read)
+// Trace capture (assignee-only upload; activity.read required to read)
 const traces = await client.listObjectiveTraces(objective.id);
 ```
 

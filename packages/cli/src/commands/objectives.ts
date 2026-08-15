@@ -10,8 +10,8 @@
  *   csuite objectives cancel <id> [--reason <r>]
  *   csuite objectives reassign <id> --to <slot> [--note <n>]
  *
- * Create / cancel-anyone's / reassign require `objectives.manage`
- * server-side; an originator can always cancel their own. List / view
+ * Create, cancel-anyone's, and reassign require `objectives.create`,
+ * `objectives.cancel`, and `objectives.reassign` respectively; an originator can always cancel their own. List / view
  * / update / complete work from any slot (with appropriate scoping
  * server-side).
  */

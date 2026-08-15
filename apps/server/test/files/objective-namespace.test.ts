@@ -69,14 +69,25 @@ async function makeApp() {
   const members = createMemberStore([
     {
       name: 'alice',
-      role: { title: 'admin', description: '' },
-      permissions: ['members.manage', 'objectives.manage'],
+      role: { title: 'team lead', description: '' },
+      permissions: [
+        'members.manage',
+        'objectives.create',
+        'objectives.cancel',
+        'objectives.reassign',
+        'objectives.watch',
+      ],
       token: ALICE,
     },
     {
       name: 'bob',
       role: { title: 'engineer', description: '' },
-      permissions: ['objectives.manage'],
+      permissions: [
+        'objectives.create',
+        'objectives.cancel',
+        'objectives.reassign',
+        'objectives.watch',
+      ],
       token: BOB,
     },
     {

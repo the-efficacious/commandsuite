@@ -116,7 +116,7 @@ export function TeamHome({ viewer }: TeamHomeProps) {
             const isSelf = t.name === viewer;
             const isLast = idx === r.teammates.length - 1;
             const rowBorder = isLast ? '' : 'border-bottom:1px solid var(--ef-surface-hairline);';
-            const summary = summarizePermissions(t.permissions, b.team.permissionPresets);
+            const summary = summarizePermissions(t.permissions);
 
             return (
               <li key={t.name}>
@@ -564,7 +564,6 @@ export function __resetTeamHomeForTests(): void {
 }
 
 function roleBadgeVariant(summary: PermissionSummary): string {
-  if (summary.isAdmin) return 'solid';
-  if (summary.kind === 'preset' || summary.kind === 'custom') return 'caution solid';
+  if (summary.kind === 'custom') return 'caution solid';
   return 'soft';
 }

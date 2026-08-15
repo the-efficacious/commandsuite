@@ -259,7 +259,7 @@ permissions in any mix; the server resolves at create time.
 
 Patches any subset of fields. Enforces "at least one
 `members.manage` member must remain" — rejects with 400 if the
-update would remove the only admin's permission.
+update would remove `members.manage` from its sole holder.
 
 Role and instructions edits fan out one `kind: 'instructions'`
 channel event to every member whose composed instruction text
@@ -277,7 +277,7 @@ never touch the prose and fan nothing out.
 | **Auth** | manage |
 | **Returns** | `204` |
 
-Same admin-survival invariant as `PATCH`. Tokens for the deleted
+Same capability-holder invariant as `PATCH`. Tokens for the deleted
 member are invalidated.
 
 ### `POST /members/:name/rotate-token`
@@ -411,8 +411,7 @@ member is a 404 (indistinguishable, so ids don't leak ownership).
 
 ## Team
 
-Team-level config: name, context, and the named permission presets
-members reference in their raw permissions. Reads are open to every
+Team-level config is the name and shared context. Reads are open to every
 authenticated member; mutations require `team.manage`.
 
 A `context` edit is instruction-bearing: it fans out one
@@ -428,7 +427,7 @@ member's composed prose, so it moves every composition.
 | | |
 |---|---|
 | **Auth** | dual |
-| **Returns** | `{ team: Team }` — `{ name, context, permissionPresets }` |
+| **Returns** | `{ team: Team }` — `{ name, context }` plus a deprecated empty compatibility field on current servers |
 
 ### `PATCH /team`
 
@@ -443,36 +442,6 @@ still lands, but the response carries a `warning` field (mirrored
 in an `X-CSuite-Warning` header) — the string will appear verbatim
 in captured traces.
 
-### `GET /team/presets`
-
-| | |
-|---|---|
-| **Auth** | dual |
-| **Returns** | `{ presets: PermissionPreset[] }` |
-
-### `PUT /team/presets/:name`
-
-| | |
-|---|---|
-| **Auth** | dual; `team.manage` |
-| **Body** | `{ permissions: string[] }` — leaf permissions only (presets cannot reference presets) |
-| **Returns** | `{ preset: { name, permissions } }` |
-
-Create or replace a preset. Members referencing the preset by name
-re-resolve to the new leaf set on their next read — no per-member
-sweep. Unknown leaves are rejected with 400.
-
-### `DELETE /team/presets/:name`
-
-| | |
-|---|---|
-| **Auth** | dual; `team.manage` |
-| **Returns** | `{ deleted: <name>, referencedBy: string[] }` — 404 for an unknown preset |
-
-`referencedBy` names the members that still reference the deleted
-preset; their resolved permissions silently drop its leaves on the
-next read.
-
 ## Objectives
 
 ### `GET /objectives?assignee=<name>&related=<name>&status=<s>`
@@ -482,10 +451,10 @@ next read.
 | **Auth** | dual |
 | **Returns** | `ListObjectivesResponse` — `{ objectives: Objective[] }` |
 
-Callers **without** `objectives.manage` are scoped to their own
+Callers **without** `objectives.create` are scoped to their own
 relationship union — objectives they are assigned, originated, or
 watch — and may only pass their own name in `assignee` / `related`
-(403 otherwise). Callers **with** `objectives.manage` get the
+(403 otherwise). Callers **with** `objectives.create` get the
 team-wide list; `related=<name>` narrows it to one member's
 relationship union, `assignee=<name>` to one member's plate. The
 MCP `objectives_list` tool sits on top of this route.
@@ -494,7 +463,7 @@ MCP `objectives_list` tool sits on top of this route.
 
 | | |
 |---|---|
-| **Auth** | dual; requires `objectives.manage` |
+| **Auth** | dual; requires `objectives.create` |
 | **Body** | `CreateObjectiveRequest` — `{ title, outcome, assignee, body?, watchers?, attachments? }` |
 | **Returns** | `Objective` |
 
@@ -508,7 +477,7 @@ caller has read access to each path.
 
 | | |
 |---|---|
-| **Auth** | dual; thread participant (assignee, originator, watcher) OR `objectives.manage` |
+| **Auth** | dual; thread participant (assignee, originator, watcher) OR `objectives.create` |
 | **Returns** | `GetObjectiveResponse` — `{ objective: Objective, events: ObjectiveEvent[] }` |
 
 Full state plus the append-only event log.
@@ -522,11 +491,11 @@ Full state plus the append-only event log.
 | **Returns** | `Objective` |
 
 One mutation surface, gated per field group: `status`/`blockReason`
-require the assignee or `objectives.manage`; `assignee` (a
+require the assignee or `objectives.cancel`; `assignee` (a
 reassignment — the previous assignee is promoted to watcher, both
 parties notified, `note` carries handover context) requires
-`objectives.manage`; watcher changes require the originator or
-`objectives.manage`. A payload touching several groups must satisfy
+`objectives.reassign`; watcher changes require the originator or
+`objectives.watch`. A payload touching several groups must satisfy
 every gate it touches, and all gates are checked before any change
 applies. `blockReason` is optional; setting `assignee` to the current
 assignee is an idempotent no-op. Use `complete` / `cancel` for
@@ -547,7 +516,7 @@ audit log and is the "what was actually delivered" summary.
 
 | | |
 |---|---|
-| **Auth** | dual; `objectives.manage` OR originator |
+| **Auth** | dual; `objectives.cancel` OR originator |
 | **Body** | `CancelObjectiveRequest` — `{ reason? }` |
 | **Returns** | `Objective` |
 
@@ -717,7 +686,7 @@ member's next runner start.
 Inbound webhooks / API calls routed to members and channels as
 ambient input — see
 [external notifications](/docs/concepts/external-notifications) for
-the model. Admin endpoints are dual-auth; mutations require
+the model. Management endpoints are dual-auth; mutations require
 `notifications.manage`. Signing secrets are write-only (never
 returned; summaries expose `hasSecret` only).
 
@@ -921,7 +890,7 @@ Owner-private files from other members never appear.
 | **Auth** | dual; `members.manage` |
 | **Returns** | `FsListResponse` — every file in every home, flat, newest first |
 
-Admin-only enumeration across all homes. Non-admins use the
+`members.manage`-only enumeration across all homes. Other members use the
 per-home tree under `/<owner>/...` for their own files and
 `/fs/shared` for grants.
 
@@ -1051,7 +1020,7 @@ Error codes: `authorization_pending`, `slow_down`,
 | **Auth** | manage |
 | **Returns** | `ListPendingEnrollmentsResponse` |
 
-For the admin approval UI — pending requests with source IP / UA /
+For the enrollment approval UI — pending requests with source IP / UA /
 expiry.
 
 ### `POST /enroll/approve`

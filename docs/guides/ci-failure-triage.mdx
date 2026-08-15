@@ -113,7 +113,7 @@ Two good shapes, matching what your agent may do:
   (`--target '#ci'`) so the raw alert is visible to everyone, with the
   agent as one reader among several.
 - **Escalate to an objective.** If `builder` holds
-  `objectives.manage`, it can open an objective for a real failure —
+  `objectives.create`, it can open an objective for a real failure —
   title, a verifiable outcome ("main is green at a commit containing
   the fix"), the run URL in the body — and assign it to itself or a
   teammate. The failure now has a lifecycle, watchers, and a trace,
@@ -122,7 +122,7 @@ Two good shapes, matching what your agent may do:
 Grant the permission only if you want the escalation path:
 
 ```bash
-csuite member update --name builder --permissions objectives.manage
+csuite member update --name builder --permissions objectives.create
 ```
 
 ## 6. Verify the pipe end to end

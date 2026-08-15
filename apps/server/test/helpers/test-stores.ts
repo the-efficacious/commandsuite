@@ -20,15 +20,13 @@ import type { MemberStore } from '../../src/members.js';
  * through `seedStores` should prefer the real DB-backed store.
  */
 export function mockTeamStore(team: Team): TeamStore {
-  let current: Team = { ...team, permissionPresets: { ...team.permissionPresets } };
-  const snapshot = (): Team => ({
-    ...current,
-    permissionPresets: { ...current.permissionPresets },
-  });
+  let current: Team = { name: team.name, context: team.context };
+  let legacyPresets: PermissionPresets = { ...(team.permissionPresets ?? {}) };
+  const snapshot = (): Team => ({ ...current });
   const store: Partial<TeamStore> = {
     getTeam: snapshot,
     hasTeam: () => true,
-    getPresets: () => ({ ...current.permissionPresets }),
+    getPresets: () => ({ ...legacyPresets }),
     setTeam: (input) => {
       current = {
         ...current,
@@ -46,14 +44,13 @@ export function mockTeamStore(team: Team): TeamStore {
       return snapshot();
     },
     setPreset: (name, leaves) => {
-      const next: PermissionPresets = { ...current.permissionPresets, [name]: [...leaves] };
-      current = { ...current, permissionPresets: next };
+      legacyPresets = { ...legacyPresets, [name]: [...leaves] };
     },
     deletePreset: (name) => {
-      if (!(name in current.permissionPresets)) return false;
-      const next: PermissionPresets = { ...current.permissionPresets };
+      if (!(name in legacyPresets)) return false;
+      const next: PermissionPresets = { ...legacyPresets };
       delete next[name];
-      current = { ...current, permissionPresets: next };
+      legacyPresets = next;
       return true;
     },
     membersReferencingPreset: (name, members) => {

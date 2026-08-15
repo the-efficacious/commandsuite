@@ -82,7 +82,7 @@ spot should land as a row someone reclassifies, not as a blocker.
 
 | gate | server predicate | verdict |
 |---|---|---|
-| `FilesPanel.tsx` Delete | `canWrite()` = admin \| owner \| objective member | **FIXED** — was `owner === viewer`, false for every namespace member |
+| `FilesPanel.tsx` Delete | `canWrite()` = `members.manage` \| owner \| objective member | **FIXED** — was `owner === viewer`, false for every namespace member |
 | `ObjectiveDetail.tsx` status | assignee \| `objectives.cancel` | **FIXED** — used `members.manage`; diverged in both directions |
 | `ChannelSettings.tsx` remove/leave | channel admin or self, **plus a last-admin guard** | **named, not fixed** — more permissive by construction |
 

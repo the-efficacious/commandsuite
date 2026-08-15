@@ -85,7 +85,7 @@ If no approver is reachable — say, provisioning an air-gapped CI
 runner — fall back to handing the token over yourself:
 
 ```bash
-# On a machine with an admin credential:
+# On a machine with a credential holding members.manage:
 csuite rotate --member ci-runner    # prints the new token once
 
 # On the device:

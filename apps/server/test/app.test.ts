@@ -102,7 +102,7 @@ describe('app GET /instructions', () => {
     expect(body.name).toBe('director-1');
     expect(body.role.title).toBe('director');
     expect(body.permissions).toContain('members.manage');
-    expect(body.team).toEqual(TEAM);
+    expect(body.team).toEqual({ name: TEAM.name, context: TEAM.context });
     expect(body.teammates.map((t) => t.name).sort()).toEqual(['build-bot', 'director-1']);
     expect(body.openObjectives).toEqual([]);
     expect(body.instructions).toContain('director-1');

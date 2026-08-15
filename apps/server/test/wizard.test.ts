@@ -1,8 +1,8 @@
 /**
  * First-run wizard tests.
  *
- * The wizard collects identity + auth only (team name, admin name,
- * token, TOTP), auto-enrolls the admin in TOTP, and returns the
+ * The wizard collects identity + auth only (team name, member name,
+ * token, TOTP), auto-enrolls the bootstrap member in TOTP, and returns the
  * captured `WizardResult` for the caller to seed into the database.
  * Standing context (team context, roles, instructions) is configured
  * after boot, so the wizard neither prompts for nor captures it. Tests stub stdin with a scripted
@@ -69,13 +69,13 @@ describe('runFirstRunWizard', () => {
     };
   }
 
-  // Happy-path script: team name (default), admin name (default),
+  // Happy-path script: team name (default), member name (default),
   // press enter after token banner, TOTP code.
   function happyScript(code: string, overrides: Partial<Record<string, string>> = {}): string[] {
-    return [overrides.teamName ?? '', overrides.adminName ?? '', '', code];
+    return [overrides.teamName ?? '', overrides.memberName ?? '', '', code];
   }
 
-  it('captures team + first admin and returns a seedable WizardResult', async () => {
+  it('captures team + first member and returns a seedable WizardResult', async () => {
     const code = currentCode(FIXED_TOTP_SECRET, FIXED_NOW_MS);
     const io = mockIO(happyScript(code));
 
@@ -83,39 +83,28 @@ describe('runFirstRunWizard', () => {
 
     expect(result.team.name).toBe('my-team');
     expect(result.team.context).toBe('');
-    expect(result.team.permissionPresets).toBeDefined();
 
-    expect(result.admin.name).toBe('director-1');
-    expect(result.admin.role.title).toBe('director');
-    expect(result.admin.permissions).toContain('members.manage');
-    expect(result.admin.rawPermissions).toEqual(['admin']);
-    expect(result.admin.token).toBe('csuite_test_fixed_token');
-    expect(result.admin.totpSecret).toBe(FIXED_TOTP_SECRET);
+    expect(result.bootstrapMember.name).toBe('member-1');
+    expect(result.bootstrapMember.role.title).toBe('member');
+    expect(result.bootstrapMember.permissions).toContain('members.manage');
+    expect(result.bootstrapMember.rawPermissions).toEqual(result.bootstrapMember.permissions);
+    expect(result.bootstrapMember.token).toBe('csuite_test_fixed_token');
+    expect(result.bootstrapMember.totpSecret).toBe(FIXED_TOTP_SECRET);
 
     expect(io.remaining()).toBe(0);
   });
 
-  it('ships admin + operator permission presets in the captured team', async () => {
+  it('stamps a neutral default role without prompting for it', async () => {
     const code = currentCode(FIXED_TOTP_SECRET, FIXED_NOW_MS);
     const io = mockIO(happyScript(code));
     const result = await runFirstRunWizard(wizardOpts(io));
 
-    expect(result.team.permissionPresets.admin).toBeDefined();
-    expect(result.team.permissionPresets.admin).toContain('members.manage');
-    expect(result.team.permissionPresets.operator).toContain('objectives.manage');
-  });
-
-  it('stamps the default admin role without prompting for it', async () => {
-    const code = currentCode(FIXED_TOTP_SECRET, FIXED_NOW_MS);
-    const io = mockIO(happyScript(code));
-    const result = await runFirstRunWizard(wizardOpts(io));
-
-    expect(result.admin.role.title).toBe('director');
-    expect(result.admin.role.description).toBe('');
+    expect(result.bootstrapMember.role.title).toBe('member');
+    expect(result.bootstrapMember.role.description).toBe('');
     expect(io.output.some((l) => l.startsWith('? ') && l.includes('role'))).toBe(false);
   });
 
-  it('re-prompts on an invalid admin name and keeps going', async () => {
+  it('re-prompts on an invalid member name and keeps going', async () => {
     const code = currentCode(FIXED_TOTP_SECRET, FIXED_NOW_MS);
     const io = mockIO([
       '', // team name
@@ -125,7 +114,7 @@ describe('runFirstRunWizard', () => {
       code,
     ]);
     const result = await runFirstRunWizard(wizardOpts(io));
-    expect(result.admin.name).toBe('chief');
+    expect(result.bootstrapMember.name).toBe('chief');
     expect(io.output.some((l) => l.includes('alphanumeric with . _ -'))).toBe(true);
   });
 
@@ -133,7 +122,7 @@ describe('runFirstRunWizard', () => {
     const code = currentCode(FIXED_TOTP_SECRET, FIXED_NOW_MS);
     const io = mockIO([...happyScript('000000'), code]);
     const result = await runFirstRunWizard(wizardOpts(io));
-    expect(result.admin.totpSecret).toBe(FIXED_TOTP_SECRET);
+    expect(result.bootstrapMember.totpSecret).toBe(FIXED_TOTP_SECRET);
     expect(io.output.some((l) => l.includes('try again'))).toBe(true);
   });
 
