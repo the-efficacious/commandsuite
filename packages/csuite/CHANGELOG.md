@@ -1,5 +1,15 @@
 # csuite
 
+## 0.8.0
+
+### Patch Changes
+
+- Updated dependencies [[`a2cc68a`](https://github.com/the-efficacious/commandsuite/commit/a2cc68af186c8bcb661088efc7b26f914c7abd80), [`7c03e4b`](https://github.com/the-efficacious/commandsuite/commit/7c03e4b4c10c4daa9bc419b9eae7adab9efaff7f), [`a2cc68a`](https://github.com/the-efficacious/commandsuite/commit/a2cc68af186c8bcb661088efc7b26f914c7abd80), [`a2cc68a`](https://github.com/the-efficacious/commandsuite/commit/a2cc68af186c8bcb661088efc7b26f914c7abd80), [`a2cc68a`](https://github.com/the-efficacious/commandsuite/commit/a2cc68af186c8bcb661088efc7b26f914c7abd80), [`a2cc68a`](https://github.com/the-efficacious/commandsuite/commit/a2cc68af186c8bcb661088efc7b26f914c7abd80), [`a2cc68a`](https://github.com/the-efficacious/commandsuite/commit/a2cc68af186c8bcb661088efc7b26f914c7abd80), [`a2cc68a`](https://github.com/the-efficacious/commandsuite/commit/a2cc68af186c8bcb661088efc7b26f914c7abd80)]:
+  - csuite-core@0.8.0
+  - csuite-cli@0.8.0
+  - csuite-sdk@0.8.0
+  - csuite-server@0.8.0
+
 ## 0.7.1
 
 ### Patch Changes

@@ -1,5 +1,23 @@
 # csuite-server
 
+## 0.8.0
+
+### Minor Changes
+
+- [#192](https://github.com/the-efficacious/commandsuite/pull/192) [`7c03e4b`](https://github.com/the-efficacious/commandsuite/commit/7c03e4b4c10c4daa9bc419b9eae7adab9efaff7f) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - Replace the Director, Admin, and Operator member categories with explicit permission leaves, restore independent objective capabilities, and make permission bundles one-shot member-creation templates.
+
+- [#194](https://github.com/the-efficacious/commandsuite/pull/194) [`a2cc68a`](https://github.com/the-efficacious/commandsuite/commit/a2cc68af186c8bcb661088efc7b26f914c7abd80) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - **Breaking.** One structured logger across the broker, CLI and runner: every process now emits `{ts, level, component, msg, ...context}` as one JSON line, with a `CSUITE_LOG_LEVEL` threshold. Runner logs previously carried no severity at all, and the broker's `BrokerLogger` defaulted to a no-op that discarded subscriber warnings.
+
+  `BrokerLogger` is no longer exported from `csuite-core`; `Broker`, the MCP client manager and the gen-ai correlator all take the standard `Logger`, and the correlator's `log` option is now `logger`.
+
+- [#194](https://github.com/the-efficacious/commandsuite/pull/194) [`a2cc68a`](https://github.com/the-efficacious/commandsuite/commit/a2cc68af186c8bcb661088efc7b26f914c7abd80) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - `csuite prune-traces` now deletes across the whole activity database — inferences, telemetry and raw bodies as well as the activity timeline — and reports each separately. Previously it pruned only the timeline while the heaviest tables in the same file grew without bound. Raw bodies are collected by reference rather than age, so a deduplicated body outlives the exchange that first stored it.
+
+### Patch Changes
+
+- Updated dependencies [[`a2cc68a`](https://github.com/the-efficacious/commandsuite/commit/a2cc68af186c8bcb661088efc7b26f914c7abd80), [`7c03e4b`](https://github.com/the-efficacious/commandsuite/commit/7c03e4b4c10c4daa9bc419b9eae7adab9efaff7f), [`a2cc68a`](https://github.com/the-efficacious/commandsuite/commit/a2cc68af186c8bcb661088efc7b26f914c7abd80), [`a2cc68a`](https://github.com/the-efficacious/commandsuite/commit/a2cc68af186c8bcb661088efc7b26f914c7abd80), [`a2cc68a`](https://github.com/the-efficacious/commandsuite/commit/a2cc68af186c8bcb661088efc7b26f914c7abd80), [`a2cc68a`](https://github.com/the-efficacious/commandsuite/commit/a2cc68af186c8bcb661088efc7b26f914c7abd80), [`a2cc68a`](https://github.com/the-efficacious/commandsuite/commit/a2cc68af186c8bcb661088efc7b26f914c7abd80), [`a2cc68a`](https://github.com/the-efficacious/commandsuite/commit/a2cc68af186c8bcb661088efc7b26f914c7abd80)]:
+  - csuite-core@0.8.0
+  - csuite-sdk@0.8.0
+
 ## 0.7.1
 
 ### Patch Changes
