@@ -21,7 +21,6 @@ import { getClient } from '../lib/client.js';
 import { initials } from '../lib/initials.js';
 import { instructions, loadInstructions } from '../lib/instructions.js';
 import { objectives } from '../lib/objectives.js';
-import { type PermissionSummary, summarizePermissions } from '../lib/permissions.js';
 import { presenceActivity, presenceCaptureWarning, roster } from '../lib/roster.js';
 import { selectMemberProfile } from '../lib/view.js';
 import { ErrorCallout, Loading, PageHeader, TextMetrics } from './ui/index.js';
@@ -116,8 +115,6 @@ export function TeamHome({ viewer }: TeamHomeProps) {
             const isSelf = t.name === viewer;
             const isLast = idx === r.teammates.length - 1;
             const rowBorder = isLast ? '' : 'border-bottom:1px solid var(--ef-surface-hairline);';
-            const summary = summarizePermissions(t.permissions);
-
             return (
               <li key={t.name}>
                 <button
@@ -149,9 +146,11 @@ export function TeamHome({ viewer }: TeamHomeProps) {
                             (you)
                           </span>
                         )}
-                        <span class={`badge ${roleBadgeVariant(summary)}`}>
-                          {t.role.title.toUpperCase()}
-                        </span>
+                        {t.role.title.trim().toLowerCase() !== 'member' && (
+                          <span class="badge soft" title={`Team role: ${t.role.title}`}>
+                            {t.role.title.toUpperCase()}
+                          </span>
+                        )}
                         {r.restartPending?.includes(t.name) === true && (
                           <span
                             class="badge warn"
@@ -177,15 +176,6 @@ export function TeamHome({ viewer }: TeamHomeProps) {
                             title="This broker cannot assess capture health for this member — not a claim that capture is healthy."
                           >
                             CAPTURE UNCHECKED
-                          </span>
-                        )}
-                        {summary.kind !== 'baseline' && (
-                          <span
-                            class="badge soft"
-                            style="font-size:9.5px;letter-spacing:.06em"
-                            title={`Permissions: ${summary.label}`}
-                          >
-                            {summary.label}
                           </span>
                         )}
                       </div>
@@ -561,9 +551,4 @@ export function __resetTeamHomeForTests(): void {
   prcDisposition.value = 'scope_change';
   prcBusy.value = false;
   prcError.value = null;
-}
-
-function roleBadgeVariant(summary: PermissionSummary): string {
-  if (summary.kind === 'custom') return 'caution solid';
-  return 'soft';
 }

@@ -530,7 +530,7 @@ describe('<TeamHome />', () => {
   it('marks teammates as online when connected count > 0', async () => {
     instructions.value = {
       name: 'director-1',
-      role: { title: 'director', description: '' },
+      role: { title: 'member', description: '' },
       permissions: ['members.manage'],
       team: { name: 'demo-team', context: '', permissionPresets: {} },
       teammates: [],
@@ -543,7 +543,7 @@ describe('<TeamHome />', () => {
       teammates: [
         {
           name: 'director-1',
-          role: { title: 'director', description: '' },
+          role: { title: 'member', description: '' },
           permissions: ['members.manage'],
         },
         { name: 'build-bot', role: { title: 'engineer', description: '' }, permissions: [] },
@@ -566,6 +566,11 @@ describe('<TeamHome />', () => {
       expect(onlineRow.querySelector('.state-word')?.textContent).toContain('ONLINE');
       const offlineRow = screen.getByRole('button', { name: /open profile for director-1/i });
       expect(offlineRow.querySelector('.state-word')?.textContent).toContain('OFFLINE');
+      // Authority is inspectable on the profile, not classified beside
+      // identity in the roster.
+      expect(offlineRow.textContent).not.toContain('1 permission');
+      expect(offlineRow.textContent).not.toContain('CUSTOM');
+      expect(offlineRow.textContent).not.toContain('MEMBER');
     });
   });
 

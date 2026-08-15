@@ -160,9 +160,11 @@ export function MemberProfile({ name, tab, viewer }: MemberProfileProps) {
               </span>
             )}
           </h1>
-          <span class={`badge ${badgeClassFor(permSummary)}`}>
-            {displayRole.title.toUpperCase()}
-          </span>
+          {displayRole.title.trim().toLowerCase() !== 'member' && (
+            <span class="badge soft" title={`Team role: ${displayRole.title}`}>
+              {displayRole.title.toUpperCase()}
+            </span>
+          )}
           {captureWarning === 'gap' && (
             <span
               class="badge warn"
@@ -559,11 +561,6 @@ function tabsFor({
   if (canManageMembers) tabs.splice(2, 0, 'activity');
   if (canManageMembers && !isSelf) tabs.push('manage');
   return tabs;
-}
-
-function badgeClassFor(summary: import('../lib/permissions.js').PermissionSummary): string {
-  if (summary.kind === 'custom') return 'caution';
-  return 'soft';
 }
 
 function labelFor(leaf: string): string {
