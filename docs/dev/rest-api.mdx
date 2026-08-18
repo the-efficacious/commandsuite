@@ -189,6 +189,15 @@ general channel scrollback. `limit` defaults to 100, max 1000
 (the MCP `recent` tool applies its own tighter 50/500 bounds
 client-side). `before` is an epoch-ms cursor for paging.
 
+Every form is scoped to the caller. A message delivered to a named
+audience — a private channel, an objective thread — is returned to
+that audience and its sender, and to nobody else; the audience is
+recorded when the message is delivered, so the read agrees with the
+live fan-out. Secret lifecycle events are in no one's feed (use
+`GET /secrets`). Messages persisted before audiences were recorded
+cannot say who they were for: if such a row carries a channel or
+objective thread tag, only its sender sees it.
+
 ## Sessions and TOTP
 
 ### `POST /session/totp`
@@ -201,8 +210,14 @@ client-side). `before` is an epoch-ms cursor for paging.
 
 When `member` is set, the server verifies against just that
 member. When omitted, the server iterates enrolled members
-looking for a match (codeless login). Rate-limited: 5 failures /
-15min per member, 10 failures / 15min global.
+looking for a match (codeless login).
+
+Rate limits, all sliding 15-minute windows: 5 failures per member
+(targeted), 5 per source and 40 in total (codeless). A source that
+exhausts its own bucket gets a plain `429`. Reaching the global
+codeless ceiling returns `429` with `code: "member_name_required"` —
+codeless is suspended, and sign-in continues by naming the member,
+under the per-member bucket.
 
 On success the session cookie is `httpOnly`, `Secure` over HTTPS,
 `SameSite=Strict`, 7-day sliding TTL — every authenticated request
@@ -872,12 +887,21 @@ a home you own or that's been shared with you.
 | | |
 |---|---|
 | **Auth** | dual; readable by caller |
-| **Returns** | `200 <bytes>` with `Content-Type: <mime>` |
+| **Returns** | `200 <bytes>` with `Content-Type: <mime>`, `X-Content-Type-Options: nosniff`, and a restrictive `Content-Security-Policy` |
 
 Friendly URL — segments are URL-encoded individually so the path
 works directly in `<a href>` and `<img src>`. The server checks
 read access (own home, `members.manage`, objective-namespace
 membership, or a grant from a message attachment).
+
+The stored MIME type is whatever the uploader declared, and these
+bytes are served from the same origin as the web UI, so the response
+is served **`inline` only for types that render without scripting** —
+raster images, `audio/*`, `video/*`, and `application/pdf`. Everything
+else, including `image/svg+xml` and `text/html`, gets
+`Content-Disposition: attachment`. Subresource loads (`<img>`,
+`<video>`, `fetch`) are unaffected by disposition, so previews render
+either way.
 
 ### `POST /fs/write`
 

@@ -93,9 +93,12 @@ A custom tool is configuration, not code:
 URL, headers, or body. The host part of the URL is fixed at save
 time — an agent's arguments can never steer a credentialed request
 to a different server, and the credential header can never be
-templated. `resultPath` optionally extracts one field from a JSON
-response so the agent gets the answer, not the envelope. Responses
-are capped at 64 KiB.
+templated. That holds through redirects too: a redirect within the
+configured origin is followed, and one that leaves it fails the call
+without sending anything, so an upstream that bounces cannot become a
+way to read the credential. `resultPath` optionally extracts one field
+from a JSON response so the agent gets the answer, not the envelope.
+Responses are capped at 64 KiB.
 
 ## MCP sources
 

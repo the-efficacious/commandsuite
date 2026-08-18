@@ -201,11 +201,17 @@ without the encrypted data it wrapped.
 
 ### `429 Too Many Requests` on /session/totp
 
-Per-member: 5 failures / 15 minutes. Global (codeless login,
-where the server iterates members to find a match): 10 failures
-/ 15 minutes.
+Per-member: 5 failures / 15 minutes. Codeless login (no member
+name, where the server iterates members to find a match): 5
+failures / 15 minutes from your own address, and 40 across the
+whole server.
 
-Wait the window out. If you're locked out and need to bypass:
+If the response says `member_name_required`, the server-wide
+codeless ceiling was reached — someone else's failures, not yours.
+Sign in with your member name and you go through the per-member
+bucket instead of waiting.
+
+Otherwise wait the window out. If you're locked out and need to bypass:
 
 ```bash
 csuite enroll --member <name>
