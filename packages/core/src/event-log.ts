@@ -71,14 +71,54 @@ export function channelThreadTag(channelId: string): string {
   return `${CHANNEL_THREAD_PREFIX}${channelId}`;
 }
 
+/** Thread prefix for objective lifecycle + discussion events (`obj:<id>`). */
+export const OBJECTIVE_THREAD_PREFIX = 'obj:' as const;
+
+/**
+ * True when a thread tag names an audience narrower than the team.
+ *
+ * `chan:general` is deliberately NOT scoped: the general channel's
+ * membership is implicit (everyone), so its pushes take the broadcast
+ * path and carry no recipient list.
+ *
+ * Used only for rows written before `recipients` was persisted — see
+ * `feedVisibleTo`. Rows written since carry their audience and are
+ * judged on that instead of on their tag.
+ */
+export function isScopedThreadTag(tag: unknown): boolean {
+  if (typeof tag !== 'string' || tag.length === 0) return false;
+  if (tag.startsWith(SECRET_THREAD_PREFIX)) return true;
+  if (tag.startsWith(OBJECTIVE_THREAD_PREFIX)) return true;
+  if (tag.startsWith(CHANNEL_THREAD_PREFIX)) {
+    return tag !== channelThreadTag(GENERAL_CHANNEL_ID);
+  }
+  return false;
+}
+
 /** True when a message is a secret lifecycle event. */
 export function isSecretThread(ev: Pick<Message, 'data'>): boolean {
   const tag = ev.data?.thread;
   return typeof tag === 'string' && tag.startsWith(SECRET_THREAD_PREFIX);
 }
 
+/**
+ * What an append needs to know beyond the message itself.
+ *
+ * `recipients` is the delivery audience the broker fanned the message
+ * out to — the channel's members, an objective thread, the holders of
+ * a secret. It is persisted so a later read can answer the same
+ * question the live fan-out already answered.
+ *
+ * `null` / omitted means "no narrower audience": a DM (addressed by
+ * `to`) or a team-wide broadcast. It does NOT mean "audience unknown"
+ * — every fan-out path passes its list.
+ */
+export interface EventLogAppendOptions {
+  recipients?: readonly string[] | null;
+}
+
 export interface EventLog {
-  append(message: Message): Promise<void>;
+  append(message: Message, options?: EventLogAppendOptions): Promise<void>;
   tail(options?: EventLogTailOptions): Promise<Message[]>;
   /**
    * Return messages relevant to the viewer, newest-first. Used by
@@ -106,12 +146,56 @@ export function clampQueryLimit(raw: number | undefined): number {
   return Math.min(Math.floor(raw), MAX_QUERY_LIMIT);
 }
 
+/**
+ * Is `ev` part of `viewer`'s default feed?
+ *
+ * THE RULE, stated once. `SqliteEventLog`'s feed statement is the same
+ * predicate in SQL and the two must move together — a test in each
+ * asserts the same scoping, and `event-log-scope.test.ts` runs the
+ * shared cases against both.
+ *
+ *   1. Secret lifecycle events are never in anyone's feed. Unchanged,
+ *      and deliberately unconditional — `GET /secrets` is the surface
+ *      built for that question.
+ *   2. Addressed messages (`to` set) reach their two ends only.
+ *   3. A message with a recorded audience reaches that audience, plus
+ *      its sender.
+ *   4. A message with NO recorded audience predates this column. If it
+ *      carries a scoped thread tag we cannot reconstruct who it was
+ *      for, so it is withheld from everyone but its sender — the
+ *      fail-closed direction. Unscoped legacy rows stay visible.
+ */
+export function feedVisibleTo(
+  ev: Message,
+  recipients: readonly string[] | null,
+  viewer: string,
+): boolean {
+  if (isSecretThread(ev)) return false;
+  if (ev.to !== null && ev.from !== viewer && ev.to !== viewer) return false;
+  if (ev.from === viewer) return true;
+  if (recipients !== null) return recipients.includes(viewer);
+  if (ev.to !== null) return ev.to === viewer;
+  return !isScopedThreadTag(ev.data?.thread);
+}
+
+interface StoredEvent {
+  message: Message;
+  recipients: readonly string[] | null;
+}
+
 /** In-memory event log. Useful for tests and ephemeral dev runs. */
 export class InMemoryEventLog implements EventLog {
-  private readonly events: Message[] = [];
+  private readonly stored: StoredEvent[] = [];
 
-  async append(message: Message): Promise<void> {
-    this.events.push(message);
+  private get events(): Message[] {
+    return this.stored.map((e) => e.message);
+  }
+
+  async append(message: Message, options: EventLogAppendOptions = {}): Promise<void> {
+    this.stored.push({
+      message,
+      recipients: options.recipients ? [...options.recipients] : null,
+    });
   }
 
   async tail(options: EventLogTailOptions = {}): Promise<Message[]> {
@@ -125,13 +209,14 @@ export class InMemoryEventLog implements EventLog {
     const limit = clampQueryLimit(options.limit);
     const matches: Message[] = [];
     // Walk newest-first so we can bail out once we've filled `limit`.
-    for (let i = this.events.length - 1; i >= 0; i--) {
-      const ev = this.events[i];
-      if (!ev) continue;
+    for (let i = this.stored.length - 1; i >= 0; i--) {
+      const entry = this.stored[i];
+      if (!entry) continue;
+      const ev = entry.message;
       if (options.before !== undefined && ev.ts >= options.before) continue;
       if (options.channel !== undefined) {
         if (!matchesChannel(ev, options.channel)) continue;
-      } else if (!matchesViewer(ev, options.viewer, options.with)) {
+      } else if (!matchesViewer(ev, entry.recipients, options.viewer, options.with)) {
         continue;
       }
       matches.push(ev);
@@ -142,7 +227,7 @@ export class InMemoryEventLog implements EventLog {
 
   /** Test-only: number of events currently in the log. */
   size(): number {
-    return this.events.length;
+    return this.stored.length;
   }
 }
 
@@ -161,7 +246,12 @@ function matchesChannel(ev: Message, channelId: string): boolean {
   return false;
 }
 
-function matchesViewer(ev: Message, viewer: string, withOther?: string): boolean {
+function matchesViewer(
+  ev: Message,
+  recipients: readonly string[] | null,
+  viewer: string,
+  withOther?: string,
+): boolean {
   if (withOther !== undefined) {
     // Narrowed DM view: only messages between `viewer` and `withOther`.
     // A DM from viewer to withOther has from=viewer, to=withOther.
@@ -171,17 +261,5 @@ function matchesViewer(ev: Message, viewer: string, withOther?: string): boolean
     if (ev.from === withOther && ev.to === viewer) return true;
     return false;
   }
-  // Secret lifecycle events never appear in the default feed. They are
-  // delivered to an explicit recipient set but persist with `to: null`,
-  // so without this the next line hands every member the full history
-  // of who holds which secret. Checked before the broadcast case
-  // because that is the case that leaks it, and before the `from`
-  // case so the actor's own feed is not the exception that keeps the
-  // spam alive.
-  if (isSecretThread(ev)) return false;
-  // Default feed: broadcasts + any DM where viewer is either end.
-  if (ev.to === null) return true;
-  if (ev.from === viewer) return true;
-  if (ev.to === viewer) return true;
-  return false;
+  return feedVisibleTo(ev, recipients, viewer);
 }
