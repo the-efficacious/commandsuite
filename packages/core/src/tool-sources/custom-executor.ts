@@ -85,20 +85,40 @@ export async function executeCustomTool(input: ExecuteCustomToolInput): Promise<
     }
   }
 
-  // 3. Request. `redirect: 'follow'` — undici strips Authorization on
-  //    cross-origin redirects, which is the safe default; we don't
-  //    re-attach.
+  // 3. Request, following redirects BY HAND.
+  //
+  //    `redirect: 'follow'` was wrong here in two ways, and the runtime
+  //    only papers over one of them. It does strip `Authorization` on a
+  //    cross-origin hop — so a `kind: 'bearer'` credential was safe —
+  //    but a `kind: 'header'` credential (`X-API-Key` and friends) is
+  //    just an ordinary header to the fetch spec and rides along to
+  //    wherever the redirect points. Measured against Node's fetch:
+  //    `authorization` is dropped, `x-api-key` arrives intact at the
+  //    new origin. Tool arguments reach the path and query, so an agent
+  //    can aim a cooperative upstream's open redirect at a collector
+  //    and read back a credential the broker exists to keep from it.
+  //
+  //    The second way: the origin invariant is checked before the first
+  //    request and nothing re-checks it after. A redirect chain walked
+  //    by the runtime lands wherever it likes — loopback, RFC1918, a
+  //    metadata endpoint — with the save-time "https, non-loopback"
+  //    rule already satisfied and behind us.
+  //
+  //    Both are the same fix: the pinned origin is a property of every
+  //    hop, not of hop zero.
   const fetchImpl = input.fetchImpl ?? globalThis.fetch;
   let res: Response;
   try {
-    res = await fetchImpl(expanded.url, {
+    res = await fetchWithPinnedOrigin(fetchImpl, {
+      url: expanded.url,
+      origin: expanded.origin,
       method: input.binding.method,
       headers,
       body: expanded.body,
-      signal: AbortSignal.timeout(expanded.timeoutMs),
-      redirect: 'follow',
+      timeoutMs: expanded.timeoutMs,
     });
   } catch (err) {
+    if (err instanceof OriginEscapeError) return errorResult(err.message);
     if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
       return errorResult(`upstream request timed out after ${expanded.timeoutMs}ms`);
     }
@@ -159,6 +179,88 @@ export async function executeCustomTool(input: ExecuteCustomToolInput): Promise<
   }
   if (finalTruncated) text += TRUNCATION_MARKER(TOOL_RESULT_MAX_BYTES);
   return textResult(text);
+}
+
+/**
+ * A redirect tried to leave the binding's configured origin. Surfaces
+ * as a tool-level `isError` result — the agent asked for a tool call
+ * and gets told why it did not happen, same as a template error.
+ */
+class OriginEscapeError extends Error {
+  constructor(from: string, to: string) {
+    super(
+      `upstream redirected off the configured origin (${from} → ${to}); ` +
+        'the request was not followed and no credential was sent',
+    );
+    this.name = 'OriginEscapeError';
+  }
+}
+
+/** Redirect statuses per the fetch spec. */
+const REDIRECT_STATUSES: ReadonlySet<number> = new Set([301, 302, 303, 307, 308]);
+const MAX_REDIRECTS = 5;
+
+interface PinnedFetchInput {
+  url: string;
+  /** The binding's static origin. Every hop must match it. */
+  origin: string;
+  method: string;
+  headers: Headers;
+  body: string | null;
+  timeoutMs: number;
+}
+
+/**
+ * Perform the request, following same-origin redirects only.
+ *
+ * One timeout covers the whole chain, not each hop — otherwise five
+ * redirects buy five times the configured budget.
+ *
+ * 303, and 301/302 on a POST, drop to GET without a body, matching what
+ * every HTTP client does. 307/308 preserve both.
+ */
+async function fetchWithPinnedOrigin(
+  fetchImpl: typeof fetch,
+  input: PinnedFetchInput,
+): Promise<Response> {
+  const signal = AbortSignal.timeout(input.timeoutMs);
+  let url = input.url;
+  let method = input.method;
+  let body = input.body;
+
+  for (let hop = 0; ; hop++) {
+    const res = await fetchImpl(url, {
+      method,
+      headers: input.headers,
+      body,
+      signal,
+      redirect: 'manual',
+    });
+    if (!REDIRECT_STATUSES.has(res.status)) return res;
+
+    const location = res.headers.get('location');
+    if (location === null) return res;
+    if (hop >= MAX_REDIRECTS) {
+      throw new OriginEscapeError(url, `${location} (after ${MAX_REDIRECTS} redirects)`);
+    }
+
+    let next: URL;
+    try {
+      next = new URL(location, url);
+    } catch {
+      throw new OriginEscapeError(url, location);
+    }
+    if (next.origin !== input.origin) {
+      // Nothing is sent to `next`. The credential stays here.
+      throw new OriginEscapeError(url, next.origin);
+    }
+
+    if (res.status === 303 || ((res.status === 301 || res.status === 302) && method !== 'GET')) {
+      method = method === 'HEAD' ? 'HEAD' : 'GET';
+      body = null;
+    }
+    url = next.toString();
+  }
 }
 
 /**
