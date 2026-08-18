@@ -19,6 +19,7 @@ import {
   clampQueryLimit,
   DEFAULT_QUERY_LIMIT,
   type EventLog,
+  type EventLogAppendOptions,
   type EventLogQueryOptions,
   type EventLogTailOptions,
   GENERAL_CHANNEL_ID,
@@ -35,6 +36,7 @@ interface EventRow {
   level: string;
   data: string;
   attachments: string | null;
+  recipients: string | null;
 }
 
 const CREATE_SCHEMA = `
@@ -47,7 +49,8 @@ const CREATE_SCHEMA = `
     body TEXT NOT NULL,
     level TEXT NOT NULL,
     data TEXT NOT NULL,
-    attachments TEXT
+    attachments TEXT,
+    recipients TEXT
   );
   CREATE INDEX IF NOT EXISTS events_ts_idx ON events (ts);
   -- Every read here is \`WHERE ts < ? AND <filter> ORDER BY ts DESC\`, and
@@ -89,6 +92,7 @@ export class SqliteEventLog implements EventLog {
     for (const alter of [
       'ALTER TABLE events ADD COLUMN from_name TEXT',
       'ALTER TABLE events ADD COLUMN attachments TEXT',
+      'ALTER TABLE events ADD COLUMN recipients TEXT',
     ]) {
       try {
         this.db.exec(alter);
@@ -100,35 +104,58 @@ export class SqliteEventLog implements EventLog {
       }
     }
     this.insertStmt = this.db.prepare(
-      'INSERT INTO events (id, ts, to_name, from_name, title, body, level, data, attachments) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO events (id, ts, to_name, from_name, title, body, level, data, attachments, recipients) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     );
     this.tailSinceStmt = this.db.prepare(
-      'SELECT id, ts, to_name, from_name, title, body, level, data, attachments FROM events WHERE ts >= ? ORDER BY ts DESC LIMIT ?',
+      'SELECT id, ts, to_name, from_name, title, body, level, data, attachments, recipients FROM events WHERE ts >= ? ORDER BY ts DESC LIMIT ?',
     );
-    // Default feed. The `secret:` exclusion mirrors `matchesViewer` in
-    // the in-memory log and must stay in step with it — the two
-    // implementations answer the same question and a test in each
-    // asserts this row is absent.
+    // Default feed — the SQL half of `feedVisibleTo` in event-log.ts.
+    // The two answer the same question and must move together; the
+    // shared cases run against both in event-log-scope.test.ts.
     //
-    // Why it is needed: secret events are pushed to an explicit
-    // recipient set, but a fan-out push persists `to_name = NULL`, and
-    // `to_name IS NULL` is exactly what this feed returns to every
-    // viewer. Measured before the fix on the live broker: 27 of 27
-    // secret events were returned to a member who was neither bound to
-    // any of them nor a `secrets.manage` holder.
+    // Three clauses, in the order they were needed:
+    //
+    //   1. Addressing. A DM reaches its two ends.
+    //   2. Secret lifecycle events reach nobody's feed, unconditionally.
+    //      `GET /secrets` is the surface built for that question.
+    //   3. Audience. A fan-out push persists `to_name = NULL`, so
+    //      without this clause `to_name IS NULL` hands every
+    //      channel-scoped and objective-scoped message to every member
+    //      — live delivery was already scoped, and the durable read
+    //      disagreed with it. Rows written since carry the recipient
+    //      list the fan-out used; rows written before it cannot say who
+    //      they were for, so a scoped tag on one withholds it from
+    //      everyone but its sender.
     this.queryFeedStmt = this.db.prepare(
-      `SELECT id, ts, to_name, from_name, title, body, level, data, attachments
+      `SELECT id, ts, to_name, from_name, title, body, level, data, attachments, recipients
        FROM events
-       WHERE ts < ?
-         AND (to_name IS NULL OR from_name = ? OR to_name = ?)
+       WHERE ts < ?1
+         AND (to_name IS NULL OR from_name = ?2 OR to_name = ?2)
          AND (
            json_extract(data, '$.thread') IS NULL
            OR json_extract(data, '$.thread') NOT LIKE 'secret:%'
          )
-       ORDER BY ts DESC LIMIT ?`,
+         AND (
+           from_name = ?2
+           OR CASE
+                WHEN recipients IS NOT NULL
+                  THEN EXISTS (
+                    SELECT 1 FROM json_each(events.recipients) WHERE value = ?2
+                  )
+                WHEN to_name IS NOT NULL
+                  THEN to_name = ?2
+                ELSE json_extract(data, '$.thread') IS NULL
+                     OR json_extract(data, '$.thread') = 'chan:general'
+                     OR (
+                       json_extract(data, '$.thread') NOT LIKE 'chan:%'
+                       AND json_extract(data, '$.thread') NOT LIKE 'obj:%'
+                     )
+              END
+         )
+       ORDER BY ts DESC LIMIT ?3`,
     );
     this.queryDmStmt = this.db.prepare(
-      `SELECT id, ts, to_name, from_name, title, body, level, data, attachments
+      `SELECT id, ts, to_name, from_name, title, body, level, data, attachments, recipients
        FROM events
        WHERE ts < ?
          AND to_name IS NOT NULL
@@ -142,7 +169,7 @@ export class SqliteEventLog implements EventLog {
     // expected `chan:<id>` tag. Uses SQLite's JSON1 extension
     // (`json_extract`); part of the driver's required dialect.
     this.queryChannelStmt = this.db.prepare(
-      `SELECT id, ts, to_name, from_name, title, body, level, data, attachments
+      `SELECT id, ts, to_name, from_name, title, body, level, data, attachments, recipients
        FROM events
        WHERE ts < ?
          AND json_extract(data, '$.thread') = ?
@@ -152,7 +179,7 @@ export class SqliteEventLog implements EventLog {
     // any untagged broadcast (`to_name IS NULL` with no `data.thread`).
     // Mirrors `matchesChannel` in the in-memory log.
     this.queryGeneralStmt = this.db.prepare(
-      `SELECT id, ts, to_name, from_name, title, body, level, data, attachments
+      `SELECT id, ts, to_name, from_name, title, body, level, data, attachments, recipients
        FROM events
        WHERE ts < ?
          AND (
@@ -163,7 +190,11 @@ export class SqliteEventLog implements EventLog {
     );
   }
 
-  async append(message: Message): Promise<void> {
+  async append(message: Message, options: EventLogAppendOptions = {}): Promise<void> {
+    // An empty list is still an audience — a channel whose only member
+    // is offline fans out to nobody live, and that message is not
+    // team-visible afterwards. `[]` and `null` must not collapse.
+    const recipients = options.recipients ?? null;
     this.insertStmt.run(
       message.id,
       message.ts,
@@ -174,6 +205,7 @@ export class SqliteEventLog implements EventLog {
       message.level,
       JSON.stringify(message.data),
       message.attachments.length > 0 ? JSON.stringify(message.attachments) : null,
+      recipients === null ? null : JSON.stringify([...recipients]),
     );
   }
 
@@ -204,12 +236,7 @@ export class SqliteEventLog implements EventLog {
         limit,
       ) as unknown as EventRow[];
     } else {
-      rows = this.queryFeedStmt.all(
-        before,
-        options.viewer,
-        options.viewer,
-        limit,
-      ) as unknown as EventRow[];
+      rows = this.queryFeedStmt.all(before, options.viewer, limit) as unknown as EventRow[];
     }
     return rows.map(rowToMessage);
   }

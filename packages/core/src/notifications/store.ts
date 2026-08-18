@@ -60,6 +60,21 @@ export class NotificationsError extends Error {
 
 /** Raw-body cap on ingress; the stored body is capped to the same. */
 export const HOOK_BODY_MAX = 256 * 1024;
+
+/**
+ * How many delivery receipts to keep per endpoint.
+ *
+ * Deliveries were the one broker table with no ceiling and no prune:
+ * activity has retention, traces have `csuite prune-traces`, and this
+ * grew forever on a route an unauthenticated caller can drive. A cap
+ * per endpoint is self-maintaining — no scheduler, no operator step,
+ * and the bound is stated in rows rather than in days so a busy
+ * endpoint and a quiet one both stay bounded.
+ *
+ * 1000 is roughly a week of a chatty CI hook and far more than any
+ * diagnosis walks back through.
+ */
+export const DELIVERY_RETENTION_PER_ENDPOINT = 1000;
 /** Secret length cap (matches the SDK schema). */
 const SECRET_MAX = 4096;
 /** Wire `bodyPreview` length. */
@@ -473,6 +488,7 @@ class SqliteNotificationsStore implements NotificationsStore {
   private readonly selectDeliveriesBeforeStmt: SqlStatement;
   private readonly selectStrandedDebounceStmt: SqlStatement;
   private readonly deleteDeliveriesForEndpointStmt: SqlStatement;
+  private readonly trimDeliveriesStmt: SqlStatement;
 
   private readonly insertPendingStmt: SqlStatement;
   private readonly selectPendingForMemberStmt: SqlStatement;
@@ -581,6 +597,28 @@ class SqliteNotificationsStore implements NotificationsStore {
     );
     this.deleteDeliveriesForEndpointStmt = db.prepare(
       'DELETE FROM notification_deliveries WHERE endpoint_id = ?',
+    );
+    // Keep the newest N receipts per endpoint. Runs on insert, so the
+    // table self-trims on the same path that grows it.
+    //
+    // A queued delivery is never trimmed regardless of age: the pending
+    // row holds only the delivery's id, so trimming the row it points at
+    // would flush an empty notification when the member comes back. An
+    // offline member is exactly when a queue gets long AND its endpoint
+    // stays busy, so this is the case that would actually hit.
+    this.trimDeliveriesStmt = db.prepare(
+      `DELETE FROM notification_deliveries
+        WHERE endpoint_id = ?1
+          AND id NOT IN (
+            SELECT id FROM notification_deliveries
+             WHERE endpoint_id = ?1
+             ORDER BY received_at DESC, id DESC
+             LIMIT ?2
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM notification_pending p, json_each(p.delivery_ids)
+             WHERE json_each.value = notification_deliveries.id
+          )`,
     );
 
     const PENDING_COLS =
@@ -876,6 +914,7 @@ class SqliteNotificationsStore implements NotificationsStore {
       null,
       input.replayOf ?? null,
     );
+    this.trimDeliveriesStmt.run(input.endpointId, DELIVERY_RETENTION_PER_ENDPOINT);
     return this.getDeliveryRecord(id) as DeliveryRecord;
   }
 

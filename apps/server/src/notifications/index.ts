@@ -7,6 +7,7 @@ export {
   DEFAULT_HMAC_HEADER,
   DEFAULT_HMAC_PREFIX,
   DEFAULT_POLICY,
+  DELIVERY_RETENTION_PER_ENDPOINT,
   type DeliveryRecord,
   defaultRender,
   formatDuration,

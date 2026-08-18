@@ -169,12 +169,19 @@ describe('SqliteEventLog', () => {
     });
 
     it('still returns everything else, so the empty result above means something', async () => {
+      // `outsider` is in the audience of the scoped rows here — that is
+      // what puts them in this feed. Scoping itself is covered in
+      // packages/core/test/event-log-scope.test.ts, against both logs.
       const log = makeLog(tmpDbPath());
       await log.append(plain('broadcast', 1));
       await log.append(plain('dm', 2, { from: 'bob', to: 'outsider' }));
-      await log.append(plain('chan', 3, { data: { thread: 'chan:abc' } }));
-      await log.append(plain('obj', 4, { data: { thread: 'obj:obj-123' } }));
-      await log.append(secretEvent('secret', 5, 'deploy-key'));
+      await log.append(plain('chan', 3, { data: { thread: 'chan:abc' } }), {
+        recipients: ['outsider'],
+      });
+      await log.append(plain('obj', 4, { data: { thread: 'obj:obj-123' } }), {
+        recipients: ['outsider'],
+      });
+      await log.append(secretEvent('secret', 5, 'deploy-key'), { recipients: ['outsider'] });
 
       const seen = await log.query({ viewer: 'outsider' });
       expect(seen.map((m) => m.id).sort()).toEqual(['broadcast', 'chan', 'dm', 'obj']);
@@ -188,8 +195,12 @@ describe('SqliteEventLog', () => {
     });
 
     it('leaves a channel thread that merely contains "secret:" alone', async () => {
+      // In the channel, so the only thing that could withhold this row
+      // is the secret rule misfiring on a tag containing the word.
       const log = makeLog(tmpDbPath());
-      await log.append(plain('c', 1, { data: { thread: 'chan:top-secret:stuff' } }));
+      await log.append(plain('c', 1, { data: { thread: 'chan:top-secret:stuff' } }), {
+        recipients: ['outsider'],
+      });
       expect((await log.query({ viewer: 'outsider' })).map((m) => m.id)).toEqual(['c']);
     });
   });
