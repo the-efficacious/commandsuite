@@ -201,7 +201,19 @@ const APP_IN_SCOPE = [
  * the store cannot record. This site reports that the CALLER could not
  * run the sweep, which is the operational half of the same story.
  */
-const TOTAL_SITES = 67;
+/**
+ * 67 → 68: `totp lockout buckets pruned under pressure` in app.ts.
+ *
+ * OPERATIONAL, not a completeness claim. It reports that the login
+ * rate-limiter's bucket map hit its cap and shed the oldest entries —
+ * a statement about memory pressure on an in-process map, with no
+ * captured data on either side of it. Nothing is missing from a
+ * member's activity, gen_ai, or raw-body stream when it fires; the
+ * consequence is that a guesser gets a fresh five attempts, which the
+ * global bucket still counts. So it belongs to the operational half of
+ * the census, and stays out of retention.
+ */
+const TOTAL_SITES = 68;
 
 function messagesIn(file: string): string[] {
   let src: string | null = null;

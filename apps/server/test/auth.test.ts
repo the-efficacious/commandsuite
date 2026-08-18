@@ -297,6 +297,86 @@ describe('POST /session/totp', () => {
   });
 });
 
+// ─── codeless login rate limiting ───────────────────────────────────
+//
+// Codeless is the SPA's path: type a code, no member name. It needs a
+// tighter bound than targeted login because the server tries every
+// enrolled member. It ALSO used to hold the whole team's access
+// hostage: one global counter, ten wrong codes from anyone, and nobody
+// could sign in for fifteen minutes — renewable forever, from an
+// unauthenticated endpoint.
+
+describe('POST /session/totp — codeless', () => {
+  const guess = (
+    app: Awaited<ReturnType<typeof makeApp>>['app'],
+    source: string,
+    code = '000000',
+  ) =>
+    app.request('/session/totp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': source },
+      body: JSON.stringify({ code }),
+    });
+
+  it('signs in with no member name when the code matches', async () => {
+    const now = 1_700_000_000_000;
+    const { app, secret } = await makeApp({ now: () => now });
+    const res = await guess(app, '10.0.0.1', currentCode(secret, now));
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as SessionResponse).member).toBe('director-1');
+  });
+
+  it('locks out the guesser after 5 tries, and only the guesser', async () => {
+    const clock = 1_700_000_000_000;
+    const { app, secret } = await makeApp({ now: () => clock });
+
+    for (let i = 0; i < 5; i++) {
+      expect((await guess(app, '10.0.0.66')).status).toBe(401);
+    }
+    expect((await guess(app, '10.0.0.66', currentCode(secret, clock))).status).toBe(429);
+
+    // The rest of the team is unaffected — this is the whole point.
+    expect((await guess(app, '10.0.0.7', currentCode(secret, clock))).status).toBe(200);
+  });
+
+  it('degrades to "use your member name" instead of refusing everyone', async () => {
+    const clock = 1_700_000_000_000;
+    const { app, secret } = await makeApp({ now: () => clock });
+
+    // Spread the flood across sources so no single per-source bucket
+    // fills — this is the distributed case the global bucket is for.
+    for (let i = 0; i < 40; i++) {
+      expect((await guess(app, `10.0.1.${i}`)).status).toBe(401);
+    }
+
+    const codeless = await guess(app, '10.0.9.9', currentCode(secret, clock));
+    expect(codeless.status).toBe(429);
+    expect((await codeless.json()) as { code?: string }).toMatchObject({
+      code: 'member_name_required',
+    });
+
+    // …and the way it names still works, under the per-member bucket
+    // that has always governed targeted login.
+    const targeted = await app.request('/session/totp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ member: 'director-1', code: currentCode(secret, clock) }),
+    });
+    expect(targeted.status).toBe(200);
+  });
+
+  it('recovers when the window passes', async () => {
+    let clock = 1_700_000_000_000;
+    const { app, secret } = await makeApp({ now: () => clock });
+    for (let i = 0; i < 5; i++) {
+      expect((await guess(app, '10.0.0.66')).status).toBe(401);
+    }
+    expect((await guess(app, '10.0.0.66')).status).toBe(429);
+    clock += 16 * 60 * 1000;
+    expect((await guess(app, '10.0.0.66', currentCode(secret, clock))).status).toBe(200);
+  });
+});
+
 // ─── /session/logout and /session ───────────────────────────────────
 
 describe('session lifecycle', () => {

@@ -423,6 +423,30 @@ export interface AppOptions {
   now?: () => number;
 }
 
+/**
+ * Best-available identifier for the client behind a request, used to
+ * bucket rate limits on the unauthenticated endpoints (`POST /enroll`,
+ * codeless TOTP login).
+ *
+ * Header chain: `Forwarded` → `X-Forwarded-For` → `X-Real-IP` → a
+ * sentinel. These are NOT trusted as identity — anyone can send them.
+ * They are trusted only to SEPARATE callers, which is all a bucket
+ * needs: a spoofer trades one bucket for another and still cannot
+ * exceed the global ceiling that sits above the per-source one.
+ */
+function clientSourceKey(c: Context<AppBindings>): string {
+  const forwarded = c.req.header('Forwarded');
+  if (forwarded) {
+    const match = forwarded.match(/for=("?\[?[^;",\]]+\]?"?)/i);
+    if (match?.[1]) return match[1].replace(/^"|"$/g, '');
+  }
+  const xff = c.req.header('X-Forwarded-For');
+  if (xff) return xff.split(',')[0]?.trim() || 'unknown';
+  const real = c.req.header('X-Real-IP');
+  if (real) return real;
+  return 'unknown';
+}
+
 export type AppBindings = AuthBindings;
 
 /**
@@ -446,15 +470,31 @@ interface TotpLockout {
 const TOTP_MAX_FAILURES = 5;
 const TOTP_LOCKOUT_WINDOW_MS = 15 * 60 * 1000;
 
-// Global codeless lockout — applies to the SPA's "just type a code"
-// login path where the server iterates members to find a match. With N
-// enrolled members each guess has N× the per-user hit chance, so we
-// compensate with a tighter global cap in the same 15min window.
-// 10 failures / 15min × 6-digit code space × ~10 enrolled members works
-// out to a multi-year expected-crack time, comparable to the old
-// per-user flow.
-const TOTP_CODELESS_MAX_FAILURES = 10;
+// Codeless login — the SPA's "just type a code" path, where the server
+// iterates members to find a match. With N enrolled members each guess
+// has N× the per-user hit chance, so it needs a tighter bound than the
+// targeted path.
+//
+// TWO buckets, because one global counter was both the bound and a
+// team-wide outage switch: ten wrong codes from anyone locked every
+// member out of the web UI for fifteen minutes, renewable forever, from
+// an unauthenticated endpoint.
+//
+//   per source — 5 / 15min, and the attacker's own bucket is what
+//                fills first, so guessing costs the guesser their
+//                access and nobody else's
+//   global     — 40 / 15min, still bounding the aggregate guess rate
+//                across every source. Reaching it no longer refuses
+//                logins outright: it suspends the CODELESS shortcut and
+//                asks for a member name, which routes to the per-member
+//                bucket that has always governed targeted login.
+//
+// So the guess-rate ceiling survives, and a flood degrades the login
+// path to "type your name too" instead of taking it offline.
+const TOTP_CODELESS_MAX_FAILURES = 40;
+const TOTP_CODELESS_PER_SOURCE_MAX_FAILURES = 5;
 const CODELESS_LOCKOUT_KEY = '__codeless__';
+const CODELESS_SOURCE_LOCKOUT_PREFIX = 'codeless-src:';
 
 /**
  * The set of request paths we treat as "API." Any GET outside this
@@ -847,7 +887,11 @@ export function createApp(options: AppOptions): CreatedApp {
   const totpLockouts = new Map<string, TotpLockout>();
 
   function maxFailuresFor(key: string): number {
-    return key === CODELESS_LOCKOUT_KEY ? TOTP_CODELESS_MAX_FAILURES : TOTP_MAX_FAILURES;
+    if (key === CODELESS_LOCKOUT_KEY) return TOTP_CODELESS_MAX_FAILURES;
+    if (key.startsWith(CODELESS_SOURCE_LOCKOUT_PREFIX)) {
+      return TOTP_CODELESS_PER_SOURCE_MAX_FAILURES;
+    }
+    return TOTP_MAX_FAILURES;
   }
 
   function checkTotpLockout(key: string): { locked: boolean; retryAfter?: number } {
@@ -868,10 +912,40 @@ export function createApp(options: AppOptions): CreatedApp {
     return { locked: false };
   }
 
+  /**
+   * Cap on live lockout buckets.
+   *
+   * Per-member keys are bounded by the roster, but per-source keys come
+   * from a request header anyone can vary, so an attacker who rotates
+   * `X-Forwarded-For` mints a bucket per request. Sweeping expired
+   * entries reclaims the honest ones; the hard cap is what stops a
+   * flood of fresh keys from becoming a memory leak. Evicting the
+   * oldest bucket is safe in the direction that matters — an evicted
+   * bucket means a guesser gets their five attempts again, which the
+   * global bucket still counts.
+   */
+  const TOTP_LOCKOUT_MAX_BUCKETS = 10_000;
+
+  function pruneTotpLockouts(t: number): void {
+    for (const [key, entry] of totpLockouts) {
+      if (t - entry.firstFailureAt >= TOTP_LOCKOUT_WINDOW_MS) totpLockouts.delete(key);
+    }
+    if (totpLockouts.size <= TOTP_LOCKOUT_MAX_BUCKETS) return;
+    // Map iteration is insertion-ordered, so the front is the oldest.
+    const excess = totpLockouts.size - TOTP_LOCKOUT_MAX_BUCKETS;
+    let dropped = 0;
+    for (const key of totpLockouts.keys()) {
+      totpLockouts.delete(key);
+      if (++dropped >= excess) break;
+    }
+    logger.warn('totp lockout buckets pruned under pressure', { dropped });
+  }
+
   function recordTotpFailure(key: string): void {
     const t = now();
     const entry = totpLockouts.get(key);
     if (!entry || t - entry.firstFailureAt >= TOTP_LOCKOUT_WINDOW_MS) {
+      if (totpLockouts.size >= TOTP_LOCKOUT_MAX_BUCKETS) pruneTotpLockouts(t);
       totpLockouts.set(key, { failures: 1, firstFailureAt: t });
       return;
     }
@@ -1017,12 +1091,42 @@ export function createApp(options: AppOptions): CreatedApp {
     //   1. `member` was provided → targeted login (CLI, scripts that
     //      know their name). Uses the per-member rate-limit bucket.
     //   2. `member` was omitted → codeless login (SPA). Server
-    //      iterates TOTP-enrolled members to find a match. Uses the
-    //      tighter global `__codeless__` rate-limit bucket to
-    //      compensate for the multi-member effective attack surface.
+    //      iterates TOTP-enrolled members to find a match. Guarded by
+    //      two buckets — one per source, one global — which together
+    //      bound the multi-member attack surface without letting one
+    //      guesser lock out the team. See TOTP_CODELESS_MAX_FAILURES.
+    const codeless = providedName === undefined;
     const lockoutKey = providedName ?? CODELESS_LOCKOUT_KEY;
+    // The source bucket is checked first and is the one a guesser
+    // fills: it costs them their own access and nobody else's.
+    const sourceKey = codeless ? `${CODELESS_SOURCE_LOCKOUT_PREFIX}${clientSourceKey(c)}` : null;
+    if (sourceKey !== null) {
+      const sourceLockout = checkTotpLockout(sourceKey);
+      if (sourceLockout.locked) {
+        return c.json(
+          { error: 'too many attempts; try again later', retryAfter: sourceLockout.retryAfter },
+          429,
+        );
+      }
+    }
     const lockout = checkTotpLockout(lockoutKey);
     if (lockout.locked) {
+      // Codeless is a convenience, not the only way in. When the global
+      // ceiling is reached we withdraw the convenience and say what to
+      // do instead — targeted login still works, under the per-member
+      // bucket that has always governed it. Refusing every login here
+      // is what turned a rate limit into an outage.
+      if (codeless) {
+        return c.json(
+          {
+            error:
+              'too many sign-in attempts across this server; sign in with your member name instead',
+            code: 'member_name_required' as const,
+            retryAfter: lockout.retryAfter,
+          },
+          429,
+        );
+      }
       return c.json(
         { error: 'too many attempts; try again later', retryAfter: lockout.retryAfter },
         429,
@@ -1057,6 +1161,7 @@ export function createApp(options: AppOptions): CreatedApp {
 
     if (!matched) {
       recordTotpFailure(lockoutKey);
+      if (sourceKey !== null) recordTotpFailure(sourceKey);
       logger.warn('totp login rejected', {
         path: providedName ? 'targeted' : 'codeless',
         ...(providedName ? { name: providedName } : {}),
@@ -1068,6 +1173,7 @@ export function createApp(options: AppOptions): CreatedApp {
 
     members.recordTotpAccept(matchedName, matchedCounter);
     clearTotpLockout(lockoutKey);
+    if (sourceKey !== null) clearTotpLockout(sourceKey);
     if (providedName === undefined) {
       clearTotpLockout(matchedName);
     }
@@ -5460,32 +5566,12 @@ export function createApp(options: AppOptions): CreatedApp {
     }
     const mintBuckets = new Map<string, MintBucket>();
 
-    function ipKey(c: Context<AppBindings>): string {
-      // Hono doesn't expose remoteAddress directly; pull from the
-      // standard headers a reverse proxy sets, falling back to a
-      // sentinel. The header chain is `Forwarded` → `X-Forwarded-For`
-      // → 'unknown'. Header values are NOT trusted for security,
-      // only for rate-limit bucketing — an attacker who can spoof
-      // `X-Forwarded-For` is already inside the trust boundary
-      // around the broker host.
-      const forwarded = c.req.header('Forwarded');
-      if (forwarded) {
-        const match = forwarded.match(/for=("?\[?[^;",\]]+\]?"?)/i);
-        if (match?.[1]) return match[1].replace(/^"|"$/g, '');
-      }
-      const xff = c.req.header('X-Forwarded-For');
-      if (xff) return xff.split(',')[0]?.trim() || 'unknown';
-      const real = c.req.header('X-Real-IP');
-      if (real) return real;
-      return 'unknown';
-    }
-
     /**
      * Bound an enrollment source label to what `PendingEnrollmentSchema`
      * will accept, and say so when it had to cut.
      *
      * Called ONLY on the value that gets STORED — never on the rate-limit
-     * key, which keeps the full `ipKey()` string. Truncating the bucket key
+     * key, which keeps the full `clientSourceKey()` string. Truncating it
      * would merge every client sharing a long forwarded prefix into one
      * bucket, so a rate limit tuned per-client would start firing across
      * unrelated ones.
@@ -5546,7 +5632,7 @@ export function createApp(options: AppOptions): CreatedApp {
     }
 
     app.post(PATHS.enroll, async (c) => {
-      const ip = ipKey(c);
+      const ip = clientSourceKey(c);
       const limit = checkMintLimit(ip);
       if (!limit.ok) {
         c.header('Retry-After', String(limit.retryAfter));
