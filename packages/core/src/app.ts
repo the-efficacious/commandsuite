@@ -5944,9 +5944,8 @@ export function createApp(options: AppOptions): CreatedApp {
         return new Response(stream, {
           status: 200,
           headers: {
-            'Content-Type': entry.mimeType ?? 'application/octet-stream',
+            ...fileResponseHeaders(entry.mimeType, entry.name),
             ...(entry.size !== null ? { 'Content-Length': String(entry.size) } : {}),
-            'Content-Disposition': `inline; filename="${encodeFilenameForHeader(entry.name)}"`,
           },
         });
       } catch (err) {
@@ -6243,6 +6242,91 @@ function mapFsError(c: Context<AppBindings>, err: unknown): Response {
     return c.json({ error: err.message, code: err.code }, status as 400 | 403 | 404 | 409 | 413);
   }
   return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+}
+
+/**
+ * MIME types a browser may render in place. Everything else is served
+ * as a download.
+ *
+ * The stored `mimeType` is a CLAIM BY WHOEVER UPLOADED THE FILE — the
+ * write route takes it verbatim from a query parameter — and this
+ * route serves the bytes from the same origin as the web UI. Reflecting
+ * that claim back as `Content-Type` with `inline` disposition let any
+ * member store a document that runs as script on the broker's origin:
+ * open the link, and it acts as whoever opened it, session cookie and
+ * all.
+ *
+ * So the allowlist is by RENDERED BEHAVIOR, not by "is this type
+ * plausible":
+ *   - raster images and media decode to pixels or samples; they carry
+ *     no script
+ *   - `application/pdf` renders in the browser's own PDF viewer, which
+ *     is what the preview modal's iframe needs, and does not reach the
+ *     embedding origin's DOM
+ *
+ * `image/svg+xml` is deliberately ABSENT. An SVG is a document: opened
+ * directly it executes its own `<script>` on this origin. It renders
+ * fine inside the `<img>` the UI uses either way, because
+ * `Content-Disposition` does not apply to subresource loads — only to
+ * navigation. That asymmetry is the whole reason this list can be
+ * tight without breaking the previews.
+ */
+const INLINE_RENDERABLE_TYPES: ReadonlySet<string> = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'image/avif',
+  'image/bmp',
+  'image/x-icon',
+  'image/vnd.microsoft.icon',
+  'application/pdf',
+]);
+
+const INLINE_RENDERABLE_PREFIXES: readonly string[] = ['audio/', 'video/'];
+
+function isInlineRenderable(mimeType: string): boolean {
+  return (
+    INLINE_RENDERABLE_TYPES.has(mimeType) ||
+    INLINE_RENDERABLE_PREFIXES.some((prefix) => mimeType.startsWith(prefix))
+  );
+}
+
+/**
+ * Response headers for a stored file. Three defenses, because the
+ * content is attacker-authored and the origin is shared with the SPA:
+ *
+ *   `nosniff`          — the declared type is the only type. Without it
+ *                        a browser may sniff a `text/plain` upload into
+ *                        HTML and undo the allowlist below.
+ *   disposition        — `inline` only for types that render without
+ *                        scripting (see INLINE_RENDERABLE_TYPES);
+ *                        everything else downloads instead of executing.
+ *   CSP `sandbox`      — if a document is rendered anyway, it lands in
+ *                        an opaque origin with no script, so it cannot
+ *                        reach this origin's cookies or API.
+ *
+ * PDFs are the one exception to `sandbox`: the browser's PDF viewer is
+ * the thing rendering them, and sandboxing the response breaks that
+ * viewer in the preview iframe. They still get `nosniff` and a pinned
+ * `Content-Type`, and a PDF cannot script the embedding origin.
+ */
+function fileResponseHeaders(mimeType: string | null, fileName: string): Record<string, string> {
+  const declared = (mimeType ?? 'application/octet-stream').trim().toLowerCase();
+  const baseType = declared.split(';')[0]?.trim() ?? 'application/octet-stream';
+  const inline = isInlineRenderable(baseType);
+  const headers: Record<string, string> = {
+    'Content-Type': mimeType ?? 'application/octet-stream',
+    'X-Content-Type-Options': 'nosniff',
+    'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename="${encodeFilenameForHeader(
+      fileName,
+    )}"`,
+  };
+  headers['Content-Security-Policy'] =
+    baseType === 'application/pdf'
+      ? "default-src 'none'; object-src 'self'; base-uri 'none'; form-action 'none'"
+      : "default-src 'none'; sandbox; base-uri 'none'; form-action 'none'";
+  return headers;
 }
 
 /**
