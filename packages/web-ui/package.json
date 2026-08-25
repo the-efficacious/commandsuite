@@ -40,23 +40,23 @@
     "clean": "rm -rf .turbo"
   },
   "dependencies": {
-    "@preact/signals": "^2.9.4",
+    "@preact/signals": "^2.11.1",
     "@the-efficacious/brand": "^0.2.0",
     "csuite-sdk": "workspace:*",
-    "dompurify": "^3.4.12",
-    "highlight.js": "^11.11.1",
-    "lucide-preact": "^1.26.0",
-    "marked": "^18.0.7",
-    "preact": "^10.29.7"
+    "dompurify": "^3.4.14",
+    "highlight.js": "^11.12.0",
+    "lucide-preact": "^1.33.0",
+    "marked": "^18.0.10",
+    "preact": "^10.29.8"
   },
   "devDependencies": {
     "@preact/preset-vite": "^2.10.6",
     "@testing-library/preact": "^3.2.4",
-    "@types/node": "^26.1.1",
-    "happy-dom": "^20.11.1",
+    "@types/node": "^26.2.0",
+    "happy-dom": "^20.11.6",
     "jsdom": "^30.0.1",
     "typescript": "^6.0.3",
-    "vite": "^8.1.5",
-    "vitest": "^4.1.10"
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11"
   }
 }
