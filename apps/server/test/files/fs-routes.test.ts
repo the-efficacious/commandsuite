@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import {
   Broker,
   createApp,
+  createSqliteChannelStore,
   createTokenStoreFromMembers,
   InMemoryEventLog,
   SqliteSessionStore,
@@ -27,6 +28,7 @@ import { mockTeamStore } from '../helpers/test-stores.js';
 
 const ALICE_TOKEN = 'csuite_test_alice_secret';
 const BOB_TOKEN = 'csuite_test_bob_secret';
+const CAROL_TOKEN = 'csuite_test_carol_secret';
 const DIRECTOR_TOKEN = 'csuite_test_director_secret';
 
 const TEAM: Team = {
@@ -54,6 +56,7 @@ async function makeApp() {
   const members = createMemberStore([
     { name: 'alice', role: WORKER_ROLE, permissions: [], token: ALICE_TOKEN },
     { name: 'bob', role: WORKER_ROLE, permissions: [], token: BOB_TOKEN },
+    { name: 'carol', role: WORKER_ROLE, permissions: [], token: CAROL_TOKEN },
     {
       name: 'diana',
       role: WORKER_ROLE,
@@ -71,6 +74,7 @@ async function makeApp() {
   tmpDirs.push(blobDir);
   const blobs = new LocalBlobStore(blobDir);
   const files = createSqliteFilesystemStore({ db, blobs });
+  const channels = createSqliteChannelStore(db);
   for (const m of members.members()) {
     files.ensureHome(m.name);
   }
@@ -81,6 +85,7 @@ async function makeApp() {
     sessions,
     teamStore: mockTeamStore(TEAM),
     files,
+    channels,
     version: '0.0.0',
     logger: silentLogger(),
   });
@@ -222,7 +227,7 @@ describe('/fs/ls', () => {
     const res = await app.request('/fs/ls?path=%2F', { headers: authed(DIRECTOR_TOKEN) });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { entries: FsEntry[] };
-    expect(body.entries.map((e) => e.name).sort()).toEqual(['alice', 'bob', 'diana']);
+    expect(body.entries.map((e) => e.name).sort()).toEqual(['alice', 'bob', 'carol', 'diana']);
   });
 });
 
@@ -288,6 +293,55 @@ describe('/push with attachments', () => {
 
     // The grant is persisted in the store under the message id.
     expect(files.hasGrant('/alice/share.txt', 'bob')).toBe(true);
+  });
+
+  it('grants a private-channel attachment only to channel members', async () => {
+    const { app, files } = await makeApp();
+    await writeFile(app, ALICE_TOKEN, '/alice/private.txt', 'text/plain', 'channel only');
+
+    const created = await app.request('/channels', {
+      method: 'POST',
+      headers: { ...authed(ALICE_TOKEN), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slug: 'private-room' }),
+    });
+    expect(created.status).toBe(201);
+    const { id } = (await created.json()) as { id: string };
+    const added = await app.request('/channels/private-room/members', {
+      method: 'POST',
+      headers: { ...authed(ALICE_TOKEN), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ member: 'bob' }),
+    });
+    expect(added.status).toBeLessThan(300);
+
+    const pushed = await app.request('/push', {
+      method: 'POST',
+      headers: { ...authed(ALICE_TOKEN), 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        body: 'private attachment',
+        data: { thread: `chan:${id}` },
+        attachments: [
+          { path: '/alice/private.txt', name: 'private.txt', size: 12, mimeType: 'text/plain' },
+        ],
+      }),
+    });
+    expect(pushed.status).toBe(200);
+
+    expect(
+      (
+        await app.request('/fs/read/alice/private.txt', {
+          headers: authed(BOB_TOKEN),
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await app.request('/fs/read/alice/private.txt', {
+          headers: authed(CAROL_TOKEN),
+        })
+      ).status,
+    ).toBe(403);
+    expect(files.hasGrant('/alice/private.txt', 'bob')).toBe(true);
+    expect(files.hasGrant('/alice/private.txt', 'carol')).toBe(false);
   });
 
   it('rejects attachments on paths the sender cannot access', async () => {

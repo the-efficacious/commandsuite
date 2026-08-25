@@ -12,6 +12,7 @@
  */
 
 import { signal } from '@preact/signals';
+import { ClientError } from 'csuite-sdk/client';
 import type { Permission, Role, SessionResponse } from 'csuite-sdk/types';
 import { getClient } from './client.js';
 
@@ -60,19 +61,31 @@ export async function bootstrap(): Promise<void> {
 }
 
 /**
- * Submit a TOTP login. The SPA uses the codeless flow — only the
- * 6-digit code is submitted and the server iterates enrolled slots
- * to find a match. On success the server sets the session cookie
- * and we update the signal to authenticated. On failure we throw
- * `LoginError` so the Login component can render a user-facing message.
+ * Submit a TOTP login. The SPA starts with the codeless flow; when the
+ * server-wide codeless ceiling is reached, Login retries with the optional
+ * member name so one caller's failures cannot lock the UI for everyone.
+ * On success the server sets the session cookie and we update the signal
+ * to authenticated. On failure we preserve the broker's machine-readable
+ * code so the Login component can expose that fallback.
  */
-export async function loginWithTotp(code: string): Promise<void> {
+export async function loginWithTotp(code: string, member?: string): Promise<void> {
   try {
-    const result = await getClient().loginWithTotp({ code });
+    const result = await getClient().loginWithTotp({ code, ...(member ? { member } : {}) });
     session.value = authenticatedFrom(result);
     sessionNotice.value = null;
   } catch (err) {
-    throw new LoginError(err instanceof Error && err.message ? err.message : 'login failed');
+    if (err instanceof ClientError) {
+      let detail: { error?: unknown; code?: unknown } = {};
+      try {
+        detail = JSON.parse(err.body) as { error?: unknown; code?: unknown };
+      } catch {
+        // A non-JSON error still carries the HTTP status below.
+      }
+      const message = typeof detail.error === 'string' ? detail.error : err.message;
+      const errorCode = typeof detail.code === 'string' ? detail.code : null;
+      throw new LoginError(message, errorCode);
+    }
+    throw new LoginError(err instanceof Error && err.message ? err.message : 'login failed', null);
   }
 }
 
@@ -97,9 +110,12 @@ export async function logout(notice?: string): Promise<void> {
 }
 
 export class LoginError extends Error {
-  constructor(message: string) {
+  readonly code: string | null;
+
+  constructor(message: string, code: string | null) {
     super(message);
     this.name = 'LoginError';
+    this.code = code;
   }
 }
 

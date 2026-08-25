@@ -54,6 +54,27 @@ export function sqlDriverConformance(makeDriver: () => SqlDriver): void {
       expect(row.thread).toBe('chan:general');
     });
 
+    it('supports json_each, which the event feed scopes rows with', () => {
+      const db = makeDriver();
+      db.exec('CREATE TABLE r (id TEXT NOT NULL, recipients TEXT)');
+      const insert = db.prepare('INSERT INTO r (id, recipients) VALUES (?, ?)');
+      insert.run('scoped', JSON.stringify(['alice', 'bob']));
+      insert.run('broadcast', null);
+      const stmt = db.prepare(
+        `SELECT id FROM r
+          WHERE recipients IS NULL
+             OR EXISTS (SELECT 1 FROM json_each(r.recipients) WHERE value = ?)
+          ORDER BY id`,
+      );
+      expect((stmt.all('bob') as Array<{ id: string }>).map((row) => row.id)).toEqual([
+        'broadcast',
+        'scoped',
+      ]);
+      expect((stmt.all('carol') as Array<{ id: string }>).map((row) => row.id)).toEqual([
+        'broadcast',
+      ]);
+    });
+
     it('surfaces UNIQUE violations as thrown errors, not silent no-ops', () => {
       const db = makeDriver();
       db.exec('CREATE TABLE u (id TEXT PRIMARY KEY)');

@@ -259,7 +259,21 @@ export class Broker {
       attachments: payload.attachments ?? [],
     };
 
-    await this.eventLog.append(message);
+    // The audience is persisted with the row, not just used for live
+    // fan-out. A scoped push (channel, objective thread, secret) stores
+    // `to: null` like a broadcast does, so the row alone cannot say who
+    // it was for — and `/history` answered that question wrong for as
+    // long as it had to guess from the thread tag.
+    //
+    // Recorded BEFORE delivery, from the same list delivery uses, so
+    // the two cannot drift: whoever the fan-out below reaches is
+    // whoever the durable read will show it to.
+    await this.eventLog.append(message, {
+      recipients:
+        targetName === null && context.recipients !== undefined
+          ? [...new Set([...context.recipients, ...(context.from ? [context.from] : [])])]
+          : null,
+    });
 
     const recipients = new Set<PresenceState>();
     if (targetName) {

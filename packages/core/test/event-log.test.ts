@@ -82,12 +82,23 @@ describe('InMemoryEventLog secret-event scoping', () => {
   it('does not swallow anything else — the feed still works', async () => {
     // Absence tests need a control that proves the query can see rows
     // at all, or "empty" means nothing.
+    //
+    // The channel and objective rows carry `outsider` in their
+    // audience, which is what puts them in this feed. Appended without
+    // one they would be withheld — see the scoping suite; this case is
+    // about the secret rule not over-reaching, not about scope.
     const log = new InMemoryEventLog();
     await log.append(msg({ id: 'broadcast', ts: 1 }));
     await log.append(msg({ id: 'dm', ts: 2, from: 'bob', to: 'outsider' }));
-    await log.append(msg({ id: 'chan', ts: 3, data: { thread: channelThreadTag('abc') } }));
-    await log.append(msg({ id: 'obj', ts: 4, data: { thread: 'obj:obj-123' } }));
-    await log.append(msg({ id: 'secret', ts: 5, data: { thread: 'secret:deploy-key' } }));
+    await log.append(msg({ id: 'chan', ts: 3, data: { thread: channelThreadTag('abc') } }), {
+      recipients: ['outsider'],
+    });
+    await log.append(msg({ id: 'obj', ts: 4, data: { thread: 'obj:obj-123' } }), {
+      recipients: ['outsider'],
+    });
+    await log.append(msg({ id: 'secret', ts: 5, data: { thread: 'secret:deploy-key' } }), {
+      recipients: ['outsider'],
+    });
 
     const seen = await log.query({ viewer: 'outsider' });
     expect(seen.map((m) => m.id).sort()).toEqual(['broadcast', 'chan', 'dm', 'obj']);
@@ -105,9 +116,13 @@ describe('InMemoryEventLog secret-event scoping', () => {
 
   it('leaves a thread merely containing "secret:" alone', async () => {
     // The rule is a prefix, and a channel that happens to mention the
-    // word is not a secret event.
+    // word is not a secret event. `outsider` is in the channel, so the
+    // only thing that could withhold this row is the secret rule
+    // misfiring on a tag that merely contains the word.
     const log = new InMemoryEventLog();
-    await log.append(msg({ id: 'c', ts: 1, data: { thread: 'chan:top-secret:stuff' } }));
+    await log.append(msg({ id: 'c', ts: 1, data: { thread: 'chan:top-secret:stuff' } }), {
+      recipients: ['outsider'],
+    });
     expect((await log.query({ viewer: 'outsider' })).map((m) => m.id)).toEqual(['c']);
   });
 });

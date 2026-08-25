@@ -41,6 +41,7 @@ import type {
 import type { Broker } from '../broker.js';
 import type { ChannelStore } from '../channels.js';
 import { GENERAL_CHANNEL_ID } from '../event-log.js';
+import { sha256Hex } from '../hashing.js';
 import type { Logger } from '../logger.js';
 import type { MemberStore } from '../members-domain.js';
 import type { WorkStateTracker } from '../work-state.js';
@@ -435,19 +436,40 @@ export function createNotificationDispatcher(
       const title = endpoint.title ?? (endpoint.displayName || endpoint.slug);
 
       if (verifyReason !== null) {
+        // The RECEIPT is kept; the PAYLOAD is not.
+        //
+        // `/hooks/:slug` is unauthenticated by design — the signature is
+        // the gate — so a caller who fails it is, by definition, someone
+        // we have not authenticated. Retaining their body verbatim made
+        // an anonymous caller a writer of durable broker storage: 256 KB
+        // per request, 120 requests a minute per endpoint, nothing
+        // pruning it. That is a disk-fill primitive dressed as an audit
+        // trail.
+        //
+        // What a reviewer actually needs from a rejection is that it
+        // happened, when, why, and whether two rejections carried the
+        // same payload. Size and digest answer all of it, in 100 bytes,
+        // and a digest is comparable against a legitimate sender's body
+        // when someone is diagnosing a signing mismatch.
+        const digest = await sha256Hex(bodyText);
         const rejected = store.insertDelivery({
           endpointId: endpoint.id,
           endpointSlug: endpoint.slug,
           receivedAt: now(),
           status: 'rejected',
           statusReason: verifyReason,
-          body: bodyText,
+          body: `[unverified payload not retained — ${input.rawBody.length} bytes, sha256:${digest}]`,
           contentType: input.contentType,
           level,
           title,
           overrides: input.overrides,
         });
-        logger.warn('hook delivery rejected', { endpoint: endpoint.slug, reason: verifyReason });
+        logger.warn('hook delivery rejected', {
+          endpoint: endpoint.slug,
+          reason: verifyReason,
+          bytes: input.rawBody.length,
+          sha256: digest,
+        });
         return { id: rejected.id, status: 'rejected', httpStatus: 401 };
       }
 
@@ -483,6 +505,18 @@ export function createNotificationDispatcher(
     async replay(deliveryId: string): Promise<DeliveryRecord> {
       const source = store.getDeliveryRecord(deliveryId);
       if (!source) throw new NotificationsError('not_found', `delivery ${deliveryId} not found`);
+      // A rejected delivery never passed verification, so replaying it
+      // would push an unauthenticated caller's content to the team
+      // under the endpoint's name — the one thing the signature check
+      // exists to prevent, reachable through the admin surface instead
+      // of the ingress. Its body is not retained either (see `ingest`),
+      // so there is nothing to replay even if it were allowed.
+      if (source.status === 'rejected') {
+        throw new NotificationsError(
+          'invalid_input',
+          'this delivery failed signature verification and cannot be replayed',
+        );
+      }
       const endpoint = store.get(source.endpointId);
       if (!endpoint) {
         throw new NotificationsError('not_found', 'the delivery’s endpoint no longer exists');

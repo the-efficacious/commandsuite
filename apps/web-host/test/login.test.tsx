@@ -133,6 +133,48 @@ describe('<Login />', () => {
       expect(session.value.permissions).toContain('members.manage');
     }
   });
+
+  it('asks for a member name and retries through targeted login at the codeless ceiling', async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    stubFetch({
+      '/session/totp': (init) => {
+        const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+        requests.push(body);
+        if (requests.length === 1) {
+          return {
+            status: 429,
+            body: {
+              error: 'too many sign-in attempts; sign in with your member name instead',
+              code: 'member_name_required',
+            },
+          };
+        }
+        return {
+          status: 200,
+          body: {
+            member: 'director-1',
+            role: { title: 'director', description: '' },
+            permissions: ['members.manage'],
+            expiresAt: 9_999_999_999_999,
+          },
+        };
+      },
+    });
+    render(<Login />);
+
+    fireEvent.input(screen.getByPlaceholderText('000000'), { target: { value: '123456' } });
+    fireEvent.submit(screen.getByRole('button', { name: /sign in/i }).closest('form') as Element);
+
+    const memberInput = await screen.findByPlaceholderText('director-1');
+    // The valid code is retained so the user can identify themselves
+    // and retry immediately, before the current TOTP rotation ends.
+    expect((screen.getByPlaceholderText('000000') as HTMLInputElement).value).toBe('123456');
+    fireEvent.input(memberInput, { target: { value: 'director-1' } });
+    fireEvent.submit(screen.getByRole('button', { name: /sign in/i }).closest('form') as Element);
+
+    await waitFor(() => expect(session.value.status).toBe('authenticated'));
+    expect(requests).toEqual([{ code: '123456' }, { code: '123456', member: 'director-1' }]);
+  });
 });
 
 describe('loginWithTotp', () => {

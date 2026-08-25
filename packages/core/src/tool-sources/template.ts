@@ -29,6 +29,10 @@
  *   2. Execute time: the expanded URL's origin must equal the origin
  *      computed at save time (re-derived here) — belt and braces
  *      against encoding tricks.
+ *   3. Redirect time: `expandBinding` returns that origin so the
+ *      executor can hold every hop to it. A pin checked once, on the
+ *      URL we start from, is not a pin — see `fetchWithPinnedOrigin`
+ *      in custom-executor.ts.
  *
  * Credential headers are NOT part of templates: `validateBinding`
  * rejects bindings that set `authorization` (or the source
@@ -218,6 +222,13 @@ function walkJsonTemplate(
 
 export interface ExpandedRequest {
   url: string;
+  /**
+   * The binding's static origin — the URL with every placeholder
+   * neutralized. Returned alongside the expanded URL because the
+   * executor re-checks it on every redirect hop, not only on the URL
+   * it starts from.
+   */
+  origin: string;
   headers: Record<string, string>;
   /** Serialized body, or null when the binding has none. */
   body: string | null;
@@ -314,7 +325,7 @@ export function expandBinding(
     MAX_TIMEOUT_MS,
   );
 
-  return { url: finalUrl.toString(), headers, body, contentType, timeoutMs };
+  return { url: finalUrl.toString(), origin: staticOrigin, headers, body, contentType, timeoutMs };
 }
 
 /** Sentinel returned by expandJsonNode when a whole-token arg is absent. */
