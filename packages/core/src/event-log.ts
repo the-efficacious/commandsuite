@@ -73,6 +73,13 @@ export function channelThreadTag(channelId: string): string {
 
 /** Thread prefix for objective lifecycle + discussion events (`obj:<id>`). */
 export const OBJECTIVE_THREAD_PREFIX = 'obj:' as const;
+/** Other fan-out event families whose membership can be narrower than the team. */
+const TOOL_THREAD_PREFIX = 'tool:' as const;
+const VARIABLE_THREAD_PREFIX = 'variable:' as const;
+const NOTIFICATION_THREAD_PREFIX = 'hook:' as const;
+
+/** Recipient-list events that predate the thread-tag convention. */
+const SCOPED_UNTHREADED_KINDS: ReadonlySet<string> = new Set(['instructions', 'context_control']);
 
 /**
  * True when a thread tag names an audience narrower than the team.
@@ -89,10 +96,27 @@ export function isScopedThreadTag(tag: unknown): boolean {
   if (typeof tag !== 'string' || tag.length === 0) return false;
   if (tag.startsWith(SECRET_THREAD_PREFIX)) return true;
   if (tag.startsWith(OBJECTIVE_THREAD_PREFIX)) return true;
+  if (tag.startsWith(TOOL_THREAD_PREFIX)) return true;
+  if (tag.startsWith(VARIABLE_THREAD_PREFIX)) return true;
+  if (tag.startsWith(NOTIFICATION_THREAD_PREFIX)) return true;
   if (tag.startsWith(CHANNEL_THREAD_PREFIX)) {
     return tag !== channelThreadTag(GENERAL_CHANNEL_ID);
   }
   return false;
+}
+
+/**
+ * Whether a row with no recorded audience came from a scoped fan-out.
+ *
+ * Most such events carry a thread tag. Instruction-change and context-control
+ * pushes do not, but their `kind` still identifies recipient-list delivery.
+ * Both shapes existed before the audience column, so upgrades must recognize
+ * both or old private rows remain broadcasts forever.
+ */
+function isLegacyScopedEvent(ev: Pick<Message, 'data'>): boolean {
+  if (isScopedThreadTag(ev.data?.thread)) return true;
+  const kind = ev.data?.kind;
+  return typeof kind === 'string' && SCOPED_UNTHREADED_KINDS.has(kind);
 }
 
 /** True when a message is a secret lifecycle event. */
@@ -160,10 +184,11 @@ export function clampQueryLimit(raw: number | undefined): number {
  *   2. Addressed messages (`to` set) reach their two ends only.
  *   3. A message with a recorded audience reaches that audience, plus
  *      its sender.
- *   4. A message with NO recorded audience predates this column. If it
- *      carries a scoped thread tag we cannot reconstruct who it was
- *      for, so it is withheld from everyone but its sender — the
- *      fail-closed direction. Unscoped legacy rows stay visible.
+ *   4. A message with NO recorded audience predates this column. If its
+ *      thread or event kind identifies recipient-list delivery, we cannot
+ *      reconstruct who it was for, so it is withheld from everyone but
+ *      its sender — the fail-closed direction. Unscoped legacy rows stay
+ *      visible.
  */
 export function feedVisibleTo(
   ev: Message,
@@ -175,7 +200,7 @@ export function feedVisibleTo(
   if (ev.from === viewer) return true;
   if (recipients !== null) return recipients.includes(viewer);
   if (ev.to !== null) return ev.to === viewer;
-  return !isScopedThreadTag(ev.data?.thread);
+  return !isLegacyScopedEvent(ev);
 }
 
 interface StoredEvent {

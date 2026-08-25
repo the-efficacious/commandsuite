@@ -190,13 +190,14 @@ general channel scrollback. `limit` defaults to 100, max 1000
 client-side). `before` is an epoch-ms cursor for paging.
 
 Every form is scoped to the caller. A message delivered to a named
-audience — a private channel, an objective thread — is returned to
-that audience and its sender, and to nobody else; the audience is
-recorded when the message is delivered, so the read agrees with the
-live fan-out. Secret lifecycle events are in no one's feed (use
-`GET /secrets`). Messages persisted before audiences were recorded
-cannot say who they were for: if such a row carries a channel or
-objective thread tag, only its sender sees it.
+audience — a private channel, objective thread, registry event, or
+targeted control — is returned to that audience and its sender, and to
+nobody else; the audience is recorded when the message is delivered,
+so the read agrees with the live fan-out. Secret lifecycle events are
+in no one's feed (use `GET /secrets`). Messages persisted before
+audiences were recorded cannot say who they were for: a row with any
+known scoped thread or recipient-list event kind is shown only to its
+sender.
 
 ## Sessions and TOTP
 

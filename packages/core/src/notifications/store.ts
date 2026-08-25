@@ -488,9 +488,12 @@ class SqliteNotificationsStore implements NotificationsStore {
   private readonly selectDeliveriesBeforeStmt: SqlStatement;
   private readonly selectStrandedDebounceStmt: SqlStatement;
   private readonly deleteDeliveriesForEndpointStmt: SqlStatement;
-  private readonly trimDeliveriesStmt: SqlStatement;
+  private readonly selectDeliveryIdsBeyondRetentionStmt: SqlStatement;
+  private readonly deleteDeliveryByIdStmt: SqlStatement;
 
   private readonly insertPendingStmt: SqlStatement;
+  private readonly selectPendingForEndpointStmt: SqlStatement;
+  private readonly updatePendingDeliveryIdsStmt: SqlStatement;
   private readonly selectPendingForMemberStmt: SqlStatement;
   private readonly selectPendingForMemberReasonStmt: SqlStatement;
   private readonly selectPendingDueStmt: SqlStatement;
@@ -598,28 +601,13 @@ class SqliteNotificationsStore implements NotificationsStore {
     this.deleteDeliveriesForEndpointStmt = db.prepare(
       'DELETE FROM notification_deliveries WHERE endpoint_id = ?',
     );
-    // Keep the newest N receipts per endpoint. Runs on insert, so the
-    // table self-trims on the same path that grows it.
-    //
-    // A queued delivery is never trimmed regardless of age: the pending
-    // row holds only the delivery's id, so trimming the row it points at
-    // would flush an empty notification when the member comes back. An
-    // offline member is exactly when a queue gets long AND its endpoint
-    // stays busy, so this is the case that would actually hit.
-    this.trimDeliveriesStmt = db.prepare(
-      `DELETE FROM notification_deliveries
-        WHERE endpoint_id = ?1
-          AND id NOT IN (
-            SELECT id FROM notification_deliveries
-             WHERE endpoint_id = ?1
-             ORDER BY received_at DESC, id DESC
-             LIMIT ?2
-          )
-          AND NOT EXISTS (
-            SELECT 1 FROM notification_pending p, json_each(p.delivery_ids)
-             WHERE json_each.value = notification_deliveries.id
-          )`,
+    this.selectDeliveryIdsBeyondRetentionStmt = db.prepare(
+      `SELECT id FROM notification_deliveries
+        WHERE endpoint_id = ?
+        ORDER BY received_at DESC, id DESC
+        LIMIT -1 OFFSET ?`,
     );
+    this.deleteDeliveryByIdStmt = db.prepare('DELETE FROM notification_deliveries WHERE id = ?');
 
     const PENDING_COLS =
       'id, endpoint_id, member_name, reason, delivery_ids, level, title, created_at, deadline_at';
@@ -627,6 +615,12 @@ class SqliteNotificationsStore implements NotificationsStore {
       `INSERT INTO notification_pending
         (id, endpoint_id, member_name, reason, delivery_ids, level, title, created_at, deadline_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    this.selectPendingForEndpointStmt = db.prepare(
+      `SELECT ${PENDING_COLS} FROM notification_pending WHERE endpoint_id = ?`,
+    );
+    this.updatePendingDeliveryIdsStmt = db.prepare(
+      'UPDATE notification_pending SET delivery_ids = ? WHERE id = ?',
     );
     this.selectPendingForMemberStmt = db.prepare(
       `SELECT ${PENDING_COLS} FROM notification_pending WHERE member_name = ? ORDER BY created_at ASC`,
@@ -896,25 +890,27 @@ class SqliteNotificationsStore implements NotificationsStore {
 
   insertDelivery(input: InsertDeliveryInput): DeliveryRecord {
     const id = globalThis.crypto.randomUUID();
-    this.insertDeliveryStmt.run(
-      id,
-      input.endpointId,
-      input.endpointSlug,
-      input.receivedAt,
-      input.status,
-      input.statusReason ?? null,
-      input.dedupeKey ?? null,
-      '[]',
-      input.body.slice(0, HOOK_BODY_MAX),
-      input.contentType ?? null,
-      input.rendered ?? '',
-      input.level,
-      input.title ?? null,
-      input.overrides ? JSON.stringify(input.overrides) : null,
-      null,
-      input.replayOf ?? null,
-    );
-    this.trimDeliveriesStmt.run(input.endpointId, DELIVERY_RETENTION_PER_ENDPOINT);
+    runInTransaction(this.db, () => {
+      this.insertDeliveryStmt.run(
+        id,
+        input.endpointId,
+        input.endpointSlug,
+        input.receivedAt,
+        input.status,
+        input.statusReason ?? null,
+        input.dedupeKey ?? null,
+        '[]',
+        input.body.slice(0, HOOK_BODY_MAX),
+        input.contentType ?? null,
+        input.rendered ?? '',
+        input.level,
+        input.title ?? null,
+        input.overrides ? JSON.stringify(input.overrides) : null,
+        null,
+        input.replayOf ?? null,
+      );
+      this.trimDeliveries(input.endpointId);
+    });
     return this.getDeliveryRecord(id) as DeliveryRecord;
   }
 
@@ -1020,6 +1016,36 @@ class SqliteNotificationsStore implements NotificationsStore {
   }
 
   // ── Internals ──
+
+  /**
+   * Enforce the hard per-endpoint receipt cap and keep the pending queue
+   * referentially sound. A pending row is a delivery mechanism, not an
+   * exemption from retention: references to receipts that age out are
+   * removed, and an empty queue row is removed with them. Trimming both
+   * structures in the insert transaction prevents either dangling ids or
+   * the formerly unbounded "N plus every queued receipt" shape.
+   */
+  private trimDeliveries(endpointId: string): void {
+    const evicted = new Set(
+      (
+        this.selectDeliveryIdsBeyondRetentionStmt.all(
+          endpointId,
+          DELIVERY_RETENTION_PER_ENDPOINT,
+        ) as unknown as Array<{ id: string }>
+      ).map((row) => row.id),
+    );
+    if (evicted.size === 0) return;
+
+    const pending = this.selectPendingForEndpointStmt.all(endpointId) as unknown as PendingDbRow[];
+    for (const raw of pending) {
+      const row = rowToPending(raw);
+      const kept = row.deliveryIds.filter((deliveryId) => !evicted.has(deliveryId));
+      if (kept.length === row.deliveryIds.length) continue;
+      if (kept.length === 0) this.deletePendingStmt.run(row.id);
+      else this.updatePendingDeliveryIdsStmt.run(JSON.stringify(kept), row.id);
+    }
+    for (const deliveryId of evicted) this.deleteDeliveryByIdStmt.run(deliveryId);
+  }
 
   private resolveProfileId(profileSlug: string | null): string | null {
     if (profileSlug === null) return null;

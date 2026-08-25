@@ -114,7 +114,7 @@ describe('rejected hook deliveries', () => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Hub-Signature-256': 'sha256=' + '0'.repeat(64),
+        'X-Hub-Signature-256': `sha256=${'0'.repeat(64)}`,
       },
       body: payload,
     });
@@ -159,7 +159,7 @@ describe('rejected hook deliveries', () => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Hub-Signature-256': 'sha256=' + '0'.repeat(64),
+        'X-Hub-Signature-256': `sha256=${'0'.repeat(64)}`,
       },
       body: '{"a":1}',
     });

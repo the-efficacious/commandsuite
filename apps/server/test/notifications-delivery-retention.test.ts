@@ -3,9 +3,9 @@
  *
  * This table was the one with no ceiling and no prune, on a route an
  * unauthenticated caller can drive. The cap is enforced on insert, so
- * it needs no scheduler and no operator step — and it must not evict a
- * receipt the pending queue still points at, or a member coming back
- * online gets an empty notification.
+ * it needs no scheduler and no operator step. Pending references are
+ * trimmed in the same transaction so queueing cannot turn the hard cap
+ * back into "N plus every delivery received while a member is offline."
  */
 
 import { DELIVERY_RETENTION_PER_ENDPOINT } from 'csuite-core';
@@ -69,8 +69,8 @@ describe('delivery retention', () => {
     ).toEqual({ n: 0 });
   });
 
-  it('does not evict a receipt the pending queue still needs', async () => {
-    const { store, endpoint } = makeStore();
+  it('removes pending references when their receipt ages out', async () => {
+    const { store, endpoint, db } = makeStore();
     const queued = insert(store, endpoint.id, endpoint.slug, 0);
     store.insertPending({
       endpointId: endpoint.id,
@@ -85,9 +85,36 @@ describe('delivery retention', () => {
     for (let i = 1; i <= DELIVERY_RETENTION_PER_ENDPOINT + 5; i++) {
       insert(store, endpoint.id, endpoint.slug, i);
     }
-    // Oldest by far, and still there, because a member is waiting on it.
-    expect(store.getDeliveryRecord(queued.id)).not.toBeNull();
-    expect(store.deliveriesByIds([queued.id])).toHaveLength(1);
+    expect(store.getDeliveryRecord(queued.id)).toBeNull();
+    expect(store.pendingForMember('builder')).toEqual([]);
+    expect(
+      db.prepare('SELECT COUNT(*) AS n FROM notification_deliveries').get() as { n: number },
+    ).toEqual({ n: DELIVERY_RETENTION_PER_ENDPOINT });
+  });
+
+  it('keeps surviving ids when a pending group crosses the retention boundary', async () => {
+    const { store, endpoint } = makeStore();
+    const oldest = insert(store, endpoint.id, endpoint.slug, 0);
+    for (let i = 1; i < DELIVERY_RETENTION_PER_ENDPOINT - 1; i++) {
+      insert(store, endpoint.id, endpoint.slug, i);
+    }
+    const recent = insert(store, endpoint.id, endpoint.slug, DELIVERY_RETENTION_PER_ENDPOINT - 1);
+    store.insertPending({
+      endpointId: endpoint.id,
+      memberName: 'builder',
+      reason: 'offline',
+      deliveryIds: [oldest.id, recent.id],
+      level: 'info',
+      title: null,
+      createdAt: 1_700_000_000_000,
+      deadlineAt: 1_700_000_900_000,
+    });
+
+    insert(store, endpoint.id, endpoint.slug, DELIVERY_RETENTION_PER_ENDPOINT);
+
+    expect(store.getDeliveryRecord(oldest.id)).toBeNull();
+    expect(store.getDeliveryRecord(recent.id)).not.toBeNull();
+    expect(store.pendingForMember('builder').map((row) => row.deliveryIds)).toEqual([[recent.id]]);
   });
 
   it('bounds each endpoint separately', async () => {

@@ -1153,10 +1153,9 @@ export interface HookIngressResponse {
 /**
  * Request body for `POST /session/totp`. The SPA submits a 6-digit
  * code and the server iterates enrolled members to find a match. The
- * optional `member` field is a CLI hint: when present, the server
- * skips iteration and verifies against that specific member only,
- * preserving the targeted-login flow for automation that already
- * knows which name is logging in.
+ * optional `member` field selects the targeted path: the CLI can use
+ * it directly, and the SPA uses it when the server-wide codeless rate
+ * limit asks the caller to identify themselves.
  */
 export interface TotpLoginRequest {
   code: string;

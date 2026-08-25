@@ -1504,6 +1504,14 @@ export function createApp(options: AppOptions): CreatedApp {
       if (result.message.to) {
         recipients.add(result.message.to);
         if (member.name !== result.message.to) recipients.add(member.name);
+      } else if (pushContext.recipients !== undefined) {
+        // A private-channel push has `to: null` just like a broadcast,
+        // but its explicit recipient list is still its complete audience.
+        // Reuse it here exactly as the broker does for live delivery and
+        // durable history; widening attachment grants would otherwise leak
+        // the file even after the message itself was correctly scoped.
+        for (const name of pushContext.recipients) recipients.add(name);
+        recipients.add(member.name);
       } else {
         for (const s of members.members()) recipients.add(s.name);
       }

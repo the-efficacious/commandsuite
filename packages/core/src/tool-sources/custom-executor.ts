@@ -227,11 +227,12 @@ async function fetchWithPinnedOrigin(
   let url = input.url;
   let method = input.method;
   let body = input.body;
+  const headers = new Headers(input.headers);
 
   for (let hop = 0; ; hop++) {
     const res = await fetchImpl(url, {
       method,
-      headers: input.headers,
+      headers,
       body,
       signal,
       redirect: 'manual',
@@ -255,9 +256,23 @@ async function fetchWithPinnedOrigin(
       throw new OriginEscapeError(url, next.origin);
     }
 
-    if (res.status === 303 || ((res.status === 301 || res.status === 302) && method !== 'GET')) {
-      method = method === 'HEAD' ? 'HEAD' : 'GET';
+    const switchesToGet =
+      (res.status === 303 && method !== 'GET' && method !== 'HEAD') ||
+      ((res.status === 301 || res.status === 302) && method === 'POST');
+    if (switchesToGet) {
+      method = 'GET';
       body = null;
+      // Fetch removes request-body headers when redirect semantics drop
+      // the body. Keeping Content-Type from the original POST would make
+      // this manual path observably different from native redirect handling.
+      for (const name of [
+        'content-encoding',
+        'content-language',
+        'content-location',
+        'content-type',
+      ]) {
+        headers.delete(name);
+      }
     }
     url = next.toString();
   }

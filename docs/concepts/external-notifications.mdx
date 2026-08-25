@@ -125,7 +125,9 @@ dedupe are skipped — replay is for debugging exactly those). A
 delivery that failed verification cannot be replayed. Bodies are
 capped at 256 KiB, each endpoint is rate-limited to 120 requests per
 minute, and each keeps its most recent 1000 receipts — older ones are
-dropped as new ones arrive, except any a queued delivery still needs.
+dropped as new ones arrive. If an offline or busy queue spans that
+boundary, references to the retired receipts are dropped from the queue
+too; queueing cannot make durable receipt storage exceed the cap.
 
 ## Administration
 

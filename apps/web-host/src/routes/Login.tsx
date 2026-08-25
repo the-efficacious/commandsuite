@@ -1,13 +1,11 @@
 /**
  * Login route — TOTP-only, codeless authentication for human users.
  *
- * One input (6-digit authenticator code) and a submit button. The
- * server iterates enrolled slots and logs the caller in as whichever
- * slot's current TOTP secret matches. No name input — the code
- * itself identifies the user. On success the session signal flips to
- * authenticated and the router renders the shell. On failure we show
- * the server's error text and clear the code input so the user can
- * re-enter on the next 30-second rotation.
+ * Starts with one input: the 6-digit code identifies the member. If the
+ * server-wide codeless rate limit is reached, the server asks for a member
+ * name and the form exposes that second input. The retry then uses the
+ * independently limited targeted-login path instead of leaving every web
+ * user locked out by someone else's failures.
  */
 
 import { signal } from '@preact/signals';
@@ -16,6 +14,8 @@ import type { JSX } from 'preact';
 import { LoginError, loginWithTotp, sessionNotice } from '../lib/session.js';
 
 const code = signal('');
+const member = signal('');
+const memberRequired = signal(false);
 const error = signal<string | null>(null);
 const submitting = signal(false);
 
@@ -33,10 +33,14 @@ async function handleSubmit(event: Event) {
     }
   }, 15000);
   try {
-    await loginWithTotp(code.value.trim());
+    await loginWithTotp(code.value.trim(), memberRequired.value ? member.value.trim() : undefined);
   } catch (err) {
     if (err instanceof LoginError) {
       error.value = err.message;
+      if (err.code === 'member_name_required') {
+        memberRequired.value = true;
+        return;
+      }
     } else {
       error.value = err instanceof Error ? err.message : 'unexpected error';
     }
@@ -54,7 +58,10 @@ function onCode(event: JSX.TargetedInputEvent<HTMLInputElement>) {
 }
 
 export function Login() {
-  const canSubmit = !submitting.value && /^\d{6}$/.test(code.value);
+  const canSubmit =
+    !submitting.value &&
+    /^\d{6}$/.test(code.value) &&
+    (!memberRequired.value || member.value.trim().length > 0);
   const notice = sessionNotice.value;
   return (
     <main class="min-h-screen flex items-center justify-center relative" style="padding:24px">
@@ -127,6 +134,25 @@ export function Login() {
           />
         </div>
 
+        {memberRequired.value && (
+          <div class="field">
+            <label class="field-label" for="member-name">
+              Member name
+            </label>
+            <input
+              id="member-name"
+              type="text"
+              autoComplete="username"
+              value={member.value}
+              onInput={(event) => {
+                member.value = event.currentTarget.value;
+              }}
+              placeholder="director-1"
+              class="input"
+            />
+          </div>
+        )}
+
         {error.value && (
           <div role="alert" class="callout err">
             <div class="icon" aria-hidden="true">
@@ -149,6 +175,8 @@ export function Login() {
 
 export function __resetLoginState(): void {
   code.value = '';
+  member.value = '';
+  memberRequired.value = false;
   error.value = null;
   submitting.value = false;
 }

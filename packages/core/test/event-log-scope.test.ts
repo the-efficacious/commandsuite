@@ -109,6 +109,40 @@ for (const impl of IMPLEMENTATIONS) {
       expect(await idsFor('alice')).toEqual(['legacy-chan', 'legacy-obj']);
     });
 
+    it('withholds every legacy thread family that used recipient-list delivery', async () => {
+      await log.append(msg({ id: 'tool', ts: 1, data: { thread: 'tool:private-api' } }));
+      await log.append(msg({ id: 'variable', ts: 2, data: { thread: 'variable:region' } }));
+      await log.append(msg({ id: 'hook', ts: 3, data: { thread: 'hook:incident-feed' } }));
+
+      expect(await idsFor('carol')).toEqual([]);
+      expect(await idsFor('alice')).toEqual(['hook', 'tool', 'variable']);
+    });
+
+    it('withholds legacy recipient-list events that have no thread tag', async () => {
+      await log.append(msg({ id: 'instructions', ts: 1, data: { kind: 'instructions' } }));
+      await log.append(
+        msg({
+          id: 'control',
+          ts: 2,
+          data: { kind: 'context_control', target: 'bob', reason: 'private reason' },
+        }),
+      );
+
+      expect(await idsFor('carol')).toEqual([]);
+      expect(await idsFor('alice')).toEqual(['control', 'instructions']);
+    });
+
+    it('uses the recorded audience for every current thread family', async () => {
+      for (const [index, thread] of ['tool:s', 'variable:v', 'hook:h'].entries()) {
+        await log.append(msg({ id: thread, ts: index + 1, data: { thread } }), {
+          recipients: ['bob'],
+        });
+      }
+
+      expect(await idsFor('bob')).toEqual(['hook:h', 'tool:s', 'variable:v']);
+      expect(await idsFor('carol')).toEqual([]);
+    });
+
     it('leaves legacy unscoped rows visible', async () => {
       await log.append(msg({ id: 'plain', ts: 1, data: { kind: 'chat' } }));
       expect(await idsFor('carol')).toEqual(['plain']);

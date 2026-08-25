@@ -33,14 +33,19 @@ const CREDENTIAL = {
 
 /** A fetch stub that replays a scripted chain and records every hop. */
 function scriptedFetch(steps: Array<{ status: number; location?: string; body?: string }>) {
-  const seen: Array<{ url: string; headers: Record<string, string>; method: string }> = [];
+  const seen: Array<{
+    url: string;
+    headers: Record<string, string>;
+    method: string;
+    body: BodyInit | null | undefined;
+  }> = [];
   let call = 0;
   const impl = (async (url: string | URL, init?: RequestInit) => {
     const headers: Record<string, string> = {};
     new Headers(init?.headers).forEach((v, k) => {
       headers[k] = v;
     });
-    seen.push({ url: String(url), headers, method: init?.method ?? 'GET' });
+    seen.push({ url: String(url), headers, method: init?.method ?? 'GET', body: init?.body });
     const step = steps[Math.min(call++, steps.length - 1)];
     if (!step) throw new Error('fetch stub exhausted');
     return new Response(step.body ?? '', {
@@ -141,6 +146,48 @@ describe('custom tool executor — redirects', () => {
     });
     expect(seen[0]?.method).toBe('POST');
     expect(seen[1]?.method).toBe('GET');
+    expect(seen[1]?.body).toBeNull();
+    expect(seen[1]?.headers['content-type']).toBeUndefined();
+  });
+
+  it.each([
+    ['PUT', 301],
+    ['PUT', 302],
+    ['PATCH', 301],
+    ['PATCH', 302],
+    ['DELETE', 301],
+    ['DELETE', 302],
+  ] as const)('preserves %s across a %s redirect', async (method, status) => {
+    const { impl, seen } = scriptedFetch([
+      { status, location: 'https://api.example.com/canonical' },
+      { status: 200, body: '{}' },
+    ]);
+    await executeCustomTool({
+      binding: binding({ method, bodyTemplate: 'payload' }),
+      credential: CREDENTIAL,
+      args: { id: '1' },
+      fetchImpl: impl,
+    });
+
+    expect(seen.map((hop) => hop.method)).toEqual([method, method]);
+    expect(seen[1]?.body).toBe('payload');
+    expect(seen[1]?.headers['content-type']).toBe('text/plain; charset=utf-8');
+  });
+
+  it('changes POST to GET on a 302', async () => {
+    const { impl, seen } = scriptedFetch([
+      { status: 302, location: 'https://api.example.com/canonical' },
+      { status: 200, body: '{}' },
+    ]);
+    await executeCustomTool({
+      binding: binding({ method: 'POST', bodyTemplate: 'payload' }),
+      credential: CREDENTIAL,
+      args: { id: '1' },
+      fetchImpl: impl,
+    });
+
+    expect(seen.map((hop) => hop.method)).toEqual(['POST', 'GET']);
+    expect(seen[1]?.body).toBeNull();
   });
 
   it('gives up rather than chase an endless same-origin loop', async () => {

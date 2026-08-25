@@ -124,8 +124,8 @@ export class SqliteEventLog implements EventLog {
     //      — live delivery was already scoped, and the durable read
     //      disagreed with it. Rows written since carry the recipient
     //      list the fan-out used; rows written before it cannot say who
-    //      they were for, so a scoped tag on one withholds it from
-    //      everyone but its sender.
+    //      they were for, so a scoped thread or recipient-list event kind
+    //      withholds one from everyone but its sender.
     this.queryFeedStmt = this.db.prepare(
       `SELECT id, ts, to_name, from_name, title, body, level, data, attachments, recipients
        FROM events
@@ -144,12 +144,21 @@ export class SqliteEventLog implements EventLog {
                   )
                 WHEN to_name IS NOT NULL
                   THEN to_name = ?2
-                ELSE json_extract(data, '$.thread') IS NULL
-                     OR json_extract(data, '$.thread') = 'chan:general'
-                     OR (
-                       json_extract(data, '$.thread') NOT LIKE 'chan:%'
-                       AND json_extract(data, '$.thread') NOT LIKE 'obj:%'
-                     )
+                ELSE (
+                  json_extract(data, '$.kind') IS NULL
+                  OR json_extract(data, '$.kind') NOT IN ('instructions', 'context_control')
+                )
+                AND (
+                  json_extract(data, '$.thread') IS NULL
+                  OR json_extract(data, '$.thread') = 'chan:general'
+                  OR (
+                    json_extract(data, '$.thread') NOT LIKE 'chan:%'
+                    AND json_extract(data, '$.thread') NOT LIKE 'obj:%'
+                    AND json_extract(data, '$.thread') NOT LIKE 'tool:%'
+                    AND json_extract(data, '$.thread') NOT LIKE 'variable:%'
+                    AND json_extract(data, '$.thread') NOT LIKE 'hook:%'
+                  )
+                )
               END
          )
        ORDER BY ts DESC LIMIT ?3`,
