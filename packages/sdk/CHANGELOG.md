@@ -1,5 +1,17 @@
 # csuite-sdk
 
+## 0.8.0
+
+### Minor Changes
+
+- [#192](https://github.com/the-efficacious/commandsuite/pull/192) [`7c03e4b`](https://github.com/the-efficacious/commandsuite/commit/7c03e4b4c10c4daa9bc419b9eae7adab9efaff7f) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - Replace the Director, Admin, and Operator member categories with explicit permission leaves, restore independent objective capabilities, and make permission bundles one-shot member-creation templates.
+
+- [#194](https://github.com/the-efficacious/commandsuite/pull/194) [`a2cc68a`](https://github.com/the-efficacious/commandsuite/commit/a2cc68af186c8bcb661088efc7b26f914c7abd80) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - Read paths for captured data that was previously write-only: `GET /members/:name/telemetry` serves the cost and token records agents export, and `GET /members/:name/genai/:id/raw` serves the verbatim bytes behind an inference. The agent timeline now renders session start/end, so a run that dropped events says so instead of looking identical to a complete one, and unresolved capture diagnostics appear on the member profile.
+
+- [#194](https://github.com/the-efficacious/commandsuite/pull/194) [`a2cc68a`](https://github.com/the-efficacious/commandsuite/commit/a2cc68af186c8bcb661088efc7b26f914c7abd80) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - **Breaking.** Rename the live idle/working/blocked signal to work state (`WorkStateTracker`, `WorkState`), so "activity" unambiguously means the durable per-member record. Wire paths and JSON field names are unchanged.
+
+  `ActivityTracker`, `createActivityTracker`, `ACTIVITY_TTL_MS` and the `ActivityState` type become `WorkStateTracker`, `createWorkStateTracker`, `WORK_STATE_TTL_MS` and `WorkState`.
+
 ## 0.7.1
 
 ## 0.7.0

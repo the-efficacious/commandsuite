@@ -5,6 +5,94 @@ CommandSuite versions in lockstep — one version per release train —
 so each section below is one release. Per-package `CHANGELOG.md`
 files still ship inside every npm tarball.
 
+## 0.8.0 (2026-08-25)
+
+### csuite-cli
+
+#### Minor Changes
+
+- [#192](https://github.com/the-efficacious/commandsuite/pull/192) [`7c03e4b`](https://github.com/the-efficacious/commandsuite/commit/7c03e4b4c10c4daa9bc419b9eae7adab9efaff7f) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - Replace the Director, Admin, and Operator member categories with explicit permission leaves, restore independent objective capabilities, and make permission bundles one-shot member-creation templates.
+
+- [#194](https://github.com/the-efficacious/commandsuite/pull/194) [`a2cc68a`](https://github.com/the-efficacious/commandsuite/commit/a2cc68af186c8bcb661088efc7b26f914c7abd80) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - **Breaking.** One structured logger across the broker, CLI and runner: every process now emits `{ts, level, component, msg, ...context}` as one JSON line, with a `CSUITE_LOG_LEVEL` threshold. Runner logs previously carried no severity at all, and the broker's `BrokerLogger` defaulted to a no-op that discarded subscriber warnings.
+
+  `BrokerLogger` is no longer exported from `csuite-core`; `Broker`, the MCP client manager and the gen-ai correlator all take the standard `Logger`, and the correlator's `log` option is now `logger`.
+
+- [#194](https://github.com/the-efficacious/commandsuite/pull/194) [`a2cc68a`](https://github.com/the-efficacious/commandsuite/commit/a2cc68af186c8bcb661088efc7b26f914c7abd80) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - `csuite prune-traces` now deletes across the whole activity database — inferences, telemetry and raw bodies as well as the activity timeline — and reports each separately. Previously it pruned only the timeline while the heaviest tables in the same file grew without bound. Raw bodies are collected by reference rather than age, so a deduplicated body outlives the exchange that first stored it.
+
+### csuite-server
+
+#### Minor Changes
+
+- [#192](https://github.com/the-efficacious/commandsuite/pull/192) [`7c03e4b`](https://github.com/the-efficacious/commandsuite/commit/7c03e4b4c10c4daa9bc419b9eae7adab9efaff7f) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - Replace the Director, Admin, and Operator member categories with explicit permission leaves, restore independent objective capabilities, and make permission bundles one-shot member-creation templates.
+
+- [#194](https://github.com/the-efficacious/commandsuite/pull/194) [`a2cc68a`](https://github.com/the-efficacious/commandsuite/commit/a2cc68af186c8bcb661088efc7b26f914c7abd80) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - **Breaking.** One structured logger across the broker, CLI and runner: every process now emits `{ts, level, component, msg, ...context}` as one JSON line, with a `CSUITE_LOG_LEVEL` threshold. Runner logs previously carried no severity at all, and the broker's `BrokerLogger` defaulted to a no-op that discarded subscriber warnings.
+
+  `BrokerLogger` is no longer exported from `csuite-core`; `Broker`, the MCP client manager and the gen-ai correlator all take the standard `Logger`, and the correlator's `log` option is now `logger`.
+
+- [#194](https://github.com/the-efficacious/commandsuite/pull/194) [`a2cc68a`](https://github.com/the-efficacious/commandsuite/commit/a2cc68af186c8bcb661088efc7b26f914c7abd80) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - `csuite prune-traces` now deletes across the whole activity database — inferences, telemetry and raw bodies as well as the activity timeline — and reports each separately. Previously it pruned only the timeline while the heaviest tables in the same file grew without bound. Raw bodies are collected by reference rather than age, so a deduplicated body outlives the exchange that first stored it.
+
+### csuite-core
+
+#### Minor Changes
+
+- [#192](https://github.com/the-efficacious/commandsuite/pull/192) [`7c03e4b`](https://github.com/the-efficacious/commandsuite/commit/7c03e4b4c10c4daa9bc419b9eae7adab9efaff7f) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - Replace the Director, Admin, and Operator member categories with explicit permission leaves, restore independent objective capabilities, and make permission bundles one-shot member-creation templates.
+
+- [#194](https://github.com/the-efficacious/commandsuite/pull/194) [`a2cc68a`](https://github.com/the-efficacious/commandsuite/commit/a2cc68af186c8bcb661088efc7b26f914c7abd80) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - **Breaking.** One structured logger across the broker, CLI and runner: every process now emits `{ts, level, component, msg, ...context}` as one JSON line, with a `CSUITE_LOG_LEVEL` threshold. Runner logs previously carried no severity at all, and the broker's `BrokerLogger` defaulted to a no-op that discarded subscriber warnings.
+
+  `BrokerLogger` is no longer exported from `csuite-core`; `Broker`, the MCP client manager and the gen-ai correlator all take the standard `Logger`, and the correlator's `log` option is now `logger`.
+
+- [#194](https://github.com/the-efficacious/commandsuite/pull/194) [`a2cc68a`](https://github.com/the-efficacious/commandsuite/commit/a2cc68af186c8bcb661088efc7b26f914c7abd80) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - Read paths for captured data that was previously write-only: `GET /members/:name/telemetry` serves the cost and token records agents export, and `GET /members/:name/genai/:id/raw` serves the verbatim bytes behind an inference. The agent timeline now renders session start/end, so a run that dropped events says so instead of looking identical to a complete one, and unresolved capture diagnostics appear on the member profile.
+
+- [#194](https://github.com/the-efficacious/commandsuite/pull/194) [`a2cc68a`](https://github.com/the-efficacious/commandsuite/commit/a2cc68af186c8bcb661088efc7b26f914c7abd80) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - `csuite prune-traces` now deletes across the whole activity database — inferences, telemetry and raw bodies as well as the activity timeline — and reports each separately. Previously it pruned only the timeline while the heaviest tables in the same file grew without bound. Raw bodies are collected by reference rather than age, so a deduplicated body outlives the exchange that first stored it.
+
+- [#196](https://github.com/the-efficacious/commandsuite/pull/196) [`134f0f8`](https://github.com/the-efficacious/commandsuite/commit/134f0f8a17d990cc91b13ceb0d34616d86f96f81) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - Fix `/history` returning private channel and objective-thread messages to every member. A scoped push was delivered to its audience live but persisted like a broadcast, so the durable read handed it to anyone. Messages now carry the audience they were delivered to, and the feed honours it; rows written before this cannot say who they were for, so a scoped one is now shown only to its sender.
+
+- [#194](https://github.com/the-efficacious/commandsuite/pull/194) [`a2cc68a`](https://github.com/the-efficacious/commandsuite/commit/a2cc68af186c8bcb661088efc7b26f914c7abd80) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - **Breaking.** Rename the live idle/working/blocked signal to work state (`WorkStateTracker`, `WorkState`), so "activity" unambiguously means the durable per-member record. Wire paths and JSON field names are unchanged.
+
+  `ActivityTracker`, `createActivityTracker`, `ACTIVITY_TTL_MS` and the `ActivityState` type become `WorkStateTracker`, `createWorkStateTracker`, `WORK_STATE_TTL_MS` and `WorkState`.
+
+#### Patch Changes
+
+- [#194](https://github.com/the-efficacious/commandsuite/pull/194) [`a2cc68a`](https://github.com/the-efficacious/commandsuite/commit/a2cc68af186c8bcb661088efc7b26f914c7abd80) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - The diagnostics retention ladder now actually runs. Its compaction was implemented and never called, leaving row caps as the only bound on the diagnostics tables.
+
+- [#196](https://github.com/the-efficacious/commandsuite/pull/196) [`134f0f8`](https://github.com/the-efficacious/commandsuite/commit/134f0f8a17d990cc91b13ceb0d34616d86f96f81) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - Stop serving uploaded files as executable documents on the broker's own origin. `GET /fs/read` reflected the uploader's declared content type with `inline` disposition, so an HTML or SVG upload ran as script — with the opener's session — when the link was opened. Files now download unless they are a type that renders without scripting (raster images, media, PDF), and every response carries `nosniff` plus a restrictive Content-Security-Policy. Image, media and PDF previews in the web UI are unchanged.
+
+- [#194](https://github.com/the-efficacious/commandsuite/pull/194) [`a2cc68a`](https://github.com/the-efficacious/commandsuite/commit/a2cc68af186c8bcb661088efc7b26f914c7abd80) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - Unmatched `/members/...` requests now answer a JSON 404 instead of falling through to the single-page app, which returned `index.html` with a 200 to clients asking for JSON.
+
+- [#196](https://github.com/the-efficacious/commandsuite/pull/196) [`134f0f8`](https://github.com/the-efficacious/commandsuite/commit/134f0f8a17d990cc91b13ceb0d34616d86f96f81) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - Stop a handful of wrong sign-in codes locking every member out of the web UI. Codeless login counted failures in one global bucket, so ten bad guesses from anywhere blocked the whole team for fifteen minutes. Failures are now counted per source first — the guesser locks themselves out — and reaching the global ceiling asks for a member name instead of refusing everyone.
+
+- [#196](https://github.com/the-efficacious/commandsuite/pull/196) [`134f0f8`](https://github.com/the-efficacious/commandsuite/commit/134f0f8a17d990cc91b13ceb0d34616d86f96f81) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - Stop storing the body of webhook deliveries that fail signature verification, and bound the deliveries table. `/hooks/:slug` is unauthenticated by design, so retaining rejected payloads let anyone who knew a slug write unbounded data into the broker database. Rejections now record size, digest and reason instead of the payload, cannot be replayed, and each endpoint keeps its most recent 1000 receipts.
+
+- [#194](https://github.com/the-efficacious/commandsuite/pull/194) [`a2cc68a`](https://github.com/the-efficacious/commandsuite/commit/a2cc68af186c8bcb661088efc7b26f914c7abd80) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - Fix traces silently truncating at a corrupt row. The activity, inference and telemetry list paths skipped rows they could not decode and returned a short page, which every caller reads as "no more rows" — so one bad row ended a trace early and reported it as complete. They now refill, and a short page means exhausted.
+
+- [#196](https://github.com/the-efficacious/commandsuite/pull/196) [`134f0f8`](https://github.com/the-efficacious/commandsuite/commit/134f0f8a17d990cc91b13ceb0d34616d86f96f81) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - Keep custom tool-source credentials on the origin they were configured for. The executor followed redirects, and while the runtime strips `Authorization` across origins it forwards a `kind: header` credential (`X-API-Key` and the like) intact — reachable by an agent steering a cooperative upstream's open redirect. Redirects are now followed only within the binding's pinned origin, and a hop that leaves it fails the tool call without sending anything.
+
+### csuite-sdk
+
+#### Minor Changes
+
+- [#192](https://github.com/the-efficacious/commandsuite/pull/192) [`7c03e4b`](https://github.com/the-efficacious/commandsuite/commit/7c03e4b4c10c4daa9bc419b9eae7adab9efaff7f) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - Replace the Director, Admin, and Operator member categories with explicit permission leaves, restore independent objective capabilities, and make permission bundles one-shot member-creation templates.
+
+- [#194](https://github.com/the-efficacious/commandsuite/pull/194) [`a2cc68a`](https://github.com/the-efficacious/commandsuite/commit/a2cc68af186c8bcb661088efc7b26f914c7abd80) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - Read paths for captured data that was previously write-only: `GET /members/:name/telemetry` serves the cost and token records agents export, and `GET /members/:name/genai/:id/raw` serves the verbatim bytes behind an inference. The agent timeline now renders session start/end, so a run that dropped events says so instead of looking identical to a complete one, and unresolved capture diagnostics appear on the member profile.
+
+- [#194](https://github.com/the-efficacious/commandsuite/pull/194) [`a2cc68a`](https://github.com/the-efficacious/commandsuite/commit/a2cc68af186c8bcb661088efc7b26f914c7abd80) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - **Breaking.** Rename the live idle/working/blocked signal to work state (`WorkStateTracker`, `WorkState`), so "activity" unambiguously means the durable per-member record. Wire paths and JSON field names are unchanged.
+
+  `ActivityTracker`, `createActivityTracker`, `ACTIVITY_TTL_MS` and the `ActivityState` type become `WorkStateTracker`, `createWorkStateTracker`, `WORK_STATE_TTL_MS` and `WorkState`.
+
+### csuite-web-ui
+
+#### Minor Changes
+
+- [#192](https://github.com/the-efficacious/commandsuite/pull/192) [`7c03e4b`](https://github.com/the-efficacious/commandsuite/commit/7c03e4b4c10c4daa9bc419b9eae7adab9efaff7f) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - Replace the Director, Admin, and Operator member categories with explicit permission leaves, restore independent objective capabilities, and make permission bundles one-shot member-creation templates.
+
+- [#194](https://github.com/the-efficacious/commandsuite/pull/194) [`a2cc68a`](https://github.com/the-efficacious/commandsuite/commit/a2cc68af186c8bcb661088efc7b26f914c7abd80) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - Read paths for captured data that was previously write-only: `GET /members/:name/telemetry` serves the cost and token records agents export, and `GET /members/:name/genai/:id/raw` serves the verbatim bytes behind an inference. The agent timeline now renders session start/end, so a run that dropped events says so instead of looking identical to a complete one, and unresolved capture diagnostics appear on the member profile.
+
+### csuite-web-host
+
+#### Minor Changes
+
+- [#192](https://github.com/the-efficacious/commandsuite/pull/192) [`7c03e4b`](https://github.com/the-efficacious/commandsuite/commit/7c03e4b4c10c4daa9bc419b9eae7adab9efaff7f) Thanks [@andrew-jon-p7a](https://github.com/andrew-jon-p7a)! - Replace the Director, Admin, and Operator member categories with explicit permission leaves, restore independent objective capabilities, and make permission bundles one-shot member-creation templates.
+
 ## 0.7.1 (2026-08-13)
 
 ### csuite-server
