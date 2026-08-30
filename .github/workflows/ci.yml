@@ -23,6 +23,12 @@ jobs:
           # tagless checkout makes `git describe` fail.
           fetch-depth: 0
 
+      # The same proof runs `changeset status`, which diffs against the
+      # local `main` ref; a PR checkout has only origin/main. Create it
+      # when absent — never force-update a checked-out main on push runs.
+      - name: Materialize the changesets base ref
+        run: git show-ref --verify --quiet refs/heads/main || git branch main origin/main
+
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
