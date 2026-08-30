@@ -53,7 +53,7 @@ describe('runner credential egress guard', () => {
   });
 
   it('provisions a member through the runner while the whole MCP result stream stays credential-free', async () => {
-    broker = await startFakeBroker();
+    broker = await startFakeBroker({ additionalPermissions: ['secrets.manage'] });
     runner = await startRunner({
       url: broker.url,
       token: FAKE_BROKER_TOKEN,
