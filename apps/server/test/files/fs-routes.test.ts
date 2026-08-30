@@ -89,7 +89,7 @@ async function makeApp() {
     version: '0.0.0',
     logger: silentLogger(),
   });
-  return { app, files };
+  return { app, files, members };
 }
 
 function authed(token: string): HeadersInit {
@@ -220,6 +220,60 @@ describe('/fs/ls', () => {
     await writeFile(app, ALICE_TOKEN, '/alice/a.txt', 'text/plain', 'a');
     const res = await app.request('/fs/ls?path=%2Falice', { headers: authed(BOB_TOKEN) });
     expect(res.status).toBe(403);
+  });
+
+  it('distinguishes readable nonempty, readable empty, unreadable, and nonexistent roots', async () => {
+    const { app } = await makeApp();
+    await writeFile(app, ALICE_TOKEN, '/alice/a.txt', 'text/plain', 'a');
+
+    const nonempty = await app.request('/fs/ls?path=%2Falice', { headers: authed(ALICE_TOKEN) });
+    expect(nonempty.status).toBe(200);
+    expect(((await nonempty.json()) as { entries: FsEntry[] }).entries).toHaveLength(1);
+
+    const empty = await app.request('/fs/ls?path=%2Fbob', { headers: authed(BOB_TOKEN) });
+    expect(empty.status).toBe(200);
+    expect(await empty.json()).toEqual({ entries: [] });
+
+    const unreadable = await app.request('/fs/ls?path=%2Falice', { headers: authed(BOB_TOKEN) });
+    expect(unreadable.status).toBe(403);
+
+    const nonexistent = await app.request('/fs/ls?path=%2Fnobody', { headers: authed(BOB_TOKEN) });
+    expect(nonexistent.status).toBe(404);
+  });
+
+  it('does not disclose existence below an unreadable namespace boundary', async () => {
+    const { app } = await makeApp();
+    await writeFile(app, ALICE_TOKEN, '/alice/existing/file.txt', 'text/plain', 'secret');
+    for (const path of ['/alice/existing', '/alice/not-there']) {
+      const res = await app.request(`/fs/ls?path=${encodeURIComponent(path)}`, {
+        headers: authed(BOB_TOKEN),
+      });
+      expect(res.status).toBe(403);
+    }
+  });
+
+  it("reports a deleted member's surviving home as stored, not nonexistent", async () => {
+    const { app, members } = await makeApp();
+    await writeFile(app, ALICE_TOKEN, '/alice/survives-delete.txt', 'text/plain', 'retained');
+    members.removeMember('alice');
+
+    // Deletion removes identity and credentials, not retained filesystem data. The
+    // namespace therefore falls through to the store's ordinary ACL answer.
+    const manager = await app.request('/fs/ls?path=%2Falice', {
+      headers: authed(DIRECTOR_TOKEN),
+    });
+    expect(manager.status).toBe(200);
+    expect(((await manager.json()) as { entries: FsEntry[] }).entries.map((e) => e.name)).toEqual([
+      'survives-delete.txt',
+    ]);
+
+    const baseline = await app.request('/fs/ls?path=%2Falice', { headers: authed(BOB_TOKEN) });
+    expect(baseline.status).toBe(403);
+
+    const nonexistent = await app.request('/fs/ls?path=%2Fnobody', {
+      headers: authed(DIRECTOR_TOKEN),
+    });
+    expect(nonexistent.status).toBe(404);
   });
 
   it('lists root as per-owner homes (director sees everyone)', async () => {

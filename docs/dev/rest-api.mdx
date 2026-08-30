@@ -901,6 +901,11 @@ per-member homes (`/<name>/...`). Paths are absolute Unix-style.
 `path=/` lists every visible home root. Other paths must sit under
 a home you own or that's been shared with you.
 
+At an exact member-home root, `200 { entries: [] }` means readable and
+empty, `403` means the roster-backed namespace exists but is unreadable,
+and `404` means no such member namespace exists. Below an unreadable
+boundary all paths return `403`, whether or not the interior path exists.
+
 ### `GET /fs/stat?path=<p>`
 
 | | |

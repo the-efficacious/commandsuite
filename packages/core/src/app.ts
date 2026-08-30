@@ -6180,6 +6180,20 @@ export function createApp(options: AppOptions): CreatedApp {
       if (!parsedPath.success) {
         return c.json({ error: 'invalid path', details: parsedPath.error.issues }, 400);
       }
+      // Member homes exist conceptually before their first file. At the namespace-root
+      // boundary, distinguish a roster-backed home (including an empty one), an orphaned
+      // stored home left by a deleted member, and a name that has never existed. Probe the
+      // stored root as its former owner only to answer existence; the real viewer still
+      // goes through the store below, so an orphan is readable to members.manage and 403
+      // to everyone else. Below an unreadable home, the store deliberately returns the
+      // same 403 for every path.
+      const topLevel = /^\/([^/]+)$/.exec(parsedPath.data)?.[1];
+      if (topLevel && topLevel !== 'objectives' && members.findByName(topLevel) === null) {
+        const storedRoot = fsStore.stat(parsedPath.data, { name: topLevel, permissions: [] });
+        if (storedRoot === null) {
+          return c.json({ error: `no such namespace: ${parsedPath.data}` }, 404);
+        }
+      }
       try {
         const entries = fsStore.list(parsedPath.data, toViewer(c.get('member')));
         return c.json({ entries });
