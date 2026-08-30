@@ -64,6 +64,30 @@ export interface AgentDoctorOptions {
    * binary just to read a version adds real latency to every start.
    */
   includeVersion?: boolean;
+  /**
+   * What the runner will use to authenticate, as resolved by the
+   * caller. When given, the report includes a `saved auth` check so a
+   * headless start that would otherwise fall into the enrollment
+   * wizard is named here first. Still local-only: this reads the
+   * device auth store, never the broker.
+   */
+  auth?: SavedAuthInput;
+}
+
+/** Inputs to the `saved auth` check, gathered by the runner verb. */
+export interface SavedAuthInput {
+  /** Broker URL the lookup is keyed on. */
+  url: string;
+  /** True when neither `--url` nor `$CSUITE_URL` was given and the loopback default applies. */
+  urlDefaulted: boolean;
+  /** Directory the lookup is keyed on (the process cwd, not `--cwd`). */
+  cwd: string;
+  /** A token came from `--token` or `$CSUITE_TOKEN`, bypassing the store. */
+  tokenFromEnv: boolean;
+  /** The store entry that resolves for (url, cwd), or null. */
+  entry: { workspace: string | null } | null;
+  /** stdin is a TTY, so the enrollment wizard could run instead. */
+  interactive: boolean;
 }
 
 /** Run the shared + adapter-specific preflight checks for one runner. */
@@ -106,6 +130,9 @@ export async function runAgentDoctor(
   checks.push(
     gitIdentityCheck(await readGitConfig('user.name'), await readGitConfig('user.email')),
   );
+  if (options.auth !== undefined) {
+    checks.push(savedAuthCheck(options.auth));
+  }
 
   if (adapter.doctor) {
     try {
@@ -176,6 +203,46 @@ async function checkAgentVersion(
     };
   }
   return { name, status: 'PASS', detail: `${detected} (tested range ${rangeText})` };
+}
+
+/**
+ * Does a credential resolve for this (broker URL, directory)? Pure over
+ * its input for the same reason as `nodeVersionCheck`: the branch that
+ * matters is the one a healthy dev machine never takes.
+ *
+ * Headless with nothing resolving is FAIL, because the runner's only
+ * other move is the interactive enrollment wizard, which without a TTY
+ * either exits 0 (and a supervisor restarts it forever) or hangs on a
+ * device code (commandsuite#199). At a TTY the same state is WARN:
+ * the wizard will run and that is the intended first-run experience.
+ */
+export function savedAuthCheck(input: SavedAuthInput): DoctorCheck {
+  const name = 'saved auth';
+  const key = `${input.url} scoped to ${input.cwd}`;
+  if (input.tokenFromEnv) {
+    return { name, status: 'PASS', detail: 'token from --token / $CSUITE_TOKEN' };
+  }
+  if (input.entry !== null) {
+    const scope =
+      input.entry.workspace === null ? 'machine-wide entry' : `entry for ${input.entry.workspace}`;
+    return { name, status: 'PASS', detail: `${scope} resolves for ${key}` };
+  }
+  const hint = input.urlDefaulted
+    ? ` — ${input.url} is the default; if you enrolled against another broker, set $CSUITE_URL or --url to that exact URL`
+    : '';
+  const fix = `run \`csuite connect --url ${input.url} --workspace ${input.cwd}\` or set $CSUITE_TOKEN`;
+  if (input.interactive) {
+    return {
+      name,
+      status: 'WARN',
+      detail: `nothing resolves for ${key}${hint}; the enrollment wizard will run first`,
+    };
+  }
+  return {
+    name,
+    status: 'FAIL',
+    detail: `nothing resolves for ${key} and stdin is not a TTY, so the enrollment wizard cannot run${hint}; ${fix}`,
+  };
 }
 
 /**

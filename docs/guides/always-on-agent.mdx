@@ -76,6 +76,9 @@ After=network-online.target
 
 [Service]
 WorkingDirectory=%h/work/api
+# The saved credential is looked up by (broker URL, working directory).
+# Set the URL to exactly the one you ran `csuite connect` with.
+Environment=CSUITE_URL=https://broker.example.com
 ExecStart=%h/.local/bin/csuite claude --cwd %h/work/api
 Restart=on-failure
 RestartSec=10
@@ -91,12 +94,32 @@ loginctl enable-linger "$USER"    # keep user services alive after logout
 journalctl --user -u csuite-builder -f
 ```
 
-Two behaviors make the runner service-friendly. It runs a preflight
+Three behaviors make the runner service-friendly. It runs a preflight
 check on every start and exits with a readable report if the
 environment is broken (run `csuite claude --doctor` to see the full
 report yourself; `--skip-doctor` bypasses it once you trust the box).
-And its terminal status strip switches itself off when output isn't a
-terminal, so your service logs stay plain text.
+Its terminal status strip switches itself off when output isn't a
+terminal, so your service logs stay plain text. And when no credential
+resolves and there is no terminal to run the enrollment wizard on, it
+exits non-zero with the lookup key it used instead of waiting on a
+device code nobody will type — so `Restart=` cannot loop a runner that
+was never going to connect.
+
+That lookup key is the pair **(broker URL, working directory)**: the
+entry `csuite connect` saved is found only for the URL you connected
+with — exact match, no trailing-slash normalization — and for the
+directory you ran it in or any directory below. A unit that omits
+`CSUITE_URL` looks up the loopback default and finds nothing, however
+correct its `WorkingDirectory` is. Before enabling the unit, prove the
+lookup from its own environment:
+
+```bash
+cd ~/work/api && env -i HOME=$HOME PATH=$PATH CSUITE_URL=https://broker.example.com csuite roster </dev/null
+```
+
+Exit 0 and your member in the list means the unit will find the same
+entry. `csuite auth list` shows every enrollment and marks the one that
+resolves from where you are.
 
 ## 4. Resume after an interruption
 
