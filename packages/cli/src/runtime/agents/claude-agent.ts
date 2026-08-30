@@ -297,6 +297,22 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
   // so the successor continues the same conversation under the new
   // system prompt.
   let effectiveResume: string | true | undefined = options.resume;
+  // The initial resume plan, computed ONCE from the ORIGINAL ask
+  // (options.resume) and the on-disk facts — immune to prepare()'s
+  // later mutation of effectiveResume, so the session_start stamp and
+  // the spawn behavior always tell the same story.
+  let cachedInitialPlan: { resumed: boolean; reason?: string } | null = null;
+  const computeInitialPlan = (cwd: string): { resumed: boolean; reason?: string } => {
+    if (cachedInitialPlan === null) {
+      if (options.resume === undefined) cachedInitialPlan = { resumed: false };
+      else if (typeof options.resume === 'string') cachedInitialPlan = { resumed: true };
+      else
+        cachedInitialPlan = hasClaudeSessionFor(cwd)
+          ? { resumed: true }
+          : { resumed: false, reason: 'no previous session in this directory' };
+    }
+    return cachedInitialPlan;
+  };
 
   const composeChildEnv = (ctx: AgentSessionContext): Record<string, string | undefined> => {
     const { runner, log } = ctx;
@@ -433,11 +449,12 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
     prepare(ctx: AgentSessionContext): AgentPrepared {
       const { runner, cwd, log } = ctx;
       const bannerLines: string[] = [];
-      if (effectiveResume === true && !hasClaudeSessionFor(cwd)) {
+      if (effectiveResume === true && computeInitialPlan(cwd).reason !== undefined) {
         // Bare --resume is resume-or-start: the SDK's `continue` errors
         // on an empty project dir, and under Restart=always that's an
         // infinite loop. Loud instead: this line, the banner, and
-        // resumed:false with a reason on session_start.
+        // resumed:false with a reason on session_start (stamped from
+        // the same cached plan, whatever the call order).
         effectiveResume = undefined;
         log.info('resume: no previous claude session found — starting fresh', { cwd });
         bannerLines.push('csuite claude: no previous session here — starting fresh (--resume)');
@@ -789,11 +806,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
     },
 
     initialResumePlan(ctx: AgentSessionContext): { resumed: boolean; reason?: string } | null {
-      if (effectiveResume === undefined) return { resumed: false };
-      if (typeof effectiveResume === 'string') return { resumed: true };
-      return hasClaudeSessionFor(ctx.cwd)
-        ? { resumed: true }
-        : { resumed: false, reason: 'no previous session in this directory' };
+      return computeInitialPlan(ctx.cwd);
     },
   };
   return adapter;

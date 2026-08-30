@@ -187,6 +187,7 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
   // home symlinks it in), so tearing one home down and resuming from
   // a fresh one loses nothing.
   let effectiveResume: string | true | undefined = options.resume;
+  let cachedInitialPlan: { resumed: boolean; reason?: string } | null = null;
 
   // Buffering channel sink. The runner needs a sink up front, but the
   // codex channel sink can't exist until after spawnCodex creates the
@@ -410,11 +411,18 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
     },
 
     initialResumePlan(ctx: AgentSessionContext): { resumed: boolean; reason?: string } | null {
-      if (effectiveResume === undefined) return { resumed: false };
-      if (typeof effectiveResume === 'string') return { resumed: true };
-      return findLatestThreadId(defaultSessionsDir(ctx.runner.instructions.name)) !== null
-        ? { resumed: true }
-        : { resumed: false, reason: 'no previous codex session found' };
+      // Cached and computed from the ORIGINAL ask, not effectiveResume
+      // (which respawns mutate), so the stamp is call-order immune.
+      if (cachedInitialPlan === null) {
+        if (options.resume === undefined) cachedInitialPlan = { resumed: false };
+        else if (typeof options.resume === 'string') cachedInitialPlan = { resumed: true };
+        else
+          cachedInitialPlan =
+            findLatestThreadId(defaultSessionsDir(ctx.runner.instructions.name)) !== null
+              ? { resumed: true }
+              : { resumed: false, reason: 'no previous codex session found' };
+      }
+      return cachedInitialPlan;
     },
   };
   return adapter;
