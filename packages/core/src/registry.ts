@@ -13,7 +13,14 @@
  * as `PresenceIdentityError`.
  */
 
-import type { Message, Presence, Role, RunnerIdentity, RunnerReport } from 'csuite-sdk/types';
+import type {
+  ClientIdentity,
+  ClientReport,
+  Message,
+  Presence,
+  Role,
+  RunnerReport,
+} from 'csuite-sdk/types';
 
 export type Subscriber = (message: Message) => void | Promise<void>;
 
@@ -21,7 +28,7 @@ export interface PresenceState {
   presence: Presence;
   subscribers: Set<Subscriber>;
   subscriberTokenIds: Map<Subscriber, string | null>;
-  subscriberRunnerIdentities: Map<Subscriber, RunnerIdentity | null>;
+  subscriberClientIdentities: Map<Subscriber, ClientIdentity | null>;
 }
 
 /**
@@ -69,7 +76,7 @@ export class PresenceRegistry {
       },
       subscribers: new Set(),
       subscriberTokenIds: new Map(),
-      subscriberRunnerIdentities: new Map(),
+      subscriberClientIdentities: new Map(),
     };
     this.presences.set(name, state);
     return state;
@@ -86,30 +93,50 @@ export class PresenceRegistry {
   list(blockedTokenIds: ReadonlySet<string> = new Set(), brokerVersion?: string): Presence[] {
     const out: Presence[] = [];
     for (const state of this.presences.values()) {
-      const identities = [...state.subscriberRunnerIdentities.values()];
-      const grouped = new Map<string, { identity: RunnerIdentity; connections: number }>();
+      const identities = [...state.subscriberClientIdentities.values()];
+      const grouped = new Map<string, { identity: ClientIdentity; connections: number }>();
       for (const identity of identities) {
         if (identity === null) continue;
-        const key = JSON.stringify([
-          identity.runner,
-          identity.modelId,
-          identity.runnerVersion,
-          identity.runnerBuildSource,
-        ]);
+        const key =
+          identity.kind === 'runner'
+            ? JSON.stringify([
+                identity.kind,
+                identity.runnerIdentity.runner,
+                identity.runnerIdentity.modelId,
+                identity.runnerIdentity.runnerVersion,
+                identity.runnerIdentity.runnerBuildSource,
+              ])
+            : JSON.stringify([identity.kind, identity.clientVersion]);
         const prior = grouped.get(key);
         if (prior) prior.connections += 1;
         else grouped.set(key, { identity, connections: 1 });
       }
-      const runnerReports: RunnerReport[] = [...grouped.values()].map(
-        ({ identity, connections }) => ({
-          ...identity,
-          connections,
-          versionSkew: {
-            skew: brokerVersion !== undefined && identity.runnerVersion !== brokerVersion,
-            runnerVersion: identity.runnerVersion,
-            brokerVersion: brokerVersion ?? '(unreported)',
-          },
-        }),
+      const clientReports: ClientReport[] = [...grouped.values()].map(
+        ({ identity, connections }) =>
+          identity.kind === 'runner'
+            ? {
+                ...identity,
+                connections,
+                versionSkew: {
+                  skew:
+                    brokerVersion !== undefined &&
+                    identity.runnerIdentity.runnerVersion !== brokerVersion,
+                  runnerVersion: identity.runnerIdentity.runnerVersion,
+                  brokerVersion: brokerVersion ?? '(unreported)',
+                },
+              }
+            : { ...identity, connections },
+      );
+      const runnerReports: RunnerReport[] = clientReports.flatMap((report) =>
+        report.kind === 'runner'
+          ? [
+              {
+                ...report.runnerIdentity,
+                connections: report.connections,
+                versionSkew: report.versionSkew,
+              },
+            ]
+          : [],
       );
       out.push({
         name: state.presence.name,
@@ -120,6 +147,7 @@ export class PresenceRegistry {
         ...(brokerVersion !== undefined
           ? {
               runnerReports,
+              clientReports,
               unreportedConnections: identities.filter((identity) => identity === null).length,
             }
           : {}),

@@ -201,28 +201,43 @@ export function TeamHome({ viewer }: TeamHomeProps) {
                           {t.role.description}
                         </div>
                       )}
-                      {online && conn?.runnerReports === undefined && (
+                      {online && conn?.clientReports === undefined && (
                         <div style="font-family:var(--ef-font-mono);font-size:10px;color:var(--ef-text-muted)">
-                          runner identity unreported · broker predates runner identity
+                          client identity unreported · broker predates client identity
                         </div>
                       )}
-                      {conn?.runnerReports?.map((report) => (
+                      {conn?.clientReports?.map((report) => (
                         <div
-                          key={`${report.runner}:${report.modelId}:${report.runnerVersion}`}
+                          key={
+                            report.kind === 'runner'
+                              ? `runner:${report.runnerIdentity.runner}:${report.runnerIdentity.modelId}:${report.runnerIdentity.runnerVersion}`
+                              : `${report.kind}:${report.clientVersion}`
+                          }
                           style="font-family:var(--ef-font-mono);font-size:10px;color:var(--ef-text-muted)"
                         >
-                          {report.runner.toUpperCase()}
-                          {report.runner === 'stub' ? ' · TEST/CI INSTRUMENT' : ''} ·{' '}
-                          {report.modelId ?? 'agent default — not resolved locally'} ·{' '}
-                          {report.runnerVersion} · {report.runnerBuildSource}
-                          {report.versionSkew.skew
-                            ? ` · SKEW (broker ${report.versionSkew.brokerVersion})`
-                            : ''}
+                          {report.kind === 'runner' ? (
+                            <>
+                              RUNNER/{report.runnerIdentity.runner.toUpperCase()}
+                              {report.runnerIdentity.runner === 'stub'
+                                ? ' · TEST/CI INSTRUMENT'
+                                : ''}{' '}
+                              ·{' '}
+                              {report.runnerIdentity.modelId ??
+                                'agent default — not resolved locally'}{' '}
+                              · {report.runnerIdentity.runnerVersion} ·{' '}
+                              {report.runnerIdentity.runnerBuildSource}
+                              {report.versionSkew.skew
+                                ? ` · SKEW (broker ${report.versionSkew.brokerVersion})`
+                                : ''}
+                            </>
+                          ) : (
+                            `${report.kind.toUpperCase()} · ${report.clientVersion} · connections=${report.connections}`
+                          )}
                         </div>
                       ))}
                       {(conn?.unreportedConnections ?? 0) > 0 && (
                         <div style="font-family:var(--ef-font-mono);font-size:10px;color:var(--ef-lamp-caution)">
-                          {conn?.unreportedConnections} connection(s) without runner identity
+                          {conn?.unreportedConnections} connection(s) without client identity
                         </div>
                       )}
                       {status && (

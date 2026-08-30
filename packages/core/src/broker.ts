@@ -17,6 +17,7 @@
 import { containsBearerToken } from 'csuite-sdk/credential-safety';
 import { NameSchema } from 'csuite-sdk/schemas';
 import type {
+  ClientIdentity,
   Member,
   Message,
   Presence,
@@ -130,6 +131,9 @@ export interface IdentityContext {
   role?: Role | null;
   /** Opaque bearer token id for token-aware presence; null for cookie/JWT/in-process callers. */
   tokenId?: string | null;
+  /** Typed, observational identity of this subscriber. Never authorizes. */
+  clientIdentity?: ClientIdentity;
+  /** @deprecated Compatibility for in-process callers; maps to client kind `runner`. */
   runnerIdentity?: RunnerIdentity;
 }
 
@@ -406,12 +410,18 @@ export class Broker {
     const state = this.registry.registerOrGet(name, this.now(), context.role ?? null);
     state.subscribers.add(callback);
     state.subscriberTokenIds.set(callback, context.tokenId ?? null);
-    state.subscriberRunnerIdentities.set(callback, context.runnerIdentity ?? null);
+    state.subscriberClientIdentities.set(
+      callback,
+      context.clientIdentity ??
+        (context.runnerIdentity
+          ? { kind: 'runner', runnerIdentity: context.runnerIdentity }
+          : null),
+    );
     return () => {
       const current = this.registry.get(name);
       current?.subscribers.delete(callback);
       current?.subscriberTokenIds.delete(callback);
-      current?.subscriberRunnerIdentities.delete(callback);
+      current?.subscriberClientIdentities.delete(callback);
     };
   }
 

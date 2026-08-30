@@ -565,7 +565,7 @@ describe('Broker.subscribe', () => {
     unsubscribeB();
   });
 
-  it('groups reported runner identities per connection and counts old runners honestly', async () => {
+  it('groups all client kinds and counts only absent identities as unreported', async () => {
     const { broker } = makeBroker();
     await broker.register('agent-1');
     const identity = {
@@ -575,10 +575,29 @@ describe('Broker.subscribe', () => {
       runnerBuildSource: 'main' as const,
     };
     const a = broker.subscribe('agent-1', () => {}, { runnerIdentity: identity });
-    const b = broker.subscribe('agent-1', () => {}, { runnerIdentity: identity });
+    const b = broker.subscribe('agent-1', () => {}, {
+      clientIdentity: {
+        kind: 'runner',
+        runnerIdentity: {
+          runnerBuildSource: 'main',
+          runnerVersion: '0.8.0+main.abc',
+          modelId: 'gpt-5.6',
+          runner: 'codex',
+        },
+      },
+    });
+    const browser = broker.subscribe('agent-1', () => {}, {
+      clientIdentity: { kind: 'browser', clientVersion: '0.8.0' },
+    });
+    const cli = broker.subscribe('agent-1', () => {}, {
+      clientIdentity: { kind: 'cli', clientVersion: '0.8.0' },
+    });
+    const sdk = broker.subscribe('agent-1', () => {}, {
+      clientIdentity: { kind: 'sdk', clientVersion: '0.8.0' },
+    });
     const old = broker.subscribe('agent-1', () => {});
     expect(broker.listPresences('0.8.0+main.def')[0]).toMatchObject({
-      connected: 3,
+      connected: 6,
       unreportedConnections: 1,
       runnerReports: [
         {
@@ -591,9 +610,27 @@ describe('Broker.subscribe', () => {
           },
         },
       ],
+      clientReports: expect.arrayContaining([
+        {
+          kind: 'runner',
+          runnerIdentity: identity,
+          connections: 2,
+          versionSkew: {
+            skew: true,
+            runnerVersion: '0.8.0+main.abc',
+            brokerVersion: '0.8.0+main.def',
+          },
+        },
+        { kind: 'browser', clientVersion: '0.8.0', connections: 1 },
+        { kind: 'cli', clientVersion: '0.8.0', connections: 1 },
+        { kind: 'sdk', clientVersion: '0.8.0', connections: 1 },
+      ]),
     });
     a();
     b();
+    browser();
+    cli();
+    sdk();
     old();
   });
 

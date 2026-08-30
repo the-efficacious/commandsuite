@@ -86,13 +86,23 @@ async function runStatus(
         ? 'presence=absent'
         : `connected=${row.presence.connected} authBlocked=${row.presence.authBlocked ?? 'unreported'}`;
     stdout(`${row.member.name}  ${presence}  last-activity=${time(row.lastActivityAt)}`);
-    if (row.presence?.runnerReports?.length) {
-      for (const runner of row.presence.runnerReports) {
+    if (row.presence?.clientReports?.length) {
+      for (const report of row.presence.clientReports) {
+        if (report.kind !== 'runner') {
+          stdout(
+            `  client ${report.kind} version=${report.clientVersion} connections=${report.connections}`,
+          );
+          continue;
+        }
+        const runner = report.runnerIdentity;
         stdout(
-          `  runner ${runner.runner} model=${runner.modelId ?? 'agent default — not resolved locally'} version=${runner.runnerVersion}${runner.versionSkew.skew ? ` SKEW broker=${runner.versionSkew.brokerVersion}` : ''}`,
+          `  runner ${runner.runner} model=${runner.modelId ?? 'agent default — not resolved locally'} version=${runner.runnerVersion}${report.versionSkew.skew ? ` SKEW broker=${report.versionSkew.brokerVersion}` : ''}`,
         );
       }
-    } else stdout('  runner unreported');
+    } else if (row.presence?.clientReports === undefined) stdout('  client identity unreported');
+    if ((row.presence?.unreportedConnections ?? 0) > 0) {
+      stdout(`  ${row.presence?.unreportedConnections} connection(s) without client identity`);
+    }
     for (const objective of row.activeObjectives) {
       stdout(
         `  ${objective.id} ${objective.status}${objective.stalled ? ` STALLED missing=${objective.staleSignals.join(',')}` : ''} last-post=${time(objective.lastThreadPostAt)} last-pr=${time(objective.lastPrLinkAt)} last-lifecycle=${time(objective.lastLifecycleAt)}`,

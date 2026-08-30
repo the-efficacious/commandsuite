@@ -11,9 +11,11 @@
  */
 
 import { WebSocket as NodeWebSocket } from 'ws';
+import packageJson from '../package.json' with { type: 'json' };
 import {
   AUTH_HEADER,
   CHANNEL_PATHS,
+  CLIENT_IDENTITY_HEADER,
   FS_PATHS,
   MEMBER_PATHS,
   NOTIFICATION_PATHS,
@@ -22,7 +24,6 @@ import {
   PROCESS_DOCUMENT_PATHS,
   PROTOCOL_HEADER,
   PROTOCOL_VERSION,
-  RUNNER_IDENTITY_HEADER,
   RUNNER_VERSION_HEADER,
   SECRET_PATHS,
   TOOL_SOURCE_PATHS,
@@ -37,6 +38,7 @@ import {
   BindToolSourceRequestSchema,
   BindVariableRequestSchema,
   ChannelSchema,
+  ClientIdentitySchema,
   ContextControlResponseSchema,
   CreateChannelRequestSchema,
   CreateMemberResponseSchema,
@@ -131,6 +133,7 @@ import type {
   CancelObjectiveRequest,
   Channel,
   ChannelSummary,
+  ClientIdentity,
   ContextControlRequest,
   ContextControlResponse,
   CreateChannelRequest,
@@ -264,6 +267,8 @@ export interface ClientOptions {
   WebSocket?: typeof NodeWebSocket;
   /** Called when either outbound transport receives an authentication rejection. */
   onUnauthorized?: (source: 'http' | 'websocket') => void;
+  /** Identity reported by subscriptions; defaults to this SDK build. */
+  clientIdentity?: ClientIdentity;
 }
 
 export class ClientError extends Error {
@@ -285,6 +290,7 @@ export class Client {
   private readonly fetchImpl: typeof fetch;
   private readonly WebSocketImpl: typeof NodeWebSocket;
   private readonly onUnauthorized: ((source: 'http' | 'websocket') => void) | undefined;
+  private readonly clientIdentity: ClientIdentity;
   private readonly activeSubscriptions = new Set<NodeWebSocket>();
 
   constructor(options: ClientOptions) {
@@ -305,6 +311,9 @@ export class Client {
     this.fetchImpl = fetchRef.bind(globalThis);
     this.WebSocketImpl = options.WebSocket ?? NodeWebSocket;
     this.onUnauthorized = options.onUnauthorized;
+    this.clientIdentity = ClientIdentitySchema.parse(
+      options.clientIdentity ?? { kind: 'sdk', clientVersion: packageJson.version },
+    );
   }
 
   /**
@@ -1842,7 +1851,7 @@ export class Client {
   async *subscribe(
     name: string,
     signal?: AbortSignal,
-    runnerIdentity?: RunnerIdentity,
+    clientIdentity?: ClientIdentity | RunnerIdentity,
   ): AsyncIterable<Message> {
     const url = this.buildWsUrl(PATHS.subscribe, { name });
     const headers: Record<string, string> = {
@@ -1851,9 +1860,13 @@ export class Client {
     if (this.token) {
       headers[AUTH_HEADER] = `Bearer ${this.token}`;
     }
-    if (runnerIdentity !== undefined) {
-      headers[RUNNER_IDENTITY_HEADER] = JSON.stringify(RunnerIdentitySchema.parse(runnerIdentity));
-    }
+    const normalized =
+      clientIdentity === undefined
+        ? this.clientIdentity
+        : 'kind' in clientIdentity
+          ? ClientIdentitySchema.parse(clientIdentity)
+          : { kind: 'runner' as const, runnerIdentity: RunnerIdentitySchema.parse(clientIdentity) };
+    headers[CLIENT_IDENTITY_HEADER] = JSON.stringify(normalized);
     const ws = new this.WebSocketImpl(url, { headers });
     this.activeSubscriptions.add(ws);
 

@@ -24,6 +24,7 @@
  */
 
 import {
+  CLIENT_IDENTITY_HEADER,
   PATHS,
   PROCESS_DOCUMENT_PATHS,
   PROTOCOL_HEADER,
@@ -40,6 +41,7 @@ import {
   BindToolSourceRequestSchema,
   BindVariableRequestSchema,
   CancelObjectiveRequestSchema,
+  ClientIdentitySchema,
   CompleteObjectiveRequestSchema,
   ContextControlRequestSchema,
   CreateChannelRequestSchema,
@@ -4743,6 +4745,25 @@ export function createApp(options: AppOptions): CreatedApp {
           403,
         );
       }
+      const browserKind = c.req.query('clientKind');
+      const browserVersion = c.req.query('clientVersion');
+      const reportedClient = c.req.header(CLIENT_IDENTITY_HEADER);
+      const reportedRunner = c.req.header(RUNNER_IDENTITY_HEADER);
+      if (browserKind !== undefined || browserVersion !== undefined) {
+        const parsed = ClientIdentitySchema.safeParse({
+          kind: browserKind,
+          clientVersion: browserVersion,
+        });
+        if (!parsed.success || parsed.data.kind !== 'browser') {
+          return c.json({ error: 'browser client identity query is invalid' }, 400);
+        }
+        if (reportedClient !== undefined || reportedRunner !== undefined) {
+          return c.json(
+            { error: 'client identity header and browser identity query cannot be combined' },
+            400,
+          );
+        }
+      }
       await next();
     },
     upgradeWebSocket === null
@@ -4751,16 +4772,36 @@ export function createApp(options: AppOptions): CreatedApp {
           // Pre-check middleware guaranteed a valid `name` and identity match.
           const targetName = c.req.query('name') as string;
           const member = c.get('member');
-          const reportedIdentity = c.req.header(RUNNER_IDENTITY_HEADER);
-          const runnerIdentity = (() => {
-            if (reportedIdentity === undefined) return undefined;
-            if (reportedIdentity.length > 1024) return undefined;
-            try {
-              const parsed = RunnerIdentitySchema.safeParse(JSON.parse(reportedIdentity));
-              return parsed.success ? parsed.data : undefined;
-            } catch {
-              return undefined;
+          const reportedClient = c.req.header(CLIENT_IDENTITY_HEADER);
+          const reportedRunner = c.req.header(RUNNER_IDENTITY_HEADER);
+          const browserVersion = c.req.query('clientVersion');
+          const clientIdentity = (() => {
+            if (reportedClient !== undefined) {
+              if (reportedClient.length > 1024) return undefined;
+              try {
+                const parsed = ClientIdentitySchema.safeParse(JSON.parse(reportedClient));
+                return parsed.success ? parsed.data : undefined;
+              } catch {
+                return undefined;
+              }
             }
+            if (reportedRunner !== undefined) {
+              if (reportedRunner.length > 1024) return undefined;
+              try {
+                const parsed = RunnerIdentitySchema.safeParse(JSON.parse(reportedRunner));
+                return parsed.success
+                  ? ({ kind: 'runner', runnerIdentity: parsed.data } as const)
+                  : undefined;
+              } catch {
+                return undefined;
+              }
+            }
+            if (browserVersion === undefined) return undefined;
+            const parsed = ClientIdentitySchema.safeParse({
+              kind: 'browser',
+              clientVersion: browserVersion,
+            });
+            return parsed.success ? parsed.data : undefined;
           })();
           let unsubscribe: (() => void) | null = null;
           let onShutdown: (() => void) | null = null;
@@ -4784,7 +4825,7 @@ export function createApp(options: AppOptions): CreatedApp {
                   role: member.role,
                   name: member.name,
                   tokenId: c.get('tokenId'),
-                  runnerIdentity,
+                  clientIdentity,
                 },
               );
 

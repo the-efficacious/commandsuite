@@ -611,6 +611,24 @@ describe('<TeamHome />', () => {
               },
             },
           ],
+          clientReports: [
+            {
+              kind: 'runner',
+              runnerIdentity: {
+                runner: 'stub',
+                modelId: null,
+                runnerVersion: '0.8.0+main.aaaa',
+                runnerBuildSource: 'main',
+              },
+              connections: 1,
+              versionSkew: {
+                skew: true,
+                runnerVersion: '0.8.0+main.aaaa',
+                brokerVersion: '0.8.0+main.bbbb',
+              },
+            },
+            { kind: 'browser', clientVersion: '0.8.0', connections: 1 },
+          ],
           unreportedConnections: 1,
         },
       ],
@@ -624,7 +642,8 @@ describe('<TeamHome />', () => {
       expect(row.textContent).toContain('SKEW');
       expect(row.textContent).toContain('0.8.0+main.aaaa');
       expect(row.textContent).toContain('broker 0.8.0+main.bbbb');
-      expect(row.textContent).toContain('1 connection(s) without runner identity');
+      expect(row.textContent).toContain('BROWSER');
+      expect(row.textContent).toContain('1 connection(s) without client identity');
     });
   });
 
