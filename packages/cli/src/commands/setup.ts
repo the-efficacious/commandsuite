@@ -1,10 +1,25 @@
 /**
- * `csuite setup` — run the first-time wizard and seed the DB.
+ * `csuite setup` — seed a team and its first member, interactively or not.
  *
- * Walks the user through team + first-member setup, opens the SQLite DB
- * at the resolved path, seeds the team singleton + bootstrap member
- * + bearer token, and writes the slim infra-only
- * config file alongside.
+ * Two paths, one seed:
+ *
+ *   - Interactive (default): walk the operator through team + first
+ *     member setup at a TTY. The wizard mints the bearer token (shown
+ *     once, then wiped from scrollback) and enrolls TOTP with a
+ *     confirmed code.
+ *   - `--non-interactive`: no TTY, no prompts. Identity comes from
+ *     `--team` and `--member` (required — a bootstrap member is not
+ *     something to default silently). The bearer token is written to
+ *     `--token-file` (required) at mode 0600 and never printed; the
+ *     token is what a provisioning script, container entrypoint, or CI
+ *     job needs to reach the broker, and stdout is where it would leak.
+ *     TOTP is optional: pass `--totp-secret-file` to have a secret
+ *     generated, enrolled, and written 0600 (an agent can then sign in
+ *     to the web UI); omit it and the summary says how to enroll later.
+ *
+ * Both paths open the SQLite DB at the resolved path, seed the team
+ * singleton + bootstrap member + bearer token, and write the slim
+ * infra-only config file alongside.
  *
  * Resolution of the config path:
  *   1. explicit `--config-path` on the command line
@@ -18,15 +33,55 @@
  * csuite.db` is the way to start over.
  */
 
-import { mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { closeSync, existsSync, mkdirSync, openSync, writeSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { ENV } from 'csuite-sdk/protocol';
+import type { Permission, Role } from 'csuite-sdk/types';
+import { PERMISSIONS } from 'csuite-sdk/types';
 import { UsageError } from './errors.js';
 
 export { UsageError };
 
 export interface SetupCommandInput {
   configPath?: string;
+  /** Seed without prompting. Requires `team`, `member`, and `tokenFile`. */
+  nonInteractive?: boolean;
+  /** Team name (non-interactive only). 1–128 characters. */
+  team?: string;
+  /** Bootstrap member name (non-interactive only). Alphanumeric plus `. _ -`. */
+  member?: string;
+  /** Where to write the bearer token, mode 0600 (non-interactive only). */
+  tokenFile?: string;
+  /**
+   * Where to write the generated base32 TOTP secret, mode 0600
+   * (non-interactive only). Omit to skip TOTP enrollment.
+   */
+  totpSecretFile?: string;
+  /**
+   * Test-only. Runs after the path preflight and immediately before
+   * each secret file is created — the window in which another process
+   * could fill the path. Exists so the failure report's ownership rule
+   * can be proven against a real concurrent write rather than described.
+   */
+  beforeSecretWrite?: (path: string) => void;
+}
+
+const NAME_REGEX = /^[a-zA-Z0-9._-]+$/;
+const BOOTSTRAP_ROLE_TITLE = 'member';
+
+/** Everything the seed needs, whichever path captured it. */
+interface BootstrapSeed {
+  team: { name: string; context: string };
+  member: {
+    name: string;
+    role: Role;
+    instructions: string;
+    rawPermissions: string[];
+    permissions: Permission[];
+    token: string;
+    /** `null` when no TOTP is enrolled (non-interactive without a secret file). */
+    totpSecret: string | null;
+  };
 }
 
 export async function runSetupCommand(
@@ -36,7 +91,12 @@ export async function runSetupCommand(
   const server = await loadServerModule();
   const configPath = input.configPath ?? process.env[ENV.configPath] ?? server.defaultConfigPath();
 
-  // Note: the KEK is installed later, right before the wizard runs.
+  // Validate the non-interactive inputs before touching anything, so a
+  // typo fails with nothing on disk. Passing identity flags without
+  // `--non-interactive` is refused rather than silently ignored.
+  const nonInteractive = validateNonInteractiveInput(input);
+
+  // Note: the KEK is installed later, right before seeding.
   // `resolveKek` mints `csuite-kek.bin` on first use, so resolving it
   // up front would leave a stray key file behind whenever setup bails
   // early (non-TTY stdin, already-populated team). None of the probe
@@ -44,14 +104,14 @@ export async function runSetupCommand(
 
   // Refuse to overwrite an existing setup. We check both: file
   // presence AND a populated team singleton in the DB. If only the
-  // file exists but the DB is empty, fall through and let the wizard
-  // re-seed (operator probably bricked their DB and is recovering).
+  // file exists but the DB is empty, fall through and let the seed
+  // re-run (operator probably bricked their DB and is recovering).
   let existingConfig: Awaited<ReturnType<typeof server.loadServerConfigFromFile>> | null = null;
   try {
     existingConfig = server.loadServerConfigFromFile(configPath);
   } catch (err) {
     if (err instanceof server.ConfigNotFoundError) {
-      // Happy path — no file, run the wizard.
+      // Happy path — no file, seed from scratch.
     } else if (err instanceof server.MemberLoadError) {
       throw new UsageError(`setup: existing config at ${configPath} is invalid: ${err.message}`);
     } else {
@@ -79,7 +139,7 @@ export async function runSetupCommand(
             `  team:    ${team.name}\n` +
             `  members: ${stores.members.size()} (${memberNames.join(', ')})\n` +
             `  db:      ${dbPath}\n\n` +
-            `  Running the wizard now would mint a fresh bootstrap member and invalidate all\n` +
+            `  Running setup now would mint a fresh bootstrap member and invalidate all\n` +
             `  existing tokens. If that is what you want, remove both first:\n` +
             `    rm ${configPath} ${dbPath}`,
         );
@@ -89,12 +149,25 @@ export async function runSetupCommand(
     }
   }
 
+  if (nonInteractive !== null) {
+    await runNonInteractive(
+      server,
+      { configPath, dbPath, existingConfig },
+      nonInteractive,
+      stdout,
+      input.beforeSecretWrite,
+    );
+    return;
+  }
+
   const { io, close } = server.createTtyWizardIO();
   if (!io.isInteractive) {
     close();
     throw new UsageError(
       'setup: stdin is not a TTY — the wizard needs interactive input.\n' +
-        '  Run this command in a real terminal (not piped / under turbo).',
+        '  Run this command in a real terminal (not piped / under turbo), or seed without\n' +
+        '  prompts:\n' +
+        '    csuite setup --non-interactive --team <name> --member <name> --token-file <path>',
     );
   }
 
@@ -108,51 +181,14 @@ export async function runSetupCommand(
     server.setKek(server.resolveKek(configPath));
 
     const wizard = await server.runFirstRunWizard({ configPath, io });
-
-    // Seed DB with the wizard's captured team + bootstrap member.
-    const db = server.openDatabase(dbPath);
-    try {
-      const stores = server.openTeamAndMembers(db);
-      stores.team.setTeam({
-        name: wizard.team.name,
-        context: wizard.team.context,
-      });
-      stores.members.addMember({
-        name: wizard.bootstrapMember.name,
-        role: wizard.bootstrapMember.role,
-        instructions: wizard.bootstrapMember.instructions,
-        rawPermissions: wizard.bootstrapMember.rawPermissions,
-        permissions: wizard.bootstrapMember.permissions,
-        totpSecret: wizard.bootstrapMember.totpSecret,
-      });
-      const tokens = new server.SqliteTokenStore(db);
-      await tokens.insert({
-        memberName: wizard.bootstrapMember.name,
-        rawToken: wizard.bootstrapMember.token,
-        label: 'wizard',
-        origin: 'bootstrap',
-        createdBy: null,
-      });
-    } finally {
-      db.close();
-    }
-
-    // Write the slim infra-only config file with sensible defaults.
-    // Store dbPath relative to the config file when we placed the DB
-    // alongside it (the new-setup case); preserve whatever shape the
-    // existing config used otherwise (recovery-from-empty-DB path).
-    const configuredDbPath =
-      existingConfig?.dbPath ??
-      (dbPath === join(dirname(configPath), 'csuite.db') ? './csuite.db' : dbPath);
-    server.writeServerConfigFile(configPath, {
-      dbPath: configuredDbPath,
-      activityDbPath: null,
-      filesRoot: null,
-      https: server.defaultHttpsConfig(),
-      webPush: null,
-      jwt: null,
-      files: null,
-    });
+    await seedBootstrap(
+      server,
+      { configPath, dbPath, existingConfig },
+      {
+        team: wizard.team,
+        member: { ...wizard.bootstrapMember },
+      },
+    );
 
     stdout('');
     stdout('✓ setup complete');
@@ -175,6 +211,279 @@ export async function runSetupCommand(
     throw err;
   } finally {
     close();
+  }
+}
+
+interface NonInteractiveInput {
+  team: string;
+  member: string;
+  tokenFile: string;
+  totpSecretFile: string | null;
+}
+
+/**
+ * Returns the validated non-interactive inputs, or `null` when the
+ * interactive path applies. Every failure names the flag to fix.
+ */
+function validateNonInteractiveInput(input: SetupCommandInput): NonInteractiveInput | null {
+  const identityFlags: string[] = [];
+  if (input.team !== undefined) identityFlags.push('--team');
+  if (input.member !== undefined) identityFlags.push('--member');
+  if (input.tokenFile !== undefined) identityFlags.push('--token-file');
+  if (input.totpSecretFile !== undefined) identityFlags.push('--totp-secret-file');
+
+  if (!input.nonInteractive) {
+    if (identityFlags.length > 0) {
+      throw new UsageError(`setup: ${identityFlags.join(', ')} only apply with --non-interactive`);
+    }
+    return null;
+  }
+
+  const missing: string[] = [];
+  if (!input.team) missing.push('--team <name>');
+  if (!input.member) missing.push('--member <name>');
+  if (!input.tokenFile) missing.push('--token-file <path>');
+  if (missing.length > 0) {
+    throw new UsageError(
+      `setup: --non-interactive requires ${missing.join(', ')}\n` +
+        '  The bootstrap identity is never defaulted silently, and the bearer token is\n' +
+        '  written to a file (mode 0600) rather than printed.',
+    );
+  }
+  const team = input.team as string;
+  const member = input.member as string;
+  if (team.length > 128) {
+    throw new UsageError('setup: --team must be 1-128 characters');
+  }
+  if (member.length > 128 || !NAME_REGEX.test(member)) {
+    throw new UsageError(
+      `setup: invalid --member '${member}' (must be alphanumeric with . _ - allowed, 128 max)`,
+    );
+  }
+  const tokenFile = resolve(input.tokenFile as string);
+  const totpSecretFile = input.totpSecretFile !== undefined ? resolve(input.totpSecretFile) : null;
+  if (totpSecretFile !== null && totpSecretFile === tokenFile) {
+    throw new UsageError(
+      `setup: --token-file and --totp-secret-file must be different files (both: ${tokenFile})`,
+    );
+  }
+  // Every output path is checked BEFORE anything is minted or written, so
+  // a collision on the second file cannot strand the first: an orphaned
+  // token file would make the corrected retry fail on itself, which is
+  // exactly the unattended path this flag exists for.
+  for (const [flag, path] of [
+    ['--token-file', tokenFile],
+    ['--totp-secret-file', totpSecretFile],
+  ] as const) {
+    if (path !== null && existsSync(path)) {
+      throw new UsageError(
+        `setup: ${flag} ${path} already exists — refusing to overwrite a secret file.\n` +
+          '  Remove it or point the flag at a fresh path. Nothing was written.',
+      );
+    }
+  }
+  return { team, member, tokenFile, totpSecretFile };
+}
+
+async function runNonInteractive(
+  server: typeof import('csuite-server'),
+  paths: SeedPaths,
+  input: NonInteractiveInput,
+  stdout: (line: string) => void,
+  beforeSecretWrite?: (path: string) => void,
+): Promise<void> {
+  // On failure nothing is deleted. Proving that a file is ours to
+  // delete under a concurrent writer is exactly the problem no
+  // invariant needs; what a retry needs is an accurate list. Two
+  // lists, because they carry different certainty: a secret file is
+  // known to be ours once its own O_EXCL create returned; the server
+  // directory's files can only be reported as "absent when this run
+  // began, present now" — inspect-only, never in a removal command.
+  const kekPath = join(dirname(paths.configPath), 'csuite-kek.bin');
+  const serverFiles = [paths.configPath, paths.dbPath, kekPath];
+  const absentAtStart = serverFiles.filter((path) => !existsSync(path));
+  const created: string[] = [];
+
+  try {
+    const token = server.generateBearerToken();
+    const totpSecret = input.totpSecretFile !== null ? server.generateTotpSecret() : null;
+
+    // Secrets land on disk BEFORE the DB is seeded: if the token file
+    // cannot be created (unwritable dir, a race with the preflight),
+    // nothing has been minted that the operator can no longer reach.
+    beforeSecretWrite?.(input.tokenFile);
+    writeSecretFile(input.tokenFile, token, '--token-file');
+    created.push(input.tokenFile);
+    if (input.totpSecretFile !== null && totpSecret !== null) {
+      beforeSecretWrite?.(input.totpSecretFile);
+      writeSecretFile(input.totpSecretFile, totpSecret, '--totp-secret-file');
+      created.push(input.totpSecretFile);
+    }
+
+    mkdirSync(dirname(paths.configPath), { recursive: true, mode: 0o700 });
+    server.setKek(server.resolveKek(paths.configPath));
+
+    // seedBootstrap writes the config file last; that write is the
+    // commit boundary. Everything after it is reporting.
+    await seedBootstrap(server, paths, {
+      team: { name: input.team, context: '' },
+      member: {
+        name: input.member,
+        role: { title: BOOTSTRAP_ROLE_TITLE, description: '' },
+        instructions: '',
+        rawPermissions: [...PERMISSIONS],
+        permissions: [...PERMISSIONS],
+        token,
+        totpSecret,
+      },
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const prefixed =
+      err instanceof UsageError || message.startsWith('setup:') ? message : `setup: ${message}`;
+    throw new UsageError(`${prefixed}\n${formatPartialSetup(created, absentAtStart)}`);
+  }
+
+  stdout('');
+  stdout('✓ setup complete (non-interactive)');
+  stdout(`  team:    ${input.team}`);
+  stdout(`  member:  ${input.member}`);
+  stdout(`  config:  ${paths.configPath}`);
+  stdout(`  db:      ${paths.dbPath}`);
+  stdout(`  token:   ${input.tokenFile}  (mode 0600 — the only copy; the DB stores a hash)`);
+  if (input.totpSecretFile !== null) {
+    stdout(`  totp:    ${input.totpSecretFile}  (mode 0600 — base32 secret for web UI sign-in)`);
+  } else {
+    stdout('  totp:    not enrolled — once the broker is running:');
+    stdout(`             csuite enroll --member ${input.member}`);
+  }
+  stdout('');
+  stdout('Next steps:');
+  stdout(`  csuite serve --config-path ${paths.configPath}`);
+  stdout(`  CSUITE_TOKEN=$(cat ${input.tokenFile}) csuite roster`);
+  stdout('');
+}
+
+/**
+ * The failure report: what to remove before a retry, stated with
+ * exactly the certainty each item has. Files this invocation provably
+ * created (their O_EXCL create returned) are listed as the ones to
+ * remove; server-directory files that were absent at start and are
+ * present now are listed separately as inspect-only — they may be a
+ * concurrent writer's. Paths are printed one per line, verbatim, and
+ * never inside a shell command: a path can hold spaces, a leading
+ * dash, or metacharacters, and a line meant to be copied into a shell
+ * would then do something other than what it says. Exported for
+ * tests: the wording is the deliverable.
+ */
+export function formatPartialSetup(
+  created: readonly string[],
+  absentAtStart: readonly string[],
+): string {
+  const appeared = absentAtStart.filter((path) => existsSync(path));
+  const lines = ['  Nothing was deleted. Partial setup:'];
+  if (created.length > 0) {
+    lines.push('    created by this run (remove these to retry):');
+    for (const path of created) lines.push(`      ${path}`);
+  } else {
+    lines.push('    created by this run: (nothing)');
+  }
+  if (appeared.length > 0) {
+    lines.push('    absent at start, present now (inspect before touching):');
+    for (const path of appeared) lines.push(`      ${path}`);
+  }
+  lines.push('  Fix the cause and re-run.');
+  return lines.join('\n');
+}
+
+interface SeedPaths {
+  configPath: string;
+  dbPath: string;
+  existingConfig: { dbPath: string | null } | null;
+}
+
+/**
+ * Seed the DB with the team + bootstrap member + bearer token and
+ * write the slim infra-only config file. Shared by both paths so the
+ * wizard and the non-interactive flag cannot drift apart.
+ */
+async function seedBootstrap(
+  server: typeof import('csuite-server'),
+  paths: SeedPaths,
+  seed: BootstrapSeed,
+): Promise<void> {
+  const { configPath, dbPath, existingConfig } = paths;
+  const db = server.openDatabase(dbPath);
+  try {
+    const stores = server.openTeamAndMembers(db);
+    stores.team.setTeam({
+      name: seed.team.name,
+      context: seed.team.context,
+    });
+    stores.members.addMember({
+      name: seed.member.name,
+      role: seed.member.role,
+      instructions: seed.member.instructions,
+      rawPermissions: seed.member.rawPermissions,
+      permissions: seed.member.permissions,
+      totpSecret: seed.member.totpSecret,
+    });
+    const tokens = new server.SqliteTokenStore(db);
+    // `insert` hashes the raw token (async) before the row lands —
+    // awaited inside the try so `db.close()` cannot run first.
+    await tokens.insert({
+      memberName: seed.member.name,
+      rawToken: seed.member.token,
+      label: 'wizard',
+      origin: 'bootstrap',
+      createdBy: null,
+    });
+  } finally {
+    db.close();
+  }
+
+  // Write the slim infra-only config file with sensible defaults.
+  // Store dbPath relative to the config file when we placed the DB
+  // alongside it (the new-setup case); preserve whatever shape the
+  // existing config used otherwise (recovery-from-empty-DB path).
+  const configuredDbPath =
+    existingConfig?.dbPath ??
+    (dbPath === join(dirname(configPath), 'csuite.db') ? './csuite.db' : dbPath);
+  server.writeServerConfigFile(configPath, {
+    dbPath: configuredDbPath,
+    activityDbPath: null,
+    filesRoot: null,
+    https: server.defaultHttpsConfig(),
+    webPush: null,
+    jwt: null,
+    files: null,
+  });
+}
+
+/**
+ * Create `path` with mode 0600 and write one line. `wx` refuses an
+ * existing file: a secret file is never overwritten, because the
+ * operator may have pointed the flag at something that matters.
+ */
+function writeSecretFile(path: string, value: string, flag: string): void {
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  let fd: number;
+  try {
+    fd = openSync(path, 'wx', 0o600);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'EEXIST') {
+      throw new UsageError(
+        `setup: ${flag} ${path} already exists — refusing to overwrite a secret file.\n` +
+          '  Remove it or point the flag at a fresh path.',
+      );
+    }
+    throw new UsageError(`setup: cannot create ${flag} ${path}: ${(err as Error).message}`);
+  }
+  try {
+    writeSync(fd, `${value}\n`);
+  } finally {
+    closeSync(fd);
   }
 }
 

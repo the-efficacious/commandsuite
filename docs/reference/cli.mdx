@@ -69,7 +69,7 @@ installed the command prints the install hint.
 If no config file exists and you're at an interactive terminal, serve
 drops into the same first-run wizard as `csuite setup`. In a non-TTY
 context (systemd, CI) it exits with a message instead — run
-`csuite setup` first.
+`csuite setup --non-interactive …` first.
 
 ```
 $ csuite serve
@@ -87,19 +87,46 @@ and writes.
 
 ```
 csuite setup [--config-path <path>]
+csuite setup --non-interactive --team <name> --member <name> --token-file <path>
+             [--totp-secret-file <path>] [--config-path <path>]
 ```
 
-The first-run wizard. Prompts for a team name, the first member's name,
-and that member's authenticator (TOTP) enrollment. Then it:
+The first-run seed. At an interactive terminal it is a wizard: it
+prompts for a team name, the first member's name, and that member's
+authenticator (TOTP) enrollment, then prints the member's bearer token
+**exactly once** — save it.
+
+With `--non-interactive` nothing is prompted and nothing secret is
+printed:
+
+| Flag | Description |
+|---|---|
+| `--team <name>` | Team name, 1–128 characters. Required. |
+| `--member <name>` | First member's name (letters, digits, `. _ -`). Required. |
+| `--token-file <path>` | Where the member's bearer token is written, mode 0600. Required — this file is the only copy; the database stores a hash. Refuses to overwrite an existing file. |
+| `--totp-secret-file <path>` | Optional. Generate and enroll a TOTP secret and write it (base32) here at mode 0600, so the member can sign in to the web UI. Omit it and no authenticator is enrolled; `csuite enroll --member <name>` does that later. |
+
+Identity is never defaulted: if any required flag is missing, setup
+exits without writing anything and names the flag.
+
+Either way, setup then:
 
 - seeds the database with the team and a first member holding every permission leaf,
-- writes the server config file,
-- prints that member's bearer token **exactly once** — save it.
+- writes the server config file.
 
 Setup refuses to run when the config already points at a populated
 team, because re-running would mint a fresh bootstrap member and invalidate every
 existing credential. The refusal message names the config and database
 files to remove if a reset is really what you want.
+
+A provisioning script uses the token straight from the file:
+
+```bash
+csuite setup --non-interactive --team acme --member admin \
+  --token-file ~/.config/csuite/admin.token --totp-secret-file ~/.config/csuite/admin.totp
+csuite serve &
+CSUITE_TOKEN=$(cat ~/.config/csuite/admin.token) csuite roster
+```
 
 ## connect
 
