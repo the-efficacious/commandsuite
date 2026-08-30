@@ -15,6 +15,8 @@ import { z } from 'zod';
  * round-trip preset references to disk without expanding them.
  */
 export interface LoadedMember extends Member {
+  /** Stable member identity; optional while old brokers/fixtures remain readable. */
+  identityId?: string;
   /** Preset names + leaf permissions as written on disk; preserved for round-tripping. */
   rawPermissions: string[];
   totpSecret?: string | null;
