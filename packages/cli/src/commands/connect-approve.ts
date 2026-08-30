@@ -48,32 +48,20 @@ export interface ConnectApproveInput {
  * Requester-controlled strings (label hint, source IP, user agent) are
  * typed by whoever ran `csuite connect` — unauthenticated — and this
  * command prints them to a privileged operator's terminal. Rendered
- * terminal-safe: every C0/C1 control (so no newline can forge a row,
- * no ESC can start a sequence, no CR can overwrite one), and every
- * other non-printing or zero-width code point, becomes a visible
- * placeholder; runs of whitespace collapse; the result is capped so one
- * record is always one line of bounded width.
+ * terminal-safe by Unicode property, not by a hand list: every
+ * control (Cc: C0, DEL, C1 — so no newline forges a row, no ESC
+ * starts a sequence, no CR overwrites one), every format character
+ * (Cf: zero-width joiners and spaces, bidi overrides and isolates,
+ * soft hyphen, BOM, Arabic letter mark, …) and every line/paragraph
+ * separator (Zl, Zp) becomes a visible U+FFFD; a tab is whitespace;
+ * runs of whitespace collapse; the result is capped so one record is
+ * always one line of bounded width.
  */
+const UNSAFE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
+
 export function terminalSafe(value: string | null | undefined, max: number): string {
   if (value === null || value === undefined) return '';
-  let out = '';
-  for (const ch of value) {
-    const cp = ch.codePointAt(0) ?? 0;
-    const control =
-      cp < 0x20 ||
-      (cp >= 0x7f && cp <= 0x9f) ||
-      cp === 0x2028 ||
-      cp === 0x2029 ||
-      cp === 0x200b ||
-      cp === 0x200e ||
-      cp === 0x200f ||
-      (cp >= 0x202a && cp <= 0x202e) ||
-      (cp >= 0x2066 && cp <= 0x2069) ||
-      cp === 0xfeff;
-    // A tab is whitespace for the collapse below; every other control is marked.
-    out += ch === '\t' ? ' ' : control ? '\ufffd' : ch;
-  }
-  out = out.replace(/\s+/g, ' ').trim();
+  const out = value.replace(/\t/g, ' ').replace(UNSAFE, '\ufffd').replace(/\s+/g, ' ').trim();
   return out.length > max ? `${out.slice(0, max - 1)}…` : out;
 }
 

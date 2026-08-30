@@ -133,7 +133,61 @@ describe('csuite connect pending', () => {
     expect(row.slice(0, 9)).toBe('AB12-CD34');
   });
 
-  it('terminalSafe: replaces every control with a visible placeholder, collapses whitespace, caps width', () => {
+  it('terminalSafe: replaces every Cc/Cf/Zl/Zp code point, not a hand list', () => {
+    // Rune's review of #208: the first version enumerated code points and
+    // missed these. Each is a real format/separator character a requester
+    // can put in a label; each must become U+FFFD.
+    const missed = [
+      '\u061c', // ARABIC LETTER MARK (Cf)
+      '\u200c', // ZERO WIDTH NON-JOINER (Cf)
+      '\u200d', // ZERO WIDTH JOINER (Cf)
+      '\u2060', // WORD JOINER (Cf)
+      '\u00ad', // SOFT HYPHEN (Cf)
+      '\u2066', // LEFT-TO-RIGHT ISOLATE (Cf)
+      '\ufeff', // BOM (Cf)
+      '\u2028', // LINE SEPARATOR (Zl)
+      '\u2029', // PARAGRAPH SEPARATOR (Zp)
+      '\u0085', // NEXT LINE (Cc)
+      '\u009b', // CSI (Cc)
+      '\u{e0001}', // LANGUAGE TAG (Cf, astral)
+    ];
+    for (const ch of missed) {
+      const rendered = terminalSafe(`a${ch}b`, 40);
+      expect(rendered, `U+${(ch.codePointAt(0) ?? 0).toString(16)}`).toBe('a\ufffdb');
+    }
+    // Property check across the whole BMP + a supplementary plane: nothing
+    // in Cc/Cf/Zl/Zp survives, and nothing else is touched (positive control).
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: the controls are the subject under test
+    const unsafe = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
+    let unsafeCount = 0;
+    const ranges: Array<[number, number]> = [
+      [0, 0xffff], // the whole BMP
+      [0x10000, 0x1ffff], // SMP: emoji, tags' neighbours
+      [0xe0000, 0xe01ff], // tags and variation selectors (Cf)
+    ];
+    const codePoints = ranges.flatMap(([lo, hi]) =>
+      Array.from({ length: hi - lo + 1 }, (_, i) => lo + i),
+    );
+    for (const cp of codePoints) {
+      if (cp >= 0xd800 && cp <= 0xdfff) continue;
+      const ch = String.fromCodePoint(cp);
+      const rendered = terminalSafe(`x${ch}x`, 40);
+      if (cp === 0x09) {
+        // Tab is Cc but deliberately whitespace: it collapses, never marks.
+        expect(rendered).toBe('x x');
+      } else if (unsafe.test(ch)) {
+        unsafeCount++;
+        expect(rendered, `U+${cp.toString(16)} must be replaced`).toBe('x\ufffdx');
+      } else if (/\s/u.test(ch)) {
+        expect(rendered, `U+${cp.toString(16)} is whitespace`).toBe('x x');
+      } else {
+        expect(rendered, `U+${cp.toString(16)} must pass through`).toBe(`x${ch}x`);
+      }
+    }
+    expect(unsafeCount).toBeGreaterThan(200);
+  });
+
+  it('terminalSafe: replaces controls with a visible placeholder, collapses whitespace, caps width', () => {
     expect(terminalSafe('a\nb\x1b[31mc\rd', 40)).toBe('a\ufffdb\ufffd[31mc\ufffdd');
     expect(terminalSafe('  many   spaces \t here ', 40)).toBe('many spaces here');
     expect(terminalSafe('x'.repeat(50), 10)).toHaveLength(10);
