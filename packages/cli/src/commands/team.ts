@@ -62,6 +62,8 @@ async function runStatus(
   client: Client,
   stdout: (line: string) => void,
 ): Promise<void> {
+  const time = (value: number | null): string =>
+    value === null ? 'absent' : new Date(value).toISOString();
   const { values } = parseArgs({
     args,
     options: { stalled: { type: 'string' }, json: { type: 'boolean' } },
@@ -83,7 +85,7 @@ async function runStatus(
       row.presence === null
         ? 'presence=absent'
         : `connected=${row.presence.connected} authBlocked=${row.presence.authBlocked ?? 'unreported'}`;
-    stdout(`${row.member.name}  ${presence}  last-activity=${row.lastActivityAt ?? 'absent'}`);
+    stdout(`${row.member.name}  ${presence}  last-activity=${time(row.lastActivityAt)}`);
     if (row.presence?.runnerReports?.length) {
       for (const runner of row.presence.runnerReports) {
         stdout(
@@ -93,7 +95,7 @@ async function runStatus(
     } else stdout('  runner unreported');
     for (const objective of row.activeObjectives) {
       stdout(
-        `  ${objective.id} ${objective.status}${objective.stalled ? ` STALLED missing=${objective.staleSignals.join(',')}` : ''} last-post=${objective.lastThreadPostAt ?? 'absent'} last-pr=${objective.lastPrLinkAt ?? 'absent'} last-lifecycle=${objective.lastLifecycleAt ?? 'absent'}`,
+        `  ${objective.id} ${objective.status}${objective.stalled ? ` STALLED missing=${objective.staleSignals.join(',')}` : ''} last-post=${time(objective.lastThreadPostAt)} last-pr=${time(objective.lastPrLinkAt)} last-lifecycle=${time(objective.lastLifecycleAt)}`,
       );
     }
   }

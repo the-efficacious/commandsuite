@@ -69,8 +69,20 @@ describe('csuite team status', () => {
                 permissions: [],
               },
               presence: null,
-              activeObjectives: [],
-              lastActivityAt: null,
+              activeObjectives: [
+                {
+                  id: 'obj-1',
+                  title: 'work',
+                  status: 'active' as const,
+                  lastThreadPostAt: 1_000,
+                  lastPrLinkAt: null,
+                  lastLifecycleAt: null,
+                  lastSignalAt: 1_000,
+                  stalled: false,
+                  staleSignals: [],
+                },
+              ],
+              lastActivityAt: 2_000,
             },
             {
               member: {
@@ -103,8 +115,12 @@ describe('csuite team status', () => {
       } as unknown as Client,
       (line) => lines.push(line),
     );
-    expect(lines).toContain('rune  presence=absent  last-activity=absent');
+    expect(lines).toContain(
+      'rune  presence=absent  last-activity=1970-01-01T00:00:02.000Z',
+    );
     expect(lines.join('\n')).toContain('model=agent default — not resolved locally');
     expect(lines.join('\n')).not.toContain('model=unreported');
+    expect(lines.join('\n')).toContain('last-activity=1970-01-01T00:00:02.000Z');
+    expect(lines.join('\n')).toContain('last-post=1970-01-01T00:00:01.000Z');
   });
 });

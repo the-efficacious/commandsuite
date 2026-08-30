@@ -78,5 +78,6 @@ describe('TeamHome team status', () => {
     await waitFor(() => expect(screen.getByText(/obj-1 · active · STALLED/)).toBeTruthy());
     expect(teamStatus).toHaveBeenCalledOnce();
     expect(screen.getByText(/last activity: absent/)).toBeTruthy();
+    expect(screen.getByText(/lifecycle /).textContent).not.toContain('lifecycle 1000');
   });
 });
