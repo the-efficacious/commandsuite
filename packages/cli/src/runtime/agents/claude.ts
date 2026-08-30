@@ -30,6 +30,41 @@ export class ClaudeCodeAdapterError extends AgentAdapterError {
   }
 }
 
+/**
+ * The Agent SDK — an optional dependency of csuite — is not installed
+ * at all. A broker-only install (`--omit=optional`) lands here on
+ * purpose; the doctor reads `absentByDesign` and reports it as
+ * advisory rather than FAIL. A present-but-broken SDK (missing
+ * platform binary, dead `CLAUDE_PATH`) stays a plain
+ * `ClaudeCodeAdapterError`.
+ */
+export class ClaudeSdkAbsentError extends ClaudeCodeAdapterError {
+  override readonly absentByDesign = true;
+
+  constructor() {
+    super(
+      '@anthropic-ai/claude-agent-sdk is not installed (an optional dependency of csuite) — ' +
+        'run `npm install @anthropic-ai/claude-agent-sdk` where csuite is installed, ' +
+        'or reinstall csuite with optional dependencies included (the default).',
+    );
+    this.name = 'ClaudeSdkAbsentError';
+  }
+}
+
+/**
+ * Is this import failure the SDK package being absent — the one case
+ * that is a deliberate broker-only install? Pure over the error so the
+ * branches are testable: a module-not-found naming a *different*
+ * specifier (a broken SDK missing its own dependency) or any other
+ * import error (a corrupt SDK) is NOT absence and must surface as an
+ * ordinary failure, not an advisory one.
+ */
+export function isSdkAbsentImportError(err: unknown): boolean {
+  const code = (err as { code?: unknown }).code;
+  if (code !== 'ERR_MODULE_NOT_FOUND' && code !== 'MODULE_NOT_FOUND') return false;
+  return err instanceof Error && err.message.includes("'@anthropic-ai/claude-agent-sdk'");
+}
+
 export interface ClaudeExecutable {
   /** Absolute path of the Claude Code executable the SDK will spawn. */
   path: string;
@@ -76,9 +111,7 @@ export function resolveClaudeExecutable(): ClaudeExecutable {
 
   const sdkDir = findSdkDir();
   if (sdkDir === null) {
-    throw new ClaudeCodeAdapterError(
-      '@anthropic-ai/claude-agent-sdk is not installed — reinstall csuite (the SDK ships with it).',
-    );
+    throw new ClaudeSdkAbsentError();
   }
 
   // The CLI lives in a per-platform sibling package that is a

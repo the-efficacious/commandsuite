@@ -163,9 +163,6 @@ importers:
 
   packages/cli:
     dependencies:
-      '@anthropic-ai/claude-agent-sdk':
-        specifier: ^0.3.220
-        version: 0.3.220(@anthropic-ai/sdk@0.115.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(zod@4.4.3)
@@ -200,6 +197,10 @@ importers:
       ws:
         specifier: ^8.21.1
         version: 8.21.1
+    optionalDependencies:
+      '@anthropic-ai/claude-agent-sdk':
+        specifier: ^0.3.220
+        version: 0.3.220(@anthropic-ai/sdk@0.115.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)
 
   packages/core:
     dependencies:
@@ -4383,6 +4384,7 @@ snapshots:
       '@anthropic-ai/claude-agent-sdk-linux-x64-musl': 0.3.220
       '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.3.220
       '@anthropic-ai/claude-agent-sdk-win32-x64': 0.3.220
+    optional: true
 
   '@anthropic-ai/sdk@0.115.0(zod@4.4.3)':
     dependencies:
@@ -4390,6 +4392,7 @@ snapshots:
       standardwebhooks: 1.0.0
     optionalDependencies:
       zod: 4.4.3
+    optional: true
 
   '@apideck/better-ajv-errors@0.3.7(ajv@8.20.0)':
     dependencies:
@@ -5985,7 +5988,8 @@ snapshots:
   '@rollup/rollup-win32-x64-msvc@4.60.1':
     optional: true
 
-  '@stablelib/base64@1.0.1': {}
+  '@stablelib/base64@1.0.1':
+    optional: true
 
   '@standard-schema/spec@1.1.0': {}
 
@@ -6883,7 +6887,8 @@ snapshots:
 
   fast-json-stable-stringify@2.1.0: {}
 
-  fast-sha256@1.3.0: {}
+  fast-sha256@1.3.0:
+    optional: true
 
   fast-uri@3.1.2: {}
 
@@ -7335,6 +7340,7 @@ snapshots:
     dependencies:
       '@babel/runtime': 7.29.7
       ts-algebra: 2.0.0
+    optional: true
 
   json-schema-traverse@1.0.0: {}
 
@@ -8087,6 +8093,7 @@ snapshots:
     dependencies:
       '@stablelib/base64': 1.0.1
       fast-sha256: 1.3.0
+    optional: true
 
   statuses@2.0.2: {}
 
@@ -8239,7 +8246,8 @@ snapshots:
 
   tree-kill@1.2.2: {}
 
-  ts-algebra@2.0.0: {}
+  ts-algebra@2.0.0:
+    optional: true
 
   ts-interface-checker@0.1.13: {}
 

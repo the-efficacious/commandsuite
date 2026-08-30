@@ -40,7 +40,6 @@
   "dependencies": {
     "csuite-core": "workspace:*",
     "csuite-sdk": "workspace:*",
-    "@anthropic-ai/claude-agent-sdk": "^0.3.220",
     "@modelcontextprotocol/sdk": "^1.29.0"
   },
   "peerDependencies": {
@@ -63,5 +62,8 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "optionalDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.220"
   }
 }
