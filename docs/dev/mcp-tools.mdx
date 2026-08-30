@@ -341,7 +341,9 @@ the permission independently on every call.
 
 | Tool | Input | What it does |
 |---|---|---|
-| `members_add` | `{ name (req), title (req), description?, instructions?, permissions?: string[] }` | Create a member with explicit leaves. Returns the member plus the plaintext bearer token — emitted exactly once. `POST /members`. |
+| `members_add` | `{ name (req), title (req), description?, instructions?, permissions?: string[] }` | Create a member pending device enrolment. Mints no bearer credential and returns the `csuite connect` / approval path. `POST /members`. |
+| `connect_pending` | `{}` | List pending device codes and request metadata. No credential values. `GET /enroll/pending`. |
+| `connect_approve` | `{ code (req), member (req), label? }` | Bind a polling device to an existing member. The credential travels broker → device and the result contains member/token metadata only. `POST /enroll/approve`. |
 | `members_update` | `{ name (req), title?, description?, instructions?, permissions?: string[] }` | Update role, instructions, or permissions. Role and instructions edits fan out as an instructions event: the member's runner restarts its agent at the next idle boundary with the new composed text (a role edit also reaches teammates whose roster line changed). Enforces "at least one `members.manage` holder remains". `PATCH /members/:name`. |
 | `members_remove` | `{ name (req) }` | Delete a member; all bearer tokens revoked. Refused if it would leave zero `members.manage` holders. `DELETE /members/:name`. |
 

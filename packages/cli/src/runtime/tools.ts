@@ -662,9 +662,8 @@ function buildManagementTools(instructions: InstructionsResponse): Tool[] {
       name: 'members_add',
       description:
         'Create a new team member with an explicit list of permission leaves. ' +
-        'Returns the new member plus the plaintext ' +
-        'bearer token (emitted exactly once — capture it from the response and deliver ' +
-        'it to the operator/agent securely).',
+        'Creates no bearer credential and returns the device-code enrolment path. ' +
+        'Use `connect_approve` after the new member runs `csuite connect`.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -685,6 +684,29 @@ function buildManagementTools(instructions: InstructionsResponse): Tool[] {
           },
         },
         required: ['name', 'title'],
+      },
+    });
+    tools.push({
+      name: 'connect_pending',
+      description:
+        'List pending device-code enrolments awaiting approval. Returns only the short ' +
+        'user code and request metadata; never a bearer credential. Requires `members.manage`.',
+      inputSchema: { type: 'object', properties: {} },
+    });
+    tools.push({
+      name: 'connect_approve',
+      description:
+        'Approve a pending device code and bind it to an existing member. The bearer ' +
+        'credential travels directly from the broker to the polling device and is never ' +
+        'returned to this tool. Create the member first with `members_add`. Requires `members.manage`.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          code: { type: 'string', description: 'Pending user code (XXXX-XXXX).' },
+          member: { type: 'string', description: 'Existing member to bind.' },
+          label: { type: 'string', description: 'Optional device label.' },
+        },
+        required: ['code', 'member'],
       },
     });
     tools.push({
@@ -1997,6 +2019,10 @@ export async function handleToolCall(
         return await handleTeamUpdate(args, brokerClient);
       case 'members_add':
         return await handleMembersAdd(args, brokerClient);
+      case 'connect_pending':
+        return await handleConnectPending(brokerClient, instructions);
+      case 'connect_approve':
+        return await handleConnectApprove(args, brokerClient, instructions);
       case 'members_update':
         return await handleMembersUpdate(args, brokerClient);
       case 'members_remove':
@@ -2875,6 +2901,52 @@ async function handleMembersAdd(
       `credential: pending device enrolment (no token was created).\n` +
       `next: ${result.enrollment.connectCommand} as '${name}', then ` +
       `${result.enrollment.approveCommand} --code <code> --member ${name}`,
+  );
+}
+
+async function handleConnectPending(
+  brokerClient: BrokerClient,
+  instructions: InstructionsResponse,
+): Promise<CallToolResult> {
+  if (!instructions.permissions.includes('members.manage')) {
+    return errorResult('connect_pending: you do not have the required permission on this team');
+  }
+  const pending = await brokerClient.listPendingEnrollments();
+  if (pending.length === 0) return textResult('pending device enrolments: none');
+  return textResult(
+    [
+      `pending device enrolments: ${pending.length}`,
+      ...pending.map(
+        (row) =>
+          `${row.userCode} label=${row.labelHint || '(none)'} ` +
+          `createdAt=${row.createdAt} expiresAt=${row.expiresAt}`,
+      ),
+    ].join('\n'),
+  );
+}
+
+async function handleConnectApprove(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+  instructions: InstructionsResponse,
+): Promise<CallToolResult> {
+  if (!instructions.permissions.includes('members.manage')) {
+    return errorResult('connect_approve: you do not have the required permission on this team');
+  }
+  const code = typeof args.code === 'string' ? args.code.trim().toUpperCase() : '';
+  const member = typeof args.member === 'string' ? args.member.trim() : '';
+  const label = typeof args.label === 'string' ? args.label : undefined;
+  if (!code || !member) return errorResult('connect_approve: `code` and `member` are required');
+  const result = await brokerClient.approveEnrollment({
+    mode: 'bind',
+    userCode: code,
+    memberName: member,
+    ...(label !== undefined ? { label } : {}),
+  });
+  return textResult(
+    `approved ${code} — bound device to '${result.member.name}' (${result.member.role.title})\n` +
+      `token metadata: label=${result.tokenInfo.label || '(none)'} id=${result.tokenInfo.id}\n` +
+      'the polling device receives its credential directly from the broker',
   );
 }
 

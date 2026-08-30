@@ -74,8 +74,10 @@ A member can hold many tokens at once — one per enrolled device. The
 web UI's Manage tab for each member lists them with label, origin,
 created/last-used times, and a per-token revoke.
 
-`csuite rotate --member <name>` is the break-glass: it revokes
-**every** token the member holds and prints one fresh replacement.
+`csuite rotate --member <name> --all --token-file <fresh-path>` is the
+break-glass: it revokes **every** token the member holds and writes one fresh
+replacement to a new 0600 file without printing it. To replace only one device,
+use `--token-id <id>` instead of `--all`.
 Reach for it when you suspect a leak; for everyday "add a device," use
 `csuite connect`.
 
@@ -96,18 +98,18 @@ bootstrap member from `csuite setup --non-interactive` holds every
 leaf). The device still receives its token from the broker, not from
 the script.
 
-If no approver is reachable at all — say, provisioning an air-gapped CI
-runner — fall back to handing the token over yourself:
+If no approver is reachable at all — say, recovering an air-gapped runner —
+the explicit break-glass path writes the replacement to a credential file:
 
 ```bash
 # On a machine with a credential holding members.manage:
-csuite rotate --member ci-runner    # prints the new token once
+csuite rotate --member ci-runner --all --token-file ./ci-runner.token
 
 # On the device:
-export CSUITE_TOKEN='csuite_…'
+export CSUITE_TOKEN="$(cat /secure-transfer/ci-runner.token)"
 ```
 
-You're back to hand-carrying a credential, so prefer `csuite connect`
+You're back to hand-carrying a credential file, so prefer `csuite connect`
 whenever a live approval is possible.
 
 ## Troubleshooting

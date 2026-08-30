@@ -250,11 +250,12 @@ locked-out teammate.
 ### Suspecting a token leak
 
 ```bash
-csuite rotate --member <name>
+csuite rotate --member <name> --all --token-file <fresh-path>
 ```
 
-Revokes **every** active token for the named member and mints a
-fresh one. Print is one-shot; save the new token immediately.
+Revokes **every** active token for the named member and mints a fresh one in a
+new 0600 file. Plaintext is never printed. To replace only the affected device,
+use `--token-id <id>` instead of `--all`.
 
 Every existing process holding the old token starts failing on
 its next request. Re-enroll affected devices with `csuite connect`.
