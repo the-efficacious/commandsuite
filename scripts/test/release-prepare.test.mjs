@@ -100,7 +100,9 @@ beforeAll(async () => {
       'case "$args" in *" build "*) echo "sha256:emulated0000000000000000000000000000000000000000000000000000feed"; exit 0;; esac',
       'case "$args" in *" image inspect "*) echo "157286400"; exit 0;; esac',
       'echo "docker emulator: unexpected verb: $*" >&2; exit 96',
-    ].join('\n') + '\n',
+    ]
+      .join('\n')
+      .concat('\n'),
   );
   chmodSync(dockerPath, 0o755);
   // The script has no gh call path at all — any invocation is forbidden.
