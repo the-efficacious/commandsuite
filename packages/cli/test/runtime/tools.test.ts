@@ -209,6 +209,7 @@ function makeChannel(overrides: Partial<ChannelSummary> = {}): ChannelSummary {
   return {
     id: 'eng-id-123',
     slug: 'engineering',
+    description: '',
     createdBy: 'director',
     createdAt: 1_700_000_000_000,
     archivedAt: null,
