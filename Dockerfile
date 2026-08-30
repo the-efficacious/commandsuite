@@ -7,12 +7,23 @@
 # tooling and test frameworks). The runtime copies that pruned tree, the
 # bootstrap script, and nothing else — no sources, no tests, no secrets.
 #
-# Size note: the tree carries @anthropic-ai/claude-agent-sdk (~263 MB), a
-# hard dependency of csuite-cli that `csuite claude --doctor` checks for.
-# Splitting it out is a CLI dependency-shape change, tracked on #198.
+# This is the broker-only image: the production install passes
+# --no-optional, which drops the agent binaries (the Claude Agent SDK is
+# an optionalDependency of csuite-cli, ~263 MB) AND the optional vitest
+# peer of csuite-core with its vite/esbuild/jsdom chain (~70 MB). Broker
+# verbs all work without them; `csuite <runner> --doctor` reports the
+# agent binary as absent by design. To build an image that can run a
+# live agent in-container, drop the --no-optional flag below (docs:
+# docs/deployment.mdx).
 #
-# Base pinned by digest; bump deliberately.
+# Bases pinned by digest; bump deliberately. The builder needs the full
+# node toolchain (corepack/pnpm); the runtime needs only node itself, so
+# it uses Alpine's dynamically-linked nodejs package (~60 MB lighter
+# than the node image) — safe here because the production tree carries
+# zero native modules (pure JS + node builtins; node:sqlite proven under
+# musl by scripts/compose-check.sh).
 ARG NODE_IMAGE=node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5
+ARG RUNTIME_IMAGE=alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce
 
 # ---- builder ----------------------------------------------------------
 FROM ${NODE_IMAGE} AS builder
@@ -32,22 +43,29 @@ RUN pnpm install --frozen-lockfile
 COPY . .
 RUN pnpm build
 # Production-only for the meta-package and its dependency closure; the
-# store is warm so this is offline and fast. csuite-cli declares the
-# broker as a peer dependency (it loads it lazily for `setup`/`serve`);
-# the production install does not re-link that peer, so link it where a
-# dev install puts it. Then drop what the runtime never reads.
-RUN pnpm install --prod --frozen-lockfile --offline --filter "csuite..." \
+# store is warm so this is offline and fast. The dev tree is REMOVED
+# first: `pnpm install --prod` over an existing node_modules prunes the
+# top-level links but leaves the dev-era .pnpm content behind (measured:
+# a 639 MB layer where a fresh install is 78 MB). csuite-cli declares
+# the broker as a peer dependency (it loads it lazily for
+# `setup`/`serve`); the production install does not re-link that peer,
+# so link it where a dev install puts it. Then drop what the runtime
+# never reads.
+RUN rm -rf node_modules packages/*/node_modules apps/*/node_modules \
+ && pnpm install --prod --frozen-lockfile --offline --no-optional --filter "csuite..." \
  && ln -sfn ../../../apps/server packages/cli/node_modules/csuite-server \
  && rm -rf apps/web-host packages/web-ui docs scripts/test \
       packages/*/src packages/*/test apps/server/src apps/server/test \
       .turbo packages/*/.turbo apps/*/.turbo
 
 # ---- runtime ----------------------------------------------------------
-FROM ${NODE_IMAGE}
-# curl: scripts/bootstrap.sh's health checks and the container healthcheck.
-RUN apt-get update \
- && apt-get install -y --no-install-recommends curl ca-certificates \
- && rm -rf /var/lib/apt/lists/*
+FROM ${RUNTIME_IMAGE}
+# bash: entrypoint.sh and bootstrap.sh; curl: their health checks and
+# the container healthcheck. Alpine's nodejs is 22.x (node:sqlite and
+# the fetch surface exist); the tree has no native modules, so musl is
+# equivalent to glibc here — compose-check proves it end to end.
+RUN apk add --no-cache nodejs bash curl ca-certificates \
+ && adduser -D node
 WORKDIR /app
 COPY --from=builder --chown=node:node /src/package.json /src/pnpm-workspace.yaml ./
 COPY --from=builder --chown=node:node /src/node_modules ./node_modules
