@@ -279,7 +279,7 @@ function claudeRootCheck(): AgentDoctorCheck {
 export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter {
   let executable: ClaudeExecutable | null = null;
   // Populated by prepare(), consumed by spawn(); the mutable parts
-  // (systemPrompt, resume/sessionId) are refreshed by respawn().
+  // (systemPrompt, env, resume/sessionId) are refreshed by respawn().
   let sdkOptions: SdkOptions = {};
 
   // Streaming-input queue + channel sink, live from construction: the
@@ -296,6 +296,26 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
   // so the successor continues the same conversation under the new
   // system prompt.
   let effectiveResume: string | true | undefined = options.resume;
+
+  const composeChildEnv = (ctx: AgentSessionContext): Record<string, string | undefined> => {
+    const { runner, log } = ctx;
+    // The SDK `env` option replaces the subprocess environment. Compose
+    // this for every generation: secrets and capture-host credentials are
+    // mutable runner state, just like instructions and resume posture.
+    const env: Record<string, string | undefined> = { ...process.env };
+    const secretNames = Object.keys(runner.secretsEnv);
+    if (secretNames.length > 0) {
+      for (const [k, v] of Object.entries(runner.secretsEnv)) env[k] = v;
+      log.info('broker secrets injected into agent env', { envNames: secretNames });
+    }
+    if (runner.captureHost !== null) {
+      for (const [k, v] of Object.entries(runner.captureHost.envVars())) env[k] = v;
+      log.info('capture host armed (transcript capture)', {
+        hookUrl: runner.captureHost.hookEndpointUrl,
+      });
+    }
+    return env;
+  };
 
   // ── Compaction request/ack correlation ───────────────────────────
   //
@@ -418,27 +438,10 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
         throw new Error('claude adapter: prepare() called before locate()');
       }
 
-      // Child environment: broker-held secrets first, capture host's
-      // OTEL delta after — runner-managed vars always win on a
-      // (theoretical) name collision. The SDK `env` option REPLACES the
-      // subprocess environment, so start from process.env.
-      const env: Record<string, string | undefined> = { ...process.env };
-      const secretNames = Object.keys(runner.secretsEnv);
-      if (secretNames.length > 0) {
-        for (const [k, v] of Object.entries(runner.secretsEnv)) env[k] = v;
-        log.info('broker secrets injected into agent env', { envNames: secretNames });
-      }
-      if (runner.captureHost !== null) {
-        for (const [k, v] of Object.entries(runner.captureHost.envVars())) env[k] = v;
-        log.info('capture host armed (transcript capture)', {
-          hookUrl: runner.captureHost.hookEndpointUrl,
-        });
-      }
-
       const instructions = composeFixedContext(runner.instructions);
       sdkOptions = {
         cwd,
-        env,
+        env: composeChildEnv(ctx),
         pathToClaudeCodeExecutable: resolved.path,
         // The csuite MCP bridge — delivered inline on the invocation
         // the SDK composes (`--mcp-config <json>`); the member's own
@@ -684,10 +687,11 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
 
     async respawn(ctx: AgentSessionContext, prior: RespawnPosture): Promise<AgentProcess> {
       const fresh = composeFixedContext(ctx.runner.instructions);
-      // The three mutable spawn inputs, recomputed: system prompt from
-      // the runner's CURRENT packet, resume posture from the
-      // predecessor, and no minted session id (the SDK forbids
-      // combining `sessionId` with resume/continue).
+      // The four mutable spawn inputs, recomputed: system prompt and
+      // child environment from the runner's CURRENT packet, resume
+      // posture from the predecessor, and no minted session id (the SDK
+      // forbids combining `sessionId` with resume/continue).
+      sdkOptions.env = composeChildEnv(ctx);
       sdkOptions.systemPrompt =
         fresh.length > 0
           ? { type: 'preset', preset: 'claude_code', append: fresh }
