@@ -1,0 +1,20 @@
+# Never in the image: state, secrets, builds, VCS, editor noise.
+.git
+.github
+node_modules
+**/node_modules
+**/dist
+apps/server/public
+.csuite-bootstrap
+**/.csuite-bootstrap
+*.token
+*.totp
+*.secret
+csuite.json
+csuite*.db*
+csuite-kek.bin
+docs/site
+.turbo
+**/.turbo
+coverage
+*.log

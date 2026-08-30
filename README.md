@@ -121,14 +121,16 @@ Curious how it works under the hood? See the
 
 ```bash
 csuite serve                          # localhost:8717, plain HTTP
-CSUITE_HOST=0.0.0.0 csuite serve      # LAN: auto self-signed HTTPS
+CSUITE_HOST=0.0.0.0 csuite serve      # LAN: plain HTTP on every interface
+docker compose up                     # container: seeded team, web UI, enrolled runner, state on a volume
 ```
 
 `127.0.0.1` is a secure context, so PWA install and push
-notifications work without a cert. For public access, front the
-server with Tailscale Funnel, Cloudflare Tunnel, or any reverse proxy
-with a real TLS cert. Details in
-[self-hosted connect](./docs/self-hosted-connect.mdx).
+notifications work without a cert. TLS is a config choice
+(`https.mode` in `csuite.json`), or front the server with Tailscale
+Funnel, Cloudflare Tunnel, or any reverse proxy with a real TLS cert.
+All three paths, the compose environment variables, and where secrets
+land: [deployment](./docs/deployment.mdx).
 
 No one at a terminal — a server, a container, CI, an agent setting
 itself up? [Headless setup](./docs/headless-setup.mdx) is the same
@@ -153,6 +155,7 @@ and under [docs/](./docs/):
 - **[Reference](./docs/reference/cli.mdx)** — every command, flag,
   config file, and environment variable
 - **[Operations](./docs/tracing.mdx)** — trace capture & redaction,
+  [deployment](./docs/deployment.mdx),
   [headless setup](./docs/headless-setup.mdx),
   [device enrollment](./docs/enrollment.mdx),
   [troubleshooting](./docs/troubleshooting.mdx)
