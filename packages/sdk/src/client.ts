@@ -109,6 +109,7 @@ import {
   SetToolCredentialRequestSchema,
   SetVariableValueRequestSchema,
   TeamSchema,
+  TeamStatusResponseSchema,
   ToolSourceSchema,
   UpdateNotificationEndpointRequestSchema,
   UpdateNotificationProfileRequestSchema,
@@ -199,6 +200,7 @@ import type {
   SetToolCredentialRequest,
   SetVariableValueRequest,
   Team,
+  TeamStatusResponse,
   TelemetryRecordRow,
   TokenInfo,
   ToolSource,
@@ -481,6 +483,15 @@ export class Client {
   async roster(): Promise<RosterResponse> {
     const resp = await this.request(PATHS.roster, { method: 'GET' });
     return RosterResponseSchema.parse(await this.json(resp));
+  }
+
+  /** Read the broker-composed team operability report. Requires members.manage. */
+  async teamStatus(options: { stalledMs?: number } = {}): Promise<TeamStatusResponse> {
+    const params = new URLSearchParams();
+    if (options.stalledMs !== undefined) params.set('stalledMs', String(options.stalledMs));
+    const suffix = params.size > 0 ? `?${params}` : '';
+    const resp = await this.request(`${PATHS.teamStatus}${suffix}`, { method: 'GET' });
+    return TeamStatusResponseSchema.parse(await this.json(resp));
   }
 
   // ─────────────────────── Objectives ───────────────────────

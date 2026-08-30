@@ -179,6 +179,7 @@ describeIfBuilt('csuite claude end-to-end', () => {
       'roster',
       'send',
       'team_get',
+      'team_status',
       'team_update',
     ]);
   }, 30_000);

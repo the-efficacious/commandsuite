@@ -428,6 +428,17 @@ describe('defineTools — chat surface includes channel tools', () => {
   });
 });
 
+describe('team_status tool', () => {
+  it('is exposed only to members.manage and returns the broker response unchanged', async () => {
+    expect(defineTools(PACKET).map((tool) => tool.name)).not.toContain('team_status');
+    expect(defineTools(ADMIN_PACKET).map((tool) => tool.name)).toContain('team_status');
+    const response = { generatedAt: 1, stalledAfterMs: null, members: [] };
+    const broker = makeBroker({ teamStatus: vi.fn(async () => response) });
+    const text = getCallText(await handleToolCall('team_status', {}, broker, ADMIN_PACKET));
+    expect(JSON.parse(text)).toEqual(response);
+  });
+});
+
 describe('roster — recent activity without liveness claims', () => {
   it('distinguishes recent working and blocked reports from no recent report', async () => {
     const broker = makeBroker({

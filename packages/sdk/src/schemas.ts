@@ -1921,6 +1921,33 @@ export const RosterResponseSchema = z.object({
   restartPending: z.array(NameSchema).optional(),
 });
 
+export const TeamStatusStaleSignalSchema = z.enum(['thread_post', 'pr_link', 'lifecycle']);
+
+export const TeamStatusObjectiveSchema = z.object({
+  id: z.string().min(1),
+  title: z.string(),
+  status: z.enum(['active', 'blocked']),
+  lastThreadPostAt: z.number().nullable(),
+  lastPrLinkAt: z.number().nullable(),
+  lastLifecycleAt: z.number().nullable(),
+  lastSignalAt: z.number().nullable(),
+  stalled: z.boolean(),
+  staleSignals: z.array(TeamStatusStaleSignalSchema),
+});
+
+export const TeamStatusMemberSchema = z.object({
+  member: TeammateSchema,
+  presence: PresenceSchema.nullable(),
+  activeObjectives: z.array(TeamStatusObjectiveSchema),
+  lastActivityAt: z.number().nullable(),
+});
+
+export const TeamStatusResponseSchema = z.object({
+  generatedAt: z.number(),
+  stalledAfterMs: z.number().int().positive().nullable(),
+  members: z.array(TeamStatusMemberSchema),
+});
+
 export const HistoryResponseSchema = z.object({
   messages: z.array(MessageSchema),
 });

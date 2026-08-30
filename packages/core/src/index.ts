@@ -365,6 +365,7 @@ export {
   SqliteTokenStore,
   type TokenSeedMemberSource,
 } from './sqlite-token-store.js';
+export { type ComposeTeamStatusOptions, composeTeamStatus } from './team-status.js';
 export {
   createSqliteMemberStore,
   openTeamAndMembers,
