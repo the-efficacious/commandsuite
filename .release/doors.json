@@ -183,6 +183,14 @@
     {
       "pr": 259,
       "reason": "discoverer's classification: nightly CI workflow \u2014 no shipped surface"
+    },
+    {
+      "pr": 261,
+      "reason": "discoverer's classification: door-manifest maintenance \u2014 no shipped surface"
+    },
+    {
+      "pr": 262,
+      "reason": "discoverer's classification: door-manifest maintenance (self-classified per the no-repair-loop rule) \u2014 no shipped surface"
     }
   ]
 }
