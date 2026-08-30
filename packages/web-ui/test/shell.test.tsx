@@ -574,6 +574,60 @@ describe('<TeamHome />', () => {
     });
   });
 
+  it('renders typed runner identity, skew, and stub instrument status', async () => {
+    instructions.value = {
+      name: 'director-1',
+      role: { title: 'member', description: '' },
+      permissions: [],
+      team: { name: 'demo-team', context: '', permissionPresets: {} },
+      teammates: [],
+      openObjectives: [],
+      toolSources: [],
+      processDocument: null,
+      instructions: '',
+    };
+    roster.value = {
+      teammates: [
+        { name: 'build-bot', role: { title: 'engineer', description: '' }, permissions: [] },
+      ],
+      connected: [
+        {
+          name: 'build-bot',
+          connected: 2,
+          createdAt: 0,
+          lastSeen: 0,
+          role: null,
+          runnerReports: [
+            {
+              runner: 'stub',
+              modelId: null,
+              runnerVersion: '0.8.0+main.aaaa',
+              runnerBuildSource: 'main',
+              connections: 1,
+              versionSkew: {
+                skew: true,
+                runnerVersion: '0.8.0+main.aaaa',
+                brokerVersion: '0.8.0+main.bbbb',
+              },
+            },
+          ],
+          unreportedConnections: 1,
+        },
+      ],
+    };
+
+    render(<TeamHome viewer="director-1" />);
+    await waitFor(() => {
+      const row = screen.getByRole('button', { name: /open profile for build-bot/i });
+      expect(row.textContent).toContain('STUB');
+      expect(row.textContent).toContain('TEST/CI INSTRUMENT');
+      expect(row.textContent).toContain('SKEW');
+      expect(row.textContent).toContain('0.8.0+main.aaaa');
+      expect(row.textContent).toContain('broker 0.8.0+main.bbbb');
+      expect(row.textContent).toContain('1 connection(s) without runner identity');
+    });
+  });
+
   it('renders the three activity states distinctly on the roster', async () => {
     instructions.value = {
       name: 'director-1',

@@ -16,7 +16,15 @@
 
 import { containsBearerToken } from 'csuite-sdk/credential-safety';
 import { NameSchema } from 'csuite-sdk/schemas';
-import type { Member, Message, Presence, PushPayload, PushResult, Role } from 'csuite-sdk/types';
+import type {
+  Member,
+  Message,
+  Presence,
+  PushPayload,
+  PushResult,
+  Role,
+  RunnerIdentity,
+} from 'csuite-sdk/types';
 import type { EventLog } from './event-log.js';
 import { logger as defaultLogger, type Logger } from './logger.js';
 import {
@@ -122,6 +130,7 @@ export interface IdentityContext {
   role?: Role | null;
   /** Opaque bearer token id for token-aware presence; null for cookie/JWT/in-process callers. */
   tokenId?: string | null;
+  runnerIdentity?: RunnerIdentity;
 }
 
 export interface RegistrationResult {
@@ -397,10 +406,12 @@ export class Broker {
     const state = this.registry.registerOrGet(name, this.now(), context.role ?? null);
     state.subscribers.add(callback);
     state.subscriberTokenIds.set(callback, context.tokenId ?? null);
+    state.subscriberRunnerIdentities.set(callback, context.runnerIdentity ?? null);
     return () => {
       const current = this.registry.get(name);
       current?.subscribers.delete(callback);
       current?.subscriberTokenIds.delete(callback);
+      current?.subscriberRunnerIdentities.delete(callback);
     };
   }
 
@@ -409,8 +420,8 @@ export class Broker {
     for (const id of tokenIds) this.blockedTokenIds.add(id);
   }
 
-  listPresences(): Presence[] {
-    return this.registry.list(this.blockedTokenIds);
+  listPresences(brokerVersion?: string): Presence[] {
+    return this.registry.list(this.blockedTokenIds, brokerVersion);
   }
 
   hasMember(name: string): boolean {

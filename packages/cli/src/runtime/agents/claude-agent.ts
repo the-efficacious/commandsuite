@@ -434,6 +434,10 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
       return executable?.path ?? null;
     },
 
+    resolvedModelId(): string | null {
+      return options.model ?? null;
+    },
+
     runnerOptions() {
       sink = createClaudeChannelSink({
         getQueue: () => queueRef.current,

@@ -234,6 +234,10 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
   const adapter: AgentAdapter = {
     meta: CODEX_META,
 
+    resolvedModelId(): string | null {
+      return options.model ?? null;
+    },
+
     locate(): void {
       codexBinary = findCodexBinary();
     },

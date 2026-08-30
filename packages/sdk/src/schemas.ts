@@ -165,10 +165,35 @@ export const MessageSchema = z.object({
   attachments: z.array(AttachmentSchema).default([]),
 });
 
+export const RunnerIdentitySchema = z.object({
+  runner: z.enum(['claude', 'codex', 'stub']),
+  // RunnerIdentity is JSON-encoded into an HTTP header. Refuse values
+  // Node's header writer cannot represent before reaching transport.
+  modelId: z
+    .string()
+    .min(1)
+    .max(200)
+    .regex(/^[\x20-\x7e]+$/)
+    .nullable(),
+  runnerVersion: z.string().min(1).max(128),
+  runnerBuildSource: z.enum(['npm', 'main']),
+});
+
+export const RunnerReportSchema = RunnerIdentitySchema.extend({
+  connections: z.number().int().positive(),
+  versionSkew: z.object({
+    skew: z.boolean(),
+    runnerVersion: z.string().min(1).max(128),
+    brokerVersion: z.string().min(1).max(128),
+  }),
+});
+
 export const PresenceSchema = z.object({
   name: NameSchema,
   connected: z.number().int().nonnegative(),
   authBlocked: z.number().int().nonnegative().optional(),
+  runnerReports: z.array(RunnerReportSchema).optional(),
+  unreportedConnections: z.number().int().nonnegative().optional(),
   createdAt: z.number(),
   lastSeen: z.number(),
   role: RoleSchema.nullable(),
@@ -1449,6 +1474,8 @@ export const ActivityEventSchema = z.discriminatedUnion('kind', [
     captureTier: z.number().int().min(0).max(3).optional(),
     resumed: z.boolean().optional(),
     resumeReason: z.string().optional(),
+    modelId: z.string().min(1).max(200).nullable().optional(),
+    runnerBuildSource: z.enum(['npm', 'main']).optional(),
   }),
   z.object({
     kind: z.literal('session_end'),

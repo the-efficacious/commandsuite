@@ -1,9 +1,16 @@
 import { type ChildProcess, spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { defineConfig } from 'tsup';
+import { sourceFingerprint } from '../../scripts/source-fingerprint.mjs';
 
 const pkg = JSON.parse(readFileSync('./package.json', 'utf8')) as { version: string };
-const define = { __PKG_VERSION__: JSON.stringify(pkg.version) };
+const buildSource = process.env.CSUITE_BUILD_SOURCE === 'npm' ? 'npm' : 'main';
+const fingerprint = sourceFingerprint('../..');
+const define = {
+  __PKG_VERSION__: JSON.stringify(pkg.version),
+  __BUILD_SOURCE__: JSON.stringify(buildSource),
+  __SOURCE_FINGERPRINT__: JSON.stringify(fingerprint),
+};
 
 // Note: `node:sqlite` is loaded via `createRequire` inside
 // `src/sqlite-event-log.ts` to bypass esbuild's aggressive

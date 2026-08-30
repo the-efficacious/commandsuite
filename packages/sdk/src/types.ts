@@ -215,6 +215,10 @@ export interface Presence {
   connected: number;
   /** Live bearer-auth subscriptions whose credential has been revoked. */
   authBlocked?: number;
+  /** Per-connection runner facts, grouped only when every field matches. */
+  runnerReports?: RunnerReport[];
+  /** Live connections from old runners that reported no identity. */
+  unreportedConnections?: number;
   createdAt: number;
   lastSeen: number;
   role: Role | null;
@@ -276,6 +280,23 @@ export interface Presence {
    * one layer down.
    */
   diagnosticsRetention?: 'healthy' | 'degraded' | 'unknown';
+}
+
+export interface RunnerIdentity {
+  runner: 'claude' | 'codex' | 'stub';
+  /** Adapter-resolved model id; null means the agent default was not resolved locally. */
+  modelId: string | null;
+  runnerVersion: string;
+  runnerBuildSource: 'npm' | 'main';
+}
+
+export interface RunnerReport extends RunnerIdentity {
+  connections: number;
+  versionSkew: {
+    skew: boolean;
+    runnerVersion: string;
+    brokerVersion: string;
+  };
 }
 
 /**
@@ -2108,6 +2129,8 @@ export interface ActivitySessionStart {
    */
   readonly resumed?: boolean;
   readonly resumeReason?: string;
+  readonly modelId?: string | null;
+  readonly runnerBuildSource?: 'npm' | 'main';
 }
 
 /**

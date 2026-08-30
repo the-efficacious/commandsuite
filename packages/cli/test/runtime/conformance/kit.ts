@@ -173,6 +173,12 @@ export function describeRunnerConformance(subject: ConformanceSubject): void {
       expect(start, 'no session_start uploaded').toBeDefined();
       expect(start?.event.runner).toBe(subject.id);
       expect(typeof start?.event.captureTier).toBe('number');
+      expect(start?.event).toHaveProperty('modelId');
+      expect(start?.event.runnerBuildSource).toBe('main');
+      // Vitest imports source directly, outside tsup's build-time defines.
+      // The packed-artifact test covers the concrete package version and
+      // fingerprint; conformance covers propagation of the one identity.
+      expect(start?.event.runnerVersion).toMatch(/\+main\.(?:[0-9a-f]{12}|unknown)$/);
 
       expect(end, 'no session_end uploaded').toBeDefined();
       expect(end?.event.runner).toBe(subject.id);

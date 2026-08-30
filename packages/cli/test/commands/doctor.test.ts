@@ -137,6 +137,7 @@ describe('runAgentDoctor composition', () => {
     const names = report.checks.map((c) => c.name);
     expect(names).toEqual([
       'fake binary',
+      'runner identity',
       'node >= 22',
       '$TMPDIR writable',
       'loopback hook server bindable',

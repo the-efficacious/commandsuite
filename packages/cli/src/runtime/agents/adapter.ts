@@ -241,6 +241,8 @@ export interface AgentAdapter {
    * or `null` before/without one. The doctor's version probe uses it.
    */
   binaryPath?(): string | null;
+  /** Adapter-resolved model id; null when the agent default is not knowable locally. */
+  resolvedModelId?(): string | null;
   /**
    * Runner options this agent framework needs — the channel sink (how
    * broker events become the framework's "ambient input") and/or the

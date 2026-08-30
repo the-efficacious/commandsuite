@@ -10,6 +10,7 @@ export const PROTOCOL_HEADER = 'X-CSUITE-Protocol' as const;
 export const AUTH_HEADER = 'Authorization' as const;
 /** Loaded version of the long-lived runner requesting its instructions. */
 export const RUNNER_VERSION_HEADER = 'X-CSUITE-Runner-Version' as const;
+export const RUNNER_IDENTITY_HEADER = 'X-CSUITE-Runner-Identity' as const;
 
 export const PATHS = {
   health: '/healthz',
