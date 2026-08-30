@@ -115,9 +115,7 @@ describe('csuite team status', () => {
       } as unknown as Client,
       (line) => lines.push(line),
     );
-    expect(lines).toContain(
-      'rune  presence=absent  last-activity=1970-01-01T00:00:02.000Z',
-    );
+    expect(lines).toContain('rune  presence=absent  last-activity=1970-01-01T00:00:02.000Z');
     expect(lines.join('\n')).toContain('model=agent default — not resolved locally');
     expect(lines.join('\n')).not.toContain('model=unreported');
     expect(lines.join('\n')).toContain('last-activity=1970-01-01T00:00:02.000Z');
