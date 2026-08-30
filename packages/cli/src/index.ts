@@ -34,6 +34,7 @@ import { runConnectApproveCommand, runConnectPendingCommand } from './commands/c
 import { formatReport, runAgentDoctor, type SavedAuthInput } from './commands/doctor.js';
 import { runEnrollCommand } from './commands/enroll.js';
 import { UsageError } from './commands/errors.js';
+import { runFsCommand } from './commands/fs.js';
 import { runMemberCommand } from './commands/member.js';
 import { runNotificationsCommand } from './commands/notifications.js';
 import { runObjectivesCommand } from './commands/objectives.js';
@@ -75,6 +76,8 @@ usage:
   csuite roster      [--reveal-token --member <name> [--config-path <path>]]
                                     list teammates (no flags) or rotate+print a member's token (alias over 'csuite rotate')
   csuite objectives  list|view|create|update|complete|cancel|reassign   team objectives
+  csuite fs          put <local-path> <csuite-path> [--mime <type>] [--collide error|suffix|overwrite]
+  csuite fs          get <csuite-path> <local-path> [--overwrite]       stream files between this machine and csuite
   csuite tools       list|show|add|rm|enable|disable|cred|bind|unbind|def|def-rm|refresh   tool-source registry (platform tools)
   csuite secrets     list|view|add|update|set-value|delete-value|bind|unbind|rm   broker-held env secrets (values are write-only)
   csuite variables   list|view|add|update|set-value|delete-value|bind|unbind|rm   broker-held env variables that are NOT secrets (values readable, never redacted from traces)
@@ -264,6 +267,9 @@ async function main(): Promise<void> {
     case 'objectives':
       await handleObjectives(rest);
       return;
+    case 'fs':
+      await handleFs(rest);
+      return;
     case 'team':
       await handleTeam(rest);
       return;
@@ -302,6 +308,39 @@ async function main(): Promise<void> {
     default:
       process.stderr.write(USAGE);
       fail(`unknown subcommand: ${subcommand}`);
+  }
+}
+
+async function handleFs(args: string[]): Promise<void> {
+  const subcommand = args[0];
+  const { values, positionals } = parseSubcommandArgs(args.slice(1), {
+    url: { type: 'string' },
+    token: { type: 'string' },
+    mime: { type: 'string' },
+    collide: { type: 'string' },
+    overwrite: { type: 'boolean' },
+    help: { type: 'boolean', short: 'h' },
+  });
+  if (values.help === true) {
+    process.stdout.write(USAGE);
+    return;
+  }
+  try {
+    const client = makeClient(values);
+    await runFsCommand(
+      {
+        subcommand,
+        positionals,
+        mimeType: getString(values, 'mime'),
+        collision: getString(values, 'collide'),
+        overwrite: getBoolean(values, 'overwrite'),
+      },
+      client,
+      (line) => log(line),
+    );
+  } catch (err) {
+    if (err instanceof UsageError) fail(err.message, 2);
+    fail(err instanceof Error ? err.message : String(err));
   }
 }
 

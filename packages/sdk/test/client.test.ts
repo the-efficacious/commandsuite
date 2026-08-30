@@ -333,3 +333,39 @@ describe('process document edit parsing', () => {
     expect(ProcessDocumentEditSchema.safeParse(forged).success).toBe(false);
   });
 });
+
+describe('filesystem streaming transport', () => {
+  it('marks a ReadableStream upload half-duplex for Node fetch without buffering it', async () => {
+    let seen: (RequestInit & { duplex?: string }) | undefined;
+    const fetchImpl = async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      seen = init;
+      return new Response(
+        JSON.stringify({
+          renamed: false,
+          entry: {
+            path: '/scout/large.bin',
+            name: 'large.bin',
+            kind: 'file',
+            owner: 'scout',
+            size: 3,
+            mimeType: 'application/octet-stream',
+            hash: 'a'.repeat(64),
+            createdAt: 1,
+            createdBy: 'scout',
+            updatedAt: 1,
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const client = new Client({ url: 'http://broker.test', token: 'token', fetch: fetchImpl });
+    const source = new Blob([new Uint8Array([0, 1, 2])]).stream();
+    await client.fsWrite({
+      path: '/scout/large.bin',
+      mimeType: 'application/octet-stream',
+      source,
+    });
+    expect(seen?.body).toBe(source);
+    expect(seen?.duplex).toBe('half');
+  });
+});

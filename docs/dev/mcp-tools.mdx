@@ -80,12 +80,13 @@ DM a specific teammate by name. Private to caller and target.
 
 | | |
 |---|---|
-| **Input** | `{ to: string (req), body: string (req, ≤ 65536 chars), level?: LogLevel, attachments?: string[] (≤ 64) }` |
+| **Input** | `{ to: string (req), body: string (req, ≤ 65536 chars), level?: LogLevel, attachments?: (string \| { localPath, path?, mimeType?, collide? })[] (≤ 64) }` |
 | **Output** | `delivered to <to>: live=N targets=M msg=<id>` |
 | **Broker call** | `POST /push` with `to: <name>` |
 
-Same attachment rules as `broadcast`; the recipient receives read
-access.
+Remote path strings retain the existing attachment behavior. A local
+object is streamed from the runner first, then its returned remote path
+is attached; the recipient receives read access.
 
 ### channels_list
 
@@ -107,7 +108,7 @@ member of that channel; non-members get
 
 | | |
 |---|---|
-| **Input** | `{ channel: string (req, slug), body: string (req, ≤ 65536 chars), level?: LogLevel, attachments?: string[] (≤ 64) }` |
+| **Input** | `{ channel: string (req, slug), body: string (req, ≤ 65536 chars), level?: LogLevel, attachments?: (string \| { localPath, path?, mimeType?, collide? })[] (≤ 64) }` |
 | **Output** | `posted to #<slug>: live=N targets=M msg=<id>` |
 | **Broker call** | `GET /channels/:slug` to resolve id, then `POST /push` with `data: { thread: 'chan:<id>' }` |
 
@@ -184,7 +185,7 @@ live streams.
 
 | | |
 |---|---|
-| **Input** | `{ id: string (req), body: string (req, ≤ 16384 chars), attachments?: string[] (≤ 64) }` |
+| **Input** | `{ id: string (req), body: string (req, ≤ 16384 chars), attachments?: (string \| { localPath, path?, mimeType?, collide? })[] (≤ 64) }` |
 | **Output** | `posted to objective <id> thread: msg=<id> attachments=N? (fanned out to thread members)` |
 | **Broker call** | `POST /objectives/:id/discuss` |
 
@@ -498,6 +499,32 @@ directories are auto-created.
 | **Input** | `{ path: string (req), mimeType: string (req), text?: string, base64?: string, collide?: 'error' \| 'suffix' \| 'overwrite' }` (default `error`) |
 | **Output** | `wrote <path>: size=N mime=<mime>` (with `(renamed to <new>)` when `collide=suffix` triggered) |
 | **Broker call** | `POST /fs/write` |
+
+### fs_upload
+
+Stream a file from the runner's own filesystem to CommandSuite. Only
+the paths and options cross the MCP bridge; bytes stream directly from
+disk to the existing write endpoint and never appear in an IPC frame,
+tool result, or model context. Relative local paths resolve from the
+runner cwd; absolute paths use the runner process's filesystem access.
+
+| | |
+|---|---|
+| **Input** | `{ localPath: string (req), path: string (req), mimeType?: string, collide?: 'error' \| 'suffix' \| 'overwrite' }` |
+| **Output** | The resulting `FsEntry` as JSON; no file bytes |
+| **Broker call** | streaming `POST /fs/write` |
+
+### fs_download
+
+Stream a CommandSuite file onto the runner's filesystem. The completed
+download is published atomically and an existing destination is left
+untouched unless `overwrite` is explicit.
+
+| | |
+|---|---|
+| **Input** | `{ path: string (req), localPath: string (req), overwrite?: boolean }` |
+| **Output** | Remote path, resolved local destination, and byte count; no file bytes |
+| **Broker call** | streaming `GET /fs/read/<path>` |
 
 ### fs_mkdir
 

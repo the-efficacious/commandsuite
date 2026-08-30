@@ -33,6 +33,7 @@
  *   - objectives_cancel   — cancel your own-originated work, or anyone's with `objectives.cancel`
  */
 
+import { basename } from 'node:path';
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { Client as BrokerClient, ClientError } from 'csuite-sdk/client';
 import { PROCESS_DOCUMENT_MAX } from 'csuite-sdk/schemas';
@@ -53,6 +54,7 @@ import type {
   NotificationProfileSummary,
   NotificationTarget,
   ObjectiveStatus,
+  PushResult,
   ResolvedToolSource,
   SecretSummary,
   ToolCredentialKind,
@@ -60,6 +62,7 @@ import type {
   ToolSourceSummary,
   VariableSummary,
 } from 'csuite-sdk/types';
+import { downloadLocalFile, uploadLocalFile } from '../commands/fs.js';
 
 const LEVELS: readonly LogLevel[] = ['debug', 'info', 'notice', 'warning', 'error', 'critical'];
 const OBJECTIVE_STATUSES: readonly ObjectiveStatus[] = ['active', 'blocked', 'done', 'cancelled'];
@@ -77,6 +80,30 @@ const OBJECTIVE_LIST_FILTERS: readonly string[] = [...OBJECTIVE_STATUSES, 'open'
 
 const DEFAULT_RECENT_LIMIT = 50;
 const MAX_RECENT_LIMIT = 500;
+
+const LOCAL_OR_REMOTE_ATTACHMENT_SCHEMA = {
+  oneOf: [
+    { type: 'string', description: 'An existing readable path in the csuite filesystem.' },
+    {
+      type: 'object',
+      properties: {
+        localPath: { type: 'string', description: "A file on the runner's own disk." },
+        path: {
+          type: 'string',
+          description: 'Optional csuite target; defaults to /<self>/uploads/<basename>.',
+        },
+        mimeType: { type: 'string', description: 'Optional MIME override.' },
+        collide: {
+          type: 'string',
+          enum: ['error', 'suffix', 'overwrite'],
+          description: "Upload collision behavior (default 'suffix').",
+        },
+      },
+      required: ['localPath'],
+      additionalProperties: false,
+    },
+  ],
+} as const;
 
 /**
  * Build the tool set. Descriptions are static per session — the only
@@ -161,9 +188,9 @@ export function defineTools(
           },
           attachments: {
             type: 'array',
-            items: { type: 'string' },
+            items: LOCAL_OR_REMOTE_ATTACHMENT_SCHEMA,
             description:
-              'Optional list of file paths to attach. Max 64. Each must already exist and be readable to you.',
+              'Optional existing csuite paths or local-file upload objects. Max 64. Local bytes stream from the runner and never enter the tool call or result.',
           },
         },
         required: ['to', 'body'],
@@ -206,9 +233,9 @@ export function defineTools(
           },
           attachments: {
             type: 'array',
-            items: { type: 'string' },
+            items: LOCAL_OR_REMOTE_ATTACHMENT_SCHEMA,
             description:
-              'Optional list of file paths to attach. Max 64. Each must already exist and be readable to you.',
+              'Optional existing csuite paths or local-file upload objects. Max 64. Local bytes stream from the runner and never enter the tool call or result.',
           },
         },
         required: ['channel', 'body'],
@@ -372,9 +399,9 @@ export function defineTools(
           },
           attachments: {
             type: 'array',
-            items: { type: 'string' },
+            items: LOCAL_OR_REMOTE_ATTACHMENT_SCHEMA,
             description:
-              'Optional list of file paths to attach. Max 64. Each must already exist and be readable to you.',
+              'Optional existing csuite paths or local-file upload objects. Max 64. Local bytes stream from the runner and never enter the tool call or result.',
           },
         },
         required: ['id', 'body'],
@@ -1596,6 +1623,47 @@ function buildFilesystemTools(name: string): Tool[] {
       },
     },
     {
+      name: 'fs_upload',
+      description:
+        `Stream a file from the runner's own disk into the csuite filesystem. ` +
+        `Only the local and target paths cross the MCP bridge; file bytes flow from the ` +
+        `runner directly to POST /fs/write and never enter an IPC frame or tool result. ` +
+        `Relative local paths resolve from the runner cwd; absolute paths use the runner's ` +
+        `filesystem. MIME is inferred from common extensions or defaults to ` +
+        `application/octet-stream. Returns the resulting FsEntry.`,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          localPath: { type: 'string', description: 'Path on the runner machine to upload.' },
+          path: { type: 'string', description: 'Absolute target path in csuite.' },
+          mimeType: { type: 'string', description: 'Optional MIME override.' },
+          collide: {
+            type: 'string',
+            enum: ['error', 'suffix', 'overwrite'],
+            description: "Collision behavior (default 'error').",
+          },
+        },
+        required: ['localPath', 'path'],
+      },
+    },
+    {
+      name: 'fs_download',
+      description:
+        `Stream a csuite file onto the runner's own disk. Bytes flow directly from ` +
+        `GET /fs/read/<path> into a same-directory temporary file and are published ` +
+        `atomically; they never enter an IPC frame, tool result, or agent context. ` +
+        `Refuses an existing destination unless overwrite=true.`,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Absolute csuite file path to download.' },
+          localPath: { type: 'string', description: 'Destination on the runner machine.' },
+          overwrite: { type: 'boolean', description: 'Replace an existing file (default false).' },
+        },
+        required: ['path', 'localPath'],
+      },
+    },
+    {
       name: 'fs_mkdir',
       description:
         `Create a directory. Pass recursive=true to auto-create missing parents. ` +
@@ -1852,11 +1920,11 @@ export async function handleToolCall(
       case 'broadcast':
         return await handleBroadcast(args, brokerClient);
       case 'send':
-        return await handleSend(args, brokerClient);
+        return await handleSend(args, brokerClient, instructions);
       case 'channels_list':
         return await handleChannelsList(brokerClient, instructions);
       case 'channels_post':
-        return await handleChannelsPost(args, brokerClient);
+        return await handleChannelsPost(args, brokerClient, instructions);
       case 'recent':
         return await handleRecent(args, brokerClient, instructions);
       case 'objectives_list':
@@ -1866,7 +1934,7 @@ export async function handleToolCall(
       case 'objectives_update':
         return await handleObjectivesUpdate(args, brokerClient);
       case 'objectives_discuss':
-        return await handleObjectivesDiscuss(args, brokerClient);
+        return await handleObjectivesDiscuss(args, brokerClient, instructions);
       case 'objectives_complete':
         return await handleObjectivesComplete(args, brokerClient);
       case 'objectives_create':
@@ -1887,6 +1955,10 @@ export async function handleToolCall(
         return await handleFsRead(args, brokerClient);
       case 'fs_write':
         return await handleFsWrite(args, brokerClient);
+      case 'fs_upload':
+        return await handleFsUpload(args, brokerClient);
+      case 'fs_download':
+        return await handleFsDownload(args, brokerClient);
       case 'fs_mkdir':
         return await handleFsMkdir(args, brokerClient);
       case 'fs_rm':
@@ -2060,26 +2132,41 @@ async function handleBroadcast(
 async function handleSend(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
   const to = typeof args.to === 'string' ? args.to : '';
   const body = typeof args.body === 'string' ? args.body : '';
   if (!to || !body) return errorResult('send: `to` and `body` are required');
   const levelResult = parseLevel(args.level);
   if (levelResult.error) return errorResult(`send: ${levelResult.error}`);
-  const attachments = await resolveAttachmentPaths(args.attachments, brokerClient);
+  const attachments = await resolveAttachmentPaths(
+    args.attachments,
+    brokerClient,
+    instructions.name,
+  );
   if ('error' in attachments) return errorResult(`send: ${attachments.error}`);
-  const result = await brokerClient.push({
-    to,
-    body,
-    level: levelResult.level,
-    ...(attachments.list.length > 0 ? { attachments: attachments.list } : {}),
-  });
+  let result: PushResult;
+  try {
+    result = await brokerClient.push({
+      to,
+      body,
+      level: levelResult.level,
+      ...(attachments.list.length > 0 ? { attachments: attachments.list } : {}),
+    });
+  } catch (err) {
+    return errorResult(postUploadFailure('send', err, attachments.uploaded));
+  }
   const attachmentSummary =
     attachments.list.length > 0 ? ` attachments=${attachments.list.length}` : '';
   return textResult(
     `delivered to ${to}: live=${result.delivery.live} ` +
       `targets=${result.delivery.targets} msg=${result.message.id}${attachmentSummary}`,
   );
+}
+
+function postUploadFailure(tool: string, err: unknown, uploaded: string[]): string {
+  const retained = uploaded.length > 0 ? `; uploads retained: ${uploaded.join(', ')}` : '';
+  return `${tool}: operation failed: ${err instanceof Error ? err.message : String(err)}${retained}`;
 }
 
 /**
@@ -2090,22 +2177,65 @@ async function handleSend(
 async function resolveAttachmentPaths(
   raw: unknown,
   brokerClient: BrokerClient,
-): Promise<{ list: Attachment[] } | { error: string }> {
-  if (raw === undefined || raw === null) return { list: [] };
+  localUploadMember?: string,
+): Promise<{ list: Attachment[]; uploaded: string[] } | { error: string }> {
+  if (raw === undefined || raw === null) return { list: [], uploaded: [] };
   if (!Array.isArray(raw)) {
     return { error: '`attachments` must be an array of paths' };
   }
   const list: Attachment[] = [];
-  for (const p of raw) {
+  const uploaded: string[] = [];
+  const failure = (message: string): { error: string } => ({
+    error: message + (uploaded.length > 0 ? `; uploads retained: ${uploaded.join(', ')}` : ''),
+  });
+  for (const item of raw) {
+    if (typeof item === 'object' && item !== null && !Array.isArray(item)) {
+      if (!localUploadMember) {
+        return failure('`attachments` local-file objects are not supported by this tool');
+      }
+      const spec = item as Record<string, unknown>;
+      const localPath = typeof spec.localPath === 'string' ? spec.localPath : '';
+      if (!localPath) return failure('local attachment requires `localPath`');
+      const collide = typeof spec.collide === 'string' ? spec.collide : 'suffix';
+      if (collide !== 'error' && collide !== 'suffix' && collide !== 'overwrite') {
+        return failure(`local attachment has invalid collide strategy '${collide}'`);
+      }
+      const target =
+        typeof spec.path === 'string' && spec.path.length > 0
+          ? spec.path
+          : `/${localUploadMember}/uploads/${basename(localPath)}`;
+      try {
+        const entry = await uploadLocalFile(brokerClient, {
+          localPath,
+          path: target,
+          mimeType: typeof spec.mimeType === 'string' ? spec.mimeType : undefined,
+          collision: collide,
+        });
+        if (entry.size === null || entry.mimeType === null) {
+          return failure(`uploaded attachment is corrupt: ${entry.path}`);
+        }
+        uploaded.push(entry.path);
+        list.push({
+          path: entry.path,
+          name: entry.name,
+          size: entry.size,
+          mimeType: entry.mimeType,
+        });
+        continue;
+      } catch (err) {
+        return failure(`local attachment upload failed for ${localPath}: ${String(err)}`);
+      }
+    }
+    const p = item;
     if (typeof p !== 'string' || p.length === 0) {
-      return { error: '`attachments` entries must be non-empty path strings' };
+      return failure('`attachments` entries must be csuite path strings or local-file objects');
     }
     try {
       const entry = await brokerClient.fsStat(p);
-      if (!entry) return { error: `attachment not found: ${p}` };
-      if (entry.kind !== 'file') return { error: `attachment is a directory: ${p}` };
+      if (!entry) return failure(`attachment not found: ${p}`);
+      if (entry.kind !== 'file') return failure(`attachment is a directory: ${p}`);
       if (entry.size === null || entry.mimeType === null) {
-        return { error: `attachment is corrupt: ${p}` };
+        return failure(`attachment is corrupt: ${p}`);
       }
       list.push({
         path: entry.path,
@@ -2114,10 +2244,10 @@ async function resolveAttachmentPaths(
         mimeType: entry.mimeType,
       });
     } catch (err) {
-      return { error: `attachment lookup failed for ${p}: ${String(err)}` };
+      return failure(`attachment lookup failed for ${p}: ${String(err)}`);
     }
   }
-  return { list };
+  return { list, uploaded };
 }
 
 async function handleRecent(
@@ -2209,6 +2339,7 @@ async function handleChannelsList(
 async function handleChannelsPost(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
   const slug = typeof args.channel === 'string' ? args.channel : '';
   const body = typeof args.body === 'string' ? args.body : '';
@@ -2216,7 +2347,11 @@ async function handleChannelsPost(
   if (!body) return errorResult('channels_post: `body` is required');
   const levelResult = parseLevel(args.level);
   if (levelResult.error) return errorResult(`channels_post: ${levelResult.error}`);
-  const attachments = await resolveAttachmentPaths(args.attachments, brokerClient);
+  const attachments = await resolveAttachmentPaths(
+    args.attachments,
+    brokerClient,
+    instructions.name,
+  );
   if ('error' in attachments) return errorResult(`channels_post: ${attachments.error}`);
 
   // Resolve slug → id. The push routing on the server side keys on
@@ -2231,25 +2366,38 @@ async function handleChannelsPost(
     channelId = ch.channel.id;
     if (!ch.channel.joined) {
       return errorResult(
-        `channels_post: you are not a member of #${slug}. Ask a channel manager to add you, or use \`broadcast\` for the general channel.`,
+        postUploadFailure(
+          'channels_post',
+          `you are not a member of #${slug}. Ask a channel manager to add you, or use \`broadcast\` for the general channel.`,
+          attachments.uploaded,
+        ),
       );
     }
   } catch (err) {
     const ce = err as ClientError;
     if (ce?.name === 'ClientError' && ce.status === 404) {
       return errorResult(
-        `channels_post: no channel '${slug}'. Use \`channels_list\` to see available channels.`,
+        postUploadFailure(
+          'channels_post',
+          `no channel '${slug}'. Use \`channels_list\` to see available channels.`,
+          attachments.uploaded,
+        ),
       );
     }
-    throw err;
+    return errorResult(postUploadFailure('channels_post', err, attachments.uploaded));
   }
 
-  const result = await brokerClient.push({
-    body,
-    level: levelResult.level,
-    data: { thread: `chan:${channelId}` },
-    ...(attachments.list.length > 0 ? { attachments: attachments.list } : {}),
-  });
+  let result: PushResult;
+  try {
+    result = await brokerClient.push({
+      body,
+      level: levelResult.level,
+      data: { thread: `chan:${channelId}` },
+      ...(attachments.list.length > 0 ? { attachments: attachments.list } : {}),
+    });
+  } catch (err) {
+    return errorResult(postUploadFailure('channels_post', err, attachments.uploaded));
+  }
   const attachmentSummary =
     attachments.list.length > 0 ? ` attachments=${attachments.list.length}` : '';
   return textResult(
@@ -2502,20 +2650,30 @@ async function handleObjectivesUpdate(
 async function handleObjectivesDiscuss(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
+  instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
   const id = typeof args.id === 'string' ? args.id : '';
   const body = typeof args.body === 'string' ? args.body : '';
   if (!id || !body) {
     return errorResult('objectives_discuss: both `id` and `body` are required');
   }
-  const attachmentsResult = await resolveAttachmentPaths(args.attachments, brokerClient);
+  const attachmentsResult = await resolveAttachmentPaths(
+    args.attachments,
+    brokerClient,
+    instructions.name,
+  );
   if ('error' in attachmentsResult) {
     return errorResult(`objectives_discuss: ${attachmentsResult.error}`);
   }
-  const message = await brokerClient.discussObjective(id, {
-    body,
-    ...(attachmentsResult.list.length > 0 ? { attachments: attachmentsResult.list } : {}),
-  });
+  let message: Message;
+  try {
+    message = await brokerClient.discussObjective(id, {
+      body,
+      ...(attachmentsResult.list.length > 0 ? { attachments: attachmentsResult.list } : {}),
+    });
+  } catch (err) {
+    return errorResult(postUploadFailure('objectives_discuss', err, attachmentsResult.uploaded));
+  }
   const attachmentNote =
     attachmentsResult.list.length > 0 ? ` attachments=${attachmentsResult.list.length}` : '';
   return textResult(
@@ -3827,6 +3985,52 @@ async function handleFsWrite(
   return textResult(
     `wrote ${result.entry.path}${renamedNote}: size=${result.entry.size ?? source.length} mime=${result.entry.mimeType}`,
   );
+}
+
+async function handleFsUpload(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+): Promise<CallToolResult> {
+  const localPath = typeof args.localPath === 'string' ? args.localPath : '';
+  const path = typeof args.path === 'string' ? args.path : '';
+  if (!localPath || !path) return errorResult('fs_upload: `localPath` and `path` are required');
+  const mimeType = typeof args.mimeType === 'string' ? args.mimeType : undefined;
+  const collideRaw = typeof args.collide === 'string' ? args.collide : 'error';
+  if (collideRaw !== 'error' && collideRaw !== 'overwrite' && collideRaw !== 'suffix') {
+    return errorResult(`fs_upload: invalid collide strategy '${collideRaw}'`);
+  }
+  try {
+    const entry = await uploadLocalFile(brokerClient, {
+      localPath,
+      path,
+      mimeType,
+      collision: collideRaw,
+    });
+    return textResult(JSON.stringify(entry));
+  } catch (err) {
+    return errorResult(`fs_upload: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+async function handleFsDownload(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+): Promise<CallToolResult> {
+  const path = typeof args.path === 'string' ? args.path : '';
+  const localPath = typeof args.localPath === 'string' ? args.localPath : '';
+  if (!path || !localPath) {
+    return errorResult('fs_download: `path` and `localPath` are required');
+  }
+  try {
+    const result = await downloadLocalFile(brokerClient, {
+      path,
+      localPath,
+      overwrite: args.overwrite === true,
+    });
+    return textResult(`downloaded ${path} -> ${result.localPath}: size=${result.size}`);
+  } catch (err) {
+    return errorResult(`fs_download: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 async function handleFsMkdir(
