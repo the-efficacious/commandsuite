@@ -58,7 +58,7 @@ usage:
   csuite setup       [--config-path <path>]                 first-run wizard (team + first member + TOTP)
   csuite setup       --non-interactive --team <name> --member <name> --token-file <path> [--totp-secret-file <path>] [--config-path <path>]
                                     seed a team + first member with no prompts; bearer token to --token-file (0600), never stdout
-  csuite member        list|create|update|delete [--config-path <path>]   offline member management (runs without the broker)
+  csuite member        list|create|update|delete            manage members through the running broker (create prints the token once)
   csuite connect     [--url <broker>] [--label <hint>] [--workspace <dir>] [--global] [--no-write] [--quiet]
   csuite connect     pending                                 list device enrollments waiting for approval (members.manage)
   csuite connect     approve --code <XXXX-XXXX> --member <name> [--label <l>]     approve a device: bind it to an existing member

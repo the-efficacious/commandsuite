@@ -1,0 +1,170 @@
+---
+title: Headless setup
+description: Bring up a broker, a seeded team, the web UI and an enrolled runner with nobody at a terminal — for a server, a container, or CI.
+section: Operations
+order: 5
+---
+
+# Headless setup
+
+Everything in [getting started](/docs/getting-started) assumes a person
+at a terminal: the first-run wizard prompts, the device enrollment is
+approved in a browser. This page is the same outcome with no prompts
+and no browser — what a provisioning script, a container entrypoint, a
+CI job, or an agent standing the project up for itself needs.
+
+By the end: a broker with a seeded team and first member, the web UI
+reachable and signed into, and a second member enrolled as a runner
+whose credential resolves from its working directory with no
+environment variable.
+
+The whole sequence is one script in the repository,
+[`scripts/bootstrap.sh`](https://github.com/the-efficacious/commandsuite/blob/main/scripts/bootstrap.sh),
+and it is what CI runs on every change (the "Headless bootstrap"
+workflow). The steps below are that script, spelled out, so you can
+run them by hand or lift them into your own tooling.
+
+## Prerequisites
+
+- Node.js 22+ and `curl`.
+- `csuite` on `$PATH` (`npm install -g csuite`), **or** a built
+  checkout of this repository (`pnpm install && pnpm build`) — the
+  script finds either.
+- Nothing needs a TTY. Every command below works with stdin from
+  `/dev/null`.
+
+## The script
+
+```bash
+scripts/bootstrap.sh up       # seed, start, enrol, verify
+scripts/bootstrap.sh verify   # re-check a running stack
+scripts/bootstrap.sh down     # stop the broker it started
+```
+
+State lives in `./.csuite-bootstrap/` (override with
+`CSUITE_BOOTSTRAP_DIR`): the server directory, the secret files, the
+runner workspace, the broker log and pid. Names and port are
+environment variables — `CSUITE_TEAM`, `CSUITE_ADMIN`, `CSUITE_RUNNER`,
+`CSUITE_PORT` — with defaults `bootstrap`, `admin`, `builder`, `8717`.
+
+`CSUITE_RUNNER_VERB` selects the runner the preflight and the final
+step use — `claude` (default) or `codex` — so the sequence proves
+whichever family the seat holds a credential for.
+
+The script exits non-zero at the first step that is not true and says
+which. Run it twice and the second run finds everything already in
+place.
+
+## The steps, by hand
+
+### 1. Seed the team
+
+```bash
+csuite setup --non-interactive --team acme --member admin \
+  --token-file ./secrets/admin.token --totp-secret-file ./secrets/admin.totp \
+  --config-path ./server/csuite.json </dev/null
+```
+
+No prompts. The bearer token goes to the file at mode 0600 — it is the
+only copy; the database stores a hash — and is never printed. The TOTP
+secret is what lets this member sign in to the web UI. Both flags
+refuse to overwrite an existing file, and all output paths are checked
+before anything is written. Details:
+[`csuite setup`](/docs/reference/cli#setup).
+
+### 2. Start the broker
+
+```bash
+csuite serve --config-path ./server/csuite.json </dev/null &
+until curl -sf http://127.0.0.1:8717/healthz; do sleep 0.5; done
+```
+
+With a config file present, `serve` never enters the wizard, so it
+runs fine under a supervisor. Web UI: `GET /` serves the app.
+
+### 3. Prove the seeded member works
+
+```bash
+CSUITE_TOKEN=$(cat ./secrets/admin.token) csuite roster
+```
+
+And a web-UI sign-in over the API, using a code from the secret
+(`scripts/bootstrap/totp.mjs` prints one; any TOTP library does):
+
+```bash
+code=$(node scripts/bootstrap/totp.mjs ./secrets/admin.totp)
+curl -c jar -H 'content-type: application/json' \
+  -d "{\"code\":\"$code\",\"member\":\"admin\"}" http://127.0.0.1:8717/session/totp
+curl -b jar http://127.0.0.1:8717/session      # → {"member":"admin", …}
+```
+
+### 4. Enrol a runner through the device-code flow
+
+The runner is a second member with its own credential. The clean way
+to give a machine a credential is [device enrollment](/docs/enrollment)
+— and it needs an approver. The bootstrap member is that approver, from
+the CLI:
+
+```bash
+# device side, in the directory the runner will work from:
+( cd ./runner && csuite connect --url http://127.0.0.1:8717 --workspace "$PWD" --quiet </dev/null ) > connect.out &
+code=$(sed -n 's/^code:[[:space:]]*\([A-Z0-9]\{4\}-[A-Z0-9]\{4\}\).*/\1/p' connect.out)
+
+# approver side, as the bootstrap member:
+CSUITE_TOKEN=$(cat ./secrets/admin.token) csuite connect approve \
+  --url http://127.0.0.1:8717 --code "$code" --create --member builder --title engineer
+wait   # csuite connect exits once the token has landed in the auth store
+```
+
+The token travels from the broker to the device's auth store; neither
+the script nor the approver ever holds it.
+
+### 5. Prove the runner is enrolled
+
+The credential must resolve from the runner's directory with **no**
+`CSUITE_TOKEN` — that is what "enrolled" means, and it is the lookup a
+service unit will perform:
+
+```bash
+cd ./runner && env -i HOME=$HOME PATH=$PATH CSUITE_URL=http://127.0.0.1:8717 csuite roster </dev/null
+cd ./runner && env -i HOME=$HOME PATH=$PATH CSUITE_URL=http://127.0.0.1:8717 csuite claude --doctor </dev/null   # or: csuite codex --doctor
+```
+
+The first lists the team as `builder`; the second reports
+`[PASS] saved auth` among its checks. Auth is keyed by
+**(broker URL, working directory)** — the URL must be exactly the one
+used with `csuite connect`. Without it the runner exits 1 naming the
+key it looked up; see [troubleshooting](/docs/troubleshooting).
+
+### 6. Start the runner
+
+```bash
+cd ./runner && CSUITE_URL=http://127.0.0.1:8717 csuite claude    # or: csuite codex
+```
+
+This needs an agent binary and a model credential. CI has no model
+credential, so the script **stops before this step and prints that it
+did** — steps 5 and 6 prove the credential resolves and the preflight
+passes, and that is all they prove; a passing preflight is not a
+connection. Set `CSUITE_START_RUNNER=1` on a machine that has both and
+the script starts the runner and waits until the roster shows
+`builder` with `connected 1`. `CSUITE_RUNNER_VERB=codex` makes both
+the preflight and this step use `csuite codex` instead — a Codex team
+proves its own path, not Claude's. Running it as a service:
+[always-on agent](/docs/guides/always-on-agent).
+
+## Using it from CI
+
+The repository's own job is the reference: build, run
+`scripts/bootstrap.sh up`, run `verify` again to show it is idempotent,
+`down` on exit. It sets `CSUITE_BOOTSTRAP_DIR` and
+`CSUITE_AUTH_CONFIG_PATH` under the job's temp directory so nothing
+outside the checkout is written, and a non-default port so it cannot
+collide with anything else on the runner.
+
+## Starting over
+
+`csuite setup` refuses to re-seed a populated team, because doing so
+would invalidate every credential. To start from scratch, remove the
+state directory (or point `CSUITE_BOOTSTRAP_DIR` somewhere new) and
+run `up` again.

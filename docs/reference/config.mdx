@@ -39,16 +39,16 @@ optional server features are on:
 ```json
 {
   "dbPath": "./csuite.db",
-  "activityDbPath": null,
-  "https": { "mode": "off", "...": "..." },
-  "webPush": null,
-  "jwt": null,
-  "files": null
+  "https": { "mode": "off", "...": "..." }
 }
 ```
 
-- `dbPath` / `activityDbPath` — database locations. `null` for the
-  activity path means the standard derivation from `dbPath`.
+Every key is optional and **omitted when unset** — the loader rejects
+`null` (`expected string, received null`), so do not copy a key you
+mean to leave at its default.
+
+- `dbPath` / `activityDbPath` — database locations. Omit the activity
+  path for the standard derivation from `dbPath`.
 - `https` — TLS settings for serving beyond localhost.
 - `webPush` — browser push notification keys, generated on first use.
 - `jwt` — set by the [platform connect](/docs/self-hosted-connect)
