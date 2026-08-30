@@ -16,12 +16,13 @@
 import { signal } from '@preact/signals';
 import type { Presence, ProcessDocument } from 'csuite-sdk/types';
 import { hasPermission } from 'csuite-sdk/types';
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { getClient } from '../lib/client.js';
 import { initials } from '../lib/initials.js';
 import { instructions, loadInstructions } from '../lib/instructions.js';
 import { objectives } from '../lib/objectives.js';
 import { presenceActivity, presenceCaptureWarning, roster } from '../lib/roster.js';
+import { loadTeamStatus, teamStatus } from '../lib/team-status.js';
 import { selectMemberProfile } from '../lib/view.js';
 import { ErrorCallout, Loading, PageHeader, TextMetrics } from './ui/index.js';
 
@@ -33,6 +34,15 @@ export function TeamHome({ viewer }: TeamHomeProps) {
   const b = instructions.value;
   const r = roster.value;
   const obj = objectives.value;
+  const canReadTeamStatus = hasPermission(b?.permissions ?? [], 'members.manage');
+
+  useEffect(() => {
+    if (!canReadTeamStatus) return;
+    void loadTeamStatus().catch(() => {
+      // The roster remains usable if this read-only operator detail fails.
+      // Baseline members never make this request at all.
+    });
+  }, [canReadTeamStatus, r]);
 
   if (!b || !r) {
     return <Loading label="Loading team…" />;
@@ -101,6 +111,9 @@ export function TeamHome({ viewer }: TeamHomeProps) {
         <ul style="display:flex;flex-direction:column;list-style:none;padding:0;margin:0">
           {r.teammates.map((t, idx) => {
             const conn = connectedByName.get(t.name);
+            const status = canReadTeamStatus
+              ? teamStatus.value?.members.find((row) => row.member.name === t.name)
+              : undefined;
             const online = (conn?.connected ?? 0) > 0;
             // 3-state activity, orthogonal to the connection state above.
             const activity = presenceActivity(conn);
@@ -206,6 +219,25 @@ export function TeamHome({ viewer }: TeamHomeProps) {
                       {(conn?.unreportedConnections ?? 0) > 0 && (
                         <div style="font-family:var(--ef-font-mono);font-size:10px;color:var(--ef-lamp-caution)">
                           {conn?.unreportedConnections} connection(s) without runner identity
+                        </div>
+                      )}
+                      {status && (
+                        <div style="font-family:var(--ef-font-mono);font-size:10px;color:var(--ef-text-muted);margin-top:3px">
+                          auth blocked: {status.presence?.authBlocked ?? 'absent'} · last activity:{' '}
+                          {status.lastActivityAt ?? 'absent'}
+                          {status.activeObjectives.length === 0
+                            ? ' · no active objective'
+                            : status.activeObjectives.map((objective) => (
+                                <div key={objective.id}>
+                                  {objective.id} · {objective.status}
+                                  {objective.stalled
+                                    ? ` · STALLED (${objective.staleSignals.join(', ')})`
+                                    : ''}{' '}
+                                  · post {objective.lastThreadPostAt ?? 'absent'} · PR{' '}
+                                  {objective.lastPrLinkAt ?? 'absent'} · lifecycle{' '}
+                                  {objective.lastLifecycleAt ?? 'absent'}
+                                </div>
+                              ))}
                         </div>
                       )}
                     </div>
@@ -565,6 +597,7 @@ function TeamProcessSection({
 }
 
 export function __resetTeamHomeForTests(): void {
+  teamStatus.value = null;
   ctxEditing.value = false;
   ctxDraft.value = '';
   ctxBusy.value = false;

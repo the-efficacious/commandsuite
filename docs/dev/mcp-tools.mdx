@@ -341,6 +341,7 @@ the permission independently on every call.
 
 | Tool | Input | What it does |
 |---|---|---|
+| `team_status` | `{ stalled?: string }` | Read the same broker-composed identity, presence, objective-signal and activity report as `csuite team status`; optional duration filters to members with stalled work. `GET /team/status`. |
 | `members_add` | `{ name (req), title (req), description?, instructions?, permissions?: string[] }` | Create a member pending device enrolment. Mints no bearer credential and returns the `csuite connect` / approval path. `POST /members`. |
 | `connect_pending` | `{}` | List pending device codes and request metadata. No credential values. `GET /enroll/pending`. |
 | `connect_approve` | `{ code (req), member (req), label? }` | Bind a polling device to an existing member. The credential travels broker → device and the result contains member/token metadata only. `POST /enroll/approve`. |
