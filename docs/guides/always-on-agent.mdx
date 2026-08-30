@@ -54,9 +54,11 @@ Use `--global` instead if the whole machine should be one identity
 ## 3. Keep the runner alive
 
 The runner is a plain foreground process — `csuite claude` or
-`csuite codex` runs until it exits. There is no built-in daemon or
-service mode, on purpose: your operating system already has better
-supervisors than we could ship. Two that work well:
+`csuite codex` runs until it exits. It does not daemonize itself, on
+purpose: your operating system already has a better supervisor than we
+could ship, so `install-service` delegates to it — writing and
+enabling the systemd unit rather than becoming one. Two ways to keep
+a runner up:
 
 **tmux** — quickest, good for a workstation you also log into:
 
