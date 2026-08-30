@@ -29,6 +29,18 @@ export CSUITE_AUTH_CONFIG_PATH="${CSUITE_AUTH_CONFIG_PATH:-$CSUITE_BOOTSTRAP_DIR
 CLI=/app/packages/csuite/bin/csuite.mjs
 export CSUITE_BIN="$CLI"
 
+# The container's outcome is a seeded team, a reachable UI and an
+# enrolled runner member — enrolled meaning its credential resolves and
+# `--doctor` is green. A live model runner inside the container (a model
+# credential in the image or volume, two long-lived processes under one
+# PID 1, restart semantics for both) is a different thing with its own
+# doors; it is refused here rather than silently not done. Attach a
+# runner from outside: docs/guides/always-on-agent.
+if [ "${CSUITE_START_RUNNER:-0}" != 0 ]; then
+  echo "csuite container: CSUITE_START_RUNNER is not supported in the container; run the runner outside it (docs/guides/always-on-agent) and enrol it against this broker with csuite connect" >&2
+  exit 64
+fi
+
 if [ "${1:-}" = "serve-only" ]; then
   cd "$CSUITE_BOOTSTRAP_DIR"
   # Escape hatch: skip the bring-up and just serve an already-seeded volume.
@@ -44,5 +56,5 @@ echo "csuite container: bring-up via scripts/bootstrap.sh (state: $CSUITE_BOOTST
 /app/scripts/bootstrap.sh down
 
 echo "csuite container: bring-up complete; broker moving to the foreground on 0.0.0.0:$CSUITE_PORT"
-echo "csuite container: no live runner started (CSUITE_START_RUNNER unset or no model credential in a container); the enrolled runner member's credential is on the volume"
+echo "csuite container: stops at an enrolled runner member (credential on the volume, preflight green); a live runner runs outside the container — see docs/guides/always-on-agent"
 exec "$CLI" serve --host 0.0.0.0 --port "$CSUITE_PORT" --config-path "$CSUITE_BOOTSTRAP_DIR/server/csuite.json"

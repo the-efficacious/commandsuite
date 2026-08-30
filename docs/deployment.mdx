@@ -42,8 +42,14 @@ the broker in the foreground:
    credential resolves from `/var/lib/csuite/runner` with no
    environment variable; `csuite claude --doctor` passes.
 4. The loopback broker stops and the real one runs as PID 1 on
-   `0.0.0.0:8717`. No live runner is started — a container has no
-   model credential — and the log says so.
+   `0.0.0.0:8717`. That is where the container stops: an enrolled
+   runner member, not a running runner. A live runner needs a model
+   credential and its own process lifecycle, so it runs **outside** the
+   container — on any machine, `csuite connect --url http://<host>:8717`
+   (approve as `admin`, from the web UI or `csuite connect approve`) and
+   then `csuite claude` / `csuite codex` as a service:
+   [always-on agent](/docs/guides/always-on-agent). Setting
+   `CSUITE_START_RUNNER=1` on the container is refused with that message.
 
 A restart re-runs the same sequence against the volume: already
 seeded, already enrolled, a few seconds. The image contains no secret
@@ -72,7 +78,6 @@ command line.
 | `CSUITE_ADMIN` | `admin` | First member (holds every permission); names the secret files. |
 | `CSUITE_RUNNER` | `builder` | Runner member enrolled on first start. |
 | `CSUITE_RUNNER_VERB` | `claude` | Which runner's preflight is proved: `claude` or `codex`. |
-| `CSUITE_START_RUNNER` | `0` | `1` starts `csuite <verb>` after the bring-up. Needs a model credential in the container; leave at `0` unless you have provided one. |
 | `CSUITE_LOG_LEVEL` | `info` | Broker log threshold. |
 
 Names and team are read only on the first start; later changes do
@@ -106,6 +111,7 @@ image without it is a follow-on (#198). No image is published;
 
 `scripts/compose-check.sh` is what CI runs and what a person can run:
 `up`, the four assertions above, `restart`, the same four, `down -v`.
+It stops before any live model connection and says so.
 `KEEP=1 scripts/compose-check.sh` leaves the stack running.
 
 ## Beyond localhost

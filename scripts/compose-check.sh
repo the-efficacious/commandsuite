@@ -70,8 +70,8 @@ assert_all "after restart"
 ok "second bring-up was idempotent (already seeded, already enrolled)"
 
 say "what this proves and what it does not"
-printf '   --  no live runner was started: a container has no model credential; the runner member is enrolled and its\n'
-printf '       credential resolves. A live connection is proven on a real seat (docs/headless-setup).\n'
+printf '   --  the container stops at an enrolled runner member (credential on the volume, --doctor green); a live\n'
+printf '       runner runs outside it (docs/guides/always-on-agent). No model connection is made here.\n'
 
 if [ "${KEEP:-0}" = 1 ]; then
   say "leaving the stack running (KEEP=1): $URL"
