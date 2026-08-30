@@ -42,7 +42,7 @@ if [ "${CSUITE_START_RUNNER:-0}" != 0 ]; then
 fi
 
 if [ "${1:-}" = "serve-only" ]; then
-  cd "$CSUITE_BOOTSTRAP_DIR"
+  cd "$CSUITE_BOOTSTRAP_DIR" && touch "$CSUITE_BOOTSTRAP_DIR/.ready"
   # Escape hatch: skip the bring-up and just serve an already-seeded volume.
   exec "$CLI" serve --host 0.0.0.0 --port "$CSUITE_PORT" --config-path "$CSUITE_BOOTSTRAP_DIR/server/csuite.json"
 fi
@@ -50,11 +50,16 @@ fi
 # Run from the state directory: the broker keeps its file blob store at
 # ./data/files relative to its cwd, and that belongs on the volume.
 mkdir -p "$CSUITE_BOOTSTRAP_DIR" && cd "$CSUITE_BOOTSTRAP_DIR"
+# The healthcheck requires this marker as well as /healthz: during the
+# bring-up the script's own loopback broker answers /healthz, and
+# "healthy" must mean the final broker below, not that one.
+rm -f "$CSUITE_BOOTSTRAP_DIR/.ready"
 
 echo "csuite container: bring-up via scripts/bootstrap.sh (state: $CSUITE_BOOTSTRAP_DIR)"
 /app/scripts/bootstrap.sh up </dev/null
 /app/scripts/bootstrap.sh down
 
 echo "csuite container: bring-up complete; broker moving to the foreground on 0.0.0.0:$CSUITE_PORT"
+touch "$CSUITE_BOOTSTRAP_DIR/.ready"
 echo "csuite container: stops at an enrolled runner member (credential on the volume, preflight green); a live runner runs outside the container — see docs/guides/always-on-agent"
 exec "$CLI" serve --host 0.0.0.0 --port "$CSUITE_PORT" --config-path "$CSUITE_BOOTSTRAP_DIR/server/csuite.json"

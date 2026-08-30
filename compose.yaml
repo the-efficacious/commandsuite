@@ -22,7 +22,9 @@ services:
     volumes:
       - csuite-state:/var/lib/csuite
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8717/healthz"]
+      # .ready is written by the entrypoint only once the final broker is
+      # about to run; without it the bootstrap's loopback broker would pass.
+      test: ["CMD-SHELL", "test -f /var/lib/csuite/.ready && curl -fsS http://127.0.0.1:8717/healthz"]
       interval: 10s
       timeout: 3s
       retries: 12

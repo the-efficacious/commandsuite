@@ -71,5 +71,5 @@ USER node
 VOLUME ["/var/lib/csuite"]
 EXPOSE 8717
 HEALTHCHECK --interval=10s --timeout=3s --start-period=90s --retries=12 \
-  CMD curl -fsS http://127.0.0.1:8717/healthz || exit 1
+  CMD test -f /var/lib/csuite/.ready && curl -fsS http://127.0.0.1:8717/healthz || exit 1
 ENTRYPOINT ["/app/docker/entrypoint.sh"]
