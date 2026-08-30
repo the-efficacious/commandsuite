@@ -27,7 +27,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PERMISSIONS } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it } from 'vitest';
-import { runSetupCommand, UsageError } from '../src/commands/setup.js';
+import { formatPartialSetup, runSetupCommand, UsageError } from '../src/commands/setup.js';
 
 const dirsToClean: string[] = [];
 
@@ -340,7 +340,7 @@ describe('runSetupCommand --non-interactive', { timeout: 30_000 }, () => {
     expect(existsSync(join(dir, 'csuite.json'))).toBe(false);
   });
 
-  it('rolls back the secret files when a later step fails for real', async () => {
+  it('reports what it created when a later step fails for real, and deletes nothing', async () => {
     // The config directory exists but is read-only, so minting the KEK
     // fails AFTER the secrets were written — the branch the path
     // preflight cannot reach. Root ignores directory modes, so the
@@ -355,72 +355,8 @@ describe('runSetupCommand --non-interactive', { timeout: 30_000 }, () => {
     const tokenFile = join(dir, 'admin.token');
     const totpSecretFile = join(dir, 'admin.totp');
     try {
-      await expect(
-        runSetupCommand(
-          {
-            configPath: join(srv, 'csuite.json'),
-            nonInteractive: true,
-            team: 't',
-            member: 'admin',
-            tokenFile,
-            totpSecretFile,
-          },
-          () => {},
-        ),
-      ).rejects.toThrow(/Nothing this run created was left behind/);
-      expect(existsSync(tokenFile)).toBe(false);
-      expect(existsSync(totpSecretFile)).toBe(false);
-      expect(existsSync(join(srv, 'csuite-kek.bin'))).toBe(false);
-      expect(existsSync(join(srv, 'csuite.json'))).toBe(false);
-    } finally {
-      chmodSync(srv, 0o700);
-    }
-  });
-
-  it('a file another process creates between preflight and write is not ours — rollback leaves it', async () => {
-    // Rune's second finding on PR #206: the preflight passes, then a
-    // concurrent writer fills the TOTP path before our O_EXCL create.
-    // Our create fails; the rollback must remove OUR token file and
-    // must not touch THEIR file.
-    const dir = tmpDir();
-    const configPath = join(dir, 'srv', 'csuite.json');
-    const tokenFile = join(dir, 'admin.token');
-    const totpSecretFile = join(dir, 'admin.totp');
-    await expect(
-      runSetupCommand(
-        {
-          configPath,
-          nonInteractive: true,
-          team: 't',
-          member: 'admin',
-          tokenFile,
-          totpSecretFile,
-          beforeSecretWrite: (path) => {
-            if (path === totpSecretFile) writeFileSync(path, 'theirs\n');
-          },
-        },
-        () => {},
-      ),
-    ).rejects.toThrow(/--totp-secret-file .* already exists/);
-    expect(existsSync(tokenFile), 'our token file must be rolled back').toBe(false);
-    expect(readFileSync(totpSecretFile, 'utf8'), 'their file must survive').toBe('theirs\n');
-    expect(existsSync(configPath)).toBe(false);
-    expect(existsSync(join(dir, 'srv', 'csuite.db'))).toBe(false);
-  });
-
-  it('a KEK that existed before the run survives a failed run', async () => {
-    // Ownership for the KEK is "we created it": a pre-existing key file
-    // is never a rollback candidate, even when a later step fails.
-    const dir = tmpDir();
-    const srv = join(dir, 'srv');
-    mkdirSync(srv, { mode: 0o700 });
-    const kek = join(srv, 'csuite-kek.bin');
-    // A well-formed 32-byte key the server will accept as-is.
-    writeFileSync(kek, Buffer.alloc(32, 7), { mode: 0o600 });
-    const tokenFile = join(dir, 'admin.token');
-    const totpSecretFile = join(dir, 'admin.totp');
-    await expect(
-      runSetupCommand(
+      let message = '';
+      await runSetupCommand(
         {
           configPath: join(srv, 'csuite.json'),
           nonInteractive: true,
@@ -428,15 +364,106 @@ describe('runSetupCommand --non-interactive', { timeout: 30_000 }, () => {
           member: 'admin',
           tokenFile,
           totpSecretFile,
-          beforeSecretWrite: (path) => {
-            if (path === totpSecretFile) writeFileSync(path, 'theirs\n');
-          },
         },
         () => {},
-      ),
-    ).rejects.toThrow(/already exists/);
+      ).catch((err: Error) => {
+        message = err.message;
+      });
+      expect(message).toContain('Nothing was deleted');
+      expect(message).toContain(`rm ${tokenFile} ${totpSecretFile}`);
+      expect(message).not.toContain('present now');
+      // Both secrets are still there — nothing deleted — and the
+      // directory is otherwise as it was.
+      expect(existsSync(tokenFile)).toBe(true);
+      expect(existsSync(totpSecretFile)).toBe(true);
+      expect(existsSync(join(srv, 'csuite-kek.bin'))).toBe(false);
+      expect(existsSync(join(srv, 'csuite.json'))).toBe(false);
+    } finally {
+      chmodSync(srv, 0o700);
+    }
+  });
+
+  it('a file another process creates between preflight and write is not ours — nothing deleted, report exact', async () => {
+    // Rune's second finding on PR #206: the preflight passes, then a
+    // concurrent writer fills the TOTP path before our O_EXCL create.
+    // Our create fails. Our token file must be in the removal line and
+    // left in place; their file must be untouched and not in it.
+    const dir = tmpDir();
+    const configPath = join(dir, 'srv', 'csuite.json');
+    const tokenFile = join(dir, 'admin.token');
+    const totpSecretFile = join(dir, 'admin.totp');
+    let message = '';
+    await runSetupCommand(
+      {
+        configPath,
+        nonInteractive: true,
+        team: 't',
+        member: 'admin',
+        tokenFile,
+        totpSecretFile,
+        beforeSecretWrite: (path) => {
+          if (path === totpSecretFile) writeFileSync(path, 'theirs\n');
+        },
+      },
+      () => {},
+    ).catch((err: Error) => {
+      message = err.message;
+    });
+    expect(message).toMatch(/--totp-secret-file .* already exists/);
+    expect(message).toContain(`rm ${tokenFile}\n`);
+    expect(message).not.toContain(`rm ${tokenFile} ${totpSecretFile}`);
+    expect(existsSync(tokenFile), 'our token file is left in place').toBe(true);
+    expect(readFileSync(totpSecretFile, 'utf8'), 'their file must survive').toBe('theirs\n');
+    expect(existsSync(configPath)).toBe(false);
+    expect(existsSync(join(dir, 'srv', 'csuite.db'))).toBe(false);
+  });
+
+  it('server-directory files are inspect-only in the report; pre-existing ones are not mentioned', async () => {
+    // A directory where the DB file goes makes the seed fail after the
+    // KEK was minted. The pre-existing KEK is neither created nor
+    // appeared; the token is in the removal line; nothing from the
+    // server directory is.
+    const dir = tmpDir();
+    const srv = join(dir, 'srv');
+    mkdirSync(srv, { mode: 0o700 });
+    const kek = join(srv, 'csuite-kek.bin');
+    writeFileSync(kek, Buffer.alloc(32, 7), { mode: 0o600 });
+    mkdirSync(join(srv, 'csuite.db'));
+    const tokenFile = join(dir, 'admin.token');
+    let message = '';
+    await runSetupCommand(
+      {
+        configPath: join(srv, 'csuite.json'),
+        nonInteractive: true,
+        team: 't',
+        member: 'admin',
+        tokenFile,
+      },
+      () => {},
+    ).catch((err: Error) => {
+      message = err.message;
+    });
+    expect(message).toContain('Nothing was deleted');
+    expect(message).toContain(`rm ${tokenFile}\n`);
+    expect(message).not.toContain(kek);
+    expect(message.match(/rm ([^\n]*)/)?.[1], 'removal line names only the token').toBe(tokenFile);
     expect(existsSync(kek), 'pre-existing KEK must survive').toBe(true);
-    expect(existsSync(tokenFile)).toBe(false);
+    expect(existsSync(tokenFile)).toBe(true);
+  });
+
+  it('formatPartialSetup: removal line names only created files; appeared files are inspect-only and only when present', () => {
+    const dir = tmpDir();
+    const present = join(dir, 'present');
+    writeFileSync(present, 'x');
+    const text = formatPartialSetup(['/a/token'], [present, join(dir, 'never-made')]);
+    expect(text).toContain('rm /a/token\n');
+    expect(text).toContain(`inspect before touching:  ${present}`);
+    expect(text).not.toContain(`rm /a/token ${present}`);
+    expect(text).not.toContain('never-made');
+    const none = formatPartialSetup([], [join(dir, 'never-made')]);
+    expect(none).toContain('(nothing)');
+    expect(none).not.toContain('rm ');
+    expect(none).not.toContain('present now');
   });
 
   it('still refuses when the config already points to a populated team', async () => {

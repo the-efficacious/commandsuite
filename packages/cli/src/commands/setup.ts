@@ -33,7 +33,7 @@
  * csuite.db` is the way to start over.
  */
 
-import { closeSync, existsSync, mkdirSync, openSync, rmSync, writeSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, writeSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { ENV } from 'csuite-sdk/protocol';
 import type { Permission, Role } from 'csuite-sdk/types';
@@ -60,8 +60,8 @@ export interface SetupCommandInput {
   /**
    * Test-only. Runs after the path preflight and immediately before
    * each secret file is created — the window in which another process
-   * could fill the path. Exists so the rollback's ownership rule can be
-   * proven against a real concurrent write rather than described.
+   * could fill the path. Exists so the failure report's ownership rule
+   * can be proven against a real concurrent write rather than described.
    */
   beforeSecretWrite?: (path: string) => void;
 }
@@ -71,8 +71,6 @@ const BOOTSTRAP_ROLE_TITLE = 'member';
 
 /** Everything the seed needs, whichever path captured it. */
 interface BootstrapSeed {
-  /** Called right after the DB file is opened (and so created if it was absent). */
-  onDbOpened?: () => void;
   team: { name: string; context: string };
   member: {
     name: string;
@@ -294,17 +292,17 @@ async function runNonInteractive(
   stdout: (line: string) => void,
   beforeSecretWrite?: (path: string) => void,
 ): Promise<void> {
-  // Rollback removes ONLY what this invocation demonstrably created:
-  // a secret file is owned once its own O_EXCL create returned, the
-  // KEK and DB once the call that creates them ran against a path that
-  // was absent just before. "It exists now and did not before" alone is
-  // not ownership — another process can fill a path between the
-  // preflight and our write, and its file is not ours to delete.
+  // On failure nothing is deleted. Proving that a file is ours to
+  // delete under a concurrent writer is exactly the problem no
+  // invariant needs; what a retry needs is an accurate list. Two
+  // lists, because they carry different certainty: a secret file is
+  // known to be ours once its own O_EXCL create returned; the server
+  // directory's files can only be reported as "absent when this run
+  // began, present now" — inspect-only, never in a removal command.
   const kekPath = join(dirname(paths.configPath), 'csuite-kek.bin');
+  const serverFiles = [paths.configPath, paths.dbPath, kekPath];
+  const absentAtStart = serverFiles.filter((path) => !existsSync(path));
   const created: string[] = [];
-  const rollback = () => {
-    for (const path of created) rmSync(path, { force: true });
-  };
 
   try {
     const token = server.generateBearerToken();
@@ -323,17 +321,11 @@ async function runNonInteractive(
     }
 
     mkdirSync(dirname(paths.configPath), { recursive: true, mode: 0o700 });
-    const kekWasAbsent = !existsSync(kekPath);
     server.setKek(server.resolveKek(paths.configPath));
-    if (kekWasAbsent && existsSync(kekPath)) created.push(kekPath);
 
-    const dbWasAbsent = !existsSync(paths.dbPath);
-    const onDbOpened = () => {
-      if (dbWasAbsent) created.push(paths.dbPath);
-    };
-
+    // seedBootstrap writes the config file last; that write is the
+    // commit boundary. Everything after it is reporting.
     await seedBootstrap(server, paths, {
-      onDbOpened,
       team: { name: input.team, context: '' },
       member: {
         name: input.member,
@@ -345,34 +337,60 @@ async function runNonInteractive(
         totpSecret,
       },
     });
-
-    stdout('');
-    stdout('✓ setup complete (non-interactive)');
-    stdout(`  team:    ${input.team}`);
-    stdout(`  member:  ${input.member}`);
-    stdout(`  config:  ${paths.configPath}`);
-    stdout(`  db:      ${paths.dbPath}`);
-    stdout(`  token:   ${input.tokenFile}  (mode 0600 — the only copy; the DB stores a hash)`);
-    if (input.totpSecretFile !== null) {
-      stdout(`  totp:    ${input.totpSecretFile}  (mode 0600 — base32 secret for web UI sign-in)`);
-    } else {
-      stdout('  totp:    not enrolled — once the broker is running:');
-      stdout(`             csuite enroll --member ${input.member}`);
-    }
-    stdout('');
-    stdout('Next steps:');
-    stdout(`  csuite serve --config-path ${paths.configPath}`);
-    stdout(`  CSUITE_TOKEN=$(cat ${input.tokenFile}) csuite roster`);
-    stdout('');
   } catch (err) {
-    rollback();
     const message = err instanceof Error ? err.message : String(err);
     const prefixed =
       err instanceof UsageError || message.startsWith('setup:') ? message : `setup: ${message}`;
-    throw new UsageError(
-      `${prefixed}\n  Nothing this run created was left behind; fix the cause and re-run.`,
+    throw new UsageError(`${prefixed}\n${formatPartialSetup(created, absentAtStart)}`);
+  }
+
+  stdout('');
+  stdout('✓ setup complete (non-interactive)');
+  stdout(`  team:    ${input.team}`);
+  stdout(`  member:  ${input.member}`);
+  stdout(`  config:  ${paths.configPath}`);
+  stdout(`  db:      ${paths.dbPath}`);
+  stdout(`  token:   ${input.tokenFile}  (mode 0600 — the only copy; the DB stores a hash)`);
+  if (input.totpSecretFile !== null) {
+    stdout(`  totp:    ${input.totpSecretFile}  (mode 0600 — base32 secret for web UI sign-in)`);
+  } else {
+    stdout('  totp:    not enrolled — once the broker is running:');
+    stdout(`             csuite enroll --member ${input.member}`);
+  }
+  stdout('');
+  stdout('Next steps:');
+  stdout(`  csuite serve --config-path ${paths.configPath}`);
+  stdout(`  CSUITE_TOKEN=$(cat ${input.tokenFile}) csuite roster`);
+  stdout('');
+}
+
+/**
+ * The failure report: what to remove before a retry, stated with
+ * exactly the certainty each item has. The removal line names only
+ * files this invocation provably created (their O_EXCL create
+ * returned). Server-directory files that were absent at start and are
+ * present now are listed separately as inspect-only — they may be a
+ * concurrent writer's. Exported for tests: the wording is the
+ * deliverable, and it must be right under every failure.
+ */
+export function formatPartialSetup(
+  created: readonly string[],
+  absentAtStart: readonly string[],
+): string {
+  const appeared = absentAtStart.filter((path) => existsSync(path));
+  const lines = ['  Nothing was deleted. Partial setup:'];
+  if (created.length > 0) {
+    lines.push(`    created by this run — remove to retry:  rm ${created.join(' ')}`);
+  } else {
+    lines.push('    created by this run:  (nothing)');
+  }
+  if (appeared.length > 0) {
+    lines.push(
+      `    absent at start, present now — inspect before touching:  ${appeared.join(', ')}`,
     );
   }
+  lines.push('  Fix the cause and re-run.');
+  return lines.join('\n');
 }
 
 interface SeedPaths {
@@ -393,7 +411,6 @@ async function seedBootstrap(
 ): Promise<void> {
   const { configPath, dbPath, existingConfig } = paths;
   const db = server.openDatabase(dbPath);
-  seed.onDbOpened?.();
   try {
     const stores = server.openTeamAndMembers(db);
     stores.team.setTeam({
