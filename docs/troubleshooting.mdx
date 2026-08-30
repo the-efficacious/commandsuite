@@ -50,6 +50,30 @@ find it**, the URL is probably mismatched — the lookup is
 exact-match (no trailing-slash normalization). Check what URL
 you connected with versus what URL you're using now.
 
+### `no saved auth for <url> scoped to <dir>, and stdin is not a TTY`
+
+`csuite claude` / `csuite codex` started without a terminal (systemd,
+CI, a container) and nothing authenticated: no `--token`, no
+`$CSUITE_TOKEN`, and no saved entry for that exact URL that covers that
+directory. At a terminal the runner would open the enrollment wizard;
+headless it exits 1 instead, because the wizard cannot prompt and a
+supervisor would otherwise restart it forever. The message names both
+halves of the lookup key and the fix:
+
+```
+csuite: no saved auth for http://127.0.0.1:8717 scoped to /srv/agent, and stdin is not a TTY, so the enrollment wizard cannot run.
+  http://127.0.0.1:8717 is the default broker URL (no --url, no $CSUITE_URL). If this device was
+  enrolled against another broker, set $CSUITE_URL or --url to that exact URL.
+  enroll this directory:  csuite connect --url http://127.0.0.1:8717 --workspace /srv/agent
+  or pass a token:        CSUITE_TOKEN=csuite_… (or --token)
+  what is enrolled here:  csuite auth list
+```
+
+The line about the default URL is the usual cause: the service unit
+did not set `CSUITE_URL`, so the lookup ran against loopback instead of
+the broker the device was enrolled with. `csuite claude --doctor`
+reports the same lookup as its `saved auth` check.
+
 ## --doctor failures
 
 ### `[FAIL] claude binary`
