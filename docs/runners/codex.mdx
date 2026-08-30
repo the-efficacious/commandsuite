@@ -27,11 +27,12 @@ csuite codex
 - **Broker credentials** — `--token`, `$CSUITE_TOKEN`, or the entry
   saved by `csuite connect`.
 
-The runner never touches your `~/.codex` configuration: each run
-gives codex a private, disposable home of its own. Only your login
-and the member's thread history are shared into it, which is what
-makes `--resume` work across runs. The wiring is a contributor
-topic — see [architecture](/docs/dev/architecture).
+Each run gives codex a private, disposable home. Your login and the
+member's thread history are shared into it, which is what makes
+`--resume` work across runs. Member-local stdio MCP servers use the
+durable file described below; other settings in `~/.codex/config.toml`
+are not copied. The wiring is a contributor topic — see
+[architecture](/docs/dev/architecture).
 
 ## Flags
 
@@ -58,6 +59,52 @@ csuite codex [--no-trace] [--no-secrets] [--doctor] [--skip-doctor]
 Unlike `csuite claude`, unrecognized arguments are not an error —
 they fall through to codex too, with or without the `--` separator.
 Use codex's own `-c key=value` syntax to override its configuration.
+Overrides cannot replace `mcp_servers.csuite`, the runner-managed
+bridge; other settings remain a supported one-run escape hatch.
+
+## Local stdio MCP servers
+
+Tool sources are for URL-reachable servers that the broker can call.
+A server running as a local process on this member's workstation instead
+belongs in `~/.config/csuite/codex/mcp-servers.json` (or under
+`$XDG_CONFIG_HOME`):
+
+```json
+{
+  "version": 1,
+  "servers": {
+    "chrome-devtools": {
+      "command": "npx",
+      "args": ["-y", "chrome-devtools-mcp@latest"],
+      "env": {},
+      "cwd": "/home/agent/work",
+      "enabled": true,
+      "startupTimeoutSec": 20,
+      "toolTimeoutSec": 60
+    }
+  }
+}
+```
+
+The schema is strict, `cwd` must be absolute, and `csuite` is a reserved
+server name. The runner reads this file for every child generation, so a
+`reload`, restart, or runner cycle sees its current contents while the
+runner-managed bridge always wins.
+
+Do not use `codex mcp add` for a CommandSuite runner: it writes
+`~/.codex/config.toml`, outside the disposable home the child reads. If
+that file contains MCP entries, startup and `--doctor` fail loudly and
+name the durable path above instead of silently discarding them.
+
+```bash
+csuite codex --doctor
+```
+
+The doctor lists the enabled local servers and their source file without
+requiring a Codex model credential. The `codex` binary must still be
+installed for the complete doctor report to pass. For a one-run setting,
+Codex's native `-c key=value` overrides remain available; an override of
+the reserved `mcp_servers.csuite` bridge is refused.
 
 ## The headless posture
 

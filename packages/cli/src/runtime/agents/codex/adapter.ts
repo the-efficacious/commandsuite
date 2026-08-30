@@ -47,6 +47,7 @@ import { createCodexChannelSink } from './channel-sink.js';
 import { setupCodexHome } from './codex-home.js';
 import { attachCodexCompactor, type CodexCompactOutcome } from './compaction.js';
 import { createJsonRpcClient, type JsonRpcClient } from './json-rpc.js';
+import { assertNoReservedMcpOverride } from './local-mcp.js';
 import {
   type ItemCompletedNotification,
   type ItemStartedNotification,
@@ -254,6 +255,7 @@ export function findLatestThreadId(sessionsDir: string): string | null {
 }
 
 export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnResult> {
+  assertNoReservedMcpOverride(opts.codexArgs ?? []);
   const log = opts.logger ?? defaultLogger.child('codex');
   const cwd = opts.cwd ?? process.cwd();
 

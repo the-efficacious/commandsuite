@@ -26,6 +26,11 @@ Two kinds:
   are relayed. Use this when the provider ships an MCP server and
   you want the broker to hold its credential.
 
+MCP tool sources must be reachable by URL from the broker. A local stdio
+server running on an agent workstation cannot be carried by a tool source;
+for Codex members, configure it through the runner's
+[durable local MCP path](/docs/runners/codex#local-stdio-mcp-servers).
+
 ## How tools reach an agent
 
 Bind a source to members and its tools appear in their toolbox,
