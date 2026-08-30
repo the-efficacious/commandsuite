@@ -58,6 +58,7 @@ import type {
   ResolvedToolSource,
 } from 'csuite-sdk/types';
 import { CLI_VERSION } from '../version.js';
+import { createAuthRecoveryController } from './auth-recovery.js';
 import { startActivityReporter } from './busy-reporter.js';
 import type { ChannelEventSink, ContextControlEvent } from './forwarder.js';
 import { runForwarder } from './forwarder.js';
@@ -84,6 +85,8 @@ export class RunnerStartupError extends Error {
 export interface RunnerOptions {
   url: string;
   token: string;
+  /** Re-read saved device auth after this token is rejected. Absent for env/flag tokens. */
+  resolveReplacementToken?: () => string | null;
   /**
    * Require broker acknowledgement for runner-relayed Claude raw bodies.
    * Claude sets this; Codex does not need it because it uploads bytes through
@@ -267,7 +270,12 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
     throw new RunnerStartupError('token is required');
   }
 
-  const brokerClient = new BrokerClient({ url: options.url, token: options.token });
+  let unauthorizedHandler: (source: 'http' | 'websocket') => void = () => {};
+  const brokerClient = new BrokerClient({
+    url: options.url,
+    token: options.token,
+    onUnauthorized: (source) => unauthorizedHandler(source),
+  });
 
   let instructions: InstructionsResponse;
   try {
@@ -422,6 +430,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
         name: instructions.name,
         brokerUrl: options.url,
         token: options.token,
+        onUnauthorized: () => unauthorizedHandler('http'),
         logger: log.child('capture-host'),
         onSessionStart: (source) => {
           // `compact` = post-compaction restart, `clear` = /clear —
@@ -440,6 +449,17 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
       captureHost = null;
     }
   }
+
+  const authRecovery = createAuthRecoveryController({
+    brokerClient,
+    captureHost,
+    initialToken: options.token,
+    logger: log.child('auth'),
+    ...(options.resolveReplacementToken
+      ? { resolveReplacementToken: options.resolveReplacementToken }
+      : {}),
+  });
+  unauthorizedHandler = authRecovery.handleUnauthorized;
 
   // Pre-emptively remove any stale socket from a previous crashed
   // runner at the same path. Unix domain sockets are files; a stale
@@ -765,6 +785,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
   const shutdown = async (reason?: string): Promise<void> => {
     if (closed) return;
     closed = true;
+    authRecovery.close();
     log.info('shutdown requested', reason ? { reason } : {});
     abortController.abort();
     if (activeBridge !== null) {

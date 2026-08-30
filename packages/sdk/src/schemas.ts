@@ -168,6 +168,7 @@ export const MessageSchema = z.object({
 export const PresenceSchema = z.object({
   name: NameSchema,
   connected: z.number().int().nonnegative(),
+  authBlocked: z.number().int().nonnegative().optional(),
   createdAt: z.number(),
   lastSeen: z.number(),
   role: RoleSchema.nullable(),
@@ -1431,6 +1432,7 @@ export const ActivityKindSchema = z.enum([
   'tool_action',
   'user_prompt',
   'context_control',
+  'auth_state',
 ]);
 
 export const ActivityEventSchema = z.discriminatedUnion('kind', [
@@ -1459,6 +1461,8 @@ export const ActivityEventSchema = z.discriminatedUnion('kind', [
         enqueued: z.number().int().nonnegative(),
         uploaded: z.number().int().nonnegative(),
         dropped: z.number().int().nonnegative(),
+        retained: z.number().int().nonnegative().optional(),
+        evictedWhileBlocked: z.number().int().nonnegative().optional(),
         peakQueuedEvents: z.number().int().nonnegative().optional(),
         peakQueuedBytes: z.number().int().nonnegative().optional(),
       })
@@ -1544,6 +1548,16 @@ export const ActivityEventSchema = z.discriminatedUnion('kind', [
         after: z.number().int().nonnegative(),
       })
       .optional(),
+  }),
+  z.object({
+    kind: z.literal('auth_state'),
+    ts: z.number().int().nonnegative(),
+    state: z.enum(['blocked', 'recovered']),
+    status: z.literal(401),
+    queuedEvents: z.number().int().nonnegative(),
+    queuedBytes: z.number().int().nonnegative(),
+    evictedEvents: z.number().int().nonnegative(),
+    evictedBytes: z.number().int().nonnegative(),
   }),
 ]);
 

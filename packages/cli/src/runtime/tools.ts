@@ -1002,7 +1002,7 @@ function buildVariablesAdminTools(instructions: InstructionsResponse): Tool[] {
         'control variables rejected), and a member may not resolve one env name from both a ' +
         'secret and a variable — binding a collision fails with 409. Creating stores NO value ' +
         'and binds NOBODY: follow with `variables_set_value` and `variables_bindings`. Members ' +
-        'pick it up on their next runner start.',
+        'reload it at their next idle boundary (or next start for opted-out/older runners).',
       inputSchema: {
         type: 'object',
         properties: {
@@ -1054,7 +1054,7 @@ function buildVariablesAdminTools(instructions: InstructionsResponse): Tool[] {
       description:
         "Set a variable's value. Readable afterwards by any `secrets.manage` holder and " +
         'NOT redacted from traces — this is the difference from `secrets_set_value`. Members ' +
-        'receive it on their next runner start.',
+        'reload it at their next idle boundary (or next start for opted-out/older runners).',
       inputSchema: {
         type: 'object',
         properties: {
@@ -1130,8 +1130,8 @@ function buildSecretsAdminTools(instructions: InstructionsResponse): Tool[] {
         'loader/interpreter control variables like PATH or NODE_OPTIONS are rejected). ' +
         'Creating a secret stores NO value and binds NOBODY — set the value with ' +
         '`secrets_set_value` (or ask a human to drop it in the web UI), then bind members ' +
-        'with `secrets_bindings` or pass allMembers=true. Members pick secrets up on their ' +
-        'next runner start (the agent environment is frozen at spawn). Returns the created ' +
+        'with `secrets_bindings` or pass allMembers=true. Running agents reload changes at ' +
+        'their next idle boundary (or next start when opted out). Returns the created ' +
         'secret.',
       inputSchema: {
         type: 'object',
@@ -1189,8 +1189,8 @@ function buildSecretsAdminTools(instructions: InstructionsResponse): Tool[] {
       name: 'secrets_set_value',
       description:
         'Set (or rotate) the secret value. WRITE-ONLY: once set, no one — agent or human — ' +
-        'can read it back through any csuite surface; to rotate, set it again. Members get ' +
-        'the new value on their next runner start. Note the value you pass becomes part of ' +
+        'can read it back through any csuite surface; to rotate, set it again. Running agents ' +
+        'reload it at their next idle boundary (or next start when opted out). Note the value you pass becomes part of ' +
         'your session transcript: use this when you generated or were handed the value as ' +
         'part of your work (a key you minted, a self-provisioned service account); when a ' +
         'human holds the value, prefer asking them to drop it in via the web UI (Secrets → ' +
@@ -1220,8 +1220,8 @@ function buildSecretsAdminTools(instructions: InstructionsResponse): Tool[] {
     {
       name: 'secrets_bindings',
       description:
-        "Grant or revoke members' access to a secret. Bound members receive it as an env " +
-        'var on their next runner start. Pass `add` and/or `remove` as arrays of member ' +
+        "Grant or revoke members' access to a secret. Running agents reload the env change " +
+        'at their next idle boundary (or next start when opted out). Pass `add` and/or `remove` as arrays of member ' +
         'names. Not needed when the secret has allMembers=true. Returns the updated binding ' +
         'list.',
       inputSchema: {
@@ -2116,7 +2116,12 @@ async function handleRoster(
     const presence = presenceByName.get(t.name);
     const conn = presence?.connected ?? 0;
     const self = t.name === instructions.name ? ' (you)' : '';
-    const state = conn > 0 ? `connected=${conn}` : 'offline';
+    const state =
+      (presence?.authBlocked ?? 0) > 0
+        ? `auth-blocked=${presence?.authBlocked ?? 0}; connected=${conn}`
+        : conn > 0
+          ? `connected=${conn}`
+          : 'offline';
     const activity =
       presence?.activity === 'working' || presence?.activity === 'blocked'
         ? `reported ${presence.activity} ${activityWindow}`
@@ -3301,7 +3306,7 @@ async function handleSecretsUpdate(
   });
   return textResult(
     `updated '${updated.slug}': envName=${updated.envName} enabled=${updated.enabled} ` +
-      `allMembers=${updated.allMembers}. Changes apply on each member's next runner start.`,
+      `allMembers=${updated.allMembers}. Metadata changes apply on each member's next runner start.`,
   );
 }
 
@@ -3332,7 +3337,7 @@ async function handleSecretsSetValue(
   await brokerClient.setSecretValue(slug, { value });
   return textResult(
     `value set for '${slug}'. It is write-only from here — nobody can read it back; set ` +
-      'again to rotate. Members receive it on their next runner start.',
+      'again to rotate. Running agents reload it at their next idle boundary.',
   );
 }
 
@@ -3443,7 +3448,7 @@ async function handleVariablesUpdate(
   });
   return textResult(
     `updated '${updated.slug}': envName=${updated.envName} enabled=${updated.enabled} ` +
-      `allMembers=${updated.allMembers}. Changes apply on each member's next runner start.`,
+      `allMembers=${updated.allMembers}. Metadata changes apply on each member's next runner start.`,
   );
 }
 
@@ -3474,7 +3479,7 @@ async function handleVariablesSetValue(
   await brokerClient.setVariableValue(slug, { value });
   return textResult(
     `value set for '${slug}'. It is readable and is NOT redacted from traces. Members ` +
-      'receive it on their next runner start.',
+      'reload it at their next idle boundary.',
   );
 }
 
@@ -3519,7 +3524,7 @@ async function handleVariablesBindings(
   const bound = detail.boundMembers ?? [];
   return textResult(
     `'${slug}' bound to: ${bound.length > 0 ? bound.join(', ') : '(nobody)'}. ` +
-      "Applies on each member's next runner start.",
+      'Running agents reload the change at their next idle boundary.',
   );
 }
 
@@ -3551,7 +3556,7 @@ async function handleSecretsBindings(
   const bound = detail.boundMembers ?? [];
   return textResult(
     `bindings updated for '${slug}'. Now bound: ${bound.length > 0 ? bound.join(', ') : '(nobody)'}. ` +
-      'Members pick the secret up on their next runner start.',
+      'Running agents reload the change at their next idle boundary.',
   );
 }
 

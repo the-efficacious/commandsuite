@@ -109,6 +109,8 @@ export interface PushContext {
 export interface IdentityContext {
   name?: string | null;
   role?: Role | null;
+  /** Opaque bearer token id for token-aware presence; null for cookie/JWT/in-process callers. */
+  tokenId?: string | null;
 }
 
 export interface RegistrationResult {
@@ -183,6 +185,7 @@ export class Broker {
   private readonly idFactory: () => string;
   private readonly logger: Logger;
   private readonly fanoutConcurrency: number;
+  private readonly blockedTokenIds = new Set<string>();
 
   constructor(options: BrokerOptions) {
     this.eventLog = options.eventLog;
@@ -377,14 +380,21 @@ export class Broker {
     this.assertIdentity(name, context.name);
     const state = this.registry.registerOrGet(name, this.now(), context.role ?? null);
     state.subscribers.add(callback);
+    state.subscriberTokenIds.set(callback, context.tokenId ?? null);
     return () => {
       const current = this.registry.get(name);
       current?.subscribers.delete(callback);
+      current?.subscriberTokenIds.delete(callback);
     };
   }
 
+  /** Mark live subscriptions authenticated by these revoked tokens as blocked. */
+  blockTokens(tokenIds: readonly string[]): void {
+    for (const id of tokenIds) this.blockedTokenIds.add(id);
+  }
+
   listPresences(): Presence[] {
-    return this.registry.list();
+    return this.registry.list(this.blockedTokenIds);
   }
 
   hasMember(name: string): boolean {

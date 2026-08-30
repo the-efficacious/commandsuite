@@ -60,6 +60,7 @@ import type { ActivityUploaderStats } from './trace/activity-uploader.js';
 export interface AgentSessionInput {
   url?: string;
   token?: string;
+  resolveReplacementToken?: () => string | null;
   /** Working directory for the agent. Defaults to `process.cwd()`. */
   cwd?: string;
   /** Logger override. When absent the driver owns a session log. */
@@ -169,6 +170,7 @@ export async function runAgentSession(
     runner = await startRunner({
       url,
       token,
+      resolveReplacementToken: input.resolveReplacementToken,
       logger: log.child('runner'),
       presence,
       noTrace: input.noTrace,

@@ -184,6 +184,44 @@ describe('runner-local OTLP relay', () => {
     expect(broker.received).toEqual([]);
   });
 
+  it('reports an upstream 401 and retries with replaced broker auth while ingress stays stable', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'csuite-relay-'));
+    dirs.push(dir);
+    const authorizations: Array<string | undefined> = [];
+    const broker = createServer((req, res) => {
+      authorizations.push(req.headers.authorization);
+      res.writeHead(req.headers.authorization === 'Bearer fresh' ? 200 : 401, {
+        'Content-Type': 'application/json',
+      });
+      res.end(JSON.stringify({ partialSuccess: {} }));
+    });
+    await new Promise<void>((resolve) => broker.listen(0, '127.0.0.1', resolve));
+    servers.push(broker);
+    const address = broker.address();
+    if (address === null || typeof address === 'string') throw new Error('broker did not bind');
+    let unauthorized = 0;
+    const relay = await startOtlpRelay({
+      brokerUrl: `http://127.0.0.1:${address.port}`,
+      token: 'startup',
+      rawBodiesDir: dir,
+      onUnauthorized: () => unauthorized++,
+    });
+    relays.push(relay);
+    const post = () =>
+      fetch(`${relay.endpoint}/v1/logs`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer startup', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resourceLogs: [] }),
+      });
+    // Exporters receive a retryable 503; the runner separately receives the
+    // typed upstream-auth signal rather than exposing broker auth to the child.
+    expect((await post()).status).toBe(503);
+    expect(unauthorized).toBe(1);
+    relay.replaceBrokerToken('fresh');
+    expect((await post()).status).toBe(200);
+    expect(authorizations).toEqual(['Bearer startup', 'Bearer fresh']);
+  });
+
   it('serializes forwarding so stateful cross-batch correlation keeps exporter order', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'csuite-relay-'));
     dirs.push(dir);

@@ -164,6 +164,8 @@ describe('ActivityUploader', () => {
       dropped: 0,
       peakQueuedEvents: 2,
       peakQueuedBytes: expectedBytes,
+      retained: 2,
+      evictedWhileBlocked: 0,
     });
 
     await u.flush();
@@ -173,6 +175,46 @@ describe('ActivityUploader', () => {
       peakQueuedEvents: 2,
       peakQueuedBytes: expectedBytes,
     });
+  });
+
+  it('pauses after an authentication rejection and retains the queue at close', async () => {
+    const client = makeFakeClient();
+    let uploader: ActivityUploader;
+    client.uploadActivity.mockImplementationOnce(async () => {
+      uploader.setAuthBlocked(true);
+      throw new Error('401 unauthorized');
+    });
+    uploader = new ActivityUploader({
+      brokerClient: client as unknown as BrokerClient,
+      name: 'engineer-1',
+      logger: silentLogger(),
+      maxBatchEvents: 1,
+    });
+    uploader.enqueue(makeEvent(1));
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(client.uploadActivity).toHaveBeenCalledTimes(1);
+    await uploader.close();
+    expect(uploader.stats()).toMatchObject({ dropped: 0, retained: 1 });
+  });
+
+  it('discloses cap evictions while authentication is blocked', () => {
+    vi.useRealTimers();
+    const uploader = new ActivityUploader({
+      brokerClient: makeFakeClient() as unknown as BrokerClient,
+      name: 'engineer-1',
+      logger: silentLogger(),
+      maxBatchEvents: 100,
+      maxBatchAgeMs: 60_000,
+      maxQueueEvents: 2,
+    });
+    uploader.setAuthBlocked(true);
+    uploader.enqueue(makeEvent(1));
+    uploader.enqueue(makeEvent(2));
+    uploader.enqueue(makeEvent(3));
+    expect(uploader.blockedStats()).toMatchObject({ queuedEvents: 2, evictedEvents: 1 });
+    expect(uploader.stats()).toMatchObject({ dropped: 1, retained: 2, evictedWhileBlocked: 1 });
+    vi.useFakeTimers();
   });
 
   it('enforces maxQueueBytes using UTF-8 bytes rather than UTF-16 code units', () => {

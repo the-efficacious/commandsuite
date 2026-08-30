@@ -256,6 +256,8 @@ export interface ClientOptions {
    * plus `close()`. Defaults to `WebSocket` from `ws`.
    */
   WebSocket?: typeof NodeWebSocket;
+  /** Called when either outbound transport receives an authentication rejection. */
+  onUnauthorized?: (source: 'http' | 'websocket') => void;
 }
 
 export class ClientError extends Error {
@@ -272,10 +274,12 @@ export class ClientError extends Error {
 
 export class Client {
   private readonly baseUrl: URL;
-  private readonly token: string | null;
+  private token: string | null;
   private readonly useCookies: boolean;
   private readonly fetchImpl: typeof fetch;
   private readonly WebSocketImpl: typeof NodeWebSocket;
+  private readonly onUnauthorized: ((source: 'http' | 'websocket') => void) | undefined;
+  private readonly activeSubscriptions = new Set<NodeWebSocket>();
 
   constructor(options: ClientOptions) {
     // Normalize: strip trailing slash so URL composition is predictable.
@@ -294,6 +298,19 @@ export class Client {
     // Bind to avoid "Illegal invocation" on some runtimes.
     this.fetchImpl = fetchRef.bind(globalThis);
     this.WebSocketImpl = options.WebSocket ?? NodeWebSocket;
+    this.onUnauthorized = options.onUnauthorized;
+  }
+
+  /**
+   * Replace the bearer credential used by future requests. Never returns or logs the token.
+   * A token supplied to a runner through its environment cannot be replaced in place;
+   * restart that runner with the new environment value instead.
+   */
+  replaceToken(token: string): void {
+    if (this.useCookies) throw new Error('Client.replaceToken is unavailable for cookie clients');
+    if (token.length === 0) throw new Error('Client.replaceToken requires a non-empty token');
+    this.token = token;
+    for (const socket of this.activeSubscriptions) socket.close(4001, 'credential replaced');
   }
 
   /** Make a request with the protocol header and credentials. */
@@ -312,7 +329,9 @@ export class Client {
     if (this.useCookies) {
       requestInit.credentials = 'include';
     }
-    return this.fetchImpl(url, requestInit);
+    const response = await this.fetchImpl(url, requestInit);
+    if (!init.skipAuth && response.status === 401) this.onUnauthorized?.('http');
+    return response;
   }
 
   private async json<T>(resp: Response): Promise<T> {
@@ -1805,6 +1824,7 @@ export class Client {
       headers[AUTH_HEADER] = `Bearer ${this.token}`;
     }
     const ws = new this.WebSocketImpl(url, { headers });
+    this.activeSubscriptions.add(ws);
 
     // Async-iterator plumbing: messages arrive out-of-band via
     // `on('message')`, so we buffer them in a queue that the
@@ -1846,6 +1866,7 @@ export class Client {
       wake();
     });
     ws.on('error', (err: Error) => {
+      if (/\b401\b/.test(err.message)) this.onUnauthorized?.('websocket');
       state.error = err;
       state.done = true;
       wake();
@@ -1877,6 +1898,7 @@ export class Client {
         });
       }
     } finally {
+      this.activeSubscriptions.delete(ws);
       signal?.removeEventListener('abort', abortHandler);
       try {
         ws.close();

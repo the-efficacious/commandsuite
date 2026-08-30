@@ -93,6 +93,8 @@ export interface ActivityUploaderStats {
   peakQueuedEvents: number;
   /** Highest serialized UTF-8 payload size queued at once; excludes JS object overhead. */
   peakQueuedBytes: number;
+  retained: number;
+  evictedWhileBlocked: number;
 }
 
 export class ActivityUploader {
@@ -120,6 +122,9 @@ export class ActivityUploader {
   private statDropped = 0;
   private peakQueuedEvents = 0;
   private peakQueuedBytes = 0;
+  private authBlocked = false;
+  private evictedWhileBlocked = 0;
+  private evictedBytesWhileBlocked = 0;
 
   constructor(options: ActivityUploaderOptions) {
     this.brokerClient = options.brokerClient;
@@ -155,6 +160,10 @@ export class ActivityUploader {
       if (dropped) {
         this.queueBytes -= dropped.bytes;
         this.statDropped++;
+        if (this.authBlocked) {
+          this.evictedWhileBlocked++;
+          this.evictedBytesWhileBlocked += dropped.bytes;
+        }
         this.log.warn('queue full, dropping oldest', {
           queued: this.queue.length,
           bytes: this.queueBytes,
@@ -173,6 +182,44 @@ export class ActivityUploader {
     } else {
       this.scheduleFlush(this.maxBatchAgeMs);
     }
+  }
+
+  /** Pause/resume uploads around an invalid credential without losing queue order. */
+  setAuthBlocked(blocked: boolean): void {
+    this.authBlocked = blocked;
+    if (blocked) {
+      if (this.flushTimer) clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+      if (this.backoffTimer) clearTimeout(this.backoffTimer);
+      this.backoffTimer = null;
+      return;
+    }
+    if (this.queue.length > 0) this.scheduleFlush(0);
+  }
+
+  /** Queue a control marker ahead of retained traffic. */
+  enqueueFirst(event: ActivityEvent): void {
+    if (this.closed) return;
+    const bytes = Buffer.byteLength(JSON.stringify(event), 'utf8');
+    this.statEnqueued++;
+    this.queue.unshift({ event, bytes });
+    this.queueBytes += bytes;
+    this.peakQueuedEvents = Math.max(this.peakQueuedEvents, this.queue.length);
+    this.peakQueuedBytes = Math.max(this.peakQueuedBytes, this.queueBytes);
+  }
+
+  blockedStats(): {
+    queuedEvents: number;
+    queuedBytes: number;
+    evictedEvents: number;
+    evictedBytes: number;
+  } {
+    return {
+      queuedEvents: this.queue.length,
+      queuedBytes: this.queueBytes,
+      evictedEvents: this.evictedWhileBlocked,
+      evictedBytes: this.evictedBytesWhileBlocked,
+    };
   }
 
   /**
@@ -218,7 +265,7 @@ export class ActivityUploader {
     // errors and re-queues + backs off internally, so a batch that
     // makes no progress ends the drain; we strip any re-queue by
     // clearing the queue after the loop.
-    while (this.queue.length > 0) {
+    while (!this.authBlocked && this.queue.length > 0) {
       const before = this.queue.length;
       try {
         await this.doFlush();
@@ -230,15 +277,19 @@ export class ActivityUploader {
       if (this.queue.length >= before) break;
     }
     // Drop any re-queued events + cancel any backoff retry.
-    const dropped = this.queue.length;
+    const dropped = this.authBlocked ? 0 : this.queue.length;
     if (dropped > 0) {
       this.statDropped += dropped;
       this.log.error('close dropping events after final flush', {
         dropped,
       });
     }
-    this.queue = [];
-    this.queueBytes = 0;
+    if (!this.authBlocked) {
+      this.queue = [];
+      this.queueBytes = 0;
+    } else if (this.queue.length > 0) {
+      this.log.error('close retaining events blocked on authentication', this.blockedStats());
+    }
     if (this.backoffTimer) {
       clearTimeout(this.backoffTimer);
       this.backoffTimer = null;
@@ -270,7 +321,7 @@ export class ActivityUploader {
   }
 
   private scheduleFlush(delayMs: number): void {
-    if (this.inFlight || this.closed || this.backoffTimer) return;
+    if (this.inFlight || this.closed || this.backoffTimer || this.authBlocked) return;
     // Already scheduled: only reschedule if the new delay is
     // strictly shorter. Upgrades the slow "maxBatchAgeMs" timer
     // to an immediate flush when a size threshold is hit.
@@ -335,18 +386,22 @@ export class ActivityUploader {
       // Re-queue the batch at the head so ordering is preserved.
       this.queue.unshift(...batch);
       this.queueBytes += batchBytes;
-      this.backoffMs =
-        this.backoffMs === 0 ? BACKOFF_START_MS : Math.min(this.backoffMs * 2, BACKOFF_MAX_MS);
-      this.log.warn('upload failed, backing off', {
-        error: err instanceof Error ? err.message : String(err),
-        backoffMs: this.backoffMs,
-        queued: this.queue.length,
-      });
-      this.backoffTimer = setTimeout(() => {
-        this.backoffTimer = null;
-        this.scheduleFlush(0);
-      }, this.backoffMs);
-      if (typeof this.backoffTimer.unref === 'function') this.backoffTimer.unref();
+      this.log.warn(
+        this.authBlocked ? 'upload rejected; authentication blocked' : 'upload failed, backing off',
+        {
+          error: err instanceof Error ? err.message : String(err),
+          queued: this.queue.length,
+        },
+      );
+      if (!this.authBlocked) {
+        this.backoffMs =
+          this.backoffMs === 0 ? BACKOFF_START_MS : Math.min(this.backoffMs * 2, BACKOFF_MAX_MS);
+        this.backoffTimer = setTimeout(() => {
+          this.backoffTimer = null;
+          this.scheduleFlush(0);
+        }, this.backoffMs);
+        if (typeof this.backoffTimer.unref === 'function') this.backoffTimer.unref();
+      }
     } finally {
       this.inFlight = false;
     }
@@ -365,6 +420,8 @@ export class ActivityUploader {
       dropped: this.statDropped,
       peakQueuedEvents: this.peakQueuedEvents,
       peakQueuedBytes: this.peakQueuedBytes,
+      retained: this.queue.length,
+      evictedWhileBlocked: this.evictedWhileBlocked,
     };
   }
 

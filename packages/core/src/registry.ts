@@ -20,6 +20,7 @@ export type Subscriber = (message: Message) => void | Promise<void>;
 export interface PresenceState {
   presence: Presence;
   subscribers: Set<Subscriber>;
+  subscriberTokenIds: Map<Subscriber, string | null>;
 }
 
 /**
@@ -66,6 +67,7 @@ export class PresenceRegistry {
         role,
       },
       subscribers: new Set(),
+      subscriberTokenIds: new Map(),
     };
     this.presences.set(name, state);
     return state;
@@ -79,12 +81,15 @@ export class PresenceRegistry {
     return this.presences.has(name);
   }
 
-  list(): Presence[] {
+  list(blockedTokenIds: ReadonlySet<string> = new Set()): Presence[] {
     const out: Presence[] = [];
     for (const state of this.presences.values()) {
       out.push({
         name: state.presence.name,
         connected: state.subscribers.size,
+        authBlocked: [...state.subscriberTokenIds.values()].filter(
+          (tokenId) => tokenId !== null && blockedTokenIds.has(tokenId),
+        ).length,
         createdAt: state.presence.createdAt,
         lastSeen: state.presence.lastSeen,
         role: state.presence.role,

@@ -43,11 +43,13 @@ export interface OtlpRelayOptions {
   rawBodiesDir: string;
   fetch?: typeof fetch;
   logger?: Logger;
+  onUnauthorized?: () => void;
 }
 
 export interface OtlpRelay {
   /** Base endpoint for `OTEL_EXPORTER_OTLP_ENDPOINT` (ends in `/otlp`). */
   readonly endpoint: string;
+  replaceBrokerToken(token: string): void;
   close(): Promise<void>;
 }
 
@@ -358,6 +360,8 @@ export async function startOtlpRelay(options: OtlpRelayOptions): Promise<OtlpRel
   const brokerBase = options.brokerUrl.replace(/\/+$/, '');
   const spoolDir = resolve(options.rawBodiesDir);
   let closing = false;
+  const ingressToken = options.token;
+  let brokerToken = options.token;
   let forwardTail: Promise<void> = Promise.resolve();
 
   const server: Server = createServer(async (req, res) => {
@@ -369,7 +373,7 @@ export async function startOtlpRelay(options: OtlpRelayOptions): Promise<OtlpRel
     // Loopback is a reachability boundary, not an authority boundary. Claude
     // already sends this bearer from OTEL_EXPORTER_OTLP_HEADERS; require it
     // before proxying anything with the member's broker credential.
-    if (req.headers.authorization !== `Bearer ${options.token}`) {
+    if (req.headers.authorization !== `Bearer ${ingressToken}`) {
       res.writeHead(401, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'missing or invalid relay credentials' }));
       return;
@@ -405,12 +409,13 @@ export async function startOtlpRelay(options: OtlpRelayOptions): Promise<OtlpRel
       const upstream = await fetchImpl(`${brokerBase}${req.url}`, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${options.token}`,
+          Authorization: `Bearer ${brokerToken}`,
           'Content-Type': 'application/json',
           'X-CSuite-Raw-Bodies': String(refs.length),
         },
         body: Uint8Array.from(output),
       });
+      if (upstream.status === 401) options.onUnauthorized?.();
       const responseBytes = Buffer.from(await upstream.arrayBuffer());
       let captured = 0;
       if (refs.length > 0) {
@@ -479,6 +484,10 @@ export async function startOtlpRelay(options: OtlpRelayOptions): Promise<OtlpRel
 
   return {
     endpoint: `http://127.0.0.1:${address.port}/otlp`,
+    replaceBrokerToken(token: string) {
+      if (token.length === 0) throw new Error('replacement token must not be empty');
+      brokerToken = token;
+    },
     async close() {
       if (closing) return;
       closing = true;
