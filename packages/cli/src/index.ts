@@ -55,6 +55,8 @@ const USAGE = `csuite cli v${CLI_VERSION}
 
 usage:
   csuite setup       [--config-path <path>]                 first-run wizard (team + first member + TOTP)
+  csuite setup       --non-interactive --team <name> --member <name> --token-file <path> [--totp-secret-file <path>] [--config-path <path>]
+                                    seed a team + first member with no prompts; bearer token to --token-file (0600), never stdout
   csuite member        list|create|update|delete [--config-path <path>]   offline member management (runs without the broker)
   csuite connect     [--url <broker>] [--label <hint>] [--workspace <dir>] [--global] [--no-write] [--quiet]
                                     enroll this device with the broker (device-code flow); saves to the user-global auth store, scoped to cwd (or --workspace / --global)
@@ -302,6 +304,11 @@ async function handleSetup(args: string[]): Promise<void> {
   const { values } = parseSubcommandArgs(args, {
     'config-path': { type: 'string' },
     config: { type: 'string' },
+    'non-interactive': { type: 'boolean' },
+    team: { type: 'string' },
+    member: { type: 'string' },
+    'token-file': { type: 'string' },
+    'totp-secret-file': { type: 'string' },
     help: { type: 'boolean', short: 'h' },
   });
   if (values.help === true) {
@@ -313,6 +320,11 @@ async function handleSetup(args: string[]): Promise<void> {
     await runSetupCommand(
       {
         configPath: getString(values, 'config-path') ?? getString(values, 'config'),
+        nonInteractive: values['non-interactive'] === true,
+        team: getString(values, 'team'),
+        member: getString(values, 'member'),
+        tokenFile: getString(values, 'token-file'),
+        totpSecretFile: getString(values, 'totp-secret-file'),
       },
       (line) => log(line),
     );
