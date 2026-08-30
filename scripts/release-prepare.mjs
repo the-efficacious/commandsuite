@@ -66,7 +66,8 @@ const skipImage = args.has('--skip-image');
 const gateMode = argValue('--gate') ?? 'full';
 
 const problems = []; // fatal fact-collection failures
-const holds = []; // classifications awaiting a ruling — rendered, not fatal
+const holds = []; // unresolved classifications — rendered AND nonzero exit
+const notes = []; // deliberate diagnostic gaps (skip flags) — non-signable, exit 0
 
 function git(...argv) {
   return execFileSync('git', argv, { cwd: REPO_ROOT, encoding: 'utf8' }).trim();
@@ -163,7 +164,26 @@ async function fetchMergedSince(sinceIso) {
   return merged.sort((a, b) => a.number - b.number);
 }
 
-const manifest = JSON.parse(readFileSync(join(REPO_ROOT, '.release', 'doors.json'), 'utf8'));
+const manifestPath = argValue('--manifest') ?? join(REPO_ROOT, '.release', 'doors.json');
+const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+// Schema safety BEFORE the maps: Maps silently collapse duplicates,
+// and the manifest's contract is "exactly one classification per PR".
+{
+  const doorPrs = manifest.doors.map((d) => d.pr);
+  const dismissedPrs = manifest.dismissed.map((d) => d.pr);
+  for (const [label, list] of [
+    ['doors', doorPrs],
+    ['dismissed', dismissedPrs],
+  ]) {
+    const dupes = list.filter((pr, i) => list.indexOf(pr) !== i);
+    if (dupes.length > 0)
+      problems.push(`manifest ${label} lists duplicate PR(s): ${[...new Set(dupes)].join(', ')}`);
+  }
+  const overlap = doorPrs.filter((pr) => dismissedPrs.includes(pr));
+  if (overlap.length > 0) {
+    problems.push(`manifest classifies PR(s) as BOTH door and dismissed: ${overlap.join(', ')}`);
+  }
+}
 const doorByPr = new Map(manifest.doors.map((d) => [d.pr, d]));
 const dismissedByPr = new Map(manifest.dismissed.map((d) => [d.pr, d]));
 
@@ -200,6 +220,11 @@ for (const dismissed of manifest.dismissed) {
     holds.push(`PR #${dismissed.pr}: ${dismissed.reason}`);
   }
   const pr = mergedByPr.get(dismissed.pr);
+  if (mergedPrs.length > 0 && pr === undefined) {
+    problems.push(
+      `manifest dismisses PR #${dismissed.pr} which is not merged to main since ${lastTag} — stale row`,
+    );
+  }
   const cited = /held for ruling|not a door per|discoverer's classification|ruled dismissed/i.test(
     dismissed.reason,
   );
@@ -231,7 +256,7 @@ if (!skipBuild) {
   const { sourceFingerprint } = await import('./source-fingerprint.mjs');
   fingerprint = sourceFingerprint(REPO_ROOT);
 } else {
-  holds.push('builds skipped (--skip-build) — artefact facts absent');
+  notes.push('builds skipped (--skip-build) — artefact facts absent');
 }
 if (!skipImage && !skipBuild) {
   const tag = `csuite-release-prepare:${version ?? 'unversioned'}`;
@@ -249,7 +274,7 @@ if (!skipImage && !skipBuild) {
     artefacts.push({ name: `container ${tag}`, size: Number(size), sha256: imageId });
   }
 } else if (!skipBuild) {
-  holds.push('container image skipped (--skip-image) — image facts absent');
+  notes.push('container image skipped (--skip-image) — image facts absent');
 }
 
 // ── 4. The gate ─────────────────────────────────────────────────────
@@ -315,9 +340,17 @@ const gateJobs = [
   },
 ];
 
+if (allowDirty) {
+  notes.push(
+    dirty === ''
+      ? 'run with --allow-dirty — not signable regardless of tree state'
+      : 'dirty tree (--allow-dirty) — this render derives from uncommitted state',
+  );
+}
+
 const gateRows = [];
 if (gateMode === 'none') {
-  holds.push('gate skipped (--gate none) — no gate facts');
+  notes.push('gate skipped (--gate none) — no gate facts');
 } else {
   for (const job of gateJobs) {
     const reason = job.capability?.() ?? null;
@@ -346,9 +379,9 @@ if (gateMode === 'none') {
     );
     gateRows.push({
       name: job.name,
-      command: job.command.join(' ').slice(0, 120),
+      command: job.command.join(' '),
       status: run.status === 0 ? 'PASS' : 'FAIL',
-      reason: run.status === 0 ? null : `exit ${run.status}`,
+      exitCode: run.status,
       logPath,
       durationMs: Date.now() - started,
     });
@@ -384,8 +417,13 @@ if (problems.length > 0) {
   lines.push('');
 }
 if (holds.length > 0) {
-  lines.push('## HOLDS — resolve before signing');
+  lines.push('## HOLDS — resolve before signing (preparation exits nonzero)');
   for (const hold of holds) lines.push(`- ${hold}`);
+  lines.push('');
+}
+if (notes.length > 0) {
+  lines.push('## DIAGNOSTIC GAPS — this render is not signable');
+  for (const note of notes) lines.push(`- ${note}`);
   lines.push('');
 }
 lines.push(`## Proposed version: ${version ?? 'n/a'}`);
@@ -453,4 +491,5 @@ writeFileSync(outPath, `${lines.join('\n')}\n`);
 console.log(`rendered ${outPath}${signable ? ' (signable)' : ' (NOT SIGNABLE)'}`);
 for (const problem of problems) console.error(`problem: ${problem}`);
 for (const hold of holds) console.error(`hold: ${hold}`);
-process.exit(problems.length > 0 || gateFails.length > 0 ? 1 : 0);
+for (const note of notes) console.error(`note: ${note}`);
+process.exit(problems.length > 0 || gateFails.length > 0 || holds.length > 0 ? 1 : 0);

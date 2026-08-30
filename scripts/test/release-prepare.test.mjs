@@ -51,6 +51,10 @@ function shimEnv() {
     PATH: `${shimDir}:${process.env.PATH}`,
     INVOCATION_LOG: logPath,
     RELEASE_PREPARE_GITHUB_BASE: `http://127.0.0.1:${serverPort}`,
+    // Any npm network traffic lands on the recording server, so a write
+    // (publish) would be both trapped at the executable AND visible as a
+    // non-GET request. npm pack is offline; expect zero /npm requests.
+    npm_config_registry: `http://127.0.0.1:${serverPort}/npm/`,
     GITHUB_TOKEN: '',
   };
 }
@@ -81,12 +85,24 @@ beforeAll(async () => {
     which('npx'),
     'case "$args" in *"changeset publish"*|*"changeset version"*) forbid;; esac',
   );
-  writeShim(
-    shimDir,
-    'docker',
-    which('docker'),
-    'case "$args" in *" push "*|*" login "*) forbid;; esac',
+  // docker is a deterministic EMULATOR, not a passthrough: the script's
+  // image path must execute during the proof (verifier bar), but a real
+  // image build is minutes of work the trap property doesn't need. build
+  // and inspect answer deterministically; write verbs trap.
+  const dockerPath = join(shimDir, 'docker');
+  writeFileSync(
+    dockerPath,
+    [
+      '#!/usr/bin/env bash',
+      'echo "docker $*" >> "$INVOCATION_LOG"',
+      'args=" $* "',
+      'case "$args" in *" push "*|*" login "*) echo "FORBIDDEN: docker $*" >> "$INVOCATION_LOG"; exit 97;; esac',
+      'case "$args" in *" build "*) echo "sha256:emulated0000000000000000000000000000000000000000000000000000feed"; exit 0;; esac',
+      'case "$args" in *" image inspect "*) echo "157286400"; exit 0;; esac',
+      'echo "docker emulator: unexpected verb: $*" >&2; exit 96',
+    ].join('\n') + '\n',
   );
+  chmodSync(dockerPath, 0o755);
   // The script has no gh call path at all — any invocation is forbidden.
   const ghPath = join(shimDir, 'gh');
   writeFileSync(
@@ -164,16 +180,7 @@ describe('release-prepare cannot publish', () => {
     const run = await new Promise((resolvePromise) => {
       const child = spawn(
         process.execPath,
-        [
-          SCRIPT,
-          '--allow-dirty',
-          '--skip-image',
-          '--gate',
-          'none',
-          '--allow-incomplete',
-          '--out',
-          outPath,
-        ],
+        [SCRIPT, '--allow-dirty', '--gate', 'none', '--allow-incomplete', '--out', outPath],
         { cwd: REPO_ROOT, env: shimEnv() },
       );
       let stdout = '';
@@ -195,6 +202,8 @@ describe('release-prepare cannot publish', () => {
     expect(log).toContain('git status --porcelain');
     expect(log).toContain('pnpm build');
     expect(log).toContain('npm pack');
+    expect(log).toContain('docker build');
+    expect(log).toContain('docker image inspect');
     expect(log).not.toContain('FORBIDDEN');
     expect(log).not.toMatch(/\bgh\b/);
     expect(log).not.toMatch(/npm publish|pnpm publish|docker push|git push/);
@@ -215,5 +224,82 @@ describe('release-prepare cannot publish', () => {
     expect(rendered).not.toContain('- Lea: ___');
     expect(rendered).toContain('## Read these');
     expect(rendered).toContain('## Proposed version');
+    expect(rendered).toContain('container csuite-release-prepare');
+    expect(rendered).toContain('--allow-dirty');
+    // npm never reached the network: the recording registry saw no /npm
+    // traffic at all, and nothing anywhere was a write.
+    expect(serverRequests.filter((r) => r.includes('/npm'))).toEqual([]);
   }, 600_000);
+});
+
+describe('manifest contract violations fail loud', () => {
+  /** Fast run: no builds, no gate — only classification runs. */
+  function prepare(manifestPath) {
+    return new Promise((resolvePromise) => {
+      const child = spawn(
+        process.execPath,
+        [
+          SCRIPT,
+          '--allow-dirty',
+          '--skip-build',
+          '--gate',
+          'none',
+          '--allow-incomplete',
+          '--manifest',
+          manifestPath,
+          '--out',
+          join(sandbox, 'RELEASE-mutation.md'),
+        ],
+        { cwd: REPO_ROOT, env: shimEnv() },
+      );
+      let stderr = '';
+      child.stderr.on('data', (chunk) => {
+        stderr += chunk;
+      });
+      child.on('close', (status) => resolvePromise({ status, stderr }));
+    });
+  }
+
+  function mutatedManifest(mutate) {
+    const manifest = JSON.parse(readFileSync(join(REPO_ROOT, '.release', 'doors.json'), 'utf8'));
+    mutate(manifest);
+    const path = join(sandbox, `manifest-${Math.abs(JSON.stringify(manifest).length)}.json`);
+    writeFileSync(path, JSON.stringify(manifest));
+    return path;
+  }
+
+  it('rejects a duplicate PR within a list', async () => {
+    const path = mutatedManifest((m) => m.doors.push({ ...m.doors[0] }));
+    const run = await prepare(path);
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain('duplicate PR');
+  });
+
+  it('rejects a PR classified as both door and dismissed', async () => {
+    const path = mutatedManifest((m) =>
+      m.dismissed.push({ pr: m.doors[0].pr, reason: 'ruled dismissed (contradiction)' }),
+    );
+    const run = await prepare(path);
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain('BOTH door and dismissed');
+  });
+
+  it('rejects a dismissed row outside the tag range', async () => {
+    const path = mutatedManifest((m) =>
+      m.dismissed.push({ pr: 9999, reason: 'ruled dismissed (never merged)' }),
+    );
+    const run = await prepare(path);
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain('stale row');
+  });
+
+  it('exits nonzero while a classification is held for ruling', async () => {
+    const path = mutatedManifest((m) => {
+      const moved = m.doors.pop();
+      m.dismissed.push({ pr: moved.pr, reason: 'held for ruling: reclassification pending' });
+    });
+    const run = await prepare(path);
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain('held for ruling');
+  });
 });
