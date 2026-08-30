@@ -1,6 +1,6 @@
 ---
 title: Route walk
-description: The web-UI route manifest and the headless walker that asserts every route stays clean for a baseline member and an admin — what the manifest declares, how to run the walk locally, and why adding a page without a permission story fails the build.
+description: The web-UI route manifest and the headless walker that asserts every route stays clean for a baseline member and an admin — what the manifest declares, how the router contract is validated, how to run the walk locally, and why adding a page without a permission story fails the build.
 section: Development
 order: 80
 ---
@@ -27,35 +27,64 @@ Each entry covers one `kind` of the router's `Route` union
   instances, not synthetic ids.
 - `roles.baseline` / `roles.admin` — the expectation per role:
   - `clean` — the SPA renders, a hard load of the deep link
-    serves the app shell (`200 app`, not a JSON error), zero
-    console errors, zero failed requests.
+    honours the row's hard-load contract (`200 app` unless the
+    row pins another), zero console errors, zero failed
+    requests.
   - `restricted` — the app renders **and** the Restricted
     callout is shown, with the same zero-noise bar. A refusal
     is rendered, never fetched-then-refused: a request for the
     gated resource counts as a failed request and fails the row.
+- `hardLoad` — optional override of the hard-load contract.
+  The default is `200 app` (the deep link serves the SPA
+  shell); pseudo rows pin other truths, e.g. unknown paths
+  hard-load as `404` while in-app they fall through to home.
 - `allowRestrictedPanel` — roles for which the page is `clean`
   but one panel legitimately renders the Restricted callout
   (the DM thread's peer-activity inspector for a baseline
   viewer). Restricted anywhere else still fails.
-- `why` — required prose for every non-clean expectation,
-  naming the permission that gates the route.
+- `pseudo` — marks a row that pins a contract *outside* the
+  `Route` union (the unknown-path fallthrough, the reserved
+  `/enroll` API namespace). The value states why the row is
+  pseudo; a pseudo row must not shadow a real router kind.
+- `why` — required prose for every non-clean expectation and
+  every pseudo row, naming the permission or contract involved.
 
 Changing a role expectation is a permissions statement — review
 it like one.
 
-## Completeness
+## The router contract
 
-The walker extracts every `kind` from the `Route` union
-(`scripts/route-walk/extract-route-kinds.mjs`) and fails before
-walking if any kind is missing from the manifest. Adding a page
-without declaring its permission story is therefore a build
-failure, not a silent gap.
+`scripts/route-walk/contract.mjs` parses the router source and
+validates the manifest against it in both directions before any
+page loads. It fails, naming the offender, on:
+
+- a `Route` union kind absent from the manifest — a new page
+  cannot merge without declaring its permission story;
+- a non-pseudo manifest kind the router does not have;
+- a `member-profile` URL set that does not exactly match the
+  tabs in `PROFILE_TABS` — adding a tab is adding a page, and
+  the new `/@name/<tab>` needs a declaration of its own;
+- duplicate kinds or URLs, rows without `urls` or a
+  `clean|restricted` expectation for both roles, restricted
+  rows without a `why`, and `allowRestrictedPanel` naming an
+  unknown role.
+
+Check the manifest without walking:
+
+```sh
+node scripts/route-walk/contract.mjs --check scripts/route-walk/manifest.json
+```
+
+To see the gate catch a mutation, add a value to
+`PROFILE_TABS` (or a member to the `Route` union) and run the
+check again — it fails naming the undeclared URL or kind.
 
 ## Running it locally
 
-You need a chromium binary (`CHROMIUM` env, default
-`/usr/bin/chromium`); `puppeteer-core` is a workspace dev
-dependency.
+You need a Chromium-family binary (`CHROMIUM` env, default
+`/usr/bin/chromium`; CI uses the runner image's Chrome). The
+walker drives it over raw CDP with Node's built-in WebSocket —
+there is no npm dependency to install.
 
 ```sh
 # 1. A local broker with an admin and a baseline member
@@ -87,7 +116,7 @@ node scripts/route-walk/walk.mjs \
 ```
 
 The walker prints one `ok`/`FAIL` line per route with the
-failing predicate (`hard-load 404 api-json`, `2 console
+failing predicate (`hard-load 404 (wanted 200 app)`, `2 console
 errors`, `Restricted not rendered`, …), writes
 `report-<role>.json` (route × result, with the console errors
 and failed requests it saw), and exits non-zero naming every

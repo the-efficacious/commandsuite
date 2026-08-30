@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "comment": "Every web-UI route kind (packages/web-ui/src/lib/routes.ts Route union) with what 'clean' means per role. clean = hard load serves the SPA (200 app), zero console errors, zero failed requests. restricted = the Restricted callout rendered AND no request for the gated resource (the #220 bar). {placeholders} are filled from the fixtures file seed.mjs writes. Changing a role expectation is a permissions statement — it gets reviewed like one.",
+  "comment": "Every web-UI route kind (packages/web-ui/src/lib/routes.ts Route union) with what 'clean' means per role. clean = hard load serves the SPA (200 app, or the row's pinned hardLoad contract), zero console errors, zero failed requests. restricted = the Restricted callout rendered AND no request for the gated resource (the #220 bar). Rows marked pseudo pin contracts outside the Route union (unknown-path fallthrough, reserved API namespaces); scripts/route-walk/contract.mjs validates this file against the router in both directions, including PROFILE_TABS variant parity. {placeholders} are filled from the fixtures file seed.mjs writes. Changing a role expectation is a permissions statement — it gets reviewed like one.",
   "routes": [
     {
       "kind": "home",
@@ -28,8 +28,8 @@
     },
     {
       "kind": "thread-channel",
-      "urls": ["/c/{channelSlug}"],
-      "fixture": "a channel the member belongs to",
+      "urls": ["/c/{channelSlug}", "/c/general"],
+      "fixture": "a channel the member belongs to, plus the built-in general channel",
       "roles": {
         "baseline": "clean",
         "admin": "clean"
@@ -186,6 +186,26 @@
         "baseline": "clean",
         "admin": "clean"
       }
+    },
+    {
+      "kind": "fallthrough",
+      "pseudo": "not a Route union kind — pins the router's unknown-path contract (routes.ts: unknown paths resolve to home)",
+      "urls": ["/definitely/not/a/route"],
+      "roles": {
+        "baseline": "clean",
+        "admin": "clean"
+      },
+      "why": "an unknown path falls through to home so stale links don't strand users — in-app via the router, and on hard loads via the Accept-negotiated SPA fallback (run.ts: only an explicit text/html range selects the SPA; API clients get 404). The walker asserts the browser side of that contract"
+    },
+    {
+      "kind": "reserved-enroll",
+      "pseudo": "not a Route union kind — /enroll is the device-enrolment REST namespace (POST /enroll, GET /enroll/pending), with no GET page of its own",
+      "urls": ["/enroll"],
+      "roles": {
+        "baseline": "clean",
+        "admin": "clean"
+      },
+      "why": "in a browser /enroll behaves as an unknown path: home in-app, SPA shell on a hard load via the Accept-negotiated fallback (API clients get 404 — the GET namespace has no route). Adding a real enrolment page later means changing this row under review"
     }
   ]
 }
