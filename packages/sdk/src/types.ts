@@ -2098,6 +2098,16 @@ export interface ActivitySessionStart {
   readonly runnerVersion?: string;
   /** The runner's declared capture tier (0 operable … 3 full fidelity). */
   readonly captureTier?: number;
+  /**
+   * Whether this generation resumed a prior conversation. `false` with
+   * a `resumeReason` marks a resume-or-start fallback (bare --resume
+   * found nothing — e.g. a fresh member or a wiped state dir), which
+   * must be visible in the trace, not only in a runner log. Absent on
+   * events from older runners. (obj-mtfxwvbk-j extends this event with
+   * the full RunnerIdentity; one schema, coordinated there.)
+   */
+  readonly resumed?: boolean;
+  readonly resumeReason?: string;
 }
 
 /**

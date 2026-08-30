@@ -195,6 +195,11 @@ export interface CodexSpawnResult {
   /** Pluggable sink the runner forwarder writes channel events into. */
   channelSink: CodexChannelSink;
   /**
+   * True when bare `--resume` found nothing and this session started a
+   * fresh thread instead — surfaced on session_start as resumed:false.
+   */
+  resumedFresh: boolean;
+  /**
    * The codex thread id this session runs on — what a later
    * `csuite codex --resume <id>` takes. Set once the thread/start (or
    * thread/resume) handshake completes, i.e. by the time `spawnCodex`
@@ -254,6 +259,27 @@ export function findLatestThreadId(sessionsDir: string): string | null {
   return m?.[1] ?? null;
 }
 
+/**
+ * Resolve a `--resume` posture against the sessions on disk. Bare
+ * `true` is resume-or-start: newest thread when one exists, otherwise
+ * a loud fresh start (`resumedFresh`) — under a supervisor a
+ * deterministic "nothing to resume" error is an infinite Restart=
+ * loop, not loudness. An explicit id stays strict and is passed
+ * through untouched: the caller named a thread; if it does not exist,
+ * codex's own failure is correct.
+ */
+export function resolveCodexResume(
+  resume: string | true | undefined,
+  sessionsDir: string,
+): { threadId: string | null; resumedFresh: boolean } {
+  if (resume === true) {
+    const threadId = findLatestThreadId(sessionsDir);
+    return { threadId, resumedFresh: threadId === null };
+  }
+  if (typeof resume === 'string') return { threadId: resume, resumedFresh: false };
+  return { threadId: null, resumedFresh: false };
+}
+
 export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnResult> {
   assertNoReservedMcpOverride(opts.codexArgs ?? []);
   const log = opts.logger ?? defaultLogger.child('codex');
@@ -264,17 +290,14 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
   //    (bare form = newest rollout on disk) BEFORE touching anything so
   //    "nothing to resume" fails fast with no cleanup owed.
   const sessionsDir = opts.sessionsDir ?? defaultSessionsDir(opts.instructions.name);
-  let resumeThreadId: string | null = null;
-  if (opts.resume === true) {
-    resumeThreadId = findLatestThreadId(sessionsDir);
-    if (resumeThreadId === null) {
-      throw new CodexAdapterError(
-        `--resume: no previous codex session found for ${opts.instructions.name} ` +
-          `(looked in ${sessionsDir}) — start one without --resume first`,
-      );
-    }
-  } else if (typeof opts.resume === 'string') {
-    resumeThreadId = opts.resume;
+  const resolved = resolveCodexResume(opts.resume, sessionsDir);
+  const resumeThreadId = resolved.threadId;
+  const resumedFresh = resolved.resumedFresh;
+  if (resumedFresh) {
+    log.info('resume: no previous codex session found — starting a new thread', {
+      member: opts.instructions.name,
+      sessionsDir,
+    });
   }
 
   // 1. Set up ephemeral CODEX_HOME with our config.toml. When tracing is
@@ -725,6 +748,7 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
     exitCode,
     channelSink,
     getThreadId: () => threadId,
+    resumedFresh,
     compact: (timeoutMs) => compactor.request(timeoutMs),
     shutdown: teardown,
   };

@@ -23,7 +23,7 @@
  * same as `bridge.test.ts`.
  */
 
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -34,6 +34,7 @@ import { writeFakeClaude } from './conformance/fake-agents.js';
 import {
   FAKE_BROKER_TOKEN,
   type FakeBroker,
+  fakeBrokerActivity,
   fakeBrokerInstructions,
   startFakeBroker,
 } from './fake-broker.js';
@@ -180,5 +181,83 @@ describeIfBuilt('csuite claude end-to-end', () => {
       'team_get',
       'team_update',
     ]);
+  }, 30_000);
+
+  it('cold bare --resume stamps resumed:false WITH the reason on the real session_start', async () => {
+    // Driver-level: prepare() mutates the resume posture before the
+    // driver reads the plan — the cached-plan design must keep the
+    // typed trace evidence identical to the child behavior (the
+    // ordering bug Rune caught on #239).
+    const prevClaudePath = process.env.CLAUDE_PATH;
+    process.env.CLAUDE_PATH = fakeClaudePath;
+    const prevExitCode = process.env.FAKE_AGENT_EXIT_CODE;
+    process.env.FAKE_AGENT_EXIT_CODE = '0';
+    const prevHome = process.env.HOME;
+    process.env.HOME = sandbox; // no ~/.claude/projects here — truly cold
+    fakeBrokerActivity.length = 0;
+    try {
+      const exitCode = await runClaudeCommand({
+        url: broker.url,
+        token: FAKE_BROKER_TOKEN,
+        cwd: sandbox,
+        resume: true,
+        logger: silentLogger(),
+        bridgeCommand: process.execPath,
+        bridgeArgs: [CLI_BINARY, 'mcp-bridge'],
+      });
+      expect(exitCode).toBe(0);
+      const starts = fakeBrokerActivity
+        .map((a) => a.event)
+        .filter((e) => e.kind === 'session_start');
+      expect(starts.length).toBeGreaterThan(0);
+      expect(starts[0]).toMatchObject({
+        resumed: false,
+        resumeReason: 'no previous session in this directory',
+      });
+    } finally {
+      if (prevClaudePath === undefined) delete process.env.CLAUDE_PATH;
+      else process.env.CLAUDE_PATH = prevClaudePath;
+      if (prevExitCode === undefined) delete process.env.FAKE_AGENT_EXIT_CODE;
+      else process.env.FAKE_AGENT_EXIT_CODE = prevExitCode;
+      if (prevHome === undefined) delete process.env.HOME;
+      else process.env.HOME = prevHome;
+    }
+  }, 30_000);
+
+  it('warm bare --resume stamps resumed:true (positive control)', async () => {
+    const prevClaudePath = process.env.CLAUDE_PATH;
+    process.env.CLAUDE_PATH = fakeClaudePath;
+    const prevExitCode = process.env.FAKE_AGENT_EXIT_CODE;
+    process.env.FAKE_AGENT_EXIT_CODE = '0';
+    const prevHome = process.env.HOME;
+    process.env.HOME = sandbox;
+    const slugDir = join(sandbox, '.claude', 'projects', sandbox.replace(/[/.]/g, '-'));
+    mkdirSync(slugDir, { recursive: true });
+    writeFileSync(join(slugDir, 'prior-session.jsonl'), '');
+    fakeBrokerActivity.length = 0;
+    try {
+      const exitCode = await runClaudeCommand({
+        url: broker.url,
+        token: FAKE_BROKER_TOKEN,
+        cwd: sandbox,
+        resume: true,
+        logger: silentLogger(),
+        bridgeCommand: process.execPath,
+        bridgeArgs: [CLI_BINARY, 'mcp-bridge'],
+      });
+      expect(exitCode).toBe(0);
+      const starts = fakeBrokerActivity
+        .map((a) => a.event)
+        .filter((e) => e.kind === 'session_start');
+      expect(starts[0]).toMatchObject({ resumed: true });
+      expect(starts[0]).not.toHaveProperty('resumeReason');
+    } finally {
+      if (prevClaudePath === undefined) delete process.env.CLAUDE_PATH;
+      else process.env.CLAUDE_PATH = prevClaudePath;
+      if (prevExitCode === undefined) delete process.env.FAKE_AGENT_EXIT_CODE;
+      else process.env.FAKE_AGENT_EXIT_CODE = prevExitCode;
+      if (prevHome === undefined) delete process.env.HOME;
+      else process.env.HOME = prevHome;
+    }
   }, 30_000);
 });

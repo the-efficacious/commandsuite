@@ -54,11 +54,7 @@ vi.mock('../../../src/runtime/agents/codex/channel-sink.js', () => ({
 }));
 
 import type { InstructionsResponse } from 'csuite-sdk/types';
-import {
-  CodexAdapterError,
-  findLatestThreadId,
-  spawnCodex,
-} from '../../../src/runtime/agents/codex/adapter.js';
+import { findLatestThreadId, spawnCodex } from '../../../src/runtime/agents/codex/adapter.js';
 import { composeFixedContext } from '../../../src/runtime/fixed-context.js';
 import { silentLogger } from '../../helpers/logger.js';
 
@@ -193,14 +189,37 @@ describe('spawnCodex — resume', () => {
     await result.exitCode;
   });
 
-  it('bare resume with no prior sessions fails fast without spawning', async () => {
+  it('bare resume with no prior sessions starts a fresh thread loudly (resume-or-start)', async () => {
+    // The old strict behavior was an infinite Restart= loop under a
+    // supervisor on any fresh member — obj-mtfvz379-i's acceptance
+    // finding. Cold bare --resume now spawns via thread/start and marks
+    // the fallback for session_start's resumed:false.
     const empty = mkdtempSync(join(tmpdir(), 'csuite-resume-empty-'));
     cleanups.push(() => rmSync(empty, { recursive: true, force: true }));
 
-    await expect(spawnCodex({ ...BASE_OPTS, resume: true, sessionsDir: empty })).rejects.toThrow(
-      CodexAdapterError,
-    );
-    expect(spawnMock).not.toHaveBeenCalled();
+    const result = await spawnCodex({ ...BASE_OPTS, resume: true, sessionsDir: empty });
+    expect(result.resumedFresh).toBe(true);
+    const methods = rpcMock.request.mock.calls.map((c) => c[0]);
+    expect(methods).toContain('thread/start');
+    expect(methods).not.toContain('thread/resume');
+
+    fakeChild.emit('exit', 0, null);
+    await result.exitCode;
+  });
+
+  it('an explicit thread id stays strict: passed to thread/resume untouched', async () => {
+    const empty = mkdtempSync(join(tmpdir(), 'csuite-resume-strict-'));
+    cleanups.push(() => rmSync(empty, { recursive: true, force: true }));
+    const result = await spawnCodex({
+      ...BASE_OPTS,
+      resume: '0197c9e1-cccc-4ccc-8ccc-cccccccccccc',
+      sessionsDir: empty,
+    });
+    expect(result.resumedFresh).toBe(false);
+    const methods = rpcMock.request.mock.calls.map((c) => c[0]);
+    expect(methods).toContain('thread/resume');
+    fakeChild.emit('exit', 0, null);
+    await result.exitCode;
   });
 
   it('still uses thread/start when resume is not requested', async () => {

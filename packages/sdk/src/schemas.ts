@@ -1447,6 +1447,8 @@ export const ActivityEventSchema = z.discriminatedUnion('kind', [
     runner: z.string().min(1),
     runnerVersion: z.string().optional(),
     captureTier: z.number().int().min(0).max(3).optional(),
+    resumed: z.boolean().optional(),
+    resumeReason: z.string().optional(),
   }),
   z.object({
     kind: z.literal('session_end'),

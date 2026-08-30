@@ -51,7 +51,7 @@ csuite codex [--no-trace] [--no-secrets] [--doctor] [--skip-doctor]
 | `--skip-doctor` | off | Skip the silent preflight that normally runs before starting. |
 | `--cwd <dir>` | current directory | Directory codex works in — its shell and patch tools resolve paths from here. |
 | `--model <name>` | codex picks | Model for the thread (e.g. `gpt-5`). Codex's own default applies when omitted. |
-| `--resume [<threadId>]` | fresh thread | Resume a previous thread. With an id (printed in the startup banner of the run that created it), that thread; bare `--resume`, this member's most recent thread on this machine. |
+| `--resume [<threadId>]` | fresh thread | Resume a previous thread. With an id (printed in the startup banner of the run that created it), that thread (strict — codex fails if it does not exist); bare `--resume`, this member's most recent thread on this machine, **or a loud fresh start when none exists** (logged, and `resumed: false` with the reason on the `session_start` event). |
 | `--url <url>` | `http://127.0.0.1:8717` | Broker URL. Falls back to `$CSUITE_URL`. |
 | `--token <secret>` | — | Bearer token. Falls back to `$CSUITE_TOKEN`, then the saved login. |
 | `-- <args>` | — | Everything after `--` is forwarded verbatim to codex. |

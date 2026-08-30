@@ -263,12 +263,23 @@ export async function runAgentSession(
 
   // Open the run bracket. Every runner emits the same pair regardless
   // of agent framework, so the activity stream can be sliced per run.
+  // The initial generation's resume posture comes from the adapter's
+  // plan (same facts spawn() will use); a resume-or-start fallback is
+  // typed here so a wiped state dir shows in the trace, not only in a
+  // runner log line.
+  const initialPlan = adapter.initialResumePlan?.(ctx) ?? null;
   runner.captureHost?.enqueue({
     kind: 'session_start',
     ts: startedAt,
     runner: meta.id,
     runnerVersion: CLI_VERSION,
     captureTier: meta.captureTier,
+    ...(initialPlan !== null
+      ? {
+          resumed: initialPlan.resumed,
+          ...(initialPlan.reason !== undefined ? { resumeReason: initialPlan.reason } : {}),
+        }
+      : {}),
   });
 
   const removeProcessHandlers = (handlers: { sigint: () => void; sigterm: () => void }): void => {
@@ -430,6 +441,9 @@ export async function runAgentSession(
             runner: meta.id,
             runnerVersion: CLI_VERSION,
             captureTier: meta.captureTier,
+            // An instruction/environment restart always resumes the
+            // live conversation — that is its contract.
+            resumed: true,
           });
           const next = await respawn(ctx, prior);
           currentProc = next;
@@ -526,6 +540,8 @@ export async function runAgentSession(
           runner: meta.id,
           runnerVersion: CLI_VERSION,
           captureTier: meta.captureTier,
+          resumed: false,
+          resumeReason: 'context cleared',
         });
         const next = await respawnForClear(ctx, { resume: false });
         currentProc = next;
@@ -571,6 +587,8 @@ export async function runAgentSession(
           runner: meta.id,
           runnerVersion: CLI_VERSION,
           captureTier: meta.captureTier,
+          // A reload resumes the same conversation by definition.
+          resumed: true,
         });
         const next = await respawnForClear(ctx, {
           resume: true,
