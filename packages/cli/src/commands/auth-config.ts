@@ -132,6 +132,20 @@ export function authStorePath(): string {
  * that no longer exists resolves to itself, since a recorded workspace may
  * have been deleted and that must not throw during token lookup.
  */
+/**
+ * Canonical form + containment, exported so other commands
+ * (install-service's broker-URL selection) share EXACTLY the rules
+ * token resolution uses — a second approximation could disagree on
+ * trailing slashes, symlinks, or `..`.
+ */
+export function canonicalWorkspacePath(path: string): string {
+  return canonical(path);
+}
+
+export function workspaceContains(workspace: string, cwd: string): boolean {
+  return containsPath(canonical(workspace), canonical(cwd));
+}
+
 function canonical(path: string): string {
   try {
     return realpathSync(resolve(path));
