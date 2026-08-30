@@ -57,6 +57,13 @@ export interface SetupCommandInput {
    * (non-interactive only). Omit to skip TOTP enrollment.
    */
   totpSecretFile?: string;
+  /**
+   * Test-only. Runs after the path preflight and immediately before
+   * each secret file is created — the window in which another process
+   * could fill the path. Exists so the rollback's ownership rule can be
+   * proven against a real concurrent write rather than described.
+   */
+  beforeSecretWrite?: (path: string) => void;
 }
 
 const NAME_REGEX = /^[a-zA-Z0-9._-]+$/;
@@ -64,6 +71,8 @@ const BOOTSTRAP_ROLE_TITLE = 'member';
 
 /** Everything the seed needs, whichever path captured it. */
 interface BootstrapSeed {
+  /** Called right after the DB file is opened (and so created if it was absent). */
+  onDbOpened?: () => void;
   team: { name: string; context: string };
   member: {
     name: string;
@@ -143,7 +152,13 @@ export async function runSetupCommand(
   }
 
   if (nonInteractive !== null) {
-    await runNonInteractive(server, { configPath, dbPath, existingConfig }, nonInteractive, stdout);
+    await runNonInteractive(
+      server,
+      { configPath, dbPath, existingConfig },
+      nonInteractive,
+      stdout,
+      input.beforeSecretWrite,
+    );
     return;
   }
 
@@ -277,30 +292,18 @@ async function runNonInteractive(
   paths: SeedPaths,
   input: NonInteractiveInput,
   stdout: (line: string) => void,
+  beforeSecretWrite?: (path: string) => void,
 ): Promise<void> {
-  // Anything this invocation creates is rolled back if a later step
-  // fails, so a failed run leaves the directory as it found it and a
-  // corrected retry starts clean. Only files that did NOT exist before
-  // are candidates — a pre-existing KEK or an empty-but-present DB
-  // (the recovery path) is never deleted.
+  // Rollback removes ONLY what this invocation demonstrably created:
+  // a secret file is owned once its own O_EXCL create returned, the
+  // KEK and DB once the call that creates them ran against a path that
+  // was absent just before. "It exists now and did not before" alone is
+  // not ownership — another process can fill a path between the
+  // preflight and our write, and its file is not ours to delete.
   const kekPath = join(dirname(paths.configPath), 'csuite-kek.bin');
-  const preexisting = new Set(
-    [paths.configPath, paths.dbPath, kekPath].filter((path) => existsSync(path)),
-  );
   const created: string[] = [];
   const rollback = () => {
-    for (const path of [
-      input.tokenFile,
-      input.totpSecretFile,
-      paths.configPath,
-      paths.dbPath,
-      kekPath,
-    ]) {
-      if (path === null || preexisting.has(path)) continue;
-      if (created.includes(path) || existsSync(path)) {
-        rmSync(path, { force: true });
-      }
-    }
+    for (const path of created) rmSync(path, { force: true });
   };
 
   try {
@@ -310,17 +313,27 @@ async function runNonInteractive(
     // Secrets land on disk BEFORE the DB is seeded: if the token file
     // cannot be created (unwritable dir, a race with the preflight),
     // nothing has been minted that the operator can no longer reach.
+    beforeSecretWrite?.(input.tokenFile);
     writeSecretFile(input.tokenFile, token, '--token-file');
     created.push(input.tokenFile);
     if (input.totpSecretFile !== null && totpSecret !== null) {
+      beforeSecretWrite?.(input.totpSecretFile);
       writeSecretFile(input.totpSecretFile, totpSecret, '--totp-secret-file');
       created.push(input.totpSecretFile);
     }
 
     mkdirSync(dirname(paths.configPath), { recursive: true, mode: 0o700 });
+    const kekWasAbsent = !existsSync(kekPath);
     server.setKek(server.resolveKek(paths.configPath));
+    if (kekWasAbsent && existsSync(kekPath)) created.push(kekPath);
+
+    const dbWasAbsent = !existsSync(paths.dbPath);
+    const onDbOpened = () => {
+      if (dbWasAbsent) created.push(paths.dbPath);
+    };
 
     await seedBootstrap(server, paths, {
+      onDbOpened,
       team: { name: input.team, context: '' },
       member: {
         name: input.member,
@@ -380,6 +393,7 @@ async function seedBootstrap(
 ): Promise<void> {
   const { configPath, dbPath, existingConfig } = paths;
   const db = server.openDatabase(dbPath);
+  seed.onDbOpened?.();
   try {
     const stores = server.openTeamAndMembers(db);
     stores.team.setTeam({

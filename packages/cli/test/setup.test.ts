@@ -377,6 +377,68 @@ describe('runSetupCommand --non-interactive', { timeout: 30_000 }, () => {
     }
   });
 
+  it('a file another process creates between preflight and write is not ours — rollback leaves it', async () => {
+    // Rune's second finding on PR #206: the preflight passes, then a
+    // concurrent writer fills the TOTP path before our O_EXCL create.
+    // Our create fails; the rollback must remove OUR token file and
+    // must not touch THEIR file.
+    const dir = tmpDir();
+    const configPath = join(dir, 'srv', 'csuite.json');
+    const tokenFile = join(dir, 'admin.token');
+    const totpSecretFile = join(dir, 'admin.totp');
+    await expect(
+      runSetupCommand(
+        {
+          configPath,
+          nonInteractive: true,
+          team: 't',
+          member: 'admin',
+          tokenFile,
+          totpSecretFile,
+          beforeSecretWrite: (path) => {
+            if (path === totpSecretFile) writeFileSync(path, 'theirs\n');
+          },
+        },
+        () => {},
+      ),
+    ).rejects.toThrow(/--totp-secret-file .* already exists/);
+    expect(existsSync(tokenFile), 'our token file must be rolled back').toBe(false);
+    expect(readFileSync(totpSecretFile, 'utf8'), 'their file must survive').toBe('theirs\n');
+    expect(existsSync(configPath)).toBe(false);
+    expect(existsSync(join(dir, 'srv', 'csuite.db'))).toBe(false);
+  });
+
+  it('a KEK that existed before the run survives a failed run', async () => {
+    // Ownership for the KEK is "we created it": a pre-existing key file
+    // is never a rollback candidate, even when a later step fails.
+    const dir = tmpDir();
+    const srv = join(dir, 'srv');
+    mkdirSync(srv, { mode: 0o700 });
+    const kek = join(srv, 'csuite-kek.bin');
+    // A well-formed 32-byte key the server will accept as-is.
+    writeFileSync(kek, Buffer.alloc(32, 7), { mode: 0o600 });
+    const tokenFile = join(dir, 'admin.token');
+    const totpSecretFile = join(dir, 'admin.totp');
+    await expect(
+      runSetupCommand(
+        {
+          configPath: join(srv, 'csuite.json'),
+          nonInteractive: true,
+          team: 't',
+          member: 'admin',
+          tokenFile,
+          totpSecretFile,
+          beforeSecretWrite: (path) => {
+            if (path === totpSecretFile) writeFileSync(path, 'theirs\n');
+          },
+        },
+        () => {},
+      ),
+    ).rejects.toThrow(/already exists/);
+    expect(existsSync(kek), 'pre-existing KEK must survive').toBe(true);
+    expect(existsSync(tokenFile)).toBe(false);
+  });
+
   it('still refuses when the config already points to a populated team', async () => {
     const dir = tmpDir();
     const configPath = join(dir, 'csuite.json');
