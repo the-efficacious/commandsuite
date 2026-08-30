@@ -1,0 +1,126 @@
+name: Route walk
+
+# Walks every route in scripts/route-walk/manifest.json as a baseline
+# member and as an admin, headless, against a bootstrapped broker with
+# the stub runner live (no model credential). Fails on any route that
+# is not what its manifest row declares (clean, or the Restricted
+# callout rendered without a request for the gated resource) and on
+# any kind in the router's Route union that is absent from the
+# manifest — adding a page without declaring its permission story
+# fails this job by name. docs/dev/route-walk.mdx has the local run.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  route-walk:
+    runs-on: ubuntu-latest
+    env:
+      BROKER: http://127.0.0.1:8725
+      # The runner image ships Google Chrome; the walker only needs a
+      # Chromium-family binary.
+      CHROMIUM: /usr/bin/google-chrome
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+
+      # runner.temp is a step-level context — job-level env cannot see
+      # it, so the shared paths are set through GITHUB_ENV instead.
+      - name: Working paths under the runner's temp dir
+        run: |
+          echo "CSUITE_BOOTSTRAP_DIR=$RUNNER_TEMP/csuite-route-walk" >> "$GITHUB_ENV"
+          echo "WALK_OUT=$RUNNER_TEMP/csuite-route-walk/walk" >> "$GITHUB_ENV"
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      - name: Broker up with the stub runner live
+        env:
+          CSUITE_AUTH_CONFIG_PATH: ${{ runner.temp }}/csuite-route-walk/auth.json
+          CSUITE_PORT: 8725
+          CSUITE_RUNNER_VERB: stub
+          CSUITE_START_RUNNER: "1"
+        run: scripts/bootstrap.sh up </dev/null
+
+      - name: Seed fixtures and enrol TOTP for both roles
+        run: |
+          node scripts/route-walk/seed.mjs \
+            --broker "$BROKER" \
+            --admin-token-file "$CSUITE_BOOTSTRAP_DIR/secrets/admin.token" \
+            --baseline builder \
+            --csuite "node $GITHUB_WORKSPACE/packages/cli/dist/index.js" \
+            --out "$WALK_OUT"
+
+      - name: Walk every manifest route as both roles
+        run: |
+          fail=0
+          node scripts/route-walk/walk.mjs \
+            --broker "$BROKER" --member builder --role baseline \
+            --secret "$WALK_OUT/totp-builder.secret" \
+            --fixtures "$WALK_OUT/fixtures.json" \
+            --out "$WALK_OUT" || fail=1
+          node scripts/route-walk/walk.mjs \
+            --broker "$BROKER" --member admin --role admin \
+            --secret "$WALK_OUT/totp-admin.secret" \
+            --fixtures "$WALK_OUT/fixtures.json" \
+            --out "$WALK_OUT" || fail=1
+          exit $fail
+
+      - name: Route × role report in the job summary
+        if: always()
+        run: |
+          node - "$WALK_OUT" >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          const { readFileSync, existsSync } = require('node:fs');
+          const out = process.argv[2];
+          const failing = [];
+          console.log('## Route walk\n');
+          console.log('| kind | url | role | expectation | result |');
+          console.log('| --- | --- | --- | --- | --- |');
+          for (const role of ['baseline', 'admin']) {
+            const file = `${out}/report-${role}.json`;
+            if (!existsSync(file)) {
+              console.log(`| — | — | ${role} | — | no report (walk did not finish) |`);
+              failing.push(`${role}: no report`);
+              continue;
+            }
+            for (const r of JSON.parse(readFileSync(file, 'utf8')).routes) {
+              const why = [
+                r.error,
+                r.hardLoad && r.hardLoad !== '200 app' ? `hard-load ${r.hardLoad}` : null,
+                r.consoleErrors?.length ? `${r.consoleErrors.length} console errors` : null,
+                r.failedRequests?.length ? `${r.failedRequests.length} failed requests` : null,
+              ].filter(Boolean).join('; ');
+              console.log(`| ${r.kind} | ${r.url} | ${role} | ${r.expectation} | ${r.ok ? 'ok' : `FAIL — ${why || 'expectation not met'}`} |`);
+              if (!r.ok) failing.push(`${role} ${r.kind} ${r.url}`);
+            }
+          }
+          console.log(failing.length ? `\n**${failing.length} failing:** ${failing.join('; ')}` : '\nAll routes clean for both roles.');
+          EOF
+
+      - name: Upload route × role reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: route-walk-reports
+          path: ${{ runner.temp }}/csuite-route-walk/walk/report-*.json
+          if-no-files-found: warn
+
+      - name: Stop the broker
+        if: always()
+        run: scripts/bootstrap.sh down
