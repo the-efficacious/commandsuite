@@ -144,25 +144,37 @@ nothing.
 > verification that names only the branch has not said what was checked. State
 > the SHA. **A branch name is not an object; a branch name at a commit is.**
 
-### Commit signing does not currently work
+### Commit signing
 
-Observed independently on **two hosts**, in two repositories. Both hosts have
-`gpg.format=ssh` configured against an SSH key.
+**Measured working on a provisioned agent seat (2026-08-30 — Debian 13, git
+2.47.3, OpenSSH 10.0):** with `gpg.format=ssh` and `user.signingkey` naming an
+ed25519 **key file** (`~/.ssh/id_ed25519_signing.pub`), three consecutive
+commits in this repository each signed in 16–23 ms, `git log --format=%G?`
+reported `G` for all three, and a push to GitHub returned
+`verification.verified: true, reason: valid` for the commit. No ssh-agent was
+in the path — `SSH_AUTH_SOCK` was unset — so git called `ssh-keygen -Y sign`
+against the file directly.
 
-**The failure differs between attempts, not between machines:** sometimes git's
-signing path returns `communication with agent failed`; sometimes the commit
-hangs past a bounded timeout. Both modes have been observed on the same host with
-the same config, hours apart. In every observed case the commit does not
-complete. We have not isolated the variable and are not guessing at it.
+**What was true before, kept as recorded history.** Earlier, signing failed
+independently on two hosts, in two repositories, both with `gpg.format=ssh`
+configured against an SSH key: sometimes git's signing path returned
+`communication with agent failed`; sometimes the commit hung past a bounded
+timeout. Both modes were observed on the same host with the same config, hours
+apart, and in every observed case the commit did not complete. The variable was
+not isolated at the time. The one difference the working seat can name is that
+no agent was involved — a candidate, not a proven cause, because the failure has
+not been reproduced with the agent removed on an affected host.
 
-This is environmental rather than one person's misconfiguration, and it says
-nothing about your machine.
+So: if your `user.signingkey` names a key file and no agent is in the path,
+expect signing to work and leave `commit.gpgsign=true`. If a commit hangs or
+reports an agent error, measure it first (see "When something inexplicable
+happens, measure it"), record what you saw, and only then fall back to
+`-c commit.gpgsign=false` for that commit — **keeping the DCO `Signed-off-by`
+trailer**, which is a separate mechanism and is required regardless (see below).
 
-Disable GPG signing for the commit, but **keep the DCO `Signed-off-by` trailer**
-— that is a separate mechanism and it is required (see below).
-
-This matters if branch protection ever requires signed commits: it has to be
-solved before that requirement lands, not discovered at a rejected push.
+This matters if branch protection ever requires signed commits: a seat where
+signing fails has to be fixed before that requirement lands, not discovered at
+a rejected push.
 
 ## Writing tests
 
@@ -725,17 +737,31 @@ That adds a line like:
 Signed-off-by: Your Name <you@example.com>
 ```
 
-to the end of the commit message. The name and email must match your
-`git config user.name` and `user.email`.
+to the end of the commit message. The name and email must match the
+committer identity git writes on the commit — `git config user.name` and
+`user.email`, or `GIT_COMMITTER_NAME` and `GIT_COMMITTER_EMAIL` when those
+environment variables are set (the environment wins over config).
 
 To make the sign-off automatic, install a `commit-msg` hook (from the
 repo root):
 
 ```bash
 printf '%s\n' '#!/bin/sh' \
-  'grep -q "^Signed-off-by:" "$1" || printf "\nSigned-off-by: %s <%s>\n" "$(git config user.name)" "$(git config user.email)" >> "$1"' \
+  'ident=$(git var GIT_COMMITTER_IDENT | sed -E "s/ [0-9]+ [-+][0-9]{4}$//")' \
+  'grep -q "^Signed-off-by:" "$1" || printf "\nSigned-off-by: %s\n" "$ident" >> "$1"' \
   > .git/hooks/commit-msg && chmod +x .git/hooks/commit-msg
 ```
+
+The hook reads `git var GIT_COMMITTER_IDENT` rather than `git config
+user.name` and `user.email` because they are not the same source. `git var`
+is the identity git will actually write on the commit, resolved the way git
+resolves it — environment first, then config — with the timestamp stripped.
+An earlier version of this hook read `git config`; on a host whose identity
+is supplied only through `GIT_AUTHOR_*` / `GIT_COMMITTER_*` (how this
+project's agent seats are provisioned) that returns empty strings, and the
+hook appended `Signed-off-by:  <>` — a trailer the DCO check rejects.
+Measured 2026-08-30. `git commit -s` was never affected, because it also
+uses the committer ident.
 
 > An earlier version of this section said `git config --global
 > format.signOff true` does this. It does not — that setting affects
