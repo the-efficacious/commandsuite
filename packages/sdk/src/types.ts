@@ -1270,6 +1270,12 @@ export interface RotateTokenResponse {
 }
 
 /**
+ * Explicit rotation scope. Omitting the body retains the legacy revoke-all
+ * behavior until the separately approved compatibility flip lands.
+ */
+export type RotateTokenRequest = { scope: 'token'; tokenId: string } | { scope: 'all' };
+
+/**
  * `POST /members/:name/enroll-totp` response — requires
  * `members.manage` OR self. Returns the new TOTP secret + otpauth
  * URI. Any member may enroll; there's no type gate.

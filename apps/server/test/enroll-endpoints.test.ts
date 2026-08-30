@@ -20,6 +20,7 @@ import {
   createApp,
   createTokenStoreFromMembers,
   EnrollmentStore,
+  generateBearerToken,
   InMemoryEventLog,
   SqliteSessionStore,
 } from 'csuite-core';
@@ -433,7 +434,10 @@ describe('member CRUD ↔ token store', () => {
     expect(res.status).toBe(401);
   });
 
-  it('rotate-token nukes all peer tokens and issues a fresh one', async () => {
+  it.each([
+    ['legacy empty body', undefined],
+    ['explicit all scope', { scope: 'all' as const }],
+  ])('rotate-token nukes all peer tokens with %s', async (_case, scope) => {
     const { app, tokens } = await makeApp();
     // Add a peer token via enrollment first.
     const mintRes = await app.request('/enroll', {
@@ -456,7 +460,11 @@ describe('member CRUD ↔ token store', () => {
 
     const rotateRes = await app.request('/members/engineer-1/rotate-token', {
       method: 'POST',
-      headers: bearer(ADMIN_TOKEN),
+      headers: {
+        ...bearer(ADMIN_TOKEN),
+        ...(scope ? { 'Content-Type': 'application/json' } : {}),
+      },
+      ...(scope ? { body: JSON.stringify(scope) } : {}),
     });
     expect(rotateRes.status).toBe(200);
     const { token: newToken } = (await rotateRes.json()) as { token: string };
@@ -465,5 +473,54 @@ describe('member CRUD ↔ token store', () => {
     (await expect(await tokens.listForMember('engineer-1'))).toHaveLength(1);
     (await expect(await tokens.resolve(newToken))).not.toBeNull();
     (await expect(await tokens.resolve(NON_ADMIN_TOKEN))).toBeNull();
+  });
+
+  it('rotates exactly one token and leaves peer credentials active', async () => {
+    const { app, tokens } = await makeApp();
+    const before = await tokens.listForMember('engineer-1');
+    const target = before.find((token) => token.id);
+    expect(target).toBeDefined();
+    if (!target) throw new Error('fixture token missing');
+
+    const peerRaw = generateBearerToken();
+    const peer = await tokens.insert({
+      memberName: 'engineer-1',
+      rawToken: peerRaw,
+      label: 'peer-device',
+      origin: 'enroll',
+      createdBy: 'admin',
+    });
+
+    const rotateRes = await app.request('/members/engineer-1/rotate-token', {
+      method: 'POST',
+      headers: { ...bearer(ADMIN_TOKEN), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scope: 'token', tokenId: target.id }),
+    });
+    expect(rotateRes.status).toBe(200);
+    const rotated = (await rotateRes.json()) as { token: string; tokenInfo: { label: string } };
+
+    expect(await tokens.resolve(NON_ADMIN_TOKEN)).toBeNull();
+    expect(await tokens.resolve(peerRaw)).toMatchObject({ id: peer.id });
+    expect(await tokens.resolve(rotated.token)).toMatchObject({ label: target.label });
+    await expect(tokens.listForMember('engineer-1')).resolves.toHaveLength(before.length + 1);
+  });
+
+  it('refuses a token id belonging to another member without rotating anything', async () => {
+    const { app, tokens } = await makeApp();
+    const adminToken = await tokens.insert({
+      memberName: 'admin',
+      rawToken: generateBearerToken(),
+      label: 'admin-peer',
+      origin: 'enroll',
+      createdBy: 'admin',
+    });
+    const before = await tokens.listForMember('engineer-1');
+    const res = await app.request('/members/engineer-1/rotate-token', {
+      method: 'POST',
+      headers: { ...bearer(ADMIN_TOKEN), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scope: 'token', tokenId: adminToken.id }),
+    });
+    expect(res.status).toBe(404);
+    await expect(tokens.listForMember('engineer-1')).resolves.toEqual(before);
   });
 });

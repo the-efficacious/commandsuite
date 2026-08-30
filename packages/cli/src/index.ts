@@ -70,7 +70,7 @@ usage:
                                     enroll this device with the broker (device-code flow); saves to the user-global auth store, scoped to cwd (or --workspace / --global)
   csuite auth          list|migrate                         inspect the local auth store; fold a legacy project-scoped .csuite/auth.json into it
   csuite enroll      --member <name> [--config-path <path>]   (re-)enroll a member for web UI login (TOTP — separate from 'csuite connect')
-  csuite rotate      --member <name> [--config-path <path>]   rotate a member's bearer token (atomic; prints new token once)
+  csuite rotate      --member <name> (--token-id <id> | --all) --token-file <path>   rotate credentials without printing plaintext
   csuite quickstart  [--skip-browser] [--assignee <name>]   seed a demo objective + open the web UI
   csuite claude      [--no-trace] [--no-secrets] [--no-env-reload] [--doctor] [--skip-doctor] [--cwd <dir>] [--model <name>] [--resume [<sessionId>]]   run Claude Code headlessly (Agent SDK) as an agent member of a csuite team (--resume alone continues the most recent session; alias: claude-code)
   csuite codex       [--no-trace] [--no-secrets] [--no-env-reload] [--doctor] [--skip-doctor] [--cwd <dir>] [--model <name>] [--resume [<threadId>]] [-- <codex args>...]   spawn OpenAI Codex CLI as a headless agent member of a csuite team (--resume alone picks up the most recent thread)
@@ -512,6 +512,9 @@ async function handleConnectApprover(sub: 'pending' | 'approve', args: string[])
 async function handleRotate(args: string[]): Promise<void> {
   const { values } = parseSubcommandArgs(args, {
     member: { type: 'string', short: 'm' },
+    'token-id': { type: 'string' },
+    all: { type: 'boolean' },
+    'token-file': { type: 'string' },
     url: { type: 'string' },
     token: { type: 'string' },
     help: { type: 'boolean', short: 'h' },
@@ -526,6 +529,9 @@ async function handleRotate(args: string[]): Promise<void> {
     await runRotateCommand(
       {
         member: getString(values, 'member'),
+        tokenId: getString(values, 'token-id'),
+        all: getBoolean(values, 'all'),
+        tokenFile: getString(values, 'token-file'),
       },
       client,
       (line) => log(line),
@@ -663,6 +669,8 @@ async function handleRoster(args: string[]): Promise<void> {
     url: { type: 'string' },
     token: { type: 'string' },
     'reveal-token': { type: 'boolean' },
+    all: { type: 'boolean' },
+    'token-file': { type: 'string' },
     member: { type: 'string', short: 'm' },
     'config-path': { type: 'string' },
     config: { type: 'string' },
@@ -673,24 +681,24 @@ async function handleRoster(args: string[]): Promise<void> {
     return;
   }
 
-  // `--reveal-token` is an alias over `csuite rotate --member X`: the only
-  // honest way to surface a member's bearer plaintext is to mint a fresh
-  // one, since hash-on-disk (I1 posture) means the existing plaintext
-  // was never persisted. Invoking this command therefore has a visible
-  // side effect — the previous token is invalidated. We disclose that
-  // up front so it's impossible to miss, then delegate to the exact
-  // same code path `csuite rotate` uses.
+  // Compatibility alias over explicit revoke-all rotation. Plaintext no
+  // longer reaches stdout: the caller must name a fresh credential file.
   if (getBoolean(values, 'reveal-token')) {
     const member = getString(values, 'member');
     if (!member) {
       fail('roster --reveal-token: --member <name> is required', 2);
     }
-    log('');
-    log(`csuite roster --reveal-token → rotating '${member}' token.`);
-    log('  (csuite never persists token plaintext; the only honest "reveal"');
-    log('   is to mint a fresh token and print it once. This invalidates');
-    log('   any previous token for this member.)');
-    const rotateInput: RotateCommandInput = { member };
+    if (!getBoolean(values, 'all') || !getString(values, 'token-file')) {
+      fail(
+        'roster --reveal-token: plaintext is no longer printed; pass --all --token-file <path>, or use `csuite rotate`',
+        2,
+      );
+    }
+    const rotateInput: RotateCommandInput = {
+      member,
+      all: true,
+      tokenFile: getString(values, 'token-file'),
+    };
     try {
       const client = makeClient(values);
       await runRotateCommand(rotateInput, client, (line) => log(line));

@@ -185,6 +185,7 @@ import type {
   RenameChannelRequest,
   ResolveSecretsResponse,
   RosterResponse,
+  RotateTokenRequest,
   RotateTokenResponse,
   Secret,
   SecretSummary,
@@ -902,12 +903,20 @@ export class Client {
   }
 
   /**
-   * Rotate a member's bearer token. Requires `members.manage` OR
-   * self. Returns the new plaintext (shown once); the previous token
-   * is invalidated.
+   * Rotate a member's bearer token. Requires `members.manage` OR self.
+   * Explicit scope can replace one device credential or every credential.
+   * An omitted request retains the legacy revoke-all contract temporarily.
    */
-  async rotateToken(name: string): Promise<RotateTokenResponse> {
-    const resp = await this.request(MEMBER_PATHS.rotateToken(name), { method: 'POST' });
+  async rotateToken(name: string, request?: RotateTokenRequest): Promise<RotateTokenResponse> {
+    const resp = await this.request(MEMBER_PATHS.rotateToken(name), {
+      method: 'POST',
+      ...(request
+        ? {
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(request),
+          }
+        : {}),
+    });
     return RotateTokenResponseSchema.parse(await this.json(resp));
   }
 

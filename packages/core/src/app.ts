@@ -67,6 +67,7 @@ import {
   PushSubscriptionPayloadSchema,
   RejectEnrollmentRequestSchema,
   RenameChannelRequestSchema,
+  RotateTokenRequestSchema,
   SetCustomToolRequestSchema,
   SetNotificationSecretRequestSchema,
   SetSecretValueRequestSchema,
@@ -5391,6 +5392,25 @@ export function createApp(options: AppOptions): CreatedApp {
     if (!hasPermission(member.permissions, 'members.manage') && member.name !== target.name) {
       return c.json({ error: 'rotate-token requires members.manage, or self' }, 403);
     }
+    const rawBody = await c.req.text();
+    let scope: { scope: 'token'; tokenId: string } | { scope: 'all' } | undefined;
+    if (rawBody.trim().length > 0) {
+      let decoded: unknown;
+      try {
+        decoded = JSON.parse(rawBody);
+      } catch {
+        return c.json({ error: 'invalid rotate-token JSON body' }, 400);
+      }
+      const parsed = RotateTokenRequestSchema.safeParse(decoded);
+      if (!parsed.success) {
+        return c.json(
+          { error: 'rotate-token requires {scope:"token",tokenId} or {scope:"all"}' },
+          400,
+        );
+      }
+      scope = parsed.data;
+    }
+
     // Multi-token rotation: in the legacy single-token world rotate
     // meant "replace the only token." Now it means "issue a fresh
     // token AND invalidate every other active token for this
@@ -5399,16 +5419,27 @@ export function createApp(options: AppOptions): CreatedApp {
     // to add a token without nuking peers should use the
     // device-code flow (`csuite connect` → member-manager approval) which
     // calls `tokens.insert` on its own.
-    const token = generateBearerToken();
     const before = await tokens.listForMember(parsedName.data);
-    for (const t of before) {
+    // An omitted body deliberately retains the 0.8 revoke-all contract until
+    // the separately approved compatibility flip. New callers always send an
+    // explicit scope. A token-scoped rotation preserves every peer credential.
+    const revoked =
+      scope?.scope === 'token'
+        ? before.filter((candidate) => candidate.id === scope.tokenId)
+        : before;
+    if (scope?.scope === 'token' && revoked.length === 0) {
+      return c.json({ error: 'no such token for member' }, 404);
+    }
+    for (const t of revoked) {
       await tokens.revoke(t.id);
     }
-    broker.blockTokens(before.map((t) => t.id));
+    broker.blockTokens(revoked.map((t) => t.id));
+    const token = generateBearerToken();
+    const label = scope?.scope === 'token' ? revoked[0]?.label : 'rotated';
     const newRow = await tokens.insert({
       memberName: parsedName.data,
       rawToken: token,
-      label: 'rotated',
+      label,
       origin: 'rotate',
       createdBy: member.name,
     });
@@ -5419,7 +5450,8 @@ export function createApp(options: AppOptions): CreatedApp {
       name: parsedName.data,
       rotatedBy: member.name,
       tokenId: newRow.id,
-      revokedPeers: before.length,
+      scope: scope?.scope ?? 'legacy-all',
+      revokedTokens: revoked.length,
     });
     // `tokenInfo` strips the hash before going on the wire (the
     // schema's `TokenInfoSchema` doesn't include it).
