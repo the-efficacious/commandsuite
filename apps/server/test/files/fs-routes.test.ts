@@ -89,7 +89,7 @@ async function makeApp() {
     version: '0.0.0',
     logger: silentLogger(),
   });
-  return { app, files };
+  return { app, files, members };
 }
 
 function authed(token: string): HeadersInit {
@@ -250,6 +250,30 @@ describe('/fs/ls', () => {
       });
       expect(res.status).toBe(403);
     }
+  });
+
+  it("reports a deleted member's surviving home as stored, not nonexistent", async () => {
+    const { app, members } = await makeApp();
+    await writeFile(app, ALICE_TOKEN, '/alice/survives-delete.txt', 'text/plain', 'retained');
+    members.removeMember('alice');
+
+    // Deletion removes identity and credentials, not retained filesystem data. The
+    // namespace therefore falls through to the store's ordinary ACL answer.
+    const manager = await app.request('/fs/ls?path=%2Falice', {
+      headers: authed(DIRECTOR_TOKEN),
+    });
+    expect(manager.status).toBe(200);
+    expect(((await manager.json()) as { entries: FsEntry[] }).entries.map((e) => e.name)).toEqual([
+      'survives-delete.txt',
+    ]);
+
+    const baseline = await app.request('/fs/ls?path=%2Falice', { headers: authed(BOB_TOKEN) });
+    expect(baseline.status).toBe(403);
+
+    const nonexistent = await app.request('/fs/ls?path=%2Fnobody', {
+      headers: authed(DIRECTOR_TOKEN),
+    });
+    expect(nonexistent.status).toBe(404);
   });
 
   it('lists root as per-owner homes (director sees everyone)', async () => {
