@@ -51,6 +51,20 @@ export class ClaudeSdkAbsentError extends ClaudeCodeAdapterError {
   }
 }
 
+/**
+ * Is this import failure the SDK package being absent — the one case
+ * that is a deliberate broker-only install? Pure over the error so the
+ * branches are testable: a module-not-found naming a *different*
+ * specifier (a broken SDK missing its own dependency) or any other
+ * import error (a corrupt SDK) is NOT absence and must surface as an
+ * ordinary failure, not an advisory one.
+ */
+export function isSdkAbsentImportError(err: unknown): boolean {
+  const code = (err as { code?: unknown }).code;
+  if (code !== 'ERR_MODULE_NOT_FOUND' && code !== 'MODULE_NOT_FOUND') return false;
+  return err instanceof Error && err.message.includes("'@anthropic-ai/claude-agent-sdk'");
+}
+
 export interface ClaudeExecutable {
   /** Absolute path of the Claude Code executable the SDK will spawn. */
   path: string;

@@ -20,7 +20,11 @@ import { describe, expect, it } from 'vitest';
 import { runAgentDoctor } from '../src/commands/doctor.js';
 import type { AgentAdapter } from '../src/runtime/agents/adapter.js';
 import { AgentAdapterError } from '../src/runtime/agents/adapter.js';
-import { ClaudeSdkAbsentError, resolveClaudeExecutable } from '../src/runtime/agents/claude.js';
+import {
+  ClaudeSdkAbsentError,
+  isSdkAbsentImportError,
+  resolveClaudeExecutable,
+} from '../src/runtime/agents/claude.js';
 
 const pkgDir = join(import.meta.dirname, '..');
 
@@ -69,6 +73,45 @@ describe('optional agent SDK — absent error contract', () => {
 
   it('plain adapter errors stay absentByDesign=false (positive control)', () => {
     expect(new AgentAdapterError('boom').absentByDesign).toBe(false);
+  });
+});
+
+describe('optional agent SDK — import-failure classification', () => {
+  // Only the SDK package itself being absent is a broker-only install.
+  // A present-but-broken SDK must surface as an ordinary failure, or
+  // the doctor would report a real breakage as intentional.
+  function importError(code: string | undefined, message: string): Error {
+    const err = new Error(message);
+    if (code !== undefined) (err as NodeJS.ErrnoException).code = code;
+    return err;
+  }
+
+  it('module-not-found naming the SDK is absence', () => {
+    expect(
+      isSdkAbsentImportError(
+        importError(
+          'ERR_MODULE_NOT_FOUND',
+          "Cannot find package '@anthropic-ai/claude-agent-sdk' imported from /app/packages/cli/dist/index.js",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it('a broken SDK missing its own dependency is NOT absence (negative control)', () => {
+    expect(
+      isSdkAbsentImportError(
+        importError(
+          'ERR_MODULE_NOT_FOUND',
+          "Cannot find package 'zod' imported from /app/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs",
+        ),
+      ),
+    ).toBe(false);
+  });
+
+  it('a corrupt SDK module (no not-found code) is NOT absence (negative control)', () => {
+    expect(isSdkAbsentImportError(importError(undefined, 'Unexpected token in sdk.mjs'))).toBe(
+      false,
+    );
   });
 });
 

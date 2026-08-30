@@ -58,21 +58,30 @@ import type {
   AgentSessionContext,
   RespawnPosture,
 } from './adapter.js';
-import { type ClaudeExecutable, ClaudeSdkAbsentError, resolveClaudeExecutable } from './claude.js';
+import {
+  type ClaudeExecutable,
+  ClaudeSdkAbsentError,
+  isSdkAbsentImportError,
+  resolveClaudeExecutable,
+} from './claude.js';
 
 /**
  * The Agent SDK is an optional dependency, loaded only here and only at
  * session start: every broker-side verb must keep working on an install
  * without it. `locate()` reports absence first with the operator-facing
  * message; this guard covers the SDK vanishing between locate and spawn.
+ * Only the package itself being absent maps to the advisory error — a
+ * present-but-broken SDK (missing sub-dependency, corrupt module) is a
+ * real failure and propagates as one.
  */
 let loadedQuery: typeof sdkQuery | null = null;
 async function loadSdkQuery(): Promise<typeof sdkQuery> {
   if (loadedQuery === null) {
     try {
       ({ query: loadedQuery } = await import('@anthropic-ai/claude-agent-sdk'));
-    } catch {
-      throw new ClaudeSdkAbsentError();
+    } catch (err) {
+      if (isSdkAbsentImportError(err)) throw new ClaudeSdkAbsentError();
+      throw err;
     }
   }
   return loadedQuery;
