@@ -17,6 +17,7 @@ import type { Attachment, LogLevel, Message } from 'csuite-sdk/types';
 import {
   channelThreadTag,
   clampQueryLimit,
+  containsCanonicalPullRequestUrl,
   DEFAULT_QUERY_LIMIT,
   type EventLog,
   type EventLogAppendOptions,
@@ -78,6 +79,7 @@ export class SqliteEventLog implements EventLog {
   private readonly queryDmStmt: SqlStatement;
   private readonly queryChannelStmt: SqlStatement;
   private readonly queryGeneralStmt: SqlStatement;
+  private readonly objectiveDiscussionStmt: SqlStatement;
 
   constructor(db: SqlDriver) {
     this.db = db;
@@ -197,6 +199,13 @@ export class SqliteEventLog implements EventLog {
          )
        ORDER BY ts DESC LIMIT ?`,
     );
+    this.objectiveDiscussionStmt = this.db.prepare(
+      `SELECT id, ts, to_name, from_name, title, body, level, data, attachments, recipients
+       FROM events
+       WHERE json_extract(data, '$.thread') = ?
+         AND json_extract(data, '$.kind') = 'objective_discuss'
+       ORDER BY ts DESC`,
+    );
   }
 
   async append(message: Message, options: EventLogAppendOptions = {}): Promise<void> {
@@ -248,6 +257,19 @@ export class SqliteEventLog implements EventLog {
       rows = this.queryFeedStmt.all(before, options.viewer, limit) as unknown as EventRow[];
     }
     return rows.map(rowToMessage);
+  }
+
+  async latestObjectiveSignals(objectiveId: string): Promise<{
+    lastThreadPostAt: number | null;
+    lastPrLinkAt: number | null;
+  }> {
+    const rows = this.objectiveDiscussionStmt.all(`obj:${objectiveId}`) as unknown as EventRow[];
+    const messages = rows.map(rowToMessage);
+    return {
+      lastThreadPostAt: messages[0]?.ts ?? null,
+      lastPrLinkAt:
+        messages.find((message) => containsCanonicalPullRequestUrl(message.body))?.ts ?? null,
+    };
   }
 
   /**

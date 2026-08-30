@@ -470,6 +470,34 @@ export interface RosterResponse {
   activityWindowMs?: number;
 }
 
+export type TeamStatusStaleSignal = 'thread_post' | 'pr_link' | 'lifecycle';
+
+export interface TeamStatusObjective {
+  id: string;
+  title: string;
+  status: 'active' | 'blocked';
+  lastThreadPostAt: number | null;
+  lastPrLinkAt: number | null;
+  lastLifecycleAt: number | null;
+  lastSignalAt: number | null;
+  stalled: boolean;
+  staleSignals: TeamStatusStaleSignal[];
+}
+
+export interface TeamStatusMember {
+  member: Teammate;
+  /** null means disconnected; it is never reconstructed from old state. */
+  presence: Presence | null;
+  activeObjectives: TeamStatusObjective[];
+  lastActivityAt: number | null;
+}
+
+export interface TeamStatusResponse {
+  generatedAt: number;
+  stalledAfterMs: number | null;
+  members: TeamStatusMember[];
+}
+
 /** Query parameters for `GET /history`. */
 export interface HistoryQuery {
   with?: string;

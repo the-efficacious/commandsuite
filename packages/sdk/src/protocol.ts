@@ -21,6 +21,8 @@ export const PATHS = {
    */
   instructions: '/instructions',
   roster: '/roster',
+  /** Read-only, members.manage team-operability report. */
+  teamStatus: '/team/status',
   push: '/push',
   subscribe: '/subscribe',
   history: '/history',

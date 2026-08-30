@@ -150,6 +150,11 @@ export interface EventLog {
    * and after reconnects.
    */
   query(options: EventLogQueryOptions): Promise<Message[]>;
+  /** Latest stored discussion and canonical GitHub PR-link timestamps for an objective thread. */
+  latestObjectiveSignals(objectiveId: string): Promise<{
+    lastThreadPostAt: number | null;
+    lastPrLinkAt: number | null;
+  }>;
   /** Close any underlying resources. No-op for in-memory impl. */
   close?(): Promise<void>;
 }
@@ -250,10 +255,34 @@ export class InMemoryEventLog implements EventLog {
     return matches;
   }
 
+  async latestObjectiveSignals(objectiveId: string): Promise<{
+    lastThreadPostAt: number | null;
+    lastPrLinkAt: number | null;
+  }> {
+    let lastThreadPostAt: number | null = null;
+    let lastPrLinkAt: number | null = null;
+    const thread = `obj:${objectiveId}`;
+    for (const { message } of this.stored) {
+      if (message.data?.kind !== 'objective_discuss' || message.data?.thread !== thread) continue;
+      lastThreadPostAt = Math.max(lastThreadPostAt ?? -Infinity, message.ts);
+      if (containsCanonicalPullRequestUrl(message.body)) {
+        lastPrLinkAt = Math.max(lastPrLinkAt ?? -Infinity, message.ts);
+      }
+    }
+    return { lastThreadPostAt, lastPrLinkAt };
+  }
+
   /** Test-only: number of events currently in the log. */
   size(): number {
     return this.stored.length;
   }
+}
+
+/** Bare `#123` is deliberately not evidence of a linked PR. */
+export function containsCanonicalPullRequestUrl(body: string): boolean {
+  return /https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/[0-9]+(?:\b|\/)/.test(
+    body,
+  );
 }
 
 function matchesChannel(ev: Message, channelId: string): boolean {

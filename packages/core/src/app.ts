@@ -174,7 +174,6 @@ import {
   WORK_STATE_TTL_MS,
   type WorkStateTracker,
 } from './index.js';
-
 import {
   type LoadedMember,
   MemberLoadError,
@@ -194,6 +193,7 @@ import {
   toWireDelivery,
 } from './notifications/store.js';
 import type { RawBodyStore } from './raw-body-types.js';
+import { composeTeamStatus } from './team-status.js';
 import { executeCustomTool } from './tool-sources/custom-executor.js';
 import { type McpToolManager, McpUnavailableError } from './tool-sources/mcp-manager.js';
 import { type ToolSourceStore, ToolSourcesError } from './tool-sources/store.js';
@@ -511,6 +511,7 @@ const API_PATH_PREFIXES = [
   PATHS.health,
   PATHS.instructions,
   PATHS.roster,
+  PATHS.teamStatus,
   PATHS.push,
   PATHS.subscribe,
   PATHS.history,
@@ -1386,6 +1387,30 @@ export function createApp(options: AppOptions): CreatedApp {
       activityWindowMs: WORK_STATE_TTL_MS,
       restartPending: await restartPendingMembers(),
     });
+  });
+
+  app.get(PATHS.teamStatus, auth, async (c) => {
+    const member = c.get('member');
+    if (!hasPermission(member.permissions, 'members.manage')) {
+      return c.json({ error: 'team status requires the members.manage permission' }, 403);
+    }
+    const raw = c.req.query('stalledMs');
+    const stalledAfterMs = raw === undefined ? null : Number(raw);
+    if (stalledAfterMs !== null && (!Number.isSafeInteger(stalledAfterMs) || stalledAfterMs <= 0)) {
+      return c.json({ error: 'stalledMs must be a positive integer' }, 400);
+    }
+    return c.json(
+      await composeTeamStatus({
+        broker,
+        brokerVersion: version,
+        members,
+        objectives,
+        eventLog: broker.getEventLog(),
+        activityStore,
+        generatedAt: now(),
+        stalledAfterMs,
+      }),
+    );
   });
 
   /**

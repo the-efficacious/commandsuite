@@ -4,6 +4,7 @@
  * Subcommands:
  *   csuite team get
  *   csuite team set [--name <n>] [--context <c>] [--context-file <path>]
+ *   csuite team status [--stalled <duration>] [--json]
  *
  * Talks to the running broker via the HTTP API. Mutations require
  * the calling member to have `team.manage`. Changes apply
@@ -25,7 +26,7 @@ export async function runTeamCommand(
 ): Promise<void> {
   const [sub, ...rest] = args;
   if (!sub || sub === '-h' || sub === '--help') {
-    throw new UsageError('team subcommand required. Use: get | set');
+    throw new UsageError('team subcommand required. Use: get | set | status');
   }
   switch (sub) {
     case 'get':
@@ -35,8 +36,66 @@ export async function runTeamCommand(
     case 'update':
       await runSet(rest, client, stdout);
       return;
+    case 'status':
+      await runStatus(rest, client, stdout);
+      return;
     default:
       throw new UsageError(`unknown team subcommand: ${sub}`);
+  }
+}
+
+function durationMs(input: string): number {
+  const match = /^(\d+)(ms|s|m|h|d)$/.exec(input);
+  if (!match) throw new UsageError('--stalled must be a duration such as 30m, 2h, or 1d');
+  const value = Number(match[1]);
+  const factor = { ms: 1, s: 1_000, m: 60_000, h: 3_600_000, d: 86_400_000 }[
+    match[2] as 'ms' | 's' | 'm' | 'h' | 'd'
+  ];
+  const result = value * factor;
+  if (!Number.isSafeInteger(result) || result <= 0)
+    throw new UsageError('--stalled must be positive');
+  return result;
+}
+
+async function runStatus(
+  args: string[],
+  client: Client,
+  stdout: (line: string) => void,
+): Promise<void> {
+  const { values } = parseArgs({
+    args,
+    options: { stalled: { type: 'string' }, json: { type: 'boolean' } },
+    allowPositionals: false,
+  });
+  const report = await client.teamStatus({
+    ...(values.stalled ? { stalledMs: durationMs(values.stalled) } : {}),
+  });
+  if (values.json) {
+    stdout(JSON.stringify(report, null, 2));
+    return;
+  }
+  if (report.members.length === 0) {
+    stdout('(no matching members)');
+    return;
+  }
+  for (const row of report.members) {
+    const presence =
+      row.presence === null
+        ? 'presence=absent'
+        : `connected=${row.presence.connected} authBlocked=${row.presence.authBlocked ?? 'unreported'}`;
+    stdout(`${row.member.name}  ${presence}  last-activity=${row.lastActivityAt ?? 'absent'}`);
+    if (row.presence?.runnerReports?.length) {
+      for (const runner of row.presence.runnerReports) {
+        stdout(
+          `  runner ${runner.runner} model=${runner.modelId ?? 'agent default — not resolved locally'} version=${runner.runnerVersion}${runner.versionSkew.skew ? ` SKEW broker=${runner.versionSkew.brokerVersion}` : ''}`,
+        );
+      }
+    } else stdout('  runner unreported');
+    for (const objective of row.activeObjectives) {
+      stdout(
+        `  ${objective.id} ${objective.status}${objective.stalled ? ` STALLED missing=${objective.staleSignals.join(',')}` : ''} last-post=${objective.lastThreadPostAt ?? 'absent'} last-pr=${objective.lastPrLinkAt ?? 'absent'} last-lifecycle=${objective.lastLifecycleAt ?? 'absent'}`,
+      );
+    }
   }
 }
 

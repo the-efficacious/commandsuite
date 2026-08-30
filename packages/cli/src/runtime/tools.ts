@@ -135,6 +135,21 @@ export function defineTools(
         `when the window is unknown; recent activity is not executor liveness.`,
       inputSchema: { type: 'object', properties: {} },
     },
+    ...(instructions.permissions.includes('members.manage')
+      ? [
+          {
+            name: 'team_status',
+            description:
+              'Read the broker-composed team operability report: runner identity/skew, presence/auth state, open objectives and their stored thread/PR/lifecycle signals, and last activity. Optional stalled duration filters to members with a stalled objective.',
+            inputSchema: {
+              type: 'object' as const,
+              properties: {
+                stalled: { type: 'string', description: 'Duration such as 30m, 2h, or 1d' },
+              },
+            },
+          },
+        ]
+      : []),
     {
       name: 'broadcast',
       description:
@@ -1961,6 +1976,8 @@ export async function handleToolCall(
     switch (name) {
       case 'roster':
         return await handleRoster(brokerClient, instructions);
+      case 'team_status':
+        return await handleTeamStatus(args, brokerClient);
       case 'broadcast':
         return await handleBroadcast(args, brokerClient);
       case 'send':
@@ -2123,6 +2140,28 @@ export async function handleToolCall(
     }
     return errorResult(err instanceof Error ? err.message : String(err));
   }
+}
+
+async function handleTeamStatus(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+): Promise<CallToolResult> {
+  let stalledMs: number | undefined;
+  if (args.stalled !== undefined) {
+    if (typeof args.stalled !== 'string') return errorResult('stalled must be a duration string');
+    const match = /^(\d+)(ms|s|m|h|d)$/.exec(args.stalled);
+    if (!match) return errorResult('stalled must be a duration such as 30m, 2h, or 1d');
+    const factor = { ms: 1, s: 1_000, m: 60_000, h: 3_600_000, d: 86_400_000 }[
+      match[2] as 'ms' | 's' | 'm' | 'h' | 'd'
+    ];
+    stalledMs = Number(match[1]) * factor;
+    if (!Number.isSafeInteger(stalledMs) || stalledMs <= 0)
+      return errorResult('stalled must be positive');
+  }
+  const report = await brokerClient.teamStatus({
+    ...(stalledMs === undefined ? {} : { stalledMs }),
+  });
+  return textResult(JSON.stringify(report, null, 2));
 }
 
 async function handleRoster(
