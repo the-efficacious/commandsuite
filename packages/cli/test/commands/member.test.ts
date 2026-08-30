@@ -26,13 +26,18 @@ function fakeClient(overrides: Partial<FakeClient> = {}): { client: Client; call
   const calls: FakeClient = {
     listMembers: vi.fn().mockResolvedValue([]),
     createMember: vi.fn().mockResolvedValue({
+      credentialMode: 'pending',
       member: {
         name: 'newbie',
         role: { title: 'engineer', description: 'ships code' },
         instructions: '',
         permissions: [],
       },
-      token: 'csuite_fake_token',
+      enrollment: {
+        method: 'device_code',
+        connectCommand: 'csuite connect',
+        approveCommand: 'csuite connect approve',
+      },
     }),
     updateMember: vi.fn().mockResolvedValue({
       name: 'alice',
@@ -85,7 +90,7 @@ describe('csuite member list', () => {
 });
 
 describe('csuite member create', () => {
-  it('POSTs to createMember with the supplied flags and prints the token banner', async () => {
+  it('creates a pending member and prints the device-enrolment path without a token', async () => {
     const { client, calls } = fakeClient();
     const out = captureStdout();
     await runMemberCommand(
@@ -109,8 +114,11 @@ describe('csuite member create', () => {
       role: { title: 'engineer', description: 'ships code' },
       instructions: '',
       permissions: ['operator'],
+      credentialMode: 'pending',
     });
-    expect(out.lines.some((l) => l.includes('csuite_fake_token'))).toBe(true);
+    expect(out.lines.join('\n')).not.toContain('BEARER TOKEN');
+    expect(out.lines.join('\n')).toContain('no token was created');
+    expect(out.lines.join('\n')).toContain('csuite connect approve');
     expect(out.lines).toContain(
       '  role description: 10 characters · ≈3 estimated tokens (characters ÷ 4)',
     );
@@ -124,6 +132,26 @@ describe('csuite member create', () => {
     await expect(
       runMemberCommand(['create', '--title', 'engineer'], client, () => {}),
     ).rejects.toBeInstanceOf(UsageError);
+  });
+
+  it('fails closed without printing a credential when the broker lacks pending mode', async () => {
+    const { client } = fakeClient({
+      createMember: vi.fn().mockResolvedValue({
+        credentialMode: 'bootstrap',
+        member: {
+          name: 'newbie',
+          role: { title: 'engineer', description: '' },
+          instructions: '',
+          permissions: [],
+        },
+        token: 'not-a-real-credential',
+      }),
+    });
+    const out = captureStdout();
+    await expect(
+      runMemberCommand(['create', '--name', 'newbie', '--title', 'engineer'], client, out.write),
+    ).rejects.toThrow('does not support pending device enrolment');
+    expect(out.lines.join('\n')).not.toContain('not-a-real-credential');
   });
 
   it('errors when --title is missing', async () => {

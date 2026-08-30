@@ -74,6 +74,32 @@ async function bootHttp(): Promise<RunningServer> {
   return running;
 }
 
+async function bootHttpWithDb() {
+  const seeded = await seedStores({
+    team: TEAM,
+    members: [
+      {
+        name: 'alice',
+        role: { title: 'admin', description: '' },
+        rawPermissions: ['members.manage'],
+        permissions: ['members.manage'],
+        token: ADMIN_TOKEN,
+      },
+    ],
+  });
+  const running = await runServer({
+    db: seeded.db,
+    https: { ...defaultHttpsConfig(), mode: 'off' },
+    webPush: null,
+    port: 0,
+    host: '127.0.0.1',
+    publicRoot: null,
+    logger: silentLogger(),
+  });
+  serversToStop.push(running);
+  return { running, db: seeded.db };
+}
+
 async function postMember(running: RunningServer, body: unknown): Promise<Response> {
   return fetch(`http://127.0.0.1:${running.port}/members`, {
     method: 'POST',
@@ -106,6 +132,33 @@ describe('runServer member mutation', () => {
     const listed = (await list.json()) as { members: Array<{ name: string }> };
     const names = listed.members.map((m) => m.name);
     expect(names).toContain('newbie');
+  });
+
+  it('creates a pending member without minting a credential', async () => {
+    const { running, db } = await bootHttpWithDb();
+    const res = await postMember(running, {
+      name: 'pending-agent',
+      role: { title: 'engineer', description: '' },
+      permissions: [],
+      credentialMode: 'pending',
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown> & {
+      member: { name: string };
+      enrollment: { method: string; connectCommand: string; approveCommand: string };
+    };
+    expect(body).not.toHaveProperty('token');
+    expect(body.credentialMode).toBe('pending');
+    expect(body.member.name).toBe('pending-agent');
+    expect(body.enrollment).toEqual({
+      method: 'device_code',
+      connectCommand: 'csuite connect',
+      approveCommand: 'csuite connect approve',
+    });
+    const tokenCount = db
+      .prepare('SELECT COUNT(*) AS count FROM tokens WHERE member_name = ?')
+      .get('pending-agent') as { count: number };
+    expect(tokenCount.count).toBe(0);
   });
 });
 

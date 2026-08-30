@@ -860,9 +860,10 @@ export class Client {
   }
 
   /**
-   * Create a new member. Requires `members.manage`. Returns the new
-   * member plus the plaintext bearer token (shown once). TOTP is
-   * optional and enrolled separately via `enrollTotp(name)`.
+   * Create a new member. Requires `members.manage`. Prefer
+   * `credentialMode: 'pending'`: no credential is minted or returned;
+   * the member enrolls through the device-code flow. Omitting the mode
+   * preserves the 0.8 bootstrap-token response during migration.
    */
   async createMember(payload: CreateMemberRequest): Promise<CreateMemberResponse> {
     const resp = await this.request(PATHS.members, {

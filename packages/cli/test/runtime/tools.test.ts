@@ -77,13 +77,18 @@ describe('instruction authoring tools report text cost', () => {
   it('reports role and personal-instruction metrics after member creation', async () => {
     const broker = makeBroker({
       createMember: vi.fn(async () => ({
+        credentialMode: 'pending' as const,
         member: {
           name: 'newbie',
           role: { title: 'engineer', description: '12345' },
           permissions: [],
           instructions: '12345678',
         },
-        token: 'secret-token',
+        enrollment: {
+          method: 'device_code' as const,
+          connectCommand: 'csuite connect' as const,
+          approveCommand: 'csuite connect approve' as const,
+        },
       })),
     } as never);
     const text = getCallText(
@@ -96,6 +101,32 @@ describe('instruction authoring tools report text cost', () => {
     );
     expect(text).toContain('role description: 5 characters · ≈2 estimated tokens');
     expect(text).toContain('personal instructions: 8 characters · ≈2 estimated tokens');
+    expect(text).toContain('no token was created');
+    expect(text).toContain('csuite connect approve');
+  });
+
+  it('fails closed without returning a credential from a legacy broker', async () => {
+    const broker = makeBroker({
+      createMember: vi.fn(async () => ({
+        credentialMode: 'bootstrap' as const,
+        member: {
+          name: 'newbie',
+          role: { title: 'engineer', description: '' },
+          permissions: [],
+        },
+        token: 'not-a-real-credential',
+      })),
+    } as never);
+    const text = getCallText(
+      (await handleToolCall(
+        'members_add',
+        { name: 'newbie', title: 'engineer' },
+        broker,
+        ADMIN_PACKET,
+      )) as never,
+    );
+    expect(text).toContain('does not support pending device enrolment');
+    expect(text).not.toContain('not-a-real-credential');
   });
 });
 

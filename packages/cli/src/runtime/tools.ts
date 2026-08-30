@@ -2861,12 +2861,20 @@ async function handleMembersAdd(
     role: { title, description },
     instructions,
     permissions,
+    credentialMode: 'pending',
   });
+  if (result.credentialMode !== 'pending') {
+    return errorResult(
+      'members_add: this broker does not support pending device enrolment; upgrade the broker',
+    );
+  }
   return textResult(
     `member '${result.member.name}' created.\n` +
       `role description: ${formatTextMetrics(description)}\n` +
       `personal instructions: ${formatTextMetrics(instructions)}\n` +
-      `bearer token (capture now — not shown again):\n  ${result.token}`,
+      `credential: pending device enrolment (no token was created).\n` +
+      `next: ${result.enrollment.connectCommand} as '${name}', then ` +
+      `${result.enrollment.approveCommand} --code <code> --member ${name}`,
   );
 }
 

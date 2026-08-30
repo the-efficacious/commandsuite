@@ -240,8 +240,12 @@ function CreateMemberForm() {
         role: { title, description },
         instructions,
         permissions: formPermissions.value,
+        credentialMode: 'pending',
       });
-      reveal.value = { kind: 'create', response };
+      if (response.credentialMode !== 'pending') {
+        throw new Error('this broker does not support pending device enrolment');
+      }
+      reveal.value = { kind: 'pending', response };
       formOpen.value = false;
       await refresh();
       await loadRoster();

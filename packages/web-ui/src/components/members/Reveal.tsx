@@ -8,6 +8,7 @@
  */
 
 import type {
+  CreateMemberPendingResponse,
   CreateMemberResponse,
   EnrollTotpResponse,
   RotateTokenResponse,
@@ -15,12 +16,13 @@ import type {
 import { useState } from 'preact/hooks';
 
 export type Reveal =
-  | { kind: 'create'; response: CreateMemberResponse }
+  | { kind: 'create'; response: Extract<CreateMemberResponse, { credentialMode: 'bootstrap' }> }
+  | { kind: 'pending'; response: CreateMemberPendingResponse }
   | { kind: 'rotate'; name: string; response: RotateTokenResponse }
   | { kind: 'totp'; name: string; response: EnrollTotpResponse };
 
 export function revealTargetName(r: Reveal): string {
-  return r.kind === 'create' ? r.response.member.name : r.name;
+  return r.kind === 'create' || r.kind === 'pending' ? r.response.member.name : r.name;
 }
 
 export interface RevealBannerProps {
@@ -34,6 +36,8 @@ export function RevealBanner({ reveal: r, onDismiss }: RevealBannerProps) {
   if (r.kind === 'create') {
     title = `Created '${r.response.member.name}'`;
     fields.push({ label: 'Bearer token', value: r.response.token });
+  } else if (r.kind === 'pending') {
+    title = `Created '${r.response.member.name}' — pending enrolment`;
   } else if (r.kind === 'rotate') {
     title = `Rotated token for '${r.name}'`;
     fields.push({ label: 'Bearer token', value: r.response.token });
@@ -53,10 +57,21 @@ export function RevealBanner({ reveal: r, onDismiss }: RevealBannerProps) {
               <SecretField key={f.label} label={f.label} value={f.value} />
             ))}
           </div>
-          <div style="margin-top:12px;font-style:italic;color:var(--ef-text-muted)">
-            Save these now — they are not persisted anywhere else. Dismissing this banner hides them
-            forever.
-          </div>
+          {r.kind === 'pending' ? (
+            <div style="margin-top:12px;color:var(--ef-text-muted)">
+              No credential was created. Run <code>csuite connect</code> as this member, then
+              approve its device code with{' '}
+              <code>
+                csuite connect approve --code &lt;code&gt; --member {r.response.member.name}
+              </code>
+              .
+            </div>
+          ) : (
+            <div style="margin-top:12px;font-style:italic;color:var(--ef-text-muted)">
+              Save these now — they are not persisted anywhere else. Dismissing this banner hides
+              them forever.
+            </div>
+          )}
         </div>
       </div>
       <button

@@ -1606,6 +1606,7 @@ export const CreateMemberRequestSchema = z.object({
   role: RoleSchema,
   instructions: z.string().default(''),
   permissions: MemberPermissionListSchema,
+  credentialMode: z.enum(['bootstrap', 'pending']).default('bootstrap'),
 });
 
 export const UpdateMemberRequestSchema = z
@@ -1619,10 +1620,22 @@ export const UpdateMemberRequestSchema = z
     { message: 'update must include at least one of: role, instructions, permissions' },
   );
 
-export const CreateMemberResponseSchema = z.object({
-  member: TeammateSchema,
-  token: z.string(),
-});
+export const CreateMemberResponseSchema = z.discriminatedUnion('credentialMode', [
+  z.object({
+    credentialMode: z.literal('bootstrap'),
+    member: TeammateSchema,
+    token: z.string(),
+  }),
+  z.object({
+    credentialMode: z.literal('pending'),
+    member: TeammateSchema,
+    enrollment: z.object({
+      method: z.literal('device_code'),
+      connectCommand: z.literal('csuite connect'),
+      approveCommand: z.literal('csuite connect approve'),
+    }),
+  }),
+]);
 
 export const ListMembersResponseSchema = z.object({
   members: z.array(MemberSchema),
