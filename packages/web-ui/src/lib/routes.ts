@@ -14,10 +14,17 @@
  * Unknown paths resolve to `home` so stale links don't strand users.
  */
 
-export type ProfileTab = 'overview' | 'activity' | 'objectives' | 'files' | 'manage';
+export type ProfileTab =
+  | 'overview'
+  | 'acceptance-undeclared'
+  | 'activity'
+  | 'objectives'
+  | 'files'
+  | 'manage';
 
 export const PROFILE_TABS: readonly ProfileTab[] = [
   'overview',
+  'acceptance-undeclared',
   'activity',
   'objectives',
   'files',
