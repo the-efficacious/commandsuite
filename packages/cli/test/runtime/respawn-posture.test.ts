@@ -46,6 +46,8 @@ function fakeProcess(): AgentProcess {
 function fakeContext(logger: Logger) {
   return {
     runner: {
+      secretsEnv: {},
+      captureHost: null,
       instructions: {
         name: 'me',
         role: { title: 'engineer' },
