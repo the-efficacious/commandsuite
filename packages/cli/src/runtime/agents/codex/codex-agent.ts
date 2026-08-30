@@ -150,6 +150,21 @@ function codexLocalMcpCheck(): AgentDoctorCheck {
   }
 }
 
+/**
+ * The thread banner tells the truth about what HAPPENED, not what was
+ * asked: bare --resume that found nothing started fresh, and saying
+ * "(resumed)" next to "starting a new thread" is a lie in the log
+ * (caught by obj-mtfvz379-i's cold acceptance rerun).
+ */
+export function threadBannerLine(
+  threadId: string,
+  askedResume: string | true | undefined,
+  resumedFresh: boolean,
+): string {
+  const resumed = askedResume !== undefined && !resumedFresh;
+  return `csuite codex: thread ${threadId}${resumed ? ' (resumed)' : ''} — pick it up later with: csuite codex --resume ${threadId}\n`;
+}
+
 export const CODEX_META: AgentAdapterMeta = {
   id: 'codex',
   displayName: 'OpenAI Codex',
@@ -302,9 +317,7 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
       // back up later — the codex analogue of claude's session id.
       const threadId = spawned.getThreadId();
       process.stderr.write(
-        (threadId
-          ? `csuite codex: thread ${threadId}${effectiveResume ? ' (resumed)' : ''} — pick it up later with: csuite codex --resume ${threadId}\n`
-          : '') +
+        (threadId ? threadBannerLine(threadId, effectiveResume, spawned.resumedFresh) : '') +
           `csuite codex: agent connected — Ctrl-C to stop. Direct it via the broker:\n` +
           `    csuite push --agent ${runner.instructions.name} --body "your instructions"\n\n`,
       );
