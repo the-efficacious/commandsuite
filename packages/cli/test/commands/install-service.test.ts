@@ -18,6 +18,7 @@ import {
   renderRunnerUnit,
   resolveServiceUrl,
   runInstallServiceCommand,
+  snapshotPrivilegedFile,
   sudoersFilePathFor,
   systemdValue,
   UsageError,
@@ -368,6 +369,24 @@ describe('replacement safety (delete nothing, previous runner untouched)', () =>
     );
   });
 
+  it('flow: a failed snapshot refuses BEFORE any privileged mutation', async () => {
+    const { deps, commands, workspace } = fixture(null);
+    (deps as { readExisting: (p: string) => string | null }).readExisting = () => {
+      throw new UsageError(
+        'install-service: cannot snapshot /etc/sudoers.d/x — refusing before any mutation',
+      );
+    };
+    await expect(
+      runInstallServiceCommand(
+        { verb: 'stub', url: 'http://x:1', workspace, timeoutMs: 1, execPath: '/usr/bin/csuite' },
+        deps as never,
+      ),
+    ).rejects.toThrow(/refusing before any mutation/);
+    expect(commands.join('\n')).not.toMatch(
+      /install -m|rm -f|systemctl (stop|start|restart|enable|disable|daemon-reload)/,
+    );
+  });
+
   it('stops and disables a fresh install when liveness fails and nothing preceded it', async () => {
     const { deps, commands, workspace } = fixture(null);
     await expect(
@@ -383,6 +402,47 @@ describe('replacement safety (delete nothing, previous runner untouched)', () =>
       /systemctl disable csuite-builder[\s\S]*systemctl stop csuite-builder[\s\S]*rm -f \/etc\/systemd\/system\/csuite-builder\.service[\s\S]*rm -f \/etc\/sudoers\.d\/builder-csuite-runner[\s\S]*daemon-reload/,
     );
     expect(joined).not.toContain('.previous');
+  });
+});
+
+describe('privileged snapshot (root-0440 sudoers)', () => {
+  const enoent = () => {
+    const err = new Error('ENOENT') as NodeJS.ErrnoException;
+    err.code = 'ENOENT';
+    throw err;
+  };
+  const eacces = () => {
+    const err = new Error('EACCES') as NodeJS.ErrnoException;
+    err.code = 'EACCES';
+    throw err;
+  };
+
+  it('a readable file is its own snapshot', () => {
+    expect(snapshotPrivilegedFile('/x', { read: () => 'bytes', privRead: () => null })).toBe(
+      'bytes',
+    );
+  });
+
+  it('ENOENT is the only unprivileged reading of absent', () => {
+    expect(snapshotPrivilegedFile('/x', { read: enoent, privRead: () => 'never' })).toBe(null);
+  });
+
+  it('EACCES falls back to the privileged reader', () => {
+    expect(snapshotPrivilegedFile('/x', { read: eacces, privRead: () => 'root bytes' })).toBe(
+      'root bytes',
+    );
+    expect(snapshotPrivilegedFile('/x', { read: eacces, privRead: () => null })).toBe(null);
+  });
+
+  it('an undecidable snapshot refuses (never absent-by-assumption)', () => {
+    expect(() =>
+      snapshotPrivilegedFile('/x', {
+        read: eacces,
+        privRead: () => {
+          throw new UsageError('cannot snapshot');
+        },
+      }),
+    ).toThrow(/cannot snapshot/);
   });
 });
 

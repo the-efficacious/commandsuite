@@ -279,6 +279,29 @@ export function formatOperatorHandoff(input: {
   ].join('\n');
 }
 
+/**
+ * Snapshot a privileged destination before mutating it. ENOENT is the
+ * only reading of "absent": an unreadable file (root-0440 sudoers,
+ * EACCES) falls back to a privileged `cat`, and if THAT cannot decide,
+ * we refuse before any mutation — deleting a pre-existing rule the
+ * snapshot never captured is the one unrecoverable rollback.
+ */
+export function snapshotPrivilegedFile(
+  path: string,
+  io: {
+    read: (path: string) => string;
+    /** Run the privileged reader; returns stdout or null when the file does not exist; throws otherwise. */
+    privRead: (path: string) => string | null;
+  },
+): string | null {
+  try {
+    return io.read(path);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    return io.privRead(path);
+  }
+}
+
 // ─── install-service flow ───────────────────────────────────────────
 
 export interface InstallServiceInput {
@@ -387,13 +410,23 @@ export async function runInstallServiceCommand(
   // previous runner back exactly as it was.
   const readExisting =
     deps.readExisting ??
-    ((path: string): string | null => {
-      try {
-        return readFileSync(path, 'utf8');
-      } catch {
-        return null;
-      }
-    });
+    ((path: string): string | null =>
+      snapshotPrivilegedFile(path, {
+        read: (target) => readFileSync(target, 'utf8'),
+        privRead: (target) => {
+          const cmd = privilege === 'root' ? ['cat', target] : ['sudo', '-n', 'cat', target];
+          const res = runSync(cmd[0] as string, cmd.slice(1), {
+            stdio: ['ignore', 'pipe', 'pipe'],
+            encoding: 'utf8',
+            timeout: 10_000,
+          });
+          if (res.status === 0) return String(res.stdout);
+          if (/no such file/i.test(String(res.stderr ?? ''))) return null;
+          throw new UsageError(
+            `install-service: cannot snapshot ${target} before replacing it (${String(res.stderr ?? '').trim() || `exit ${res.status}`}) — refusing before any mutation`,
+          );
+        },
+      }));
   const previousUnit = readExisting(unitPath);
   const previousSudoers = readExisting(sudoersPath);
   const anyPrevious = previousUnit !== null || previousSudoers !== null;
