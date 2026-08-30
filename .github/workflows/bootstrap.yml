@@ -53,7 +53,14 @@ jobs:
         run: |
           TOKEN=$(cat "$CSUITE_BOOTSTRAP_DIR/secrets/admin.token")
           URL=http://127.0.0.1:8719
-          curl -fsS -H "Authorization: Bearer $TOKEN" "$URL/members/builder/activity?limit=50" | grep -q '"kind":"session_start"'
+          # The activity uploader batches: connected=1 (step 8) can land
+          # before the first batch flushes, so poll rather than read once.
+          ok=0
+          for i in $(seq 1 30); do
+            if curl -fsS -H "Authorization: Bearer $TOKEN" "$URL/members/builder/activity?limit=50" | grep -q '"kind":"session_start"'; then ok=1; break; fi
+            sleep 2
+          done
+          [ "$ok" = 1 ] || { echo "no session_start activity event within 60s" >&2; exit 1; }
           echo "session_start activity event present"
           curl -fsS -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
             -d '{"to":"builder","body":"builder: are you there?"}' "$URL/push" >/dev/null
