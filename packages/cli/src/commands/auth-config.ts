@@ -415,3 +415,34 @@ export function migrateLegacyStore(
   }
   return { ...report, migrated, skipped };
 }
+
+/**
+ * The message for a headless runner start with nothing to authenticate
+ * with — the sentence a stranger can act on without reading source.
+ * Names the whole lookup key (URL and directory: `findAuthEntry` is
+ * keyed on both, and "for this directory" hides the half that bites
+ * when a service unit forgets `CSUITE_URL`), the two fixes, and the
+ * command that shows what IS enrolled. Pure so the wording is tested.
+ */
+export function formatHeadlessNoAuth(input: {
+  url: string;
+  cwd: string;
+  /** Neither `--url` nor `$CSUITE_URL` was given; the loopback default applied. */
+  urlDefaulted: boolean;
+}): string {
+  const lines = [
+    `no saved auth for ${input.url} scoped to ${input.cwd}, and stdin is not a TTY, so the enrollment wizard cannot run.`,
+  ];
+  if (input.urlDefaulted) {
+    lines.push(
+      `  ${input.url} is the default broker URL (no --url, no $CSUITE_URL). If this device was`,
+      '  enrolled against another broker, set $CSUITE_URL or --url to that exact URL.',
+    );
+  }
+  lines.push(
+    `  enroll this directory:  csuite connect --url ${input.url} --workspace ${input.cwd}`,
+    '  or pass a token:        CSUITE_TOKEN=csuite_… (or --token)',
+    '  what is enrolled here:  csuite auth list',
+  );
+  return lines.join('\n');
+}

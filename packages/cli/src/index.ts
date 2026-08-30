@@ -26,11 +26,11 @@ import { Client } from 'csuite-sdk/client';
 import { DEFAULT_PORT, ENV } from 'csuite-sdk/protocol';
 import { parseDataFlag, parseSubcommandArgs } from './args.js';
 import { runAuthCommand } from './commands/auth.js';
-import { findAuthEntry } from './commands/auth-config.js';
+import { findAuthEntry, formatHeadlessNoAuth } from './commands/auth-config.js';
 import { runClaudeCommand } from './commands/claude.js';
 import { runCodexCommand } from './commands/codex.js';
 import { runConnectCommand } from './commands/connect.js';
-import { formatReport, runAgentDoctor, runDoctor } from './commands/doctor.js';
+import { formatReport, runAgentDoctor, type SavedAuthInput } from './commands/doctor.js';
 import { runEnrollCommand } from './commands/enroll.js';
 import { UsageError } from './commands/errors.js';
 import { runMemberCommand } from './commands/member.js';
@@ -158,6 +158,23 @@ async function resolveAuthOrConnect(input: { url?: string; token?: string }): Pr
   }
   if (token) return { url, token };
 
+  // No auth for (url, cwd). Headless, the wizard below cannot prompt —
+  // it would exit 0 at the URL question (a supervisor with
+  // Restart=always then loops it forever) or hang on a device code
+  // until it expires (commandsuite#199). Fail like every single-use
+  // verb does, and name the whole lookup key: "this directory" hides
+  // the URL half, which is the half that bites when a service unit
+  // forgets CSUITE_URL and the lookup silently runs against loopback.
+  if (!process.stdin.isTTY) {
+    fail(
+      formatHeadlessNoAuth({
+        url,
+        cwd: process.cwd(),
+        urlDefaulted: input.url === undefined && !process.env[ENV.url],
+      }),
+    );
+  }
+
   // No auth in this project. Fall through to the device-code flow.
   // Pass `input.url` through (not the resolved fallback) so connect
   // re-runs its own resolution — that way an unset `--url` still
@@ -174,6 +191,25 @@ async function resolveAuthOrConnect(input: { url?: string; token?: string }): Pr
     if (err instanceof UsageError) fail(err.message, 2);
     fail(err instanceof Error ? err.message : String(err));
   }
+}
+
+/**
+ * Gather what the runner will authenticate with, for the doctor's
+ * `saved auth` check. Mirrors `resolveAuthOrConnect`'s lookup exactly
+ * (same URL default, same cwd) so the report and the runner agree.
+ */
+function savedAuthInput(input: { url?: string; token?: string }): SavedAuthInput {
+  const url = input.url ?? process.env[ENV.url] ?? `http://127.0.0.1:${DEFAULT_PORT}`;
+  const tokenFromEnv = Boolean(input.token ?? process.env[ENV.token]);
+  const entry = tokenFromEnv ? null : findAuthEntry(url);
+  return {
+    url,
+    urlDefaulted: input.url === undefined && !process.env[ENV.url],
+    cwd: process.cwd(),
+    tokenFromEnv,
+    entry: entry === null ? null : { workspace: entry.workspace },
+    interactive: Boolean(process.stdin.isTTY),
+  };
 }
 
 async function main(): Promise<void> {
@@ -839,7 +875,9 @@ async function handleClaude(args: string[]): Promise<void> {
   // Explicit `--doctor` is the "run doctor, print the full report, exit"
   // mode. Unchanged.
   if (doctor) {
-    const report = await runDoctor();
+    const report = await runAgentDoctor(createClaudeAdapter({}), {
+      auth: savedAuthInput({ url, token }),
+    });
     log(formatReport(report));
     process.exit(report.anyFail ? 1 : 0);
   }
@@ -856,6 +894,7 @@ async function handleClaude(args: string[]): Promise<void> {
   if (!skipDoctor) {
     const report = await runAgentDoctor(createClaudeAdapter({}), {
       includeVersion: false,
+      auth: savedAuthInput({ url, token }),
     });
     if (report.anyFail) {
       process.stderr.write(formatReport(report));
@@ -992,7 +1031,9 @@ async function handleCodex(args: string[]): Promise<void> {
   // Explicit `--doctor`: run the full preflight report (version probe
   // included) and exit — mirrors `csuite claude --doctor`.
   if (doctor) {
-    const report = await runAgentDoctor(createCodexAdapter({}));
+    const report = await runAgentDoctor(createCodexAdapter({}), {
+      auth: savedAuthInput({ url, token }),
+    });
     log(formatReport(report));
     process.exit(report.anyFail ? 1 : 0);
   }
@@ -1001,7 +1042,10 @@ async function handleCodex(args: string[]): Promise<void> {
   // abort (with the full report); WARNs proceed; `--skip-doctor` opts
   // out; the version probe is skipped for startup latency.
   if (!skipDoctor) {
-    const report = await runAgentDoctor(createCodexAdapter({}), { includeVersion: false });
+    const report = await runAgentDoctor(createCodexAdapter({}), {
+      includeVersion: false,
+      auth: savedAuthInput({ url, token }),
+    });
     if (report.anyFail) {
       process.stderr.write(formatReport(report));
       process.stderr.write(
