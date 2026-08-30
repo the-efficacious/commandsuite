@@ -1206,16 +1206,38 @@ export interface CreateMemberRequest {
   role: Role;
   instructions?: string;
   permissions: Permission[];
+  /**
+   * `bootstrap` preserves the 0.8 behaviour: mint a bearer credential
+   * and return it once. `pending` creates the member with no credential;
+   * the member enrolls a device through `csuite connect` and an operator
+   * approves it with `csuite connect approve`.
+   *
+   * Omitted means `bootstrap` for wire compatibility with 0.8 clients.
+   */
+  credentialMode?: 'bootstrap' | 'pending';
 }
 
 /**
- * `POST /members` response. The plaintext `token` is shown to the
- * caller who created the member, then immediately hashed on disk.
+ * `POST /members` response. Callers should select `pending`; the
+ * bootstrap variant remains while 0.8 clients migrate.
  */
-export interface CreateMemberResponse {
+export interface CreateMemberBootstrapResponse {
+  credentialMode: 'bootstrap';
   member: Teammate;
   token: string;
 }
+
+export interface CreateMemberPendingResponse {
+  credentialMode: 'pending';
+  member: Teammate;
+  enrollment: {
+    method: 'device_code';
+    connectCommand: 'csuite connect';
+    approveCommand: 'csuite connect approve';
+  };
+}
+
+export type CreateMemberResponse = CreateMemberBootstrapResponse | CreateMemberPendingResponse;
 
 /**
  * `PATCH /members/:name` body. Any subset of fields may be present;

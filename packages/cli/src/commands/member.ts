@@ -112,7 +112,13 @@ async function runCreate(
     role: { title, description },
     instructions,
     permissions: permissions as Permission[],
+    credentialMode: 'pending',
   });
+  if (result.credentialMode !== 'pending') {
+    throw new UsageError(
+      'member create: this broker does not support pending device enrolment; upgrade the broker',
+    );
+  }
 
   stdout('');
   stdout(
@@ -120,12 +126,10 @@ async function runCreate(
   );
   stdout(`  role description: ${formatTextMetrics(description)}`);
   stdout(`  personal instructions: ${formatTextMetrics(instructions)}`);
-  stdout('');
-  stdout('  ┌─ BEARER TOKEN — save this now; it is not persisted anywhere else ─┐');
-  stdout(`  │ ${result.token}`);
-  stdout('  └────────────────────────────────────────────────────────────────────┘');
-  stdout('');
-  stdout(`  To enable web UI login, run: csuite enroll --user ${name}`);
+  stdout('  credential: pending device enrolment (no token was created)');
+  stdout(`  next: ${result.enrollment.connectCommand} as '${name}', then`);
+  stdout(`        ${result.enrollment.approveCommand} --code <code> --member ${name}`);
+  stdout(`  web UI login is separate: csuite enroll --member ${name}`);
   stdout('');
 }
 

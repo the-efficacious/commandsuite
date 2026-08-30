@@ -136,8 +136,13 @@ describe('POST /members', () => {
       }),
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { member: Teammate; token: string };
+    const body = (await res.json()) as {
+      credentialMode: 'bootstrap';
+      member: Teammate;
+      token: string;
+    };
     expect(body.member.name).toBe('newbie');
+    expect(body.credentialMode).toBe('bootstrap');
     expect(body.token).toMatch(/^csuite_/);
     expect(persistMembers).toHaveBeenCalledTimes(1);
     expect(broker.hasMember('newbie')).toBe(true);

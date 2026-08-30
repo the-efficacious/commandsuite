@@ -5166,7 +5166,8 @@ export function createApp(options: AppOptions): CreatedApp {
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
     }
-    const token = generateBearerToken();
+    const credentialMode = parsed.data.credentialMode;
+    const token = credentialMode === 'bootstrap' ? generateBearerToken() : undefined;
     try {
       members.addMember({
         name: parsed.data.name,
@@ -5188,13 +5189,15 @@ export function createApp(options: AppOptions): CreatedApp {
     // would match its hash. `origin = 'bootstrap'` matches the JSON-
     // initiated path; the row is labeled 'initial' so reviewers
     // listing tokens can see this is the one created at member-add.
-    await tokens.insert({
-      memberName: parsed.data.name,
-      rawToken: token,
-      label: 'initial',
-      origin: 'bootstrap',
-      createdBy: member.name,
-    });
+    if (token !== undefined) {
+      await tokens.insert({
+        memberName: parsed.data.name,
+        rawToken: token,
+        label: 'initial',
+        origin: 'bootstrap',
+        createdBy: member.name,
+      });
+    }
     persistMembers();
     const teammate: Teammate = {
       name: parsed.data.name,
@@ -5208,7 +5211,18 @@ export function createApp(options: AppOptions): CreatedApp {
       permissions: teammate.permissions,
       createdBy: member.name,
     });
-    return c.json({ member: teammate, token });
+    if (credentialMode === 'pending') {
+      return c.json({
+        credentialMode,
+        member: teammate,
+        enrollment: {
+          method: 'device_code',
+          connectCommand: 'csuite connect',
+          approveCommand: 'csuite connect approve',
+        },
+      });
+    }
+    return c.json({ credentialMode, member: teammate, token });
   });
 
   app.patch(`${PATHS.members}/:name`, auth, async (c) => {
