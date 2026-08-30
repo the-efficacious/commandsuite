@@ -1,0 +1,73 @@
+name: Release prepare
+
+# Renders the release checklist nightly (and on demand) so the human
+# gate is always one read away: scripts/release-prepare.mjs collects
+# the changesets, the door manifest's read-these list, artefact
+# hashes, and the full six-job gate, and renders RELEASE-<version>.md
+# with the two signature lines. The script publishes nothing — the
+# cannot-publish proof lives in scripts/test/release-prepare.test.mjs
+# — and exits nonzero on any failed gate, unresolved hold, or
+# unclassified PR, so an unsignable night is a red run, never a
+# plausible artifact. docs/dev/releasing.mdx is the contract.
+
+on:
+  schedule:
+    - cron: '17 5 * * *' # nightly, 05:17 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release-prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          # The script derives the release range from real tags.
+          fetch-depth: 0
+
+      # `changeset status` diffs against the local `main` ref; create
+      # it when absent (dispatch runs from another ref), never touch a
+      # checked-out main.
+      - name: Materialize the changesets base ref
+        run: git show-ref --verify --quiet refs/heads/main || git branch main origin/main
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Prepare the release checklist (full gate, publishes nothing)
+        env:
+          # Rate limits only; the script works unauthenticated and
+          # never writes (structurally, and by the trap-test proof).
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The runner image ships Chrome; the route-walk gate needs a
+          # Chromium-family binary.
+          CHROMIUM: /usr/bin/google-chrome
+        run: node scripts/release-prepare.mjs
+
+      - name: Upload the rendered checklist
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-checklist
+          path: RELEASE-*.md
+          if-no-files-found: warn
+
+      - name: Upload the gate logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-prepare-logs
+          path: .release/prepare-logs/
+          if-no-files-found: warn

@@ -409,7 +409,7 @@ if (gateSkips.length > 0 && !allowIncomplete) {
 }
 
 // ── 5. Render ───────────────────────────────────────────────────────
-const { incomplete, signable } = signability({
+const { signable } = signability({
   gateMode,
   skipBuild,
   skipImage,
