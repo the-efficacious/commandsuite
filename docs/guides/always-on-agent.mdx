@@ -65,44 +65,44 @@ tmux new -d -s builder 'csuite claude --cwd ~/work/api'
 tmux attach -t builder   # look in on it any time
 ```
 
-**systemd user unit** — the right answer for a server:
-
-```ini
-# ~/.config/systemd/user/csuite-builder.service
-[Unit]
-Description=CommandSuite runner - builder
-After=network-online.target
-
-[Service]
-WorkingDirectory=%h/work/api
-# The saved credential is looked up by (broker URL, working directory).
-# Set the URL to exactly the one you ran `csuite connect` with.
-Environment=CSUITE_URL=https://broker.example.com
-ExecStart=%h/.local/bin/csuite claude --cwd %h/work/api
-Restart=on-failure
-RestartSec=10
-
-[Install]
-WantedBy=default.target
-```
+**systemd, installed by the runner itself** — the right answer for a
+server:
 
 ```bash
-systemctl --user daemon-reload
-systemctl --user enable --now csuite-builder
-loginctl enable-linger "$USER"    # keep user services alive after logout
-journalctl --user -u csuite-builder -f
+cd ~/work/api            # the workspace you ran `csuite connect` in
+csuite claude install-service
 ```
 
-Three behaviors make the runner service-friendly. It runs a preflight
-check on every start and exits with a readable report if the
-environment is broken (run `csuite claude --doctor` to see the full
-report yourself; `--skip-doctor` bypasses it once you trust the box).
-Its terminal status strip switches itself off when output isn't a
-terminal, so your service logs stay plain text. And when no credential
-resolves and there is no terminal to run the enrollment wizard on, it
-exits non-zero with the lookup key it used instead of waiting on a
-device code nobody will type — so `Restart=` cannot loop a runner that
-was never going to connect.
+`install-service` (on every runner verb: `claude`, `codex`, `stub`)
+writes a system unit and a sudoers rule scoped to exactly the five
+`systemctl` verbs on exactly that unit, then enables it and confirms
+the member is **live at the broker** — present on the roster with a
+fresh `last_seen` — before declaring success. A live pid is not a live
+agent: a runner stuck short of connecting stays "active" for systemd,
+so the broker is the only honest referee.
+
+It refuses up front, naming the exact `(broker URL, workspace)` lookup
+key, when no saved credential resolves headlessly from the directory
+you run it in — enroll first with `csuite connect`. Without root (or
+passwordless sudo) it writes nothing outside `$HOME` and prints the
+two files with the exact operator commands instead; `--print` forces
+that mode. A failed install rolls everything back: a previous unit is
+restored byte-exact with its enablement and active state, and files
+created fresh are removed — nothing is deleted that was not first
+captured, and the staged copies stay in `~/.config/csuite/service/`
+as evidence.
+
+Running from a source checkout or a main-build deploy tree? Point the
+unit at it: `csuite claude install-service --exec /path/to/bin/csuite`
+(the default is the exact interpreter and entry script of the
+invocation that ran the command).
+
+Restart it from inside the runner — the agent restarting its own
+supervisor — with:
+
+```bash
+csuite claude cycle      # detached worker; confirms liveness at the broker
+```
 
 That lookup key is the pair **(broker URL, working directory)**: the
 entry `csuite connect` saved is found only for the URL you connected

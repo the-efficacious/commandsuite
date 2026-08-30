@@ -132,7 +132,10 @@ export function renderRunnerUnit(opts: UnitRenderOptions): string {
       execStartToken(opts.url, 'url'),
       '--cwd',
       execStartToken(opts.workspace, 'workspace'),
-      '--resume',
+      // The stub has no conversation to resume and its parser says so;
+      // real verbs resume so a cycle keeps the session (CI caught the
+      // stub unit exiting 2 in a Restart=always loop on this flag).
+      ...(opts.verb === 'stub' ? [] : ['--resume']),
     ].join(' ')}`,
     'Restart=always',
     'RestartSec=5',
@@ -554,6 +557,21 @@ export interface CycleInput {
 }
 
 /**
+ * The detached worker's CLI args: everything the parent invocation was
+ * told, forwarded — a worker that silently drops --url or --timeout
+ * verifies a different thing than the caller asked for.
+ */
+export function cycleWorkerArgs(input: CycleInput): string[] {
+  return [
+    input.verb,
+    'cycle',
+    '--worker',
+    ...(input.url !== undefined ? ['--url', input.url] : []),
+    ...(input.timeoutMs !== undefined ? ['--timeout', String(input.timeoutMs / 1000)] : []),
+  ];
+}
+
+/**
  * Restart the unit from inside the runner. The requester is a
  * descendant of the process being restarted, so the work happens in a
  * detached worker (setsid-equivalent: detached spawn, ignored stdio,
@@ -574,9 +592,7 @@ export async function runCycleCommand(
     const argv = deps.execArgv ?? [
       ...process.execArgv,
       process.argv[1] as string,
-      input.verb,
-      'cycle',
-      '--worker',
+      ...cycleWorkerArgs(input),
     ];
     const fd = openSync(logPath, 'a');
     const child = spawn(process.execPath, argv, {

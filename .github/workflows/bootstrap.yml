@@ -86,3 +86,85 @@ jobs:
         env:
           CSUITE_BOOTSTRAP_DIR: ${{ runner.temp }}/csuite-bootstrap
         run: scripts/bootstrap.sh down
+
+  service:
+    # install-service end to end with the stub verb: real systemd (PID 1
+    # on ubuntu-latest), real passwordless sudo, real broker liveness.
+    # Exercises the part-2 review bar: systemd-analyze verify on the
+    # installed unit, reinstall over the root-0440 sudoers (the
+    # privileged snapshot path), cycle via the scoped rule, and a
+    # teardown that proves no surviving process.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      - name: Broker up with an enrolled runner member (default auth store)
+        env:
+          CSUITE_BOOTSTRAP_DIR: ${{ runner.temp }}/csuite-service
+          CSUITE_PORT: 8723
+        run: scripts/bootstrap.sh up </dev/null
+
+      - name: install-service (stub) — unit, sudoers, broker-observed liveness
+        env:
+          CSUITE_PORT: 8723
+        run: |
+          cd "${{ runner.temp }}/csuite-service/runner"
+          node "$GITHUB_WORKSPACE/packages/cli/dist/index.js" stub install-service --url http://127.0.0.1:8723 --timeout 90 \
+            || { echo "::group::journalctl -u csuite-$(id -un)"; sudo journalctl -u "csuite-$(id -un)" --no-pager | tail -60; echo "::endgroup::"; exit 2; }
+          systemd-analyze verify "/etc/systemd/system/csuite-$(id -un).service"
+          echo "unit verified"
+          [ "$(sudo stat -c %a "/etc/sudoers.d/$(id -un)-csuite-runner")" = 440 ]
+          echo "sudoers installed at 0440"
+
+      - name: Reinstall over the live service (root-0440 snapshot path)
+        env:
+          CSUITE_PORT: 8723
+        run: |
+          cd "${{ runner.temp }}/csuite-service/runner"
+          node "$GITHUB_WORKSPACE/packages/cli/dist/index.js" stub install-service --url http://127.0.0.1:8723 --timeout 90 | tee reinstall.out \
+            || { echo "::group::journalctl -u csuite-$(id -un)"; sudo journalctl -u "csuite-$(id -un)" --no-pager | tail -60; echo "::endgroup::"; exit 2; }
+          grep -q "replaced the previous install" reinstall.out
+
+      - name: cycle — detached worker restarts the unit, liveness at the broker
+        env:
+          CSUITE_PORT: 8723
+        run: |
+          cd "${{ runner.temp }}/csuite-service/runner"
+          LOG="$HOME/.local/var/csuite-cycle.log"
+          # Invocation-scoped log: an append-only file must not let an
+          # old success bless a new failure.
+          : > "$LOG" || true
+          node "$GITHUB_WORKSPACE/packages/cli/dist/index.js" stub cycle --url http://127.0.0.1:8723 --timeout 90
+          for i in $(seq 1 60); do
+            if grep -qE "✓ cycled|failed|never showed" "$LOG" 2>/dev/null; then break; fi
+            sleep 2
+          done
+          cat "$LOG"
+          grep -q "✓ cycled" "$LOG"
+          ! grep -qE "failed|never showed" "$LOG"
+
+      - name: Teardown — nothing survives
+        if: always()
+        env:
+          CSUITE_BOOTSTRAP_DIR: ${{ runner.temp }}/csuite-service
+        run: |
+          UNIT="csuite-$(id -un)"
+          sudo systemctl disable --now "$UNIT" || true
+          sudo rm -f "/etc/systemd/system/$UNIT.service" "/etc/sudoers.d/$(id -un)-csuite-runner"
+          sudo systemctl daemon-reload
+          scripts/bootstrap.sh down || true
+          if pgrep -af "dist/index.js stub" | grep -v "bash -c"; then
+            echo "leaked stub process" >&2; exit 1
+          fi
+          echo "teardown clean"

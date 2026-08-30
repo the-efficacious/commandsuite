@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  cycleWorkerArgs,
   detectInstallPrivilege,
   execStartToken,
   formatOperatorHandoff,
@@ -42,8 +43,16 @@ describe('unit render', () => {
     expect(unit).toContain('Environment=CSUITE_URL=http://127.0.0.1:8719');
     expect(unit).toContain('WorkingDirectory=/home/builder/work');
     expect(unit).toContain(
-      'ExecStart=/usr/bin/csuite stub --url http://127.0.0.1:8719 --cwd /home/builder/work --resume',
+      'ExecStart=/usr/bin/csuite stub --url http://127.0.0.1:8719 --cwd /home/builder/work',
     );
+    // The stub rejects --resume (nothing to resume); real verbs carry it
+    // so a cycle keeps the conversation. CI caught the stub unit
+    // restart-looping on this flag.
+    expect(unit).not.toContain('--resume');
+    const claudeUnit = renderRunnerUnit({ ...RENDER, verb: 'claude' });
+    expect(claudeUnit).toContain('--cwd /home/builder/work --resume');
+    const codexUnit = renderRunnerUnit({ ...RENDER, verb: 'codex' });
+    expect(codexUnit).toContain('--cwd /home/builder/work --resume');
     expect(unit).toContain('Restart=always');
     expect(unit).toContain('StartLimitIntervalSec=0');
     expect(unit).toContain('SyslogIdentifier=csuite-builder');
@@ -199,7 +208,7 @@ describe('systemd value hygiene', () => {
 
   it('renders a spacey workspace as quoted ExecStart tokens', () => {
     const unit = renderRunnerUnit({ ...RENDER, workspace: '/home/builder/my work' });
-    expect(unit).toContain('--cwd "/home/builder/my work" --resume');
+    expect(unit).toContain('--cwd "/home/builder/my work"');
     expect(unit).toContain('WorkingDirectory=/home/builder/my work');
   });
 });
@@ -443,6 +452,24 @@ describe('privileged snapshot (root-0440 sudoers)', () => {
         },
       }),
     ).toThrow(/cannot snapshot/);
+  });
+});
+
+describe('cycle worker argv', () => {
+  it('forwards --url and --timeout to the detached worker', () => {
+    expect(cycleWorkerArgs({ verb: 'stub', url: 'http://x:1', timeoutMs: 90_000 })).toEqual([
+      'stub',
+      'cycle',
+      '--worker',
+      '--url',
+      'http://x:1',
+      '--timeout',
+      '90',
+    ]);
+  });
+
+  it('omits what the caller did not pass (env/default paths stay intact)', () => {
+    expect(cycleWorkerArgs({ verb: 'codex' })).toEqual(['codex', 'cycle', '--worker']);
   });
 });
 
