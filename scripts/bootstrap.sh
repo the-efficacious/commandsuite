@@ -99,22 +99,72 @@ wait_for_health() {
   return 1
 }
 
+# ---- process ownership --------------------------------------------------
+# A pid file names a number, and numbers get reused. Before signalling
+# anything we check the live process is the one we started: the broker's
+# command line must carry our exact config path, and the runner's working
+# directory must be our workspace. `kill -0` alone proves only that some
+# process exists. (Linux reads /proc; elsewhere `ps` args are used and the
+# runner check falls back to its argument shape.)
+# Alive means running, not merely present: a zombie (exited, not yet
+# reaped by its parent) answers `kill -0` but is gone for our purposes.
+is_alive() {
+  kill -0 "$1" 2>/dev/null || return 1
+  if [ -r "/proc/$1/stat" ]; then
+    [ "$(awk '{print $3}' "/proc/$1/stat" 2>/dev/null)" != "Z" ]
+  else
+    [ "$(ps -o stat= -p "$1" 2>/dev/null | cut -c1)" != "Z" ]
+  fi
+}
+cmdline_of() {
+  if [ -r "/proc/$1/cmdline" ]; then tr '\0' ' ' <"/proc/$1/cmdline"; else ps -o args= -p "$1" 2>/dev/null; fi
+}
+is_ours() { # is_ours <pid> broker|runner
+  local pid="$1" kind="$2" args
+  is_alive "$pid" || return 1
+  args="$(cmdline_of "$pid")"
+  case "$kind" in
+    broker) [[ "$args" == *" serve "* && "$args" == *"$CONFIG"* ]] ;;
+    runner)
+      if [ -L "/proc/$pid/cwd" ]; then
+        [ "$(readlink "/proc/$pid/cwd")" = "$WORKSPACE" ] && [[ "$args" =~ (claude|codex) ]]
+      else
+        [[ "$args" =~ (claude|codex)\ --skip-doctor ]]
+      fi ;;
+  esac
+}
 serve_running() {
-  [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null
+  [ -f "$PID_FILE" ] && is_ours "$(cat "$PID_FILE")" broker
+}
+# stop_recorded <pidfile> broker|runner <label> — signal only what is ours,
+# wait for it to go (bounded), escalate once, and fail if it survives.
+stop_recorded() {
+  local file="$1" kind="$2" label="$3" pid i
+  [ -f "$file" ] || { ok "no $label running from $DIR"; return 0; }
+  pid="$(cat "$file")"
+  if ! is_alive "$pid"; then
+    ok "$label pid $pid is not running (stale pid file removed)"; rm -f "$file"; return 0
+  fi
+  if ! is_ours "$pid" "$kind"; then
+    printf '   --  pid %s is alive but is not our %s (%s); leaving it alone, removing the stale pid file\n' \
+      "$pid" "$label" "$(cmdline_of "$pid" | cut -c1-80)"
+    rm -f "$file"; return 0
+  fi
+  kill "$pid" 2>/dev/null || true
+  for i in $(seq 1 40); do is_alive "$pid" || break; sleep 0.25; done
+  if is_alive "$pid"; then
+    printf '   ..  %s pid %s ignored SIGTERM for 10s; sending SIGKILL\n' "$label" "$pid"
+    kill -9 "$pid" 2>/dev/null || true
+    for i in $(seq 1 8); do is_alive "$pid" || break; sleep 0.25; done
+  fi
+  if is_alive "$pid"; then die "$label pid $pid is still running after SIGKILL"; fi
+  rm -f "$file"; ok "stopped $label pid $pid (gone)"
 }
 
 # ---- down -----------------------------------------------------------------
 if [ "$mode" = down ]; then
-  if [ -f "$DIR/runner.pid" ] && kill -0 "$(cat "$DIR/runner.pid")" 2>/dev/null; then
-    kill "$(cat "$DIR/runner.pid")" && ok "stopped runner pid $(cat "$DIR/runner.pid")"
-    rm -f "$DIR/runner.pid"
-  fi
-  if serve_running; then
-    kill "$(cat "$PID_FILE")" && ok "stopped broker pid $(cat "$PID_FILE")"
-    rm -f "$PID_FILE"
-  else
-    ok "no broker running from $DIR"
-  fi
+  stop_recorded "$DIR/runner.pid" runner runner
+  stop_recorded "$PID_FILE" broker broker
   exit 0
 fi
 
@@ -228,7 +278,7 @@ if [ "${CSUITE_START_RUNNER:-0}" = 1 ]; then
     if CSUITE_TOKEN="$(cat "$TOKEN_FILE")" csuite roster --url "$URL" </dev/null | awk -v m="$RUNNER" '$1==m && $(NF-1)>=1 {found=1} END {exit !found}'; then
       ok "roster shows $RUNNER connected=1 (runner pid $(cat "$DIR/runner.pid"), log $DIR/runner.log)"; break
     fi
-    kill -0 "$(cat "$DIR/runner.pid")" 2>/dev/null || { cat "$DIR/runner.log" >&2; die "runner exited before connecting"; }
+    is_ours "$(cat "$DIR/runner.pid")" runner || { cat "$DIR/runner.log" >&2; die "runner exited before connecting"; }
     sleep 1
     [ "$i" = 60 ] && die "runner did not show connected=1 within 60s (log: $DIR/runner.log)"
   done
