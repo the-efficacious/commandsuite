@@ -1,0 +1,106 @@
+---
+title: Route walk
+description: The web-UI route manifest and the headless walker that asserts every route stays clean for a baseline member and an admin — what the manifest declares, how to run the walk locally, and why adding a page without a permission story fails the build.
+section: Development
+order: 80
+---
+
+# Route walk
+
+Every route the web UI can render is declared in
+`scripts/route-walk/manifest.json`, together with what a
+**baseline** member (no manage permissions) and an **admin**
+must see there. A headless walker signs in through the
+product's own TOTP form and visits every declared URL as each
+role, asserting the declaration. CI runs the walk on every PR;
+a route that regresses — or a route added to the router without
+a manifest entry — fails the build by name.
+
+## What the manifest declares
+
+Each entry covers one `kind` of the router's `Route` union
+(`packages/web-ui/src/lib/routes.ts`) and carries:
+
+- `urls` — one or more URL templates for the kind.
+  `{placeholders}` are filled from the fixtures file the seeder
+  writes, so parametrised routes are walked against real
+  instances, not synthetic ids.
+- `roles.baseline` / `roles.admin` — the expectation per role:
+  - `clean` — the SPA renders, a hard load of the deep link
+    serves the app shell (`200 app`, not a JSON error), zero
+    console errors, zero failed requests.
+  - `restricted` — the app renders **and** the Restricted
+    callout is shown, with the same zero-noise bar. A refusal
+    is rendered, never fetched-then-refused: a request for the
+    gated resource counts as a failed request and fails the row.
+- `allowRestrictedPanel` — roles for which the page is `clean`
+  but one panel legitimately renders the Restricted callout
+  (the DM thread's peer-activity inspector for a baseline
+  viewer). Restricted anywhere else still fails.
+- `why` — required prose for every non-clean expectation,
+  naming the permission that gates the route.
+
+Changing a role expectation is a permissions statement — review
+it like one.
+
+## Completeness
+
+The walker extracts every `kind` from the `Route` union
+(`scripts/route-walk/extract-route-kinds.mjs`) and fails before
+walking if any kind is missing from the manifest. Adding a page
+without declaring its permission story is therefore a build
+failure, not a silent gap.
+
+## Running it locally
+
+You need a chromium binary (`CHROMIUM` env, default
+`/usr/bin/chromium`); `puppeteer-core` is a workspace dev
+dependency.
+
+```sh
+# 1. A local broker with an admin and a baseline member
+CSUITE_BOOTSTRAP_DIR=/tmp/walk scripts/bootstrap.sh up
+
+# 2. Seed fixtures (channel, DM, objective, tool source,
+#    secret, variable, notification endpoint) and enrol
+#    web-UI TOTP for both roles
+node scripts/route-walk/seed.mjs \
+  --broker http://127.0.0.1:8780 \
+  --admin-token-file /tmp/walk/secrets/admin.token \
+  --baseline builder \
+  --out /tmp/walk/route-walk
+
+# 3. Walk each role
+node scripts/route-walk/walk.mjs \
+  --broker http://127.0.0.1:8780 \
+  --member builder --role baseline \
+  --secret /tmp/walk/route-walk/totp-builder.secret \
+  --fixtures /tmp/walk/route-walk/fixtures.json \
+  --out /tmp/walk/route-walk
+
+node scripts/route-walk/walk.mjs \
+  --broker http://127.0.0.1:8780 \
+  --member admin --role admin \
+  --secret /tmp/walk/route-walk/totp-admin.secret \
+  --fixtures /tmp/walk/route-walk/fixtures.json \
+  --out /tmp/walk/route-walk
+```
+
+The walker prints one `ok`/`FAIL` line per route with the
+failing predicate (`hard-load 404 api-json`, `2 console
+errors`, `Restricted not rendered`, …), writes
+`report-<role>.json` (route × result, with the console errors
+and failed requests it saw), and exits non-zero naming every
+failing route. `--screenshots` saves a JPEG per route;
+`--only <kind>` walks a single kind while iterating on a page.
+
+TOTP secrets land beside the fixtures at mode 0600. The seeder
+is idempotent — re-running it against an already-seeded broker
+is fine.
+
+## In CI
+
+The walk job bootstraps a broker with the stub runner (no model
+credential), seeds it, and walks both roles. The two
+`report-<role>.json` files are uploaded as an artifact on every
+PR and failing routes are named in the job summary.
