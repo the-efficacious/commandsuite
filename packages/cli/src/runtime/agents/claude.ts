@@ -17,10 +17,27 @@
  * operators who need a specific Claude Code build).
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { AgentAdapterError } from './adapter.js';
+
+/**
+ * Does Claude Code hold any prior session for `cwd`? Sessions live at
+ * `~/.claude/projects/<slug>/<sessionId>.jsonl` where the slug is the
+ * cwd with path separators and dots dashed. Bare `--resume` uses this
+ * to resume-or-start: the SDK's `continue` errors on an empty project,
+ * and under a supervisor that deterministic error is an infinite
+ * restart loop (measured in obj-mtfvz379-i's acceptance).
+ */
+export function hasClaudeSessionFor(cwd: string, home: string = process.env.HOME ?? ''): boolean {
+  const slug = cwd.replace(/[/.]/g, '-');
+  try {
+    return readdirSync(join(home, '.claude', 'projects', slug)).some((f) => f.endsWith('.jsonl'));
+  } catch {
+    return false;
+  }
+}
 
 /** Operator-facing claude runner error (clean message, exit 2). */
 export class ClaudeCodeAdapterError extends AgentAdapterError {

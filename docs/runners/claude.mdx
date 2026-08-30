@@ -44,7 +44,7 @@ csuite claude [--no-trace] [--no-secrets] [--doctor] [--skip-doctor]
 | `--skip-doctor` | off | Skip the silent preflight that normally runs before starting. For CI or scripted reruns in a known-good environment. |
 | `--cwd <dir>` | current directory | Directory the agent works in. |
 | `--model <name>` | Claude Code default | Model override (e.g. `claude-sonnet-5`). |
-| `--resume [<sessionId>]` | — | Resume a previous session. With an id, that session; bare `--resume`, the member's most recent session in this directory. |
+| `--resume [<sessionId>]` | — | Resume a previous session. With an id, that session (strict — a missing id is an error); bare `--resume`, the member's most recent session in this directory, **or a loud fresh start when none exists** (logged, and `resumed: false` with the reason on the `session_start` event). |
 | `--url <url>` | `http://127.0.0.1:8717` | Broker URL. Falls back to `$CSUITE_URL`. |
 | `--token <secret>` | — | Bearer token. Falls back to `$CSUITE_TOKEN`, then the saved login. |
 

@@ -272,6 +272,15 @@ export interface AgentAdapter {
    */
   doctor?(): Promise<AgentDoctorCheck[]>;
   /**
+   * How the INITIAL spawn will treat resume, computed from the same
+   * facts spawn() will use (cheap, no side effects): resuming a prior
+   * conversation, or starting fresh — with a reason when that is the
+   * bare-resume fallback (nothing to resume). The driver stamps the
+   * first session_start from this; respawn generations' postures are
+   * driver-known. Optional; null when the adapter cannot say.
+   */
+  initialResumePlan?(ctx: AgentSessionContext): { resumed: boolean; reason?: string } | null;
+  /**
    * Re-point ambient input (the channel sink's delivery target) at a
    * buffer for a successor agent process. Called by the driver's
    * restart coordinator BEFORE the current process is shut down, so

@@ -36,7 +36,13 @@ import type {
   AgentSessionContext,
   RespawnPosture,
 } from '../adapter.js';
-import { type CodexCompactOutcome, findCodexBinary, spawnCodex } from './adapter.js';
+import {
+  type CodexCompactOutcome,
+  defaultSessionsDir,
+  findCodexBinary,
+  findLatestThreadId,
+  spawnCodex,
+} from './adapter.js';
 import { LocalMcpConfigError, loadLocalMcpConfig } from './local-mcp.js';
 
 /**
@@ -401,6 +407,14 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
 
     async doctor(): Promise<AgentDoctorCheck[]> {
       return [codexRootCheck(), await codexCacheCheck(), codexLocalMcpCheck()];
+    },
+
+    initialResumePlan(ctx: AgentSessionContext): { resumed: boolean; reason?: string } | null {
+      if (effectiveResume === undefined) return { resumed: false };
+      if (typeof effectiveResume === 'string') return { resumed: true };
+      return findLatestThreadId(defaultSessionsDir(ctx.runner.instructions.name)) !== null
+        ? { resumed: true }
+        : { resumed: false, reason: 'no previous codex session found' };
     },
   };
   return adapter;

@@ -61,6 +61,7 @@ import type {
 import {
   type ClaudeExecutable,
   ClaudeSdkAbsentError,
+  hasClaudeSessionFor,
   isSdkAbsentImportError,
   resolveClaudeExecutable,
 } from './claude.js';
@@ -432,6 +433,15 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
     prepare(ctx: AgentSessionContext): AgentPrepared {
       const { runner, cwd, log } = ctx;
       const bannerLines: string[] = [];
+      if (effectiveResume === true && !hasClaudeSessionFor(cwd)) {
+        // Bare --resume is resume-or-start: the SDK's `continue` errors
+        // on an empty project dir, and under Restart=always that's an
+        // infinite loop. Loud instead: this line, the banner, and
+        // resumed:false with a reason on session_start.
+        effectiveResume = undefined;
+        log.info('resume: no previous claude session found — starting fresh', { cwd });
+        bannerLines.push('csuite claude: no previous session here — starting fresh (--resume)');
+      }
       const resolved = executable;
       if (resolved === null) {
         // locate() runs first on every driver path; belt and braces.
@@ -776,6 +786,14 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
       // refuses `--dangerously-skip-permissions` as root, and the
       // runner depends on that flag.
       return [claudeRootCheck()];
+    },
+
+    initialResumePlan(ctx: AgentSessionContext): { resumed: boolean; reason?: string } | null {
+      if (effectiveResume === undefined) return { resumed: false };
+      if (typeof effectiveResume === 'string') return { resumed: true };
+      return hasClaudeSessionFor(ctx.cwd)
+        ? { resumed: true }
+        : { resumed: false, reason: 'no previous session in this directory' };
     },
   };
   return adapter;

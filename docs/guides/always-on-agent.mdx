@@ -99,6 +99,11 @@ unit at it: `csuite claude install-service --exec /path/to/bin/csuite`
 (the default is the exact interpreter and entry script of the
 invocation that ran the command).
 
+Bare `--resume` in the unit is resume-or-start: the very first service
+start (no session yet) begins fresh — loudly, with `resumed: false`
+on the `session_start` event — and every later start resumes, so a
+cycle keeps the conversation.
+
 Restart it from inside the runner — the agent restarting its own
 supervisor — with:
 
