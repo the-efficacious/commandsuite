@@ -1646,6 +1646,11 @@ export const RotateTokenResponseSchema = z.object({
   tokenInfo: z.lazy(() => TokenInfoSchema).optional(),
 });
 
+export const RotateTokenRequestSchema = z.discriminatedUnion('scope', [
+  z.object({ scope: z.literal('token'), tokenId: z.string().uuid() }),
+  z.object({ scope: z.literal('all') }),
+]);
+
 export const EnrollTotpResponseSchema = z.object({
   totpSecret: z.string(),
   totpUri: z.string(),

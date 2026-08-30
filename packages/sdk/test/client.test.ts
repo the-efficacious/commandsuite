@@ -56,6 +56,39 @@ function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
 }
 
 describe('Client', () => {
+  it('sends an explicit per-token rotation scope', async () => {
+    let body = '';
+    const client = new Client({
+      url: 'http://example.test:8717',
+      token: 'test-secret',
+      fetch: makeFakeFetch((_url, init) => {
+        body = String(init.body);
+        return jsonResponse({
+          token: 'not-a-real-credential',
+          tokenInfo: {
+            id: '11111111-1111-4111-8111-111111111111',
+            memberName: 'rune',
+            label: 'seat',
+            origin: 'rotate',
+            createdAt: 1,
+            lastUsedAt: null,
+            expiresAt: null,
+            createdBy: 'rune',
+          },
+        });
+      }),
+    });
+
+    await client.rotateToken('rune', {
+      scope: 'token',
+      tokenId: '22222222-2222-4222-8222-222222222222',
+    });
+    expect(JSON.parse(body)).toEqual({
+      scope: 'token',
+      tokenId: '22222222-2222-4222-8222-222222222222',
+    });
+  });
+
   it('sends runner version only when the instructions caller declares the long-lived runner', async () => {
     const seen: Array<string | null> = [];
     const client = new Client({
