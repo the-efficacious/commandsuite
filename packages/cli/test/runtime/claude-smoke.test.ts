@@ -35,7 +35,9 @@ import {
   FAKE_BROKER_TOKEN,
   type FakeBroker,
   fakeBrokerActivity,
+  fakeBrokerActivityFailure,
   fakeBrokerInstructions,
+  fakeBrokerTimeline,
   startFakeBroker,
 } from './fake-broker.js';
 
@@ -57,12 +59,38 @@ describeIfBuilt('csuite claude end-to-end', () => {
   });
 
   beforeEach(() => {
+    fakeBrokerActivityFailure.enabled = false;
+    fakeBrokerTimeline.length = 0;
     sandbox = mkdtempSync(join(tmpdir(), 'csuite-claude-smoke-'));
     transcriptPath = join(sandbox, 'claude-transcript.txt');
     fakeClaudePath = writeFakeClaude(sandbox);
   });
 
+  it('fails causally before presence when session_start cannot be acknowledged', async () => {
+    const previous = process.env.CLAUDE_PATH;
+    process.env.CLAUDE_PATH = fakeClaudePath;
+    fakeBrokerActivityFailure.enabled = true;
+    try {
+      await expect(
+        runClaudeCommand({
+          url: broker.url,
+          token: FAKE_BROKER_TOKEN,
+          cwd: sandbox,
+          logger: silentLogger(),
+          bridgeCommand: process.execPath,
+          bridgeArgs: [CLI_BINARY, 'mcp-bridge'],
+        }),
+      ).rejects.toThrow('session_start could not be delivered; runner presence was not opened');
+      expect(fakeBrokerTimeline.some((entry) => entry.kind === 'subscribe')).toBe(false);
+    } finally {
+      fakeBrokerActivityFailure.enabled = false;
+      if (previous === undefined) delete process.env.CLAUDE_PATH;
+      else process.env.CLAUDE_PATH = previous;
+    }
+  });
+
   afterEach(() => {
+    fakeBrokerActivityFailure.enabled = false;
     fakeBrokerInstructions.value = '';
     rmSync(sandbox, { recursive: true, force: true });
   });

@@ -111,6 +111,8 @@ export interface CaptureHost {
    * to the batched uploader. Returns immediately.
    */
   enqueue(event: ActivityEvent): void;
+  /** Enqueue in FIFO order and wait until the broker has acknowledged the batch. */
+  enqueueImmediate(event: ActivityEvent): Promise<void>;
   enqueueFirst(event: ActivityEvent): void;
   setAuthBlocked(blocked: boolean): void;
   blockedStats(): ReturnType<ActivityUploader['blockedStats']>;
@@ -323,6 +325,10 @@ export async function startCaptureHost(options: CaptureHostOptions): Promise<Cap
     hookEndpointUrl: hookServer.url,
     enqueue(event) {
       uploader.enqueue(event);
+    },
+    async enqueueImmediate(event) {
+      uploader.enqueue(event);
+      await uploader.flush({ throwOnFailure: true });
     },
     enqueueFirst(event) {
       uploader.enqueueFirst(event);

@@ -14,7 +14,7 @@
 
 import type { Client as BrokerClient } from 'csuite-sdk/client';
 import type { Message } from 'csuite-sdk/types';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { runForwarder } from '../../src/runtime/forwarder.js';
 import { silentLogger } from '../helpers/logger.js';
 
@@ -97,6 +97,20 @@ async function captureNotifications(
 }
 
 describe('forwarder thread classification', () => {
+  it('returns without subscribing when the lifecycle gate rejects', async () => {
+    const subscribe = vi.fn();
+    await expect(
+      runForwarder({
+        sink: { deliver: vi.fn() },
+        brokerClient: { subscribe } as unknown as BrokerClient,
+        name: 'me',
+        signal: new AbortController().signal,
+        subscriptionGate: Promise.reject(new Error('session_start could not be delivered')),
+        logger: silentLogger(),
+      }),
+    ).resolves.toBeUndefined();
+    expect(subscribe).not.toHaveBeenCalled();
+  });
   it('marks broadcasts to general as thread=primary', async () => {
     const captured = await captureNotifications([
       makeMessage({ id: 'm-broadcast', to: null, from: 'director' }),

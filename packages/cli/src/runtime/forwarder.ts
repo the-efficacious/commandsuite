@@ -174,6 +174,8 @@ export interface ForwarderOptions {
    */
   presence?: Presence;
   runnerIdentity?: RunnerIdentity;
+  /** Internal lifecycle gate: initial session_start commits before presence opens. */
+  subscriptionGate?: Promise<void>;
 }
 
 export async function runForwarder(opts: ForwarderOptions): Promise<void> {
@@ -189,6 +191,7 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
     onContextControlEvent,
     presence,
     runnerIdentity,
+    subscriptionGate,
   } = opts;
   const log = opts.logger ?? defaultLogger.child('forwarder');
   let backoff = BACKOFF_START_MS;
@@ -218,6 +221,16 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
     }
   };
 
+  if (subscriptionGate !== undefined) {
+    try {
+      await subscriptionGate;
+    } catch (err) {
+      log.error('subscription gate closed before presence opened', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return;
+    }
+  }
   while (!signal.aborted) {
     try {
       log.info('subscribing to broker', { name });
