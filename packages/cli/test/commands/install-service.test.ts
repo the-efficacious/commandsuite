@@ -43,8 +43,14 @@ describe('unit render', () => {
     expect(unit).toContain('Environment=CSUITE_URL=http://127.0.0.1:8719');
     expect(unit).toContain('WorkingDirectory=/home/builder/work');
     expect(unit).toContain(
-      'ExecStart=/usr/bin/csuite stub --url http://127.0.0.1:8719 --cwd /home/builder/work --resume',
+      'ExecStart=/usr/bin/csuite stub --url http://127.0.0.1:8719 --cwd /home/builder/work',
     );
+    // The stub rejects --resume (nothing to resume); real verbs carry it
+    // so a cycle keeps the conversation. CI caught the stub unit
+    // restart-looping on this flag.
+    expect(unit).not.toContain('--resume');
+    const claudeUnit = renderRunnerUnit({ ...RENDER, verb: 'claude' });
+    expect(claudeUnit).toContain('--cwd /home/builder/work --resume');
     expect(unit).toContain('Restart=always');
     expect(unit).toContain('StartLimitIntervalSec=0');
     expect(unit).toContain('SyslogIdentifier=csuite-builder');

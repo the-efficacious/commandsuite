@@ -132,7 +132,10 @@ export function renderRunnerUnit(opts: UnitRenderOptions): string {
       execStartToken(opts.url, 'url'),
       '--cwd',
       execStartToken(opts.workspace, 'workspace'),
-      '--resume',
+      // The stub has no conversation to resume and its parser says so;
+      // real verbs resume so a cycle keeps the session (CI caught the
+      // stub unit exiting 2 in a Restart=always loop on this flag).
+      ...(opts.verb === 'stub' ? [] : ['--resume']),
     ].join(' ')}`,
     'Restart=always',
     'RestartSec=5',
