@@ -133,7 +133,10 @@ describe('csuite connect pending', () => {
     expect(row.slice(0, 9)).toBe('AB12-CD34');
   });
 
-  it('terminalSafe: replaces every Cc/Cf/Zl/Zp code point, not a hand list', () => {
+  // 20 s: the codespace walk builds ~197k strings; ~1 s alone, more under a parallel root run.
+  it('terminalSafe: replaces every Cc/Cf/Zl/Zp code point, not a hand list', {
+    timeout: 20_000,
+  }, () => {
     // Rune's review of #208: the first version enumerated code points and
     // missed these. Each is a real format/separator character a requester
     // can put in a label; each must become U+FFFD.
@@ -155,36 +158,49 @@ describe('csuite connect pending', () => {
       const rendered = terminalSafe(`a${ch}b`, 40);
       expect(rendered, `U+${(ch.codePointAt(0) ?? 0).toString(16)}`).toBe('a\ufffdb');
     }
-    // Property check across the whole BMP + a supplementary plane: nothing
-    // in Cc/Cf/Zl/Zp survives, and nothing else is touched (positive control).
+    // Property check across the whole BMP plus the emoji and tag planes,
+    // in chunks: the same code points as a per-character walk, but ~200
+    // assertions instead of ~197k (the per-character version timed out
+    // under full-suite contention in CI).
     // biome-ignore lint/suspicious/noControlCharactersInRegex: the controls are the subject under test
     const unsafe = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
-    let unsafeCount = 0;
     const ranges: Array<[number, number]> = [
-      [0, 0xffff], // the whole BMP
-      [0x10000, 0x1ffff], // SMP: emoji, tags' neighbours
-      [0xe0000, 0xe01ff], // tags and variation selectors (Cf)
+      [0, 0xffff],
+      [0x10000, 0x1ffff],
+      [0xe0000, 0xe01ff],
     ];
-    const codePoints = ranges.flatMap(([lo, hi]) =>
-      Array.from({ length: hi - lo + 1 }, (_, i) => lo + i),
-    );
-    for (const cp of codePoints) {
-      if (cp >= 0xd800 && cp <= 0xdfff) continue;
-      const ch = String.fromCodePoint(cp);
-      const rendered = terminalSafe(`x${ch}x`, 40);
-      if (cp === 0x09) {
-        // Tab is Cc but deliberately whitespace: it collapses, never marks.
-        expect(rendered).toBe('x x');
-      } else if (unsafe.test(ch)) {
-        unsafeCount++;
-        expect(rendered, `U+${cp.toString(16)} must be replaced`).toBe('x\ufffdx');
-      } else if (/\s/u.test(ch)) {
-        expect(rendered, `U+${cp.toString(16)} is whitespace`).toBe('x x');
-      } else {
-        expect(rendered, `U+${cp.toString(16)} must pass through`).toBe(`x${ch}x`);
+    const unsafeChars: string[] = [];
+    const spaceChars: string[] = [];
+    const safeChars: string[] = [];
+    for (const [lo, hi] of ranges) {
+      for (let cp = lo; cp <= hi; cp += 1) {
+        if (cp >= 0xd800 && cp <= 0xdfff) continue;
+        const ch = String.fromCodePoint(cp);
+        if (cp === 0x09 || (!unsafe.test(ch) && /\s/u.test(ch))) spaceChars.push(ch);
+        else if (unsafe.test(ch)) unsafeChars.push(ch);
+        else safeChars.push(ch);
       }
     }
-    expect(unsafeCount).toBeGreaterThan(200);
+    expect(unsafeChars.length).toBeGreaterThan(200);
+    const chunks = (chars: string[], size: number) =>
+      Array.from({ length: Math.ceil(chars.length / size) }, (_, i) =>
+        chars.slice(i * size, (i + 1) * size),
+      );
+    // Every unsafe code point → U+FFFD, one for one.
+    for (const chunk of chunks(unsafeChars, 500)) {
+      expect(terminalSafe(`x${chunk.join('x')}x`, 1e9)).toBe(
+        `x${chunk.map(() => '\ufffd').join('x')}x`,
+      );
+    }
+    // Every whitespace code point (and tab) → a single space.
+    for (const chunk of chunks(spaceChars, 500)) {
+      expect(terminalSafe(`x${chunk.join('x')}x`, 1e9)).toBe(`x${chunk.map(() => ' ').join('x')}x`);
+    }
+    // Everything else passes through untouched — the positive control.
+    for (const chunk of chunks(safeChars, 1000)) {
+      const text = chunk.join('');
+      expect(terminalSafe(text, 1e9)).toBe(text);
+    }
   });
 
   it('terminalSafe: replaces controls with a visible placeholder, collapses whitespace, caps width', () => {
