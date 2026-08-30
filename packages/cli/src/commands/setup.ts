@@ -366,12 +366,15 @@ async function runNonInteractive(
 
 /**
  * The failure report: what to remove before a retry, stated with
- * exactly the certainty each item has. The removal line names only
- * files this invocation provably created (their O_EXCL create
- * returned). Server-directory files that were absent at start and are
+ * exactly the certainty each item has. Files this invocation provably
+ * created (their O_EXCL create returned) are listed as the ones to
+ * remove; server-directory files that were absent at start and are
  * present now are listed separately as inspect-only — they may be a
- * concurrent writer's. Exported for tests: the wording is the
- * deliverable, and it must be right under every failure.
+ * concurrent writer's. Paths are printed one per line, verbatim, and
+ * never inside a shell command: a path can hold spaces, a leading
+ * dash, or metacharacters, and a line meant to be copied into a shell
+ * would then do something other than what it says. Exported for
+ * tests: the wording is the deliverable.
  */
 export function formatPartialSetup(
   created: readonly string[],
@@ -380,14 +383,14 @@ export function formatPartialSetup(
   const appeared = absentAtStart.filter((path) => existsSync(path));
   const lines = ['  Nothing was deleted. Partial setup:'];
   if (created.length > 0) {
-    lines.push(`    created by this run — remove to retry:  rm ${created.join(' ')}`);
+    lines.push('    created by this run (remove these to retry):');
+    for (const path of created) lines.push(`      ${path}`);
   } else {
-    lines.push('    created by this run:  (nothing)');
+    lines.push('    created by this run: (nothing)');
   }
   if (appeared.length > 0) {
-    lines.push(
-      `    absent at start, present now — inspect before touching:  ${appeared.join(', ')}`,
-    );
+    lines.push('    absent at start, present now (inspect before touching):');
+    for (const path of appeared) lines.push(`      ${path}`);
   }
   lines.push('  Fix the cause and re-run.');
   return lines.join('\n');

@@ -370,7 +370,9 @@ describe('runSetupCommand --non-interactive', { timeout: 30_000 }, () => {
         message = err.message;
       });
       expect(message).toContain('Nothing was deleted');
-      expect(message).toContain(`rm ${tokenFile} ${totpSecretFile}`);
+      expect(message).toContain(
+        `remove these to retry):\n      ${tokenFile}\n      ${totpSecretFile}\n`,
+      );
       expect(message).not.toContain('present now');
       // Both secrets are still there — nothing deleted — and the
       // directory is otherwise as it was.
@@ -410,8 +412,10 @@ describe('runSetupCommand --non-interactive', { timeout: 30_000 }, () => {
       message = err.message;
     });
     expect(message).toMatch(/--totp-secret-file .* already exists/);
-    expect(message).toContain(`rm ${tokenFile}\n`);
-    expect(message).not.toContain(`rm ${tokenFile} ${totpSecretFile}`);
+    expect(message).toContain(`remove these to retry):\n      ${tokenFile}\n  `);
+    expect(message.split(totpSecretFile).length - 1, 'their path appears only in the refusal').toBe(
+      1,
+    );
     expect(existsSync(tokenFile), 'our token file is left in place').toBe(true);
     expect(readFileSync(totpSecretFile, 'utf8'), 'their file must survive').toBe('theirs\n');
     expect(existsSync(configPath)).toBe(false);
@@ -444,26 +448,32 @@ describe('runSetupCommand --non-interactive', { timeout: 30_000 }, () => {
       message = err.message;
     });
     expect(message).toContain('Nothing was deleted');
-    expect(message).toContain(`rm ${tokenFile}\n`);
+    expect(message).toContain(`remove these to retry):\n      ${tokenFile}\n  `);
     expect(message).not.toContain(kek);
-    expect(message.match(/rm ([^\n]*)/)?.[1], 'removal line names only the token').toBe(tokenFile);
     expect(existsSync(kek), 'pre-existing KEK must survive').toBe(true);
     expect(existsSync(tokenFile)).toBe(true);
   });
 
-  it('formatPartialSetup: removal line names only created files; appeared files are inspect-only and only when present', () => {
+  it('formatPartialSetup: created files listed to remove, appeared files inspect-only and only when present, never as a shell command', () => {
     const dir = tmpDir();
     const present = join(dir, 'present');
     writeFileSync(present, 'x');
     const text = formatPartialSetup(['/a/token'], [present, join(dir, 'never-made')]);
-    expect(text).toContain('rm /a/token\n');
-    expect(text).toContain(`inspect before touching:  ${present}`);
-    expect(text).not.toContain(`rm /a/token ${present}`);
+    expect(text).toContain('remove these to retry):\n      /a/token\n');
+    expect(text).toContain(`inspect before touching):\n      ${present}\n`);
     expect(text).not.toContain('never-made');
+    expect(text).not.toMatch(/\brm\b/);
     const none = formatPartialSetup([], [join(dir, 'never-made')]);
     expect(none).toContain('(nothing)');
-    expect(none).not.toContain('rm ');
     expect(none).not.toContain('present now');
+  });
+
+  it('formatPartialSetup prints hostile paths verbatim, one per line, never inside a command', () => {
+    const hostile = ['/tmp/with space/admin.token', '-rf', '/tmp/a;rm -rf ~/x', '/tmp/$(id)'];
+    const text = formatPartialSetup(hostile, []);
+    for (const path of hostile) expect(text).toContain(`\n      ${path}\n`);
+    // Nothing on any line reads as a command to run.
+    for (const line of text.split('\n')) expect(line).not.toMatch(/^\s*(rm|sudo|sh)\b/);
   });
 
   it('still refuses when the config already points to a populated team', async () => {
