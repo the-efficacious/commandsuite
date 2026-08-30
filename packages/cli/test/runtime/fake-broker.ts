@@ -110,7 +110,9 @@ export const fakeBrokerCapabilities: { rawBodyAck: boolean } = { rawBodyAck: tru
  */
 export const fakeBrokerActivity: Array<{ member: string; event: Record<string, unknown> }> = [];
 
-export async function startFakeBroker(options: { additionalPermissions?: string[] } = {}): Promise<FakeBroker> {
+export async function startFakeBroker(
+  options: { additionalPermissions?: string[] } = {},
+): Promise<FakeBroker> {
   const pushes: FakeBrokerPush[] = [];
   const subscribers: LiveSubscriber[] = [];
 
