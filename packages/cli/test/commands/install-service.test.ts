@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  cycleWorkerArgs,
   detectInstallPrivilege,
   execStartToken,
   formatOperatorHandoff,
@@ -443,6 +444,24 @@ describe('privileged snapshot (root-0440 sudoers)', () => {
         },
       }),
     ).toThrow(/cannot snapshot/);
+  });
+});
+
+describe('cycle worker argv', () => {
+  it('forwards --url and --timeout to the detached worker', () => {
+    expect(cycleWorkerArgs({ verb: 'stub', url: 'http://x:1', timeoutMs: 90_000 })).toEqual([
+      'stub',
+      'cycle',
+      '--worker',
+      '--url',
+      'http://x:1',
+      '--timeout',
+      '90',
+    ]);
+  });
+
+  it('omits what the caller did not pass (env/default paths stay intact)', () => {
+    expect(cycleWorkerArgs({ verb: 'codex' })).toEqual(['codex', 'cycle', '--worker']);
   });
 });
 

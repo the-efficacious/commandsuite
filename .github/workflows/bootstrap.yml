@@ -139,14 +139,18 @@ jobs:
           CSUITE_PORT: 8723
         run: |
           cd "${{ runner.temp }}/csuite-service/runner"
-          node "$GITHUB_WORKSPACE/packages/cli/dist/index.js" stub cycle --url http://127.0.0.1:8723 --timeout 90
           LOG="$HOME/.local/var/csuite-cycle.log"
+          # Invocation-scoped log: an append-only file must not let an
+          # old success bless a new failure.
+          : > "$LOG" || true
+          node "$GITHUB_WORKSPACE/packages/cli/dist/index.js" stub cycle --url http://127.0.0.1:8723 --timeout 90
           for i in $(seq 1 60); do
-            if grep -qE "✓ cycled|cycle:" "$LOG" 2>/dev/null; then break; fi
+            if grep -qE "✓ cycled|failed|never showed" "$LOG" 2>/dev/null; then break; fi
             sleep 2
           done
           cat "$LOG"
           grep -q "✓ cycled" "$LOG"
+          ! grep -qE "failed|never showed" "$LOG"
 
       - name: Teardown — nothing survives
         if: always()
