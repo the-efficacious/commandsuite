@@ -51,6 +51,16 @@ assert_all() {
       csuite roster </dev/null | grep -q "^${CSUITE_RUNNER:-builder} " || die "saved auth for the runner member did not resolve from /var/lib/csuite/runner"
   ok "saved auth for (http://127.0.0.1:8717, /var/lib/csuite/runner) resolves; roster lists ${CSUITE_RUNNER:-builder}"
   compose exec -T csuite stat -c '%a %n' /var/lib/csuite/secrets/admin.token /var/lib/csuite/secrets/admin.totp | grep -vq '^600 ' && die "secret files are not 0600" || ok "secret files are mode 0600 on the volume"
+
+  say "$1: in-container doctor — broker-only image reports the agent binary absent by design, not failed"
+  local doctor
+  doctor="$(compose exec -T -w /var/lib/csuite/runner csuite \
+    env -i HOME=/home/node PATH=/app/packages/csuite/node_modules/.bin:/usr/local/bin:/usr/bin:/bin \
+      CSUITE_URL=http://127.0.0.1:8717 CSUITE_AUTH_CONFIG_PATH=/var/lib/csuite/auth.json \
+      csuite claude --doctor </dev/null)" || die "csuite claude --doctor exited non-zero in the container"
+  printf '%s\n' "$doctor" | grep -q 'absent by design' || die "doctor did not report the agent binary as absent by design"
+  printf '%s\n' "$doctor" | grep -q 'doctor: OK' || die "doctor did not end OK (the absent agent binary must be advisory, not FAIL)"
+  ok "doctor: OK with '[WARN] claude binary — absent by design'"
 }
 
 say "build + up"
