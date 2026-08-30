@@ -1,0 +1,135 @@
+---
+title: Route walk
+description: The web-UI route manifest and the headless walker that asserts every route stays clean for a baseline member and an admin — what the manifest declares, how the router contract is validated, how to run the walk locally, and why adding a page without a permission story fails the build.
+section: Development
+order: 80
+---
+
+# Route walk
+
+Every route the web UI can render is declared in
+`scripts/route-walk/manifest.json`, together with what a
+**baseline** member (no manage permissions) and an **admin**
+must see there. A headless walker signs in through the
+product's own TOTP form and visits every declared URL as each
+role, asserting the declaration. CI runs the walk on every PR;
+a route that regresses — or a route added to the router without
+a manifest entry — fails the build by name.
+
+## What the manifest declares
+
+Each entry covers one `kind` of the router's `Route` union
+(`packages/web-ui/src/lib/routes.ts`) and carries:
+
+- `urls` — one or more URL templates for the kind.
+  `{placeholders}` are filled from the fixtures file the seeder
+  writes, so parametrised routes are walked against real
+  instances, not synthetic ids.
+- `roles.baseline` / `roles.admin` — the expectation per role:
+  - `clean` — the SPA renders, a hard load of the deep link
+    honours the row's hard-load contract (`200 app` unless the
+    row pins another), zero console errors, zero failed
+    requests.
+  - `restricted` — the app renders **and** the Restricted
+    callout is shown, with the same zero-noise bar. A refusal
+    is rendered, never fetched-then-refused: a request for the
+    gated resource counts as a failed request and fails the row.
+- `hardLoad` — optional override of the hard-load contract.
+  The default is `200 app` (the deep link serves the SPA
+  shell); pseudo rows pin other truths, e.g. unknown paths
+  hard-load as `404` while in-app they fall through to home.
+- `allowRestrictedPanel` — roles for which the page is `clean`
+  but one panel legitimately renders the Restricted callout
+  (the DM thread's peer-activity inspector for a baseline
+  viewer). Restricted anywhere else still fails.
+- `pseudo` — marks a row that pins a contract *outside* the
+  `Route` union (the unknown-path fallthrough, the reserved
+  `/enroll` API namespace). The value states why the row is
+  pseudo; a pseudo row must not shadow a real router kind.
+- `why` — required prose for every non-clean expectation and
+  every pseudo row, naming the permission or contract involved.
+
+Changing a role expectation is a permissions statement — review
+it like one.
+
+## The router contract
+
+`scripts/route-walk/contract.mjs` parses the router source and
+validates the manifest against it in both directions before any
+page loads. It fails, naming the offender, on:
+
+- a `Route` union kind absent from the manifest — a new page
+  cannot merge without declaring its permission story;
+- a non-pseudo manifest kind the router does not have;
+- a `member-profile` URL set that does not exactly match the
+  tabs in `PROFILE_TABS` — adding a tab is adding a page, and
+  the new `/@name/<tab>` needs a declaration of its own;
+- duplicate kinds or URLs, rows without `urls` or a
+  `clean|restricted` expectation for both roles, restricted
+  rows without a `why`, and `allowRestrictedPanel` naming an
+  unknown role.
+
+Check the manifest without walking:
+
+```sh
+node scripts/route-walk/contract.mjs --check scripts/route-walk/manifest.json
+```
+
+To see the gate catch a mutation, add a value to
+`PROFILE_TABS` (or a member to the `Route` union) and run the
+check again — it fails naming the undeclared URL or kind.
+
+## Running it locally
+
+You need a Chromium-family binary (`CHROMIUM` env, default
+`/usr/bin/chromium`; CI uses the runner image's Chrome). The
+walker drives it over raw CDP with Node's built-in WebSocket —
+there is no npm dependency to install.
+
+```sh
+# 1. A local broker with an admin and a baseline member
+CSUITE_BOOTSTRAP_DIR=/tmp/walk scripts/bootstrap.sh up
+
+# 2. Seed fixtures (channel, DM, objective, tool source,
+#    secret, variable, notification endpoint) and enrol
+#    web-UI TOTP for both roles
+node scripts/route-walk/seed.mjs \
+  --broker http://127.0.0.1:8780 \
+  --admin-token-file /tmp/walk/secrets/admin.token \
+  --baseline builder \
+  --out /tmp/walk/route-walk
+
+# 3. Walk each role
+node scripts/route-walk/walk.mjs \
+  --broker http://127.0.0.1:8780 \
+  --member builder --role baseline \
+  --secret /tmp/walk/route-walk/totp-builder.secret \
+  --fixtures /tmp/walk/route-walk/fixtures.json \
+  --out /tmp/walk/route-walk
+
+node scripts/route-walk/walk.mjs \
+  --broker http://127.0.0.1:8780 \
+  --member admin --role admin \
+  --secret /tmp/walk/route-walk/totp-admin.secret \
+  --fixtures /tmp/walk/route-walk/fixtures.json \
+  --out /tmp/walk/route-walk
+```
+
+The walker prints one `ok`/`FAIL` line per route with the
+failing predicate (`hard-load 404 (wanted 200 app)`, `2 console
+errors`, `Restricted not rendered`, …), writes
+`report-<role>.json` (route × result, with the console errors
+and failed requests it saw), and exits non-zero naming every
+failing route. `--screenshots` saves a JPEG per route;
+`--only <kind>` walks a single kind while iterating on a page.
+
+TOTP secrets land beside the fixtures at mode 0600. The seeder
+is idempotent — re-running it against an already-seeded broker
+is fine.
+
+## In CI
+
+The walk job bootstraps a broker with the stub runner (no model
+credential), seeds it, and walks both roles. The two
+`report-<role>.json` files are uploaded as an artifact on every
+PR and failing routes are named in the job summary.

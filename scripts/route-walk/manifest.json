@@ -1,0 +1,211 @@
+{
+  "version": 1,
+  "comment": "Every web-UI route kind (packages/web-ui/src/lib/routes.ts Route union) with what 'clean' means per role. clean = hard load serves the SPA (200 app, or the row's pinned hardLoad contract), zero console errors, zero failed requests. restricted = the Restricted callout rendered AND no request for the gated resource (the #220 bar). Rows marked pseudo pin contracts outside the Route union (unknown-path fallthrough, reserved API namespaces); scripts/route-walk/contract.mjs validates this file against the router in both directions, including PROFILE_TABS variant parity. {placeholders} are filled from the fixtures file seed.mjs writes. Changing a role expectation is a permissions statement — it gets reviewed like one.",
+  "routes": [
+    {
+      "kind": "home",
+      "urls": ["/"],
+      "roles": {
+        "baseline": "clean",
+        "admin": "clean"
+      }
+    },
+    {
+      "kind": "inbox",
+      "urls": ["/inbox"],
+      "roles": {
+        "baseline": "clean",
+        "admin": "clean"
+      }
+    },
+    {
+      "kind": "account",
+      "urls": ["/account"],
+      "roles": {
+        "baseline": "clean",
+        "admin": "clean"
+      }
+    },
+    {
+      "kind": "thread-channel",
+      "urls": ["/c/{channelSlug}", "/c/general"],
+      "fixture": "a channel the member belongs to, plus the built-in general channel",
+      "roles": {
+        "baseline": "clean",
+        "admin": "clean"
+      }
+    },
+    {
+      "kind": "thread-dm",
+      "urls": ["/dm/{dmPeer}"],
+      "fixture": "a DM thread with the admin",
+      "roles": {
+        "baseline": "clean",
+        "admin": "clean"
+      },
+      "allowRestrictedPanel": ["baseline"],
+      "why": "the right-rail activity inspector renders Restricted for a viewer without activity.read on the peer (#214/#220's designed refusal) — the page itself is clean"
+    },
+    {
+      "kind": "channels-browse",
+      "urls": ["/channels"],
+      "roles": {
+        "baseline": "clean",
+        "admin": "clean"
+      }
+    },
+    {
+      "kind": "channel-create",
+      "urls": ["/channels/new"],
+      "roles": {
+        "baseline": "clean",
+        "admin": "clean"
+      }
+    },
+    {
+      "kind": "objectives-list",
+      "urls": ["/objectives"],
+      "roles": {
+        "baseline": "clean",
+        "admin": "clean"
+      }
+    },
+    {
+      "kind": "objective-create",
+      "urls": ["/objectives/new"],
+      "roles": {
+        "baseline": "clean",
+        "admin": "clean"
+      }
+    },
+    {
+      "kind": "objective-detail",
+      "urls": ["/objectives/{objectiveId}"],
+      "fixture": "an objective assigned to the baseline member",
+      "roles": {
+        "baseline": "clean",
+        "admin": "clean"
+      }
+    },
+    {
+      "kind": "members",
+      "urls": ["/members"],
+      "roles": {
+        "baseline": "restricted",
+        "admin": "clean"
+      },
+      "why": "member management requires members.manage"
+    },
+    {
+      "kind": "member-profile",
+      "urls": [
+        "/@{selfName}",
+        "/@{selfName}/objectives",
+        "/@{selfName}/files",
+        "/@{selfName}/activity",
+        "/@{selfName}/manage"
+      ],
+      "fixture": "the walking member's own profile (every tab incl. manage)",
+      "roles": {
+        "baseline": "clean",
+        "admin": "clean"
+      }
+    },
+    {
+      "kind": "tool-sources",
+      "urls": ["/tools"],
+      "roles": {
+        "baseline": "restricted",
+        "admin": "clean"
+      },
+      "why": "tool sources require tools.manage"
+    },
+    {
+      "kind": "tool-source-detail",
+      "urls": ["/tools/{toolSourceSlug}"],
+      "fixture": "a custom tool source",
+      "roles": {
+        "baseline": "restricted",
+        "admin": "clean"
+      },
+      "why": "tool sources require tools.manage"
+    },
+    {
+      "kind": "environment",
+      "urls": ["/environment"],
+      "roles": {
+        "baseline": "restricted",
+        "admin": "clean"
+      },
+      "why": "secrets/variables require secrets.manage"
+    },
+    {
+      "kind": "secret-detail",
+      "urls": ["/environment/secrets/{secretSlug}"],
+      "fixture": "a secret bound to the baseline member",
+      "roles": {
+        "baseline": "restricted",
+        "admin": "clean"
+      },
+      "why": "secrets require secrets.manage"
+    },
+    {
+      "kind": "variable-detail",
+      "urls": ["/environment/variables/{variableSlug}"],
+      "fixture": "a variable bound to the baseline member",
+      "roles": {
+        "baseline": "restricted",
+        "admin": "clean"
+      },
+      "why": "variables require secrets.manage"
+    },
+    {
+      "kind": "notifications",
+      "urls": ["/notifications"],
+      "roles": {
+        "baseline": "restricted",
+        "admin": "clean"
+      },
+      "why": "notification endpoints require notifications.manage"
+    },
+    {
+      "kind": "notification-detail",
+      "urls": ["/notifications/{notificationSlug}"],
+      "fixture": "a notification endpoint",
+      "roles": {
+        "baseline": "restricted",
+        "admin": "clean"
+      },
+      "why": "notification endpoints require notifications.manage"
+    },
+    {
+      "kind": "files",
+      "urls": ["/files", "/files/{selfName}"],
+      "fixture": "the member's own home (root listing + own directory)",
+      "roles": {
+        "baseline": "clean",
+        "admin": "clean"
+      }
+    },
+    {
+      "kind": "fallthrough",
+      "pseudo": "not a Route union kind — pins the router's unknown-path contract (routes.ts: unknown paths resolve to home)",
+      "urls": ["/definitely/not/a/route"],
+      "roles": {
+        "baseline": "clean",
+        "admin": "clean"
+      },
+      "why": "an unknown path falls through to home so stale links don't strand users — in-app via the router, and on hard loads via the Accept-negotiated SPA fallback (run.ts: only an explicit text/html range selects the SPA; API clients get 404). The walker asserts the browser side of that contract"
+    },
+    {
+      "kind": "reserved-enroll",
+      "pseudo": "not a Route union kind — /enroll is the device-enrolment REST namespace (POST /enroll, GET /enroll/pending), with no GET page of its own",
+      "urls": ["/enroll"],
+      "roles": {
+        "baseline": "clean",
+        "admin": "clean"
+      },
+      "why": "in a browser /enroll behaves as an unknown path: home in-app, SPA shell on a hard load via the Accept-negotiated fallback (API clients get 404 — the GET namespace has no route). Adding a real enrolment page later means changing this row under review"
+    }
+  ]
+}
