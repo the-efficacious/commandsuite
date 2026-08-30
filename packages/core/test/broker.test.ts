@@ -544,6 +544,24 @@ describe('Broker.subscribe', () => {
     unsub();
     expect(broker.listPresences()[0]?.connected).toBe(0);
   });
+
+  it('reports revoked live bearer subscriptions separately from connectivity', async () => {
+    const { broker } = makeBroker();
+    await broker.register('agent-1');
+    const unsubscribeA = broker.subscribe('agent-1', () => {}, {
+      name: 'agent-1',
+      tokenId: 'token-a',
+    });
+    const unsubscribeB = broker.subscribe('agent-1', () => {}, {
+      name: 'agent-1',
+      tokenId: 'token-b',
+    });
+    broker.blockTokens(['token-a']);
+    expect(broker.listPresences()[0]).toMatchObject({ connected: 2, authBlocked: 1 });
+    unsubscribeA();
+    expect(broker.listPresences()[0]).toMatchObject({ connected: 1, authBlocked: 0 });
+    unsubscribeB();
+  });
 });
 
 describe('InMemoryEventLog.query', () => {

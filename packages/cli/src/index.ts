@@ -159,14 +159,23 @@ function resolveAuth(input: { url?: string; token?: string }): {
 async function resolveAuthOrConnect(input: { url?: string; token?: string }): Promise<{
   url: string;
   token: string;
+  resolveReplacementToken?: () => string | null;
 }> {
   const url = input.url ?? process.env[ENV.url] ?? `http://127.0.0.1:${DEFAULT_PORT}`;
   let token = input.token ?? process.env[ENV.token];
+  let fromSavedAuth = false;
   if (!token) {
     const saved = findAuthEntry(url);
-    if (saved) token = saved.token;
+    if (saved) {
+      token = saved.token;
+      fromSavedAuth = true;
+    }
   }
-  if (token) return { url, token };
+  if (token) {
+    return fromSavedAuth
+      ? { url, token, resolveReplacementToken: () => findAuthEntry(url)?.token ?? null }
+      : { url, token };
+  }
 
   // No auth for (url, cwd). Headless, the wizard below cannot prompt —
   // it would exit 0 at the URL question (a supervisor with
@@ -196,7 +205,11 @@ async function resolveAuthOrConnect(input: { url?: string; token?: string }): Pr
       (line) => process.stdout.write(`${line}\n`),
       (line) => process.stderr.write(`${line}\n`),
     );
-    return { url: result.url, token: result.token };
+    return {
+      url: result.url,
+      token: result.token,
+      resolveReplacementToken: () => findAuthEntry(result.url)?.token ?? null,
+    };
   } catch (err) {
     if (err instanceof UsageError) fail(err.message, 2);
     fail(err instanceof Error ? err.message : String(err));
@@ -1024,6 +1037,7 @@ async function handleClaude(args: string[]): Promise<void> {
     const code = await runClaudeCommand({
       url: resolved.url,
       token: resolved.token,
+      resolveReplacementToken: resolved.resolveReplacementToken,
       cwd,
       model,
       resume,
@@ -1180,6 +1194,7 @@ async function handleCodex(args: string[]): Promise<void> {
     const code = await runCodexCommand({
       url: resolved.url,
       token: resolved.token,
+      resolveReplacementToken: resolved.resolveReplacementToken,
       cwd,
       model,
       resume,

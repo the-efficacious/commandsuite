@@ -3076,7 +3076,7 @@ export function createApp(options: AppOptions): CreatedApp {
               : 'disabled';
         queueMicrotask(() => {
           void publishSecretEvent(updated, event, member.name, {
-            body: `Secret '${updated.slug}' was ${event} by ${member.name}. Running agents pick this up on their next runner start.`,
+            body: `Secret '${updated.slug}' was ${event} by ${member.name}. Running agents reload it at their next idle boundary; opted-out or older runners use their next start.`,
             recipients: event === 'disabled' ? preRecipients : secretRecipients(updated),
           });
         });
@@ -3131,7 +3131,7 @@ export function createApp(options: AppOptions): CreatedApp {
         registerSecretValues([parsed.data.value]);
         queueMicrotask(() => {
           void publishSecretEvent(secret, 'value_set', member.name, {
-            body: `The value of secret '${secret.slug}' was updated by ${member.name}. Running agents pick this up on their next runner start.`,
+            body: `The value of secret '${secret.slug}' was updated by ${member.name}. Running agents reload it at their next idle boundary; opted-out or older runners use their next start.`,
           });
           const targets = secret.allMembers
             ? members.members().map((entry) => entry.name)
@@ -3187,7 +3187,7 @@ export function createApp(options: AppOptions): CreatedApp {
       }
       queueMicrotask(() => {
         void publishSecretEvent(secret, 'bound', member.name, {
-          body: `${parsed.data.member} was given the secret '${secret.slug}' (${secret.envName}) by ${member.name}. It applies on their next runner start.`,
+          body: `${parsed.data.member} was given the secret '${secret.slug}' (${secret.envName}) by ${member.name}. Their runner reloads it at its next idle boundary; opted-out or older runners use their next start.`,
           extra: { member: parsed.data.member },
         });
         void publishEnvironmentEvent(parsed.data.member, 'bound', member.name, secret.envName);
@@ -3207,7 +3207,8 @@ export function createApp(options: AppOptions): CreatedApp {
       queueMicrotask(() => {
         void publishSecretEvent(secret, 'unbound', member.name, {
           // The removed member gets the event too so they know the
-          // env var disappears on their next runner start.
+          // The environment event makes a current runner respawn at idle;
+          // opted-out or older runners lose it on their next start.
           body: `${name}'s access to secret '${secret.slug}' was removed by ${member.name}.`,
           recipients: secretRecipients(secret, name),
           extra: { member: name },
@@ -3498,7 +3499,7 @@ export function createApp(options: AppOptions): CreatedApp {
         variables.setValue(variable.id, parsed.data.value);
         queueMicrotask(() => {
           void publishVariableEvent(variable, 'value_set', member.name, {
-            body: `The value of variable '${variable.slug}' was updated by ${member.name}. Running agents pick this up on their next runner start.`,
+            body: `The value of variable '${variable.slug}' was updated by ${member.name}. Running agents reload it at their next idle boundary; opted-out or older runners use their next start.`,
           });
           const targets = variable.allMembers
             ? members.members().map((entry) => entry.name)
@@ -3554,7 +3555,7 @@ export function createApp(options: AppOptions): CreatedApp {
       }
       queueMicrotask(() => {
         void publishVariableEvent(variable, 'bound', member.name, {
-          body: `${parsed.data.member} was given the variable '${variable.slug}' (${variable.envName}) by ${member.name}. It applies on their next runner start.`,
+          body: `${parsed.data.member} was given the variable '${variable.slug}' (${variable.envName}) by ${member.name}. Their runner reloads it at its next idle boundary; opted-out or older runners use their next start.`,
           extra: { member: parsed.data.member },
         });
         void publishEnvironmentEvent(parsed.data.member, 'bound', member.name, variable.envName);
@@ -4728,7 +4729,7 @@ export function createApp(options: AppOptions): CreatedApp {
                     });
                   }
                 },
-                { role: member.role, name: member.name },
+                { role: member.role, name: member.name, tokenId: c.get('tokenId') },
               );
 
               // Shutdown fan-out: server.close() needs every live socket
@@ -5377,6 +5378,7 @@ export function createApp(options: AppOptions): CreatedApp {
     for (const t of before) {
       await tokens.revoke(t.id);
     }
+    broker.blockTokens(before.map((t) => t.id));
     const newRow = await tokens.insert({
       memberName: parsedName.data,
       rawToken: token,
@@ -5572,6 +5574,7 @@ export function createApp(options: AppOptions): CreatedApp {
       );
     }
     await tokens.revoke(row.id);
+    broker.blockTokens([row.id]);
     logger.info('token revoked', {
       name: parsedName.data,
       tokenId: row.id,

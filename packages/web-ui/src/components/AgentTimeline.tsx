@@ -92,6 +92,7 @@ const DEFAULT_FILTERS: KindFilter = {
   tool_action: true,
   user_prompt: true,
   context_control: true,
+  auth_state: true,
 };
 
 const kindFilters = signal<KindFilter>({ ...DEFAULT_FILTERS });

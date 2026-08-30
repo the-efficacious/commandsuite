@@ -85,6 +85,7 @@ export interface CaptureHostOptions {
    * no hook server).
    */
   onSessionStart?: (source: string) => void;
+  onUnauthorized?: () => void;
   logger?: Logger;
 }
 
@@ -110,6 +111,10 @@ export interface CaptureHost {
    * to the batched uploader. Returns immediately.
    */
   enqueue(event: ActivityEvent): void;
+  enqueueFirst(event: ActivityEvent): void;
+  setAuthBlocked(blocked: boolean): void;
+  blockedStats(): ReturnType<ActivityUploader['blockedStats']>;
+  replaceBrokerToken(token: string): void;
   /**
    * Env vars to merge into the agent child's environment. Enables Claude
    * Code's operational OTEL export (metrics + structured events) to the
@@ -245,14 +250,16 @@ export async function startCaptureHost(options: CaptureHostOptions): Promise<Cap
   const rawBodiesDir = join(tmpdir(), `csuite-otel-bodies-${safeName}-${process.pid}`);
   mkdirSync(rawBodiesDir, { recursive: true });
 
-  // Claude posts OTLP to loopback. The relay resolves FILE-mode body_ref
-  // paths on the runner, then forwards inline byte-exact bodies to the
-  // broker. Codex does not use this endpoint; it keeps its bundle upload.
+  // Both agents post OTLP to loopback. For Claude the relay also resolves
+  // FILE-mode body_ref paths. Keeping Codex behind the same relay means a
+  // rotated broker credential can be replaced without respawning the child;
+  // the loopback ingress credential remains the frozen startup token.
   const otlpRelay: OtlpRelay = await startOtlpRelay({
     brokerUrl: options.brokerUrl,
     token: options.token,
     rawBodiesDir,
     logger: log.child('otlp-relay'),
+    onUnauthorized: options.onUnauthorized,
   });
 
   // Streaming activity uploader — batches events, ships to broker.
@@ -317,6 +324,18 @@ export async function startCaptureHost(options: CaptureHostOptions): Promise<Cap
     enqueue(event) {
       uploader.enqueue(event);
     },
+    enqueueFirst(event) {
+      uploader.enqueueFirst(event);
+    },
+    setAuthBlocked(blocked) {
+      uploader.setAuthBlocked(blocked);
+    },
+    blockedStats() {
+      return uploader.blockedStats();
+    },
+    replaceBrokerToken(token) {
+      otlpRelay.replaceBrokerToken(token);
+    },
     /**
      * Env delta for the Claude Code child. Enables Claude Code's LEAN
      * OTEL export so the child ships OPERATIONAL telemetry — metrics
@@ -356,9 +375,9 @@ export async function startCaptureHost(options: CaptureHostOptions): Promise<Cap
     },
     otelLogsTarget() {
       // Codex posts to the configured URL verbatim (no /v1/logs suffix),
-      // so hand it the full logs path. Bearer resolves to the member.
-      const base = options.brokerUrl.replace(/\/+$/, '');
-      return { endpoint: `${base}/otlp/v1/logs`, token: options.token };
+      // so hand it the relay's full logs path. The child keeps its original
+      // loopback credential while the relay can rotate broker auth in place.
+      return { endpoint: `${otlpRelay.endpoint}/v1/logs`, token: options.token };
     },
     async uploadGenai(inferences) {
       if (inferences.length === 0) return;

@@ -213,6 +213,8 @@ export interface Presence {
   name: string;
   /** Number of live WebSocket subscribers currently attached. */
   connected: number;
+  /** Live bearer-auth subscriptions whose credential has been revoked. */
+  authBlocked?: number;
   createdAt: number;
   lastSeen: number;
   role: Role | null;
@@ -2046,7 +2048,8 @@ export type ActivityEvent =
   | ActivityLlmExchange
   | ActivityToolAction
   | ActivityUserPrompt
-  | ActivityContextControl;
+  | ActivityContextControl
+  | ActivityAuthState;
 
 export type ActivityKind = ActivityEvent['kind'];
 
@@ -2334,6 +2337,17 @@ export interface ActivityContextControl {
     readonly before: number;
     readonly after: number;
   };
+}
+
+export interface ActivityAuthState {
+  readonly kind: 'auth_state';
+  readonly ts: number;
+  readonly state: 'blocked' | 'recovered';
+  readonly status: 401;
+  readonly queuedEvents: number;
+  readonly queuedBytes: number;
+  readonly evictedEvents: number;
+  readonly evictedBytes: number;
 }
 
 /**

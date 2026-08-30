@@ -29,6 +29,7 @@ export { UsageError };
 export interface CodexCommandInput {
   url?: string;
   token?: string;
+  resolveReplacementToken?: () => string | null;
   /** Working directory for codex. Defaults to process.cwd(). */
   cwd?: string;
   /** Optional model override forwarded as `thread/start`'s `model`. */
@@ -67,6 +68,7 @@ export async function runCodexCommand(input: CodexCommandInput): Promise<number>
   const exitCode = await runAgentSession(adapter, {
     url: input.url,
     token: input.token,
+    resolveReplacementToken: input.resolveReplacementToken,
     cwd: input.cwd,
     logger: input.logger,
     noTrace: input.noTrace,

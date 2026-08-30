@@ -25,6 +25,7 @@ export { UsageError };
 export interface ClaudeCommandInput {
   url?: string;
   token?: string;
+  resolveReplacementToken?: () => string | null;
   /** Model override forwarded to the SDK (e.g. `claude-sonnet-5`). */
   model?: string;
   /**
@@ -76,6 +77,7 @@ export async function runClaudeCommand(input: ClaudeCommandInput): Promise<numbe
   return runAgentSession(adapter, {
     url: input.url,
     token: input.token,
+    resolveReplacementToken: input.resolveReplacementToken,
     cwd: input.cwd,
     logger: input.logger,
     noTrace: input.noTrace,

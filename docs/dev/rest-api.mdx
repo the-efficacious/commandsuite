@@ -175,6 +175,13 @@ Multiple concurrent subscribers per member are supported (the
 `Presence.connected` count reflects that). On server shutdown every
 live socket is closed with code `1001`.
 
+Long-running bearer clients can set `onUnauthorized(source)` to receive the
+same signal for an HTTP 401 or a WebSocket upgrade 401. After device
+re-enrolment, `client.replaceToken(token)` swaps the bearer used by subsequent
+requests and reconnects active subscriptions; it never returns or logs the
+token. Clients whose credential comes only from an environment variable must
+restart to replace it in their process environment.
+
 Two side effects fire when the subscriber is a runner (opaque
 bearer auth, i.e. `tokenId !== null` — never web-UI sessions or
 federated JWTs): the broker DMs a session-online notice from

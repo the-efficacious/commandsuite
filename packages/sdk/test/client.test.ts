@@ -166,6 +166,36 @@ describe('Client', () => {
     }
   });
 
+  it('routes HTTP and WebSocket 401s through one unauthorized hook and replaces bearer auth silently', async () => {
+    const sources: string[] = [];
+    const seenAuth: string[] = [];
+    FakeWebSocket.instances = [];
+    const client = new Client({
+      url: 'http://example.test:8717',
+      token: 'old-secret',
+      onUnauthorized: (source) => sources.push(source),
+      fetch: makeFakeFetch((_url, init) => {
+        seenAuth.push(new Headers(init.headers).get('Authorization') ?? '');
+        return new Response('unauthorized', { status: 401 });
+      }),
+      WebSocket: asWs(),
+    });
+    await expect(client.roster()).rejects.toBeInstanceOf(ClientError);
+    const iteration = (async () => {
+      for await (const _message of client.subscribe('agent-1')) {
+        // no messages
+      }
+    })();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    FakeWebSocket.instances[0]?.emit('error', new Error('Unexpected server response: 401'));
+    await expect(iteration).rejects.toMatchObject({ status: 0 });
+    expect(sources).toEqual(['http', 'websocket']);
+
+    expect(client.replaceToken('new-secret')).toBeUndefined();
+    await expect(client.roster()).rejects.toBeInstanceOf(ClientError);
+    expect(seenAuth).toEqual(['Bearer old-secret', 'Bearer new-secret']);
+  });
+
   it('subscribe yields parsed messages from WebSocket frames', async () => {
     const fakeMessage: Message = {
       id: 'msg-1',
