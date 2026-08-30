@@ -110,7 +110,9 @@ export const fakeBrokerCapabilities: { rawBodyAck: boolean } = { rawBodyAck: tru
  */
 export const fakeBrokerActivity: Array<{ member: string; event: Record<string, unknown> }> = [];
 
-export async function startFakeBroker(): Promise<FakeBroker> {
+export async function startFakeBroker(
+  options: { additionalPermissions?: string[] } = {},
+): Promise<FakeBroker> {
   const pushes: FakeBrokerPush[] = [];
   const subscribers: LiveSubscriber[] = [];
 
@@ -197,6 +199,7 @@ export async function startFakeBroker(): Promise<FakeBroker> {
           permissions: [
             'team.manage',
             'members.manage',
+            ...(options.additionalPermissions ?? []),
             'objectives.create',
             'objectives.cancel',
             'objectives.reassign',
@@ -319,6 +322,116 @@ export async function startFakeBroker(): Promise<FakeBroker> {
       fakeBrokerObjectiveQueries.push(url.searchParams.toString());
       res.writeHead(200, jsonHeaders);
       res.end(JSON.stringify({ objectives: fakeBrokerObjectives }));
+      return;
+    }
+
+    if (url.pathname === '/members' && req.method === 'POST') {
+      const body = JSON.parse((await readBody(req)) || '{}') as {
+        name?: string;
+        role?: { title?: string; description?: string };
+        permissions?: string[];
+      };
+      res.writeHead(201, jsonHeaders);
+      res.end(
+        JSON.stringify({
+          credentialMode: 'pending',
+          member: {
+            name: body.name ?? 'newbie',
+            role: {
+              title: body.role?.title ?? 'engineer',
+              description: body.role?.description ?? '',
+            },
+            permissions: body.permissions ?? [],
+          },
+          enrollment: {
+            method: 'device_code',
+            connectCommand: 'csuite connect',
+            approveCommand: 'csuite connect approve',
+          },
+        }),
+      );
+      return;
+    }
+
+    if (url.pathname === '/enroll/pending' && req.method === 'GET') {
+      res.writeHead(200, jsonHeaders);
+      res.end(
+        JSON.stringify({
+          enrollments: [
+            {
+              userCode: 'AB12-CD34',
+              labelHint: 'new-seat',
+              sourceIp: null,
+              sourceUa: null,
+              createdAt: 10,
+              expiresAt: Date.now() + 60_000,
+            },
+          ],
+        }),
+      );
+      return;
+    }
+
+    if (url.pathname === '/enroll/approve' && req.method === 'POST') {
+      const body = JSON.parse((await readBody(req)) || '{}') as {
+        memberName?: string;
+        label?: string;
+      };
+      res.writeHead(200, jsonHeaders);
+      res.end(
+        JSON.stringify({
+          member: {
+            name: body.memberName ?? 'newbie',
+            role: { title: 'engineer', description: '' },
+            permissions: [],
+          },
+          tokenInfo: {
+            id: '11111111-1111-4111-8111-111111111111',
+            memberName: body.memberName ?? 'newbie',
+            label: body.label ?? 'new-seat',
+            origin: 'enroll',
+            createdAt: 10,
+            lastUsedAt: null,
+            expiresAt: null,
+            createdBy: FAKE_BROKER_NAME,
+          },
+        }),
+      );
+      return;
+    }
+
+    const bindingMatch = /^\/(secrets|variables)\/([^/]+)\/bindings$/.exec(url.pathname);
+    if (bindingMatch && req.method === 'POST') {
+      res.writeHead(200, jsonHeaders);
+      res.end('{}');
+      return;
+    }
+
+    const environmentDetail = /^\/(secrets|variables)\/([^/]+)$/.exec(url.pathname);
+    if (environmentDetail && req.method === 'GET') {
+      const kind = environmentDetail[1] as 'secrets' | 'variables';
+      const slug = decodeURIComponent(environmentDetail[2] as string);
+      const base = {
+        id: `fake-${kind}-${slug}`,
+        slug,
+        envName: slug.toUpperCase().replaceAll('-', '_'),
+        description: '',
+        enabled: true,
+        allMembers: false,
+        createdBy: FAKE_BROKER_NAME,
+        createdAt: 10,
+        updatedAt: 10,
+        hasValue: true,
+        bound: true,
+      };
+      res.writeHead(200, jsonHeaders);
+      res.end(
+        JSON.stringify(
+          kind === 'secrets'
+            ? { secret: base, boundMembers: ['newbie'] }
+            : { variable: { ...base, value: 'safe' }, boundMembers: ['newbie'] },
+        ),
+      );
       return;
     }
 

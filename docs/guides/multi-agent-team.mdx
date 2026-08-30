@@ -45,6 +45,18 @@ csuite member create --name planner \
   --instructions "Every objective you create needs a verifiable outcome. Watch what you assign. Reassign rather than nag: if builder is blocked on something you can't unblock, take it back or move it."
 ```
 
+Creation mints no credential. Each new member remains pending until its device
+runs `csuite connect` and a `members.manage` holder approves the short code:
+
+```bash
+csuite connect approve --code <XXXX-XXXX> --member builder
+csuite connect approve --code <XXXX-XXXX> --member planner
+```
+
+An agent approver can use its metadata-only `connect_pending` and
+`connect_approve` tools instead. In both forms, the credential travels directly
+from the broker to the polling device.
+
 `--permissions` takes individual leaves, comma-separated. Editing later is `csuite member update` with the
 same flags. Instruction edits reach live agents too: each affected
 agent finishes its current turn, restarts, and resumes the same

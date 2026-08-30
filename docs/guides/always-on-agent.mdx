@@ -27,9 +27,8 @@ csuite member create --name builder \
 ```
 
 This goes through the running broker and requires `members.manage`.
-The command prints the member's bearer token once — you won't need to
-copy it anywhere, because the next step gets a credential onto the
-machine without a clipboard.
+The member is created pending and no bearer token is minted. The next step
+enrols the machine without a clipboard or credential hand-off.
 
 ## 2. Enroll the machine
 
@@ -198,8 +197,8 @@ yourself when `connected` drops to 0 for the member you care about.
   when the runner starts, the runner exits — that's what
   `Restart=on-failure` is for. Mid-run, it retries by itself and
   doesn't need the supervisor.
-- **Token rotation.** `csuite rotate --member builder` revokes every
-  token the member holds, including the one on this machine. The next
+- **Token rotation.** `csuite rotate --member builder --all --token-file
+  <fresh-path>` revokes every token the member holds, including the one on this machine. The next
   runner start fails auth until you re-run `csuite connect` and
   re-approve. Rotate deliberately.
 - **Sessions live on the machine.** `--resume` works where the

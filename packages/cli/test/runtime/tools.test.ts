@@ -128,6 +128,57 @@ describe('instruction authoring tools report text cost', () => {
     expect(text).toContain('does not support pending device enrolment');
     expect(text).not.toContain('not-a-real-credential');
   });
+
+  it('lists and approves device enrolment with metadata-only results', async () => {
+    const listPendingEnrollments = vi.fn(async () => [
+      {
+        userCode: 'AB12-CD34',
+        labelHint: 'new-seat',
+        sourceIp: null,
+        sourceUa: null,
+        createdAt: 10,
+        expiresAt: 20,
+      },
+    ]);
+    const approveEnrollment = vi.fn(async () => ({
+      member: {
+        name: 'newbie',
+        role: { title: 'engineer', description: '' },
+        permissions: [],
+      },
+      tokenInfo: {
+        id: '11111111-1111-4111-8111-111111111111',
+        memberName: 'newbie',
+        label: 'new-seat',
+        origin: 'enroll' as const,
+        createdAt: 10,
+        lastUsedAt: null,
+        expiresAt: null,
+        createdBy: 'scout',
+      },
+    }));
+    const broker = makeBroker({ listPendingEnrollments, approveEnrollment });
+
+    const pending = getCallText(await handleToolCall('connect_pending', {}, broker, ADMIN_PACKET));
+    const approved = getCallText(
+      await handleToolCall(
+        'connect_approve',
+        { code: 'ab12-cd34', member: 'newbie', label: 'new-seat' },
+        broker,
+        ADMIN_PACKET,
+      ),
+    );
+
+    expect(pending).toContain('AB12-CD34');
+    expect(approved).toContain("bound device to 'newbie'");
+    expect(approved).toContain('id=11111111-1111-4111-8111-111111111111');
+    expect(approveEnrollment).toHaveBeenCalledWith({
+      mode: 'bind',
+      userCode: 'AB12-CD34',
+      memberName: 'newbie',
+      label: 'new-seat',
+    });
+  });
 });
 
 describe('context_control', () => {

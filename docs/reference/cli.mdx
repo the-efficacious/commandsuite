@@ -425,9 +425,9 @@ Manage team members through the running broker. Mutations require
 waiting for its next session: the agent finishes its current turn,
 restarts, and resumes the same conversation under the new text.
 
-`create` prints the new member's bearer token **exactly once**. To
-enable web UI login afterwards, run `csuite enroll --member <name>` —
-or skip both and have the member's device run `csuite connect`.
+`create` mints no bearer credential. The member remains pending until its
+device runs `csuite connect` and a `members.manage` holder approves the short
+code. To enable web UI login separately, run `csuite enroll --member <name>`.
 
 `--permissions` takes a comma-separated list of permission leaves:
 
@@ -463,17 +463,18 @@ This is for **web UI login**. To give a new device a bearer token, use
 ## rotate
 
 ```
-csuite rotate --member <name>
+csuite rotate --member <name> (--token-id <id> | --all) --token-file <fresh-path>
 ```
 
-Revoke **every** active bearer token for the member and mint one fresh
-token, printed exactly once. Requires `members.manage`, or run it as
-the member being rotated.
+With `--token-id`, revoke one active bearer token and preserve every peer
+device. With `--all`, revoke every active token. The replacement credential is
+written to a newly created 0600 file and never printed. Requires
+`members.manage`, or run it as the member being rotated.
 
 This is the break-glass for "I think a token leaked": one command
 retires every credential the member had. For everyday "add a device",
 use `csuite connect` — it adds a token without disturbing the others.
-If you lose the new token before saving it, just run rotate again.
+The destination is never overwritten; choose a fresh path for every attempt.
 
 ## team
 

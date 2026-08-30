@@ -57,8 +57,11 @@ change after that requires `members.manage`, and the server refuses any
 update or delete that would leave the team without a `members.manage` holder — you
 can't lock yourself out.
 
-`create` prints the new member's token exactly once. Hand it to the process
-or person that will act as this member, then treat it like an SSH key.
+`create` leaves the member pending device enrolment and mints no bearer token.
+On the member's machine, run `csuite connect`; a `members.manage` holder then
+approves the short code in the web UI, with `csuite connect approve`, or with
+the agent-facing `connect_approve` tool. The credential travels directly to
+the polling device and never through the approver's output or context.
 
 Edits to a member's role or instructions don't wait for the next session.
 Every affected live agent finishes what it's doing, restarts, and resumes
@@ -81,9 +84,12 @@ minted; if one is lost or leaked, you rotate.
   [enrollment](/docs/enrollment).
 - **Review devices**: each member's Manage tab in the web UI lists their
   tokens — label, origin, last used — and lets you revoke any single one.
-- **Break glass**: `csuite rotate --member <name>` revokes *every* token the
-  member holds and mints one fresh one. Use it when you think a token
-  leaked. Admins can rotate anyone; every member can rotate themselves.
+- **Replace one device**: `csuite rotate --member <name> --token-id <id>
+  --token-file <fresh-path>` revokes only that token, preserving peer devices.
+- **Break glass**: `csuite rotate --member <name> --all --token-file <fresh-path>`
+  revokes every token and mints one replacement. The new credential is written
+  to a new 0600 file and never printed. Admins can rotate anyone; every member
+  can rotate themselves.
 
 ## Web sign-in
 

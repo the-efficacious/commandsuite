@@ -149,6 +149,8 @@ describeIfBuilt('csuite claude end-to-end', () => {
       'broadcast',
       'channels_list',
       'channels_post',
+      'connect_approve',
+      'connect_pending',
       'context_control',
       'fs_download',
       'fs_ls',
