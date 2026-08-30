@@ -35,6 +35,30 @@ function teamColumns(db: DatabaseSyncInstance): string[] {
   return rows.map((r) => r.name);
 }
 
+function legacyMembersDb(): DatabaseSyncInstance {
+  const db = openDatabase(':memory:');
+  db.exec(`
+    CREATE TABLE team (
+      id INTEGER PRIMARY KEY CHECK (id = 1), name TEXT NOT NULL,
+      context TEXT NOT NULL DEFAULT '', updated_at INTEGER NOT NULL, updated_by TEXT
+    );
+    CREATE TABLE permission_presets (
+      name TEXT PRIMARY KEY, permissions TEXT NOT NULL,
+      updated_at INTEGER NOT NULL, updated_by TEXT
+    );
+    CREATE TABLE members (
+      name TEXT PRIMARY KEY, role_title TEXT NOT NULL,
+      role_description TEXT NOT NULL DEFAULT '', instructions TEXT NOT NULL DEFAULT '',
+      raw_permissions TEXT NOT NULL, totp_secret TEXT, totp_last_counter INTEGER NOT NULL DEFAULT 0,
+      insertion_order INTEGER NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+    );
+    INSERT INTO members VALUES
+      ('legacy', 'engineer', '', '', '[]', NULL, 0, 0, 1, 1),
+      ('second', 'reviewer', '', '', '[]', NULL, 0, 1, 1, 1);
+  `);
+  return db;
+}
+
 describe('team-store directive → context migration', () => {
   it('folds a legacy directive into the head of context and drops the column', () => {
     const db = legacyDb({
@@ -71,6 +95,28 @@ describe('team-store directive → context migration', () => {
     const second = openTeamAndMembers(db);
     expect(second.team.getTeam()).toMatchObject({ name: 'fresh-team', context: 'ctx' });
     expect(teamColumns(db)).not.toContain('directive');
+    db.close();
+  });
+});
+
+describe('member stable-identity migration', () => {
+  it('backfills distinct UUIDs in a pre-migration database and preserves them across reopen', () => {
+    const db = legacyMembersDb();
+    const first = openTeamAndMembers(db).members.members();
+    expect(first.map((member) => member.identityId)).toHaveLength(2);
+    expect(first[0]?.identityId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(first[1]?.identityId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(first[0]?.identityId).not.toBe(first[1]?.identityId);
+
+    const reopened = openTeamAndMembers(db).members.members();
+    expect(reopened.map((member) => member.identityId)).toEqual(
+      first.map((member) => member.identityId),
+    );
+    expect(
+      (db.prepare('PRAGMA index_list(members)').all() as unknown as Array<{ name: string }>).map(
+        (row) => row.name,
+      ),
+    ).toContain('members_identity_id_idx');
     db.close();
   });
 });

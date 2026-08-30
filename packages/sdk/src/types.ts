@@ -177,6 +177,12 @@ export interface Role {
  * callers holding `members.manage`.
  */
 export interface Teammate {
+  /**
+   * Stable member identity. Names are display/lookup handles and may be
+   * explicitly reused after departure; this id never is. Optional because
+   * brokers predating typed offboarding do not report it.
+   */
+  identityId?: string;
   name: string;
   role: Role;
   /** Resolved leaf permissions (presets expanded). */

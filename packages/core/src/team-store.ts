@@ -64,6 +64,7 @@ const CREATE_SCHEMA = `
   );
 
   CREATE TABLE IF NOT EXISTS members (
+    identity_id       TEXT NOT NULL UNIQUE,
     name              TEXT PRIMARY KEY,
     role_title        TEXT NOT NULL,
     role_description  TEXT NOT NULL DEFAULT '',
@@ -95,6 +96,7 @@ interface RawPresetRow {
 }
 
 interface RawMemberRow {
+  identity_id: string;
   name: string;
   role_title: string;
   role_description: string;
@@ -142,6 +144,30 @@ function migrateDirectiveIntoContext(db: SqlDriver): void {
       WHERE id = 1 AND length(directive) > 0;
       ALTER TABLE team DROP COLUMN directive;
     `);
+  });
+}
+
+/**
+ * Add the stable identity key to databases created before typed member
+ * offboarding. The backfill is deliberately independent of member names:
+ * names may later be explicitly reused, identity ids never are.
+ */
+function migrateMemberIdentityIds(db: SqlDriver): void {
+  const columns = db.prepare('PRAGMA table_info(members)').all() as unknown as Array<{
+    name: string;
+  }>;
+  if (columns.some((c) => c.name === 'identity_id')) return;
+
+  runInTransaction(db, () => {
+    db.exec('ALTER TABLE members ADD COLUMN identity_id TEXT');
+    const rows = db
+      .prepare('SELECT name FROM members ORDER BY insertion_order ASC')
+      .all() as unknown as Array<{
+      name: string;
+    }>;
+    const update = db.prepare('UPDATE members SET identity_id = ? WHERE name = ?');
+    for (const row of rows) update.run(globalThis.crypto.randomUUID(), row.name);
+    db.exec('CREATE UNIQUE INDEX members_identity_id_idx ON members(identity_id)');
   });
 }
 
@@ -322,21 +348,22 @@ class SqliteMemberStore implements MemberStore {
     this.now = options.now ?? Date.now;
     this.getCipher = options.getCipher ?? (() => null);
     this.db.exec(CREATE_SCHEMA);
+    migrateMemberIdentityIds(this.db);
     this.listAllStmt = this.db.prepare(
-      `SELECT name, role_title, role_description, instructions, raw_permissions,
+      `SELECT identity_id, name, role_title, role_description, instructions, raw_permissions,
               totp_secret, totp_last_counter, insertion_order, created_at, updated_at
          FROM members ORDER BY insertion_order ASC`,
     );
     this.findByNameStmt = this.db.prepare(
-      `SELECT name, role_title, role_description, instructions, raw_permissions,
+      `SELECT identity_id, name, role_title, role_description, instructions, raw_permissions,
               totp_secret, totp_last_counter, insertion_order, created_at, updated_at
          FROM members WHERE name = ?`,
     );
     this.insertStmt = this.db.prepare(`
       INSERT INTO members
-        (name, role_title, role_description, instructions, raw_permissions,
+        (identity_id, name, role_title, role_description, instructions, raw_permissions,
          totp_secret, totp_last_counter, insertion_order, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
     `);
     this.deleteStmt = this.db.prepare('DELETE FROM members WHERE name = ?');
     this.updateStmt = this.db.prepare(`
@@ -366,6 +393,7 @@ class SqliteMemberStore implements MemberStore {
     const presets = this.teamStore.getPresets();
     const permissions = resolvePermissions(rawPermissions, presets, `member '${row.name}'`);
     return {
+      identityId: row.identity_id,
       name: row.name,
       role: { title: row.role_title, description: row.role_description },
       instructions: row.instructions,
@@ -395,6 +423,7 @@ class SqliteMemberStore implements MemberStore {
     return rows.map((row) => {
       const rawPermissions = parseJsonArray(row.raw_permissions, `member '${row.name}'`);
       return {
+        identityId: row.identity_id,
         name: row.name,
         role: { title: row.role_title, description: row.role_description },
         instructions: row.instructions,
@@ -434,6 +463,7 @@ class SqliteMemberStore implements MemberStore {
     const next = (this.nextOrderStmt.get() as { next: number } | undefined)?.next ?? 0;
     const t = this.now();
     this.insertStmt.run(
+      globalThis.crypto.randomUUID(),
       input.name,
       input.role.title,
       input.role.description,
