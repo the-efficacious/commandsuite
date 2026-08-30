@@ -16,6 +16,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Readable } from 'node:stream';
 import type { Client as BrokerClient } from 'csuite-sdk/client';
 import type {
   ChannelSummary,
@@ -133,7 +134,13 @@ describe('runner-local file transfer tools', () => {
       writeFileSync(localPath, bytes);
       let received = Buffer.alloc(0);
       const fsWrite = vi.fn(async (input: { source: BodyInit; path: string; mimeType: string }) => {
-        received = Buffer.from(await new Response(input.source).arrayBuffer());
+        const chunks: Buffer[] = [];
+        for await (const chunk of Readable.fromWeb(
+          input.source as import('node:stream/web').ReadableStream<Uint8Array>,
+        )) {
+          chunks.push(Buffer.from(chunk));
+        }
+        received = Buffer.concat(chunks);
         return {
           renamed: false,
           entry: {
