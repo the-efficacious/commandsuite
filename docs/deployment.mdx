@@ -40,7 +40,8 @@ the broker in the foreground:
 3. A runner member `builder` is enrolled through the real device-code
    flow (`csuite connect`, approved from the CLI as `admin`); its
    credential resolves from `/var/lib/csuite/runner` with no
-   environment variable; `csuite claude --doctor` passes.
+   environment variable; `csuite claude --doctor` passes (in this
+   broker-only image, with the agent binary reported absent by design).
 4. The loopback broker stops and the real one runs as PID 1 on
    `0.0.0.0:8717`. That is where the container stops: an enrolled
    runner member, not a running runner. A live runner needs a model
@@ -98,19 +99,34 @@ docker compose up -d
 
 ### Image
 
-Two stages on a digest-pinned `node:22-bookworm-slim`; the runtime is
-the production dependency tree of the `csuite` meta-package, the
-bootstrap script, and `curl` for health checks, running as the
-unprivileged `node` user. It is large — about 890 MB — because
-`csuite-cli` depends on the Claude Agent SDK's bundled binary
-(~263 MB), which `csuite claude --doctor` checks for; a broker-only
-image without it is a follow-on (#198). No image is published;
-`compose up` builds `commandsuite/csuite:local` from your checkout.
+Two stages: a digest-pinned `node:22-bookworm-slim` builder, and a
+digest-pinned Alpine runtime carrying the distro's `nodejs` (22.x),
+`bash` and `curl`, the production dependency tree of the `csuite`
+meta-package, and the bootstrap script, running as the unprivileged
+`node` user — about 150 MB.
+
+This is the **broker-only** image: the production install passes
+`--no-optional`, which leaves out the Claude Agent SDK (an optional
+dependency of `csuite-cli`, ~263 MB of per-platform agent binary the
+broker never executes). Every broker verb — `serve`, `setup`,
+`connect`, `member`, `fs`, the bootstrap path — works without it;
+`csuite claude` inside the container fails fast naming the missing
+package, and `csuite claude --doctor` reports the agent binary as
+`absent by design` (advisory, not a failure) — the compose CI asserts
+exactly that line. To build an image that can also run a live agent
+in-container, remove `--no-optional` from the `pnpm install --prod`
+line in the `Dockerfile`; the default install of csuite outside a
+container is unaffected either way, because npm and pnpm install
+optional dependencies by default.
+
+No image is published; `compose up` builds `commandsuite/csuite:local`
+from your checkout.
 
 ### Verifying a deployment
 
 `scripts/compose-check.sh` is what CI runs and what a person can run:
-`up`, the four assertions above, `restart`, the same four, `down -v`.
+`up`, the assertions above plus the in-container doctor line,
+`restart`, the same again, `down -v`.
 It stops before any live model connection and says so.
 `KEEP=1 scripts/compose-check.sh` leaves the stack running.
 
