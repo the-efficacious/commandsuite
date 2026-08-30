@@ -30,6 +30,10 @@ export interface TeamHomeProps {
   viewer: string;
 }
 
+function formatStatusTime(value: number | null): string {
+  return value === null ? 'absent' : new Date(value).toLocaleString();
+}
+
 export function TeamHome({ viewer }: TeamHomeProps) {
   const b = instructions.value;
   const r = roster.value;
@@ -224,7 +228,7 @@ export function TeamHome({ viewer }: TeamHomeProps) {
                       {status && (
                         <div style="font-family:var(--ef-font-mono);font-size:10px;color:var(--ef-text-muted);margin-top:3px">
                           auth blocked: {status.presence?.authBlocked ?? 'absent'} · last activity:{' '}
-                          {status.lastActivityAt ?? 'absent'}
+                          {formatStatusTime(status.lastActivityAt)}
                           {status.activeObjectives.length === 0
                             ? ' · no active objective'
                             : status.activeObjectives.map((objective) => (
@@ -233,9 +237,9 @@ export function TeamHome({ viewer }: TeamHomeProps) {
                                   {objective.stalled
                                     ? ` · STALLED (${objective.staleSignals.join(', ')})`
                                     : ''}{' '}
-                                  · post {objective.lastThreadPostAt ?? 'absent'} · PR{' '}
-                                  {objective.lastPrLinkAt ?? 'absent'} · lifecycle{' '}
-                                  {objective.lastLifecycleAt ?? 'absent'}
+                                  · post {formatStatusTime(objective.lastThreadPostAt)} · PR{' '}
+                                  {formatStatusTime(objective.lastPrLinkAt)} · lifecycle{' '}
+                                  {formatStatusTime(objective.lastLifecycleAt)}
                                 </div>
                               ))}
                         </div>
