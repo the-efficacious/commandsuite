@@ -17,7 +17,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
-import type { Client as BrokerClient } from 'csuite-sdk/client';
+import { type Client as BrokerClient, ClientError } from 'csuite-sdk/client';
 import type {
   ChannelSummary,
   GetChannelResponse,
@@ -229,6 +229,44 @@ function getCallText(result: { content: Array<{ type: string; text?: string }> }
 }
 
 describe('runner-local file transfer tools', () => {
+  it('keeps empty, unreadable, and nonexistent listings in one result shape', async () => {
+    const empty = getCallText(
+      await handleToolCall(
+        'fs_ls',
+        { path: '/scout' },
+        makeBroker({ fsList: vi.fn(async () => []) }),
+        PACKET,
+      ),
+    );
+    const unreadable = getCallText(
+      await handleToolCall(
+        'fs_ls',
+        { path: '/lead' },
+        makeBroker({
+          fsList: vi.fn(async () => {
+            throw new ClientError('403', 403, '{}');
+          }),
+        }),
+        PACKET,
+      ),
+    );
+    const missing = getCallText(
+      await handleToolCall(
+        'fs_ls',
+        { path: '/nobody' },
+        makeBroker({
+          fsList: vi.fn(async () => {
+            throw new ClientError('404', 404, '{}');
+          }),
+        }),
+        PACKET,
+      ),
+    );
+    expect(empty).toBe('/scout: (empty)');
+    expect(unreadable).toBe('/lead: (unreadable)');
+    expect(missing).toBe('/nobody: (not found)');
+  });
+
   it('streams a binary file larger than the IPC frame without returning its bytes', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'csuite-fs-upload-'));
     try {

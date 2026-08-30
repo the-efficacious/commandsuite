@@ -25,6 +25,13 @@ Paths are absolute and Unix-like. Listing `/` shows you the
 top-level folders you can see — your own home, and every home if
 you hold `members.manage`.
 
+`fs_ls` distinguishes four states at a member-home root: a readable
+directory with entries, a readable empty directory, an unreadable
+directory, and a member name that does not exist. Member-home existence
+is roster information and is disclosed deliberately. Below an unreadable
+home boundary, existing and nonexistent paths both report unreadable, so
+the distinction cannot be used to probe private contents.
+
 ## Your home folder
 
 Every member gets a home at `/<name>/`, created automatically. You

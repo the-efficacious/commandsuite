@@ -102,8 +102,14 @@ describe('the write description carries the two things an agent will otherwise g
   });
 
   it('states the delivery bound rather than implying the edit is live everywhere', () => {
-    expect(write()?.description).toMatch(/NEXT runner start/);
-    expect(write()?.description).toMatch(/NOT pushed into a running session/);
+    expect(write()?.description).toMatch(/next idle boundary/);
+    expect(write()?.description).toMatch(/resumes the same conversation/);
+    expect(write()?.description).toMatch(/restart-pending/);
+  });
+
+  it('states the writer permission and retained history fields', () => {
+    expect(write()?.description).toMatch(/Requires `process\.manage`/);
+    expect(write()?.description).toMatch(/prior text, editor, reason, and disposition/);
   });
 
   it('explains both dispositions and what each binds', () => {
@@ -228,7 +234,9 @@ describe('process_document_write', () => {
     );
     expect(text).toMatch(/created the process document at v1/);
     expect(text).toMatch(/History begins here/);
-    expect(text).toMatch(/NEXT runner start/);
+    expect(text).toMatch(/next idle boundary/);
+    expect(text).toMatch(/resume the same conversation/);
+    expect(text).toMatch(/restart-pending/);
     expect(text).toMatch(/No broadcast is needed and none was sent/);
 
     // POSITIVE CONTROL, before the absence assertion. Prove the

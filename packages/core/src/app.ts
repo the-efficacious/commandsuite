@@ -6180,6 +6180,13 @@ export function createApp(options: AppOptions): CreatedApp {
       if (!parsedPath.success) {
         return c.json({ error: 'invalid path', details: parsedPath.error.issues }, 400);
       }
+      // Member homes exist conceptually before their first file. At the namespace-root
+      // boundary, distinguish a roster-backed home from a name that does not exist; below
+      // an unreadable home, the store deliberately returns the same 403 for every path.
+      const topLevel = /^\/([^/]+)$/.exec(parsedPath.data)?.[1];
+      if (topLevel && topLevel !== 'objectives' && members.findByName(topLevel) === null) {
+        return c.json({ error: `no such namespace: ${parsedPath.data}` }, 404);
+      }
       try {
         const entries = fsStore.list(parsedPath.data, toViewer(c.get('member')));
         return c.json({ entries });

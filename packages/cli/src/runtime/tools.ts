@@ -35,7 +35,7 @@
 
 import { basename } from 'node:path';
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
-import type { Client as BrokerClient, ClientError } from 'csuite-sdk/client';
+import { type Client as BrokerClient, ClientError } from 'csuite-sdk/client';
 import { PROCESS_DOCUMENT_MAX } from 'csuite-sdk/schemas';
 import { formatTextMetrics } from 'csuite-sdk/text-metrics';
 import type {
@@ -1595,6 +1595,8 @@ function buildFilesystemTools(name: string): Tool[] {
         `Entries include per-item metadata (kind, size, mime type, owner). ` +
         `Listing \`/objectives/<id>\` works for members of that objective and for ` +
         `directors; those entries are owned by \`obj:<id>\` rather than by a member. ` +
+        `The result distinguishes a readable listing (including an empty one), an ` +
+        `unreadable member-home root, and a nonexistent member-home root. ` +
         `PATHS MUST NOT END IN "/". Directories are DISPLAYED with a trailing slash ` +
         `(\`/you/notes/\`) but are STORED without one, and the API rejects a trailing ` +
         `slash as an invalid path — so strip it before passing a directory path from ` +
@@ -1839,10 +1841,10 @@ function buildProcessDocumentTools(instructions: InstructionsResponse): Tool[] {
       '**The text you supply REPLACES the document; it is not appended.** Read it first ' +
       'with `process_document_get` and send the full new text, or you will delete everything ' +
       'you did not retype. The first write creates version 1; every later write increments ' +
-      'the version and retains the prior text, so nothing is destroyed. The document reaches ' +
-      "every member's injected context at their NEXT runner start — it is NOT pushed into a " +
-      'running session, so a teammate mid-session has not seen your edit. No broadcast is ' +
-      'needed for it to take effect and none is sent.',
+      'the version and retains the prior text, editor, reason, and disposition. Every affected ' +
+      'runner restarts at its next idle boundary and resumes the same conversation under the ' +
+      'new version; the roster reports restart-pending until delivery. No broadcast is needed ' +
+      'for the edit to take effect and none is sent.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -2680,8 +2682,9 @@ async function handleProcessDocumentWrite(
     `${created ? 'created' : 'updated'} the process document at v${document.version} ` +
       `(${edit.disposition}: ${binding}). ` +
       `${created ? 'History begins here.' : 'The prior text is retained and retrievable via `process_document_history`.'} ` +
-      'Every member receives it in their injected context at their NEXT runner start — ' +
-      'a teammate already running has not seen it. No broadcast is needed and none was sent.',
+      'Affected runners restart at their next idle boundary and resume the same conversation ' +
+      'under the new version; the roster reports restart-pending until delivery. No broadcast ' +
+      'is needed and none was sent.',
   );
 }
 
@@ -4092,7 +4095,16 @@ async function handleFsLs(
   instructions: InstructionsResponse,
 ): Promise<CallToolResult> {
   const raw = typeof args.path === 'string' ? args.path : `/${instructions.name}`;
-  const entries = await brokerClient.fsList(raw);
+  let entries: FsEntry[];
+  try {
+    entries = await brokerClient.fsList(raw);
+  } catch (err) {
+    // Keep all directory states in the normal tool-result shape. An agent can reason
+    // about unreadable and nonexistent roots without treating either as tool failure.
+    if (err instanceof ClientError && err.status === 403) return textResult(`${raw}: (unreadable)`);
+    if (err instanceof ClientError && err.status === 404) return textResult(`${raw}: (not found)`);
+    throw err;
+  }
   if (entries.length === 0) {
     return textResult(`${raw}: (empty)`);
   }

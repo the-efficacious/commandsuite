@@ -222,6 +222,36 @@ describe('/fs/ls', () => {
     expect(res.status).toBe(403);
   });
 
+  it('distinguishes readable nonempty, readable empty, unreadable, and nonexistent roots', async () => {
+    const { app } = await makeApp();
+    await writeFile(app, ALICE_TOKEN, '/alice/a.txt', 'text/plain', 'a');
+
+    const nonempty = await app.request('/fs/ls?path=%2Falice', { headers: authed(ALICE_TOKEN) });
+    expect(nonempty.status).toBe(200);
+    expect(((await nonempty.json()) as { entries: FsEntry[] }).entries).toHaveLength(1);
+
+    const empty = await app.request('/fs/ls?path=%2Fbob', { headers: authed(BOB_TOKEN) });
+    expect(empty.status).toBe(200);
+    expect(await empty.json()).toEqual({ entries: [] });
+
+    const unreadable = await app.request('/fs/ls?path=%2Falice', { headers: authed(BOB_TOKEN) });
+    expect(unreadable.status).toBe(403);
+
+    const nonexistent = await app.request('/fs/ls?path=%2Fnobody', { headers: authed(BOB_TOKEN) });
+    expect(nonexistent.status).toBe(404);
+  });
+
+  it('does not disclose existence below an unreadable namespace boundary', async () => {
+    const { app } = await makeApp();
+    await writeFile(app, ALICE_TOKEN, '/alice/existing/file.txt', 'text/plain', 'secret');
+    for (const path of ['/alice/existing', '/alice/not-there']) {
+      const res = await app.request(`/fs/ls?path=${encodeURIComponent(path)}`, {
+        headers: authed(BOB_TOKEN),
+      });
+      expect(res.status).toBe(403);
+    }
+  });
+
   it('lists root as per-owner homes (director sees everyone)', async () => {
     const { app } = await makeApp();
     const res = await app.request('/fs/ls?path=%2F', { headers: authed(DIRECTOR_TOKEN) });
