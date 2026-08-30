@@ -188,11 +188,40 @@ export const RunnerReportSchema = RunnerIdentitySchema.extend({
   }),
 });
 
+const NonRunnerClientIdentitySchema = z.object({
+  kind: z.enum(['browser', 'cli', 'sdk']),
+  clientVersion: z
+    .string()
+    .min(1)
+    .max(128)
+    .regex(/^[\x20-\x7e]+$/),
+});
+
+export const ClientIdentitySchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('runner'), runnerIdentity: RunnerIdentitySchema }),
+  NonRunnerClientIdentitySchema,
+]);
+
+export const ClientReportSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('runner'),
+    runnerIdentity: RunnerIdentitySchema,
+    connections: z.number().int().positive(),
+    versionSkew: z.object({
+      skew: z.boolean(),
+      runnerVersion: z.string().min(1).max(128),
+      brokerVersion: z.string().min(1).max(128),
+    }),
+  }),
+  NonRunnerClientIdentitySchema.extend({ connections: z.number().int().positive() }),
+]);
+
 export const PresenceSchema = z.object({
   name: NameSchema,
   connected: z.number().int().nonnegative(),
   authBlocked: z.number().int().nonnegative().optional(),
   runnerReports: z.array(RunnerReportSchema).optional(),
+  clientReports: z.array(ClientReportSchema).optional(),
   unreportedConnections: z.number().int().nonnegative().optional(),
   createdAt: z.number(),
   lastSeen: z.number(),

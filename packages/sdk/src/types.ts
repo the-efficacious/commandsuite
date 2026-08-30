@@ -217,7 +217,9 @@ export interface Presence {
   authBlocked?: number;
   /** Per-connection runner facts, grouped only when every field matches. */
   runnerReports?: RunnerReport[];
-  /** Live connections from old runners that reported no identity. */
+  /** Per-connection client facts, grouped only when every field matches. */
+  clientReports?: ClientReport[];
+  /** Live connections that reported no validated client identity. */
   unreportedConnections?: number;
   createdAt: number;
   lastSeen: number;
@@ -298,6 +300,27 @@ export interface RunnerReport extends RunnerIdentity {
     brokerVersion: string;
   };
 }
+
+/** Observational identity a subscriber reports during its presence handshake. */
+export type ClientIdentity =
+  | { kind: 'runner'; runnerIdentity: RunnerIdentity }
+  | { kind: 'browser'; clientVersion: string }
+  | { kind: 'cli'; clientVersion: string }
+  | { kind: 'sdk'; clientVersion: string };
+
+/** Live subscriber identity grouped by identical fields. */
+export type ClientReport =
+  | {
+      kind: 'runner';
+      runnerIdentity: RunnerIdentity;
+      connections: number;
+      versionSkew: RunnerReport['versionSkew'];
+    }
+  | {
+      kind: 'browser' | 'cli' | 'sdk';
+      clientVersion: string;
+      connections: number;
+    };
 
 /**
  * Body for `POST /presence/activity` — the runner-side report of a

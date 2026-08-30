@@ -106,6 +106,20 @@ describe('csuite team status', () => {
                     versionSkew: { skew: false, runnerVersion: '1.0.0', brokerVersion: '1.0.0' },
                   },
                 ],
+                clientReports: [
+                  {
+                    kind: 'runner' as const,
+                    runnerIdentity: {
+                      runner: 'codex' as const,
+                      modelId: null,
+                      runnerVersion: '1.0.0',
+                      runnerBuildSource: 'main' as const,
+                    },
+                    connections: 1,
+                    versionSkew: { skew: false, runnerVersion: '1.0.0', brokerVersion: '1.0.0' },
+                  },
+                ],
+                unreportedConnections: 1,
               },
               activeObjectives: [],
               lastActivityAt: null,
@@ -118,6 +132,7 @@ describe('csuite team status', () => {
     expect(lines).toContain('rune  presence=absent  last-activity=1970-01-01T00:00:02.000Z');
     expect(lines.join('\n')).toContain('model=agent default — not resolved locally');
     expect(lines.join('\n')).not.toContain('model=unreported');
+    expect(lines.join('\n')).toContain('1 connection(s) without client identity');
     expect(lines.join('\n')).toContain('last-activity=1970-01-01T00:00:02.000Z');
     expect(lines.join('\n')).toContain('last-post=1970-01-01T00:00:01.000Z');
   });

@@ -22,6 +22,7 @@
 
 import { signal } from '@preact/signals';
 import { MessageSchema } from 'csuite-sdk/schemas';
+import packageJson from '../../package.json' with { type: 'json' };
 import { getClient } from './client.js';
 import { loadInstructions } from './instructions.js';
 import { appendMessages } from './messages.js';
@@ -56,7 +57,9 @@ const MAX_RETRY_MS = 30_000;
  */
 export function startSubscribe(options: StartSubscribeOptions): () => void {
   const { name, historyLimit = 50, onError } = options;
-  const url = buildWsUrl(`/subscribe?name=${encodeURIComponent(name)}`);
+  const url = buildWsUrl(
+    `/subscribe?name=${encodeURIComponent(name)}&clientKind=browser&clientVersion=${encodeURIComponent(packageJson.version)}`,
+  );
 
   let ws: WebSocket | null = null;
   let cancelled = false;

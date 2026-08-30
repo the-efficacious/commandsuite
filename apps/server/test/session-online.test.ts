@@ -32,6 +32,7 @@ import {
   InMemoryEventLog,
   SqliteSessionStore,
 } from 'csuite-core';
+import { CLIENT_IDENTITY_HEADER, RUNNER_IDENTITY_HEADER } from 'csuite-sdk/protocol';
 import type { Message, Team } from 'csuite-sdk/types';
 import type { UpgradeWebSocket } from 'hono/ws';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -188,6 +189,76 @@ describe('runServer session-online notice — auth-plane gating', () => {
       ws.close();
     }
   }, 10_000);
+});
+
+describe('subscribe client identity ingress', () => {
+  let booted: BootedServer | null = null;
+  const auth = { Authorization: `Bearer ${ADMIN_TOKEN}` };
+  const runner = {
+    runner: 'codex',
+    modelId: 'gpt-5',
+    runnerVersion: '0.8.0',
+    runnerBuildSource: 'main',
+  };
+
+  afterEach(async () => {
+    if (booted) await booted.running.stop();
+    booted = null;
+  });
+
+  it('accepts the browser-only query and records a browser report', async () => {
+    booted = await bootServer();
+    const { ws } = await connectAndCapture(
+      `${booted.wsOrigin}/subscribe?name=alice&clientKind=browser&clientVersion=0.8.0`,
+      auth,
+    );
+    try {
+      const response = await fetch(`${booted.origin}/roster`, { headers: auth });
+      const roster = (await response.json()) as {
+        connected: Array<{ clientReports?: unknown[] }>;
+      };
+      expect(roster.connected[0]?.clientReports).toContainEqual({
+        kind: 'browser',
+        clientVersion: '0.8.0',
+        connections: 1,
+      });
+    } finally {
+      ws.close();
+    }
+  });
+
+  it('rejects browser query combined with the new identity header', async () => {
+    booted = await bootServer();
+    await expect(
+      connectAndCapture(
+        `${booted.wsOrigin}/subscribe?name=alice&clientKind=browser&clientVersion=0.8.0`,
+        {
+          ...auth,
+          [CLIENT_IDENTITY_HEADER]: JSON.stringify({ kind: 'runner', runnerIdentity: runner }),
+        },
+      ),
+    ).rejects.toThrow('upgrade rejected: 400');
+  });
+
+  it('rejects browser query combined with the legacy runner header', async () => {
+    booted = await bootServer();
+    await expect(
+      connectAndCapture(
+        `${booted.wsOrigin}/subscribe?name=alice&clientKind=browser&clientVersion=0.8.0`,
+        { ...auth, [RUNNER_IDENTITY_HEADER]: JSON.stringify(runner) },
+      ),
+    ).rejects.toThrow('upgrade rejected: 400');
+  });
+
+  it('rejects a non-browser kind through the query surface', async () => {
+    booted = await bootServer();
+    await expect(
+      connectAndCapture(
+        `${booted.wsOrigin}/subscribe?name=alice&clientKind=runner&clientVersion=0.8.0`,
+        auth,
+      ),
+    ).rejects.toThrow('upgrade rejected: 400');
+  });
 });
 
 // ─── lower-level: WS subscribe with a session cookie ────────────────

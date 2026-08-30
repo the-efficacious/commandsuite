@@ -27,31 +27,38 @@ export async function runRosterCommand(client: Client): Promise<string> {
   for (const teammate of teammates) {
     const state = connectedByName.get(teammate.name);
     if (state === undefined || state.connected === 0) continue;
-    if (state.runnerReports === undefined || state.unreportedConnections === undefined) {
+    if (state.clientReports === undefined || state.unreportedConnections === undefined) {
       identityLines.push(
-        `  ${teammate.name}: runner identity unreported (broker predates runner identity)`,
+        `  ${teammate.name}: client identity unreported (broker predates client identity)`,
       );
       continue;
     }
-    for (const report of state.runnerReports) {
-      const model = report.modelId ?? 'agent default — not resolved locally';
-      const instrument = report.runner === 'stub' ? ' · TEST/CI INSTRUMENT' : '';
+    for (const report of state.clientReports) {
+      if (report.kind !== 'runner') {
+        identityLines.push(
+          `  ${teammate.name}: ${report.kind} · ${report.clientVersion} · connections=${report.connections}`,
+        );
+        continue;
+      }
+      const identity = report.runnerIdentity;
+      const model = identity.modelId ?? 'agent default — not resolved locally';
+      const instrument = identity.runner === 'stub' ? ' · TEST/CI INSTRUMENT' : '';
       const skew = report.versionSkew.skew
         ? ` · SKEW runner=${report.versionSkew.runnerVersion} broker=${report.versionSkew.brokerVersion}`
         : ' · version matches broker';
       identityLines.push(
-        `  ${teammate.name}: ${report.runner} · ${model} · ${report.runnerVersion} · ${report.runnerBuildSource} · connections=${report.connections}${instrument}${skew}`,
+        `  ${teammate.name}: runner/${identity.runner} · ${model} · ${identity.runnerVersion} · ${identity.runnerBuildSource} · connections=${report.connections}${instrument}${skew}`,
       );
     }
     if (state.unreportedConnections > 0) {
       identityLines.push(
-        `  ${teammate.name}: ${state.unreportedConnections} connection(s) without runner identity`,
+        `  ${teammate.name}: ${state.unreportedConnections} connection(s) without client identity`,
       );
     }
   }
   return [
     header,
     ...rows,
-    ...(identityLines.length > 0 ? ['', 'runner identity', ...identityLines] : []),
+    ...(identityLines.length > 0 ? ['', 'client identity', ...identityLines] : []),
   ].join('\n');
 }
