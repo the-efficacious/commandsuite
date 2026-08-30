@@ -24,7 +24,8 @@
 #                         device auth store to enrol into. Default: the user's real
 #                         store (~/.config/csuite/auth.json). CI points it into the
 #                         state dir so nothing outside the checkout is touched.
-#   CSUITE_RUNNER_VERB    which runner the preflight and step 8 use: `claude` (default)
+#   CSUITE_RUNNER_VERB    which runner the preflight and step 8 use: `claude` (default),
+#                         `codex`, or `stub` (a test/CI instrument needing no model credential)
 #                         or `codex`. The ecosystem has two runner verbs; the
 #                         sequence proves whichever the seat holds a credential for.
 #   CSUITE_START_RUNNER   1 → also start `csuite $CSUITE_RUNNER_VERB` from the runner
@@ -46,7 +47,7 @@ TEAM="${CSUITE_TEAM:-bootstrap}"
 ADMIN="${CSUITE_ADMIN:-admin}"
 RUNNER="${CSUITE_RUNNER:-builder}"
 VERB="${CSUITE_RUNNER_VERB:-claude}"
-case "$VERB" in claude|codex) ;; *) printf '\n   FAIL CSUITE_RUNNER_VERB must be claude or codex (got %s)\n' "$VERB" >&2; exit 1 ;; esac
+case "$VERB" in claude|codex|stub) ;; *) printf '\n   FAIL CSUITE_RUNNER_VERB must be claude, codex, or stub (got %s)\n' "$VERB" >&2; exit 1 ;; esac
 SERVER_DIR="$DIR/server"
 CONFIG="$SERVER_DIR/csuite.json"
 SECRETS="$DIR/secrets"
@@ -286,7 +287,8 @@ else
   printf '   --  not started: CSUITE_START_RUNNER is unset. Steps 6-7 proved the credential resolves and the\n'
   printf '       preflight passes; a live connection needs an agent binary and a model credential, which\n'
   printf '       this environment (e.g. CI) does not have. Set CSUITE_START_RUNNER=1 on a seat that does\n'
-  printf '       (CSUITE_RUNNER_VERB=claude|codex selects the runner; default claude).\n'
+  printf '       (CSUITE_RUNNER_VERB=claude|codex selects the runner; default claude) — or set\n'
+  printf '       CSUITE_RUNNER_VERB=stub, the test instrument that needs neither (what CI does).\n'
 fi
 
 say "done"

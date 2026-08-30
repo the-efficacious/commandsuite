@@ -50,7 +50,11 @@ the broker in the foreground:
    (approve as `admin`, from the web UI or `csuite connect approve`) and
    then `csuite claude` / `csuite codex` as a service:
    [always-on agent](/docs/guides/always-on-agent). Setting
-   `CSUITE_START_RUNNER=1` on the container is refused with that message.
+   `CSUITE_START_RUNNER=1` on the container is refused with that message
+   for model runners; the one exception is `CSUITE_RUNNER_VERB=stub` —
+   the [stub runner](/docs/runners/stub), a credential-free test/CI
+   instrument that starts against the real broker so CI can observe a
+   measured `connected=1` (never a member you'd deploy).
 
 A restart re-runs the same sequence against the volume: already
 seeded, already enrolled, a few seconds. The image contains no secret
@@ -78,8 +82,9 @@ command line.
 | `CSUITE_TEAM` | `bootstrap` | Team name seeded on first start. |
 | `CSUITE_ADMIN` | `admin` | First member (holds every permission); names the secret files. |
 | `CSUITE_RUNNER` | `builder` | Runner member enrolled on first start. |
-| `CSUITE_RUNNER_VERB` | `claude` | Which runner's preflight is proved: `claude` or `codex`. |
+| `CSUITE_RUNNER_VERB` | `claude` | Which runner's preflight is proved: `claude`, `codex`, or `stub`. |
 | `CSUITE_LOG_LEVEL` | `info` | Broker log threshold. |
+| `CSUITE_START_RUNNER` | `0` | `1` starts the runner in-container — honoured for `stub` only; model verbs are refused (exit 64). |
 
 Names and team are read only on the first start; later changes do
 nothing until the volume is recreated.
@@ -126,9 +131,10 @@ from your checkout.
 
 `scripts/compose-check.sh` is what CI runs and what a person can run:
 `up`, the assertions above plus the in-container doctor line,
-`restart`, the same again, `down -v`.
-It stops before any live model connection and says so.
-`KEEP=1 scripts/compose-check.sh` leaves the stack running.
+`restart`, the same again, `down -v`. CI sets
+`CSUITE_START_RUNNER=1 CSUITE_RUNNER_VERB=stub`, so it also asserts the
+stub runner at `connected=1` with a `session_start` event — a measured
+connection with no model anywhere. `KEEP=1` leaves the stack running.
 
 ## Beyond localhost
 
