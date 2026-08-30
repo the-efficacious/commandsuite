@@ -210,7 +210,7 @@ type ThreadItem =
       key: string;
       variant: 'context-control';
       ts: number;
-      verb: 'compact' | 'clear';
+      verb: 'compact' | 'clear' | 'reload';
       outcome: 'applied' | 'declined' | 'unsupported' | 'failed';
       requestedBy: string;
       detail: string | null;
@@ -794,7 +794,7 @@ function ThreadItemView({ item }: { item: ThreadItem }) {
 }
 
 /**
- * A broker-issued compact/clear and what came of it.
+ * A broker-issued compact/clear/reload and what came of it.
  *
  * The outcome is the whole reason this row exists, so it is rendered
 /**
@@ -867,7 +867,7 @@ function SessionEndMarker({ item }: { item: Extract<ThreadItem, { variant: 'sess
 }
 
 /**
- * A broker-issued compact/clear and what came of it. The outcome reads
+ * A broker-issued compact/clear/reload and what came of it. The outcome reads
  * as text and never as colour alone — `declined` and `applied` must
  * not be distinguishable only to someone who can see the difference
  * between two greys. The framework's own reason is shown verbatim

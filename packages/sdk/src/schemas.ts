@@ -1534,7 +1534,7 @@ export const ActivityEventSchema = z.discriminatedUnion('kind', [
     kind: z.literal('context_control'),
     ts: z.number().int().nonnegative(),
     requestId: z.string().min(1),
-    verb: z.enum(['compact', 'clear']),
+    verb: z.enum(['compact', 'clear', 'reload']),
     outcome: z.enum(['applied', 'declined', 'unsupported', 'failed']),
     requestedBy: NameSchema,
     detail: z.string().optional(),
@@ -1626,7 +1626,14 @@ export const EnrollTotpResponseSchema = z.object({
 
 // ───────────────────────── Context control ─────────────────────
 
-export const ContextControlVerbSchema = z.enum(['compact', 'clear']);
+export const EnvironmentEventSchema = z.object({
+  kind: z.literal('environment'),
+  action: z.enum(['value_set', 'bound', 'unbound']),
+  actor: NameSchema,
+  envName: z.string().min(1),
+});
+
+export const ContextControlVerbSchema = z.enum(['compact', 'clear', 'reload']);
 
 export const ContextControlRequestSchema = z.object({
   verb: ContextControlVerbSchema,

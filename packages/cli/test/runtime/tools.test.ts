@@ -99,6 +99,26 @@ describe('instruction authoring tools report text cost', () => {
   });
 });
 
+describe('context_control', () => {
+  it('targets self by default and returns the correlation acknowledgement', async () => {
+    const controlContext = vi.fn(async () => ({
+      requestId: 'req-reload',
+      verb: 'reload' as const,
+      target: 'scout',
+      delivered: true,
+    }));
+    const broker = makeBroker({ controlContext } as never);
+
+    const text = getCallText(
+      await handleToolCall('context_control', { verb: 'reload' }, broker, PACKET),
+    );
+
+    expect(controlContext).toHaveBeenCalledWith('scout', { verb: 'reload' });
+    expect(text).toContain('requestId=req-reload');
+    expect(text).toContain('activity acknowledgement is authoritative');
+  });
+});
+
 function makeBroker(overrides: Partial<BrokerClient> = {}): BrokerClient {
   return overrides as BrokerClient;
 }

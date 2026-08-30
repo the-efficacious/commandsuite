@@ -270,6 +270,28 @@ export function defineTools(
       },
     },
     {
+      name: 'context_control',
+      description:
+        'Ask a runner to compact, clear, or reload its agent context. Targets yourself by default; controlling a teammate requires members.context. The immediate result only confirms delivery. The runner later records a context_control activity acknowledgement with the same requestId and the actual outcome.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          verb: {
+            type: 'string',
+            enum: ['compact', 'clear', 'reload'],
+            description:
+              'compact summarizes; clear starts cold; reload refreshes instructions and environment then resumes.',
+          },
+          member: {
+            type: 'string',
+            description: 'Target member. Defaults to yourself.',
+          },
+          reason: { type: 'string', description: 'Optional reason, max 500 characters.' },
+        },
+        required: ['verb'],
+      },
+    },
+    {
       name: 'objectives_list',
       description:
         `List objectives you have a relationship with — ` +
@@ -1927,6 +1949,8 @@ export async function handleToolCall(
         return await handleChannelsPost(args, brokerClient, instructions);
       case 'recent':
         return await handleRecent(args, brokerClient, instructions);
+      case 'context_control':
+        return await handleContextControl(args, brokerClient, instructions);
       case 'objectives_list':
         return await handleObjectivesList(args, brokerClient, instructions);
       case 'objectives_view':
@@ -2304,6 +2328,30 @@ async function handleRecent(
       : `recent ${instructions.team.name} team chat (${messages.length}):`;
   const lines = messages.map((m) => formatRecentLine(m));
   return textResult(`${header}\n${lines.join('\n')}`);
+}
+
+async function handleContextControl(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+  instructions: InstructionsResponse,
+): Promise<CallToolResult> {
+  const verb = args.verb;
+  if (verb !== 'compact' && verb !== 'clear' && verb !== 'reload') {
+    return errorResult('context_control: `verb` must be compact, clear, or reload');
+  }
+  const member =
+    typeof args.member === 'string' && args.member.length > 0 ? args.member : instructions.name;
+  const reason = typeof args.reason === 'string' ? args.reason : undefined;
+  if (reason !== undefined && reason.length > 500) {
+    return errorResult('context_control: `reason` must be 500 characters or fewer');
+  }
+  const response = await brokerClient.controlContext(member, {
+    verb,
+    ...(reason !== undefined ? { reason } : {}),
+  });
+  return textResult(
+    `context ${verb} requested for ${response.target}: requestId=${response.requestId}, delivered=${response.delivered}; the context_control activity acknowledgement is authoritative`,
+  );
 }
 
 async function handleChannelsList(

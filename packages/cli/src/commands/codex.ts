@@ -44,6 +44,7 @@ export interface CodexCommandInput {
   noTrace?: boolean;
   /** Skip resolving/injecting broker-held secrets. */
   noSecrets?: boolean;
+  noEnvReload?: boolean;
   /**
    * Extra args forwarded verbatim to `codex app-server`. Populated by
    * everything the caller passes after `--` on the command line.
@@ -70,6 +71,7 @@ export async function runCodexCommand(input: CodexCommandInput): Promise<number>
     logger: input.logger,
     noTrace: input.noTrace,
     noSecrets: input.noSecrets,
+    noEnvReload: input.noEnvReload,
     bridgeCommand: input.bridgeCommand,
     bridgeArgs: input.bridgeArgs,
   });

@@ -60,6 +60,44 @@ describe('runner secrets', () => {
     });
   });
 
+  it('atomically refreshes the live environment and registers new secret values', async () => {
+    fakeBrokerSecrets.env = { OLD_TOKEN: 'old_secret_value' };
+    fakeBrokerSecrets.secretEnvNames = ['OLD_TOKEN'];
+    broker = await startFakeBroker();
+    runner = await startRunner({
+      url: broker.url,
+      token: FAKE_BROKER_TOKEN,
+      logger: silentLogger(),
+      noTrace: true,
+    });
+
+    fakeBrokerSecrets.env = { NEW_TOKEN: 'new_secret_value', GIT_AUTHOR_NAME: 'Rune' };
+    fakeBrokerSecrets.secretEnvNames = ['NEW_TOKEN'];
+    const sameSnapshot = runner.secretsEnv;
+    await runner.refreshSecrets();
+
+    expect(runner.secretsEnv).toBe(sameSnapshot);
+    expect(runner.secretsEnv).toEqual({ NEW_TOKEN: 'new_secret_value', GIT_AUTHOR_NAME: 'Rune' });
+    expect(redactSecrets('old_secret_value new_secret_value Rune')).toBe(
+      `${REDACTED} ${REDACTED} Rune`,
+    );
+  });
+
+  it('keeps the previous environment when refresh fails', async () => {
+    fakeBrokerSecrets.env = { TOKEN: 'original_value' };
+    broker = await startFakeBroker();
+    runner = await startRunner({
+      url: broker.url,
+      token: FAKE_BROKER_TOKEN,
+      logger: silentLogger(),
+      noTrace: true,
+    });
+
+    fakeBrokerSecrets.env = null;
+    await expect(runner.refreshSecrets()).rejects.toThrow();
+    expect(runner.secretsEnv).toEqual({ TOKEN: 'original_value' });
+  });
+
   it('drops reserved and malformed env names a broker might send', async () => {
     fakeBrokerSecrets.env = {
       GOOD_ONE: 'a-perfectly-fine-value',

@@ -70,8 +70,8 @@ usage:
   csuite enroll      --member <name> [--config-path <path>]   (re-)enroll a member for web UI login (TOTP — separate from 'csuite connect')
   csuite rotate      --member <name> [--config-path <path>]   rotate a member's bearer token (atomic; prints new token once)
   csuite quickstart  [--skip-browser] [--assignee <name>]   seed a demo objective + open the web UI
-  csuite claude      [--no-trace] [--no-secrets] [--doctor] [--skip-doctor] [--cwd <dir>] [--model <name>] [--resume [<sessionId>]]   run Claude Code headlessly (Agent SDK) as an agent member of a csuite team (--resume alone continues the most recent session; alias: claude-code)
-  csuite codex       [--no-trace] [--no-secrets] [--doctor] [--skip-doctor] [--cwd <dir>] [--model <name>] [--resume [<threadId>]] [-- <codex args>...]   spawn OpenAI Codex CLI as a headless agent member of a csuite team (--resume alone picks up the most recent thread)
+  csuite claude      [--no-trace] [--no-secrets] [--no-env-reload] [--doctor] [--skip-doctor] [--cwd <dir>] [--model <name>] [--resume [<sessionId>]]   run Claude Code headlessly (Agent SDK) as an agent member of a csuite team (--resume alone continues the most recent session; alias: claude-code)
+  csuite codex       [--no-trace] [--no-secrets] [--no-env-reload] [--doctor] [--skip-doctor] [--cwd <dir>] [--model <name>] [--resume [<threadId>]] [-- <codex args>...]   spawn OpenAI Codex CLI as a headless agent member of a csuite team (--resume alone picks up the most recent thread)
   csuite push        --body <text> (--agent <id> | --broadcast) [--title <t>] [--level <lvl>] [--data key=value]...
   csuite roster      [--reveal-token --member <name> [--config-path <path>]]
                                     list teammates (no flags) or rotate+print a member's token (alias over 'csuite rotate')
@@ -911,6 +911,7 @@ async function handleClaude(args: string[]): Promise<void> {
   let resume: string | true | undefined;
   let noTrace = false;
   let noSecrets = false;
+  let noEnvReload = false;
   let doctor = false;
   let skipDoctor = false;
 
@@ -927,6 +928,10 @@ async function handleClaude(args: string[]): Promise<void> {
     }
     if (arg === '--no-secrets') {
       noSecrets = true;
+      continue;
+    }
+    if (arg === '--no-env-reload') {
+      noEnvReload = true;
       continue;
     }
     if (arg === '--doctor') {
@@ -1024,6 +1029,7 @@ async function handleClaude(args: string[]): Promise<void> {
       resume,
       noTrace,
       noSecrets,
+      noEnvReload,
     });
     process.exit(code);
   } catch (err) {
@@ -1060,6 +1066,7 @@ async function handleCodex(args: string[]): Promise<void> {
   let resume: string | true | undefined;
   let noTrace = false;
   let noSecrets = false;
+  let noEnvReload = false;
   let doctor = false;
   let skipDoctor = false;
   const codexArgs: string[] = [];
@@ -1086,6 +1093,10 @@ async function handleCodex(args: string[]): Promise<void> {
     }
     if (arg === '--no-secrets') {
       noSecrets = true;
+      continue;
+    }
+    if (arg === '--no-env-reload') {
+      noEnvReload = true;
       continue;
     }
     if (arg === '--doctor') {
@@ -1174,6 +1185,7 @@ async function handleCodex(args: string[]): Promise<void> {
       resume,
       noTrace,
       noSecrets,
+      noEnvReload,
       codexArgs: codexArgs.length > 0 ? codexArgs : undefined,
     });
     process.exit(code);
