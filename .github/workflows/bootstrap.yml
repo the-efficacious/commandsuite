@@ -120,7 +120,8 @@ jobs:
           CSUITE_PORT: 8723
         run: |
           cd "${{ runner.temp }}/csuite-service/runner"
-          node "$GITHUB_WORKSPACE/packages/cli/dist/index.js" stub install-service --url http://127.0.0.1:8723 --timeout 90
+          node "$GITHUB_WORKSPACE/packages/cli/dist/index.js" stub install-service --url http://127.0.0.1:8723 --timeout 90 \
+            || { echo "::group::journalctl -u csuite-$(id -un)"; sudo journalctl -u "csuite-$(id -un)" --no-pager | tail -60; echo "::endgroup::"; exit 2; }
           systemd-analyze verify "/etc/systemd/system/csuite-$(id -un).service"
           echo "unit verified"
           sudo test "$(stat -c %a "/etc/sudoers.d/$(id -un)-csuite-runner")" = 440
@@ -131,7 +132,8 @@ jobs:
           CSUITE_PORT: 8723
         run: |
           cd "${{ runner.temp }}/csuite-service/runner"
-          node "$GITHUB_WORKSPACE/packages/cli/dist/index.js" stub install-service --url http://127.0.0.1:8723 --timeout 90 | tee reinstall.out
+          node "$GITHUB_WORKSPACE/packages/cli/dist/index.js" stub install-service --url http://127.0.0.1:8723 --timeout 90 | tee reinstall.out \
+            || { echo "::group::journalctl -u csuite-$(id -un)"; sudo journalctl -u "csuite-$(id -un)" --no-pager | tail -60; echo "::endgroup::"; exit 2; }
           grep -q "replaced the previous install" reinstall.out
 
       - name: cycle — detached worker restarts the unit, liveness at the broker

@@ -51,6 +51,8 @@ describe('unit render', () => {
     expect(unit).not.toContain('--resume');
     const claudeUnit = renderRunnerUnit({ ...RENDER, verb: 'claude' });
     expect(claudeUnit).toContain('--cwd /home/builder/work --resume');
+    const codexUnit = renderRunnerUnit({ ...RENDER, verb: 'codex' });
+    expect(codexUnit).toContain('--cwd /home/builder/work --resume');
     expect(unit).toContain('Restart=always');
     expect(unit).toContain('StartLimitIntervalSec=0');
     expect(unit).toContain('SyslogIdentifier=csuite-builder');
@@ -206,7 +208,7 @@ describe('systemd value hygiene', () => {
 
   it('renders a spacey workspace as quoted ExecStart tokens', () => {
     const unit = renderRunnerUnit({ ...RENDER, workspace: '/home/builder/my work' });
-    expect(unit).toContain('--cwd "/home/builder/my work" --resume');
+    expect(unit).toContain('--cwd "/home/builder/my work"');
     expect(unit).toContain('WorkingDirectory=/home/builder/my work');
   });
 });
