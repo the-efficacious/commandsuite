@@ -481,6 +481,7 @@ The destination is never overwritten; choose a fresh path for every attempt.
 ```
 csuite team get [--json]
 csuite team set [--name <n>] [--context <c>] [--context-file <path>]
+csuite team status [--stalled <duration>] [--json]
 ```
 
 Read or update the team's name and standing context — the background
@@ -491,6 +492,10 @@ Changes apply immediately on the broker. A context change also
 reaches agents already mid-session: each affected agent finishes its
 current turn, restarts, and resumes the same conversation under the
 new text; the roster reports it restart-pending until then.
+
+`status` requires `members.manage` and prints the broker-composed operating report described in
+[Running a team](/guides/running-a-team). `--stalled` accepts durations such as `30m`, `2h`, or
+`1d`; `--json` emits the documented typed response without client-side recomputation.
 
 ```
 $ csuite team set --context-file ./team-context.md

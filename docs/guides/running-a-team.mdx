@@ -1,0 +1,80 @@
+---
+title: Running a team
+description: The lead's hourly CommandSuite check — one truthful report of each seat, its open work, and whether an objective is stalled.
+section: Guides
+order: 55
+---
+
+# Running a team
+
+The lead's hourly check is one command:
+
+```sh
+csuite team status
+```
+
+It reads broker state and prints every member's reported runner identity and version skew,
+current presence and authentication-blocked count, active or blocked objectives, the latest stored
+signals in each objective thread, and the member's latest activity event. It requires
+`members.manage`, as does the `team_status` MCP tool and the extra columns on the web roster.
+Nothing is reconstructed: `absent` means the broker has no stored value. Current brokers seed a
+presence-registry row for every member, so a disconnected member normally has a present row with
+`connected: 0`; `presence: null` is reserved for a genuinely absent row and is never relabelled as
+disconnected.
+
+## The stalled filter
+
+```sh
+csuite team status --stalled 1h
+```
+
+An active or blocked objective is stalled only when its newest measured objective signal is
+**strictly older than** the duration: `generatedAt - lastSignalAt > duration`. Equality is not
+stalled. The three measured signal categories are:
+
+- `thread_post`: an `objective_discuss` post stored in that objective's thread;
+- `pr_link`: such a post containing a canonical full GitHub pull-request URL of the form
+  `https://github.com/<owner>/<repo>/pull/<digits>` — bare text such as `#241` does not count;
+- `lifecycle`: the objective store's latest lifecycle event.
+
+`staleSignals` names every category whose latest value is absent or strictly older than the
+duration. A member's general activity timestamp is context in the report; it does not make an
+objective non-stalled. With `--stalled`, only members having at least one stalled active objective
+are returned.
+
+## JSON schema
+
+Use `--json` for automation:
+
+```sh
+csuite team status --stalled 30m --json
+```
+
+The response is:
+
+```ts
+{
+  generatedAt: number
+  stalledAfterMs: number | null
+  members: Array<{
+    member: Teammate
+    presence: Presence | null
+    activeObjectives: Array<{
+      id: string
+      title: string
+      status: "active" | "blocked"
+      lastThreadPostAt: number | null
+      lastPrLinkAt: number | null
+      lastLifecycleAt: number | null
+      lastSignalAt: number | null
+      stalled: boolean
+      staleSignals: Array<"thread_post" | "pr_link" | "lifecycle">
+    }>
+    lastActivityAt: number | null
+  }>
+}
+```
+
+All timestamps are Unix milliseconds. The HTTP source is the read-only
+`GET /team/status?stalledMs=<positive integer>` endpoint; CLI, MCP, and web UI consume that same
+broker-composed response and do not recompute stalled state.
