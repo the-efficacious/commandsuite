@@ -172,6 +172,19 @@ describe('csuite claude, headless, nothing resolves (built CLI as a process)', (
     expect(r.stdout).toContain(`${BROKER} scoped to ${dir}`);
   });
 
+  for (const verb of ['claude', 'codex']) {
+    it(`${verb} --doctor reports the explicit model the runner would use`, () => {
+      const dir = sandbox();
+      const r = run(
+        [verb, '--doctor', '--model', 'acceptance-model'],
+        { CSUITE_AUTH_CONFIG_PATH: join(dir, 'auth.json'), CSUITE_URL: BROKER },
+        dir,
+      );
+      expect(r.stdout).toContain(`${verb} · acceptance-model`);
+      expect(r.stdout).not.toContain(`${verb} · agent default — not resolved locally`);
+    });
+  }
+
   it('positive control: with an entry for (url, cwd) the same --doctor line is [PASS]', () => {
     const dir = sandbox();
     const store = join(dir, 'auth.json');
