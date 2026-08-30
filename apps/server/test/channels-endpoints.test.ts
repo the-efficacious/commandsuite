@@ -36,7 +36,7 @@ async function makeApp() {
     {
       name: 'alice',
       role: { title: 'admin', description: '' },
-      permissions: ['members.manage'],
+      permissions: ['members.manage', 'channels.manage'],
       token: ALICE,
     },
     {
@@ -110,7 +110,7 @@ describe('GET /channels', () => {
 });
 
 describe('POST /channels', () => {
-  it('creates a channel; caller becomes admin', async () => {
+  it('creates a channel; caller joins as an ordinary member', async () => {
     const { app } = await makeApp();
     const res = await app.request('/channels', authed(ALICE, { slug: 'eng' }));
     expect(res.status).toBe(201);
@@ -118,8 +118,8 @@ describe('POST /channels', () => {
     expect(ch.slug).toBe('eng');
     const detailRes = await app.request(`/channels/${ch.slug}`, authed(ALICE));
     const detail = (await detailRes.json()) as GetChannelResponse;
-    expect(detail.channel.myRole).toBe('admin');
-    expect(detail.members.find((m) => m.memberName === 'alice')?.role).toBe('admin');
+    expect(detail.channel.myRole).toBe('member');
+    expect(detail.members.find((m) => m.memberName === 'alice')?.role).toBe('member');
   });
 
   it('rejects an invalid slug', async () => {
@@ -143,13 +143,17 @@ describe('POST /channels', () => {
 });
 
 describe('PATCH /channels/:slug', () => {
-  it('admin can rename', async () => {
+  it('channels.manage holder can rename and edit description', async () => {
     const { app } = await makeApp();
     await app.request('/channels', authed(ALICE, { slug: 'ops' }));
-    const res = await app.request('/channels/ops', authed(ALICE, { slug: 'ops-team' }, 'PATCH'));
+    const res = await app.request(
+      '/channels/ops',
+      authed(ALICE, { slug: 'ops-team', description: 'Operations' }, 'PATCH'),
+    );
     expect(res.status).toBe(200);
     const ch = (await res.json()) as Channel;
     expect(ch.slug).toBe('ops-team');
+    expect(ch.description).toBe('Operations');
   });
 
   it('non-admin gets 403', async () => {
@@ -162,7 +166,7 @@ describe('PATCH /channels/:slug', () => {
 });
 
 describe('DELETE /channels/:slug (archive)', () => {
-  it('admin can archive; channel disappears from list', async () => {
+  it('channels.manage holder can archive; channel disappears from list', async () => {
     const { app } = await makeApp();
     await app.request('/channels', authed(ALICE, { slug: 'ops' }));
     const res = await app.request('/channels/ops', authed(ALICE, undefined, 'DELETE'));
@@ -189,7 +193,7 @@ describe('POST /channels/:slug/members (self-join + admin-add)', () => {
     expect(body.members.some((m) => m.memberName === 'bob')).toBe(true);
   });
 
-  it('admin can add a different member', async () => {
+  it('channels.manage holder can add a different member', async () => {
     const { app } = await makeApp();
     await app.request('/channels', authed(ALICE, { slug: 'ops' }));
     const res = await app.request('/channels/ops/members', authed(ALICE, { member: 'bob' }));
@@ -230,7 +234,7 @@ describe('DELETE /channels/:slug/members/:name (leave / remove)', () => {
     expect(res.status).toBe(403);
   });
 
-  it('refuses to remove the last admin while members remain', async () => {
+  it('creator may self-leave because creator provenance grants no standing', async () => {
     const { app } = await makeApp();
     await app.request('/channels', authed(ALICE, { slug: 'ops' }));
     await app.request('/channels/ops/members', authed(BOB, undefined, 'POST'));
@@ -238,8 +242,37 @@ describe('DELETE /channels/:slug/members/:name (leave / remove)', () => {
       '/channels/ops/members/alice',
       authed(ALICE, undefined, 'DELETE'),
     );
-    // alice is the sole admin; bob is a regular member — refused.
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
+  });
+});
+
+describe('GET /channels/:slug/audit', () => {
+  it('records actor and each administrative action', async () => {
+    const { app } = await makeApp();
+    await app.request('/channels', authed(BOB, { slug: 'ops' }));
+    await app.request(
+      '/channels/ops',
+      authed(ALICE, { slug: 'operations', description: 'Team ops' }, 'PATCH'),
+    );
+    await app.request('/channels/operations/members', authed(ALICE, { member: 'carol' }));
+    const res = await app.request('/channels/operations/audit', authed(ALICE));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { entries: Array<{ actor: string; action: string }> };
+    expect(body.entries.map((entry) => [entry.actor, entry.action])).toEqual([
+      ['bob', 'create'],
+      ['alice', 'rename'],
+      ['alice', 'description'],
+      ['alice', 'member_add'],
+    ]);
+  });
+
+  it('refuses a baseline member even when they created the channel', async () => {
+    const { app } = await makeApp();
+    await app.request('/channels', authed(BOB, { slug: 'mine' }));
+    expect(
+      (await app.request('/channels/mine', authed(BOB, { slug: 'still-mine' }, 'PATCH'))).status,
+    ).toBe(403);
+    expect((await app.request('/channels/mine/audit', authed(BOB))).status).toBe(403);
   });
 });
 

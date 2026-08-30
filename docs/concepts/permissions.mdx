@@ -18,12 +18,13 @@ completing objectives assigned to you, discussing your own objectives,
 managing your own files, rotating your own token, reading your own traces,
 and asking your own runner to compact or clear your context.
 
-## The twelve leaves
+## The thirteen leaves
 
 | Permission | What it grants |
 |---|---|
 | `team.manage` | Edit the team name and standing team context. |
 | `members.manage` | Create, update, and delete members. Rotate any member's token. Approve or reject device enrollments. Read members' private instructions. Holders also see every objective thread. |
+| `channels.manage` | Rename, describe, re-scope, archive, and audit channels. Channel creation alone grants no administrative standing. |
 | `members.context` | Ask **another** member's runner to compact or clear its agent context. Interrupts live work, so it is a separate leaf from `members.manage` rather than part of it. Doing it to yourself is baseline. |
 | `objectives.create` | Create and assign objectives. Inspect the team-wide objective ledger so new work can be coordinated against work already in flight. |
 | `objectives.cancel` | Change another assignee's status, or cancel an objective you did not originate. Assignees manage their own status and originators cancel their own objectives without it. |

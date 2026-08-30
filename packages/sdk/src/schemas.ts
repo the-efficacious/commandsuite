@@ -456,6 +456,7 @@ export const ChannelMemberRoleSchema = z.enum(['admin', 'member']);
 export const ChannelSchema = z.object({
   id: z.string().min(1),
   slug: ChannelSlugSchema,
+  description: z.string().max(1024),
   createdBy: z.string(),
   createdAt: z.number().int().nonnegative(),
   archivedAt: z.number().int().nonnegative().nullable(),
@@ -492,11 +493,34 @@ export const GetChannelResponseSchema = z.object({
 
 export const CreateChannelRequestSchema = z.object({
   slug: ChannelSlugSchema,
+  description: z.string().max(1024).optional(),
 });
 
-export const RenameChannelRequestSchema = z.object({
-  slug: ChannelSlugSchema,
+export const UpdateChannelRequestSchema = z
+  .object({ slug: ChannelSlugSchema.optional(), description: z.string().max(1024).optional() })
+  .refine((value) => value.slug !== undefined || value.description !== undefined, {
+    message: 'slug or description is required',
+  });
+export const RenameChannelRequestSchema = z.object({ slug: ChannelSlugSchema });
+
+export const ChannelAuditActionSchema = z.enum([
+  'create',
+  'rename',
+  'description',
+  'member_add',
+  'member_remove',
+  'member_role',
+  'archive',
+]);
+export const ChannelAuditEntrySchema = z.object({
+  id: z.number().int().nonnegative(),
+  channelId: z.string().min(1),
+  actor: NameSchema,
+  action: ChannelAuditActionSchema,
+  at: z.number().int().nonnegative(),
+  details: z.record(z.string(), z.string().nullable()),
 });
+export const ChannelAuditResponseSchema = z.object({ entries: z.array(ChannelAuditEntrySchema) });
 
 export const AddChannelMemberRequestSchema = z.object({
   member: NameSchema,

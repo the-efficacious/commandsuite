@@ -10,6 +10,7 @@
 
 import { signal } from '@preact/signals';
 import type { ChannelSummary } from 'csuite-sdk/types';
+import { instructions } from '../lib/instructions.js';
 import { ChannelSettings } from './ChannelSettings.js';
 import { Settings } from './icons/index.js';
 
@@ -30,7 +31,9 @@ interface ChannelHeaderProps {
 
 export function ChannelHeader({ channel, viewer }: ChannelHeaderProps) {
   const open = settingsOpen.value;
-  const canManage = channel.id !== 'general' && channel.myRole === 'admin';
+  const canManage =
+    channel.id !== 'general' &&
+    (instructions.value?.permissions.includes('channels.manage') ?? false);
   const canLeave = channel.id !== 'general' && channel.joined;
 
   return (

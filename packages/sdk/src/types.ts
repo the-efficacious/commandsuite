@@ -89,6 +89,8 @@ export const PERMISSIONS = [
   'tools.manage',
   'secrets.manage',
   'notifications.manage',
+  /** Administer named channels. Channel creation and self-membership remain ungated. */
+  'channels.manage',
   /**
    * Edit the team's process document. A DEDICATED leaf rather than a
    * reuse of an objective permission: under this design the permission is
@@ -551,6 +553,7 @@ export type ChannelMemberRole = 'admin' | 'member';
 export interface Channel {
   id: string;
   slug: string;
+  description: string;
   createdBy: string;
   createdAt: number;
   /** null when active; epoch-ms timestamp when soft-archived. */
@@ -588,10 +591,38 @@ export interface GetChannelResponse {
 
 export interface CreateChannelRequest {
   slug: string;
+  description?: string;
+}
+
+export interface UpdateChannelRequest {
+  slug?: string;
+  description?: string;
 }
 
 export interface RenameChannelRequest {
   slug: string;
+}
+
+export type ChannelAuditAction =
+  | 'create'
+  | 'rename'
+  | 'description'
+  | 'member_add'
+  | 'member_remove'
+  | 'member_role'
+  | 'archive';
+
+export interface ChannelAuditEntry {
+  id: number;
+  channelId: string;
+  actor: string;
+  action: ChannelAuditAction;
+  at: number;
+  details: Record<string, string | null>;
+}
+
+export interface ChannelAuditResponse {
+  entries: ChannelAuditEntry[];
 }
 
 export interface AddChannelMemberRequest {

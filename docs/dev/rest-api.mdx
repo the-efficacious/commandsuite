@@ -817,10 +817,11 @@ Per-viewer projection. `joined` reflects caller's membership;
 | | |
 |---|---|
 | **Auth** | dual |
-| **Body** | `CreateChannelRequest` — `{ slug }` |
+| **Body** | `CreateChannelRequest` — `{ slug, description? }` |
 | **Returns** | `Channel` |
 
-Creator becomes channel admin. Slug grammar: 1–32 lowercase,
+Creator becomes an ordinary channel member. Creation is provenance, not
+authorization; administration requires `channels.manage`. Slug grammar: 1–32 lowercase,
 letters / digits / dashes, must start + end alphanumeric, no
 consecutive dashes.
 
@@ -837,18 +838,18 @@ Detail + member list.
 
 | | |
 |---|---|
-| **Auth** | dual; channel admin OR `members.manage` |
-| **Body** | `RenameChannelRequest` — `{ slug }` |
+| **Auth** | dual; `channels.manage` |
+| **Body** | `UpdateChannelRequest` — at least one of `{ slug, description }` |
 | **Returns** | `Channel` |
 
-Rename. Existing message references (`data.thread = 'chan:<id>'`)
+Rename or update the description. Existing message references (`data.thread = 'chan:<id>'`)
 remain valid — they reference id, not slug.
 
 ### `DELETE /channels/:slug`
 
 | | |
 |---|---|
-| **Auth** | dual; channel admin OR `members.manage` |
+| **Auth** | dual; `channels.manage` |
 | **Returns** | `204` |
 
 Soft-archive (sets `archivedAt`). History remains queryable;
@@ -858,21 +859,32 @@ posts return 410.
 
 | | |
 |---|---|
-| **Auth** | dual; channel admin (others) OR self (own name) OR `members.manage` |
+| **Auth** | dual; `channels.manage` (others) OR self (own name) |
 | **Body** | `AddChannelMemberRequest` — `{ member, role?: 'admin'\|'member' }` |
 | **Returns** | `204` |
 
 Self-join allowed when `member === caller.name`. Adding others
-requires admin.
+requires `channels.manage`. The stored `role` is observational legacy data and
+does not authorize administration.
 
 ### `DELETE /channels/:slug/members/:name`
 
 | | |
 |---|---|
-| **Auth** | dual; channel admin (others) OR self OR `members.manage` |
+| **Auth** | dual; `channels.manage` (others) OR self |
 | **Returns** | `204` |
 
 Self-leave always allowed.
+
+### `GET /channels/:slug/audit`
+
+| | |
+|---|---|
+| **Auth** | dual; `channels.manage` |
+| **Returns** | `ChannelAuditResponse` — `{ entries: ChannelAuditEntry[] }` |
+
+Administrative changes are recorded atomically with the mutation. Each entry
+names the actor, action, timestamp, and before/after metadata.
 
 ## Filesystem
 

@@ -1,6 +1,6 @@
 /**
- * ChannelSettings — inline panel below the ChannelHeader. Admins
- * see rename + members + archive; non-admins see only "Leave
+ * ChannelSettings — inline panel below the ChannelHeader. Channel managers
+ * see description, rename, members, and archive; other members see only "Leave
  * channel". General has no settings panel at all (the header
  * suppresses the toggle for it).
  *
@@ -20,6 +20,7 @@ import {
   leaveChannel,
   removeChannelMember,
   renameChannel,
+  updateChannel,
 } from '../lib/channels.js';
 import { getClient } from '../lib/client.js';
 import { confirmDialog } from '../lib/confirm.js';
@@ -37,6 +38,8 @@ interface ChannelSettingsProps {
 const renameInput = signal('');
 const renameError = signal<string | null>(null);
 const renameBusy = signal(false);
+const descriptionInput = signal('');
+const descriptionBusy = signal(false);
 
 const memberError = signal<string | null>(null);
 const memberBusy = signal<string | null>(null);
@@ -50,7 +53,7 @@ const detailLoading = signal(false);
 const detailError = signal<string | null>(null);
 
 export function ChannelSettings({ channel, viewer, onClose }: ChannelSettingsProps) {
-  const isAdmin = channel.myRole === 'admin';
+  const canManage = instructions.value?.permissions.includes('channels.manage') ?? false;
   const members = detailMembers.value;
   const teammates: Teammate[] = roster.value?.teammates ?? instructions.value?.teammates ?? [];
 
@@ -77,6 +80,10 @@ export function ChannelSettings({ channel, viewer, onClose }: ChannelSettingsPro
       cancelled = true;
     };
   }, [channel.slug]);
+
+  useEffect(() => {
+    descriptionInput.value = channel.description;
+  }, [channel.description]);
 
   // Re-pull members after a mutation succeeds so the list reflects
   // the just-updated state without a manual refresh.
@@ -120,6 +127,19 @@ export function ChannelSettings({ channel, viewer, onClose }: ChannelSettingsPro
       memberError.value = err instanceof Error ? err.message : 'failed to add member';
     } finally {
       memberBusy.value = null;
+    }
+  };
+
+  const onDescription = async (e: JSX.TargetedEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    descriptionBusy.value = true;
+    memberError.value = null;
+    try {
+      await updateChannel(channel.slug, { description: descriptionInput.value.trim() });
+    } catch (err) {
+      memberError.value = err instanceof Error ? err.message : 'description update failed';
+    } finally {
+      descriptionBusy.value = false;
     }
   };
 
@@ -205,7 +225,30 @@ export function ChannelSettings({ channel, viewer, onClose }: ChannelSettingsPro
         </div>
       )}
 
-      {isAdmin && (
+      {canManage && (
+        <form onSubmit={onDescription} style="display:flex;flex-direction:column;gap:6px">
+          <span class="eyebrow" style="color:var(--ef-text-faint)">
+            Description
+          </span>
+          <div class="flex items-center" style="gap:6px">
+            <input
+              type="text"
+              value={descriptionInput.value}
+              onInput={(e) => {
+                descriptionInput.value = e.currentTarget.value;
+              }}
+              placeholder="What this channel is for"
+              maxLength={1024}
+              style="flex:1;background:var(--ef-surface-raised);border:1px solid var(--ef-border);border-radius:var(--ef-radius-sm);padding:6px 10px;color:var(--ef-text);font-family:var(--ef-font-body);font-size:13px;outline:0"
+            />
+            <button type="submit" disabled={descriptionBusy.value} class="btn btn-secondary btn-sm">
+              {descriptionBusy.value ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </form>
+      )}
+
+      {canManage && (
         <form onSubmit={onRename} style="display:flex;flex-direction:column;gap:6px">
           <span class="eyebrow" style="color:var(--ef-text-faint)">
             Rename
@@ -266,7 +309,7 @@ export function ChannelSettings({ channel, viewer, onClose }: ChannelSettingsPro
               <span style="font-family:var(--ef-font-mono);font-size:10px;letter-spacing:.06em;color:var(--ef-text-muted);text-transform:uppercase">
                 {m.role}
               </span>
-              {(isAdmin || m.memberName === viewer) && (
+              {(canManage || m.memberName === viewer) && (
                 <button
                   type="button"
                   onClick={() => void onRemoveMember(m.memberName)}
@@ -285,7 +328,7 @@ export function ChannelSettings({ channel, viewer, onClose }: ChannelSettingsPro
             </li>
           ))}
         </ul>
-        {isAdmin && addableTeammates.length > 0 && (
+        {canManage && addableTeammates.length > 0 && (
           <form onSubmit={onAddMember} class="flex items-center" style="gap:6px;margin-top:8px">
             <select
               value={addInput.value}
@@ -326,7 +369,7 @@ export function ChannelSettings({ channel, viewer, onClose }: ChannelSettingsPro
             {leaveBusy.value ? 'Leaving…' : 'Leave channel'}
           </button>
         )}
-        {isAdmin && (
+        {canManage && (
           <button
             type="button"
             onClick={() => void onArchive()}

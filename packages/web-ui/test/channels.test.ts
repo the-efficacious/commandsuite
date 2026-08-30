@@ -38,6 +38,7 @@ function stubFetch(
 const GENERAL: ChannelSummary = {
   id: 'general',
   slug: 'general',
+  description: '',
   createdBy: '__system__',
   createdAt: 0,
   archivedAt: null,
@@ -49,6 +50,7 @@ const GENERAL: ChannelSummary = {
 const OPS: ChannelSummary = {
   id: 'ops-uuid',
   slug: 'ops',
+  description: '',
   createdBy: 'alice',
   createdAt: 1000,
   archivedAt: null,
@@ -134,6 +136,7 @@ describe('createChannel', () => {
             body: {
               id: 'new-id',
               slug: 'eng',
+              description: '',
               createdBy: 'alice',
               createdAt: 2000,
               archivedAt: null,
@@ -149,6 +152,7 @@ describe('createChannel', () => {
               {
                 id: 'new-id',
                 slug: 'eng',
+                description: '',
                 createdBy: 'alice',
                 createdAt: 2000,
                 archivedAt: null,

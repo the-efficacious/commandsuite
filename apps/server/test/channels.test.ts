@@ -94,7 +94,7 @@ describe('ChannelStore', () => {
   });
 
   describe('create', () => {
-    it('creates a channel and adds the creator as admin', () => {
+    it('creates a channel and adds the creator as a regular member', () => {
       const store = makeStore();
       const channel = store.create({ slug: 'ops', creator: 'alice', now: 1000 });
       expect(channel.slug).toBe('ops');
@@ -104,7 +104,10 @@ describe('ChannelStore', () => {
       const members = store.listMembers(channel.id);
       expect(members).toHaveLength(1);
       expect(members[0]?.memberName).toBe('alice');
-      expect(members[0]?.role).toBe('admin');
+      expect(members[0]?.role).toBe('member');
+      expect(store.listAudit(channel.id)).toEqual([
+        expect.objectContaining({ actor: 'alice', action: 'create' }),
+      ]);
     });
 
     it('rejects a slug that already exists (active)', () => {
@@ -156,11 +159,12 @@ describe('ChannelStore', () => {
       expect(store.listMembers(id)).toHaveLength(1);
     });
 
-    it('refuses non-admin actor', () => {
+    it('does not authorize in the store from legacy member roles', () => {
       const store = makeStore();
       const ch = store.create({ slug: 'ops', creator: 'alice' });
       store.addMember({ channelId: ch.id, memberName: 'bob' });
-      expect(() => store.rename(ch.id, 'ops-team', 'bob')).toThrow(/only admins/);
+      expect(() => store.rename(ch.id, 'ops-team', 'bob')).not.toThrow();
+      expect(store.listAudit(ch.id).at(-1)).toMatchObject({ actor: 'bob', action: 'rename' });
     });
 
     it('refuses if new slug collides with another active channel', () => {
@@ -176,6 +180,27 @@ describe('ChannelStore', () => {
       const same = store.rename(ch.id, 'ops', 'alice');
       expect(same.id).toBe(ch.id);
     });
+
+    it('rolls the mutation back when its audit insert fails', () => {
+      const db = openDatabase(':memory:');
+      dbsToClose.push(db);
+      const store = createSqliteChannelStore(db);
+      const ch = store.create({ slug: 'ops', creator: 'alice' });
+      db.exec('DROP TABLE channel_audit');
+      expect(() => store.update(ch.id, { slug: 'operations' }, 'alice')).toThrow();
+      expect(store.get(ch.id)?.slug).toBe('ops');
+    });
+  });
+
+  it('migrates a pre-description channels table additively', () => {
+    const db = openDatabase(':memory:');
+    dbsToClose.push(db);
+    db.exec(`CREATE TABLE channels (
+      id TEXT PRIMARY KEY, slug TEXT NOT NULL, created_by TEXT NOT NULL,
+      created_at INTEGER NOT NULL, archived_at INTEGER
+    )`);
+    const store = createSqliteChannelStore(db);
+    expect(store.get('general')?.description).toBe('');
   });
 
   describe('archive', () => {
@@ -188,24 +213,25 @@ describe('ChannelStore', () => {
       expect(fetched?.archivedAt).not.toBeNull();
     });
 
-    it('refuses non-admin', () => {
+    it('records the actor independent of legacy member role', () => {
       const store = makeStore();
       const ch = store.create({ slug: 'ops', creator: 'alice' });
       store.addMember({ channelId: ch.id, memberName: 'bob' });
-      expect(() => store.archive(ch.id, 'bob')).toThrow(/only admins/);
+      expect(() => store.archive(ch.id, 'bob')).not.toThrow();
+      expect(store.listAudit(ch.id).at(-1)).toMatchObject({ actor: 'bob', action: 'archive' });
     });
   });
 
   describe('membership', () => {
-    it('adds and lists members; admins sort first', () => {
+    it('adds and lists members; legacy roles remain observational', () => {
       const store = makeStore();
       const ch = store.create({ slug: 'ops', creator: 'alice', now: 1000 });
       store.addMember({ channelId: ch.id, memberName: 'bob', now: 1010 });
       store.addMember({ channelId: ch.id, memberName: 'carol', role: 'admin', now: 1020 });
       const members = store.listMembers(ch.id);
-      expect(members.map((m) => m.memberName)).toEqual(['alice', 'carol', 'bob']);
+      expect(members.map((m) => m.memberName)).toEqual(['carol', 'alice', 'bob']);
       expect(members[0]?.role).toBe('admin');
-      expect(members[1]?.role).toBe('admin');
+      expect(members[1]?.role).toBe('member');
     });
 
     it('addMember is idempotent', () => {
@@ -224,11 +250,11 @@ describe('ChannelStore', () => {
       expect(store.isMember(ch.id, 'bob')).toBe(false);
     });
 
-    it('refuses to remove the last admin while other members remain', () => {
+    it('allows creator removal while other members remain', () => {
       const store = makeStore();
       const ch = store.create({ slug: 'ops', creator: 'alice' });
       store.addMember({ channelId: ch.id, memberName: 'bob' });
-      expect(() => store.removeMember(ch.id, 'alice')).toThrow(/last admin/);
+      expect(() => store.removeMember(ch.id, 'alice')).not.toThrow();
     });
 
     it('allows the last admin to leave when no members remain (channel empties out)', () => {

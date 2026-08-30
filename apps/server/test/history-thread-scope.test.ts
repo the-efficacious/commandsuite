@@ -33,7 +33,12 @@ async function makeApp() {
   const db = openDatabase(':memory:');
   const broker = new Broker({ eventLog: new SqliteEventLog(db) });
   const members = createMemberStore([
-    { name: 'alice', role: ENG, permissions: ['objectives.create'], token: ALICE },
+    {
+      name: 'alice',
+      role: ENG,
+      permissions: ['objectives.create', 'channels.manage'],
+      token: ALICE,
+    },
     { name: 'bob', role: ENG, permissions: [], token: BOB },
     { name: 'carol', role: ENG, permissions: [], token: CAROL },
   ]);
