@@ -119,4 +119,32 @@ describe('member stable-identity migration', () => {
     ).toContain('members_identity_id_idx');
     db.close();
   });
+
+  it('backfills active lifecycle state and retains a departed identity under its reserved name', () => {
+    const db = legacyMembersDb();
+    const members = openTeamAndMembers(db, { now: () => 1234 }).members;
+    expect(members.members().map((member) => member.state)).toEqual(['active', 'active']);
+
+    const departed = members.departMember('legacy', 'second');
+    expect(departed).toMatchObject({
+      name: 'legacy',
+      state: 'departed',
+      departedAt: 1234,
+      departedBy: 'second',
+    });
+    expect(members.findByName('legacy')).toBeNull();
+    expect(members.findAnyByName('legacy')?.identityId).toBe(departed.identityId);
+    expect(members.members().map((member) => member.name)).toEqual(['second']);
+    expect(members.allMembers().map((member) => member.name)).toEqual(['legacy', 'second']);
+    expect(() =>
+      members.addMember({
+        name: 'legacy',
+        role: { title: 'new', description: '' },
+        instructions: '',
+        rawPermissions: [],
+        permissions: [],
+      }),
+    ).toThrow("duplicate name 'legacy'");
+    db.close();
+  });
 });

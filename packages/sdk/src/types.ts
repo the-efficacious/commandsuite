@@ -183,6 +183,11 @@ export interface Teammate {
    * brokers predating typed offboarding do not report it.
    */
   identityId?: string;
+  /** Lifecycle state. Omitted by brokers predating typed offboarding. */
+  state?: 'active' | 'departed';
+  /** Stored departure facts; present only when state is `departed`. */
+  departedAt?: number;
+  departedBy?: string;
   name: string;
   role: Role;
   /** Resolved leaf permissions (presets expanded). */

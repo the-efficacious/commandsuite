@@ -66,6 +66,9 @@ const CREATE_SCHEMA = `
   CREATE TABLE IF NOT EXISTS members (
     identity_id       TEXT NOT NULL UNIQUE,
     name              TEXT PRIMARY KEY,
+    state             TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'departed')),
+    departed_at       INTEGER,
+    departed_by       TEXT,
     role_title        TEXT NOT NULL,
     role_description  TEXT NOT NULL DEFAULT '',
     instructions      TEXT NOT NULL DEFAULT '',
@@ -98,6 +101,9 @@ interface RawPresetRow {
 interface RawMemberRow {
   identity_id: string;
   name: string;
+  state: 'active' | 'departed';
+  departed_at: number | null;
+  departed_by: string | null;
   role_title: string;
   role_description: string;
   instructions: string;
@@ -168,6 +174,23 @@ function migrateMemberIdentityIds(db: SqlDriver): void {
     const update = db.prepare('UPDATE members SET identity_id = ? WHERE name = ?');
     for (const row of rows) update.run(globalThis.crypto.randomUUID(), row.name);
     db.exec('CREATE UNIQUE INDEX members_identity_id_idx ON members(identity_id)');
+  });
+}
+
+function migrateMemberLifecycle(db: SqlDriver): void {
+  const columns = db.prepare('PRAGMA table_info(members)').all() as unknown as Array<{
+    name: string;
+  }>;
+  runInTransaction(db, () => {
+    if (!columns.some((c) => c.name === 'state')) {
+      db.exec("ALTER TABLE members ADD COLUMN state TEXT NOT NULL DEFAULT 'active'");
+    }
+    if (!columns.some((c) => c.name === 'departed_at')) {
+      db.exec('ALTER TABLE members ADD COLUMN departed_at INTEGER');
+    }
+    if (!columns.some((c) => c.name === 'departed_by')) {
+      db.exec('ALTER TABLE members ADD COLUMN departed_by TEXT');
+    }
   });
 }
 
@@ -328,6 +351,7 @@ class SqliteMemberStore implements MemberStore {
   private readonly teamStore: TeamStore;
   private readonly listAllStmt: SqlStatement;
   private readonly findByNameStmt: SqlStatement;
+  private readonly findAnyByNameStmt: SqlStatement;
   private readonly insertStmt: SqlStatement;
   private readonly deleteStmt: SqlStatement;
   private readonly updateStmt: SqlStatement;
@@ -349,21 +373,31 @@ class SqliteMemberStore implements MemberStore {
     this.getCipher = options.getCipher ?? (() => null);
     this.db.exec(CREATE_SCHEMA);
     migrateMemberIdentityIds(this.db);
+    migrateMemberLifecycle(this.db);
     this.listAllStmt = this.db.prepare(
-      `SELECT identity_id, name, role_title, role_description, instructions, raw_permissions,
+      `SELECT identity_id, name, state, departed_at, departed_by,
+              role_title, role_description, instructions, raw_permissions,
               totp_secret, totp_last_counter, insertion_order, created_at, updated_at
-         FROM members ORDER BY insertion_order ASC`,
+         FROM members WHERE state = 'active' ORDER BY insertion_order ASC`,
     );
     this.findByNameStmt = this.db.prepare(
-      `SELECT identity_id, name, role_title, role_description, instructions, raw_permissions,
+      `SELECT identity_id, name, state, departed_at, departed_by,
+              role_title, role_description, instructions, raw_permissions,
+              totp_secret, totp_last_counter, insertion_order, created_at, updated_at
+         FROM members WHERE name = ? AND state = 'active'`,
+    );
+    this.findAnyByNameStmt = this.db.prepare(
+      `SELECT identity_id, name, state, departed_at, departed_by,
+              role_title, role_description, instructions, raw_permissions,
               totp_secret, totp_last_counter, insertion_order, created_at, updated_at
          FROM members WHERE name = ?`,
     );
     this.insertStmt = this.db.prepare(`
       INSERT INTO members
-        (identity_id, name, role_title, role_description, instructions, raw_permissions,
+        (identity_id, name, state, departed_at, departed_by,
+         role_title, role_description, instructions, raw_permissions,
          totp_secret, totp_last_counter, insertion_order, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+      VALUES (?, ?, 'active', NULL, NULL, ?, ?, ?, ?, ?, 0, ?, ?, ?)
     `);
     this.deleteStmt = this.db.prepare('DELETE FROM members WHERE name = ?');
     this.updateStmt = this.db.prepare(`
@@ -395,6 +429,9 @@ class SqliteMemberStore implements MemberStore {
     return {
       identityId: row.identity_id,
       name: row.name,
+      state: row.state,
+      ...(row.departed_at !== null ? { departedAt: row.departed_at } : {}),
+      ...(row.departed_by !== null ? { departedBy: row.departed_by } : {}),
       role: { title: row.role_title, description: row.role_description },
       instructions: row.instructions,
       permissions,
@@ -406,6 +443,11 @@ class SqliteMemberStore implements MemberStore {
 
   findByName(name: string): LoadedMember | null {
     const row = this.findByNameStmt.get(name) as RawMemberRow | undefined;
+    return row ? this.rowToLoaded(row) : null;
+  }
+
+  findAnyByName(name: string): LoadedMember | null {
+    const row = this.findAnyByNameStmt.get(name) as RawMemberRow | undefined;
     return row ? this.rowToLoaded(row) : null;
   }
 
@@ -425,6 +467,9 @@ class SqliteMemberStore implements MemberStore {
       return {
         identityId: row.identity_id,
         name: row.name,
+        state: row.state,
+        ...(row.departed_at !== null ? { departedAt: row.departed_at } : {}),
+        ...(row.departed_by !== null ? { departedBy: row.departed_by } : {}),
         role: { title: row.role_title, description: row.role_description },
         instructions: row.instructions,
         permissions: resolvePermissions(rawPermissions, presets, `member '${row.name}'`),
@@ -433,6 +478,18 @@ class SqliteMemberStore implements MemberStore {
         totpLastCounter: row.totp_last_counter,
       };
     });
+  }
+
+  allMembers(): LoadedMember[] {
+    const rows = this.db
+      .prepare(
+        `SELECT identity_id, name, state, departed_at, departed_by,
+                role_title, role_description, instructions, raw_permissions,
+                totp_secret, totp_last_counter, insertion_order, created_at, updated_at
+           FROM members ORDER BY insertion_order ASC`,
+      )
+      .all() as unknown as RawMemberRow[];
+    return rows.map((row) => this.rowToLoaded(row));
   }
 
   names(): string[] {
@@ -450,7 +507,7 @@ class SqliteMemberStore implements MemberStore {
     if (input.totpSecret !== null && input.totpSecret !== undefined) {
       validateTotpSecret(input.totpSecret);
     }
-    if (this.findByNameStmt.get(input.name) !== undefined) {
+    if (this.findAnyByNameStmt.get(input.name) !== undefined) {
       throw new MemberLoadError(`duplicate name '${input.name}'`);
     }
     const presets = this.teamStore.getPresets();
@@ -485,6 +542,21 @@ class SqliteMemberStore implements MemberStore {
     const row = this.findByNameStmt.get(name) as RawMemberRow | undefined;
     if (!row) throw new MemberLoadError(`no such member: '${name}'`);
     this.deleteStmt.run(name);
+  }
+
+  departMember(name: string, actor: string, at = this.now()): LoadedMember {
+    const target = this.findByName(name);
+    if (!target) throw new MemberLoadError(`no such active member: '${name}'`);
+    this.db
+      .prepare(
+        `UPDATE members
+            SET state = 'departed', departed_at = ?, departed_by = ?, updated_at = ?
+          WHERE name = ? AND state = 'active'`,
+      )
+      .run(at, actor, at, name);
+    const departed = this.findAnyByName(name);
+    if (!departed) throw new MemberLoadError(`departMember: row vanished (name='${name}')`);
+    return departed;
   }
 
   updateMember(name: string, patch: UpdateMemberPatch): LoadedMember {

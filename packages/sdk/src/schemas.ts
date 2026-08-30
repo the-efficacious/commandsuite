@@ -102,6 +102,9 @@ export const TeammateSchema = z.object({
   // Stable across an explicit post-departure name reuse. Optional for wire
   // compatibility with brokers predating typed offboarding.
   identityId: z.string().uuid().optional(),
+  state: z.enum(['active', 'departed']).optional(),
+  departedAt: z.number().int().nonnegative().optional(),
+  departedBy: NameSchema.optional(),
   name: NameSchema,
   role: RoleSchema,
   permissions: PermissionsSchema,

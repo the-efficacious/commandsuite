@@ -17,6 +17,9 @@ import { z } from 'zod';
 export interface LoadedMember extends Member {
   /** Stable member identity; optional while old brokers/fixtures remain readable. */
   identityId?: string;
+  state?: 'active' | 'departed';
+  departedAt?: number;
+  departedBy?: string;
   /** Preset names + leaf permissions as written on disk; preserved for round-tripping. */
   rawPermissions: string[];
   totpSecret?: string | null;
@@ -221,6 +224,8 @@ export interface UpdateMemberPatch {
 export interface MemberStore {
   // Read surface
   findByName(name: string): LoadedMember | null;
+  /** Find an active or departed identity by its reserved name. */
+  findAnyByName(name: string): LoadedMember | null;
   /**
    * Return the on-disk token hash for `name`, or null if the store
    * doesn't track one. Only the in-memory `MapMemberStore` (used by
@@ -232,6 +237,8 @@ export interface MemberStore {
   size(): number;
   /** Snapshot of every member in insertion order. */
   members(): LoadedMember[];
+  /** Snapshot including departed identities, in insertion order. */
+  allMembers(): LoadedMember[];
   names(): string[];
   // Mutation surface — each method mutates store state atomically and
   // throws `MemberLoadError` on validation failure without leaving
@@ -240,6 +247,8 @@ export interface MemberStore {
   // memory only.
   addMember(input: AddMemberInput): LoadedMember;
   removeMember(name: string): void;
+  /** Mark an active identity departed without rewriting its record. */
+  departMember(name: string, actor: string, at?: number): LoadedMember;
   updateMember(name: string, patch: UpdateMemberPatch): LoadedMember;
   /**
    * Replace a member's TOTP secret. Pass `null` to clear the
@@ -256,7 +265,11 @@ export interface MemberStore {
  */
 export function teammatesFromMembers(store: MemberStore): Teammate[] {
   return store.members().map((m) => ({
+    ...(m.identityId ? { identityId: m.identityId } : {}),
     name: m.name,
+    ...(m.state ? { state: m.state } : {}),
+    ...(m.departedAt !== undefined ? { departedAt: m.departedAt } : {}),
+    ...(m.departedBy !== undefined ? { departedBy: m.departedBy } : {}),
     role: m.role,
     permissions: m.permissions,
     // The auth plane is the only person/agent signal we have: humans
