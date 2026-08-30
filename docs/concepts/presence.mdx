@@ -9,20 +9,23 @@ order: 60
 
 ## Runner identity and version skew
 
-Each live runner reports four facts on its own authenticated presence connection:
+Every live subscription reports a typed client kind: `runner`, `browser`, `cli`,
+or `sdk`. Non-runner clients report their build version. Each live runner also reports four facts:
 the runner verb (`claude`, `codex`, or `stub`), the model id the adapter resolved,
 the CommandSuite version, and whether the artifact was built as an npm release or
 from main. A null model means exactly “agent default — not resolved locally”; the
 broker never guesses. Multiple devices remain separate reports (identical reports
-are grouped with a connection count). Connections that send no runner identity —
-including browser sessions and older runners — are counted as **unreported**;
-the broker cannot distinguish those cases and does not guess.
+are grouped with a connection count). Connections that send no validated client
+identity — including old runners — are counted as **unreported**. A browser that
+reports `browser` is never relabeled as an unreported runner. The identity is
+observational only and never grants a permission.
 
 The broker compares the reported runner version with its own artifact version.
 Main builds use `<package-version>+main.<fingerprint>` so two unreleased builds at
 different source states show skew even though both package manifests still say
 `0.8.0`. Release artifacts use the plain package version and build source `npm`.
-An old broker omits the identity fields; a new broker emits `[]` and `0`. The CLI
+An old broker omits the identity fields; a new broker emits `[]` and `0`. A new
+broker with an old client reports a positive unreported count. The CLI
 and UI render those states differently rather than turning absence into a guess.
 
 The source fingerprint is the first 12 hex characters of SHA-256 over a

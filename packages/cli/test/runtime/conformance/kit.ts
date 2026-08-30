@@ -49,6 +49,7 @@ import {
   FAKE_BROKER_NAME,
   type FakeBroker,
   fakeBrokerActivity,
+  fakeBrokerTimeline,
   startFakeBroker,
 } from '../fake-broker.js';
 
@@ -118,6 +119,7 @@ export function describeRunnerConformance(subject: ConformanceSubject): void {
       sandbox = mkdtempSync(join(tmpdir(), `csuite-conformance-${subject.id}-`));
       logs = [];
       fakeBrokerActivity.length = 0;
+      fakeBrokerTimeline.length = 0;
     });
 
     afterEach(() => {
@@ -135,6 +137,12 @@ export function describeRunnerConformance(subject: ConformanceSubject): void {
       const socketPath = bound?.ctx.socketPath as string;
       expect(typeof socketPath).toBe('string');
       expect(existsSync(socketPath)).toBe(false);
+      expect(fakeBrokerTimeline).toContainEqual({
+        kind: 'subscribe',
+        detail: FAKE_BROKER_NAME,
+        at: expect.any(Number),
+      });
+      expect(fakeBrokerTimeline.some((entry) => entry.detail === 'session_start')).toBe(false);
     }, 30_000);
 
     it('S2: propagates the agent exit code', async () => {
@@ -196,6 +204,13 @@ export function describeRunnerConformance(subject: ConformanceSubject): void {
       expect(mine.indexOf(start as (typeof mine)[number])).toBeLessThan(
         mine.indexOf(end as (typeof mine)[number]),
       );
+      const startArrival = fakeBrokerTimeline.find((entry) => entry.detail === 'session_start');
+      const presenceArrival = fakeBrokerTimeline.find((entry) => entry.kind === 'subscribe');
+      expect(startArrival).toBeDefined();
+      expect(presenceArrival).toBeDefined();
+      const connectedToStartMs =
+        (startArrival?.at ?? Infinity) - (presenceArrival?.at ?? -Infinity);
+      expect(connectedToStartMs).toBeLessThanOrEqual(0);
     }, 30_000);
 
     it('S5: logs a machine-readable run summary on every exit path', async () => {

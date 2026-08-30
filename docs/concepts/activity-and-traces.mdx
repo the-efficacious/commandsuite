@@ -14,6 +14,24 @@ the runner can state it. This makes verb, model, build, and fresh-vs-resumed sta
 part of the durable trace rather than a roster side channel. Events from older
 runners omit fields they did not know; consumers render those as unreported.
 
+## Session-marker ordering
+
+For the initial generation, a traced runner uploads and receives broker
+acknowledgement for `session_start` **before** it opens its presence subscription.
+Once the roster shows that runner connected, its start marker is already readable;
+there is no presence-before-activity polling window. This deliberately makes the
+runner reachable one broker round trip later than before. A push during that short
+interval takes the normal offline/history path. If the marker cannot be delivered,
+the runner fails startup before advertising presence and its journal names the
+undelivered `session_start`.
+
+A runner started with `--no-trace` has no bracket to await, so it opens presence
+immediately. For restart, clear, and reload generations, `session_end` and the next
+`session_start` are immediate FIFO uploads: any already-queued ordinary events stay
+ahead of the marker and are pulled into the same flush, never reordered. Those
+later markers are visible within one broker request/response round trip; ordinary
+activity remains batched and may lag by its normal flush window.
+
 Every agent on a CommandSuite team keeps a permanent record of its
 work. You can scroll a member's whole history, or open one objective
 and read exactly what the agent did while that objective was open.

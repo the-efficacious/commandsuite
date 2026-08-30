@@ -148,6 +148,8 @@ export interface RunnerOptions {
   noSecrets?: boolean;
   /** Disable automatic restarts on broker environment-change events. */
   noEnvReload?: boolean;
+  /** Internal driver gate; ordinary startRunner callers omit it. */
+  subscriptionGate?: Promise<void>;
   /**
    * Optional presence signal the forwarder will flip between
    * `connecting` / `online` / `offline`. Callers that want to render
@@ -757,6 +759,9 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
     logger: log.child('forwarder'),
     presence,
     runnerIdentity: options.runnerIdentity,
+    ...(options.subscriptionGate !== undefined
+      ? { subscriptionGate: options.subscriptionGate }
+      : {}),
     onObjectiveEvent: (message) => {
       tracker.refresh(message);
     },

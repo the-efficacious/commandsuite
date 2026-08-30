@@ -101,6 +101,8 @@ export const fakeBrokerSecrets: {
 
 /** Whether `/healthz` advertises the remote-Claude raw-body acknowledgement. */
 export const fakeBrokerCapabilities: { rawBodyAck: boolean } = { rawBodyAck: true };
+/** Test-only switch for the runner's fail-before-presence bracket path. */
+export const fakeBrokerActivityFailure: { enabled: boolean } = { enabled: false };
 
 /**
  * Activity events received on POST /members/:name/activity, in arrival
@@ -109,6 +111,12 @@ export const fakeBrokerCapabilities: { rawBodyAck: boolean } = { rawBodyAck: tru
  * broker. Tests should clear it between runs.
  */
 export const fakeBrokerActivity: Array<{ member: string; event: Record<string, unknown> }> = [];
+/** Arrival order across the activity and presence transports. */
+export const fakeBrokerTimeline: Array<{
+  kind: 'activity' | 'subscribe';
+  detail: string;
+  at: number;
+}> = [];
 
 export async function startFakeBroker(
   options: { additionalPermissions?: string[] } = {},
@@ -145,6 +153,7 @@ export async function startFakeBroker(
   });
 
   function attachSubscriber(ws: WebSocket, name: string): void {
+    fakeBrokerTimeline.push({ kind: 'subscribe', detail: name, at: performance.now() });
     const sub: LiveSubscriber = {
       name,
       write: (json) => {
@@ -258,12 +267,22 @@ export async function startFakeBroker(
     // Records every event and acks the batch, mirroring the real broker.
     const activityMatch = /^\/members\/([^/]+)\/activity$/.exec(url.pathname);
     if (activityMatch && req.method === 'POST') {
+      if (fakeBrokerActivityFailure.enabled) {
+        res.writeHead(503, jsonHeaders);
+        res.end(JSON.stringify({ error: 'activity unavailable for test' }));
+        return;
+      }
       const body = await readBody(req);
       const parsed = JSON.parse(body || '{}') as { events?: Array<Record<string, unknown>> };
       const member = decodeURIComponent(activityMatch[1] as string);
       const events = Array.isArray(parsed.events) ? parsed.events : [];
       for (const event of events) {
         fakeBrokerActivity.push({ member, event });
+        fakeBrokerTimeline.push({
+          kind: 'activity',
+          detail: String(event.kind ?? 'unknown'),
+          at: performance.now(),
+        });
       }
       res.writeHead(200, jsonHeaders);
       res.end(JSON.stringify({ accepted: events.length }));

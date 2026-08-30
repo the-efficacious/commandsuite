@@ -59,6 +59,20 @@ describe('ActivityUploader', () => {
     vi.useRealTimers();
   });
 
+  it('strict flush requeues and rejects when the broker does not acknowledge', async () => {
+    const client = makeFakeClient();
+    client.uploadActivity.mockRejectedValueOnce(new Error('broker unavailable'));
+    const u = new ActivityUploader({
+      brokerClient: client as unknown as BrokerClient,
+      name: 'engineer-1',
+      logger: silentLogger(),
+    });
+    u.enqueue(makeEvent(1));
+    await expect(u.flush({ throwOnFailure: true })).rejects.toThrow('broker unavailable');
+    expect(u.stats()).toMatchObject({ enqueued: 1, uploaded: 0, retained: 1 });
+    await u.close();
+  });
+
   it('flushes a full batch immediately when maxBatchEvents is reached', async () => {
     const client = makeFakeClient();
     const u = new ActivityUploader({

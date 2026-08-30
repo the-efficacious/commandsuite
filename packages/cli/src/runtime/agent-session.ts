@@ -144,6 +144,15 @@ export async function runAgentSession(
   // 2. Start the runner with the adapter's framework-specific knobs.
   const presence = createPresence();
   const runnerOptions = adapter.runnerOptions?.() ?? {};
+  let openSubscription!: () => void;
+  let rejectSubscription!: (error: unknown) => void;
+  const subscriptionGate = new Promise<void>((resolve, reject) => {
+    openSubscription = resolve;
+    rejectSubscription = reject;
+  });
+  // A startup failure can precede the forwarder's first await. Attach a
+  // handler immediately so rejecting the gate never masks that causal error.
+  void subscriptionGate.catch(() => undefined);
   // The restart coordinator exists only once an agent process does;
   // an instruction event in the startup window is remembered and
   // replayed to it (rare, but an edit can land between the packet
@@ -197,9 +206,11 @@ export async function runAgentSession(
         if (contextControl !== null) void contextControl.handle(control);
         else contextControlsBeforeSpawn.push(control);
       },
+      subscriptionGate,
       ...runnerOptions,
     });
   } catch (err) {
+    rejectSubscription(err);
     ownedSessionLog?.close();
     if (err instanceof RunnerStartupError) throw new UsageError(err.message);
     throw err;
@@ -235,6 +246,7 @@ export async function runAgentSession(
   try {
     prepared = await adapter.prepare(ctx);
   } catch (err) {
+    rejectSubscription(err);
     await runner.shutdown('prepare-failed').catch((shutdownErr) => {
       log.warn('runner shutdown failed during prepare cleanup', {
         error: shutdownErr instanceof Error ? shutdownErr.message : String(shutdownErr),
@@ -277,7 +289,7 @@ export async function runAgentSession(
   // typed here so a wiped state dir shows in the trace, not only in a
   // runner log line.
   const initialPlan = adapter.initialResumePlan?.(ctx) ?? null;
-  runner.captureHost?.enqueue({
+  const initialSessionStart = {
     kind: 'session_start',
     ts: startedAt,
     runner: meta.id,
@@ -291,7 +303,23 @@ export async function runAgentSession(
           ...(initialPlan.reason !== undefined ? { resumeReason: initialPlan.reason } : {}),
         }
       : {}),
-  });
+  } as const;
+  if (runner.captureHost === null) {
+    openSubscription();
+  } else {
+    try {
+      await runner.captureHost.enqueueImmediate(initialSessionStart);
+      openSubscription();
+    } catch (err) {
+      const causal = new Error(
+        `session_start could not be delivered; runner presence was not opened: ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err },
+      );
+      rejectSubscription(causal);
+      await runner.shutdown('session-start-undeliverable').catch(() => undefined);
+      closeLogAndThrow(causal);
+    }
+  }
 
   const removeProcessHandlers = (handlers: { sigint: () => void; sigterm: () => void }): void => {
     process.off('SIGINT', handlers.sigint);
@@ -311,7 +339,7 @@ export async function runAgentSession(
     } catch {
       /* cleanup is contractually non-throwing; belt and suspenders */
     }
-    finishRun({
+    await finishRun({
       meta,
       runner,
       log,
@@ -384,7 +412,7 @@ export async function runAgentSession(
           error: err instanceof Error ? err.message : String(err),
         });
       }
-      const summary = finishRun({
+      const summary = await finishRun({
         meta,
         runner,
         log,
@@ -431,7 +459,7 @@ export async function runAgentSession(
           expectedRestartExit = prior;
           await prior.shutdown(reason);
           const code = await prior.exitCode.catch(() => 1);
-          finishRun({
+          await finishRun({
             meta,
             runner,
             log,
@@ -446,7 +474,7 @@ export async function runAgentSession(
         refreshSecrets: () => runner.refreshSecrets(),
         respawn: async (prior) => {
           generationStartedAt = Date.now();
-          runner.captureHost?.enqueue({
+          await runner.captureHost?.enqueueImmediate({
             kind: 'session_start',
             ts: generationStartedAt,
             runner: meta.id,
@@ -524,7 +552,7 @@ export async function runAgentSession(
         expectedRestartExit = prior;
         await prior.shutdown(reason);
         const code = await prior.exitCode.catch(() => 1);
-        finishRun({
+        await finishRun({
           meta,
           runner,
           log,
@@ -547,7 +575,7 @@ export async function runAgentSession(
           });
         }
         generationStartedAt = Date.now();
-        runner.captureHost?.enqueue({
+        await runner.captureHost?.enqueueImmediate({
           kind: 'session_start',
           ts: generationStartedAt,
           runner: meta.id,
@@ -572,7 +600,7 @@ export async function runAgentSession(
         expectedRestartExit = prior;
         await prior.shutdown(reason);
         const code = await prior.exitCode.catch(() => 1);
-        finishRun({
+        await finishRun({
           meta,
           runner,
           log,
@@ -596,7 +624,7 @@ export async function runAgentSession(
           });
         }
         generationStartedAt = Date.now();
-        runner.captureHost?.enqueue({
+        await runner.captureHost?.enqueueImmediate({
           kind: 'session_start',
           ts: generationStartedAt,
           runner: meta.id,
@@ -677,7 +705,7 @@ export async function runAgentSession(
  * `session_end` activity event (when capture is on). Called BEFORE
  * `runner.shutdown()` so the terminal event rides the final drain.
  */
-function finishRun(args: {
+async function finishRun(args: {
   meta: AgentAdapter['meta'];
   runner: RunnerHandle;
   log: AgentLog;
@@ -685,7 +713,7 @@ function finishRun(args: {
   exitCode: number | null;
   startedAt: number;
   agentSessionId: string | null;
-}): RunSummary {
+}): Promise<RunSummary> {
   const durationMs = Date.now() - args.startedAt;
   const capture = args.runner.captureHost?.stats() ?? null;
   const summary: RunSummary = {
@@ -697,7 +725,7 @@ function finishRun(args: {
     agentSessionId: args.agentSessionId,
     capture,
   };
-  args.runner.captureHost?.enqueue({
+  await args.runner.captureHost?.enqueueImmediate({
     kind: 'session_end',
     ts: Date.now(),
     runner: args.meta.id,

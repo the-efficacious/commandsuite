@@ -79,6 +79,14 @@ describe('CaptureHost', () => {
     expect(host.hookEndpointUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/hook\/tool-event$/);
   });
 
+  it('enqueueImmediate uploads without waiting for the batch timer', async () => {
+    const stub = stubBrokerClient();
+    host = await startCaptureHost({ ...BASE, brokerClient: stub.client });
+    await host.enqueueImmediate({ kind: 'session_start', ts: 1, runner: 'stub' });
+    expect(stub.uploaded).toEqual([{ kind: 'session_start', ts: 1, runner: 'stub' }]);
+    expect(stub.client.uploadActivity).toHaveBeenCalledTimes(1);
+  });
+
   it('envVars returns the LEAN operational OTEL delta plus FILE-mode raw bodies — no prose content flags, no proxy/CA', async () => {
     host = await startCaptureHost({ ...BASE, brokerClient: stubBrokerClient().client });
     const env = host.envVars();

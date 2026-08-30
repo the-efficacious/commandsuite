@@ -227,13 +227,13 @@ export class ActivityUploader {
    * the uploader is idle (queue empty or backoff waiting). If an
    * upload is already in flight, that upload is awaited first.
    */
-  async flush(): Promise<void> {
+  async flush(options: { throwOnFailure?: boolean } = {}): Promise<void> {
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;
     }
     await this.settleInFlight();
-    await this.doFlush();
+    await this.doFlush(options.throwOnFailure ?? false);
   }
 
   /**
@@ -350,7 +350,7 @@ export class ActivityUploader {
     }
   }
 
-  private doFlush(): Promise<void> {
+  private doFlush(throwOnFailure = false): Promise<void> {
     // A flush is already on the wire — join it instead of returning
     // early, so `await doFlush()` always means "no POST outstanding".
     if (this.inFlightPromise) return this.inFlightPromise;
@@ -360,14 +360,14 @@ export class ActivityUploader {
     // inside `runFlush` so it can never run before the assignment
     // below (an upload that rejects before its first await would
     // otherwise strand a settled promise here forever).
-    const promise = this.runFlush().finally(() => {
+    const promise = this.runFlush(throwOnFailure).finally(() => {
       this.inFlightPromise = null;
     });
     this.inFlightPromise = promise;
     return promise;
   }
 
-  private async runFlush(): Promise<void> {
+  private async runFlush(throwOnFailure: boolean): Promise<void> {
     this.inFlight = true;
     const batch = this.takeBatch();
     const batchBytes = batch.reduce((n, q) => n + q.bytes, 0);
@@ -402,6 +402,7 @@ export class ActivityUploader {
         }, this.backoffMs);
         if (typeof this.backoffTimer.unref === 'function') this.backoffTimer.unref();
       }
+      if (throwOnFailure) throw err;
     } finally {
       this.inFlight = false;
     }
