@@ -14,6 +14,7 @@ import { ActivityEventSchema } from 'csuite-sdk/schemas';
 import { afterEach, describe, expect, it } from 'vitest';
 import { hasClaudeSessionFor } from '../../src/runtime/agents/claude.js';
 import { resolveCodexResume } from '../../src/runtime/agents/codex/adapter.js';
+import { threadBannerLine } from '../../src/runtime/agents/codex/codex-agent.js';
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -82,5 +83,18 @@ describe('session_start resume fields (one schema, shared with obj-mtfxwvbk-j)',
       }),
     ).toMatchObject({ resumed: false });
     expect(ActivityEventSchema.parse(base)).not.toHaveProperty('resumed');
+  });
+});
+
+describe('codex thread banner tells the truth', () => {
+  it('cold bare --resume never says (resumed) beside a fresh thread', () => {
+    expect(threadBannerLine('01a05389-x', true, true)).not.toContain('(resumed)');
+  });
+  it('a real resume says (resumed) (positive control)', () => {
+    expect(threadBannerLine('01a05389-x', true, false)).toContain('(resumed)');
+    expect(threadBannerLine('01a05389-x', '01a05389-x', false)).toContain('(resumed)');
+  });
+  it('a plain fresh start has no resume claim', () => {
+    expect(threadBannerLine('01a05389-x', undefined, false)).not.toContain('(resumed)');
   });
 });
