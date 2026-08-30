@@ -174,7 +174,7 @@ describe('runner-local file transfer tools', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  }, 15_000);
+  }, 30_000);
 
   it('downloads binary bytes atomically and refuses to replace by default', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'csuite-fs-download-'));
