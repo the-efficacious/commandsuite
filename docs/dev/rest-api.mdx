@@ -16,6 +16,12 @@ session cookie). All paths and types are defined by
 `csuite-sdk` — `csuite-sdk/protocol` for path constants,
 `csuite-sdk/schemas` for zod request / response shapes.
 
+The REST API and browser app share origin-root paths. On `GET`, an
+`Accept` header that explicitly prefers `text/html` over
+`application/json` receives the app; JSON, wildcard, absent, and
+equal-preference headers receive the REST response. Other methods are
+always REST requests.
+
 Every request carries `X-CSUITE-Protocol: 2` and is validated
 against the schema. Schema mismatches return 400 with a JSON
 error body. Long-lived runners additionally send

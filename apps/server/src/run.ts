@@ -27,6 +27,7 @@ import { serveStatic } from '@hono/node-server/serve-static';
 import { createNodeWebSocket } from '@hono/node-ws';
 import {
   type ActivityStore,
+  type AppBindings,
   Broker,
   createApp,
   createCaptureHealthStore,
@@ -56,6 +57,7 @@ import {
   type TeamStore,
   type TelemetryStore,
 } from 'csuite-core';
+import { Hono } from 'hono';
 import { type DatabaseSyncInstance, openDatabase } from './db.js';
 import { createSqliteFilesystemStore, LocalBlobStore } from './files/index.js';
 import { createHttp2ServerFactory } from './https/server.js';
@@ -144,7 +146,6 @@ export {
 } from 'csuite-core';
 
 import { existsSync } from 'node:fs';
-import { isApiPath } from 'csuite-core';
 import type { UpgradeWebSocket } from 'hono/ws';
 import { createGenAiCorrelator } from './genai-correlator.js';
 
@@ -367,6 +368,43 @@ function defaultActivityDbPath(mainDbPath: string): string {
     return `${mainDbPath.slice(0, extIdx)}-activity${mainDbPath.slice(extIdx)}`;
   }
   return `${mainDbPath}-activity`;
+}
+
+/**
+ * Browser document navigations explicitly prefer HTML. Machine callers
+ * either prefer JSON or send only the HTTP wildcard. Honor that distinction
+ * without making the route path itself choose between the SPA and REST.
+ *
+ * Only an explicit `text/html` range can select the SPA. JSON inherits the
+ * strongest applicable application/wildcard range, and wins ties so adding
+ * HTML as an equally acceptable diagnostic format cannot surprise an API
+ * caller with index.html.
+ */
+function prefersHtmlRepresentation(accept: string | undefined): boolean {
+  if (accept === undefined) return false;
+  const qualities = new Map<string, number>();
+  for (const rawRange of accept.split(',')) {
+    const [rawType, ...parameters] = rawRange.split(';');
+    const type = rawType?.trim().toLowerCase();
+    if (!type) continue;
+    let quality = 1;
+    for (const parameter of parameters) {
+      const match = /^\s*q\s*=\s*([^\s]+)\s*$/i.exec(parameter);
+      if (!match) continue;
+      const parsed = Number(match[1]);
+      quality = Number.isFinite(parsed) && parsed >= 0 && parsed <= 1 ? parsed : 0;
+    }
+    qualities.set(type, Math.max(qualities.get(type) ?? 0, quality));
+  }
+
+  const html = qualities.get('text/html') ?? 0;
+  if (html <= 0) return false;
+  const json = Math.max(
+    qualities.get('application/json') ?? 0,
+    qualities.get('application/*') ?? 0,
+    qualities.get('*/*') ?? 0,
+  );
+  return html > json;
 }
 
 export async function runServer(options: RunServerOptions): Promise<RunningServer> {
@@ -700,7 +738,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   const jwtVerifier = options.jwt ? createJwtVerifier(options.jwt) : undefined;
 
   let injectWebSocket: ReturnType<typeof createNodeWebSocket>['injectWebSocket'] | null = null;
-  const { app } = createApp({
+  const { app: apiApp } = createApp({
     webSocket: (a) => {
       const ws = createNodeWebSocket({ app: a });
       injectWebSocket = ws.injectWebSocket;
@@ -744,17 +782,24 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
     ...(jwtVerifier !== undefined ? { jwt: jwtVerifier } : {}),
   });
 
-  // ─── Static SPA serving (registered LAST so API routes match first) ─
+  // ─── Static SPA serving + representation negotiation ──────────────
   //
-  // Mounted by the binding, not the app factory: which directory (if
-  // any) holds a built SPA is a deployment concern, and the fallback
-  // must register after every API route.
+  // The UI and REST API deliberately share origin-root paths. A browser
+  // navigation to `/objectives`, for example, wants index.html while an
+  // SDK GET to the same path wants JSON. Put the host in front of the API
+  // app so an explicit preference for HTML can select the SPA before a
+  // colliding REST route returns. JSON, wildcard, absent-Accept, and every
+  // non-GET request continue into the API app unchanged.
+  let app = apiApp;
   if (publicRoot !== undefined && existsSync(publicRoot)) {
-    app.use('*', serveStatic({ root: publicRoot }));
-    app.get('*', async (c, next) => {
-      if (isApiPath(c.req.path)) return next();
+    const hostApp = new Hono<AppBindings>();
+    hostApp.use('*', serveStatic({ root: publicRoot }));
+    hostApp.get('*', async (c, next) => {
+      if (!prefersHtmlRepresentation(c.req.header('Accept'))) return next();
       return serveStatic({ root: publicRoot, path: 'index.html' })(c, next);
     });
+    hostApp.route('/', apiApp);
+    app = hostApp;
   }
 
   // Optional HTTP→HTTPS redirect listener. Only spun up when HTTPS
