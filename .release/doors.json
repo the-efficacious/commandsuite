@@ -1,0 +1,168 @@
+{
+  "comment": "The completeness contract for the release checklist's 'read these' section (obj-mtg8urof-p). Every PR merged to main since the tag named in `since` must appear in exactly one of `doors` or `dismissed`; scripts/release-prepare.mjs fails loud on any merged PR it cannot classify, any door here that is not merged in range, and any label/manifest disagreement. `doors` is authoritative \u2014 sourced from the ruler's helm log (obj-mtg8urof-p thread, Lea msg 596830be, 2026-08-30), AMENDED by the discoverer's tripwire and ruled in msg be027fce: #206/#208/#228 were morning doors the afternoon-weighted helm grep missed \u2014 the mechanism working as designed. From 0.9.0 on: every PR that lands a surfaced door gets the `door` label at surfacing time AND a row here in the same PR.",
+  "since": "v0.8.0",
+  "doors": [
+    {
+      "pr": 196,
+      "ruling": "five security behaviour changes: history scoping fail-closed, attachment-grant restriction, stored content as downloads, credential origin-pinning, notification receipt bounds \u2014 pre-team PR, ruled a door in msg f8d7bd3d"
+    },
+    {
+      "pr": 206,
+      "ruling": "`setup --non-interactive` \u2014 headless team seeding CLI surface (ruled a door in the morning digest; amended per msg be027fce)"
+    },
+    {
+      "pr": 208,
+      "ruling": "`connect approve` CLI verb \u2014 device enrollment approval surface (amended per msg be027fce)"
+    },
+    {
+      "pr": 217,
+      "ruling": "Accept-header negotiation for SPA hard loads \u2014 server behaviour contract (obj-mtflvbmb-8)"
+    },
+    {
+      "pr": 218,
+      "ruling": "fs upload/download tool surface (obj-mtfmjbzx-a)"
+    },
+    {
+      "pr": 221,
+      "ruling": "agent SDK moved to optionalDependencies \u2014 install-surface change"
+    },
+    {
+      "pr": 222,
+      "ruling": "`environment` member-stream event + `reload` context verb (obj-mtfozciw-d)"
+    },
+    {
+      "pr": 224,
+      "ruling": "the shipped broker image changed (Alpine/musl, 890\u2192150 MB) \u2014 part of the slim-image mandate; ruled a door in msg f8d7bd3d"
+    },
+    {
+      "pr": 225,
+      "ruling": "`auth_state` activity kind + `authBlocked` presence + SDK onUnauthorized/replaceToken"
+    },
+    {
+      "pr": 228,
+      "ruling": "`csuite stub` \u2014 new public runner verb, CI instrument (approved 11:43; amended per msg be027fce)"
+    },
+    {
+      "pr": 229,
+      "ruling": "Codex durable MCP config: reserved `csuite` name, `-c` refusal (obj-mtfujuwd-g)"
+    },
+    {
+      "pr": 231,
+      "ruling": "member create defaults to credentialMode 'pending' (obj-mtfv7dhz-h)"
+    },
+    {
+      "pr": 232,
+      "ruling": "credential-egress refusal at broker ingress and tool egress \u2014 behaviour change"
+    },
+    {
+      "pr": 233,
+      "ruling": "scoped rotate: --token-id/--all + --token-file CLI forms"
+    },
+    {
+      "pr": 234,
+      "ruling": "connect_pending/connect_approve MCP tools"
+    },
+    {
+      "pr": 236,
+      "ruling": "install-service/cycle CLI surface (obj-mtfvz379-i) \u2014 one door, first of two PRs"
+    },
+    {
+      "pr": 237,
+      "ruling": "install-service/cycle CLI surface (obj-mtfvz379-i) \u2014 one door, second of two PRs"
+    },
+    {
+      "pr": 239,
+      "ruling": "bare --resume is resume-or-start + typed session_start fields \u2014 on Andrew's read list"
+    },
+    {
+      "pr": 241,
+      "ruling": "RunnerIdentity presence header + session_start fields + resolvedModelId seam (obj-mtfxwvbk-j)"
+    },
+    {
+      "pr": 247,
+      "ruling": "GET /team/status endpoint + CLI/MCP surface (obj-mtg5c2sf-n) \u2014 one door with #248"
+    },
+    {
+      "pr": 248,
+      "ruling": "team-status UI columns + docs (obj-mtg5c2sf-n) \u2014 one door with #247"
+    },
+    {
+      "pr": 249,
+      "ruling": "rider on #247's surface: human timestamp rendering, JSON contract unchanged \u2014 labelled for completeness"
+    },
+    {
+      "pr": 251,
+      "ruling": "client-identity header + browser-only query form (obj-mtg7fyj1-o)"
+    },
+    {
+      "pr": 252,
+      "ruling": "session-bracket-before-presence ordering contract (obj-mtg7fyj1-o)"
+    },
+    {
+      "pr": 254,
+      "ruling": "new `channels.manage` permission; creator demoted to provenance; legacy channel-admin roles no longer authorize (obj-mtg938mc-r, ruled msg 207ba3f8) \u2014 release notes consequence: existing teams must grant the leaf"
+    }
+  ],
+  "dismissed": [
+    {
+      "pr": 193,
+      "reason": "discoverer's classification: changesets version-packages mechanics for 0.8.0 \u2014 no surface"
+    },
+    {
+      "pr": 203,
+      "reason": "discoverer's classification: docs + DCO hook fix \u2014 no public surface"
+    },
+    {
+      "pr": 207,
+      "reason": "discoverer's classification: fail-fast fix, surface ruled under #206/#208's door \u2014 no separate surface"
+    },
+    {
+      "pr": 211,
+      "reason": "discoverer's classification: repo bootstrap script \u2014 not shipped surface"
+    },
+    {
+      "pr": 215,
+      "reason": "not a door per helm log \u2014 output-order fix"
+    },
+    {
+      "pr": 219,
+      "reason": "ruled dismissed (msg f8d7bd3d): reference deployment material, not invocable or shipped surface; revisit if 0.9.0 publishes it as an artefact"
+    },
+    {
+      "pr": 220,
+      "reason": "not a door per helm log \u2014 web-ui request-hygiene fix"
+    },
+    {
+      "pr": 227,
+      "reason": "not a door per helm log \u2014 respawn env fix"
+    },
+    {
+      "pr": 230,
+      "reason": "not a door per helm log \u2014 bootstrap fingerprint fix"
+    },
+    {
+      "pr": 238,
+      "reason": "not a door per helm log \u2014 docs correction"
+    },
+    {
+      "pr": 240,
+      "reason": "not a door per helm log \u2014 banner truth fix"
+    },
+    {
+      "pr": 243,
+      "reason": "not a door per helm log \u2014 doctor --model fix"
+    },
+    {
+      "pr": 245,
+      "reason": "not a door per helm log \u2014 repo scripts (route walk)"
+    },
+    {
+      "pr": 246,
+      "reason": "not a door per helm log \u2014 CI job (route walk)"
+    },
+    {
+      "pr": 253,
+      "reason": "not a door per helm log \u2014 CI workflow hunk"
+    }
+  ]
+}
