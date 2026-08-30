@@ -47,6 +47,10 @@ runner workspace, the broker log and pid. Names and port are
 environment variables — `CSUITE_TEAM`, `CSUITE_ADMIN`, `CSUITE_RUNNER`,
 `CSUITE_PORT` — with defaults `bootstrap`, `admin`, `builder`, `8717`.
 
+`CSUITE_RUNNER_VERB` selects the runner the preflight and the final
+step use — `claude` (default) or `codex` — so the sequence proves
+whichever family the seat holds a credential for.
+
 The script exits non-zero at the first step that is not true and says
 which. Run it twice and the second run finds everything already in
 place.
@@ -123,7 +127,7 @@ service unit will perform:
 
 ```bash
 cd ./runner && env -i HOME=$HOME PATH=$PATH CSUITE_URL=http://127.0.0.1:8717 csuite roster </dev/null
-cd ./runner && env -i HOME=$HOME PATH=$PATH CSUITE_URL=http://127.0.0.1:8717 csuite claude --doctor </dev/null
+cd ./runner && env -i HOME=$HOME PATH=$PATH CSUITE_URL=http://127.0.0.1:8717 csuite claude --doctor </dev/null   # or: csuite codex --doctor
 ```
 
 The first lists the team as `builder`; the second reports
@@ -135,7 +139,7 @@ key it looked up; see [troubleshooting](/docs/troubleshooting).
 ### 6. Start the runner
 
 ```bash
-cd ./runner && CSUITE_URL=http://127.0.0.1:8717 csuite claude
+cd ./runner && CSUITE_URL=http://127.0.0.1:8717 csuite claude    # or: csuite codex
 ```
 
 This needs an agent binary and a model credential. CI has no model
@@ -144,7 +148,9 @@ did** — steps 5 and 6 prove the credential resolves and the preflight
 passes, and that is all they prove; a passing preflight is not a
 connection. Set `CSUITE_START_RUNNER=1` on a machine that has both and
 the script starts the runner and waits until the roster shows
-`builder` with `connected 1`. Running it as a service:
+`builder` with `connected 1`. `CSUITE_RUNNER_VERB=codex` makes both
+the preflight and this step use `csuite codex` instead — a Codex team
+proves its own path, not Claude's. Running it as a service:
 [always-on agent](/docs/guides/always-on-agent).
 
 ## Using it from CI

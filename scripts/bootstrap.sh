@@ -24,10 +24,13 @@
 #                         device auth store to enrol into. Default: the user's real
 #                         store (~/.config/csuite/auth.json). CI points it into the
 #                         state dir so nothing outside the checkout is touched.
-#   CSUITE_START_RUNNER   1 → also start `csuite claude` from the runner workspace and
-#                         wait for the roster to show it connected. Needs an agent
-#                         binary and a model credential; CI does not have one and
-#                         says so instead of pretending.
+#   CSUITE_RUNNER_VERB    which runner the preflight and step 8 use: `claude` (default)
+#                         or `codex`. The ecosystem has two runner verbs; the
+#                         sequence proves whichever the seat holds a credential for.
+#   CSUITE_START_RUNNER   1 → also start `csuite $CSUITE_RUNNER_VERB` from the runner
+#                         workspace and wait for the roster to show it connected. Needs
+#                         an agent binary and a model credential; CI does not have one
+#                         and says so instead of pretending.
 #
 # Requires: bash, node >= 22, curl. Nothing else.
 set -euo pipefail
@@ -42,6 +45,8 @@ URL="http://127.0.0.1:$PORT"
 TEAM="${CSUITE_TEAM:-bootstrap}"
 ADMIN="${CSUITE_ADMIN:-admin}"
 RUNNER="${CSUITE_RUNNER:-builder}"
+VERB="${CSUITE_RUNNER_VERB:-claude}"
+case "$VERB" in claude|codex) ;; *) printf '\n   FAIL CSUITE_RUNNER_VERB must be claude or codex (got %s)\n' "$VERB" >&2; exit 1 ;; esac
 SERVER_DIR="$DIR/server"
 CONFIG="$SERVER_DIR/csuite.json"
 SECRETS="$DIR/secrets"
@@ -203,21 +208,21 @@ say "6. the runner credential resolves from its working directory with no env to
 csuite_as_runner roster | grep -q "^$RUNNER " || die "from $WORKSPACE with no env token, roster did not resolve as $RUNNER"
 ok "saved auth for ($URL, $WORKSPACE) resolves; roster lists $RUNNER"
 
-say "7. runner preflight from that directory"
+say "7. runner preflight from that directory (csuite $VERB --doctor)"
 doctor_out="$DIR/doctor.out"
-if csuite_as_runner claude --doctor >"$doctor_out" 2>&1; then
+if csuite_as_runner "$VERB" --doctor >"$doctor_out" 2>&1; then
   grep -q '\[PASS\][[:space:]]*saved auth' "$doctor_out" || { cat "$doctor_out"; die "doctor did not PASS 'saved auth'"; }
-  ok "csuite claude --doctor: all checks pass, including saved auth"
+  ok "csuite $VERB --doctor: all checks pass, including saved auth"
 else
   cat "$doctor_out"
-  die "csuite claude --doctor failed (see above)"
+  die "csuite $VERB --doctor failed (see above)"
 fi
 
 say "8. runner connection"
 if [ "${CSUITE_START_RUNNER:-0}" = 1 ]; then
   ( cd "$WORKSPACE" && exec env -i HOME="$HOME" PATH="$PATH" CSUITE_URL="$URL" \
       ${CSUITE_AUTH_CONFIG_PATH:+CSUITE_AUTH_CONFIG_PATH="$CSUITE_AUTH_CONFIG_PATH"} \
-      "${CSUITE_CMD[@]}" claude --skip-doctor </dev/null >"$DIR/runner.log" 2>&1 ) &
+      "${CSUITE_CMD[@]}" "$VERB" --skip-doctor </dev/null >"$DIR/runner.log" 2>&1 ) &
   echo $! >"$DIR/runner.pid"
   for i in $(seq 1 60); do
     if CSUITE_TOKEN="$(cat "$TOKEN_FILE")" csuite roster --url "$URL" </dev/null | awk -v m="$RUNNER" '$1==m && $(NF-1)>=1 {found=1} END {exit !found}'; then
@@ -230,7 +235,8 @@ if [ "${CSUITE_START_RUNNER:-0}" = 1 ]; then
 else
   printf '   --  not started: CSUITE_START_RUNNER is unset. Steps 6-7 proved the credential resolves and the\n'
   printf '       preflight passes; a live connection needs an agent binary and a model credential, which\n'
-  printf '       this environment (e.g. CI) does not have. Set CSUITE_START_RUNNER=1 on a seat that does.\n'
+  printf '       this environment (e.g. CI) does not have. Set CSUITE_START_RUNNER=1 on a seat that does\n'
+  printf '       (CSUITE_RUNNER_VERB=claude|codex selects the runner; default claude).\n'
 fi
 
 say "done"
