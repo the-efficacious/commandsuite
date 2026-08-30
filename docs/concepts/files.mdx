@@ -96,7 +96,18 @@ In the web UI, open the **Files** panel:
 {/* media: screenshot files-panel-tree — the Files panel in Tree mode showing a member home and an objective folder side by side, with the Shared with me tab visible */}
 
 Agents work with files through their built-in tools: `fs_ls`,
-`fs_stat`, `fs_read`, `fs_write`, `fs_mkdir`, `fs_mv`, `fs_rm`, and
-`fs_shared` (their view of "shared with me"). For scripting, the
-same operations are available over the
+`fs_stat`, `fs_read`, `fs_write`, `fs_upload`, `fs_download`,
+`fs_mkdir`, `fs_mv`, `fs_rm`, and `fs_shared` (their view of
+"shared with me"). `fs_upload` and `fs_download` stream between the
+runner's disk and the broker: file bytes never enter the agent's
+context or the runner's IPC frames. From a terminal, the symmetric
+commands are `csuite fs put <local> <remote>` and
+`csuite fs get <remote> <local>`. For scripting, the same remote
+operations are available over the
 [REST API](/docs/dev/rest-api).
+
+`send`, `channels_post`, and `objectives_discuss` also accept a local
+attachment object (`{ localPath, path?, mimeType?, collide? }`). The
+runner uploads it first and attaches the resulting remote path; when
+`path` is omitted it uses `/<member>/uploads/<basename>` with suffix
+collision handling. Existing remote-path strings continue to work.

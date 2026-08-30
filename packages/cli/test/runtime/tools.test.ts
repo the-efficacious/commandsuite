@@ -12,6 +12,11 @@
  * tightly scoped.
  */
 
+import { randomBytes } from 'node:crypto';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Readable } from 'node:stream';
 import type { Client as BrokerClient } from 'csuite-sdk/client';
 import type {
   ChannelSummary,
@@ -119,6 +124,176 @@ function getCallText(result: { content: Array<{ type: string; text?: string }> }
   }
   return first.text;
 }
+
+describe('runner-local file transfer tools', () => {
+  it('streams a binary file larger than the IPC frame without returning its bytes', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'csuite-fs-upload-'));
+    try {
+      const localPath = join(dir, 'large.bin');
+      const bytes = Buffer.alloc(1_048_577, 0xa5);
+      writeFileSync(localPath, bytes);
+      let received = Buffer.alloc(0);
+      const fsWrite = vi.fn(async (input: { source: BodyInit; path: string; mimeType: string }) => {
+        const chunks: Buffer[] = [];
+        for await (const chunk of Readable.fromWeb(
+          input.source as import('node:stream/web').ReadableStream<Uint8Array>,
+        )) {
+          chunks.push(Buffer.from(chunk));
+        }
+        received = Buffer.concat(chunks);
+        return {
+          renamed: false,
+          entry: {
+            path: input.path,
+            name: 'large.bin',
+            kind: 'file' as const,
+            owner: 'scout',
+            size: received.length,
+            mimeType: input.mimeType,
+            hash: 'a'.repeat(64),
+            createdAt: 1,
+            createdBy: 'scout',
+            updatedAt: 1,
+          },
+        };
+      });
+      const args = { localPath, path: '/scout/uploads/large.bin' };
+      // This is the entire payload that crosses bridge → runner. The file is
+      // larger than MAX_FRAME_BYTES; the request remains path-sized.
+      expect(Buffer.byteLength(JSON.stringify(args))).toBeLessThan(1024);
+      const result = await handleToolCall(
+        'fs_upload',
+        args,
+        makeBroker({ fsWrite } as never),
+        PACKET,
+      );
+      const text = getCallText(result as never);
+      expect(received).toEqual(bytes);
+      expect(Buffer.byteLength(text)).toBeLessThan(1024);
+      expect(text).not.toContain(bytes.subarray(0, 32).toString('base64'));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('downloads binary bytes atomically and refuses to replace by default', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'csuite-fs-download-'));
+    try {
+      const bytes = randomBytes(4097);
+      const destination = join(dir, 'nested', 'copy.bin');
+      const broker = makeBroker({
+        fsReadStream: vi.fn(async () => new Blob([bytes]).stream()),
+      } as never);
+      const first = getCallText(
+        (await handleToolCall(
+          'fs_download',
+          { path: '/scout/source.bin', localPath: destination },
+          broker,
+          PACKET,
+        )) as never,
+      );
+      expect(first).toContain('size=4097');
+      expect(readFileSync(destination)).toEqual(bytes);
+      const second = await handleToolCall(
+        'fs_download',
+        { path: '/scout/source.bin', localPath: destination },
+        broker,
+        PACKET,
+      );
+      expect(second.isError).toBe(true);
+      expect(readFileSync(destination)).toEqual(bytes);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('uploads a local attachment before sending and attaches the returned path', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'csuite-local-attachment-'));
+    try {
+      const localPath = join(dir, 'evidence.jpg');
+      writeFileSync(localPath, randomBytes(128));
+      const fsWrite = vi.fn(async (input: { source: BodyInit; path: string }) => {
+        const size = (await new Response(input.source).arrayBuffer()).byteLength;
+        return {
+          renamed: true,
+          entry: {
+            path: '/scout/uploads/evidence-1.jpg',
+            name: 'evidence-1.jpg',
+            kind: 'file' as const,
+            owner: 'scout',
+            size,
+            mimeType: 'image/jpeg',
+            hash: 'b'.repeat(64),
+            createdAt: 1,
+            createdBy: 'scout',
+            updatedAt: 1,
+          },
+        };
+      });
+      const push = vi.fn(async (_payload: PushPayload) => ({
+        message: { id: 'msg-1' },
+        delivery: { live: 1, targets: 1 },
+      }));
+      const result = await handleToolCall(
+        'send',
+        { to: 'lead', body: 'evidence', attachments: [{ localPath }] },
+        makeBroker({ fsWrite, push } as never),
+        PACKET,
+      );
+      expect(result.isError).not.toBe(true);
+      expect(fsWrite).toHaveBeenCalledOnce();
+      expect(push).toHaveBeenCalledWith(
+        expect.objectContaining({
+          attachments: [
+            expect.objectContaining({ path: '/scout/uploads/evidence-1.jpg', size: 128 }),
+          ],
+        }),
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('names retained uploads when the later post fails', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'csuite-local-attachment-failure-'));
+    try {
+      const localPath = join(dir, 'evidence.txt');
+      writeFileSync(localPath, 'evidence');
+      const broker = makeBroker({
+        fsWrite: vi.fn(async () => ({
+          renamed: false,
+          entry: {
+            path: '/scout/uploads/evidence.txt',
+            name: 'evidence.txt',
+            kind: 'file' as const,
+            owner: 'scout',
+            size: 8,
+            mimeType: 'text/plain',
+            hash: 'c'.repeat(64),
+            createdAt: 1,
+            createdBy: 'scout',
+            updatedAt: 1,
+          },
+        })),
+        push: vi.fn(async () => {
+          throw new Error('broker unavailable');
+        }),
+      } as never);
+      const result = await handleToolCall(
+        'send',
+        { to: 'lead', body: 'evidence', attachments: [{ localPath }] },
+        broker,
+        PACKET,
+      );
+      expect(result.isError).toBe(true);
+      expect(getCallText(result as never)).toContain(
+        'uploads retained: /scout/uploads/evidence.txt',
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 // ─── tool definition surface ─────────────────────────────────────────
 

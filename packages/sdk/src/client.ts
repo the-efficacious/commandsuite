@@ -1724,10 +1724,15 @@ export class Client {
       mime: input.mimeType,
       collide: input.collision ?? 'error',
     });
-    const resp = await this.request(`${PATHS.fsWrite}?${qs.toString()}`, {
+    const init: RequestInit & { duplex?: 'half' } = {
       method: 'POST',
       body: input.source,
-    });
+    };
+    // Node's fetch requires `duplex: 'half'` for a streaming request body.
+    // Browsers do not support that option, so add it only for a
+    // ReadableStream source; the cast remains local to the transport seam.
+    if (input.source instanceof ReadableStream) init.duplex = 'half';
+    const resp = await this.request(`${PATHS.fsWrite}?${qs.toString()}`, init);
     return FsWriteResponseSchema.parse(await this.json(resp));
   }
 
