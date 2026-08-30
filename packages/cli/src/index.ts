@@ -35,6 +35,11 @@ import { formatReport, runAgentDoctor, type SavedAuthInput } from './commands/do
 import { runEnrollCommand } from './commands/enroll.js';
 import { UsageError } from './commands/errors.js';
 import { runFsCommand } from './commands/fs.js';
+import {
+  runCycleCommand,
+  runInstallServiceCommand,
+  type ServiceVerb,
+} from './commands/install-service.js';
 import { runMemberCommand } from './commands/member.js';
 import { runNotificationsCommand } from './commands/notifications.js';
 import { runObjectivesCommand } from './commands/objectives.js';
@@ -74,6 +79,8 @@ usage:
   csuite quickstart  [--skip-browser] [--assignee <name>]   seed a demo objective + open the web UI
   csuite claude      [--no-trace] [--no-secrets] [--no-env-reload] [--doctor] [--skip-doctor] [--cwd <dir>] [--model <name>] [--resume [<sessionId>]]   run Claude Code headlessly (Agent SDK) as an agent member of a csuite team (--resume alone continues the most recent session; alias: claude-code)
   csuite codex       [--no-trace] [--no-secrets] [--no-env-reload] [--doctor] [--skip-doctor] [--cwd <dir>] [--model <name>] [--resume [<threadId>]] [-- <codex args>...]   spawn OpenAI Codex CLI as a headless agent member of a csuite team (--resume alone picks up the most recent thread)
+  csuite <runner> install-service   [--url <broker>] [--exec <path>] [--print]   write + enable a systemd unit and a scoped sudoers rule for this runner (refuses without saved auth; prints the files when no root)
+  csuite <runner> cycle             [--timeout <sec>]   restart the runner's unit from inside it (detached worker; confirms liveness at the broker)
   csuite stub        [--no-trace] [--no-secrets] [--no-env-reload] [--doctor] [--skip-doctor] [--cwd <dir>]   run the stub agent — a test/CI instrument proving the runner lifecycle with no model credential; never deploy it as a member
   csuite push        --body <text> (--agent <id> | --broadcast) [--title <t>] [--level <lvl>] [--data key=value]...
   csuite roster      [--reveal-token --member <name> [--config-path <path>]]
@@ -931,6 +938,7 @@ function handleAuth(args: string[]): void {
  * unrecognized args are an error rather than silently forwarded.
  */
 async function handleClaude(args: string[]): Promise<void> {
+  if (await maybeHandleServiceSubcommand('claude', args)) return;
   let url: string | undefined;
   let token: string | undefined;
   let cwd: string | undefined;
@@ -1067,6 +1075,69 @@ async function handleClaude(args: string[]): Promise<void> {
 }
 
 /**
+ * `csuite <verb> install-service|cycle` — service management
+ * subcommands shared by every runner verb. Returns true when the first
+ * positional arg selected one (and it ran); false lets the verb's
+ * normal flag parsing proceed.
+ */
+async function maybeHandleServiceSubcommand(verb: ServiceVerb, args: string[]): Promise<boolean> {
+  const sub = args[0];
+  if (sub !== 'install-service' && sub !== 'cycle') return false;
+  const rest = args.slice(1);
+  let url: string | undefined;
+  let execPath: string | undefined;
+  let print = false;
+  let worker = false;
+  let timeoutMs: number | undefined;
+  for (let i = 0; i < rest.length; i++) {
+    const arg = rest[i];
+    if (arg === undefined) continue;
+    if (arg === '--print') {
+      print = true;
+      continue;
+    }
+    if (arg === '--worker') {
+      worker = true;
+      continue;
+    }
+    if (arg === '--url' || arg === '--exec' || arg === '--timeout') {
+      const next = rest[i + 1];
+      if (next === undefined) fail(`${arg} requires a value`, 2);
+      if (arg === '--url') url = next as string;
+      else if (arg === '--exec') execPath = next as string;
+      else {
+        const secs = Number(next);
+        if (!Number.isFinite(secs) || secs <= 0)
+          fail('--timeout requires a positive number of seconds', 2);
+        timeoutMs = secs * 1000;
+      }
+      i++;
+      continue;
+    }
+    fail(
+      `csuite ${verb} ${sub}: unknown argument ${arg} (supported: ${sub === 'install-service' ? '--url, --exec, --print' : '--url, --timeout'})`,
+      2,
+    );
+  }
+  const deps = {
+    stdout: (line: string) => log(line),
+    clientFor: (clientUrl: string, token: string) => new Client({ url: clientUrl, token }),
+  };
+  try {
+    if (sub === 'install-service') {
+      await runInstallServiceCommand({ verb, url, execPath, print, timeoutMs }, deps);
+    } else {
+      await runCycleCommand({ verb, url, worker, timeoutMs }, deps);
+    }
+    process.exit(0);
+  } catch (err) {
+    if (err instanceof UsageError) fail(err.message, 2);
+    fail(err instanceof Error ? err.message : String(err));
+  }
+  return true;
+}
+
+/**
  * `csuite stub` — run the stub agent, a test/CI instrument.
  *
  * Same knob set as the real runner verbs minus the model/resume knobs
@@ -1074,6 +1145,7 @@ async function handleClaude(args: string[]): Promise<void> {
  * names the instrument; the adapter self-identifies everywhere else.
  */
 async function handleStub(args: string[]): Promise<void> {
+  if (await maybeHandleServiceSubcommand('stub', args)) return;
   let url: string | undefined;
   let token: string | undefined;
   let cwd: string | undefined;
@@ -1188,6 +1260,7 @@ async function handleStub(args: string[]): Promise<void> {
  *               -c 'model_providers.qwen.base_url="http://localhost:8000/v1"'
  */
 async function handleCodex(args: string[]): Promise<void> {
+  if (await maybeHandleServiceSubcommand('codex', args)) return;
   let url: string | undefined;
   let token: string | undefined;
   let cwd: string | undefined;
