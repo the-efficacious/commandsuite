@@ -180,7 +180,7 @@ describe('release-prepare cannot publish', () => {
     const run = await new Promise((resolvePromise) => {
       const child = spawn(
         process.execPath,
-        [SCRIPT, '--allow-dirty', '--gate', 'none', '--allow-incomplete', '--out', outPath],
+        [SCRIPT, '--allow-dirty', '--gate', 'conformance', '--allow-incomplete', '--out', outPath],
         { cwd: REPO_ROOT, env: shimEnv() },
       );
       let stdout = '';
@@ -226,6 +226,12 @@ describe('release-prepare cannot publish', () => {
     expect(rendered).toContain('## Proposed version');
     expect(rendered).toContain('container csuite-release-prepare');
     expect(rendered).toContain('--allow-dirty');
+    // The gate row contract in the rendered Markdown itself: captured
+    // numeric exit on a PASS row, and the verbatim untruncated command.
+    expect(rendered).toMatch(/\| conformance \(stub\) \| PASS \| 0 \| \d+s \|/);
+    expect(rendered).toContain(
+      '- **conformance (stub)** (exit 0): `npx vitest run test/runtime/conformance`',
+    );
     // npm never reached the network: the recording registry saw no /npm
     // traffic at all, and nothing anywhere was a write.
     expect(serverRequests.filter((r) => r.includes('/npm'))).toEqual([]);
@@ -301,5 +307,47 @@ describe('manifest contract violations fail loud', () => {
     const run = await prepare(path);
     expect(run.status).toBe(1);
     expect(run.stderr).toContain('held for ruling');
+  });
+});
+
+describe('signability predicate, isolated', async () => {
+  const { signability } = await import('../release-prepare-signability.mjs');
+  const clean = {
+    gateMode: 'full',
+    skipBuild: false,
+    skipImage: false,
+    allowDirty: false,
+    gateSkips: 0,
+    gateFails: 0,
+    problems: 0,
+    holds: 0,
+    notes: 0,
+  };
+
+  it('a complete all-green run is signable', () => {
+    expect(signability(clean)).toEqual({ incomplete: false, signable: true });
+  });
+
+  it('--allow-dirty alone is never signable', () => {
+    const result = signability({ ...clean, allowDirty: true });
+    expect(result.signable).toBe(false);
+    expect(result.incomplete).toBe(true);
+  });
+
+  it('every other single deviation blocks the signature block', () => {
+    for (const deviation of [
+      { gateMode: 'none' },
+      { skipBuild: true },
+      { skipImage: true },
+      { gateSkips: 1 },
+      { gateFails: 1 },
+      { problems: 1 },
+      { holds: 1 },
+      { notes: 1 },
+    ]) {
+      expect(signability({ ...clean, ...deviation }).signable, JSON.stringify(deviation)).toBe(
+        false,
+      );
+    }
   });
 });

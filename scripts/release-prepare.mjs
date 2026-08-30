@@ -45,6 +45,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { signability } from './release-prepare-signability.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const OWNER = 'the-efficacious';
@@ -352,7 +353,18 @@ const gateRows = [];
 if (gateMode === 'none') {
   notes.push('gate skipped (--gate none) — no gate facts');
 } else {
-  for (const job of gateJobs) {
+  // `--gate full` runs everything; any other value is a name-prefix
+  // filter (diagnostic/test use — a filtered run is not signable
+  // because the unselected jobs surface as diagnostic gaps).
+  const selected =
+    gateMode === 'full' ? gateJobs : gateJobs.filter((job) => job.name.startsWith(gateMode));
+  if (selected.length === 0) problems.push(`--gate ${gateMode} matches no gate job`);
+  if (selected.length < gateJobs.length) {
+    notes.push(
+      `gate filtered (--gate ${gateMode}) — ${gateJobs.length - selected.length} job(s) not run`,
+    );
+  }
+  for (const job of selected) {
     const reason = job.capability?.() ?? null;
     const logPath = join(logDir, `${job.name.replace(/[^a-z-]+/gi, '-')}.log`);
     if (reason !== null) {
@@ -361,6 +373,7 @@ if (gateMode === 'none') {
         command: job.command.join(' '),
         status: 'SKIPPED',
         reason,
+        exitCode: null,
         logPath: null,
         durationMs: 0,
       });
@@ -396,8 +409,17 @@ if (gateSkips.length > 0 && !allowIncomplete) {
 }
 
 // ── 5. Render ───────────────────────────────────────────────────────
-const incomplete = gateMode === 'none' || skipBuild || gateSkips.length > 0 || problems.length > 0;
-const signable = !incomplete && gateFails.length === 0 && holds.length === 0;
+const { incomplete, signable } = signability({
+  gateMode,
+  skipBuild,
+  skipImage,
+  allowDirty,
+  gateSkips: gateSkips.length,
+  gateFails: gateFails.length,
+  problems: problems.length,
+  holds: holds.length,
+  notes: notes.length,
+});
 const outPath = resolve(
   argValue('--out') ?? join(REPO_ROOT, `RELEASE-${version ?? 'unversioned'}.md`),
 );
@@ -462,14 +484,23 @@ for (const artefact of artefacts) {
 lines.push('');
 lines.push('## Gate');
 lines.push('');
-lines.push('| job | result | detail | duration | log |');
+lines.push('| job | result | exit | duration | log |');
 lines.push('| --- | --- | --- | --- | --- |');
 for (const row of gateRows) {
+  const result = row.status === 'SKIPPED' ? `SKIPPED — ${row.reason}` : row.status;
   lines.push(
-    `| ${row.name} | ${row.status} | ${row.reason ?? ''} | ${(row.durationMs / 1000).toFixed(0)}s | ${row.logPath ? row.logPath.replace(`${REPO_ROOT}/`, '') : '—'} |`,
+    `| ${row.name} | ${result} | ${row.exitCode ?? '—'} | ${(row.durationMs / 1000).toFixed(0)}s | ${row.logPath ? row.logPath.replace(`${REPO_ROOT}/`, '') : '—'} |`,
   );
 }
 if (gateRows.length === 0) lines.push('| (gate not run) | — | — | — | — |');
+if (gateRows.length > 0) {
+  lines.push('');
+  lines.push('Exact commands, verbatim:');
+  lines.push('');
+  for (const row of gateRows) {
+    lines.push(`- **${row.name}** (exit ${row.exitCode ?? 'not run'}): \`${row.command}\``);
+  }
+}
 lines.push('');
 if (signable) {
   lines.push('## Signatures');
