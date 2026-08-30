@@ -82,13 +82,19 @@ export function describeTarget(t: NotificationTarget): string {
 
 export function NotificationsPanel() {
   const b = instructions.value;
+  // Every read here is `notifications.manage`-gated on the broker;
+  // fetching before the refusal below produced a 403 on every visit by
+  // a member without it (obj-mtfo3k5f-b). Decide from the identity
+  // packet, like the refusal itself does.
+  const canManage = b !== null && hasPermission(b.permissions, 'notifications.manage');
 
   useEffect(() => {
+    if (!canManage) return;
     void loadNotificationEndpoints();
     loadNotificationProfiles().catch(() => {
       /* surfaced by the endpoints error path on a broken broker */
     });
-  }, []);
+  }, [canManage]);
 
   if (!b) {
     return (

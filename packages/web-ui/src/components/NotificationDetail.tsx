@@ -89,12 +89,16 @@ async function run(label: string, fn: () => Promise<unknown>): Promise<void> {
 export function NotificationDetail({ slug }: { slug: string }) {
   const b = instructions.value;
   const endpoint = notificationEndpointBySlug(slug);
+  // Same gate as the panel: nothing here is readable without
+  // `notifications.manage`, so don't ask and collect a 403.
+  const canManage = b !== null && hasPermission(b.permissions, 'notifications.manage');
 
   useEffect(() => {
     detailError.value = null;
     confirmDelete.value = false;
     seededFor.value = null;
     secretInput.value = '';
+    if (!canManage) return;
     if (notificationEndpoints.value === null) void loadNotificationEndpoints();
     loadNotificationProfiles().catch(() => {
       /* profile select degrades to inline-auth only */
@@ -102,7 +106,7 @@ export function NotificationDetail({ slug }: { slug: string }) {
     loadNotificationDeliveries(slug).catch((err) => {
       detailError.value = err instanceof Error ? err.message : String(err);
     });
-  }, [slug]);
+  }, [slug, canManage]);
 
   // Seed the edit forms once per slug, after the summary loads.
   useEffect(() => {

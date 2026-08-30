@@ -228,7 +228,12 @@ export interface FilesPanelProps {
   path: string;
 }
 
-export function FilesPanel({ viewer, path }: FilesPanelProps) {
+export function FilesPanel({ viewer, path: routePath }: FilesPanelProps) {
+  // The `files` route carries '' for its root (`/files`), while the
+  // broker's `GET /fs/ls` requires a non-empty path — sending '' was a
+  // 400 rendered as a bare "400" (commandsuite#216). Root is '/': the
+  // homes this member can see.
+  const path = routePath === '' ? '/' : routePath;
   // Normalize the incoming path once per render and load lazily
   // when it changes. We compare against the current panelState to
   // avoid looping on our own signal updates.

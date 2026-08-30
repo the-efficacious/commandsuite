@@ -26,8 +26,10 @@
  * attribute toggles the open/closed state of the overlay.
  */
 
+import { hasPermission } from 'csuite-sdk/types';
 import { useCallback, useEffect, useState } from 'preact/hooks';
 import { closeInspector, isInspectorOpen } from '../lib/inspector.js';
+import { instructions } from '../lib/instructions.js';
 import {
   memberActivityConnected,
   memberActivityRows,
@@ -37,6 +39,7 @@ import { useResizableWidth } from '../lib/use-resizable-width.js';
 import { useStickyBottom } from '../lib/use-sticky-bottom.js';
 import { TimelineBody, TimelineFilters, timelineFilterSummary } from './AgentTimeline.js';
 import { ChevronDown, ChevronsDown, X } from './icons/index.js';
+import { ErrorCallout } from './ui/index.js';
 
 const RESIZE_STORAGE_KEY = 'csuite:activity-inspector-width';
 const RESIZE_DEFAULT_PX = 380;
@@ -134,9 +137,21 @@ export function ActivityInspector({ agentName }: ActivityInspectorProps) {
     }
   };
 
+  // The stream is `activity.read`-gated on the broker (own activity is
+  // always readable). Opening the socket without the permission fails
+  // the handshake with 403 and the client retries forever — noise a
+  // baseline member hit on every DM (commandsuite#214). Decide here,
+  // from the same identity packet every other panel uses, and render
+  // the standard refusal instead of dialling.
+  const packet = instructions.value;
+  const canReadActivity =
+    packet !== null &&
+    (packet.name === agentName || hasPermission(packet.permissions, 'activity.read'));
+
   useEffect(() => {
+    if (!canReadActivity) return undefined;
     return startMemberActivitySubscribe({ name: agentName });
-  }, [agentName]);
+  }, [agentName, canReadActivity]);
 
   return (
     <aside
@@ -194,55 +209,67 @@ export function ActivityInspector({ agentName }: ActivityInspectorProps) {
           tail dominates vertical space. The summary text on the right
           flags any active filter even when collapsed so the operator
           sees the feed isn't showing everything. */}
-      <div class="activity-filter-tray" data-open={filtersOpen ? 'true' : 'false'}>
-        <button
-          type="button"
-          onClick={toggleFilters}
-          class="activity-filter-tray-toggle"
-          aria-expanded={filtersOpen}
-          aria-controls="activity-filter-tray-body"
-        >
-          <ChevronDown
-            size={14}
-            aria-hidden="true"
-            style={`transform:rotate(${filtersOpen ? 0 : -90}deg);transition:transform 0.15s var(--ef-motion-ease)`}
-          />
-          <span style="flex:1;text-align:left">Filters</span>
-          {filterSummary !== null && (
-            <span style="color:var(--ef-text-secondary);font-size:11px;font-family:var(--ef-font-mono)">
-              {filterSummary}
-            </span>
-          )}
-        </button>
-        {filtersOpen && (
-          <div id="activity-filter-tray-body" class="activity-filter-tray-body">
-            <TimelineFilters />
-          </div>
-        )}
-      </div>
-
-      <div style="flex:1;min-height:0;position:relative">
-        <div
-          ref={containerRef}
-          onScroll={onScroll}
-          data-scroll-anchor="activity"
-          class="activity-inspector-scroll scroller--hair"
-          style="position:absolute;inset:0;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:10px"
-        >
-          <TimelineBody />
-        </div>
-        {!isPinned && (
+      {canReadActivity && (
+        <div class="activity-filter-tray" data-open={filtersOpen ? 'true' : 'false'}>
           <button
             type="button"
-            onClick={jumpToBottom}
-            aria-label="Jump to newest activity"
-            title="Jump to newest"
-            style="position:absolute;right:14px;bottom:14px;width:36px;height:36px;border-radius:9999px;background:var(--ef-surface);border:1px solid var(--ef-border);color:var(--ef-text);box-shadow:var(--ef-shadow-overlay);cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:2"
+            onClick={toggleFilters}
+            class="activity-filter-tray-toggle"
+            aria-expanded={filtersOpen}
+            aria-controls="activity-filter-tray-body"
           >
-            <ChevronsDown size={18} aria-hidden="true" />
+            <ChevronDown
+              size={14}
+              aria-hidden="true"
+              style={`transform:rotate(${filtersOpen ? 0 : -90}deg);transition:transform 0.15s var(--ef-motion-ease)`}
+            />
+            <span style="flex:1;text-align:left">Filters</span>
+            {filterSummary !== null && (
+              <span style="color:var(--ef-text-secondary);font-size:11px;font-family:var(--ef-font-mono)">
+                {filterSummary}
+              </span>
+            )}
           </button>
-        )}
-      </div>
+          {filtersOpen && (
+            <div id="activity-filter-tray-body" class="activity-filter-tray-body">
+              <TimelineFilters />
+            </div>
+          )}
+        </div>
+      )}
+
+      {!canReadActivity && (
+        <div style="padding:12px 14px">
+          <ErrorCallout
+            title="Restricted"
+            message={`Reading ${agentName}'s activity requires the activity.read permission.`}
+          />
+        </div>
+      )}
+      {canReadActivity && (
+        <div style="flex:1;min-height:0;position:relative">
+          <div
+            ref={containerRef}
+            onScroll={onScroll}
+            data-scroll-anchor="activity"
+            class="activity-inspector-scroll scroller--hair"
+            style="position:absolute;inset:0;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:10px"
+          >
+            <TimelineBody />
+          </div>
+          {!isPinned && (
+            <button
+              type="button"
+              onClick={jumpToBottom}
+              aria-label="Jump to newest activity"
+              title="Jump to newest"
+              style="position:absolute;right:14px;bottom:14px;width:36px;height:36px;border-radius:9999px;background:var(--ef-surface);border:1px solid var(--ef-border);color:var(--ef-text);box-shadow:var(--ef-shadow-overlay);cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:2"
+            >
+              <ChevronsDown size={18} aria-hidden="true" />
+            </button>
+          )}
+        </div>
+      )}
     </aside>
   );
 }
