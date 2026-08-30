@@ -1,0 +1,35 @@
+# CommandSuite in a container — `docker compose up`.
+#
+# Builds the broker + CLI from this checkout, seeds a team and first
+# member without a TTY, enrols a runner member through the product's own
+# device-code flow, and serves the web UI on ${CSUITE_PORT:-8717}. It stops at
+# an enrolled runner member; a live runner runs outside the container. Every
+# variable below is documented in docs/deployment.mdx. Secrets live on
+# the named volume at mode 0600 and are never in the image or the logs:
+#   docker compose exec csuite cat /var/lib/csuite/secrets/admin.token
+services:
+  csuite:
+    build: .
+    image: commandsuite/csuite:local
+    ports:
+      - "${CSUITE_PORT:-8717}:8717"
+    environment:
+      CSUITE_TEAM: ${CSUITE_TEAM:-bootstrap}
+      CSUITE_ADMIN: ${CSUITE_ADMIN:-admin}
+      CSUITE_RUNNER: ${CSUITE_RUNNER:-builder}
+      CSUITE_RUNNER_VERB: ${CSUITE_RUNNER_VERB:-claude}
+      CSUITE_LOG_LEVEL: ${CSUITE_LOG_LEVEL:-info}
+    volumes:
+      - csuite-state:/var/lib/csuite
+    healthcheck:
+      # .ready is written by the entrypoint only once the final broker is
+      # about to run; without it the bootstrap's loopback broker would pass.
+      test: ["CMD-SHELL", "test -f /var/lib/csuite/.ready && curl -fsS http://127.0.0.1:8717/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 90s
+    restart: unless-stopped
+
+volumes:
+  csuite-state:

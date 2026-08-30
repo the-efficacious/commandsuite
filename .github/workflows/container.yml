@@ -1,0 +1,38 @@
+name: Container
+
+# Builds the image from a clean checkout and proves `docker compose up`:
+# /healthz, the SPA, an authenticated roster, the runner member's
+# saved-auth resolution inside the container, secrets at 0600 on the
+# volume — then the same after `compose restart` (the entrypoint's
+# bring-up must be idempotent against the volume), then `compose down -v`.
+# It stops before any live model connection, and says so.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+
+      - name: Cold build, timed
+        run: |
+          start=$(date +%s)
+          docker build --no-cache -t commandsuite/csuite:local .
+          echo "cold build: $(( $(date +%s) - start ))s" | tee -a "$GITHUB_STEP_SUMMARY"
+          docker image inspect commandsuite/csuite:local --format 'image size: {{.Size}} bytes' | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: compose up → assert → restart → assert → down
+        env:
+          CSUITE_PORT: 8719
+        run: scripts/compose-check.sh </dev/null
