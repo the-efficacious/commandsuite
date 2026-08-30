@@ -128,9 +128,9 @@ is_ours() { # is_ours <pid> broker|runner
     broker) [[ "$args" == *" serve "* && "$args" == *"$CONFIG"* ]] ;;
     runner)
       if [ -L "/proc/$pid/cwd" ]; then
-        [ "$(readlink "/proc/$pid/cwd")" = "$WORKSPACE" ] && [[ "$args" =~ (claude|codex) ]]
+        [ "$(readlink "/proc/$pid/cwd")" = "$WORKSPACE" ] && [[ "$args" =~ (claude|codex|stub) ]]
       else
-        [[ "$args" =~ (claude|codex)\ --skip-doctor ]]
+        [[ "$args" =~ (claude|codex|stub)\ --skip-doctor ]]
       fi ;;
   esac
 }
