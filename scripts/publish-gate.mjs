@@ -33,6 +33,7 @@ function run(command, args, options = {}) {
     cwd: REPO_ROOT,
     encoding: 'utf8',
     stdio: options.capture ? 'pipe' : 'inherit',
+    env: { ...process.env, ...options.env },
   });
   if (result.status !== 0) {
     if (options.capture) {
@@ -115,7 +116,10 @@ export function payloadDigest(dir, manifest) {
 
 function prepare() {
   assertClean();
-  run('pnpm', ['build']);
+  // Release identity is a publication-boundary fact. The workflow may
+  // build earlier for validation, but this root-owned gate is the one
+  // path every supported publish takes immediately before payload hashing.
+  run('pnpm', ['build'], { env: { CSUITE_BUILD_SOURCE: 'npm' } });
   run('pnpm', ['verify-pack']);
   assertClean();
 

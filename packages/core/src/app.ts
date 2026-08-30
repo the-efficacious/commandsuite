@@ -28,6 +28,7 @@ import {
   PROCESS_DOCUMENT_PATHS,
   PROTOCOL_HEADER,
   PROTOCOL_VERSION,
+  RUNNER_IDENTITY_HEADER,
   RUNNER_VERSION_HEADER,
 } from 'csuite-sdk/protocol';
 import {
@@ -68,6 +69,7 @@ import {
   RejectEnrollmentRequestSchema,
   RenameChannelRequestSchema,
   RotateTokenRequestSchema,
+  RunnerIdentitySchema,
   SetCustomToolRequestSchema,
   SetNotificationSecretRequestSchema,
   SetSecretValueRequestSchema,
@@ -1333,7 +1335,7 @@ export function createApp(options: AppOptions): CreatedApp {
     // it emits `ok` explicitly rather than omitting. Reading an absent
     // field as healthy is exactly the conflation this exists to remove,
     // and it is only absent when the store isn't wired at all.
-    const presences = broker.listPresences().map((p) => {
+    const presences = broker.listPresences(options.version).map((p) => {
       const activity = workState.getActivity(p.name);
       const health = captureHealth?.forMember(p.name);
       // `pending` is internal — an aged-out marker hasn't earned a
@@ -4724,6 +4726,17 @@ export function createApp(options: AppOptions): CreatedApp {
           // Pre-check middleware guaranteed a valid `name` and identity match.
           const targetName = c.req.query('name') as string;
           const member = c.get('member');
+          const reportedIdentity = c.req.header(RUNNER_IDENTITY_HEADER);
+          const runnerIdentity = (() => {
+            if (reportedIdentity === undefined) return undefined;
+            if (reportedIdentity.length > 1024) return undefined;
+            try {
+              const parsed = RunnerIdentitySchema.safeParse(JSON.parse(reportedIdentity));
+              return parsed.success ? parsed.data : undefined;
+            } catch {
+              return undefined;
+            }
+          })();
           let unsubscribe: (() => void) | null = null;
           let onShutdown: (() => void) | null = null;
 
@@ -4742,7 +4755,12 @@ export function createApp(options: AppOptions): CreatedApp {
                     });
                   }
                 },
-                { role: member.role, name: member.name, tokenId: c.get('tokenId') },
+                {
+                  role: member.role,
+                  name: member.name,
+                  tokenId: c.get('tokenId'),
+                  runnerIdentity,
+                },
               );
 
               // Shutdown fan-out: server.close() needs every live socket

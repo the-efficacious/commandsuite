@@ -13,7 +13,7 @@
  * as `PresenceIdentityError`.
  */
 
-import type { Message, Presence, Role } from 'csuite-sdk/types';
+import type { Message, Presence, Role, RunnerIdentity, RunnerReport } from 'csuite-sdk/types';
 
 export type Subscriber = (message: Message) => void | Promise<void>;
 
@@ -21,6 +21,7 @@ export interface PresenceState {
   presence: Presence;
   subscribers: Set<Subscriber>;
   subscriberTokenIds: Map<Subscriber, string | null>;
+  subscriberRunnerIdentities: Map<Subscriber, RunnerIdentity | null>;
 }
 
 /**
@@ -68,6 +69,7 @@ export class PresenceRegistry {
       },
       subscribers: new Set(),
       subscriberTokenIds: new Map(),
+      subscriberRunnerIdentities: new Map(),
     };
     this.presences.set(name, state);
     return state;
@@ -81,15 +83,46 @@ export class PresenceRegistry {
     return this.presences.has(name);
   }
 
-  list(blockedTokenIds: ReadonlySet<string> = new Set()): Presence[] {
+  list(blockedTokenIds: ReadonlySet<string> = new Set(), brokerVersion?: string): Presence[] {
     const out: Presence[] = [];
     for (const state of this.presences.values()) {
+      const identities = [...state.subscriberRunnerIdentities.values()];
+      const grouped = new Map<string, { identity: RunnerIdentity; connections: number }>();
+      for (const identity of identities) {
+        if (identity === null) continue;
+        const key = JSON.stringify([
+          identity.runner,
+          identity.modelId,
+          identity.runnerVersion,
+          identity.runnerBuildSource,
+        ]);
+        const prior = grouped.get(key);
+        if (prior) prior.connections += 1;
+        else grouped.set(key, { identity, connections: 1 });
+      }
+      const runnerReports: RunnerReport[] = [...grouped.values()].map(
+        ({ identity, connections }) => ({
+          ...identity,
+          connections,
+          versionSkew: {
+            skew: brokerVersion !== undefined && identity.runnerVersion !== brokerVersion,
+            runnerVersion: identity.runnerVersion,
+            brokerVersion: brokerVersion ?? '(unreported)',
+          },
+        }),
+      );
       out.push({
         name: state.presence.name,
         connected: state.subscribers.size,
         authBlocked: [...state.subscriberTokenIds.values()].filter(
           (tokenId) => tokenId !== null && blockedTokenIds.has(tokenId),
         ).length,
+        ...(brokerVersion !== undefined
+          ? {
+              runnerReports,
+              unreportedConnections: identities.filter((identity) => identity === null).length,
+            }
+          : {}),
         createdAt: state.presence.createdAt,
         lastSeen: state.presence.lastSeen,
         role: state.presence.role,

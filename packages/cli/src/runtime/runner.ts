@@ -58,6 +58,7 @@ import type {
   Message,
   Objective,
   ResolvedToolSource,
+  RunnerIdentity,
 } from 'csuite-sdk/types';
 import { CLI_VERSION } from '../version.js';
 import { createAuthRecoveryController } from './auth-recovery.js';
@@ -87,6 +88,8 @@ export class RunnerStartupError extends Error {
 export interface RunnerOptions {
   url: string;
   token: string;
+  /** Facts reported on this runner's live subscription. Never authorizes. */
+  runnerIdentity?: RunnerIdentity;
   /** Re-read saved device auth after this token is rejected. Absent for env/flag tokens. */
   resolveReplacementToken?: () => string | null;
   /**
@@ -753,6 +756,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
     signal: abortController.signal,
     logger: log.child('forwarder'),
     presence,
+    runnerIdentity: options.runnerIdentity,
     onObjectiveEvent: (message) => {
       tracker.refresh(message);
     },

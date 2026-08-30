@@ -34,8 +34,9 @@
 import { resolve } from 'node:path';
 import type { Logger } from 'csuite-core';
 import { DEFAULT_PORT, ENV } from 'csuite-sdk/protocol';
+import type { RunnerIdentity } from 'csuite-sdk/types';
 import { UsageError } from '../commands/errors.js';
-import { CLI_VERSION } from '../version.js';
+import { CLI_BUILD_SOURCE, CLI_VERSION } from '../version.js';
 import type {
   AgentAdapter,
   AgentLog,
@@ -133,6 +134,13 @@ export async function runAgentSession(
     closeLogAndThrow(err);
   }
 
+  const runnerIdentity: RunnerIdentity = {
+    runner: meta.id as RunnerIdentity['runner'],
+    modelId: adapter.resolvedModelId?.() ?? null,
+    runnerVersion: CLI_VERSION,
+    runnerBuildSource: CLI_BUILD_SOURCE,
+  };
+
   // 2. Start the runner with the adapter's framework-specific knobs.
   const presence = createPresence();
   const runnerOptions = adapter.runnerOptions?.() ?? {};
@@ -173,6 +181,7 @@ export async function runAgentSession(
       resolveReplacementToken: input.resolveReplacementToken,
       logger: log.child('runner'),
       presence,
+      runnerIdentity,
       noTrace: input.noTrace,
       noSecrets: input.noSecrets,
       onInstructionsEvent: () => {
@@ -274,6 +283,8 @@ export async function runAgentSession(
     runner: meta.id,
     runnerVersion: CLI_VERSION,
     captureTier: meta.captureTier,
+    modelId: runnerIdentity.modelId,
+    runnerBuildSource: runnerIdentity.runnerBuildSource,
     ...(initialPlan !== null
       ? {
           resumed: initialPlan.resumed,
@@ -441,6 +452,8 @@ export async function runAgentSession(
             runner: meta.id,
             runnerVersion: CLI_VERSION,
             captureTier: meta.captureTier,
+            modelId: runnerIdentity.modelId,
+            runnerBuildSource: runnerIdentity.runnerBuildSource,
             // An instruction/environment restart always resumes the
             // live conversation — that is its contract.
             resumed: true,
@@ -540,6 +553,8 @@ export async function runAgentSession(
           runner: meta.id,
           runnerVersion: CLI_VERSION,
           captureTier: meta.captureTier,
+          modelId: runnerIdentity.modelId,
+          runnerBuildSource: runnerIdentity.runnerBuildSource,
           resumed: false,
           resumeReason: 'context cleared',
         });
@@ -587,6 +602,8 @@ export async function runAgentSession(
           runner: meta.id,
           runnerVersion: CLI_VERSION,
           captureTier: meta.captureTier,
+          modelId: runnerIdentity.modelId,
+          runnerBuildSource: runnerIdentity.runnerBuildSource,
           // A reload resumes the same conversation by definition.
           resumed: true,
         });

@@ -221,6 +221,10 @@ export function createStubAdapter(): AgentAdapter {
   const adapter: AgentAdapter = {
     meta: STUB_META,
 
+    resolvedModelId(): null {
+      return null;
+    },
+
     locate(): void {
       // Nothing to locate: the stub is in-process. Deliberately not an
       // absent-by-design error — the stub is always runnable.

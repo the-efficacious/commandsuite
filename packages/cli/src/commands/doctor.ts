@@ -40,6 +40,7 @@ import { promisify } from 'node:util';
 import type { AgentAdapter, TestedVersionRange } from '../runtime/agents/adapter.js';
 import { AgentAdapterError } from '../runtime/agents/adapter.js';
 import { createClaudeAdapter } from '../runtime/agents/claude-agent.js';
+import { CLI_BUILD_SOURCE, CLI_VERSION } from '../version.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -134,6 +135,12 @@ export async function runAgentDoctor(
       checks.push(await checkAgentVersion(meta.id, binary, meta.versionArgs, meta.testedVersions));
     }
   }
+
+  checks.push({
+    name: 'runner identity',
+    status: 'PASS',
+    detail: `${meta.id} · ${adapter.resolvedModelId?.() ?? 'agent default — not resolved locally'} · ${CLI_VERSION} · ${CLI_BUILD_SOURCE}`,
+  });
 
   checks.push(nodeVersionCheck(process.versions.node));
   checks.push(await checkTmpdir());

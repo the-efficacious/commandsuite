@@ -2,7 +2,12 @@ import { EventEmitter } from 'node:events';
 import { describe, expect, it } from 'vitest';
 import type { WebSocket as WsWebSocket } from 'ws';
 import { Client, ClientError } from '../src/client.js';
-import { PROTOCOL_HEADER, PROTOCOL_VERSION, RUNNER_VERSION_HEADER } from '../src/protocol.js';
+import {
+  PROTOCOL_HEADER,
+  PROTOCOL_VERSION,
+  RUNNER_IDENTITY_HEADER,
+  RUNNER_VERSION_HEADER,
+} from '../src/protocol.js';
 import {
   EditProcessDocumentRequestSchema,
   PROCESS_DOCUMENT_FIELDS,
@@ -56,6 +61,25 @@ function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
 }
 
 describe('Client', () => {
+  it('refuses a runner model id that cannot safely transit an HTTP header', async () => {
+    const client = new Client({
+      url: 'http://example.test:8717',
+      token: 'x',
+      WebSocket: FakeWebSocket as never,
+    });
+    const iterator = client
+      .subscribe('agent-1', undefined, {
+        runner: 'codex',
+        modelId: '模型',
+        runnerVersion: '0.8.0',
+        runnerBuildSource: 'npm',
+      })
+      [Symbol.asyncIterator]();
+
+    await expect(iterator.next()).rejects.toThrow();
+    expect(FakeWebSocket.instances).toHaveLength(0);
+  });
+
   it('sends an explicit per-token rotation scope', async () => {
     let body = '';
     const client = new Client({
@@ -253,7 +277,12 @@ describe('Client', () => {
 
     const received: Message[] = [];
     const iteration = (async () => {
-      for await (const msg of client.subscribe('agent-1')) {
+      for await (const msg of client.subscribe('agent-1', undefined, {
+        runner: 'codex',
+        modelId: 'gpt-5.6',
+        runnerVersion: '0.8.0+main.abc',
+        runnerBuildSource: 'main',
+      })) {
         received.push(msg);
       }
     })();
@@ -268,6 +297,12 @@ describe('Client', () => {
     expect(ws.url).toContain('name=agent-1');
     expect(ws.opts?.headers?.Authorization).toBe('Bearer x');
     expect(ws.opts?.headers?.[PROTOCOL_HEADER]).toBe(String(PROTOCOL_VERSION));
+    expect(JSON.parse(ws.opts?.headers?.[RUNNER_IDENTITY_HEADER] ?? '{}')).toEqual({
+      runner: 'codex',
+      modelId: 'gpt-5.6',
+      runnerVersion: '0.8.0+main.abc',
+      runnerBuildSource: 'main',
+    });
 
     ws.emit('message', JSON.stringify(fakeMessage));
     ws.emit('message', JSON.stringify(fakeMessage2));

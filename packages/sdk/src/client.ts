@@ -22,6 +22,7 @@ import {
   PROCESS_DOCUMENT_PATHS,
   PROTOCOL_HEADER,
   PROTOCOL_VERSION,
+  RUNNER_IDENTITY_HEADER,
   RUNNER_VERSION_HEADER,
   SECRET_PATHS,
   TOOL_SOURCE_PATHS,
@@ -99,6 +100,7 @@ import {
   ResolveSecretsResponseSchema,
   RosterResponseSchema,
   RotateTokenResponseSchema,
+  RunnerIdentitySchema,
   SecretSchema,
   SessionResponseSchema,
   SetCustomToolRequestSchema,
@@ -187,6 +189,7 @@ import type {
   RosterResponse,
   RotateTokenRequest,
   RotateTokenResponse,
+  RunnerIdentity,
   Secret,
   SecretSummary,
   SessionResponse,
@@ -1825,13 +1828,20 @@ export class Client {
    * match the authenticated identity with a pre-upgrade 403, so the
    * handshake throws `ClientError` in that case.
    */
-  async *subscribe(name: string, signal?: AbortSignal): AsyncIterable<Message> {
+  async *subscribe(
+    name: string,
+    signal?: AbortSignal,
+    runnerIdentity?: RunnerIdentity,
+  ): AsyncIterable<Message> {
     const url = this.buildWsUrl(PATHS.subscribe, { name });
     const headers: Record<string, string> = {
       [PROTOCOL_HEADER]: String(PROTOCOL_VERSION),
     };
     if (this.token) {
       headers[AUTH_HEADER] = `Bearer ${this.token}`;
+    }
+    if (runnerIdentity !== undefined) {
+      headers[RUNNER_IDENTITY_HEADER] = JSON.stringify(RunnerIdentitySchema.parse(runnerIdentity));
     }
     const ws = new this.WebSocketImpl(url, { headers });
     this.activeSubscriptions.add(ws);

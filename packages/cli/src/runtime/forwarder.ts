@@ -12,7 +12,7 @@
 
 import { logger as defaultLogger, type Logger } from 'csuite-core';
 import type { Client as BrokerClient } from 'csuite-sdk/client';
-import type { Message } from 'csuite-sdk/types';
+import type { Message, RunnerIdentity } from 'csuite-sdk/types';
 import type { Presence } from './presence.js';
 import { formatAgentTimestamp } from './tools.js';
 
@@ -173,6 +173,7 @@ export interface ForwarderOptions {
    * drive the bottom-strip dot.
    */
   presence?: Presence;
+  runnerIdentity?: RunnerIdentity;
 }
 
 export async function runForwarder(opts: ForwarderOptions): Promise<void> {
@@ -187,6 +188,7 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
     onEnvironmentEvent,
     onContextControlEvent,
     presence,
+    runnerIdentity,
   } = opts;
   const log = opts.logger ?? defaultLogger.child('forwarder');
   let backoff = BACKOFF_START_MS;
@@ -222,7 +224,7 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
       presence?.setConnecting();
       backoff = BACKOFF_START_MS;
 
-      const stream = brokerClient.subscribe(name, signal);
+      const stream = brokerClient.subscribe(name, signal, runnerIdentity);
       // Presence flips to `online` optimistically as soon as subscribe
       // returns an iterator — we don't wait for the first message
       // because a quiet team with long heartbeat gaps would otherwise

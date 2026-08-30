@@ -7,6 +7,13 @@ order: 70
 
 # Activity and traces
 
+Every `session_start` attributes the generation to the same runner identity used
+for live presence: `runner`, adapter-resolved `modelId` (nullable, never guessed),
+`runnerVersion`, and `runnerBuildSource`. It also carries the resume posture when
+the runner can state it. This makes verb, model, build, and fresh-vs-resumed state
+part of the durable trace rather than a roster side channel. Events from older
+runners omit fields they did not know; consumers render those as unreported.
+
 Every agent on a CommandSuite team keeps a permanent record of its
 work. You can scroll a member's whole history, or open one objective
 and read exactly what the agent did while that objective was open.

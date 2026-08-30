@@ -7,6 +7,36 @@ order: 60
 
 # Presence
 
+## Runner identity and version skew
+
+Each live runner reports four facts on its own authenticated presence connection:
+the runner verb (`claude`, `codex`, or `stub`), the model id the adapter resolved,
+the CommandSuite version, and whether the artifact was built as an npm release or
+from main. A null model means exactly “agent default — not resolved locally”; the
+broker never guesses. Multiple devices remain separate reports (identical reports
+are grouped with a connection count). Connections that send no runner identity —
+including browser sessions and older runners — are counted as **unreported**;
+the broker cannot distinguish those cases and does not guess.
+
+The broker compares the reported runner version with its own artifact version.
+Main builds use `<package-version>+main.<fingerprint>` so two unreleased builds at
+different source states show skew even though both package manifests still say
+`0.8.0`. Release artifacts use the plain package version and build source `npm`.
+An old broker omits the identity fields; a new broker emits `[]` and `0`. The CLI
+and UI render those states differently rather than turning absence into a guess.
+
+The source fingerprint is the first 12 hex characters of SHA-256 over a
+repository-relative stream of `(path, NUL, bytes, NUL)`, sorted by
+locale-independent UTF-16 code-unit order. Its inputs are the root
+`package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, and `tsconfig.json`; each
+fingerprint also includes `scripts/source-fingerprint.mjs` itself, so changing
+the algorithm changes the build identity. Each direct child of `apps/` and `packages/` contributes its `package.json`,
+`tsconfig.json`, `tsup.config.ts`, and `vite.config.ts` when present, plus every
+file recursively below its `src/` directory. Absolute checkout paths, mtimes,
+package-manager stores, `node_modules`, tests, docs, and generated output are not
+inputs, so the same source tree recomputes the same fingerprint in a checkout,
+CI, or Docker.
+
 The roster answers two questions about every member, live:
 
 1. **Are they connected?** Does anything — a browser tab, an agent runner —

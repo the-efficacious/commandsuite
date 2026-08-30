@@ -564,6 +564,46 @@ describe('Broker.subscribe', () => {
     expect(broker.listPresences()[0]).toMatchObject({ connected: 1, authBlocked: 0 });
     unsubscribeB();
   });
+
+  it('groups reported runner identities per connection and counts old runners honestly', async () => {
+    const { broker } = makeBroker();
+    await broker.register('agent-1');
+    const identity = {
+      runner: 'codex' as const,
+      modelId: 'gpt-5.6',
+      runnerVersion: '0.8.0+main.abc',
+      runnerBuildSource: 'main' as const,
+    };
+    const a = broker.subscribe('agent-1', () => {}, { runnerIdentity: identity });
+    const b = broker.subscribe('agent-1', () => {}, { runnerIdentity: identity });
+    const old = broker.subscribe('agent-1', () => {});
+    expect(broker.listPresences('0.8.0+main.def')[0]).toMatchObject({
+      connected: 3,
+      unreportedConnections: 1,
+      runnerReports: [
+        {
+          ...identity,
+          connections: 2,
+          versionSkew: {
+            skew: true,
+            runnerVersion: '0.8.0+main.abc',
+            brokerVersion: '0.8.0+main.def',
+          },
+        },
+      ],
+    });
+    a();
+    b();
+    old();
+  });
+
+  it('omits identity fields when the caller represents an old broker', async () => {
+    const { broker } = makeBroker();
+    await broker.register('agent-1');
+    broker.subscribe('agent-1', () => {});
+    expect(broker.listPresences()[0]).not.toHaveProperty('runnerReports');
+    expect(broker.listPresences()[0]).not.toHaveProperty('unreportedConnections');
+  });
 });
 
 describe('InMemoryEventLog.query', () => {

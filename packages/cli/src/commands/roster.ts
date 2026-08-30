@@ -23,5 +23,35 @@ export async function runRosterCommand(client: Client): Promise<string> {
     const last = state ? new Date(state.lastSeen).toISOString() : '-';
     return `${name}${role}${perms}${conn}${auth}${last}`;
   });
-  return [header, ...rows].join('\n');
+  const identityLines: string[] = [];
+  for (const teammate of teammates) {
+    const state = connectedByName.get(teammate.name);
+    if (state === undefined || state.connected === 0) continue;
+    if (state.runnerReports === undefined || state.unreportedConnections === undefined) {
+      identityLines.push(
+        `  ${teammate.name}: runner identity unreported (broker predates runner identity)`,
+      );
+      continue;
+    }
+    for (const report of state.runnerReports) {
+      const model = report.modelId ?? 'agent default — not resolved locally';
+      const instrument = report.runner === 'stub' ? ' · TEST/CI INSTRUMENT' : '';
+      const skew = report.versionSkew.skew
+        ? ` · SKEW runner=${report.versionSkew.runnerVersion} broker=${report.versionSkew.brokerVersion}`
+        : ' · version matches broker';
+      identityLines.push(
+        `  ${teammate.name}: ${report.runner} · ${model} · ${report.runnerVersion} · ${report.runnerBuildSource} · connections=${report.connections}${instrument}${skew}`,
+      );
+    }
+    if (state.unreportedConnections > 0) {
+      identityLines.push(
+        `  ${teammate.name}: ${state.unreportedConnections} connection(s) without runner identity`,
+      );
+    }
+  }
+  return [
+    header,
+    ...rows,
+    ...(identityLines.length > 0 ? ['', 'runner identity', ...identityLines] : []),
+  ].join('\n');
 }
