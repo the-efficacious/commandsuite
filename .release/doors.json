@@ -101,6 +101,14 @@
     {
       "pr": 254,
       "ruling": "new `channels.manage` permission; creator demoted to provenance; legacy channel-admin roles no longer authorize (obj-mtg938mc-r, ruled msg 207ba3f8) \u2014 release notes consequence: existing teams must grant the leaf"
+    },
+    {
+      "pr": 255,
+      "ruling": "fs four-state semantics (403/404 split, no-oracle boundary) + process-document truth correction (obj-mtg938mc-r; behaviour change on public fs results)"
+    },
+    {
+      "pr": 260,
+      "ruling": "stable member identityId: additive wire field + on-disk migration (obj-mtgbb3ct-s, ruled msg ecc31990)"
     }
   ],
   "dismissed": [
@@ -163,6 +171,18 @@
     {
       "pr": 253,
       "reason": "not a door per helm log \u2014 CI workflow hunk"
+    },
+    {
+      "pr": 257,
+      "reason": "discoverer's classification: release-prepare repo script/manifest/docs \u2014 no shipped surface"
+    },
+    {
+      "pr": 258,
+      "reason": "discoverer's classification: bootstrap typed-readiness repo-script fix \u2014 no shipped surface"
+    },
+    {
+      "pr": 259,
+      "reason": "discoverer's classification: nightly CI workflow \u2014 no shipped surface"
     }
   ]
 }
