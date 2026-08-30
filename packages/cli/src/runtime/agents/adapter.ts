@@ -53,6 +53,14 @@ export type AgentLog = Logger;
  * extend this; the driver maps any instance to the CLI's `UsageError`.
  */
 export class AgentAdapterError extends Error {
+  /**
+   * True when the binary is missing because an optional dependency was
+   * deliberately not installed (a broker-only install), as opposed to a
+   * broken override or a half-installed package. The doctor reports
+   * this as advisory, not FAIL.
+   */
+  readonly absentByDesign: boolean = false;
+
   constructor(message: string) {
     super(message);
     this.name = 'AgentAdapterError';

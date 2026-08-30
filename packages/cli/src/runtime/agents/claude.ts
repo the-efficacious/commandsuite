@@ -30,6 +30,27 @@ export class ClaudeCodeAdapterError extends AgentAdapterError {
   }
 }
 
+/**
+ * The Agent SDK — an optional dependency of csuite — is not installed
+ * at all. A broker-only install (`--omit=optional`) lands here on
+ * purpose; the doctor reads `absentByDesign` and reports it as
+ * advisory rather than FAIL. A present-but-broken SDK (missing
+ * platform binary, dead `CLAUDE_PATH`) stays a plain
+ * `ClaudeCodeAdapterError`.
+ */
+export class ClaudeSdkAbsentError extends ClaudeCodeAdapterError {
+  override readonly absentByDesign = true;
+
+  constructor() {
+    super(
+      '@anthropic-ai/claude-agent-sdk is not installed (an optional dependency of csuite) — ' +
+        'run `npm install @anthropic-ai/claude-agent-sdk` where csuite is installed, ' +
+        'or reinstall csuite with optional dependencies included (the default).',
+    );
+    this.name = 'ClaudeSdkAbsentError';
+  }
+}
+
 export interface ClaudeExecutable {
   /** Absolute path of the Claude Code executable the SDK will spawn. */
   path: string;
@@ -76,9 +97,7 @@ export function resolveClaudeExecutable(): ClaudeExecutable {
 
   const sdkDir = findSdkDir();
   if (sdkDir === null) {
-    throw new ClaudeCodeAdapterError(
-      '@anthropic-ai/claude-agent-sdk is not installed — reinstall csuite (the SDK ships with it).',
-    );
+    throw new ClaudeSdkAbsentError();
   }
 
   // The CLI lives in a per-platform sibling package that is a

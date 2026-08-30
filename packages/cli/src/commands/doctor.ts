@@ -109,11 +109,22 @@ export async function runAgentDoctor(
       detail: adapter.binaryPath?.() ?? 'found',
     });
   } catch (err) {
-    checks.push({
-      name: `${meta.id} binary`,
-      status: 'FAIL',
-      detail: err instanceof AgentAdapterError || err instanceof Error ? err.message : String(err),
-    });
+    if (err instanceof AgentAdapterError && err.absentByDesign) {
+      // A broker-only install (optional dependency omitted on purpose).
+      // Advisory, not FAIL: this host was never meant to run the agent.
+      checks.push({
+        name: `${meta.id} binary`,
+        status: 'WARN',
+        detail: `absent by design — ${err.message}`,
+      });
+    } else {
+      checks.push({
+        name: `${meta.id} binary`,
+        status: 'FAIL',
+        detail:
+          err instanceof AgentAdapterError || err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   // 2. Agent version vs declared tested range. Advisory: WARN, never FAIL.

@@ -34,15 +34,15 @@
 
 import { type ChildProcess, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import {
-  type HookCallback,
-  type HookCallbackMatcher,
-  type HookEvent,
-  type Query,
-  query,
-  type SDKMessage,
-  type Options as SdkOptions,
-  type SpawnedProcess,
+import type {
+  HookCallback,
+  HookCallbackMatcher,
+  HookEvent,
+  Query,
+  SDKMessage,
+  Options as SdkOptions,
+  SpawnedProcess,
+  query as sdkQuery,
 } from '@anthropic-ai/claude-agent-sdk';
 import { logger as defaultLogger } from 'csuite-core';
 import type { CompactAttempt } from '../context-control.js';
@@ -58,7 +58,26 @@ import type {
   AgentSessionContext,
   RespawnPosture,
 } from './adapter.js';
-import { type ClaudeExecutable, resolveClaudeExecutable } from './claude.js';
+import { type ClaudeExecutable, ClaudeSdkAbsentError, resolveClaudeExecutable } from './claude.js';
+
+/**
+ * The Agent SDK is an optional dependency, loaded only here and only at
+ * session start: every broker-side verb must keep working on an install
+ * without it. `locate()` reports absence first with the operator-facing
+ * message; this guard covers the SDK vanishing between locate and spawn.
+ */
+let loadedQuery: typeof sdkQuery | null = null;
+async function loadSdkQuery(): Promise<typeof sdkQuery> {
+  if (loadedQuery === null) {
+    try {
+      ({ query: loadedQuery } = await import('@anthropic-ai/claude-agent-sdk'));
+    } catch {
+      throw new ClaudeSdkAbsentError();
+    }
+  }
+  return loadedQuery;
+}
+
 import { createClaudeActivityPrinter } from './claude-activity-printer.js';
 import {
   type ClaudeChannelSink,
@@ -537,7 +556,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
         cwd: ctx.cwd,
       });
 
-      const q: Query = query({ prompt: queue.stream(), options: sdkOptions });
+      const q: Query = (await loadSdkQuery())({ prompt: queue.stream(), options: sdkOptions });
 
       let announcedSessionId = sessionId;
       const printer = createClaudeActivityPrinter();
