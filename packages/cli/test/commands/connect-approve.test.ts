@@ -18,6 +18,7 @@ import { describe, expect, it } from 'vitest';
 import {
   runConnectApproveCommand,
   runConnectPendingCommand,
+  terminalSafe,
   UsageError,
 } from '../../src/commands/connect-approve.js';
 
@@ -97,6 +98,49 @@ describe('csuite connect pending', () => {
     expect(o.text()).toContain('0s');
     expect(o.text()).not.toContain('[object Object]');
     expect(o.text()).not.toContain('null');
+  });
+
+  it('renders requester-controlled fields terminal-safe: one record is one line, no controls survive', async () => {
+    // An unauthenticated requester chose these. Newlines would forge a
+    // second row; ESC would start a sequence; CR would overwrite the
+    // line; C1 and Unicode line separators are the same trick in other
+    // encodings. None may reach the operator's terminal.
+    const now = 1_000_000;
+    const hostile = {
+      userCode: 'AB12-CD34',
+      labelHint: 'ok\nZZ99-YY88  300s     forged-row',
+      sourceIp: '10.0.0.5\r\x1b[2K\x1b[31mred',
+      sourceUa: 'ua\u2028line\u0085sep\x7fdel\u200bzw\u202eRLO end',
+      createdAt: now,
+      expiresAt: now + 100_000,
+    };
+    const { client } = fakeClient({ pending: [hostile] });
+    const o = out();
+    await runConnectPendingCommand(client, o.stdout, () => now);
+    // Header + exactly one record.
+    expect(o.lines).toHaveLength(2);
+    const row = o.lines[1] ?? '';
+    expect(row.startsWith('AB12-CD34')).toBe(true);
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: the controls are the subject under test
+    expect(row).not.toMatch(/[\x00-\x1f\x7f-\x9f\u2028\u2029\u200b\u202e]/);
+    // The forged text may survive as inert characters inside the label
+    // column (truncated); what must not survive is a second row.
+    expect(o.lines.filter((l) => /^[A-Z0-9]{4}-[A-Z0-9]{4}/.test(l))).toHaveLength(1);
+    expect(row).toContain('10.0.0.5');
+    expect(row).toContain('end');
+    // The user code is not the requester's to shape either — the
+    // schema guarantees it, but the row starts with it unchanged.
+    expect(row.slice(0, 9)).toBe('AB12-CD34');
+  });
+
+  it('terminalSafe: replaces every control with a visible placeholder, collapses whitespace, caps width', () => {
+    expect(terminalSafe('a\nb\x1b[31mc\rd', 40)).toBe('a\ufffdb\ufffd[31mc\ufffdd');
+    expect(terminalSafe('  many   spaces \t here ', 40)).toBe('many spaces here');
+    expect(terminalSafe('x'.repeat(50), 10)).toHaveLength(10);
+    expect(terminalSafe('x'.repeat(50), 10).endsWith('…')).toBe(true);
+    expect(terminalSafe(null, 10)).toBe('');
+    // Positive control: ordinary text passes through untouched.
+    expect(terminalSafe('csuite-cli/0.8.0 (linux)', 40)).toBe('csuite-cli/0.8.0 (linux)');
   });
 
   it('says so when nothing is pending', async () => {

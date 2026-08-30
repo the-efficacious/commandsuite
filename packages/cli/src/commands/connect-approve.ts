@@ -44,6 +44,39 @@ export interface ConnectApproveInput {
   now?: () => number;
 }
 
+/**
+ * Requester-controlled strings (label hint, source IP, user agent) are
+ * typed by whoever ran `csuite connect` — unauthenticated — and this
+ * command prints them to a privileged operator's terminal. Rendered
+ * terminal-safe: every C0/C1 control (so no newline can forge a row,
+ * no ESC can start a sequence, no CR can overwrite one), and every
+ * other non-printing or zero-width code point, becomes a visible
+ * placeholder; runs of whitespace collapse; the result is capped so one
+ * record is always one line of bounded width.
+ */
+export function terminalSafe(value: string | null | undefined, max: number): string {
+  if (value === null || value === undefined) return '';
+  let out = '';
+  for (const ch of value) {
+    const cp = ch.codePointAt(0) ?? 0;
+    const control =
+      cp < 0x20 ||
+      (cp >= 0x7f && cp <= 0x9f) ||
+      cp === 0x2028 ||
+      cp === 0x2029 ||
+      cp === 0x200b ||
+      cp === 0x200e ||
+      cp === 0x200f ||
+      (cp >= 0x202a && cp <= 0x202e) ||
+      (cp >= 0x2066 && cp <= 0x2069) ||
+      cp === 0xfeff;
+    // A tab is whitespace for the collapse below; every other control is marked.
+    out += ch === '\t' ? ' ' : control ? '\ufffd' : ch;
+  }
+  out = out.replace(/\s+/g, ' ').trim();
+  return out.length > max ? `${out.slice(0, max - 1)}…` : out;
+}
+
 export async function runConnectPendingCommand(
   client: Client,
   stdout: (line: string) => void,
@@ -57,10 +90,14 @@ export async function runConnectPendingCommand(
   stdout(`${'code'.padEnd(11)}${'expires'.padEnd(9)}${'label'.padEnd(22)}source`);
   for (const p of pending) {
     const secondsLeft = Math.max(0, Math.round((p.expiresAt - now()) / 1000));
-    const source = [p.sourceIp, p.sourceUa].filter((s) => s !== null && s.length > 0).join(' ');
-    stdout(
-      `${p.userCode.padEnd(11)}${`${secondsLeft}s`.padEnd(9)}${(p.labelHint || '-').padEnd(22)}${source || '-'}`,
-    );
+    // The code is broker-minted and schema-checked; everything else on
+    // the row came from the requester and is rendered terminal-safe.
+    const label = terminalSafe(p.labelHint, 20) || '-';
+    const source =
+      [terminalSafe(p.sourceIp, 45), terminalSafe(p.sourceUa, 80)]
+        .filter((s) => s.length > 0)
+        .join(' ') || '-';
+    stdout(`${p.userCode.padEnd(11)}${`${secondsLeft}s`.padEnd(9)}${label.padEnd(22)}${source}`);
   }
 }
 
