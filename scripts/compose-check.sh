@@ -61,7 +61,16 @@ assert_all() {
     done
     [ "$rconn" = 1 ] || die "roster never showed ${CSUITE_RUNNER:-builder} connected=1 with the stub started"
     ok "roster shows ${CSUITE_RUNNER:-builder} connected=1 (stub runner)"
-    curl -s --max-time 5 -H "Authorization: Bearer $token" "$URL/members/${CSUITE_RUNNER:-builder}/activity?limit=50" | grep -q '"kind":"session_start"' || die "no session_start activity event for the stub runner"
+    curl -s --max-time 5 -H "Authorization: Bearer $token" "$URL/roster" | grep -q '"name":"'"${CSUITE_RUNNER:-builder}"'"[^}]*"title":"stub runner (CI instrument)"' || die "the stub member's roster title does not name it a stub"
+    ok "roster title names the stub: 'stub runner (CI instrument)'"
+    # The activity uploader batches: session_start can lag connected=1 by
+    # a flush window, so poll with the same bound as the connection.
+    local sstart=0
+    for _ in $(seq 1 30); do
+      if curl -s --max-time 5 -H "Authorization: Bearer $token" "$URL/members/${CSUITE_RUNNER:-builder}/activity?limit=50" | grep -q '"kind":"session_start"'; then sstart=1; break; fi
+      sleep 2
+    done
+    [ "$sstart" = 1 ] || die "no session_start activity event for the stub runner within 60s"
     ok "session_start activity event present for ${CSUITE_RUNNER:-builder}"
   fi
 

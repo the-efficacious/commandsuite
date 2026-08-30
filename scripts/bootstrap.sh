@@ -247,8 +247,16 @@ else
   done
   [ -n "$user_code" ] || { cat "$connect_out" >&2; die "csuite connect printed no device code"; }
   ok "device code $user_code pending"
+  # The stub verb's member is titled as what it is — a test instrument —
+  # so the roster itself says stub (part of the stub's visibility
+  # contract; a member enrolled for a real verb keeps the working title).
+  if [ "$VERB" = stub ]; then
+    RUNNER_TITLE="stub runner (CI instrument)"
+  else
+    RUNNER_TITLE="engineer"
+  fi
   CSUITE_TOKEN="$(cat "$TOKEN_FILE")" csuite connect approve --url "$URL" --code "$user_code" \
-    --create --member "$RUNNER" --title engineer --description "runner enrolled by scripts/bootstrap.sh" \
+    --create --member "$RUNNER" --title "$RUNNER_TITLE" --description "runner enrolled by scripts/bootstrap.sh" \
     --label "bootstrap-runner" </dev/null
   wait "$connect_pid" || { cat "$connect_out" >&2; die "csuite connect did not complete after approval"; }
   ok "approved: member '$RUNNER' created, token delivered to the device"
