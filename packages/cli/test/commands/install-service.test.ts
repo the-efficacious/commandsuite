@@ -253,7 +253,7 @@ describe('replacement safety (delete nothing, previous runner untouched)', () =>
         roster: vi.fn().mockResolvedValue({ teammates: [], connected: [] }),
       }),
       runSync: runSync as never,
-      readExisting: () => previousUnit,
+      readExisting: (path: string) => (path.endsWith('.service') ? previousUnit : null),
       authStorePath: store,
       user: 'builder',
       home,
@@ -310,10 +310,61 @@ describe('replacement safety (delete nothing, previous runner untouched)', () =>
         deps as never,
       ),
     ).rejects.toThrow(
-      /starting or verifying the unit failed \(broker exploded\)[\s\S]*restored the previous/,
+      /installing or verifying the unit failed \(broker exploded\)[\s\S]*restored the previous/,
     );
     expect(commands.join('\n')).toMatch(
       /systemctl stop csuite-builder[\s\S]*\.previous[\s\S]*systemctl start csuite-builder/,
+    );
+  });
+
+  it('a failure at the sudoers install rolls back both files without touching the running previous unit', async () => {
+    const { deps, commands, workspace } = fixture('[Unit]\n# old\n', {});
+    // Inject: the privileged sudoers install fails.
+    const inner = deps.runSync as unknown as ReturnType<typeof vi.fn>;
+    const original = inner.getMockImplementation() as (
+      cmd: string,
+      args: string[],
+    ) => { status: number; stderr: string };
+    inner.mockImplementation(((cmd: string, args: string[]) => {
+      if (
+        args.includes('-m') &&
+        args.includes('440') &&
+        !String(args.join(' ')).includes('.previous')
+      ) {
+        commands.push([cmd, ...args].join(' '));
+        return { status: 1, stderr: 'disk full' };
+      }
+      return original(cmd, args);
+    }) as never);
+    await expect(
+      runInstallServiceCommand(
+        { verb: 'stub', url: 'http://x:1', workspace, timeoutMs: 1, execPath: '/usr/bin/csuite' },
+        deps as never,
+      ),
+    ).rejects.toThrow(
+      /installing or verifying the unit failed[\s\S]*restored the previous \/etc\/systemd\/system\/csuite-builder\.service[\s\S]*removed the fresh \/etc\/sudoers\.d/,
+    );
+    const joined = commands.join('\n');
+    // The previous runner's process was never ours to stop: started=false.
+    expect(joined).not.toMatch(/systemctl (stop|start|restart) csuite-builder/);
+    expect(joined).toMatch(/\.previous \/etc\/systemd\/system\/csuite-builder\.service/);
+  });
+
+  it('sudoers is snapshotted too: a prior rule is restored byte-exact on rollback', async () => {
+    const { deps, commands, workspace, home } = fixture('[Unit]\n# old\n', {});
+    (deps as { readExisting: (p: string) => string | null }).readExisting = (p: string) =>
+      p.endsWith('.service') ? '[Unit]\n# old\n' : '# old sudoers rule\n';
+    await expect(
+      runInstallServiceCommand(
+        { verb: 'stub', url: 'http://x:1', workspace, timeoutMs: 1, execPath: '/usr/bin/csuite' },
+        deps as never,
+      ),
+    ).rejects.toThrow(/restored the previous \/etc\/sudoers\.d\/builder-csuite-runner/);
+    expect(
+      readFileSync(join(home, '.config/csuite/service/builder-csuite-runner.previous'), 'utf8'),
+    ).toBe('# old sudoers rule\n');
+    expect(commands.join('\n')).toMatch(
+      /440 .*builder-csuite-runner\.previous \/etc\/sudoers\.d\/builder-csuite-runner/,
     );
   });
 
@@ -324,9 +375,14 @@ describe('replacement safety (delete nothing, previous runner untouched)', () =>
         { verb: 'stub', url: 'http://x:1', workspace, timeoutMs: 1, execPath: '/usr/bin/csuite' },
         deps as never,
       ),
-    ).rejects.toThrow(/stopped and disabled/);
-    expect(commands.join('\n')).toContain('systemctl disable csuite-builder');
-    expect(commands.join('\n')).not.toContain('.previous');
+    ).rejects.toThrow(/removed the fresh \/etc\/systemd\/system\/csuite-builder\.service/);
+    const joined = commands.join('\n');
+    // Fresh rollback: disable (unlink wants), stop, remove BOTH fresh
+    // privileged artifacts, reload; nothing restored, staging kept.
+    expect(joined).toMatch(
+      /systemctl disable csuite-builder[\s\S]*systemctl stop csuite-builder[\s\S]*rm -f \/etc\/systemd\/system\/csuite-builder\.service[\s\S]*rm -f \/etc\/sudoers\.d\/builder-csuite-runner[\s\S]*daemon-reload/,
+    );
+    expect(joined).not.toContain('.previous');
   });
 });
 

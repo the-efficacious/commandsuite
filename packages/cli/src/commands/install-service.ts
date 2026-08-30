@@ -72,9 +72,9 @@ export function execStartToken(value: string, label: string): string {
 /** One Environment= line; quoted when the assignment contains whitespace, quotes refused. */
 export function envAssignment(name: string, value: string): string {
   const clean = systemdValue(value, name);
-  if (clean.includes('"')) {
+  if (/["\\]/.test(clean)) {
     throw new UsageError(
-      `install-service: ${name} contains a double quote and cannot be rendered into a unit file`,
+      `install-service: ${name} contains a quote or backslash and cannot be rendered into a unit file`,
     );
   }
   const assignment = `${name}=${clean}`;
@@ -395,6 +395,8 @@ export async function runInstallServiceCommand(
       }
     });
   const previousUnit = readExisting(unitPath);
+  const previousSudoers = readExisting(sudoersPath);
+  const anyPrevious = previousUnit !== null || previousSudoers !== null;
   const wasActive =
     previousUnit !== null &&
     runSync('systemctl', ['is-active', unit], { stdio: 'ignore', timeout: 10_000 }).status === 0;
@@ -402,41 +404,72 @@ export async function runInstallServiceCommand(
     previousUnit !== null &&
     runSync('systemctl', ['is-enabled', unit], { stdio: 'ignore', timeout: 10_000 }).status === 0;
 
+  // The staged-sudoers syntax gate runs before ANY privileged mutation.
   priv(['visudo', '-c', '-f', stagedSudoers]);
-  priv(['install', '-m', '644', stagedUnit, unitPath]);
-  priv(['install', '-m', '440', stagedSudoers, sudoersPath]);
-  priv(['systemctl', 'daemon-reload']);
-  deps.stdout(`installed ${unitPath} and ${sudoersPath}`);
 
-  // Everything past the overwrite is one transaction: ANY failure —
-  // enable, the identity call, the liveness wait, a thrown broker
-  // error — rolls the unit back to exactly the previous bytes, active
-  // state, and enablement (or stop+disable when nothing preceded it).
+  // From the first privileged mutation through liveness this is ONE
+  // transaction. `started` gates the stop: until we restart the unit
+  // ourselves, a previous runner's process was never touched and must
+  // not be stopped by rollback. Per-destination: a previous file is
+  // restored byte-exact; a destination we created fresh is removed —
+  // an unvalidated privileged artifact (a half-installed sudoers rule)
+  // must not outlive its failed install. Staged copies in $HOME remain
+  // as evidence either way.
+  let started = false;
   const rollback = (): string => {
-    priv(['systemctl', 'stop', unit]);
-    if (previousUnit === null) {
-      priv(['systemctl', 'disable', unit]);
-      return `stopped and disabled ${unit}; created files kept for inspection: ${unitPath}, ${sudoersPath}`;
+    if (started) priv(['systemctl', started && previousUnit === null ? 'disable' : 'stop', unit]);
+    if (started && previousUnit === null) {
+      // disable above removed the wants-symlink; now stop it too.
+      priv(['systemctl', 'stop', unit]);
     }
-    const restoreStage = join(stageDir, `${unit}.service.previous`);
-    writeFile0600(restoreStage, previousUnit);
-    priv(['install', '-m', '644', restoreStage, unitPath]);
+    const restored: string[] = [];
+    if (previousUnit !== null) {
+      const restoreStage = join(stageDir, `${unit}.service.previous`);
+      writeFile0600(restoreStage, previousUnit);
+      priv(['install', '-m', '644', restoreStage, unitPath]);
+      restored.push(`restored the previous ${unitPath}`);
+    } else {
+      priv(['rm', '-f', unitPath]);
+      restored.push(`removed the fresh ${unitPath}`);
+    }
+    if (previousSudoers !== null) {
+      const restoreStage = join(stageDir, `${sudoersFileNameFor(user)}.previous`);
+      writeFile0600(restoreStage, previousSudoers);
+      priv(['install', '-m', '440', restoreStage, sudoersPath]);
+      restored.push(`restored the previous ${sudoersPath}`);
+    } else {
+      priv(['rm', '-f', sudoersPath]);
+      restored.push(`removed the fresh ${sudoersPath}`);
+    }
     priv(['systemctl', 'daemon-reload']);
-    if (!wasEnabled) priv(['systemctl', 'disable', unit]);
-    if (wasActive) priv(['systemctl', 'start', unit]);
+    if (previousUnit !== null) {
+      if (!wasEnabled) priv(['systemctl', 'disable', unit]);
+      if (started && wasActive) priv(['systemctl', 'start', unit]);
+    }
     return (
-      `restored the previous ${unitPath}` +
-      `${wasEnabled ? '' : ' (left disabled, as found)'}${wasActive ? ' and restarted it' : ''}; ` +
-      `the new render stays staged at ${stagedUnit}`
+      `${restored.join(', ')}` +
+      `${previousUnit !== null && !wasEnabled ? ' (left disabled, as found)' : ''}` +
+      `${previousUnit !== null && started && wasActive ? ' and restarted it' : ''}` +
+      `${previousUnit !== null && !started && wasActive ? ' (previous runner was never stopped)' : ''}; ` +
+      `staged renders kept: ${stagedUnit}, ${stagedSudoers}`
     );
   };
 
-  // 4. Start + broker-side liveness (a live pid is not a live agent).
   const sinceMs = (deps.now ?? Date.now)();
   let memberName = '(unknown)';
   let live = false;
   try {
-    priv(['systemctl', 'enable', '--now', unit]);
+    priv(['install', '-m', '644', stagedUnit, unitPath]);
+    priv(['install', '-m', '440', stagedSudoers, sudoersPath]);
+    priv(['systemctl', 'daemon-reload']);
+    deps.stdout(`installed ${unitPath} and ${sudoersPath}`);
+    // enable and restart separately: `enable --now` is a no-op start on
+    // an already-active replacement, which would leave the OLD process
+    // running and let its presence pass the liveness check for the new
+    // unit. `restart` makes the successor real before we measure it.
+    priv(['systemctl', 'enable', unit]);
+    started = true;
+    priv(['systemctl', 'restart', unit]);
     const client = deps.clientFor(url, entry.token);
     memberName = (await client.instructions({})).name;
     live = await waitForMemberLive(
@@ -449,7 +482,7 @@ export async function runInstallServiceCommand(
   } catch (err) {
     const restored = rollback();
     throw new UsageError(
-      `install-service: starting or verifying the unit failed (${err instanceof Error ? err.message : String(err)}) — ` +
+      `install-service: installing or verifying the unit failed (${err instanceof Error ? err.message : String(err)}) — ` +
         `${restored}; logs: journalctl -u ${unit}`,
     );
   }
@@ -460,8 +493,9 @@ export async function runInstallServiceCommand(
         `${restored}; logs: journalctl -u ${unit}`,
     );
   }
+  const replaced = anyPrevious ? ' (replaced the previous install)' : '';
   deps.stdout(
-    `✓ ${unit} enabled and live: '${memberName}' connected at ${url} (journalctl -u ${unit} -f)`,
+    `✓ ${unit} enabled and live: '${memberName}' connected at ${url}${replaced} (journalctl -u ${unit} -f)`,
   );
 }
 
