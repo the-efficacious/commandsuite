@@ -6,14 +6,20 @@
  * liveness polling semantics, and the no-root hand-off.
  */
 
-import { describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   detectInstallPrivilege,
+  execStartToken,
   formatOperatorHandoff,
   renderRunnerSudoers,
   renderRunnerUnit,
   resolveServiceUrl,
+  runInstallServiceCommand,
   sudoersFilePathFor,
+  systemdValue,
   UsageError,
   unitFilePathFor,
   unitNameFor,
@@ -163,6 +169,111 @@ describe('operator hand-off', () => {
     expect(text).toContain('visudo -c -f');
     expect(text).toContain('sudo install -m 440');
     expect(text).toContain('sudo systemctl enable --now csuite-builder');
+  });
+});
+
+describe('systemd value hygiene', () => {
+  it('refuses control characters (directive injection) and escapes %', () => {
+    expect(() => systemdValue('a\nExecStart=/bin/evil', 'workspace')).toThrow(/control characters/);
+    expect(() => systemdValue('a\rb', 'workspace')).toThrow(/control characters/);
+    expect(systemdValue('/srv/100%cpu', 'workspace')).toBe('/srv/100%%cpu');
+  });
+
+  it('quotes ExecStart tokens containing whitespace and refuses quotes/backslashes', () => {
+    expect(execStartToken('/opt/my tools/csuite', 'exec path')).toBe('"/opt/my tools/csuite"');
+    expect(execStartToken('/usr/bin/csuite', 'exec path')).toBe('/usr/bin/csuite');
+    expect(() => execStartToken('/opt/a"b', 'exec path')).toThrow(/quotes or backslashes/);
+  });
+
+  it('renders a spacey workspace as quoted ExecStart tokens', () => {
+    const unit = renderRunnerUnit({ ...RENDER, workspace: '/home/builder/my work' });
+    expect(unit).toContain('--cwd "/home/builder/my work" --resume');
+    expect(unit).toContain('WorkingDirectory=/home/builder/my work');
+  });
+});
+
+describe('component-aware workspace scoping', () => {
+  it('a sibling directory sharing a prefix is not under the workspace', () => {
+    const entries = [{ url: 'http://a:1', workspace: '/home/builder/work' }];
+    expect(() => resolveServiceUrl({ workspace: '/home/builder/workother', entries })).toThrow(
+      /no saved auth entry/,
+    );
+    expect(resolveServiceUrl({ workspace: '/home/builder/work', entries })).toBe('http://a:1');
+    expect(resolveServiceUrl({ workspace: '/home/builder/work/sub', entries })).toBe('http://a:1');
+  });
+});
+
+describe('replacement safety (delete nothing, previous runner untouched)', () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function fixture(previousUnit: string | null) {
+    const home = mkdtempSync(join(tmpdir(), 'csuite-svc-'));
+    dirs.push(home);
+    const workspace = join(home, 'work');
+    const store = join(home, 'auth.json');
+    writeFileSync(
+      store,
+      JSON.stringify({
+        schema: 2,
+        entries: [{ url: 'http://x:1', workspace, token: 'tok', savedAt: 1 }],
+      }),
+    );
+    const commands: string[] = [];
+    const runSync = vi.fn((cmd: string, args: string[]) => {
+      commands.push([cmd, ...args].join(' '));
+      return { status: 0, stderr: '' };
+    });
+    const deps = {
+      stdout: () => {},
+      clientFor: () => ({
+        instructions: vi.fn().mockResolvedValue({ name: 'builder' }),
+        roster: vi.fn().mockResolvedValue({ teammates: [], connected: [] }),
+      }),
+      runSync: runSync as never,
+      readExisting: () => previousUnit,
+      authStorePath: store,
+      user: 'builder',
+      home,
+      sleep: async () => {},
+    };
+    return { deps, commands, workspace, home };
+  }
+
+  it('restores and restarts a previously active unit when liveness fails', async () => {
+    const { deps, commands, workspace, home } = fixture('[Unit]\n# the old unit\n');
+    await expect(
+      runInstallServiceCommand(
+        { verb: 'stub', url: 'http://x:1', workspace, timeoutMs: 1, execPath: '/usr/bin/csuite' },
+        deps as never,
+      ),
+    ).rejects.toThrow(/restored the previous .*and restarted it/);
+    const joined = commands.join('\n');
+    // Restore sequence: stop new → install previous bytes back → reload → start.
+    expect(joined).toMatch(
+      /systemctl stop csuite-builder[\s\S]*\.previous \/etc\/systemd\/system\/csuite-builder\.service[\s\S]*daemon-reload[\s\S]*systemctl start csuite-builder/,
+    );
+    // The restore staged the exact previous bytes; the new render stays staged.
+    expect(
+      readFileSync(join(home, '.config/csuite/service/csuite-builder.service.previous'), 'utf8'),
+    ).toBe('[Unit]\n# the old unit\n');
+    expect(
+      readFileSync(join(home, '.config/csuite/service/csuite-builder.service'), 'utf8'),
+    ).toContain('ExecStart=');
+  });
+
+  it('stops and disables a fresh install when liveness fails and nothing preceded it', async () => {
+    const { deps, commands, workspace } = fixture(null);
+    await expect(
+      runInstallServiceCommand(
+        { verb: 'stub', url: 'http://x:1', workspace, timeoutMs: 1, execPath: '/usr/bin/csuite' },
+        deps as never,
+      ),
+    ).rejects.toThrow(/stopped and disabled/);
+    expect(commands.join('\n')).toContain('systemctl disable csuite-builder');
+    expect(commands.join('\n')).not.toContain('.previous');
   });
 });
 

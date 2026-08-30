@@ -24,9 +24,9 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, closeSync, mkdirSync, openSync, writeSync } from 'node:fs';
+import { chmodSync, closeSync, mkdirSync, openSync, readFileSync, writeSync } from 'node:fs';
 import { userInfo } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve as resolvePath } from 'node:path';
 import type { Client } from 'csuite-sdk/client';
 import { findAuthEntry, formatHeadlessNoAuth } from './auth-config.js';
 import { UsageError } from './errors.js';
@@ -38,6 +38,35 @@ export type ServiceVerb = 'claude' | 'codex' | 'stub';
 
 export function unitNameFor(user: string): string {
   return `csuite-${user}`;
+}
+
+// ─── systemd value hygiene ──────────────────────────────────────────
+
+/**
+ * Refuse control characters outright (a \n in any value is a unit-file
+ * directive injection), escape systemd's % specifier, and quote
+ * ExecStart tokens containing whitespace. Values we cannot render
+ * safely are refused, never mangled.
+ */
+export function systemdValue(value: string, label: string): string {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: control chars are exactly what we refuse
+  if (/[\u0000-\u001f\u007f]/.test(value)) {
+    throw new UsageError(
+      `install-service: ${label} contains control characters and cannot be rendered into a unit file`,
+    );
+  }
+  return value.replace(/%/g, '%%');
+}
+
+/** One ExecStart token: hygiene + quoting for whitespace; refuses quotes/backslashes. */
+export function execStartToken(value: string, label: string): string {
+  const clean = systemdValue(value, label);
+  if (/["\\]/.test(clean)) {
+    throw new UsageError(
+      `install-service: ${label} contains quotes or backslashes and cannot be rendered into ExecStart`,
+    );
+  }
+  return /\s/.test(clean) ? `"${clean}"` : clean;
 }
 
 export interface UnitRenderOptions {
@@ -73,16 +102,21 @@ export function renderRunnerUnit(opts: UnitRenderOptions): string {
     '',
     '[Service]',
     'Type=simple',
-    `User=${opts.user}`,
-    `WorkingDirectory=${opts.workspace}`,
-    `Environment=HOME=${opts.home}`,
-    `Environment=USER=${opts.user}`,
-    `Environment=PATH=${opts.home}/.local/bin:/usr/local/bin:/usr/bin:/bin`,
+    `User=${systemdValue(opts.user, 'user')}`,
+    `WorkingDirectory=${systemdValue(opts.workspace, 'workspace')}`,
+    `Environment=HOME=${systemdValue(opts.home, 'home')}`,
+    `Environment=USER=${systemdValue(opts.user, 'user')}`,
+    `Environment=PATH=${systemdValue(opts.home, 'home')}/.local/bin:/usr/local/bin:/usr/bin:/bin`,
     '# Saved auth is keyed on (broker URL, workspace). Without CSUITE_URL the',
     '# lookup uses the loopback default and finds nothing, however correct',
     '# WorkingDirectory is.',
-    `Environment=CSUITE_URL=${opts.url}`,
-    `ExecStart=${opts.execPath} ${opts.verb} --url ${opts.url} --cwd ${opts.workspace} --resume`,
+    `Environment=CSUITE_URL=${systemdValue(opts.url, 'url')}`,
+    `ExecStart=${opts.execPath
+      .split(' ')
+      .map((token, i) => execStartToken(token, i === 0 ? 'exec path' : 'exec argument'))
+      .join(
+        ' ',
+      )} ${opts.verb} --url ${execStartToken(opts.url, 'url')} --cwd ${execStartToken(opts.workspace, 'workspace')} --resume`,
     'Restart=always',
     'RestartSec=5',
     'KillMode=mixed',
@@ -185,7 +219,11 @@ export function resolveServiceUrl(input: {
   const urls = [
     ...new Set(
       input.entries
-        .filter((e) => e.workspace !== null && input.workspace.startsWith(e.workspace))
+        .filter(
+          (e) =>
+            e.workspace !== null &&
+            (input.workspace === e.workspace || input.workspace.startsWith(`${e.workspace}/`)),
+        )
         .map((e) => e.url),
     ),
   ];
@@ -249,6 +287,8 @@ export interface InstallServiceDeps {
   /** Client for the liveness check, built from the resolved (url, token). */
   clientFor: (url: string, token: string) => Pick<Client, 'roster' | 'instructions'>;
   runSync?: typeof spawnSync;
+  /** Read an existing installed unit's bytes; null when absent. Injectable for tests. */
+  readExisting?: (path: string) => string | null;
   authStorePath?: string;
   user?: string;
   home?: string;
@@ -286,7 +326,12 @@ export async function runInstallServiceCommand(
     );
   }
 
-  const execPath = input.execPath ?? 'csuite';
+  // systemd requires absolute ExecStart paths: the honest default is the
+  // exact interpreter + entry script THIS invocation runs under, which is
+  // correct for a packaged install, a checkout dist, and a deploy tree
+  // alike. --exec overrides (e.g. a main-build tree's bin shim).
+  const execPath =
+    input.execPath ?? `${process.execPath} ${resolvePath(process.argv[1] as string)}`;
   const unitText = renderRunnerUnit({ user, verb: input.verb, url, workspace, execPath, home });
   const sudoersText = renderRunnerSudoers(user);
   const unitPath = unitFilePathFor(user);
@@ -322,6 +367,23 @@ export async function runInstallServiceCommand(
     }
   };
 
+  // Replacement safety: capture the previous unit (bytes + active
+  // state) BEFORE overwriting, so a failed liveness check can put the
+  // previous runner back exactly as it was.
+  const readExisting =
+    deps.readExisting ??
+    ((path: string): string | null => {
+      try {
+        return readFileSync(path, 'utf8');
+      } catch {
+        return null;
+      }
+    });
+  const previousUnit = readExisting(unitPath);
+  const wasActive =
+    previousUnit !== null &&
+    runSync('systemctl', ['is-active', unit], { stdio: 'ignore', timeout: 10_000 }).status === 0;
+
   priv(['visudo', '-c', '-f', stagedSudoers]);
   priv(['install', '-m', '644', stagedUnit, unitPath]);
   priv(['install', '-m', '440', stagedSudoers, sudoersPath]);
@@ -342,9 +404,25 @@ export async function runInstallServiceCommand(
   );
   if (!live) {
     priv(['systemctl', 'stop', unit]);
+    if (previousUnit !== null) {
+      // Put the previous runner back exactly as found: bytes, then
+      // enablement state. The new render stays staged in $HOME for
+      // inspection; nothing is deleted.
+      const restoreStage = join(stageDir, `${unit}.service.previous`);
+      writeFile0600(restoreStage, previousUnit);
+      priv(['install', '-m', '644', restoreStage, unitPath]);
+      priv(['systemctl', 'daemon-reload']);
+      if (wasActive) priv(['systemctl', 'start', unit]);
+      throw new UsageError(
+        `install-service: '${memberName}' never showed connected with a fresh lastSeen at ${url} — ` +
+          `restored the previous ${unitPath}${wasActive ? ' and restarted it' : ''}; ` +
+          `the new render stays staged at ${stagedUnit}; logs: journalctl -u ${unit}`,
+      );
+    }
+    priv(['systemctl', 'disable', unit]);
     throw new UsageError(
       `install-service: the unit started but '${memberName}' never showed connected with a fresh lastSeen at ${url} — ` +
-        `stopped ${unit}; created files kept for inspection: ${unitPath}, ${sudoersPath}; ` +
+        `stopped and disabled ${unit}; created files kept for inspection: ${unitPath}, ${sudoersPath}; ` +
         `logs: journalctl -u ${unit}`,
     );
   }
