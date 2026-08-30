@@ -86,6 +86,15 @@ csuite_as_runner() {
       "${CSUITE_CMD[@]}" "$@" </dev/null)
 }
 
+# Read the typed broker fact, never a column position in human roster output.
+# Role/permission/identity columns legitimately contain spaces and grow over time;
+# the former `awk $(NF-1)` test treated the string `ok` as >= 1 and could bless a
+# disconnected row before the runner had delivered its session bracket or spawned.
+runner_connected() {
+  curl -fsS -H "Authorization: Bearer $(cat "$TOKEN_FILE")" "$URL/roster" |
+    node "$repo/scripts/roster-connected.mjs" "$RUNNER"
+}
+
 node_major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
 [ "$node_major" -ge 22 ] || die "node >= 22 required (found $(node --version 2>/dev/null || echo none))"
 command -v curl >/dev/null || die "curl is required"
@@ -284,7 +293,7 @@ if [ "${CSUITE_START_RUNNER:-0}" = 1 ]; then
       "${CSUITE_CMD[@]}" "$VERB" --skip-doctor </dev/null >"$DIR/runner.log" 2>&1 ) &
   echo $! >"$DIR/runner.pid"
   for i in $(seq 1 60); do
-    if CSUITE_TOKEN="$(cat "$TOKEN_FILE")" csuite roster --url "$URL" </dev/null | awk -v m="$RUNNER" '$1==m && $(NF-1)>=1 {found=1} END {exit !found}'; then
+    if runner_connected; then
       ok "roster shows $RUNNER connected=1 (runner pid $(cat "$DIR/runner.pid"), log $DIR/runner.log)"; break
     fi
     is_ours "$(cat "$DIR/runner.pid")" runner || { cat "$DIR/runner.log" >&2; die "runner exited before connecting"; }
