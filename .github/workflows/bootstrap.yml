@@ -3,10 +3,11 @@ name: Headless bootstrap
 # Brings up the whole ecosystem from a clean checkout with nobody at a
 # terminal — broker seeded, web UI reachable and signed into, a runner
 # member enrolled through the device-code flow whose credential resolves
-# from its working directory with no env token, runner preflight green.
-# It stops before starting a live runner: CI has no model credential,
-# and the script says so rather than pretending. A live connection is
-# proven on a real seat (docs/headless-setup.mdx).
+# from its working directory with no env token, runner preflight green —
+# then a LIVE runner connection, measured: the stub runner (a test/CI
+# instrument needing no model credential) starts and the roster shows
+# connected=1, a session_start activity event lands, and an addressed DM
+# gets the stub's canned self-identifying reply.
 
 on:
   push:
@@ -42,7 +43,36 @@ jobs:
           CSUITE_BOOTSTRAP_DIR: ${{ runner.temp }}/csuite-bootstrap
           CSUITE_AUTH_CONFIG_PATH: ${{ runner.temp }}/csuite-bootstrap/auth.json
           CSUITE_PORT: 8719
+          CSUITE_RUNNER_VERB: stub
+          CSUITE_START_RUNNER: "1"
         run: scripts/bootstrap.sh up </dev/null
+
+      - name: Runner is measurably connected (session_start + canned turn)
+        env:
+          CSUITE_BOOTSTRAP_DIR: ${{ runner.temp }}/csuite-bootstrap
+        run: |
+          TOKEN=$(cat "$CSUITE_BOOTSTRAP_DIR/secrets/admin.token")
+          URL=http://127.0.0.1:8719
+          # The activity uploader batches: connected=1 (step 8) can land
+          # before the first batch flushes, so poll rather than read once.
+          ok=0
+          for i in $(seq 1 30); do
+            if curl -fsS -H "Authorization: Bearer $TOKEN" "$URL/members/builder/activity?limit=50" | grep -q '"kind":"session_start"'; then ok=1; break; fi
+            sleep 2
+          done
+          [ "$ok" = 1 ] || { echo "no session_start activity event within 60s" >&2; exit 1; }
+          echo "session_start activity event present"
+          curl -fsS -H "Authorization: Bearer $TOKEN" "$URL/roster" | grep -q '"name":"builder"[^}]*"title":"stub runner (CI instrument)"'
+          echo "roster title names the stub"
+          curl -fsS -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+            -d '{"to":"builder","body":"builder: are you there?"}' "$URL/push" >/dev/null
+          for i in $(seq 1 30); do
+            if curl -fsS -H "Authorization: Bearer $TOKEN" "$URL/history?limit=6" | grep -q 'stub runner'; then
+              echo "canned self-identifying reply observed"; exit 0
+            fi
+            sleep 2
+          done
+          echo "no canned reply within 60s" >&2; exit 1
 
       - name: Verify is idempotent against the running stack
         env:

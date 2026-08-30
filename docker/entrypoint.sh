@@ -36,9 +36,21 @@ export CSUITE_BIN="$CLI"
 # PID 1, restart semantics for both) is a different thing with its own
 # doors; it is refused here rather than silently not done. Attach a
 # runner from outside: docs/guides/always-on-agent.
-if [ "${CSUITE_START_RUNNER:-0}" != 0 ]; then
-  echo "csuite container: CSUITE_START_RUNNER is not supported in the container; run the runner outside it (docs/guides/always-on-agent) and enrol it against this broker with csuite connect" >&2
+# The stub runner (a test/CI instrument, no model credential) is the one
+# exception: CSUITE_START_RUNNER=1 with CSUITE_RUNNER_VERB=stub starts it
+# against the real broker once /healthz answers, so CI can observe
+# connected=1 instead of stopping at an enrolled credential.
+if [ "${CSUITE_START_RUNNER:-0}" != 0 ] && [ "${CSUITE_RUNNER_VERB:-claude}" != stub ]; then
+  echo "csuite container: CSUITE_START_RUNNER is not supported for model runners in the container; run the runner outside it (docs/guides/always-on-agent) and enrol it against this broker with csuite connect. (CSUITE_RUNNER_VERB=stub, the credential-free test instrument, is the exception.)" >&2
   exit 64
+fi
+START_STUB=0
+if [ "${CSUITE_START_RUNNER:-0}" != 0 ] && [ "${CSUITE_RUNNER_VERB:-claude}" = stub ]; then
+  START_STUB=1
+  # The bring-up below runs against a loopback broker and then stops it,
+  # which would kill a step-8 runner with it — so keep the bring-up
+  # runner-free and start the stub against the real broker instead.
+  export CSUITE_START_RUNNER=0
 fi
 
 if [ "${1:-}" = "serve-only" ]; then
@@ -61,5 +73,16 @@ echo "csuite container: bring-up via scripts/bootstrap.sh (state: $CSUITE_BOOTST
 
 echo "csuite container: bring-up complete; broker moving to the foreground on 0.0.0.0:$CSUITE_PORT"
 touch "$CSUITE_BOOTSTRAP_DIR/.ready"
-echo "csuite container: stops at an enrolled runner member (credential on the volume, preflight green); a live runner runs outside the container — see docs/guides/always-on-agent"
+if [ "$START_STUB" = 1 ]; then
+  # Background child survives the exec below (it stays a child of this
+  # PID); it waits for the real broker, then runs the stub runner from
+  # the enrolled workspace so the roster shows connected=1.
+  (
+    until curl -fsS "http://127.0.0.1:$CSUITE_PORT/healthz" >/dev/null 2>&1; do sleep 1; done
+    cd "$CSUITE_BOOTSTRAP_DIR/runner" && exec env CSUITE_URL="http://127.0.0.1:$CSUITE_PORT"       CSUITE_AUTH_CONFIG_PATH="$CSUITE_AUTH_CONFIG_PATH"       "$CLI" stub --skip-doctor >>"$CSUITE_BOOTSTRAP_DIR/runner.log" 2>&1
+  ) </dev/null &
+  echo "csuite container: stub runner starting against the foreground broker (test/CI instrument — never a deployable member; log: $CSUITE_BOOTSTRAP_DIR/runner.log)"
+else
+  echo "csuite container: stops at an enrolled runner member (credential on the volume, preflight green); a live model runner runs outside the container — see docs/guides/always-on-agent"
+fi
 exec "$CLI" serve --host 0.0.0.0 --port "$CSUITE_PORT" --config-path "$CSUITE_BOOTSTRAP_DIR/server/csuite.json"

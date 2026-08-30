@@ -52,6 +52,28 @@ assert_all() {
   ok "saved auth for (http://127.0.0.1:8717, /var/lib/csuite/runner) resolves; roster lists ${CSUITE_RUNNER:-builder}"
   compose exec -T csuite stat -c '%a %n' /var/lib/csuite/secrets/admin.token /var/lib/csuite/secrets/admin.totp | grep -vq '^600 ' && die "secret files are not 0600" || ok "secret files are mode 0600 on the volume"
 
+  if [ "${CSUITE_START_RUNNER:-0}" = 1 ]; then
+    say "$1: stub runner connected (CSUITE_START_RUNNER=1, verb stub)"
+    local rconn=0
+    for _ in $(seq 1 30); do
+      if curl -s --max-time 5 -H "Authorization: Bearer $token" "$URL/roster" | grep -q '"name":"'"${CSUITE_RUNNER:-builder}"'"[^}]*"connected":1'; then rconn=1; break; fi
+      sleep 2
+    done
+    [ "$rconn" = 1 ] || die "roster never showed ${CSUITE_RUNNER:-builder} connected=1 with the stub started"
+    ok "roster shows ${CSUITE_RUNNER:-builder} connected=1 (stub runner)"
+    curl -s --max-time 5 -H "Authorization: Bearer $token" "$URL/roster" | grep -q '"name":"'"${CSUITE_RUNNER:-builder}"'"[^}]*"title":"stub runner (CI instrument)"' || die "the stub member's roster title does not name it a stub"
+    ok "roster title names the stub: 'stub runner (CI instrument)'"
+    # The activity uploader batches: session_start can lag connected=1 by
+    # a flush window, so poll with the same bound as the connection.
+    local sstart=0
+    for _ in $(seq 1 30); do
+      if curl -s --max-time 5 -H "Authorization: Bearer $token" "$URL/members/${CSUITE_RUNNER:-builder}/activity?limit=50" | grep -q '"kind":"session_start"'; then sstart=1; break; fi
+      sleep 2
+    done
+    [ "$sstart" = 1 ] || die "no session_start activity event for the stub runner within 60s"
+    ok "session_start activity event present for ${CSUITE_RUNNER:-builder}"
+  fi
+
   say "$1: in-container doctor — broker-only image reports the agent binary absent by design, not failed"
   local doctor
   doctor="$(compose exec -T -w /var/lib/csuite/runner csuite \
@@ -80,8 +102,14 @@ assert_all "after restart"
 ok "second bring-up was idempotent (already seeded, already enrolled)"
 
 say "what this proves and what it does not"
-printf '   --  the container stops at an enrolled runner member (credential on the volume, --doctor green); a live\n'
-printf '       runner runs outside it (docs/guides/always-on-agent). No model connection is made here.\n'
+if [ "${CSUITE_START_RUNNER:-0}" = 1 ]; then
+  printf '   --  the container ran the STUB runner (a test/CI instrument, never a deployable member): the roster\n'
+  printf '       showed connected=1 and a session_start event — a measured connection, no model anywhere.\n'
+else
+  printf '   --  the container stops at an enrolled runner member (credential on the volume, --doctor green); a live\n'
+  printf '       model runner runs outside it (docs/guides/always-on-agent), or set CSUITE_START_RUNNER=1 with\n'
+  printf '       CSUITE_RUNNER_VERB=stub for the credential-free test instrument.\n'
+fi
 
 if [ "${KEEP:-0}" = 1 ]; then
   say "leaving the stack running (KEEP=1): $URL"

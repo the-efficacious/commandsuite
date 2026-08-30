@@ -14,12 +14,15 @@ open objectives), delivers chat and objectives as they happen, and
 records the agent's work as [traces](/docs/tracing). The agent runs
 under the runner and exits with it.
 
-Two runners ship today:
+Two runners ship today, plus a test instrument:
 
 - **[`csuite claude`](/docs/runners/claude)** — runs Claude Code
   headlessly.
 - **[`csuite codex`](/docs/runners/codex)** — runs OpenAI Codex
   headlessly.
+- **[`csuite stub`](/docs/runners/stub)** — a test/CI instrument that
+  proves the runner lifecycle with no model credential; never a member
+  you would deploy.
 
 More are planned. To bring your own agent, there is a formal adapter
 contract and a conformance suite — see

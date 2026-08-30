@@ -46,11 +46,13 @@ import { type RotateCommandInput, runRotateCommand } from './commands/rotate.js'
 import { runSecretsCommand } from './commands/secrets.js';
 import { runServeCommand } from './commands/serve.js';
 import { runSetupCommand } from './commands/setup.js';
+import { runStubCommand } from './commands/stub.js';
 import { runTeamCommand } from './commands/team.js';
 import { runToolsCommand } from './commands/tools.js';
 import { runVariablesCommand } from './commands/variables.js';
 import { createClaudeAdapter } from './runtime/agents/claude-agent.js';
 import { createCodexAdapter } from './runtime/agents/codex/codex-agent.js';
+import { createStubAdapter } from './runtime/agents/stub-agent.js';
 import { CLI_VERSION } from './version.js';
 
 const USAGE = `csuite cli v${CLI_VERSION}
@@ -72,6 +74,7 @@ usage:
   csuite quickstart  [--skip-browser] [--assignee <name>]   seed a demo objective + open the web UI
   csuite claude      [--no-trace] [--no-secrets] [--no-env-reload] [--doctor] [--skip-doctor] [--cwd <dir>] [--model <name>] [--resume [<sessionId>]]   run Claude Code headlessly (Agent SDK) as an agent member of a csuite team (--resume alone continues the most recent session; alias: claude-code)
   csuite codex       [--no-trace] [--no-secrets] [--no-env-reload] [--doctor] [--skip-doctor] [--cwd <dir>] [--model <name>] [--resume [<threadId>]] [-- <codex args>...]   spawn OpenAI Codex CLI as a headless agent member of a csuite team (--resume alone picks up the most recent thread)
+  csuite stub        [--no-trace] [--no-secrets] [--no-env-reload] [--doctor] [--skip-doctor] [--cwd <dir>]   run the stub agent — a test/CI instrument proving the runner lifecycle with no model credential; never deploy it as a member
   csuite push        --body <text> (--agent <id> | --broadcast) [--title <t>] [--level <lvl>] [--data key=value]...
   csuite roster      [--reveal-token --member <name> [--config-path <path>]]
                                     list teammates (no flags) or rotate+print a member's token (alias over 'csuite rotate')
@@ -317,6 +320,9 @@ async function main(): Promise<void> {
       return;
     case 'codex':
       await handleCodex(rest);
+      return;
+    case 'stub':
+      await handleStub(rest);
       return;
     default:
       process.stderr.write(USAGE);
@@ -1041,6 +1047,107 @@ async function handleClaude(args: string[]): Promise<void> {
       cwd,
       model,
       resume,
+      noTrace,
+      noSecrets,
+      noEnvReload,
+    });
+    process.exit(code);
+  } catch (err) {
+    if (err instanceof UsageError) fail(err.message, 2);
+    fail(err instanceof Error ? err.message : String(err));
+  }
+}
+
+/**
+ * `csuite stub` — run the stub agent, a test/CI instrument.
+ *
+ * Same knob set as the real runner verbs minus the model/resume knobs
+ * (there is no model and no conversation to resume). The doctor path
+ * names the instrument; the adapter self-identifies everywhere else.
+ */
+async function handleStub(args: string[]): Promise<void> {
+  let url: string | undefined;
+  let token: string | undefined;
+  let cwd: string | undefined;
+  let noTrace = false;
+  let noSecrets = false;
+  let noEnvReload = false;
+  let doctor = false;
+  let skipDoctor = false;
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === undefined) continue;
+    if (arg === '-h' || arg === '--help') {
+      process.stdout.write(USAGE);
+      return;
+    }
+    if (arg === '--no-trace') {
+      noTrace = true;
+      continue;
+    }
+    if (arg === '--no-secrets') {
+      noSecrets = true;
+      continue;
+    }
+    if (arg === '--no-env-reload') {
+      noEnvReload = true;
+      continue;
+    }
+    if (arg === '--doctor') {
+      doctor = true;
+      continue;
+    }
+    if (arg === '--skip-doctor') {
+      skipDoctor = true;
+      continue;
+    }
+    if (arg === '--url' || arg === '--token' || arg === '--cwd') {
+      const next = args[i + 1];
+      if (next === undefined) {
+        fail(`${arg} requires a value`, 2);
+      }
+      if (arg === '--url') url = next as string;
+      else if (arg === '--token') token = next as string;
+      else cwd = next as string;
+      i++;
+      continue;
+    }
+    fail(
+      `csuite stub: unknown argument ${arg} (supported: --url, --token, --cwd, --no-trace, --no-secrets, --no-env-reload, --doctor, --skip-doctor)`,
+      2,
+    );
+  }
+
+  if (doctor) {
+    const report = await runAgentDoctor(createStubAdapter(), {
+      auth: savedAuthInput({ url, token }),
+    });
+    log(formatReport(report));
+    process.exit(report.anyFail ? 1 : 0);
+  }
+
+  if (!skipDoctor) {
+    const report = await runAgentDoctor(createStubAdapter(), {
+      includeVersion: false,
+      auth: savedAuthInput({ url, token }),
+    });
+    if (report.anyFail) {
+      process.stderr.write(formatReport(report));
+      process.stderr.write(
+        `\ncsuite stub: preflight FAILED — fix the above or pass --skip-doctor to bypass\n`,
+      );
+      process.exit(1);
+    }
+  }
+
+  try {
+    const resolved = await resolveAuthOrConnect({ url, token });
+    const code = await runStubCommand({
+      url: resolved.url,
+      token: resolved.token,
+      resolveReplacementToken: resolved.resolveReplacementToken,
+      cwd,
       noTrace,
       noSecrets,
       noEnvReload,

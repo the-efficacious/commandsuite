@@ -5,7 +5,9 @@ name: Container
 # saved-auth resolution inside the container, secrets at 0600 on the
 # volume — then the same after `compose restart` (the entrypoint's
 # bring-up must be idempotent against the volume), then `compose down -v`.
-# It stops before any live model connection, and says so.
+# With CSUITE_START_RUNNER=1 and the stub verb, it also proves a LIVE
+# runner connection (connected=1 + session_start) with no model anywhere;
+# a model runner inside the container stays refused with exit 64.
 
 on:
   push:
@@ -35,4 +37,6 @@ jobs:
       - name: compose up → assert → restart → assert → down
         env:
           CSUITE_PORT: 8719
+          CSUITE_RUNNER_VERB: stub
+          CSUITE_START_RUNNER: "1"
         run: scripts/compose-check.sh </dev/null

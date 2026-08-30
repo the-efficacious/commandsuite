@@ -1,0 +1,69 @@
+---
+title: csuite stub
+description: The stub runner — a test/CI instrument that proves the runner lifecycle with no model credential. Never deploy it as a team member.
+section: Runners
+order: 50
+---
+
+# csuite stub
+
+`csuite stub` runs the **stub agent**: a test/CI instrument, not an
+agent. It exists so an environment with no model credential — CI, a
+fresh container — can observe the runner lifecycle end to end instead
+of stopping at "the credential resolves": presence reaching
+`connected=1` on the roster, the `session_start`/`session_end`
+activity bracket, the MCP bridge attaching, restart/`clear`/`reload`
+respawns, and a clean exit.
+
+**Never deploy it as a team member.** There is no model anywhere. When
+addressed in a DM the stub answers one canned, self-identifying line
+through the same path a real agent uses (an MCP `send` tool call
+through the bridge); everything else it ignores.
+
+You can always tell a stub from a real member, in four places:
+
+- every `session_start` activity event in its trace carries
+  `runner: "stub"` — a stub can never masquerade in the record;
+- CI enrols it with a title naming it a stub, shown wherever the
+  member appears (roster, web UI);
+- `csuite stub --doctor` prints
+  `stub instrument — … test/CI instrument … never deploy …`;
+- the canned reply itself says what it is.
+
+## Usage
+
+```bash
+csuite stub [--url <broker>] [--token <t>] [--cwd <dir>]
+            [--no-trace] [--no-secrets] [--no-env-reload]
+            [--doctor] [--skip-doctor]
+```
+
+Auth, secrets injection, capture, and environment reload behave
+exactly as on the real runners — that is the point: the runner
+machinery under test is the real machinery, only the agent is canned.
+There is no `--model` and no `--resume` (nothing to model, nothing to
+resume; a `reload` resumes the same stub generation identity, a
+`clear` starts a fresh one).
+
+Two environment knobs exist for bounded runs in tests and CI — a stub
+otherwise runs until signalled:
+
+| variable | effect |
+|---|---|
+| `CSUITE_STUB_EXIT_AFTER_MS` | end the generation after this many ms |
+| `CSUITE_STUB_EXIT_CODE` | exit code for that bounded end (default 0) |
+
+## Where CI uses it
+
+`scripts/bootstrap.sh` accepts `CSUITE_RUNNER_VERB=stub`, and the
+container honours `CSUITE_START_RUNNER=1` **only** for the stub — a
+real model runner inside the container stays refused with exit 64 and
+a pointer to [always-on agent](/docs/guides/always-on-agent). The
+"Headless bootstrap" and container CI jobs use this to assert a
+measured `connected=1` and a `session_start` event for the runner
+member on every commit.
+
+The stub passes the same runner conformance suite as
+[`csuite claude`](/docs/runners/claude) and
+[`csuite codex`](/docs/runners/codex) — see
+[conformance](/docs/dev/conformance).

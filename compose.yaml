@@ -19,6 +19,9 @@ services:
       CSUITE_RUNNER: ${CSUITE_RUNNER:-builder}
       CSUITE_RUNNER_VERB: ${CSUITE_RUNNER_VERB:-claude}
       CSUITE_LOG_LEVEL: ${CSUITE_LOG_LEVEL:-info}
+      # Honoured for the stub verb only (a credential-free test instrument);
+      # any model runner verb with this set is refused with exit 64.
+      CSUITE_START_RUNNER: ${CSUITE_START_RUNNER:-0}
     volumes:
       - csuite-state:/var/lib/csuite
     healthcheck:
