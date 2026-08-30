@@ -1024,7 +1024,7 @@ async function handleClaude(args: string[]): Promise<void> {
   // Explicit `--doctor` is the "run doctor, print the full report, exit"
   // mode. Unchanged.
   if (doctor) {
-    const report = await runAgentDoctor(createClaudeAdapter({}), {
+    const report = await runAgentDoctor(createClaudeAdapter({ model }), {
       auth: savedAuthInput({ url, token }),
     });
     log(formatReport(report));
@@ -1041,7 +1041,7 @@ async function handleClaude(args: string[]): Promise<void> {
   // spawns the agent binary and would tax every session start; the
   // explicit `--doctor` mode includes it.
   if (!skipDoctor) {
-    const report = await runAgentDoctor(createClaudeAdapter({}), {
+    const report = await runAgentDoctor(createClaudeAdapter({ model }), {
       includeVersion: false,
       auth: savedAuthInput({ url, token }),
     });
@@ -1353,7 +1353,7 @@ async function handleCodex(args: string[]): Promise<void> {
   // Explicit `--doctor`: run the full preflight report (version probe
   // included) and exit — mirrors `csuite claude --doctor`.
   if (doctor) {
-    const report = await runAgentDoctor(createCodexAdapter({}), {
+    const report = await runAgentDoctor(createCodexAdapter({ model }), {
       auth: savedAuthInput({ url, token }),
     });
     log(formatReport(report));
@@ -1364,7 +1364,7 @@ async function handleCodex(args: string[]): Promise<void> {
   // abort (with the full report); WARNs proceed; `--skip-doctor` opts
   // out; the version probe is skipped for startup latency.
   if (!skipDoctor) {
-    const report = await runAgentDoctor(createCodexAdapter({}), {
+    const report = await runAgentDoctor(createCodexAdapter({ model }), {
       includeVersion: false,
       auth: savedAuthInput({ url, token }),
     });
