@@ -30,6 +30,7 @@ import { findAuthEntry } from './commands/auth-config.js';
 import { runClaudeCommand } from './commands/claude.js';
 import { runCodexCommand } from './commands/codex.js';
 import { runConnectCommand } from './commands/connect.js';
+import { runConnectApproveCommand, runConnectPendingCommand } from './commands/connect-approve.js';
 import { formatReport, runAgentDoctor, runDoctor } from './commands/doctor.js';
 import { runEnrollCommand } from './commands/enroll.js';
 import { UsageError } from './commands/errors.js';
@@ -57,6 +58,10 @@ usage:
   csuite setup       [--config-path <path>]                 first-run wizard (team + first member + TOTP)
   csuite member        list|create|update|delete [--config-path <path>]   offline member management (runs without the broker)
   csuite connect     [--url <broker>] [--label <hint>] [--workspace <dir>] [--global] [--no-write] [--quiet]
+  csuite connect     pending                                 list device enrollments waiting for approval (members.manage)
+  csuite connect     approve --code <XXXX-XXXX> --member <name> [--label <l>]     approve a device: bind it to an existing member
+  csuite connect     approve --code <XXXX-XXXX> --create --member <name> --title <t> [--description <d>] [--permissions <leaf,...>] [--instructions <i>]
+                                    approve a device: create a new member for it (same routes and check as the web UI's /enroll page)
                                     enroll this device with the broker (device-code flow); saves to the user-global auth store, scoped to cwd (or --workspace / --global)
   csuite auth          list|migrate                         inspect the local auth store; fold a legacy project-scoped .csuite/auth.json into it
   csuite enroll      --member <name> [--config-path <path>]   (re-)enroll a member for web UI login (TOTP — separate from 'csuite connect')
@@ -308,6 +313,12 @@ async function handleEnroll(args: string[]): Promise<void> {
 }
 
 async function handleConnect(args: string[]): Promise<void> {
+  // The approver's side lives under the same verb: `connect pending`
+  // and `connect approve` are what the device-side `connect` waits on.
+  if (args[0] === 'pending' || args[0] === 'approve') {
+    await handleConnectApprover(args[0], args.slice(1));
+    return;
+  }
   const { values } = parseSubcommandArgs(args, {
     url: { type: 'string' },
     label: { type: 'string', short: 'l' },
@@ -338,6 +349,53 @@ async function handleConnect(args: string[]): Promise<void> {
       },
       (line) => process.stdout.write(`${line}\n`),
       (line) => process.stderr.write(`${line}\n`),
+    );
+  } catch (err) {
+    if (err instanceof UsageError) fail(err.message, 2);
+    fail(err instanceof Error ? err.message : String(err));
+  }
+}
+
+async function handleConnectApprover(sub: 'pending' | 'approve', args: string[]): Promise<void> {
+  const { values, positionals } = parseSubcommandArgs(args, {
+    url: { type: 'string' },
+    token: { type: 'string' },
+    code: { type: 'string' },
+    member: { type: 'string' },
+    create: { type: 'boolean' },
+    title: { type: 'string' },
+    description: { type: 'string' },
+    instructions: { type: 'string' },
+    permissions: { type: 'string' },
+    label: { type: 'string', short: 'l' },
+    help: { type: 'boolean', short: 'h' },
+  });
+  if (values.help === true) {
+    process.stdout.write(USAGE);
+    return;
+  }
+  try {
+    if (positionals.length > 0) {
+      throw new UsageError(`connect ${sub}: unexpected argument '${positionals[0]}'`);
+    }
+    const client = makeClient(values);
+    if (sub === 'pending') {
+      await runConnectPendingCommand(client, (line) => log(line));
+      return;
+    }
+    await runConnectApproveCommand(
+      {
+        code: getString(values, 'code'),
+        member: getString(values, 'member'),
+        create: getBoolean(values, 'create'),
+        title: getString(values, 'title'),
+        description: getString(values, 'description'),
+        instructions: getString(values, 'instructions'),
+        permissions: getString(values, 'permissions'),
+        label: getString(values, 'label'),
+      },
+      client,
+      (line) => log(line),
     );
   } catch (err) {
     if (err instanceof UsageError) fail(err.message, 2);

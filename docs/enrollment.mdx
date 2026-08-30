@@ -29,9 +29,17 @@ $ csuite connect --url https://broker.example.com
 ```
 
 Open the URL (it carries the code) or type the code at `/enroll` in
-the web UI. Approving requires the `members.manage` permission and a
-signed-in web session — the person running `csuite connect` can't
-approve themselves.
+the web UI — or, with no browser at hand, approve from any device
+already authenticated as a `members.manage` holder:
+
+```bash
+csuite connect pending                                   # what is waiting, with source IP and label
+csuite connect approve --code KQ4M-7P2H --member builder   # bind to an existing member
+csuite connect approve --code KQ4M-7P2H --create --member scout --title researcher
+```
+
+Approving requires the `members.manage` permission — the device running
+`csuite connect` can't approve itself, whichever surface is used.
 
 The approval screen shows the request's source IP, user agent, and the
 device's suggested label, and offers two choices:
@@ -81,7 +89,14 @@ invalidates previously bound authenticators. Anyone holding
 
 ## When approval isn't possible
 
-If no approver is reachable — say, provisioning an air-gapped CI
+A script can be the approver: run `csuite connect --quiet` on the
+device, read the code from its output, and approve it with
+`csuite connect approve` as a member holding `members.manage` (the
+bootstrap member from `csuite setup --non-interactive` holds every
+leaf). The device still receives its token from the broker, not from
+the script.
+
+If no approver is reachable at all — say, provisioning an air-gapped CI
 runner — fall back to handing the token over yourself:
 
 ```bash

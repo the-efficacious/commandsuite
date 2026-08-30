@@ -106,6 +106,10 @@ files to remove if a reset is really what you want.
 ```
 csuite connect [--url <broker>] [--label <hint>] [--workspace <dir> | --global]
                [--no-write] [--quiet]
+csuite connect pending
+csuite connect approve --code <XXXX-XXXX> --member <name> [--label <l>]
+csuite connect approve --code <XXXX-XXXX> --create --member <name> --title <t>
+                       [--description <d>] [--permissions <leaf,...>] [--instructions <i>] [--label <l>]
 ```
 
 Enroll this device with a broker. Prints a short code and a
@@ -139,6 +143,37 @@ project directories gives you two independent member identities on one
 machine. Ctrl-C cancels; the pending request expires on its own after
 five minutes.
 
+
+### Approving from the CLI
+
+`csuite connect pending` and `csuite connect approve` are the
+approver's side of the same handshake, for a member holding
+`members.manage` who is not at a browser — a provisioning script running
+as the bootstrap member, or an agent onboarding another agent. They call
+the routes the web UI's `/enroll` page calls, with the same permission
+check; the token still travels only from broker to device, and the
+approver never sees it.
+
+```
+$ csuite connect pending
+code       expires  label                 source
+KQ4M-7P2H  271s     ci-runner             10.0.0.5 csuite-cli/0.8.0
+
+$ csuite connect approve --code KQ4M-7P2H --member builder
+✓ approved KQ4M-7P2H — bound to member 'builder' (engineer)
+  token: ci-runner · id 3f1c…
+  The device that ran `csuite connect` receives the token on its next poll.
+```
+
+| Flag | Description |
+|---|---|
+| `--code` | The `XXXX-XXXX` code the device printed. Required. |
+| `--member` | Bind mode: the existing member the device becomes a token for. Create mode: the new member's name. Required. |
+| `--create` | Create a new member for the device instead of binding. Requires `--title`; `--description`, `--permissions` (comma-separated leaves) and `--instructions` apply only here. |
+| `--label` | Overrides the device's suggested token label. |
+
+Both take the usual `--url` / `--token` and otherwise authenticate as
+the calling device does.
 ## auth
 
 ```
