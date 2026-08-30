@@ -130,6 +130,7 @@ import {
   type Broker,
   type ChannelStore,
   ChannelsError,
+  CredentialShapedBodyError,
   clampQueryLimit,
   composedInstructionsSha256,
   composeInstructions,
@@ -1492,7 +1493,15 @@ export function createApp(options: AppOptions): CreatedApp {
       }
     }
 
-    const result = await broker.push(payload, pushContext);
+    let result: Awaited<ReturnType<Broker['push']>>;
+    try {
+      result = await broker.push(payload, pushContext);
+    } catch (err) {
+      if (err instanceof CredentialShapedBodyError) {
+        return c.json({ error: err.message }, 400);
+      }
+      throw err;
+    }
 
     // Grant fanout — for every recipient that isn't the owner, record
     // a read grant keyed on the message id. The recipient set is the
@@ -4650,6 +4659,9 @@ export function createApp(options: AppOptions): CreatedApp {
         );
         canonical = result.message;
       } catch (err) {
+        if (err instanceof CredentialShapedBodyError) {
+          return c.json({ error: err.message }, 400);
+        }
         logger.warn('failed to fanout objective discuss', {
           objectiveId: id,
           error: err instanceof Error ? err.message : String(err),

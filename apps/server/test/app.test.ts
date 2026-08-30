@@ -2,6 +2,7 @@ import {
   Broker,
   createApp,
   createTokenStoreFromMembers,
+  generateBearerToken,
   InMemoryEventLog,
   SqliteSessionStore,
 } from 'csuite-core';
@@ -329,6 +330,24 @@ describe('app POST /push', () => {
     const { app } = await makeApp();
     const res = await app.request('/push', authed(OP_TOKEN, { body: '' }));
     expect(res.status).toBe(400);
+  });
+
+  it.each([
+    ['broadcast', {}],
+    ['direct message', { to: 'build-bot' }],
+    ['channel post', { data: { thread: 'chan:general' } }],
+  ])('returns an explanatory 400 for a credential-shaped %s', async (_surface, shape) => {
+    const { app, broker } = await makeApp();
+    await broker.register('build-bot');
+    const token = generateBearerToken();
+    const res = await app.request(
+      '/push',
+      authed(OP_TOKEN, { ...shape, body: `credential ${token}` }),
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('credential-shaped body');
+    expect(body.error).not.toContain(token);
   });
 
   it('broadcasts to all registered agents when to is omitted', async () => {

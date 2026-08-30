@@ -48,8 +48,10 @@ import { unlinkSync } from 'node:fs';
 import type { Socket } from 'node:net';
 import { createServer as createNetServer, type Server as NetServer } from 'node:net';
 import { createInterface } from 'node:readline';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { logger as defaultLogger, type Logger, registerSecretValues } from 'csuite-core';
 import { Client as BrokerClient, ClientError } from 'csuite-sdk/client';
+import { containsBearerToken } from 'csuite-sdk/credential-safety';
 import { isReservedEnvName } from 'csuite-sdk/schemas';
 import type {
   InstructionsResponse,
@@ -880,7 +882,9 @@ async function handleMcpRequest(
         params?.arguments && typeof params.arguments === 'object'
           ? (params.arguments as Record<string, unknown>)
           : undefined;
-      const result = await handleToolCall(name, args, brokerClient, instructions, externalTools);
+      const result = guardCredentialFreeToolResult(
+        await handleToolCall(name, args, brokerClient, instructions, externalTools),
+      );
       return { kind: 'mcp_response', id: frame.id, result };
     }
     return {
@@ -898,6 +902,25 @@ async function handleMcpRequest(
       },
     };
   }
+}
+
+/**
+ * Final runner-side egress guard. This runs after every built-in and external
+ * handler and before the result enters an IPC frame or the agent's context.
+ * JSON serialization is deliberate: nested/doubly-serialized text retains the
+ * literal base64url token substring because that alphabet needs no JSON escapes.
+ */
+export function guardCredentialFreeToolResult(result: CallToolResult): CallToolResult {
+  if (!containsBearerToken(JSON.stringify(result))) return result;
+  return {
+    isError: true,
+    content: [
+      {
+        type: 'text',
+        text: 'tool result refused: credential-shaped content must not enter agent context',
+      },
+    ],
+  };
 }
 
 // ─── Bridge connection wrapper ─────────────────────────────────────

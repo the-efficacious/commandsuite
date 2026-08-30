@@ -14,6 +14,7 @@
  * bookkeeping.
  */
 
+import { containsBearerToken } from 'csuite-sdk/credential-safety';
 import { NameSchema } from 'csuite-sdk/schemas';
 import type { Member, Message, Presence, PushPayload, PushResult, Role } from 'csuite-sdk/types';
 import type { EventLog } from './event-log.js';
@@ -51,6 +52,16 @@ export class InvalidRecipientError extends Error {
     );
     this.name = 'InvalidRecipientError';
     this.to = to;
+  }
+}
+
+/** A message body contained the complete shape of a plaintext bearer credential. */
+export class CredentialShapedBodyError extends Error {
+  constructor() {
+    super(
+      'message refused: credential-shaped body detected; credentials must use the device-enrolment or secret-value paths, never chat',
+    );
+    this.name = 'CredentialShapedBodyError';
   }
 }
 
@@ -248,6 +259,11 @@ export class Broker {
    * (which still reports the primary recipient count).
    */
   async push(payload: PushPayload, context: PushContext = { from: null }): Promise<PushResult> {
+    // This is the last shared boundary before every DM, channel post,
+    // objective discussion, and internal message reaches durable history.
+    // Reject before minting an id or touching the event log; never echo the
+    // body (and therefore never echo the credential) in the error.
+    if (containsBearerToken(payload.body)) throw new CredentialShapedBodyError();
     const ts = this.now();
     const targetName = this.resolveTarget(payload.to);
     const message: Message = {
