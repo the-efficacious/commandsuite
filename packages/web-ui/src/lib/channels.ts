@@ -20,7 +20,7 @@
  */
 
 import { signal } from '@preact/signals';
-import type { ChannelSummary } from 'csuite-sdk/types';
+import type { ChannelSummary, UpdateChannelRequest } from 'csuite-sdk/types';
 import { getClient } from './client.js';
 import { GENERAL_CHANNEL_ID } from './messages.js';
 
@@ -97,7 +97,7 @@ export async function createChannel(slug: string): Promise<ChannelSummary> {
     channelBySlug(created.slug) ?? {
       ...created,
       joined: true,
-      myRole: 'admin',
+      myRole: 'member',
       memberCount: 1,
     }
   );
@@ -110,9 +110,20 @@ export async function renameChannel(slug: string, newSlug: string): Promise<Chan
     channelBySlug(updated.slug) ?? {
       ...updated,
       joined: true,
-      myRole: 'admin',
+      myRole: 'member',
       memberCount: 1,
     }
+  );
+}
+
+export async function updateChannel(
+  slug: string,
+  update: UpdateChannelRequest,
+): Promise<ChannelSummary> {
+  const updated = await getClient().updateChannel(slug, update);
+  await loadChannels();
+  return (
+    channelBySlug(updated.slug) ?? { ...updated, joined: true, myRole: 'member', memberCount: 1 }
   );
 }
 

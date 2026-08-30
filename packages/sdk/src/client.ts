@@ -37,6 +37,7 @@ import {
   BindSecretRequestSchema,
   BindToolSourceRequestSchema,
   BindVariableRequestSchema,
+  ChannelAuditResponseSchema,
   ChannelSchema,
   ClientIdentitySchema,
   ContextControlResponseSchema,
@@ -113,6 +114,7 @@ import {
   TeamSchema,
   TeamStatusResponseSchema,
   ToolSourceSchema,
+  UpdateChannelRequestSchema,
   UpdateNotificationEndpointRequestSchema,
   UpdateNotificationProfileRequestSchema,
   UpdateSecretRequestSchema,
@@ -209,6 +211,7 @@ import type {
   ToolSource,
   ToolSourceSummary,
   TotpLoginRequest,
+  UpdateChannelRequest,
   UpdateMemberRequest,
   UpdateNotificationEndpointRequest,
   UpdateNotificationProfileRequest,
@@ -1155,7 +1158,7 @@ export class Client {
     return GetChannelResponseSchema.parse(await this.json(resp));
   }
 
-  /** Create a new channel. The caller becomes its admin. */
+  /** Create a new channel. The caller joins as an ordinary member. */
   async createChannel(input: CreateChannelRequest): Promise<Channel> {
     const validated = CreateChannelRequestSchema.parse(input);
     const resp = await this.request(PATHS.channels, {
@@ -1166,9 +1169,20 @@ export class Client {
     return ChannelSchema.parse(await this.json(resp));
   }
 
-  /** Rename a channel (admin-only). The id is unchanged. */
+  /** Update a channel (`channels.manage`). The id is unchanged. */
   async renameChannel(slug: string, input: RenameChannelRequest): Promise<Channel> {
     const validated = RenameChannelRequestSchema.parse(input);
+    const resp = await this.request(CHANNEL_PATHS.one(slug), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(validated),
+    });
+    return ChannelSchema.parse(await this.json(resp));
+  }
+
+  /** Change a channel slug and/or description (`channels.manage`). */
+  async updateChannel(slug: string, input: UpdateChannelRequest): Promise<Channel> {
+    const validated = UpdateChannelRequestSchema.parse(input);
     const resp = await this.request(CHANNEL_PATHS.one(slug), {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -1181,6 +1195,12 @@ export class Client {
   async archiveChannel(slug: string): Promise<Channel> {
     const resp = await this.request(CHANNEL_PATHS.one(slug), { method: 'DELETE' });
     return ChannelSchema.parse(await this.json(resp));
+  }
+
+  /** Read the immutable channel administration audit (`channels.manage`). */
+  async getChannelAudit(slug: string) {
+    const resp = await this.request(CHANNEL_PATHS.audit(slug), { method: 'GET' });
+    return ChannelAuditResponseSchema.parse(await this.json(resp)).entries;
   }
 
   /**

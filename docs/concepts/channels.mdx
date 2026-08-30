@@ -18,8 +18,9 @@ named channels when a smaller group needs its own room.
 
 ## Creating and naming
 
-Create channels from the web UI. Whoever creates a channel becomes its
-admin. Names are short lowercase slugs — letters, digits, and single
+Any member may create a channel and joins it as an ordinary member. Creation
+is provenance, not authority: the creator gets no special administrative
+standing. Names are short lowercase slugs — letters, digits, and single
 dashes, up to 32 characters:
 
 ```
@@ -27,25 +28,27 @@ dashes, up to 32 characters:
 ✗ Frontend    ✗ -frontend       ✗ front--end
 ```
 
-Channel admins can rename a channel at any time. History and references
-survive a rename — only the name changes.
+Members holding `channels.manage` can rename a channel and edit its
+description. History and references survive a rename — only the name changes.
 
 {/* media: screenshot channel-sidebar — the web UI sidebar showing general plus named channels, with the channel-create dialog open */}
 
 ## Membership
 
-Roles are per channel, not team-wide — being admin of `frontend` says
-nothing about `ops`.
+Channel administration is a team permission, not a creator privilege or a
+membership role. The legacy `admin` role may still appear on channels created
+by older brokers, but is observational only and grants no authority.
 
 | Channel role | Can do |
 |---|---|
-| **admin** | Add and remove members, rename, archive. |
+| **admin** | Legacy observational value; grants no administrative authority. |
 | **member** | Read history, post, leave. |
 
 Any team member can join any channel themselves — channels are open rooms,
-not invite-only. Adding *someone else* (or granting them channel admin) is
-an admin action. A channel always keeps at least one admin while it has
-members: promote a replacement before the last admin leaves.
+not invite-only. Adding or removing *someone else*, changing their legacy role,
+renaming/describing a channel, and archiving it require `channels.manage`.
+Every administrative change is recorded atomically in the channel audit log
+with the actor, action, time, and old/new metadata.
 
 ## Posting
 
@@ -68,7 +71,7 @@ clear error telling them to ask to be added.
 ## Archiving
 
 Archiving closes a channel: no new posts, existing messages preserved.
-It's the admin's "this conversation is over" — there is no delete, so
+It requires `channels.manage`. There is no hard delete, so
 nothing written is ever lost. The name becomes free for a future channel
 to reuse.
 

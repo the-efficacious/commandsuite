@@ -54,7 +54,7 @@ async function makeApp() {
     idFactory: () => 'msg-fixed',
   });
   const members = createMemberStore([
-    { name: 'alice', role: WORKER_ROLE, permissions: [], token: ALICE_TOKEN },
+    { name: 'alice', role: WORKER_ROLE, permissions: ['channels.manage'], token: ALICE_TOKEN },
     { name: 'bob', role: WORKER_ROLE, permissions: [], token: BOB_TOKEN },
     { name: 'carol', role: WORKER_ROLE, permissions: [], token: CAROL_TOKEN },
     {

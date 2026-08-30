@@ -69,7 +69,6 @@ import {
   PushPayloadSchema,
   PushSubscriptionPayloadSchema,
   RejectEnrollmentRequestSchema,
-  RenameChannelRequestSchema,
   RotateTokenRequestSchema,
   RunnerIdentitySchema,
   SetCustomToolRequestSchema,
@@ -78,6 +77,7 @@ import {
   SetToolCredentialRequestSchema,
   SetVariableValueRequestSchema,
   TotpLoginRequestSchema,
+  UpdateChannelRequestSchema,
   UpdateMemberRequestSchema,
   UpdateNotificationEndpointRequestSchema,
   UpdateNotificationProfileRequestSchema,
@@ -1659,7 +1659,7 @@ export function createApp(options: AppOptions): CreatedApp {
       }
       const member = c.get('member');
       try {
-        const ch = channels.create({ slug: parsed.data.slug, creator: member.name });
+        const ch = channels.create({ ...parsed.data, creator: member.name });
         return c.json(ch, 201);
       } catch (err) {
         return mapChannelsError(c, err);
@@ -1678,16 +1678,18 @@ export function createApp(options: AppOptions): CreatedApp {
     app.patch(`${PATHS.channels}/:slug`, auth, async (c) => {
       const slug = c.req.param('slug');
       const raw = await c.req.json().catch(() => null);
-      const parsed = RenameChannelRequestSchema.safeParse(raw);
+      const parsed = UpdateChannelRequestSchema.safeParse(raw);
       if (!parsed.success) {
         return c.json({ error: 'invalid rename input', details: parsed.error.issues }, 400);
       }
       const ch = channels.getBySlug(slug);
       if (!ch) return c.json({ error: `no such channel: ${slug}` }, 404);
       const member = c.get('member');
+      if (!hasPermission(member.permissions, 'channels.manage')) {
+        return c.json({ error: 'channels.manage is required to administer channels' }, 403);
+      }
       try {
-        const renamed = channels.rename(ch.id, parsed.data.slug, member.name);
-        return c.json(renamed);
+        return c.json(channels.update(ch.id, parsed.data, member.name));
       } catch (err) {
         return mapChannelsError(c, err);
       }
@@ -1698,6 +1700,9 @@ export function createApp(options: AppOptions): CreatedApp {
       const ch = channels.getBySlug(slug);
       if (!ch) return c.json({ error: `no such channel: ${slug}` }, 404);
       const member = c.get('member');
+      if (!hasPermission(member.permissions, 'channels.manage')) {
+        return c.json({ error: 'channels.manage is required to administer channels' }, 403);
+      }
       try {
         const archived = channels.archive(ch.id, member.name);
         return c.json(archived);
@@ -1728,20 +1733,22 @@ export function createApp(options: AppOptions): CreatedApp {
         role = parsed.data.role;
       }
       // Self-join is always allowed (this is a public-channel model).
-      // Admin-add gates on the caller being an admin AND the target
+      // Other-member changes gate on channels.manage AND the target
       // being a real team member.
       const isSelf = target === caller.name;
       if (!isSelf) {
-        const callerRole = channels.roleOf(ch.id, caller.name);
-        if (callerRole !== 'admin') {
-          return c.json({ error: 'only admins can add other members' }, 403);
+        if (!hasPermission(caller.permissions, 'channels.manage')) {
+          return c.json(
+            { error: 'channels.manage is required to administer channel membership' },
+            403,
+          );
         }
         if (members.findByName(target) === null) {
           return c.json({ error: `no such team member: ${target}` }, 404);
         }
       }
       try {
-        channels.addMember({ channelId: ch.id, memberName: target, role });
+        channels.addMember({ channelId: ch.id, memberName: target, role, actor: caller.name });
       } catch (err) {
         return mapChannelsError(c, err);
       }
@@ -1758,19 +1765,31 @@ export function createApp(options: AppOptions): CreatedApp {
       const caller = c.get('member');
       const isSelf = name === caller.name;
       if (!isSelf) {
-        const callerRole = channels.roleOf(ch.id, caller.name);
-        if (callerRole !== 'admin') {
-          return c.json({ error: 'only admins can remove other members' }, 403);
+        if (!hasPermission(caller.permissions, 'channels.manage')) {
+          return c.json(
+            { error: 'channels.manage is required to administer channel membership' },
+            403,
+          );
         }
       }
       try {
-        channels.removeMember(ch.id, name);
+        channels.removeMember(ch.id, name, caller.name);
       } catch (err) {
         return mapChannelsError(c, err);
       }
       const summary = summarize(slug, caller.name);
       const memberRows = channels.listMembers(ch.id);
       return c.json({ channel: summary, members: memberRows });
+    });
+
+    app.get(`${PATHS.channels}/:slug/audit`, auth, (c) => {
+      const caller = c.get('member');
+      if (!hasPermission(caller.permissions, 'channels.manage')) {
+        return c.json({ error: 'channels.manage is required to read channel audit history' }, 403);
+      }
+      const ch = channels.getBySlug(c.req.param('slug'));
+      if (!ch) return c.json({ error: `no such channel: ${c.req.param('slug')}` }, 404);
+      return c.json({ entries: channels.listAudit(ch.id) });
     });
   }
 

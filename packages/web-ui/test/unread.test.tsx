@@ -66,6 +66,7 @@ beforeEach(() => {
     {
       id: 'general',
       slug: 'general',
+      description: '',
       createdBy: '__system__',
       createdAt: 0,
       archivedAt: null,

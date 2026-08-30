@@ -50,6 +50,7 @@ export {
 } from './capture-health.js';
 export {
   type Channel,
+  type ChannelAuditEntry,
   type ChannelMember,
   type ChannelMemberRole,
   type ChannelStore,

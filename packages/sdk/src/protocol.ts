@@ -39,7 +39,7 @@ export const PATHS = {
   // assignees execute, watchers observe.
   objectives: '/objectives',
   // Channels — Slack-style named team threads. Anyone can create;
-  // admins (creator-by-default) manage. The `general` channel is
+  // `channels.manage` holders administer. The `general` channel is
   // synthetic and seeded server-side; everyone is implicitly a
   // member.
   channels: '/channels',
@@ -155,6 +155,7 @@ export const CHANNEL_PATHS = {
   members: (slug: string) => `/channels/${encodeURIComponent(slug)}/members`,
   member: (slug: string, name: string) =>
     `/channels/${encodeURIComponent(slug)}/members/${encodeURIComponent(name)}`,
+  audit: (slug: string) => `/channels/${encodeURIComponent(slug)}/audit`,
 } as const;
 
 /**
