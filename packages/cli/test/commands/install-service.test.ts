@@ -31,7 +31,7 @@ const RENDER = {
   verb: 'stub' as const,
   url: 'http://127.0.0.1:8719',
   workspace: '/home/builder/work',
-  execPath: 'csuite',
+  execArgv: ['/usr/bin/csuite'],
   home: '/home/builder',
 };
 
@@ -41,7 +41,7 @@ describe('unit render', () => {
     expect(unit).toContain('Environment=CSUITE_URL=http://127.0.0.1:8719');
     expect(unit).toContain('WorkingDirectory=/home/builder/work');
     expect(unit).toContain(
-      'ExecStart=csuite stub --url http://127.0.0.1:8719 --cwd /home/builder/work --resume',
+      'ExecStart=/usr/bin/csuite stub --url http://127.0.0.1:8719 --cwd /home/builder/work --resume',
     );
     expect(unit).toContain('Restart=always');
     expect(unit).toContain('StartLimitIntervalSec=0');
@@ -50,8 +50,19 @@ describe('unit render', () => {
   });
 
   it('honours an exec override for main-build deploy trees', () => {
-    const unit = renderRunnerUnit({ ...RENDER, execPath: '/opt/csuite-main/bin/csuite.mjs' });
+    const unit = renderRunnerUnit({ ...RENDER, execArgv: ['/opt/csuite-main/bin/csuite.mjs'] });
     expect(unit).toContain('ExecStart=/opt/csuite-main/bin/csuite.mjs stub ');
+  });
+
+  it('quotes a space-containing exec path as ONE token and spacey env values', () => {
+    const unit = renderRunnerUnit({
+      ...RENDER,
+      execArgv: ['/usr/bin/node', '/opt/my tools/dist/index.js'],
+      home: '/home/my builder',
+    });
+    expect(unit).toContain('ExecStart=/usr/bin/node "/opt/my tools/dist/index.js" stub ');
+    expect(unit).toContain('Environment="HOME=/home/my builder"');
+    expect(unit).toContain('Environment="PATH=/home/my builder/.local/bin:');
   });
 });
 
@@ -209,7 +220,10 @@ describe('replacement safety (delete nothing, previous runner untouched)', () =>
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
-  function fixture(previousUnit: string | null) {
+  function fixture(
+    previousUnit: string | null,
+    options: { unitWasEnabled?: boolean; unitWasActive?: boolean; instructionsError?: Error } = {},
+  ) {
     const home = mkdtempSync(join(tmpdir(), 'csuite-svc-'));
     dirs.push(home);
     const workspace = join(home, 'work');
@@ -224,12 +238,18 @@ describe('replacement safety (delete nothing, previous runner untouched)', () =>
     const commands: string[] = [];
     const runSync = vi.fn((cmd: string, args: string[]) => {
       commands.push([cmd, ...args].join(' '));
+      if (args[0] === 'is-enabled')
+        return { status: options.unitWasEnabled === false ? 1 : 0, stderr: '' };
+      if (args[0] === 'is-active')
+        return { status: options.unitWasActive === false ? 1 : 0, stderr: '' };
       return { status: 0, stderr: '' };
     });
     const deps = {
       stdout: () => {},
       clientFor: () => ({
-        instructions: vi.fn().mockResolvedValue({ name: 'builder' }),
+        instructions: options.instructionsError
+          ? vi.fn().mockRejectedValue(options.instructionsError)
+          : vi.fn().mockResolvedValue({ name: 'builder' }),
         roster: vi.fn().mockResolvedValue({ teammates: [], connected: [] }),
       }),
       runSync: runSync as never,
@@ -262,6 +282,39 @@ describe('replacement safety (delete nothing, previous runner untouched)', () =>
     expect(
       readFileSync(join(home, '.config/csuite/service/csuite-builder.service'), 'utf8'),
     ).toContain('ExecStart=');
+  });
+
+  it('a previously DISABLED unit is restored disabled and not started', async () => {
+    const { deps, commands, workspace } = fixture('[Unit]\n# old\n', {
+      unitWasEnabled: false,
+      unitWasActive: false,
+    });
+    await expect(
+      runInstallServiceCommand(
+        { verb: 'stub', url: 'http://x:1', workspace, timeoutMs: 1, execPath: '/usr/bin/csuite' },
+        deps as never,
+      ),
+    ).rejects.toThrow(/left disabled, as found/);
+    const joined = commands.join('\n');
+    expect(joined).toMatch(/\.previous[\s\S]*daemon-reload[\s\S]*systemctl disable csuite-builder/);
+    expect(joined).not.toMatch(/systemctl start csuite-builder/);
+  });
+
+  it('an exception from the broker identity call rolls back like a liveness failure', async () => {
+    const { deps, commands, workspace } = fixture('[Unit]\n# old\n', {
+      instructionsError: new Error('broker exploded'),
+    });
+    await expect(
+      runInstallServiceCommand(
+        { verb: 'stub', url: 'http://x:1', workspace, timeoutMs: 1, execPath: '/usr/bin/csuite' },
+        deps as never,
+      ),
+    ).rejects.toThrow(
+      /starting or verifying the unit failed \(broker exploded\)[\s\S]*restored the previous/,
+    );
+    expect(commands.join('\n')).toMatch(
+      /systemctl stop csuite-builder[\s\S]*\.previous[\s\S]*systemctl start csuite-builder/,
+    );
   });
 
   it('stops and disables a fresh install when liveness fails and nothing preceded it', async () => {
