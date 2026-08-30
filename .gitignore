@@ -131,3 +131,7 @@ exports/
 # Station VM image build products — multi-GB rootfs/kernel artifacts,
 # never repo content. `git add .` once tried to pack 5.2G of this.
 stations/*/out/
+
+# release preparation renders + logs (never committed)
+RELEASE-*.md
+.release/prepare-logs/

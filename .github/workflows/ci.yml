@@ -17,6 +17,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          # The root suite includes the release-prepare proof, which
+          # derives the release range from real tags — a shallow,
+          # tagless checkout makes `git describe` fail.
+          fetch-depth: 0
+
+      # The same proof runs `changeset status`, which diffs against the
+      # local `main` ref; a PR checkout has only origin/main. Create it
+      # when absent — never force-update a checked-out main on push runs.
+      - name: Materialize the changesets base ref
+        run: git show-ref --verify --quiet refs/heads/main || git branch main origin/main
 
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
 

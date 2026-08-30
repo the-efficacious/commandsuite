@@ -1,0 +1,86 @@
+---
+title: Releasing
+description: How a CommandSuite release is decided — the preparation script that renders every fact the two human signers need, the door manifest behind its "read these" section, and why preparation can never publish.
+section: Development
+order: 90
+---
+
+# Releasing
+
+Releases are the human gate: main is agent territory, and a
+release is where fit to the mission is judged by people. Two
+humans sign every release, and they sign from one generated
+file — never from facts assembled by hand.
+
+## Preparing
+
+```sh
+node scripts/release-prepare.mjs
+```
+
+From a clean checkout this renders `RELEASE-<version>.md`
+containing, in order:
+
+1. **The proposed version and changelog** — every changeset
+   since the last tag and the semver bump the changesets
+   tooling derives from them.
+2. **Read these** — every PR since the last tag that landed a
+   surfaced door (public API, wire format, permission, security
+   or install-surface change), with the ruling behind each.
+   This section is the input to the human gate: the signers
+   read these PRs before signing.
+3. **Artefacts** — the CLI and SDK tarballs and the container
+   image, built locally, with sizes, sha256 hashes, and the
+   source fingerprint (the same recomputable contract the
+   roster shows for main builds).
+4. **The gate** — unit, stub conformance, bootstrap, compose,
+   service, and route-walk, each row backed by the captured
+   exit status and a log file under `.release/prepare-logs/`.
+   A row exists only because its command ran.
+5. **Two empty signature lines** (Lea, Andrew).
+
+The file is signable only when every gate ran and passed and no
+classification is on hold. A host that cannot run a gate fails
+preparation; `--allow-incomplete` renders the missing pieces
+for local diagnosis but replaces the signature block with an
+INCOMPLETE — NOT SIGNABLE banner. The nightly workflow runs the
+complete form on a runner with every capability and attaches
+the render as an artifact, so the release gate is always one
+read away.
+
+## The door manifest
+
+`.release/doors.json` is the completeness contract behind
+"read these". Every PR merged since the tag named in `since`
+must be classified there — as a door (with its ruling) or as
+dismissed (with a cited reason). Preparation fails loud on:
+
+- a merged PR the manifest does not classify;
+- a manifest door that is not actually merged in range;
+- a PR carrying the `door` label that the manifest omits;
+- a dismissed PR whose text trips the door phrasing tripwire
+  while its dismissal cites no ruling.
+
+The convention: **every PR that lands a surfaced door gets the
+`door` label at surfacing time and a manifest row in the same
+PR.** The phrase tripwire exists for what the label misses —
+its findings go to the objective thread for a ruling, never
+into the manifest silently.
+
+## Preparation cannot publish
+
+There is no call path in the script that tags, pushes, or
+publishes, and `scripts/test/release-prepare.test.mjs` proves
+it at the executable level: git, npm, pnpm, npx, docker, and gh
+are PATH-shimmed with traps that log every invocation, pass
+read verbs through, and hard-fail push/publish/tag-creation/
+release verbs; a recording GitHub stand-in asserts zero
+non-GET requests; and the repository's refs and tags are
+byte-identical before and after. The script needs no credential
+of any kind — GitHub PR metadata is read unauthenticated, and a
+failed read fails preparation causally rather than rendering a
+plausible blank.
+
+Publishing itself stays where it always was: the release
+workflow, gated on the signed checklist, after both signatures
+exist.
