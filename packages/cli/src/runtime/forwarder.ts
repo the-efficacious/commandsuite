@@ -295,6 +295,12 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
             });
           }
         }
+        if (dataKind === 'environment') {
+          if (!onEnvironmentEvent) {
+            log.warn('environment change received but automatic reload is disabled');
+          }
+          continue;
+        }
 
         // Context control — a broker request to compact or clear this
         // member's agent context.

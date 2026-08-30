@@ -448,7 +448,12 @@ export async function runAgentSession(
         },
       },
     );
-    if (instructionsEventBeforeSpawn || environmentEventBeforeSpawn) coordinator.request();
+    if (instructionsEventBeforeSpawn || environmentEventBeforeSpawn) {
+      if (environmentEventBeforeSpawn) {
+        log.info('environment changed before agent spawn — scheduling one refresh cycle');
+      }
+      coordinator.request();
+    }
   } else if (instructionsEventBeforeSpawn) {
     log.info('instructions changed before spawn — packet already current');
   }

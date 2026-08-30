@@ -717,7 +717,10 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
     );
     for (const name of Object.keys(secretsEnv)) delete secretsEnv[name];
     Object.assign(secretsEnv, fresh);
-    log.info('runner environment refreshed', { envNames: Object.keys(fresh) });
+    log.info('runner environment refreshed', {
+      envNames: Object.keys(fresh),
+      registeredEnvNames: secretNames.filter((name) => name in fresh),
+    });
     return secretsEnv;
   };
 
