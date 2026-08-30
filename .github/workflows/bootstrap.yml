@@ -1,0 +1,58 @@
+name: Headless bootstrap
+
+# Brings up the whole ecosystem from a clean checkout with nobody at a
+# terminal — broker seeded, web UI reachable and signed into, a runner
+# member enrolled through the device-code flow whose credential resolves
+# from its working directory with no env token, runner preflight green.
+# It stops before starting a live runner: CI has no model credential,
+# and the script says so rather than pretending. A live connection is
+# proven on a real seat (docs/headless-setup.mdx).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      - name: Bring the ecosystem up, headless
+        env:
+          CSUITE_BOOTSTRAP_DIR: ${{ runner.temp }}/csuite-bootstrap
+          CSUITE_AUTH_CONFIG_PATH: ${{ runner.temp }}/csuite-bootstrap/auth.json
+          CSUITE_PORT: 8719
+        run: scripts/bootstrap.sh up </dev/null
+
+      - name: Verify is idempotent against the running stack
+        env:
+          CSUITE_BOOTSTRAP_DIR: ${{ runner.temp }}/csuite-bootstrap
+          CSUITE_AUTH_CONFIG_PATH: ${{ runner.temp }}/csuite-bootstrap/auth.json
+          CSUITE_PORT: 8719
+        run: scripts/bootstrap.sh verify </dev/null
+
+      - name: Stop the broker
+        if: always()
+        env:
+          CSUITE_BOOTSTRAP_DIR: ${{ runner.temp }}/csuite-bootstrap
+        run: scripts/bootstrap.sh down

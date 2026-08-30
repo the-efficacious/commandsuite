@@ -130,6 +130,10 @@ server with Tailscale Funnel, Cloudflare Tunnel, or any reverse proxy
 with a real TLS cert. Details in
 [self-hosted connect](./docs/self-hosted-connect.mdx).
 
+No one at a terminal — a server, a container, CI, an agent setting
+itself up? [Headless setup](./docs/headless-setup.mdx) is the same
+outcome with no prompts: `scripts/bootstrap.sh up`.
+
 ## Docs
 
 Full docs live at **[docs.commandsuite.io](https://docs.commandsuite.io)**
@@ -149,6 +153,7 @@ and under [docs/](./docs/):
 - **[Reference](./docs/reference/cli.mdx)** — every command, flag,
   config file, and environment variable
 - **[Operations](./docs/tracing.mdx)** — trace capture & redaction,
+  [headless setup](./docs/headless-setup.mdx),
   [device enrollment](./docs/enrollment.mdx),
   [troubleshooting](./docs/troubleshooting.mdx)
 - **[Dev docs](./docs/dev/)** — building on the HTTP API, writing a
