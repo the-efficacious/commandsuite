@@ -37,6 +37,7 @@ import type {
   RespawnPosture,
 } from '../adapter.js';
 import { type CodexCompactOutcome, findCodexBinary, spawnCodex } from './adapter.js';
+import { LocalMcpConfigError, loadLocalMcpConfig } from './local-mcp.js';
 
 /**
  * uid-0 posture. Codex has no root refusal — it runs with sandbox
@@ -114,6 +115,31 @@ async function codexCacheCheck(): Promise<AgentDoctorCheck> {
       name,
       status: 'WARN',
       detail: `could not stat ${probe}: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
+function codexLocalMcpCheck(): AgentDoctorCheck {
+  const name = 'codex local MCP servers';
+  try {
+    const config = loadLocalMcpConfig();
+    const enabled = Object.entries(config.servers)
+      .filter(([, server]) => server.enabled)
+      .map(([serverName]) => serverName)
+      .sort();
+    return {
+      name,
+      status: 'PASS',
+      detail:
+        enabled.length === 0
+          ? `none configured (source: ${config.path})`
+          : `${enabled.join(', ')} (source: ${config.path})`,
+    };
+  } catch (err) {
+    return {
+      name,
+      status: 'FAIL',
+      detail: err instanceof LocalMcpConfigError ? err.message : String(err),
     };
   }
 }
@@ -374,7 +400,7 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
     },
 
     async doctor(): Promise<AgentDoctorCheck[]> {
-      return [codexRootCheck(), await codexCacheCheck()];
+      return [codexRootCheck(), await codexCacheCheck(), codexLocalMcpCheck()];
     },
   };
   return adapter;

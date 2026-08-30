@@ -24,7 +24,8 @@
  *     the check runs a real `fs.statfs` and gets a real answer.
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -198,6 +199,7 @@ describe('adapter doctor() checks', () => {
   // expectations below would then be asserting the wrong branch on their
   // machine and the right one in CI.
   const savedIsSandbox = process.env.IS_SANDBOX;
+  const savedConfigHome = process.env.XDG_CONFIG_HOME;
 
   function setUid(uid: number | null): void {
     if (uid === null) delete process.getuid;
@@ -218,6 +220,8 @@ describe('adapter doctor() checks', () => {
     else process.env.XDG_CACHE_HOME = savedCacheHome;
     if (savedIsSandbox === undefined) delete process.env.IS_SANDBOX;
     else process.env.IS_SANDBOX = savedIsSandbox;
+    if (savedConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = savedConfigHome;
   });
 
   async function claudeChecks(): Promise<AgentDoctorCheck[]> {
@@ -391,6 +395,41 @@ describe('adapter doctor() checks', () => {
       setUid(1000);
       const names = (await claudeChecks()).map((c) => c.name);
       expect(names).toEqual(['not running as root']);
+    });
+  });
+
+  describe('codex: local MCP servers', () => {
+    it('lists enabled servers from the durable source without a credential', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'csuite-doctor-mcp-'));
+      const dir = join(root, 'csuite', 'codex');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, 'mcp-servers.json'),
+        JSON.stringify({
+          version: 1,
+          servers: {
+            chrome: { command: 'node' },
+            off: { command: 'node', enabled: false },
+          },
+        }),
+      );
+      process.env.XDG_CONFIG_HOME = root;
+      const check = byName(await codexChecks(), 'codex local MCP servers');
+      expect(check?.status).toBe('PASS');
+      expect(check?.detail).toContain('chrome');
+      expect(check?.detail).not.toContain('off');
+      expect(check?.detail).toContain(join(dir, 'mcp-servers.json'));
+    });
+
+    it('FAILs invalid durable configuration with an actionable path', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'csuite-doctor-mcp-bad-'));
+      const dir = join(root, 'csuite', 'codex');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'mcp-servers.json'), '{');
+      process.env.XDG_CONFIG_HOME = root;
+      const check = byName(await codexChecks(), 'codex local MCP servers');
+      expect(check?.status).toBe('FAIL');
+      expect(check?.detail).toContain(join(dir, 'mcp-servers.json'));
     });
   });
 });

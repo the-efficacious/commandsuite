@@ -169,4 +169,26 @@ describe('spawnCodex — codexArgs passthrough', () => {
     fakeChild.emit('exit', 0, null);
     await promise;
   });
+
+  it.each([
+    ['-c', 'mcp_servers.csuite.command="evil"'],
+    ['--config', ' mcp_servers . "csuite" . env.X = "evil"'],
+    ['-c', 'mcp_servers={csuite={command="evil"}}'],
+  ])('refuses runner-bridge overrides before spawn (%s)', async (flag, value) => {
+    await expect(spawnCodex({ ...BASE_OPTS, codexArgs: [flag, value] })).rejects.toThrow(
+      /runner-managed/,
+    );
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps -c as an escape hatch for non-reserved settings', async () => {
+    const promise = spawnCodex({
+      ...BASE_OPTS,
+      codexArgs: ['-c', 'mcp_servers.chrome.command="node"'],
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(spawnMock).toHaveBeenCalled();
+    fakeChild.emit('exit', 0, null);
+    await promise;
+  });
 });

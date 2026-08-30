@@ -58,6 +58,123 @@ describe('setupCodexHome', () => {
     }
   });
 
+  it('composes durable local servers before the runner-managed bridge', () => {
+    const fakeRealHome = join(workDir, 'fake-codex');
+    mkdirSync(fakeRealHome);
+    const localConfig = join(workDir, 'mcp-servers.json');
+    writeFileSync(
+      localConfig,
+      JSON.stringify({
+        version: 1,
+        servers: {
+          chrome: {
+            command: '/usr/bin/node',
+            args: ['/opt/chrome-mcp.js', '--headless'],
+            env: { DISPLAY: ':99' },
+            cwd: '/work',
+            startupTimeoutSec: 20,
+            toolTimeoutSec: 60,
+          },
+        },
+      }),
+    );
+    const handle = setupCodexHome({
+      realCodexHome: fakeRealHome,
+      localMcpConfigPath: localConfig,
+      parentDir: workDir,
+      bridgeCommand: 'node',
+      bridgeArgs: ['cli', 'mcp-bridge'],
+      runnerSocketPath: '/tmp/sock',
+    });
+    try {
+      const toml = readFileSync(handle.configPath, 'utf8');
+      expect(toml).toContain('[mcp_servers.chrome]');
+      expect(toml).toContain('args = ["/opt/chrome-mcp.js", "--headless"]');
+      expect(toml).toContain('[mcp_servers.chrome.env]');
+      expect(toml).toContain('DISPLAY = ":99"');
+      expect(toml.indexOf('[mcp_servers.chrome]')).toBeLessThan(
+        toml.indexOf('[mcp_servers.csuite]'),
+      );
+    } finally {
+      handle.remove();
+    }
+  });
+
+  it('reads the durable file again for each child generation', () => {
+    const fakeRealHome = join(workDir, 'fake-codex');
+    mkdirSync(fakeRealHome);
+    const localConfig = join(workDir, 'mcp-servers.json');
+    const makeHome = () =>
+      setupCodexHome({
+        realCodexHome: fakeRealHome,
+        localMcpConfigPath: localConfig,
+        parentDir: workDir,
+        bridgeCommand: 'node',
+        bridgeArgs: ['cli', 'mcp-bridge'],
+        runnerSocketPath: '/tmp/sock',
+      });
+
+    writeFileSync(
+      localConfig,
+      JSON.stringify({ version: 1, servers: { before: { command: '/bin/true' } } }),
+    );
+    const first = makeHome();
+    expect(readFileSync(first.configPath, 'utf8')).toContain('[mcp_servers.before]');
+    first.remove();
+
+    writeFileSync(
+      localConfig,
+      JSON.stringify({ version: 1, servers: { after: { command: '/bin/true' } } }),
+    );
+    const successor = makeHome();
+    try {
+      const effective = readFileSync(successor.configPath, 'utf8');
+      expect(effective).toContain('[mcp_servers.after]');
+      expect(effective).not.toContain('[mcp_servers.before]');
+      expect(effective).toContain('[mcp_servers.csuite]');
+    } finally {
+      successor.remove();
+    }
+  });
+
+  it('refuses a member server named csuite before creating an ephemeral home', () => {
+    const fakeRealHome = join(workDir, 'fake-codex');
+    mkdirSync(fakeRealHome);
+    const localConfig = join(workDir, 'mcp-servers.json');
+    writeFileSync(
+      localConfig,
+      JSON.stringify({ version: 1, servers: { csuite: { command: 'x' } } }),
+    );
+    expect(() =>
+      setupCodexHome({
+        realCodexHome: fakeRealHome,
+        localMcpConfigPath: localConfig,
+        parentDir: workDir,
+        bridgeCommand: 'node',
+        bridgeArgs: ['cli'],
+        runnerSocketPath: '/tmp/sock',
+      }),
+    ).toThrow(/reserved/);
+    expect(existsSync(join(workDir, 'config.toml'))).toBe(false);
+  });
+
+  it('refuses legacy codex mcp entries and names the supported path', () => {
+    const fakeRealHome = join(workDir, 'fake-codex');
+    mkdirSync(fakeRealHome);
+    writeFileSync(join(fakeRealHome, 'config.toml'), '[mcp_servers.old]\ncommand="node"\n');
+    const localConfig = join(workDir, 'supported.json');
+    expect(() =>
+      setupCodexHome({
+        realCodexHome: fakeRealHome,
+        localMcpConfigPath: localConfig,
+        parentDir: workDir,
+        bridgeCommand: 'node',
+        bridgeArgs: ['cli'],
+        runnerSocketPath: '/tmp/sock',
+      }),
+    ).toThrow(localConfig);
+  });
+
   it('writes an [otel] block when an otel target is supplied', () => {
     const fakeRealHome = join(workDir, 'fake-codex');
     mkdirSync(fakeRealHome);
