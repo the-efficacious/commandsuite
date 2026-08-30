@@ -13,7 +13,16 @@
  *     name and member count
  */
 
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PERMISSIONS } from 'csuite-sdk/types';
@@ -268,6 +277,104 @@ describe('runSetupCommand --non-interactive', { timeout: 30_000 }, () => {
     ).rejects.toThrow(/already exists — refusing to overwrite/);
     expect(readFileSync(tokenFile, 'utf8')).toBe('precious\n');
     expect(() => statSync(join(dir, 'csuite.db'))).toThrow();
+  });
+
+  it('a pre-existing TOTP file leaves nothing behind, and the corrected retry succeeds', async () => {
+    // Rune's reproduction on PR #206: the token file was created before
+    // the TOTP collision was noticed, and the retry then failed on it.
+    const dir = tmpDir();
+    const configPath = join(dir, 'srv', 'csuite.json');
+    const tokenFile = join(dir, 'admin.token');
+    const totpSecretFile = join(dir, 'admin.totp');
+    writeFileSync(totpSecretFile, 'preexisting\n');
+    await expect(
+      runSetupCommand(
+        { configPath, nonInteractive: true, team: 't', member: 'admin', tokenFile, totpSecretFile },
+        () => {},
+      ),
+    ).rejects.toThrow(/--totp-secret-file .* already exists/);
+    // Nothing this run would have created exists: token, config, DB, KEK.
+    for (const path of [
+      tokenFile,
+      configPath,
+      join(dir, 'srv', 'csuite.db'),
+      join(dir, 'srv', 'csuite-kek.bin'),
+    ]) {
+      expect(existsSync(path), path).toBe(false);
+    }
+    // The pre-existing file is untouched.
+    expect(readFileSync(totpSecretFile, 'utf8')).toBe('preexisting\n');
+    // The corrected retry — same token path, fresh TOTP path — succeeds.
+    await runSetupCommand(
+      {
+        configPath,
+        nonInteractive: true,
+        team: 't',
+        member: 'admin',
+        tokenFile,
+        totpSecretFile: join(dir, 'admin-2.totp'),
+      },
+      () => {},
+    );
+    expect(readFileSync(tokenFile, 'utf8')).toMatch(/^csuite_/);
+    expect(existsSync(configPath)).toBe(true);
+  });
+
+  it('refuses identical --token-file and --totp-secret-file before writing anything', async () => {
+    const dir = tmpDir();
+    const same = join(dir, 'both');
+    await expect(
+      runSetupCommand(
+        {
+          configPath: join(dir, 'csuite.json'),
+          nonInteractive: true,
+          team: 't',
+          member: 'admin',
+          tokenFile: same,
+          totpSecretFile: same,
+        },
+        () => {},
+      ),
+    ).rejects.toThrow(/must be different files/);
+    expect(existsSync(same)).toBe(false);
+    expect(existsSync(join(dir, 'csuite.json'))).toBe(false);
+  });
+
+  it('rolls back the secret files when a later step fails for real', async () => {
+    // The config directory exists but is read-only, so minting the KEK
+    // fails AFTER the secrets were written — the branch the path
+    // preflight cannot reach. Root ignores directory modes, so the
+    // failure cannot be produced there; say so rather than pass vacuously.
+    if (process.getuid?.() === 0) {
+      console.warn('skipping: running as root, read-only dir cannot fail');
+      return;
+    }
+    const dir = tmpDir();
+    const srv = join(dir, 'srv');
+    mkdirSync(srv, { mode: 0o500 });
+    const tokenFile = join(dir, 'admin.token');
+    const totpSecretFile = join(dir, 'admin.totp');
+    try {
+      await expect(
+        runSetupCommand(
+          {
+            configPath: join(srv, 'csuite.json'),
+            nonInteractive: true,
+            team: 't',
+            member: 'admin',
+            tokenFile,
+            totpSecretFile,
+          },
+          () => {},
+        ),
+      ).rejects.toThrow(/Nothing this run created was left behind/);
+      expect(existsSync(tokenFile)).toBe(false);
+      expect(existsSync(totpSecretFile)).toBe(false);
+      expect(existsSync(join(srv, 'csuite-kek.bin'))).toBe(false);
+      expect(existsSync(join(srv, 'csuite.json'))).toBe(false);
+    } finally {
+      chmodSync(srv, 0o700);
+    }
   });
 
   it('still refuses when the config already points to a populated team', async () => {

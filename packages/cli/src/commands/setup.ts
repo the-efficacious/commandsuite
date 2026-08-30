@@ -33,7 +33,7 @@
  * csuite.db` is the way to start over.
  */
 
-import { closeSync, mkdirSync, openSync, writeSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, rmSync, writeSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { ENV } from 'csuite-sdk/protocol';
 import type { Permission, Role } from 'csuite-sdk/types';
@@ -247,12 +247,29 @@ function validateNonInteractiveInput(input: SetupCommandInput): NonInteractiveIn
       `setup: invalid --member '${member}' (must be alphanumeric with . _ - allowed, 128 max)`,
     );
   }
-  return {
-    team,
-    member,
-    tokenFile: resolve(input.tokenFile as string),
-    totpSecretFile: input.totpSecretFile !== undefined ? resolve(input.totpSecretFile) : null,
-  };
+  const tokenFile = resolve(input.tokenFile as string);
+  const totpSecretFile = input.totpSecretFile !== undefined ? resolve(input.totpSecretFile) : null;
+  if (totpSecretFile !== null && totpSecretFile === tokenFile) {
+    throw new UsageError(
+      `setup: --token-file and --totp-secret-file must be different files (both: ${tokenFile})`,
+    );
+  }
+  // Every output path is checked BEFORE anything is minted or written, so
+  // a collision on the second file cannot strand the first: an orphaned
+  // token file would make the corrected retry fail on itself, which is
+  // exactly the unattended path this flag exists for.
+  for (const [flag, path] of [
+    ['--token-file', tokenFile],
+    ['--totp-secret-file', totpSecretFile],
+  ] as const) {
+    if (path !== null && existsSync(path)) {
+      throw new UsageError(
+        `setup: ${flag} ${path} already exists — refusing to overwrite a secret file.\n` +
+          '  Remove it or point the flag at a fresh path. Nothing was written.',
+      );
+    }
+  }
+  return { team, member, tokenFile, totpSecretFile };
 }
 
 async function runNonInteractive(
@@ -261,20 +278,47 @@ async function runNonInteractive(
   input: NonInteractiveInput,
   stdout: (line: string) => void,
 ): Promise<void> {
-  try {
-    mkdirSync(dirname(paths.configPath), { recursive: true, mode: 0o700 });
-    server.setKek(server.resolveKek(paths.configPath));
+  // Anything this invocation creates is rolled back if a later step
+  // fails, so a failed run leaves the directory as it found it and a
+  // corrected retry starts clean. Only files that did NOT exist before
+  // are candidates — a pre-existing KEK or an empty-but-present DB
+  // (the recovery path) is never deleted.
+  const kekPath = join(dirname(paths.configPath), 'csuite-kek.bin');
+  const preexisting = new Set(
+    [paths.configPath, paths.dbPath, kekPath].filter((path) => existsSync(path)),
+  );
+  const created: string[] = [];
+  const rollback = () => {
+    for (const path of [
+      input.tokenFile,
+      input.totpSecretFile,
+      paths.configPath,
+      paths.dbPath,
+      kekPath,
+    ]) {
+      if (path === null || preexisting.has(path)) continue;
+      if (created.includes(path) || existsSync(path)) {
+        rmSync(path, { force: true });
+      }
+    }
+  };
 
+  try {
     const token = server.generateBearerToken();
     const totpSecret = input.totpSecretFile !== null ? server.generateTotpSecret() : null;
 
     // Secrets land on disk BEFORE the DB is seeded: if the token file
-    // cannot be created (exists already, unwritable dir), nothing has
-    // been minted that the operator can no longer reach.
+    // cannot be created (unwritable dir, a race with the preflight),
+    // nothing has been minted that the operator can no longer reach.
     writeSecretFile(input.tokenFile, token, '--token-file');
+    created.push(input.tokenFile);
     if (input.totpSecretFile !== null && totpSecret !== null) {
       writeSecretFile(input.totpSecretFile, totpSecret, '--totp-secret-file');
+      created.push(input.totpSecretFile);
     }
+
+    mkdirSync(dirname(paths.configPath), { recursive: true, mode: 0o700 });
+    server.setKek(server.resolveKek(paths.configPath));
 
     await seedBootstrap(server, paths, {
       team: { name: input.team, context: '' },
@@ -308,10 +352,13 @@ async function runNonInteractive(
     stdout(`  CSUITE_TOKEN=$(cat ${input.tokenFile}) csuite roster`);
     stdout('');
   } catch (err) {
-    if (err instanceof server.MemberLoadError || err instanceof server.KekResolutionError) {
-      throw new UsageError(`setup: ${err.message}`);
-    }
-    throw err;
+    rollback();
+    const message = err instanceof Error ? err.message : String(err);
+    const prefixed =
+      err instanceof UsageError || message.startsWith('setup:') ? message : `setup: ${message}`;
+    throw new UsageError(
+      `${prefixed}\n  Nothing this run created was left behind; fix the cause and re-run.`,
+    );
   }
 }
 
