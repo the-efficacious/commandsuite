@@ -51,6 +51,10 @@
     "./text-metrics": {
       "types": "./dist/text-metrics.d.ts",
       "import": "./dist/text-metrics.js"
+    },
+    "./credential-safety": {
+      "types": "./dist/credential-safety.d.ts",
+      "import": "./dist/credential-safety.js"
     }
   },
   "files": [

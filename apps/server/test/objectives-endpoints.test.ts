@@ -18,6 +18,7 @@ import {
   createApp,
   createSqliteObjectivesStore,
   createTokenStoreFromMembers,
+  generateBearerToken,
   InMemoryEventLog,
   SqliteSessionStore,
 } from 'csuite-core';
@@ -772,6 +773,20 @@ describe('POST /objectives/:id/discuss', () => {
     const obj = await createOne(app, ALICE, { assignee: 'carol' });
     const res = await app.request(`/objectives/${obj.id}/discuss`, authed(CAROL, { body: '' }));
     expect(res.status).toBe(400);
+  });
+
+  it('refuses a credential-shaped discussion body without echoing it', async () => {
+    const { app } = await makeApp();
+    const obj = await createOne(app, ALICE, { assignee: 'carol' });
+    const token = generateBearerToken();
+    const res = await app.request(
+      `/objectives/${obj.id}/discuss`,
+      authed(CAROL, { body: `credential ${token}` }),
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('credential-shaped body');
+    expect(body.error).not.toContain(token);
   });
 
   // Thread membership is COMPUTED from assignee + originator + watchers

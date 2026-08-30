@@ -35,6 +35,7 @@ export {
 export {
   Broker,
   type BrokerOptions,
+  CredentialShapedBodyError,
   type IdentityContext,
   InvalidRecipientError,
   type PushContext,

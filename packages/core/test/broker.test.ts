@@ -3,6 +3,8 @@ import type { Message } from 'csuite-sdk/types';
 import { describe, expect, it, vi } from 'vitest';
 import {
   Broker,
+  CredentialShapedBodyError,
+  generateBearerToken,
   InMemoryEventLog,
   InvalidRecipientError,
   type Logger,
@@ -811,5 +813,32 @@ describe('Broker.push recipient validation', () => {
     const err = await broker.push({ to: 'chan:general', body: 'hi' }).catch((e) => e);
     expect(err.message).toContain('data.thread');
     expect(err.to).toBe('chan:general');
+  });
+});
+
+describe('Broker.push credential boundary', () => {
+  it('refuses a plaintext bearer before persistence or fanout without echoing it', async () => {
+    const { broker, eventLog } = makeBroker();
+    await broker.register('alice');
+    const subscriber = vi.fn();
+    broker.subscribe('alice', subscriber);
+    const token = generateBearerToken();
+
+    let failure: unknown;
+    try {
+      await broker.push({ body: `please use ${token} now` }, { from: 'alice' });
+    } catch (err) {
+      failure = err;
+    }
+    expect(failure).toBeInstanceOf(CredentialShapedBodyError);
+    expect(String(failure)).not.toContain(token);
+    expect(await eventLog.query({ viewer: 'alice' })).toEqual([]);
+    expect(subscriber).not.toHaveBeenCalled();
+  });
+
+  it('does not reject prefixes, suffixes, or longer base64url words', async () => {
+    const { broker } = makeBroker();
+    const body = `csuite_${'A'.repeat(42)} csuite_${'B'.repeat(44)} Xcsuite_${'C'.repeat(43)}Y`;
+    await expect(broker.push({ body })).resolves.toBeDefined();
   });
 });

@@ -8,6 +8,7 @@ export default defineConfig({
     protocol: 'src/protocol.ts',
     client: 'src/client.ts',
     'text-metrics': 'src/text-metrics.ts',
+    'credential-safety': 'src/credential-safety.ts',
   },
   format: ['esm'],
   dts: true,
