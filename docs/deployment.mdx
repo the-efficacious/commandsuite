@@ -1,0 +1,121 @@
+---
+title: Deployment
+description: Run CommandSuite as one process, as a container with docker compose, or headlessly with the bootstrap script — what each writes, where secrets go, and how to reach the UI.
+section: Operations
+order: 3
+---
+
+# Deployment
+
+CommandSuite is one process — a broker with SQLite on disk — that
+serves the API and the web UI from the same port. Three ways to run
+it, one outcome each time: a broker, a seeded team, the web UI
+reachable, and (for the last two) a runner member enrolled and ready.
+
+| you have | run | you get |
+|---|---|---|
+| a terminal | `csuite serve` | the first-run wizard, then the broker on `http://127.0.0.1:8717` — [getting started](/docs/getting-started) |
+| a server, a script, CI, an agent | `scripts/bootstrap.sh up` | the same, with no prompts — [headless setup](/docs/headless-setup) |
+| Docker | `docker compose up` | the same, in a container, state on a volume — this page |
+
+## `docker compose up`
+
+From a checkout of the repository:
+
+```bash
+docker compose up -d          # builds the image, seeds, enrols, serves
+docker compose logs -f csuite # watch the bring-up; ends at "listening on http://0.0.0.0:8717"
+open http://127.0.0.1:8717    # the web UI
+```
+
+What the container does, in order, on first start — it is
+[`scripts/bootstrap.sh`](/docs/headless-setup), unchanged, followed by
+the broker in the foreground:
+
+1. `csuite setup --non-interactive` — team `bootstrap`, first member
+   `admin`, bearer token and TOTP secret written to the volume at mode
+   0600.
+2. The broker starts on loopback; `/healthz`, the web UI, an
+   authenticated roster and a TOTP sign-in are checked.
+3. A runner member `builder` is enrolled through the real device-code
+   flow (`csuite connect`, approved from the CLI as `admin`); its
+   credential resolves from `/var/lib/csuite/runner` with no
+   environment variable; `csuite claude --doctor` passes.
+4. The loopback broker stops and the real one runs as PID 1 on
+   `0.0.0.0:8717`. No live runner is started — a container has no
+   model credential — and the log says so.
+
+A restart re-runs the same sequence against the volume: already
+seeded, already enrolled, a few seconds. The image contains no secret
+and prints none; the CLI and broker build from this checkout.
+
+### Reading the secrets
+
+```bash
+docker compose exec csuite cat /var/lib/csuite/secrets/admin.token   # bearer token for admin
+docker compose exec csuite cat /var/lib/csuite/secrets/admin.totp    # base32 TOTP secret for the web UI
+```
+
+Use the token with `CSUITE_TOKEN=… csuite roster --url http://127.0.0.1:8717`
+from your machine, or sign in to the web UI with a code from the
+secret. Both files are the only copies; the broker stores hashes.
+
+### Environment variables
+
+All optional; set them in a `.env` beside `compose.yaml` or on the
+command line.
+
+| variable | default | what it does |
+|---|---|---|
+| `CSUITE_PORT` | `8717` | Host port mapped to the broker. |
+| `CSUITE_TEAM` | `bootstrap` | Team name seeded on first start. |
+| `CSUITE_ADMIN` | `admin` | First member (holds every permission); names the secret files. |
+| `CSUITE_RUNNER` | `builder` | Runner member enrolled on first start. |
+| `CSUITE_RUNNER_VERB` | `claude` | Which runner's preflight is proved: `claude` or `codex`. |
+| `CSUITE_START_RUNNER` | `0` | `1` starts `csuite <verb>` after the bring-up. Needs a model credential in the container; leave at `0` unless you have provided one. |
+| `CSUITE_LOG_LEVEL` | `info` | Broker log threshold. |
+
+Names and team are read only on the first start; later changes do
+nothing until the volume is recreated.
+
+### Volume and reset
+
+Everything the container writes lives in the named volume
+`csuite-state`, mounted at `/var/lib/csuite`: the server directory
+(`server/csuite.json`, databases, KEK), `secrets/`, the runner
+workspace and its auth store, and the file blob store under `data/`.
+Back it up as a unit. To start over:
+
+```bash
+docker compose down -v        # removes the volume: team, tokens, files, traces
+docker compose up -d
+```
+
+### Image
+
+Two stages on a digest-pinned `node:22-bookworm-slim`; the runtime is
+the production dependency tree of the `csuite` meta-package, the
+bootstrap script, and `curl` for health checks, running as the
+unprivileged `node` user. It is large — about 890 MB — because
+`csuite-cli` depends on the Claude Agent SDK's bundled binary
+(~263 MB), which `csuite claude --doctor` checks for; a broker-only
+image without it is a follow-on (#198). No image is published;
+`compose up` builds `commandsuite/csuite:local` from your checkout.
+
+### Verifying a deployment
+
+`scripts/compose-check.sh` is what CI runs and what a person can run:
+`up`, the four assertions above, `restart`, the same four, `down -v`.
+`KEEP=1 scripts/compose-check.sh` leaves the stack running.
+
+## Beyond localhost
+
+The broker serves plain HTTP on whatever it binds — `csuite serve
+--host 0.0.0.0` (or the container's mapped port) is HTTP on the LAN.
+TLS is a configuration choice, not a bind-address side effect: set
+`https.mode` in `csuite.json` to `self-signed` or `custom` (see
+[config files](/docs/reference/config)), or front the broker with
+Tailscale Funnel, Cloudflare Tunnel, or any reverse proxy that holds a
+real certificate. `127.0.0.1` is a secure context, so PWA install and
+push notifications work there without a certificate. Pairing with a
+hosted control plane: [self-hosted connect](/docs/self-hosted-connect).
