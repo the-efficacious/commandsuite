@@ -47,7 +47,7 @@ const BACKOFF_MAX_MS = 30_000;
  */
 export interface ContextControlEvent {
   requestId: string;
-  verb: 'compact' | 'clear';
+  verb: 'compact' | 'clear' | 'reload';
   /**
    * Member this control is FOR.
    *
@@ -81,7 +81,7 @@ export function parseContextControl(data: unknown): ContextControlEvent | null {
   if (d.kind !== 'context_control') return null;
   const { requestId, verb, target, requestedBy, reason } = d;
   if (typeof requestId !== 'string' || requestId.length === 0) return null;
-  if (verb !== 'compact' && verb !== 'clear') return null;
+  if (verb !== 'compact' && verb !== 'clear' && verb !== 'reload') return null;
   if (typeof target !== 'string' || target.length === 0) return null;
   if (typeof requestedBy !== 'string' || requestedBy.length === 0) return null;
   return {
@@ -148,6 +148,8 @@ export interface ForwarderOptions {
    * ones.
    */
   onInstructionsEvent?: (message: Message) => void;
+  /** Invoked when this member's resolved runner environment changed. */
+  onEnvironmentEvent?: (message: Message) => void;
   /**
    * Invoked for every message whose `data.kind` is `'context_control'`
    * — the broker is asking this member's runner to compact or clear
@@ -182,6 +184,7 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
     onObjectiveEvent,
     onToolSourceEvent,
     onInstructionsEvent,
+    onEnvironmentEvent,
     onContextControlEvent,
     presence,
   } = opts;
@@ -281,6 +284,22 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
               error: err instanceof Error ? err.message : String(err),
             });
           }
+        }
+
+        if (dataKind === 'environment' && onEnvironmentEvent) {
+          try {
+            onEnvironmentEvent(message);
+          } catch (err) {
+            log.error('onEnvironmentEvent handler threw', {
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+        if (dataKind === 'environment') {
+          if (!onEnvironmentEvent) {
+            log.warn('environment change received but automatic reload is disabled');
+          }
+          continue;
         }
 
         // Context control — a broker request to compact or clear this

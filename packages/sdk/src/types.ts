@@ -2207,6 +2207,14 @@ export interface ActivityUserPrompt {
 
 // ───────────────────────── Context control ────────────────────────────
 
+/** A secret or variable mutation changed one member's resolved runner environment. */
+export interface EnvironmentEvent {
+  readonly kind: 'environment';
+  readonly action: 'value_set' | 'bound' | 'unbound';
+  readonly actor: string;
+  readonly envName: string;
+}
+
 /**
  * What a broker-originated context control asks a runner to do.
  *
@@ -2224,7 +2232,7 @@ export interface ActivityUserPrompt {
  * is the whole point: a restart costs the member its place on the net,
  * and these do not.
  */
-export type ContextControlVerb = 'compact' | 'clear';
+export type ContextControlVerb = 'compact' | 'clear' | 'reload';
 
 /**
  * How a context control ended. The broker records the request as

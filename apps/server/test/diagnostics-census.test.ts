@@ -213,7 +213,7 @@ const APP_IN_SCOPE = [
  * global bucket still counts. So it belongs to the operational half of
  * the census, and stays out of retention.
  */
-const TOTAL_SITES = 68;
+const TOTAL_SITES = 69;
 
 function messagesIn(file: string): string[] {
   let src: string | null = null;

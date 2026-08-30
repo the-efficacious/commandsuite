@@ -68,6 +68,8 @@ export interface AgentSessionInput {
   noTrace?: boolean;
   /** Skip resolving/injecting broker-held secrets. */
   noSecrets?: boolean;
+  /** Do not restart automatically when the broker reports an environment change. */
+  noEnvReload?: boolean;
   /** Override the `csuite mcp-bridge` command (tests). */
   bridgeCommand?: string;
   /** Override the bridge args (tests). */
@@ -139,6 +141,7 @@ export async function runAgentSession(
   // fetch and the first spawn).
   let coordinator: RestartCoordinator | null = null;
   let instructionsEventBeforeSpawn = false;
+  let environmentEventBeforeSpawn = false;
   // Same story for context controls: the coordinator needs a live agent
   // process, so a control landing in the startup window is held and
   // replayed once one exists. Held rather than dropped because the
@@ -173,6 +176,11 @@ export async function runAgentSession(
       onInstructionsEvent: () => {
         if (coordinator !== null) coordinator.request();
         else instructionsEventBeforeSpawn = true;
+      },
+      onEnvironmentEvent: () => {
+        if (input.noEnvReload) return;
+        if (coordinator !== null) coordinator.request();
+        else environmentEventBeforeSpawn = true;
       },
       onContextControlEvent: (control) => {
         if (contextControl !== null) void contextControl.handle(control);
@@ -411,6 +419,7 @@ export async function runAgentSession(
           return { sessionId: prior.sessionId() };
         },
         refreshInstructions: () => runner.refreshInstructions(),
+        refreshSecrets: () => runner.refreshSecrets(),
         respawn: async (prior) => {
           generationStartedAt = Date.now();
           runner.captureHost?.enqueue({
@@ -439,7 +448,12 @@ export async function runAgentSession(
         },
       },
     );
-    if (instructionsEventBeforeSpawn) coordinator.request();
+    if (instructionsEventBeforeSpawn || environmentEventBeforeSpawn) {
+      if (environmentEventBeforeSpawn) {
+        log.info('environment changed before agent spawn — scheduling one refresh cycle');
+      }
+      coordinator.request();
+    }
   } else if (instructionsEventBeforeSpawn) {
     log.info('instructions changed before spawn — packet already current');
   }
@@ -515,6 +529,54 @@ export async function runAgentSession(
         currentProc = next;
         attachGenerationWatch(next);
         process.stderr.write(`csuite ${meta.id}: context cleared — agent restarted cold\n`);
+      },
+      reload: async (reason) => {
+        if (respawnForClear === null) {
+          throw new Error(`the ${meta.id} runner cannot restart its agent in place`);
+        }
+        adapter.detachForRestart?.();
+        const prior = currentProc;
+        expectedRestartExit = prior;
+        await prior.shutdown(reason);
+        const code = await prior.exitCode.catch(() => 1);
+        finishRun({
+          meta,
+          runner,
+          log,
+          reason,
+          exitCode: code,
+          startedAt: generationStartedAt,
+          agentSessionId: prior.sessionId(),
+        });
+        try {
+          await runner.refreshInstructions();
+        } catch (err) {
+          log.warn('instructions refetch failed during reload — using cached packet', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        try {
+          await runner.refreshSecrets();
+        } catch (err) {
+          log.warn('environment refetch failed during reload — using cached environment', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        generationStartedAt = Date.now();
+        runner.captureHost?.enqueue({
+          kind: 'session_start',
+          ts: generationStartedAt,
+          runner: meta.id,
+          runnerVersion: CLI_VERSION,
+          captureTier: meta.captureTier,
+        });
+        const next = await respawnForClear(ctx, {
+          resume: true,
+          sessionId: prior.sessionId(),
+        });
+        currentProc = next;
+        attachGenerationWatch(next);
+        process.stderr.write(`csuite ${meta.id}: environment reloaded — agent resumed\n`);
       },
       report: (event) => {
         // The ack rides the activity plane, so it lands in the member's

@@ -2857,6 +2857,31 @@ export function createApp(options: AppOptions): CreatedApp {
     return ctx.json({ error: err instanceof Error ? err.message : String(err) }, 500);
   };
 
+  const publishEnvironmentEvent = async (
+    target: string,
+    action: 'value_set' | 'bound' | 'unbound',
+    actor: string,
+    envName: string,
+  ): Promise<void> => {
+    try {
+      await broker.push(
+        {
+          body: `Runner environment ${action.replace('_', ' ')} for ${envName}.`,
+          level: 'info',
+          data: { kind: 'environment', action, actor, envName },
+        },
+        { from: 'csuite', recipients: [target] },
+      );
+    } catch (err) {
+      logger.warn('failed to fanout runner environment event', {
+        target,
+        action,
+        envName,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  };
+
   if (secrets !== undefined) {
     const summarizeSecret = (secret: Secret, viewer: string): SecretSummary => ({
       ...secret,
@@ -3108,6 +3133,12 @@ export function createApp(options: AppOptions): CreatedApp {
           void publishSecretEvent(secret, 'value_set', member.name, {
             body: `The value of secret '${secret.slug}' was updated by ${member.name}. Running agents pick this up on their next runner start.`,
           });
+          const targets = secret.allMembers
+            ? members.members().map((entry) => entry.name)
+            : secrets.listBindings(secret.id);
+          for (const target of targets) {
+            void publishEnvironmentEvent(target, 'value_set', member.name, secret.envName);
+          }
         });
         return c.json({ ok: true });
       } catch (err) {
@@ -3159,6 +3190,7 @@ export function createApp(options: AppOptions): CreatedApp {
           body: `${parsed.data.member} was given the secret '${secret.slug}' (${secret.envName}) by ${member.name}. It applies on their next runner start.`,
           extra: { member: parsed.data.member },
         });
+        void publishEnvironmentEvent(parsed.data.member, 'bound', member.name, secret.envName);
       });
       return c.json({ ok: true, boundMembers: secrets.listBindings(secret.id) });
     });
@@ -3180,6 +3212,7 @@ export function createApp(options: AppOptions): CreatedApp {
           recipients: secretRecipients(secret, name),
           extra: { member: name },
         });
+        void publishEnvironmentEvent(name, 'unbound', member.name, secret.envName);
       });
       return c.json({ ok: true, boundMembers: secrets.listBindings(secret.id) });
     });
@@ -3467,6 +3500,12 @@ export function createApp(options: AppOptions): CreatedApp {
           void publishVariableEvent(variable, 'value_set', member.name, {
             body: `The value of variable '${variable.slug}' was updated by ${member.name}. Running agents pick this up on their next runner start.`,
           });
+          const targets = variable.allMembers
+            ? members.members().map((entry) => entry.name)
+            : variables.listBindings(variable.id);
+          for (const target of targets) {
+            void publishEnvironmentEvent(target, 'value_set', member.name, variable.envName);
+          }
         });
         return c.json({ ok: true });
       } catch (err) {
@@ -3518,6 +3557,7 @@ export function createApp(options: AppOptions): CreatedApp {
           body: `${parsed.data.member} was given the variable '${variable.slug}' (${variable.envName}) by ${member.name}. It applies on their next runner start.`,
           extra: { member: parsed.data.member },
         });
+        void publishEnvironmentEvent(parsed.data.member, 'bound', member.name, variable.envName);
       });
       return c.json({ ok: true, boundMembers: variables.listBindings(variable.id) });
     });
@@ -3537,6 +3577,7 @@ export function createApp(options: AppOptions): CreatedApp {
           recipients: variableRecipients(variable, name),
           extra: { member: name },
         });
+        void publishEnvironmentEvent(name, 'unbound', member.name, variable.envName);
       });
       return c.json({ ok: true, boundMembers: variables.listBindings(variable.id) });
     });
@@ -5419,7 +5460,9 @@ export function createApp(options: AppOptions): CreatedApp {
           body:
             parsed.data.verb === 'compact'
               ? `${member.name} asked your runner to compact your context${parsed.data.reason ? `: ${parsed.data.reason}` : ''}.`
-              : `${member.name} asked your runner to clear your context${parsed.data.reason ? `: ${parsed.data.reason}` : ''}. Your instruction blocks and open objectives are re-delivered afterwards.`,
+              : parsed.data.verb === 'reload'
+                ? `${member.name} asked your runner to reload its environment${parsed.data.reason ? `: ${parsed.data.reason}` : ''}. The current conversation is resumed.`
+                : `${member.name} asked your runner to clear your context${parsed.data.reason ? `: ${parsed.data.reason}` : ''}. Your instruction blocks and open objectives are re-delivered afterwards.`,
           level: 'notice',
           data: {
             kind: 'context_control',

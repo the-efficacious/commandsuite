@@ -61,6 +61,8 @@ export interface RestartHooks {
   stopCurrent(reason: string): Promise<{ sessionId: string | null }>;
   /** Refetch instructions. A rejection aborts nothing — see run(). */
   refreshInstructions(): Promise<unknown>;
+  /** Refetch secrets and variables; failure keeps the prior atomic snapshot. */
+  refreshSecrets(): Promise<unknown>;
   /**
    * Spawn the successor. An instruction restart ALWAYS resumes — the
    * whole point is that the successor holds the same conversation under
@@ -191,6 +193,13 @@ export function createRestartCoordinator(
       // The edit that triggered us is NOT applied — keep the cycle
       // armed so a later attempt retries the fetch.
       rearm = true;
+    }
+    try {
+      await hooks.refreshSecrets();
+    } catch (err) {
+      hooks.log.warn('environment refetch failed — respawning with cached environment', {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
     // Edits landing after this point missed the fetch; they re-arm.
     covered = false;

@@ -65,6 +65,9 @@ function harness(opts: { activity: ActivityObservation | null }) {
       calls.push('refresh');
       return h.onRefresh();
     },
+    refreshSecrets: async () => {
+      calls.push('refresh-secrets');
+    },
     respawn: async (prior) => {
       calls.push(`respawn:${prior.sessionId}`);
       return h.onRespawn();
@@ -104,7 +107,13 @@ describe('drain ordering', () => {
     activity.set('idle');
     await settleFully(h);
 
-    expect(h.calls).toEqual(['detach', 'stop:restart-instructions', 'refresh', 'respawn:sess-1']);
+    expect(h.calls).toEqual([
+      'detach',
+      'stop:restart-instructions',
+      'refresh',
+      'refresh-secrets',
+      'respawn:sess-1',
+    ]);
   });
 
   it('proceeds immediately when already idle', async () => {
@@ -124,6 +133,7 @@ describe('drain ordering', () => {
       'detach',
       'stop:restart-instructions',
       'refresh',
+      'refresh-secrets',
       'respawn:sess-1',
     ]);
   });

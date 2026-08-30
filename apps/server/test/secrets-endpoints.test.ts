@@ -415,6 +415,25 @@ describe('change events', () => {
     for (const call of calls) {
       expect(JSON.stringify(call[0])).not.toContain('ghp_neverinevents');
     }
+
+    const environmentCalls = pushSpy.mock.calls.filter(
+      (call) => (call[0]?.data as { kind?: string } | undefined)?.kind === 'environment',
+    );
+    const valueChanged = environmentCalls.find(
+      (call) => (call[0]?.data as { action?: string } | undefined)?.action === 'value_set',
+    );
+    expect(valueChanged?.[0]?.data).toEqual({
+      kind: 'environment',
+      action: 'value_set',
+      actor: 'admin',
+      envName: 'GITHUB_TOKEN',
+    });
+    expect(valueChanged).toBeDefined();
+    expect((valueChanged?.[1] as { recipients: string[] } | undefined)?.recipients).toEqual([
+      'bound',
+    ]);
+    expect(JSON.stringify(valueChanged)).not.toContain('ghp_neverinevents');
+    expect(JSON.stringify(valueChanged)).not.toContain('secret_slug');
   });
 
   it('unbound events still reach the removed member', async () => {

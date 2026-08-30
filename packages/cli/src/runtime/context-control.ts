@@ -75,6 +75,8 @@ export interface ContextControlHooks {
    * capture host). Resolves once the successor is up.
    */
   clear(reason: string): Promise<void>;
+  /** Restart while resuming the same conversation, refreshing instructions and environment. */
+  reload(reason: string): Promise<void>;
   /** Emit the ack onto the member's activity stream. */
   report(event: ActivityContextControl): void;
   /**
@@ -203,6 +205,21 @@ export function createContextControlCoordinator(
     ack(control, 'applied');
   };
 
+  const runReload = async (control: ContextControlEvent): Promise<void> => {
+    await waitForIdle();
+    if (closed) {
+      hooks.logger.warn('session ending — reload abandoned before swap');
+      ack(control, 'failed', { detail: 'session ended before the reload could be applied' });
+      return;
+    }
+    await hooks.reload(
+      control.reason !== undefined
+        ? `context-reload (${control.requestedBy}): ${control.reason}`
+        : `context-reload (${control.requestedBy})`,
+    );
+    ack(control, 'applied');
+  };
+
   const run = async (control: ContextControlEvent): Promise<void> => {
     try {
       if (control.verb === 'compact') {
@@ -213,7 +230,7 @@ export function createContextControlCoordinator(
       // the process, so holding the gate across a summarisation that
       // can take 20s+ would stall an unrelated instruction-restart for
       // no benefit.
-      await hooks.gate(() => runClear(control));
+      await hooks.gate(() => (control.verb === 'reload' ? runReload(control) : runClear(control)));
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       hooks.logger.error('control failed', {

@@ -59,6 +59,7 @@ export interface ClaudeCommandInput {
    * environment. `csuite claude --no-secrets` sets this.
    */
   noSecrets?: boolean;
+  noEnvReload?: boolean;
 }
 
 /**
@@ -79,6 +80,7 @@ export async function runClaudeCommand(input: ClaudeCommandInput): Promise<numbe
     logger: input.logger,
     noTrace: input.noTrace,
     noSecrets: input.noSecrets,
+    noEnvReload: input.noEnvReload,
     bridgeCommand: input.bridgeCommand,
     bridgeArgs: input.bridgeArgs,
   });

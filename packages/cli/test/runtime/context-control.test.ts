@@ -82,6 +82,9 @@ function harness(
       calls.push(`clear:${reason}`);
       await opts.clear?.(reason);
     },
+    reload: async (reason) => {
+      calls.push(`reload:${reason}`);
+    },
     report: (event) => {
       acks.push(event);
     },
@@ -214,6 +217,15 @@ describe('acknowledgement', () => {
 });
 
 describe('clear', () => {
+  it('reloads at idle and acks applied', async () => {
+    const h = harness();
+
+    await h.coordinator.handle(control({ verb: 'reload' }));
+
+    expect(h.calls).toEqual(['reload:context-reload (director)']);
+    expect(h.acks[0]).toMatchObject({ verb: 'reload', outcome: 'applied' });
+  });
+
   it('waits for idle before swapping, and passes the requester through', async () => {
     const activity = fakeActivity('working');
     const h = harness({ activity: activity.observation });
@@ -250,6 +262,7 @@ describe('clear', () => {
       activity: () => fakeActivity('idle').observation,
       compact: async () => ({ supported: true, applied: true }),
       clear: async () => {},
+      reload: async () => {},
       report: (e) => acks.push(e),
       gate: async (fn) => {
         gated.push('enter');
@@ -285,6 +298,7 @@ describe('serialization and shutdown', () => {
         if (id === 1) await first.promise;
         order.push(`end:${id}`);
       },
+      reload: async () => {},
       report: (e) => acks.push(e),
       gate: (fn) => fn(),
       logger: silentLogger(),

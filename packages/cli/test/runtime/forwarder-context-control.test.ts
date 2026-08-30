@@ -58,10 +58,12 @@ const wellFormed = {
  */
 async function drive(messages: Message[]): Promise<{
   controls: ContextControlEvent[];
+  environmentEvents: Message[];
   sinkEvents: Array<{ content: string; meta: Record<string, string> }>;
   logs: string[];
 }> {
   const controls: ContextControlEvent[] = [];
+  const environmentEvents: Message[] = [];
   const sinkEvents: Array<{ content: string; meta: Record<string, string> }> = [];
   const rec = recordingLogger();
   const ctrl = new AbortController();
@@ -94,11 +96,22 @@ async function drive(messages: Message[]): Promise<{
     signal: ctrl.signal,
     logger: rec.logger,
     onContextControlEvent: (control) => controls.push(control),
+    onEnvironmentEvent: (message) => environmentEvents.push(message),
   });
-  return { controls, sinkEvents, logs: rec.messages() };
+  return { controls, environmentEvents, sinkEvents, logs: rec.messages() };
 }
 
 describe('context control routing', () => {
+  it('routes environment changes to the lifecycle handler and keeps them off chat', async () => {
+    const message = makeMessage({
+      data: { kind: 'environment', action: 'value_set', actor: 'admin', envName: 'TOKEN' },
+    });
+    const { environmentEvents, sinkEvents } = await drive([message]);
+
+    expect(environmentEvents).toEqual([message]);
+    expect(sinkEvents).toEqual([]);
+  });
+
   it('routes a well-formed control to the handler and keeps it OFF the channel sink', async () => {
     const { controls, sinkEvents } = await drive([makeMessage({ data: wellFormed })]);
 

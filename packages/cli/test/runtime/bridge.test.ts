@@ -179,6 +179,7 @@ describeIfBuilt('runner + bridge end-to-end', () => {
       'broadcast',
       'channels_list',
       'channels_post',
+      'context_control',
       'fs_download',
       'fs_ls',
       'fs_mkdir',

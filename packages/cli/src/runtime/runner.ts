@@ -138,6 +138,8 @@ export interface RunnerOptions {
    * `csuite claude --no-secrets` sets this to `true`.
    */
   noSecrets?: boolean;
+  /** Disable automatic restarts on broker environment-change events. */
+  noEnvReload?: boolean;
   /**
    * Optional presence signal the forwarder will flip between
    * `connecting` / `online` / `offline`. Callers that want to render
@@ -170,6 +172,7 @@ export interface RunnerOptions {
    * message; nothing restarts.
    */
   onInstructionsEvent?: (message: Message) => void;
+  onEnvironmentEvent?: (message: Message) => void;
   /**
    * Invoked for every `data.kind === 'context_control'` event — the
    * broker is asking this runner to compact or clear its agent's
@@ -204,6 +207,8 @@ export interface RunnerHandle {
    * whether stale-but-cached is acceptable for their operation.
    */
   refreshInstructions(): Promise<InstructionsResponse>;
+  /** Re-resolve the current environment and atomically replace the live snapshot. */
+  refreshSecrets(): Promise<Readonly<Record<string, string>>>;
   /**
    * The live capture host owning the activity uploader, the busy
    * signal, and the Claude Code hook server. `null` when the runner
@@ -695,6 +700,30 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
     return fresh;
   };
 
+  const refreshSecrets = async (): Promise<Readonly<Record<string, string>>> => {
+    if (options.noSecrets) return secretsEnv;
+    const resolved = await brokerClient.resolveSecrets();
+    const fresh: Record<string, string> = {};
+    for (const [name, value] of Object.entries(resolved.env)) {
+      if (!/^[A-Z][A-Z0-9_]*$/.test(name) || isReservedEnvName(name)) {
+        log.warn('dropping secret with reserved/invalid env name', { name });
+        continue;
+      }
+      fresh[name] = value;
+    }
+    const secretNames = resolved.secretEnvNames ?? Object.keys(fresh);
+    registerSecretValues(
+      secretNames.map((name) => fresh[name]).filter((v): v is string => v !== undefined),
+    );
+    for (const name of Object.keys(secretsEnv)) delete secretsEnv[name];
+    Object.assign(secretsEnv, fresh);
+    log.info('runner environment refreshed', {
+      envNames: Object.keys(fresh),
+      registeredEnvNames: secretNames.filter((name) => name in fresh),
+    });
+    return secretsEnv;
+  };
+
   const forwarderPromise = runForwarder({
     sink,
     brokerClient,
@@ -710,6 +739,9 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
     },
     ...(options.onInstructionsEvent !== undefined
       ? { onInstructionsEvent: options.onInstructionsEvent }
+      : {}),
+    ...(options.onEnvironmentEvent !== undefined
+      ? { onEnvironmentEvent: options.onEnvironmentEvent }
       : {}),
     ...(options.onContextControlEvent !== undefined
       ? { onContextControlEvent: options.onContextControlEvent }
@@ -772,6 +804,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
       return instructions;
     },
     refreshInstructions,
+    refreshSecrets,
     rebrief: (reason) => sendRebrief(reason),
     captureHost,
     secretsEnv,
