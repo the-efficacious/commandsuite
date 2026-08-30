@@ -124,7 +124,7 @@ jobs:
             || { echo "::group::journalctl -u csuite-$(id -un)"; sudo journalctl -u "csuite-$(id -un)" --no-pager | tail -60; echo "::endgroup::"; exit 2; }
           systemd-analyze verify "/etc/systemd/system/csuite-$(id -un).service"
           echo "unit verified"
-          sudo test "$(stat -c %a "/etc/sudoers.d/$(id -un)-csuite-runner")" = 440
+          [ "$(sudo stat -c %a "/etc/sudoers.d/$(id -un)-csuite-runner")" = 440 ]
           echo "sudoers installed at 0440"
 
       - name: Reinstall over the live service (root-0440 snapshot path)
