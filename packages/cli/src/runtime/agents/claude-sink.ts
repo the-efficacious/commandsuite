@@ -27,7 +27,11 @@ import type { SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { Logger } from 'csuite-core';
 import type { RunnerConditionCode, RunnerControlFrame } from 'csuite-sdk/types';
 import type { ChannelDeliveryReceipt, ChannelEventSink } from '../forwarder.js';
-import { classifyRunnerFailure, RUNNER_CONDITION_DETAIL } from '../runner-condition.js';
+import {
+  classifyRunnerFailure,
+  isUnactedClaudeFailure,
+  RUNNER_CONDITION_DETAIL,
+} from '../runner-condition.js';
 import { formatChannelEvent } from './channel-format.js';
 
 const DEFAULT_BUNDLE_WINDOW_MS = 200;
@@ -189,7 +193,11 @@ export function createClaudeChannelSink(opts: ClaudeChannelSinkOptions): ClaudeC
     observe(message) {
       if (message.type === 'assistant' && turn !== null) {
         const code = classifyRunnerFailure(message);
-        if (code !== 'unknown') {
+        // A typed SDK error is itself the degraded fact. `unknown` means
+        // "known failure, reason not yet classified" when that field is
+        // present; it means "no prose match" only for legacy messages that
+        // carry no structured error.
+        if (message.error !== undefined || code !== 'unknown') {
           turn.failureCode = code;
           sendControl?.({
             kind: 'runner_condition',
@@ -217,7 +225,9 @@ export function createClaudeChannelSink(opts: ClaudeChannelSinkOptions): ClaudeC
       if (message.type !== 'result' || turn === null) return;
       const current = turn;
       turn = null;
-      const failed = message.subtype !== 'success' || current.failureCode !== undefined;
+      const unactedFailure = isUnactedClaudeFailure(message, current.acted);
+      const failed =
+        message.subtype !== 'success' || current.failureCode !== undefined || unactedFailure;
       const outcome = failed ? 'failed' : current.acted ? 'acted' : 'no_action';
       sendControl?.({
         kind: 'runner_turn',
@@ -235,7 +245,8 @@ export function createClaudeChannelSink(opts: ClaudeChannelSinkOptions): ClaudeC
         } else receipt.settle('handled');
       }
       if (failed) {
-        const code = current.failureCode ?? classifyRunnerFailure(message);
+        const classified = classifyRunnerFailure(message);
+        const code = current.failureCode ?? (classified !== 'unknown' ? classified : 'unknown');
         sendControl?.({
           kind: 'runner_condition',
           at: Date.now(),
