@@ -13,10 +13,10 @@
 // same browser context, so they share cookies (sign in once, probe
 // hard loads from a second tab).
 import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { once } from 'node:events';
 
 /** Wait for the "DevTools listening on ws://…" line on stderr. */
 function devtoolsUrl(child, timeoutMs) {

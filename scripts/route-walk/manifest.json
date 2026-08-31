@@ -4,9 +4,7 @@
   "routes": [
     {
       "kind": "home",
-      "urls": [
-        "/"
-      ],
+      "urls": ["/"],
       "marker": "ACTIVE OBJECTIVES",
       "roles": {
         "baseline": "clean",
@@ -16,9 +14,7 @@
     },
     {
       "kind": "inbox",
-      "urls": [
-        "/inbox"
-      ],
+      "urls": ["/inbox"],
       "roles": {
         "baseline": "clean",
         "admin": "clean"
@@ -27,9 +23,7 @@
     },
     {
       "kind": "account",
-      "urls": [
-        "/account"
-      ],
+      "urls": ["/account"],
       "marker": "Signed in as",
       "roles": {
         "baseline": "clean",
@@ -38,14 +32,8 @@
     },
     {
       "kind": "thread-channel",
-      "urls": [
-        "/c/{channelSlug}",
-        "/c/general"
-      ],
-      "markers": [
-        "# {channelSlug}",
-        "# general"
-      ],
+      "urls": ["/c/{channelSlug}", "/c/general"],
+      "markers": ["# {channelSlug}", "# general"],
       "fixture": "a channel the member belongs to, plus the built-in general channel",
       "roles": {
         "baseline": "clean",
@@ -54,17 +42,13 @@
     },
     {
       "kind": "thread-dm",
-      "urls": [
-        "/dm/{dmPeer}"
-      ],
+      "urls": ["/dm/{dmPeer}"],
       "fixture": "a DM thread with the admin",
       "roles": {
         "baseline": "clean",
         "admin": "clean"
       },
-      "allowRestrictedPanel": [
-        "baseline"
-      ],
+      "allowRestrictedPanel": ["baseline"],
       "why": "the right-rail activity inspector renders Restricted for a viewer without activity.read on the peer (#214/#220's designed refusal) \u2014 the page itself is clean",
       "marker": {
         "baseline": "DM with",
@@ -74,9 +58,7 @@
     },
     {
       "kind": "channels-browse",
-      "urls": [
-        "/channels"
-      ],
+      "urls": ["/channels"],
       "marker": "Every active channel",
       "roles": {
         "baseline": "clean",
@@ -85,9 +67,7 @@
     },
     {
       "kind": "channel-create",
-      "urls": [
-        "/channels/new"
-      ],
+      "urls": ["/channels/new"],
       "marker": "Create a channel",
       "roles": {
         "baseline": "clean",
@@ -96,9 +76,7 @@
     },
     {
       "kind": "objectives-list",
-      "urls": [
-        "/objectives"
-      ],
+      "urls": ["/objectives"],
       "marker": "outcome:",
       "roles": {
         "baseline": "clean",
@@ -107,9 +85,7 @@
     },
     {
       "kind": "objective-create",
-      "urls": [
-        "/objectives/new"
-      ],
+      "urls": ["/objectives/new"],
       "marker": "Create + assign",
       "roles": {
         "baseline": "clean",
@@ -118,9 +94,7 @@
     },
     {
       "kind": "objective-detail",
-      "urls": [
-        "/objectives/{objectiveId}"
-      ],
+      "urls": ["/objectives/{objectiveId}"],
       "marker": "assignee:",
       "fixture": "an objective assigned to the baseline member",
       "roles": {
@@ -130,9 +104,7 @@
     },
     {
       "kind": "members",
-      "urls": [
-        "/members"
-      ],
+      "urls": ["/members"],
       "marker": "+ New member",
       "roles": {
         "baseline": "restricted",
@@ -168,9 +140,7 @@
     },
     {
       "kind": "tool-sources",
-      "urls": [
-        "/tools"
-      ],
+      "urls": ["/tools"],
       "marker": "External tools the platform executes",
       "roles": {
         "baseline": "restricted",
@@ -180,9 +150,7 @@
     },
     {
       "kind": "tool-source-detail",
-      "urls": [
-        "/tools/{toolSourceSlug}"
-      ],
+      "urls": ["/tools/{toolSourceSlug}"],
       "marker": "Tools / {toolSourceSlug}",
       "fixture": "a custom tool source",
       "roles": {
@@ -193,9 +161,7 @@
     },
     {
       "kind": "environment",
-      "urls": [
-        "/environment"
-      ],
+      "urls": ["/environment"],
       "marker": "Everything the runner injects",
       "roles": {
         "baseline": "restricted",
@@ -205,9 +171,7 @@
     },
     {
       "kind": "secret-detail",
-      "urls": [
-        "/environment/secrets/{secretSlug}"
-      ],
+      "urls": ["/environment/secrets/{secretSlug}"],
       "marker": "Environment / {secretSlug}",
       "fixture": "a secret bound to the baseline member",
       "roles": {
@@ -218,9 +182,7 @@
     },
     {
       "kind": "variable-detail",
-      "urls": [
-        "/environment/variables/{variableSlug}"
-      ],
+      "urls": ["/environment/variables/{variableSlug}"],
       "marker": "Environment / {variableSlug}",
       "fixture": "a variable bound to the baseline member",
       "roles": {
@@ -231,9 +193,7 @@
     },
     {
       "kind": "notifications",
-      "urls": [
-        "/notifications"
-      ],
+      "urls": ["/notifications"],
       "marker": "Inbound webhooks and API calls",
       "roles": {
         "baseline": "restricted",
@@ -243,9 +203,7 @@
     },
     {
       "kind": "notification-detail",
-      "urls": [
-        "/notifications/{notificationSlug}"
-      ],
+      "urls": ["/notifications/{notificationSlug}"],
       "marker": "Notifications / {notificationSlug}",
       "fixture": "a notification endpoint",
       "roles": {
@@ -256,26 +214,18 @@
     },
     {
       "kind": "files",
-      "urls": [
-        "/files",
-        "/files/{selfName}"
-      ],
+      "urls": ["/files", "/files/{selfName}"],
       "fixture": "the member's own home (root listing + own directory)",
       "roles": {
         "baseline": "clean",
         "admin": "clean"
       },
-      "markers": [
-        "Shared with me",
-        "Files / {selfName}"
-      ]
+      "markers": ["Shared with me", "Files / {selfName}"]
     },
     {
       "kind": "fallthrough",
       "pseudo": "not a Route union kind \u2014 pins the router's unknown-path contract (routes.ts: unknown paths resolve to home)",
-      "urls": [
-        "/definitely/not/a/route"
-      ],
+      "urls": ["/definitely/not/a/route"],
       "marker": "ACTIVE OBJECTIVES",
       "roles": {
         "baseline": "clean",
@@ -287,9 +237,7 @@
     {
       "kind": "reserved-enroll",
       "pseudo": "not a Route union kind \u2014 /enroll is the device-enrolment REST namespace (POST /enroll, GET /enroll/pending), with no GET page of its own",
-      "urls": [
-        "/enroll"
-      ],
+      "urls": ["/enroll"],
       "marker": "ACTIVE OBJECTIVES",
       "roles": {
         "baseline": "clean",
