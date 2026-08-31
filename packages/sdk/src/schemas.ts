@@ -7,7 +7,7 @@
  */
 
 import { z } from 'zod';
-import { LEGACY_PERMISSION_EXPANSIONS, PERMISSIONS } from './types.js';
+import { LEGACY_PERMISSION_EXPANSIONS, PERMISSIONS, RUNNER_CONDITION_CODES } from './types.js';
 
 export const LogLevelSchema = z.enum(['debug', 'info', 'notice', 'warning', 'error', 'critical']);
 
@@ -17,6 +17,7 @@ export const LogLevelSchema = z.enum(['debug', 'info', 'notice', 'warning', 'err
  * `blocked` (waiting on a human). See `WorkState` in types.ts.
  */
 export const WorkStateSchema = z.enum(['idle', 'working', 'blocked']);
+export const RunnerConditionCodeSchema = z.enum(RUNNER_CONDITION_CODES);
 
 /**
  * Whether a member's VERBATIM capture is reaching the broker.
@@ -181,6 +182,7 @@ export const RunnerIdentitySchema = z.object({
   runnerVersion: z.string().min(1).max(128),
   runnerBuildSource: z.enum(['npm', 'main']),
   deliveryProtocol: z.literal('disposition-v1').optional(),
+  livenessProtocol: z.literal('runner-state-v1').optional(),
   supervision: z
     .union([
       z.object({ kind: z.literal('systemd'), unit: z.string().min(1).max(200) }),
@@ -233,6 +235,18 @@ export const PresenceSchema = z.object({
   runnerReports: z.array(RunnerReportSchema).optional(),
   clientReports: z.array(ClientReportSchema).optional(),
   unreportedConnections: z.number().int().nonnegative().optional(),
+  executor: z
+    .object({
+      state: z.enum(['ready', 'degraded', 'unreported']),
+      reason: z
+        .object({ code: RunnerConditionCodeSchema, detail: z.string().min(1).max(200) })
+        .optional(),
+      activeTurns: z.number().int().nonnegative(),
+      lastTurnAt: z.number().int().nonnegative().nullable(),
+      lastActedAt: z.number().int().nonnegative().nullable(),
+      lastTurnOutcome: z.enum(['acted', 'no_action', 'failed']).optional(),
+    })
+    .optional(),
   createdAt: z.number(),
   lastSeen: z.number(),
   role: RoleSchema.nullable(),
@@ -300,7 +314,7 @@ export const DeliveryReportSchema = z.object({
 export const MessageDispositionFrameSchema = z.object({
   kind: z.literal('message_disposition'),
   messageId: z.string().min(1).max(200),
-  disposition: z.enum(['acted', 'handled', 'deferred', 'refused']),
+  disposition: z.enum(['accepted', 'acted', 'handled', 'deferred', 'refused']),
   at: z.number().int().nonnegative(),
   reason: z
     .object({
@@ -315,14 +329,67 @@ export const MessageDispositionFrameSchema = z.object({
   evidence: z
     .object({
       kind: z.enum(['tool_call', 'outbound_effect']),
-      name: z
-        .string()
-        .min(1)
-        .max(200)
-        .regex(/^[\x20-\x7e]+$/),
     })
     .optional(),
 });
+
+export const RunnerConditionFrameSchema = z
+  .object({
+    kind: z.literal('runner_condition'),
+    at: z.number().int().nonnegative(),
+    state: z.enum(['ready', 'degraded']),
+    reason: z
+      .object({
+        code: RunnerConditionCodeSchema,
+        detail: z
+          .string()
+          .min(1)
+          .max(200)
+          .regex(/^[\x20-\x7e]+$/),
+      })
+      .optional(),
+  })
+  .superRefine((frame, ctx) => {
+    if (frame.state === 'degraded' && frame.reason === undefined) {
+      ctx.addIssue({ code: 'custom', path: ['reason'], message: 'degraded requires a reason' });
+    }
+    if (frame.state === 'ready' && frame.reason !== undefined) {
+      ctx.addIssue({ code: 'custom', path: ['reason'], message: 'ready must not carry a reason' });
+    }
+  });
+
+export const RunnerTurnFrameSchema = z
+  .object({
+    kind: z.literal('runner_turn'),
+    at: z.number().int().nonnegative(),
+    turnId: z.string().min(1).max(200),
+    phase: z.enum(['started', 'completed']),
+    outcome: z.enum(['acted', 'no_action', 'failed']).optional(),
+    evidence: z.object({ kind: z.enum(['tool_call', 'outbound_effect']) }).optional(),
+  })
+  .superRefine((frame, ctx) => {
+    if (
+      frame.phase === 'started' &&
+      (frame.outcome !== undefined || frame.evidence !== undefined)
+    ) {
+      ctx.addIssue({ code: 'custom', message: 'started must not carry terminal fields' });
+    }
+    if (frame.phase === 'completed' && frame.outcome === undefined) {
+      ctx.addIssue({ code: 'custom', path: ['outcome'], message: 'completed requires an outcome' });
+    }
+    if (frame.outcome === 'acted' && frame.evidence === undefined) {
+      ctx.addIssue({ code: 'custom', path: ['evidence'], message: 'acted requires evidence' });
+    }
+    if (frame.outcome !== 'acted' && frame.evidence !== undefined) {
+      ctx.addIssue({ code: 'custom', path: ['evidence'], message: 'only acted carries evidence' });
+    }
+  });
+
+export const RunnerControlFrameSchema = z.union([
+  MessageDispositionFrameSchema,
+  RunnerConditionFrameSchema,
+  RunnerTurnFrameSchema,
+]);
 
 export const PushResultSchema = z.object({
   delivery: DeliveryReportSchema,
@@ -2037,6 +2104,8 @@ export const TeamStatusMemberSchema = z.object({
   presence: PresenceSchema.nullable(),
   activeObjectives: z.array(TeamStatusObjectiveSchema),
   lastActivityAt: z.number().nullable(),
+  stalled: z.boolean().optional(),
+  stalledReasons: z.array(z.enum(['objective_stale', 'executor_degraded'])).optional(),
 });
 
 export const TeamStatusResponseSchema = z.object({

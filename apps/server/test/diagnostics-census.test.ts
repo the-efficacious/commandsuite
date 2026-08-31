@@ -232,8 +232,26 @@ const APP_IN_SCOPE = [
  * leaves the row pending in the durable ledger; invalid/refused frames do
  * not settle it; a failed sweep retries on the next interval. The record therefore remains incomplete visibly in its
  * authoritative pending state, while these lines explain transport noise.
+ *
+ * 2026-08-31, +7 -3 = 79. Proven runner liveness renamed three diagnostics
+ * from `drop`/`disposition` language to the protocol's actual
+ * `deferred`/`control frame` language, and added four sites:
+ * `runner condition reported`, `pending message redelivery failed`, and the
+ * failed-turn/backstop/auth-blocked redelivery failures (obj-mtgsjlg5-x).
+ *
+ * OPERATIONAL, not completeness claims. The condition site records that the
+ * fixed code was transmitted; it carries no captured payload. Every
+ * redelivery-failure site fires only after the owning lease has atomically
+ * returned to the durable `pending` state. A callback failure can delay the
+ * next attempt until another ready transition or reconnect (and the 24-hour
+ * bound eventually produces an explicit refusal); it cannot settle or erase
+ * the row. These diagnostics explain availability delay while the
+ * authoritative ledger continues to state, visibly, that delivery is
+ * incomplete. The renamed sites retain the same classification as the sites
+ * they replace: invalid/refused frames cannot settle a row, and `deferred`
+ * explicitly preserves it.
  */
-const TOTAL_SITES = 75;
+const TOTAL_SITES = 79;
 
 function messagesIn(file: string): string[] {
   let src: string | null = null;

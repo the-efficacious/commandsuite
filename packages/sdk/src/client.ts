@@ -104,6 +104,7 @@ import {
   ResolveSecretsResponseSchema,
   RosterResponseSchema,
   RotateTokenResponseSchema,
+  RunnerControlFrameSchema,
   RunnerIdentitySchema,
   SecretSchema,
   SessionResponseSchema,
@@ -197,6 +198,7 @@ import type {
   RosterResponse,
   RotateTokenRequest,
   RotateTokenResponse,
+  RunnerControlFrame,
   RunnerIdentity,
   Secret,
   SecretSummary,
@@ -291,6 +293,8 @@ export class ClientError extends Error {
 /** Ack-capable runner subscription. Dispositions travel on the same authenticated WebSocket. */
 export interface ReliableSubscription extends AsyncIterable<Message> {
   disposition(frame: MessageDispositionFrame): void;
+  /** Additive liveness-v1 control; old brokers ignore the unknown frame. */
+  control(frame: RunnerControlFrame): void;
 }
 
 export class Client {
@@ -1891,16 +1895,28 @@ export class Client {
     name: string,
     signal: AbortSignal | undefined,
     runnerIdentity: RunnerIdentity,
+    liveness = false,
   ): ReliableSubscription {
     const identity = RunnerIdentitySchema.parse({
       ...runnerIdentity,
       deliveryProtocol: 'disposition-v1',
+      ...(liveness ? { livenessProtocol: 'runner-state-v1' as const } : {}),
     });
     let socket: NodeWebSocket | null = null;
+    let socketOpen = false;
+    const pendingFrames: string[] = [];
     let iterated = false;
     const iterable = this.subscribeInternal(name, signal, identity, (ws) => {
       socket = ws;
+      ws.once('open', () => {
+        socketOpen = true;
+        for (const encoded of pendingFrames.splice(0)) ws.send(encoded);
+      });
     });
+    const sendFrame = (encoded: string): void => {
+      if (socket !== null && socketOpen) socket.send(encoded);
+      else pendingFrames.push(encoded);
+    };
     return {
       [Symbol.asyncIterator]() {
         if (iterated) throw new Error('reliable subscription can only be iterated once');
@@ -1908,8 +1924,10 @@ export class Client {
         return iterable[Symbol.asyncIterator]();
       },
       disposition(frame) {
-        if (socket === null) throw new Error('reliable subscription has not started');
-        socket.send(JSON.stringify(MessageDispositionFrameSchema.parse(frame)));
+        sendFrame(JSON.stringify(MessageDispositionFrameSchema.parse(frame)));
+      },
+      control(frame) {
+        sendFrame(JSON.stringify(RunnerControlFrameSchema.parse(frame)));
       },
     };
   }

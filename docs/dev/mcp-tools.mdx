@@ -50,7 +50,7 @@ activity.
 | | |
 |---|---|
 | **Input** | `{}` |
-| **Output** | Text block: `team <name> roster:` followed by per-line `- <name> (you)? [<role>] permissions=<leaves\|baseline>; connected=N\|offline; activity=<reported working\|blocked …\|no report …>` (activity is qualified by the broker's reporting window) |
+| **Output** | Text block: `team <name> roster:` followed by per-line connection, executor state/reason, last proven action, and supervision claim. Old brokers render executor state as `unreported`, with legacy activity only as a compatibility window. |
 | **Broker call** | `GET /roster` |
 
 ### broadcast

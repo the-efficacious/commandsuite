@@ -64,21 +64,26 @@ export async function composeTeamStatus(
             };
           }),
       );
+      const presence = presences.get(member.name) ?? null;
+      const objectiveStalled = activeObjectives.some((objective) => objective.stalled);
+      const executorDegraded = presence?.executor?.state === 'degraded';
       return {
         member,
-        presence: presences.get(member.name) ?? null,
+        presence,
         activeObjectives,
         lastActivityAt:
           options.activityStore?.list({ memberName: member.name, limit: 1 })[0]?.event.ts ?? null,
+        stalled: objectiveStalled || executorDegraded,
+        stalledReasons: [
+          ...(objectiveStalled ? (['objective_stale'] as const) : []),
+          ...(executorDegraded ? (['executor_degraded'] as const) : []),
+        ],
       };
     }),
   );
   return {
     generatedAt: options.generatedAt,
     stalledAfterMs: options.stalledAfterMs,
-    members:
-      options.stalledAfterMs === null
-        ? members
-        : members.filter((row) => row.activeObjectives.some((objective) => objective.stalled)),
+    members: options.stalledAfterMs === null ? members : members.filter((row) => row.stalled),
   };
 }

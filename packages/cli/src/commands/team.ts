@@ -86,6 +86,12 @@ async function runStatus(
         ? 'presence=absent'
         : `connected=${row.presence.connected} authBlocked=${row.presence.authBlocked ?? 'unreported'}`;
     stdout(`${row.member.name}  ${presence}  last-activity=${time(row.lastActivityAt)}`);
+    if (row.presence?.executor) {
+      const executor = row.presence.executor;
+      stdout(
+        `  executor=${executor.state}${executor.reason ? ` reason=${executor.reason.code}` : ''} turns=${executor.activeTurns} last-acted=${time(executor.lastActedAt)}`,
+      );
+    } else stdout('  executor=unreported');
     if (row.presence?.clientReports?.length) {
       for (const report of row.presence.clientReports) {
         if (report.kind !== 'runner') {
@@ -96,7 +102,7 @@ async function runStatus(
         }
         const runner = report.runnerIdentity;
         stdout(
-          `  runner ${runner.runner} model=${runner.modelId ?? 'agent default — not resolved locally'} version=${runner.runnerVersion}${report.versionSkew.skew ? ` SKEW broker=${report.versionSkew.brokerVersion}` : ''}`,
+          `  runner ${runner.runner} model=${runner.modelId ?? 'agent default — not resolved locally'} version=${runner.runnerVersion} supervision-claim=${runner.supervision?.kind ?? 'unreported'}${report.versionSkew.skew ? ` SKEW broker=${report.versionSkew.brokerVersion}` : ''}`,
         );
       }
     } else if (row.presence?.clientReports === undefined) stdout('  client identity unreported');

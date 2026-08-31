@@ -36,6 +36,7 @@ import type { InstructionsResponse } from 'csuite-sdk/types';
 import { CLI_VERSION } from '../../../version.js';
 import { composeFixedContext } from '../../fixed-context.js';
 import type { Presence } from '../../presence.js';
+import { classifyRunnerFailure, RUNNER_CONDITION_DETAIL } from '../../runner-condition.js';
 import type { BusySignal } from '../../trace/busy.js';
 import type { CaptureHost } from '../../trace/host.js';
 import { AgentAdapterError } from '../adapter.js';
@@ -49,6 +50,7 @@ import { attachCodexCompactor, type CodexCompactOutcome } from './compaction.js'
 import { createJsonRpcClient, type JsonRpcClient } from './json-rpc.js';
 import { assertNoReservedMcpOverride } from './local-mcp.js';
 import {
+  type ErrorNotification,
   type ItemCompletedNotification,
   type ItemStartedNotification,
   METHODS,
@@ -59,6 +61,7 @@ import {
   type ThreadStartResponse,
   type ThreadStatus,
   type ThreadStatusChangedNotification,
+  type TurnCompletedNotification,
   type TurnStartedNotification,
 } from './protocol.js';
 import { attachRolloutReader, type RolloutReader } from './rollout-reader.js';
@@ -473,6 +476,7 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
         break;
       case 'systemError':
         opts.presence.setOffline();
+        channelSink.degraded('unknown', RUNNER_CONDITION_DETAIL.unknown);
         break;
     }
     if (status.type !== 'notLoaded') {
@@ -507,13 +511,23 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
     const p = params as TurnStartedNotification;
     if (p?.turn?.id) {
       activeTurnId = p.turn.id;
+      channelSink.turnStarted(p.turn.id, p.turn.startedAt ?? Date.now());
       // Duplicate turn/started for the same id is a no-op.
       if (opts.busy && !turnActiveHandles.has(p.turn.id)) {
         turnActiveHandles.set(p.turn.id, opts.busy.start('turn_active'));
       }
     }
   });
-  rpc.onNotification(NOTIFICATIONS.turnCompleted, () => {
+  rpc.onNotification(NOTIFICATIONS.turnCompleted, (params) => {
+    const p = params as TurnCompletedNotification;
+    const completedId = p?.turn?.id ?? activeTurnId;
+    if (completedId) {
+      channelSink.turnCompleted(
+        completedId,
+        p?.turn?.status === 'failed',
+        p?.turn?.completedAt ?? Date.now(),
+      );
+    }
     activeTurnId = null;
     // Codex runs one turn at a time, so a turn/completed ends whatever
     // turn_active handle is open — drain all rather than depend on the
@@ -524,6 +538,14 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
     const p = params as ItemStartedNotification;
     if (p?.item?.type) {
       log.debug('item started', { type: p.item.type, turnId: p.turnId });
+      if (
+        p.item.type === 'commandExecution' ||
+        p.item.type === 'mcpToolCall' ||
+        p.item.type === 'dynamicToolCall' ||
+        p.item.type === 'fileChange'
+      ) {
+        channelSink.acted(p.turnId, 'tool_call', p.startedAtMs ?? Date.now());
+      }
     }
   });
   rpc.onNotification(NOTIFICATIONS.itemCompleted, (params) => {
@@ -591,6 +613,9 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
       : attachCodexActivityPrinter({ rpc, logger: log.child('codex-activity-printer') });
   rpc.onNotification(NOTIFICATIONS.error, (params) => {
     log.error('error notification', params as Record<string, unknown>);
+    const code = classifyRunnerFailure(params as ErrorNotification);
+    channelSink.degraded(code, RUNNER_CONDITION_DETAIL[code]);
+    log.warn('runner condition reported', { code, detail: RUNNER_CONDITION_DETAIL[code] });
   });
 
   // ─── Shutdown wiring ──────────────────────────────────────────

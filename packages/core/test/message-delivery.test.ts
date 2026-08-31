@@ -31,6 +31,14 @@ const LEGACY_RUNNER: ClientIdentity = {
   },
 };
 
+const LIVENESS_RUNNER: ClientIdentity = {
+  kind: 'runner',
+  runnerIdentity: {
+    ...ACK_RUNNER.runnerIdentity,
+    livenessProtocol: 'runner-state-v1',
+  },
+};
+
 function fixture() {
   let now = 1_000;
   let id = 0;
@@ -157,6 +165,291 @@ describe('message disposition ledger', () => {
         clientIdentity: { kind: 'browser', clientVersion: 'test' },
       }),
     ).resolves.toBe(false);
+  });
+
+  it('releases an accepted lease on subscription close and refuses its stale completion', async () => {
+    const { broker, ledger } = fixture();
+    const context = {
+      name: 'bob',
+      clientIdentity: LIVENESS_RUNNER,
+      subscriptionId: 'socket-1',
+    } as const;
+    const unsubscribe = broker.subscribe('bob', () => {}, context);
+    const pushed = await broker.push({ to: 'bob', body: 'survive' }, { from: 'alice' });
+    await expect(
+      broker.disposition(
+        'bob',
+        {
+          kind: 'message_disposition',
+          messageId: pushed.message.id,
+          disposition: 'accepted',
+          at: 1_001,
+        },
+        context,
+      ),
+    ).resolves.toBe(true);
+    expect(ledger.pending('bob', 1_002)).toEqual([]);
+
+    unsubscribe();
+    expect(ledger.pending('bob', 1_002)).toHaveLength(1);
+    await expect(
+      broker.disposition(
+        'bob',
+        {
+          kind: 'message_disposition',
+          messageId: pushed.message.id,
+          disposition: 'handled',
+          at: 1_003,
+        },
+        context,
+      ),
+    ).resolves.toBe(false);
+  });
+
+  it('redelivers a released lease when the same runner recovers to ready', async () => {
+    const { broker } = fixture();
+    const delivered: Message[] = [];
+    const context = {
+      name: 'bob',
+      clientIdentity: LIVENESS_RUNNER,
+      subscriptionId: 'socket-1',
+    } as const;
+    broker.subscribe(
+      'bob',
+      (message) => {
+        delivered.push(message);
+      },
+      context,
+    );
+    await broker.runnerCondition(
+      'bob',
+      { kind: 'runner_condition', at: 1_000, state: 'ready' },
+      context,
+    );
+    const pushed = await broker.push({ to: 'bob', body: 'recover me' }, { from: 'alice' });
+    await broker.disposition(
+      'bob',
+      {
+        kind: 'message_disposition',
+        messageId: pushed.message.id,
+        disposition: 'accepted',
+        at: 1_001,
+      },
+      context,
+    );
+    await broker.runnerCondition(
+      'bob',
+      {
+        kind: 'runner_condition',
+        at: 1_002,
+        state: 'degraded',
+        reason: { code: 'model_unavailable', detail: 'configured model is unavailable' },
+      },
+      context,
+    );
+    expect(delivered).toHaveLength(1);
+    await broker.runnerCondition(
+      'bob',
+      { kind: 'runner_condition', at: 1_003, state: 'ready' },
+      context,
+    );
+    expect(delivered.map((message) => message.id)).toEqual([pushed.message.id, pushed.message.id]);
+  });
+
+  it('an open turn without evidence never projects working', async () => {
+    const { broker } = fixture();
+    const context = {
+      name: 'bob',
+      clientIdentity: LIVENESS_RUNNER,
+      subscriptionId: 'socket-1',
+    } as const;
+    broker.subscribe('bob', () => {}, context);
+    await broker.runnerCondition(
+      'bob',
+      { kind: 'runner_condition', at: 1_000, state: 'ready' },
+      context,
+    );
+    expect(
+      broker.runnerTurn(
+        'bob',
+        { kind: 'runner_turn', at: 1_001, turnId: 'turn-open', phase: 'started' },
+        context,
+      ),
+    ).toBe(true);
+    const presence = broker.listPresences('test').find((row) => row.name === 'bob');
+    expect(presence?.executor).toMatchObject({
+      state: 'ready',
+      activeTurns: 1,
+      lastActedAt: null,
+    });
+    expect(presence?.activity).not.toBe('working');
+  });
+
+  it('assigns a tracked message to only one capable runner subscription', async () => {
+    const { broker } = fixture();
+    const first: Message[] = [];
+    const second: Message[] = [];
+    const firstContext = {
+      name: 'bob',
+      clientIdentity: LIVENESS_RUNNER,
+      subscriptionId: 'socket-1',
+    } as const;
+    const secondContext = {
+      name: 'bob',
+      clientIdentity: LIVENESS_RUNNER,
+      subscriptionId: 'socket-2',
+    } as const;
+    broker.subscribe(
+      'bob',
+      (message) => {
+        first.push(message);
+      },
+      firstContext,
+    );
+    broker.subscribe(
+      'bob',
+      (message) => {
+        second.push(message);
+      },
+      secondContext,
+    );
+    await broker.runnerCondition(
+      'bob',
+      {
+        kind: 'runner_condition',
+        at: 1_000,
+        state: 'degraded',
+        reason: { code: 'model_unavailable', detail: 'configured model is unavailable' },
+      },
+      firstContext,
+    );
+    await broker.runnerCondition(
+      'bob',
+      { kind: 'runner_condition', at: 1_001, state: 'ready' },
+      secondContext,
+    );
+    await broker.push({ to: 'bob', body: 'exactly once' }, { from: 'alice' });
+    expect(first).toHaveLength(0);
+    expect(second).toHaveLength(1);
+  });
+
+  it('reassigns a degraded subscription lease to another ready subscription', async () => {
+    const { broker } = fixture();
+    const first: Message[] = [];
+    const second: Message[] = [];
+    const firstContext = {
+      name: 'bob',
+      clientIdentity: LIVENESS_RUNNER,
+      subscriptionId: 'socket-1',
+    } as const;
+    const secondContext = {
+      name: 'bob',
+      clientIdentity: LIVENESS_RUNNER,
+      subscriptionId: 'socket-2',
+    } as const;
+    broker.subscribe('bob', (message) => void first.push(message), firstContext);
+    broker.subscribe('bob', (message) => void second.push(message), secondContext);
+    await broker.runnerCondition(
+      'bob',
+      { kind: 'runner_condition', at: 1_000, state: 'ready' },
+      firstContext,
+    );
+    await broker.runnerCondition(
+      'bob',
+      { kind: 'runner_condition', at: 1_000, state: 'ready' },
+      secondContext,
+    );
+    const pushed = await broker.push({ to: 'bob', body: 'move on degradation' }, { from: 'alice' });
+    await broker.disposition(
+      'bob',
+      {
+        kind: 'message_disposition',
+        messageId: pushed.message.id,
+        disposition: 'accepted',
+        at: 1_001,
+      },
+      firstContext,
+    );
+    await broker.runnerCondition(
+      'bob',
+      {
+        kind: 'runner_condition',
+        at: 1_002,
+        state: 'degraded',
+        reason: { code: 'server_overloaded', detail: 'model service is overloaded' },
+      },
+      firstContext,
+    );
+    expect(first).toHaveLength(1);
+    expect(second.map((message) => message.id)).toEqual([pushed.message.id]);
+    expect(broker.listPresences('test')[0]?.executor?.state).toBe('ready');
+  });
+
+  it('releases leases at the degraded projection for frames, auth, and the backstop', async () => {
+    const { broker, ledger, setNow } = fixture();
+    const context = {
+      name: 'bob',
+      tokenId: 'token-1',
+      clientIdentity: LIVENESS_RUNNER,
+      subscriptionId: 'socket-1',
+    } as const;
+    broker.subscribe('bob', () => {}, context);
+    await broker.runnerCondition(
+      'bob',
+      { kind: 'runner_condition', at: 1_000, state: 'ready' },
+      context,
+    );
+
+    const accept = async (body: string, turnId: string) => {
+      await broker.runnerCondition(
+        'bob',
+        { kind: 'runner_condition', at: 1_000, state: 'ready' },
+        context,
+      );
+      const pushed = await broker.push({ to: 'bob', body }, { from: 'alice' });
+      await broker.disposition(
+        'bob',
+        {
+          kind: 'message_disposition',
+          messageId: pushed.message.id,
+          disposition: 'accepted',
+          at: 1_001,
+        },
+        context,
+      );
+      broker.runnerTurn(
+        'bob',
+        { kind: 'runner_turn', at: 1_001, turnId, phase: 'started' },
+        context,
+      );
+      return pushed.message.id;
+    };
+
+    await accept('condition', 'turn-1');
+    await expect(
+      broker.runnerCondition(
+        'bob',
+        {
+          kind: 'runner_condition',
+          at: 1_002,
+          state: 'degraded',
+          reason: { code: 'invalid_model', detail: 'configured model id is invalid' },
+        },
+        context,
+      ),
+    ).resolves.toBe(true);
+    expect(ledger.pending('bob', 1_003)).toHaveLength(1);
+
+    await accept('auth', 'turn-2');
+    broker.blockTokens(['token-1']);
+    expect(ledger.pending('bob', 1_003)).toHaveLength(2);
+
+    await accept('backstop', 'turn-old');
+    setNow(1_001 + Broker.OPEN_TURN_BACKSTOP_MS);
+    const presence = broker.listPresences('test').find((row) => row.name === 'bob');
+    expect(presence?.executor?.state).toBe('degraded');
+    expect(presence?.activity).not.toBe('working');
+    expect(ledger.pending('bob', 1_001 + Broker.OPEN_TURN_BACKSTOP_MS)).not.toHaveLength(0);
   });
 
   it('emits one ledger-exempt refusal fact for explicit refusal and expiry', async () => {

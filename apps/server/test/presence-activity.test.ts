@@ -118,7 +118,7 @@ async function rosterScout(
 afterEach(() => vi.restoreAllMocks());
 
 describe('POST /presence/activity', () => {
-  it('accepts a working report and surfaces activity + busy on /roster', async () => {
+  it('accepts legacy working telemetry without projecting executor liveness', async () => {
     const { app } = await makeApp();
 
     const post = await app.request(
@@ -128,8 +128,8 @@ describe('POST /presence/activity', () => {
     expect(post.status).toBe(204);
 
     const scout = await rosterScout(app);
-    expect(scout?.activity).toBe('working');
-    expect(scout?.busy).toBe(true);
+    expect(scout?.activity).toBeUndefined();
+    expect(scout?.busy).toBeUndefined();
 
     const roster = await app.request('/roster', {
       method: 'GET',

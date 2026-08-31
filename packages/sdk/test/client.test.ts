@@ -349,10 +349,14 @@ describe('Client', () => {
     })();
     await new Promise((resolve) => setTimeout(resolve, 0));
     const ws = FakeWebSocket.instances[0];
+    ws?.emit('open');
     expect(JSON.parse(ws?.opts?.headers?.[CLIENT_IDENTITY_HEADER] ?? '{}')).toMatchObject({
       kind: 'runner',
       runnerIdentity: { deliveryProtocol: 'disposition-v1' },
     });
+    expect(
+      JSON.parse(ws?.opts?.headers?.[CLIENT_IDENTITY_HEADER] ?? '{}').runnerIdentity,
+    ).not.toHaveProperty('livenessProtocol');
 
     subscription.disposition({
       kind: 'message_disposition',

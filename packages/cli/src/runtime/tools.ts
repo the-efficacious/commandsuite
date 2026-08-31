@@ -130,9 +130,9 @@ export function defineTools(
       name: 'roster',
       description:
         `List all teammates currently on the csuite net. Returns each teammate's name, ` +
-        `role, authority, connection state, and any recently reported working or blocked ` +
-        `activity. The response uses the broker's reporting window when supplied and says ` +
-        `when the window is unknown; recent activity is not executor liveness.`,
+        `role, authority, connection state, executor readiness or degraded reason, last proven ` +
+        `action, and supervision claim. Old brokers render executor state as unreported; their ` +
+        `activity window is compatibility scheduling telemetry, never executor liveness.`,
       inputSchema: { type: 'object', properties: {} },
     },
     ...(instructions.permissions.includes('members.manage')
@@ -2189,15 +2189,15 @@ async function handleRoster(
         : conn > 0
           ? `connected=${conn}`
           : 'offline';
-    const activity =
-      presence?.activity === 'working' || presence?.activity === 'blocked'
-        ? `reported ${presence.activity} ${activityWindow}`
-        : `no report ${activityWindow} (idle, lapsed, or never reported)`;
+    const executor = presence?.executor;
+    const activity = executor
+      ? `${executor.state}${executor.reason ? `(${executor.reason.code})` : ''}; last-acted=${executor.lastActedAt === null ? 'never' : new Date(executor.lastActedAt).toISOString()}; active-turns=${executor.activeTurns}`
+      : `unreported (broker predates executor evidence); compatibility-window=${activityWindow}`;
     const permissions =
       t.permissions.length > 0
         ? ` permissions=${t.permissions.join(',')};`
         : ' permissions=baseline;';
-    return `- ${t.name}${self} [${t.role.title}]${permissions} ${state}; activity=${activity}`;
+    return `- ${t.name}${self} [${t.role.title}]${permissions} ${state}; executor=${activity}`;
   });
   return textResult(`team ${instructions.team.name} roster:\n${lines.join('\n')}`);
 }

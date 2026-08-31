@@ -25,7 +25,9 @@ import type {
   PushPayload,
   PushResult,
   Role,
+  RunnerConditionFrame,
   RunnerIdentity,
+  RunnerTurnFrame,
 } from 'csuite-sdk/types';
 import type { EventLog } from './event-log.js';
 import { logger as defaultLogger, type Logger } from './logger.js';
@@ -141,6 +143,8 @@ export interface IdentityContext {
   clientIdentity?: ClientIdentity;
   /** @deprecated Compatibility for in-process callers; maps to client kind `runner`. */
   runnerIdentity?: RunnerIdentity;
+  /** Broker-local owner for frames arriving on one subscription socket. */
+  subscriptionId?: string;
 }
 
 export interface RegistrationResult {
@@ -159,6 +163,12 @@ export interface MessageDispositionEvent {
 const EMPTY_IDENTITY: IdentityContext = {};
 
 const DEFAULT_FANOUT_CONCURRENCY = 32;
+
+function supportsDisposition(identity: ClientIdentity | null | undefined): boolean {
+  return (
+    identity?.kind === 'runner' && identity.runnerIdentity.deliveryProtocol === 'disposition-v1'
+  );
+}
 
 /**
  * Minimal bounded-parallel `forEach` over async callbacks. Runs up to
@@ -226,6 +236,15 @@ export class Broker {
   private readonly deliveryLedger: MessageDeliveryLedger;
   private readonly dispositionListeners = new Set<(event: MessageDispositionEvent) => void>();
   private readonly blockedTokenIds = new Set<string>();
+
+  /**
+   * Exitability backstop, not a failure detector. Four times the measured
+   * healthy Codex maximum (~2h, one day's 270-turn sample). It never creates
+   * `working`; it only bounds a state otherwise exitable solely by the failed
+   * runner. A false early fire costs visible redelivery; no backstop costs
+   * permanent loss, so the recoverable direction is intentionally preferred.
+   */
+  static readonly OPEN_TURN_BACKSTOP_MS = 8 * 60 * 60_000;
 
   constructor(options: BrokerOptions) {
     this.eventLog = options.eventLog;
@@ -373,9 +392,7 @@ export class Broker {
         const runnerIdentities = [...state.subscriberClientIdentities.values()].filter(
           (identity) => identity?.kind === 'runner',
         );
-        const hasAckRunner = runnerIdentities.some(
-          (identity) => identity.runnerIdentity.deliveryProtocol === 'disposition-v1',
-        );
+        const hasAckRunner = runnerIdentities.some((identity) => supportsDisposition(identity));
         const hasLegacyRunner = runnerIdentities.length > 0 && !hasAckRunner;
         if (hasLegacyRunner) {
           unreported += 1;
@@ -398,6 +415,21 @@ export class Broker {
     const tasks: FanoutTask[] = [];
     for (const state of targetStates) {
       state.presence.lastSeen = ts;
+      const trackedForMember =
+        context.trackDisposition !== false && dispositionNames.has(state.presence.name);
+      const capableRunners = trackedForMember
+        ? [...state.subscribers].filter((candidate) =>
+            supportsDisposition(state.subscriberClientIdentities.get(candidate)),
+          )
+        : [];
+      const selectedRunner =
+        capableRunners.find((candidate) => this.subscriberReady(state, candidate)) ??
+        capableRunners.find((candidate) => {
+          const identity = state.subscriberClientIdentities.get(candidate);
+          return (
+            identity?.kind === 'runner' && identity.runnerIdentity.livenessProtocol === undefined
+          );
+        });
       // Snapshot subscribers before collecting — a subscriber callback
       // is allowed to mutate the Set (e.g. self-unsubscribe, or trigger
       // cleanup that removes another subscriber). Iterating a live
@@ -405,12 +437,16 @@ export class Broker {
       // for deletions but too subtle to rely on.
       for (const sub of state.subscribers) {
         const identity = state.subscriberClientIdentities.get(sub);
+        // One member-level lease has one runner owner. Browser/CLI observers
+        // still see the event, but once a capable runner exists no second
+        // runner receives the same actionable message concurrently.
+        if (identity?.kind === 'runner' && capableRunners.length > 0 && sub !== selectedRunner) {
+          continue;
+        }
         tasks.push({
           state,
           sub,
-          ackCapable:
-            identity?.kind === 'runner' &&
-            identity.runnerIdentity.deliveryProtocol === 'disposition-v1',
+          ackCapable: supportsDisposition(identity),
         });
       }
     }
@@ -505,11 +541,20 @@ export class Broker {
           ? { kind: 'runner', runnerIdentity: context.runnerIdentity }
           : null),
     );
+    const subscriptionId = context.subscriptionId ?? this.idFactory();
+    state.subscriberIds.set(callback, subscriptionId);
+    state.runnerTurns.set(callback, new Map());
     return () => {
       const current = this.registry.get(name);
+      if (current) this.projectSubscriberGone(name, callback, current);
       current?.subscribers.delete(callback);
       current?.subscriberTokenIds.delete(callback);
       current?.subscriberClientIdentities.delete(callback);
+      current?.subscriberIds.delete(callback);
+      current?.runnerConditions.delete(callback);
+      current?.runnerTurns.delete(callback);
+      current?.runnerLastActedAt.delete(callback);
+      current?.runnerLastTurn.delete(callback);
     };
   }
 
@@ -520,13 +565,14 @@ export class Broker {
     context: IdentityContext = EMPTY_IDENTITY,
   ): Promise<boolean> {
     this.assertIdentity(name, context.name);
-    if (
-      context.clientIdentity?.kind !== 'runner' ||
-      context.clientIdentity.runnerIdentity.deliveryProtocol !== 'disposition-v1'
-    ) {
+    const clientIdentity = context.clientIdentity;
+    if (!supportsDisposition(clientIdentity) || clientIdentity?.kind !== 'runner') {
       return false;
     }
-    const row = this.deliveryLedger.settle(name, frame);
+    const requiresAcceptance = clientIdentity.runnerIdentity.livenessProtocol === 'runner-state-v1';
+    const owner = context.subscriptionId ?? (requiresAcceptance ? null : `legacy:${name}`);
+    if (!owner) return false;
+    const row = this.deliveryLedger.settle(name, frame, owner, requiresAcceptance);
     if (!row) return false;
     const event: MessageDispositionEvent = {
       message: row.message,
@@ -557,6 +603,137 @@ export class Broker {
     return true;
   }
 
+  /** Apply a dynamic runner condition on the owning subscription. */
+  async runnerCondition(
+    name: string,
+    frame: RunnerConditionFrame,
+    context: IdentityContext,
+  ): Promise<boolean> {
+    this.assertIdentity(name, context.name);
+    const state = this.registry.get(name);
+    const sub = this.findSubscription(state, context.subscriptionId);
+    if (!state || !sub || context.clientIdentity?.kind !== 'runner') return false;
+    const prior = state.runnerConditions.get(sub);
+    state.runnerConditions.set(sub, frame);
+    if (frame.state === 'degraded') {
+      this.projectDegraded(name, sub, state);
+      await this.redeliverToReady(name, state, sub);
+    } else if (prior?.state !== 'ready') {
+      await this.redeliverPending(name, sub, context.clientIdentity ?? null);
+    }
+    return true;
+  }
+
+  /** Record receipt/completion without treating an open turn as proof of action. */
+  runnerTurn(name: string, frame: RunnerTurnFrame, context: IdentityContext): boolean {
+    this.assertIdentity(name, context.name);
+    const state = this.registry.get(name);
+    const sub = this.findSubscription(state, context.subscriptionId);
+    if (!state || !sub || context.clientIdentity?.kind !== 'runner') return false;
+    const turns = state.runnerTurns.get(sub) ?? new Map<string, { startedAt: number }>();
+    state.runnerTurns.set(sub, turns);
+    if (frame.phase === 'started') {
+      turns.set(frame.turnId, { startedAt: frame.at });
+      return true;
+    }
+    if (!turns.delete(frame.turnId)) return false;
+    const outcome = frame.outcome as 'acted' | 'no_action' | 'failed';
+    state.runnerLastTurn.set(sub, { at: frame.at, outcome });
+    if (outcome === 'acted') state.runnerLastActedAt.set(sub, frame.at);
+    if (outcome === 'failed' && state.runnerConditions.get(sub)?.state !== 'degraded') {
+      state.runnerConditions.set(sub, {
+        kind: 'runner_condition',
+        at: frame.at,
+        state: 'degraded',
+        reason: { code: 'unknown', detail: 'runner turn failed' },
+      });
+      this.projectDegraded(name, sub, state);
+      void this.redeliverToReady(name, state, sub).catch((err) => {
+        this.logger.warn('failed-turn redelivery failed', {
+          name,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }
+    return true;
+  }
+
+  private findSubscription(
+    state: PresenceState | undefined,
+    id: string | undefined,
+  ): Subscriber | null {
+    if (!state || !id) return null;
+    for (const [sub, candidate] of state.subscriberIds) if (candidate === id) return sub;
+    return null;
+  }
+
+  /** Every degraded source converges here, so every source releases leases. */
+  private projectDegraded(name: string, sub: Subscriber, state: PresenceState): void {
+    const owner = state.subscriberIds.get(sub);
+    if (owner) this.deliveryLedger.releaseOwner(name, owner);
+  }
+
+  private subscriberReady(state: PresenceState, sub: Subscriber): boolean {
+    const identity = state.subscriberClientIdentities.get(sub);
+    if (!supportsDisposition(identity)) return false;
+    const tokenId = state.subscriberTokenIds.get(sub) ?? null;
+    if (tokenId !== null && this.blockedTokenIds.has(tokenId)) return false;
+    return state.runnerConditions.get(sub)?.state === 'ready';
+  }
+
+  private async redeliverToReady(
+    name: string,
+    state: PresenceState,
+    excluded?: Subscriber,
+  ): Promise<number> {
+    const ready = [...state.subscribers].find(
+      (candidate) => candidate !== excluded && this.subscriberReady(state, candidate),
+    );
+    if (!ready) return 0;
+    return this.redeliverPending(name, ready, state.subscriberClientIdentities.get(ready) ?? null);
+  }
+
+  private projectSubscriberGone(name: string, sub: Subscriber, state: PresenceState): void {
+    const owner = state.subscriberIds.get(sub);
+    if (owner) this.deliveryLedger.releaseOwner(name, owner);
+  }
+
+  /**
+   * Exitability backstop, not failure detection. The eight-hour bound is four
+   * times the largest turn in one day's measured sample (7,172 seconds). A
+   * longer healthy turn may exist; early release risks visible redelivery,
+   * while no independent exit risks permanent loss.
+   */
+  sweepOpenTurnBackstops(): number {
+    const now = this.now();
+    let released = 0;
+    for (const state of this.registry.allStates()) {
+      for (const [sub, turns] of state.runnerTurns) {
+        const expired = [...turns.entries()].filter(
+          ([, turn]) => now - turn.startedAt >= Broker.OPEN_TURN_BACKSTOP_MS,
+        );
+        if (expired.length === 0) continue;
+        for (const [turnId] of expired) turns.delete(turnId);
+        state.runnerLastTurn.set(sub, { at: now, outcome: 'failed' });
+        state.runnerConditions.set(sub, {
+          kind: 'runner_condition',
+          at: now,
+          state: 'degraded',
+          reason: { code: 'unknown', detail: 'runner turn exceeded exitability backstop' },
+        });
+        this.projectDegraded(state.presence.name, sub, state);
+        void this.redeliverToReady(state.presence.name, state, sub).catch((err) => {
+          this.logger.warn('backstop redelivery failed', {
+            name: state.presence.name,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+        released += expired.length;
+      }
+    }
+    return released;
+  }
+
   /** Observe runner dispositions; notification receipts consume this same primitive. */
   onMessageDisposition(listener: (event: MessageDispositionEvent) => void): () => void {
     this.dispositionListeners.add(listener);
@@ -584,9 +761,7 @@ export class Broker {
     clientIdentity: ClientIdentity | null,
   ): Promise<number> {
     const rows = this.deliveryLedger.pending(name, this.now());
-    const capable =
-      clientIdentity?.kind === 'runner' &&
-      clientIdentity.runnerIdentity.deliveryProtocol === 'disposition-v1';
+    const capable = supportsDisposition(clientIdentity);
     const legacy = clientIdentity?.kind === 'runner' && !capable;
     if (!capable && !legacy) return 0;
     let delivered = 0;
@@ -638,9 +813,23 @@ export class Broker {
   /** Mark live subscriptions authenticated by these revoked tokens as blocked. */
   blockTokens(tokenIds: readonly string[]): void {
     for (const id of tokenIds) this.blockedTokenIds.add(id);
+    for (const state of this.registry.allStates()) {
+      for (const [sub, tokenId] of state.subscriberTokenIds) {
+        if (tokenId !== null && this.blockedTokenIds.has(tokenId)) {
+          this.projectDegraded(state.presence.name, sub, state);
+          void this.redeliverToReady(state.presence.name, state, sub).catch((err) => {
+            this.logger.warn('auth-blocked redelivery failed', {
+              name: state.presence.name,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
+        }
+      }
+    }
   }
 
   listPresences(brokerVersion?: string): Presence[] {
+    this.sweepOpenTurnBackstops();
     return this.registry.list(this.blockedTokenIds, brokerVersion);
   }
 

@@ -45,12 +45,18 @@
  */
 
 import { logger as defaultLogger, type Logger } from 'csuite-core';
-import type { ChannelEventSink } from '../../forwarder.js';
+import type { RunnerConditionCode, RunnerControlFrame } from 'csuite-sdk/types';
+import type { ChannelDeliveryReceipt, ChannelEventSink } from '../../forwarder.js';
 import { formatChannelEvent } from '../channel-format.js';
 import type { JsonRpcClient } from './json-rpc.js';
 import { METHODS, type ThreadStatus, type TurnStartResponse, type UserInput } from './protocol.js';
 
 const DEFAULT_BUNDLE_WINDOW_MS = 200;
+const UNREPORTED_RECEIPT: ChannelDeliveryReceipt = {
+  messageId: '(unreported)',
+  accepted() {},
+  settle() {},
+};
 
 export interface CodexChannelSinkOptions {
   rpc: JsonRpcClient;
@@ -69,6 +75,7 @@ export interface CodexChannelSinkOptions {
 interface BufferedEvent {
   /** The flattened text body to pass to codex. */
   text: string;
+  receipt: ChannelDeliveryReceipt;
 }
 
 export interface CodexChannelSink extends ChannelEventSink {
@@ -78,6 +85,10 @@ export interface CodexChannelSink extends ChannelEventSink {
    * we tear down the thread.
    */
   flushNow(): Promise<void>;
+  turnStarted(turnId: string, at?: number): void;
+  turnCompleted(turnId: string, failed?: boolean, at?: number): void;
+  acted(turnId: string, kind: 'tool_call' | 'outbound_effect', at?: number): void;
+  degraded(code: RunnerConditionCode, detail: string): void;
 }
 
 export function createCodexChannelSink(opts: CodexChannelSinkOptions): CodexChannelSink {
@@ -87,6 +98,16 @@ export function createCodexChannelSink(opts: CodexChannelSinkOptions): CodexChan
   const buffer: BufferedEvent[] = [];
   let timer: NodeJS.Timeout | null = null;
   let flushing: Promise<void> | null = null;
+  let sendControl: ((frame: RunnerControlFrame) => void) | null = null;
+  const awaitingStarted = new Map<string, ChannelDeliveryReceipt[]>();
+  const turnReceipts = new Map<string, ChannelDeliveryReceipt[]>();
+  const actedTurns = new Map<string, 'tool_call' | 'outbound_effect'>();
+
+  const defer = (events: BufferedEvent[], detail: string): void => {
+    for (const event of events) {
+      event.receipt.settle('deferred', { reason: { code: 'turn_failed', detail } });
+    }
+  };
 
   const renderBuffer = (events: BufferedEvent[]): UserInput[] => {
     if (events.length === 0) return [];
@@ -111,9 +132,8 @@ export function createCodexChannelSink(opts: CodexChannelSinkOptions): CodexChan
 
     const status = opts.getStatus();
     if (status.type === 'systemError') {
-      log.warn('dropping events — thread in systemError', {
-        dropped: events.length,
-      });
+      log.warn('deferring events — thread in systemError', { deferred: events.length });
+      defer(events, 'codex thread is unavailable');
       return;
     }
     if (status.type === 'notLoaded') {
@@ -126,15 +146,20 @@ export function createCodexChannelSink(opts: CodexChannelSinkOptions): CodexChan
 
     if (status.type === 'idle') {
       try {
-        await opts.rpc.request<TurnStartResponse>(METHODS.turnStart, {
+        const started = await opts.rpc.request<TurnStartResponse>(METHODS.turnStart, {
           threadId,
           input,
         });
+        awaitingStarted.set(
+          started.turn.id,
+          events.map((event) => event.receipt),
+        );
       } catch (err) {
         log.warn('turn/start failed', {
           error: err instanceof Error ? err.message : String(err),
-          dropped: events.length,
+          deferred: events.length,
         });
+        defer(events, 'codex turn failed to start');
       }
       return;
     }
@@ -153,6 +178,9 @@ export function createCodexChannelSink(opts: CodexChannelSinkOptions): CodexChan
         input,
         expectedTurnId: turnId,
       });
+      const receipts = events.map((event) => event.receipt);
+      for (const receipt of receipts) receipt.accepted();
+      turnReceipts.set(turnId, [...(turnReceipts.get(turnId) ?? []), ...receipts]);
     } catch (err) {
       // ExpectedTurnMismatch / NoActiveTurn on race with turn end. The
       // protocol surfaces these as JSON-RPC errors with code -32600
@@ -166,23 +194,29 @@ export function createCodexChannelSink(opts: CodexChannelSinkOptions): CodexChan
       if (!looksLikeRace) {
         log.warn('turn/steer failed (non-race)', {
           error: msg,
-          dropped: events.length,
+          deferred: events.length,
         });
+        defer(events, 'codex turn steer failed');
         return;
       }
       log.warn('steer race — retrying', { reason: msg });
       const retryStatus = opts.getStatus();
       if (retryStatus.type === 'idle') {
         try {
-          await opts.rpc.request<TurnStartResponse>(METHODS.turnStart, {
+          const started = await opts.rpc.request<TurnStartResponse>(METHODS.turnStart, {
             threadId,
             input,
           });
+          awaitingStarted.set(
+            started.turn.id,
+            events.map((event) => event.receipt),
+          );
         } catch (retryErr) {
           log.warn('retry turn/start failed', {
             error: retryErr instanceof Error ? retryErr.message : String(retryErr),
-            dropped: events.length,
+            deferred: events.length,
           });
+          defer(events, 'codex retry turn failed to start');
         }
         return;
       }
@@ -201,11 +235,15 @@ export function createCodexChannelSink(opts: CodexChannelSinkOptions): CodexChan
             input,
             expectedTurnId: retryTurnId,
           });
+          const receipts = events.map((event) => event.receipt);
+          for (const receipt of receipts) receipt.accepted();
+          turnReceipts.set(retryTurnId, [...(turnReceipts.get(retryTurnId) ?? []), ...receipts]);
         } catch (retryErr) {
           log.warn('retry turn/steer failed', {
             error: retryErr instanceof Error ? retryErr.message : String(retryErr),
-            dropped: events.length,
+            deferred: events.length,
           });
+          defer(events, 'codex retry turn steer failed');
         }
         return;
       }
@@ -213,9 +251,8 @@ export function createCodexChannelSink(opts: CodexChannelSinkOptions): CodexChan
       if (retryStatus.type === 'notLoaded') {
         buffer.unshift(...events);
       } else {
-        log.warn('retry dropped — systemError', {
-          dropped: events.length,
-        });
+        log.warn('retry deferred — systemError', { deferred: events.length });
+        defer(events, 'codex thread entered system error');
       }
     }
   };
@@ -256,7 +293,7 @@ export function createCodexChannelSink(opts: CodexChannelSinkOptions): CodexChan
   };
 
   return {
-    async deliver(event) {
+    async deliver(event, receipt = UNREPORTED_RECEIPT) {
       // Channel events include the runner's `context_refresh`
       // re-briefs — same path. `tools/list_changed` capability updates
       // reach codex through the bridge's stdio MCP transport, not this
@@ -268,8 +305,56 @@ export function createCodexChannelSink(opts: CodexChannelSinkOptions): CodexChan
         status: opts.getStatus().type,
         threadId: opts.getThreadId(),
       });
-      buffer.push({ text });
+      buffer.push({ text, receipt });
       scheduleFlush();
+    },
+    attachControl(send) {
+      sendControl = send;
+      send({ kind: 'runner_condition', at: Date.now(), state: 'ready' });
+    },
+    turnStarted(turnId, at = Date.now()) {
+      sendControl?.({ kind: 'runner_condition', at, state: 'ready' });
+      sendControl?.({ kind: 'runner_turn', at, turnId, phase: 'started' });
+      const receipts = awaitingStarted.get(turnId) ?? [];
+      awaitingStarted.delete(turnId);
+      for (const receipt of receipts) receipt.accepted();
+      if (receipts.length > 0) turnReceipts.set(turnId, receipts);
+    },
+    acted(turnId, kind, _at = Date.now()) {
+      actedTurns.set(turnId, kind);
+      for (const receipt of turnReceipts.get(turnId) ?? []) {
+        receipt.settle('acted', { evidence: { kind } });
+      }
+      turnReceipts.delete(turnId);
+    },
+    turnCompleted(turnId, failed = false, at = Date.now()) {
+      const evidence = actedTurns.get(turnId);
+      actedTurns.delete(turnId);
+      const outcome = failed ? 'failed' : evidence ? 'acted' : 'no_action';
+      sendControl?.({
+        kind: 'runner_turn',
+        at,
+        turnId,
+        phase: 'completed',
+        outcome,
+        ...(outcome === 'acted' && evidence ? { evidence: { kind: evidence } } : {}),
+      });
+      for (const receipt of turnReceipts.get(turnId) ?? []) {
+        if (failed) {
+          receipt.settle('deferred', {
+            reason: { code: 'turn_failed', detail: 'codex turn failed' },
+          });
+        } else receipt.settle('handled');
+      }
+      turnReceipts.delete(turnId);
+    },
+    degraded(code, detail) {
+      sendControl?.({
+        kind: 'runner_condition',
+        at: Date.now(),
+        state: 'degraded',
+        reason: { code, detail },
+      });
     },
     async flushNow() {
       await flush();

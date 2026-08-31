@@ -132,8 +132,11 @@ the drain-and-restart cycle an instruction edit triggers (below).
 | **Auth** | dual |
 | **Returns** | `RosterResponse` — `{ teammates: Teammate[], connected: Presence[], restartPending: string[], activityWindowMs }` |
 
-Public projection of teammates plus a parallel list of live
-presence (connection count, last-seen, busy flag). For the
+Public projection of teammates plus a parallel list of live presence:
+connection count, client/runner reports, executor state and fixed degraded
+reason, open-turn count, last turn outcome, last proven action, and supervision
+claim. Legacy activity remains compatibility scheduling telemetry and is not
+executor proof. For the
 presence model see [presence](/docs/concepts/presence).
 
 `restartPending` lists members whose current composed instructions
@@ -174,6 +177,15 @@ middleware with a plain HTTP 400/403 (the broker enforces
 Multiple concurrent subscribers per member are supported (the
 `Presence.connected` count reflects that). On server shutdown every
 live socket is closed with code `1001`.
+
+A runner advertising `deliveryProtocol: "disposition-v1"` may send
+`message_disposition` frames on this same socket. With additive
+`livenessProtocol: "runner-state-v1"`, it may also send
+`runner_condition` and `runner_turn` frames; `accepted` becomes a
+subscription-owned nonterminal lease. All fields are optional capabilities:
+an old peer omits them and is rendered `unreported`, never inferred ready.
+Condition detail is fixed text selected by the condition code, and turn
+evidence carries only `tool_call` or `outbound_effect`, never a tool name.
 
 Long-running bearer clients can set `onUnauthorized(source)` to receive the
 same signal for an HTTP 401 or a WebSocket upgrade 401. After device
@@ -1061,8 +1073,9 @@ member.
 | **Body** | `ActivityReport` — `{ state: ActivityState }` where `ActivityState` is `idle` / `working` / `blocked` |
 | **Returns** | `204` |
 
-Runner-only. Reports the agent's live 3-state activity to the
-broker on every transition. The server applies a 30s TTL — a
+Runner-only compatibility scheduling telemetry. It does not prove executor
+liveness and `working` is not projected onto the roster without separate action
+evidence. The server applies a 30s TTL — a
 non-idle (`working` / `blocked`) report resolves back to `idle` if
 no heartbeat refreshes it. The runner re-posts the current state
 every 10s while non-idle, and posts `{ state: "idle" }` once when

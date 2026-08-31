@@ -229,6 +229,12 @@ export interface Presence {
   clientReports?: ClientReport[];
   /** Live connections that reported no validated client identity. */
   unreportedConnections?: number;
+  /**
+   * Executor capability reported by live runner subscriptions. Absence means
+   * this broker predates the field; `unreported` means it understands the
+   * field but no connected runner supplied enough evidence to classify it.
+   */
+  executor?: ExecutorState;
   createdAt: number;
   lastSeen: number;
   role: Role | null;
@@ -300,8 +306,54 @@ export interface RunnerIdentity {
   runnerBuildSource: 'npm' | 'main';
   /** Additive reliable-delivery capability. Absence means an old runner, never support. */
   deliveryProtocol?: 'disposition-v1';
-  /** How this process will return after failure. Observational; never authorizes. */
+  /** Additive runner condition/turn frames and accepted-lease semantics. */
+  livenessProtocol?: 'runner-state-v1';
+  /**
+   * The runner's claim about how it was started. This is not a guarantee that
+   * a restart policy is effective, or that a wedged process will return.
+   * Observational only; never authorizes.
+   */
   supervision?: { kind: 'systemd'; unit: string } | { kind: 'none' };
+}
+
+export const RUNNER_CONDITION_CODES = [
+  'no_credential',
+  'invalid_model',
+  'model_unavailable',
+  'server_overloaded',
+  'auth_blocked',
+  'unknown',
+] as const;
+
+export type RunnerConditionCode = (typeof RUNNER_CONDITION_CODES)[number];
+
+export interface RunnerConditionFrame {
+  readonly kind: 'runner_condition';
+  readonly at: number;
+  readonly state: 'ready' | 'degraded';
+  /** Fixed, code-owned text only; adapters must never forward raw payloads. */
+  readonly reason?: { readonly code: RunnerConditionCode; readonly detail: string };
+}
+
+export interface RunnerTurnFrame {
+  readonly kind: 'runner_turn';
+  readonly at: number;
+  readonly turnId: string;
+  readonly phase: 'started' | 'completed';
+  readonly outcome?: 'acted' | 'no_action' | 'failed';
+  /** Deliberately omits the tool/effect name: liveness proves that, not what. */
+  readonly evidence?: { readonly kind: 'tool_call' | 'outbound_effect' };
+}
+
+export type RunnerControlFrame = MessageDispositionFrame | RunnerConditionFrame | RunnerTurnFrame;
+
+export interface ExecutorState {
+  readonly state: 'ready' | 'degraded' | 'unreported';
+  readonly reason?: { readonly code: RunnerConditionCode; readonly detail: string };
+  readonly activeTurns: number;
+  readonly lastTurnAt: number | null;
+  readonly lastActedAt: number | null;
+  readonly lastTurnOutcome?: 'acted' | 'no_action' | 'failed';
 }
 
 export interface RunnerReport extends RunnerIdentity {
@@ -400,7 +452,7 @@ export interface DeliveryReport {
   };
 }
 
-export type MessageDisposition = 'acted' | 'handled' | 'deferred' | 'refused';
+export type MessageDisposition = 'accepted' | 'acted' | 'handled' | 'deferred' | 'refused';
 export type MessageDispositionReasonCode =
   | 'degraded'
   | 'turn_failed'
@@ -417,7 +469,6 @@ export interface MessageDispositionFrame {
   readonly reason?: { readonly code: MessageDispositionReasonCode; readonly detail: string };
   readonly evidence?: {
     readonly kind: 'tool_call' | 'outbound_effect';
-    readonly name: string;
   };
 }
 
@@ -552,6 +603,9 @@ export interface TeamStatusMember {
   presence: Presence | null;
   activeObjectives: TeamStatusObjective[];
   lastActivityAt: number | null;
+  /** Additive broker verdict used by --stalled; absent on old brokers. */
+  stalled?: boolean;
+  stalledReasons?: Array<'objective_stale' | 'executor_degraded'>;
 }
 
 export interface TeamStatusResponse {

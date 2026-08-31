@@ -94,11 +94,15 @@ export function NavColumn({ viewer }: NavColumnProps) {
   // Live 3-state activity, orthogonal to the connection count above.
   // Only non-idle states are stored; a missing entry reads as idle.
   const activityByName = new Map<string, WorkState>();
+  const degradedByName = new Map<string, string>();
   if (r) {
     for (const a of r.connected) {
       onlineByName.set(a.name, a.connected);
       const state = presenceActivity(a);
       if (state !== 'idle') activityByName.set(a.name, state);
+      if (a.executor?.state === 'degraded') {
+        degradedByName.set(a.name, a.executor.reason?.code ?? 'unknown');
+      }
     }
   }
 
@@ -281,18 +285,21 @@ export function NavColumn({ viewer }: NavColumnProps) {
           const activity = activityByName.get(t.name) ?? 'idle';
           const working = activity === 'working';
           const blocked = activity === 'blocked';
+          const degraded = degradedByName.get(t.name);
           const active = v.kind === 'thread' && v.key === dmThreadKey(t.name);
           const unread = unreadCount(dmThreadKey(t.name), viewer, lastRead, msgMap);
           // Activity label (working / needs input) takes precedence over
           // the connection label (online / offline) in the a11y text — a
           // working or blocked member is online by definition.
-          const stateLabel = blocked
-            ? 'needs input'
-            : working
-              ? 'working'
-              : online
-                ? 'online'
-                : 'offline';
+          const stateLabel = degraded
+            ? `degraded: ${degraded}`
+            : blocked
+              ? 'needs input'
+              : working
+                ? 'working'
+                : online
+                  ? 'online'
+                  : 'offline';
           return (
             <li key={t.name}>
               <button
@@ -314,7 +321,7 @@ export function NavColumn({ viewer }: NavColumnProps) {
                 >
                   {t.name}
                 </span>
-                {working && (
+                {working && !degraded && (
                   // Working spinner — the agent is actively processing a
                   // turn (model generation and/or tool execution). Driven
                   // by `activity === 'working'` on the roster.
@@ -325,6 +332,11 @@ export function NavColumn({ viewer }: NavColumnProps) {
                     role="status"
                     style="flex-shrink:0"
                   />
+                )}
+                {degraded && (
+                  <span class="badge warn" title={`Runner degraded: ${degraded}`}>
+                    DEGRADED
+                  </span>
                 )}
                 {blocked && (
                   // Blocked — the agent is stuck waiting on a human (needs
