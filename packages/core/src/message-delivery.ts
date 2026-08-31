@@ -2,7 +2,7 @@
 
 import { MessageSchema } from 'csuite-sdk/schemas';
 import type { Message, MessageDispositionFrame } from 'csuite-sdk/types';
-import type { SqlDriver, SqlStatement } from './sql-driver.js';
+import type { SqlDriver, SqlRunResult, SqlStatement } from './sql-driver.js';
 
 export const MESSAGE_DELIVERY_TTL_MS = 24 * 60 * 60_000;
 
@@ -22,14 +22,22 @@ export interface ExpiredMessageDelivery extends PendingMessageDelivery {
 export interface MessageDeliveryLedger {
   track(message: Message, recipient: string, now: number): void;
   noteSent(messageId: string, recipient: string, now: number): void;
-  settle(recipient: string, frame: MessageDispositionFrame): PendingMessageDelivery | null;
+  settle(
+    recipient: string,
+    frame: MessageDispositionFrame,
+    owner: string,
+    requireAcceptance: boolean,
+  ): PendingMessageDelivery | null;
+  releaseOwner(recipient: string, owner: string): number;
   pending(recipient: string, now: number): PendingMessageDelivery[];
   expire(now: number): ExpiredMessageDelivery[];
   markUnreported(messageId: string, recipient: string, now: number): void;
 }
 
 interface MemoryRow extends PendingMessageDelivery {
-  state: 'pending' | 'acted' | 'handled' | 'refused' | 'unreported';
+  state: 'pending' | 'accepted' | 'acted' | 'handled' | 'refused' | 'unreported';
+  acceptedOwner: string | null;
+  releasedOwners: Set<string>;
   dispositionAt: number | null;
   reason: MessageDispositionFrame['reason'] | null;
 }
@@ -48,6 +56,8 @@ export class InMemoryMessageDeliveryLedger implements MessageDeliveryLedger {
       message,
       recipient,
       state: 'pending',
+      acceptedOwner: null,
+      releasedOwners: new Set(),
       attempts: 0,
       firstSentAt: null,
       lastSentAt: null,
@@ -59,23 +69,60 @@ export class InMemoryMessageDeliveryLedger implements MessageDeliveryLedger {
 
   noteSent(messageId: string, recipient: string, now: number): void {
     const row = this.rows.get(this.key(messageId, recipient));
-    if (!row || row.state !== 'pending') return;
+    if (row?.state !== 'pending') return;
     row.attempts += 1;
     row.firstSentAt ??= now;
     row.lastSentAt = now;
   }
 
-  settle(recipient: string, frame: MessageDispositionFrame): PendingMessageDelivery | null {
+  settle(
+    recipient: string,
+    frame: MessageDispositionFrame,
+    owner: string,
+    requireAcceptance: boolean,
+  ): PendingMessageDelivery | null {
     const row = this.rows.get(this.key(frame.messageId, recipient));
-    if (!row || row.state !== 'pending') return null;
+    if (!row) return null;
+    if (frame.disposition === 'accepted') {
+      if (row.state !== 'pending') return null;
+      row.state = 'accepted';
+      row.acceptedOwner = owner;
+      row.reason = null;
+      return { ...row };
+    }
     if (frame.disposition === 'deferred') {
+      if (row.state === 'accepted' && row.acceptedOwner !== owner) return null;
+      if (row.state !== 'pending' && row.state !== 'accepted') return null;
+      if (row.state === 'accepted') row.releasedOwners.add(owner);
+      row.state = 'pending';
+      row.acceptedOwner = null;
       row.reason = frame.reason ?? null;
       return { ...row };
     }
+    if (row.state === 'accepted') {
+      if (row.acceptedOwner !== owner) return null;
+    } else if (row.state !== 'pending' || requireAcceptance || row.releasedOwners.has(owner)) {
+      return null;
+    }
     row.state = frame.disposition;
+    row.acceptedOwner = null;
     row.dispositionAt = frame.at;
     row.reason = frame.reason ?? null;
     return { ...row };
+  }
+
+  releaseOwner(recipient: string, owner: string): number {
+    let released = 0;
+    for (const row of this.rows.values()) {
+      if (row.recipient !== recipient || row.state !== 'accepted' || row.acceptedOwner !== owner) {
+        continue;
+      }
+      row.state = 'pending';
+      row.acceptedOwner = null;
+      row.releasedOwners.add(owner);
+      released += 1;
+    }
+    return released;
   }
 
   pending(recipient: string, now: number): PendingMessageDelivery[] {
@@ -89,7 +136,7 @@ export class InMemoryMessageDeliveryLedger implements MessageDeliveryLedger {
   expire(now: number): ExpiredMessageDelivery[] {
     const expired: ExpiredMessageDelivery[] = [];
     for (const row of this.rows.values()) {
-      if (row.state !== 'pending' || row.expiresAt > now) continue;
+      if ((row.state !== 'pending' && row.state !== 'accepted') || row.expiresAt > now) continue;
       row.state = 'refused';
       row.dispositionAt = now;
       row.reason = { code: 'expired', detail: 'message acknowledgement expired after 24 hours' };
@@ -103,7 +150,7 @@ export class InMemoryMessageDeliveryLedger implements MessageDeliveryLedger {
 
   markUnreported(messageId: string, recipient: string, now: number): void {
     const row = this.rows.get(this.key(messageId, recipient));
-    if (!row || row.state !== 'pending') return;
+    if (row?.state !== 'pending') return;
     row.state = 'unreported';
     row.dispositionAt = now;
   }
@@ -116,6 +163,8 @@ interface DeliveryRow {
   first_sent_at: number | null;
   last_sent_at: number | null;
   expires_at: number;
+  state?: string;
+  accepted_owner?: string | null;
 }
 
 const CREATE_SCHEMA = `
@@ -130,6 +179,7 @@ const CREATE_SCHEMA = `
     expires_at INTEGER NOT NULL,
     disposition_at INTEGER,
     reason_json TEXT,
+    accepted_owner TEXT,
     PRIMARY KEY (message_id, recipient)
   );
   CREATE INDEX IF NOT EXISTS message_deliveries_pending_idx
@@ -148,9 +198,25 @@ export class SqliteMessageDeliveryLedger implements MessageDeliveryLedger {
   private readonly expireStmt: SqlStatement;
   private readonly purgeTerminalStmt: SqlStatement;
   private readonly unreportedStmt: SqlStatement;
+  private readonly acceptStmt: SqlStatement;
+  private readonly terminalAcceptedStmt: SqlStatement;
+  private readonly releaseOwnerStmt: SqlStatement;
+  private readonly acceptedByOwner: SqlStatement;
+  private readonly byIdStmt: SqlStatement;
+  private readonly deferAcceptedStmt: SqlStatement;
+  private readonly releasedOwner = new Map<string, Set<string>>();
 
   constructor(db: SqlDriver) {
     db.exec(CREATE_SCHEMA);
+    try {
+      db.exec('ALTER TABLE message_deliveries ADD COLUMN accepted_owner TEXT');
+    } catch {
+      // Existing current-schema databases already have the additive column.
+    }
+    // Accepted leases are owned by live sockets. A broker restart has no
+    // surviving owner, so recovery must not depend on the dead process.
+    db.exec(`UPDATE message_deliveries SET state = 'pending', accepted_owner = NULL
+             WHERE state = 'accepted'`);
     this.insert = db.prepare(
       `INSERT OR IGNORE INTO message_deliveries
        (message_id, recipient, message_json, state, expires_at)
@@ -165,9 +231,36 @@ export class SqliteMessageDeliveryLedger implements MessageDeliveryLedger {
       `UPDATE message_deliveries SET state = ?, disposition_at = ?, reason_json = ?
        WHERE message_id = ? AND recipient = ? AND state = 'pending'`,
     );
+    this.acceptStmt = db.prepare(
+      `UPDATE message_deliveries SET state = 'accepted', accepted_owner = ?, reason_json = NULL
+       WHERE message_id = ? AND recipient = ? AND state = 'pending'`,
+    );
+    this.terminalAcceptedStmt = db.prepare(
+      `UPDATE message_deliveries SET state = ?, disposition_at = ?, reason_json = ?, accepted_owner = NULL
+       WHERE message_id = ? AND recipient = ? AND state = 'accepted' AND accepted_owner = ?`,
+    );
+    this.releaseOwnerStmt = db.prepare(
+      `UPDATE message_deliveries SET state = 'pending', accepted_owner = NULL
+       WHERE recipient = ? AND state = 'accepted' AND accepted_owner = ?`,
+    );
+    this.acceptedByOwner = db.prepare(
+      `SELECT message_json, recipient, attempts, first_sent_at, last_sent_at, expires_at,
+              state, accepted_owner
+       FROM message_deliveries
+       WHERE recipient = ? AND state = 'accepted' AND accepted_owner = ?`,
+    );
+    this.byIdStmt = db.prepare(
+      `SELECT message_json, recipient, attempts, first_sent_at, last_sent_at, expires_at,
+              state, accepted_owner
+       FROM message_deliveries WHERE recipient = ? AND message_id = ?`,
+    );
     this.deferStmt = db.prepare(
       `UPDATE message_deliveries SET reason_json = ?
        WHERE message_id = ? AND recipient = ? AND state = 'pending'`,
+    );
+    this.deferAcceptedStmt = db.prepare(
+      `UPDATE message_deliveries SET state = 'pending', accepted_owner = NULL, reason_json = ?
+       WHERE message_id = ? AND recipient = ? AND state = 'accepted' AND accepted_owner = ?`,
     );
     this.pendingStmt = db.prepare(
       `SELECT message_json, recipient, attempts, first_sent_at, last_sent_at, expires_at
@@ -177,11 +270,11 @@ export class SqliteMessageDeliveryLedger implements MessageDeliveryLedger {
     );
     this.expiredStmt = db.prepare(
       `SELECT message_json, recipient, attempts, first_sent_at, last_sent_at, expires_at
-       FROM message_deliveries WHERE state = 'pending' AND expires_at <= ?`,
+       FROM message_deliveries WHERE state IN ('pending', 'accepted') AND expires_at <= ?`,
     );
     this.expireStmt = db.prepare(
       `UPDATE message_deliveries SET state = 'refused', disposition_at = ?, reason_json = ?
-       WHERE state = 'pending' AND expires_at <= ?`,
+       WHERE state IN ('pending', 'accepted') AND expires_at <= ?`,
     );
     this.purgeTerminalStmt = db.prepare(
       `DELETE FROM message_deliveries
@@ -201,19 +294,70 @@ export class SqliteMessageDeliveryLedger implements MessageDeliveryLedger {
     this.note.run(now, now, messageId, recipient);
   }
 
-  settle(recipient: string, frame: MessageDispositionFrame): PendingMessageDelivery | null {
-    const row = (
-      this.pendingStmt.all(recipient, Number.NEGATIVE_INFINITY) as unknown as DeliveryRow[]
-    )
-      .map(rowToPending)
-      .find((candidate) => candidate.message.id === frame.messageId);
-    if (!row) return null;
+  settle(
+    recipient: string,
+    frame: MessageDispositionFrame,
+    owner: string,
+    requireAcceptance: boolean,
+  ): PendingMessageDelivery | null {
+    const selected = this.pendingById(recipient, frame.messageId);
+    if (!selected) return null;
+    const row = rowToPending(selected);
     const reason = frame.reason ? JSON.stringify(frame.reason) : null;
-    const result =
-      frame.disposition === 'deferred'
-        ? this.deferStmt.run(reason, frame.messageId, recipient)
-        : this.settleStmt.run(frame.disposition, frame.at, reason, frame.messageId, recipient);
+    let result: SqlRunResult;
+    if (frame.disposition === 'accepted') {
+      result = this.acceptStmt.run(owner, frame.messageId, recipient);
+    } else if (frame.disposition === 'deferred') {
+      if (selected.state === 'accepted' && selected.accepted_owner !== owner) return null;
+      result =
+        selected.state === 'accepted'
+          ? this.deferAcceptedStmt.run(reason, frame.messageId, recipient, owner)
+          : this.deferStmt.run(reason, frame.messageId, recipient);
+      if (selected.state === 'accepted') {
+        this.noteReleased(recipient, frame.messageId, owner);
+      }
+    } else if (selected.state === 'accepted') {
+      result = this.terminalAcceptedStmt.run(
+        frame.disposition,
+        frame.at,
+        reason,
+        frame.messageId,
+        recipient,
+        owner,
+      );
+    } else {
+      if (requireAcceptance || this.wasReleased(recipient, frame.messageId, owner)) return null;
+      result = this.settleStmt.run(frame.disposition, frame.at, reason, frame.messageId, recipient);
+    }
     return result.changes > 0 ? row : null;
+  }
+
+  releaseOwner(recipient: string, owner: string): number {
+    const rows = this.acceptedByOwner.all(recipient, owner) as unknown as DeliveryRow[];
+    for (const row of rows) {
+      const pending = rowToPending(row);
+      this.noteReleased(recipient, pending.message.id, owner);
+    }
+    return Number(this.releaseOwnerStmt.run(recipient, owner).changes);
+  }
+
+  private pendingById(recipient: string, messageId: string): DeliveryRow | null {
+    return (this.byIdStmt.get(recipient, messageId) as unknown as DeliveryRow | undefined) ?? null;
+  }
+
+  private releaseKey(recipient: string, messageId: string): string {
+    return `${recipient}\u0000${messageId}`;
+  }
+
+  private noteReleased(recipient: string, messageId: string, owner: string): void {
+    const key = this.releaseKey(recipient, messageId);
+    const owners = this.releasedOwner.get(key) ?? new Set<string>();
+    owners.add(owner);
+    this.releasedOwner.set(key, owners);
+  }
+
+  private wasReleased(recipient: string, messageId: string, owner: string): boolean {
+    return this.releasedOwner.get(this.releaseKey(recipient, messageId))?.has(owner) ?? false;
   }
 
   pending(recipient: string, now: number): PendingMessageDelivery[] {

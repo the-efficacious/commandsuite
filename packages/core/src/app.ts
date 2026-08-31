@@ -64,13 +64,13 @@ import {
   InvokeToolRequestSchema,
   ListObjectivesQuerySchema,
   LogLevelSchema,
-  MessageDispositionFrameSchema,
   NameSchema,
   PendingEnrollmentSchema,
   PushPayloadSchema,
   PushSubscriptionPayloadSchema,
   RejectEnrollmentRequestSchema,
   RotateTokenRequestSchema,
+  RunnerControlFrameSchema,
   RunnerIdentitySchema,
   SetCustomToolRequestSchema,
   SetNotificationSecretRequestSchema,
@@ -685,6 +685,7 @@ export function createApp(options: AppOptions): CreatedApp {
   // Sweep independently of notifications so ordinary team messages also
   // reach an explicit terminal refusal instead of accumulating forever.
   const messageDeliverySweepInterval = setInterval(() => {
+    broker.sweepOpenTurnBackstops();
     void broker.sweepMessageDeliveries().catch((err) => {
       logger.warn('message delivery sweep failed', {
         error: err instanceof Error ? err.message : String(err),
@@ -1363,14 +1364,10 @@ export function createApp(options: AppOptions): CreatedApp {
   });
 
   app.get(PATHS.roster, auth, async (c) => {
-    // Decorate the live presence list with each member's ACTIVITY state
-    // (idle/working/blocked). Both `activity` and the back-compat `busy`
-    // mirror default to absent for members the tracker resolves as idle
-    // (never reported, reported idle, or lapsed past the TTL) — older
-    // clients ignore the fields and see the same shape they always have.
-    // For non-idle members we surface `activity` plus `busy = activity
-    // === 'working'`, so `blocked` reads as not-busy (an operator should
-    // look) while still exposing the distinct state to new UIs.
+    // Compatibility activity projection. `working` is now derived ONLY
+    // from recent broker-recorded tool/outbound evidence. Turn lifecycle
+    // and message consumption remain scheduling telemetry and can never
+    // make a member look capable. `blocked` stays runner telemetry.
     //
     // `captureHealth` follows a DIFFERENT absence rule from `activity`,
     // deliberately. `activity` omits the field for idle members and a
@@ -1381,7 +1378,17 @@ export function createApp(options: AppOptions): CreatedApp {
     // field as healthy is exactly the conflation this exists to remove,
     // and it is only absent when the store isn't wired at all.
     const presences = broker.listPresences(options.version).map((p) => {
-      const activity = workState.getActivity(p.name);
+      const schedulingState = workState.getActivity(p.name);
+      const actedRecently =
+        p.executor?.lastActedAt !== null &&
+        p.executor?.lastActedAt !== undefined &&
+        now() - p.executor.lastActedAt <= WORK_STATE_TTL_MS;
+      const activity =
+        schedulingState === 'blocked'
+          ? ('blocked' as const)
+          : actedRecently
+            ? ('working' as const)
+            : ('idle' as const);
       const health = captureHealth?.forMember(p.name);
       // `pending` is internal — an aged-out marker hasn't earned a
       // claim yet, and healthy lag means every turn is briefly
@@ -4887,6 +4894,7 @@ export function createApp(options: AppOptions): CreatedApp {
           let unsubscribe: (() => void) | null = null;
           let onShutdown: (() => void) | null = null;
           let sendMessage: ((message: Message) => void) | null = null;
+          const subscriptionId = crypto.randomUUID();
 
           return {
             onOpen: (_evt, ws) => {
@@ -4906,12 +4914,31 @@ export function createApp(options: AppOptions): CreatedApp {
                 name: member.name,
                 tokenId: c.get('tokenId'),
                 clientIdentity,
+                subscriptionId,
               });
+              if (
+                clientIdentity?.kind !== 'runner' ||
+                clientIdentity.runnerIdentity.livenessProtocol !== 'runner-state-v1'
+              ) {
+                void broker
+                  .redeliverPending(targetName, sendMessage, clientIdentity ?? null)
+                  .catch((err) => {
+                    logger.warn('pending message redelivery failed', {
+                      targetName,
+                      error: err instanceof Error ? err.message : String(err),
+                    });
+                  });
+              }
 
               // Shutdown fan-out: server.close() needs every live socket
               // to close before it returns. Without this, SIGTERM would
               // hang indefinitely on idle connections.
               onShutdown = () => {
+                // Release subscription-owned delivery leases while durable
+                // storage is still open; the WebSocket close event can race
+                // the server's final database close.
+                unsubscribe?.();
+                unsubscribe = null;
                 try {
                   ws.close(1001, 'server shutting down');
                 } catch {
@@ -4965,23 +4992,30 @@ export function createApp(options: AppOptions): CreatedApp {
               let raw: string;
               try {
                 raw = typeof evt.data === 'string' ? evt.data : String(evt.data);
-                const parsed = MessageDispositionFrameSchema.safeParse(JSON.parse(raw));
+                const parsed = RunnerControlFrameSchema.safeParse(JSON.parse(raw));
                 if (!parsed.success) {
-                  logger.warn('invalid message disposition frame', { targetName });
+                  logger.warn('invalid runner control frame', { targetName });
                   return;
                 }
-                const accepted = await broker.disposition(targetName, parsed.data, {
+                const context = {
                   name: member.name,
                   clientIdentity,
-                });
+                  subscriptionId,
+                };
+                const accepted =
+                  parsed.data.kind === 'message_disposition'
+                    ? await broker.disposition(targetName, parsed.data, context)
+                    : parsed.data.kind === 'runner_condition'
+                      ? await broker.runnerCondition(targetName, parsed.data, context)
+                      : broker.runnerTurn(targetName, parsed.data, context);
                 if (!accepted) {
-                  logger.warn('message disposition refused', {
+                  logger.warn('runner control frame refused', {
                     targetName,
-                    messageId: parsed.data.messageId,
+                    kind: parsed.data.kind,
                   });
                 }
               } catch {
-                logger.warn('invalid message disposition frame', { targetName });
+                logger.warn('invalid runner control frame', { targetName });
               }
             },
             onClose: () => {

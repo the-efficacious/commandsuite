@@ -12,7 +12,13 @@
 
 import { logger as defaultLogger, type Logger } from 'csuite-core';
 import type { Client as BrokerClient } from 'csuite-sdk/client';
-import type { Message, RunnerIdentity } from 'csuite-sdk/types';
+import type {
+  Message,
+  MessageDisposition,
+  MessageDispositionReasonCode,
+  RunnerControlFrame,
+  RunnerIdentity,
+} from 'csuite-sdk/types';
 import type { Presence } from './presence.js';
 import { formatAgentTimestamp } from './tools.js';
 
@@ -34,7 +40,21 @@ export interface ChannelEvent {
  * re-briefs ride the same sink.
  */
 export interface ChannelEventSink {
-  deliver(event: ChannelEvent): Promise<void>;
+  deliver(event: ChannelEvent, receipt: ChannelDeliveryReceipt): Promise<void>;
+  /** Replaced on reconnect; adapters emit condition/turn facts through it. */
+  attachControl?(send: (frame: RunnerControlFrame) => void): void;
+}
+
+export interface ChannelDeliveryReceipt {
+  readonly messageId: string;
+  accepted(): void;
+  settle(
+    disposition: Exclude<MessageDisposition, 'accepted'>,
+    options?: {
+      reason?: { code: MessageDispositionReasonCode; detail: string };
+      evidence?: { kind: 'tool_call' | 'outbound_effect' };
+    },
+  ): void;
 }
 
 const BACKOFF_START_MS = 1_000;
@@ -237,7 +257,37 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
       presence?.setConnecting();
       backoff = BACKOFF_START_MS;
 
-      const stream = brokerClient.subscribe(name, signal, runnerIdentity);
+      // The fallback is for old embedded SDK shims/tests. A real current SDK
+      // always supplies subscribeReliable; omission degrades to unreported.
+      const reliable = (brokerClient as Partial<BrokerClient>).subscribeReliable;
+      const stream =
+        typeof reliable === 'function' && runnerIdentity !== undefined
+          ? reliable.call(brokerClient, name, signal, runnerIdentity)
+          : Object.assign(brokerClient.subscribe(name, signal, runnerIdentity), {
+              disposition() {},
+              control() {},
+            });
+      sink.attachControl?.((frame) => stream.control(frame));
+      const receiptFor = (messageId: string): ChannelDeliveryReceipt => ({
+        messageId,
+        accepted() {
+          stream.disposition({
+            kind: 'message_disposition',
+            messageId,
+            disposition: 'accepted',
+            at: Date.now(),
+          });
+        },
+        settle(disposition, options = {}) {
+          stream.disposition({
+            kind: 'message_disposition',
+            messageId,
+            disposition,
+            at: Date.now(),
+            ...options,
+          });
+        },
+      });
       // Presence flips to `online` optimistically as soon as subscribe
       // returns an iterator — we don't wait for the first message
       // because a quiet team with long heartbeat gaps would otherwise
@@ -247,6 +297,7 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
       // back to `offline`.
       presence?.setOnline();
       for await (const message of stream) {
+        const receipt = receiptFor(message.id);
         log.debug('broker message received', {
           msgId: message.id,
           from: message.from,
@@ -314,6 +365,7 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
           if (!onEnvironmentEvent) {
             log.warn('environment change received but automatic reload is disabled');
           }
+          receipt.settle('handled');
           continue;
         }
 
@@ -332,6 +384,9 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
           const control = parseContextControl(message.data);
           if (control === null) {
             log.warn('dropped malformed context control', { msgId: message.id });
+            receipt.settle('refused', {
+              reason: { code: 'unsupported', detail: 'malformed context control' },
+            });
           } else if (control.target !== name) {
             // Addressed to a teammate. The broker does not currently
             // send us those, which is exactly why this is worth
@@ -341,18 +396,28 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
               target: control.target,
               requestId: control.requestId,
             });
+            receipt.settle('refused', {
+              reason: { code: 'operator_policy', detail: 'context control addressed elsewhere' },
+            });
           } else if (onContextControlEvent) {
             try {
               onContextControlEvent(control);
+              receipt.settle('handled');
             } catch (err) {
               log.error('onContextControlEvent handler threw', {
                 error: err instanceof Error ? err.message : String(err),
+              });
+              receipt.settle('deferred', {
+                reason: { code: 'turn_failed', detail: 'context control handler failed' },
               });
             }
           } else {
             log.warn('context control received but this runner has no handler', {
               verb: control.verb,
               requestId: control.requestId,
+            });
+            receipt.settle('refused', {
+              reason: { code: 'unsupported', detail: 'context control unsupported' },
             });
           }
           continue;
@@ -363,8 +428,11 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
         // sends come back on the subscription stream. Forwarding them would
         // cost the agent a turn to recognise and discard its own
         // output. `recent` still returns self-sends for scrollback.
-        if (message.from === name) continue;
-        await forwardMessage(sink, message, log, resolveChannelSlug);
+        if (message.from === name) {
+          receipt.settle('handled');
+          continue;
+        }
+        await forwardMessage(sink, message, receipt, log, resolveChannelSlug);
       }
 
       // If we get here, the stream ended cleanly — treat as a reconnect.
@@ -408,6 +476,7 @@ const RESERVED_META_KEYS: ReadonlySet<string> = new Set([
 async function forwardMessage(
   sink: ChannelEventSink,
   message: Message,
+  receipt: ChannelDeliveryReceipt,
   log: Logger,
   resolveChannelSlug?: (id: string) => Promise<string | null>,
 ): Promise<void> {
@@ -467,11 +536,14 @@ async function forwardMessage(
   }
 
   try {
-    await sink.deliver({ content: message.body, meta });
+    await sink.deliver({ content: message.body, meta }, receipt);
   } catch (err) {
     log.error('failed to deliver channel event', {
       messageId: message.id,
       error: err instanceof Error ? err.message : String(err),
+    });
+    receipt.settle('deferred', {
+      reason: { code: 'turn_failed', detail: 'channel sink rejected delivery' },
     });
   }
 }

@@ -7,7 +7,8 @@
  * queue is the async generator the Agent SDK consumes.
  */
 
-import { describe, expect, it } from 'vitest';
+import type { RunnerControlFrame } from 'csuite-sdk/types';
+import { describe, expect, it, vi } from 'vitest';
 import {
   ClaudeMessageQueue,
   createClaudeChannelSink,
@@ -93,5 +94,44 @@ describe('createClaudeChannelSink', () => {
     expect(queue.depth).toBe(0);
     sink.flushNow();
     expect(queue.depth).toBe(1);
+  });
+
+  it('classifies a prose capacity failure locally and defers its accepted mail', async () => {
+    const queue = new ClaudeMessageQueue();
+    const frames: RunnerControlFrame[] = [];
+    const settle = vi.fn();
+    const accepted = vi.fn();
+    const sink = createClaudeChannelSink({
+      getQueue: () => queue,
+      log: silentLogger(),
+      bundleWindowMs: 5_000,
+    });
+    sink.attachControl((frame) => frames.push(frame));
+    await sink.deliver(channelEvent('please act'), {
+      messageId: 'message-1',
+      accepted,
+      settle,
+    });
+    sink.flushNow();
+    const iter = queue.stream();
+    await iter.next();
+    expect(accepted).toHaveBeenCalledOnce();
+
+    sink.observe({
+      type: 'assistant',
+      message: {
+        content: [{ type: 'text', text: 'Selected model is at capacity: raw-secret-fragment' }],
+      },
+    } as never);
+
+    expect(frames).toContainEqual({
+      kind: 'runner_condition',
+      at: expect.any(Number),
+      state: 'degraded',
+      reason: { code: 'server_overloaded', detail: 'model service is overloaded' },
+    });
+    expect(JSON.stringify(frames)).not.toContain('raw-secret-fragment');
+    expect(settle).toHaveBeenCalledWith('deferred', expect.any(Object));
+    queue.close();
   });
 });

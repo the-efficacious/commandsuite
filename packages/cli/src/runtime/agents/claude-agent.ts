@@ -624,6 +624,7 @@ export function createClaudeAdapter(options: ClaudeAdapterOptions): AgentAdapter
               }
             }
             observeCompactionMessage(message);
+            sink?.observe(message);
             printer.handle(message);
           }
           log.info('message stream ended');

@@ -22,12 +22,20 @@
  * is dropped, nothing needs a second buffering layer.
  */
 
-import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import { randomUUID } from 'node:crypto';
+import type { SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { Logger } from 'csuite-core';
-import type { ChannelEventSink } from '../forwarder.js';
+import type { RunnerConditionCode, RunnerControlFrame } from 'csuite-sdk/types';
+import type { ChannelDeliveryReceipt, ChannelEventSink } from '../forwarder.js';
+import { classifyRunnerFailure, RUNNER_CONDITION_DETAIL } from '../runner-condition.js';
 import { formatChannelEvent } from './channel-format.js';
 
 const DEFAULT_BUNDLE_WINDOW_MS = 200;
+const UNREPORTED_RECEIPT: ChannelDeliveryReceipt = {
+  messageId: '(unreported)',
+  accepted() {},
+  settle() {},
+};
 
 /**
  * Unbounded FIFO of streaming-input messages, consumed by the async
@@ -36,13 +44,13 @@ const DEFAULT_BUNDLE_WINDOW_MS = 200;
  * the SDK's graceful-shutdown signal (stdin EOF → grace window).
  */
 export class ClaudeMessageQueue {
-  private items: SDKUserMessage[] = [];
+  private items: Array<{ message: SDKUserMessage; onConsumed?: () => void }> = [];
   private wake: (() => void) | null = null;
   private closed = false;
 
-  push(message: SDKUserMessage): boolean {
+  push(message: SDKUserMessage, onConsumed?: () => void): boolean {
     if (this.closed) return false;
-    this.items.push(message);
+    this.items.push({ message, ...(onConsumed ? { onConsumed } : {}) });
     this.wake?.();
     return true;
   }
@@ -61,7 +69,10 @@ export class ClaudeMessageQueue {
     while (true) {
       while (this.items.length > 0) {
         const next = this.items.shift();
-        if (next !== undefined) yield next;
+        if (next !== undefined) {
+          next.onConsumed?.();
+          yield next.message;
+        }
       }
       if (this.closed) return;
       await new Promise<void>((resolve) => {
@@ -96,12 +107,20 @@ export interface ClaudeChannelSink extends ChannelEventSink {
    * the 200ms window at teardown.
    */
   flushNow(): void;
+  observe(message: SDKMessage): void;
 }
 
 export function createClaudeChannelSink(opts: ClaudeChannelSinkOptions): ClaudeChannelSink {
   const bundleWindow = opts.bundleWindowMs ?? DEFAULT_BUNDLE_WINDOW_MS;
-  const buffer: string[] = [];
+  const buffer: Array<{ text: string; receipt: ChannelDeliveryReceipt }> = [];
   let timer: NodeJS.Timeout | null = null;
+  let sendControl: ((frame: RunnerControlFrame) => void) | null = null;
+  let turn: {
+    id: string;
+    receipts: ChannelDeliveryReceipt[];
+    acted: boolean;
+    failureCode?: RunnerConditionCode;
+  } | null = null;
 
   const flush = (): void => {
     if (timer !== null) {
@@ -109,14 +128,32 @@ export function createClaudeChannelSink(opts: ClaudeChannelSinkOptions): ClaudeC
       timer = null;
     }
     if (buffer.length === 0) return;
-    const body = buffer.splice(0, buffer.length).join('\n');
-    const accepted = opts.getQueue().push({
-      type: 'user',
-      message: { role: 'user', content: body },
-      parent_tool_use_id: null,
-    });
+    const events = buffer.splice(0, buffer.length);
+    const body = events.map((event) => event.text).join('\n');
+    const receipts = events.map((event) => event.receipt);
+    const accepted = opts.getQueue().push(
+      {
+        type: 'user',
+        message: { role: 'user', content: body },
+        parent_tool_use_id: null,
+      },
+      () => {
+        for (const receipt of receipts) receipt.accepted();
+        if (turn === null) {
+          turn = { id: randomUUID(), receipts: [], acted: false };
+          sendControl?.({ kind: 'runner_condition', at: Date.now(), state: 'ready' });
+          sendControl?.({ kind: 'runner_turn', at: Date.now(), turnId: turn.id, phase: 'started' });
+        }
+        turn.receipts.push(...receipts);
+      },
+    );
     if (!accepted) {
-      opts.log.warn('dropped events — input stream closed', { bytes: body.length });
+      opts.log.warn('deferred events — input stream closed', { bytes: body.length });
+      for (const receipt of receipts) {
+        receipt.settle('deferred', {
+          reason: { code: 'turn_failed', detail: 'claude input stream is closed' },
+        });
+      }
     }
   };
 
@@ -131,7 +168,7 @@ export function createClaudeChannelSink(opts: ClaudeChannelSinkOptions): ClaudeC
   };
 
   return {
-    async deliver(event) {
+    async deliver(event, receipt = UNREPORTED_RECEIPT) {
       // Channel events include the runner's `context_refresh`
       // re-briefs — same path. Capability updates
       // (`tools/list_changed`) reach claude through the bridge's stdio
@@ -142,8 +179,70 @@ export function createClaudeChannelSink(opts: ClaudeChannelSinkOptions): ClaudeC
         bufferDepth: buffer.length + 1,
         queueDepth: opts.getQueue().depth,
       });
-      buffer.push(text);
+      buffer.push({ text, receipt });
       scheduleFlush();
+    },
+    attachControl(send) {
+      sendControl = send;
+      send({ kind: 'runner_condition', at: Date.now(), state: 'ready' });
+    },
+    observe(message) {
+      if (message.type === 'assistant' && turn !== null) {
+        const code = classifyRunnerFailure(message);
+        if (code !== 'unknown') {
+          turn.failureCode = code;
+          sendControl?.({
+            kind: 'runner_condition',
+            at: Date.now(),
+            state: 'degraded',
+            reason: { code, detail: RUNNER_CONDITION_DETAIL[code] },
+          });
+          for (const receipt of turn.receipts) {
+            receipt.settle('deferred', {
+              reason: { code: 'turn_failed', detail: 'claude cannot act on this turn' },
+            });
+          }
+          turn.receipts = [];
+        }
+        const usedTool = message.message.content.some((block) => block.type === 'tool_use');
+        if (usedTool && !turn.acted) {
+          turn.acted = true;
+          for (const receipt of turn.receipts) {
+            receipt.settle('acted', { evidence: { kind: 'tool_call' } });
+          }
+          turn.receipts = [];
+        }
+        return;
+      }
+      if (message.type !== 'result' || turn === null) return;
+      const current = turn;
+      turn = null;
+      const failed = message.subtype !== 'success' || current.failureCode !== undefined;
+      const outcome = failed ? 'failed' : current.acted ? 'acted' : 'no_action';
+      sendControl?.({
+        kind: 'runner_turn',
+        at: Date.now(),
+        turnId: current.id,
+        phase: 'completed',
+        outcome,
+        ...(outcome === 'acted' ? { evidence: { kind: 'tool_call' } } : {}),
+      });
+      for (const receipt of current.receipts) {
+        if (failed) {
+          receipt.settle('deferred', {
+            reason: { code: 'turn_failed', detail: 'claude turn failed' },
+          });
+        } else receipt.settle('handled');
+      }
+      if (failed) {
+        const code = current.failureCode ?? classifyRunnerFailure(message);
+        sendControl?.({
+          kind: 'runner_condition',
+          at: Date.now(),
+          state: 'degraded',
+          reason: { code, detail: RUNNER_CONDITION_DETAIL[code] },
+        });
+      }
     },
     flushNow() {
       flush();

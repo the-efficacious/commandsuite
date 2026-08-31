@@ -233,7 +233,7 @@ const APP_IN_SCOPE = [
  * not settle it; a failed sweep retries on the next interval. The record therefore remains incomplete visibly in its
  * authoritative pending state, while these lines explain transport noise.
  */
-const TOTAL_SITES = 75;
+const TOTAL_SITES = 79;
 
 function messagesIn(file: string): string[] {
   let src: string | null = null;

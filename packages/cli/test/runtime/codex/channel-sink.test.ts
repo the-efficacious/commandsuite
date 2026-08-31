@@ -128,20 +128,23 @@ describe('createCodexChannelSink', () => {
     ).toContain('early event');
   });
 
-  it('drops events when status is systemError', async () => {
+  it('defers events when status is systemError', async () => {
     const { sink, requests, rec } = makeSink({
       status: { type: 'systemError' },
     });
-    await sink.deliver({ content: 'wasted', meta: {} });
+    const settle = vi.fn();
+    await sink.deliver(
+      { content: 'retained', meta: {} },
+      { messageId: 'message-1', accepted: vi.fn(), settle },
+    );
     await tick();
     expect(requests).toHaveLength(0);
-    // The drop is deliberate and logged — a warn record distinguishes it
-    // from silent buffering, which would also produce zero requests.
+    expect(settle).toHaveBeenCalledWith('deferred', expect.any(Object));
     expect(rec.records).toContainEqual(
       expect.objectContaining({
         level: 'warn',
-        msg: 'dropping events — thread in systemError',
-        dropped: 1,
+        msg: 'deferring events — thread in systemError',
+        deferred: 1,
       }),
     );
   });

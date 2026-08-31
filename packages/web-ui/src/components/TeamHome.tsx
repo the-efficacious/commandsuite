@@ -129,6 +129,7 @@ export function TeamHome({ viewer }: TeamHomeProps) {
             const captureWarning = presenceCaptureWarning(conn);
             const working = activity === 'working';
             const blocked = activity === 'blocked';
+            const degraded = conn?.executor?.state === 'degraded';
             const isSelf = t.name === viewer;
             const isLast = idx === r.teammates.length - 1;
             const rowBorder = isLast ? '' : 'border-bottom:1px solid var(--ef-surface-hairline);';
@@ -195,6 +196,15 @@ export function TeamHome({ viewer }: TeamHomeProps) {
                             CAPTURE UNCHECKED
                           </span>
                         )}
+                        {degraded && (
+                          <span
+                            class="badge warn"
+                            style="font-size:9.5px;letter-spacing:.06em"
+                            title={conn?.executor?.reason?.detail ?? 'Runner cannot act'}
+                          >
+                            DEGRADED · {conn?.executor?.reason?.code ?? 'unknown'}
+                          </span>
+                        )}
                       </div>
                       {t.role.description.length > 0 && (
                         <div style="font-family:var(--ef-font-body);font-size:11.5px;color:var(--ef-text-muted);line-height:1.4">
@@ -226,6 +236,8 @@ export function TeamHome({ viewer }: TeamHomeProps) {
                                 'agent default — not resolved locally'}{' '}
                               · {report.runnerIdentity.runnerVersion} ·{' '}
                               {report.runnerIdentity.runnerBuildSource}
+                              {' · '}supervision claim:{' '}
+                              {report.runnerIdentity.supervision?.kind ?? 'unreported'}
                               {report.versionSkew.skew
                                 ? ` · SKEW (broker ${report.versionSkew.brokerVersion})`
                                 : ''}
@@ -244,6 +256,10 @@ export function TeamHome({ viewer }: TeamHomeProps) {
                         <div style="font-family:var(--ef-font-mono);font-size:10px;color:var(--ef-text-muted);margin-top:3px">
                           auth blocked: {status.presence?.authBlocked ?? 'absent'} · last activity:{' '}
                           {formatStatusTime(status.lastActivityAt)}
+                          {' · executor: '}
+                          {status.presence?.executor?.state ?? 'unreported'}
+                          {' · last acted: '}
+                          {formatStatusTime(status.presence?.executor?.lastActedAt ?? null)}
                           {status.activeObjectives.length === 0
                             ? ' · no active objective'
                             : status.activeObjectives.map((objective) => (

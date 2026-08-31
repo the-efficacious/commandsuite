@@ -478,8 +478,8 @@ describe('team_status tool', () => {
   });
 });
 
-describe('roster — recent activity without liveness claims', () => {
-  it('distinguishes recent working and blocked reports from no recent report', async () => {
+describe('roster — old broker compatibility does not invent liveness', () => {
+  it('renders old activity only as a compatibility window', async () => {
     const broker = makeBroker({
       roster: vi.fn().mockResolvedValue({
         teammates: [
@@ -512,23 +512,22 @@ describe('roster — recent activity without liveness claims', () => {
 
     const text = getCallText(await handleToolCall('roster', {}, broker, PACKET));
 
-    expect(text).toMatch(
-      /scout \(you\) \[engineer\] permissions=baseline; connected=1; activity=reported working within last 45s/,
+    expect(text).toContain(
+      'scout (you) [engineer] permissions=baseline; connected=1; executor=unreported (broker predates executor evidence); compatibility-window=within last 45s',
     );
-    expect(text).toMatch(
-      /lead \[team lead\] permissions=members\.manage; connected=1; activity=reported blocked within last 45s/,
+    expect(text).toContain(
+      'lead [team lead] permissions=members.manage; connected=1; executor=unreported (broker predates executor evidence); compatibility-window=within last 45s',
     );
-    expect(text).toMatch(
-      /reviewer \[reviewer\] permissions=baseline; offline; activity=no report within last 45s \(idle, lapsed, or never reported\)/,
+    expect(text).toContain(
+      'reviewer [reviewer] permissions=baseline; offline; executor=unreported (broker predates executor evidence); compatibility-window=within last 45s',
     );
-    expect(text).not.toContain('activity=idle');
   });
 
-  it('describes the activity window and disclaims liveness in the tool metadata', () => {
+  it('describes executor evidence and demotes old activity in the tool metadata', () => {
     const roster = defineTools(PACKET).find((tool) => tool.name === 'roster');
-    expect(roster?.description).toContain("broker's reporting window when supplied");
-    expect(roster?.description).toContain('window is unknown');
-    expect(roster?.description).toContain('not executor liveness');
+    expect(roster?.description).toContain('executor readiness or degraded reason');
+    expect(roster?.description).toContain('last proven action');
+    expect(roster?.description).toContain('never executor liveness');
   });
 
   it('renders an unknown window instead of inventing one for an older broker', async () => {
@@ -549,9 +548,11 @@ describe('roster — recent activity without liveness claims', () => {
     });
 
     const text = getCallText(await handleToolCall('roster', {}, broker, PACKET));
-    expect(text).toContain('activity=reported working within an unknown window');
     expect(text).toContain(
-      'lead [team lead] permissions=members.manage; offline; activity=no report within an unknown window (idle, lapsed, or never reported)',
+      'executor=unreported (broker predates executor evidence); compatibility-window=within an unknown window',
+    );
+    expect(text).toContain(
+      'lead [team lead] permissions=members.manage; offline; executor=unreported (broker predates executor evidence); compatibility-window=within an unknown window',
     );
     expect(text).not.toMatch(/within last \d+s/);
   });
