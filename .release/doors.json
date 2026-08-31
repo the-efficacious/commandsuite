@@ -113,6 +113,10 @@
     {
       "pr": 272,
       "ruling": "unknown, live, and disabled webhook endpoints become indistinguishable to unauthenticated callers; verified disabled delivery gains a causal receipt (obj-mtgqxh2b-w)"
+    },
+    {
+      "pr": 274,
+      "ruling": "additive runner message-disposition protocol and notification receipts that wait for subscriber acknowledgement (obj-mtgsjlg5-x)"
     }
   ],
   "dismissed": [
