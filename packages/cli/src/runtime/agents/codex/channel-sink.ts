@@ -322,7 +322,15 @@ export function createCodexChannelSink(opts: CodexChannelSinkOptions): CodexChan
     },
     attachControl(send) {
       sendControl = send;
-      send({ kind: 'runner_condition', at: Date.now(), state: 'ready' });
+      const at = Date.now();
+      send({ kind: 'runner_condition', at, state: 'ready' });
+      const activeTurnId = opts.getActiveTurnId();
+      if (activeTurnId !== null) {
+        // Broker turn state is subscription-scoped. A reconnect during a
+        // live Codex turn must re-establish the started fact before the
+        // eventual completion arrives on the new socket.
+        send({ kind: 'runner_turn', at, turnId: activeTurnId, phase: 'started' });
+      }
     },
     turnStarted(turnId, at = Date.now()) {
       sendControl?.({ kind: 'runner_condition', at, state: 'ready' });

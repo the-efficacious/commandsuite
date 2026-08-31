@@ -15,6 +15,7 @@ import type { Client as BrokerClient } from 'csuite-sdk/client';
 import type {
   Message,
   MessageDisposition,
+  MessageDispositionFrame,
   MessageDispositionReasonCode,
   RunnerControlFrame,
   RunnerIdentity,
@@ -241,6 +242,61 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
     }
   };
 
+  type ReliableStream = {
+    disposition(frame: MessageDispositionFrame): void;
+    control(frame: RunnerControlFrame): void;
+  };
+  let activeStream: { stream: ReliableStream; generation: number } | null = null;
+  let streamGeneration = 0;
+  const pendingActions: Array<() => void> = [];
+  const sendDisposition = (frame: MessageDispositionFrame): void => {
+    if (activeStream === null) pendingActions.push(() => sendDisposition(frame));
+    else activeStream.stream.disposition(frame);
+  };
+  const sendControl = (frame: RunnerControlFrame): void => {
+    if (activeStream === null) pendingActions.push(() => sendControl(frame));
+    else activeStream.stream.control(frame);
+  };
+  const flushPendingFrames = (): void => {
+    if (activeStream === null) return;
+    for (const action of pendingActions.splice(0)) action();
+  };
+  const receiptFor = (messageId: string): ChannelDeliveryReceipt => {
+    let acceptedGeneration = -1;
+    const accepted = (): void => {
+      if (activeStream === null) {
+        pendingActions.push(accepted);
+        return;
+      }
+      if (acceptedGeneration === activeStream.generation) return;
+      activeStream.stream.disposition({
+        kind: 'message_disposition',
+        messageId,
+        disposition: 'accepted',
+        at: Date.now(),
+      });
+      acceptedGeneration = activeStream.generation;
+    };
+    const settle: ChannelDeliveryReceipt['settle'] = (disposition, options = {}) => {
+      if (activeStream === null) {
+        pendingActions.push(() => settle(disposition, options));
+        return;
+      }
+      // A reconnect releases accepted leases. Re-accept on the live
+      // subscription before sending a terminal disposition, including
+      // sinks that settle directly without an explicit accepted() call.
+      accepted();
+      sendDisposition({
+        kind: 'message_disposition',
+        messageId,
+        disposition,
+        at: Date.now(),
+        ...options,
+      });
+    };
+    return { messageId, accepted, settle };
+  };
+
   if (subscriptionGate !== undefined) {
     try {
       await subscriptionGate;
@@ -252,6 +308,7 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
     }
   }
   while (!signal.aborted) {
+    let generation: number | null = null;
     try {
       log.info('subscribing to broker', { name });
       presence?.setConnecting();
@@ -273,27 +330,10 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
               disposition() {},
               control() {},
             });
-      sink.attachControl?.((frame) => stream.control(frame));
-      const receiptFor = (messageId: string): ChannelDeliveryReceipt => ({
-        messageId,
-        accepted() {
-          stream.disposition({
-            kind: 'message_disposition',
-            messageId,
-            disposition: 'accepted',
-            at: Date.now(),
-          });
-        },
-        settle(disposition, options = {}) {
-          stream.disposition({
-            kind: 'message_disposition',
-            messageId,
-            disposition,
-            at: Date.now(),
-            ...options,
-          });
-        },
-      });
+      generation = ++streamGeneration;
+      activeStream = { stream, generation };
+      sink.attachControl?.(sendControl);
+      flushPendingFrames();
       // Presence flips to `online` optimistically as soon as subscribe
       // returns an iterator — we don't wait for the first message
       // because a quiet team with long heartbeat gaps would otherwise
@@ -451,6 +491,8 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
         error: err instanceof Error ? err.message : String(err),
       });
     }
+
+    if (activeStream?.generation === generation) activeStream = null;
 
     if (signal.aborted) return;
     await sleep(backoff, signal);

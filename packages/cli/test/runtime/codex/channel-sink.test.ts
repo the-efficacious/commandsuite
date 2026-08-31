@@ -61,6 +61,27 @@ async function tick(ms = 20): Promise<void> {
 }
 
 describe('createCodexChannelSink', () => {
+  it('replays the active turn start when a replacement control socket attaches', () => {
+    const { sink } = makeSink({
+      status: { type: 'active' },
+      activeTurnId: 'turn_across_reconnect',
+    });
+    const first = vi.fn();
+    const second = vi.fn();
+
+    sink.attachControl?.(first);
+    sink.attachControl?.(second);
+
+    expect(second.mock.calls.map(([frame]) => frame)).toEqual([
+      expect.objectContaining({ kind: 'runner_condition', state: 'ready' }),
+      expect.objectContaining({
+        kind: 'runner_turn',
+        turnId: 'turn_across_reconnect',
+        phase: 'started',
+      }),
+    ]);
+  });
+
   it('dispatches a single turn/start when idle', async () => {
     const { sink, requests } = makeSink({ status: { type: 'idle' } });
     await sink.deliver({ content: 'hello there', meta: { from: 'director', kind: 'chat' } });
