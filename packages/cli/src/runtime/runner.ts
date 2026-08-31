@@ -168,10 +168,10 @@ export interface RunnerOptions {
    * seam differs per agent framework.
    *
    * Every real adapter must provide one. When absent (bare
-   * `startRunner` in tests, a misconfigured adapter), events are
-   * dropped with a log line — they still land in server history, and
-   * the agent catches up via `recent` — but the member is effectively
-   * deaf to live traffic.
+   * `startRunner` in tests, a misconfigured adapter), live delivery is
+   * explicitly refused and logged. The message remains visible in server
+   * history for `recent`, while the terminal refusal prevents a pending
+   * row from replaying forever to a runner that cannot act on it.
    */
   channelSink?: ChannelEventSink;
   /**
@@ -196,6 +196,21 @@ export interface RunnerOptions {
    * assumed done.
    */
   onContextControlEvent?: (control: ContextControlEvent) => void;
+}
+
+export function createFallbackChannelSink(log: Logger): ChannelEventSink {
+  return {
+    deliver: async (event, receipt) => {
+      log.warn('channel event refused (no channel sink attached)', {
+        bytes: event.content.length,
+        kind: event.meta.kind ?? null,
+        from: event.meta.from ?? null,
+      });
+      receipt?.settle('refused', {
+        reason: { code: 'unsupported', detail: 'runner has no channel sink' },
+      });
+    },
+  };
 }
 
 export interface RunnerHandle {
@@ -613,18 +628,10 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
 
   // Channel sink: where the forwarder delivers broker events.
   // Adapter-supplied (streaming input for claude, turn dispatches for
-  // codex); without one, events are dropped with a log line — they
-  // still land in server history and the agent catches up via
-  // `recent`.
-  const sink: ChannelEventSink = options.channelSink ?? {
-    deliver: async (event) => {
-      log.warn('channel event dropped (no channel sink attached)', {
-        bytes: event.content.length,
-        kind: event.meta.kind ?? null,
-        from: event.meta.from ?? null,
-      });
-    },
-  };
+  // codex). Without one, refuse delivery explicitly: the message still
+  // lands in server history for `recent`, but must not remain pending and
+  // replay forever merely because this runner has no delivery surface.
+  const sink: ChannelEventSink = options.channelSink ?? createFallbackChannelSink(log);
 
   // Real re-brief implementation, now that the sink exists. Rides the
   // same delivery path as broker events, so it renders identically

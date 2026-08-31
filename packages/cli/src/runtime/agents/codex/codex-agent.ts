@@ -26,7 +26,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { RunnerControlFrame } from 'csuite-sdk/types';
 import type { CompactAttempt } from '../../context-control.js';
-import type { ChannelEvent, ChannelEventSink } from '../../forwarder.js';
+import type { ChannelDeliveryReceipt, ChannelEvent, ChannelEventSink } from '../../forwarder.js';
 import { type HudHandle, startHud } from '../../hud.js';
 import type {
   AgentAdapter,
@@ -48,19 +48,25 @@ import { LocalMcpConfigError, loadLocalMcpConfig } from './local-mcp.js';
 
 export function createCodexSinkWrapper(): {
   sink: ChannelEventSink;
-  attach(live: ChannelEventSink): ChannelEvent[];
+  attach(live: ChannelEventSink): Array<{
+    event: ChannelEvent;
+    receipt: ChannelDeliveryReceipt | undefined;
+  }>;
   detach(): void;
 } {
   let liveSink: ChannelEventSink | null = null;
   let sendControl: ((frame: RunnerControlFrame) => void) | null = null;
-  const pendingEvents: ChannelEvent[] = [];
+  const pendingEvents: Array<{
+    event: ChannelEvent;
+    receipt: ChannelDeliveryReceipt | undefined;
+  }> = [];
   const sink: ChannelEventSink = {
-    async deliver(event) {
+    async deliver(event, receipt) {
       if (liveSink === null) {
-        pendingEvents.push(event);
+        pendingEvents.push({ event, receipt });
         return;
       }
-      await liveSink.deliver(event);
+      await liveSink.deliver(event, receipt);
     },
     attachControl(send) {
       sendControl = send;
@@ -330,9 +336,9 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
       const drain = sinkWrapper.attach(spawned.channelSink);
       if (drain.length > 0) {
         log.info('draining pre-attach broker queue', { queued: drain.length });
-        for (const event of drain) {
+        for (const { event, receipt } of drain) {
           try {
-            await spawned.channelSink.deliver(event);
+            await spawned.channelSink.deliver(event, receipt);
           } catch (err) {
             log.warn('drain delivery failed', {
               error: err instanceof Error ? err.message : String(err),

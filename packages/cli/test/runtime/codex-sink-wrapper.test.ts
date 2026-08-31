@@ -1,7 +1,15 @@
 import type { RunnerControlFrame } from 'csuite-sdk/types';
 import { describe, expect, it, vi } from 'vitest';
 import { createCodexSinkWrapper } from '../../src/runtime/agents/codex/codex-agent.js';
-import type { ChannelEventSink } from '../../src/runtime/forwarder.js';
+import type { ChannelDeliveryReceipt, ChannelEventSink } from '../../src/runtime/forwarder.js';
+
+function receipt(): ChannelDeliveryReceipt {
+  return {
+    messageId: 'message-1',
+    accepted: vi.fn(),
+    settle: vi.fn(),
+  };
+}
 
 describe('codex cold-start sink wrapper', () => {
   it('advertises control support and forwards it to every live sink generation', () => {
@@ -48,12 +56,35 @@ describe('codex cold-start sink wrapper', () => {
     expect(transmitted).toEqual([degraded, { kind: 'runner_condition', at: 2, state: 'ready' }]);
   });
 
-  it('retains cold-start messages until a live sink is attached', async () => {
+  it('forwards the receipt on live delivery so acted mail can settle', async () => {
+    const wrapper = createCodexSinkWrapper();
+    const delivered = vi.fn<ChannelEventSink['deliver']>(async (_event, delivery) => {
+      delivery?.settle('acted');
+    });
+    wrapper.attach({ deliver: delivered });
+    const delivery = receipt();
+
+    await wrapper.sink.deliver({ content: 'live', meta: {} }, delivery);
+
+    expect(delivered).toHaveBeenCalledWith({ content: 'live', meta: {} }, delivery);
+    expect(delivery.settle).toHaveBeenCalledWith('acted');
+  });
+
+  it('retains cold-start messages with their receipt until a live sink is attached', async () => {
     const wrapper = createCodexSinkWrapper();
     const event = { content: 'retained', meta: { id: 'message-1' } };
-    await wrapper.sink.deliver(event);
+    const delivery = receipt();
+    await wrapper.sink.deliver(event, delivery);
 
-    expect(wrapper.attach({ deliver: vi.fn() })).toEqual([event]);
+    const live: ChannelEventSink = {
+      async deliver(_event, queuedReceipt) {
+        queuedReceipt?.settle('handled');
+      },
+    };
+    const drain = wrapper.attach(live);
+    expect(drain).toEqual([{ event, receipt: delivery }]);
+    for (const queued of drain) await live.deliver(queued.event, queued.receipt);
+    expect(delivery.settle).toHaveBeenCalledWith('handled');
   });
 
   it('forwards a control sender that arrives after the live sink', () => {

@@ -23,16 +23,16 @@
  *   ThreadStatus.notLoaded  → buffer indefinitely until status flips;
  *                              avoids dispatching before thread/start
  *                              completes on cold boot
- *   ThreadStatus.systemError → drop with a log line — no point queuing
- *                              against a broken thread
+ *   ThreadStatus.systemError → defer with a typed reason — the broker
+ *                              retains the message for a healthy turn
  *
  * Mid-turn → idle race (turn/steer mismatch): when codex transitions
  * out of `active` between our flush decision and the JSON-RPC
  * dispatch arriving server-side, codex returns ExpectedTurnMismatch.
  * We retry once: re-read current status, dispatch as turn/start (if
  * idle) or turn/steer with the new turn_id (if a new turn started).
- * If the second attempt also fails we drop the event with a log;
- * that's almost always thread-shutdown anyway.
+ * If the second attempt also fails we defer the event with a typed
+ * reason so the broker retains it rather than treating it as handled.
  *
  * Channel-event content is wrapped in unmistakable framing so the
  * agent recognises it as ambient signal, not a fresh user request:
