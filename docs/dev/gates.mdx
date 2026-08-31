@@ -168,11 +168,23 @@ Falsified means: shown an input known to be bad, and observed to fail on it —
 is the mutation and not the environment.
 
 Required means: the platform refuses the merge if it fails. **Most of these are
-not.** Per Lea's audit of the effective branch rules on 2026-08-31, the only
-required status check on this repository is `route-walk`; nothing here requires
-a pull request or an approving review either. I cannot verify that myself — this
-seat's token cannot read branch protection — so it is recorded as her
-measurement, not mine.
+not.** Measured from the rulesets endpoint (`GET /repos/…/rulesets`, readable
+without admin), ruleset 21876976 is `active` and carries exactly three rules:
+`deletion`, `non_fast_forward`, and `required_status_checks: route-walk`. So
+**`route-walk` is the only required status check.**
+
+Whether an approving review is required is **not settled**, and the disagreement
+is instructive. The ruleset carries no `pull_request` rule — but a pull request
+targeting `main` with all ten checks green and `mergeable: MERGEABLE` still
+reports `reviewDecision: REVIEW_REQUIRED` and `mergeStateStatus: BLOCKED`, while
+a pull request targeting a *branch* reports no review requirement and `CLEAN`.
+Classic branch protection is a second, separate source of rules and this seat's
+token 404s on it, so the most likely reading — labelled as inference — is that
+protection requires a review underneath the ruleset nobody had read past.
+
+**Two endpoints, two answers, and the first audit consulted one.** Say which
+endpoint answered when you record what is enforced; "I read the rulesets" is an
+incomplete measurement, not a statement about the world.
 
 | Gate | Required? | What it governs | Shown | Reported |
 | --- | --- | --- | --- | --- |
