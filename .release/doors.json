@@ -109,6 +109,10 @@
     {
       "pr": 260,
       "ruling": "stable member identityId: additive wire field + on-disk migration (obj-mtgbb3ct-s, ruled msg ecc31990)"
+    },
+    {
+      "pr": 272,
+      "ruling": "unknown, live, and disabled webhook endpoints become indistinguishable to unauthenticated callers; verified disabled delivery gains a causal receipt (obj-mtgqxh2b-w)"
     }
   ],
   "dismissed": [

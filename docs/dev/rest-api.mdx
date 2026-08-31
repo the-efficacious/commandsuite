@@ -791,11 +791,23 @@ returned; summaries expose `hasSecret` only).
 | **Auth** | none at the middleware layer — verified per-endpoint (HMAC-SHA256 over the raw body, or shared-secret header) against the KEK-held secret |
 | **Body** | the sender's raw payload (≤ 256 KiB) |
 | **Query** | `if_offline=drop\|queue`, `if_busy=now\|wait`, `level=<LogLevel>` — per-delivery policy overrides |
-| **Returns** | `202 { id, status }` — also for `duplicate` / `filtered` / `dropped`; `401` (detail-free) on verification failure; `404` unknown, `409` disabled, `413` oversized, `429` + `Retry-After` on the per-endpoint rate limit (120/min) |
+| **Returns** | `202 { id, status }` — also for `duplicate` / `filtered` / `dropped`; after shared body-size and query-grammar validation, the same detail-free `401 {"error":"unauthorized"}` for an unknown slug, a failed verification, or a disabled endpoint; `413` oversized, `429` + `Retry-After` on the per-endpoint rate limit (120/min) |
 
-Every request that clears the rate limit lands a delivery receipt,
-including rejected ones (the failure reason is on the receipt, not
-the wire). Registry changes fan out as
+An authenticated request to a disabled endpoint lands a rejected
+receipt naming disablement; an anonymous request does not. Unknown,
+live, and disabled endpoints return identical status and body on this
+public surface after shared body-cap and query validation. Rate-limit
+state is keyed by endpoint identity. The broker verifies a known
+endpoint even when its window is exhausted: a verified sender gets 429,
+while an unverified sender gets the same bare 401 and writes no receipt.
+Known endpoints perform HMAC work and under-limit failures synchronously
+write a receipt, so statistical timing differences may remain; this fix
+adds neither dummy cryptographic work nor dummy writes for unknown
+slugs. A flood against a known slug can still consume that endpoint's
+window before verification, unchanged from the prior limiter. A typo
+otherwise reads as 401. An authorized
+operator uses `GET /notifications/endpoints` or the Notifications UI
+to inspect endpoint state. Registry changes fan out as
 `data.kind = 'notification_endpoint'` events (thread `hook:<slug>`)
 to direct member targets plus `notifications.manage` holders.
 

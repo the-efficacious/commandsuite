@@ -58,6 +58,23 @@ verification returns a bare 401 to the sender; the specific reason
 lands on the delivery receipt, where you can see it and an attacker
 can't.
 
+Unknown slugs and disabled endpoints return that same status and body,
+so endpoint existence and administrative state are not disclosed by
+the response bytes. Shared body-size and query-grammar checks likewise
+answer identically across all three states. Rate limiting is keyed by a
+known endpoint identity; only a sender that proves the endpoint secret
+can observe 429, while an unverified over-limit request still gets the
+bare 401 and creates no receipt. Known endpoints perform verification
+work and an under-limit rejection writes a receipt, so statistical
+timing differences may remain; the broker adds neither dummy crypto nor
+dummy storage writes for unknown slugs. A flood against a known slug can
+still exhaust that endpoint's quota before verification, unchanged from
+the prior endpoint-id limiter. This deliberately makes a typo look like an auth
+failure. An authorized operator uses `csuite notifications list|view`
+or the Notifications UI instead. A correctly signed request to a
+disabled endpoint creates a rejected receipt whose reason names the
+disablement; an anonymous request to it creates no receipt.
+
 The receipt for a failed verification records the size, SHA-256, and
 reason — not the payload. Anyone can reach this endpoint, so anyone
 who fails the signature check is by definition unauthenticated, and

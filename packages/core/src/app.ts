@@ -4134,15 +4134,17 @@ export function createApp(options: AppOptions): CreatedApp {
     // ── Ingress ──
     //
     // POST /hooks/:slug — NO auth middleware; this is the outside
-    // world's door. Transport checks here (existence, enabled, size,
-    // override grammar), then the dispatcher owns verify → dedupe →
-    // filter → render → policy. Responses are deliberately terse:
+    // world's door. Shared transport checks happen before endpoint
+    // existence affects the response; the dispatcher then owns verify
+    // → enabled → dedupe → filter → render → policy. Responses are deliberately terse:
     // verification failures are a bare 401 with no detail, and the
     // accept path returns 202 before any fanout completes.
     app.post(`${PATHS.hooks}/:slug`, async (c) => {
       const endpoint = notifications.getBySlug(c.req.param('slug'));
-      if (!endpoint) return c.json({ error: 'not_found' }, 404);
-      if (!endpoint.enabled) return c.json({ error: 'disabled' }, 409);
+      // Unknown, live-but-unverified, and disabled endpoints are
+      // intentionally indistinguishable to an unauthenticated caller.
+      // Operators inspect endpoint state through the authenticated
+      // management surface instead.
 
       const declared = c.req.header('content-length');
       if (declared !== undefined && Number(declared) > HOOK_BODY_MAX) {
@@ -4180,18 +4182,36 @@ export function createApp(options: AppOptions): CreatedApp {
         overrides.level = parsedLevel.data;
       }
 
-      const result = await dispatcher.ingest({
+      // Size and query grammar are transport properties, so enforce
+      // them identically before endpoint existence can affect the
+      // response. Only then collapse an unknown slug into the same
+      // authentication failure as a known endpoint.
+      if (!endpoint) return c.json({ error: 'unauthorized' }, 401);
+
+      const ingress = {
         endpoint,
         rawBody,
-        contentType: c.req.header('content-type') ?? null,
-        getHeader: (name) => c.req.header(name),
-        overrides: Object.keys(overrides).length > 0 ? overrides : null,
-      });
-
-      if (result.status === 'rate_limited') {
+        getHeader: (name: string) => c.req.header(name),
+      };
+      const limited = dispatcher.checkIngressRateLimit(endpoint.id);
+      // Verification is deliberately paid even while throttled. Only a
+      // sender who proves knowledge of the endpoint secret may observe
+      // 429; every unverified state remains the same bare 401. Nothing
+      // is receipted or delivered on this over-limit path.
+      const verification = await dispatcher.verifyIngress(ingress);
+      if (limited) {
+        if (!verification.ok) return c.json({ error: 'unauthorized' }, 401);
         c.header('Retry-After', '60');
         return c.json({ error: 'rate_limited' }, 429);
       }
+
+      const result = await dispatcher.ingest({
+        ...ingress,
+        contentType: c.req.header('content-type') ?? null,
+        overrides: Object.keys(overrides).length > 0 ? overrides : null,
+        verification,
+      });
+
       if (result.httpStatus === 401) {
         return c.json({ error: 'unauthorized' }, 401);
       }

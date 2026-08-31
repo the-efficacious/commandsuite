@@ -212,8 +212,20 @@ const APP_IN_SCOPE = [
  * consequence is that a guesser gets a fresh five attempts, which the
  * global bucket still counts. So it belongs to the operational half of
  * the census, and stays out of retention.
+ *
+ * 2026-08-31, +1 = 70. `hook delivery rejected` gained a second site
+ * in the signed-disabled branch (#265 / obj-mtgqxh2b-w).
+ * OPERATIONAL, not a completeness claim: the authoritative
+ * `rejected / endpoint disabled` receipt is written immediately before
+ * it, so the record is complete when the line fires. It tells an
+ * operator that a legitimate signed sender is hitting a disabled
+ * endpoint. This new site is verified-only: the anonymous path returns
+ * above it with no row and no log. The older site with the same message
+ * remains anonymous-reachable for a known, enabled slug and is bounded
+ * by that endpoint's 120/minute ingress window; this change does not
+ * widen it.
  */
-const TOTAL_SITES = 69;
+const TOTAL_SITES = 70;
 
 function messagesIn(file: string): string[] {
   let src: string | null = null;

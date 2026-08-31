@@ -63,6 +63,7 @@ import { verifyInbound } from './verify.js';
 /** Per-endpoint ingress rate limit (sliding window). */
 const RATE_LIMIT_MAX = 120;
 const RATE_LIMIT_WINDOW_MS = 60_000;
+export type IngressVerification = { ok: true } | { ok: false; reason: string };
 
 export interface IngestInput {
   endpoint: NotificationEndpoint;
@@ -70,16 +71,23 @@ export interface IngestInput {
   contentType: string | null;
   getHeader: (name: string) => string | undefined;
   overrides: NotificationOverrides | null;
+  verification: IngressVerification;
 }
 
 export interface IngestResult {
-  /** Delivery id (existing row's id for duplicates; null when rate-limited). */
+  /** Delivery id (existing row's id for duplicates; null for unrecorded rejection). */
   id: string | null;
-  status: NotificationDeliveryStatus | 'rate_limited';
+  status: NotificationDeliveryStatus;
   httpStatus: number;
 }
 
 export interface NotificationDispatcher {
+  /** Verify once; the result is handed unchanged to `ingest`. */
+  verifyIngress(
+    input: Pick<IngestInput, 'endpoint' | 'rawBody' | 'getHeader'>,
+  ): Promise<IngressVerification>;
+  /** Apply the public ingress rate limit to a known endpoint identity. */
+  checkIngressRateLimit(endpointId: string): boolean;
   ingest(input: IngestInput): Promise<IngestResult>;
   /** Re-run a stored delivery (no verify/dedupe/rate limit; filters + policy apply). */
   replay(deliveryId: string): Promise<DeliveryRecord>;
@@ -132,6 +140,23 @@ export function createNotificationDispatcher(
     fresh.push(ts);
     rateWindows.set(endpointId, fresh);
     return false;
+  }
+
+  async function verifyIngress(
+    input: Pick<IngestInput, 'endpoint' | 'rawBody' | 'getHeader'>,
+  ): Promise<IngressVerification> {
+    try {
+      const verification = store.resolveVerification(input.endpoint.id);
+      return await verifyInbound(verification, input.rawBody, input.getHeader);
+    } catch (err) {
+      return {
+        ok: false,
+        reason:
+          err instanceof NotificationsError && err.code === 'no_kek'
+            ? 'encryption key unavailable'
+            : `verification error: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
   }
 
   function memberExists(name: string): boolean {
@@ -408,34 +433,26 @@ export function createNotificationDispatcher(
   }
 
   return {
+    verifyIngress,
+    checkIngressRateLimit(endpointId: string): boolean {
+      return rateLimited(endpointId);
+    },
     async ingest(input: IngestInput): Promise<IngestResult> {
       const { endpoint } = input;
-
-      if (rateLimited(endpoint.id)) {
-        // Deliberately NOT recorded — receipts under a flood would be
-        // their own denial of service.
-        return { id: null, status: 'rate_limited', httpStatus: 429 };
-      }
-
-      // Verify. Failures are recorded (security visibility) but the
-      // HTTP response stays a detail-free 401.
-      let verifyReason: string | null = null;
-      try {
-        const verification = store.resolveVerification(endpoint.id);
-        const result = await verifyInbound(verification, input.rawBody, input.getHeader);
-        if (!result.ok) verifyReason = result.reason;
-      } catch (err) {
-        verifyReason =
-          err instanceof NotificationsError && err.code === 'no_kek'
-            ? 'encryption key unavailable'
-            : `verification error: ${err instanceof Error ? err.message : String(err)}`;
-      }
+      const verifyReason = input.verification.ok ? null : input.verification.reason;
 
       const bodyText = new TextDecoder().decode(input.rawBody);
       const level = input.overrides?.level ?? endpoint.level;
       const title = endpoint.title ?? (endpoint.displayName || endpoint.slug);
 
       if (verifyReason !== null) {
+        // A disabled endpoint is deliberately indistinguishable from an
+        // unknown one until the sender authenticates. Do not let an
+        // anonymous caller use the disabled endpoint as a durable-receipt
+        // writer; a verified request takes the causal branch below.
+        if (!endpoint.enabled) {
+          return { id: null, status: 'rejected', httpStatus: 401 };
+        }
         // The RECEIPT is kept; the PAYLOAD is not.
         //
         // `/hooks/:slug` is unauthenticated by design — the signature is
@@ -469,6 +486,32 @@ export function createNotificationDispatcher(
           reason: verifyReason,
           bytes: input.rawBody.length,
           sha256: digest,
+        });
+        return { id: rejected.id, status: 'rejected', httpStatus: 401 };
+      }
+
+      // Disablement is an administrative state, not an authentication
+      // oracle. Check it only after the sender proves knowledge of the
+      // endpoint secret: anonymous callers receive the same bare 401 as
+      // every other verification failure and cannot manufacture
+      // disablement receipts.
+      if (!endpoint.enabled) {
+        const rejected = store.insertDelivery({
+          endpointId: endpoint.id,
+          endpointSlug: endpoint.slug,
+          receivedAt: now(),
+          status: 'rejected',
+          statusReason: 'endpoint disabled',
+          body: bodyText,
+          contentType: input.contentType,
+          level,
+          title,
+          overrides: input.overrides,
+        });
+        logger.warn('hook delivery rejected', {
+          endpoint: endpoint.slug,
+          reason: 'endpoint disabled',
+          bytes: input.rawBody.length,
         });
         return { id: rejected.id, status: 'rejected', httpStatus: 401 };
       }
