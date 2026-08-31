@@ -64,6 +64,42 @@ instrument makes a correct property look expensive, fix the instrument.
 never reports those requests as finished ([#278](https://github.com/the-efficacious/commandsuite/issues/278));
 the walker's idle rule changed, the header did not.
 
+## Stating a gate: name the ladder, not the yes/no
+
+**A gate described as a single yes/no is almost always a ladder with the bottom
+rung missing.** That is how "we require review" and "our tests gate merges"
+manage to be true-sounding and unfalsifiable at once: each names a real
+mechanism and quietly implies coverage the mechanism never had.
+
+So when claiming a gate — here, in a release note, or to anyone outside the
+work — **list the rungs, name what refuses each one, and say plainly where
+judgement begins.** For `route-walk` on this repository:
+
+| rung | refused by |
+| --- | --- |
+| `route-walk` must pass | the platform (the only required check here) |
+| every route in the router is walked | `contract.mjs`, validating the manifest against the `Route` union in both directions |
+| a clean row asserts view content, not the shell | `contract.mjs` |
+| the marker actually distinguishes that view from the fallback | the walker, against home's real text, before every run |
+| the marker means the page *works* | **judgement — nothing refuses this** |
+
+Two things follow, and the second is the one worth keeping.
+
+**Coverage lives in files we control, so it is convention unless something
+checks it.** A required check aggregates whatever its workflow says it does;
+delete a job from the list and the platform still sees green, because the
+enforcement was never about that job. Where coverage *is* mechanised — the
+`contract.mjs` rung above — say so, because that is the rung people assume and
+rarely verify.
+
+**The bottom rung being judgement is not a defect to engineer away — it is what
+review is for.** The point of mechanising the rungs above it is not to approach
+zero judgement; it is to stop spending judgement on things a machine can hold,
+so it is available for the one that needs a person. A reviewer asking "is this
+marker a good assertion?" is worth something. A reviewer also expected to
+remember whether the route was covered at all is a reviewer who will eventually
+forget.
+
 ## The inventory
 
 Falsified means: shown an input known to be bad, and observed to fail on it.
@@ -85,7 +121,7 @@ measurement, not mine.
 | `release-prepare` | no | the release render publishes nothing | trap-first: PATH-shimmed `git`/`npm`/`pnpm`/`docker`/`gh` that abort on any push or publish, plus a recording server asserting zero non-GET requests | **Fails if anything reaches for the network** — falsified by construction, and the traps run on every invocation rather than in a separate suite |
 | `bootstrap` | no | a headless bring-up works from a clean checkout | **not falsified in this pass** | It has failed honestly in the field: [#258](https://github.com/the-efficacious/commandsuite/issues/258) was a bootstrap check that blessed the string `ok` on a *disconnected* row — found by a human reading output, not by the gate. Falsifying it costs a deliberate break of the bring-up. |
 | `container` | no | the shipped image builds and runs | **not falsified in this pass** | Falsifiable cheaply — break the compose file or the image entrypoint and confirm it reports rather than skips. Worth doing before the next release. |
-| `docs-deploy` | no | the docs site builds | **not falsified in this pass** | Falsifiable by breaking a doc reference. |
+| `docs-deploy` | no | the docs site builds | a page whose frontmatter omits the required `title` | **Failed by name** — `[InvalidContentEntryDataError] docs → dev/gates data does not match collection schema. title: Required`. Control run on the unmodified tree builds 47 pages and exits 0, so the failure is the mutation and not the environment. |
 | `codeql` | no | static analysis for security patterns | **cannot be falsified by me** | To falsify: land a branch carrying a pattern CodeQL is documented to catch and confirm it is reported. Doing that means pushing a deliberately vulnerable pattern, which needs a decision, not an initiative. |
 | `dependency-review` | no | new dependencies with known advisories, OpenSSF thresholds | **cannot be falsified by me** | To falsify: add a dependency with a known advisory on a scratch PR. Same caveat. It *has* fired in anger — it rejected `puppeteer-core`, which is why the route walk drives raw CDP. |
 | `release` | n/a | what gets published, and when | **structurally protected for *what*; the *when* is now guarded — see below** | A release is the human gate, so this row is longer than the others. |
