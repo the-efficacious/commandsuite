@@ -81,7 +81,8 @@ Falsified means: shown an input known to be bad, and observed to fail on it.
 | `docs-deploy` | the docs site builds | **not falsified in this pass** | Falsifiable by breaking a doc reference. |
 | `codeql` | static analysis for security patterns | **cannot be falsified by me** | To falsify: land a branch carrying a pattern CodeQL is documented to catch and confirm it is reported. Doing that means pushing a deliberately vulnerable pattern, which needs a decision, not an initiative. |
 | `dependency-review` | new dependencies with known advisories, OpenSSF thresholds | **cannot be falsified by me** | To falsify: add a dependency with a known advisory on a scratch PR. Same caveat. It *has* fired in anger — it rejected `puppeteer-core`, which is why the route walk drives raw CDP. |
-| `release` | what gets published, and when | **structurally protected for *what*; convention only for *when*** | See below — this row is longer than the others because a release is the human gate and the answer is not uniform. |
+| `release` | what gets published, and when | **structurally protected for *what*; the *when* is now guarded — see below** | A release is the human gate, so this row is longer than the others. |
+| `version-guard` | a version may only change via the changesets Version PR | a real `0.8.0 → 9.9.9` bump to `packages/core/package.json`, committed on an ordinary branch | **Refused**, naming the file, both versions and the branch. The same commit on `changeset-release/main` passes. Branches merely *named* like the release branch (`changeset-release/main-2`, `not-changeset-release/main`) are refused. Invoked without its arguments it exits 2 rather than reporting nothing to check. Its own fixtures run in the same job that enforces it. |
 
 ### `release`, in full
 
