@@ -68,21 +68,52 @@ the walker's idle rule changed, the header did not.
 
 Falsified means: shown an input known to be bad, and observed to fail on it.
 
-| Gate | What it governs | Shown | Reported |
-| --- | --- | --- | --- |
-| `route-walk` | every UI route renders its own view, as both roles | objectives route deleted from the router, rebuilt, asset hash confirmed changed | **Failed by name** — `shell mounted but "outcome:" absent — wrong view for this URL`. The pre-marker walker passed the same build. |
-| `route-walk` | same | a broker without `Vary: Accept` ([#276](https://github.com/the-efficacious/commandsuite/issues/276)) | **Failed by name** on `objective-detail` — the page renders `invalid JSON` under HTTP 200 |
-| `commit-convention` | subject lines that land on main | `style(team): <74 chars>` | **Failed**, naming both problems: `[length] subject is 74 characters` and `[unknown-type] type "style"`. Also refuses the vacuous case: an empty `--pr-title` exits 1 rather than checking nothing and passing. It additionally self-tests its own fixtures in the same job, so a validator degraded to reject-everything fails there rather than blocking every PR. |
-| `dco` | every commit carries `Signed-off-by` | an empty commit created with `--no-verify` | **Failed**, naming the commit |
-| `ci` (test suite) | the repository's tests | a fixture asserting `expect(1).toBe(2)` | **Failed** — `Test Files 1 failed (1)` |
-| `release-prepare` | the release render publishes nothing | trap-first: PATH-shimmed `git`/`npm`/`pnpm`/`docker`/`gh` that abort on any push or publish, plus a recording server asserting zero non-GET requests | **Fails if anything reaches for the network** — falsified by construction, and the traps run on every invocation rather than in a separate suite |
-| `bootstrap` | a headless bring-up works from a clean checkout | **not falsified in this pass** | It has failed honestly in the field: [#258](https://github.com/the-efficacious/commandsuite/issues/258) was a bootstrap check that blessed the string `ok` on a *disconnected* row — found by a human reading output, not by the gate. Falsifying it costs a deliberate break of the bring-up. |
-| `container` | the shipped image builds and runs | **not falsified in this pass** | Falsifiable cheaply — break the compose file or the image entrypoint and confirm it reports rather than skips. Worth doing before the next release. |
-| `docs-deploy` | the docs site builds | **not falsified in this pass** | Falsifiable by breaking a doc reference. |
-| `codeql` | static analysis for security patterns | **cannot be falsified by me** | To falsify: land a branch carrying a pattern CodeQL is documented to catch and confirm it is reported. Doing that means pushing a deliberately vulnerable pattern, which needs a decision, not an initiative. |
-| `dependency-review` | new dependencies with known advisories, OpenSSF thresholds | **cannot be falsified by me** | To falsify: add a dependency with a known advisory on a scratch PR. Same caveat. It *has* fired in anger — it rejected `puppeteer-core`, which is why the route walk drives raw CDP. |
-| `release` | what gets published, and when | **structurally protected for *what*; the *when* is now guarded — see below** | A release is the human gate, so this row is longer than the others. |
-| `version-guard` | a version may only change via the changesets Version PR | a real `0.8.0 → 9.9.9` bump to `packages/core/package.json`, committed on an ordinary branch | **Refused**, naming the file, both versions and the branch. The same commit on `changeset-release/main` passes. Branches merely *named* like the release branch (`changeset-release/main-2`, `not-changeset-release/main`) are refused. Invoked without its arguments it exits 2 rather than reporting nothing to check. Its own fixtures run in the same job that enforces it. |
+Required means: the platform refuses the merge if it fails. **Most of these are
+not.** Per Lea's audit of the effective branch rules on 2026-08-31, the only
+required status check on this repository is `route-walk`; nothing here requires
+a pull request or an approving review either. I cannot verify that myself — this
+seat's token cannot read branch protection — so it is recorded as her
+measurement, not mine.
+
+| Gate | Required? | What it governs | Shown | Reported |
+| --- | --- | --- | --- | --- |
+| `route-walk` | **yes** | every UI route renders its own view, as both roles | objectives route deleted from the router, rebuilt, asset hash confirmed changed | **Failed by name** — `shell mounted but "outcome:" absent — wrong view for this URL`. The pre-marker walker passed the same build. |
+| `route-walk` | **yes** | same | a broker without `Vary: Accept` ([#276](https://github.com/the-efficacious/commandsuite/issues/276)) | **Failed by name** on `objective-detail` — the page renders `invalid JSON` under HTTP 200 |
+| `commit-convention` | no | subject lines that land on main | `style(team): <74 chars>` | **Failed**, naming both problems: `[length] subject is 74 characters` and `[unknown-type] type "style"`. Also refuses the vacuous case: an empty `--pr-title` exits 1 rather than checking nothing and passing. It additionally self-tests its own fixtures in the same job, so a validator degraded to reject-everything fails there rather than blocking every PR. |
+| `dco` | no | every commit carries `Signed-off-by` | an empty commit created with `--no-verify` | **Failed**, naming the commit |
+| `ci` (test suite) | no | the repository's tests | a fixture asserting `expect(1).toBe(2)` | **Failed** — `Test Files 1 failed (1)` |
+| `release-prepare` | no | the release render publishes nothing | trap-first: PATH-shimmed `git`/`npm`/`pnpm`/`docker`/`gh` that abort on any push or publish, plus a recording server asserting zero non-GET requests | **Fails if anything reaches for the network** — falsified by construction, and the traps run on every invocation rather than in a separate suite |
+| `bootstrap` | no | a headless bring-up works from a clean checkout | **not falsified in this pass** | It has failed honestly in the field: [#258](https://github.com/the-efficacious/commandsuite/issues/258) was a bootstrap check that blessed the string `ok` on a *disconnected* row — found by a human reading output, not by the gate. Falsifying it costs a deliberate break of the bring-up. |
+| `container` | no | the shipped image builds and runs | **not falsified in this pass** | Falsifiable cheaply — break the compose file or the image entrypoint and confirm it reports rather than skips. Worth doing before the next release. |
+| `docs-deploy` | no | the docs site builds | **not falsified in this pass** | Falsifiable by breaking a doc reference. |
+| `codeql` | no | static analysis for security patterns | **cannot be falsified by me** | To falsify: land a branch carrying a pattern CodeQL is documented to catch and confirm it is reported. Doing that means pushing a deliberately vulnerable pattern, which needs a decision, not an initiative. |
+| `dependency-review` | no | new dependencies with known advisories, OpenSSF thresholds | **cannot be falsified by me** | To falsify: add a dependency with a known advisory on a scratch PR. Same caveat. It *has* fired in anger — it rejected `puppeteer-core`, which is why the route walk drives raw CDP. |
+| `release` | n/a | what gets published, and when | **structurally protected for *what*; the *when* is now guarded — see below** | A release is the human gate, so this row is longer than the others. |
+| `version-guard` | **not yet — see below** | a version may only change via the changesets Version PR | a real `0.8.0 → 9.9.9` bump to `packages/core/package.json`, committed on an ordinary branch | **Refused**, naming the file, both versions and the branch. The same commit on `changeset-release/main` passes. Branches merely *named* like the release branch (`changeset-release/main-2`, `not-changeset-release/main`) are refused. Invoked without its arguments it exits 2 rather than reporting nothing to check. Its own fixtures run in the same job that enforces it. |
+
+### A workflow that exists is not a gate
+
+**`version-guard` is not required, so today nothing refuses a merge that fails
+it.** It runs, it reports honestly, and the platform does not care — which makes
+it, exactly, a green tick nobody has to obey. It becomes machinery when it is
+added to the required status checks; that needs admin rights this seat does not
+have.
+
+Stated here rather than left implicit because the guard was built *in response
+to* a convention wearing the appearance of a gate, and shipping it unrequired
+would reproduce the thing it was built to close. The same applies to every row
+above marked "no": those checks are useful, they are run, and a red one blocks
+nothing but a reviewer's judgement.
+
+And the rung below that, which no configuration reaches — **even where the
+machinery is real, its coverage is convention.** A required check aggregates
+whatever a file we control tells it to. For this repository the coverage of
+`route-walk` is itself enforced (`contract.mjs` validates the manifest against
+the router's `Route` union in both directions — a page added without a
+declaration fails by name), but what each row *asserts* is enforced only as far
+as the marker rules go, and whether a marker is a *good* one is review. A
+force-push is a single detectable operation; "the work was checked" is a
+judgement about coverage, and no ruleset holds that for us.
 
 ### `release`, in full
 
