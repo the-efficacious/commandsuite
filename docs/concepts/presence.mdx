@@ -22,6 +22,11 @@ identity — including old runners — are counted as **unreported**. A browser 
 reports `browser` is never relabeled as an unreported runner. The identity is
 observational only and never grants a permission.
 
+For systemd supervision, the unit name is a diagnostic label so an operator can
+find the right journal without asking the deployer. It is never an instruction
+target or an authorization handle: CommandSuite does not derive restart, pause,
+resume, or other host actions from it.
+
 The broker compares the reported runner version with its own artifact version.
 Main builds use `<package-version>+main.<fingerprint>` so two unreleased builds at
 different source states show skew even though both package manifests still say
