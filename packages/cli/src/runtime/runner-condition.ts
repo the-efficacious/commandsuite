@@ -50,6 +50,14 @@ function structuredClaudeCondition(raw: unknown): RunnerConditionCode | null {
  * and of the SDK's optional error label. Duration is deliberately absent:
  * measured credit-exhaustion failures span 0.83–1.45s, while model cost is the
  * axis that separates those failures from healthy prose-only turns.
+ *
+ * This is a fallback for zero-cost synthetic failures, not a definition of
+ * inability. A typed SDK failure remains decisive even when it incurred cost.
+ * Conversely, if an adapter removes its typed failure and returns a paid,
+ * apparently successful prose response, that turn is observationally
+ * identical here to a healthy prose-only answer and cannot be classified
+ * without making model text a control surface. Because the turn completed,
+ * the open-turn backstop does not cover that hypothetical either.
  */
 export function isUnactedClaudeFailure(raw: unknown, acted: boolean): boolean {
   if (acted || raw === null || typeof raw !== 'object') return false;
