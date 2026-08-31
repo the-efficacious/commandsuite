@@ -267,6 +267,39 @@ wearing the appearance of a gate** — recorded here rather than assumed. Closin
 it would mean refusing a version change on any commit that is not the changesets
 bot's own.
 
+### The grid: required × falsified
+
+Two independent properties, and the interesting square is not the one people
+look at:
+
+| | **falsified** — shown a known-bad input and seen to fail | **unfalsified** |
+| --- | --- | --- |
+| **required** — can block a merge | what you want. Real authority, demonstrated. | **the worst square.** The authority is real and the demonstration is absent. |
+| **not required** | useful, honest; a reviewer's judgement decides what to do with it | a green tick nobody has to obey and nobody has tested |
+
+`codeql` and `dependency-review` are in the worst square: both are required
+contexts on `main`, either can refuse a merge, and neither has ever been shown
+to refuse anything. That is strictly worse than an unfalsified gate nobody
+relies on, because a release claim can honestly cite a check that blocks — while
+the evidence that it *would* block does not exist.
+
+`version-guard` is in the bottom-right for the opposite reason: falsified
+thoroughly, required by nothing.
+
+**Falsifying the two in the worst square is scheduled work with boundaries, not
+a spare-twenty-minutes job** (ruled by Lea, 2026-08-31), because it means
+committing something deliberately bad to a public repository:
+
+- a dedicated short-lived branch, never merged, deleted immediately after;
+- the commit message and the fixture both stating in plain words that this is a
+  deliberate gate test;
+- a *known published* advisory or a canonical CodeQL test pattern — never
+  something novel that could be mistaken for a real finding about our code;
+- a named owner, done deliberately, recorded here with what was pushed and what
+  refused — and not on a release night;
+- anything that would raise an external notification (a security advisory, an
+  org-wide alert) goes to Lea first.
+
 ### What follows from the un-falsified rows
 
 **A gate we cannot falsify is a gate whose green is an opinion, and no release
