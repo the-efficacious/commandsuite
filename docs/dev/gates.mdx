@@ -138,7 +138,7 @@ judgement begins.** For `route-walk` on this repository:
 
 | rung | refused by |
 | --- | --- |
-| `route-walk` must pass | the platform (the only required check here) |
+| `route-walk` must pass | the platform (one of five required contexts) |
 | every route in the router is walked | `contract.mjs`, validating the manifest against the `Route` union in both directions |
 | a clean row asserts view content, not the shell | `contract.mjs` |
 | the marker actually distinguishes that view from the fallback | the walker, against home's real text, before every run |
@@ -167,54 +167,45 @@ Falsified means: shown an input known to be bad, and observed to fail on it —
 **with a control run on the unmodified tree observed to pass first**, so the red
 is the mutation and not the environment.
 
-Required means: the platform refuses the merge if it fails. **Most of these are
-not.** Measured from the rulesets endpoint (`GET /repos/…/rulesets`, readable
-without admin), ruleset 21876976 is `active` and carries exactly three rules:
-`deletion`, `non_fast_forward`, and `required_status_checks: route-walk`. So
-**`route-walk` is the only required status check.**
+Required means: the platform refuses the merge if it fails. **Enforcement here
+comes from two layers, and reading either one alone gives a wrong answer.**
+Measured:
 
-Whether an approving review is required is **not settled**, and the disagreement
-is instructive. The ruleset carries no `pull_request` rule — but a pull request
-targeting `main` with all ten checks green and `mergeable: MERGEABLE` still
-reports `reviewDecision: REVIEW_REQUIRED` and `mergeStateStatus: BLOCKED`, while
-a pull request targeting a *branch* reports no review requirement and `CLEAN`.
-Classic branch protection is a second, separate source of rules and this seat's
-token 404s on it, so the most likely reading — labelled as inference — is that
-protection requires a review underneath the ruleset nobody had read past.
+```
+GET /repos/…/rulesets            ruleset 21876976, active:
+                                   deletion, non_fast_forward,
+                                   required_status_checks: route-walk
+GET /repos/…/branches/main       protected: true, enforcement: non_admins
+                                   contexts: build, Verify Signed-off-by,
+                                             dependency-review,
+                                             Analyze (javascript-typescript)
+GET /repos/…/branches/main/protection      404 — admin-gated
+```
 
-**Two endpoints, two answers, and the first audit consulted one.** Say which
-endpoint answered when you record what is enforced; "I read the rulesets" is an
-incomplete measurement, not a statement about the world.
+**Five required contexts, not one.** Every audit of this repository tonight —
+three people, independently — read one source and reported it as the state of
+the world. turndb enforces through rulesets alone and commandsuite through
+classic protection with a ruleset on top, so the *same* endpoint honestly
+answers "the enforcement" on one repo and "some of the enforcement" on the
+other. That needed a second source, not more care with the first.
 
-**How to check what is actually enforced, in the order that works.** GitHub
-exposes enforcement through at least three surfaces, and they answer different
-questions:
-
-| surface | answers | readable without admin |
-| --- | --- | --- |
-| `GET /repos/…/rulesets` (+ `?includes_parents=true`) | what rules a ruleset declares | yes |
-| `GET /repos/…/branches/main/protection` | what classic protection declares | **no — 404s for us** |
-| a PR's `mergeStateStatus` / `reviewDecision` / `mergeable` | **would this merge be refused right now** | yes |
-
-The third is the only one available to every seat *and* the only one that
-describes the refusal rather than a rule assumed to produce it. Use it as the
-control: open a pull request against `main` and one against a branch, and compare.
-`mergeable: MERGEABLE` with `mergeStateStatus: BLOCKED` means something is
-refusing that is not the diff and not the checks.
+When `branches/{branch}/protection` 404s, **read `branches/{branch}`** before
+concluding you cannot see: it carries a `protection` summary including
+`required_status_checks.contexts`.
 
 | Gate | Required? | What it governs | Shown | Reported |
 | --- | --- | --- | --- | --- |
 | `route-walk` | **yes** | every UI route renders its own view, as both roles | objectives route deleted from the router, rebuilt, asset hash confirmed changed | **Failed by name** — `shell mounted but "outcome:" absent — wrong view for this URL`. The pre-marker walker passed the same build. |
 | `route-walk` | **yes** | same | a broker without `Vary: Accept` ([#276](https://github.com/the-efficacious/commandsuite/issues/276)) | **Failed by name** on `objective-detail` — the page renders `invalid JSON` under HTTP 200 |
 | `commit-convention` | no | subject lines that land on main | `style(team): <74 chars>` | **Failed**, naming both problems: `[length] subject is 74 characters` and `[unknown-type] type "style"`. Also refuses the vacuous case: an empty `--pr-title` exits 1 rather than checking nothing and passing. It additionally self-tests its own fixtures in the same job, so a validator degraded to reject-everything fails there rather than blocking every PR. |
-| `dco` | no | every commit carries `Signed-off-by` | an empty commit created with `--no-verify` | **Failed**, naming the commit |
-| `ci` (test suite) | no | the repository's tests | a fixture asserting `expect(1).toBe(2)` | **Failed** — `Test Files 1 failed (1)` |
+| `dco` | **yes** (`Verify Signed-off-by`) | every commit carries `Signed-off-by` | an empty commit created with `--no-verify` | **Failed**, naming the commit |
+| `ci` (test suite) | **yes** (`build`) | the repository's tests | a fixture asserting `expect(1).toBe(2)` | **Failed** — `Test Files 1 failed (1)` |
 | `release-prepare` | no | the release render publishes nothing | trap-first: PATH-shimmed `git`/`npm`/`pnpm`/`docker`/`gh` that abort on any push or publish, plus a recording server asserting zero non-GET requests | **Fails if anything reaches for the network** — falsified by construction, and the traps run on every invocation rather than in a separate suite |
 | `bootstrap` | no | a headless bring-up works from a clean checkout | **not falsified in this pass** | It has failed honestly in the field: [#258](https://github.com/the-efficacious/commandsuite/issues/258) was a bootstrap check that blessed the string `ok` on a *disconnected* row — found by a human reading output, not by the gate. Falsifying it costs a deliberate break of the bring-up. |
 | `container` | no | the shipped image builds and runs | a published port mapped to the wrong container port | **Failed** — but originally with *no diagnosis*: bare `exit 56`, no FAIL line, no container logs, because `set -e` aborted the script on the failed command substitution before its own `die` could run. Fixed at both substitutions; it now reports `FAIL GET http://…/healthz could not complete (curl exit 56) — is the published port mapped to 8717?` and exits 1. Control run on the unmodified tree passes all assertions through restart and teardown (`EXIT=0`). |
 | `docs-deploy` | no | the docs site builds | a page whose frontmatter omits the required `title` | **Failed by name** — `[InvalidContentEntryDataError] docs → dev/gates data does not match collection schema. title: Required`. Control run on the unmodified tree builds 47 pages and exits 0, so the failure is the mutation and not the environment. |
-| `codeql` | no | static analysis for security patterns | **cannot be falsified by me** | To falsify: land a branch carrying a pattern CodeQL is documented to catch and confirm it is reported. Doing that means pushing a deliberately vulnerable pattern, which needs a decision, not an initiative. |
-| `dependency-review` | no | new dependencies with known advisories, OpenSSF thresholds | **cannot be falsified by me** | To falsify: add a dependency with a known advisory on a scratch PR. Same caveat. It *has* fired in anger — it rejected `puppeteer-core`, which is why the route walk drives raw CDP. |
+| `codeql` | **yes** (`Analyze (javascript-typescript)`) | static analysis for security patterns | **cannot be falsified by me** | To falsify: land a branch carrying a pattern CodeQL is documented to catch and confirm it is reported. Doing that means pushing a deliberately vulnerable pattern, which needs a decision, not an initiative. |
+| `dependency-review` | **yes** | new dependencies with known advisories, OpenSSF thresholds | **cannot be falsified by me** | To falsify: add a dependency with a known advisory on a scratch PR. Same caveat. It *has* fired in anger — it rejected `puppeteer-core`, which is why the route walk drives raw CDP. |
 | `release` | n/a | what gets published, and when | **structurally protected for *what*; the *when* is now guarded — see below** | A release is the human gate, so this row is longer than the others. |
 | `version-guard` | **not yet — see below** | a version may only change via the changesets Version PR | a real `0.8.0 → 9.9.9` bump to `packages/core/package.json`, committed on an ordinary branch | **Refused**, naming the file, both versions and the branch. The same commit on `changeset-release/main` passes. Branches merely *named* like the release branch (`changeset-release/main-2`, `not-changeset-release/main`) are refused. Invoked without its arguments it exits 2 rather than reporting nothing to check. Its own fixtures run in the same job that enforces it. |
 
@@ -280,7 +271,10 @@ bot's own.
 
 **A gate we cannot falsify is a gate whose green is an opinion, and no release
 claim may rest on one.** `codeql` and `dependency-review` are useful and stay;
-what they are not is evidence. If a release note wants to say "no known
+what they are not is evidence. Note the uncomfortable pairing the measurement
+produced: **both are *required* — they can block a merge — and neither has ever
+been shown to fail.** Required and unfalsified is the worst square to be in,
+because the authority is real and the demonstration is absent. If a release note wants to say "no known
 vulnerable dependencies ship in this release", that claim needs to name the
 check that was run and shown to discriminate — not the presence of a green tick
 from a gate nobody has ever seen fail.
