@@ -186,6 +186,22 @@ protection requires a review underneath the ruleset nobody had read past.
 endpoint answered when you record what is enforced; "I read the rulesets" is an
 incomplete measurement, not a statement about the world.
 
+**How to check what is actually enforced, in the order that works.** GitHub
+exposes enforcement through at least three surfaces, and they answer different
+questions:
+
+| surface | answers | readable without admin |
+| --- | --- | --- |
+| `GET /repos/…/rulesets` (+ `?includes_parents=true`) | what rules a ruleset declares | yes |
+| `GET /repos/…/branches/main/protection` | what classic protection declares | **no — 404s for us** |
+| a PR's `mergeStateStatus` / `reviewDecision` / `mergeable` | **would this merge be refused right now** | yes |
+
+The third is the only one available to every seat *and* the only one that
+describes the refusal rather than a rule assumed to produce it. Use it as the
+control: open a pull request against `main` and one against a branch, and compare.
+`mergeable: MERGEABLE` with `mergeStateStatus: BLOCKED` means something is
+refusing that is not the diff and not the checks.
+
 | Gate | Required? | What it governs | Shown | Reported |
 | --- | --- | --- | --- | --- |
 | `route-walk` | **yes** | every UI route renders its own view, as both roles | objectives route deleted from the router, rebuilt, asset hash confirmed changed | **Failed by name** — `shell mounted but "outcome:" absent — wrong view for this URL`. The pre-marker walker passed the same build. |
