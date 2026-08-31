@@ -662,39 +662,40 @@ describe('delivery policy', () => {
     expect(messages[1]?.body).toContain('run 42');
   });
 
-  it('rate-limits an endpoint flood without recording receipts', async () => {
+  it('reveals rate limiting only to verified senders and does not receipt the limited tail', async () => {
     const ctx = await makeApp();
-    let unknownLimited = 0;
-    let unknownTail: { status: number; body: string } | null = null;
+    const unauthorized = { status: 401, body: '{"error":"unauthorized"}' };
     for (let i = 0; i < 125; i++) {
       const resp = await ctx.app.request('/hooks/ghost', hookPost('{}'));
-      if (resp.status === 429) unknownLimited += 1;
-      if (i === 124) unknownTail = { status: resp.status, body: await resp.text() };
+      expect({ status: resp.status, body: await resp.text() }).toEqual(unauthorized);
     }
-    expect(unknownLimited).toBe(5);
 
     await createEndpoint(ctx);
     const body = '{}';
     const headers = { 'X-Hub-Signature-256': sign(body) };
-    let limited = 0;
+    // Invalid requests consume the known endpoint's window. The first
+    // 120 are receipted; over-limit invalid requests remain the same
+    // bare 401 and write nothing.
     for (let i = 0; i < 125; i++) {
-      const resp = await ctx.app.request('/hooks/ci-alerts', hookPost(body, headers));
-      if (resp.status === 429) limited += 1;
+      const resp = await ctx.app.request('/hooks/ci-alerts', hookPost(body));
+      expect({ status: resp.status, body: await resp.text() }).toEqual(unauthorized);
     }
-    expect(limited).toBe(5);
+    // Only a sender that proves the endpoint secret may observe 429.
+    const verifiedTail = await ctx.app.request('/hooks/ci-alerts', hookPost(body, headers));
+    expect(verifiedTail.status).toBe(429);
+    expect(await verifiedTail.text()).toBe('{"error":"rate_limited"}');
     await ctx.app.request(
       '/notifications/endpoints/ci-alerts',
       authed(ADMIN, { enabled: false }, 'PATCH'),
     );
     const disabledTail = await ctx.app.request('/hooks/ci-alerts', hookPost('{}'));
-    expect(unknownTail).toEqual({ status: 429, body: '{"error":"rate_limited"}' });
-    expect({ status: disabledTail.status, body: await disabledTail.text() }).toEqual(unknownTail);
+    expect({ status: disabledTail.status, body: await disabledTail.text() }).toEqual(unauthorized);
     const receipts = await ctx.app.request(
       '/notifications/endpoints/ci-alerts/deliveries?limit=500',
       authed(ADMIN, undefined, 'GET'),
     );
     const { deliveries } = (await receipts.json()) as { deliveries: unknown[] };
-    // 120 accepted receipts, zero for the rate-limited tail.
+    // 120 under-limit rejection receipts, zero for both over-limit tails.
     expect(deliveries.length).toBe(120);
   });
 });

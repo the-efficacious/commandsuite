@@ -60,14 +60,16 @@ can't.
 
 Unknown slugs and disabled endpoints return that same status and body,
 so endpoint existence and administrative state are not disclosed by
-the response bytes. Shared body-size, query-grammar, and per-slug rate
-limit checks run before the existence decision and likewise answer
-identically across all three states. Known endpoints still perform
-verification work, so a statistical timing channel may remain; the
-broker does not add dummy cryptographic work for unknown slugs. The
-bounded limiter uses 1024 hashed buckets, so colliding slugs share quota
-and may cause false 429 responses rather than allocate unbounded state.
-This deliberately makes a typo look like an auth
+the response bytes. Shared body-size and query-grammar checks likewise
+answer identically across all three states. Rate limiting is keyed by a
+known endpoint identity; only a sender that proves the endpoint secret
+can observe 429, while an unverified over-limit request still gets the
+bare 401 and creates no receipt. Known endpoints perform verification
+work and an under-limit rejection writes a receipt, so statistical
+timing differences may remain; the broker adds neither dummy crypto nor
+dummy storage writes for unknown slugs. A flood against a known slug can
+still exhaust that endpoint's quota before verification, unchanged from
+the prior endpoint-id limiter. This deliberately makes a typo look like an auth
 failure. An authorized operator uses `csuite notifications list|view`
 or the Notifications UI instead. A correctly signed request to a
 disabled endpoint creates a rejected receipt whose reason names the

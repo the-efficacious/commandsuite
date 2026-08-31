@@ -4182,27 +4182,34 @@ export function createApp(options: AppOptions): CreatedApp {
         overrides.level = parsedLevel.data;
       }
 
-      // Rate-limit by the requested slug before existence affects the
-      // response. Unknown slugs therefore have the same flood behavior
-      // as live and disabled endpoints and cannot be used as a control
-      // for enumeration.
-      if (dispatcher.checkIngressRateLimit(c.req.param('slug'))) {
-        c.header('Retry-After', '60');
-        return c.json({ error: 'rate_limited' }, 429);
-      }
-
       // Size and query grammar are transport properties, so enforce
       // them identically before endpoint existence can affect the
       // response. Only then collapse an unknown slug into the same
       // authentication failure as a known endpoint.
       if (!endpoint) return c.json({ error: 'unauthorized' }, 401);
 
-      const result = await dispatcher.ingest({
+      const ingress = {
         endpoint,
         rawBody,
+        getHeader: (name: string) => c.req.header(name),
+      };
+      const limited = dispatcher.checkIngressRateLimit(endpoint.id);
+      // Verification is deliberately paid even while throttled. Only a
+      // sender who proves knowledge of the endpoint secret may observe
+      // 429; every unverified state remains the same bare 401. Nothing
+      // is receipted or delivered on this over-limit path.
+      const verification = await dispatcher.verifyIngress(ingress);
+      if (limited) {
+        if (!verification.ok) return c.json({ error: 'unauthorized' }, 401);
+        c.header('Retry-After', '60');
+        return c.json({ error: 'rate_limited' }, 429);
+      }
+
+      const result = await dispatcher.ingest({
+        ...ingress,
         contentType: c.req.header('content-type') ?? null,
-        getHeader: (name) => c.req.header(name),
         overrides: Object.keys(overrides).length > 0 ? overrides : null,
+        verification,
       });
 
       if (result.httpStatus === 401) {

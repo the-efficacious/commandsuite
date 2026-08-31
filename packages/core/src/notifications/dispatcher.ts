@@ -63,21 +63,7 @@ import { verifyInbound } from './verify.js';
 /** Per-endpoint ingress rate limit (sliding window). */
 const RATE_LIMIT_MAX = 120;
 const RATE_LIMIT_WINDOW_MS = 60_000;
-// Bound unauthenticated state allocation. Arbitrary unknown slugs cannot
-// grow this table; collisions deliberately fail by sharing quota (false
-// 429) instead of allocating memory or exposing endpoint state.
-const RATE_LIMIT_BUCKETS = 1024;
-
-function rateLimitBucket(slug: string): number {
-  // FNV-1a over UTF-16 code units. This bucket controls traffic only;
-  // it is never an identity, authentication, or authorization fact.
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < slug.length; i++) {
-    hash ^= slug.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0) % RATE_LIMIT_BUCKETS;
-}
+export type IngressVerification = { ok: true } | { ok: false; reason: string };
 
 export interface IngestInput {
   endpoint: NotificationEndpoint;
@@ -85,6 +71,7 @@ export interface IngestInput {
   contentType: string | null;
   getHeader: (name: string) => string | undefined;
   overrides: NotificationOverrides | null;
+  verification: IngressVerification;
 }
 
 export interface IngestResult {
@@ -95,8 +82,12 @@ export interface IngestResult {
 }
 
 export interface NotificationDispatcher {
-  /** Apply the public ingress rate limit by slug, including unknown slugs. */
-  checkIngressRateLimit(slug: string): boolean;
+  /** Verify once; the result is handed unchanged to `ingest`. */
+  verifyIngress(
+    input: Pick<IngestInput, 'endpoint' | 'rawBody' | 'getHeader'>,
+  ): Promise<IngressVerification>;
+  /** Apply the public ingress rate limit to a known endpoint identity. */
+  checkIngressRateLimit(endpointId: string): boolean;
   ingest(input: IngestInput): Promise<IngestResult>;
   /** Re-run a stored delivery (no verify/dedupe/rate limit; filters + policy apply). */
   replay(deliveryId: string): Promise<DeliveryRecord>;
@@ -135,21 +126,37 @@ export function createNotificationDispatcher(
   const now = options.now ?? Date.now;
 
   const debounceBuffers = new Map<string, DebounceBuffer>();
-  const rateWindows: Array<number[] | undefined> = new Array(RATE_LIMIT_BUCKETS);
+  const rateWindows = new Map<string, number[]>();
   let stopped = false;
 
-  function rateLimited(slug: string): boolean {
+  function rateLimited(endpointId: string): boolean {
     const ts = now();
-    const bucket = rateLimitBucket(slug);
-    const window = rateWindows[bucket] ?? [];
+    const window = rateWindows.get(endpointId) ?? [];
     const fresh = window.filter((t) => ts - t < RATE_LIMIT_WINDOW_MS);
     if (fresh.length >= RATE_LIMIT_MAX) {
-      rateWindows[bucket] = fresh;
+      rateWindows.set(endpointId, fresh);
       return true;
     }
     fresh.push(ts);
-    rateWindows[bucket] = fresh;
+    rateWindows.set(endpointId, fresh);
     return false;
+  }
+
+  async function verifyIngress(
+    input: Pick<IngestInput, 'endpoint' | 'rawBody' | 'getHeader'>,
+  ): Promise<IngressVerification> {
+    try {
+      const verification = store.resolveVerification(input.endpoint.id);
+      return await verifyInbound(verification, input.rawBody, input.getHeader);
+    } catch (err) {
+      return {
+        ok: false,
+        reason:
+          err instanceof NotificationsError && err.code === 'no_kek'
+            ? 'encryption key unavailable'
+            : `verification error: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
   }
 
   function memberExists(name: string): boolean {
@@ -426,25 +433,13 @@ export function createNotificationDispatcher(
   }
 
   return {
-    checkIngressRateLimit(slug: string): boolean {
-      return rateLimited(slug);
+    verifyIngress,
+    checkIngressRateLimit(endpointId: string): boolean {
+      return rateLimited(endpointId);
     },
     async ingest(input: IngestInput): Promise<IngestResult> {
       const { endpoint } = input;
-
-      // Verify. Failures are recorded (security visibility) but the
-      // HTTP response stays a detail-free 401.
-      let verifyReason: string | null = null;
-      try {
-        const verification = store.resolveVerification(endpoint.id);
-        const result = await verifyInbound(verification, input.rawBody, input.getHeader);
-        if (!result.ok) verifyReason = result.reason;
-      } catch (err) {
-        verifyReason =
-          err instanceof NotificationsError && err.code === 'no_kek'
-            ? 'encryption key unavailable'
-            : `verification error: ${err instanceof Error ? err.message : String(err)}`;
-      }
+      const verifyReason = input.verification.ok ? null : input.verification.reason;
 
       const bodyText = new TextDecoder().decode(input.rawBody);
       const level = input.overrides?.level ?? endpoint.level;
