@@ -102,6 +102,23 @@ absence** on these seats — it is evidence of absence outside `.gitignore`. Tha
 is usually what you want when reading source and exactly what you don't want
 when asking whether a built artefact, a lockfile or a log contains something.
 
+**And a corollary that cost more than the shim did.** Chasing the above, the
+team adopted "use `! grep -q -E …`, never `grep -vq`". That is right for a check
+list and **inverts a conformance audit**: applied to the mode assertion in
+`compose-check.sh`, it silently permits a world-readable token. Measured under
+GNU grep, modes `644` and `600`:
+
+```
+grep -vq '^600 '   → refuses ✓        ! grep -q '^600 '   → permits ✗
+```
+
+`grep -v` inverts **per line**, so it answers *does some line differ*, never *do
+all lines conform*. Match the question to the assertion — *is any line bad?* is
+`! grep -q`; *is any line not good?* is `grep -vq`. They coincide exactly when
+input and intent are both single-line, which is why the wrong one survives
+review. **A rule applied to the wrong shape doesn't fail loudly; it inverts and
+looks tidier than what it replaced.**
+
 And the rule these serve: **the gate bends, not the security posture.** When an
 instrument makes a correct property look expensive, fix the instrument.
 `Cache-Control: no-store` made a route walk six times slower because Chromium
