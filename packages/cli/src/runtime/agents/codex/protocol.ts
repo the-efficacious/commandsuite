@@ -200,13 +200,9 @@ export interface TurnStartParams {
 
 export interface Turn {
   id: string;
-  /**
-   * Unix ms when the turn started. Present on the `turn/started` (and
-   * `turn/completed`) payload's `turn` object. Confirmed against the
-   * codex 0.130.0 schema (`Turn.startedAt`); read defensively.
-   */
+  /** Unix seconds when the turn started (Codex app-server 0.130.0). */
   startedAt?: number;
-  /** Unix ms when the turn completed. Present on `turn/completed`. */
+  /** Unix seconds when the turn completed. */
   completedAt?: number;
   /** Turn wall-clock duration in ms. Present on `turn/completed`. */
   durationMs?: number;

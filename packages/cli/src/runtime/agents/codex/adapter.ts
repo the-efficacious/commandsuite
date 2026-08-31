@@ -73,6 +73,17 @@ export class CodexAdapterError extends AgentAdapterError {
   }
 }
 
+/**
+ * Codex app-server currently reports whole-turn timestamps as Unix seconds,
+ * while runner control frames use Unix milliseconds. Accept milliseconds too
+ * so an app-server schema change cannot turn a fresh turn into a decades-old
+ * one (or move it into the far future).
+ */
+export function codexTurnTimestampMs(value: number | undefined, now = Date.now()): number {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) return now;
+  return value < 1_000_000_000_000 ? value * 1_000 : value;
+}
+
 /** Locate the `codex` binary: `$CODEX_PATH`, then `which codex`. */
 export function findCodexBinary(): string {
   const fromEnv = process.env.CODEX_PATH;
@@ -286,6 +297,20 @@ export function resolveCodexResume(
 export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnResult> {
   assertNoReservedMcpOverride(opts.codexArgs ?? []);
   const log = opts.logger ?? defaultLogger.child('codex');
+  const turnTimestampMs = (
+    field: 'startedAt' | 'completedAt',
+    value: number | undefined,
+  ): number => {
+    const now = Date.now();
+    if (value === undefined || !Number.isFinite(value) || value <= 0) {
+      log.warn('Codex turn timestamp unavailable; using local time', {
+        field,
+        value: value ?? null,
+        substitutedAt: now,
+      });
+    }
+    return codexTurnTimestampMs(value, now);
+  };
   const cwd = opts.cwd ?? process.cwd();
 
   // 0. Durable sessions + resume resolution. Sessions persist per
@@ -511,7 +536,7 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
     const p = params as TurnStartedNotification;
     if (p?.turn?.id) {
       activeTurnId = p.turn.id;
-      channelSink.turnStarted(p.turn.id, p.turn.startedAt ?? Date.now());
+      channelSink.turnStarted(p.turn.id, turnTimestampMs('startedAt', p.turn.startedAt));
       // Duplicate turn/started for the same id is a no-op.
       if (opts.busy && !turnActiveHandles.has(p.turn.id)) {
         turnActiveHandles.set(p.turn.id, opts.busy.start('turn_active'));
@@ -525,7 +550,7 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
       channelSink.turnCompleted(
         completedId,
         p?.turn?.status === 'failed',
-        p?.turn?.completedAt ?? Date.now(),
+        turnTimestampMs('completedAt', p?.turn?.completedAt),
       );
     }
     activeTurnId = null;
