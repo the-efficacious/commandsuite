@@ -60,6 +60,20 @@ assert_all() {
       CSUITE_URL=http://127.0.0.1:8717 CSUITE_AUTH_CONFIG_PATH=/var/lib/csuite/auth.json \
       csuite roster </dev/null | grep -q "^${CSUITE_RUNNER:-builder} " || die "saved auth for the runner member did not resolve from /var/lib/csuite/runner"
   ok "saved auth for (http://127.0.0.1:8717, /var/lib/csuite/runner) resolves; roster lists ${CSUITE_RUNNER:-builder}"
+  # `grep -vq` is the RIGHT inversion here and the wrong one elsewhere.
+  # The assertion is "every line must be 600", so "is any line NOT 600"
+  # is the violation. Do not rewrite this as `! grep -q '^600 '`: that
+  # asks "is no line 600", which permits a 644 token as long as one
+  # other file is correct. Measured, GNU grep, modes 644+600:
+  # `grep -vq` refuses, `! grep -q` permits.
+  #
+  # Open edge, correct today for a reason nobody chose: `-q` closes the
+  # pipe at its first selected line, and pipefail would turn that
+  # SIGPIPE into a pipeline failure -- `&& die` would not fire and
+  # `|| ok` would report success. Two short lines from `stat` land in
+  # one write before grep exits, so it cannot happen at this size. It
+  # becomes reachable if this file list grows; capture the output first
+  # if it does.
   compose exec -T csuite stat -c '%a %n' /var/lib/csuite/secrets/admin.token /var/lib/csuite/secrets/admin.totp | grep -vq '^600 ' && die "secret files are not 0600" || ok "secret files are mode 0600 on the volume"
 
   if [ "${CSUITE_START_RUNNER:-0}" = 1 ]; then
