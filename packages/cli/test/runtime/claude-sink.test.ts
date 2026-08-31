@@ -229,7 +229,7 @@ describe('createClaudeChannelSink', () => {
     queue.close();
   });
 
-  it('does not degrade a healthy prose-only turn that incurred model cost', async () => {
+  it('does not claim a paid no-action turn is failure when vendor fields are absent', async () => {
     const queue = new ClaudeMessageQueue();
     const frames: RunnerControlFrame[] = [];
     const settle = vi.fn();
@@ -254,6 +254,10 @@ describe('createClaudeChannelSink', () => {
       total_cost_usd: 0.001,
     } as never);
 
+    // This is deliberately also the documented detection boundary: after an
+    // adapter removes its typed error, a paid synthetic failure has the same
+    // observable shape as this healthy prose-only answer. Guessing degraded
+    // here would make healthy no-action turns fail the idle-by-design leg.
     expect(frames).toContainEqual({
       kind: 'runner_turn',
       at: expect.any(Number),
