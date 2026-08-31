@@ -184,7 +184,8 @@ export class SqliteMessageDeliveryLedger implements MessageDeliveryLedger {
        WHERE state = 'pending' AND expires_at <= ?`,
     );
     this.purgeTerminalStmt = db.prepare(
-      `DELETE FROM message_deliveries WHERE state <> 'pending' AND expires_at <= ?`,
+      `DELETE FROM message_deliveries
+       WHERE state IN ('acted', 'handled', 'refused', 'unreported') AND expires_at <= ?`,
     );
     this.unreportedStmt = db.prepare(
       `UPDATE message_deliveries SET state = 'unreported', disposition_at = ?

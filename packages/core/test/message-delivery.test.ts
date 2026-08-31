@@ -240,5 +240,15 @@ describe('SqliteMessageDeliveryLedger', () => {
       .all(1_000) as Array<{ detail: string }>;
     expect(plan.some((row) => row.detail.includes('message_deliveries_expiry_idx'))).toBe(true);
     expect(plan.some((row) => /^SCAN message_deliveries$/.test(row.detail))).toBe(false);
+    const purgePlan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN DELETE FROM message_deliveries
+         WHERE state IN ('acted', 'handled', 'refused', 'unreported') AND expires_at <= ?`,
+      )
+      .all(1_000) as Array<{ detail: string }>;
+    expect(purgePlan.some((row) => row.detail.includes('message_deliveries_expiry_idx'))).toBe(
+      true,
+    );
+    expect(purgePlan.some((row) => /^SCAN message_deliveries$/.test(row.detail))).toBe(false);
   });
 });
