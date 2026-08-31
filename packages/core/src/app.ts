@@ -4141,8 +4141,11 @@ export function createApp(options: AppOptions): CreatedApp {
     // accept path returns 202 before any fanout completes.
     app.post(`${PATHS.hooks}/:slug`, async (c) => {
       const endpoint = notifications.getBySlug(c.req.param('slug'));
-      if (!endpoint) return c.json({ error: 'not_found' }, 404);
-      if (!endpoint.enabled) return c.json({ error: 'disabled' }, 409);
+      // Unknown, live-but-unverified, and disabled endpoints are
+      // intentionally indistinguishable to an unauthenticated caller.
+      // Operators inspect endpoint state through the authenticated
+      // management surface instead.
+      if (!endpoint) return c.json({ error: 'unauthorized' }, 401);
 
       const declared = c.req.header('content-length');
       if (declared !== undefined && Number(declared) > HOOK_BODY_MAX) {

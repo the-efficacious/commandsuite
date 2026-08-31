@@ -791,11 +791,14 @@ returned; summaries expose `hasSecret` only).
 | **Auth** | none at the middleware layer — verified per-endpoint (HMAC-SHA256 over the raw body, or shared-secret header) against the KEK-held secret |
 | **Body** | the sender's raw payload (≤ 256 KiB) |
 | **Query** | `if_offline=drop\|queue`, `if_busy=now\|wait`, `level=<LogLevel>` — per-delivery policy overrides |
-| **Returns** | `202 { id, status }` — also for `duplicate` / `filtered` / `dropped`; `401` (detail-free) on verification failure; `404` unknown, `409` disabled, `413` oversized, `429` + `Retry-After` on the per-endpoint rate limit (120/min) |
+| **Returns** | `202 { id, status }` — also for `duplicate` / `filtered` / `dropped`; the same detail-free `401 {"error":"unauthorized"}` for an unknown slug, a failed verification, or a disabled endpoint; `413` oversized, `429` + `Retry-After` on the per-endpoint rate limit (120/min) |
 
-Every request that clears the rate limit lands a delivery receipt,
-including rejected ones (the failure reason is on the receipt, not
-the wire). Registry changes fan out as
+An authenticated request to a disabled endpoint lands a rejected
+receipt naming disablement; an anonymous request does not. Unknown,
+live, and disabled endpoint state is intentionally indistinguishable
+on this public surface, so a typo also reads as 401. An authorized
+operator uses `GET /notifications/endpoints` or the Notifications UI
+to inspect endpoint state. Registry changes fan out as
 `data.kind = 'notification_endpoint'` events (thread `hook:<slug>`)
 to direct member targets plus `notifications.manage` holders.
 

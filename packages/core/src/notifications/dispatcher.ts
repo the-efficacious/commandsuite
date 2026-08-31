@@ -436,6 +436,13 @@ export function createNotificationDispatcher(
       const title = endpoint.title ?? (endpoint.displayName || endpoint.slug);
 
       if (verifyReason !== null) {
+        // A disabled endpoint is deliberately indistinguishable from an
+        // unknown one until the sender authenticates. Do not let an
+        // anonymous caller use the disabled endpoint as a durable-receipt
+        // writer; a verified request takes the causal branch below.
+        if (!endpoint.enabled) {
+          return { id: null, status: 'rejected', httpStatus: 401 };
+        }
         // The RECEIPT is kept; the PAYLOAD is not.
         //
         // `/hooks/:slug` is unauthenticated by design — the signature is
@@ -469,6 +476,32 @@ export function createNotificationDispatcher(
           reason: verifyReason,
           bytes: input.rawBody.length,
           sha256: digest,
+        });
+        return { id: rejected.id, status: 'rejected', httpStatus: 401 };
+      }
+
+      // Disablement is an administrative state, not an authentication
+      // oracle. Check it only after the sender proves knowledge of the
+      // endpoint secret: anonymous callers receive the same bare 401 as
+      // every other verification failure and cannot manufacture
+      // disablement receipts.
+      if (!endpoint.enabled) {
+        const rejected = store.insertDelivery({
+          endpointId: endpoint.id,
+          endpointSlug: endpoint.slug,
+          receivedAt: now(),
+          status: 'rejected',
+          statusReason: 'endpoint disabled',
+          body: bodyText,
+          contentType: input.contentType,
+          level,
+          title,
+          overrides: input.overrides,
+        });
+        logger.warn('hook delivery rejected', {
+          endpoint: endpoint.slug,
+          reason: 'endpoint disabled',
+          bytes: input.rawBody.length,
         });
         return { id: rejected.id, status: 'rejected', httpStatus: 401 };
       }

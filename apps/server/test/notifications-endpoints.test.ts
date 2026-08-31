@@ -248,13 +248,65 @@ describe('registry CRUD + gating', () => {
 });
 
 describe('ingress verification', () => {
-  it('404 unknown slug, 409 disabled, 413 oversized', async () => {
+  it('makes unknown, live, and disabled endpoints indistinguishable before authentication', async () => {
     const ctx = await makeApp();
-    expect((await ctx.app.request('/hooks/ghost', hookPost('{}'))).status).toBe(404);
+    const unknown = await ctx.app.request('/hooks/ghost', hookPost('{}'));
 
-    await createEndpoint(ctx, { enabled: false });
-    expect((await ctx.app.request('/hooks/ci-alerts', hookPost('{}'))).status).toBe(409);
+    await createEndpoint(ctx);
+    const live = await ctx.app.request('/hooks/ci-alerts', hookPost('{}'));
+    const beforeDisable = ctx.notifications.listDeliveries(
+      ctx.notifications.getBySlug('ci-alerts')?.id ?? '',
+    ).length;
+    const disabledBy = await ctx.app.request(
+      '/notifications/endpoints/ci-alerts',
+      authed(ADMIN, { enabled: false }, 'PATCH'),
+    );
+    expect(disabledBy.status).toBe(200);
+    const disabled = await ctx.app.request('/hooks/ci-alerts', hookPost('{}'));
 
+    const observed = await Promise.all(
+      [unknown, live, disabled].map(async (response) => ({
+        status: response.status,
+        body: await response.text(),
+      })),
+    );
+    expect(observed).toEqual([
+      { status: 401, body: '{"error":"unauthorized"}' },
+      { status: 401, body: '{"error":"unauthorized"}' },
+      { status: 401, body: '{"error":"unauthorized"}' },
+    ]);
+    expect(
+      ctx.notifications.listDeliveries(ctx.notifications.getBySlug('ci-alerts')?.id ?? '').length,
+    ).toBe(beforeDisable);
+
+    // A sender that proves knowledge of the secret gets the same terse
+    // response, while the authorized operator gets the causal receipt.
+    const body = '{"signed":true}';
+    const signedDisabled = await ctx.app.request(
+      '/hooks/ci-alerts',
+      hookPost(body, { 'X-Hub-Signature-256': sign(body) }),
+    );
+    expect(signedDisabled.status).toBe(401);
+    expect(await signedDisabled.json()).toEqual({ error: 'unauthorized' });
+
+    const receipts = await ctx.app.request(
+      '/notifications/endpoints/ci-alerts/deliveries',
+      authed(ADMIN),
+    );
+    const deliveries = ((await receipts.json()) as { deliveries: Array<Record<string, unknown>> })
+      .deliveries;
+    expect(deliveries).toContainEqual(
+      expect.objectContaining({
+        status: 'rejected',
+        statusReason: 'endpoint disabled',
+      }),
+    );
+
+    const operatorView = await ctx.app.request('/notifications/endpoints/ci-alerts', authed(ADMIN));
+    expect(await operatorView.json()).toMatchObject({ endpoint: { enabled: false } });
+  });
+
+  it('rejects oversized bodies with 413 for a known endpoint', async () => {
     const ctx2 = await makeApp();
     await createEndpoint(ctx2);
     const huge = 'x'.repeat(256 * 1024 + 1);

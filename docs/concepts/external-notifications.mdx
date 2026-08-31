@@ -58,6 +58,14 @@ verification returns a bare 401 to the sender; the specific reason
 lands on the delivery receipt, where you can see it and an attacker
 can't.
 
+Unknown slugs and disabled endpoints return that same status and body,
+so the unauthenticated surface discloses neither endpoint existence nor
+administrative state. This deliberately makes a typo look like an auth
+failure. An authorized operator uses `csuite notifications list|view`
+or the Notifications UI instead. A correctly signed request to a
+disabled endpoint creates a rejected receipt whose reason names the
+disablement; an anonymous request to it creates no receipt.
+
 The receipt for a failed verification records the size, SHA-256, and
 reason — not the payload. Anyone can reach this endpoint, so anyone
 who fails the signature check is by definition unauthenticated, and
