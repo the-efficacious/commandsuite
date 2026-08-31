@@ -1,0 +1,102 @@
+---
+title: Gates
+description: Every gate governing merges in this repository, the known-bad input it was shown, and what it reported — plus the practice that produced the list, since an instrument only ever run in the direction where it agrees with its author has been tested in no directions.
+section: Development
+order: 85
+---
+
+# Gates, and what each one has been shown
+
+A gate that has only ever run against work its author believed was good has been
+tested in no directions. Its green is an opinion.
+
+This page is the record of which of ours have been falsified — shown an input we
+know is bad, and observed to fail — and which have not. It exists because three
+of our own instruments were found defective in a single night, each by someone
+using it for real rather than by the instrument itself:
+
+- a liveness probe that printed `CONFIRMED` against an unchanged broker, because
+  it grepped rendered output and matched its own fixture's role title;
+- a query-plan tripwire that closed the statement it was written for and not the
+  class of statement;
+- the route walk, which asserted that the app shell had mounted and therefore
+  passed a build with a page deleted from the router, and which discarded the
+  console errors, failed requests and page text it had collected on the only
+  path where they mattered.
+
+## The practice
+
+**An instrument earns its verdict by being shown a known-bad input, and until it
+has been, a green from it is an opinion.** Four minutes each. Three rules follow
+from doing it, and each was learned by getting it wrong first:
+
+**1. Prove the input was actually bad.** A mutation you did not confirm reached
+the system under test is not a test — it is the instrument agreeing with you
+through a different door. Use a **build fingerprint that changes when your
+change arrives**: the served asset hash, a version string, a checksum, whatever
+the system offers. Deleting a route from the router and rebuilding with a pnpm
+filter that matched no project produced a "known-bad build" that was byte-identical
+to the good one, and a gate that passed it correctly.
+
+```
+asset before:  /assets/index-C1-T_VNZ.js
+asset after:   /assets/index-C1-T_VNZ.js     ← nothing was tested
+asset after:   /assets/index-DtYccP1C.js     ← now it is a different build
+```
+
+**2. Never discard stderr.** pnpm printed `No projects matched the filters`. It
+went to `/dev/null`, and the exit code was checked instead. **Discarding stderr
+is discarding the only channel that reports the thing you did not anticipate**,
+which is by definition the thing you most need. This is a strictly worse failure
+than an untested instrument: the information existed, was correct, was free, and
+was thrown away by habit.
+
+**3. A new check's first duty is to disagree with something you already know the
+answer to.** The route walk's own marker-ambiguity check passed everything on
+its first run — it read the page before its panels resolved, so a half-rendered
+page flagged nothing. A self-check that self-approves is the failure mode this
+whole practice has to survive. Point it at a case whose answer you already know,
+and require it to disagree.
+
+And the rule these serve: **the gate bends, not the security posture.** When an
+instrument makes a correct property look expensive, fix the instrument.
+`Cache-Control: no-store` made a route walk six times slower because Chromium
+never reports those requests as finished ([#278](https://github.com/the-efficacious/commandsuite/issues/278));
+the walker's idle rule changed, the header did not.
+
+## The inventory
+
+Falsified means: shown an input known to be bad, and observed to fail on it.
+
+| Gate | What it governs | Shown | Reported |
+| --- | --- | --- | --- |
+| `route-walk` | every UI route renders its own view, as both roles | objectives route deleted from the router, rebuilt, asset hash confirmed changed | **Failed by name** — `shell mounted but "outcome:" absent — wrong view for this URL`. The pre-marker walker passed the same build. |
+| `route-walk` | same | a broker without `Vary: Accept` ([#276](https://github.com/the-efficacious/commandsuite/issues/276)) | **Failed by name** on `objective-detail` — the page renders `invalid JSON` under HTTP 200 |
+| `commit-convention` | subject lines that land on main | `style(team): <74 chars>` | **Failed**, naming both problems: `[length] subject is 74 characters` and `[unknown-type] type "style"`. Also refuses the vacuous case: an empty `--pr-title` exits 1 rather than checking nothing and passing. It additionally self-tests its own fixtures in the same job, so a validator degraded to reject-everything fails there rather than blocking every PR. |
+| `dco` | every commit carries `Signed-off-by` | an empty commit created with `--no-verify` | **Failed**, naming the commit |
+| `ci` (test suite) | the repository's tests | a fixture asserting `expect(1).toBe(2)` | **Failed** — `Test Files 1 failed (1)` |
+| `release-prepare` | the release render publishes nothing | trap-first: PATH-shimmed `git`/`npm`/`pnpm`/`docker`/`gh` that abort on any push or publish, plus a recording server asserting zero non-GET requests | **Fails if anything reaches for the network** — falsified by construction, and the traps run on every invocation rather than in a separate suite |
+| `bootstrap` | a headless bring-up works from a clean checkout | **not falsified in this pass** | It has failed honestly in the field: [#258](https://github.com/the-efficacious/commandsuite/issues/258) was a bootstrap check that blessed the string `ok` on a *disconnected* row — found by a human reading output, not by the gate. Falsifying it costs a deliberate break of the bring-up. |
+| `container` | the shipped image builds and runs | **not falsified in this pass** | Falsifiable cheaply — break the compose file or the image entrypoint and confirm it reports rather than skips. Worth doing before the next release. |
+| `docs-deploy` | the docs site builds | **not falsified in this pass** | Falsifiable by breaking a doc reference. |
+| `codeql` | static analysis for security patterns | **cannot be falsified by me** | To falsify: land a branch carrying a pattern CodeQL is documented to catch and confirm it is reported. Doing that means pushing a deliberately vulnerable pattern, which needs a decision, not an initiative. |
+| `dependency-review` | new dependencies with known advisories, OpenSSF thresholds | **cannot be falsified by me** | To falsify: add a dependency with a known advisory on a scratch PR. Same caveat. It *has* fired in anger — it rejected `puppeteer-core`, which is why the route walk drives raw CDP. |
+| `release` | publishing on a tag | **not falsifiable without publishing** | The honest position: this one is exercised only by doing the thing it guards. |
+
+### What follows from the un-falsified rows
+
+**A gate we cannot falsify is a gate whose green is an opinion, and no release
+claim may rest on one.** `codeql` and `dependency-review` are useful and stay;
+what they are not is evidence. If a release note wants to say "no known
+vulnerable dependencies ship in this release", that claim needs to name the
+check that was run and shown to discriminate — not the presence of a green tick
+from a gate nobody has ever seen fail.
+
+The same applies to `release`, `bootstrap`, `container` and `docs-deploy` until
+someone does the four minutes.
+
+## Adding a gate
+
+A new gate is not done when it passes. It is done when you have watched it fail
+for the reason it exists, and the failure named the cause. Record the input and
+the output in the table above in the same change that adds it.
