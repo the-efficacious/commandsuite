@@ -129,7 +129,7 @@ describe('POST /presence/activity', () => {
 
     const scout = await rosterScout(app);
     expect(scout?.activity).toBeUndefined();
-    expect(scout?.busy).toBeFalsy();
+    expect(scout?.busy).toBeUndefined();
 
     const roster = await app.request('/roster', {
       method: 'GET',

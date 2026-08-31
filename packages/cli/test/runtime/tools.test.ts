@@ -521,6 +521,8 @@ describe('roster — old broker compatibility does not invent liveness', () => {
     expect(text).toContain(
       'reviewer [reviewer] permissions=baseline; offline; executor=unreported (broker predates executor evidence); compatibility-window=within last 45s',
     );
+    expect(text).not.toContain('activity=reported working');
+    expect(text).not.toContain('executor=ready');
   });
 
   it('describes executor evidence and demotes old activity in the tool metadata', () => {

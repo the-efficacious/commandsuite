@@ -262,7 +262,13 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
       const reliable = (brokerClient as Partial<BrokerClient>).subscribeReliable;
       const stream =
         typeof reliable === 'function' && runnerIdentity !== undefined
-          ? reliable.call(brokerClient, name, signal, runnerIdentity)
+          ? reliable.call(
+              brokerClient,
+              name,
+              signal,
+              runnerIdentity,
+              sink.attachControl !== undefined,
+            )
           : Object.assign(brokerClient.subscribe(name, signal, runnerIdentity), {
               disposition() {},
               control() {},

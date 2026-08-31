@@ -1895,11 +1895,12 @@ export class Client {
     name: string,
     signal: AbortSignal | undefined,
     runnerIdentity: RunnerIdentity,
+    liveness = true,
   ): ReliableSubscription {
     const identity = RunnerIdentitySchema.parse({
       ...runnerIdentity,
       deliveryProtocol: 'disposition-v1',
-      livenessProtocol: 'runner-state-v1',
+      ...(liveness ? { livenessProtocol: 'runner-state-v1' as const } : {}),
     });
     let socket: NodeWebSocket | null = null;
     let socketOpen = false;
