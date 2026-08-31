@@ -27,7 +27,7 @@ using it for real rather than by the instrument itself:
 ## The practice
 
 **An instrument earns its verdict by being shown a known-bad input, and until it
-has been, a green from it is an opinion.** Four minutes each. Four rules follow
+has been, a green from it is an opinion.** Four minutes each. Five rules follow
 from doing it, and every one was learned by getting it wrong first:
 
 **1. Prove the input was actually bad.** A mutation you did not confirm reached
@@ -67,6 +67,22 @@ missing title" would have gone into the table on evidence that proved only that
 a workspace wasn't installed. **An environment failure wearing a falsification
 is the mirror image of rule 1**: there, nothing was tested and the gate passed;
 here, nothing was tested and the gate failed. Both look like results.
+
+**5. Your own tools are part of the environment you are measuring.** Shell
+`grep` on an agent seat here is not GNU grep — the harness shims it to `ugrep`
+via a shell function, and the two disagree. On identical input:
+
+```
+printf '644 a\n600 b\n' | grep -vq '^600 '          → exit 1   (shimmed)
+printf '644 a\n600 b\n' | command grep -vq '^600 '  → exit 0   (GNU, what CI and scripts run)
+```
+
+That difference nearly produced a false security finding: an assertion in
+`compose-check.sh` that the secret files are mode `0600` appeared to pass on a
+`644` fixture, which would have been reported as a gate that cannot fail. It
+fails correctly under the grep that actually runs it. **A shell function is not
+the binary a script invokes**, so when a result turns on a tool's exit code,
+re-run it with `command <tool>` before believing it.
 
 And the rule these serve: **the gate bends, not the security posture.** When an
 instrument makes a correct property look expensive, fix the instrument.
@@ -132,7 +148,7 @@ measurement, not mine.
 | `ci` (test suite) | no | the repository's tests | a fixture asserting `expect(1).toBe(2)` | **Failed** — `Test Files 1 failed (1)` |
 | `release-prepare` | no | the release render publishes nothing | trap-first: PATH-shimmed `git`/`npm`/`pnpm`/`docker`/`gh` that abort on any push or publish, plus a recording server asserting zero non-GET requests | **Fails if anything reaches for the network** — falsified by construction, and the traps run on every invocation rather than in a separate suite |
 | `bootstrap` | no | a headless bring-up works from a clean checkout | **not falsified in this pass** | It has failed honestly in the field: [#258](https://github.com/the-efficacious/commandsuite/issues/258) was a bootstrap check that blessed the string `ok` on a *disconnected* row — found by a human reading output, not by the gate. Falsifying it costs a deliberate break of the bring-up. |
-| `container` | no | the shipped image builds and runs | **not falsified in this pass** | Falsifiable cheaply — break the compose file or the image entrypoint and confirm it reports rather than skips. Worth doing before the next release. |
+| `container` | no | the shipped image builds and runs | a published port mapped to the wrong container port | **Failed** — but originally with *no diagnosis*: bare `exit 56`, no FAIL line, no container logs, because `set -e` aborted the script on the failed command substitution before its own `die` could run. Fixed at both substitutions; it now reports `FAIL GET http://…/healthz could not complete (curl exit 56) — is the published port mapped to 8717?` and exits 1. Control run on the unmodified tree passes all assertions through restart and teardown (`EXIT=0`). |
 | `docs-deploy` | no | the docs site builds | a page whose frontmatter omits the required `title` | **Failed by name** — `[InvalidContentEntryDataError] docs → dev/gates data does not match collection schema. title: Required`. Control run on the unmodified tree builds 47 pages and exits 0, so the failure is the mutation and not the environment. |
 | `codeql` | no | static analysis for security patterns | **cannot be falsified by me** | To falsify: land a branch carrying a pattern CodeQL is documented to catch and confirm it is reported. Doing that means pushing a deliberately vulnerable pattern, which needs a decision, not an initiative. |
 | `dependency-review` | no | new dependencies with known advisories, OpenSSF thresholds | **cannot be falsified by me** | To falsify: add a dependency with a known advisory on a scratch PR. Same caveat. It *has* fired in anger — it rejected `puppeteer-core`, which is why the route walk drives raw CDP. |
