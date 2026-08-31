@@ -572,6 +572,38 @@ The related discipline: **when two careful measurements of the same thing
 disagree, stop arguing about the thing and check whether you measured the same
 thing.** Same path, different machines, different contents.
 
+## Show your instrument a known-bad input
+
+**An instrument only ever run in the direction where it agrees with its author
+has been tested in no directions.** A gate that has only run against work you
+believed was good has never demonstrated it can fail, and its green is an
+opinion. Before you trust one — yours or an existing one — break something it
+claims to cover and watch it report the cause by name. Four minutes.
+
+Three rules that come from doing it and getting it wrong first:
+
+- **Prove the input was actually bad.** A mutation you did not confirm reached
+  the system under test is not a test; it is the instrument agreeing with you
+  through a different door. Use a fingerprint that changes when your change
+  arrives — the served asset hash, a version string, a checksum.
+- **Never send stderr to `/dev/null`.** `pnpm --filter <wrong-name> build` exits
+  0 and prints `No projects matched the filters` on stderr. Discard it and you
+  are testing a build that never happened. **Stderr is the only channel that
+  reports what you did not anticipate**, which is exactly what you are looking
+  for.
+- **A new check's first duty is to disagree with something you already know the
+  answer to.** A self-check that self-approves is the failure this practice has
+  to survive.
+
+And when an instrument makes a correct property look expensive: **the gate
+bends, not the property.** Fix the instrument.
+
+Which of this repository's gates have been shown a known-bad input, what they
+were shown, and what they reported is recorded in
+[docs/dev/gates.mdx](../docs/dev/gates.mdx) — including the ones that have not
+been, because a gate we cannot falsify is a gate whose green no release claim
+may rest on.
+
 ## Use a command that cannot see your working tree
 
 **Intending to cite a commit is not the same as running a command that reaches

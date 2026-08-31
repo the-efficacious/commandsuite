@@ -203,6 +203,10 @@
     {
       "pr": 262,
       "reason": "discoverer's classification: door-manifest maintenance (self-classified per the no-repair-loop rule) \u2014 no shipped surface"
+    },
+    {
+      "pr": 280,
+      "reason": "discoverer's classification: repo instruments and developer docs \u2014 the route-walk gate's markers/evidence, the version-guard workflow, and docs/dev/gates.mdx. No shipped surface and no wire change; version-guard governs our own merges, not anything a user of csuite can invoke. Self-classified per the no-repair-loop rule."
     }
   ]
 }
