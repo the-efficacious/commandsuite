@@ -4182,6 +4182,15 @@ export function createApp(options: AppOptions): CreatedApp {
         overrides.level = parsedLevel.data;
       }
 
+      // Rate-limit by the requested slug before existence affects the
+      // response. Unknown slugs therefore have the same flood behavior
+      // as live and disabled endpoints and cannot be used as a control
+      // for enumeration.
+      if (dispatcher.checkIngressRateLimit(c.req.param('slug'))) {
+        c.header('Retry-After', '60');
+        return c.json({ error: 'rate_limited' }, 429);
+      }
+
       // Size and query grammar are transport properties, so enforce
       // them identically before endpoint existence can affect the
       // response. Only then collapse an unknown slug into the same

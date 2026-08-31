@@ -664,6 +664,15 @@ describe('delivery policy', () => {
 
   it('rate-limits an endpoint flood without recording receipts', async () => {
     const ctx = await makeApp();
+    let unknownLimited = 0;
+    let unknownTail: { status: number; body: string } | null = null;
+    for (let i = 0; i < 125; i++) {
+      const resp = await ctx.app.request('/hooks/ghost', hookPost('{}'));
+      if (resp.status === 429) unknownLimited += 1;
+      if (i === 124) unknownTail = { status: resp.status, body: await resp.text() };
+    }
+    expect(unknownLimited).toBe(5);
+
     await createEndpoint(ctx);
     const body = '{}';
     const headers = { 'X-Hub-Signature-256': sign(body) };
@@ -673,6 +682,13 @@ describe('delivery policy', () => {
       if (resp.status === 429) limited += 1;
     }
     expect(limited).toBe(5);
+    await ctx.app.request(
+      '/notifications/endpoints/ci-alerts',
+      authed(ADMIN, { enabled: false }, 'PATCH'),
+    );
+    const disabledTail = await ctx.app.request('/hooks/ci-alerts', hookPost('{}'));
+    expect(unknownTail).toEqual({ status: 429, body: '{"error":"rate_limited"}' });
+    expect({ status: disabledTail.status, body: await disabledTail.text() }).toEqual(unknownTail);
     const receipts = await ctx.app.request(
       '/notifications/endpoints/ci-alerts/deliveries?limit=500',
       authed(ADMIN, undefined, 'GET'),

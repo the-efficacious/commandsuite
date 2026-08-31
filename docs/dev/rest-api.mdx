@@ -795,10 +795,13 @@ returned; summaries expose `hasSecret` only).
 
 An authenticated request to a disabled endpoint lands a rejected
 receipt naming disablement; an anonymous request does not. Unknown,
-live, and disabled endpoint state is intentionally indistinguishable
-on this public surface: body-cap and query errors are checked before
-existence, so those responses are identical too. A typo otherwise
-reads as 401. An authorized
+live, and disabled endpoints return identical status and body on this
+public surface: body-cap,
+query, and rate-limit checks are applied by slug before existence, so
+those responses are identical too. HMAC work still creates a possible
+statistical timing difference for known endpoints; this fix does not
+add dummy cryptographic work to unknown slugs. A typo otherwise reads
+as 401. An authorized
 operator uses `GET /notifications/endpoints` or the Notifications UI
 to inspect endpoint state. Registry changes fan out as
 `data.kind = 'notification_endpoint'` events (thread `hook:<slug>`)

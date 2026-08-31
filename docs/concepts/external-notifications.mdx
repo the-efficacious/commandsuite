@@ -59,10 +59,13 @@ lands on the delivery receipt, where you can see it and an attacker
 can't.
 
 Unknown slugs and disabled endpoints return that same status and body,
-so the unauthenticated surface discloses neither endpoint existence nor
-administrative state. Shared body-size and query-grammar checks run
-before the existence decision and likewise answer identically across
-all three states. This deliberately makes a typo look like an auth
+so endpoint existence and administrative state are not disclosed by
+the response bytes. Shared body-size, query-grammar, and per-slug rate
+limit checks run before the existence decision and likewise answer
+identically across all three states. Known endpoints still perform
+verification work, so a statistical timing channel may remain; the
+broker does not add dummy cryptographic work for unknown slugs. This
+deliberately makes a typo look like an auth
 failure. An authorized operator uses `csuite notifications list|view`
 or the Notifications UI instead. A correctly signed request to a
 disabled endpoint creates a rejected receipt whose reason names the

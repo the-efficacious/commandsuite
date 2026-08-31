@@ -80,6 +80,8 @@ export interface IngestResult {
 }
 
 export interface NotificationDispatcher {
+  /** Apply the public ingress rate limit by slug, including unknown slugs. */
+  checkIngressRateLimit(slug: string): boolean;
   ingest(input: IngestInput): Promise<IngestResult>;
   /** Re-run a stored delivery (no verify/dedupe/rate limit; filters + policy apply). */
   replay(deliveryId: string): Promise<DeliveryRecord>;
@@ -121,16 +123,16 @@ export function createNotificationDispatcher(
   const rateWindows = new Map<string, number[]>();
   let stopped = false;
 
-  function rateLimited(endpointId: string): boolean {
+  function rateLimited(slug: string): boolean {
     const ts = now();
-    const window = rateWindows.get(endpointId) ?? [];
+    const window = rateWindows.get(slug) ?? [];
     const fresh = window.filter((t) => ts - t < RATE_LIMIT_WINDOW_MS);
     if (fresh.length >= RATE_LIMIT_MAX) {
-      rateWindows.set(endpointId, fresh);
+      rateWindows.set(slug, fresh);
       return true;
     }
     fresh.push(ts);
-    rateWindows.set(endpointId, fresh);
+    rateWindows.set(slug, fresh);
     return false;
   }
 
@@ -408,14 +410,11 @@ export function createNotificationDispatcher(
   }
 
   return {
+    checkIngressRateLimit(slug: string): boolean {
+      return rateLimited(slug);
+    },
     async ingest(input: IngestInput): Promise<IngestResult> {
       const { endpoint } = input;
-
-      if (rateLimited(endpoint.id)) {
-        // Deliberately NOT recorded — receipts under a flood would be
-        // their own denial of service.
-        return { id: null, status: 'rate_limited', httpStatus: 429 };
-      }
 
       // Verify. Failures are recorded (security visibility) but the
       // HTTP response stays a detail-free 401.
