@@ -119,6 +119,18 @@ export function createCodexChannelSink(opts: CodexChannelSinkOptions): CodexChan
     return [{ type: 'text', text: body }];
   };
 
+  const registerStartedReceipts = (turnId: string, receipts: ChannelDeliveryReceipt[]): void => {
+    // Codex may emit turn/started before the turn/start request resolves.
+    // In that ordering the notification already set activeTurnId, so waiting
+    // for a second notification would strand these receipts forever.
+    if (opts.getActiveTurnId() === turnId) {
+      for (const receipt of receipts) receipt.accepted();
+      turnReceipts.set(turnId, [...(turnReceipts.get(turnId) ?? []), ...receipts]);
+      return;
+    }
+    awaitingStarted.set(turnId, receipts);
+  };
+
   const dispatchOnce = async (events: BufferedEvent[]): Promise<void> => {
     const threadId = opts.getThreadId();
     if (threadId === null) {
@@ -150,7 +162,7 @@ export function createCodexChannelSink(opts: CodexChannelSinkOptions): CodexChan
           threadId,
           input,
         });
-        awaitingStarted.set(
+        registerStartedReceipts(
           started.turn.id,
           events.map((event) => event.receipt),
         );
@@ -207,7 +219,7 @@ export function createCodexChannelSink(opts: CodexChannelSinkOptions): CodexChan
             threadId,
             input,
           });
-          awaitingStarted.set(
+          registerStartedReceipts(
             started.turn.id,
             events.map((event) => event.receipt),
           );
