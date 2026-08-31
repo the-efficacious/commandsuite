@@ -84,6 +84,24 @@ fails correctly under the grep that actually runs it. **A shell function is not
 the binary a script invokes**, so when a result turns on a tool's exit code,
 re-run it with `command <tool>` before believing it.
 
+**Coverage differs too, and this one bites the way you look for things.** The
+shim passes `--ignore-files`, so a recursive search *from the repository root*
+silently skips everything `.gitignore` covers — `dist/`, `node_modules/`, build
+output, logs. The ignore file binds to the search root, so searching a
+subdirectory does not apply it:
+
+```
+marker in packages/core/dist (gitignored)     shimmed   GNU
+  grep -rl … .                                     0      1     ← absence is a lie
+  grep -rl … packages/                             1      1
+  grep -rl … packages/core/dist                    1      1
+```
+
+So **"I grepped from the repo root and found nothing" is not evidence of
+absence** on these seats — it is evidence of absence outside `.gitignore`. That
+is usually what you want when reading source and exactly what you don't want
+when asking whether a built artefact, a lockfile or a log contains something.
+
 And the rule these serve: **the gate bends, not the security posture.** When an
 instrument makes a correct property look expensive, fix the instrument.
 `Cache-Control: no-store` made a route walk six times slower because Chromium
