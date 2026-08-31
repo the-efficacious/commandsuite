@@ -111,6 +111,29 @@ describe('message disposition ledger', () => {
     expect(ledger.pending('bob', 1_002)).toHaveLength(0);
   });
 
+  it('keeps authoritative settlement when an observational listener throws', async () => {
+    const { broker, ledger } = fixture();
+    broker.subscribe('bob', () => {}, { name: 'bob', clientIdentity: ACK_RUNNER });
+    const pushed = await broker.push({ to: 'bob', body: 'work' }, { from: 'alice' });
+    broker.onMessageDisposition(() => {
+      throw new Error('observer failed');
+    });
+
+    await expect(
+      broker.disposition(
+        'bob',
+        {
+          kind: 'message_disposition',
+          messageId: pushed.message.id,
+          disposition: 'handled',
+          at: 1_001,
+        },
+        { name: 'bob', clientIdentity: ACK_RUNNER },
+      ),
+    ).resolves.toBe(true);
+    expect(ledger.pending('bob', 1_001)).toHaveLength(0);
+  });
+
   it('marks legacy delivery unreported and rejects dispositions from non-runners', async () => {
     const { broker, ledger } = fixture();
     broker.subscribe('bob', () => {}, { name: 'bob', clientIdentity: LEGACY_RUNNER });
@@ -199,6 +222,23 @@ describe('SqliteMessageDeliveryLedger', () => {
     expect(reopened.expire(1_000 + MESSAGE_DELIVERY_TTL_MS + 1)).toEqual([
       expect.objectContaining({ message, recipient: 'bob', sender: 'alice' }),
     ]);
+    expect(
+      (db.prepare('SELECT COUNT(*) AS count FROM message_deliveries').get() as { count: number })
+        .count,
+    ).toBe(0);
     expect(reopened.expire(1_000 + MESSAGE_DELIVERY_TTL_MS + 2)).toEqual([]);
+  });
+
+  it('serves expiry from the state/expires index rather than scanning the table', () => {
+    const db = new DatabaseSync(':memory:') as unknown as SqlDriver;
+    new SqliteMessageDeliveryLedger(db);
+    const plan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT message_json FROM message_deliveries
+         WHERE state = 'pending' AND expires_at <= ?`,
+      )
+      .all(1_000) as Array<{ detail: string }>;
+    expect(plan.some((row) => row.detail.includes('message_deliveries_expiry_idx'))).toBe(true);
+    expect(plan.some((row) => /^SCAN message_deliveries$/.test(row.detail))).toBe(false);
   });
 });

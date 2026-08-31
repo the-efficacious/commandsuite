@@ -535,7 +535,7 @@ export class Broker {
       at: frame.at,
       reason: frame.reason ?? null,
     };
-    for (const listener of this.dispositionListeners) listener(event);
+    this.emitDisposition(event);
     if (frame.disposition === 'refused' && row.message.from !== null) {
       await this.push(
         {
@@ -561,6 +561,20 @@ export class Broker {
   onMessageDisposition(listener: (event: MessageDispositionEvent) => void): () => void {
     this.dispositionListeners.add(listener);
     return () => this.dispositionListeners.delete(listener);
+  }
+
+  private emitDisposition(event: MessageDispositionEvent): void {
+    for (const listener of this.dispositionListeners) {
+      try {
+        listener(event);
+      } catch (err) {
+        this.logger.warn('message disposition listener failed', {
+          messageId: event.message.id,
+          recipient: event.recipient,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
   }
 
   /** Redeliver pending rows in original message order on runner attach. */
@@ -593,15 +607,13 @@ export class Broker {
   async sweepMessageDeliveries(): Promise<number> {
     const expired = this.deliveryLedger.expire(this.now());
     for (const row of expired) {
-      for (const listener of this.dispositionListeners) {
-        listener({
-          message: row.message,
-          recipient: row.recipient,
-          disposition: 'refused',
-          at: this.now(),
-          reason: { code: 'expired', detail: 'message acknowledgement expired after 24 hours' },
-        });
-      }
+      this.emitDisposition({
+        message: row.message,
+        recipient: row.recipient,
+        disposition: 'refused',
+        at: this.now(),
+        reason: { code: 'expired', detail: 'message acknowledgement expired after 24 hours' },
+      });
       if (row.sender === null) continue;
       await this.push(
         {

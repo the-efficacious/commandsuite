@@ -95,6 +95,9 @@ export class InMemoryMessageDeliveryLedger implements MessageDeliveryLedger {
       row.reason = { code: 'expired', detail: 'message acknowledgement expired after 24 hours' };
       expired.push({ ...row, sender: row.message.from });
     }
+    for (const [key, row] of this.rows) {
+      if (row.state !== 'pending' && row.expiresAt <= now) this.rows.delete(key);
+    }
     return expired;
   }
 
@@ -131,6 +134,8 @@ const CREATE_SCHEMA = `
   );
   CREATE INDEX IF NOT EXISTS message_deliveries_pending_idx
     ON message_deliveries (recipient, state, expires_at);
+  CREATE INDEX IF NOT EXISTS message_deliveries_expiry_idx
+    ON message_deliveries (state, expires_at);
 `;
 
 export class SqliteMessageDeliveryLedger implements MessageDeliveryLedger {
@@ -141,6 +146,7 @@ export class SqliteMessageDeliveryLedger implements MessageDeliveryLedger {
   private readonly pendingStmt: SqlStatement;
   private readonly expiredStmt: SqlStatement;
   private readonly expireStmt: SqlStatement;
+  private readonly purgeTerminalStmt: SqlStatement;
   private readonly unreportedStmt: SqlStatement;
 
   constructor(db: SqlDriver) {
@@ -177,6 +183,9 @@ export class SqliteMessageDeliveryLedger implements MessageDeliveryLedger {
       `UPDATE message_deliveries SET state = 'refused', disposition_at = ?, reason_json = ?
        WHERE state = 'pending' AND expires_at <= ?`,
     );
+    this.purgeTerminalStmt = db.prepare(
+      `DELETE FROM message_deliveries WHERE state <> 'pending' AND expires_at <= ?`,
+    );
     this.unreportedStmt = db.prepare(
       `UPDATE message_deliveries SET state = 'unreported', disposition_at = ?
        WHERE message_id = ? AND recipient = ? AND state = 'pending'`,
@@ -212,12 +221,16 @@ export class SqliteMessageDeliveryLedger implements MessageDeliveryLedger {
 
   expire(now: number): ExpiredMessageDelivery[] {
     const rows = (this.expiredStmt.all(now) as unknown as DeliveryRow[]).map(rowToPending);
-    if (rows.length === 0) return [];
+    if (rows.length === 0) {
+      this.purgeTerminalStmt.run(now);
+      return [];
+    }
     this.expireStmt.run(
       now,
       JSON.stringify({ code: 'expired', detail: 'message acknowledgement expired after 24 hours' }),
       now,
     );
+    this.purgeTerminalStmt.run(now);
     return rows.map((row) => ({ ...row, sender: row.message.from }));
   }
 
