@@ -58,6 +58,16 @@ page flagged nothing. A self-check that self-approves is the failure mode this
 whole practice has to survive. Point it at a case whose answer you already know,
 and require it to disagree.
 
+**4. A red only counts as falsification if the control passed.** Run the
+unmodified tree first and see it green; only then does a red on the mutated tree
+mean what you want it to mean. The docs build died on a missing `node_modules`
+*before it ever reached* the frontmatter I had broken — the exit code alone
+would have read as a successful falsification, and "docs-deploy refuses a
+missing title" would have gone into the table on evidence that proved only that
+a workspace wasn't installed. **An environment failure wearing a falsification
+is the mirror image of rule 1**: there, nothing was tested and the gate passed;
+here, nothing was tested and the gate failed. Both look like results.
+
 And the rule these serve: **the gate bends, not the security posture.** When an
 instrument makes a correct property look expensive, fix the instrument.
 `Cache-Control: no-store` made a route walk six times slower because Chromium
@@ -102,7 +112,9 @@ forget.
 
 ## The inventory
 
-Falsified means: shown an input known to be bad, and observed to fail on it.
+Falsified means: shown an input known to be bad, and observed to fail on it —
+**with a control run on the unmodified tree observed to pass first**, so the red
+is the mutation and not the environment.
 
 Required means: the platform refuses the merge if it fails. **Most of these are
 not.** Per Lea's audit of the effective branch rules on 2026-08-31, the only
@@ -196,6 +208,66 @@ from a gate nobody has ever seen fail.
 
 The same applies to `release`, `bootstrap`, `container` and `docs-deploy` until
 someone does the four minutes.
+
+## Reproducing these falsifications
+
+Every row above was produced by one of these. They are here so the table can be
+re-checked rather than believed, and so the next person adding a gate has a
+worked example of the shape.
+
+**`route-walk` — a page deleted from the router.** The asset hash is the
+fingerprint proving the mutated build reached the browser; without it you may
+be testing nothing (see rule 1).
+
+```bash
+curl -s "$URL/" | grep -oE '/assets/index-[A-Za-z0-9_-]+\.js'   # before
+# in packages/web-ui/src/lib/routes.ts, make the objectives-list branch unreachable:
+#   if (rest.length === 0 && false) return withTeam({ kind: 'objectives-list' }, team);
+pnpm build                                                       # ROOT build; a filter may match nothing
+curl -s "$URL/" | grep -oE '/assets/index-[A-Za-z0-9_-]+\.js'   # must differ
+node scripts/route-walk/walk.mjs --broker "$URL" --member builder --role baseline \
+  --secret "$WALK/totp-builder.secret" --fixtures "$WALK/fixtures.json" \
+  --out /tmp/kb --only objectives-list
+# expect: FAIL … [shell mounted but "outcome:" absent — wrong view for this URL]
+```
+
+**`route-walk` — a broker without the `Vary` fix.** Point the same walk at one:
+`objective-detail` fails on its marker, because the page renders `invalid JSON`
+under HTTP 200 with no console error and no failed request.
+
+**`route-walk` — a marker that proves nothing.** Change any row's marker to a
+string home also renders (`"ROSTER"`). The walk aborts before touching a route:
+`these markers also appear on home, so they prove nothing`.
+
+**`contract.mjs` — a page with no declaration.** Add a kind to the `Route` union
+in `routes.ts` and run `node scripts/route-walk/contract.mjs --check
+scripts/route-walk/manifest.json`. Expect `route kind '…' is in the router but
+absent from the manifest`.
+
+**`version-guard`.** Against the live Version PR and against the same commit
+from anywhere else — the verdict must flip on the branch name alone:
+
+```bash
+node scripts/check-version-bump.mjs --base-ref origin/main --head <version-pr-sha> \
+  --head-ref changeset-release/main        # exit 0
+node scripts/check-version-bump.mjs --base-ref origin/main --head <version-pr-sha> \
+  --head-ref feat/anything-else            # exit 1, naming every package
+```
+
+**`commit-convention`.** `node scripts/check-commit-convention.mjs --pr-title
+"style(team): <74 chars>" --author <you>` — expect both `[length]` and
+`[unknown-type]`. An empty `--pr-title` must exit 1, not pass vacuously.
+
+**`dco`.** `git commit --allow-empty --no-verify -m "test: no trailer"`, then the
+workflow's own loop over `git show -s --format='%(trailers:key=Signed-off-by,valueonly)'`.
+
+**`ci`.** Drop a test asserting `expect(1).toBe(2)` and run it.
+
+**`docs-deploy`.** Remove `title` from any page's frontmatter and run
+`pnpm build` in `docs/site` — expect `InvalidContentEntryDataError … title:
+Required`. Run the control first: that workspace has its own `node_modules`, and
+a missing install fails the build for a reason that has nothing to do with your
+mutation.
 
 ## Adding a gate
 
