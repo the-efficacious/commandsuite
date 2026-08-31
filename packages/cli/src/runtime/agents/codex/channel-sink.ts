@@ -45,7 +45,7 @@
  */
 
 import { logger as defaultLogger, type Logger } from 'csuite-core';
-import type { RunnerControlFrame } from 'csuite-sdk/types';
+import type { RunnerConditionCode, RunnerControlFrame } from 'csuite-sdk/types';
 import type { ChannelDeliveryReceipt, ChannelEventSink } from '../../forwarder.js';
 import { formatChannelEvent } from '../channel-format.js';
 import type { JsonRpcClient } from './json-rpc.js';
@@ -88,10 +88,7 @@ export interface CodexChannelSink extends ChannelEventSink {
   turnStarted(turnId: string, at?: number): void;
   turnCompleted(turnId: string, failed?: boolean, at?: number): void;
   acted(turnId: string, kind: 'tool_call' | 'outbound_effect', at?: number): void;
-  degraded(
-    code: 'no_credential' | 'invalid_model' | 'model_unavailable' | 'server_overloaded' | 'unknown',
-    detail: string,
-  ): void;
+  degraded(code: RunnerConditionCode, detail: string): void;
 }
 
 export function createCodexChannelSink(opts: CodexChannelSinkOptions): CodexChannelSink {

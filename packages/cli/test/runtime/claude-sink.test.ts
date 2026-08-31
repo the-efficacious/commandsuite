@@ -106,7 +106,7 @@ describe('createClaudeChannelSink', () => {
       log: silentLogger(),
       bundleWindowMs: 5_000,
     });
-    sink.attachControl((frame) => frames.push(frame));
+    sink.attachControl?.((frame) => frames.push(frame));
     await sink.deliver(channelEvent('please act'), {
       messageId: 'message-1',
       accepted,

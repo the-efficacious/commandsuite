@@ -40,7 +40,7 @@ export interface ChannelEvent {
  * re-briefs ride the same sink.
  */
 export interface ChannelEventSink {
-  deliver(event: ChannelEvent, receipt: ChannelDeliveryReceipt): Promise<void>;
+  deliver(event: ChannelEvent, receipt?: ChannelDeliveryReceipt): Promise<void>;
   /** Replaced on reconnect; adapters emit condition/turn facts through it. */
   attachControl?(send: (frame: RunnerControlFrame) => void): void;
 }
