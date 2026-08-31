@@ -13,7 +13,7 @@
  */
 
 import type { Client as BrokerClient } from 'csuite-sdk/client';
-import type { Message } from 'csuite-sdk/types';
+import type { Message, MessageDispositionFrame, RunnerControlFrame } from 'csuite-sdk/types';
 import { describe, expect, it, vi } from 'vitest';
 import { runForwarder } from '../../src/runtime/forwarder.js';
 import { silentLogger } from '../helpers/logger.js';
@@ -97,6 +97,86 @@ async function captureNotifications(
 }
 
 describe('forwarder thread classification', () => {
+  it('re-accepts a held receipt on the subscription generation that settles it', async () => {
+    vi.useFakeTimers();
+    try {
+      const ctrl = new AbortController();
+      const dispositions: MessageDispositionFrame[][] = [[], []];
+      const controls: RunnerControlFrame[][] = [[], []];
+      let subscriptions = 0;
+      let heldReceipt: Parameters<
+        NonNullable<Parameters<typeof runForwarder>[0]['sink']['deliver']>
+      >[1];
+      let secondReady!: () => void;
+      const secondSubscribed = new Promise<void>((resolve) => {
+        secondReady = resolve;
+      });
+      const subscribeReliable = vi.fn((_name: string, signal: AbortSignal) => {
+        const generation = subscriptions++;
+        const iterable: AsyncIterable<Message> = {
+          [Symbol.asyncIterator]: async function* () {
+            if (generation === 0) {
+              yield makeMessage({ id: 'across-reconnect', to: 'me' });
+              return;
+            }
+            secondReady();
+            await new Promise<void>((resolve) => {
+              if (signal.aborted) return resolve();
+              signal.addEventListener('abort', () => resolve(), { once: true });
+            });
+          },
+        };
+        return Object.assign(iterable, {
+          disposition(frame: MessageDispositionFrame) {
+            dispositions[generation]?.push(frame);
+          },
+          control(frame: RunnerControlFrame) {
+            controls[generation]?.push(frame);
+          },
+        });
+      });
+      const running = runForwarder({
+        sink: {
+          async deliver(_event, receipt) {
+            if (heldReceipt === undefined) {
+              heldReceipt = receipt;
+              receipt?.accepted();
+            }
+          },
+          attachControl: vi.fn(),
+        },
+        brokerClient: {
+          subscribeReliable,
+          listChannels: vi.fn().mockResolvedValue([]),
+        } as unknown as BrokerClient,
+        name: 'me',
+        signal: ctrl.signal,
+        runnerIdentity: {
+          runner: 'codex',
+          modelId: null,
+          runnerVersion: 'test',
+          runnerBuildSource: 'main',
+        },
+        logger: silentLogger(),
+      });
+
+      for (let i = 0; i < 5 && heldReceipt === undefined; i += 1) await Promise.resolve();
+      expect(heldReceipt).toBeDefined();
+      expect(dispositions[0]?.map((frame) => frame.disposition)).toEqual(['accepted']);
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      await secondSubscribed;
+      heldReceipt?.settle('acted', { evidence: { kind: 'tool_call' } });
+
+      expect(dispositions[1]?.map((frame) => frame.disposition)).toEqual(['accepted', 'acted']);
+      expect(dispositions[0]?.map((frame) => frame.disposition)).toEqual(['accepted']);
+      ctrl.abort();
+      await running;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('returns without subscribing when the lifecycle gate rejects', async () => {
     const subscribe = vi.fn();
     await expect(
