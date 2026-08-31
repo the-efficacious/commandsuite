@@ -63,6 +63,21 @@ import { verifyInbound } from './verify.js';
 /** Per-endpoint ingress rate limit (sliding window). */
 const RATE_LIMIT_MAX = 120;
 const RATE_LIMIT_WINDOW_MS = 60_000;
+// Bound unauthenticated state allocation. Arbitrary unknown slugs cannot
+// grow this table; collisions deliberately fail by sharing quota (false
+// 429) instead of allocating memory or exposing endpoint state.
+const RATE_LIMIT_BUCKETS = 1024;
+
+function rateLimitBucket(slug: string): number {
+  // FNV-1a over UTF-16 code units. This bucket controls traffic only;
+  // it is never an identity, authentication, or authorization fact.
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < slug.length; i++) {
+    hash ^= slug.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0) % RATE_LIMIT_BUCKETS;
+}
 
 export interface IngestInput {
   endpoint: NotificationEndpoint;
@@ -73,9 +88,9 @@ export interface IngestInput {
 }
 
 export interface IngestResult {
-  /** Delivery id (existing row's id for duplicates; null when rate-limited). */
+  /** Delivery id (existing row's id for duplicates; null for unrecorded rejection). */
   id: string | null;
-  status: NotificationDeliveryStatus | 'rate_limited';
+  status: NotificationDeliveryStatus;
   httpStatus: number;
 }
 
@@ -120,19 +135,20 @@ export function createNotificationDispatcher(
   const now = options.now ?? Date.now;
 
   const debounceBuffers = new Map<string, DebounceBuffer>();
-  const rateWindows = new Map<string, number[]>();
+  const rateWindows: Array<number[] | undefined> = new Array(RATE_LIMIT_BUCKETS);
   let stopped = false;
 
   function rateLimited(slug: string): boolean {
     const ts = now();
-    const window = rateWindows.get(slug) ?? [];
+    const bucket = rateLimitBucket(slug);
+    const window = rateWindows[bucket] ?? [];
     const fresh = window.filter((t) => ts - t < RATE_LIMIT_WINDOW_MS);
     if (fresh.length >= RATE_LIMIT_MAX) {
-      rateWindows.set(slug, fresh);
+      rateWindows[bucket] = fresh;
       return true;
     }
     fresh.push(ts);
-    rateWindows.set(slug, fresh);
+    rateWindows[bucket] = fresh;
     return false;
   }
 

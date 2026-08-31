@@ -4134,9 +4134,9 @@ export function createApp(options: AppOptions): CreatedApp {
     // ── Ingress ──
     //
     // POST /hooks/:slug — NO auth middleware; this is the outside
-    // world's door. Transport checks here (existence, enabled, size,
-    // override grammar), then the dispatcher owns verify → dedupe →
-    // filter → render → policy. Responses are deliberately terse:
+    // world's door. Shared transport checks happen before endpoint
+    // existence affects the response; the dispatcher then owns verify
+    // → enabled → dedupe → filter → render → policy. Responses are deliberately terse:
     // verification failures are a bare 401 with no detail, and the
     // accept path returns 202 before any fanout completes.
     app.post(`${PATHS.hooks}/:slug`, async (c) => {
@@ -4205,10 +4205,6 @@ export function createApp(options: AppOptions): CreatedApp {
         overrides: Object.keys(overrides).length > 0 ? overrides : null,
       });
 
-      if (result.status === 'rate_limited') {
-        c.header('Retry-After', '60');
-        return c.json({ error: 'rate_limited' }, 429);
-      }
       if (result.httpStatus === 401) {
         return c.json({ error: 'unauthorized' }, 401);
       }

@@ -64,8 +64,10 @@ the response bytes. Shared body-size, query-grammar, and per-slug rate
 limit checks run before the existence decision and likewise answer
 identically across all three states. Known endpoints still perform
 verification work, so a statistical timing channel may remain; the
-broker does not add dummy cryptographic work for unknown slugs. This
-deliberately makes a typo look like an auth
+broker does not add dummy cryptographic work for unknown slugs. The
+bounded limiter uses 1024 hashed buckets, so colliding slugs share quota
+and may cause false 429 responses rather than allocate unbounded state.
+This deliberately makes a typo look like an auth
 failure. An authorized operator uses `csuite notifications list|view`
 or the Notifications UI instead. A correctly signed request to a
 disabled endpoint creates a rejected receipt whose reason names the

@@ -800,7 +800,9 @@ public surface: body-cap,
 query, and rate-limit checks are applied by slug before existence, so
 those responses are identical too. HMAC work still creates a possible
 statistical timing difference for known endpoints; this fix does not
-add dummy cryptographic work to unknown slugs. A typo otherwise reads
+add dummy cryptographic work to unknown slugs. Rate-limit state uses a
+fixed 1024-bucket hash table: memory is bounded, while colliding slugs
+share quota and can cause false 429 responses. A typo otherwise reads
 as 401. An authorized
 operator uses `GET /notifications/endpoints` or the Notifications UI
 to inspect endpoint state. Registry changes fan out as
