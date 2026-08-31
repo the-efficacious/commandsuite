@@ -244,6 +244,12 @@ export {
   validateTotpSecret,
 } from './members-domain.js';
 export {
+  InMemoryMessageDeliveryLedger,
+  MESSAGE_DELIVERY_TTL_MS,
+  type MessageDeliveryLedger,
+  SqliteMessageDeliveryLedger,
+} from './message-delivery.js';
+export {
   createNotificationDispatcher,
   type IngestInput,
   type IngestResult,

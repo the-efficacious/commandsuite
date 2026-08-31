@@ -20,6 +20,7 @@ import type {
   ClientIdentity,
   Member,
   Message,
+  MessageDispositionFrame,
   Presence,
   PushPayload,
   PushResult,
@@ -28,6 +29,7 @@ import type {
 } from 'csuite-sdk/types';
 import type { EventLog } from './event-log.js';
 import { logger as defaultLogger, type Logger } from './logger.js';
+import { InMemoryMessageDeliveryLedger, type MessageDeliveryLedger } from './message-delivery.js';
 import {
   PresenceIdentityError,
   PresenceRegistry,
@@ -95,6 +97,8 @@ export interface BrokerOptions {
    * pre-2026-04-16 serial behavior for debugging.
    */
   fanoutConcurrency?: number;
+  /** Durable message disposition ledger. In-memory by default for embedders/tests. */
+  deliveryLedger?: MessageDeliveryLedger;
 }
 
 /**
@@ -117,6 +121,8 @@ export interface PushContext {
    * looked up in the registry; missing names are silently skipped.
    */
   recipients?: string[];
+  /** False for terminal refusal/expiry facts so a refusal cannot recursively expire. */
+  trackDisposition?: boolean;
 }
 
 /**
@@ -140,6 +146,14 @@ export interface IdentityContext {
 export interface RegistrationResult {
   name: string;
   registeredAt: number;
+}
+
+export interface MessageDispositionEvent {
+  message: Message;
+  recipient: string;
+  disposition: MessageDispositionFrame['disposition'];
+  at: number;
+  reason: MessageDispositionFrame['reason'] | null;
 }
 
 const EMPTY_IDENTITY: IdentityContext = {};
@@ -209,6 +223,8 @@ export class Broker {
   private readonly idFactory: () => string;
   private readonly logger: Logger;
   private readonly fanoutConcurrency: number;
+  private readonly deliveryLedger: MessageDeliveryLedger;
+  private readonly dispositionListeners = new Set<(event: MessageDispositionEvent) => void>();
   private readonly blockedTokenIds = new Set<string>();
 
   constructor(options: BrokerOptions) {
@@ -227,6 +243,7 @@ export class Broker {
     // failures went unobserved.
     this.logger = options.logger ?? defaultLogger.child('broker');
     this.fanoutConcurrency = options.fanoutConcurrency ?? DEFAULT_FANOUT_CONCURRENCY;
+    this.deliveryLedger = options.deliveryLedger ?? new InMemoryMessageDeliveryLedger();
   }
 
   /**
@@ -335,7 +352,39 @@ export class Broker {
     }
 
     const targetStates = [...recipients];
+    const dispositionNames = new Set<string>(
+      targetName
+        ? [targetName]
+        : context.recipients !== undefined
+          ? context.recipients
+          : targetStates.map((state) => state.presence.name),
+    );
     let live = 0;
+    let pending = 0;
+    let unreported = 0;
+
+    // A disposition belongs to the member identity, not to a browser tab
+    // or individual runner socket. Offline recipients remain pending. A
+    // live legacy runner receives the message under the old contract and
+    // is explicitly unreported rather than being guessed into support.
+    if (context.trackDisposition !== false) {
+      for (const state of targetStates) {
+        if (!dispositionNames.has(state.presence.name)) continue;
+        const runnerIdentities = [...state.subscriberClientIdentities.values()].filter(
+          (identity) => identity?.kind === 'runner',
+        );
+        const hasAckRunner = runnerIdentities.some(
+          (identity) => identity.runnerIdentity.deliveryProtocol === 'disposition-v1',
+        );
+        const hasLegacyRunner = runnerIdentities.length > 0 && !hasAckRunner;
+        if (hasLegacyRunner) {
+          unreported += 1;
+        } else {
+          this.deliveryLedger.track(message, state.presence.name, ts);
+          pending += 1;
+        }
+      }
+    }
 
     // Flatten (state, subscriber) pairs once so one bounded-concurrency
     // sweep covers every subscriber across every recipient. With the
@@ -345,7 +394,7 @@ export class Broker {
     // under backpressure. See `fanoutConcurrency` in BrokerOptions for
     // the tunable; default 32 stays well above real-world subscriber
     // counts while bounding pathological broadcast cases.
-    type FanoutTask = { state: PresenceState; sub: Subscriber };
+    type FanoutTask = { state: PresenceState; sub: Subscriber; ackCapable: boolean };
     const tasks: FanoutTask[] = [];
     for (const state of targetStates) {
       state.presence.lastSeen = ts;
@@ -355,15 +404,25 @@ export class Broker {
       // Set while callbacks may mutate it is technically well-defined
       // for deletions but too subtle to rely on.
       for (const sub of state.subscribers) {
-        tasks.push({ state, sub });
+        const identity = state.subscriberClientIdentities.get(sub);
+        tasks.push({
+          state,
+          sub,
+          ackCapable:
+            identity?.kind === 'runner' &&
+            identity.runnerIdentity.deliveryProtocol === 'disposition-v1',
+        });
       }
     }
 
     await boundedParallel(
       tasks,
       this.fanoutConcurrency,
-      async ({ sub }) => {
+      async ({ state, sub, ackCapable }) => {
         await sub(message);
+        if (context.trackDisposition !== false && ackCapable) {
+          this.deliveryLedger.noteSent(message.id, state.presence.name, ts);
+        }
         live++;
       },
       ({ state }, err) => {
@@ -374,6 +433,21 @@ export class Broker {
         });
       },
     );
+
+    // A subscriber may disposition synchronously from its callback. Report
+    // the ledger state after fan-out, not the pre-delivery snapshot.
+    if (context.trackDisposition !== false) {
+      pending = [...dispositionNames].reduce(
+        (count, name) =>
+          count +
+          (this.deliveryLedger
+            .pending(name, this.now())
+            .some((row) => row.message.id === message.id)
+            ? 1
+            : 0),
+        0,
+      );
+    }
 
     let targets: number;
     if (targetName) {
@@ -390,6 +464,20 @@ export class Broker {
       delivery: {
         live,
         targets,
+        ...(context.trackDisposition === false
+          ? {}
+          : {
+              acknowledgement: {
+                status:
+                  pending > 0
+                    ? ('pending' as const)
+                    : unreported > 0
+                      ? ('unreported' as const)
+                      : ('settled' as const),
+                pending,
+                unreported,
+              },
+            }),
       },
       message,
     };
@@ -423,6 +511,128 @@ export class Broker {
       current?.subscriberTokenIds.delete(callback);
       current?.subscriberClientIdentities.delete(callback);
     };
+  }
+
+  /** Settle/defer one delivery from the authenticated ack-capable runner socket. */
+  async disposition(
+    name: string,
+    frame: MessageDispositionFrame,
+    context: IdentityContext = EMPTY_IDENTITY,
+  ): Promise<boolean> {
+    this.assertIdentity(name, context.name);
+    if (
+      context.clientIdentity?.kind !== 'runner' ||
+      context.clientIdentity.runnerIdentity.deliveryProtocol !== 'disposition-v1'
+    ) {
+      return false;
+    }
+    const row = this.deliveryLedger.settle(name, frame);
+    if (!row) return false;
+    const event: MessageDispositionEvent = {
+      message: row.message,
+      recipient: name,
+      disposition: frame.disposition,
+      at: frame.at,
+      reason: frame.reason ?? null,
+    };
+    this.emitDisposition(event);
+    if (frame.disposition === 'refused' && row.message.from !== null) {
+      await this.push(
+        {
+          to: row.message.from,
+          title: 'Message explicitly refused',
+          body: `Message ${row.message.id} to ${name} was refused.`,
+          level: 'warning',
+          data: {
+            kind: 'message_disposition',
+            messageId: row.message.id,
+            recipient: name,
+            disposition: 'refused',
+            reason: frame.reason ?? null,
+          },
+        },
+        { from: null, trackDisposition: false },
+      );
+    }
+    return true;
+  }
+
+  /** Observe runner dispositions; notification receipts consume this same primitive. */
+  onMessageDisposition(listener: (event: MessageDispositionEvent) => void): () => void {
+    this.dispositionListeners.add(listener);
+    return () => this.dispositionListeners.delete(listener);
+  }
+
+  private emitDisposition(event: MessageDispositionEvent): void {
+    for (const listener of this.dispositionListeners) {
+      try {
+        listener(event);
+      } catch (err) {
+        this.logger.warn('message disposition listener failed', {
+          messageId: event.message.id,
+          recipient: event.recipient,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  }
+
+  /** Redeliver pending rows in original message order on runner attach. */
+  async redeliverPending(
+    name: string,
+    callback: Subscriber,
+    clientIdentity: ClientIdentity | null,
+  ): Promise<number> {
+    const rows = this.deliveryLedger.pending(name, this.now());
+    const capable =
+      clientIdentity?.kind === 'runner' &&
+      clientIdentity.runnerIdentity.deliveryProtocol === 'disposition-v1';
+    const legacy = clientIdentity?.kind === 'runner' && !capable;
+    if (!capable && !legacy) return 0;
+    let delivered = 0;
+    for (const row of rows) {
+      await callback(row.message);
+      delivered += 1;
+      if (capable) this.deliveryLedger.noteSent(row.message.id, name, this.now());
+      else this.deliveryLedger.markUnreported(row.message.id, name, this.now());
+    }
+    return delivered;
+  }
+
+  /**
+   * Expire the temporal (24h) bound. Refusal facts are ledger-exempt,
+   * so an offline sender can read them from history but they never
+   * recurse into another expiry/refusal.
+   */
+  async sweepMessageDeliveries(): Promise<number> {
+    const expired = this.deliveryLedger.expire(this.now());
+    for (const row of expired) {
+      this.emitDisposition({
+        message: row.message,
+        recipient: row.recipient,
+        disposition: 'refused',
+        at: this.now(),
+        reason: { code: 'expired', detail: 'message acknowledgement expired after 24 hours' },
+      });
+      if (row.sender === null) continue;
+      await this.push(
+        {
+          to: row.sender,
+          title: 'Message explicitly refused',
+          body: `Message ${row.message.id} to ${row.recipient} expired without acknowledgement.`,
+          level: 'warning',
+          data: {
+            kind: 'message_disposition',
+            messageId: row.message.id,
+            recipient: row.recipient,
+            disposition: 'refused',
+            reason: 'expired',
+          },
+        },
+        { from: null, trackDisposition: false },
+      );
+    }
+    return expired.length;
   }
 
   /** Mark live subscriptions authenticated by these revoked tokens as blocked. */

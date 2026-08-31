@@ -298,6 +298,10 @@ export interface RunnerIdentity {
   modelId: string | null;
   runnerVersion: string;
   runnerBuildSource: 'npm' | 'main';
+  /** Additive reliable-delivery capability. Absence means an old runner, never support. */
+  deliveryProtocol?: 'disposition-v1';
+  /** How this process will return after failure. Observational; never authorizes. */
+  supervision?: { kind: 'systemd'; unit: string } | { kind: 'none' };
 }
 
 export interface RunnerReport extends RunnerIdentity {
@@ -388,6 +392,33 @@ export interface DeliveryReport {
   live: number;
   /** Count of registered recipients the message was addressed to. */
   targets: number;
+  /** Effect acknowledgement, omitted by brokers predating disposition-v1. */
+  acknowledgement?: {
+    status: 'pending' | 'settled' | 'refused' | 'unreported';
+    pending: number;
+    unreported: number;
+  };
+}
+
+export type MessageDisposition = 'acted' | 'handled' | 'deferred' | 'refused';
+export type MessageDispositionReasonCode =
+  | 'degraded'
+  | 'turn_failed'
+  | 'expired'
+  | 'unsupported'
+  | 'operator_policy';
+
+/** Runner → broker frame on an ack-capable subscription WebSocket. */
+export interface MessageDispositionFrame {
+  readonly kind: 'message_disposition';
+  readonly messageId: string;
+  readonly disposition: MessageDisposition;
+  readonly at: number;
+  readonly reason?: { readonly code: MessageDispositionReasonCode; readonly detail: string };
+  readonly evidence?: {
+    readonly kind: 'tool_call' | 'outbound_effect';
+    readonly name: string;
+  };
 }
 
 export interface PushResult {

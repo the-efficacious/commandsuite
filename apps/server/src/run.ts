@@ -51,6 +51,7 @@ import {
   openTeamAndMembers,
   registerSecretValues,
   SqliteEventLog,
+  SqliteMessageDeliveryLedger,
   SqlitePushSubscriptionStore,
   SqliteSessionStore,
   SqliteTokenStore,
@@ -439,6 +440,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   const teamStore: TeamStore = stores.team;
 
   const eventLog = new SqliteEventLog(db);
+  const messageDeliveries = new SqliteMessageDeliveryLedger(db);
   const getCipher = () => kekFieldCipher(getKek());
   const sessions = new SqliteSessionStore(db);
   const tokens = new SqliteTokenStore(db);
@@ -644,6 +646,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
 
   const broker = new Broker({
     eventLog,
+    deliveryLedger: messageDeliveries,
     logger: log.child('broker'),
   });
   broker.seedMembers(memberStore.members());

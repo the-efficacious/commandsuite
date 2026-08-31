@@ -27,6 +27,7 @@ class FakeWebSocket extends EventEmitter {
   readonly url: string;
   readonly opts: { headers?: Record<string, string> } | undefined;
   closed = false;
+  readonly sent: string[] = [];
   constructor(url: string, opts?: { headers?: Record<string, string> }) {
     super();
     this.url = url;
@@ -37,6 +38,9 @@ class FakeWebSocket extends EventEmitter {
     if (this.closed) return;
     this.closed = true;
     this.emit('close', code ?? 1000, reason ?? '');
+  }
+  send(data: string): void {
+    this.sent.push(data);
   }
 }
 
@@ -321,6 +325,51 @@ describe('Client', () => {
     expect(received).toHaveLength(2);
     expect(received[0]?.id).toBe('msg-1');
     expect(received[1]?.body).toBe('second');
+  });
+
+  it('subscribeReliable sends a validated disposition on the same runner socket', async () => {
+    FakeWebSocket.instances = [];
+    const client = new Client({
+      url: 'http://example.test:8717',
+      token: 'x',
+      fetch: makeFakeFetch(() => jsonResponse({})),
+      WebSocket: asWs(),
+    });
+    const ac = new AbortController();
+    const subscription = client.subscribeReliable('agent-1', ac.signal, {
+      runner: 'codex',
+      modelId: 'gpt-5.6',
+      runnerVersion: 'test',
+      runnerBuildSource: 'main',
+    });
+    const iteration = (async () => {
+      for await (const _message of subscription) {
+        // no messages needed — starting iteration opens the socket
+      }
+    })();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const ws = FakeWebSocket.instances[0];
+    expect(JSON.parse(ws?.opts?.headers?.[CLIENT_IDENTITY_HEADER] ?? '{}')).toMatchObject({
+      kind: 'runner',
+      runnerIdentity: { deliveryProtocol: 'disposition-v1' },
+    });
+
+    subscription.disposition({
+      kind: 'message_disposition',
+      messageId: 'msg-1',
+      disposition: 'handled',
+      at: 1_700_000_000_000,
+    });
+    expect(ws?.sent.map((frame) => JSON.parse(frame))).toEqual([
+      {
+        kind: 'message_disposition',
+        messageId: 'msg-1',
+        disposition: 'handled',
+        at: 1_700_000_000_000,
+      },
+    ]);
+    ac.abort();
+    await iteration;
   });
 
   it('subscribe exits cleanly when the caller aborts', async () => {

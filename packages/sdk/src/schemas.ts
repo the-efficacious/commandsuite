@@ -180,6 +180,13 @@ export const RunnerIdentitySchema = z.object({
     .nullable(),
   runnerVersion: z.string().min(1).max(128),
   runnerBuildSource: z.enum(['npm', 'main']),
+  deliveryProtocol: z.literal('disposition-v1').optional(),
+  supervision: z
+    .union([
+      z.object({ kind: z.literal('systemd'), unit: z.string().min(1).max(200) }),
+      z.object({ kind: z.literal('none') }),
+    ])
+    .optional(),
 });
 
 export const RunnerReportSchema = RunnerIdentitySchema.extend({
@@ -281,6 +288,40 @@ export const ActivityReportSchema = z.object({
 export const DeliveryReportSchema = z.object({
   live: z.number().int().nonnegative(),
   targets: z.number().int().nonnegative(),
+  acknowledgement: z
+    .object({
+      status: z.enum(['pending', 'settled', 'refused', 'unreported']),
+      pending: z.number().int().nonnegative(),
+      unreported: z.number().int().nonnegative(),
+    })
+    .optional(),
+});
+
+export const MessageDispositionFrameSchema = z.object({
+  kind: z.literal('message_disposition'),
+  messageId: z.string().min(1).max(200),
+  disposition: z.enum(['acted', 'handled', 'deferred', 'refused']),
+  at: z.number().int().nonnegative(),
+  reason: z
+    .object({
+      code: z.enum(['degraded', 'turn_failed', 'expired', 'unsupported', 'operator_policy']),
+      detail: z
+        .string()
+        .min(1)
+        .max(500)
+        .regex(/^[\x20-\x7e]+$/),
+    })
+    .optional(),
+  evidence: z
+    .object({
+      kind: z.enum(['tool_call', 'outbound_effect']),
+      name: z
+        .string()
+        .min(1)
+        .max(200)
+        .regex(/^[\x20-\x7e]+$/),
+    })
+    .optional(),
 });
 
 export const PushResultSchema = z.object({
