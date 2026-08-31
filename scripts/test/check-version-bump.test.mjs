@@ -9,11 +9,7 @@
  * it.
  */
 import { describe, expect, it } from 'vitest';
-import {
-  checkVersionBump,
-  RELEASE_BRANCH,
-  versionChangesFrom,
-} from '../check-version-bump.mjs';
+import { checkVersionBump, RELEASE_BRANCH, versionChangesFrom } from '../check-version-bump.mjs';
 
 const BUMP = `diff --git a/packages/core/package.json b/packages/core/package.json
 --- a/packages/core/package.json
