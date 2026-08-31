@@ -81,7 +81,41 @@ Falsified means: shown an input known to be bad, and observed to fail on it.
 | `docs-deploy` | the docs site builds | **not falsified in this pass** | Falsifiable by breaking a doc reference. |
 | `codeql` | static analysis for security patterns | **cannot be falsified by me** | To falsify: land a branch carrying a pattern CodeQL is documented to catch and confirm it is reported. Doing that means pushing a deliberately vulnerable pattern, which needs a decision, not an initiative. |
 | `dependency-review` | new dependencies with known advisories, OpenSSF thresholds | **cannot be falsified by me** | To falsify: add a dependency with a known advisory on a scratch PR. Same caveat. It *has* fired in anger — it rejected `puppeteer-core`, which is why the route walk drives raw CDP. |
-| `release` | publishing on a tag | **not falsifiable without publishing** | The honest position: this one is exercised only by doing the thing it guards. |
+| `release` | what gets published, and when | **structurally protected for *what*; convention only for *when*** | See below — this row is longer than the others because a release is the human gate and the answer is not uniform. |
+
+### `release`, in full
+
+There is nothing to falsify about **what** it publishes, and that is a real
+answer rather than a gap:
+
+- **OIDC trusted publishing, with no npm token anywhere.** Each package's
+  Trusted Publisher on npmjs.com is pinned to this repository *and this
+  workflow file*. A fork, a different workflow, or a stolen secret cannot
+  publish, because there is no secret.
+- **Provenance is attached automatically**, linking each tarball to the exact
+  commit it was built from — so an unexpected publish can be traced to its
+  source after the fact.
+- **`scripts/publish-gate.mjs check`** runs as every package's
+  `prepublishOnly`: refusal-only, never rebuilds, and refuses a payload whose
+  digest does not match the one recorded for HEAD. Its own header names the
+  single path it cannot reach — `npm publish an-already-built.tgz` skips
+  lifecycle hooks — which is why provenance, not another entry point, closes it.
+
+**When** it publishes is a different matter, and is a convention rather than a
+mechanism. `changeset publish` publishes any package whose version is not yet on
+the registry, and the workflow runs on every push to `main`. So the trigger for a
+release is *"a commit on main left a version npm doesn't have yet"* — **not a
+human signature.** Versions changing only via the changesets Version PR is a
+practice, not something the machinery enforces: an ordinary PR that edited a
+version field, reviewed and merged in the normal way, would publish on merge.
+
+So the claim "what shipped is what was on main at an attested commit" is
+structurally true. The claim "nothing publishes without a human release
+sign-off" rests on nobody merging a version change, and we would learn of a
+violation only afterwards, from provenance or from npm. **That is a convention
+wearing the appearance of a gate** — recorded here rather than assumed. Closing
+it would mean refusing a version change on any commit that is not the changesets
+bot's own.
 
 ### What follows from the un-falsified rows
 
