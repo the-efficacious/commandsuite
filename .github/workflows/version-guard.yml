@@ -53,8 +53,18 @@ jobs:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          # Repository identity, not just the branch name. This repo is
+          # public: anyone may fork it, name a branch
+          # `changeset-release/main`, and open a PR from it. `head.ref`
+          # carries no identity, so the guard would have treated that
+          # fork as the Version PR. head.repo is null for a deleted
+          # fork, which the script fails closed on.
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
         run: |
           node scripts/check-version-bump.mjs \
             --base-ref "origin/$BASE_REF" \
             --head "$HEAD_SHA" \
-            --head-ref "$HEAD_REF"
+            --head-ref "$HEAD_REF" \
+            --head-repo "$HEAD_REPO" \
+            --base-repo "$BASE_REPO"

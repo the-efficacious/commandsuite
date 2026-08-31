@@ -61,11 +61,18 @@ describe('versionChangesFrom', () => {
   });
 });
 
+const OURS = 'the-efficacious/commandsuite';
+
 describe('checkVersionBump', () => {
   const changes = versionChangesFrom(BUMP);
 
   it('REFUSES a version bump on an ordinary branch', () => {
-    const problems = checkVersionBump({ changes, headRef: 'feat/innocent-looking' });
+    const problems = checkVersionBump({
+      changes,
+      headRef: 'feat/innocent-looking',
+      headRepo: OURS,
+      baseRepo: OURS,
+    });
     expect(problems).toHaveLength(1);
     expect(problems[0]).toContain('packages/core/package.json');
     expect(problems[0]).toContain('0.8.0 → 0.9.0');
@@ -81,17 +88,60 @@ describe('checkVersionBump', () => {
       'changeset-release/main/x',
       'changeset-release',
     ]) {
-      expect(checkVersionBump({ changes, headRef }), headRef).toHaveLength(1);
+      expect(
+        checkVersionBump({ changes, headRef, headRepo: OURS, baseRepo: OURS }),
+        headRef,
+      ).toHaveLength(1);
     }
   });
 
   it('allows the changesets Version PR, which is the sanctioned path', () => {
-    expect(checkVersionBump({ changes, headRef: RELEASE_BRANCH })).toEqual([]);
+    expect(
+      checkVersionBump({ changes, headRef: RELEASE_BRANCH, headRepo: OURS, baseRepo: OURS }),
+    ).toEqual([]);
+  });
+
+  // The bypass Rune found in review. This repository is public, so the
+  // branch name is attacker-controlled: anyone may fork, name a branch
+  // `changeset-release/main`, and open a pull request from it.
+  // `head.ref` carries no repository identity. Trusting it is the same
+  // trusted-name mistake as substring matching, one scope out.
+  it('REFUSES the release branch name from a FORK', () => {
+    for (const headRepo of [
+      'attacker/commandsuite',
+      'the-efficacious/commandsuite-fork',
+      'the-efficacious2/commandsuite',
+    ]) {
+      const problems = checkVersionBump({
+        changes,
+        headRef: RELEASE_BRANCH,
+        headRepo,
+        baseRepo: OURS,
+      });
+      expect(problems, headRepo).toHaveLength(1);
+      expect(problems[0], headRepo).toContain(headRepo);
+    }
+  });
+
+  // A deleted fork reports a null head repo. Absent identity must fail
+  // closed rather than compare equal to nothing.
+  it('REFUSES when the head repository is absent', () => {
+    for (const headRepo of [null, undefined, '']) {
+      expect(
+        checkVersionBump({ changes, headRef: RELEASE_BRANCH, headRepo, baseRepo: OURS }),
+        String(headRepo),
+      ).toHaveLength(1);
+    }
   });
 
   it('allows an ordinary branch that changes no version', () => {
     expect(
-      checkVersionBump({ changes: versionChangesFrom(UNRELATED), headRef: 'feat/ordinary' }),
+      checkVersionBump({
+        changes: versionChangesFrom(UNRELATED),
+        headRef: 'feat/ordinary',
+        headRepo: OURS,
+        baseRepo: OURS,
+      }),
     ).toEqual([]);
   });
 });

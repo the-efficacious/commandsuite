@@ -72,12 +72,34 @@ export function versionChangesFrom(diff) {
  * The judgement. Returns a list of human-readable problems; empty means
  * the change is allowed.
  */
-export function checkVersionBump({ changes, headRef, releaseBranch = RELEASE_BRANCH }) {
+export function checkVersionBump({
+  changes,
+  headRef,
+  headRepo,
+  baseRepo,
+  releaseBranch = RELEASE_BRANCH,
+}) {
   if (changes.length === 0) return [];
-  if (headRef === releaseBranch) return [];
+  // The sanctioned path is the changesets bot's Version PR, which is
+  // opened FROM THIS REPOSITORY on the release branch. Both halves are
+  // load-bearing:
+  //
+  //   - the branch name alone is attacker-controlled. This repo is
+  //     public, so anyone may fork it, name a branch
+  //     `changeset-release/main`, and open a pull request from it.
+  //     `head.ref` carries no repository identity, so trusting it is
+  //     the same defect as substring-matching the name -- a bypass
+  //     available to anyone who picks a convenient string. That one I
+  //     closed; this one comes from outside the repo and I did not.
+  //
+  //   - `headRepo` must be present. A deleted fork reports null, and
+  //     an absent identity must fail closed rather than compare equal
+  //     to nothing.
+  const fromThisRepo = typeof headRepo === 'string' && headRepo.length > 0 && headRepo === baseRepo;
+  if (fromThisRepo && headRef === releaseBranch) return [];
+  const origin = `${headRepo ?? '(unknown repo)'}:${headRef}`;
   return changes.map(
-    (c) =>
-      `${c.file}: version ${c.from ?? '(absent)'} → ${c.to ?? '(removed)'} on branch '${headRef}'`,
+    (c) => `${c.file}: version ${c.from ?? '(absent)'} → ${c.to ?? '(removed)'} from '${origin}'`,
   );
 }
 
@@ -98,15 +120,24 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolvePath(process.ar
   const baseRef = arg('base-ref');
   const head = arg('head');
   const headRef = arg('head-ref');
+  const headRepo = arg('head-repo');
+  const baseRepo = arg('base-repo');
   // Refuse to pass vacuously. A guard invoked without the inputs it
   // needs must fail, not report that it found nothing to check --
   // that is how a broken workflow argument becomes a silent green.
-  if (!baseRef || !head || !headRef) {
-    console.error('check-version-bump: --base-ref, --head and --head-ref are all required');
+  if (!baseRef || !head || !headRef || !baseRepo) {
+    console.error(
+      'check-version-bump: --base-ref, --head, --head-ref and --base-repo are all required',
+    );
     process.exit(2);
   }
   const diff = git(['diff', '-U0', `${baseRef}...${head}`, '--', '*package.json']);
-  const problems = checkVersionBump({ changes: versionChangesFrom(diff), headRef });
+  const problems = checkVersionBump({
+    changes: versionChangesFrom(diff),
+    headRef,
+    headRepo,
+    baseRepo,
+  });
   if (problems.length > 0) {
     for (const problem of problems) console.error(`::error::${problem}`);
     console.error(`
@@ -118,7 +149,10 @@ sign-off that is supposed to gate it.
 
 If you meant to release:   add a changeset (pnpm changeset) and let the
                            Version PR carry the bump. It comes from
-                           '${RELEASE_BRANCH}' and passes this check.
+                           '${RELEASE_BRANCH}' IN THIS REPOSITORY and
+                           passes this check. A fork branch of the same
+                           name does not -- the branch name is not an
+                           identity.
 If you did not:            revert the version field.
 
 There is no bypass, deliberately. See docs/dev/gates.mdx.`);
