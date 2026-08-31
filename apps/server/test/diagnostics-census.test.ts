@@ -224,8 +224,16 @@ const APP_IN_SCOPE = [
  * remains anonymous-reachable for a known, enabled slug and is bounded
  * by that endpoint's 120/minute ingress window; this change does not
  * widen it.
+ *
+ * 2026-08-31, +4 = 74. Reliable message disposition added four
+ * operational sites (obj-mtgsjlg5-x): WebSocket send failure,
+ * invalid disposition frame, and a disposition the
+ * ledger refused, plus delivery-sweep failure. None is a completeness claim. A send/redelivery failure
+ * leaves the row pending in the durable ledger; invalid/refused frames do
+ * not settle it; a failed sweep retries on the next interval. The record therefore remains incomplete visibly in its
+ * authoritative pending state, while these lines explain transport noise.
  */
-const TOTAL_SITES = 70;
+const TOTAL_SITES = 74;
 
 function messagesIn(file: string): string[] {
   let src: string | null = null;

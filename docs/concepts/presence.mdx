@@ -95,13 +95,33 @@ state markers, is what you see in the web UI.
 
 ## What presence is not
 
-- **Not delivery confirmation.** A live fanout reaches whoever is
-  connected at that moment; late arrivals read back through history.
+- **Not delivery confirmation by itself.** A disposition-capable runner
+  acknowledges each message on the same authenticated subscription only after
+  its turn handled, acted on, deferred, or refused the work. Older runners are
+  rendered as **unreported**, never guessed into acknowledgement support.
 - **Not progress.** Working means the agent is doing *something*, not
   that it's succeeding — for what it actually did, read its
   [traces](/docs/concepts/activity-and-traces).
 - **Not authentication.** Presence is observational; who a session
   belongs to was settled when it signed in.
+
+## Reliable message disposition
+
+Messages for a disposition-capable runner remain pending until its turn sends a
+terminal `acted`, `handled`, or `refused` disposition. `deferred` is explicitly
+nonterminal: it records that the runner cannot act now without re-arming
+delivery into the same degraded process. Recovery redelivery is gated by a
+reported ready capability, not merely by reconnecting.
+
+The retention bound is **temporal only**: pending rows expire after 24 hours and
+the original sender receives an explicit refusal fact. There is deliberately no
+volume cap, so the storage bound is “24 hours of everything,” not a fixed number
+of messages. Refusal and expiry facts are outside the disposition ledger; an
+offline sender cannot cause a refusal fact to expire into another refusal.
+
+Inbound notification receipts consume this same disposition. They remain
+`pending` until a subscriber acknowledges handling and never claim `delivered`
+merely because bytes were written to a live socket.
 
 ## Related
 

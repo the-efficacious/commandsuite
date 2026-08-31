@@ -86,6 +86,7 @@ import {
   ListToolSourcesResponseSchema,
   ListVariablesResponseSchema,
   MemberSchema,
+  MessageDispositionFrameSchema,
   MessageSchema,
   NotificationEndpointSchema,
   NotificationProfileSchema,
@@ -175,6 +176,7 @@ import type {
   ListTelemetryQuery,
   Member,
   Message,
+  MessageDispositionFrame,
   NotificationDelivery,
   NotificationEndpoint,
   NotificationEndpointSummary,
@@ -284,6 +286,11 @@ export class ClientError extends Error {
     this.status = status;
     this.body = body;
   }
+}
+
+/** Ack-capable runner subscription. Dispositions travel on the same authenticated WebSocket. */
+export interface ReliableSubscription extends AsyncIterable<Message> {
+  disposition(frame: MessageDispositionFrame): void;
 }
 
 export class Client {
@@ -1873,6 +1880,46 @@ export class Client {
     signal?: AbortSignal,
     clientIdentity?: ClientIdentity | RunnerIdentity,
   ): AsyncIterable<Message> {
+    yield* this.subscribeInternal(name, signal, clientIdentity);
+  }
+
+  /**
+   * Open the runner-only disposition-v1 subscription. Iteration owns the
+   * socket lifetime; `disposition()` is available after iteration starts.
+   */
+  subscribeReliable(
+    name: string,
+    signal: AbortSignal | undefined,
+    runnerIdentity: RunnerIdentity,
+  ): ReliableSubscription {
+    const identity = RunnerIdentitySchema.parse({
+      ...runnerIdentity,
+      deliveryProtocol: 'disposition-v1',
+    });
+    let socket: NodeWebSocket | null = null;
+    let iterated = false;
+    const iterable = this.subscribeInternal(name, signal, identity, (ws) => {
+      socket = ws;
+    });
+    return {
+      [Symbol.asyncIterator]() {
+        if (iterated) throw new Error('reliable subscription can only be iterated once');
+        iterated = true;
+        return iterable[Symbol.asyncIterator]();
+      },
+      disposition(frame) {
+        if (socket === null) throw new Error('reliable subscription has not started');
+        socket.send(JSON.stringify(MessageDispositionFrameSchema.parse(frame)));
+      },
+    };
+  }
+
+  private async *subscribeInternal(
+    name: string,
+    signal?: AbortSignal,
+    clientIdentity?: ClientIdentity | RunnerIdentity,
+    onSocket?: (socket: NodeWebSocket) => void,
+  ): AsyncIterable<Message> {
     const url = this.buildWsUrl(PATHS.subscribe, { name });
     const headers: Record<string, string> = {
       [PROTOCOL_HEADER]: String(PROTOCOL_VERSION),
@@ -1889,6 +1936,7 @@ export class Client {
     headers[CLIENT_IDENTITY_HEADER] = JSON.stringify(normalized);
     const ws = new this.WebSocketImpl(url, { headers });
     this.activeSubscriptions.add(ws);
+    onSocket?.(ws);
 
     // Async-iterator plumbing: messages arrive out-of-band via
     // `on('message')`, so we buffer them in a queue that the

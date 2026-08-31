@@ -115,9 +115,28 @@ function hookPost(body: string, headers: Record<string, string> = {}): RequestIn
 /** Subscribe a capture array to a member's live stream. */
 function capture(broker: Broker, name: string): { messages: Message[]; unsubscribe: () => void } {
   const messages: Message[] = [];
-  const unsubscribe = broker.subscribe(name, (m) => {
-    messages.push(m);
-  });
+  const runnerIdentity = {
+    kind: 'runner' as const,
+    runnerIdentity: {
+      runner: 'stub' as const,
+      modelId: 'test',
+      runnerVersion: 'test',
+      runnerBuildSource: 'main' as const,
+      deliveryProtocol: 'disposition-v1' as const,
+    },
+  };
+  const unsubscribe = broker.subscribe(
+    name,
+    async (m) => {
+      messages.push(m);
+      await broker.disposition(
+        name,
+        { kind: 'message_disposition', messageId: m.id, disposition: 'handled', at: Date.now() },
+        { name, clientIdentity: runnerIdentity },
+      );
+    },
+    { name, clientIdentity: runnerIdentity },
+  );
   return { messages, unsubscribe };
 }
 
@@ -412,6 +431,55 @@ describe('ingress verification', () => {
     expect(message.body).toContain('External notification from endpoint "ci-alerts"');
     expect(message.body).toContain('CI failed on main');
     expect(message.body).toContain('<external_content');
+  });
+
+  it('does not receipt delivered until the runner acknowledges handling', async () => {
+    const ctx = await makeApp();
+    await createEndpoint(ctx);
+    const messages: Message[] = [];
+    const clientIdentity = {
+      kind: 'runner' as const,
+      runnerIdentity: {
+        runner: 'stub' as const,
+        modelId: 'test',
+        runnerVersion: 'test',
+        runnerBuildSource: 'main' as const,
+        deliveryProtocol: 'disposition-v1' as const,
+      },
+    };
+    ctx.broker.subscribe(
+      'builder',
+      (message) => {
+        messages.push(message);
+      },
+      { name: 'builder', clientIdentity },
+    );
+    const body = '{"state":"failed"}';
+    const accepted = await ctx.app.request(
+      '/hooks/ci-alerts',
+      hookPost(body, { 'X-Hub-Signature-256': sign(body) }),
+    );
+    const initial = (await accepted.json()) as { id: string; status: string };
+    expect(initial.status).toBe('pending');
+
+    await ctx.broker.disposition(
+      'builder',
+      {
+        kind: 'message_disposition',
+        messageId: messages[0]?.id ?? '',
+        disposition: 'handled',
+        at: 1_700_000_000_100,
+      },
+      { name: 'builder', clientIdentity },
+    );
+    const receipts = await ctx.app.request(
+      '/notifications/endpoints/ci-alerts/deliveries',
+      authed(ADMIN),
+    );
+    const { deliveries } = (await receipts.json()) as {
+      deliveries: Array<{ status: string; deliveredAt: number | null }>;
+    };
+    expect(deliveries[0]).toMatchObject({ status: 'delivered', deliveredAt: 1_700_000_000_100 });
   });
 
   it('dedupes provider retries on the configured header', async () => {

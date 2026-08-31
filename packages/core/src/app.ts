@@ -64,6 +64,7 @@ import {
   InvokeToolRequestSchema,
   ListObjectivesQuerySchema,
   LogLevelSchema,
+  MessageDispositionFrameSchema,
   NameSchema,
   PendingEnrollmentSchema,
   PushPayloadSchema,
@@ -679,6 +680,21 @@ export function createApp(options: AppOptions): CreatedApp {
       { once: true },
     );
   }
+
+  // The message ledger's bound is temporal (24 hours), not volumetric.
+  // Sweep independently of notifications so ordinary team messages also
+  // reach an explicit terminal refusal instead of accumulating forever.
+  const messageDeliverySweepInterval = setInterval(() => {
+    void broker.sweepMessageDeliveries().catch((err) => {
+      logger.warn('message delivery sweep failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+  }, 5_000);
+  messageDeliverySweepInterval.unref?.();
+  shutdownSignal?.addEventListener('abort', () => clearInterval(messageDeliverySweepInterval), {
+    once: true,
+  });
 
   // Diagnostics retention. The store implements a detail -> hour -> day
   // compaction ladder and nothing ever called it, so the row caps were
@@ -4844,29 +4860,27 @@ export function createApp(options: AppOptions): CreatedApp {
           })();
           let unsubscribe: (() => void) | null = null;
           let onShutdown: (() => void) | null = null;
+          let sendMessage: ((message: Message) => void) | null = null;
 
           return {
             onOpen: (_evt, ws) => {
-              unsubscribe = broker.subscribe(
-                targetName,
-                (message) => {
-                  try {
-                    ws.send(JSON.stringify(message));
-                  } catch (err) {
-                    logger.warn('ws send failed', {
-                      targetName,
-                      messageId: message.id,
-                      error: err instanceof Error ? err.message : String(err),
-                    });
-                  }
-                },
-                {
-                  role: member.role,
-                  name: member.name,
-                  tokenId: c.get('tokenId'),
-                  clientIdentity,
-                },
-              );
+              sendMessage = (message) => {
+                try {
+                  ws.send(JSON.stringify(message));
+                } catch (err) {
+                  logger.warn('ws send failed', {
+                    targetName,
+                    messageId: message.id,
+                    error: err instanceof Error ? err.message : String(err),
+                  });
+                }
+              };
+              unsubscribe = broker.subscribe(targetName, sendMessage, {
+                role: member.role,
+                name: member.name,
+                tokenId: c.get('tokenId'),
+                clientIdentity,
+              });
 
               // Shutdown fan-out: server.close() needs every live socket
               // to close before it returns. Without this, SIGTERM would
@@ -4919,6 +4933,29 @@ export function createApp(options: AppOptions): CreatedApp {
                     error: err instanceof Error ? err.message : String(err),
                   });
                 });
+              }
+            },
+            onMessage: async (evt) => {
+              let raw: string;
+              try {
+                raw = typeof evt.data === 'string' ? evt.data : String(evt.data);
+                const parsed = MessageDispositionFrameSchema.safeParse(JSON.parse(raw));
+                if (!parsed.success) {
+                  logger.warn('invalid message disposition frame', { targetName });
+                  return;
+                }
+                const accepted = await broker.disposition(targetName, parsed.data, {
+                  name: member.name,
+                  clientIdentity,
+                });
+                if (!accepted) {
+                  logger.warn('message disposition refused', {
+                    targetName,
+                    messageId: parsed.data.messageId,
+                  });
+                }
+              } catch {
+                logger.warn('invalid message disposition frame', { targetName });
               }
             },
             onClose: () => {

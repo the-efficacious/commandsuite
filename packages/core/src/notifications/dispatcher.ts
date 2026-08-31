@@ -177,12 +177,15 @@ export function createNotificationDispatcher(
     title: string | null,
     data: Record<string, unknown>,
     target: { member: string } | { channel: string },
-  ): Promise<string | null> {
+  ): Promise<{ id: string; acknowledged: boolean } | null> {
     const from = `hook:${endpoint.slug}`;
     try {
       if ('member' in target) {
         const result = await broker.push({ to: target.member, body, title, level, data }, { from });
-        return result.message.id;
+        return {
+          id: result.message.id,
+          acknowledged: result.delivery.acknowledgement?.status === 'settled',
+        };
       }
       const channelId = target.channel;
       const payload = {
@@ -195,11 +198,17 @@ export function createNotificationDispatcher(
         const recipients = channels.recipientNames(channelId);
         if (recipients === null) return null;
         const result = await broker.push(payload, { from, recipients });
-        return result.message.id;
+        return {
+          id: result.message.id,
+          acknowledged: result.delivery.acknowledgement?.status === 'settled',
+        };
       }
       // General (or no channel store): implicit membership → broadcast.
       const result = await broker.push(payload, { from });
-      return result.message.id;
+      return {
+        id: result.message.id,
+        acknowledged: result.delivery.acknowledgement?.status === 'settled',
+      };
     } catch (err) {
       logger.warn('notification push failed', {
         endpoint: endpoint.slug,
@@ -248,6 +257,7 @@ export function createNotificationDispatcher(
     };
 
     const messageIds: string[] = [];
+    let acknowledged = 0;
     const notes: string[] = [];
     let queued = 0;
 
@@ -260,8 +270,10 @@ export function createNotificationDispatcher(
         const id = await pushMessage(endpoint, body, level, title, data, {
           channel: target.channel,
         });
-        if (id !== null) messageIds.push(id);
-        else notes.push(`channel ${target.channel} unavailable`);
+        if (id !== null) {
+          messageIds.push(id.id);
+          if (id.acknowledged) acknowledged += 1;
+        } else notes.push(`channel ${target.channel} unavailable`);
         continue;
       }
       if (target.member === undefined) continue;
@@ -312,13 +324,15 @@ export function createNotificationDispatcher(
       }
 
       const id = await pushMessage(endpoint, body, level, title, data, { member: name });
-      if (id !== null) messageIds.push(id);
-      else notes.push(`push to ${name} failed`);
+      if (id !== null) {
+        messageIds.push(id.id);
+        if (id.acknowledged) acknowledged += 1;
+      } else notes.push(`push to ${name} failed`);
     }
 
     const reason = notes.length > 0 ? notes.join('; ') : null;
     const status: NotificationDeliveryStatus =
-      messageIds.length > 0 ? 'delivered' : queued > 0 ? 'pending' : 'dropped';
+      acknowledged > 0 ? 'delivered' : messageIds.length > 0 || queued > 0 ? 'pending' : 'dropped';
 
     for (const [index, delivery] of newest.entries()) {
       // Preserve terminal facts already on the row (e.g. a wake flush
@@ -332,10 +346,28 @@ export function createNotificationDispatcher(
             : rowStatus,
         statusReason: reason,
         addMessageIds: messageIds,
-        ...(messageIds.length > 0 ? { deliveredAt: now() } : {}),
+        ...(acknowledged > 0 ? { deliveredAt: now() } : {}),
       });
     }
   }
+
+  broker.onMessageDisposition((event) => {
+    for (const delivery of store.findDeliveriesByMessageId(event.message.id)) {
+      if (event.disposition === 'acted' || event.disposition === 'handled') {
+        store.updateDelivery(delivery.id, {
+          status: 'delivered',
+          statusReason: null,
+          deliveredAt: event.at,
+        });
+      } else if (event.disposition === 'refused') {
+        store.updateDelivery(delivery.id, {
+          status: 'dropped',
+          statusReason: event.reason?.detail ?? 'subscriber refused delivery',
+        });
+      }
+      // deferred deliberately stays pending; capability recovery owns redelivery.
+    }
+  });
 
   function flushDebounce(endpointId: string): void {
     const buffer = debounceBuffers.get(endpointId);
