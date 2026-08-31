@@ -183,7 +183,7 @@ describe('createClaudeChannelSink', () => {
     queue.close();
   });
 
-  it('degrades an unacted zero-cost sub-second turn when vendor naming is absent', async () => {
+  it('degrades an unacted zero-cost turn when vendor naming is absent', async () => {
     const queue = new ClaudeMessageQueue();
     const frames: RunnerControlFrame[] = [];
     const settle = vi.fn();
@@ -206,7 +206,9 @@ describe('createClaudeChannelSink', () => {
     sink.observe({
       type: 'result',
       subtype: 'success',
-      duration_ms: 400,
+      // Above the old one-second bound: measured credit exhaustion reaches
+      // 1.45s and must not become a false negative.
+      duration_ms: 1_450,
       total_cost_usd: 0,
     } as never);
 

@@ -47,20 +47,14 @@ function structuredClaudeCondition(raw: unknown): RunnerConditionCode | null {
 /**
  * Broker mail reached a terminal Claude result without reaching the model or
  * producing an effect. This is our failure fact, independent of vendor prose
- * and of the SDK's optional error label. The one-second bound comes from the
- * captured invalid-model turn (0.4s); it is deliberately conjunctive with
- * zero cost and no action so an ordinary healthy prose-only answer is not
- * classified from duration alone.
+ * and of the SDK's optional error label. Duration is deliberately absent:
+ * measured credit-exhaustion failures span 0.83–1.45s, while model cost is the
+ * axis that separates those failures from healthy prose-only turns.
  */
 export function isUnactedClaudeFailure(raw: unknown, acted: boolean): boolean {
   if (acted || raw === null || typeof raw !== 'object') return false;
-  const result = raw as { total_cost_usd?: unknown; duration_ms?: unknown };
-  return (
-    result.total_cost_usd === 0 &&
-    typeof result.duration_ms === 'number' &&
-    result.duration_ms >= 0 &&
-    result.duration_ms < 1_000
-  );
+  const result = raw as { total_cost_usd?: unknown };
+  return result.total_cost_usd === 0;
 }
 
 /** Inspect locally, return only the bounded code. Never transmit `raw`. */
