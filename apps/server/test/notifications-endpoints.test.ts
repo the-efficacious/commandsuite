@@ -306,18 +306,55 @@ describe('ingress verification', () => {
     expect(await operatorView.json()).toMatchObject({ endpoint: { enabled: false } });
   });
 
-  it('rejects oversized bodies with 413 for a known endpoint', async () => {
-    const ctx2 = await makeApp();
-    await createEndpoint(ctx2);
+  it('keeps body-cap and query-grammar responses identical across endpoint states', async () => {
+    const ctx = await makeApp();
     const huge = 'x'.repeat(256 * 1024 + 1);
+    const unknownHuge = await ctx.app.request('/hooks/ghost', hookPost(huge));
+    const unknownMalformed = await ctx.app.request(
+      '/hooks/ghost?if_offline=eventually',
+      hookPost('{}'),
+    );
+
+    await createEndpoint(ctx);
+    const liveHuge = await ctx.app.request('/hooks/ci-alerts', hookPost(huge));
+    const liveMalformed = await ctx.app.request(
+      '/hooks/ci-alerts?if_offline=eventually',
+      hookPost('{}'),
+    );
+    await ctx.app.request(
+      '/notifications/endpoints/ci-alerts',
+      authed(ADMIN, { enabled: false }, 'PATCH'),
+    );
+    const disabledHuge = await ctx.app.request('/hooks/ci-alerts', hookPost(huge));
+    const disabledMalformed = await ctx.app.request(
+      '/hooks/ci-alerts?if_offline=eventually',
+      hookPost('{}'),
+    );
+
     expect(
-      (
-        await ctx2.app.request(
-          '/hooks/ci-alerts',
-          hookPost(huge, { 'X-Hub-Signature-256': sign(huge) }),
-        )
-      ).status,
-    ).toBe(413);
+      await Promise.all(
+        [unknownHuge, liveHuge, disabledHuge].map(async (response) => ({
+          status: response.status,
+          body: await response.text(),
+        })),
+      ),
+    ).toEqual([
+      { status: 413, body: '{"error":"payload too large"}' },
+      { status: 413, body: '{"error":"payload too large"}' },
+      { status: 413, body: '{"error":"payload too large"}' },
+    ]);
+    expect(
+      await Promise.all(
+        [unknownMalformed, liveMalformed, disabledMalformed].map(async (response) => ({
+          status: response.status,
+          body: await response.text(),
+        })),
+      ),
+    ).toEqual([
+      { status: 400, body: '{"error":"if_offline must be drop|queue"}' },
+      { status: 400, body: '{"error":"if_offline must be drop|queue"}' },
+      { status: 400, body: '{"error":"if_offline must be drop|queue"}' },
+    ]);
   });
 
   it('fails closed without a secret and rejects bad signatures — with receipts', async () => {

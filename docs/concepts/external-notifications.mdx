@@ -60,7 +60,9 @@ can't.
 
 Unknown slugs and disabled endpoints return that same status and body,
 so the unauthenticated surface discloses neither endpoint existence nor
-administrative state. This deliberately makes a typo look like an auth
+administrative state. Shared body-size and query-grammar checks run
+before the existence decision and likewise answer identically across
+all three states. This deliberately makes a typo look like an auth
 failure. An authorized operator uses `csuite notifications list|view`
 or the Notifications UI instead. A correctly signed request to a
 disabled endpoint creates a rejected receipt whose reason names the

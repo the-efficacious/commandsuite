@@ -4145,7 +4145,6 @@ export function createApp(options: AppOptions): CreatedApp {
       // intentionally indistinguishable to an unauthenticated caller.
       // Operators inspect endpoint state through the authenticated
       // management surface instead.
-      if (!endpoint) return c.json({ error: 'unauthorized' }, 401);
 
       const declared = c.req.header('content-length');
       if (declared !== undefined && Number(declared) > HOOK_BODY_MAX) {
@@ -4182,6 +4181,12 @@ export function createApp(options: AppOptions): CreatedApp {
         }
         overrides.level = parsedLevel.data;
       }
+
+      // Size and query grammar are transport properties, so enforce
+      // them identically before endpoint existence can affect the
+      // response. Only then collapse an unknown slug into the same
+      // authentication failure as a known endpoint.
+      if (!endpoint) return c.json({ error: 'unauthorized' }, 401);
 
       const result = await dispatcher.ingest({
         endpoint,
