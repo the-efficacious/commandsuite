@@ -55,4 +55,22 @@ describe('codex cold-start sink wrapper', () => {
 
     expect(wrapper.attach({ deliver: vi.fn() })).toEqual([event]);
   });
+
+  it('forwards a control sender that arrives after the live sink', () => {
+    const wrapper = createCodexSinkWrapper();
+    let liveEmitter: ((frame: RunnerControlFrame) => void) | undefined;
+    wrapper.attach({
+      deliver: vi.fn(),
+      attachControl(send) {
+        liveEmitter = send;
+      },
+    });
+    expect(liveEmitter).toBeUndefined();
+
+    const transmitted: RunnerControlFrame[] = [];
+    wrapper.sink.attachControl?.((frame) => transmitted.push(frame));
+    expect(liveEmitter).toBeTypeOf('function');
+    liveEmitter?.({ kind: 'runner_condition', at: 3, state: 'ready' });
+    expect(transmitted).toEqual([{ kind: 'runner_condition', at: 3, state: 'ready' }]);
+  });
 });
