@@ -125,8 +125,8 @@ export function checkVersionBump({
 
 // ── git plumbing ────────────────────────────────────────────────────
 
-function git(args, { allowFailure = false } = {}) {
-  const result = spawnSync('git', args, { encoding: 'utf8' });
+function git(args, { allowFailure = false, cwd } = {}) {
+  const result = spawnSync('git', args, { encoding: 'utf8', ...(cwd ? { cwd } : {}) });
   if (result.status !== 0) {
     if (allowFailure) return null;
     throw new Error(`git ${args.join(' ')} failed: ${result.stderr.trim()}`);
@@ -135,8 +135,8 @@ function git(args, { allowFailure = false } = {}) {
 }
 
 /** Parsed manifest at a ref, `null` if absent, UNPARSEABLE if broken. */
-export function manifestAt(ref, path) {
-  const raw = git(['show', `${ref}:${path}`], { allowFailure: true });
+export function manifestAt(ref, path, { cwd } = {}) {
+  const raw = git(['show', `${ref}:${path}`], { allowFailure: true, cwd });
   if (raw === null) return null; // did not exist at this ref
   try {
     return JSON.parse(raw);
@@ -146,13 +146,15 @@ export function manifestAt(ref, path) {
 }
 
 /** Every package.json touched between base and head, in either state. */
-export function changedManifests(baseRef, head) {
-  const listed = git(['diff', '--name-only', `${baseRef}...${head}`, '--', '*package.json']);
+export function changedManifests(baseRef, head, { cwd } = {}) {
+  const listed = git(['diff', '--name-only', `${baseRef}...${head}`, '--', '*package.json'], {
+    cwd,
+  });
   const files = listed.split('\n').filter((f) => f.trim().length > 0);
   return files.map((file) => ({
     file,
-    base: manifestAt(baseRef, file),
-    head: manifestAt(head, file),
+    base: manifestAt(baseRef, file, { cwd }),
+    head: manifestAt(head, file, { cwd }),
   }));
 }
 

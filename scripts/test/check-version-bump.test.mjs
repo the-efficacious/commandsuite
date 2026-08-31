@@ -16,8 +16,13 @@
  * found by hardening the previous fix** — each came from asking what
  * "new to the registry" actually means.
  */
-import { describe, expect, it } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
+  changedManifests,
   checkVersionBump,
   identityChanges,
   publishIdentity,
@@ -189,5 +194,112 @@ describe('checkVersionBump', () => {
     expect(
       checkVersionBump({ changes: [], headRef: 'feat/ordinary', headRepo: OURS, baseRepo: OURS }),
     ).toEqual([]);
+  });
+});
+
+/**
+ * The seam fixture (Rune, review of f1a2d3e).
+ *
+ * Everything above injects already-parsed manifests, so none of it
+ * touches `changedManifests → git show → JSON.parse` — the path the
+ * whole "parsing retires the text-shaped class" claim rests on.
+ * **The claim was unfalsified precisely at the seam it is about.**
+ *
+ * The fixture is an ADDED manifest whose version key is written
+ * `"\u0076ersion"` — valid JSON parsing to `version`. Measured against
+ * the old line-oriented implementation on this exact diff:
+ *
+ *     +{
+ *     +  "name": "csuite-brand-new",
+ *     +  "\u0076ersion": "1.0.0"
+ *     +}
+ *     old regex found 0 version changes → it PASSED
+ *
+ * A new publishable package would have shipped unflagged. Parsing
+ * refuses it.
+ *
+ * Note what the first draft of this fixture got wrong: it MODIFIED a
+ * manifest instead of adding one, and the old regex still caught it —
+ * on the `-  "version": "0.8.0"` removal line, which is not escaped.
+ * The comment claimed a falsification the fixture did not perform.
+ * **A fixture whose comment asserts more than the fixture demonstrates
+ * is the same defect this guard exists to prevent, one level up.**
+ */
+describe('the git seam — noncanonical JSON through git show', () => {
+  const repos = [];
+  afterEach(() => {
+    for (const dir of repos.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function repoWith(headManifest) {
+    const dir = mkdtempSync(join(tmpdir(), 'version-guard-seam-'));
+    repos.push(dir);
+    const g = (...args) =>
+      spawnSync('git', args, { cwd: dir, encoding: 'utf8', env: { ...process.env, HOME: dir } });
+    g('init', '-q', '-b', 'main');
+    g('config', 'user.email', 'seam@example.invalid');
+    g('config', 'user.name', 'seam');
+    g('config', 'commit.gpgsign', 'false');
+    writeFileSync(
+      join(dir, 'package.json'),
+      JSON.stringify({ name: 'csuite-core', version: '0.8.0' }, null, 2),
+    );
+    g('add', '-A');
+    g('commit', '-q', '--no-verify', '-m', 'base');
+    const base = g('rev-parse', 'HEAD').stdout.trim();
+    writeFileSync(join(dir, 'package.json'), headManifest);
+    g('add', '-A');
+    g('commit', '-q', '--no-verify', '-m', 'head');
+    const head = g('rev-parse', 'HEAD').stdout.trim();
+    return { dir, base, head };
+  }
+
+  function repoWithAdded(addedManifest) {
+    const dir = mkdtempSync(join(tmpdir(), 'version-guard-seam-'));
+    repos.push(dir);
+    const g = (...args) =>
+      spawnSync('git', args, { cwd: dir, encoding: 'utf8', env: { ...process.env, HOME: dir } });
+    g('init', '-q', '-b', 'main');
+    g('config', 'user.email', 'seam@example.invalid');
+    g('config', 'user.name', 'seam');
+    g('config', 'commit.gpgsign', 'false');
+    writeFileSync(join(dir, 'placeholder.json'), '{}\n');
+    g('add', '-A');
+    g('commit', '-q', '--no-verify', '-m', 'base');
+    const base = g('rev-parse', 'HEAD').stdout.trim();
+    mkdirSync(join(dir, 'packages', 'new'), { recursive: true });
+    writeFileSync(join(dir, 'packages', 'new', 'package.json'), addedManifest);
+    g('add', '-A');
+    g('commit', '-q', '--no-verify', '-m', 'head');
+    return { dir, base, head: g('rev-parse', 'HEAD').stdout.trim() };
+  }
+
+  it('REFUSES an ADDED manifest with a unicode-escaped version key', () => {
+    // Valid JSON; parses to {name, version}. Added rather than
+    // modified: there is no removal line, so a regex over diff lines
+    // sees nothing at all. Measured: the old implementation passed it.
+    const sneaky = '{\n  "name": "csuite-brand-new",\n  "\\u0076ersion": "1.0.0"\n}\n';
+    expect(JSON.parse(sneaky).version).toBe('1.0.0'); // the fixture is what we think it is
+    const { dir, base, head } = repoWithAdded(sneaky);
+    const changes = identityChanges(changedManifests(base, head, { cwd: dir }));
+    expect(changes).toHaveLength(1);
+    expect(changes[0].from).toBe('(absent)');
+    expect(changes[0].to).toBe('csuite-brand-new@1.0.0');
+    const problems = checkVersionBump({
+      changes,
+      headRef: 'feat/ordinary',
+      headRepo: OURS,
+      baseRepo: OURS,
+    });
+    expect(problems).toHaveLength(1);
+  });
+
+  // Control at the same seam: the harness must be capable of passing,
+  // or the test above proves only that it always refuses.
+  it('allows a reformatted manifest whose identity is unchanged', () => {
+    const reformatted = '{"name":"csuite-core","version":"0.8.0","description":"reflowed"}\n';
+    const { dir, base, head } = repoWith(reformatted);
+    expect(changedManifests(base, head, { cwd: dir })).toHaveLength(1); // git saw a change
+    expect(identityChanges(changedManifests(base, head, { cwd: dir }))).toEqual([]);
   });
 });
