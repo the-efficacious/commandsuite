@@ -211,6 +211,17 @@ export function trackNetwork(session) {
       const path = safePathname(p.response.url);
       tracker.failed.push(`${p.response.status} ${req?.method ?? 'GET'} ${path}`);
     }
+    // A response is enough to call a request settled for idleness.
+    // Chromium does not emit loadingFinished for every response --
+    // the `Cache-Control: no-store` replies this PR introduces arrive
+    // complete and then never report completion (#278) -- so waiting
+    // for it means one such response per page pins `inflight` forever
+    // and every networkIdle burns its full timeout. Measured: 1.8 s
+    // per route became 31 s, on an app rendering correctly throughout.
+    // This lives in the same PR as the header deliberately: shipping
+    // the header without it would leave main's only required gate
+    // taking half an hour.
+    tracker.inflight.delete(p.requestId);
   });
   const settle = (p) => {
     tracker.inflight.delete(p.requestId);

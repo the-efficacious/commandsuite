@@ -117,6 +117,10 @@
     {
       "pr": 274,
       "ruling": "additive runner message-disposition protocol and notification receipts that wait for subscriber acknowledgement (obj-mtgsjlg5-x)"
+    },
+    {
+      "pr": 279,
+      "ruling": "Vary: Accept on both representations of the shared UI/REST paths, and Cache-Control: no-store on API responses (obj-mtgw8es3-y, ruled a door by Lea). OPERATOR ACTION, not just a change: Vary fixes the cache key going forward but does NOT evict entries a CDN already stored under the unvaried response \u2014 a poisoned entry survives the upgrade and makes the fix look like it failed. Purge the cache for HTML-negotiated origin paths after upgrading. no-store additionally keeps member data out of the on-disk cache of machines we do not administer; it also makes Chromium never report those requests finished over CDP (#278), which matters to anyone driving a browser against a csuite broker."
     }
   ],
   "dismissed": [
