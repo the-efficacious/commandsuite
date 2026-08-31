@@ -134,4 +134,163 @@ describe('createClaudeChannelSink', () => {
     expect(settle).toHaveBeenCalledWith('deferred', expect.any(Object));
     queue.close();
   });
+
+  it('uses the SDK model_not_found condition from a captured invalid-model turn', async () => {
+    const queue = new ClaudeMessageQueue();
+    const frames: RunnerControlFrame[] = [];
+    const settle = vi.fn();
+    const sink = createClaudeChannelSink({
+      getQueue: () => queue,
+      log: silentLogger(),
+      bundleWindowMs: 5_000,
+    });
+    sink.attachControl?.((frame) => frames.push(frame));
+    await sink.deliver(channelEvent('call a tool'), {
+      messageId: 'invalid-model-message',
+      accepted: vi.fn(),
+      settle,
+    });
+    sink.flushNow();
+    const iter = queue.stream();
+    await iter.next();
+
+    // Captured from `--model claude-definitely-not-a-model`. The prose is
+    // deliberately not one the legacy matcher recognises; the typed SDK
+    // error is the control fact and the vendor wording is only display text.
+    sink.observe({
+      type: 'assistant',
+      isApiErrorMessage: true,
+      error: 'model_not_found',
+      message: {
+        model: '<synthetic>',
+        content: [
+          {
+            type: 'text',
+            text: "There's an issue with the selected model (claude-definitely-not-a-model). It may not exist or you may not have access to it.",
+          },
+        ],
+      },
+    } as never);
+
+    expect(frames).toContainEqual({
+      kind: 'runner_condition',
+      at: expect.any(Number),
+      state: 'degraded',
+      reason: { code: 'invalid_model', detail: 'configured model id is invalid' },
+    });
+    expect(JSON.stringify(frames)).not.toContain('claude-definitely-not-a-model');
+    expect(settle).toHaveBeenCalledWith('deferred', expect.any(Object));
+    queue.close();
+  });
+
+  it('degrades an unacted zero-cost sub-second turn when vendor naming is absent', async () => {
+    const queue = new ClaudeMessageQueue();
+    const frames: RunnerControlFrame[] = [];
+    const settle = vi.fn();
+    const sink = createClaudeChannelSink({
+      getQueue: () => queue,
+      log: silentLogger(),
+      bundleWindowMs: 5_000,
+    });
+    sink.attachControl?.((frame) => frames.push(frame));
+    await sink.deliver(channelEvent('call a tool'), {
+      messageId: 'unnamed-failure',
+      accepted: vi.fn(),
+      settle,
+    });
+    sink.flushNow();
+    const iter = queue.stream();
+    await iter.next();
+
+    // No assistant error or recognisable prose: our terminal facts decide.
+    sink.observe({
+      type: 'result',
+      subtype: 'success',
+      duration_ms: 400,
+      total_cost_usd: 0,
+    } as never);
+
+    expect(frames).toContainEqual({
+      kind: 'runner_turn',
+      at: expect.any(Number),
+      turnId: expect.any(String),
+      phase: 'completed',
+      outcome: 'failed',
+    });
+    expect(frames).toContainEqual({
+      kind: 'runner_condition',
+      at: expect.any(Number),
+      state: 'degraded',
+      reason: { code: 'unknown', detail: 'runner cannot complete turns' },
+    });
+    expect(settle).toHaveBeenCalledWith('deferred', expect.any(Object));
+    queue.close();
+  });
+
+  it('does not degrade a healthy prose-only turn that incurred model cost', async () => {
+    const queue = new ClaudeMessageQueue();
+    const frames: RunnerControlFrame[] = [];
+    const settle = vi.fn();
+    const sink = createClaudeChannelSink({
+      getQueue: () => queue,
+      log: silentLogger(),
+      bundleWindowMs: 5_000,
+    });
+    sink.attachControl?.((frame) => frames.push(frame));
+    await sink.deliver(channelEvent('answer without a tool'), {
+      messageId: 'healthy-no-action',
+      accepted: vi.fn(),
+      settle,
+    });
+    sink.flushNow();
+    const iter = queue.stream();
+    await iter.next();
+    sink.observe({
+      type: 'result',
+      subtype: 'success',
+      duration_ms: 400,
+      total_cost_usd: 0.001,
+    } as never);
+
+    expect(frames).toContainEqual({
+      kind: 'runner_turn',
+      at: expect.any(Number),
+      turnId: expect.any(String),
+      phase: 'completed',
+      outcome: 'no_action',
+    });
+    expect(frames).not.toContainEqual(
+      expect.objectContaining({ kind: 'runner_condition', state: 'degraded' }),
+    );
+    expect(settle).toHaveBeenCalledWith('handled');
+    queue.close();
+  });
+
+  it('degrades on an unrecognised structured Claude error instead of dropping it', async () => {
+    const queue = new ClaudeMessageQueue();
+    const frames: RunnerControlFrame[] = [];
+    const sink = createClaudeChannelSink({
+      getQueue: () => queue,
+      log: silentLogger(),
+      bundleWindowMs: 5_000,
+    });
+    sink.attachControl?.((frame) => frames.push(frame));
+    await sink.deliver(channelEvent('please act'));
+    sink.flushNow();
+    const iter = queue.stream();
+    await iter.next();
+    sink.observe({
+      type: 'assistant',
+      error: 'future_vendor_error',
+      message: { content: [{ type: 'text', text: 'wording can change' }] },
+    } as never);
+
+    expect(frames).toContainEqual({
+      kind: 'runner_condition',
+      at: expect.any(Number),
+      state: 'degraded',
+      reason: { code: 'unknown', detail: 'runner cannot complete turns' },
+    });
+    queue.close();
+  });
 });
