@@ -979,6 +979,32 @@ export function createApp(options: AppOptions): CreatedApp {
     totpLockouts.delete(key);
   }
 
+  // Every response from this app is member-scoped or otherwise not a
+  // shared artifact, and none of them carry a validator, so nothing
+  // here should ever be stored by a cache we do not control.
+  //
+  // RFC 9111 §3.5 already forbids a shared cache from storing a
+  // response to an `Authorization`-bearing request, but our browser
+  // sessions authenticate with a COOKIE, which gets no such
+  // protection — and CDNs are routinely configured to cache by path
+  // or extension irrespective of what the origin said. Say it
+  // explicitly rather than relying on the absence of a validator to
+  // discourage heuristic storage. Handlers that want different
+  // behaviour set the header themselves and are left alone.
+  // Set as a PREPARED header before the handler runs, not by mutating
+  // `c.res` afterwards. Touching `c.res` post-`next()` makes Hono
+  // rebuild the Response around the handler's body, and the rebuilt
+  // one never completed for the browser: `GET /session` sat in flight
+  // forever, every in-app navigation waited out its network-idle
+  // timeout, and a route walk went from 1.8 s to 31 s per route.
+  // Prepared headers are merged by `c.json()`/`c.body()` at
+  // construction, so the response is never re-wrapped and a handler
+  // that sets its own cache-control still wins.
+  app.use('*', async (c, next) => {
+    c.header('cache-control', 'no-store');
+    await next();
+  });
+
   // Enforce protocol version if the client sent the header. Missing header
   // is allowed for relaxed clients; wrong version is a 400.
   app.use('*', async (c, next) => {
