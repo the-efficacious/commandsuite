@@ -1895,7 +1895,7 @@ export class Client {
     name: string,
     signal: AbortSignal | undefined,
     runnerIdentity: RunnerIdentity,
-    liveness = true,
+    liveness = false,
   ): ReliableSubscription {
     const identity = RunnerIdentitySchema.parse({
       ...runnerIdentity,

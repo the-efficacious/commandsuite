@@ -354,6 +354,9 @@ describe('Client', () => {
       kind: 'runner',
       runnerIdentity: { deliveryProtocol: 'disposition-v1' },
     });
+    expect(
+      JSON.parse(ws?.opts?.headers?.[CLIENT_IDENTITY_HEADER] ?? '{}').runnerIdentity,
+    ).not.toHaveProperty('livenessProtocol');
 
     subscription.disposition({
       kind: 'message_disposition',
