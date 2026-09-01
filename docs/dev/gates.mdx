@@ -263,7 +263,8 @@ Measured:
 ```
 GET /repos/…/rulesets            ruleset 21876976, active:
                                    deletion, non_fast_forward,
-                                   required_status_checks: route-walk
+                                   required_status_checks: route-walk,
+                                     Refuse version changes outside the Version PR
 GET /repos/…/branches/main       protected: true, enforcement: non_admins
                                    contexts: build, Verify Signed-off-by,
                                              dependency-review,
@@ -271,7 +272,7 @@ GET /repos/…/branches/main       protected: true, enforcement: non_admins
 GET /repos/…/branches/main/protection      404 — admin-gated
 ```
 
-**Five required contexts, not one.** Every audit of this repository tonight —
+**Six required contexts, not one — and not two.** Every audit of this repository tonight —
 three people, independently — read one source and reported it as the state of
 the world. turndb enforces through rulesets alone and commandsuite through
 classic protection with a ruleset on top, so the *same* endpoint honestly
@@ -281,6 +282,13 @@ other. That needed a second source, not more care with the first.
 When `branches/{branch}/protection` 404s, **read `branches/{branch}`** before
 concluding you cannot see: it carries a `protection` summary including
 `required_status_checks.contexts`.
+
+**This paragraph did not prevent a fourth instance.** On 2026-09-01 `version-guard`
+was added to the ruleset; the author of this section read `rules/branches/main`,
+saw two contexts, and reported "there are two" to the team — **hours after writing
+the sentence above, and against it.** The count went five → six, not one → two.
+**A written rule is worth what it is worth at the moment you consult it, and the
+moment you most need it is the one where you feel certain enough not to look.**
 
 | Gate | Required? | What it governs | Shown | Reported |
 | --- | --- | --- | --- | --- |
@@ -296,15 +304,20 @@ concluding you cannot see: it carries a `protection` summary including
 | `codeql` | **yes** (`Analyze (javascript-typescript)`) | static analysis for security patterns | **cannot be falsified by me** | To falsify: land a branch carrying a pattern CodeQL is documented to catch and confirm it is reported. Doing that means pushing a deliberately vulnerable pattern, which needs a decision, not an initiative. |
 | `dependency-review` | **yes** | new dependencies with known advisories, OpenSSF thresholds | **cannot be falsified by me** | To falsify: add a dependency with a known advisory on a scratch PR. Same caveat. It *has* fired in anger — it rejected `puppeteer-core`, which is why the route walk drives raw CDP. |
 | `release` | n/a | what gets published, and when | **structurally protected for *what*; the *when* is now guarded — see below** | A release is the human gate, so this row is longer than the others. |
-| `version-guard` | **not yet — see below** | a version may only change via the changesets Version PR | a real `0.8.0 → 9.9.9` bump to `packages/core/package.json`, committed on an ordinary branch | **Refused**, naming the file, both versions and the branch. The same commit on `changeset-release/main` passes. Branches merely *named* like the release branch (`changeset-release/main-2`, `not-changeset-release/main`) are refused. Invoked without its arguments it exits 2 rather than reporting nothing to check. Its own fixtures run in the same job that enforces it. |
+| `version-guard` | **yes** (`Refuse version changes outside the Version PR`, added 2026-09-01) | a version may only change via the changesets Version PR | a real `0.8.0 → 9.9.9` bump to `packages/core/package.json`, committed on an ordinary branch | **Refused**, naming the file, both versions and the branch. The same commit on `changeset-release/main` passes. Branches merely *named* like the release branch (`changeset-release/main-2`, `not-changeset-release/main`) are refused. Invoked without its arguments it exits 2 rather than reporting nothing to check. Its own fixtures run in the same job that enforces it. |
 
 ### A workflow that exists is not a gate
 
-**`version-guard` is not required, so today nothing refuses a merge that fails
-it.** It runs, it reports honestly, and the platform does not care — which makes
-it, exactly, a green tick nobody has to obey. It becomes machinery when it is
-added to the required status checks; that needs admin rights this seat does not
-have.
+**`version-guard` ran honestly for a month while the platform did not care.**
+It reported correctly and nothing was obliged to listen — exactly a green tick
+nobody has to obey. Adding it to the required status checks needed admin rights
+this seat does not hold, so the gap could not be closed by effort here.
+
+**It was added to the ruleset on 2026-09-01 and is now required** as
+`Refuse version changes outside the Version PR`. **That is the transition this
+section exists to describe: the workflow did not change — its authority did.**
+A merge that fails it is now refused by the platform rather than by whoever
+happens to read the check.
 
 Stated here rather than left implicit because the guard was built *in response
 to* a convention wearing the appearance of a gate, and shipping it unrequired
@@ -372,8 +385,10 @@ to refuse anything. That is strictly worse than an unfalsified gate nobody
 relies on, because a release claim can honestly cite a check that blocks — while
 the evidence that it *would* block does not exist.
 
-`version-guard` is in the bottom-right for the opposite reason: falsified
-thoroughly, required by nothing.
+`version-guard` **was** in the bottom-right for the opposite reason — falsified
+thoroughly, required by nothing. **It moved to the top-left on 2026-09-01**:
+same evidence, new authority. It is the only row that has crossed the grid, and
+it crossed by an admin action rather than by any change to the check.
 
 **Falsifying the two in the worst square is scheduled work with boundaries, not
 a spare-twenty-minutes job** (ruled by Lea, 2026-08-31), because it means
