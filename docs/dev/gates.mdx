@@ -27,7 +27,7 @@ using it for real rather than by the instrument itself:
 ## The practice
 
 **An instrument earns its verdict by being shown a known-bad input, and until it
-has been, a green from it is an opinion.** Four minutes each. Nine rules follow
+has been, a green from it is an opinion.** Four minutes each. Ten rules follow
 from doing it, and every one was learned by getting it wrong first:
 
 **1. Prove the input was actually bad.** A mutation you did not confirm reached
@@ -119,43 +119,42 @@ input and intent are both single-line, which is why the wrong one survives
 review. **A rule applied to the wrong shape doesn't fail loudly; it inverts and
 looks tidier than what it replaced.**
 
-**6. Make a vacuous control impossible, not merely noticeable — and we already
-had the mechanism.** A control that perturbs a construct must **assert it found
-the construct**, and stop if it did not:
+**6. Assert that your perturbation applied — and we already had the mechanism.**
+A control that mutates a construct must confirm the mutation *reached the target*
+before the result means anything:
 
 ```python
 if old not in text:
     raise SystemExit(f"{label} control could not find the construct it is meant to perturb")
 ```
 
-Without that line, a matcher that silently matches nothing produces a control
-that "passes" having tested nothing. **Require both a non-zero exit and the
-expected message**, or a check failing for an unrelated reason gets recorded as
-the control firing.
+Without it, a stale anchor or a whitespace mismatch produces a control that
+"passes" having changed nothing. **Require both a non-zero exit and the expected
+message**, or a check failing for an unrelated reason gets recorded as the control
+firing.
 
 **`scripts/mutate.sh` has done exactly this since 2026-08-01** — it diffs against
 the original, prints `MUTATION DID NOT APPLY — the result would be meaningless,
 so nothing ran`, and exits 2 without running the suite. It was written after a
-mutation silently failed to apply over an indentation mismatch and a guard was
-nearly reported as verified without ever being exercised.
+mutation silently failed over an indentation mismatch and a guard was nearly
+reported as verified without being exercised.
 
-**And it is referenced by nothing.** Not this page, not a workflow, not another
-script. **The mechanism was correct, present, and invisible for a month** — so
-three instruments written since then did not get it, and the failure it prevents
-happened twice in one evening to the person who had read the rule:
+**And it is referenced by nothing** — not this page, not a workflow, not another
+script:
 
 ```
-a settlement control sealed with unsettled=0   -> passed, tested nothing
-a checker printed "replay: 0 of 0"  twice      -> passed, tested nothing
+$ grep -rl "mutate.sh" --include=*.md --include=*.mdx --include=*.yml --include=*.sh .
+./scripts/mutate.sh
 ```
 
-**Both were caught by a person noticing.** That is the gap this rule closes, and
-the gap was never the tooling — **it was that a working mechanism had no surface
-in the practice, so new instruments were written without it.** Use `mutate.sh`
-where it fits; where it doesn't, assert the construct yourself.
+**A correct mechanism with no surface does not travel.** That is the finding: not
+that the tooling was missing, but that it existed for a month and nothing pointed
+at it. Use `mutate.sh` where it fits; where it doesn't, assert the construct
+yourself. **It establishes exactly one property — that bytes changed — which is
+narrower than rule 10.**
 
-*(The rule was written down on the TurnDB side by Seamus, for a mechanism this
-repo already had. A mechanism nobody writes the rule for does not travel.)*
+*(Rule written down on the TurnDB side by Seamus, for a mechanism this repo
+already had.)*
 
 **7. A check must discriminate, not merely respond.** Exercise it in both
 directions before trusting it — the present case *and* the absent case:
@@ -185,6 +184,29 @@ legitimate narrow run. **People learn to read red on that path as normal, which
 is the condition under which a real red gets waved through.** The fix is not a
 looser threshold — it is stating the property precisely enough that the mechanism
 can deliver exactly it. *(Turner.)*
+
+**10. Every asserted property needs its own non-vacuous denominator.** A
+run-level PASS collapses N properties into one answer, and **a property with
+nothing to measure contributes a free pass rather than an abstention.** Two runs
+of the same checker:
+
+```
+settlement 19/19    replay 0 of 0      -> PASS, and the replay half tested nothing
+replay 0 of 20      settlement 0/0     -> PASS, and the settlement half tested nothing
+```
+
+`0 of 0` and `0 of 20` are visually identical claims with completely different
+content. **The numerator says what happened; the denominator says whether
+anything could have.** Print it, label it, and treat a zero denominator as
+*not established* rather than as passing.
+
+**This is not rule 6.** Rule 6 catches a perturbation that never reached its
+target; here the baselines were valid and the runs were real — one dimension
+simply had nothing in it. **A mutation-applied check reports success on both of
+the runs above.** Constructing a baseline where every property is live can take
+deliberate work: a running seat settled mail within twelve seconds, so the only
+way to seal with anything unsettled was to push to a stopped seat and cold-start.
+**The easy measurement was the vacuous one.**
 
 And the rule these serve: **the gate bends, not the security posture.** When an
 instrument makes a correct property look expensive, fix the instrument.
