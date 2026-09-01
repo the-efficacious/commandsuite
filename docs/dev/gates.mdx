@@ -261,10 +261,13 @@ comes from two layers, and reading either one alone gives a wrong answer.**
 Measured:
 
 ```
-GET /repos/…/rulesets            ruleset 21876976, active:
-                                   deletion, non_fast_forward,
-                                   required_status_checks: route-walk,
-                                     Refuse version changes outside the Version PR
+GET /repos/…/rulesets            TWO active rulesets, both Repository-sourced:
+                                   21876976 "main route-walk requirement"
+                                     deletion, non_fast_forward,
+                                     required_status_checks: route-walk
+                                   21943863 "Version Guard"
+                                     required_status_checks:
+                                       Refuse version changes outside the Version PR
 GET /repos/…/branches/main       protected: true, enforcement: non_admins
                                    contexts: build, Verify Signed-off-by,
                                              dependency-review,
@@ -275,9 +278,18 @@ GET /repos/…/branches/main/protection      404 — admin-gated
 **Six required contexts, not one — and not two.** Every audit of this repository tonight —
 three people, independently — read one source and reported it as the state of
 the world. turndb enforces through rulesets alone and commandsuite through
-classic protection with a ruleset on top, so the *same* endpoint honestly
+classic protection with **two** rulesets on top, so the *same* endpoint honestly
 answers "the enforcement" on one repo and "some of the enforcement" on the
 other. That needed a second source, not more care with the first.
+
+**Counting rulesets is its own trap: there are two, and an earlier version of
+this block named one.** `GET /rules/branches/main` is the reading that cannot
+undercount — it returns every rule applying to the branch regardless of which
+ruleset carries it, and reports `ruleset_source_type` per rule, so an
+organisation-level ruleset would appear there. For this repository every applying
+rule reads `Repository`, so **six is the complete enumeration and not merely the
+readable part** — which is worth stating, because `GET /orgs/…/rulesets` 404s
+without `admin:org` and looks like a gap in what you can see.
 
 When `branches/{branch}/protection` 404s, **read `branches/{branch}`** before
 concluding you cannot see: it carries a `protection` summary including
