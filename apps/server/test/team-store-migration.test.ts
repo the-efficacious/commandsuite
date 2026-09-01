@@ -119,4 +119,52 @@ describe('member stable-identity migration', () => {
     ).toContain('members_identity_id_idx');
     db.close();
   });
+
+  it('backfills active lifecycle state and retains a departed identity under its reserved name', () => {
+    const db = legacyMembersDb();
+    const members = openTeamAndMembers(db, { now: () => 1234 }).members;
+    expect(members.members().map((member) => member.state)).toEqual(['active', 'active']);
+
+    const departed = members.departMember('legacy', 'second');
+    expect(departed).toMatchObject({
+      name: 'legacy',
+      state: 'departed',
+      departedAt: 1234,
+      departedBy: 'second',
+    });
+    expect(members.findByName('legacy')).toBeNull();
+    expect(members.findAnyByName('legacy')?.identityId).toBe(departed.identityId);
+    expect(members.members().map((member) => member.name)).toEqual(['second']);
+    expect(members.allMembers().map((member) => member.name)).toEqual(['legacy', 'second']);
+    expect(() =>
+      members.addMember({
+        name: 'legacy',
+        role: { title: 'new', description: '' },
+        instructions: '',
+        rawPermissions: [],
+        permissions: [],
+      }),
+    ).toThrow("duplicate name 'legacy'");
+    expect(() =>
+      db.prepare("UPDATE members SET state = 'departd' WHERE name = 'second'").run(),
+    ).toThrow('invalid member state');
+    db.close();
+  });
+
+  it('enforces the same lifecycle vocabulary on a fresh database', () => {
+    const db = openDatabase(':memory:');
+    const members = openTeamAndMembers(db).members;
+    members.addMember({
+      name: 'fresh',
+      role: { title: 'member', description: '' },
+      instructions: '',
+      rawPermissions: [],
+      permissions: [],
+    });
+
+    expect(() =>
+      db.prepare("UPDATE members SET state = 'departd' WHERE name = 'fresh'").run(),
+    ).toThrow(/invalid member state|CHECK constraint failed/);
+    db.close();
+  });
 });

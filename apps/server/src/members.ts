@@ -151,6 +151,11 @@ class MapMemberStore implements MemberStore {
   }
 
   findByName(name: string): LoadedMember | null {
+    const member = this.byName.get(name);
+    return member?.state === 'departed' ? null : (member ?? null);
+  }
+
+  findAnyByName(name: string): LoadedMember | null {
     return this.byName.get(name) ?? null;
   }
 
@@ -171,15 +176,19 @@ class MapMemberStore implements MemberStore {
   }
 
   size(): number {
-    return this.byHash.size;
+    return this.members().length;
   }
 
   members(): LoadedMember[] {
+    return this.order.filter((member) => member.state !== 'departed');
+  }
+
+  allMembers(): LoadedMember[] {
     return [...this.order];
   }
 
   names(): string[] {
-    return this.order.map((m) => m.name);
+    return this.members().map((m) => m.name);
   }
 
   addMember(input: AddMemberInput): LoadedMember {
@@ -190,7 +199,9 @@ class MapMemberStore implements MemberStore {
     }
     const tokenHash = hashToken(input.token);
     const member: LoadedMember = {
+      identityId: globalThis.crypto.randomUUID(),
       name: input.name,
+      state: 'active',
       role: input.role,
       instructions: input.instructions,
       permissions: input.permissions,
@@ -216,6 +227,18 @@ class MapMemberStore implements MemberStore {
     this.byName.delete(name);
     const idx = this.order.indexOf(member);
     if (idx !== -1) this.order.splice(idx, 1);
+  }
+
+  departMember(name: string, actor: string, at = Date.now()): LoadedMember {
+    const member = this.findByName(name);
+    if (!member) throw new MemberLoadError(`no such active member: '${name}'`);
+    for (const [hash, candidate] of this.byHash) {
+      if (candidate === member) this.byHash.delete(hash);
+    }
+    member.state = 'departed';
+    member.departedAt = at;
+    member.departedBy = actor;
+    return member;
   }
 
   updateMember(name: string, patch: UpdateMemberPatch): LoadedMember {
