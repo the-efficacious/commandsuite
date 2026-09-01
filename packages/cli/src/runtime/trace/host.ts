@@ -281,9 +281,11 @@ export async function startCaptureHost(options: CaptureHostOptions): Promise<Cap
 
   // Latest transcript path learned from a Claude Code hook body. Null
   // until the first hook fires; the transcript reader polls `getPath`
-  // and begins tailing once it's known. The hook server dedups the
-  // callback, and the reader pins the path, so an idempotent re-set is
-  // harmless.
+  // and begins tailing once it's known. This is a LIVE value: the hook
+  // server relays every distinct path it sees, and the reader follows
+  // a change — the agent process is swapped under this host on every
+  // restart, and each successor writes a new transcript. A reader that
+  // pinned the first path would tail a dead file from then on.
   let transcriptPath: string | null = null;
 
   // Loopback HTTP endpoint for Claude Code hook events. PRESENCE-ONLY:
@@ -305,7 +307,8 @@ export async function startCaptureHost(options: CaptureHostOptions): Promise<Cap
   // runners. Tails the session transcript the hooks point us at and
   // enqueues the CONTENT events (thinking/text/tool_use turns, tool
   // results, openers), redacted by the core parser. It idles until the
-  // first hook surfaces a path (getPath returns null before then).
+  // first hook surfaces a path (getPath returns null before then) and
+  // re-pins whenever a later hook surfaces a different one.
   const transcriptReader: TranscriptReader = attachTranscriptReader({
     getPath: () => transcriptPath,
     enqueue: (event) => uploader.enqueue(event),

@@ -103,7 +103,11 @@ describe('the write description carries the two things an agent will otherwise g
 
   it('states the delivery bound rather than implying the edit is live everywhere', () => {
     expect(write()?.description).toMatch(/next idle boundary/);
-    expect(write()?.description).toMatch(/resumes the same conversation/);
+    // The restart is cold, and the description must say so: an agent
+    // told its conversation survives the swap would plan around it.
+    expect(write()?.description).toMatch(/restarts its agent cold/);
+    expect(write()?.description).toMatch(/does not resume the prior conversation/);
+    expect(write()?.description).not.toMatch(/resumes the same conversation/);
     expect(write()?.description).toMatch(/restart-pending/);
   });
 
@@ -235,7 +239,9 @@ describe('process_document_write', () => {
     expect(text).toMatch(/created the process document at v1/);
     expect(text).toMatch(/History begins here/);
     expect(text).toMatch(/next idle boundary/);
-    expect(text).toMatch(/resume the same conversation/);
+    expect(text).toMatch(/restart their agents cold/);
+    expect(text).toMatch(/not resuming the prior conversation/);
+    expect(text).not.toMatch(/resume the same conversation/);
     expect(text).toMatch(/restart-pending/);
     expect(text).toMatch(/No broadcast is needed and none was sent/);
 

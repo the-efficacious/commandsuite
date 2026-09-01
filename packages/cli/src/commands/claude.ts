@@ -30,7 +30,9 @@ export interface ClaudeCommandInput {
   model?: string;
   /**
    * Resume a previous Claude Code session. A string is a session id;
-   * `true` continues the member's most recent session in the cwd.
+   * `true` passes the SDK's `continue` through: Claude Code picks up
+   * the member's most recent session in the cwd if one exists, else
+   * starts fresh — the runner does not predict which.
    */
   resume?: string | true;
   /**

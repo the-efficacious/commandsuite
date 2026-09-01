@@ -74,6 +74,14 @@ export interface ActivityStore {
    * Persist events for a user. Returns the fully-formed rows (with
    * assigned ids + createdAt) in the order they were inserted.
    * Empty-array inputs are a no-op and return `[]`.
+   *
+   * IDEMPOTENT ON `sourceId`: an event whose `sourceId` this member has
+   * already stored is suppressed — not stored again, not returned, and
+   * not delivered to subscribers, who already saw the original. Events
+   * without a `sourceId` are never deduplicated. This is the broker's
+   * own defence against a runner replaying history (a resumed transcript
+   * re-read from offset zero, a batch retried after a lost ack), so it
+   * lives in every implementation, not in one process's memory.
    */
   append(memberName: string, events: readonly ActivityEvent[]): ActivityRow[];
 
@@ -128,6 +136,11 @@ const DEFAULT_MAX_LIMIT = 1000;
  */
 export class InMemoryActivityStore implements ActivityStore {
   private readonly rowsByMember = new Map<string, ActivityRow[]>();
+  // Per-member set of stored `sourceId`s — the in-memory twin of the
+  // SQLite impl's partial unique index. Maintained alongside the rows
+  // (and released by `prune`, as deleting a row releases its index
+  // entry) so both stores answer a replay identically.
+  private readonly sourceIdsByMember = new Map<string, Set<string>>();
   private readonly listenersByMember = new Map<string, Set<ActivityListener>>();
   private readonly now: () => number;
   private readonly maxLimit: number;
@@ -141,8 +154,30 @@ export class InMemoryActivityStore implements ActivityStore {
   append(memberName: string, events: readonly ActivityEvent[]): ActivityRow[] {
     if (events.length === 0) return [];
 
+    // Dedup on `sourceId` BEFORE minting ids, so a suppressed duplicate
+    // neither consumes an id nor appears in the returned rows. A batch
+    // that names the same source twice keeps its first occurrence —
+    // the same answer SQLite's unique index gives inside one
+    // transaction.
+    let known = this.sourceIdsByMember.get(memberName);
+    if (!known) {
+      known = new Set();
+      this.sourceIdsByMember.set(memberName, known);
+    }
+    const admitted: ActivityEvent[] = [];
+    const batchSourceIds = new Set<string>();
+    for (const event of events) {
+      const sourceId = event.sourceId;
+      if (sourceId !== undefined) {
+        if (known.has(sourceId) || batchSourceIds.has(sourceId)) continue;
+        batchSourceIds.add(sourceId);
+      }
+      admitted.push(event);
+    }
+    if (admitted.length === 0) return [];
+
     const createdAt = this.now();
-    const rows: ActivityRow[] = events.map((event) => ({
+    const rows: ActivityRow[] = admitted.map((event) => ({
       id: this.nextId++,
       memberName,
       event,
@@ -158,6 +193,7 @@ export class InMemoryActivityStore implements ActivityStore {
       this.rowsByMember.set(memberName, bucket);
     }
     for (const row of rows) bucket.push(row);
+    for (const sourceId of batchSourceIds) known.add(sourceId);
 
     // Snapshot listeners before iterating — a handler may unsubscribe
     // (or subscribe a new handler) during delivery; iterating a live
@@ -226,15 +262,21 @@ export class InMemoryActivityStore implements ActivityStore {
     let deleted = 0;
     for (const [member, bucket] of this.rowsByMember) {
       const kept: ActivityRow[] = [];
+      const known = this.sourceIdsByMember.get(member);
       for (const row of bucket) {
         if (row.event.ts < cutoffTs) {
           deleted++;
+          // A pruned row releases its dedup key, as a deleted SQLite row
+          // releases its index entry — retention must not turn into a
+          // permanent refusal of a source id.
+          if (row.event.sourceId !== undefined) known?.delete(row.event.sourceId);
         } else {
           kept.push(row);
         }
       }
       if (kept.length === 0) {
         this.rowsByMember.delete(member);
+        this.sourceIdsByMember.delete(member);
       } else if (kept.length !== bucket.length) {
         this.rowsByMember.set(member, kept);
       }

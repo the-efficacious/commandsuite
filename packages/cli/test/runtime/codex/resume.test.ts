@@ -1,9 +1,10 @@
 /**
  * Verifies the `resume` option's handshake wiring: `thread/resume` is
  * issued (with the same headless posture overrides as a fresh start)
- * instead of `thread/start`, bare-resume resolves the newest rollout in
- * the durable sessions dir, and the resolved thread id is exposed on
- * the spawn result.
+ * instead of `thread/start` for an explicit id, bare `--resume` opens a
+ * NEW thread regardless of what the durable sessions dir holds (the
+ * runner no longer picks a thread on the agent's behalf), and the
+ * resolved thread id is exposed on the spawn result.
  */
 
 import { EventEmitter } from 'node:events';
@@ -54,7 +55,7 @@ vi.mock('../../../src/runtime/agents/codex/channel-sink.js', () => ({
 }));
 
 import type { InstructionsResponse } from 'csuite-sdk/types';
-import { findLatestThreadId, spawnCodex } from '../../../src/runtime/agents/codex/adapter.js';
+import { spawnCodex } from '../../../src/runtime/agents/codex/adapter.js';
 import { composeFixedContext } from '../../../src/runtime/fixed-context.js';
 import { silentLogger } from '../../helpers/logger.js';
 
@@ -175,25 +176,30 @@ describe('spawnCodex — resume', () => {
     await result.exitCode;
   });
 
-  it('bare resume resolves the newest rollout in the sessions dir', async () => {
+  it('bare resume starts a NEW thread even when rollouts exist — the runner picks none', async () => {
+    // An earlier version scanned the sessions dir and resumed the
+    // newest rollout here. That was CommandSuite choosing the agent's
+    // conversation from the filesystem; the scan is gone, and a seeded
+    // dir must make no difference to the handshake.
     const result = await spawnCodex({
       ...BASE_OPTS,
       resume: true,
       sessionsDir: seededSessionsDir(),
     });
 
-    const resumeCall = rpcMock.request.mock.calls.find((c) => c[0] === 'thread/resume');
-    expect(resumeCall?.[1]).toMatchObject({ threadId: THREAD_B });
+    expect(result.resumedFresh).toBe(true);
+    const methods = rpcMock.request.mock.calls.map((c) => c[0]);
+    expect(methods).toContain('thread/start');
+    expect(methods).not.toContain('thread/resume');
 
     fakeChild.emit('exit', 0, null);
     await result.exitCode;
   });
 
-  it('bare resume with no prior sessions starts a fresh thread loudly (resume-or-start)', async () => {
-    // The old strict behavior was an infinite Restart= loop under a
+  it('bare resume with no prior sessions starts a fresh thread loudly, never an error', async () => {
+    // A deterministic error here was an infinite Restart= loop under a
     // supervisor on any fresh member — obj-mtfvz379-i's acceptance
-    // finding. Cold bare --resume now spawns via thread/start and marks
-    // the fallback for session_start's resumed:false.
+    // finding, and `install-service` writes --resume into every unit.
     const empty = mkdtempSync(join(tmpdir(), 'csuite-resume-empty-'));
     cleanups.push(() => rmSync(empty, { recursive: true, force: true }));
 
@@ -231,22 +237,5 @@ describe('spawnCodex — resume', () => {
 
     fakeChild.emit('exit', 0, null);
     await result.exitCode;
-  });
-});
-
-describe('findLatestThreadId', () => {
-  afterEach(() => {
-    while (cleanups.length > 0) cleanups.pop()?.();
-  });
-
-  it('picks the lexicographically newest rollout and extracts its uuid', () => {
-    expect(findLatestThreadId(seededSessionsDir())).toBe(THREAD_B);
-  });
-
-  it('returns null for a missing or empty dir', () => {
-    expect(findLatestThreadId('/nonexistent/nowhere')).toBeNull();
-    const empty = mkdtempSync(join(tmpdir(), 'csuite-resume-empty-'));
-    cleanups.push(() => rmSync(empty, { recursive: true, force: true }));
-    expect(findLatestThreadId(empty)).toBeNull();
   });
 });

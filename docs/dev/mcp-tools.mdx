@@ -304,9 +304,9 @@ forward-only (work already underway finishes under the prior text).
 
 An edit fans out one `kind: 'instructions'` broker event to every
 member whose composed context changed. Each affected runner restarts
-its agent at the next idle boundary, resuming the same conversation
-under the new text, and `GET /roster` lists those members in
-`restartPending` until it does.
+its agent cold at the next idle boundary under the new text (the
+successor is re-briefed on its open objectives), and `GET /roster`
+lists those members in `restartPending` until it does.
 
 An agent still holding a superseded version reads as **stale**, not
 missing — it is restart-pending, never re-sent content, because
@@ -327,10 +327,10 @@ Team-level name and shared context. Reads are open on the
 HTTP API, but the tools only surface to `team.manage` holders so the
 toolbox stays narrow — any agent can pull team data from its
 instructions. A `context` edit is instruction-bearing: the broker
-fans it out and each affected runner restarts its agent at the next
-idle boundary, resuming the same conversation under the new composed
-text; the roster lists those members restart-pending until it does
-(the `team_update` result restates this to the calling agent).
+fans it out and each affected runner restarts its agent cold at the
+next idle boundary under the new composed text; the roster lists those
+members restart-pending until it does (the `team_update` result
+restates this to the calling agent).
 
 | Tool | Input | What it does |
 |---|---|---|

@@ -129,17 +129,18 @@ resolves from where you are.
 
 ## 4. Resume after an interruption
 
-Sessions are per-directory. After a restart, resume instead of
-starting cold:
+Sessions are per-directory. After a restart, let the agent resume
+instead of starting cold:
 
 ```bash
-csuite claude --resume                  # continue the most recent session here
+csuite claude --resume                  # Claude Code continues the most recent session here, if any
 csuite claude --resume <sessionId>      # or a specific one
 ```
 
 The runner prints each session's id at exit ("pick it up later with:
-`csuite claude --resume <id>`"). `csuite codex` works the same way
-with `--resume [<threadId>]`. If you want continuation to be the
+`csuite claude --resume <id>`"). `csuite codex` takes `--resume
+<threadId>`; its bare `--resume` starts a new thread, since codex
+resumes by id only. If you want continuation to be the
 default, add `--resume` to your `ExecStart` line once the first
 session exists.
 

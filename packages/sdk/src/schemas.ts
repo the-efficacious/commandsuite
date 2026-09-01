@@ -1624,6 +1624,18 @@ export const ActivityKindSchema = z.enum([
   'auth_state',
 ]);
 
+/**
+ * Optional stable id of the source record an activity event was
+ * mapped from — for Claude, the transcript line's `uuid` (suffixed
+ * with the tool_use id when one line yields several `tool_action`s).
+ * The broker dedups on `(member, sourceId)`, so a runner that re-reads
+ * a resumed or forked transcript, or retries a batch whose ack was
+ * lost, cannot write the same activity twice. Additive and optional:
+ * events without it (older runners, driver-minted brackets) are stored
+ * as they always were, with no dedup.
+ */
+const ActivitySourceIdSchema = z.string().min(1).max(512).optional();
+
 export const ActivityEventSchema = z.discriminatedUnion('kind', [
   // session_start / session_end — run brackets emitted by every runner
   // (one pair per `csuite <runner>` invocation). `session_end` doubles
@@ -1632,6 +1644,7 @@ export const ActivityEventSchema = z.discriminatedUnion('kind', [
   // log formats.
   z.object({
     kind: z.literal('session_start'),
+    sourceId: ActivitySourceIdSchema,
     ts: z.number().int().nonnegative(),
     runner: z.string().min(1),
     runnerVersion: z.string().optional(),
@@ -1643,6 +1656,7 @@ export const ActivityEventSchema = z.discriminatedUnion('kind', [
   }),
   z.object({
     kind: z.literal('session_end'),
+    sourceId: ActivitySourceIdSchema,
     ts: z.number().int().nonnegative(),
     runner: z.string().min(1),
     reason: z.string().min(1),
@@ -1663,17 +1677,20 @@ export const ActivityEventSchema = z.discriminatedUnion('kind', [
   }),
   z.object({
     kind: z.literal('objective_open'),
+    sourceId: ActivitySourceIdSchema,
     ts: z.number().int().nonnegative(),
     objectiveId: z.string().min(1),
   }),
   z.object({
     kind: z.literal('objective_close'),
+    sourceId: ActivitySourceIdSchema,
     ts: z.number().int().nonnegative(),
     objectiveId: z.string().min(1),
     result: z.enum(['done', 'cancelled', 'reassigned', 'runner_shutdown']),
   }),
   z.object({
     kind: z.literal('llm_exchange'),
+    sourceId: ActivitySourceIdSchema,
     ts: z.number().int().nonnegative(),
     duration: z.number().int().nonnegative(),
     // Which agent produced it (`'claude'`, `'codex'`). Optional so
@@ -1692,6 +1709,7 @@ export const ActivityEventSchema = z.discriminatedUnion('kind', [
   // (z.unknown()) — a novel tool shape must never fail validation.
   z.object({
     kind: z.literal('tool_action'),
+    sourceId: ActivitySourceIdSchema,
     ts: z.number().int().nonnegative(),
     durationMs: z.number().int().nonnegative().optional(),
     agent: z.string().optional(),
@@ -1713,6 +1731,7 @@ export const ActivityEventSchema = z.discriminatedUnion('kind', [
   // schema only validates shape (a permissive string).
   z.object({
     kind: z.literal('user_prompt'),
+    sourceId: ActivitySourceIdSchema,
     ts: z.number().int().nonnegative(),
     text: z.string(),
     promptId: z.string().optional(),
@@ -1729,6 +1748,7 @@ export const ActivityEventSchema = z.discriminatedUnion('kind', [
   // event is that the broker never infers what happened.
   z.object({
     kind: z.literal('context_control'),
+    sourceId: ActivitySourceIdSchema,
     ts: z.number().int().nonnegative(),
     requestId: z.string().min(1),
     verb: z.enum(['compact', 'clear', 'reload']),
@@ -1744,6 +1764,7 @@ export const ActivityEventSchema = z.discriminatedUnion('kind', [
   }),
   z.object({
     kind: z.literal('auth_state'),
+    sourceId: ActivitySourceIdSchema,
     ts: z.number().int().nonnegative(),
     state: z.enum(['blocked', 'recovered']),
     status: z.literal(401),

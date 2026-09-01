@@ -65,9 +65,11 @@ written to your working tree, and there is nothing to restore
 afterwards. The member's composed instructions (team context, role,
 teammates) ride on top of Claude Code's own system prompt and
 survive compaction. If those instructions are edited mid-session,
-the runner restarts the agent at its next idle moment and resumes
-the same conversation under the new text. How the runner wires all
-this is a contributor topic: [architecture](/docs/dev/architecture).
+the runner restarts the agent cold at its next idle moment under the
+new text and re-briefs it on its open objectives; the prior
+conversation is not resumed (see [Sessions and resume](#sessions-and-resume)
+for what Claude Code keeps on its own). How the runner wires all this
+is a contributor topic: [architecture](/docs/dev/architecture).
 
 ## Directing the agent
 
@@ -91,13 +93,19 @@ csuite claude: session 042e23ac-… — pick it up later with: csuite claude --r
 # later — same context, same member
 csuite claude --resume 042e23ac-df08-4748-a6fe-1ccd7d9f7f29
 
-# or just continue the most recent session in this directory
+# or hand the choice to Claude Code: it continues the most recent
+# session in this directory when one exists, and starts fresh otherwise
 csuite claude --resume
 ```
 
-This is what makes an unattended box workable: a supervisor
-restarting the runner with `--resume` gives the member continuity
-across restarts.
+Bare `--resume` is Claude Code's decision, not the runner's: the
+runner passes the SDK's `continue` through and does not look at
+`~/.claude/projects` first, so the `session_start` trace event of such
+a run carries no `resumed` verdict (an explicit id stamps `resumed:
+true`). This is what makes an unattended box workable: a supervisor
+restarting the runner with `--resume` lets Claude Code pick its own
+conversation back up. An instruction edit is different — it restarts
+the agent cold on purpose.
 
 ## Preflight and --doctor
 

@@ -12,8 +12,9 @@
  * emits `tool_action` / `user_prompt` CONTENT — the transcript reader is
  * the single source of that now (it carries the full, untruncated turn),
  * so hooks would only duplicate it. Every hook body carries a
- * `transcript_path`; we relay the first one we see (via `onTranscriptPath`)
- * so the capture host can start tailing the session transcript.
+ * `transcript_path`; we relay each DISTINCT one we see (via
+ * `onTranscriptPath`) so the capture host can start tailing the session
+ * transcript — and move to the successor's transcript after a restart.
  *
  * Events we handle:
  *   - PreToolUse / PostToolUse / PostToolUseFailure — a tool-execution
@@ -76,7 +77,7 @@ interface HookRequestBody {
   /**
    * Absolute path to the session transcript JSONL. Present on every hook
    * body; the capture host tails it as the transcript-primary capture
-   * source. We relay the first one we see via `onTranscriptPath`.
+   * source. We relay each distinct one we see via `onTranscriptPath`.
    */
   transcript_path?: string;
   /**
@@ -134,9 +135,11 @@ export interface HookServerOptions {
   busy: ActivitySignal;
   /**
    * Fired with the `transcript_path` from the first hook body that
-   * carries one. The capture host wires this to start tailing the
-   * session transcript (the transcript-primary capture source). Called
-   * once per distinct path seen; the host dedups/pins internally.
+   * carries one, and again whenever a later body carries a DIFFERENT
+   * one (a swapped agent process writes a new transcript). The capture
+   * host wires this to tail the session transcript (the
+   * transcript-primary capture source) and to follow it across a
+   * restart. Called once per distinct path seen.
    * Optional — when absent, the server drives presence only.
    */
   onTranscriptPath?: (path: string) => void;
@@ -168,7 +171,9 @@ export async function startHookServer(options: HookServerOptions): Promise<HookS
 
   // The transcript path last relayed via `onTranscriptPath`. Deduped so
   // we fire the callback only on the first (and any changed) path rather
-  // than on every hook body — every body carries it.
+  // than on every hook body — every body carries it. A CHANGE is the
+  // signal the capture host uses to move its transcript reader to the
+  // successor's file after an agent swap.
   let lastTranscriptPath: string | null = null;
 
   // Resolve the turn-handle key for a turn-lifecycle event. Prefer the
@@ -232,8 +237,8 @@ export async function startHookServer(options: HookServerOptions): Promise<HookS
     // Relay the transcript path (present on every hook body) so the
     // capture host can tail it. Do this BEFORE routing on the event name
     // so even an event we don't act on still surfaces the path. Deduped
-    // to the first distinct path — the host pins it, but this avoids a
-    // callback per hook fire.
+    // to distinct paths — the host follows each change, and this avoids
+    // a callback per hook fire.
     if (
       typeof body.transcript_path === 'string' &&
       body.transcript_path.length > 0 &&

@@ -651,8 +651,9 @@ function buildManagementTools(instructions: InstructionsResponse): Tool[] {
       description:
         'Update one or more team-level fields. `context` changes the team ' +
         "instruction block composed into every member's fixed context; the broker " +
-        'fans the edit out and each affected runner restarts its agent at the next ' +
-        'idle boundary, resuming the same conversation under the new text. Until ' +
+        'fans the edit out and each affected runner restarts its agent cold at the next ' +
+        'idle boundary under the new text (the successor is re-briefed on its open ' +
+        'objectives; it does not resume the prior conversation). Until ' +
         'then the roster lists those members restart-pending. ' +
         'Pass at least one of `name`, `context`. Returns the updated team ' +
         'config (same shape as `team_get`).',
@@ -1842,8 +1843,9 @@ function buildProcessDocumentTools(instructions: InstructionsResponse): Tool[] {
       'with `process_document_get` and send the full new text, or you will delete everything ' +
       'you did not retype. The first write creates version 1; every later write increments ' +
       'the version and retains the prior text, editor, reason, and disposition. Every affected ' +
-      'runner restarts at its next idle boundary and resumes the same conversation under the ' +
-      'new version; the roster reports restart-pending until delivery. No broadcast is needed ' +
+      'runner restarts its agent cold at its next idle boundary under the new version (the ' +
+      'successor is re-briefed on its open objectives; it does not resume the prior ' +
+      'conversation); the roster reports restart-pending until delivery. No broadcast is needed ' +
       'for the edit to take effect and none is sent.',
     inputSchema: {
       type: 'object',
@@ -2682,9 +2684,9 @@ async function handleProcessDocumentWrite(
     `${created ? 'created' : 'updated'} the process document at v${document.version} ` +
       `(${edit.disposition}: ${binding}). ` +
       `${created ? 'History begins here.' : 'The prior text is retained and retrievable via `process_document_history`.'} ` +
-      'Affected runners restart at their next idle boundary and resume the same conversation ' +
-      'under the new version; the roster reports restart-pending until delivery. No broadcast ' +
-      'is needed and none was sent.',
+      'Affected runners restart their agents cold at their next idle boundary under the new ' +
+      'version (re-briefed on open objectives, not resuming the prior conversation); the ' +
+      'roster reports restart-pending until delivery. No broadcast is needed and none was sent.',
   );
 }
 

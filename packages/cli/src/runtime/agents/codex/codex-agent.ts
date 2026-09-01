@@ -37,13 +37,7 @@ import type {
   AgentSessionContext,
   RespawnPosture,
 } from '../adapter.js';
-import {
-  type CodexCompactOutcome,
-  defaultSessionsDir,
-  findCodexBinary,
-  findLatestThreadId,
-  spawnCodex,
-} from './adapter.js';
+import { type CodexCompactOutcome, findCodexBinary, spawnCodex } from './adapter.js';
 import { LocalMcpConfigError, loadLocalMcpConfig } from './local-mcp.js';
 
 export function createCodexSinkWrapper(): {
@@ -225,8 +219,10 @@ export interface CodexAdapterOptions {
   model?: string;
   /**
    * Resume a previous codex thread instead of starting fresh. A string
-   * is a thread id; `true` resumes this member's most recent thread on
-   * this machine.
+   * is a thread id (strict — codex fails if it does not exist). `true`
+   * (bare `--resume`) starts a new thread, loudly: codex has no native
+   * "most recent thread" resume and the runner no longer picks one
+   * from disk on the agent's behalf (see `resolveCodexResume`).
    */
   resume?: string | true;
   /** Extra args forwarded verbatim to `codex app-server`. */
@@ -243,7 +239,6 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
   // home symlinks it in), so tearing one home down and resuming from
   // a fresh one loses nothing.
   let effectiveResume: string | true | undefined = options.resume;
-  let cachedInitialPlan: { resumed: boolean; reason?: string } | null = null;
 
   // Buffering channel sink. The runner needs a sink up front, but the
   // codex channel sink can't exist until after spawnCodex creates the
@@ -457,19 +452,14 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
       return [codexRootCheck(), await codexCacheCheck(), codexLocalMcpCheck()];
     },
 
-    initialResumePlan(ctx: AgentSessionContext): { resumed: boolean; reason?: string } | null {
-      // Cached and computed from the ORIGINAL ask, not effectiveResume
-      // (which respawns mutate), so the stamp is call-order immune.
-      if (cachedInitialPlan === null) {
-        if (options.resume === undefined) cachedInitialPlan = { resumed: false };
-        else if (typeof options.resume === 'string') cachedInitialPlan = { resumed: true };
-        else
-          cachedInitialPlan =
-            findLatestThreadId(defaultSessionsDir(ctx.runner.instructions.name)) !== null
-              ? { resumed: true }
-              : { resumed: false, reason: 'no previous codex session found' };
-      }
-      return cachedInitialPlan;
+    initialResumePlan(): { resumed: boolean; reason?: string } | null {
+      // Computed from the ORIGINAL ask, not effectiveResume (which
+      // respawns mutate), so the stamp is call-order immune — and from
+      // nothing else: the runner no longer looks at the sessions dir to
+      // predict what a bare `--resume` will do (see resolveCodexResume).
+      if (options.resume === undefined) return { resumed: false };
+      if (typeof options.resume === 'string') return { resumed: true };
+      return { resumed: false, reason: 'bare --resume: codex threads resume by id only' };
     },
   };
   return adapter;

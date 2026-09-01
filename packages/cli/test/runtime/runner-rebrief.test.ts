@@ -199,6 +199,73 @@ describe('runner context re-brief', () => {
     expect(rebrief?.event.content).toContain('waiting on ops approval');
   });
 
+  it('briefs a SECOND bridge attach inside the cooldown — a fresh session holds nothing', async () => {
+    // A cold successor (instruction restart, clear, reload) connects a
+    // new bridge seconds after the predecessor was briefed. The
+    // cooldown exists to fold an attach and a compaction that land
+    // together; it must not withhold the plate from a process that
+    // never received one.
+    fakeBrokerObjectives.length = 0;
+    fakeBrokerObjectives.push(makeObjective());
+
+    broker = await startFakeBroker();
+    const delivered: RecordedRebrief[] = [];
+    runner = await startRunner({
+      url: broker.url,
+      token: FAKE_BROKER_TOKEN,
+      logger: silentLogger(),
+      noTrace: true,
+      channelSink: {
+        deliver: async (event) => {
+          delivered.push({ event });
+        },
+      },
+    });
+
+    const first = await connectFakeBridge(runner.socketPath);
+    sendFrame(first.socket, { kind: 'mcp_request', id: 1, method: 'tools/list' });
+    await waitFor(() => delivered.filter(isRebrief).length === 1);
+    first.socket.destroy();
+
+    // The successor's bridge, well inside the 10s cooldown.
+    const second = await connectFakeBridge(runner.socketPath);
+    socket = second.socket;
+    sendFrame(socket, { kind: 'mcp_request', id: 1, method: 'tools/list' });
+    await waitFor(() => delivered.filter(isRebrief).length === 2);
+    expect(delivered.filter(isRebrief)[1]?.event.content).toContain('obj-77');
+    expect(delivered.filter(isRebrief)[1]?.event.meta.reason).toBe('session-start');
+  });
+
+  it('still folds a compaction signal landing inside the cooldown (the case the cooldown is for)', async () => {
+    fakeBrokerObjectives.length = 0;
+    fakeBrokerObjectives.push(makeObjective());
+
+    broker = await startFakeBroker();
+    const delivered: RecordedRebrief[] = [];
+    runner = await startRunner({
+      url: broker.url,
+      token: FAKE_BROKER_TOKEN,
+      logger: silentLogger(),
+      noTrace: true,
+      channelSink: {
+        deliver: async (event) => {
+          delivered.push({ event });
+        },
+      },
+    });
+
+    const bridge = await connectFakeBridge(runner.socketPath);
+    socket = bridge.socket;
+    sendFrame(socket, { kind: 'mcp_request', id: 1, method: 'tools/list' });
+    await waitFor(() => delivered.filter(isRebrief).length === 1);
+
+    // The adapter-side compaction observation (codex's contextCompaction
+    // item, claude's SessionStart(compact) hook) right after the attach.
+    runner.rebrief('context-compaction');
+    await new Promise((r) => setTimeout(r, 100));
+    expect(delivered.filter(isRebrief)).toHaveLength(1);
+  });
+
   it('stays silent when the plate is empty', async () => {
     fakeBrokerObjectives.length = 0;
 

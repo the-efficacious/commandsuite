@@ -2262,6 +2262,16 @@ export interface ListTelemetryQuery {
  * `objective_open` and `objective_close` markers for a given
  * objectiveId.
  */
+/**
+ * Every variant carries an optional `sourceId`: the stable id of the
+ * source record the runner mapped it from (for Claude, the transcript
+ * line's `uuid`, suffixed with the tool_use id when one line yields
+ * several `tool_action`s). The broker dedups on `(member, sourceId)`,
+ * so re-reading a resumed or forked transcript, or retrying a batch
+ * whose ack was lost, cannot write the same activity twice. Absent on
+ * events from older runners and on the driver-minted brackets — those
+ * are stored exactly as before, with no dedup.
+ */
 export type ActivityEvent =
   | ActivitySessionStart
   | ActivitySessionEnd
@@ -2285,6 +2295,8 @@ export type ActivityKind = ActivityEvent['kind'];
  */
 export interface ActivitySessionStart {
   readonly kind: 'session_start';
+  /** Stable source-record id for broker-side dedup; see `ActivityEvent`. */
+  readonly sourceId?: string;
   readonly ts: number;
   /** Runner id (`'claude-code'`, `'codex'`, ...). */
   readonly runner: string;
@@ -2293,12 +2305,17 @@ export interface ActivitySessionStart {
   /** The runner's declared capture tier (0 operable … 3 full fidelity). */
   readonly captureTier?: number;
   /**
-   * Whether this generation resumed a prior conversation. `false` with
-   * a `resumeReason` marks a resume-or-start fallback (bare --resume
-   * found nothing — e.g. a fresh member or a wiped state dir), which
-   * must be visible in the trace, not only in a runner log. Absent on
-   * events from older runners. (obj-mtfxwvbk-j extends this event with
-   * the full RunnerIdentity; one schema, coordinated there.)
+   * Whether this generation resumed a prior conversation, stamped only
+   * from what the runner itself decided: `true` for an explicit
+   * `--resume <id>`, `false` for a plain start, and `false` with a
+   * `resumeReason` for every cold respawn (`instructions changed`,
+   * `environment reloaded`, `context cleared`). ABSENT when the runner
+   * did not decide — bare `--resume` hands the choice to the agent
+   * (Claude's `continue`), whose own SessionStart hook reports
+   * `startup`/`resume` after this event has already shipped — and on
+   * events from older runners. The runner never guesses from the
+   * filesystem. (obj-mtfxwvbk-j extends this event with the full
+   * RunnerIdentity; one schema, coordinated there.)
    */
   readonly resumed?: boolean;
   readonly resumeReason?: string;
@@ -2314,6 +2331,8 @@ export interface ActivitySessionStart {
  */
 export interface ActivitySessionEnd {
   readonly kind: 'session_end';
+  /** Stable source-record id for broker-side dedup; see `ActivityEvent`. */
+  readonly sourceId?: string;
   readonly ts: number;
   /** Runner id (`'claude-code'`, `'codex'`, ...). */
   readonly runner: string;
@@ -2344,12 +2363,16 @@ export interface ActivitySessionEnd {
 
 export interface ActivityObjectiveOpen {
   readonly kind: 'objective_open';
+  /** Stable source-record id for broker-side dedup; see `ActivityEvent`. */
+  readonly sourceId?: string;
   readonly ts: number;
   readonly objectiveId: string;
 }
 
 export interface ActivityObjectiveClose {
   readonly kind: 'objective_close';
+  /** Stable source-record id for broker-side dedup; see `ActivityEvent`. */
+  readonly sourceId?: string;
   readonly ts: number;
   readonly objectiveId: string;
   /** Terminal state that caused the close. */
@@ -2358,6 +2381,8 @@ export interface ActivityObjectiveClose {
 
 export interface ActivityLlmExchange {
   readonly kind: 'llm_exchange';
+  /** Stable source-record id for broker-side dedup; see `ActivityEvent`. */
+  readonly sourceId?: string;
   /** Start of the model request (as reported by the capture source). */
   readonly ts: number;
   /** Milliseconds between request start and response end. */
@@ -2384,6 +2409,8 @@ export interface ActivityLlmExchange {
  */
 export interface ActivityToolAction {
   readonly kind: 'tool_action';
+  /** Stable source-record id for broker-side dedup; see `ActivityEvent`. */
+  readonly sourceId?: string;
   /** When the tool action was recorded (PostToolUse fire time). */
   readonly ts: number;
   /** Optional wall-clock duration of the tool call, if known. */
@@ -2430,6 +2457,8 @@ export interface ActivityToolAction {
  */
 export interface ActivityUserPrompt {
   readonly kind: 'user_prompt';
+  /** Stable source-record id for broker-side dedup; see `ActivityEvent`. */
+  readonly sourceId?: string;
   /** When the prompt was submitted. */
   readonly ts: number;
   /** Redacted prompt text that woke the turn. */
@@ -2549,6 +2578,8 @@ export interface ContextControlResponse {
  */
 export interface ActivityContextControl {
   readonly kind: 'context_control';
+  /** Stable source-record id for broker-side dedup; see `ActivityEvent`. */
+  readonly sourceId?: string;
   readonly ts: number;
   /** Correlation id from `ContextControlResponse`. */
   readonly requestId: string;
@@ -2575,6 +2606,8 @@ export interface ActivityContextControl {
 
 export interface ActivityAuthState {
   readonly kind: 'auth_state';
+  /** Stable source-record id for broker-side dedup; see `ActivityEvent`. */
+  readonly sourceId?: string;
   readonly ts: number;
   readonly state: 'blocked' | 'recovered';
   readonly status: 401;

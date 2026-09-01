@@ -344,7 +344,12 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
   // hook with source=compact|clear). Empty plates are skipped — an
   // empty re-brief is noise. The real implementation is assigned once
   // the notification sink exists below; the cooldown guards against
-  // double-fire when an attach and a compaction land together.
+  // double-fire when an attach and a compaction land together. It
+  // applies to the COMPACTION trigger only: a fresh MCP session (a
+  // cold successor after an instruction restart, a `clear`, a
+  // reconnect) holds none of the previous brief, so a plate sent
+  // seconds ago to the process it replaced is no reason to withhold
+  // one from it — the re-brief is the successor's context.
   const REBRIEF_COOLDOWN_MS = 10_000;
   let lastRebriefMs = 0;
   let sendRebrief: (reason: 'session-start' | 'context-compaction') => void = () => {};
@@ -640,7 +645,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
   sendRebrief = (reason) => {
     if (openObjectives.length === 0) return;
     const now = Date.now();
-    if (now - lastRebriefMs < REBRIEF_COOLDOWN_MS) return;
+    if (reason === 'context-compaction' && now - lastRebriefMs < REBRIEF_COOLDOWN_MS) return;
     lastRebriefMs = now;
     log.info('sending context re-brief', {
       reason,

@@ -5131,10 +5131,25 @@ export function createApp(options: AppOptions): CreatedApp {
         return c.json({ error: 'invalid activity payload', details: parsed.error.issues }, 400);
       }
       try {
-        const rows = activityStore.append(name, parsed.data.events);
-        // Same rule: an empty accepted set exercises no write.
+        const events = parsed.data.events;
+        const rows = activityStore.append(name, events);
+        // Same rule: an empty inserted set exercises no write.
         if (rows.length > 0) diagnostics?.emit.activityAppended(name);
-        return c.json({ accepted: rows.length }, 201);
+        // A duplicate by `sourceId` is one the store already holds, so
+        // the broker HAS accepted it — `accepted` counts every event it
+        // now vouches for, not only the rows this call wrote. The
+        // runner's `uploaded` accounting reads this number, and a retry
+        // after a lost ack (the first attempt counted nothing) would
+        // otherwise report those events as never shipped. Surfaced in
+        // the log so a replay storm is visible on the broker side.
+        if (rows.length < events.length) {
+          logger.info('duplicate activity suppressed by sourceId', {
+            name,
+            suppressed: events.length - rows.length,
+            received: events.length,
+          });
+        }
+        return c.json({ accepted: events.length }, 201);
       } catch (err) {
         diagnostics?.emit.activityAppendFailed(name, parsed.data.events.length);
         logger.warn('agent activity append failed', {

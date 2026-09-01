@@ -28,9 +28,9 @@
  */
 
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 import { logger as defaultLogger, type Logger } from 'csuite-core';
 import type { InstructionsResponse } from 'csuite-sdk/types';
 import { CLI_VERSION } from '../../../version.js';
@@ -237,10 +237,6 @@ export interface CodexSpawnResult {
 
 export type { CodexCompactOutcome } from './compaction.js';
 
-/** Trailing codex thread uuid in a rollout filename. */
-const ROLLOUT_THREAD_ID_RE =
-  /^rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
-
 /**
  * Default durable sessions dir for a member. Data (not cache) — the
  * rollouts are the resume history, and a cache sweep must not eat them.
@@ -254,44 +250,26 @@ export function defaultSessionsDir(memberName: string): string {
 }
 
 /**
- * `--resume` with no id: the most recent thread in the member's durable
- * sessions dir. Rollout filenames embed a sortable timestamp
- * (`rollout-<ISO>-<uuid>.jsonl`) under zero-padded `YYYY/MM/DD` dirs, so
- * the lexicographically greatest relative path is the newest thread.
+ * Resolve a `--resume` posture. An explicit id is passed through
+ * untouched and stays strict: the caller named a thread, and if it does
+ * not exist codex's own failure is correct. Bare `true` starts a NEW
+ * thread, loudly (`resumedFresh`): codex's app-server has no
+ * "continue the most recent thread" operation, and an earlier version
+ * of this runner filled that gap by scanning the member's sessions dir
+ * for the newest rollout and resuming it on the agent's behalf. That
+ * was CommandSuite choosing an agent's conversation from the
+ * filesystem — a guess about context that is the agent framework's to
+ * manage, not the substrate's — so the scan is gone. Fresh-and-loud
+ * rather than an error because under a supervisor (`install-service`
+ * writes `--resume` into every unit) a deterministic error is an
+ * infinite Restart= loop.
  */
-export function findLatestThreadId(sessionsDir: string): string | null {
-  let entries: string[];
-  try {
-    entries = readdirSync(sessionsDir, { recursive: true }) as string[];
-  } catch {
-    return null;
-  }
-  const rollouts = entries.filter((rel) => ROLLOUT_THREAD_ID_RE.test(basename(rel))).sort();
-  const newest = rollouts[rollouts.length - 1];
-  if (newest === undefined) return null;
-  const m = ROLLOUT_THREAD_ID_RE.exec(basename(newest));
-  return m?.[1] ?? null;
-}
-
-/**
- * Resolve a `--resume` posture against the sessions on disk. Bare
- * `true` is resume-or-start: newest thread when one exists, otherwise
- * a loud fresh start (`resumedFresh`) — under a supervisor a
- * deterministic "nothing to resume" error is an infinite Restart=
- * loop, not loudness. An explicit id stays strict and is passed
- * through untouched: the caller named a thread; if it does not exist,
- * codex's own failure is correct.
- */
-export function resolveCodexResume(
-  resume: string | true | undefined,
-  sessionsDir: string,
-): { threadId: string | null; resumedFresh: boolean } {
-  if (resume === true) {
-    const threadId = findLatestThreadId(sessionsDir);
-    return { threadId, resumedFresh: threadId === null };
-  }
+export function resolveCodexResume(resume: string | true | undefined): {
+  threadId: string | null;
+  resumedFresh: boolean;
+} {
   if (typeof resume === 'string') return { threadId: resume, resumedFresh: false };
-  return { threadId: null, resumedFresh: false };
+  return { threadId: null, resumedFresh: resume === true };
 }
 
 export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnResult> {
@@ -315,17 +293,18 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
 
   // 0. Durable sessions + resume resolution. Sessions persist per
   //    member so threads survive the ephemeral home; resolve `--resume`
-  //    (bare form = newest rollout on disk) BEFORE touching anything so
-  //    "nothing to resume" fails fast with no cleanup owed.
+  //    BEFORE touching anything so a strict id that cannot be honoured
+  //    fails fast with no cleanup owed.
   const sessionsDir = opts.sessionsDir ?? defaultSessionsDir(opts.instructions.name);
-  const resolved = resolveCodexResume(opts.resume, sessionsDir);
+  const resolved = resolveCodexResume(opts.resume);
   const resumeThreadId = resolved.threadId;
   const resumedFresh = resolved.resumedFresh;
   if (resumedFresh) {
-    log.info('resume: no previous codex session found — starting a new thread', {
-      member: opts.instructions.name,
-      sessionsDir,
-    });
+    log.info(
+      'bare --resume: codex has no most-recent-thread resume — starting a new thread ' +
+        '(pass --resume <threadId> to continue a specific one)',
+      { member: opts.instructions.name, sessionsDir },
+    );
   }
 
   // 1. Set up ephemeral CODEX_HOME with our config.toml. When tracing is

@@ -21,6 +21,20 @@
  * Payloads are stored as JSON blobs (`event_json`). The server
  * doesn't introspect them beyond validating the discriminator at the
  * app layer; everything else is the SDK's responsibility.
+ *
+ * IDEMPOTENT ON `sourceId`. An event that names its source record (the
+ * transcript line uuid, for Claude) lands at most once per member: the
+ * `(member_name, source_id)` unique index is partial (`WHERE source_id
+ * IS NOT NULL`), so id-less events — older runners, the driver-minted
+ * brackets, the broker's own tool-invoke audit rows — are stored
+ * exactly as before, and pre-existing rows are never touched by the
+ * migration. `append` reports and fans out ONLY the rows that landed:
+ * a duplicate is neither returned nor delivered to a live-tail
+ * subscriber, because the subscriber already saw the original. This is
+ * the broker's own defence against a runner replaying history (a
+ * resumed transcript re-read from offset zero; a batch retried after a
+ * lost ack): the runner's in-memory dedup is the first line, not the
+ * only one.
  */
 
 import { ActivityEventSchema } from 'csuite-sdk/schemas';
@@ -41,7 +55,8 @@ const CREATE_SCHEMA = `
     ts INTEGER NOT NULL,
     kind TEXT NOT NULL,
     event_json TEXT NOT NULL,
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL,
+    source_id TEXT
   );
   CREATE INDEX IF NOT EXISTS member_activity_member_ts_idx
     ON member_activity (member_name, ts);
@@ -56,6 +71,18 @@ const CREATE_SCHEMA = `
     ON member_activity (member_name, kind, created_at);
 `;
 
+/**
+ * The dedup index, created AFTER the lazy `source_id` migration below so
+ * an older database gains the column before anything indexes it.
+ * Partial on purpose: rows without a source id (every row that predates
+ * the column, and every id-less event) stay outside the uniqueness rule.
+ */
+const CREATE_SOURCE_INDEX = `
+  CREATE UNIQUE INDEX IF NOT EXISTS member_activity_member_source_idx
+    ON member_activity (member_name, source_id)
+    WHERE source_id IS NOT NULL;
+`;
+
 interface ActivityRowRaw {
   id: number;
   member_name: string;
@@ -63,6 +90,7 @@ interface ActivityRowRaw {
   kind: string;
   event_json: string;
   created_at: number;
+  source_id: string | null;
 }
 
 /**
@@ -112,16 +140,43 @@ class SqliteActivityStore implements CoreActivityStore {
     this.db = db;
     this.log = log;
     this.db.exec(CREATE_SCHEMA);
+    // Best-effort migration for databases created before `source_id`
+    // existed — the same lazy ALTER the event log and token store use.
+    // Fresh databases already have the column from CREATE_SCHEMA, so the
+    // ALTER fails with "duplicate column name" and that one error is
+    // swallowed; anything else is a real problem and rethrows.
+    try {
+      this.db.exec('ALTER TABLE member_activity ADD COLUMN source_id TEXT');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.includes('duplicate column name')) throw err;
+    }
+    this.db.exec(CREATE_SOURCE_INDEX);
+    // Upsert-ignore against the partial index. `ON CONFLICT ... DO
+    // NOTHING` (not `INSERT OR IGNORE`) so only THIS uniqueness rule is
+    // tolerated — a NOT NULL or CHECK violation must still throw rather
+    // than silently drop a row. The conflict target names the index's
+    // WHERE clause; SQLite matches partial indexes only when it does.
     this.insertStmt = db.prepare(
-      `INSERT INTO member_activity (member_name, ts, kind, event_json, created_at)
-       VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO member_activity (member_name, ts, kind, event_json, created_at, source_id)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT (member_name, source_id) WHERE source_id IS NOT NULL DO NOTHING`,
     );
   }
 
+  /**
+   * Persist `events`, returning ONLY the rows that landed. An event whose
+   * `sourceId` is already stored for this member is suppressed by the
+   * partial unique index: it is not returned, and no listener fires for
+   * it — the live tail already carried the original, and re-delivering
+   * it would put the very duplicate this index exists to refuse in
+   * front of every subscriber.
+   */
   append(memberName: string, events: readonly ActivityEvent[]): ActivityRow[] {
     if (events.length === 0) return [];
     const now = Date.now();
     const inserted: ActivityRow[] = [];
+    let suppressed = 0;
 
     // Transaction: either every row lands or none — atomicity goes
     // through the driver seam (runInTransaction).
@@ -133,16 +188,34 @@ class SqliteActivityStore implements CoreActivityStore {
           event.kind,
           JSON.stringify(event),
           now,
+          event.sourceId ?? null,
         );
-        const id = Number(result.lastInsertRowid ?? 0);
+        // `changes` is the only honest signal that a row landed. On a
+        // suppressed conflict SQLite reports 0 changes but leaves
+        // `lastInsertRowid` at whatever the connection's LAST insert
+        // was — reading it here would hand back a different row's id
+        // as if it were this event's. Measured on node:sqlite, not
+        // assumed.
+        if (Number(result.changes) === 0) {
+          suppressed++;
+          continue;
+        }
         inserted.push({
-          id,
+          id: Number(result.lastInsertRowid),
           memberName,
           event,
           createdAt: now,
         });
       }
     });
+
+    if (suppressed > 0) {
+      this.log.debug('suppressed duplicate activity by sourceId', {
+        memberName,
+        suppressed,
+        inserted: inserted.length,
+      });
+    }
 
     // Snapshot listeners before iterating — a handler may unsubscribe
     // itself (or others) mid-fire. Mirrors InMemoryActivityStore.

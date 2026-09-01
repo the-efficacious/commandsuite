@@ -12,7 +12,11 @@
  *   - a `user` text line -> a `user_prompt` opener;
  *   - an `isMeta` line -> skipped;
  *   - a duplicate `uuid` -> emitted once;
- *   - secrets in content -> redacted before they leave the reader.
+ *   - secrets in content -> redacted before they leave the reader;
+ *   - every event carries the line's `uuid` as `sourceId` (per
+ *     tool_result for tool_actions) so the broker can dedup a replay;
+ *   - a CHANGE of transcript path re-pins the tail to the new file
+ *     without re-emitting the history a resumed transcript replays.
  *
  * The reader tails a real file with fs.watch + a poll fallback, so the
  * tests write the fixture then poll the collected events until they
@@ -201,6 +205,8 @@ describe('TranscriptReader', () => {
     // duration ≈ this line's ts minus the prior line's ts (opener at :01,
     // assistant at :03 → 2000ms).
     expect(ex.duration).toBe(2000);
+    // The line's uuid leaves the runner as the broker's dedup key.
+    expect(ex.sourceId).toBe('asst-1');
 
     // ── tool_action ─────────────────────────────────────────────────
     const actions = events.filter((e) => e.kind === 'tool_action');
@@ -212,6 +218,8 @@ describe('TranscriptReader', () => {
     expect(action.toolName).toBe('Bash'); // resolved from the tool_use id->name map
     expect(action.toolUseId).toBe('toolu_1');
     expect(action.isError).toBe(false);
+    // Per tool_result, not per line — see the multi-result test below.
+    expect(action.sourceId).toBe('user-tr-1:toolu_1');
     // Result content redacted.
     expect(JSON.stringify(action.result)).toContain('[REDACTED]');
     expect(JSON.stringify(action.result)).not.toContain('super-secret');
@@ -225,6 +233,33 @@ describe('TranscriptReader', () => {
     expect(opener.promptId).toBe('p-1');
     expect(opener.text).toContain('[REDACTED]');
     expect(opener.text).not.toContain('super-secret');
+    expect(opener.sourceId).toBe('user-open-1');
+  });
+
+  it('gives each tool_result of one line its own sourceId', async () => {
+    // One user line can carry several results. The broker dedups on
+    // sourceId, so a per-line key would make the second result look
+    // like a replay of the first and drop it at the store.
+    const line = {
+      type: 'user',
+      uuid: 'user-multi-1',
+      timestamp: '2026-07-05T00:00:01.000Z',
+      message: {
+        role: 'user',
+        content: [
+          { type: 'tool_result', tool_use_id: 'toolu_a', is_error: false, content: 'a' },
+          { type: 'tool_result', tool_use_id: 'toolu_b', is_error: false, content: 'b' },
+        ],
+      },
+    };
+    writeFileSync(path, `${JSON.stringify(line)}\n`);
+
+    start();
+    await waitFor(() => events.filter((e) => e.kind === 'tool_action').length >= 2);
+
+    const ids = events.filter((e) => e.kind === 'tool_action').map((e) => e.sourceId);
+    expect(ids).toEqual(['user-multi-1:toolu_a', 'user-multi-1:toolu_b']);
+    expect(new Set(ids).size).toBe(2);
   });
 
   it('labels a tool_result from MCP attribution when no tool_use name was seen', async () => {
@@ -407,5 +442,191 @@ describe('TranscriptReader', () => {
     for (const release of openGate.pending.splice(0)) release();
     await new Promise((r) => setTimeout(r, 80));
     expect(events).toHaveLength(countAtClose); // nothing emitted past close
+  });
+
+  // ── Following a transcript path change ─────────────────────────────
+  //
+  // The agent process is swapped under a live capture host on every
+  // restart, and each successor writes a NEW transcript. A resumed or
+  // forked transcript begins by replaying the prior session's lines
+  // under their original uuids. Measured in production before this
+  // existed: a fresh reader on such a file re-emitted 1000+ rows of
+  // history in one second. The contract: follow the new file, emit
+  // only what is genuinely new, and never lose the new file's own
+  // first lines to a stale offset.
+
+  const userLine = (uuid: string, second: number, text: string): string =>
+    JSON.stringify({
+      type: 'user',
+      uuid,
+      timestamp: `2026-07-05T00:00:${String(second).padStart(2, '0')}.000Z`,
+      message: { role: 'user', content: [{ type: 'text', text }] },
+    });
+  const prompts = (): string[] =>
+    events.filter((e) => e.kind === 'user_prompt').map((e) => e.sourceId ?? '?');
+
+  it('re-pins to a new path, re-emits nothing a resumed transcript replays, and tails the new file', async () => {
+    const pathA = join(dir, 'session-a.jsonl');
+    const pathB = join(dir, 'session-b.jsonl');
+    let current: string = pathA;
+    writeFileSync(pathA, `${userLine('a-1', 1, 'one')}\n${userLine('a-2', 2, 'two')}\n`);
+    reader = attachTranscriptReader({
+      getPath: () => current,
+      enqueue: (e) => events.push(e),
+      logger: silentLogger(),
+      pollMs: 25,
+    });
+    await waitFor(() => prompts().length >= 2);
+    expect(prompts()).toEqual(['a-1', 'a-2']);
+
+    // The successor's transcript: the whole prior history replayed
+    // under the SAME uuids (the resumed/forked shape), then one line
+    // that is genuinely new. It is also LONGER than A, so a reader that
+    // kept A's offset would skip straight past the replay AND the new
+    // line — and one that reset the offset but not the dedup set would
+    // re-emit both replayed lines.
+    writeFileSync(
+      pathB,
+      `${userLine('a-1', 1, 'one')}\n${userLine('a-2', 2, 'two')}\n${userLine('b-1', 3, 'three')}\n`,
+    );
+    current = pathB;
+    await waitFor(() => prompts().includes('b-1'));
+    // Exactly the new line: the two replayed ones were recognised.
+    expect(prompts()).toEqual(['a-1', 'a-2', 'b-1']);
+
+    // The tail now follows B incrementally — the watcher and offset
+    // moved, not just the dedup.
+    appendFileSync(pathB, `${userLine('b-2', 4, 'four')}\n`);
+    await waitFor(() => prompts().includes('b-2'));
+    expect(prompts()).toEqual(['a-1', 'a-2', 'b-1', 'b-2']);
+
+    // …and A is dead to us: a line appended there is never read.
+    appendFileSync(pathA, `${userLine('a-3', 5, 'stale')}\n`);
+    await new Promise((r) => setTimeout(r, 120));
+    expect(prompts()).toEqual(['a-1', 'a-2', 'b-1', 'b-2']);
+  });
+
+  it('a cold successor transcript (no replay) is read from its first line', async () => {
+    // The mirror of the test above and the one a dedup-only fix would
+    // pass by accident: B shares nothing with A, and its FIRST line
+    // must be emitted. A stale offset would skip it silently.
+    const pathA = join(dir, 'session-a.jsonl');
+    const pathB = join(dir, 'session-b.jsonl');
+    let current: string = pathA;
+    writeFileSync(
+      pathA,
+      `${userLine('a-1', 1, 'a long first line to give A some bytes')}\n${userLine('a-2', 2, 'two')}\n`,
+    );
+    reader = attachTranscriptReader({
+      getPath: () => current,
+      enqueue: (e) => events.push(e),
+      logger: silentLogger(),
+      pollMs: 25,
+    });
+    await waitFor(() => prompts().length >= 2);
+
+    writeFileSync(pathB, `${userLine('b-1', 3, 'b')}\n`); // shorter than A
+    current = pathB;
+    await waitFor(() => prompts().includes('b-1'));
+    expect(prompts()).toEqual(['a-1', 'a-2', 'b-1']);
+  });
+
+  it('carries tool names across the seam and resets the duration baseline', async () => {
+    // A resume can land between a tool_use and its result: the
+    // successor's first line is the tool_result for a tool_use issued
+    // in the predecessor's transcript. The label must survive the
+    // re-pin (else 'tool'). And an assistant line at the top of a cold
+    // file must not measure its duration against the last line of a
+    // different conversation hours earlier.
+    const pathA = join(dir, 'session-a.jsonl');
+    const pathB = join(dir, 'session-b.jsonl');
+    let current: string = pathA;
+    const assistantA = JSON.stringify({
+      type: 'assistant',
+      uuid: 'asst-a',
+      timestamp: '2026-07-05T00:00:01.000Z',
+      message: {
+        role: 'assistant',
+        model: 'claude-opus-4-8',
+        content: [{ type: 'tool_use', id: 'toolu_9', name: 'Bash', input: { command: 'ls' } }],
+      },
+    });
+    writeFileSync(pathA, `${assistantA}\n`);
+    reader = attachTranscriptReader({
+      getPath: () => current,
+      enqueue: (e) => events.push(e),
+      logger: silentLogger(),
+      pollMs: 25,
+    });
+    await waitFor(() => events.some((e) => e.kind === 'llm_exchange'));
+
+    const resultB = JSON.stringify({
+      type: 'user',
+      uuid: 'user-b',
+      // Six hours later — a baseline carried over would show up as a
+      // six-hour duration on the assistant line that follows.
+      timestamp: '2026-07-05T06:00:00.000Z',
+      message: {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'toolu_9', is_error: false, content: 'x' }],
+      },
+    });
+    const assistantB = JSON.stringify({
+      type: 'assistant',
+      uuid: 'asst-b',
+      timestamp: '2026-07-05T06:00:02.000Z',
+      message: {
+        role: 'assistant',
+        model: 'claude-opus-4-8',
+        content: [{ type: 'text', text: 'done' }],
+      },
+    });
+    writeFileSync(pathB, `${resultB}\n${assistantB}\n`);
+    current = pathB;
+    await waitFor(() => events.some((e) => e.kind === 'llm_exchange' && e.sourceId === 'asst-b'));
+
+    const action = events.find((e) => e.kind === 'tool_action');
+    if (action?.kind !== 'tool_action') throw new Error('expected tool_action');
+    expect(action.toolName).toBe('Bash'); // harvested in A, applied in B
+    const second = events.find((e) => e.kind === 'llm_exchange' && e.sourceId === 'asst-b');
+    if (second?.kind !== 'llm_exchange') throw new Error('expected llm_exchange');
+    // Measured against B's own previous line (2s), not A's (six hours).
+    expect(second.duration).toBe(2000);
+  });
+
+  it('a re-pin landing mid-drain does not let the old file advance the new offset', async () => {
+    // Regression for the snapshot-and-recheck in drain(): the reader is
+    // parked inside open() on A when the path flips to B. The resumed
+    // drain has read A's bytes; committing them would set B's offset to
+    // A's length and B's first lines would never be read.
+    const pathA = join(dir, 'session-a.jsonl');
+    const pathB = join(dir, 'session-b.jsonl');
+    let current: string = pathA;
+    writeFileSync(pathA, `${userLine('a-1', 1, 'one')}\n`);
+    reader = attachTranscriptReader({
+      getPath: () => current,
+      enqueue: (e) => events.push(e),
+      logger: silentLogger(),
+      pollMs: 25,
+    });
+    await waitFor(() => prompts().includes('a-1'));
+
+    // Give A a fat tail, then park the next drain inside open().
+    appendFileSync(pathA, `${userLine('a-2', 2, 'x'.repeat(2000))}\n`);
+    openGate.armed = true;
+    await waitFor(() => openGate.pending.length > 0);
+
+    // Flip the path while that drain is parked. B is shorter than A's
+    // unread tail, so a stale commit would put B's offset past its end.
+    writeFileSync(pathB, `${userLine('b-1', 3, 'b')}\n`);
+    current = pathB;
+    await new Promise((r) => setTimeout(r, 60)); // let the poll observe the change
+    openGate.armed = false;
+    for (const release of openGate.pending.splice(0)) release();
+
+    await waitFor(() => prompts().includes('b-1'));
+    expect(prompts()).toContain('b-1');
+    // The parked drain's bytes belonged to A after the flip: dropped.
+    expect(prompts()).not.toContain('a-2');
   });
 });

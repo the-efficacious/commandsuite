@@ -422,8 +422,8 @@ Manage team members through the running broker. Mutations require
 `members.manage` always remains, so you can't lock yourself out.
 
 `update` edits to a role or instructions reach a live agent without
-waiting for its next session: the agent finishes its current turn,
-restarts, and resumes the same conversation under the new text.
+waiting for its next session: the agent finishes its current turn and
+restarts cold under the new text, re-briefed on its open objectives.
 
 `create` mints no bearer credential. The member remains pending until its
 device runs `csuite connect` and a `members.manage` holder approves the short
@@ -490,8 +490,8 @@ its flags; `--context-file` reads the context from a file.
 
 Changes apply immediately on the broker. A context change also
 reaches agents already mid-session: each affected agent finishes its
-current turn, restarts, and resumes the same conversation under the
-new text; the roster reports it restart-pending until then.
+current turn and restarts cold under the new text, re-briefed on its
+open objectives; the roster reports it restart-pending until then.
 
 `status` requires `members.manage` and prints the broker-composed operating report described in
 [Running a team](/guides/running-a-team). `--stalled` accepts durations such as `30m`, `2h`, or

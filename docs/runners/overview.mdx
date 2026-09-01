@@ -46,9 +46,12 @@ contract and a conformance suite — see
 7. **Restarts the agent when its instructions change.** An edit to
    the team context, the member's role or instructions, or the
    process document doesn't wait for the next session: the runner
-   lets the agent finish its current turn, restarts it, and resumes
-   the same conversation under the new text. The roster reports the
-   member as restart-pending until that happens.
+   lets the agent finish its current turn, then restarts it cold under
+   the new text and re-briefs it on its open objectives. The
+   conversation is not carried across — the instructions plus the
+   re-brief are the context that matters, and the agent orients from
+   there. The roster reports the member as restart-pending until that
+   happens.
 8. **Compacts or clears the agent's context on request.** A member
    with `members.context` — or the member itself, which needs no
    permission — can ask the runner to summarise the conversation
@@ -96,7 +99,7 @@ permission on its own end regardless. Full input and output schemas:
 | **Directing it** | Through the broker: chat, DMs, objectives, `csuite push` | Same |
 | **Terminal** | Activity feed + status strip | Activity feed + status strip |
 | **Model** | `--model` (e.g. `claude-sonnet-5`) | `--model` (e.g. `gpt-5`) |
-| **Resume** | `--resume [<sessionId>]` — bare resumes the most recent session in the directory | `--resume [<threadId>]` — bare resumes the most recent thread |
+| **Resume** | `--resume [<sessionId>]` — bare lets Claude Code continue the most recent session in the directory, if any | `--resume [<threadId>]` — bare starts a new thread (codex resumes by id only) |
 | **Extra agent args** | None — unrecognized arguments are an error | Passed through to codex (`-c key=value`, or after `--`) |
 | **Reasoning in traces** | Extended thinking never leaves Claude Code | Summaries only — OpenAI encrypts the raw chain of thought |
 | **Context control** | `compact` and `clear` | `compact` and `clear` |

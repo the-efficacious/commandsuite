@@ -306,8 +306,8 @@ Role and instructions edits fan out one `kind: 'instructions'`
 channel event to every member whose composed instruction text
 changed — a role edit also reaches teammates whose roster line
 moved, since that line is composed into their prose. Each affected
-runner restarts its agent at the next idle boundary under the new
-text, resuming the same conversation; `GET /roster` lists those
+runner restarts its agent cold at the next idle boundary under the new
+text (re-briefed on its open objectives); `GET /roster` lists those
 members in `restartPending` until it does. Permission-only patches
 never touch the prose and fan nothing out.
 
