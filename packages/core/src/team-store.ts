@@ -47,6 +47,10 @@ import {
 } from './members-domain.js';
 import { runInTransaction, type SqlDriver, type SqlStatement } from './sql-driver.js';
 
+const MEMBER_STATES = ['active', 'departed'] as const;
+type MemberState = (typeof MEMBER_STATES)[number];
+const MEMBER_STATE_SQL = MEMBER_STATES.map((state) => `'${state}'`).join(', ');
+
 const CREATE_SCHEMA = `
   CREATE TABLE IF NOT EXISTS team (
     id          INTEGER PRIMARY KEY CHECK (id = 1),
@@ -66,7 +70,7 @@ const CREATE_SCHEMA = `
   CREATE TABLE IF NOT EXISTS members (
     identity_id       TEXT NOT NULL UNIQUE,
     name              TEXT PRIMARY KEY,
-    state             TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'departed')),
+    state             TEXT NOT NULL DEFAULT 'active' CHECK (state IN (${MEMBER_STATE_SQL})),
     departed_at       INTEGER,
     departed_by       TEXT,
     role_title        TEXT NOT NULL,
@@ -101,7 +105,7 @@ interface RawPresetRow {
 interface RawMemberRow {
   identity_id: string;
   name: string;
-  state: 'active' | 'departed';
+  state: MemberState;
   departed_at: number | null;
   departed_by: string | null;
   role_title: string;
@@ -192,6 +196,30 @@ function migrateMemberLifecycle(db: SqlDriver): void {
       db.exec('ALTER TABLE members ADD COLUMN departed_by TEXT');
     }
   });
+}
+
+/**
+ * Keep the lifecycle vocabulary enforceable on both database shapes. SQLite
+ * cannot add a CHECK constraint with ALTER TABLE, so migrated databases need
+ * the same invariant at a shared write boundary rather than relying on the
+ * stronger schema used only for fresh installs.
+ */
+function ensureMemberLifecycleStateGuard(db: SqlDriver): void {
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS members_state_insert_guard
+    BEFORE INSERT ON members
+    WHEN NEW.state NOT IN (${MEMBER_STATE_SQL})
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid member state');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS members_state_update_guard
+    BEFORE UPDATE OF state ON members
+    WHEN NEW.state NOT IN (${MEMBER_STATE_SQL})
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid member state');
+    END;
+  `);
 }
 
 function decryptTotpSecret(stored: string | null, getCipher: GetFieldCipher): string | null {
@@ -374,6 +402,7 @@ class SqliteMemberStore implements MemberStore {
     this.db.exec(CREATE_SCHEMA);
     migrateMemberIdentityIds(this.db);
     migrateMemberLifecycle(this.db);
+    ensureMemberLifecycleStateGuard(this.db);
     this.listAllStmt = this.db.prepare(
       `SELECT identity_id, name, state, departed_at, departed_by,
               role_title, role_description, instructions, raw_permissions,

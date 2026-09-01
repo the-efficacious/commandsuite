@@ -145,6 +145,26 @@ describe('member stable-identity migration', () => {
         permissions: [],
       }),
     ).toThrow("duplicate name 'legacy'");
+    expect(() =>
+      db.prepare("UPDATE members SET state = 'departd' WHERE name = 'second'").run(),
+    ).toThrow('invalid member state');
+    db.close();
+  });
+
+  it('enforces the same lifecycle vocabulary on a fresh database', () => {
+    const db = openDatabase(':memory:');
+    const members = openTeamAndMembers(db).members;
+    members.addMember({
+      name: 'fresh',
+      role: { title: 'member', description: '' },
+      instructions: '',
+      rawPermissions: [],
+      permissions: [],
+    });
+
+    expect(() =>
+      db.prepare("UPDATE members SET state = 'departd' WHERE name = 'fresh'").run(),
+    ).toThrow(/invalid member state|CHECK constraint failed/);
     db.close();
   });
 });
