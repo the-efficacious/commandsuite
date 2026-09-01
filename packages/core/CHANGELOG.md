@@ -1,5 +1,87 @@
 # csuite-core
 
+## 0.9.0
+
+### Minor Changes
+
+- [#232](https://github.com/the-efficacious/commandsuite/pull/232) [`5e11966`](https://github.com/the-efficacious/commandsuite/commit/5e119668f7d1759bee6d5930edb99d585b1976a0) Thanks [@sureforge](https://github.com/sureforge)! - Refuse bearer-credential-shaped chat bodies before persistence and guard every
+  runner tool result before it enters an IPC frame or agent context. The shared
+  credential detector recognizes complete `csuite_` bearer tokens without
+  echoing the refused value.
+
+- [#222](https://github.com/the-efficacious/commandsuite/pull/222) [`b001e51`](https://github.com/the-efficacious/commandsuite/commit/b001e5193e890732f62da24a61bc79905df47506) Thanks [@sureforge](https://github.com/sureforge)! - Runners now receive a targeted `environment` stream event when a bound secret or variable changes, drain at idle, refresh their resolved environment through the broker, and resume the same conversation. `context_control reload` triggers the same refresh explicitly, while `--no-env-reload` disables only automatic environment restarts. New secret values are registered with the additive redactor before the successor agent starts; a failed refresh keeps the prior environment.
+
+- [#225](https://github.com/the-efficacious/commandsuite/pull/225) [`7e24133`](https://github.com/the-efficacious/commandsuite/commit/7e24133b5619805385c2ad7e44e1225b0fc8de8a) Thanks [@sureforge](https://github.com/sureforge)! - Notify long-running clients when bearer authentication is rejected, expose
+  token-aware blocked presence, and let runners retain capture while saved device
+  auth is replaced after re-enrolment.
+
+- [#231](https://github.com/the-efficacious/commandsuite/pull/231) [`bc0c171`](https://github.com/the-efficacious/commandsuite/commit/bc0c171707ee885c5db76f880b44749cf6ca9144) Thanks [@sureforge](https://github.com/sureforge)! - Add compatibility-preserving pending member creation. Callers can select
+  `credentialMode: 'pending'` to create a member without minting a bearer token;
+  the CLI, MCP tool, and web UI now use that mode and direct the new member through
+  device-code enrolment. Omitting the mode retains the 0.8 bootstrap-token response
+  until the legacy default is removed in a separately approved change.
+
+- [#254](https://github.com/the-efficacious/commandsuite/pull/254) [`2e27743`](https://github.com/the-efficacious/commandsuite/commit/2e277435e0904b59df74ec04d800f98ebb8b7dc2) Thanks [@sureforge](https://github.com/sureforge)! - Add the dedicated `channels.manage` permission, channel descriptions, and an
+  immutable administration audit. Channel creator and legacy channel-admin roles
+  no longer authorize mutations; creation is provenance and creators join as
+  ordinary members. Existing teams must grant `channels.manage` before channel
+  administration resumes.
+
+- [#288](https://github.com/the-efficacious/commandsuite/pull/288) [`bb79f4d`](https://github.com/the-efficacious/commandsuite/commit/bb79f4d8a16b2263b5bac2896ea6eac427c264e6) Thanks [@sureforge](https://github.com/sureforge)! - Make runner liveness evidence-based and message delivery recoverable. Runners
+  report typed ready/degraded conditions, action-only turn outcomes, and an
+  explicit supervision claim; peers that do not advertise the capability remain
+  unreported. Messages become
+  subscription-owned accepted leases at real turn start and return to pending on
+  disconnect or any degraded projection, while stale completions are refused.
+
+  0.9.0 is the protocol compatibility baseline. Upgrade brokers and runners
+  together from 0.8.x; mixed 0.8.x/0.9.0 deployments are unsupported.
+
+- [#274](https://github.com/the-efficacious/commandsuite/pull/274) [`19dac9e`](https://github.com/the-efficacious/commandsuite/commit/19dac9eca6bd9ac3c5b90580dea36bc24129e7a8) Thanks [@sureforge](https://github.com/sureforge)! - Add the runner-to-broker message disposition protocol and durable 24-hour
+  pending ledger. Notification receipts now wait for a subscriber acknowledgement
+  instead of claiming delivery when a live socket merely accepted bytes; old
+  runners remain explicitly unreported.
+
+- [#233](https://github.com/the-efficacious/commandsuite/pull/233) [`8811e48`](https://github.com/the-efficacious/commandsuite/commit/8811e487cd62fdc94aa7ca42f8783b9302237a71) Thanks [@sureforge](https://github.com/sureforge)! - Add explicit per-token and revoke-all bearer rotation scopes. The CLI requires
+  one scope and writes the replacement credential to a new 0600 file without
+  printing plaintext; the legacy empty REST body retains revoke-all behavior
+  until its separately approved compatibility flip.
+
+- [#260](https://github.com/the-efficacious/commandsuite/pull/260) [`7de73b4`](https://github.com/the-efficacious/commandsuite/commit/7de73b4e04d9f09edfb1389a7c81fb9df941e755) Thanks [@sureforge](https://github.com/sureforge)! - Add stable UUID member identities as the attribution key for typed offboarding.
+  Existing databases are backfilled transactionally, names remain the public
+  handle, and older brokers that do not report an identity remain readable.
+
+### Patch Changes
+
+- [#255](https://github.com/the-efficacious/commandsuite/pull/255) [`a45aff0`](https://github.com/the-efficacious/commandsuite/commit/a45aff09fca495707eff7243a8393b74402c52c7) Thanks [@sureforge](https://github.com/sureforge)! - Make `fs_ls` distinguish readable-empty, unreadable, and nonexistent member roots without exposing paths below an unreadable boundary, and correct the process-document tool text to describe idle restart, conversation resume, and retained history.
+
+- [#272](https://github.com/the-efficacious/commandsuite/pull/272) [`aa3b5ed`](https://github.com/the-efficacious/commandsuite/commit/aa3b5ed49450549d2d484058ffe6d0d5c2e6d081) Thanks [@sureforge](https://github.com/sureforge)! - Make unknown, unverified, and disabled webhook endpoints indistinguishable to
+  unauthenticated senders. Correctly signed requests to disabled endpoints now
+  leave a causal rejected receipt for authorized operators.
+
+- [#279](https://github.com/the-efficacious/commandsuite/pull/279) [`b6151be`](https://github.com/the-efficacious/commandsuite/commit/b6151becf1c60a3c6b861d96a35892cc5eddbd33) Thanks [@keencaliper](https://github.com/keencaliper)! - Declare `Vary: Accept` on both representations of the paths the web UI and
+  REST API share, and mark API responses `no-store`.
+
+  A browser navigation to `/objectives` is answered with the SPA shell while an
+  API call to the same URL is answered with JSON, and neither response said it
+  had varied on `Accept`. A cache is entitled to reuse the first for the second,
+  which is what happened: refreshing an objective page cached the shell under
+  that URL, the app's own fetch of the same URL was served that HTML, and the
+  page rendered `invalid JSON from …`. Because the objectives fetch lives in the
+  shell, one refresh degraded every route in the session until the entry expired.
+
+  Operators behind a CDN: `Vary: Accept` fixes the cache key going forward but
+  does not evict entries already stored under the unvaried response. Purge the
+  cache for HTML-negotiated origin paths after upgrading, or the symptom will
+  survive the fix and look like the fix failed.
+
+  API responses now also carry `Cache-Control: no-store`. RFC 9111 §3.5 already
+  stops a shared cache storing a response to an `Authorization`-bearing request,
+  but browser sessions authenticate with a cookie and get no such protection.
+
+- Updated dependencies [[`5e11966`](https://github.com/the-efficacious/commandsuite/commit/5e119668f7d1759bee6d5930edb99d585b1976a0), [`b001e51`](https://github.com/the-efficacious/commandsuite/commit/b001e5193e890732f62da24a61bc79905df47506), [`c6977d4`](https://github.com/the-efficacious/commandsuite/commit/c6977d416ff989db0ea1bc02aa8771e5dfde2ba8), [`7e24133`](https://github.com/the-efficacious/commandsuite/commit/7e24133b5619805385c2ad7e44e1225b0fc8de8a), [`bc0c171`](https://github.com/the-efficacious/commandsuite/commit/bc0c171707ee885c5db76f880b44749cf6ca9144), [`2e27743`](https://github.com/the-efficacious/commandsuite/commit/2e277435e0904b59df74ec04d800f98ebb8b7dc2), [`bb79f4d`](https://github.com/the-efficacious/commandsuite/commit/bb79f4d8a16b2263b5bac2896ea6eac427c264e6), [`19dac9e`](https://github.com/the-efficacious/commandsuite/commit/19dac9eca6bd9ac3c5b90580dea36bc24129e7a8), [`acf7f5a`](https://github.com/the-efficacious/commandsuite/commit/acf7f5adbd7e7cf9608641e12a1348a4671dabf8), [`8811e48`](https://github.com/the-efficacious/commandsuite/commit/8811e487cd62fdc94aa7ca42f8783b9302237a71), [`7de73b4`](https://github.com/the-efficacious/commandsuite/commit/7de73b4e04d9f09edfb1389a7c81fb9df941e755)]:
+  - csuite-sdk@0.9.0
+
 ## 0.8.0
 
 ### Minor Changes

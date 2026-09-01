@@ -1,5 +1,62 @@
 # csuite-sdk
 
+## 0.9.0
+
+### Minor Changes
+
+- [#232](https://github.com/the-efficacious/commandsuite/pull/232) [`5e11966`](https://github.com/the-efficacious/commandsuite/commit/5e119668f7d1759bee6d5930edb99d585b1976a0) Thanks [@sureforge](https://github.com/sureforge)! - Refuse bearer-credential-shaped chat bodies before persistence and guard every
+  runner tool result before it enters an IPC frame or agent context. The shared
+  credential detector recognizes complete `csuite_` bearer tokens without
+  echoing the refused value.
+
+- [#222](https://github.com/the-efficacious/commandsuite/pull/222) [`b001e51`](https://github.com/the-efficacious/commandsuite/commit/b001e5193e890732f62da24a61bc79905df47506) Thanks [@sureforge](https://github.com/sureforge)! - Runners now receive a targeted `environment` stream event when a bound secret or variable changes, drain at idle, refresh their resolved environment through the broker, and resume the same conversation. `context_control reload` triggers the same refresh explicitly, while `--no-env-reload` disables only automatic environment restarts. New secret values are registered with the additive redactor before the successor agent starts; a failed refresh keeps the prior environment.
+
+- [#225](https://github.com/the-efficacious/commandsuite/pull/225) [`7e24133`](https://github.com/the-efficacious/commandsuite/commit/7e24133b5619805385c2ad7e44e1225b0fc8de8a) Thanks [@sureforge](https://github.com/sureforge)! - Notify long-running clients when bearer authentication is rejected, expose
+  token-aware blocked presence, and let runners retain capture while saved device
+  auth is replaced after re-enrolment.
+
+- [#231](https://github.com/the-efficacious/commandsuite/pull/231) [`bc0c171`](https://github.com/the-efficacious/commandsuite/commit/bc0c171707ee885c5db76f880b44749cf6ca9144) Thanks [@sureforge](https://github.com/sureforge)! - Add compatibility-preserving pending member creation. Callers can select
+  `credentialMode: 'pending'` to create a member without minting a bearer token;
+  the CLI, MCP tool, and web UI now use that mode and direct the new member through
+  device-code enrolment. Omitting the mode retains the 0.8 bootstrap-token response
+  until the legacy default is removed in a separately approved change.
+
+- [#254](https://github.com/the-efficacious/commandsuite/pull/254) [`2e27743`](https://github.com/the-efficacious/commandsuite/commit/2e277435e0904b59df74ec04d800f98ebb8b7dc2) Thanks [@sureforge](https://github.com/sureforge)! - Add the dedicated `channels.manage` permission, channel descriptions, and an
+  immutable administration audit. Channel creator and legacy channel-admin roles
+  no longer authorize mutations; creation is provenance and creators join as
+  ordinary members. Existing teams must grant `channels.manage` before channel
+  administration resumes.
+
+- [#288](https://github.com/the-efficacious/commandsuite/pull/288) [`bb79f4d`](https://github.com/the-efficacious/commandsuite/commit/bb79f4d8a16b2263b5bac2896ea6eac427c264e6) Thanks [@sureforge](https://github.com/sureforge)! - Make runner liveness evidence-based and message delivery recoverable. Runners
+  report typed ready/degraded conditions, action-only turn outcomes, and an
+  explicit supervision claim; peers that do not advertise the capability remain
+  unreported. Messages become
+  subscription-owned accepted leases at real turn start and return to pending on
+  disconnect or any degraded projection, while stale completions are refused.
+
+  0.9.0 is the protocol compatibility baseline. Upgrade brokers and runners
+  together from 0.8.x; mixed 0.8.x/0.9.0 deployments are unsupported.
+
+- [#274](https://github.com/the-efficacious/commandsuite/pull/274) [`19dac9e`](https://github.com/the-efficacious/commandsuite/commit/19dac9eca6bd9ac3c5b90580dea36bc24129e7a8) Thanks [@sureforge](https://github.com/sureforge)! - Add the runner-to-broker message disposition protocol and durable 24-hour
+  pending ledger. Notification receipts now wait for a subscriber acknowledgement
+  instead of claiming delivery when a live socket merely accepted bytes; old
+  runners remain explicitly unreported.
+
+- [#239](https://github.com/the-efficacious/commandsuite/pull/239) [`acf7f5a`](https://github.com/the-efficacious/commandsuite/commit/acf7f5adbd7e7cf9608641e12a1348a4671dabf8) Thanks [@keencaliper](https://github.com/keencaliper)! - Bare `--resume` on `csuite claude` and `csuite codex` is now resume-or-start: it resumes the most recent session/thread when one exists and otherwise starts fresh — loudly, with a greppable runner log line and typed `resumed: false` + `resumeReason` on the `session_start` activity event — instead of erroring. Under a supervisor (`install-service`'s `Restart=always`) the old deterministic error was an infinite restart loop on any fresh member. Explicit `--resume <id>` stays strict. The `session_start` schema gains optional `resumed`/`resumeReason` fields (additive; absent on events from older runners).
+
+- [#233](https://github.com/the-efficacious/commandsuite/pull/233) [`8811e48`](https://github.com/the-efficacious/commandsuite/commit/8811e487cd62fdc94aa7ca42f8783b9302237a71) Thanks [@sureforge](https://github.com/sureforge)! - Add explicit per-token and revoke-all bearer rotation scopes. The CLI requires
+  one scope and writes the replacement credential to a new 0600 file without
+  printing plaintext; the legacy empty REST body retains revoke-all behavior
+  until its separately approved compatibility flip.
+
+- [#260](https://github.com/the-efficacious/commandsuite/pull/260) [`7de73b4`](https://github.com/the-efficacious/commandsuite/commit/7de73b4e04d9f09edfb1389a7c81fb9df941e755) Thanks [@sureforge](https://github.com/sureforge)! - Add stable UUID member identities as the attribution key for typed offboarding.
+  Existing databases are backfilled transactionally, names remain the public
+  handle, and older brokers that do not report an identity remain readable.
+
+### Patch Changes
+
+- [#218](https://github.com/the-efficacious/commandsuite/pull/218) [`c6977d4`](https://github.com/the-efficacious/commandsuite/commit/c6977d416ff989db0ea1bc02aa8771e5dfde2ba8) Thanks [@sureforge](https://github.com/sureforge)! - Add streaming runner-local file upload and download tools, matching `csuite fs put|get` commands, and local-file attachment sugar for direct messages, channel posts, and objective discussions.
+
 ## 0.8.0
 
 ### Minor Changes
