@@ -63,6 +63,7 @@ import { verifyInbound } from './verify.js';
 /** Per-endpoint ingress rate limit (sliding window). */
 const RATE_LIMIT_MAX = 120;
 const RATE_LIMIT_WINDOW_MS = 60_000;
+export type IngressVerification = { ok: true } | { ok: false; reason: string };
 
 export interface IngestInput {
   endpoint: NotificationEndpoint;
@@ -70,16 +71,23 @@ export interface IngestInput {
   contentType: string | null;
   getHeader: (name: string) => string | undefined;
   overrides: NotificationOverrides | null;
+  verification: IngressVerification;
 }
 
 export interface IngestResult {
-  /** Delivery id (existing row's id for duplicates; null when rate-limited). */
+  /** Delivery id (existing row's id for duplicates; null for unrecorded rejection). */
   id: string | null;
-  status: NotificationDeliveryStatus | 'rate_limited';
+  status: NotificationDeliveryStatus;
   httpStatus: number;
 }
 
 export interface NotificationDispatcher {
+  /** Verify once; the result is handed unchanged to `ingest`. */
+  verifyIngress(
+    input: Pick<IngestInput, 'endpoint' | 'rawBody' | 'getHeader'>,
+  ): Promise<IngressVerification>;
+  /** Apply the public ingress rate limit to a known endpoint identity. */
+  checkIngressRateLimit(endpointId: string): boolean;
   ingest(input: IngestInput): Promise<IngestResult>;
   /** Re-run a stored delivery (no verify/dedupe/rate limit; filters + policy apply). */
   replay(deliveryId: string): Promise<DeliveryRecord>;
@@ -134,6 +142,23 @@ export function createNotificationDispatcher(
     return false;
   }
 
+  async function verifyIngress(
+    input: Pick<IngestInput, 'endpoint' | 'rawBody' | 'getHeader'>,
+  ): Promise<IngressVerification> {
+    try {
+      const verification = store.resolveVerification(input.endpoint.id);
+      return await verifyInbound(verification, input.rawBody, input.getHeader);
+    } catch (err) {
+      return {
+        ok: false,
+        reason:
+          err instanceof NotificationsError && err.code === 'no_kek'
+            ? 'encryption key unavailable'
+            : `verification error: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+
   function memberExists(name: string): boolean {
     return members.members().some((m) => m.name === name);
   }
@@ -152,12 +177,15 @@ export function createNotificationDispatcher(
     title: string | null,
     data: Record<string, unknown>,
     target: { member: string } | { channel: string },
-  ): Promise<string | null> {
+  ): Promise<{ id: string; acknowledged: boolean } | null> {
     const from = `hook:${endpoint.slug}`;
     try {
       if ('member' in target) {
         const result = await broker.push({ to: target.member, body, title, level, data }, { from });
-        return result.message.id;
+        return {
+          id: result.message.id,
+          acknowledged: result.delivery.acknowledgement?.status === 'settled',
+        };
       }
       const channelId = target.channel;
       const payload = {
@@ -170,11 +198,17 @@ export function createNotificationDispatcher(
         const recipients = channels.recipientNames(channelId);
         if (recipients === null) return null;
         const result = await broker.push(payload, { from, recipients });
-        return result.message.id;
+        return {
+          id: result.message.id,
+          acknowledged: result.delivery.acknowledgement?.status === 'settled',
+        };
       }
       // General (or no channel store): implicit membership → broadcast.
       const result = await broker.push(payload, { from });
-      return result.message.id;
+      return {
+        id: result.message.id,
+        acknowledged: result.delivery.acknowledgement?.status === 'settled',
+      };
     } catch (err) {
       logger.warn('notification push failed', {
         endpoint: endpoint.slug,
@@ -223,6 +257,7 @@ export function createNotificationDispatcher(
     };
 
     const messageIds: string[] = [];
+    let acknowledged = 0;
     const notes: string[] = [];
     let queued = 0;
 
@@ -235,8 +270,10 @@ export function createNotificationDispatcher(
         const id = await pushMessage(endpoint, body, level, title, data, {
           channel: target.channel,
         });
-        if (id !== null) messageIds.push(id);
-        else notes.push(`channel ${target.channel} unavailable`);
+        if (id !== null) {
+          messageIds.push(id.id);
+          if (id.acknowledged) acknowledged += 1;
+        } else notes.push(`channel ${target.channel} unavailable`);
         continue;
       }
       if (target.member === undefined) continue;
@@ -287,13 +324,15 @@ export function createNotificationDispatcher(
       }
 
       const id = await pushMessage(endpoint, body, level, title, data, { member: name });
-      if (id !== null) messageIds.push(id);
-      else notes.push(`push to ${name} failed`);
+      if (id !== null) {
+        messageIds.push(id.id);
+        if (id.acknowledged) acknowledged += 1;
+      } else notes.push(`push to ${name} failed`);
     }
 
     const reason = notes.length > 0 ? notes.join('; ') : null;
     const status: NotificationDeliveryStatus =
-      messageIds.length > 0 ? 'delivered' : queued > 0 ? 'pending' : 'dropped';
+      acknowledged > 0 ? 'delivered' : messageIds.length > 0 || queued > 0 ? 'pending' : 'dropped';
 
     for (const [index, delivery] of newest.entries()) {
       // Preserve terminal facts already on the row (e.g. a wake flush
@@ -307,10 +346,28 @@ export function createNotificationDispatcher(
             : rowStatus,
         statusReason: reason,
         addMessageIds: messageIds,
-        ...(messageIds.length > 0 ? { deliveredAt: now() } : {}),
+        ...(acknowledged > 0 ? { deliveredAt: now() } : {}),
       });
     }
   }
+
+  broker.onMessageDisposition((event) => {
+    for (const delivery of store.findDeliveriesByMessageId(event.message.id)) {
+      if (event.disposition === 'acted' || event.disposition === 'handled') {
+        store.updateDelivery(delivery.id, {
+          status: 'delivered',
+          statusReason: null,
+          deliveredAt: event.at,
+        });
+      } else if (event.disposition === 'refused') {
+        store.updateDelivery(delivery.id, {
+          status: 'dropped',
+          statusReason: event.reason?.detail ?? 'subscriber refused delivery',
+        });
+      }
+      // deferred deliberately stays pending; capability recovery owns redelivery.
+    }
+  });
 
   function flushDebounce(endpointId: string): void {
     const buffer = debounceBuffers.get(endpointId);
@@ -408,34 +465,26 @@ export function createNotificationDispatcher(
   }
 
   return {
+    verifyIngress,
+    checkIngressRateLimit(endpointId: string): boolean {
+      return rateLimited(endpointId);
+    },
     async ingest(input: IngestInput): Promise<IngestResult> {
       const { endpoint } = input;
-
-      if (rateLimited(endpoint.id)) {
-        // Deliberately NOT recorded — receipts under a flood would be
-        // their own denial of service.
-        return { id: null, status: 'rate_limited', httpStatus: 429 };
-      }
-
-      // Verify. Failures are recorded (security visibility) but the
-      // HTTP response stays a detail-free 401.
-      let verifyReason: string | null = null;
-      try {
-        const verification = store.resolveVerification(endpoint.id);
-        const result = await verifyInbound(verification, input.rawBody, input.getHeader);
-        if (!result.ok) verifyReason = result.reason;
-      } catch (err) {
-        verifyReason =
-          err instanceof NotificationsError && err.code === 'no_kek'
-            ? 'encryption key unavailable'
-            : `verification error: ${err instanceof Error ? err.message : String(err)}`;
-      }
+      const verifyReason = input.verification.ok ? null : input.verification.reason;
 
       const bodyText = new TextDecoder().decode(input.rawBody);
       const level = input.overrides?.level ?? endpoint.level;
       const title = endpoint.title ?? (endpoint.displayName || endpoint.slug);
 
       if (verifyReason !== null) {
+        // A disabled endpoint is deliberately indistinguishable from an
+        // unknown one until the sender authenticates. Do not let an
+        // anonymous caller use the disabled endpoint as a durable-receipt
+        // writer; a verified request takes the causal branch below.
+        if (!endpoint.enabled) {
+          return { id: null, status: 'rejected', httpStatus: 401 };
+        }
         // The RECEIPT is kept; the PAYLOAD is not.
         //
         // `/hooks/:slug` is unauthenticated by design — the signature is
@@ -469,6 +518,32 @@ export function createNotificationDispatcher(
           reason: verifyReason,
           bytes: input.rawBody.length,
           sha256: digest,
+        });
+        return { id: rejected.id, status: 'rejected', httpStatus: 401 };
+      }
+
+      // Disablement is an administrative state, not an authentication
+      // oracle. Check it only after the sender proves knowledge of the
+      // endpoint secret: anonymous callers receive the same bare 401 as
+      // every other verification failure and cannot manufacture
+      // disablement receipts.
+      if (!endpoint.enabled) {
+        const rejected = store.insertDelivery({
+          endpointId: endpoint.id,
+          endpointSlug: endpoint.slug,
+          receivedAt: now(),
+          status: 'rejected',
+          statusReason: 'endpoint disabled',
+          body: bodyText,
+          contentType: input.contentType,
+          level,
+          title,
+          overrides: input.overrides,
+        });
+        logger.warn('hook delivery rejected', {
+          endpoint: endpoint.slug,
+          reason: 'endpoint disabled',
+          bytes: input.rawBody.length,
         });
         return { id: rejected.id, status: 'rejected', httpStatus: 401 };
       }

@@ -1,6 +1,6 @@
 ---
 title: Presence
-description: See at a glance who is online and what every agent is doing right now — idle, working, or waiting on a person.
+description: Distinguish connection, ability to act, and action evidence without guessing.
 section: Concepts
 order: 60
 ---
@@ -13,17 +13,31 @@ Every live subscription reports a typed client kind: `runner`, `browser`, `cli`,
 or `sdk`. Non-runner clients report their build version. Each live runner also reports four facts:
 the runner verb (`claude`, `codex`, or `stub`), the model id the adapter resolved,
 the CommandSuite version, and whether the artifact was built as an npm release or
-from main. A null model means exactly “agent default — not resolved locally”; the
+from main. Runners may also report a **supervision claim** describing how they
+were started. It is not a promise that a restart policy is effective: a supervised
+process can remain wedged without dying. A null model means exactly “agent default — not resolved locally”; the
 broker never guesses. Multiple devices remain separate reports (identical reports
 are grouped with a connection count). Connections that send no validated client
 identity — including old runners — are counted as **unreported**. A browser that
 reports `browser` is never relabeled as an unreported runner. The identity is
 observational only and never grants a permission.
 
+For systemd supervision, the unit name is a diagnostic label so an operator can
+find the right journal without asking the deployer. It is never an instruction
+target or an authorization handle: CommandSuite does not derive restart, pause,
+resume, or other host actions from it.
+
 The broker compares the reported runner version with its own artifact version.
 Main builds use `<package-version>+main.<fingerprint>` so two unreleased builds at
 different source states show skew even though both package manifests still say
 `0.8.0`. Release artifacts use the plain package version and build source `npm`.
+CommandSuite 0.9.0 is the compatibility baseline for these protocols. Upgrade
+the broker and every runner together when moving from 0.8.x to 0.9.0; mixed
+0.8.x/0.9.0 deployments are unsupported. From 0.9.0 onward, version skew is a
+supported diagnostic surface, not by itself a promise that an arbitrary pair of
+versions can interoperate. Consult the release's upgrade notes before leaving a
+broker and runner at different versions.
+
 An old broker omits the identity fields; a new broker emits `[]` and `0`. A new
 broker with an old client reports a positive unreported count. The CLI
 and UI render those states differently rather than turning absence into a guess.
@@ -44,8 +58,10 @@ The roster answers two questions about every member, live:
 
 1. **Are they connected?** Does anything — a browser tab, an agent runner —
    currently have a live session for this member?
-2. **What are they doing?** Is the agent **idle**, **working**, or
-   **blocked** waiting on a person?
+2. **Can its runner act?** A runner explicitly reports ready or degraded with a
+   bounded reason; absence is unreported.
+3. **Has it acted?** Only a tool call or outbound effect advances the action
+   signal. Receiving a message or opening a turn does not.
 
 Both update in real time in the web UI's roster, and agents can ask the
 same question with the `roster` tool when deciding who to hand work to.
@@ -63,45 +79,78 @@ Being offline doesn't lose anything: messages sent meanwhile are in the
 thread history, and assigned objectives stay assigned. Presence tells you
 who will see a message *right now*, not who will ever see it.
 
-## Idle, working, blocked
+## Ready, degraded, and proven action
 
-For members running as agents, presence goes one step further than
-online/offline:
+For members running as agents, executor state is separate from connection and
+scheduling telemetry:
 
-- **Working** — the agent is actively on something: reasoning through a
-  task or running tools. Rendered as a spinner in the roster.
-- **Blocked** — the agent's work is parked waiting on a human, such as an
-  input request it can't answer itself. This is the "look here" state:
-  the agent isn't stuck on the problem, it's stuck on *you*.
-- **Idle** — connected and listening, not mid-task. The natural state of
-  an agent between assignments.
+- **Ready** — at least one runner subscription says it can act.
+- **Degraded** — runner subscriptions exist and none is ready; every reported
+  runner is unable to act. The reason is a fixed code-owned message, never raw
+  adapter error text.
+- **Unreported** — no runner state arrived. A supported peer that does not
+  advertise or cannot exercise the capability remains here; the broker never
+  promotes silence into readiness. This graceful capability fallback does not
+  make the unsupported 0.8.x/0.9.0 version pairing safe.
+- **Recent action** — a runner emitted evidence of a tool call or outbound
+  effect. Tool names are deliberately omitted: health needs to show that a seat
+  acted, not expose what it did.
 
-The signal comes from each agent's own instrumentation, so it reflects
-what the agent is actually doing — not just whether its process exists.
-It's also self-healing: if a runner dies mid-task, the roster resets that
-member to idle within about 30 seconds rather than showing a phantom
-worker.
-
-One caveat: a runner started with `--no-trace` skips the instrumentation
-entirely, so that member always reads as idle while online. Connection
-state is unaffected.
+An open turn is shown as pending context but never as working. A turn that
+completes without action records `no_action`, making silent burn visible. The
+legacy `idle` / `working` / `blocked` report remains scheduling telemetry;
+`blocked` can still say a runner is waiting for input, but message consumption
+and `working` reports never prove executor liveness.
 
 ## What agents see
 
 An agent calling `roster` gets each teammate's name, role, connection
-state, and any recently reported working or blocked activity — enough to
-pick an assignee who's actually around. The same list, with the live
+state, executor state and reason, last proven action, and supervision claim.
+The same list, with the live
 state markers, is what you see in the web UI.
 
 ## What presence is not
 
-- **Not delivery confirmation.** A live fanout reaches whoever is
-  connected at that moment; late arrivals read back through history.
+- **Not delivery confirmation by itself.** A disposition-capable runner
+  acknowledges each message on the same authenticated subscription only after
+  its turn handled, acted on, deferred, or refused the work. A supported runner
+  that does not advertise acknowledgement support is rendered as **unreported**,
+  never guessed into support.
 - **Not progress.** Working means the agent is doing *something*, not
   that it's succeeding — for what it actually did, read its
   [traces](/docs/concepts/activity-and-traces).
 - **Not authentication.** Presence is observational; who a session
   belongs to was settled when it signed in.
+
+## Reliable message disposition
+
+Messages for a disposition-capable runner remain pending until its turn sends a
+terminal `acted`, `handled`, or `refused` disposition. Actual turn start first
+creates a nonterminal `accepted` lease owned by that runner subscription.
+`deferred` is also nonterminal. Subscription close or any degraded projection
+releases accepted leases, and reconnect or degraded-to-ready recovery redelivers
+them. A completion from the stale, released owner is refused.
+
+Health is subscription-scoped before it is aggregated for the member. Delivery
+prefers a ready subscription and excludes degraded ones. If an owning
+subscription degrades while another remains ready, its lease is released and
+immediately reassigned; the member can correctly remain ready throughout.
+
+Open turns have an eight-hour exitability backstop. It is not a failure detector
+and never creates `working`: it is four times the largest turn in one day of
+measured data (7,172 seconds across two seats). A longer valid turn may exist.
+The chosen asymmetry prefers visible, recoverable duplicate delivery over a
+message that can remain pinned forever.
+
+The retention bound is **temporal only**: pending rows expire after 24 hours and
+the original sender receives an explicit refusal fact. There is deliberately no
+volume cap, so the storage bound is “24 hours of everything,” not a fixed number
+of messages. Refusal and expiry facts are outside the disposition ledger; an
+offline sender cannot cause a refusal fact to expire into another refusal.
+
+Inbound notification receipts consume this same disposition. They remain
+`pending` until a subscriber acknowledges handling and never claim `delivered`
+merely because bytes were written to a live socket.
 
 ## Related
 

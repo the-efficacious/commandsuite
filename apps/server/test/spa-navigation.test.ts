@@ -150,4 +150,38 @@ describe('SPA document navigation', () => {
       expect(response.headers.get('content-type'), accept).toContain('application/json');
     }
   });
+
+  // #276. One URL, two representations, chosen by a request header:
+  // every response on these paths must declare what it varied on or a
+  // cache may answer a JSON fetch from an HTML entry it stored earlier.
+  // That is not hypothetical -- it shipped. A document navigation to
+  // /objectives cached the shell under that URL, the SPA's own fetch of
+  // the SAME URL was served that HTML, and the page rendered
+  // "invalid JSON from …" on every refresh.
+  it('declares Vary: Accept on both representations of a negotiated path', async () => {
+    const server = await boot();
+    for (const path of ['/objectives', '/objectives/obj-example-1', '/members', '/channels']) {
+      const html = await fetch(url(server, path), { headers: { Accept: BROWSER_ACCEPT } });
+      expect(html.headers.get('content-type'), path).toContain('text/html');
+      expect(html.headers.get('vary'), `${path} (html)`).toMatch(/\bAccept\b/i);
+
+      const json = await fetch(url(server, path), { headers: { Accept: 'application/json' } });
+      expect(json.headers.get('content-type'), path).toContain('application/json');
+      expect(json.headers.get('vary'), `${path} (json)`).toMatch(/\bAccept\b/i);
+    }
+  });
+
+  // RFC 9111 §3.5 stops a shared cache storing a response to an
+  // Authorization-bearing request. Browser sessions here authenticate
+  // with a COOKIE, which gets no such protection, and these responses
+  // carry no validator to discourage heuristic storage either. Say it.
+  it('marks API responses no-store so a shared cache cannot hold member data', async () => {
+    const server = await boot();
+    for (const path of ['/objectives', '/members', '/roster', '/session']) {
+      const response = await fetch(url(server, path), {
+        headers: { Accept: 'application/json' },
+      });
+      expect(response.headers.get('cache-control'), path).toBe('no-store');
+    }
+  });
 });

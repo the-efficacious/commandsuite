@@ -24,8 +24,9 @@
 import { existsSync, promises as fs } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import type { RunnerControlFrame } from 'csuite-sdk/types';
 import type { CompactAttempt } from '../../context-control.js';
-import type { ChannelEvent, ChannelEventSink } from '../../forwarder.js';
+import type { ChannelDeliveryReceipt, ChannelEvent, ChannelEventSink } from '../../forwarder.js';
 import { type HudHandle, startHud } from '../../hud.js';
 import type {
   AgentAdapter,
@@ -44,6 +45,46 @@ import {
   spawnCodex,
 } from './adapter.js';
 import { LocalMcpConfigError, loadLocalMcpConfig } from './local-mcp.js';
+
+export function createCodexSinkWrapper(): {
+  sink: ChannelEventSink;
+  attach(live: ChannelEventSink): Array<{
+    event: ChannelEvent;
+    receipt: ChannelDeliveryReceipt | undefined;
+  }>;
+  detach(): void;
+} {
+  let liveSink: ChannelEventSink | null = null;
+  let sendControl: ((frame: RunnerControlFrame) => void) | null = null;
+  const pendingEvents: Array<{
+    event: ChannelEvent;
+    receipt: ChannelDeliveryReceipt | undefined;
+  }> = [];
+  const sink: ChannelEventSink = {
+    async deliver(event, receipt) {
+      if (liveSink === null) {
+        pendingEvents.push({ event, receipt });
+        return;
+      }
+      await liveSink.deliver(event, receipt);
+    },
+    attachControl(send) {
+      sendControl = send;
+      liveSink?.attachControl?.(send);
+    },
+  };
+  return {
+    sink,
+    attach(live) {
+      liveSink = live;
+      if (sendControl !== null) live.attachControl?.(sendControl);
+      return pendingEvents.splice(0, pendingEvents.length);
+    },
+    detach() {
+      liveSink = null;
+    },
+  };
+}
 
 /**
  * uid-0 posture. Codex has no root refusal — it runs with sandbox
@@ -216,20 +257,10 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
   // meant the agent missed the very first messages in its inbox —
   // including any DM addressed at it that arrived while it was
   // offline. The queue closes that gap.
-  let liveSink: ChannelEventSink | null = null;
+  const sinkWrapper = createCodexSinkWrapper();
   // The current generation's compaction actuator, or null before the
   // first spawn / between a stop and its successor.
   let liveCompact: ((timeoutMs?: number) => Promise<CodexCompactOutcome>) | null = null;
-  const pendingEvents: ChannelEvent[] = [];
-  const sinkWrapper: ChannelEventSink = {
-    async deliver(event) {
-      if (liveSink === null) {
-        pendingEvents.push(event);
-        return;
-      }
-      await liveSink.deliver(event);
-    },
-  };
 
   const adapter: AgentAdapter = {
     meta: CODEX_META,
@@ -248,7 +279,7 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
 
     runnerOptions() {
       return {
-        channelSink: sinkWrapper,
+        channelSink: sinkWrapper.sink,
         // Codex spawns a fresh `csuite mcp-bridge` per thread — including
         // every subagent it dispatches. Those extra bridges would displace
         // the root thread's bridge under the default `displace-old`,
@@ -302,13 +333,12 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
 
       // Attach the live sink and drain anything the forwarder queued
       // while codex was cold-starting.
-      liveSink = spawned.channelSink;
-      if (pendingEvents.length > 0) {
-        log.info('draining pre-attach broker queue', { queued: pendingEvents.length });
-        const drain = pendingEvents.splice(0, pendingEvents.length);
-        for (const event of drain) {
+      const drain = sinkWrapper.attach(spawned.channelSink);
+      if (drain.length > 0) {
+        log.info('draining pre-attach broker queue', { queued: drain.length });
+        for (const { event, receipt } of drain) {
           try {
-            await spawned.channelSink.deliver(event);
+            await spawned.channelSink.deliver(event, receipt);
           } catch (err) {
             log.warn('drain delivery failed', {
               error: err instanceof Error ? err.message : String(err),
@@ -377,7 +407,7 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
       // Back to the pre-attach buffer: events queue until the
       // successor's spawn attaches its live sink — the same mechanism
       // that already covers codex's 5-15s cold start.
-      liveSink = null;
+      sinkWrapper.detach();
     },
 
     async respawn(ctx: AgentSessionContext, prior: RespawnPosture): Promise<AgentProcess> {

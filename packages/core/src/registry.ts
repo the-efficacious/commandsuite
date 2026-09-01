@@ -19,6 +19,7 @@ import type {
   Message,
   Presence,
   Role,
+  RunnerConditionFrame,
   RunnerReport,
 } from 'csuite-sdk/types';
 
@@ -29,6 +30,11 @@ export interface PresenceState {
   subscribers: Set<Subscriber>;
   subscriberTokenIds: Map<Subscriber, string | null>;
   subscriberClientIdentities: Map<Subscriber, ClientIdentity | null>;
+  subscriberIds: Map<Subscriber, string>;
+  runnerConditions: Map<Subscriber, RunnerConditionFrame>;
+  runnerTurns: Map<Subscriber, Map<string, { startedAt: number }>>;
+  runnerLastActedAt: Map<Subscriber, number>;
+  runnerLastTurn: Map<Subscriber, { at: number; outcome: 'acted' | 'no_action' | 'failed' }>;
 }
 
 /**
@@ -77,6 +83,11 @@ export class PresenceRegistry {
       subscribers: new Set(),
       subscriberTokenIds: new Map(),
       subscriberClientIdentities: new Map(),
+      subscriberIds: new Map(),
+      runnerConditions: new Map(),
+      runnerTurns: new Map(),
+      runnerLastActedAt: new Map(),
+      runnerLastTurn: new Map(),
     };
     this.presences.set(name, state);
     return state;
@@ -105,6 +116,9 @@ export class PresenceRegistry {
                 identity.runnerIdentity.modelId,
                 identity.runnerIdentity.runnerVersion,
                 identity.runnerIdentity.runnerBuildSource,
+                identity.runnerIdentity.supervision,
+                identity.runnerIdentity.deliveryProtocol,
+                identity.runnerIdentity.livenessProtocol,
               ])
             : JSON.stringify([identity.kind, identity.clientVersion]);
         const prior = grouped.get(key);
@@ -138,6 +152,44 @@ export class PresenceRegistry {
             ]
           : [],
       );
+      const runnerSubscribers = [...state.subscribers].filter(
+        (sub) => state.subscriberClientIdentities.get(sub)?.kind === 'runner',
+      );
+      const classifications = runnerSubscribers.map((sub) => {
+        const tokenId = state.subscriberTokenIds.get(sub) ?? null;
+        if (tokenId !== null && blockedTokenIds.has(tokenId)) {
+          return {
+            state: 'degraded' as const,
+            reason: { code: 'auth_blocked' as const, detail: 'runner credential is revoked' },
+          };
+        }
+        return state.runnerConditions.get(sub) ?? null;
+      });
+      const ready = classifications.some((condition) => condition?.state === 'ready');
+      const allDegraded =
+        classifications.length > 0 &&
+        classifications.every((condition) => condition?.state === 'degraded');
+      const lastActed = [...state.runnerLastActedAt.values()];
+      const lastTurns = [...state.runnerLastTurn.values()].sort((a, b) => b.at - a.at);
+      const executor = {
+        state: ready
+          ? ('ready' as const)
+          : allDegraded
+            ? ('degraded' as const)
+            : ('unreported' as const),
+        ...(allDegraded
+          ? {
+              reason: classifications.find((condition) => condition?.state === 'degraded')?.reason,
+            }
+          : {}),
+        activeTurns: [...state.runnerTurns.values()].reduce(
+          (count, turns) => count + turns.size,
+          0,
+        ),
+        lastTurnAt: lastTurns[0]?.at ?? null,
+        lastActedAt: lastActed.length > 0 ? Math.max(...lastActed) : null,
+        ...(lastTurns[0] ? { lastTurnOutcome: lastTurns[0].outcome } : {}),
+      };
       out.push({
         name: state.presence.name,
         connected: state.subscribers.size,
@@ -149,6 +201,7 @@ export class PresenceRegistry {
               runnerReports,
               clientReports,
               unreportedConnections: identities.filter((identity) => identity === null).length,
+              executor,
             }
           : {}),
         createdAt: state.presence.createdAt,

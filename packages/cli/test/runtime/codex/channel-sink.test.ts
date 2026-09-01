@@ -61,6 +61,27 @@ async function tick(ms = 20): Promise<void> {
 }
 
 describe('createCodexChannelSink', () => {
+  it('replays the active turn start when a replacement control socket attaches', () => {
+    const { sink } = makeSink({
+      status: { type: 'active' },
+      activeTurnId: 'turn_across_reconnect',
+    });
+    const first = vi.fn();
+    const second = vi.fn();
+
+    sink.attachControl?.(first);
+    sink.attachControl?.(second);
+
+    expect(second.mock.calls.map(([frame]) => frame)).toEqual([
+      expect.objectContaining({ kind: 'runner_condition', state: 'ready' }),
+      expect.objectContaining({
+        kind: 'runner_turn',
+        turnId: 'turn_across_reconnect',
+        phase: 'started',
+      }),
+    ]);
+  });
+
   it('dispatches a single turn/start when idle', async () => {
     const { sink, requests } = makeSink({ status: { type: 'idle' } });
     await sink.deliver({ content: 'hello there', meta: { from: 'director', kind: 'chat' } });
@@ -77,6 +98,57 @@ describe('createCodexChannelSink', () => {
     expect(params.input[0]?.text).toContain('hello there');
     expect(params.input[0]?.text).toContain('from="director"');
     expect(params.input[0]?.text).toContain('kind="chat"');
+  });
+
+  it('settles receipts when turn/started arrives before turn/start returns', async () => {
+    let state: MockState | null = null;
+    let sinkRef: ReturnType<typeof createCodexChannelSink> | null = null;
+    const requestImpl: JsonRpcClient['request'] = (async (method: string) => {
+      expect(method).toBe(METHODS.turnStart);
+      if (state === null || sinkRef === null) throw new Error('fixture not attached');
+      state.status = { type: 'active' };
+      state.activeTurnId = 'turn_race';
+      sinkRef.turnStarted('turn_race', 1);
+      return { turn: { id: 'turn_race' } };
+    }) as JsonRpcClient['request'];
+    const made = makeSink({ status: { type: 'idle' } }, requestImpl);
+    state = made.state;
+    sinkRef = made.sink;
+    const accepted = vi.fn();
+    const settle = vi.fn();
+
+    await made.sink.deliver(
+      { content: 'act once', meta: {} },
+      { messageId: 'message-race', accepted, settle },
+    );
+    await tick();
+    expect(accepted).toHaveBeenCalledOnce();
+
+    made.sink.acted('turn_race', 'tool_call', 2);
+    expect(settle).toHaveBeenCalledWith('acted', { evidence: { kind: 'tool_call' } });
+  });
+
+  it('settles receipts when turn/start returns before turn/started arrives', async () => {
+    const requestImpl: JsonRpcClient['request'] = (async () => ({
+      turn: { id: 'turn_normal' },
+    })) as JsonRpcClient['request'];
+    const { sink, state } = makeSink({ status: { type: 'idle' } }, requestImpl);
+    const accepted = vi.fn();
+    const settle = vi.fn();
+
+    await sink.deliver(
+      { content: 'act once', meta: {} },
+      { messageId: 'message-normal', accepted, settle },
+    );
+    await tick();
+    expect(accepted).not.toHaveBeenCalled();
+
+    state.status = { type: 'active' };
+    state.activeTurnId = 'turn_normal';
+    sink.turnStarted('turn_normal', 1);
+    expect(accepted).toHaveBeenCalledOnce();
+    sink.acted('turn_normal', 'tool_call', 2);
+    expect(settle).toHaveBeenCalledWith('acted', { evidence: { kind: 'tool_call' } });
   });
 
   it('dispatches a turn/steer with expectedTurnId when active', async () => {
@@ -128,20 +200,23 @@ describe('createCodexChannelSink', () => {
     ).toContain('early event');
   });
 
-  it('drops events when status is systemError', async () => {
+  it('defers events when status is systemError', async () => {
     const { sink, requests, rec } = makeSink({
       status: { type: 'systemError' },
     });
-    await sink.deliver({ content: 'wasted', meta: {} });
+    const settle = vi.fn();
+    await sink.deliver(
+      { content: 'retained', meta: {} },
+      { messageId: 'message-1', accepted: vi.fn(), settle },
+    );
     await tick();
     expect(requests).toHaveLength(0);
-    // The drop is deliberate and logged — a warn record distinguishes it
-    // from silent buffering, which would also produce zero requests.
+    expect(settle).toHaveBeenCalledWith('deferred', expect.any(Object));
     expect(rec.records).toContainEqual(
       expect.objectContaining({
         level: 'warn',
-        msg: 'dropping events — thread in systemError',
-        dropped: 1,
+        msg: 'deferring events — thread in systemError',
+        deferred: 1,
       }),
     );
   });

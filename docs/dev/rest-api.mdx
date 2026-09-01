@@ -132,8 +132,11 @@ the drain-and-restart cycle an instruction edit triggers (below).
 | **Auth** | dual |
 | **Returns** | `RosterResponse` — `{ teammates: Teammate[], connected: Presence[], restartPending: string[], activityWindowMs }` |
 
-Public projection of teammates plus a parallel list of live
-presence (connection count, last-seen, busy flag). For the
+Public projection of teammates plus a parallel list of live presence:
+connection count, client/runner reports, executor state and fixed degraded
+reason, open-turn count, last turn outcome, last proven action, and supervision
+claim. Legacy activity remains compatibility scheduling telemetry and is not
+executor proof. For the
 presence model see [presence](/docs/concepts/presence).
 
 `restartPending` lists members whose current composed instructions
@@ -174,6 +177,15 @@ middleware with a plain HTTP 400/403 (the broker enforces
 Multiple concurrent subscribers per member are supported (the
 `Presence.connected` count reflects that). On server shutdown every
 live socket is closed with code `1001`.
+
+A runner advertising `deliveryProtocol: "disposition-v1"` may send
+`message_disposition` frames on this same socket. With additive
+`livenessProtocol: "runner-state-v1"`, it may also send
+`runner_condition` and `runner_turn` frames; `accepted` becomes a
+subscription-owned nonterminal lease. All fields are optional capabilities:
+an old peer omits them and is rendered `unreported`, never inferred ready.
+Condition detail is fixed text selected by the condition code, and turn
+evidence carries only `tool_call` or `outbound_effect`, never a tool name.
 
 Long-running bearer clients can set `onUnauthorized(source)` to receive the
 same signal for an HTTP 401 or a WebSocket upgrade 401. After device
@@ -791,11 +803,23 @@ returned; summaries expose `hasSecret` only).
 | **Auth** | none at the middleware layer — verified per-endpoint (HMAC-SHA256 over the raw body, or shared-secret header) against the KEK-held secret |
 | **Body** | the sender's raw payload (≤ 256 KiB) |
 | **Query** | `if_offline=drop\|queue`, `if_busy=now\|wait`, `level=<LogLevel>` — per-delivery policy overrides |
-| **Returns** | `202 { id, status }` — also for `duplicate` / `filtered` / `dropped`; `401` (detail-free) on verification failure; `404` unknown, `409` disabled, `413` oversized, `429` + `Retry-After` on the per-endpoint rate limit (120/min) |
+| **Returns** | `202 { id, status }` — also for `duplicate` / `filtered` / `dropped`; after shared body-size and query-grammar validation, the same detail-free `401 {"error":"unauthorized"}` for an unknown slug, a failed verification, or a disabled endpoint; `413` oversized, `429` + `Retry-After` on the per-endpoint rate limit (120/min) |
 
-Every request that clears the rate limit lands a delivery receipt,
-including rejected ones (the failure reason is on the receipt, not
-the wire). Registry changes fan out as
+An authenticated request to a disabled endpoint lands a rejected
+receipt naming disablement; an anonymous request does not. Unknown,
+live, and disabled endpoints return identical status and body on this
+public surface after shared body-cap and query validation. Rate-limit
+state is keyed by endpoint identity. The broker verifies a known
+endpoint even when its window is exhausted: a verified sender gets 429,
+while an unverified sender gets the same bare 401 and writes no receipt.
+Known endpoints perform HMAC work and under-limit failures synchronously
+write a receipt, so statistical timing differences may remain; this fix
+adds neither dummy cryptographic work nor dummy writes for unknown
+slugs. A flood against a known slug can still consume that endpoint's
+window before verification, unchanged from the prior limiter. A typo
+otherwise reads as 401. An authorized
+operator uses `GET /notifications/endpoints` or the Notifications UI
+to inspect endpoint state. Registry changes fan out as
 `data.kind = 'notification_endpoint'` events (thread `hook:<slug>`)
 to direct member targets plus `notifications.manage` holders.
 
@@ -1049,8 +1073,9 @@ member.
 | **Body** | `ActivityReport` — `{ state: ActivityState }` where `ActivityState` is `idle` / `working` / `blocked` |
 | **Returns** | `204` |
 
-Runner-only. Reports the agent's live 3-state activity to the
-broker on every transition. The server applies a 30s TTL — a
+Runner-only compatibility scheduling telemetry. It does not prove executor
+liveness and `working` is not projected onto the roster without separate action
+evidence. The server applies a 30s TTL — a
 non-idle (`working` / `blocked`) report resolves back to `idle` if
 no heartbeat refreshes it. The runner re-posts the current state
 every 10s while non-idle, and posts `{ state: "idle" }` once when

@@ -212,8 +212,46 @@ const APP_IN_SCOPE = [
  * consequence is that a guesser gets a fresh five attempts, which the
  * global bucket still counts. So it belongs to the operational half of
  * the census, and stays out of retention.
+ *
+ * 2026-08-31, +1 = 70. `hook delivery rejected` gained a second site
+ * in the signed-disabled branch (#265 / obj-mtgqxh2b-w).
+ * OPERATIONAL, not a completeness claim: the authoritative
+ * `rejected / endpoint disabled` receipt is written immediately before
+ * it, so the record is complete when the line fires. It tells an
+ * operator that a legitimate signed sender is hitting a disabled
+ * endpoint. This new site is verified-only: the anonymous path returns
+ * above it with no row and no log. The older site with the same message
+ * remains anonymous-reachable for a known, enabled slug and is bounded
+ * by that endpoint's 120/minute ingress window; this change does not
+ * widen it.
+ *
+ * 2026-08-31, +5 = 75. Reliable message disposition added five
+ * operational sites (obj-mtgsjlg5-x): WebSocket send failure,
+ * invalid disposition frame, a disposition the ledger refused, an isolated
+ * disposition-listener failure, plus delivery-sweep failure. None is a completeness claim. A send/redelivery failure
+ * leaves the row pending in the durable ledger; invalid/refused frames do
+ * not settle it; a failed sweep retries on the next interval. The record therefore remains incomplete visibly in its
+ * authoritative pending state, while these lines explain transport noise.
+ *
+ * 2026-08-31, +7 -3 = 79. Proven runner liveness renamed three diagnostics
+ * from `drop`/`disposition` language to the protocol's actual
+ * `deferred`/`control frame` language, and added four sites:
+ * `runner condition reported`, `pending message redelivery failed`, and the
+ * failed-turn/backstop/auth-blocked redelivery failures (obj-mtgsjlg5-x).
+ *
+ * OPERATIONAL, not completeness claims. The condition site records that the
+ * fixed code was transmitted; it carries no captured payload. Every
+ * redelivery-failure site fires only after the owning lease has atomically
+ * returned to the durable `pending` state. A callback failure can delay the
+ * next attempt until another ready transition or reconnect (and the 24-hour
+ * bound eventually produces an explicit refusal); it cannot settle or erase
+ * the row. These diagnostics explain availability delay while the
+ * authoritative ledger continues to state, visibly, that delivery is
+ * incomplete. The renamed sites retain the same classification as the sites
+ * they replace: invalid/refused frames cannot settle a row, and `deferred`
+ * explicitly preserves it.
  */
-const TOTAL_SITES = 69;
+const TOTAL_SITES = 79;
 
 function messagesIn(file: string): string[] {
   let src: string | null = null;

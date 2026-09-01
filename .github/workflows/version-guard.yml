@@ -1,0 +1,70 @@
+name: Version guard
+
+# Publishing is triggered by a version on `main` that npm does not have
+# yet -- `changeset publish` ships any package whose version is missing
+# from the registry, and Release runs on every push to main. So without
+# this check, an ordinary pull request that edited a version field would
+# publish on merge, irreversibly, with neither release signer involved.
+# Our process document says releases are the human gate; this is what
+# makes that a gate rather than a convention.
+#
+# There is no bypass. The sanctioned path is a changeset, which produces
+# the Version PR from `changeset-release/main`, and that PR passes by
+# construction.
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  version-guard:
+    name: Refuse version changes outside the Version PR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # The guard proves it discriminates in the same job that enforces
+      # it. A guard degraded to allow-everything is silent, and what it
+      # stops cannot be undone -- so its own negative fixtures run here,
+      # not in a suite that could be green in a different workflow.
+      - name: Self-test the guard
+        run: pnpm vitest run scripts/test/check-version-bump.test.mjs
+
+      - name: Fetch the base branch
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: git fetch --no-tags origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"
+
+      # Branch name and SHA come through the environment, never
+      # interpolated into the script body: both are attacker-controlled
+      # on a fork PR.
+      - name: Check for version changes
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          # Repository identity, not just the branch name. This repo is
+          # public: anyone may fork it, name a branch
+          # `changeset-release/main`, and open a PR from it. `head.ref`
+          # carries no identity, so the guard would have treated that
+          # fork as the Version PR. head.repo is null for a deleted
+          # fork, which the script fails closed on.
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
+        run: |
+          node scripts/check-version-bump.mjs \
+            --base-ref "origin/$BASE_REF" \
+            --head "$HEAD_SHA" \
+            --head-ref "$HEAD_REF" \
+            --head-repo "$HEAD_REPO" \
+            --base-repo "$BASE_REPO"

@@ -115,9 +115,28 @@ function hookPost(body: string, headers: Record<string, string> = {}): RequestIn
 /** Subscribe a capture array to a member's live stream. */
 function capture(broker: Broker, name: string): { messages: Message[]; unsubscribe: () => void } {
   const messages: Message[] = [];
-  const unsubscribe = broker.subscribe(name, (m) => {
-    messages.push(m);
-  });
+  const runnerIdentity = {
+    kind: 'runner' as const,
+    runnerIdentity: {
+      runner: 'stub' as const,
+      modelId: 'test',
+      runnerVersion: 'test',
+      runnerBuildSource: 'main' as const,
+      deliveryProtocol: 'disposition-v1' as const,
+    },
+  };
+  const unsubscribe = broker.subscribe(
+    name,
+    async (m) => {
+      messages.push(m);
+      await broker.disposition(
+        name,
+        { kind: 'message_disposition', messageId: m.id, disposition: 'handled', at: Date.now() },
+        { name, clientIdentity: runnerIdentity },
+      );
+    },
+    { name, clientIdentity: runnerIdentity },
+  );
   return { messages, unsubscribe };
 }
 
@@ -248,24 +267,113 @@ describe('registry CRUD + gating', () => {
 });
 
 describe('ingress verification', () => {
-  it('404 unknown slug, 409 disabled, 413 oversized', async () => {
+  it('makes unknown, live, and disabled endpoints indistinguishable before authentication', async () => {
     const ctx = await makeApp();
-    expect((await ctx.app.request('/hooks/ghost', hookPost('{}'))).status).toBe(404);
+    const unknown = await ctx.app.request('/hooks/ghost', hookPost('{}'));
 
-    await createEndpoint(ctx, { enabled: false });
-    expect((await ctx.app.request('/hooks/ci-alerts', hookPost('{}'))).status).toBe(409);
+    await createEndpoint(ctx);
+    const live = await ctx.app.request('/hooks/ci-alerts', hookPost('{}'));
+    const beforeDisable = ctx.notifications.listDeliveries(
+      ctx.notifications.getBySlug('ci-alerts')?.id ?? '',
+    ).length;
+    const disabledBy = await ctx.app.request(
+      '/notifications/endpoints/ci-alerts',
+      authed(ADMIN, { enabled: false }, 'PATCH'),
+    );
+    expect(disabledBy.status).toBe(200);
+    const disabled = await ctx.app.request('/hooks/ci-alerts', hookPost('{}'));
 
-    const ctx2 = await makeApp();
-    await createEndpoint(ctx2);
-    const huge = 'x'.repeat(256 * 1024 + 1);
+    const observed = await Promise.all(
+      [unknown, live, disabled].map(async (response) => ({
+        status: response.status,
+        body: await response.text(),
+      })),
+    );
+    expect(observed).toEqual([
+      { status: 401, body: '{"error":"unauthorized"}' },
+      { status: 401, body: '{"error":"unauthorized"}' },
+      { status: 401, body: '{"error":"unauthorized"}' },
+    ]);
     expect(
-      (
-        await ctx2.app.request(
-          '/hooks/ci-alerts',
-          hookPost(huge, { 'X-Hub-Signature-256': sign(huge) }),
-        )
-      ).status,
-    ).toBe(413);
+      ctx.notifications.listDeliveries(ctx.notifications.getBySlug('ci-alerts')?.id ?? '').length,
+    ).toBe(beforeDisable);
+
+    // A sender that proves knowledge of the secret gets the same terse
+    // response, while the authorized operator gets the causal receipt.
+    const body = '{"signed":true}';
+    const signedDisabled = await ctx.app.request(
+      '/hooks/ci-alerts',
+      hookPost(body, { 'X-Hub-Signature-256': sign(body) }),
+    );
+    expect(signedDisabled.status).toBe(401);
+    expect(await signedDisabled.json()).toEqual({ error: 'unauthorized' });
+
+    const receipts = await ctx.app.request(
+      '/notifications/endpoints/ci-alerts/deliveries',
+      authed(ADMIN),
+    );
+    const deliveries = ((await receipts.json()) as { deliveries: Array<Record<string, unknown>> })
+      .deliveries;
+    expect(deliveries).toContainEqual(
+      expect.objectContaining({
+        status: 'rejected',
+        statusReason: 'endpoint disabled',
+      }),
+    );
+
+    const operatorView = await ctx.app.request('/notifications/endpoints/ci-alerts', authed(ADMIN));
+    expect(await operatorView.json()).toMatchObject({ endpoint: { enabled: false } });
+  });
+
+  it('keeps body-cap and query-grammar responses identical across endpoint states', async () => {
+    const ctx = await makeApp();
+    const huge = 'x'.repeat(256 * 1024 + 1);
+    const unknownHuge = await ctx.app.request('/hooks/ghost', hookPost(huge));
+    const unknownMalformed = await ctx.app.request(
+      '/hooks/ghost?if_offline=eventually',
+      hookPost('{}'),
+    );
+
+    await createEndpoint(ctx);
+    const liveHuge = await ctx.app.request('/hooks/ci-alerts', hookPost(huge));
+    const liveMalformed = await ctx.app.request(
+      '/hooks/ci-alerts?if_offline=eventually',
+      hookPost('{}'),
+    );
+    await ctx.app.request(
+      '/notifications/endpoints/ci-alerts',
+      authed(ADMIN, { enabled: false }, 'PATCH'),
+    );
+    const disabledHuge = await ctx.app.request('/hooks/ci-alerts', hookPost(huge));
+    const disabledMalformed = await ctx.app.request(
+      '/hooks/ci-alerts?if_offline=eventually',
+      hookPost('{}'),
+    );
+
+    expect(
+      await Promise.all(
+        [unknownHuge, liveHuge, disabledHuge].map(async (response) => ({
+          status: response.status,
+          body: await response.text(),
+        })),
+      ),
+    ).toEqual([
+      { status: 413, body: '{"error":"payload too large"}' },
+      { status: 413, body: '{"error":"payload too large"}' },
+      { status: 413, body: '{"error":"payload too large"}' },
+    ]);
+    expect(
+      await Promise.all(
+        [unknownMalformed, liveMalformed, disabledMalformed].map(async (response) => ({
+          status: response.status,
+          body: await response.text(),
+        })),
+      ),
+    ).toEqual([
+      { status: 400, body: '{"error":"if_offline must be drop|queue"}' },
+      { status: 400, body: '{"error":"if_offline must be drop|queue"}' },
+      { status: 400, body: '{"error":"if_offline must be drop|queue"}' },
+    ]);
   });
 
   it('fails closed without a secret and rejects bad signatures — with receipts', async () => {
@@ -323,6 +431,55 @@ describe('ingress verification', () => {
     expect(message.body).toContain('External notification from endpoint "ci-alerts"');
     expect(message.body).toContain('CI failed on main');
     expect(message.body).toContain('<external_content');
+  });
+
+  it('does not receipt delivered until the runner acknowledges handling', async () => {
+    const ctx = await makeApp();
+    await createEndpoint(ctx);
+    const messages: Message[] = [];
+    const clientIdentity = {
+      kind: 'runner' as const,
+      runnerIdentity: {
+        runner: 'stub' as const,
+        modelId: 'test',
+        runnerVersion: 'test',
+        runnerBuildSource: 'main' as const,
+        deliveryProtocol: 'disposition-v1' as const,
+      },
+    };
+    ctx.broker.subscribe(
+      'builder',
+      (message) => {
+        messages.push(message);
+      },
+      { name: 'builder', clientIdentity },
+    );
+    const body = '{"state":"failed"}';
+    const accepted = await ctx.app.request(
+      '/hooks/ci-alerts',
+      hookPost(body, { 'X-Hub-Signature-256': sign(body) }),
+    );
+    const initial = (await accepted.json()) as { id: string; status: string };
+    expect(initial.status).toBe('pending');
+
+    await ctx.broker.disposition(
+      'builder',
+      {
+        kind: 'message_disposition',
+        messageId: messages[0]?.id ?? '',
+        disposition: 'handled',
+        at: 1_700_000_000_100,
+      },
+      { name: 'builder', clientIdentity },
+    );
+    const receipts = await ctx.app.request(
+      '/notifications/endpoints/ci-alerts/deliveries',
+      authed(ADMIN),
+    );
+    const { deliveries } = (await receipts.json()) as {
+      deliveries: Array<{ status: string; deliveredAt: number | null }>;
+    };
+    expect(deliveries[0]).toMatchObject({ status: 'delivered', deliveredAt: 1_700_000_000_100 });
   });
 
   it('dedupes provider retries on the configured header', async () => {
@@ -573,23 +730,40 @@ describe('delivery policy', () => {
     expect(messages[1]?.body).toContain('run 42');
   });
 
-  it('rate-limits an endpoint flood without recording receipts', async () => {
+  it('reveals rate limiting only to verified senders and does not receipt the limited tail', async () => {
     const ctx = await makeApp();
+    const unauthorized = { status: 401, body: '{"error":"unauthorized"}' };
+    for (let i = 0; i < 125; i++) {
+      const resp = await ctx.app.request('/hooks/ghost', hookPost('{}'));
+      expect({ status: resp.status, body: await resp.text() }).toEqual(unauthorized);
+    }
+
     await createEndpoint(ctx);
     const body = '{}';
     const headers = { 'X-Hub-Signature-256': sign(body) };
-    let limited = 0;
+    // Invalid requests consume the known endpoint's window. The first
+    // 120 are receipted; over-limit invalid requests remain the same
+    // bare 401 and write nothing.
     for (let i = 0; i < 125; i++) {
-      const resp = await ctx.app.request('/hooks/ci-alerts', hookPost(body, headers));
-      if (resp.status === 429) limited += 1;
+      const resp = await ctx.app.request('/hooks/ci-alerts', hookPost(body));
+      expect({ status: resp.status, body: await resp.text() }).toEqual(unauthorized);
     }
-    expect(limited).toBe(5);
+    // Only a sender that proves the endpoint secret may observe 429.
+    const verifiedTail = await ctx.app.request('/hooks/ci-alerts', hookPost(body, headers));
+    expect(verifiedTail.status).toBe(429);
+    expect(await verifiedTail.text()).toBe('{"error":"rate_limited"}');
+    await ctx.app.request(
+      '/notifications/endpoints/ci-alerts',
+      authed(ADMIN, { enabled: false }, 'PATCH'),
+    );
+    const disabledTail = await ctx.app.request('/hooks/ci-alerts', hookPost('{}'));
+    expect({ status: disabledTail.status, body: await disabledTail.text() }).toEqual(unauthorized);
     const receipts = await ctx.app.request(
       '/notifications/endpoints/ci-alerts/deliveries?limit=500',
       authed(ADMIN, undefined, 'GET'),
     );
     const { deliveries } = (await receipts.json()) as { deliveries: unknown[] };
-    // 120 accepted receipts, zero for the rate-limited tail.
+    // 120 under-limit rejection receipts, zero for both over-limit tails.
     expect(deliveries.length).toBe(120);
   });
 });

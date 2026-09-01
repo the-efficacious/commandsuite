@@ -12,7 +12,14 @@
 
 import { logger as defaultLogger, type Logger } from 'csuite-core';
 import type { Client as BrokerClient } from 'csuite-sdk/client';
-import type { Message, RunnerIdentity } from 'csuite-sdk/types';
+import type {
+  Message,
+  MessageDisposition,
+  MessageDispositionFrame,
+  MessageDispositionReasonCode,
+  RunnerControlFrame,
+  RunnerIdentity,
+} from 'csuite-sdk/types';
 import type { Presence } from './presence.js';
 import { formatAgentTimestamp } from './tools.js';
 
@@ -34,7 +41,21 @@ export interface ChannelEvent {
  * re-briefs ride the same sink.
  */
 export interface ChannelEventSink {
-  deliver(event: ChannelEvent): Promise<void>;
+  deliver(event: ChannelEvent, receipt?: ChannelDeliveryReceipt): Promise<void>;
+  /** Replaced on reconnect; adapters emit condition/turn facts through it. */
+  attachControl?(send: (frame: RunnerControlFrame) => void): void;
+}
+
+export interface ChannelDeliveryReceipt {
+  readonly messageId: string;
+  accepted(): void;
+  settle(
+    disposition: Exclude<MessageDisposition, 'accepted'>,
+    options?: {
+      reason?: { code: MessageDispositionReasonCode; detail: string };
+      evidence?: { kind: 'tool_call' | 'outbound_effect' };
+    },
+  ): void;
 }
 
 const BACKOFF_START_MS = 1_000;
@@ -221,6 +242,61 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
     }
   };
 
+  type ReliableStream = {
+    disposition(frame: MessageDispositionFrame): void;
+    control(frame: RunnerControlFrame): void;
+  };
+  let activeStream: { stream: ReliableStream; generation: number } | null = null;
+  let streamGeneration = 0;
+  const pendingActions: Array<() => void> = [];
+  const sendDisposition = (frame: MessageDispositionFrame): void => {
+    if (activeStream === null) pendingActions.push(() => sendDisposition(frame));
+    else activeStream.stream.disposition(frame);
+  };
+  const sendControl = (frame: RunnerControlFrame): void => {
+    if (activeStream === null) pendingActions.push(() => sendControl(frame));
+    else activeStream.stream.control(frame);
+  };
+  const flushPendingFrames = (): void => {
+    if (activeStream === null) return;
+    for (const action of pendingActions.splice(0)) action();
+  };
+  const receiptFor = (messageId: string): ChannelDeliveryReceipt => {
+    let acceptedGeneration = -1;
+    const accepted = (): void => {
+      if (activeStream === null) {
+        pendingActions.push(accepted);
+        return;
+      }
+      if (acceptedGeneration === activeStream.generation) return;
+      activeStream.stream.disposition({
+        kind: 'message_disposition',
+        messageId,
+        disposition: 'accepted',
+        at: Date.now(),
+      });
+      acceptedGeneration = activeStream.generation;
+    };
+    const settle: ChannelDeliveryReceipt['settle'] = (disposition, options = {}) => {
+      if (activeStream === null) {
+        pendingActions.push(() => settle(disposition, options));
+        return;
+      }
+      // A reconnect releases accepted leases. Re-accept on the live
+      // subscription before sending a terminal disposition, including
+      // sinks that settle directly without an explicit accepted() call.
+      accepted();
+      sendDisposition({
+        kind: 'message_disposition',
+        messageId,
+        disposition,
+        at: Date.now(),
+        ...options,
+      });
+    };
+    return { messageId, accepted, settle };
+  };
+
   if (subscriptionGate !== undefined) {
     try {
       await subscriptionGate;
@@ -232,12 +308,32 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
     }
   }
   while (!signal.aborted) {
+    let generation: number | null = null;
     try {
       log.info('subscribing to broker', { name });
       presence?.setConnecting();
       backoff = BACKOFF_START_MS;
 
-      const stream = brokerClient.subscribe(name, signal, runnerIdentity);
+      // The fallback is for old embedded SDK shims/tests. A real current SDK
+      // always supplies subscribeReliable; omission degrades to unreported.
+      const reliable = (brokerClient as Partial<BrokerClient>).subscribeReliable;
+      const stream =
+        typeof reliable === 'function' && runnerIdentity !== undefined
+          ? reliable.call(
+              brokerClient,
+              name,
+              signal,
+              runnerIdentity,
+              sink.attachControl !== undefined,
+            )
+          : Object.assign(brokerClient.subscribe(name, signal, runnerIdentity), {
+              disposition() {},
+              control() {},
+            });
+      generation = ++streamGeneration;
+      activeStream = { stream, generation };
+      sink.attachControl?.(sendControl);
+      flushPendingFrames();
       // Presence flips to `online` optimistically as soon as subscribe
       // returns an iterator — we don't wait for the first message
       // because a quiet team with long heartbeat gaps would otherwise
@@ -247,6 +343,7 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
       // back to `offline`.
       presence?.setOnline();
       for await (const message of stream) {
+        const receipt = receiptFor(message.id);
         log.debug('broker message received', {
           msgId: message.id,
           from: message.from,
@@ -314,6 +411,7 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
           if (!onEnvironmentEvent) {
             log.warn('environment change received but automatic reload is disabled');
           }
+          receipt.settle('handled');
           continue;
         }
 
@@ -332,6 +430,9 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
           const control = parseContextControl(message.data);
           if (control === null) {
             log.warn('dropped malformed context control', { msgId: message.id });
+            receipt.settle('refused', {
+              reason: { code: 'unsupported', detail: 'malformed context control' },
+            });
           } else if (control.target !== name) {
             // Addressed to a teammate. The broker does not currently
             // send us those, which is exactly why this is worth
@@ -341,18 +442,28 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
               target: control.target,
               requestId: control.requestId,
             });
+            receipt.settle('refused', {
+              reason: { code: 'operator_policy', detail: 'context control addressed elsewhere' },
+            });
           } else if (onContextControlEvent) {
             try {
               onContextControlEvent(control);
+              receipt.settle('handled');
             } catch (err) {
               log.error('onContextControlEvent handler threw', {
                 error: err instanceof Error ? err.message : String(err),
+              });
+              receipt.settle('deferred', {
+                reason: { code: 'turn_failed', detail: 'context control handler failed' },
               });
             }
           } else {
             log.warn('context control received but this runner has no handler', {
               verb: control.verb,
               requestId: control.requestId,
+            });
+            receipt.settle('refused', {
+              reason: { code: 'unsupported', detail: 'context control unsupported' },
             });
           }
           continue;
@@ -363,8 +474,11 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
         // sends come back on the subscription stream. Forwarding them would
         // cost the agent a turn to recognise and discard its own
         // output. `recent` still returns self-sends for scrollback.
-        if (message.from === name) continue;
-        await forwardMessage(sink, message, log, resolveChannelSlug);
+        if (message.from === name) {
+          receipt.settle('handled');
+          continue;
+        }
+        await forwardMessage(sink, message, receipt, log, resolveChannelSlug);
       }
 
       // If we get here, the stream ended cleanly — treat as a reconnect.
@@ -377,6 +491,8 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
         error: err instanceof Error ? err.message : String(err),
       });
     }
+
+    if (activeStream?.generation === generation) activeStream = null;
 
     if (signal.aborted) return;
     await sleep(backoff, signal);
@@ -408,6 +524,7 @@ const RESERVED_META_KEYS: ReadonlySet<string> = new Set([
 async function forwardMessage(
   sink: ChannelEventSink,
   message: Message,
+  receipt: ChannelDeliveryReceipt,
   log: Logger,
   resolveChannelSlug?: (id: string) => Promise<string | null>,
 ): Promise<void> {
@@ -467,11 +584,14 @@ async function forwardMessage(
   }
 
   try {
-    await sink.deliver({ content: message.body, meta });
+    await sink.deliver({ content: message.body, meta }, receipt);
   } catch (err) {
     log.error('failed to deliver channel event', {
       messageId: message.id,
       error: err instanceof Error ? err.message : String(err),
+    });
+    receipt.settle('deferred', {
+      reason: { code: 'turn_failed', detail: 'channel sink rejected delivery' },
     });
   }
 }

@@ -139,6 +139,10 @@ export async function runAgentSession(
     modelId: adapter.resolvedModelId?.() ?? null,
     runnerVersion: CLI_VERSION,
     runnerBuildSource: CLI_BUILD_SOURCE,
+    supervision:
+      process.env.INVOCATION_ID || process.env.SYSTEMD_EXEC_PID
+        ? { kind: 'systemd', unit: process.env.CSUITE_SYSTEMD_UNIT ?? 'unreported' }
+        : { kind: 'none' },
   };
 
   // 2. Start the runner with the adapter's framework-specific knobs.

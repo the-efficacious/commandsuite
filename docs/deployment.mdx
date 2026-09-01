@@ -18,6 +18,21 @@ reachable, and (for the last two) a runner member enrolled and ready.
 | a server, a script, CI, an agent | `scripts/bootstrap.sh up` | the same, with no prompts — [headless setup](/docs/headless-setup) |
 | Docker | `docker compose up` | the same, in a container, state on a volume — this page |
 
+## Upgrading to 0.9.0
+
+Treat 0.9.0 as a coordinated protocol upgrade: stop the runners, upgrade the
+broker and every runner, then start the runners again. Mixed 0.8.x/0.9.0
+deployments are unsupported in either direction. CommandSuite has no external
+0.8.x deployments to preserve; 0.9.0 is the compatibility baseline for future
+mixed-version support.
+
+This is a requirement, not a conservative recommendation. In a controlled test,
+a 0.9.0 runner connected to a 0.8.x broker received and acted on messages, but
+the older broker rejected the runner's new `accepted` disposition. The work
+remained permanently pending and was not redelivered after reconnect. The
+roster's `SKEW` marker identifies that the artifacts differ; it does not imply
+that crossing the 0.8.x/0.9.0 boundary is safe.
+
 ## `docker compose up`
 
 From a checkout of the repository:

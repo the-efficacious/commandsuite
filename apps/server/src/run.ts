@@ -51,6 +51,7 @@ import {
   openTeamAndMembers,
   registerSecretValues,
   SqliteEventLog,
+  SqliteMessageDeliveryLedger,
   SqlitePushSubscriptionStore,
   SqliteSessionStore,
   SqliteTokenStore,
@@ -439,6 +440,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   const teamStore: TeamStore = stores.team;
 
   const eventLog = new SqliteEventLog(db);
+  const messageDeliveries = new SqliteMessageDeliveryLedger(db);
   const getCipher = () => kekFieldCipher(getKek());
   const sessions = new SqliteSessionStore(db);
   const tokens = new SqliteTokenStore(db);
@@ -644,6 +646,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
 
   const broker = new Broker({
     eventLog,
+    deliveryLedger: messageDeliveries,
     logger: log.child('broker'),
   });
   broker.seedMembers(memberStore.members());
@@ -795,8 +798,25 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
     const hostApp = new Hono<AppBindings>();
     hostApp.use('*', serveStatic({ root: publicRoot }));
     hostApp.get('*', async (c, next) => {
-      if (!prefersHtmlRepresentation(c.req.header('Accept'))) return next();
-      return serveStatic({ root: publicRoot, path: 'index.html' })(c, next);
+      // These paths serve two representations of one URL chosen by
+      // `Accept`, so EVERY response here must say so: without `Vary`,
+      // a cache is entitled to reuse whichever representation it saw
+      // first for a request that wanted the other. That is not
+      // theoretical — a hard load of `/objectives` caches the shell
+      // under that URL, and the SPA's own JSON fetch of the same URL
+      // is then answered from cache with index.html, rendering
+      // "invalid JSON from …" on refresh. The header goes on both
+      // branches: the HTML one and the JSON one are equally cacheable
+      // and equally wrong to reuse across a differing Accept.
+      const html = prefersHtmlRepresentation(c.req.header('Accept'));
+      if (!html) {
+        await next();
+        c.res.headers.append('Vary', 'Accept');
+        return;
+      }
+      const response = await serveStatic({ root: publicRoot, path: 'index.html' })(c, next);
+      c.res.headers.append('Vary', 'Accept');
+      return response;
     });
     hostApp.route('/', apiApp);
     app = hostApp;

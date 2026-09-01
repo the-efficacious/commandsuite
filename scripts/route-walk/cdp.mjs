@@ -14,6 +14,9 @@
 // hard loads from a second tab).
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 /** Wait for the "DevTools listening on ws://…" line on stderr. */
 function devtoolsUrl(child, timeoutMs) {
@@ -37,7 +40,13 @@ function devtoolsUrl(child, timeoutMs) {
   });
 }
 
-export async function launchBrowser({ executable, userDataDir, timeoutMs = 30_000 }) {
+export async function launchBrowser({ executable, userDataDir, timeoutMs = 30_000 } = {}) {
+  // A missing profile path used to interpolate as the literal string
+  // "undefined", so Chromium created a directory of that name in the
+  // caller's cwd -- 8 MB of browser profile in the repo root the first
+  // time someone called this from a scratch script. Default to a temp
+  // profile instead of writing a lie to disk.
+  const profileDir = userDataDir ?? mkdtempSync(join(tmpdir(), 'csuite-cdp-'));
   const child = spawn(
     executable,
     [
@@ -47,7 +56,7 @@ export async function launchBrowser({ executable, userDataDir, timeoutMs = 30_00
       '--disable-gpu',
       '--no-first-run',
       '--window-size=1400,900',
-      `--user-data-dir=${userDataDir}`,
+      `--user-data-dir=${profileDir}`,
       'about:blank',
     ],
     { stdio: ['ignore', 'ignore', 'pipe'] },
@@ -211,6 +220,17 @@ export function trackNetwork(session) {
       const path = safePathname(p.response.url);
       tracker.failed.push(`${p.response.status} ${req?.method ?? 'GET'} ${path}`);
     }
+    // A response is enough to call a request settled for idleness.
+    // Chromium does not emit loadingFinished for every response --
+    // the `Cache-Control: no-store` replies this PR's base introduces
+    // arrive complete and then never report completion (#278) -- so
+    // waiting for it means one such response per page pins `inflight`
+    // forever and every networkIdle burns its full timeout. Measured:
+    // 1.8 s per route became 31 s, on an app rendering correctly
+    // throughout. The page has what it asked for at this point;
+    // body-transfer completion is not something we can observe
+    // reliably enough to gate on.
+    tracker.inflight.delete(p.requestId);
   });
   const settle = (p) => {
     tracker.inflight.delete(p.requestId);

@@ -70,6 +70,7 @@ import {
   PushSubscriptionPayloadSchema,
   RejectEnrollmentRequestSchema,
   RotateTokenRequestSchema,
+  RunnerControlFrameSchema,
   RunnerIdentitySchema,
   SetCustomToolRequestSchema,
   SetNotificationSecretRequestSchema,
@@ -680,6 +681,22 @@ export function createApp(options: AppOptions): CreatedApp {
     );
   }
 
+  // The message ledger's bound is temporal (24 hours), not volumetric.
+  // Sweep independently of notifications so ordinary team messages also
+  // reach an explicit terminal refusal instead of accumulating forever.
+  const messageDeliverySweepInterval = setInterval(() => {
+    broker.sweepOpenTurnBackstops();
+    void broker.sweepMessageDeliveries().catch((err) => {
+      logger.warn('message delivery sweep failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+  }, 5_000);
+  messageDeliverySweepInterval.unref?.();
+  shutdownSignal?.addEventListener('abort', () => clearInterval(messageDeliverySweepInterval), {
+    once: true,
+  });
+
   // Diagnostics retention. The store implements a detail -> hour -> day
   // compaction ladder and nothing ever called it, so the row caps were
   // the only bound in production and the ladder was dead code. It runs
@@ -962,6 +979,32 @@ export function createApp(options: AppOptions): CreatedApp {
   function clearTotpLockout(key: string): void {
     totpLockouts.delete(key);
   }
+
+  // Every response from this app is member-scoped or otherwise not a
+  // shared artifact, and none of them carry a validator, so nothing
+  // here should ever be stored by a cache we do not control.
+  //
+  // RFC 9111 §3.5 already forbids a shared cache from storing a
+  // response to an `Authorization`-bearing request, but our browser
+  // sessions authenticate with a COOKIE, which gets no such
+  // protection — and CDNs are routinely configured to cache by path
+  // or extension irrespective of what the origin said. Say it
+  // explicitly rather than relying on the absence of a validator to
+  // discourage heuristic storage. Handlers that want different
+  // behaviour set the header themselves and are left alone.
+  // Set as a PREPARED header before the handler runs, not by mutating
+  // `c.res` afterwards. Touching `c.res` post-`next()` makes Hono
+  // rebuild the Response around the handler's body, and the rebuilt
+  // one never completed for the browser: `GET /session` sat in flight
+  // forever, every in-app navigation waited out its network-idle
+  // timeout, and a route walk went from 1.8 s to 31 s per route.
+  // Prepared headers are merged by `c.json()`/`c.body()` at
+  // construction, so the response is never re-wrapped and a handler
+  // that sets its own cache-control still wins.
+  app.use('*', async (c, next) => {
+    c.header('cache-control', 'no-store');
+    await next();
+  });
 
   // Enforce protocol version if the client sent the header. Missing header
   // is allowed for relaxed clients; wrong version is a 400.
@@ -1321,14 +1364,10 @@ export function createApp(options: AppOptions): CreatedApp {
   });
 
   app.get(PATHS.roster, auth, async (c) => {
-    // Decorate the live presence list with each member's ACTIVITY state
-    // (idle/working/blocked). Both `activity` and the back-compat `busy`
-    // mirror default to absent for members the tracker resolves as idle
-    // (never reported, reported idle, or lapsed past the TTL) — older
-    // clients ignore the fields and see the same shape they always have.
-    // For non-idle members we surface `activity` plus `busy = activity
-    // === 'working'`, so `blocked` reads as not-busy (an operator should
-    // look) while still exposing the distinct state to new UIs.
+    // Compatibility activity projection. `working` is now derived ONLY
+    // from recent broker-recorded tool/outbound evidence. Turn lifecycle
+    // and message consumption remain scheduling telemetry and can never
+    // make a member look capable. `blocked` stays runner telemetry.
     //
     // `captureHealth` follows a DIFFERENT absence rule from `activity`,
     // deliberately. `activity` omits the field for idle members and a
@@ -1339,7 +1378,17 @@ export function createApp(options: AppOptions): CreatedApp {
     // field as healthy is exactly the conflation this exists to remove,
     // and it is only absent when the store isn't wired at all.
     const presences = broker.listPresences(options.version).map((p) => {
-      const activity = workState.getActivity(p.name);
+      const schedulingState = workState.getActivity(p.name);
+      const actedRecently =
+        p.executor?.lastActedAt !== null &&
+        p.executor?.lastActedAt !== undefined &&
+        now() - p.executor.lastActedAt <= WORK_STATE_TTL_MS;
+      const activity =
+        schedulingState === 'blocked'
+          ? ('blocked' as const)
+          : actedRecently
+            ? ('working' as const)
+            : ('idle' as const);
       const health = captureHealth?.forMember(p.name);
       // `pending` is internal — an aged-out marker hasn't earned a
       // claim yet, and healthy lag means every turn is briefly
@@ -4134,15 +4183,17 @@ export function createApp(options: AppOptions): CreatedApp {
     // ── Ingress ──
     //
     // POST /hooks/:slug — NO auth middleware; this is the outside
-    // world's door. Transport checks here (existence, enabled, size,
-    // override grammar), then the dispatcher owns verify → dedupe →
-    // filter → render → policy. Responses are deliberately terse:
+    // world's door. Shared transport checks happen before endpoint
+    // existence affects the response; the dispatcher then owns verify
+    // → enabled → dedupe → filter → render → policy. Responses are deliberately terse:
     // verification failures are a bare 401 with no detail, and the
     // accept path returns 202 before any fanout completes.
     app.post(`${PATHS.hooks}/:slug`, async (c) => {
       const endpoint = notifications.getBySlug(c.req.param('slug'));
-      if (!endpoint) return c.json({ error: 'not_found' }, 404);
-      if (!endpoint.enabled) return c.json({ error: 'disabled' }, 409);
+      // Unknown, live-but-unverified, and disabled endpoints are
+      // intentionally indistinguishable to an unauthenticated caller.
+      // Operators inspect endpoint state through the authenticated
+      // management surface instead.
 
       const declared = c.req.header('content-length');
       if (declared !== undefined && Number(declared) > HOOK_BODY_MAX) {
@@ -4180,18 +4231,36 @@ export function createApp(options: AppOptions): CreatedApp {
         overrides.level = parsedLevel.data;
       }
 
-      const result = await dispatcher.ingest({
+      // Size and query grammar are transport properties, so enforce
+      // them identically before endpoint existence can affect the
+      // response. Only then collapse an unknown slug into the same
+      // authentication failure as a known endpoint.
+      if (!endpoint) return c.json({ error: 'unauthorized' }, 401);
+
+      const ingress = {
         endpoint,
         rawBody,
-        contentType: c.req.header('content-type') ?? null,
-        getHeader: (name) => c.req.header(name),
-        overrides: Object.keys(overrides).length > 0 ? overrides : null,
-      });
-
-      if (result.status === 'rate_limited') {
+        getHeader: (name: string) => c.req.header(name),
+      };
+      const limited = dispatcher.checkIngressRateLimit(endpoint.id);
+      // Verification is deliberately paid even while throttled. Only a
+      // sender who proves knowledge of the endpoint secret may observe
+      // 429; every unverified state remains the same bare 401. Nothing
+      // is receipted or delivered on this over-limit path.
+      const verification = await dispatcher.verifyIngress(ingress);
+      if (limited) {
+        if (!verification.ok) return c.json({ error: 'unauthorized' }, 401);
         c.header('Retry-After', '60');
         return c.json({ error: 'rate_limited' }, 429);
       }
+
+      const result = await dispatcher.ingest({
+        ...ingress,
+        contentType: c.req.header('content-type') ?? null,
+        overrides: Object.keys(overrides).length > 0 ? overrides : null,
+        verification,
+      });
+
       if (result.httpStatus === 401) {
         return c.json({ error: 'unauthorized' }, 401);
       }
@@ -4824,34 +4893,52 @@ export function createApp(options: AppOptions): CreatedApp {
           })();
           let unsubscribe: (() => void) | null = null;
           let onShutdown: (() => void) | null = null;
+          let sendMessage: ((message: Message) => void) | null = null;
+          const subscriptionId = crypto.randomUUID();
 
           return {
             onOpen: (_evt, ws) => {
-              unsubscribe = broker.subscribe(
-                targetName,
-                (message) => {
-                  try {
-                    ws.send(JSON.stringify(message));
-                  } catch (err) {
-                    logger.warn('ws send failed', {
+              sendMessage = (message) => {
+                try {
+                  ws.send(JSON.stringify(message));
+                } catch (err) {
+                  logger.warn('ws send failed', {
+                    targetName,
+                    messageId: message.id,
+                    error: err instanceof Error ? err.message : String(err),
+                  });
+                }
+              };
+              unsubscribe = broker.subscribe(targetName, sendMessage, {
+                role: member.role,
+                name: member.name,
+                tokenId: c.get('tokenId'),
+                clientIdentity,
+                subscriptionId,
+              });
+              if (
+                clientIdentity?.kind !== 'runner' ||
+                clientIdentity.runnerIdentity.livenessProtocol !== 'runner-state-v1'
+              ) {
+                void broker
+                  .redeliverPending(targetName, sendMessage, clientIdentity ?? null)
+                  .catch((err) => {
+                    logger.warn('pending message redelivery failed', {
                       targetName,
-                      messageId: message.id,
                       error: err instanceof Error ? err.message : String(err),
                     });
-                  }
-                },
-                {
-                  role: member.role,
-                  name: member.name,
-                  tokenId: c.get('tokenId'),
-                  clientIdentity,
-                },
-              );
+                  });
+              }
 
               // Shutdown fan-out: server.close() needs every live socket
               // to close before it returns. Without this, SIGTERM would
               // hang indefinitely on idle connections.
               onShutdown = () => {
+                // Release subscription-owned delivery leases while durable
+                // storage is still open; the WebSocket close event can race
+                // the server's final database close.
+                unsubscribe?.();
+                unsubscribe = null;
                 try {
                   ws.close(1001, 'server shutting down');
                 } catch {
@@ -4899,6 +4986,36 @@ export function createApp(options: AppOptions): CreatedApp {
                     error: err instanceof Error ? err.message : String(err),
                   });
                 });
+              }
+            },
+            onMessage: async (evt) => {
+              let raw: string;
+              try {
+                raw = typeof evt.data === 'string' ? evt.data : String(evt.data);
+                const parsed = RunnerControlFrameSchema.safeParse(JSON.parse(raw));
+                if (!parsed.success) {
+                  logger.warn('invalid runner control frame', { targetName });
+                  return;
+                }
+                const context = {
+                  name: member.name,
+                  clientIdentity,
+                  subscriptionId,
+                };
+                const accepted =
+                  parsed.data.kind === 'message_disposition'
+                    ? await broker.disposition(targetName, parsed.data, context)
+                    : parsed.data.kind === 'runner_condition'
+                      ? await broker.runnerCondition(targetName, parsed.data, context)
+                      : broker.runnerTurn(targetName, parsed.data, context);
+                if (!accepted) {
+                  logger.warn('runner control frame refused', {
+                    targetName,
+                    kind: parsed.data.kind,
+                  });
+                }
+              } catch {
+                logger.warn('invalid runner control frame', { targetName });
               }
             },
             onClose: () => {

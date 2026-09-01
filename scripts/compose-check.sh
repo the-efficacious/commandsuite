@@ -32,14 +32,24 @@ wait_healthy() {
 
 assert_all() {
   say "$1: broker and web UI"
-  local code; code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$URL/healthz")"
+  # `set -e` aborts on a failed command substitution, so a curl that
+  # cannot connect at all used to kill the script BEFORE `die` ran: no
+  # FAIL line, no container logs, just a bare exit 56. Measured by
+  # breaking the port mapping deliberately -- the gate refused, and
+  # said nothing about why. A gate that cannot name its own cause is
+  # the defect this whole suite exists to find.
+  local code=''
+  code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$URL/healthz")" ||
+    die "GET $URL/healthz could not complete (curl exit $?) — is the published port mapped to 8717?"
   [ "$code" = 200 ] || die "GET /healthz returned $code"
   ok "/healthz 200"
   curl -s --max-time 5 "$URL/" | grep -q '<title>CommandSuite</title>' || die "GET / did not serve the web UI"
   ok "/ serves the web UI"
 
   say "$1: seeded member can use the API (token read from the volume, never printed)"
-  local token; token="$(compose exec -T csuite cat /var/lib/csuite/secrets/admin.token)"
+  local token=''
+  token="$(compose exec -T csuite cat /var/lib/csuite/secrets/admin.token)" ||
+    die "could not read the admin token from the volume (compose exec exit $?)"
   [ -n "$token" ] || die "no admin token on the volume"
   curl -s --max-time 5 -H "Authorization: Bearer $token" "$URL/roster" | grep -q '"name":"'"${CSUITE_ADMIN:-admin}"'"' || die "roster as ${CSUITE_ADMIN:-admin} failed"
   ok "authenticated roster lists ${CSUITE_ADMIN:-admin}"
@@ -50,6 +60,20 @@ assert_all() {
       CSUITE_URL=http://127.0.0.1:8717 CSUITE_AUTH_CONFIG_PATH=/var/lib/csuite/auth.json \
       csuite roster </dev/null | grep -q "^${CSUITE_RUNNER:-builder} " || die "saved auth for the runner member did not resolve from /var/lib/csuite/runner"
   ok "saved auth for (http://127.0.0.1:8717, /var/lib/csuite/runner) resolves; roster lists ${CSUITE_RUNNER:-builder}"
+  # `grep -vq` is the RIGHT inversion here and the wrong one elsewhere.
+  # The assertion is "every line must be 600", so "is any line NOT 600"
+  # is the violation. Do not rewrite this as `! grep -q '^600 '`: that
+  # asks "is no line 600", which permits a 644 token as long as one
+  # other file is correct. Measured, GNU grep, modes 644+600:
+  # `grep -vq` refuses, `! grep -q` permits.
+  #
+  # Open edge, correct today for a reason nobody chose: `-q` closes the
+  # pipe at its first selected line, and pipefail would turn that
+  # SIGPIPE into a pipeline failure -- `&& die` would not fire and
+  # `|| ok` would report success. Two short lines from `stat` land in
+  # one write before grep exits, so it cannot happen at this size. It
+  # becomes reachable if this file list grows; capture the output first
+  # if it does.
   compose exec -T csuite stat -c '%a %n' /var/lib/csuite/secrets/admin.token /var/lib/csuite/secrets/admin.totp | grep -vq '^600 ' && die "secret files are not 0600" || ok "secret files are mode 0600 on the volume"
 
   if [ "${CSUITE_START_RUNNER:-0}" = 1 ]; then

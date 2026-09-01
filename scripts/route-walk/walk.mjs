@@ -98,6 +98,13 @@ function totp(secretFile) {
   return ((h.readUInt32BE(o) & 0x7fffffff) % 1_000_000).toString().padStart(6, '0');
 }
 
+/** A marker declaration is a string, or one string per role. */
+function resolveMarker(declaration) {
+  if (declaration === undefined || declaration === null) return undefined;
+  if (typeof declaration === 'string') return declaration;
+  return declaration[ROLE];
+}
+
 const rows = declared.routes
   .filter((r) => !args.only || r.kind === args.only)
   .flatMap((r) =>
@@ -110,11 +117,37 @@ const rows = declared.routes
       // (e.g. unknown paths hard-load as 404 while in-app they fall
       // through to home).
       hardLoad: r.hardLoad ?? '200 app',
+      // Text unique to THIS view, so a clean pass proves the route
+      // rendered itself. Without it the only positive assertion was
+      // the shell, which survives in-app navigation -- a build with
+      // the objectives page deleted walked green, because /objectives
+      // fell through to home and home has a shell like everything
+      // else. `markers` (parallel to urls) where the row's URLs render
+      // different views; `marker` where one string covers them all.
+      // Templated like the URLs, so a marker can name the fixture the
+      // row is pinned to rather than hard-coding a seeded slug.
+      // A marker may be one string, or one per role. Views legitimately
+      // differ by role -- a profile tab the viewer lacks the permission
+      // for falls back to overview by design (MemberProfile.tsx
+      // `effectiveTab`), and a DM with yourself renders no peer header
+      // -- so a single string per URL forces the declaration down to
+      // whatever both roles happen to share, which is how you end up
+      // asserting the shell again.
+      marker: fill(
+        String(
+          resolveMarker(
+            Array.isArray(r.markers) ? r.markers[r.urls.indexOf(template)] : r.marker,
+          ) ?? '',
+        ),
+      ),
       // A declared partial refusal: the page is clean but one panel
       // legitimately renders the Restricted callout for this role
       // (e.g. the DM's peer-activity inspector for a baseline viewer).
       allowRestrictedPanel: (r.allowRestrictedPanel ?? []).includes(ROLE),
       why: r.why ?? null,
+      // Landing on home IS this row's contract (the two pseudo rows and
+      // home itself), so its marker is allowed to be home's.
+      rendersHome: r.rendersHome === true,
     })),
   );
 
@@ -137,6 +170,32 @@ try {
   async function goto(url) {
     await page.send('Page.navigate', { url });
     await page.networkIdle(network, 600, 45_000);
+  }
+
+  // Everything the page can still tell us at the moment something
+  // threw. Screenshots here are unconditional, unlike --screenshots
+  // (which also captures the healthy walk): a red gate with no picture
+  // and no console output costs whoever reads it a full reproduction.
+  async function diagnose(slug) {
+    const out = { consoleErrors: [...errors], failedRequests: [...network.failed] };
+    try {
+      out.location = await page.evaluate(`location.pathname + location.search`);
+      // Generous: the shell chrome alone runs past a thousand
+      // characters, so a short slice captures the navigation and
+      // clips the view that actually failed.
+      out.bodyText = String(await page.evaluate(`document.body.innerText`)).slice(0, 4000);
+    } catch (err) {
+      out.bodyText = `unreadable: ${err.message}`;
+    }
+    try {
+      const shot = await page.send('Page.captureScreenshot', { format: 'jpeg', quality: 70 });
+      const file = `${args.out}/failure-${slug.replace(/[^a-z0-9]+/gi, '-')}.jpg`;
+      writeFileSync(file, Buffer.from(shot.data, 'base64'));
+      out.screenshot = file;
+    } catch (err) {
+      out.screenshot = `unavailable: ${err.message}`;
+    }
+    return out;
   }
 
   // Sign in through the product's own TOTP form. A code is single-use
@@ -185,6 +244,59 @@ try {
         throw new Error(`sign-in failed: ${alert || 'no alert text'}`);
       }
     }
+  }
+
+  // The loop above ends when the TOTP field is GONE, which is the
+  // absence of a login form and not the presence of a session: a blank
+  // page, a crashed render and an error view all satisfy it. Assert the
+  // signed-in shell itself, once, and fail here with the page's own
+  // evidence -- otherwise a session we never had is rediscovered 28
+  // times as a 21 s timeout per route, which is how a ten-minute CI
+  // failure came to report nothing but the symptom.
+  try {
+    await page.waitFor(`document.body.innerText.includes('Jump to member')`, 30_000);
+  } catch {
+    const d = await diagnose(`${ROLE}-signin`);
+    throw new Error(
+      `signed in but the shell never mounted at ${d.location ?? '?'}` +
+        ` — ${d.consoleErrors.length} console errors, ${d.failedRequests.length} failed requests` +
+        `${d.screenshot ? `, screenshot ${d.screenshot}` : ''}\n` +
+        `  console: ${JSON.stringify(d.consoleErrors.slice(0, 5))}\n` +
+        `  failed:  ${JSON.stringify(d.failedRequests.slice(0, 5))}\n` +
+        `  body:    ${JSON.stringify(String(d.bodyText).slice(0, 300))}`,
+    );
+  }
+
+  // ── The markers' own known-bad input ────────────────────────────
+  //
+  // Unknown paths fall through to home, so a marker that also appears
+  // on home cannot tell "this route rendered" from "this route no
+  // longer exists". That is not hypothetical: deleting the objectives
+  // route from the router and rebuilding left this gate GREEN, because
+  // the marker chosen for /objectives was a string home happens to
+  // render too. Check every marker against home's actual text before
+  // walking, rather than trusting that whoever declared it looked far
+  // enough down the page.
+  // Settle first. The shell appears long before home's panels resolve,
+  // and reading too early gives a half-rendered page that flags
+  // nothing -- which is exactly what this check did on its first run,
+  // passing a marker that a fully-loaded home does render.
+  await page.networkIdle(network, 600, 30_000);
+  await new Promise((res) => setTimeout(res, 600));
+  const homeText = (await page.evaluate(`document.body.innerText`)).replace(/\s+/g, ' ');
+  const ambiguous = rows.filter(
+    (r) => r.expectation === 'clean' && !r.rendersHome && homeText.includes(String(r.marker)),
+  );
+  if (ambiguous.length > 0) {
+    console.error('walk.mjs: these markers also appear on home, so they prove nothing:');
+    for (const r of ambiguous) {
+      console.error(`  - ${r.kind} ${r.url}: ${JSON.stringify(r.marker)}`);
+    }
+    console.error(
+      '  an unknown path renders home, so such a route walks green even when its view is gone.',
+    );
+    console.error('  declare `rendersHome: true` if landing on home IS the contract for that row.');
+    process.exit(1);
   }
 
   // Hard-load probe from a second tab in the same browser context
@@ -244,6 +356,19 @@ try {
       entry.failedRequests = [...network.failed];
       entry.rendersApp = /Jump to member/.test(text);
       entry.showsRestricted = /Restricted/.test(text);
+      // The shell is not the view. A restricted route renders the
+      // callout instead of its content, so the marker is asserted
+      // only where the row expects a clean render.
+      // Matched against whitespace-collapsed text: a marker is a
+      // content assertion, not a layout one. `#` and a channel name
+      // are separate elements, so the raw innerText carries a newline
+      // between them that no sane declaration would predict — and a
+      // marker that has to guess the DOM's line breaks would fail on
+      // every restyle, which is the sort of gate people learn to
+      // ignore.
+      const flat = text.replace(/\s+/g, ' ');
+      entry.rendersOwnView =
+        r.expectation === 'restricted' ? null : flat.includes(String(r.marker));
       if (args.screenshots) {
         const shot = await page.send('Page.captureScreenshot', {
           format: 'jpeg',
@@ -259,17 +384,33 @@ try {
         entry.hardLoad === r.hardLoad;
       entry.ok =
         r.expectation === 'clean'
-          ? entry.rendersApp && (r.allowRestrictedPanel || !entry.showsRestricted) && noNoise
+          ? entry.rendersApp &&
+            entry.rendersOwnView &&
+            (r.allowRestrictedPanel || !entry.showsRestricted) &&
+            noNoise
           : entry.rendersApp && entry.showsRestricted && noNoise;
+      // Not every failure throws — a wrong view renders perfectly well.
+      // Evidence attaches to any red route, not just the ones that
+      // raised, or the quiet failures are the least diagnosable ones.
+      if (!entry.ok) Object.assign(entry, await diagnose(`${ROLE}-${r.kind}`));
     } catch (err) {
       entry.ok = false;
       entry.error = err.message;
+      // Everything below is already in memory when the throw happens.
+      // An earlier version recorded only `error` and `ms`, so a red
+      // gate said what timed out and never why -- ten minutes of CI
+      // for one string restating the symptom. The failure path is the
+      // only path where this evidence is worth anything.
+      Object.assign(entry, await diagnose(`${ROLE}-${r.kind}`));
     }
     entry.ms = Date.now() - t0;
     report.routes.push(entry);
     const detail = [
       entry.error ?? null,
       entry.hardLoad !== r.hardLoad ? `hard-load ${entry.hardLoad} (wanted ${r.hardLoad})` : null,
+      entry.rendersApp && entry.rendersOwnView === false
+        ? `shell mounted but ${JSON.stringify(r.marker)} absent — wrong view for this URL`
+        : null,
       entry.consoleErrors?.length ? `${entry.consoleErrors.length} console errors` : null,
       entry.failedRequests?.length ? `${entry.failedRequests.length} failed requests` : null,
       r.expectation === 'restricted' && !entry.showsRestricted ? 'Restricted not rendered' : null,

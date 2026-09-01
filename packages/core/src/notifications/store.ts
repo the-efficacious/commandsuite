@@ -371,6 +371,7 @@ export interface NotificationsStore {
   // ── Deliveries ──
   insertDelivery(input: InsertDeliveryInput): DeliveryRecord;
   getDeliveryRecord(id: string): DeliveryRecord | null;
+  findDeliveriesByMessageId(messageId: string): DeliveryRecord[];
   findDeliveryByDedupe(endpointId: string, dedupeKey: string): DeliveryRecord | null;
   updateDelivery(
     id: string,
@@ -483,6 +484,7 @@ class SqliteNotificationsStore implements NotificationsStore {
   private readonly insertDeliveryStmt: SqlStatement;
   private readonly selectDeliveryByIdStmt: SqlStatement;
   private readonly selectDeliveryByDedupeStmt: SqlStatement;
+  private readonly selectDeliveriesByMessageIdStmt: SqlStatement;
   private readonly updateDeliveryStmt: SqlStatement;
   private readonly selectDeliveriesStmt: SqlStatement;
   private readonly selectDeliveriesBeforeStmt: SqlStatement;
@@ -579,6 +581,12 @@ class SqliteNotificationsStore implements NotificationsStore {
     );
     this.selectDeliveryByDedupeStmt = db.prepare(
       `SELECT ${DELIVERY_COLS} FROM notification_deliveries WHERE endpoint_id = ? AND dedupe_key = ?`,
+    );
+    this.selectDeliveriesByMessageIdStmt = db.prepare(
+      `SELECT ${DELIVERY_COLS} FROM notification_deliveries AS delivery
+       WHERE EXISTS (
+         SELECT 1 FROM json_each(delivery.message_ids) WHERE json_each.value = ?
+       )`,
     );
     this.updateDeliveryStmt = db.prepare(
       `UPDATE notification_deliveries
@@ -917,6 +925,11 @@ class SqliteNotificationsStore implements NotificationsStore {
   getDeliveryRecord(id: string): DeliveryRecord | null {
     const row = this.selectDeliveryByIdStmt.get(id) as DeliveryDbRow | undefined;
     return row ? rowToDelivery(row) : null;
+  }
+
+  findDeliveriesByMessageId(messageId: string): DeliveryRecord[] {
+    const rows = this.selectDeliveriesByMessageIdStmt.all(messageId) as unknown as DeliveryDbRow[];
+    return rows.map(rowToDelivery);
   }
 
   findDeliveryByDedupe(endpointId: string, dedupeKey: string): DeliveryRecord | null {

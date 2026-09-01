@@ -86,6 +86,7 @@ import {
   ListToolSourcesResponseSchema,
   ListVariablesResponseSchema,
   MemberSchema,
+  MessageDispositionFrameSchema,
   MessageSchema,
   NotificationEndpointSchema,
   NotificationProfileSchema,
@@ -103,6 +104,7 @@ import {
   ResolveSecretsResponseSchema,
   RosterResponseSchema,
   RotateTokenResponseSchema,
+  RunnerControlFrameSchema,
   RunnerIdentitySchema,
   SecretSchema,
   SessionResponseSchema,
@@ -175,6 +177,7 @@ import type {
   ListTelemetryQuery,
   Member,
   Message,
+  MessageDispositionFrame,
   NotificationDelivery,
   NotificationEndpoint,
   NotificationEndpointSummary,
@@ -195,6 +198,7 @@ import type {
   RosterResponse,
   RotateTokenRequest,
   RotateTokenResponse,
+  RunnerControlFrame,
   RunnerIdentity,
   Secret,
   SecretSummary,
@@ -284,6 +288,13 @@ export class ClientError extends Error {
     this.status = status;
     this.body = body;
   }
+}
+
+/** Ack-capable runner subscription. Dispositions travel on the same authenticated WebSocket. */
+export interface ReliableSubscription extends AsyncIterable<Message> {
+  disposition(frame: MessageDispositionFrame): void;
+  /** Additive liveness-v1 control; old brokers ignore the unknown frame. */
+  control(frame: RunnerControlFrame): void;
 }
 
 export class Client {
@@ -1873,6 +1884,60 @@ export class Client {
     signal?: AbortSignal,
     clientIdentity?: ClientIdentity | RunnerIdentity,
   ): AsyncIterable<Message> {
+    yield* this.subscribeInternal(name, signal, clientIdentity);
+  }
+
+  /**
+   * Open the runner-only disposition-v1 subscription. Iteration owns the
+   * socket lifetime; `disposition()` is available after iteration starts.
+   */
+  subscribeReliable(
+    name: string,
+    signal: AbortSignal | undefined,
+    runnerIdentity: RunnerIdentity,
+    liveness = false,
+  ): ReliableSubscription {
+    const identity = RunnerIdentitySchema.parse({
+      ...runnerIdentity,
+      deliveryProtocol: 'disposition-v1',
+      ...(liveness ? { livenessProtocol: 'runner-state-v1' as const } : {}),
+    });
+    let socket: NodeWebSocket | null = null;
+    let socketOpen = false;
+    const pendingFrames: string[] = [];
+    let iterated = false;
+    const iterable = this.subscribeInternal(name, signal, identity, (ws) => {
+      socket = ws;
+      ws.once('open', () => {
+        socketOpen = true;
+        for (const encoded of pendingFrames.splice(0)) ws.send(encoded);
+      });
+    });
+    const sendFrame = (encoded: string): void => {
+      if (socket !== null && socketOpen) socket.send(encoded);
+      else pendingFrames.push(encoded);
+    };
+    return {
+      [Symbol.asyncIterator]() {
+        if (iterated) throw new Error('reliable subscription can only be iterated once');
+        iterated = true;
+        return iterable[Symbol.asyncIterator]();
+      },
+      disposition(frame) {
+        sendFrame(JSON.stringify(MessageDispositionFrameSchema.parse(frame)));
+      },
+      control(frame) {
+        sendFrame(JSON.stringify(RunnerControlFrameSchema.parse(frame)));
+      },
+    };
+  }
+
+  private async *subscribeInternal(
+    name: string,
+    signal?: AbortSignal,
+    clientIdentity?: ClientIdentity | RunnerIdentity,
+    onSocket?: (socket: NodeWebSocket) => void,
+  ): AsyncIterable<Message> {
     const url = this.buildWsUrl(PATHS.subscribe, { name });
     const headers: Record<string, string> = {
       [PROTOCOL_HEADER]: String(PROTOCOL_VERSION),
@@ -1889,6 +1954,7 @@ export class Client {
     headers[CLIENT_IDENTITY_HEADER] = JSON.stringify(normalized);
     const ws = new this.WebSocketImpl(url, { headers });
     this.activeSubscriptions.add(ws);
+    onSocket?.(ws);
 
     // Async-iterator plumbing: messages arrive out-of-band via
     // `on('message')`, so we buffer them in a queue that the

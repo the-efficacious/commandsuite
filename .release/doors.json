@@ -109,6 +109,18 @@
     {
       "pr": 260,
       "ruling": "stable member identityId: additive wire field + on-disk migration (obj-mtgbb3ct-s, ruled msg ecc31990)"
+    },
+    {
+      "pr": 272,
+      "ruling": "unknown, live, and disabled webhook endpoints become indistinguishable to unauthenticated callers; verified disabled delivery gains a causal receipt (obj-mtgqxh2b-w)"
+    },
+    {
+      "pr": 274,
+      "ruling": "additive runner message-disposition protocol and notification receipts that wait for subscriber acknowledgement (obj-mtgsjlg5-x)"
+    },
+    {
+      "pr": 279,
+      "ruling": "Vary: Accept on both representations of the shared UI/REST paths, and Cache-Control: no-store on API responses (obj-mtgw8es3-y, ruled a door by Lea). OPERATOR ACTION, not just a change: Vary fixes the cache key going forward but does NOT evict entries a CDN already stored under the unvaried response \u2014 a poisoned entry survives the upgrade and makes the fix look like it failed. Purge the cache for HTML-negotiated origin paths after upgrading. no-store additionally keeps member data out of the on-disk cache of machines we do not administer; it also makes Chromium never report those requests finished over CDP (#278), which matters to anyone driving a browser against a csuite broker."
     }
   ],
   "dismissed": [
@@ -191,6 +203,10 @@
     {
       "pr": 262,
       "reason": "discoverer's classification: door-manifest maintenance (self-classified per the no-repair-loop rule) \u2014 no shipped surface"
+    },
+    {
+      "pr": 280,
+      "reason": "discoverer's classification: repo instruments and developer docs \u2014 the route-walk gate's markers/evidence, the version-guard workflow, and docs/dev/gates.mdx. No shipped surface and no wire change; version-guard governs our own merges, not anything a user of csuite can invoke. Self-classified per the no-repair-loop rule."
     }
   ]
 }

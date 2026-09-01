@@ -12,16 +12,18 @@ export async function runRosterCommand(client: Client): Promise<string> {
 
   const connectedByName = new Map(connected.map((a) => [a.name, a]));
 
-  const header = `${'name'.padEnd(20)}${'role'.padEnd(18)}${'permissions'.padEnd(28)}${'connected'.padEnd(12)}${'auth'.padEnd(14)}last_seen`;
+  const header = `${'name'.padEnd(20)}${'role'.padEnd(18)}${'permissions'.padEnd(28)}${'connected'.padEnd(12)}${'executor'.padEnd(16)}last_acted`;
   const rows = teammates.map((t) => {
     const name = t.name.padEnd(20);
     const role = t.role.title.padEnd(18);
     const perms = (t.permissions.length > 0 ? t.permissions.join(',') : 'baseline').padEnd(28);
     const state = connectedByName.get(t.name);
     const conn = String(state?.connected ?? 0).padEnd(12);
-    const auth = (state?.authBlocked ? `blocked(${state.authBlocked})` : 'ok').padEnd(14);
-    const last = state ? new Date(state.lastSeen).toISOString() : '-';
-    return `${name}${role}${perms}${conn}${auth}${last}`;
+    const executor = (state?.executor?.state ?? 'unreported').padEnd(16);
+    const last = state?.executor?.lastActedAt
+      ? new Date(state.executor.lastActedAt).toISOString()
+      : '-';
+    return `${name}${role}${perms}${conn}${executor}${last}`;
   });
   const identityLines: string[] = [];
   for (const teammate of teammates) {
@@ -47,7 +49,7 @@ export async function runRosterCommand(client: Client): Promise<string> {
         ? ` · SKEW runner=${report.versionSkew.runnerVersion} broker=${report.versionSkew.brokerVersion}`
         : ' · version matches broker';
       identityLines.push(
-        `  ${teammate.name}: runner/${identity.runner} · ${model} · ${identity.runnerVersion} · ${identity.runnerBuildSource} · connections=${report.connections}${instrument}${skew}`,
+        `  ${teammate.name}: runner/${identity.runner} · ${model} · ${identity.runnerVersion} · ${identity.runnerBuildSource} · supervision claim=${identity.supervision?.kind ?? 'unreported'} · connections=${report.connections}${instrument}${skew}`,
       );
     }
     if (state.unreportedConnections > 0) {

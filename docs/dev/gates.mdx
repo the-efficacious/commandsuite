@@ -1,0 +1,512 @@
+---
+title: Gates
+description: Every gate governing merges in this repository, the known-bad input it was shown, and what it reported — plus the practice that produced the list, since an instrument only ever run in the direction where it agrees with its author has been tested in no directions.
+section: Development
+order: 85
+---
+
+# Gates, and what each one has been shown
+
+A gate that has only ever run against work its author believed was good has been
+tested in no directions. Its green is an opinion.
+
+This page is the record of which of ours have been falsified — shown an input we
+know is bad, and observed to fail — and which have not. It exists because three
+of our own instruments were found defective in a single night, each by someone
+using it for real rather than by the instrument itself:
+
+- a liveness probe that printed `CONFIRMED` against an unchanged broker, because
+  it grepped rendered output and matched its own fixture's role title;
+- a query-plan tripwire that closed the statement it was written for and not the
+  class of statement;
+- the route walk, which asserted that the app shell had mounted and therefore
+  passed a build with a page deleted from the router, and which discarded the
+  console errors, failed requests and page text it had collected on the only
+  path where they mattered.
+
+## The practice
+
+**An instrument earns its verdict by being shown a known-bad input, and until it
+has been, a green from it is an opinion.** Four minutes each. Ten rules follow
+from doing it, and every one was learned by getting it wrong first:
+
+**1. Prove the input was actually bad.** A mutation you did not confirm reached
+the system under test is not a test — it is the instrument agreeing with you
+through a different door. Use a **build fingerprint that changes when your
+change arrives**: the served asset hash, a version string, a checksum, whatever
+the system offers. Deleting a route from the router and rebuilding with a pnpm
+filter that matched no project produced a "known-bad build" that was byte-identical
+to the good one, and a gate that passed it correctly.
+
+```
+asset before:  /assets/index-C1-T_VNZ.js
+asset after:   /assets/index-C1-T_VNZ.js     ← nothing was tested
+asset after:   /assets/index-DtYccP1C.js     ← now it is a different build
+```
+
+**2. Never discard stderr.** pnpm printed `No projects matched the filters`. It
+went to `/dev/null`, and the exit code was checked instead. **Discarding stderr
+is discarding the only channel that reports the thing you did not anticipate**,
+which is by definition the thing you most need. This is a strictly worse failure
+than an untested instrument: the information existed, was correct, was free, and
+was thrown away by habit.
+
+**3. A new check's first duty is to disagree with something you already know the
+answer to.** The route walk's own marker-ambiguity check passed everything on
+its first run — it read the page before its panels resolved, so a half-rendered
+page flagged nothing. A self-check that self-approves is the failure mode this
+whole practice has to survive. Point it at a case whose answer you already know,
+and require it to disagree.
+
+**4. A red only counts as falsification if the control passed.** Run the
+unmodified tree first and see it green; only then does a red on the mutated tree
+mean what you want it to mean. The docs build died on a missing `node_modules`
+*before it ever reached* the frontmatter I had broken — the exit code alone
+would have read as a successful falsification, and "docs-deploy refuses a
+missing title" would have gone into the table on evidence that proved only that
+a workspace wasn't installed. **An environment failure wearing a falsification
+is the mirror image of rule 1**: there, nothing was tested and the gate passed;
+here, nothing was tested and the gate failed. Both look like results.
+
+**5. Your own tools are part of the environment you are measuring.** Shell
+`grep` on an agent seat here is not GNU grep — the harness shims it to `ugrep`
+via a shell function, and the two disagree. On identical input:
+
+```
+printf '644 a\n600 b\n' | grep -vq '^600 '          → exit 1   (shimmed)
+printf '644 a\n600 b\n' | command grep -vq '^600 '  → exit 0   (GNU, what CI and scripts run)
+```
+
+That difference nearly produced a false security finding: an assertion in
+`compose-check.sh` that the secret files are mode `0600` appeared to pass on a
+`644` fixture, which would have been reported as a gate that cannot fail. It
+fails correctly under the grep that actually runs it. **A shell function is not
+the binary a script invokes**, so when a result turns on a tool's exit code,
+re-run it with `command <tool>` before believing it.
+
+**Coverage differs too, and this one bites the way you look for things.** The
+shim passes `--ignore-files`, so a recursive search *from the repository root*
+silently skips everything `.gitignore` covers — `dist/`, `node_modules/`, build
+output, logs. The ignore file binds to the search root, so searching a
+subdirectory does not apply it:
+
+```
+marker in packages/core/dist (gitignored)     shimmed   GNU
+  grep -rl … .                                     0      1     ← absence is a lie
+  grep -rl … packages/                             1      1
+  grep -rl … packages/core/dist                    1      1
+```
+
+So **"I grepped from the repo root and found nothing" is not evidence of
+absence** on these seats — it is evidence of absence outside `.gitignore`. That
+is usually what you want when reading source and exactly what you don't want
+when asking whether a built artefact, a lockfile or a log contains something.
+
+**And a corollary that cost more than the shim did.** Chasing the above, the
+team adopted "use `! grep -q -E …`, never `grep -vq`". That is right for a check
+list and **inverts a conformance audit**: applied to the mode assertion in
+`compose-check.sh`, it silently permits a world-readable token. Measured under
+GNU grep, modes `644` and `600`:
+
+```
+grep -vq '^600 '   → refuses ✓        ! grep -q '^600 '   → permits ✗
+```
+
+`grep -v` inverts **per line**, so it answers *does some line differ*, never *do
+all lines conform*. Match the question to the assertion — *is any line bad?* is
+`! grep -q`; *is any line not good?* is `grep -vq`. They coincide exactly when
+input and intent are both single-line, which is why the wrong one survives
+review. **A rule applied to the wrong shape doesn't fail loudly; it inverts and
+looks tidier than what it replaced.**
+
+**6. Assert that your perturbation applied — and we already had the mechanism.**
+A control that mutates a construct must confirm the mutation *reached the target*
+before the result means anything:
+
+```python
+if old not in text:
+    raise SystemExit(f"{label} control could not find the construct it is meant to perturb")
+```
+
+Without it, a stale anchor or a whitespace mismatch produces a control that
+"passes" having changed nothing. **Require both a non-zero exit and the expected
+message**, or a check failing for an unrelated reason gets recorded as the control
+firing.
+
+**`scripts/mutate.sh` has done exactly this since 2026-08-01** — it diffs against
+the original, prints `MUTATION DID NOT APPLY — the result would be meaningless,
+so nothing ran`, and exits 2 without running the suite. It was written after a
+mutation silently failed over an indentation mismatch and a guard was nearly
+reported as verified without being exercised.
+
+**And it is referenced by nothing** — not this page, not a workflow, not another
+script:
+
+```
+$ grep -rl "mutate.sh" --include=*.md --include=*.mdx --include=*.yml --include=*.sh .
+./scripts/mutate.sh
+```
+
+**A correct mechanism with no surface does not travel.** That is the finding: not
+that the tooling was missing, but that it existed for a month and nothing pointed
+at it. Use `mutate.sh` where it fits; where it doesn't, assert the construct
+yourself. **It establishes exactly one property — that bytes changed — which is
+narrower than rule 10.**
+
+*(Rule written down on the TurnDB side by Seamus, for a mechanism this repo
+already had.)*
+
+**7. A check must discriminate, not merely respond.** Exercise it in both
+directions before trusting it — the present case *and* the absent case:
+
+```
+present → 200        absent → 404
+```
+
+**A 200 for something that exists proves the URL is well-formed and says nothing
+about whether the check would notice the thing missing.** The 404 is what makes
+it an observation rather than a formality. This is rule 3 turned from "disagree
+once" into "disagree on demand, both ways". *(Turner, testing an observation
+endpoint against the real version.)*
+
+**8. State which claim the check makes, at the check.** Two surfaces that look
+equivalent can prove different things: an exact-version registry document says
+*the version exists*; the packument says *an install would resolve it*. **They
+diverged by fifteen minutes in a measured instance.** A green check is read as
+the stronger claim unless it says otherwise, so write the narrower one down where
+the result is produced:
+
+> This proves registry existence, not packument propagation or npm installability.
+
+**9. A check that fails on correct behaviour destroys the signal it was added
+for.** A naive "fail on any non-success dependency" would have gone red on every
+legitimate narrow run. **People learn to read red on that path as normal, which
+is the condition under which a real red gets waved through.** The fix is not a
+looser threshold — it is stating the property precisely enough that the mechanism
+can deliver exactly it. *(Turner.)*
+
+**10. Every asserted property needs its own non-vacuous denominator.** A
+run-level PASS collapses N properties into one answer, and **a property with
+nothing to measure contributes a free pass rather than an abstention.** Two runs
+of the same checker:
+
+```
+settlement 19/19    replay 0 of 0      -> PASS, and the replay half tested nothing
+replay 0 of 20      settlement 0/0     -> PASS, and the settlement half tested nothing
+```
+
+`0 of 0` and `0 of 20` are visually identical claims with completely different
+content. **The numerator says what happened; the denominator says whether
+anything could have.** Print it, label it, and treat a zero denominator as
+*not established* rather than as passing.
+
+**This is not rule 6.** Rule 6 catches a perturbation that never reached its
+target; here the baselines were valid and the runs were real — one dimension
+simply had nothing in it. **A mutation-applied check reports success on both of
+the runs above.** Constructing a baseline where every property is live can take
+deliberate work: a running seat settled mail within twelve seconds, so the only
+way to seal with anything unsettled was to push to a stopped seat and cold-start.
+**The easy measurement was the vacuous one.**
+
+And the rule these serve: **the gate bends, not the security posture.** When an
+instrument makes a correct property look expensive, fix the instrument.
+`Cache-Control: no-store` made a route walk six times slower because Chromium
+never reports those requests as finished ([#278](https://github.com/the-efficacious/commandsuite/issues/278));
+the walker's idle rule changed, the header did not.
+
+## Stating a gate: name the ladder, not the yes/no
+
+**A gate described as a single yes/no is almost always a ladder with the bottom
+rung missing.** That is how "we require review" and "our tests gate merges"
+manage to be true-sounding and unfalsifiable at once: each names a real
+mechanism and quietly implies coverage the mechanism never had.
+
+So when claiming a gate — here, in a release note, or to anyone outside the
+work — **list the rungs, name what refuses each one, and say plainly where
+judgement begins.** For `route-walk` on this repository:
+
+| rung | refused by |
+| --- | --- |
+| `route-walk` must pass | the platform (one of six required contexts, across two enforcement surfaces) |
+| every route in the router is walked | `contract.mjs`, validating the manifest against the `Route` union in both directions |
+| a clean row asserts view content, not the shell | `contract.mjs` |
+| the marker actually distinguishes that view from the fallback | the walker, against home's real text, before every run |
+| the marker means the page *works* | **judgement — nothing refuses this** |
+
+Two things follow, and the second is the one worth keeping.
+
+**Coverage lives in files we control, so it is convention unless something
+checks it.** A required check aggregates whatever its workflow says it does;
+delete a job from the list and the platform still sees green, because the
+enforcement was never about that job. Where coverage *is* mechanised — the
+`contract.mjs` rung above — say so, because that is the rung people assume and
+rarely verify.
+
+**The bottom rung being judgement is not a defect to engineer away — it is what
+review is for.** The point of mechanising the rungs above it is not to approach
+zero judgement; it is to stop spending judgement on things a machine can hold,
+so it is available for the one that needs a person. A reviewer asking "is this
+marker a good assertion?" is worth something. A reviewer also expected to
+remember whether the route was covered at all is a reviewer who will eventually
+forget.
+
+## The inventory
+
+Falsified means: shown an input known to be bad, and observed to fail on it —
+**with a control run on the unmodified tree observed to pass first**, so the red
+is the mutation and not the environment.
+
+Required means: the platform refuses the merge if it fails. **Enforcement here
+comes from two layers, and reading either one alone gives a wrong answer.**
+Measured:
+
+```
+GET /repos/…/rulesets            TWO active rulesets, both Repository-sourced:
+                                   21876976 "main route-walk requirement"
+                                     deletion, non_fast_forward,
+                                     required_status_checks: route-walk
+                                   21943863 "Version Guard"
+                                     required_status_checks:
+                                       Refuse version changes outside the Version PR
+GET /repos/…/branches/main       protected: true, enforcement: non_admins
+                                   contexts: build, Verify Signed-off-by,
+                                             dependency-review,
+                                             Analyze (javascript-typescript)
+GET /repos/…/branches/main/protection      404 — admin-gated
+```
+
+**Six required contexts, not one — and not two.** Every audit of this repository tonight —
+three people, independently — read one source and reported it as the state of
+the world. turndb enforces through rulesets alone and commandsuite through
+classic protection with **two** rulesets on top, so the *same* endpoint honestly
+answers "the enforcement" on one repo and "some of the enforcement" on the
+other. That needed a second source, not more care with the first.
+
+**Counting rulesets is its own trap: there are two, and an earlier version of
+this block named one.** `GET /rules/branches/main` is the reading that cannot
+undercount — it returns every rule applying to the branch regardless of which
+ruleset carries it, and reports `ruleset_source_type` per rule, so an
+organisation-level ruleset would appear there. For this repository every applying
+rule reads `Repository`, so **six is the complete enumeration and not merely the
+readable part** — which is worth stating, because `GET /orgs/…/rulesets` 404s
+without `admin:org` and looks like a gap in what you can see.
+
+When `branches/{branch}/protection` 404s, **read `branches/{branch}`** before
+concluding you cannot see: it carries a `protection` summary including
+`required_status_checks.contexts`.
+
+**This paragraph did not prevent a fourth instance.** On 2026-09-01 `version-guard`
+was added to the ruleset; the author of this section read `rules/branches/main`,
+saw two contexts, and reported "there are two" to the team — **hours after writing
+the sentence above, and against it.** The count went five → six, not one → two.
+**A written rule is worth what it is worth at the moment you consult it, and the
+moment you most need it is the one where you feel certain enough not to look.**
+
+| Gate | Required? | What it governs | Shown | Reported |
+| --- | --- | --- | --- | --- |
+| `route-walk` | **yes** | every UI route renders its own view, as both roles | objectives route deleted from the router, rebuilt, asset hash confirmed changed | **Failed by name** — `shell mounted but "outcome:" absent — wrong view for this URL`. The pre-marker walker passed the same build. |
+| `route-walk` | **yes** | same | a broker without `Vary: Accept` ([#276](https://github.com/the-efficacious/commandsuite/issues/276)) | **Failed by name** on `objective-detail` — the page renders `invalid JSON` under HTTP 200 |
+| `commit-convention` | no | subject lines that land on main | `style(team): <74 chars>` | **Failed**, naming both problems: `[length] subject is 74 characters` and `[unknown-type] type "style"`. Also refuses the vacuous case: an empty `--pr-title` exits 1 rather than checking nothing and passing. It additionally self-tests its own fixtures in the same job, so a validator degraded to reject-everything fails there rather than blocking every PR. |
+| `dco` | **yes** (`Verify Signed-off-by`) | every commit carries `Signed-off-by` | an empty commit created with `--no-verify` | **Failed**, naming the commit |
+| `ci` (test suite) | **yes** (`build`) | the repository's tests | a fixture asserting `expect(1).toBe(2)` | **Failed** — `Test Files 1 failed (1)` |
+| `release-prepare` | no | the release render publishes nothing | trap-first: PATH-shimmed `git`/`npm`/`pnpm`/`docker`/`gh` that abort on any push or publish, plus a recording server asserting zero non-GET requests | **Fails if anything reaches for the network** — falsified by construction, and the traps run on every invocation rather than in a separate suite |
+| `bootstrap` | no | a headless bring-up works from a clean checkout | **not falsified in this pass** | It has failed honestly in the field: [#258](https://github.com/the-efficacious/commandsuite/issues/258) was a bootstrap check that blessed the string `ok` on a *disconnected* row — found by a human reading output, not by the gate. Falsifying it costs a deliberate break of the bring-up. |
+| `container` | no | the shipped image builds and runs | a published port mapped to the wrong container port | **Failed** — but originally with *no diagnosis*: bare `exit 56`, no FAIL line, no container logs, because `set -e` aborted the script on the failed command substitution before its own `die` could run. Fixed at both substitutions; it now reports `FAIL GET http://…/healthz could not complete (curl exit 56) — is the published port mapped to 8717?` and exits 1. Control run on the unmodified tree passes all assertions through restart and teardown (`EXIT=0`). |
+| `docs-deploy` | no | the docs site builds | a page whose frontmatter omits the required `title` | **Failed by name** — `[InvalidContentEntryDataError] docs → dev/gates data does not match collection schema. title: Required`. Control run on the unmodified tree builds 47 pages and exits 0, so the failure is the mutation and not the environment. |
+| `codeql` | **yes** (`Analyze (javascript-typescript)`) | static analysis for security patterns | **cannot be falsified by me** | To falsify: land a branch carrying a pattern CodeQL is documented to catch and confirm it is reported. Doing that means pushing a deliberately vulnerable pattern, which needs a decision, not an initiative. |
+| `dependency-review` | **yes** | new dependencies with known advisories, OpenSSF thresholds | **cannot be falsified by me** | To falsify: add a dependency with a known advisory on a scratch PR. Same caveat. It *has* fired in anger — it rejected `puppeteer-core`, which is why the route walk drives raw CDP. |
+| `release` | n/a | what gets published, and when | **structurally protected for *what*; the *when* is now guarded — see below** | A release is the human gate, so this row is longer than the others. |
+| `version-guard` | **yes** (`Refuse version changes outside the Version PR`, added 2026-09-01) | a version may only change via the changesets Version PR | a real `0.8.0 → 9.9.9` bump to `packages/core/package.json`, committed on an ordinary branch | **Refused**, naming the file, both versions and the branch. The same commit on `changeset-release/main` passes. Branches merely *named* like the release branch (`changeset-release/main-2`, `not-changeset-release/main`) are refused. Invoked without its arguments it exits 2 rather than reporting nothing to check. Its own fixtures run in the same job that enforces it. |
+
+### A workflow that exists is not a gate
+
+**`version-guard` ran honestly for a month while the platform did not care.**
+It reported correctly and nothing was obliged to listen — exactly a green tick
+nobody has to obey. Adding it to the required status checks needed admin rights
+this seat does not hold, so the gap could not be closed by effort here.
+
+**It was added to the ruleset on 2026-09-01 and is now required** as
+`Refuse version changes outside the Version PR`. **That is the transition this
+section exists to describe: the workflow did not change — its authority did.**
+A merge that fails it is now refused by the platform rather than by whoever
+happens to read the check.
+
+Stated here rather than left implicit because the guard was built *in response
+to* a convention wearing the appearance of a gate, and shipping it unrequired
+would reproduce the thing it was built to close. The same applies to every row
+above marked "no": those checks are useful, they are run, and a red one blocks
+nothing but a reviewer's judgement.
+
+And the rung below that, which no configuration reaches — **even where the
+machinery is real, its coverage is convention.** A required check aggregates
+whatever a file we control tells it to. For this repository the coverage of
+`route-walk` is itself enforced (`contract.mjs` validates the manifest against
+the router's `Route` union in both directions — a page added without a
+declaration fails by name), but what each row *asserts* is enforced only as far
+as the marker rules go, and whether a marker is a *good* one is review. A
+force-push is a single detectable operation; "the work was checked" is a
+judgement about coverage, and no ruleset holds that for us.
+
+### `release`, in full
+
+There is nothing to falsify about **what** it publishes, and that is a real
+answer rather than a gap:
+
+- **OIDC trusted publishing, with no npm token anywhere.** Each package's
+  Trusted Publisher on npmjs.com is pinned to this repository *and this
+  workflow file*. A fork, a different workflow, or a stolen secret cannot
+  publish, because there is no secret.
+- **Provenance is attached automatically**, linking each tarball to the exact
+  commit it was built from — so an unexpected publish can be traced to its
+  source after the fact.
+- **`scripts/publish-gate.mjs check`** runs as every package's
+  `prepublishOnly`: refusal-only, never rebuilds, and refuses a payload whose
+  digest does not match the one recorded for HEAD. Its own header names the
+  single path it cannot reach — `npm publish an-already-built.tgz` skips
+  lifecycle hooks — which is why provenance, not another entry point, closes it.
+
+**When** it publishes was a convention and is now partly machinery.
+`changeset publish` publishes any package whose version is not yet on the
+registry, and the workflow runs on every push to `main`. So the trigger for a
+release is *"a commit on main left a version npm doesn't have yet"* — **not a
+human signature.**
+
+**Since 2026-09-01 that trigger is guarded.** `version-guard` is a required
+context, so **an ordinary PR that edited a version field is refused by the
+platform**, not merely by whoever reads the check. The sentence this section
+used to carry — *an ordinary version-edit PR, reviewed and merged normally,
+would publish on merge* — **is no longer true.**
+
+**What remains convention is the timing, and only the timing.** Merging the
+changesets Version PR *is* the publication: the workflow fires on that merge, so
+the human sign-off has to happen before it and nothing enforces that ordering.
+**A release could still be published by merging the sanctioned PR without anyone
+having signed off** — that is the surviving gap, and it is narrower than the one
+recorded here before.
+
+So the claim "what shipped is what was on main at an attested commit" is
+structurally true; "no unsanctioned version change can publish" is now machinery;
+and **"nothing publishes without a human release sign-off" is still a
+convention** — one about *when a human looks*, not about *what may change*.
+
+### The grid: required × falsified
+
+Two independent properties, and the interesting square is not the one people
+look at:
+
+| | **falsified** — shown a known-bad input and seen to fail | **unfalsified** |
+| --- | --- | --- |
+| **required** — can block a merge | what you want. Real authority, demonstrated. | **the worst square.** The authority is real and the demonstration is absent. |
+| **not required** | useful, honest; a reviewer's judgement decides what to do with it | a green tick nobody has to obey and nobody has tested |
+
+`codeql` and `dependency-review` are in the worst square: both are required
+contexts on `main`, either can refuse a merge, and neither has ever been shown
+to refuse anything. That is strictly worse than an unfalsified gate nobody
+relies on, because a release claim can honestly cite a check that blocks — while
+the evidence that it *would* block does not exist.
+
+`version-guard` **was** in the bottom-right for the opposite reason — falsified
+thoroughly, required by nothing. **It moved to the top-left on 2026-09-01**:
+same evidence, new authority. It is the only row that has crossed the grid, and
+it crossed by an admin action rather than by any change to the check.
+
+**Falsifying the two in the worst square is scheduled work with boundaries, not
+a spare-twenty-minutes job** (ruled by Lea, 2026-08-31), because it means
+committing something deliberately bad to a public repository:
+
+- a dedicated short-lived branch, never merged, deleted immediately after;
+- the commit message and the fixture both stating in plain words that this is a
+  deliberate gate test;
+- a *known published* advisory or a canonical CodeQL test pattern — never
+  something novel that could be mistaken for a real finding about our code;
+- a named owner, done deliberately, recorded here with what was pushed and what
+  refused — and not on a release night;
+- anything that would raise an external notification (a security advisory, an
+  org-wide alert) goes to Lea first.
+
+### What follows from the un-falsified rows
+
+**A gate we cannot falsify is a gate whose green is an opinion, and no release
+claim may rest on one.** `codeql` and `dependency-review` are useful and stay;
+what they are not is evidence. Note the uncomfortable pairing the measurement
+produced: **both are *required* — they can block a merge — and neither has ever
+been shown to fail.** Required and unfalsified is the worst square to be in,
+because the authority is real and the demonstration is absent. If a release note wants to say "no known
+vulnerable dependencies ship in this release", that claim needs to name the
+check that was run and shown to discriminate — not the presence of a green tick
+from a gate nobody has ever seen fail.
+
+The same applies to `bootstrap` until someone does the four minutes.
+
+**`container` and `docs-deploy` are falsified** — their inventory rows record
+what each was shown and what it reported, both with a passing control run first.
+They belong in the falsified column and an earlier draft of this paragraph said
+otherwise. **`release` is a third case**: structurally protected for *what* it
+publishes, guarded by a required `version-guard` for *which versions may change*,
+and convention only for *when a human signs off*.
+
+## Reproducing these falsifications
+
+Every row above was produced by one of these. They are here so the table can be
+re-checked rather than believed, and so the next person adding a gate has a
+worked example of the shape.
+
+**`route-walk` — a page deleted from the router.** The asset hash is the
+fingerprint proving the mutated build reached the browser; without it you may
+be testing nothing (see rule 1).
+
+```bash
+curl -s "$URL/" | grep -oE '/assets/index-[A-Za-z0-9_-]+\.js'   # before
+# in packages/web-ui/src/lib/routes.ts, make the objectives-list branch unreachable:
+#   if (rest.length === 0 && false) return withTeam({ kind: 'objectives-list' }, team);
+pnpm build                                                       # ROOT build; a filter may match nothing
+curl -s "$URL/" | grep -oE '/assets/index-[A-Za-z0-9_-]+\.js'   # must differ
+node scripts/route-walk/walk.mjs --broker "$URL" --member builder --role baseline \
+  --secret "$WALK/totp-builder.secret" --fixtures "$WALK/fixtures.json" \
+  --out /tmp/kb --only objectives-list
+# expect: FAIL … [shell mounted but "outcome:" absent — wrong view for this URL]
+```
+
+**`route-walk` — a broker without the `Vary` fix.** Point the same walk at one:
+`objective-detail` fails on its marker, because the page renders `invalid JSON`
+under HTTP 200 with no console error and no failed request.
+
+**`route-walk` — a marker that proves nothing.** Change any row's marker to a
+string home also renders (`"ROSTER"`). The walk aborts before touching a route:
+`these markers also appear on home, so they prove nothing`.
+
+**`contract.mjs` — a page with no declaration.** Add a kind to the `Route` union
+in `routes.ts` and run `node scripts/route-walk/contract.mjs --check
+scripts/route-walk/manifest.json`. Expect `route kind '…' is in the router but
+absent from the manifest`.
+
+**`version-guard`.** Against the live Version PR and against the same commit
+from anywhere else — the verdict must flip on the branch name alone:
+
+```bash
+node scripts/check-version-bump.mjs --base-ref origin/main --head <version-pr-sha> \
+  --head-ref changeset-release/main        # exit 0
+node scripts/check-version-bump.mjs --base-ref origin/main --head <version-pr-sha> \
+  --head-ref feat/anything-else            # exit 1, naming every package
+```
+
+**`commit-convention`.** `node scripts/check-commit-convention.mjs --pr-title
+"style(team): <74 chars>" --author <you>` — expect both `[length]` and
+`[unknown-type]`. An empty `--pr-title` must exit 1, not pass vacuously.
+
+**`dco`.** `git commit --allow-empty --no-verify -m "test: no trailer"`, then the
+workflow's own loop over `git show -s --format='%(trailers:key=Signed-off-by,valueonly)'`.
+
+**`ci`.** Drop a test asserting `expect(1).toBe(2)` and run it.
+
+**`docs-deploy`.** Remove `title` from any page's frontmatter and run
+`pnpm build` in `docs/site` — expect `InvalidContentEntryDataError … title:
+Required`. Run the control first: that workspace has its own `node_modules`, and
+a missing install fails the build for a reason that has nothing to do with your
+mutation.
+
+## Adding a gate
+
+A new gate is not done when it passes. It is done when you have watched it fail
+for the reason it exists, and the failure named the cause. Record the input and
+the output in the table above in the same change that adds it.

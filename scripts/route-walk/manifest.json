@@ -1,14 +1,16 @@
 {
   "version": 1,
-  "comment": "Every web-UI route kind (packages/web-ui/src/lib/routes.ts Route union) with what 'clean' means per role. clean = hard load serves the SPA (200 app, or the row's pinned hardLoad contract), zero console errors, zero failed requests. restricted = the Restricted callout rendered AND no request for the gated resource (the #220 bar). Rows marked pseudo pin contracts outside the Route union (unknown-path fallthrough, reserved API namespaces); scripts/route-walk/contract.mjs validates this file against the router in both directions, including PROFILE_TABS variant parity. {placeholders} are filled from the fixtures file seed.mjs writes. Changing a role expectation is a permissions statement — it gets reviewed like one.",
+  "comment": "Every web-UI route kind (packages/web-ui/src/lib/routes.ts Route union) with what 'clean' means per role. clean = hard load serves the SPA (200 app, or the row's pinned hardLoad contract), zero console errors, zero failed requests. restricted = the Restricted callout rendered AND no request for the gated resource (the #220 bar). Rows marked pseudo pin contracts outside the Route union (unknown-path fallthrough, reserved API namespaces); scripts/route-walk/contract.mjs validates this file against the router in both directions, including PROFILE_TABS variant parity. {placeholders} are filled from the fixtures file seed.mjs writes. Changing a role expectation is a permissions statement \u2014 it gets reviewed like one.",
   "routes": [
     {
       "kind": "home",
       "urls": ["/"],
+      "marker": "ACTIVE OBJECTIVES",
       "roles": {
         "baseline": "clean",
         "admin": "clean"
-      }
+      },
+      "rendersHome": true
     },
     {
       "kind": "inbox",
@@ -16,11 +18,13 @@
       "roles": {
         "baseline": "clean",
         "admin": "clean"
-      }
+      },
+      "marker": "INBOX"
     },
     {
       "kind": "account",
       "urls": ["/account"],
+      "marker": "Signed in as",
       "roles": {
         "baseline": "clean",
         "admin": "clean"
@@ -29,6 +33,7 @@
     {
       "kind": "thread-channel",
       "urls": ["/c/{channelSlug}", "/c/general"],
+      "markers": ["# {channelSlug}", "# general"],
       "fixture": "a channel the member belongs to, plus the built-in general channel",
       "roles": {
         "baseline": "clean",
@@ -44,11 +49,17 @@
         "admin": "clean"
       },
       "allowRestrictedPanel": ["baseline"],
-      "why": "the right-rail activity inspector renders Restricted for a viewer without activity.read on the peer (#214/#220's designed refusal) — the page itself is clean"
+      "why": "the right-rail activity inspector renders Restricted for a viewer without activity.read on the peer (#214/#220's designed refusal) \u2014 the page itself is clean",
+      "marker": {
+        "baseline": "DM with",
+        "admin": "activity stream"
+      },
+      "markerNote": "a DM with yourself renders no peer header, and the right-rail peer-activity inspector only renders for a viewer with activity.read \u2014 so the two roles genuinely see different views at this URL."
     },
     {
       "kind": "channels-browse",
       "urls": ["/channels"],
+      "marker": "Every active channel",
       "roles": {
         "baseline": "clean",
         "admin": "clean"
@@ -57,6 +68,7 @@
     {
       "kind": "channel-create",
       "urls": ["/channels/new"],
+      "marker": "Create a channel",
       "roles": {
         "baseline": "clean",
         "admin": "clean"
@@ -65,6 +77,7 @@
     {
       "kind": "objectives-list",
       "urls": ["/objectives"],
+      "marker": "outcome:",
       "roles": {
         "baseline": "clean",
         "admin": "clean"
@@ -73,6 +86,7 @@
     {
       "kind": "objective-create",
       "urls": ["/objectives/new"],
+      "marker": "Create + assign",
       "roles": {
         "baseline": "clean",
         "admin": "clean"
@@ -81,6 +95,7 @@
     {
       "kind": "objective-detail",
       "urls": ["/objectives/{objectiveId}"],
+      "marker": "assignee:",
       "fixture": "an objective assigned to the baseline member",
       "roles": {
         "baseline": "clean",
@@ -90,6 +105,7 @@
     {
       "kind": "members",
       "urls": ["/members"],
+      "marker": "+ New member",
       "roles": {
         "baseline": "restricted",
         "admin": "clean"
@@ -109,11 +125,23 @@
       "roles": {
         "baseline": "clean",
         "admin": "clean"
-      }
+      },
+      "markers": [
+        "SUMMARY",
+        "ASSIGNED (",
+        "Open the Files browser",
+        {
+          "baseline": "SUMMARY",
+          "admin": "api calls"
+        },
+        "SUMMARY"
+      ],
+      "markerNote": "tabs are permission-scoped and the router falls back rather than refusing (MemberProfile.tsx effectiveTab): a viewer without members.manage has no activity tab, and nobody has a manage tab on their OWN profile, so those URLs render the overview for that role BY DESIGN. The per-role markers pin that fallback rather than leaving it to be rediscovered."
     },
     {
       "kind": "tool-sources",
       "urls": ["/tools"],
+      "marker": "External tools the platform executes",
       "roles": {
         "baseline": "restricted",
         "admin": "clean"
@@ -123,6 +151,7 @@
     {
       "kind": "tool-source-detail",
       "urls": ["/tools/{toolSourceSlug}"],
+      "marker": "Tools / {toolSourceSlug}",
       "fixture": "a custom tool source",
       "roles": {
         "baseline": "restricted",
@@ -133,6 +162,7 @@
     {
       "kind": "environment",
       "urls": ["/environment"],
+      "marker": "Everything the runner injects",
       "roles": {
         "baseline": "restricted",
         "admin": "clean"
@@ -142,6 +172,7 @@
     {
       "kind": "secret-detail",
       "urls": ["/environment/secrets/{secretSlug}"],
+      "marker": "Environment / {secretSlug}",
       "fixture": "a secret bound to the baseline member",
       "roles": {
         "baseline": "restricted",
@@ -152,6 +183,7 @@
     {
       "kind": "variable-detail",
       "urls": ["/environment/variables/{variableSlug}"],
+      "marker": "Environment / {variableSlug}",
       "fixture": "a variable bound to the baseline member",
       "roles": {
         "baseline": "restricted",
@@ -162,6 +194,7 @@
     {
       "kind": "notifications",
       "urls": ["/notifications"],
+      "marker": "Inbound webhooks and API calls",
       "roles": {
         "baseline": "restricted",
         "admin": "clean"
@@ -171,6 +204,7 @@
     {
       "kind": "notification-detail",
       "urls": ["/notifications/{notificationSlug}"],
+      "marker": "Notifications / {notificationSlug}",
       "fixture": "a notification endpoint",
       "roles": {
         "baseline": "restricted",
@@ -185,27 +219,32 @@
       "roles": {
         "baseline": "clean",
         "admin": "clean"
-      }
+      },
+      "markers": ["Shared with me", "Files / {selfName}"]
     },
     {
       "kind": "fallthrough",
-      "pseudo": "not a Route union kind — pins the router's unknown-path contract (routes.ts: unknown paths resolve to home)",
+      "pseudo": "not a Route union kind \u2014 pins the router's unknown-path contract (routes.ts: unknown paths resolve to home)",
       "urls": ["/definitely/not/a/route"],
+      "marker": "ACTIVE OBJECTIVES",
       "roles": {
         "baseline": "clean",
         "admin": "clean"
       },
-      "why": "an unknown path falls through to home so stale links don't strand users — in-app via the router, and on hard loads via the Accept-negotiated SPA fallback (run.ts: only an explicit text/html range selects the SPA; API clients get 404). The walker asserts the browser side of that contract"
+      "why": "an unknown path falls through to home so stale links don't strand users \u2014 in-app via the router, and on hard loads via the Accept-negotiated SPA fallback (run.ts: only an explicit text/html range selects the SPA; API clients get 404). The walker asserts the browser side of that contract",
+      "rendersHome": true
     },
     {
       "kind": "reserved-enroll",
-      "pseudo": "not a Route union kind — /enroll is the device-enrolment REST namespace (POST /enroll, GET /enroll/pending), with no GET page of its own",
+      "pseudo": "not a Route union kind \u2014 /enroll is the device-enrolment REST namespace (POST /enroll, GET /enroll/pending), with no GET page of its own",
       "urls": ["/enroll"],
+      "marker": "ACTIVE OBJECTIVES",
       "roles": {
         "baseline": "clean",
         "admin": "clean"
       },
-      "why": "in a browser /enroll behaves as an unknown path: home in-app, SPA shell on a hard load via the Accept-negotiated fallback (API clients get 404 — the GET namespace has no route). Adding a real enrolment page later means changing this row under review"
+      "why": "in a browser /enroll behaves as an unknown path: home in-app, SPA shell on a hard load via the Accept-negotiated fallback (API clients get 404 \u2014 the GET namespace has no route). Adding a real enrolment page later means changing this row under review",
+      "rendersHome": true
     }
   ]
 }

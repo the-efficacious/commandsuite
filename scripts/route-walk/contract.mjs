@@ -60,6 +60,40 @@ const ROLES = ['baseline', 'admin'];
 const EXPECTATIONS = new Set(['clean', 'restricted']);
 
 /**
+ * A marker is text unique to a view, declared either as one string or
+ * as one string per role. Only roles that expect a CLEAN render need a
+ * marker: a restricted row asserts the Restricted callout instead, and
+ * demanding view text for a page the role is refused would be asking
+ * for a string that must not be there.
+ */
+function markerErrors(declaration, row, label) {
+  const errors = [];
+  const needed = ROLES.filter((role) => row.roles?.[role] === 'clean');
+  if (declaration === undefined || declaration === null) {
+    return [
+      `${label}: renders clean for ${needed.join(', ')} but declares no marker — a clean pass would assert only that the shell mounted`,
+    ];
+  }
+  if (typeof declaration === 'string') {
+    if (declaration.length === 0) errors.push(`${label}: marker must be non-empty text`);
+    return errors;
+  }
+  if (typeof declaration !== 'object') {
+    return [`${label}: marker must be text, or an object of text per role`];
+  }
+  for (const role of needed) {
+    const value = declaration[role];
+    if (typeof value !== 'string' || value.length === 0) {
+      errors.push(`${label}: no marker for role '${role}', which expects a clean render`);
+    }
+  }
+  for (const role of Object.keys(declaration)) {
+    if (!ROLES.includes(role)) errors.push(`${label}: marker names unknown role '${role}'`);
+  }
+  return errors;
+}
+
+/**
  * Validate a parsed manifest against the router source. Returns a
  * list of human-readable errors (empty = contract satisfied). Rules:
  *  - every router kind is declared exactly once
@@ -105,6 +139,34 @@ export function validateManifest(manifest, source = routerSource()) {
         );
       } else if (expectation === 'restricted' && !row.why) {
         errors.push(`kind '${kind}' is restricted for '${role}' but declares no why`);
+      }
+    }
+    // A marker is text unique to the row's own view. It is what makes a
+    // clean pass mean "this route rendered itself" rather than "a shell
+    // is on screen", and the shell is present on every URL including
+    // ones with no route at all. Required wherever some role expects a
+    // clean render; `markers` must line up with `urls` one-for-one when
+    // a row's URLs render different views (member-profile's tabs).
+    const cleanForSomeRole = ROLES.some((role) => row.roles?.[role] === 'clean');
+    if (cleanForSomeRole) {
+      if (Array.isArray(row.markers)) {
+        if (!Array.isArray(row.urls) || row.markers.length !== row.urls.length) {
+          errors.push(
+            `kind '${kind}' declares ${row.markers.length} markers for ${row.urls?.length ?? 0} urls — they must correspond one-for-one`,
+          );
+        }
+        row.markers.forEach((marker, i) => {
+          for (const error of markerErrors(marker, row, `url '${row.urls?.[i]}'`)) {
+            errors.push(`kind '${kind}' ${error}`);
+          }
+        });
+      } else {
+        for (const error of markerErrors(row.marker, row, 'marker')) {
+          errors.push(`kind '${kind}' ${error}`);
+        }
+      }
+      if (row.marker !== undefined && row.markers !== undefined) {
+        errors.push(`kind '${kind}' declares both marker and markers — use one`);
       }
     }
     for (const role of row.allowRestrictedPanel ?? []) {
