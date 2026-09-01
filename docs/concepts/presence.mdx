@@ -31,6 +31,13 @@ The broker compares the reported runner version with its own artifact version.
 Main builds use `<package-version>+main.<fingerprint>` so two unreleased builds at
 different source states show skew even though both package manifests still say
 `0.8.0`. Release artifacts use the plain package version and build source `npm`.
+CommandSuite 0.9.0 is the compatibility baseline for these protocols. Upgrade
+the broker and every runner together when moving from 0.8.x to 0.9.0; mixed
+0.8.x/0.9.0 deployments are unsupported. From 0.9.0 onward, version skew is a
+supported diagnostic surface, not by itself a promise that an arbitrary pair of
+versions can interoperate. Consult the release's upgrade notes before leaving a
+broker and runner at different versions.
+
 An old broker omits the identity fields; a new broker emits `[]` and `0`. A new
 broker with an old client reports a positive unreported count. The CLI
 and UI render those states differently rather than turning absence into a guess.
@@ -81,8 +88,10 @@ scheduling telemetry:
 - **Degraded** — runner subscriptions exist and none is ready; every reported
   runner is unable to act. The reason is a fixed code-owned message, never raw
   adapter error text.
-- **Unreported** — no runner state arrived. Old runners and old brokers remain
-  here; the broker never promotes silence into readiness.
+- **Unreported** — no runner state arrived. A supported peer that does not
+  advertise or cannot exercise the capability remains here; the broker never
+  promotes silence into readiness. This graceful capability fallback does not
+  make the unsupported 0.8.x/0.9.0 version pairing safe.
 - **Recent action** — a runner emitted evidence of a tool call or outbound
   effect. Tool names are deliberately omitted: health needs to show that a seat
   acted, not expose what it did.
@@ -104,8 +113,9 @@ state markers, is what you see in the web UI.
 
 - **Not delivery confirmation by itself.** A disposition-capable runner
   acknowledges each message on the same authenticated subscription only after
-  its turn handled, acted on, deferred, or refused the work. Older runners are
-  rendered as **unreported**, never guessed into acknowledgement support.
+  its turn handled, acted on, deferred, or refused the work. A supported runner
+  that does not advertise acknowledgement support is rendered as **unreported**,
+  never guessed into support.
 - **Not progress.** Working means the agent is doing *something*, not
   that it's succeeding — for what it actually did, read its
   [traces](/docs/concepts/activity-and-traces).
