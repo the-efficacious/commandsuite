@@ -27,7 +27,7 @@ using it for real rather than by the instrument itself:
 ## The practice
 
 **An instrument earns its verdict by being shown a known-bad input, and until it
-has been, a green from it is an opinion.** Four minutes each. Five rules follow
+has been, a green from it is an opinion.** Four minutes each. Ten rules follow
 from doing it, and every one was learned by getting it wrong first:
 
 **1. Prove the input was actually bad.** A mutation you did not confirm reached
@@ -119,6 +119,95 @@ input and intent are both single-line, which is why the wrong one survives
 review. **A rule applied to the wrong shape doesn't fail loudly; it inverts and
 looks tidier than what it replaced.**
 
+**6. Assert that your perturbation applied — and we already had the mechanism.**
+A control that mutates a construct must confirm the mutation *reached the target*
+before the result means anything:
+
+```python
+if old not in text:
+    raise SystemExit(f"{label} control could not find the construct it is meant to perturb")
+```
+
+Without it, a stale anchor or a whitespace mismatch produces a control that
+"passes" having changed nothing. **Require both a non-zero exit and the expected
+message**, or a check failing for an unrelated reason gets recorded as the control
+firing.
+
+**`scripts/mutate.sh` has done exactly this since 2026-08-01** — it diffs against
+the original, prints `MUTATION DID NOT APPLY — the result would be meaningless,
+so nothing ran`, and exits 2 without running the suite. It was written after a
+mutation silently failed over an indentation mismatch and a guard was nearly
+reported as verified without being exercised.
+
+**And it is referenced by nothing** — not this page, not a workflow, not another
+script:
+
+```
+$ grep -rl "mutate.sh" --include=*.md --include=*.mdx --include=*.yml --include=*.sh .
+./scripts/mutate.sh
+```
+
+**A correct mechanism with no surface does not travel.** That is the finding: not
+that the tooling was missing, but that it existed for a month and nothing pointed
+at it. Use `mutate.sh` where it fits; where it doesn't, assert the construct
+yourself. **It establishes exactly one property — that bytes changed — which is
+narrower than rule 10.**
+
+*(Rule written down on the TurnDB side by Seamus, for a mechanism this repo
+already had.)*
+
+**7. A check must discriminate, not merely respond.** Exercise it in both
+directions before trusting it — the present case *and* the absent case:
+
+```
+present → 200        absent → 404
+```
+
+**A 200 for something that exists proves the URL is well-formed and says nothing
+about whether the check would notice the thing missing.** The 404 is what makes
+it an observation rather than a formality. This is rule 3 turned from "disagree
+once" into "disagree on demand, both ways". *(Turner, testing an observation
+endpoint against the real version.)*
+
+**8. State which claim the check makes, at the check.** Two surfaces that look
+equivalent can prove different things: an exact-version registry document says
+*the version exists*; the packument says *an install would resolve it*. **They
+diverged by fifteen minutes in a measured instance.** A green check is read as
+the stronger claim unless it says otherwise, so write the narrower one down where
+the result is produced:
+
+> This proves registry existence, not packument propagation or npm installability.
+
+**9. A check that fails on correct behaviour destroys the signal it was added
+for.** A naive "fail on any non-success dependency" would have gone red on every
+legitimate narrow run. **People learn to read red on that path as normal, which
+is the condition under which a real red gets waved through.** The fix is not a
+looser threshold — it is stating the property precisely enough that the mechanism
+can deliver exactly it. *(Turner.)*
+
+**10. Every asserted property needs its own non-vacuous denominator.** A
+run-level PASS collapses N properties into one answer, and **a property with
+nothing to measure contributes a free pass rather than an abstention.** Two runs
+of the same checker:
+
+```
+settlement 19/19    replay 0 of 0      -> PASS, and the replay half tested nothing
+replay 0 of 20      settlement 0/0     -> PASS, and the settlement half tested nothing
+```
+
+`0 of 0` and `0 of 20` are visually identical claims with completely different
+content. **The numerator says what happened; the denominator says whether
+anything could have.** Print it, label it, and treat a zero denominator as
+*not established* rather than as passing.
+
+**This is not rule 6.** Rule 6 catches a perturbation that never reached its
+target; here the baselines were valid and the runs were real — one dimension
+simply had nothing in it. **A mutation-applied check reports success on both of
+the runs above.** Constructing a baseline where every property is live can take
+deliberate work: a running seat settled mail within twelve seconds, so the only
+way to seal with anything unsettled was to push to a stopped seat and cold-start.
+**The easy measurement was the vacuous one.**
+
 And the rule these serve: **the gate bends, not the security posture.** When an
 instrument makes a correct property look expensive, fix the instrument.
 `Cache-Control: no-store` made a route walk six times slower because Chromium
@@ -174,7 +263,8 @@ Measured:
 ```
 GET /repos/…/rulesets            ruleset 21876976, active:
                                    deletion, non_fast_forward,
-                                   required_status_checks: route-walk
+                                   required_status_checks: route-walk,
+                                     Refuse version changes outside the Version PR
 GET /repos/…/branches/main       protected: true, enforcement: non_admins
                                    contexts: build, Verify Signed-off-by,
                                              dependency-review,
@@ -182,7 +272,7 @@ GET /repos/…/branches/main       protected: true, enforcement: non_admins
 GET /repos/…/branches/main/protection      404 — admin-gated
 ```
 
-**Five required contexts, not one.** Every audit of this repository tonight —
+**Six required contexts, not one — and not two.** Every audit of this repository tonight —
 three people, independently — read one source and reported it as the state of
 the world. turndb enforces through rulesets alone and commandsuite through
 classic protection with a ruleset on top, so the *same* endpoint honestly
@@ -192,6 +282,13 @@ other. That needed a second source, not more care with the first.
 When `branches/{branch}/protection` 404s, **read `branches/{branch}`** before
 concluding you cannot see: it carries a `protection` summary including
 `required_status_checks.contexts`.
+
+**This paragraph did not prevent a fourth instance.** On 2026-09-01 `version-guard`
+was added to the ruleset; the author of this section read `rules/branches/main`,
+saw two contexts, and reported "there are two" to the team — **hours after writing
+the sentence above, and against it.** The count went five → six, not one → two.
+**A written rule is worth what it is worth at the moment you consult it, and the
+moment you most need it is the one where you feel certain enough not to look.**
 
 | Gate | Required? | What it governs | Shown | Reported |
 | --- | --- | --- | --- | --- |
@@ -207,15 +304,20 @@ concluding you cannot see: it carries a `protection` summary including
 | `codeql` | **yes** (`Analyze (javascript-typescript)`) | static analysis for security patterns | **cannot be falsified by me** | To falsify: land a branch carrying a pattern CodeQL is documented to catch and confirm it is reported. Doing that means pushing a deliberately vulnerable pattern, which needs a decision, not an initiative. |
 | `dependency-review` | **yes** | new dependencies with known advisories, OpenSSF thresholds | **cannot be falsified by me** | To falsify: add a dependency with a known advisory on a scratch PR. Same caveat. It *has* fired in anger — it rejected `puppeteer-core`, which is why the route walk drives raw CDP. |
 | `release` | n/a | what gets published, and when | **structurally protected for *what*; the *when* is now guarded — see below** | A release is the human gate, so this row is longer than the others. |
-| `version-guard` | **not yet — see below** | a version may only change via the changesets Version PR | a real `0.8.0 → 9.9.9` bump to `packages/core/package.json`, committed on an ordinary branch | **Refused**, naming the file, both versions and the branch. The same commit on `changeset-release/main` passes. Branches merely *named* like the release branch (`changeset-release/main-2`, `not-changeset-release/main`) are refused. Invoked without its arguments it exits 2 rather than reporting nothing to check. Its own fixtures run in the same job that enforces it. |
+| `version-guard` | **yes** (`Refuse version changes outside the Version PR`, added 2026-09-01) | a version may only change via the changesets Version PR | a real `0.8.0 → 9.9.9` bump to `packages/core/package.json`, committed on an ordinary branch | **Refused**, naming the file, both versions and the branch. The same commit on `changeset-release/main` passes. Branches merely *named* like the release branch (`changeset-release/main-2`, `not-changeset-release/main`) are refused. Invoked without its arguments it exits 2 rather than reporting nothing to check. Its own fixtures run in the same job that enforces it. |
 
 ### A workflow that exists is not a gate
 
-**`version-guard` is not required, so today nothing refuses a merge that fails
-it.** It runs, it reports honestly, and the platform does not care — which makes
-it, exactly, a green tick nobody has to obey. It becomes machinery when it is
-added to the required status checks; that needs admin rights this seat does not
-have.
+**`version-guard` ran honestly for a month while the platform did not care.**
+It reported correctly and nothing was obliged to listen — exactly a green tick
+nobody has to obey. Adding it to the required status checks needed admin rights
+this seat does not hold, so the gap could not be closed by effort here.
+
+**It was added to the ruleset on 2026-09-01 and is now required** as
+`Refuse version changes outside the Version PR`. **That is the transition this
+section exists to describe: the workflow did not change — its authority did.**
+A merge that fails it is now refused by the platform rather than by whoever
+happens to read the check.
 
 Stated here rather than left implicit because the guard was built *in response
 to* a convention wearing the appearance of a gate, and shipping it unrequired
@@ -251,21 +353,29 @@ answer rather than a gap:
   single path it cannot reach — `npm publish an-already-built.tgz` skips
   lifecycle hooks — which is why provenance, not another entry point, closes it.
 
-**When** it publishes is a different matter, and is a convention rather than a
-mechanism. `changeset publish` publishes any package whose version is not yet on
-the registry, and the workflow runs on every push to `main`. So the trigger for a
+**When** it publishes was a convention and is now partly machinery.
+`changeset publish` publishes any package whose version is not yet on the
+registry, and the workflow runs on every push to `main`. So the trigger for a
 release is *"a commit on main left a version npm doesn't have yet"* — **not a
-human signature.** Versions changing only via the changesets Version PR is a
-practice, not something the machinery enforces: an ordinary PR that edited a
-version field, reviewed and merged in the normal way, would publish on merge.
+human signature.**
+
+**Since 2026-09-01 that trigger is guarded.** `version-guard` is a required
+context, so **an ordinary PR that edited a version field is refused by the
+platform**, not merely by whoever reads the check. The sentence this section
+used to carry — *an ordinary version-edit PR, reviewed and merged normally,
+would publish on merge* — **is no longer true.**
+
+**What remains convention is the timing, and only the timing.** Merging the
+changesets Version PR *is* the publication: the workflow fires on that merge, so
+the human sign-off has to happen before it and nothing enforces that ordering.
+**A release could still be published by merging the sanctioned PR without anyone
+having signed off** — that is the surviving gap, and it is narrower than the one
+recorded here before.
 
 So the claim "what shipped is what was on main at an attested commit" is
-structurally true. The claim "nothing publishes without a human release
-sign-off" rests on nobody merging a version change, and we would learn of a
-violation only afterwards, from provenance or from npm. **That is a convention
-wearing the appearance of a gate** — recorded here rather than assumed. Closing
-it would mean refusing a version change on any commit that is not the changesets
-bot's own.
+structurally true; "no unsanctioned version change can publish" is now machinery;
+and **"nothing publishes without a human release sign-off" is still a
+convention** — one about *when a human looks*, not about *what may change*.
 
 ### The grid: required × falsified
 
@@ -283,8 +393,10 @@ to refuse anything. That is strictly worse than an unfalsified gate nobody
 relies on, because a release claim can honestly cite a check that blocks — while
 the evidence that it *would* block does not exist.
 
-`version-guard` is in the bottom-right for the opposite reason: falsified
-thoroughly, required by nothing.
+`version-guard` **was** in the bottom-right for the opposite reason — falsified
+thoroughly, required by nothing. **It moved to the top-left on 2026-09-01**:
+same evidence, new authority. It is the only row that has crossed the grid, and
+it crossed by an admin action rather than by any change to the check.
 
 **Falsifying the two in the worst square is scheduled work with boundaries, not
 a spare-twenty-minutes job** (ruled by Lea, 2026-08-31), because it means
@@ -312,8 +424,14 @@ vulnerable dependencies ship in this release", that claim needs to name the
 check that was run and shown to discriminate — not the presence of a green tick
 from a gate nobody has ever seen fail.
 
-The same applies to `release`, `bootstrap`, `container` and `docs-deploy` until
-someone does the four minutes.
+The same applies to `bootstrap` until someone does the four minutes.
+
+**`container` and `docs-deploy` are falsified** — their inventory rows record
+what each was shown and what it reported, both with a passing control run first.
+They belong in the falsified column and an earlier draft of this paragraph said
+otherwise. **`release` is a third case**: structurally protected for *what* it
+publishes, guarded by a required `version-guard` for *which versions may change*,
+and convention only for *when a human signs off*.
 
 ## Reproducing these falsifications
 
