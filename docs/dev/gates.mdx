@@ -353,21 +353,29 @@ answer rather than a gap:
   single path it cannot reach — `npm publish an-already-built.tgz` skips
   lifecycle hooks — which is why provenance, not another entry point, closes it.
 
-**When** it publishes is a different matter, and is a convention rather than a
-mechanism. `changeset publish` publishes any package whose version is not yet on
-the registry, and the workflow runs on every push to `main`. So the trigger for a
+**When** it publishes was a convention and is now partly machinery.
+`changeset publish` publishes any package whose version is not yet on the
+registry, and the workflow runs on every push to `main`. So the trigger for a
 release is *"a commit on main left a version npm doesn't have yet"* — **not a
-human signature.** Versions changing only via the changesets Version PR is a
-practice, not something the machinery enforces: an ordinary PR that edited a
-version field, reviewed and merged in the normal way, would publish on merge.
+human signature.**
+
+**Since 2026-09-01 that trigger is guarded.** `version-guard` is a required
+context, so **an ordinary PR that edited a version field is refused by the
+platform**, not merely by whoever reads the check. The sentence this section
+used to carry — *an ordinary version-edit PR, reviewed and merged normally,
+would publish on merge* — **is no longer true.**
+
+**What remains convention is the timing, and only the timing.** Merging the
+changesets Version PR *is* the publication: the workflow fires on that merge, so
+the human sign-off has to happen before it and nothing enforces that ordering.
+**A release could still be published by merging the sanctioned PR without anyone
+having signed off** — that is the surviving gap, and it is narrower than the one
+recorded here before.
 
 So the claim "what shipped is what was on main at an attested commit" is
-structurally true. The claim "nothing publishes without a human release
-sign-off" rests on nobody merging a version change, and we would learn of a
-violation only afterwards, from provenance or from npm. **That is a convention
-wearing the appearance of a gate** — recorded here rather than assumed. Closing
-it would mean refusing a version change on any commit that is not the changesets
-bot's own.
+structurally true; "no unsanctioned version change can publish" is now machinery;
+and **"nothing publishes without a human release sign-off" is still a
+convention** — one about *when a human looks*, not about *what may change*.
 
 ### The grid: required × falsified
 
@@ -416,8 +424,14 @@ vulnerable dependencies ship in this release", that claim needs to name the
 check that was run and shown to discriminate — not the presence of a green tick
 from a gate nobody has ever seen fail.
 
-The same applies to `release`, `bootstrap`, `container` and `docs-deploy` until
-someone does the four minutes.
+The same applies to `bootstrap` until someone does the four minutes.
+
+**`container` and `docs-deploy` are falsified** — their inventory rows record
+what each was shown and what it reported, both with a passing control run first.
+They belong in the falsified column and an earlier draft of this paragraph said
+otherwise. **`release` is a third case**: structurally protected for *what* it
+publishes, guarded by a required `version-guard` for *which versions may change*,
+and convention only for *when a human signs off*.
 
 ## Reproducing these falsifications
 
