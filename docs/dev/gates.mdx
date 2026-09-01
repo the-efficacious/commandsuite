@@ -119,9 +119,9 @@ input and intent are both single-line, which is why the wrong one survives
 review. **A rule applied to the wrong shape doesn't fail loudly; it inverts and
 looks tidier than what it replaced.**
 
-**6. Make a vacuous control impossible, not merely noticeable.** Every failure
-above was caught by a person spotting it. A negative control that perturbs a
-construct should **assert it found the construct**, and stop if it did not:
+**6. Make a vacuous control impossible, not merely noticeable — and we already
+had the mechanism.** A control that perturbs a construct must **assert it found
+the construct**, and stop if it did not:
 
 ```python
 if old not in text:
@@ -129,10 +129,33 @@ if old not in text:
 ```
 
 Without that line, a matcher that silently matches nothing produces a control
-that "passes" having tested nothing — the same shape as rule 1, one level down.
-**And require both a non-zero exit and the expected message**, or a check failing
-for an unrelated reason gets recorded as the control firing. *(Measured on
-TurnDB by Seamus; it generalises to any fixture that edits a copy.)*
+that "passes" having tested nothing. **Require both a non-zero exit and the
+expected message**, or a check failing for an unrelated reason gets recorded as
+the control firing.
+
+**`scripts/mutate.sh` has done exactly this since 2026-08-01** — it diffs against
+the original, prints `MUTATION DID NOT APPLY — the result would be meaningless,
+so nothing ran`, and exits 2 without running the suite. It was written after a
+mutation silently failed to apply over an indentation mismatch and a guard was
+nearly reported as verified without ever being exercised.
+
+**And it is referenced by nothing.** Not this page, not a workflow, not another
+script. **The mechanism was correct, present, and invisible for a month** — so
+three instruments written since then did not get it, and the failure it prevents
+happened twice in one evening to the person who had read the rule:
+
+```
+a settlement control sealed with unsettled=0   -> passed, tested nothing
+a checker printed "replay: 0 of 0"  twice      -> passed, tested nothing
+```
+
+**Both were caught by a person noticing.** That is the gap this rule closes, and
+the gap was never the tooling — **it was that a working mechanism had no surface
+in the practice, so new instruments were written without it.** Use `mutate.sh`
+where it fits; where it doesn't, assert the construct yourself.
+
+*(The rule was written down on the TurnDB side by Seamus, for a mechanism this
+repo already had. A mechanism nobody writes the rule for does not travel.)*
 
 **7. A check must discriminate, not merely respond.** Exercise it in both
 directions before trusting it — the present case *and* the absent case:
