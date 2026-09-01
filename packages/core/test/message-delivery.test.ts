@@ -91,6 +91,101 @@ describe('message disposition ledger', () => {
     expect(ledger.pending('alice', 1_000)).toHaveLength(0);
   });
 
+  // #263, and clause (a) of obj-mtgdn97e-u. The defect was a delivery into a
+  // socket that is dying but still present in the registry: the broker "delivered"
+  // into it, the notification receipt said `delivered`, and the message died with
+  // the socket. The receipt claimed a fact nothing had acknowledged.
+  //
+  // The property is not "the runner is gone" — that case was always honest. It is
+  // the window where presence still shows the subscription: a push into a live,
+  // ack-capable subscription that never settles must be `pending`, never `settled`,
+  // because `settled` is the only input from which a receipt derives `delivered`.
+  it('never reports settled for a message a live subscription did not acknowledge (#263)', async () => {
+    const { broker, ledger } = fixture();
+    const received: Message[] = [];
+    const unsubscribe = broker.subscribe(
+      'bob',
+      (m) => {
+        received.push(m);
+      },
+      {
+        name: 'bob',
+        clientIdentity: ACK_RUNNER,
+      },
+    );
+
+    const pushed = await broker.push({ to: 'bob', body: 'work' }, { from: 'alice' });
+
+    // The socket took the bytes — this is the window the defect lived in.
+    expect(received).toHaveLength(1);
+
+    // ...and the broker must still refuse to call it acknowledged. `settled` here
+    // is what a receipt turns into `delivered`, so this assertion is the whole of
+    // "never a lost delivered".
+    expect(pushed.delivery.acknowledgement?.status).toBe('pending');
+    expect(pushed.delivery.acknowledgement?.status).not.toBe('settled');
+    expect(ledger.pending('bob', 1_000)).toHaveLength(1);
+
+    // The runner dies mid-window without ever settling.
+    unsubscribe();
+
+    // Not lost: the row is still owed to bob rather than consumed by the dead socket.
+    const stillPending = ledger.pending('bob', 1_000);
+    expect(stillPending).toHaveLength(1);
+    expect(stillPending[0]?.message.id).toBe(pushed.message.id);
+
+    // Release on reconnect: a successor subscription reports ready, and the
+    // broker hands it the same message. Asserted on the successor's own inbox
+    // rather than by calling a redelivery method — an earlier draft of this test
+    // used `broker.redeliverPendingFor?.('bob')`, which does not exist, so the
+    // optional call was a silent no-op and the line proved nothing.
+    const redelivered: Message[] = [];
+    broker.subscribe(
+      'bob',
+      (m) => {
+        redelivered.push(m);
+      },
+      {
+        name: 'bob',
+        clientIdentity: LIVENESS_RUNNER,
+        subscriptionId: 'sub-successor',
+      },
+    );
+    await broker.runnerCondition(
+      'bob',
+      { kind: 'runner_condition', at: 1_001, state: 'ready' },
+      { name: 'bob', clientIdentity: LIVENESS_RUNNER, subscriptionId: 'sub-successor' },
+    );
+    expect(redelivered.map((m) => m.id)).toContain(pushed.message.id);
+
+    // And once it genuinely acts, the row settles — the honest end of the same
+    // path. A liveness-advertising subscription must accept before it settles;
+    // a terminal disposition on a pending row is refused, which is the lease
+    // rule and not an artefact of this test.
+    const successor = {
+      name: 'bob',
+      clientIdentity: LIVENESS_RUNNER,
+      subscriptionId: 'sub-successor',
+    } as const;
+    const base = {
+      kind: 'message_disposition',
+      messageId: pushed.message.id,
+    } as const;
+
+    await expect(
+      broker.disposition('bob', { ...base, at: 1_002, disposition: 'handled' }, successor),
+    ).resolves.toBe(false);
+    expect(ledger.pending('bob', 1_000)).toHaveLength(1);
+
+    await expect(
+      broker.disposition('bob', { ...base, at: 1_003, disposition: 'accepted' }, successor),
+    ).resolves.toBe(true);
+    await expect(
+      broker.disposition('bob', { ...base, at: 1_004, disposition: 'handled' }, successor),
+    ).resolves.toBe(true);
+    expect(ledger.pending('bob', 1_000)).toHaveLength(0);
+  });
+
   it('keeps deferred work pending and settles a later handled disposition', async () => {
     const { broker, ledger } = fixture();
     broker.subscribe('bob', () => {}, { name: 'bob', clientIdentity: ACK_RUNNER });
