@@ -27,7 +27,7 @@ using it for real rather than by the instrument itself:
 ## The practice
 
 **An instrument earns its verdict by being shown a known-bad input, and until it
-has been, a green from it is an opinion.** Four minutes each. Five rules follow
+has been, a green from it is an opinion.** Four minutes each. Nine rules follow
 from doing it, and every one was learned by getting it wrong first:
 
 **1. Prove the input was actually bad.** A mutation you did not confirm reached
@@ -118,6 +118,50 @@ all lines conform*. Match the question to the assertion — *is any line bad?* i
 input and intent are both single-line, which is why the wrong one survives
 review. **A rule applied to the wrong shape doesn't fail loudly; it inverts and
 looks tidier than what it replaced.**
+
+**6. Make a vacuous control impossible, not merely noticeable.** Every failure
+above was caught by a person spotting it. A negative control that perturbs a
+construct should **assert it found the construct**, and stop if it did not:
+
+```python
+if old not in text:
+    raise SystemExit(f"{label} control could not find the construct it is meant to perturb")
+```
+
+Without that line, a matcher that silently matches nothing produces a control
+that "passes" having tested nothing — the same shape as rule 1, one level down.
+**And require both a non-zero exit and the expected message**, or a check failing
+for an unrelated reason gets recorded as the control firing. *(Measured on
+TurnDB by Seamus; it generalises to any fixture that edits a copy.)*
+
+**7. A check must discriminate, not merely respond.** Exercise it in both
+directions before trusting it — the present case *and* the absent case:
+
+```
+present → 200        absent → 404
+```
+
+**A 200 for something that exists proves the URL is well-formed and says nothing
+about whether the check would notice the thing missing.** The 404 is what makes
+it an observation rather than a formality. This is rule 3 turned from "disagree
+once" into "disagree on demand, both ways". *(Turner, testing an observation
+endpoint against the real version.)*
+
+**8. State which claim the check makes, at the check.** Two surfaces that look
+equivalent can prove different things: an exact-version registry document says
+*the version exists*; the packument says *an install would resolve it*. **They
+diverged by fifteen minutes in a measured instance.** A green check is read as
+the stronger claim unless it says otherwise, so write the narrower one down where
+the result is produced:
+
+> This proves registry existence, not packument propagation or npm installability.
+
+**9. A check that fails on correct behaviour destroys the signal it was added
+for.** A naive "fail on any non-success dependency" would have gone red on every
+legitimate narrow run. **People learn to read red on that path as normal, which
+is the condition under which a real red gets waved through.** The fix is not a
+looser threshold — it is stating the property precisely enough that the mechanism
+can deliver exactly it. *(Turner.)*
 
 And the rule these serve: **the gate bends, not the security posture.** When an
 instrument makes a correct property look expensive, fix the instrument.
