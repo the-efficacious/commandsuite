@@ -1,5 +1,13 @@
 # csuite-web-host
 
+## 0.9.0
+
+### Patch Changes
+
+- Updated dependencies [[`5e11966`](https://github.com/the-efficacious/commandsuite/commit/5e119668f7d1759bee6d5930edb99d585b1976a0), [`b001e51`](https://github.com/the-efficacious/commandsuite/commit/b001e5193e890732f62da24a61bc79905df47506), [`c6977d4`](https://github.com/the-efficacious/commandsuite/commit/c6977d416ff989db0ea1bc02aa8771e5dfde2ba8), [`7e24133`](https://github.com/the-efficacious/commandsuite/commit/7e24133b5619805385c2ad7e44e1225b0fc8de8a), [`bc0c171`](https://github.com/the-efficacious/commandsuite/commit/bc0c171707ee885c5db76f880b44749cf6ca9144), [`2e27743`](https://github.com/the-efficacious/commandsuite/commit/2e277435e0904b59df74ec04d800f98ebb8b7dc2), [`bb79f4d`](https://github.com/the-efficacious/commandsuite/commit/bb79f4d8a16b2263b5bac2896ea6eac427c264e6), [`19dac9e`](https://github.com/the-efficacious/commandsuite/commit/19dac9eca6bd9ac3c5b90580dea36bc24129e7a8), [`acf7f5a`](https://github.com/the-efficacious/commandsuite/commit/acf7f5adbd7e7cf9608641e12a1348a4671dabf8), [`8811e48`](https://github.com/the-efficacious/commandsuite/commit/8811e487cd62fdc94aa7ca42f8783b9302237a71), [`7de73b4`](https://github.com/the-efficacious/commandsuite/commit/7de73b4e04d9f09edfb1389a7c81fb9df941e755), [`d62e2be`](https://github.com/the-efficacious/commandsuite/commit/d62e2beb1b196906671499a0c86ac9ab4c9948b8)]:
+  - csuite-sdk@0.9.0
+  - csuite-web-ui@0.9.0
+
 ## 0.8.0
 
 ### Minor Changes

@@ -1,5 +1,34 @@
 # csuite-web-ui
 
+## 0.9.0
+
+### Minor Changes
+
+- [#231](https://github.com/the-efficacious/commandsuite/pull/231) [`bc0c171`](https://github.com/the-efficacious/commandsuite/commit/bc0c171707ee885c5db76f880b44749cf6ca9144) Thanks [@sureforge](https://github.com/sureforge)! - Add compatibility-preserving pending member creation. Callers can select
+  `credentialMode: 'pending'` to create a member without minting a bearer token;
+  the CLI, MCP tool, and web UI now use that mode and direct the new member through
+  device-code enrolment. Omitting the mode retains the 0.8 bootstrap-token response
+  until the legacy default is removed in a separately approved change.
+
+- [#288](https://github.com/the-efficacious/commandsuite/pull/288) [`bb79f4d`](https://github.com/the-efficacious/commandsuite/commit/bb79f4d8a16b2263b5bac2896ea6eac427c264e6) Thanks [@sureforge](https://github.com/sureforge)! - Make runner liveness evidence-based and message delivery recoverable. Runners
+  report typed ready/degraded conditions, action-only turn outcomes, and an
+  explicit supervision claim; peers that do not advertise the capability remain
+  unreported. Messages become
+  subscription-owned accepted leases at real turn start and return to pending on
+  disconnect or any degraded projection, while stale completions are refused.
+
+  0.9.0 is the protocol compatibility baseline. Upgrade brokers and runners
+  together from 0.8.x; mixed 0.8.x/0.9.0 deployments are unsupported.
+
+### Patch Changes
+
+- [#222](https://github.com/the-efficacious/commandsuite/pull/222) [`b001e51`](https://github.com/the-efficacious/commandsuite/commit/b001e5193e890732f62da24a61bc79905df47506) Thanks [@sureforge](https://github.com/sureforge)! - Runners now receive a targeted `environment` stream event when a bound secret or variable changes, drain at idle, refresh their resolved environment through the broker, and resume the same conversation. `context_control reload` triggers the same refresh explicitly, while `--no-env-reload` disables only automatic environment restarts. New secret values are registered with the additive redactor before the successor agent starts; a failed refresh keeps the prior environment.
+
+- [#220](https://github.com/the-efficacious/commandsuite/pull/220) [`d62e2be`](https://github.com/the-efficacious/commandsuite/commit/d62e2beb1b196906671499a0c86ac9ab4c9948b8) Thanks [@keencaliper](https://github.com/keencaliper)! - Opening a DM no longer opens the other member's activity stream unless the viewer may read it (`activity.read`, or their own) — the right-rail inspector renders "Restricted" instead of a 403 handshake retried forever ([#214](https://github.com/the-efficacious/commandsuite/issues/214)). The Files root view lists `/` instead of sending an empty path and rendering "400" ([#216](https://github.com/the-efficacious/commandsuite/issues/216)). The notifications pages no longer fetch endpoints, profiles or deliveries before rendering their own "Restricted" refusal, so a member without `notifications.manage` produces no 403s.
+
+- Updated dependencies [[`5e11966`](https://github.com/the-efficacious/commandsuite/commit/5e119668f7d1759bee6d5930edb99d585b1976a0), [`b001e51`](https://github.com/the-efficacious/commandsuite/commit/b001e5193e890732f62da24a61bc79905df47506), [`c6977d4`](https://github.com/the-efficacious/commandsuite/commit/c6977d416ff989db0ea1bc02aa8771e5dfde2ba8), [`7e24133`](https://github.com/the-efficacious/commandsuite/commit/7e24133b5619805385c2ad7e44e1225b0fc8de8a), [`bc0c171`](https://github.com/the-efficacious/commandsuite/commit/bc0c171707ee885c5db76f880b44749cf6ca9144), [`2e27743`](https://github.com/the-efficacious/commandsuite/commit/2e277435e0904b59df74ec04d800f98ebb8b7dc2), [`bb79f4d`](https://github.com/the-efficacious/commandsuite/commit/bb79f4d8a16b2263b5bac2896ea6eac427c264e6), [`19dac9e`](https://github.com/the-efficacious/commandsuite/commit/19dac9eca6bd9ac3c5b90580dea36bc24129e7a8), [`acf7f5a`](https://github.com/the-efficacious/commandsuite/commit/acf7f5adbd7e7cf9608641e12a1348a4671dabf8), [`8811e48`](https://github.com/the-efficacious/commandsuite/commit/8811e487cd62fdc94aa7ca42f8783b9302237a71), [`7de73b4`](https://github.com/the-efficacious/commandsuite/commit/7de73b4e04d9f09edfb1389a7c81fb9df941e755)]:
+  - csuite-sdk@0.9.0
+
 ## 0.8.0
 
 ### Minor Changes

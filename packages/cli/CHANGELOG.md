@@ -1,5 +1,77 @@
 # csuite-cli
 
+## 0.9.0
+
+### Minor Changes
+
+- [#234](https://github.com/the-efficacious/commandsuite/pull/234) [`ba90ecb`](https://github.com/the-efficacious/commandsuite/commit/ba90ecb5e52175a58a8ce6ed2d92424d067430bb) Thanks [@sureforge](https://github.com/sureforge)! - Add metadata-only `connect_pending` and `connect_approve` runner tools so an
+  agent holding `members.manage` can complete device-code provisioning without a
+  shell or credential value entering its tool-result stream.
+
+- [#229](https://github.com/the-efficacious/commandsuite/pull/229) [`4e6f330`](https://github.com/the-efficacious/commandsuite/commit/4e6f330d59b9e8429ff691413c366740a9adaf4a) Thanks [@sureforge](https://github.com/sureforge)! - Add durable member-local stdio MCP configuration for Codex runners, including doctor visibility and explicit refusal of legacy or bridge-colliding configuration.
+
+- [#208](https://github.com/the-efficacious/commandsuite/pull/208) [`ffbeb14`](https://github.com/the-efficacious/commandsuite/commit/ffbeb14dbf6af00efb4b74f92ae5895cfe42be04) Thanks [@keencaliper](https://github.com/keencaliper)! - `csuite connect pending` lists device enrollments waiting for approval, and `csuite connect approve --code <XXXX-XXXX> --member <name>` (or `--create --member <name> --title <t> …`) approves one from the CLI — the same routes and `members.manage` check as the web UI's `/enroll` page, so a provisioning script or an agent can onboard a device with no browser. The token still travels only from broker to device.
+
+- [#236](https://github.com/the-efficacious/commandsuite/pull/236) [`330acf5`](https://github.com/the-efficacious/commandsuite/commit/330acf57dc42b0be31c4cebc994e8ce1c50c172f) Thanks [@keencaliper](https://github.com/keencaliper)! - `csuite <runner> install-service` writes a systemd unit and a sudoers rule scoped to exactly that unit for the current user's runner (claude, codex, or stub), refusing up front — with the exact lookup key — when no saved auth resolves headlessly from the workspace, and confirming liveness at the broker (member connected with a fresh lastSeen, never a pid) after `enable --now`. Without root nothing outside `$HOME` is written; the files print with the operator's install commands (`--print` forces that mode). `csuite <runner> cycle` restarts the unit from inside the runner via a detached worker and confirms the same broker-side liveness. `--exec` overrides the ExecStart binary for main-build deploy trees.
+
+- [#222](https://github.com/the-efficacious/commandsuite/pull/222) [`b001e51`](https://github.com/the-efficacious/commandsuite/commit/b001e5193e890732f62da24a61bc79905df47506) Thanks [@sureforge](https://github.com/sureforge)! - Runners now receive a targeted `environment` stream event when a bound secret or variable changes, drain at idle, refresh their resolved environment through the broker, and resume the same conversation. `context_control reload` triggers the same refresh explicitly, while `--no-env-reload` disables only automatic environment restarts. New secret values are registered with the additive redactor before the successor agent starts; a failed refresh keeps the prior environment.
+
+- [#218](https://github.com/the-efficacious/commandsuite/pull/218) [`c6977d4`](https://github.com/the-efficacious/commandsuite/commit/c6977d416ff989db0ea1bc02aa8771e5dfde2ba8) Thanks [@sureforge](https://github.com/sureforge)! - Add streaming runner-local file upload and download tools, matching `csuite fs put|get` commands, and local-file attachment sugar for direct messages, channel posts, and objective discussions.
+
+- [#225](https://github.com/the-efficacious/commandsuite/pull/225) [`7e24133`](https://github.com/the-efficacious/commandsuite/commit/7e24133b5619805385c2ad7e44e1225b0fc8de8a) Thanks [@sureforge](https://github.com/sureforge)! - Notify long-running clients when bearer authentication is rejected, expose
+  token-aware blocked presence, and let runners retain capture while saved device
+  auth is replaced after re-enrolment.
+
+- [#221](https://github.com/the-efficacious/commandsuite/pull/221) [`2d45266`](https://github.com/the-efficacious/commandsuite/commit/2d45266a011945d9bd850620ee39cdc1f7e7fcb6) Thanks [@keencaliper](https://github.com/keencaliper)! - `@anthropic-ai/claude-agent-sdk` is now an optional dependency. A default install (npm and pnpm install optional dependencies by default) is unchanged: `csuite claude` works as before. A broker-only install (`--omit=optional` / `--no-optional`) drops the ~263 MB agent SDK; every broker-side verb works without it, `csuite claude` fails fast with a one-line message naming the missing package and how to install it, and `csuite <runner> --doctor` reports the agent binary as "absent by design" (advisory) instead of FAIL.
+
+- [#231](https://github.com/the-efficacious/commandsuite/pull/231) [`bc0c171`](https://github.com/the-efficacious/commandsuite/commit/bc0c171707ee885c5db76f880b44749cf6ca9144) Thanks [@sureforge](https://github.com/sureforge)! - Add compatibility-preserving pending member creation. Callers can select
+  `credentialMode: 'pending'` to create a member without minting a bearer token;
+  the CLI, MCP tool, and web UI now use that mode and direct the new member through
+  device-code enrolment. Omitting the mode retains the 0.8 bootstrap-token response
+  until the legacy default is removed in a separately approved change.
+
+- [#288](https://github.com/the-efficacious/commandsuite/pull/288) [`bb79f4d`](https://github.com/the-efficacious/commandsuite/commit/bb79f4d8a16b2263b5bac2896ea6eac427c264e6) Thanks [@sureforge](https://github.com/sureforge)! - Make runner liveness evidence-based and message delivery recoverable. Runners
+  report typed ready/degraded conditions, action-only turn outcomes, and an
+  explicit supervision claim; peers that do not advertise the capability remain
+  unreported. Messages become
+  subscription-owned accepted leases at real turn start and return to pending on
+  disconnect or any degraded projection, while stale completions are refused.
+
+  0.9.0 is the protocol compatibility baseline. Upgrade brokers and runners
+  together from 0.8.x; mixed 0.8.x/0.9.0 deployments are unsupported.
+
+- [#239](https://github.com/the-efficacious/commandsuite/pull/239) [`acf7f5a`](https://github.com/the-efficacious/commandsuite/commit/acf7f5adbd7e7cf9608641e12a1348a4671dabf8) Thanks [@keencaliper](https://github.com/keencaliper)! - Bare `--resume` on `csuite claude` and `csuite codex` is now resume-or-start: it resumes the most recent session/thread when one exists and otherwise starts fresh — loudly, with a greppable runner log line and typed `resumed: false` + `resumeReason` on the `session_start` activity event — instead of erroring. Under a supervisor (`install-service`'s `Restart=always`) the old deterministic error was an infinite restart loop on any fresh member. Explicit `--resume <id>` stays strict. The `session_start` schema gains optional `resumed`/`resumeReason` fields (additive; absent on events from older runners).
+
+- [#233](https://github.com/the-efficacious/commandsuite/pull/233) [`8811e48`](https://github.com/the-efficacious/commandsuite/commit/8811e487cd62fdc94aa7ca42f8783b9302237a71) Thanks [@sureforge](https://github.com/sureforge)! - Add explicit per-token and revoke-all bearer rotation scopes. The CLI requires
+  one scope and writes the replacement credential to a new 0600 file without
+  printing plaintext; the legacy empty REST body retains revoke-all behavior
+  until its separately approved compatibility flip.
+
+- [#206](https://github.com/the-efficacious/commandsuite/pull/206) [`5b5dcf6`](https://github.com/the-efficacious/commandsuite/commit/5b5dcf6ab043b68f08ec8fbd10bd758a35cac7a3) Thanks [@keencaliper](https://github.com/keencaliper)! - `csuite setup --non-interactive --team <name> --member <name> --token-file <path> [--totp-secret-file <path>]` seeds a team and its first member with no TTY. The bearer token is written to the file at mode 0600 and never printed; a TOTP secret is generated and enrolled only when a file for it is given. Provisioning scripts, container entrypoints and CI jobs can now bring up a broker without a human at a terminal ([#198](https://github.com/the-efficacious/commandsuite/issues/198)).
+
+- [#228](https://github.com/the-efficacious/commandsuite/pull/228) [`6846ab4`](https://github.com/the-efficacious/commandsuite/commit/6846ab4be345c8beb1309e194a7e17f24e3c2a69) Thanks [@keencaliper](https://github.com/keencaliper)! - New `csuite stub` runner verb: a test/CI instrument (never a deployable member) that proves the runner lifecycle with no model credential — presence to `connected=1`, the MCP bridge attach, the `session_start`/`session_end` capture bracket, restart/`clear`/`reload` respawns, and a clean exit. When addressed in a DM it answers one canned, self-identifying line through the real bridge path. Visibly a stub everywhere: `runner: "stub"` in every session_start trace event, an instrument line in the doctor, and a self-identifying reply. Bounded runs for tests via `CSUITE_STUB_EXIT_AFTER_MS`/`CSUITE_STUB_EXIT_CODE`.
+
+### Patch Changes
+
+- [#232](https://github.com/the-efficacious/commandsuite/pull/232) [`5e11966`](https://github.com/the-efficacious/commandsuite/commit/5e119668f7d1759bee6d5930edb99d585b1976a0) Thanks [@sureforge](https://github.com/sureforge)! - Refuse bearer-credential-shaped chat bodies before persistence and guard every
+  runner tool result before it enters an IPC frame or agent context. The shared
+  credential detector recognizes complete `csuite_` bearer tokens without
+  echoing the refused value.
+
+- [#215](https://github.com/the-efficacious/commandsuite/pull/215) [`50cc8f8`](https://github.com/the-efficacious/commandsuite/commit/50cc8f872df25d4aed4410f5f3d02a0e9b148c99) Thanks [@keencaliper](https://github.com/keencaliper)! - `csuite enroll` prints the new TOTP secret and otpauth URI before attempting the QR code, and a QR rendering failure is reported instead of killing the command. Previously the broker had already rotated the member's secret when the QR renderer crashed (`Dynamic require of "module" is not supported` in the ESM build), so the secret was never shown and the member was locked out of the web UI ([#212](https://github.com/the-efficacious/commandsuite/issues/212)).
+
+- [#255](https://github.com/the-efficacious/commandsuite/pull/255) [`a45aff0`](https://github.com/the-efficacious/commandsuite/commit/a45aff09fca495707eff7243a8393b74402c52c7) Thanks [@sureforge](https://github.com/sureforge)! - Make `fs_ls` distinguish readable-empty, unreadable, and nonexistent member roots without exposing paths below an unreadable boundary, and correct the process-document tool text to describe idle restart, conversation resume, and retained history.
+
+- [#227](https://github.com/the-efficacious/commandsuite/pull/227) [`275e9f3`](https://github.com/the-efficacious/commandsuite/commit/275e9f33a9ec06c67172f8e1b898d60a81fe3147) Thanks [@sureforge](https://github.com/sureforge)! - Recompose the Claude child environment on runner restarts so refreshed secrets and capture settings reach the successor process.
+
+- [#211](https://github.com/the-efficacious/commandsuite/pull/211) [`9f84707`](https://github.com/the-efficacious/commandsuite/commit/9f847070e4070102cead068014b77e0ed9a03a88) Thanks [@keencaliper](https://github.com/keencaliper)! - `csuite member` help no longer claims to run offline — it manages members through the running broker, and `create` prints the new member's token once. The repository also gains `scripts/bootstrap.sh`, a scriptable no-TTY bring-up of broker, team, web UI and an enrolled runner, documented at docs/headless-setup and run by CI ([#198](https://github.com/the-efficacious/commandsuite/issues/198)).
+
+- [#207](https://github.com/the-efficacious/commandsuite/pull/207) [`0285b4a`](https://github.com/the-efficacious/commandsuite/commit/0285b4ac6f7ce799a3ea0859d6c187c5af35c0f5) Thanks [@keencaliper](https://github.com/keencaliper)! - `csuite claude` and `csuite codex` no longer fall into the interactive enrollment wizard when no credential resolves and stdin is not a TTY. They exit 1 naming the lookup key — broker URL and working directory — and the two fixes, so a service unit that omits `CSUITE_URL` fails once with a readable reason instead of restart-looping or hanging on a device code. `--doctor` gains a `saved auth` check that reports the same lookup ([#199](https://github.com/the-efficacious/commandsuite/issues/199)).
+
+- Updated dependencies [[`5e11966`](https://github.com/the-efficacious/commandsuite/commit/5e119668f7d1759bee6d5930edb99d585b1976a0), [`a45aff0`](https://github.com/the-efficacious/commandsuite/commit/a45aff09fca495707eff7243a8393b74402c52c7), [`aa3b5ed`](https://github.com/the-efficacious/commandsuite/commit/aa3b5ed49450549d2d484058ffe6d0d5c2e6d081), [`b6151be`](https://github.com/the-efficacious/commandsuite/commit/b6151becf1c60a3c6b861d96a35892cc5eddbd33), [`b001e51`](https://github.com/the-efficacious/commandsuite/commit/b001e5193e890732f62da24a61bc79905df47506), [`c6977d4`](https://github.com/the-efficacious/commandsuite/commit/c6977d416ff989db0ea1bc02aa8771e5dfde2ba8), [`7e24133`](https://github.com/the-efficacious/commandsuite/commit/7e24133b5619805385c2ad7e44e1225b0fc8de8a), [`bc0c171`](https://github.com/the-efficacious/commandsuite/commit/bc0c171707ee885c5db76f880b44749cf6ca9144), [`2e27743`](https://github.com/the-efficacious/commandsuite/commit/2e277435e0904b59df74ec04d800f98ebb8b7dc2), [`bb79f4d`](https://github.com/the-efficacious/commandsuite/commit/bb79f4d8a16b2263b5bac2896ea6eac427c264e6), [`19dac9e`](https://github.com/the-efficacious/commandsuite/commit/19dac9eca6bd9ac3c5b90580dea36bc24129e7a8), [`acf7f5a`](https://github.com/the-efficacious/commandsuite/commit/acf7f5adbd7e7cf9608641e12a1348a4671dabf8), [`8811e48`](https://github.com/the-efficacious/commandsuite/commit/8811e487cd62fdc94aa7ca42f8783b9302237a71), [`7de73b4`](https://github.com/the-efficacious/commandsuite/commit/7de73b4e04d9f09edfb1389a7c81fb9df941e755)]:
+  - csuite-sdk@0.9.0
+  - csuite-core@0.9.0
+
 ## 0.8.0
 
 ### Minor Changes

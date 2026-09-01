@@ -79,12 +79,35 @@ beforeAll(async () => {
   );
   writeShim(shimDir, 'npm', which('npm'), 'case "$args" in *" publish "*) forbid;; esac');
   writeShim(shimDir, 'pnpm', which('pnpm'), 'case "$args" in *" publish "*) forbid;; esac');
-  writeShim(
-    shimDir,
-    'npx',
-    which('npx'),
-    'case "$args" in *"changeset publish"*|*"changeset version"*) forbid;; esac',
+  // changeset status normally reads the checkout's pending changesets. A
+  // Changesets-generated version PR has consumed those files already, so
+  // using the live queue would make this proof fail before it reaches the
+  // behavior under test. Keep the status input deterministic on every branch,
+  // while still trapping Changesets' write-capable commands.
+  const npxPath = join(shimDir, 'npx');
+  writeFileSync(
+    npxPath,
+    [
+      '#!/usr/bin/env bash',
+      'echo "npx $*" >> "$INVOCATION_LOG"',
+      'args=" $* "',
+      'case "$args" in *" changeset publish "*|*" changeset version "*) echo "FORBIDDEN: npx $*" >> "$INVOCATION_LOG"; exit 97;; esac',
+      'if [[ "$1" == "changeset" && "$2" == "status" ]]; then',
+      '  output=""',
+      '  while [[ $# -gt 0 ]]; do',
+      '    if [[ "$1" == "--output" ]]; then output="$2"; break; fi',
+      '    shift',
+      '  done',
+      '  [[ -n "$output" ]] || { echo "changeset status fixture: --output missing" >&2; exit 96; }',
+      '  printf %s \'{"changesets":["release-prepare-test"],"releases":[{"name":"csuite","type":"minor","oldVersion":"0.8.0","changesets":["release-prepare-test"],"newVersion":"0.9.0"}]}\' > "$output"',
+      '  exit 0',
+      'fi',
+      `exec "${which('npx')}" "$@"`,
+    ]
+      .join('\n')
+      .concat('\n'),
   );
+  chmodSync(npxPath, 0o755);
   // docker is a deterministic EMULATOR, not a passthrough: the script's
   // image path must execute during the proof (verifier bar), but a real
   // image build is minutes of work the trap property doesn't need. build
