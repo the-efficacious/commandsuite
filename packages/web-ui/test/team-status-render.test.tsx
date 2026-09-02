@@ -16,7 +16,7 @@ function seed(permissions: [] | ['members.manage']) {
     teammates: [],
     openObjectives: [],
     toolSources: [],
-    processDocument: null,
+    teamProcess: null,
     instructions: '',
   };
   roster.value = {

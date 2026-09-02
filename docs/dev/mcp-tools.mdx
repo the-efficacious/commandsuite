@@ -23,7 +23,7 @@ The groups:
 - **Objective tools** — list / view / update / discuss / complete
   objectives, plus permission-gated tools for creating and
   cancelling work across the team.
-- **Process-document tools** — read the team's process document and
+- **Team-process tools** — read the team process and
   its edit history; write it if you hold the authority. The current
   text arrives by injection, not by calling these.
 - **Filesystem tools** — operate on the csuite virtual filesystem
@@ -243,70 +243,82 @@ objective if priorities change again.
 | **Output** | `cancelled <id>: <title>` |
 | **Broker call** | `POST /objectives/:id/cancel` |
 
-## Process-document tools
+## Team-process tools
 
-The team's process document is **injected**: the current text is
+The team process is **injected**: the current text is
 already in the agent's fixed context as current state, and it survives
 compaction. An agent does not call a tool to learn what binds it.
 
-### process_document_get
+### team_process_get
 
 | | |
 |---|---|
 | **Required permission** | none |
 | **Input** | `{}` |
-| **Output** | `process document v<N>, last edited by <name>. Created by <name>.` then the text; or an explicit "no process document has been set" |
-| **Broker call** | `GET /process-document` |
+| **Output** | `team process v<N>, last edited by <name>. Created by <name>.` then the text; or an explicit "no team process has been set" |
+| **Broker call** | `GET /team-process` |
 
 Returns a real state rather than an error when none has been set —
 `null` means nobody has written one, not that you cannot see it.
 
-### process_document_history
+### team_process_history
 
 | | |
 |---|---|
 | **Required permission** | none |
 | **Input** | `{}` |
 | **Output** | Per edit: version, actor, `disposition` and what it binds, reason, and whether prior text exists |
-| **Broker call** | `GET /process-document/history` |
+| **Broker call** | `GET /team-process/history` |
 
 The other half of *history retrievable, not resident*: the injected
 context carries only current text, so editing fifty times costs what
 editing once costs. Version 1 is the creation and carries no prior
 text.
 
-## Process-document tools (permission-gated)
+## Team-process tools (permission-gated)
 
-### process_document_write
+### team_process_write
 
 | | |
 |---|---|
-| **Required permission** | `process.manage` |
+| **Required permission** | `team_process.manage` |
 | **Input** | `{ text: string (req), reason: string (req), disposition: 'correction'\|'scope_change' (req) }` |
-| **Output** | `created`/`updated the process document at v<N>` + what the disposition binds + the delivery bound |
-| **Broker call** | `PUT /process-document` |
+| **Output** | `created`/`updated the team process at v<N>` + what the disposition binds + the delivery bound |
+| **Broker call** | `PUT /team-process` |
 
 **`text` REPLACES the whole document.** Read it with
-`process_document_get` and send the full new text — this is not a patch
+`team_process_get` and send the full new text — this is not a patch
 API, and sending a paragraph deletes everything you did not retype.
 
 The first write creates version 1; every later write increments the
 version and retains the prior text, so nothing is destroyed.
 Each history entry retains the full text plus editor, reason, disposition,
 and timestamp. Any member may read the current document and its history;
-writing requires `process.manage`.
+writing requires `team_process.manage`.
 
 `disposition` states what the edit binds: `correction` is retroactive
 (the prior text was never validly binding), `scope_change` is
 forward-only (work already underway finishes under the prior text).
 
+### Deprecated names
+
+These three tools shipped as `process_document_get`,
+`process_document_history` and `process_document_write`. For one
+release the old names still dispatch — they are aliases for the
+`team_process_*` tools above and are **not** listed in `tools/list` —
+so prose that quotes them (team instructions, the team process text
+itself) keeps working while it is updated. Each aliased call logs a
+`warn` record naming the alias (`tool`) and what to use instead
+(`replacement`); grep the runner's session log for `replacement` to
+find every stale reference. The aliases are removed in the next minor.
+
 ### Delivery bound
 
 An edit fans out one `kind: 'instructions'` broker event to every
 member whose composed context changed. Each affected runner restarts
-its agent at the next idle boundary, resuming the same conversation
-under the new text, and `GET /roster` lists those members in
-`restartPending` until it does.
+its agent cold at the next idle boundary under the new text (the
+successor is re-briefed on its open objectives), and `GET /roster`
+lists those members in `restartPending` until it does.
 
 An agent still holding a superseded version reads as **stale**, not
 missing — it is restart-pending, never re-sent content, because
@@ -319,7 +331,7 @@ system projection. When the projection is empty, absence cannot be
 asserted and nothing is re-sent.
 
 A runner predating the field drops it silently: the member operates
-without the process document and is not told.
+without the team process and is not told.
 
 ## Team-management tools (gated on `team.manage`)
 
@@ -327,10 +339,10 @@ Team-level name and shared context. Reads are open on the
 HTTP API, but the tools only surface to `team.manage` holders so the
 toolbox stays narrow — any agent can pull team data from its
 instructions. A `context` edit is instruction-bearing: the broker
-fans it out and each affected runner restarts its agent at the next
-idle boundary, resuming the same conversation under the new composed
-text; the roster lists those members restart-pending until it does
-(the `team_update` result restates this to the calling agent).
+fans it out and each affected runner restarts its agent cold at the
+next idle boundary under the new composed text; the roster lists those
+members restart-pending until it does (the `team_update` result
+restates this to the calling agent).
 
 | Tool | Input | What it does |
 |---|---|---|

@@ -90,6 +90,13 @@ async function connectStubBridge(ctx: AgentSessionContext): Promise<StubBridge> 
   });
   const client = new McpClient({ name: 'csuite-stub-agent', version: '0.0.0' });
   await client.connect(transport);
+  // List the toolbox once, as every real framework does when an MCP
+  // server comes up. This is not decoration: the runner treats the
+  // first `tools/list` on a fresh bridge connection as "the agent's
+  // session attached" and pushes the `context_refresh` re-brief on it,
+  // so a stub that only handshook would never exercise that path.
+  const { tools } = await client.listTools();
+  ctx.log.info('stub listed the csuite toolbox', { tools: tools.length });
   return {
     async send(to, body) {
       await client.callTool({ name: 'send', arguments: { to, body } });
@@ -119,7 +126,19 @@ export class StubProcess implements AgentProcess {
 
   /** Deliver one channel event; an addressed DM earns the canned turn. */
   deliver(event: ChannelEvent): void {
-    if (this.closed || !isAddressedDm(event, this.member)) return;
+    if (this.closed) return;
+    // An instrument shows what reached it. Everything the runner hands
+    // a generation is logged with the generation's id — the re-brief
+    // included, verbatim — so a fixture can assert that a successor
+    // received its plate without the stub interpreting any of it.
+    this.log.debug('stub received channel event', {
+      session: this.id,
+      kind: event.meta.kind ?? null,
+      thread: event.meta.thread ?? null,
+      from: event.meta.from ?? null,
+      content: event.content,
+    });
+    if (!isAddressedDm(event, this.member)) return;
     const to = event.meta.from;
     if (!to || to === this.member) return;
     // Serialized so a burst of DMs cannot interleave tool calls; each
@@ -129,7 +148,7 @@ export class StubProcess implements AgentProcess {
     this.replyChain = this.replyChain.then(async () => {
       try {
         await this.bridge.send(to, cannedReply(this.member));
-        this.log.info('stub answered a DM with the canned turn', { to });
+        this.log.info('stub answered a DM with the canned turn', { to, session: this.id });
       } catch (err) {
         this.log.warn('stub canned reply failed', {
           error: err instanceof Error ? err.message : String(err),
@@ -214,7 +233,15 @@ export function createStubAdapter(): AgentAdapter {
     if (Number.isFinite(exitAfter) && exitAfter > 0) {
       proc.armTestExit(exitAfter, Number(process.env.CSUITE_STUB_EXIT_CODE ?? '0') || 0);
     }
-    ctx.log.info('stub agent generation live', { member });
+    // The packet this generation composed from, as a length: a fixture
+    // can change the instructions on the broker before a restart and
+    // prove the successor spawned on the refreshed packet rather than
+    // the cached one, without the stub reproducing any of the text.
+    ctx.log.info('stub agent generation live', {
+      member,
+      session: proc.sessionId(),
+      instructionChars: ctx.runner.instructions.instructions.length,
+    });
     return proc;
   };
 
@@ -259,8 +286,11 @@ export function createStubAdapter(): AgentAdapter {
     async respawn(ctx: AgentSessionContext, prior: RespawnPosture): Promise<AgentProcess> {
       // A stub holds no conversation, so resume-vs-cold differ only in
       // the log line; both honour the contract (predecessor fully shut
-      // down, current instructions re-read inside spawn).
-      ctx.log.info(prior.resume ? 'stub respawn (resume posture)' : 'stub respawn (cold, clear)', {
+      // down, current instructions re-read inside spawn). The driver
+      // only ever asks for cold now — every restart, clear and reload
+      // starts a fresh generation — the resume arm stays for the
+      // posture's own contract tests.
+      ctx.log.info(prior.resume ? 'stub respawn (resume posture)' : 'stub respawn (cold)', {
         priorSession: prior.resume ? prior.sessionId : null,
       });
       return spawnGeneration(ctx);

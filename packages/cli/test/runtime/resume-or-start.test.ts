@@ -1,97 +1,89 @@
 /**
- * Bare `--resume` is resume-or-start (obj-mtfvz379-i's acceptance
- * finding): a fresh member under Restart=always must not loop on a
- * deterministic "nothing to resume" error — it starts fresh, loudly,
- * with `resumed: false` and a reason typed onto session_start.
- * Explicit ids stay strict. The cold no-session Codex case is the one
- * the stub-verb CI structurally could not expose.
+ * Bare `--resume` is the AGENT's decision, not the runner's. The runner
+ * used to predict it from the filesystem (`~/.claude/projects/<slug>/`
+ * for claude, the newest rollout in the sessions dir for codex) and
+ * stamp the prediction onto session_start. Both probes are gone:
+ * claude receives the SDK's `continue` and decides for itself (measured
+ * with the bundled Claude Code 2.1.220: an empty HOME starts fresh, no
+ * error — so no Restart=always loop either), and codex, which has no
+ * native most-recent-thread resume, opens a new thread loudly. Explicit
+ * ids stay strict on both. What the runner stamps is only what it
+ * itself decided.
  */
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { ActivityEventSchema } from 'csuite-sdk/schemas';
-import { afterEach, describe, expect, it } from 'vitest';
-import { hasClaudeSessionFor } from '../../src/runtime/agents/claude.js';
+import { describe, expect, it } from 'vitest';
+import type { AgentSessionContext } from '../../src/runtime/agents/adapter.js';
+import { createClaudeAdapter } from '../../src/runtime/agents/claude-agent.js';
 import { resolveCodexResume } from '../../src/runtime/agents/codex/adapter.js';
-import { threadBannerLine } from '../../src/runtime/agents/codex/codex-agent.js';
+import {
+  createCodexAdapter,
+  threadBannerLine,
+} from '../../src/runtime/agents/codex/codex-agent.js';
 
-const dirs: string[] = [];
-afterEach(() => {
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
-});
+// Neither plan reads the context any more — the whole point — so an
+// empty object is the honest fixture: a plan that reached for `cwd` or
+// the member name would throw here rather than quietly probe.
+const NO_CONTEXT = {} as unknown as AgentSessionContext;
 
-function tmp(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'csuite-resume-'));
-  dirs.push(dir);
-  return dir;
-}
-
-describe('codex bare --resume (resume-or-start)', () => {
-  it('cold: an empty sessions dir starts fresh instead of throwing', () => {
-    const resolved = resolveCodexResume(true, join(tmp(), 'does-not-even-exist'));
-    expect(resolved).toEqual({ threadId: null, resumedFresh: true });
+describe('codex --resume resolution (no sessions-dir probe)', () => {
+  it('bare: starts a new thread, loudly — whatever is on disk', () => {
+    expect(resolveCodexResume(true)).toEqual({ threadId: null, resumedFresh: true });
   });
 
-  it('warm: the newest rollout resumes (positive control)', () => {
-    const dir = tmp();
-    writeFileSync(
-      join(dir, 'rollout-2026-08-30T10-00-00-0197c9e1-aaaa-4aaa-8aaa-aaaaaaaaaaaa.jsonl'),
-      '',
-    );
-    const resolved = resolveCodexResume(true, dir);
-    expect(resolved.resumedFresh).toBe(false);
-    expect(resolved.threadId).toBeTruthy();
-  });
-
-  it('explicit id stays strict: passed through untouched even when nothing exists', () => {
-    const resolved = resolveCodexResume('0197c9e1-bbbb-4bbb-8bbb-bbbbbbbbbbbb', tmp());
-    expect(resolved).toEqual({
+  it('explicit id stays strict: passed through untouched', () => {
+    expect(resolveCodexResume('0197c9e1-bbbb-4bbb-8bbb-bbbbbbbbbbbb')).toEqual({
       threadId: '0197c9e1-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
       resumedFresh: false,
     });
   });
 
-  it('no resume asked: fresh without the fallback marker', () => {
-    expect(resolveCodexResume(undefined, tmp())).toEqual({ threadId: null, resumedFresh: false });
+  it('no resume asked: fresh without the loud marker', () => {
+    expect(resolveCodexResume(undefined)).toEqual({ threadId: null, resumedFresh: false });
   });
 });
 
-describe('claude session detection (bare --resume fallback)', () => {
-  it('finds a session only when a .jsonl exists under the cwd slug', () => {
-    const home = tmp();
-    const cwd = '/work/my.app';
-    const slugDir = join(home, '.claude', 'projects', '-work-my-app');
-    expect(hasClaudeSessionFor(cwd, home)).toBe(false);
-    mkdirSync(slugDir, { recursive: true });
-    expect(hasClaudeSessionFor(cwd, home)).toBe(false);
-    writeFileSync(join(slugDir, 'not-a-session.txt'), '');
-    expect(hasClaudeSessionFor(cwd, home)).toBe(false);
-    writeFileSync(join(slugDir, 'aaaa.jsonl'), '');
-    expect(hasClaudeSessionFor(cwd, home)).toBe(true);
+describe('initial resume plan — only what the runner decided is stamped', () => {
+  it('claude: explicit id resumes, no flag starts fresh, bare --resume is undecided', () => {
+    expect(createClaudeAdapter({ resume: 'sess-1' }).initialResumePlan?.(NO_CONTEXT)).toEqual({
+      resumed: true,
+    });
+    expect(createClaudeAdapter({}).initialResumePlan?.(NO_CONTEXT)).toEqual({ resumed: false });
+    // Undecided: the agent continues or starts fresh on its own, and
+    // the session_start carries no verdict rather than a guess.
+    expect(createClaudeAdapter({ resume: true }).initialResumePlan?.(NO_CONTEXT)).toBeNull();
+  });
+
+  it('codex: explicit id resumes, no flag starts fresh, bare --resume is a reasoned fresh start', () => {
+    expect(createCodexAdapter({ resume: 'thread-1' }).initialResumePlan?.(NO_CONTEXT)).toEqual({
+      resumed: true,
+    });
+    expect(createCodexAdapter({}).initialResumePlan?.(NO_CONTEXT)).toEqual({ resumed: false });
+    const bare = createCodexAdapter({ resume: true }).initialResumePlan?.(NO_CONTEXT);
+    expect(bare?.resumed).toBe(false);
+    expect(bare?.reason).toMatch(/bare --resume/);
   });
 });
 
 describe('session_start resume fields (one schema, shared with obj-mtfxwvbk-j)', () => {
-  it('parses with the typed fallback marker and without it (old runners)', () => {
-    const base = { kind: 'session_start', ts: 1, runner: 'codex' };
+  it('parses with the typed cold-restart marker and without it (old runners, undecided starts)', () => {
+    const base = { kind: 'session_start', ts: 1, runner: 'claude' };
     expect(
       ActivityEventSchema.parse({
         ...base,
         resumed: false,
-        resumeReason: 'no previous codex session found',
+        resumeReason: 'instructions changed',
       }),
-    ).toMatchObject({ resumed: false });
+    ).toMatchObject({ resumed: false, resumeReason: 'instructions changed' });
     expect(ActivityEventSchema.parse(base)).not.toHaveProperty('resumed');
   });
 });
 
 describe('codex thread banner tells the truth', () => {
-  it('cold bare --resume never says (resumed) beside a fresh thread', () => {
+  it('bare --resume never says (resumed) beside a fresh thread', () => {
     expect(threadBannerLine('01a05389-x', true, true)).not.toContain('(resumed)');
   });
-  it('a real resume says (resumed) (positive control)', () => {
-    expect(threadBannerLine('01a05389-x', true, false)).toContain('(resumed)');
+  it('an explicit resume says (resumed) (positive control)', () => {
     expect(threadBannerLine('01a05389-x', '01a05389-x', false)).toContain('(resumed)');
   });
   it('a plain fresh start has no resume claim', () => {

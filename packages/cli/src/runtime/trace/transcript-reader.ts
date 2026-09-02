@@ -18,11 +18,21 @@
  *     delegated to core's pure `parseTranscriptLine` (which redacts all
  *     free text before it leaves the runner).
  *   - IDEMPOTENT: every line carries a unique `uuid`; we dedup on it so a
- *     re-read (poll + fs.watch both firing, or a resumed offset) can't
- *     double-emit.
+ *     re-read (poll + fs.watch both firing, a resumed offset, or a
+ *     resumed/forked transcript replaying its history) can't
+ *     double-emit. The same uuid leaves the runner as the event's
+ *     `sourceId`, so the broker can refuse the duplicate too — one
+ *     process's memory is not the only line of defence.
  *   - RESUMABLE: we track a byte offset and only ever consume COMPLETE
  *     lines (up to the last newline in what we've read). A partial final
  *     line is left for the next drain.
+ *   - PATH-FOLLOWING: the hook server relays every DISTINCT transcript
+ *     path it sees, and the agent's transcript path changes whenever the
+ *     agent process is swapped under a live capture host (an instruction
+ *     restart, a `clear`, a supervisor-driven `--resume`). The reader
+ *     re-pins to the new file when `getPath()` changes; pinning once and
+ *     for all would leave it tailing a dead file while the successor's
+ *     activity goes uncaptured.
  *
  * Liveness comes from BOTH `fs.watch` (low latency) and a ~300ms poll
  * fallback (fs.watch is unreliable on some platforms / network fs). Both
@@ -54,9 +64,10 @@ import type { ActivityEvent, AnthropicMessage, AnthropicMessagesEntry } from 'cs
 
 export interface TranscriptReaderOptions {
   /**
-   * Returns the transcript file path once it's known (from a hook's
+   * Returns the CURRENT transcript file path (from the latest hook's
    * `transcript_path`), or null/undefined before the first hook fires.
-   * Polled until it yields a path; the reader begins tailing then.
+   * Polled continuously: the reader begins tailing on the first path it
+   * yields and re-pins to a new file whenever the value changes.
    */
   getPath: () => string | null | undefined;
   /** Sink for the mapped activity events (the capture host's uploader). */
@@ -79,21 +90,40 @@ export function attachTranscriptReader(options: TranscriptReaderOptions): Transc
   const log = options.logger ?? defaultLogger.child('transcript-reader');
   const pollMs = options.pollMs ?? DEFAULT_POLL_MS;
 
-  // The transcript path, resolved once from getPath() and then pinned.
-  // Claude Code writes exactly one transcript per session, so once we
-  // see a path we tail it for the runner's lifetime.
+  // The transcript path currently being tailed. Resolved from getPath()
+  // and RE-RESOLVED on every poll: Claude Code writes one transcript per
+  // session, and the session changes under a live capture host whenever
+  // the agent process is swapped, so the path is a live value, not a
+  // one-time discovery.
   let path: string | null = null;
-  // Bytes consumed so far — always aligned to a newline boundary, so a
-  // partial trailing line is never counted and re-reads resume cleanly.
+  // Bytes consumed so far IN `path` — always aligned to a newline
+  // boundary, so a partial trailing line is never counted and re-reads
+  // resume cleanly. Reset to 0 on a re-pin: it describes one file.
   let offset = 0;
   // Dedup set: every line's `uuid`. Guards against poll+watch double-fire
-  // and a resumed/overlapping read re-processing a line.
+  // and a resumed/overlapping read re-processing a line. DELIBERATELY
+  // KEPT across a path change: a resumed or forked transcript begins by
+  // replaying the prior session's lines under their original uuids, and
+  // this set is exactly what makes following the new file safe — the
+  // replayed history is recognised and skipped, only genuinely new lines
+  // emit. (Measured in production before this existed: a restart
+  // re-emitted 1000+ historical rows spanning 15 hours in one second.)
   const seen = new Set<string>();
   // tool_use id -> tool name, harvested from assistant lines so a later
-  // user tool_result line can label its `tool_action`.
+  // user tool_result line can label its `tool_action`. Also kept across
+  // a path change: the harvest runs only for lines the dedup admits, so
+  // a replayed prefix does NOT re-harvest, and a result landing in the
+  // new file for a tool_use issued in the old one (a resume mid-tool)
+  // would otherwise fall back to the anonymous 'tool' label. Keys are
+  // globally unique ids, so carrying the map costs nothing.
   const toolNames = new Map<string, string>();
   // ts of the previously processed line — the "triggering prior line" for
-  // an assistant line's duration estimate.
+  // an assistant line's duration estimate. RESET on a path change: it
+  // describes the previous line of THIS file. A resumed transcript
+  // re-establishes it from the replayed prefix (the ts bookkeeping runs
+  // before the dedup check); a cold file starts from 0, so its first
+  // assistant line collapses to a zero duration rather than measuring
+  // against the last line of a different conversation.
   let prevLineTs = 0;
 
   let watcher: FSWatcher | null = null;
@@ -188,6 +218,9 @@ export function attachTranscriptReader(options: TranscriptReaderOptions): Transc
         ts: endedAt,
         duration: Math.max(0, endedAt - startedAt),
         agent: 'claude',
+        // The line's uuid travels with the event so the broker can
+        // dedup a replay this process never saw (a restart, a lost ack).
+        sourceId: entry.uuid,
         entry: messagesEntry,
       });
       return;
@@ -213,6 +246,12 @@ export function attachTranscriptReader(options: TranscriptReaderOptions): Transc
             ts: entry.ts,
             agent: 'claude',
             source: 'transcript',
+            // One line can carry several results, and the broker's dedup
+            // key must be at least as fine-grained as what we emit — so
+            // the tool_use id is folded in. The line uuid alone would
+            // make the second result of a line look like a replay of
+            // the first.
+            sourceId: `${entry.uuid}:${tr.toolUseId}`,
             toolName,
             result: tr.content,
             isError: tr.isError,
@@ -233,6 +272,7 @@ export function attachTranscriptReader(options: TranscriptReaderOptions): Transc
           text,
           promptId: entry.promptId,
           agent: 'claude',
+          sourceId: entry.uuid,
         });
       }
     }
@@ -245,6 +285,13 @@ export function attachTranscriptReader(options: TranscriptReaderOptions): Transc
    * against itself (a second trigger while draining sets `drainQueued` and
    * re-runs afterward) so poll + fs.watch overlap is safe. Never throws;
    * a missing/again-vanished file is a silent no-op.
+   *
+   * The path and offset are SNAPSHOTTED at entry and re-checked after the
+   * awaits: a re-pin can land while open/stat/read are in flight, and a
+   * drain that then committed its bytes would advance the NEW file's
+   * offset by the OLD file's length — skipping the successor's first
+   * lines outright. The seen-set would not catch that; it only guards
+   * against emitting twice, not against never reading.
    */
   const drain = async (): Promise<void> => {
     if (closed || path === null) return;
@@ -254,24 +301,28 @@ export function attachTranscriptReader(options: TranscriptReaderOptions): Transc
     }
     draining = true;
     try {
+      const drainPath = path;
+      const start = offset;
       let handle: Awaited<ReturnType<typeof open>>;
       try {
-        handle = await open(path, 'r');
+        handle = await open(drainPath, 'r');
       } catch {
         // File not there yet (or transiently gone). The poll will retry.
         return;
       }
       try {
         const stat = await handle.stat();
-        if (stat.size <= offset) return;
-        const len = stat.size - offset;
+        if (stat.size <= start) return;
+        const len = stat.size - start;
         const buf = Buffer.alloc(len);
-        const { bytesRead } = await handle.read(buf, 0, len, offset);
+        const { bytesRead } = await handle.read(buf, 0, len, start);
         if (bytesRead <= 0) return;
         // close() may have landed while the open/stat/read awaits were in
         // flight — this drain passed the entry check before it. Drop what
-        // we read: nothing may be emitted past close().
-        if (closed) return;
+        // we read: nothing may be emitted past close(). Same for a re-pin:
+        // these bytes belong to a file we no longer tail, and the offset
+        // they would advance now describes a different file.
+        if (closed || path !== drainPath) return;
         // Only consume up to the LAST newline — everything after it is a
         // partial line still being written; leave it for the next drain.
         // Work in BYTES (newline is a single-byte 0x0A, never part of a
@@ -280,7 +331,7 @@ export function attachTranscriptReader(options: TranscriptReaderOptions): Transc
         const lastNl = buf.lastIndexOf(NEWLINE, bytesRead - 1);
         if (lastNl < 0) return; // no complete line available yet
         const completeText = buf.subarray(0, lastNl).toString('utf8');
-        offset += lastNl + 1; // advance past the consumed bytes + the newline
+        offset = start + lastNl + 1; // advance past the consumed bytes + the newline
         for (const line of completeText.split('\n')) {
           if (line.trim().length === 0) continue;
           processLine(line);
@@ -303,30 +354,41 @@ export function attachTranscriptReader(options: TranscriptReaderOptions): Transc
     }
   };
 
-  /** Resolve the path once, then attach fs.watch for low-latency drains. */
-  const ensurePath = (): void => {
-    if (path !== null || closed) return;
-    const p = options.getPath();
-    if (typeof p !== 'string' || p.length === 0) return;
-    path = p;
-    log.info('tailing transcript', { path });
+  /** Release the current fs.watch, if any. Safe to call when there is none. */
+  const detachWatcher = (): void => {
+    if (watcher === null) return;
     try {
-      watcher = watch(path, () => {
+      watcher.close();
+    } catch {
+      /* ignore */
+    }
+    watcher = null;
+  };
+
+  /**
+   * Attach fs.watch to `target` for low-latency drains. A failure is not
+   * fatal — the poll fallback keeps the reader live without it.
+   */
+  const attachWatcher = (target: string): void => {
+    try {
+      const w = watch(target, () => {
         void drain();
       });
-      watcher.on('error', (err) => {
+      w.on('error', (err) => {
         // fs.watch died (rotation, platform quirk). Drop it; the poll
-        // fallback keeps us live.
+        // fallback keeps us live. Guarded by identity: a stale watcher's
+        // late error must not tear down the one attached after a re-pin.
         log.warn('watcher error, relying on poll', {
           error: err instanceof Error ? err.message : String(err),
         });
         try {
-          watcher?.close();
+          w.close();
         } catch {
           /* ignore */
         }
-        watcher = null;
+        if (watcher === w) watcher = null;
       });
+      watcher = w;
     } catch (err) {
       // Couldn't watch (file vanished between resolve and watch, etc.).
       // The poll covers us.
@@ -335,14 +397,43 @@ export function attachTranscriptReader(options: TranscriptReaderOptions): Transc
       });
       watcher = null;
     }
+  };
+
+  /**
+   * Resolve the current path and (re)pin to it. On the first resolution
+   * this arms the tail; on a CHANGE it moves the tail to the new file —
+   * fresh watcher, offset back to zero for a file we have read none of,
+   * dedup set carried over — and drains immediately so the backlog of a
+   * resumed transcript is walked (and recognised) without waiting a poll.
+   */
+  const ensurePath = (): void => {
+    if (closed) return;
+    const p = options.getPath();
+    if (typeof p !== 'string' || p.length === 0) return;
+    if (p === path) return;
+    const previous = path;
+    detachWatcher();
+    path = p;
+    offset = 0;
+    prevLineTs = 0;
+    if (previous === null) {
+      log.info('tailing transcript', { path });
+    } else {
+      log.info('transcript path changed — following the new file', {
+        from: previous,
+        to: path,
+        knownLines: seen.size,
+      });
+    }
+    attachWatcher(path);
     // Kick an immediate drain so we don't wait a poll interval for the
     // backlog already in the file.
     void drain();
   };
 
-  // The steady-state loop: resolve the path if we still need it, then
-  // drain. Runs on an interval; unref'd so it can't keep the process alive
-  // past runner shutdown.
+  // The steady-state loop: re-resolve the path (first pin, or a change),
+  // then drain. Runs on an interval; unref'd so it can't keep the process
+  // alive past runner shutdown.
   pollTimer = setInterval(() => {
     ensurePath();
     void drain();
@@ -360,14 +451,7 @@ export function attachTranscriptReader(options: TranscriptReaderOptions): Transc
         clearInterval(pollTimer);
         pollTimer = null;
       }
-      if (watcher) {
-        try {
-          watcher.close();
-        } catch {
-          /* ignore */
-        }
-        watcher = null;
-      }
+      detachWatcher();
     },
   };
 }

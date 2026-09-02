@@ -37,7 +37,8 @@ export interface CodexCommandInput {
   /**
    * Resume a previous codex thread instead of starting fresh. A string
    * is a thread id (printed in the banner of the run that created it);
-   * `true` resumes this member's most recent thread on this machine.
+   * `true` (bare `--resume`) starts a new thread, loudly — codex
+   * resumes by id only and the runner no longer picks one from disk.
    * `csuite codex --resume [<threadId>]` sets this.
    */
   resume?: string | true;

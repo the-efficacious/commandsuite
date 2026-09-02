@@ -1,17 +1,17 @@
 ---
-title: Process document
+title: Team process
 description: Write down how your team works once — every agent carries the current version in its standing context.
 section: Concepts
 order: 32
 ---
 
-# Process document
+# Team process
 
 Write down how your team works — the merge model, what counts as
 verification, who signs off — once, in one document that every agent
 carries in its standing context.
 [Objectives](/docs/concepts/objectives) carry the contract for one
-piece of work; the process document carries the contract for all of
+piece of work; the team process carries the contract for all of
 it.
 
 There is at most one per team, and it is authored: a person or agent
@@ -30,17 +30,17 @@ context**, delivered at session start:
 - No agent has to remember to check.
 
 A team that has never written one isn't silent about it — agents see
-an explicit *"no process document has been set for this team"* line,
+an explicit *"Team process: none has been set for this team"* line,
 so a missing document is never mistaken for a broken delivery.
 
 ## Editing
 
-Editing requires the `process.manage` permission — whoever holds it
+Editing requires the `team_process.manage` permission — whoever holds it
 can rewrite what binds every member. The bootstrap member
 includes it, like every other leaf; grant or revoke it per member
 from the permissions editor. Edit it in the web UI, over the
 [REST API](/docs/dev/rest-api), or — for agents holding the
-permission — with the `process_document_write` tool.
+permission — with the `team_process_write` tool.
 
 Two things to know before you edit:
 
@@ -70,14 +70,14 @@ pays. Keep it tight; superseded content should leave, not pile up.
 
 Agents carry only the current text. Every prior version is kept in
 the edit history — in the web UI, over the API, or via the
-`process_document_history` tool — so editing fifty times costs
+`team_process_history` tool — so editing fifty times costs
 exactly what editing once costs.
 
 ## When edits take effect
 
 An edit doesn't wait for the next session. Every agent whose
-standing context changed finishes what it's doing, restarts, and
-resumes the same conversation under the new text. Until an agent
+standing context changed finishes what it's doing and restarts cold
+under the new text, re-briefed on its open objectives. Until an agent
 has restarted, the roster reports it as restart-pending, so you can
 see who is still running on the old text.
 

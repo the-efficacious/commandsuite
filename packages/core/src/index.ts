@@ -303,13 +303,6 @@ export {
   parseOtlpMetrics,
 } from './otlp-parse.js';
 export {
-  assertDocumentInvariants,
-  createSqliteProcessDocumentStore,
-  type EditableFields,
-  ProcessDocumentError,
-  type ProcessDocumentStore,
-} from './process-document.js';
-export {
   type DispatchDeps,
   dispatchPush,
   type PushPayload,
@@ -372,6 +365,13 @@ export {
   SqliteTokenStore,
   type TokenSeedMemberSource,
 } from './sqlite-token-store.js';
+export {
+  assertDocumentInvariants,
+  createSqliteTeamProcessStore,
+  type EditableFields,
+  TeamProcessError,
+  type TeamProcessStore,
+} from './team-process.js';
 export { type ComposeTeamStatusOptions, composeTeamStatus } from './team-status.js';
 export {
   createSqliteMemberStore,

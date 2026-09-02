@@ -29,7 +29,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { runClaudeCommand } from '../../src/commands/claude.js';
-import { silentLogger } from '../helpers/logger.js';
+import { recordingLogger, silentLogger } from '../helpers/logger.js';
 import { writeFakeClaude } from './conformance/fake-agents.js';
 import {
   FAKE_BROKER_TOKEN,
@@ -201,36 +201,44 @@ describeIfBuilt('csuite claude end-to-end', () => {
       'objectives_list',
       'objectives_update',
       'objectives_view',
-      'process_document_get',
-      'process_document_history',
       'recent',
       'roster',
       'send',
       'team_get',
+      'team_process_get',
+      'team_process_history',
       'team_status',
       'team_update',
     ]);
   }, 30_000);
 
-  it('cold bare --resume stamps resumed:false WITH the reason on the real session_start', async () => {
-    // Driver-level: prepare() mutates the resume posture before the
-    // driver reads the plan — the cached-plan design must keep the
-    // typed trace evidence identical to the child behavior (the
-    // ordering bug Rune caught on #239).
+  /**
+   * Drive one bare-`--resume` run and return the session_start events
+   * the fake broker received plus the runner's own log records. HOME is
+   * pointed at the sandbox so the test controls whether a prior session
+   * exists under `~/.claude/projects/<slug>/`.
+   */
+  async function runBareResume(opts: { priorSession: boolean }) {
     const prevClaudePath = process.env.CLAUDE_PATH;
     process.env.CLAUDE_PATH = fakeClaudePath;
     const prevExitCode = process.env.FAKE_AGENT_EXIT_CODE;
     process.env.FAKE_AGENT_EXIT_CODE = '0';
     const prevHome = process.env.HOME;
-    process.env.HOME = sandbox; // no ~/.claude/projects here — truly cold
+    process.env.HOME = sandbox;
+    if (opts.priorSession) {
+      const slugDir = join(sandbox, '.claude', 'projects', sandbox.replace(/[/.]/g, '-'));
+      mkdirSync(slugDir, { recursive: true });
+      writeFileSync(join(slugDir, 'prior-session.jsonl'), '');
+    }
     fakeBrokerActivity.length = 0;
+    const rec = recordingLogger();
     try {
       const exitCode = await runClaudeCommand({
         url: broker.url,
         token: FAKE_BROKER_TOKEN,
         cwd: sandbox,
         resume: true,
-        logger: silentLogger(),
+        logger: rec.logger,
         bridgeCommand: process.execPath,
         bridgeArgs: [CLI_BINARY, 'mcp-bridge'],
       });
@@ -239,10 +247,7 @@ describeIfBuilt('csuite claude end-to-end', () => {
         .map((a) => a.event)
         .filter((e) => e.kind === 'session_start');
       expect(starts.length).toBeGreaterThan(0);
-      expect(starts[0]).toMatchObject({
-        resumed: false,
-        resumeReason: 'no previous session in this directory',
-      });
+      return { starts, records: rec.records };
     } finally {
       if (prevClaudePath === undefined) delete process.env.CLAUDE_PATH;
       else process.env.CLAUDE_PATH = prevClaudePath;
@@ -251,25 +256,48 @@ describeIfBuilt('csuite claude end-to-end', () => {
       if (prevHome === undefined) delete process.env.HOME;
       else process.env.HOME = prevHome;
     }
+  }
+
+  it('bare --resume on a cold directory: no verdict on session_start, continue still handed to the SDK', async () => {
+    // The runner no longer predicts resume from the filesystem. With
+    // nothing under ~/.claude/projects the SDK still receives
+    // `continue: true` (the agent decides — measured: it starts fresh,
+    // no error) and the real session_start carries neither `resumed`
+    // nor a `resumeReason`, because the runner did not decide.
+    const { starts, records } = await runBareResume({ priorSession: false });
+    expect(starts[0]).not.toHaveProperty('resumed');
+    expect(starts[0]).not.toHaveProperty('resumeReason');
+    const spawnLog = records.find((r) => r.msg === 'starting agent sdk session');
+    expect(spawnLog, 'no spawn log').toBeDefined();
+    expect(spawnLog?.resume).toBe(true); // not downgraded to a fresh start by a probe
+    // The old fallback's log line and banner are gone with the probe.
+    expect(records.map((r) => r.msg)).not.toContain(
+      'resume: no previous claude session found — starting fresh',
+    );
   }, 30_000);
 
-  it('warm bare --resume stamps resumed:true (positive control)', async () => {
+  it('bare --resume with a prior session on disk: the stamp is IDENTICAL — no probe, no guess', async () => {
+    // Positive control for the absence above: a .jsonl under the slug
+    // used to flip the stamp to resumed:true. A runner that still
+    // looked would produce a different session_start here.
+    const { starts, records } = await runBareResume({ priorSession: true });
+    expect(starts[0]).not.toHaveProperty('resumed');
+    expect(starts[0]).not.toHaveProperty('resumeReason');
+    expect(records.find((r) => r.msg === 'starting agent sdk session')?.resume).toBe(true);
+  }, 30_000);
+
+  it('explicit --resume <id> stamps resumed:true — the one resume the runner itself decides', async () => {
     const prevClaudePath = process.env.CLAUDE_PATH;
     process.env.CLAUDE_PATH = fakeClaudePath;
     const prevExitCode = process.env.FAKE_AGENT_EXIT_CODE;
     process.env.FAKE_AGENT_EXIT_CODE = '0';
-    const prevHome = process.env.HOME;
-    process.env.HOME = sandbox;
-    const slugDir = join(sandbox, '.claude', 'projects', sandbox.replace(/[/.]/g, '-'));
-    mkdirSync(slugDir, { recursive: true });
-    writeFileSync(join(slugDir, 'prior-session.jsonl'), '');
     fakeBrokerActivity.length = 0;
     try {
       const exitCode = await runClaudeCommand({
         url: broker.url,
         token: FAKE_BROKER_TOKEN,
         cwd: sandbox,
-        resume: true,
+        resume: 'f4c0de00-0000-4000-8000-00000000000a',
         logger: silentLogger(),
         bridgeCommand: process.execPath,
         bridgeArgs: [CLI_BINARY, 'mcp-bridge'],
@@ -285,8 +313,6 @@ describeIfBuilt('csuite claude end-to-end', () => {
       else process.env.CLAUDE_PATH = prevClaudePath;
       if (prevExitCode === undefined) delete process.env.FAKE_AGENT_EXIT_CODE;
       else process.env.FAKE_AGENT_EXIT_CODE = prevExitCode;
-      if (prevHome === undefined) delete process.env.HOME;
-      else process.env.HOME = prevHome;
     }
   }, 30_000);
 });

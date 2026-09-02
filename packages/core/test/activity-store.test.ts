@@ -112,6 +112,45 @@ describe('InMemoryActivityStore.append', () => {
     expect(b[0]?.id).toBe(2);
     expect(c[0]?.id).toBe(3);
   });
+
+  // The reference impl must answer a replay exactly as the SQLite
+  // store's partial unique index does — see
+  // apps/server/test/activity-source-dedup.test.ts for the mirror.
+  it('dedups on sourceId per member: a replay lands nothing, returns nothing, wakes nobody', () => {
+    const s = store();
+    const seen: number[] = [];
+    s.subscribe('engineer-1', (row) => seen.push(row.id));
+    const withId = (ts: number, sourceId: string): ActivityEvent => ({ ...llm(ts), sourceId });
+
+    expect(s.append('engineer-1', [withId(1, 'u-1'), withId(2, 'u-2')])).toHaveLength(2);
+    const replay = s.append('engineer-1', [withId(1, 'u-1'), withId(2, 'u-2'), withId(3, 'u-3')]);
+    expect(replay.map((r) => r.event.sourceId)).toEqual(['u-3']);
+    // Suppressed rows consume no id either.
+    expect(replay[0]?.id).toBe(3);
+    expect(seen).toEqual([1, 2, 3]);
+    expect(s.size()).toBe(3);
+    // Another member may hold the same id.
+    expect(s.append('engineer-2', [withId(1, 'u-1')])).toHaveLength(1);
+    // A batch naming one source twice keeps the first occurrence.
+    expect(
+      s.append('engineer-1', [withId(4, 'u-4'), withId(5, 'u-4')]).map((r) => r.event.ts),
+    ).toEqual([4]);
+  });
+
+  it('never dedups id-less events (positive control)', () => {
+    const s = store();
+    expect(s.append('engineer-1', [llm(1), llm(1), llm(1)])).toHaveLength(3);
+    expect(s.size()).toBe(3);
+  });
+
+  it('releases a sourceId on prune so the event can be stored again', () => {
+    const s = store();
+    const ev: ActivityEvent = { ...llm(1), sourceId: 'u-old' };
+    expect(s.append('engineer-1', [ev])).toHaveLength(1);
+    expect(s.append('engineer-1', [ev])).toHaveLength(0);
+    expect(s.prune(2)).toBe(1);
+    expect(s.append('engineer-1', [ev])).toHaveLength(1);
+  });
 });
 
 // ── list ─────────────────────────────────────────────────────────────

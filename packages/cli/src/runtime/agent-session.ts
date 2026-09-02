@@ -51,7 +51,11 @@ import {
 } from './context-control.js';
 import type { ContextControlEvent } from './forwarder.js';
 import { createPresence } from './presence.js';
-import { createRestartCoordinator, type RestartCoordinator } from './restart.js';
+import {
+  createRestartCoordinator,
+  type RestartCoordinator,
+  type RestartReason,
+} from './restart.js';
 import { type RunnerHandle, RunnerStartupError, startRunner } from './runner.js';
 import { createSessionLog } from './session-log.js';
 import type { ActivityUploaderStats } from './trace/activity-uploader.js';
@@ -198,12 +202,12 @@ export async function runAgentSession(
       noTrace: input.noTrace,
       noSecrets: input.noSecrets,
       onInstructionsEvent: () => {
-        if (coordinator !== null) coordinator.request();
+        if (coordinator !== null) coordinator.request('instructions');
         else instructionsEventBeforeSpawn = true;
       },
       onEnvironmentEvent: () => {
         if (input.noEnvReload) return;
-        if (coordinator !== null) coordinator.request();
+        if (coordinator !== null) coordinator.request('environment');
         else environmentEventBeforeSpawn = true;
       },
       onContextControlEvent: (control) => {
@@ -289,9 +293,14 @@ export async function runAgentSession(
   // Open the run bracket. Every runner emits the same pair regardless
   // of agent framework, so the activity stream can be sliced per run.
   // The initial generation's resume posture comes from the adapter's
-  // plan (same facts spawn() will use); a resume-or-start fallback is
-  // typed here so a wiped state dir shows in the trace, not only in a
-  // runner log line.
+  // plan — what the OPERATOR asked and the runner will do (an explicit
+  // id resumes; no flag starts fresh). A null plan means the runner did
+  // not decide: bare `--resume` hands the choice to the agent, and the
+  // fields are omitted rather than guessed from the filesystem. The
+  // agent's own verdict (Claude's SessionStart hook, `startup` vs
+  // `resume`) arrives only after this event must already have shipped
+  // — presence opens on its acknowledgement — and is logged by the
+  // hook server when it does.
   const initialPlan = adapter.initialResumePlan?.(ctx) ?? null;
   const initialSessionStart = {
     kind: 'session_start',
@@ -446,12 +455,14 @@ export async function runAgentSession(
   };
 
   // 8a. Restart support — only where the adapter can respawn and the
-  //     runner owns the terminal. An instruction edit drains the agent
-  //     at its next idle boundary, stops it gracefully, refetches the
-  //     packet, and respawns resuming the same conversation under the
-  //     new system prompt. Adapters without respawn stay on the old
-  //     contract: edits apply at the next manual start, and the broker
-  //     keeps listing the member restart-pending.
+  //     runner owns the terminal. An instruction edit (or an environment
+  //     change) drains the agent at its next idle boundary, stops it
+  //     gracefully, refetches the packet, and respawns COLD under the
+  //     new system prompt — the same swap a `clear` performs, and the
+  //     same machinery (`respawn(ctx, { resume: false })`). Adapters
+  //     without respawn stay on the old contract: edits apply at the
+  //     next manual start, and the broker keeps listing the member
+  //     restart-pending.
   if (meta.signals === 'teardown' && adapter.respawn !== undefined) {
     const respawn = adapter.respawn.bind(adapter);
     coordinator = createRestartCoordinator(
@@ -476,7 +487,18 @@ export async function runAgentSession(
         },
         refreshInstructions: () => runner.refreshInstructions(),
         refreshSecrets: () => runner.refreshSecrets(),
-        respawn: async (prior) => {
+        respawn: async (cycle) => {
+          // The successor starts COLD. Its context is the refreshed
+          // instructions plus the `context_refresh` re-brief the runner
+          // pushes when the new MCP session attaches; the conversation
+          // it replaces is the agent framework's own to keep or drop
+          // (Claude persists every session; `--resume <id>` is still
+          // the operator's lever). Resuming here was the bug: a fresh
+          // capture host re-read the whole resumed transcript as new
+          // activity, and CommandSuite was managing context that is
+          // not its to manage. The reason names what the operator
+          // changed so the trace explains the dropped conversation.
+          const reason = describeRestartReasons(cycle.reasons);
           generationStartedAt = Date.now();
           await runner.captureHost?.enqueueImmediate({
             kind: 'session_start',
@@ -486,16 +508,13 @@ export async function runAgentSession(
             captureTier: meta.captureTier,
             modelId: runnerIdentity.modelId,
             runnerBuildSource: runnerIdentity.runnerBuildSource,
-            // An instruction/environment restart always resumes the
-            // live conversation — that is its contract.
-            resumed: true,
+            resumed: false,
+            resumeReason: reason,
           });
-          const next = await respawn(ctx, prior);
+          const next = await respawn(ctx, { resume: false });
           currentProc = next;
           attachGenerationWatch(next);
-          process.stderr.write(
-            `csuite ${meta.id}: agent restarted to apply updated instructions\n`,
-          );
+          process.stderr.write(`csuite ${meta.id}: ${reason} — agent restarted cold\n`);
         },
         gate: withLifecycleLock,
         log,
@@ -513,18 +532,22 @@ export async function runAgentSession(
       if (environmentEventBeforeSpawn) {
         log.info('environment changed before agent spawn — scheduling one refresh cycle');
       }
-      coordinator.request();
+      // Both requests coalesce into one cycle; recording each reason
+      // keeps the successor's session_start truthful about the trigger.
+      if (instructionsEventBeforeSpawn) coordinator.request('instructions');
+      if (environmentEventBeforeSpawn) coordinator.request('environment');
     }
   } else if (instructionsEventBeforeSpawn) {
     log.info('instructions changed before spawn — packet already current');
   }
 
-  // 8a-bis. Context control — the broker's compact/clear verbs.
+  // 8a-bis. Context control — the broker's compact/clear/reload verbs.
   //
-  //   `clear` needs the same machinery a restart does (drain, detach,
-  //     stop, refetch, respawn) and differs in exactly one input: the
-  //     successor does NOT resume. It is gated on `respawn` for that
-  //     reason.
+  //   `clear` and `reload` need the same machinery a restart does
+  //     (drain, detach, stop, refetch, respawn cold) and are gated on
+  //     `respawn` for that reason; they differ from an instruction
+  //     restart only in what asked for the swap, which the successor's
+  //     session_start names.
   //   `compact` needs no swap at all — it asks the running agent and
   //     waits for the framework's verdict — so an adapter without
   //     `compactContext` still answers, with `unsupported`.
@@ -636,16 +659,17 @@ export async function runAgentSession(
           captureTier: meta.captureTier,
           modelId: runnerIdentity.modelId,
           runnerBuildSource: runnerIdentity.runnerBuildSource,
-          // A reload resumes the same conversation by definition.
-          resumed: true,
+          // Cold, like every other swap: the refreshed environment and
+          // instructions reach a fresh session, and the conversation
+          // is the agent framework's own to keep (see the restart
+          // coordinator's respawn hook for the reasoning).
+          resumed: false,
+          resumeReason: 'environment reloaded',
         });
-        const next = await respawnForClear(ctx, {
-          resume: true,
-          sessionId: prior.sessionId(),
-        });
+        const next = await respawnForClear(ctx, { resume: false });
         currentProc = next;
         attachGenerationWatch(next);
-        process.stderr.write(`csuite ${meta.id}: environment reloaded — agent resumed\n`);
+        process.stderr.write(`csuite ${meta.id}: environment reloaded — agent restarted cold\n`);
       },
       report: (event) => {
         // The ack rides the activity plane, so it lands in the member's
@@ -702,6 +726,20 @@ export async function runAgentSession(
   }
 
   return exitCode;
+}
+
+/**
+ * The `resumeReason` a cold restart stamps on the successor's
+ * `session_start`, from the triggers the coordinator applied. Fixed
+ * strings — the trace is grepped for them — and the joint form names
+ * both when an edit and an environment change coalesced into one swap.
+ */
+export function describeRestartReasons(reasons: readonly RestartReason[]): string {
+  const instructions = reasons.includes('instructions');
+  const environment = reasons.includes('environment');
+  if (instructions && environment) return 'instructions and environment changed';
+  if (environment) return 'environment changed';
+  return 'instructions changed';
 }
 
 /**

@@ -1,5 +1,5 @@
 /**
- * The process document as a projected, capture-exempt block.
+ * The team process as a projected, capture-exempt block.
  *
  * The document rides its own response field rather than the composed
  * prose, so its membership in `instructionBlocks` keys on WHAT WAS
@@ -13,7 +13,7 @@
  *
  * A call-site hazard is closed by typing: three places build a
  * `ComposeInstructionsInput`, one from the canonical object and two by
- * hand. `processDocument` is REQUIRED on the input so a hand-built
+ * hand. `teamProcess` is REQUIRED on the input so a hand-built
  * literal that drops it does not compile.
  */
 
@@ -23,7 +23,7 @@ import {
   composeInstructions,
   createApp,
   createGenAiStore,
-  createSqliteProcessDocumentStore,
+  createSqliteTeamProcessStore,
   createTelemetryStore,
   createTokenStoreFromMembers,
   InMemoryEventLog,
@@ -32,7 +32,7 @@ import {
   registerSecretValues,
   SqliteSessionStore,
 } from 'csuite-core';
-import type { Member, ProcessDocument, Team, Teammate } from 'csuite-sdk/types';
+import type { Member, Team, Teammate, TeamProcess } from 'csuite-sdk/types';
 import { afterEach, describe, expect, it } from 'vitest';
 import { openDatabase } from '../src/db.js';
 import { createGenAiCorrelator } from '../src/genai-correlator.js';
@@ -58,7 +58,7 @@ const TEAMMATES: Teammate[] = [
   { name: 'rune', role: { title: 'engineer', description: '' }, permissions: [] },
 ];
 
-const DOC: ProcessDocument = {
+const DOC: TeamProcess = {
   text: 'Keep a conversation running before action.\nSquash-merge to main.',
   version: 3,
   createdBy: 'AndrewJon',
@@ -67,12 +67,12 @@ const DOC: ProcessDocument = {
   updatedAt: 2,
 };
 
-const input = (processDocument: ProcessDocument | null) => ({
+const input = (teamProcess: TeamProcess | null) => ({
   self: SELF,
   team: TEAM,
   teammates: TEAMMATES,
   openObjectives: [],
-  processDocument,
+  teamProcess,
 });
 
 // ─── membership keys on what was sent ────────────────────────────────
@@ -88,16 +88,16 @@ describe('membership is what was sent, not a substring of the prose', () => {
     expect(composed).not.toContain(DOC.text);
 
     const kinds = instructionBlocks(input(DOC)).map((b) => b.kind);
-    expect(kinds).toContain('process_document');
+    expect(kinds).toContain('team_process');
   });
 
   it('projects the exact text the runner renders, not a summary of it', () => {
-    const block = instructionBlocks(input(DOC)).find((b) => b.kind === 'process_document');
+    const block = instructionBlocks(input(DOC)).find((b) => b.kind === 'team_process');
     expect(block?.text).toBe(DOC.text);
   });
 
   it('projects nothing when the team has no document', () => {
-    expect(instructionBlocks(input(null)).map((b) => b.kind)).not.toContain('process_document');
+    expect(instructionBlocks(input(null)).map((b) => b.kind)).not.toContain('team_process');
   });
 
   /**
@@ -113,7 +113,7 @@ describe('membership is what was sent, not a substring of the prose', () => {
    */
   it('projects the sent bytes, including leading and trailing whitespace', () => {
     const padded = { ...DOC, text: '  Squash-merge to main.\n' };
-    const block = instructionBlocks(input(padded)).find((b) => b.kind === 'process_document');
+    const block = instructionBlocks(input(padded)).find((b) => b.kind === 'team_process');
     expect(block?.text).toBe('  Squash-merge to main.\n');
     // Not the normalised form.
     expect(block?.text).not.toBe('Squash-merge to main.');
@@ -126,7 +126,7 @@ describe('membership is what was sent, not a substring of the prose', () => {
 
   it('projects nothing for a document that is only whitespace', () => {
     const blank = { ...DOC, text: '   \n  ' };
-    expect(instructionBlocks(input(blank)).map((b) => b.kind)).not.toContain('process_document');
+    expect(instructionBlocks(input(blank)).map((b) => b.kind)).not.toContain('team_process');
   });
 
   it('still projects the three authored blocks by their own test', () => {
@@ -137,7 +137,7 @@ describe('membership is what was sent, not a substring of the prose', () => {
       'team_context',
       'role_description',
       'personal_instructions',
-      'process_document',
+      'team_process',
     ]);
   });
 });
@@ -242,18 +242,18 @@ describe('the cold-broker rebuild carries the document', () => {
       {
         name: 'cora',
         role: { title: 'engineer', description: '' },
-        permissions: ['process.manage'],
+        permissions: ['team_process.manage'],
         token: TOKEN,
       },
     ]);
     const db = openDatabase(':memory:');
     const logger = recordingLogger().logger;
-    const processDocument = createSqliteProcessDocumentStore(db);
+    const teamProcess = createSqliteTeamProcessStore(db);
     const genaiStore = createGenAiStore(db, { logger });
     const rawBodyStore = createRawBodyStore(db, { logger });
     const telemetryStore = createTelemetryStore(db, { logger });
     if (withDocument) {
-      processDocument.write(
+      teamProcess.write(
         { text: docText, reason: 'seeded', disposition: 'scope_change' },
         'AndrewJon',
         1,
@@ -266,14 +266,14 @@ describe('the cold-broker rebuild carries the document', () => {
       tokens: await createTokenStoreFromMembers(db, members),
       sessions: new SqliteSessionStore(db),
       teamStore: mockTeamStore(TEAM),
-      processDocument,
+      teamProcess,
       genaiStore,
       rawBodyStore,
       telemetryStore,
       version: '0.0.0',
       logger,
     });
-    return { app, processDocument, rawBodyStore };
+    return { app, teamProcess, rawBodyStore };
   }
 
   /**
@@ -308,7 +308,7 @@ describe('the cold-broker rebuild carries the document', () => {
 
   /**
    * POSITIVE CONTROL for the assertion above. A registered literal
-   * that is NOT part of the process document must still be redacted —
+   * that is NOT part of the team process must still be redacted —
    * otherwise the test passes on a broker with redaction switched off
    * entirely, and proves nothing about the exemption.
    */
@@ -328,15 +328,15 @@ describe('the cold-broker rebuild carries the document', () => {
   });
 
   it('has a document to rebuild from, independent of any packet fetch', async () => {
-    const { processDocument } = await coldApp(true);
+    const { teamProcess } = await coldApp(true);
     // The store is the authority the cold path reads. If this were
     // empty the rebuild would have nothing to carry and the test
     // above would pass for the wrong reason.
-    expect(processDocument.get()?.text).toBe(DOC.text);
+    expect(teamProcess.get()?.text).toBe(DOC.text);
   });
 
   it('rebuilds nothing for a team with no document', async () => {
-    const { processDocument } = await coldApp(false);
-    expect(processDocument.get()).toBeNull();
+    const { teamProcess } = await coldApp(false);
+    expect(teamProcess.get()).toBeNull();
   });
 });

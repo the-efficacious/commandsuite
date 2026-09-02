@@ -14,7 +14,7 @@
  */
 
 import { signal } from '@preact/signals';
-import type { Presence, ProcessDocument } from 'csuite-sdk/types';
+import type { Presence, TeamProcess } from 'csuite-sdk/types';
 import { hasPermission } from 'csuite-sdk/types';
 import { useEffect, useState } from 'preact/hooks';
 import { getClient } from '../lib/client.js';
@@ -82,8 +82,8 @@ export function TeamHome({ viewer }: TeamHomeProps) {
       />
 
       <TeamProcessSection
-        doc={b.processDocument}
-        canManage={hasPermission(b.permissions, 'process.manage')}
+        doc={b.teamProcess}
+        canManage={hasPermission(b.permissions, 'team_process.manage')}
       />
 
       <div
@@ -313,7 +313,7 @@ export function TeamHome({ viewer }: TeamHomeProps) {
 
 /**
  * Standing prose collapses to a few lines unless the reader opens it.
- * Team context and the process document both run to thousands of
+ * Team context and the team process both run to thousands of
  * characters; rendered whole they push the roster off-screen, and the
  * reading case for the full text is rare next to the scanning case.
  * The full text stays in the DOM (CSS clamp), so search-in-page still
@@ -465,8 +465,8 @@ const prcBusy = signal(false);
 const prcError = signal<string | null>(null);
 
 /**
- * The team's process document, with in-place editing for
- * `process.manage` holders. Edits require a reason and disposition —
+ * The team process, with in-place editing for
+ * `team_process.manage` holders. Edits require a reason and disposition —
  * they land in the document's append-only history and fan out as an
  * instruction event, so every member's runner learns a restart is
  * owed.
@@ -480,7 +480,7 @@ function TeamProcessSection({
   doc,
   canManage,
 }: {
-  doc: ProcessDocument | null | undefined;
+  doc: TeamProcess | null | undefined;
   canManage: boolean;
 }) {
   const busy = prcBusy.value;
@@ -490,7 +490,7 @@ function TeamProcessSection({
     prcBusy.value = true;
     prcError.value = null;
     try {
-      await getClient().writeProcessDocument({
+      await getClient().writeTeamProcess({
         text: prcDraft.value,
         reason: prcReason.value.trim(),
         disposition: prcDisposition.value,
@@ -590,7 +590,7 @@ function TeamProcessSection({
   if (doc === undefined) {
     return (
       <div style="margin-bottom:24px;font-family:var(--ef-font-body);font-size:11.5px;color:var(--ef-text-muted);font-style:italic">
-        Team process: unavailable — this broker does not report a process document.
+        Team process: unavailable — this broker does not report a team process.
       </div>
     );
   }

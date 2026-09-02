@@ -61,7 +61,9 @@ export const PermissionSchema = z.enum(PERMISSIONS);
 /**
  * A resolved permission list. `objectives.manage` briefly shipped as
  * an aggregate; accept it from those servers/configs and
- * recover the four independent leaves it represented.
+ * recover the four independent leaves it represented. The same table
+ * carries the `process.manage` → `team_process.manage` rename, so a
+ * list written under the old name parses to the new leaf.
  */
 export const PermissionsSchema = z.preprocess(
   (value) =>
@@ -929,7 +931,7 @@ export const ResolveSecretsResponseSchema = z.object({
   secretEnvNames: z.array(z.string()).optional(),
 });
 
-// ─────────────────────── Team process document ────────────────────
+// ─────────────────────── Team team process ────────────────────
 //
 // The team's process as ONE authored document, injected into every
 // member's fixed context. Not a list of rulings: a list is a changelog
@@ -964,10 +966,10 @@ export const ResolveSecretsResponseSchema = z.object({
  *
  * And the document rides in its own response field for a reason that
  * never depended on any cap: a member authors their own
- * `instructions`, this is authored by whoever holds `process.manage`,
+ * `instructions`, this is authored by whoever holds `team_process.manage`,
  * and one string would collapse two authorities into one field.
  */
-export const PROCESS_DOCUMENT_MAX = 16_384;
+export const TEAM_PROCESS_MAX = 16_384;
 
 /**
  * THE single list of what an edit may change.
@@ -988,22 +990,22 @@ export const PROCESS_DOCUMENT_MAX = 16_384;
  * is worth building, not a reason to skip it: the second field is
  * where the defect appears, and by then nobody is thinking about it.
  */
-const EDITABLE_PROCESS_DOCUMENT_SHAPE = {
-  text: z.string().min(1).max(PROCESS_DOCUMENT_MAX),
+const EDITABLE_TEAM_PROCESS_SHAPE = {
+  text: z.string().min(1).max(TEAM_PROCESS_MAX),
 };
 
-type EditableProcessDocumentField = keyof typeof EDITABLE_PROCESS_DOCUMENT_SHAPE;
+type EditableTeamProcessField = keyof typeof EDITABLE_TEAM_PROCESS_SHAPE;
 
 /** Derived from the shape's own keys — not a second list to maintain. */
-export const PROCESS_DOCUMENT_FIELDS = Object.keys(EDITABLE_PROCESS_DOCUMENT_SHAPE) as [
-  EditableProcessDocumentField,
-  ...EditableProcessDocumentField[],
+export const TEAM_PROCESS_FIELDS = Object.keys(EDITABLE_TEAM_PROCESS_SHAPE) as [
+  EditableTeamProcessField,
+  ...EditableTeamProcessField[],
 ];
 
-export const ProcessDocumentFieldSchema = z.enum(PROCESS_DOCUMENT_FIELDS);
+export const TeamProcessFieldSchema = z.enum(TEAM_PROCESS_FIELDS);
 
-export const ProcessDocumentSchema = z.object({
-  text: z.string().min(1).max(PROCESS_DOCUMENT_MAX),
+export const TeamProcessSchema = z.object({
+  text: z.string().min(1).max(TEAM_PROCESS_MAX),
   /** 1 on the first write. Incremented by every edit. */
   version: z.number().int().positive(),
   createdBy: NameSchema,
@@ -1020,7 +1022,7 @@ export const ProcessDocumentSchema = z.object({
  * stood before, retained rather than reconstructed, so the diff the
  * outcome asks for is derived from two stored strings.
  */
-export const ProcessDocumentEditSchema = z
+export const TeamProcessEditSchema = z
   .object({
     /** The version this edit PRODUCED. */
     version: z.number().int().positive(),
@@ -1037,7 +1039,7 @@ export const ProcessDocumentEditSchema = z
      * alone accepts both.
      */
     fields: z
-      .array(ProcessDocumentFieldSchema)
+      .array(TeamProcessFieldSchema)
       .min(1, 'an edit that changed nothing cannot exist — write() rejects it before history')
       .refine((f) => new Set(f).size === f.length, {
         message: 'an edit cannot record the same field twice',
@@ -1058,7 +1060,7 @@ export const ProcessDocumentEditSchema = z
      * corruption and hiding it. Strict also makes the whole-map check
      * below actually whole, rather than true-of-known-keys.
      */
-    previous: z.object(EDITABLE_PROCESS_DOCUMENT_SHAPE).partial().strict(),
+    previous: z.object(EDITABLE_TEAM_PROCESS_SHAPE).partial().strict(),
   })
   .superRefine((edit, ctx) => {
     // RECORD-LEVEL INVARIANT, not a shape check.
@@ -1128,21 +1130,21 @@ export const ProcessDocumentEditSchema = z
  * invariant validator is exercised through the real path rather than
  * only by a unit test calling it directly.
  */
-export const EditProcessDocumentRequestSchema = z
-  .object(EDITABLE_PROCESS_DOCUMENT_SHAPE)
+export const EditTeamProcessRequestSchema = z
+  .object(EDITABLE_TEAM_PROCESS_SHAPE)
   .partial()
   .extend({
     reason: z.string().min(1).max(2048),
     disposition: AmendmentDispositionSchema,
   });
 
-export const GetProcessDocumentResponseSchema = z.object({
+export const GetTeamProcessResponseSchema = z.object({
   /** `null` when no document has been set — an explicit state, not an absent field. */
-  document: ProcessDocumentSchema.nullable(),
+  document: TeamProcessSchema.nullable(),
 });
 
-export const ProcessDocumentHistoryResponseSchema = z.object({
-  edits: z.array(ProcessDocumentEditSchema),
+export const TeamProcessHistoryResponseSchema = z.object({
+  edits: z.array(TeamProcessEditSchema),
 });
 
 // ────────────────────────── Variables ─────────────────────────────
@@ -1624,6 +1626,18 @@ export const ActivityKindSchema = z.enum([
   'auth_state',
 ]);
 
+/**
+ * Optional stable id of the source record an activity event was
+ * mapped from — for Claude, the transcript line's `uuid` (suffixed
+ * with the tool_use id when one line yields several `tool_action`s).
+ * The broker dedups on `(member, sourceId)`, so a runner that re-reads
+ * a resumed or forked transcript, or retries a batch whose ack was
+ * lost, cannot write the same activity twice. Additive and optional:
+ * events without it (older runners, driver-minted brackets) are stored
+ * as they always were, with no dedup.
+ */
+const ActivitySourceIdSchema = z.string().min(1).max(512).optional();
+
 export const ActivityEventSchema = z.discriminatedUnion('kind', [
   // session_start / session_end — run brackets emitted by every runner
   // (one pair per `csuite <runner>` invocation). `session_end` doubles
@@ -1632,6 +1646,7 @@ export const ActivityEventSchema = z.discriminatedUnion('kind', [
   // log formats.
   z.object({
     kind: z.literal('session_start'),
+    sourceId: ActivitySourceIdSchema,
     ts: z.number().int().nonnegative(),
     runner: z.string().min(1),
     runnerVersion: z.string().optional(),
@@ -1643,6 +1658,7 @@ export const ActivityEventSchema = z.discriminatedUnion('kind', [
   }),
   z.object({
     kind: z.literal('session_end'),
+    sourceId: ActivitySourceIdSchema,
     ts: z.number().int().nonnegative(),
     runner: z.string().min(1),
     reason: z.string().min(1),
@@ -1663,17 +1679,20 @@ export const ActivityEventSchema = z.discriminatedUnion('kind', [
   }),
   z.object({
     kind: z.literal('objective_open'),
+    sourceId: ActivitySourceIdSchema,
     ts: z.number().int().nonnegative(),
     objectiveId: z.string().min(1),
   }),
   z.object({
     kind: z.literal('objective_close'),
+    sourceId: ActivitySourceIdSchema,
     ts: z.number().int().nonnegative(),
     objectiveId: z.string().min(1),
     result: z.enum(['done', 'cancelled', 'reassigned', 'runner_shutdown']),
   }),
   z.object({
     kind: z.literal('llm_exchange'),
+    sourceId: ActivitySourceIdSchema,
     ts: z.number().int().nonnegative(),
     duration: z.number().int().nonnegative(),
     // Which agent produced it (`'claude'`, `'codex'`). Optional so
@@ -1692,6 +1711,7 @@ export const ActivityEventSchema = z.discriminatedUnion('kind', [
   // (z.unknown()) — a novel tool shape must never fail validation.
   z.object({
     kind: z.literal('tool_action'),
+    sourceId: ActivitySourceIdSchema,
     ts: z.number().int().nonnegative(),
     durationMs: z.number().int().nonnegative().optional(),
     agent: z.string().optional(),
@@ -1713,6 +1733,7 @@ export const ActivityEventSchema = z.discriminatedUnion('kind', [
   // schema only validates shape (a permissive string).
   z.object({
     kind: z.literal('user_prompt'),
+    sourceId: ActivitySourceIdSchema,
     ts: z.number().int().nonnegative(),
     text: z.string(),
     promptId: z.string().optional(),
@@ -1729,6 +1750,7 @@ export const ActivityEventSchema = z.discriminatedUnion('kind', [
   // event is that the broker never infers what happened.
   z.object({
     kind: z.literal('context_control'),
+    sourceId: ActivitySourceIdSchema,
     ts: z.number().int().nonnegative(),
     requestId: z.string().min(1),
     verb: z.enum(['compact', 'clear', 'reload']),
@@ -1744,6 +1766,7 @@ export const ActivityEventSchema = z.discriminatedUnion('kind', [
   }),
   z.object({
     kind: z.literal('auth_state'),
+    sourceId: ActivitySourceIdSchema,
     ts: z.number().int().nonnegative(),
     state: z.enum(['blocked', 'recovered']),
     status: z.literal(401),
@@ -2027,7 +2050,7 @@ export const InstructionBlockKindSchema = z.enum([
   'team_context',
   'role_description',
   'personal_instructions',
-  'process_document',
+  'team_process',
 ]);
 
 export const InstructionBlockDescriptorSchema = z.object({
@@ -2043,11 +2066,11 @@ export const InstructionsResponseSchema = MemberSchema.extend({
   // omit the field still parse.
   toolSources: z.array(ResolvedToolSourceSchema).default([]),
   /**
-   * The team's process document, or `null` when none is set.
+   * The team process, or `null` when none is set.
    *
    * Its OWN field, and the reason is authority separation: a member
-   * authors their own `instructions`, while the process document is
-   * authored by whoever holds `process.manage`. One string would
+   * authors their own `instructions`, while the team process is
+   * authored by whoever holds `team_process.manage`. One string would
    * collapse two authorities into one field.
    *
    * THREE states, and `.default(null)` would destroy the one that
@@ -2062,9 +2085,9 @@ export const InstructionsResponseSchema = MemberSchema.extend({
    *   null       -> no document has been set
    *   document   -> render it
    */
-  processDocument: ProcessDocumentSchema.nullable().optional(),
+  teamProcess: TeamProcessSchema.nullable().optional(),
   // Optional: absent from brokers that predate the instruction-block
-  // model. Same reasoning as processDocument's absent state — a
+  // model. Same reasoning as teamProcess's absent state — a
   // missing field is an older broker, not an empty answer.
   blocks: z.array(InstructionBlockDescriptorSchema).optional(),
   composedSha256: z

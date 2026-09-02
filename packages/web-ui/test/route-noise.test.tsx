@@ -62,7 +62,7 @@ const BASE: InstructionsResponse = {
   ],
   openObjectives: [],
   toolSources: [],
-  processDocument: null,
+  teamProcess: null,
   instructions: '',
 };
 

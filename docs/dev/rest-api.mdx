@@ -85,7 +85,7 @@ member record (name, role, instructions, permissions) plus the team
 (name, context, permissionPresets), the public projection
 of every teammate, the caller's currently-open objectives, the
 external tools resolved for them (`toolSources`), and the team's
-process document (`processDocument` — `null` when none is set,
+team process (`teamProcess` — `null` when none is set,
 absent on brokers that predate the field).
 
 The response also names what was composed, by content hash:
@@ -93,11 +93,11 @@ The response also names what was composed, by content hash:
 - `blocks` — one `{ kind, sha256 }` descriptor per operator-authored
   instruction block actually present in this packet. Kinds are
   `team_context`, `role_description`, `personal_instructions`, and
-  `process_document` (the wire strings are pinned). Empty blocks are
+  `team_process` (the wire strings are pinned). Empty blocks are
   omitted rather than descriptor'd.
 - `composedSha256` — sha256 of the **canonical** composition: the
   composed `instructions` prose with the transient broker/runner
-  version line normalized out, plus the process-document text. The
+  version line normalized out, plus the team-process text. The
   broker records this hash as "issued" to the member on every fetch
   and compares it against the current composition to decide
   restart-pending (`GET /roster` below). Two fetches that differ
@@ -306,8 +306,8 @@ Role and instructions edits fan out one `kind: 'instructions'`
 channel event to every member whose composed instruction text
 changed — a role edit also reaches teammates whose roster line
 moved, since that line is composed into their prose. Each affected
-runner restarts its agent at the next idle boundary under the new
-text, resuming the same conversation; `GET /roster` lists those
+runner restarts its agent cold at the next idle boundary under the new
+text (re-briefed on its open objectives); `GET /roster` lists those
 members in `restartPending` until it does. Permission-only patches
 never touch the prose and fan nothing out.
 
@@ -621,34 +621,34 @@ Terminal transition to `cancelled`.
 Posts into the `obj:<id>` thread. Members include originator,
 assignee, watchers, plus members with `members.manage` (implicit).
 
-## Process document
+## Team process
 
 The team's process as one authored document. Reads are open to every
 member — what binds you is not privileged information. Writes require
-`process.manage`, a dedicated leaf: under this design the permission is
+`team_process.manage`, a dedicated leaf: under this design the permission is
 the entire authority.
 
 The current document is also served on `GET /instructions` as
-`processDocument`, which is how it reaches a member's fixed context.
+`teamProcess`, which is how it reaches a member's fixed context.
 These endpoints exist for what injection does not carry.
 
-### `GET /process-document`
+### `GET /team-process`
 
 | | |
 |---|---|
 | **Auth** | dual |
-| **Returns** | `{ document: ProcessDocument \| null }` |
+| **Returns** | `{ document: TeamProcess \| null }` |
 
 `null` rather than 404 when none has been set. A team that has never
 written one is a real state, not a missing resource, and a 404 would
 make the caller guess which it was.
 
-### `GET /process-document/history`
+### `GET /team-process/history`
 
 | | |
 |---|---|
 | **Auth** | dual |
-| **Returns** | `{ edits: ProcessDocumentEdit[] }`, oldest first |
+| **Returns** | `{ edits: TeamProcessEdit[] }`, oldest first |
 
 Retrieved, never resident. Each edit carries the author, reason,
 `disposition` and the **full prior text**, so the diff is derived from
@@ -657,12 +657,12 @@ that can drift from the text it describes.
 
 Version 1 is the creation and carries no prior text.
 
-### `PUT /process-document`
+### `PUT /team-process`
 
 | | |
 |---|---|
-| **Auth** | dual; requires `process.manage` |
-| **Body** | `EditProcessDocumentRequest` — `{ text, reason, disposition }` |
+| **Auth** | dual; requires `team_process.manage` |
+| **Body** | `EditTeamProcessRequest` — `{ text, reason, disposition }` |
 | **Returns** | `{ document, edit }` — **201** on create, **200** on edit |
 
 Create and edit are one path. The first authorised write produces
@@ -1225,7 +1225,7 @@ list when applicable.
 - `packages/sdk/src/protocol.ts` — `PATHS`, `OBJECTIVE_PATHS`,
   `CHANNEL_PATHS`, `MEMBER_PATHS`, `TOOL_SOURCE_PATHS`,
   `SECRET_PATHS`, `VARIABLE_PATHS`, `NOTIFICATION_PATHS`,
-  `PROCESS_DOCUMENT_PATHS`, `FS_PATHS`, plus the
+  `TEAM_PROCESS_PATHS`, `FS_PATHS`, plus the
   `X-CSUITE-Protocol` / `X-CSUITE-Runner-Version` header constants
 - `packages/sdk/src/schemas.ts` — every request / response shape
 - `apps/server/src/app.ts` — endpoint dispatch

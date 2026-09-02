@@ -77,8 +77,8 @@ usage:
   csuite enroll      --member <name> [--config-path <path>]   (re-)enroll a member for web UI login (TOTP — separate from 'csuite connect')
   csuite rotate      --member <name> (--token-id <id> | --all) --token-file <path>   rotate credentials without printing plaintext
   csuite quickstart  [--skip-browser] [--assignee <name>]   seed a demo objective + open the web UI
-  csuite claude      [--no-trace] [--no-secrets] [--no-env-reload] [--doctor] [--skip-doctor] [--cwd <dir>] [--model <name>] [--resume [<sessionId>]]   run Claude Code headlessly (Agent SDK) as an agent member of a csuite team (--resume alone continues the most recent session; alias: claude-code)
-  csuite codex       [--no-trace] [--no-secrets] [--no-env-reload] [--doctor] [--skip-doctor] [--cwd <dir>] [--model <name>] [--resume [<threadId>]] [-- <codex args>...]   spawn OpenAI Codex CLI as a headless agent member of a csuite team (--resume alone picks up the most recent thread)
+  csuite claude      [--no-trace] [--no-secrets] [--no-env-reload] [--doctor] [--skip-doctor] [--cwd <dir>] [--model <name>] [--resume [<sessionId>]]   run Claude Code headlessly (Agent SDK) as an agent member of a csuite team (--resume alone lets Claude Code continue its most recent session here, if any; alias: claude-code)
+  csuite codex       [--no-trace] [--no-secrets] [--no-env-reload] [--doctor] [--skip-doctor] [--cwd <dir>] [--model <name>] [--resume [<threadId>]] [-- <codex args>...]   spawn OpenAI Codex CLI as a headless agent member of a csuite team (--resume alone starts a new thread; codex resumes by id only)
   csuite <runner> install-service   [--url <broker>] [--exec <path>] [--print]   write + enable a systemd unit and a scoped sudoers rule for this runner (refuses without saved auth; prints the files when no root)
   csuite <runner> cycle             [--timeout <sec>]   restart the runner's unit from inside it (detached worker; confirms liveness at the broker)
   csuite stub        [--no-trace] [--no-secrets] [--no-env-reload] [--doctor] [--skip-doctor] [--cwd <dir>]   run the stub agent — a test/CI instrument proving the runner lifecycle with no model credential; never deploy it as a member
@@ -979,8 +979,10 @@ async function handleClaude(args: string[]): Promise<void> {
     }
     if (arg === '--resume') {
       // Optional value: `--resume <sessionId>` resumes that session,
-      // bare `--resume` continues the member's most recent session in
-      // the cwd. A following flag is NOT the value.
+      // bare `--resume` hands Claude Code its `continue` (it picks up
+      // the most recent session in the cwd if one exists, else starts
+      // fresh — the runner does not predict which). A following flag
+      // is NOT the value.
       const next = args[i + 1];
       if (next !== undefined && !next.startsWith('-')) {
         resume = next;
@@ -1311,8 +1313,10 @@ async function handleCodex(args: string[]): Promise<void> {
     }
     if (arg === '--resume') {
       // Optional value: `--resume <threadId>` resumes that thread,
-      // bare `--resume` resumes the member's most recent one. A
-      // following flag (or `--`) is NOT the value.
+      // bare `--resume` starts a new thread loudly (codex resumes by id
+      // only; the runner no longer picks a thread from disk). Accepted
+      // so one unit file serves every verb. A following flag (or `--`)
+      // is NOT the value.
       const next = args[i + 1];
       if (next !== undefined && !next.startsWith('-')) {
         resume = next;

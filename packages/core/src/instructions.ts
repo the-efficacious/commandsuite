@@ -28,10 +28,10 @@ import type {
   InstructionBlockKind,
   InstructionsResponse,
   Member,
-  ProcessDocument,
   ResolvedToolSource,
   Team,
   Teammate,
+  TeamProcess,
 } from 'csuite-sdk/types';
 import { sha256Hex } from './hashing.js';
 
@@ -39,7 +39,7 @@ export type { InstructionBlockKind } from 'csuite-sdk/types';
 
 export interface ComposeInstructionsInput {
   /**
-   * The team's process document, or `null` when none has been
+   * The team process, or `null` when none has been
    * written. `null` is rendered as an explicit empty state by the
    * runner, never omitted — omitting it makes "no document exists"
    * indistinguishable from "your runner cannot read this field".
@@ -57,7 +57,7 @@ export interface ComposeInstructionsInput {
    * input. A reminder closes this instance; the type closes the
    * mechanism for whatever field is added next.
    */
-  processDocument: ProcessDocument | null;
+  teamProcess: TeamProcess | null;
   self: Member;
   team: Team;
   /** Version loaded by the broker process composing this response. */
@@ -124,14 +124,14 @@ export function composeInstructions(input: ComposeInstructionsInput): Instructio
     teammates,
     openObjectives,
     toolSources: input.toolSources ?? [],
-    // The team's process document rides HERE, never inside
+    // The team process rides HERE, never inside
     // `instructions`: a member authors their own `instructions`, the
-    // process document is authored by whoever holds `process.manage`,
+    // team process is authored by whoever holds `team_process.manage`,
     // and one string would collapse two authorities into one field.
     // (A wire cap once also motivated the split; every cap-era reason
     // is dead and the split stands on authority separation alone —
     // do not merge them on the grounds that the cap is gone.)
-    processDocument: input.processDocument ?? null,
+    teamProcess: input.teamProcess ?? null,
   };
 }
 
@@ -171,7 +171,7 @@ export interface InstructionBlock {
  * composed text and therefore this hash, with no per-block
  * bookkeeping.
  *
- * The process document is hashed alongside the prose (it rides in its
+ * The team process is hashed alongside the prose (it rides in its
  * own response field but is rendered into the same fixed context by
  * the runner), separated by a NUL line no authored text can contain.
  */
@@ -180,7 +180,7 @@ export async function composedInstructionsSha256(input: ComposeInstructionsInput
   delete canonical.brokerVersion;
   delete canonical.runnerVersion;
   const composed = composeInstructions(canonical);
-  return sha256Hex(`${composed.instructions}\n\u0000\n${input.processDocument?.text ?? ''}`);
+  return sha256Hex(`${composed.instructions}\n\u0000\n${input.teamProcess?.text ?? ''}`);
 }
 
 /**
@@ -193,9 +193,9 @@ export async function composedInstructionsSha256(input: ComposeInstructionsInput
  * the text actually reached the prose rather than trusting that it
  * should have.
  *
- * The process document is not in that string and never will be — it
+ * The team process is not in that string and never will be — it
  * rides in its own response field, because a member authors their
- * `instructions` and whoever holds `process.manage` authors this, and
+ * `instructions` and whoever holds `team_process.manage` authors this, and
  * one string would collapse two authorities. So a substring search of
  * the composed prose can only ever return false for it, and adding it
  * to the list above would be a silent no-op rather than a feature.
@@ -229,9 +229,9 @@ export function instructionBlocks(
   // The guard mirrors the store's own invariant — a document that is
   // only whitespace cannot exist — but it decides WHETHER to project,
   // never WHAT to project.
-  const doc = input.processDocument;
+  const doc = input.teamProcess;
   return doc !== null && doc.text.trim().length > 0
-    ? [...composedBlocks, { kind: 'process_document', text: doc.text }]
+    ? [...composedBlocks, { kind: 'team_process', text: doc.text }]
     : composedBlocks;
 }
 

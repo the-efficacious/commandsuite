@@ -19,10 +19,15 @@
  *   3. gracefully stop the agent process — its capture readers flush;
  *   4. refetch instructions so the successor composes from what the
  *      broker holds NOW (this also un-stales the MCP toolbox);
- *   5. respawn, RESUMING the prior conversation where the framework
- *      supports it. Resume is what makes the continuity cost ~zero:
- *      the successor holds the same conversation under the new system
- *      prompt, rather than a summary of it.
+ *   5. respawn COLD. The successor does not resume the predecessor's
+ *      conversation: the refreshed instructions plus the runner's
+ *      `context_refresh` re-brief ARE the context that matters, and
+ *      the agent self-orients from there (`objectives_list`, `recent`,
+ *      `roster`). Conversation continuity is the agent framework's own
+ *      business — CommandSuite owns the team substrate, not the
+ *      agent's context — and an earlier design that resumed here
+ *      re-read hours of transcript history as new activity on every
+ *      restart (see `trace/transcript-reader.ts`).
  *
  * COALESCING. Requests arriving while a restart is already draining
  * or swapping are folded into it when they land before the refetch
@@ -38,6 +43,14 @@
  */
 
 import type { AgentLog } from './agents/adapter.js';
+
+/**
+ * What asked for a restart. Both kinds run the same cycle (the refetch
+ * covers instructions AND environment either way); the distinction is
+ * carried to the successor's `session_start` so the trace says why the
+ * conversation was dropped rather than a generic "restarted".
+ */
+export type RestartReason = 'instructions' | 'environment';
 
 /** Where the coordinator gets its idle observation. */
 export interface ActivityObservation {
@@ -55,8 +68,8 @@ export interface RestartHooks {
   detach(): void;
   /**
    * Gracefully stop the current agent process and resolve with its
-   * native session id (for resume). Must not resolve before the
-   * process has exited and flushed.
+   * native session id (diagnostics only — the successor never resumes
+   * it). Must not resolve before the process has exited and flushed.
    */
   stopCurrent(reason: string): Promise<{ sessionId: string | null }>;
   /** Refetch instructions. A rejection aborts nothing — see run(). */
@@ -64,12 +77,13 @@ export interface RestartHooks {
   /** Refetch secrets and variables; failure keeps the prior atomic snapshot. */
   refreshSecrets(): Promise<unknown>;
   /**
-   * Spawn the successor. An instruction restart ALWAYS resumes — the
-   * whole point is that the successor holds the same conversation under
-   * the new system prompt, so continuity costs ~nothing. Dropping the
-   * conversation is `clear`'s job, not this one's.
+   * Spawn the successor COLD, under the refreshed instructions and
+   * environment. `reasons` is every request the cycle applied, in
+   * first-seen order, so the caller can name why the conversation was
+   * dropped. A `clear` starts cold the same way; the two differ only in
+   * what triggered them.
    */
-  respawn(prior: { resume: true; sessionId: string | null }): Promise<void>;
+  respawn(cycle: { reasons: readonly RestartReason[] }): Promise<void>;
   /**
    * Run the stop→refetch→respawn cycle under the shared
    * agent-lifecycle lock. A `clear` swaps the same process this does,
@@ -86,11 +100,13 @@ export interface RestartHooks {
 
 export interface RestartCoordinator {
   /**
-   * Note an instruction edit. Idempotent while a cycle is pending or
-   * in flight (see coalescing above). Never throws; failures inside
-   * the cycle surface through `onFailure`.
+   * Note an instruction edit or an environment change. Idempotent
+   * while a cycle is pending or in flight (see coalescing above) —
+   * the reason is still recorded so the successor's trace names every
+   * trigger the cycle applied. Never throws; failures inside the cycle
+   * surface through `onFailure`.
    */
-  request(): void;
+  request(reason: RestartReason): void;
   /**
    * Stop reacting to requests — the session is ending. A cycle
    * already past its drain keeps running to completion (a half-swapped
@@ -134,6 +150,12 @@ export function createRestartCoordinator(
   // more cycle runs when the current one completes.
   let rearm = false;
   let covered = true;
+  // Reasons accumulated since the last cycle took its snapshot. A
+  // request that folds into a running cycle (lands before its refetch)
+  // still adds its reason here, so the successor's session_start names
+  // it; one that lands after the refetch re-arms AND seeds the next
+  // cycle's reasons, because the snapshot was already taken.
+  const reasons = new Set<RestartReason>();
 
   const waitForIdle = async (): Promise<void> => {
     const activity = hooks.activity();
@@ -158,7 +180,7 @@ export function createRestartCoordinator(
     // Until the refetch below completes, any request that arrives is
     // covered by this cycle — the fetch reads current broker state.
     covered = true;
-    hooks.log.info('instruction edit observed — draining at next idle');
+    hooks.log.info('restart requested — draining at next idle', { reasons: [...reasons] });
     // The idle wait sits OUTSIDE the lock deliberately: it can block
     // for the length of a turn, and holding the lifecycle lock while
     // merely waiting would stall a `clear` that is itself about to
@@ -202,10 +224,15 @@ export function createRestartCoordinator(
       });
     }
     // Edits landing after this point missed the fetch; they re-arm.
+    // The reasons snapshot is taken at the same moment for the same
+    // reason: anything recorded after it belongs to the next cycle.
     covered = false;
-    await hooks.respawn({ resume: true, sessionId: prior.sessionId });
-    hooks.log.info('agent respawned with current instructions', {
-      resumedSession: prior.sessionId,
+    const applied = [...reasons];
+    reasons.clear();
+    await hooks.respawn({ reasons: applied });
+    hooks.log.info('agent respawned cold with current instructions and environment', {
+      reasons: applied,
+      priorSession: prior.sessionId,
     });
   };
 
@@ -226,12 +253,13 @@ export function createRestartCoordinator(
   };
 
   return {
-    request(): void {
+    request(reason): void {
       if (closed) return;
+      reasons.add(reason);
       if (inFlight !== null) {
         if (covered) {
           // The running cycle has not refetched yet — this edit rides
-          // along with it.
+          // along with it (and its reason is already recorded above).
           return;
         }
         rearm = true;

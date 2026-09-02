@@ -20,7 +20,7 @@ const BASE = {
   team: { name: 'demo-team', context: 'ctx', permissionPresets: {} },
   teammates: [],
   openObjectives: [],
-  processDocument: null,
+  teamProcess: null,
 };
 
 const SHA = 'a'.repeat(64);

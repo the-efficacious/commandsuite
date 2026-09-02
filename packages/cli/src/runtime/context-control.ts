@@ -75,7 +75,12 @@ export interface ContextControlHooks {
    * capture host). Resolves once the successor is up.
    */
   clear(reason: string): Promise<void>;
-  /** Restart while resuming the same conversation, refreshing instructions and environment. */
+  /**
+   * Restart cold under refreshed instructions and environment. Like
+   * `clear`, the successor holds none of the prior conversation; the
+   * two differ in what asked for the swap, which its session_start
+   * names (`environment reloaded` vs `context cleared`).
+   */
   reload(reason: string): Promise<void>;
   /** Emit the ack onto the member's activity stream. */
   report(event: ActivityContextControl): void;

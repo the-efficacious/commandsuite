@@ -42,8 +42,8 @@ Auth, secrets injection, capture, and environment reload behave
 exactly as on the real runners — that is the point: the runner
 machinery under test is the real machinery, only the agent is canned.
 There is no `--model` and no `--resume` (nothing to model, nothing to
-resume; a `reload` resumes the same stub generation identity, a
-`clear` starts a fresh one).
+resume; every respawn — an instruction restart, a `reload`, a `clear`
+— starts a fresh stub generation, as it does for the real runners).
 
 Two environment knobs exist for bounded runs in tests and CI — a stub
 otherwise runs until signalled:

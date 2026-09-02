@@ -7,7 +7,7 @@
  * nothing gets the current text because it is state, not an
  * announcement.
  *
- * The gate is `process.manage`, a DEDICATED leaf. Under this shape the
+ * The gate is `team_process.manage`, a DEDICATED leaf. Under this shape the
  * permission is the entire authority — whoever holds it decides what
  * binds every member — so both branches are asserted, and a member
  * holding every OTHER permission is refused.
@@ -16,12 +16,12 @@
 import {
   Broker,
   createApp,
-  createSqliteProcessDocumentStore,
+  createSqliteTeamProcessStore,
   createTokenStoreFromMembers,
   InMemoryEventLog,
   SqliteSessionStore,
 } from 'csuite-core';
-import type { ProcessDocument, ProcessDocumentEdit } from 'csuite-sdk/types';
+import type { TeamProcess, TeamProcessEdit } from 'csuite-sdk/types';
 import { describe, expect, it } from 'vitest';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
@@ -42,7 +42,7 @@ async function makeApp() {
     {
       name: 'lea',
       role: { title: 'lead', description: '' },
-      permissions: ['process.manage'],
+      permissions: ['team_process.manage'],
       token: EDITOR,
     },
     // Bound by the document, holds no authority over it.
@@ -65,18 +65,18 @@ async function makeApp() {
     },
   ]);
   const db = openDatabase(':memory:');
-  const processDocument = createSqliteProcessDocumentStore(db);
+  const teamProcess = createSqliteTeamProcessStore(db);
   const { app } = createApp({
     broker,
     members,
     tokens: await createTokenStoreFromMembers(db, members),
     sessions: new SqliteSessionStore(db),
     teamStore: mockTeamStore({ name: 'demo-team', context: '', permissionPresets: {} }),
-    processDocument,
+    teamProcess,
     version: '0.0.0',
     logger: silentLogger(),
   });
-  return { app, broker, processDocument };
+  return { app, broker, teamProcess };
 }
 
 function authed(token: string, body?: unknown, method?: string): RequestInit {
@@ -96,13 +96,13 @@ const write = (text: string, reason = 'because') => ({
 
 // ─── the gate is the permission, not the role ────────────────────────
 
-describe('the write gate is process.manage and nothing else', () => {
+describe('the write gate is team_process.manage and nothing else', () => {
   it('refuses a member the document binds but who lacks the leaf', async () => {
     const { app } = await makeApp();
-    const res = await app.request('/process-document', authed(BOUND, write(V1)));
+    const res = await app.request('/team-process', authed(BOUND, write(V1)));
     expect(res.status).toBe(403);
     expect((await res.json()) as { error: string }).toMatchObject({
-      error: 'requires process.manage',
+      error: 'requires team_process.manage',
     });
   });
 
@@ -113,22 +113,22 @@ describe('the write gate is process.manage and nothing else', () => {
    */
   it('refuses a member holding every other permission, including objectives.create', async () => {
     const { app } = await makeApp();
-    const res = await app.request('/process-document', authed(ADMIN, write(V1)));
+    const res = await app.request('/team-process', authed(ADMIN, write(V1)));
     expect(res.status).toBe(403);
   });
 
   it('allows the holder of the leaf', async () => {
     const { app } = await makeApp();
-    const res = await app.request('/process-document', authed(EDITOR, write(V1)));
+    const res = await app.request('/team-process', authed(EDITOR, write(V1)));
     expect(res.status).toBe(201);
   });
 
   it('lets a bound member READ the document that binds them', async () => {
     const { app } = await makeApp();
-    await app.request('/process-document', authed(EDITOR, write(V1)));
-    const res = await app.request('/process-document', authed(BOUND));
+    await app.request('/team-process', authed(EDITOR, write(V1)));
+    const res = await app.request('/team-process', authed(BOUND));
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { document: ProcessDocument };
+    const body = (await res.json()) as { document: TeamProcess };
     expect(body.document.text).toBe(V1);
   });
 });
@@ -138,14 +138,14 @@ describe('the write gate is process.manage and nothing else', () => {
 describe('a team with no document', () => {
   it('serves document: null with 200, not 404', async () => {
     const { app } = await makeApp();
-    const res = await app.request('/process-document', authed(BOUND));
+    const res = await app.request('/team-process', authed(BOUND));
     expect(res.status).toBe(200);
     expect((await res.json()) as { document: null }).toEqual({ document: null });
   });
 
   it('serves an empty history rather than 404', async () => {
     const { app } = await makeApp();
-    const res = await app.request('/process-document/history', authed(BOUND));
+    const res = await app.request('/team-process/history', authed(BOUND));
     expect(res.status).toBe(200);
     expect((await res.json()) as { edits: [] }).toEqual({ edits: [] });
   });
@@ -153,11 +153,11 @@ describe('a team with no document', () => {
   it('carries null on the packet, so the field is present and explicit', async () => {
     const { app } = await makeApp();
     const res = await app.request('/instructions', authed(BOUND));
-    const body = (await res.json()) as { processDocument: unknown };
+    const body = (await res.json()) as { teamProcess: unknown };
     // Present-and-null, never absent: an absent field is what an older
     // broker sends, and a member must be able to tell those apart.
-    expect('processDocument' in body).toBe(true);
-    expect(body.processDocument).toBeNull();
+    expect('teamProcess' in body).toBe(true);
+    expect(body.teamProcess).toBeNull();
   });
 });
 
@@ -172,13 +172,13 @@ describe('a team with no document', () => {
 describe('criterion 1 — the document is injected as current state', () => {
   it('reaches a member on the next fetch, and the edit announces itself once', async () => {
     const { app, broker } = await makeApp();
-    await app.request('/process-document', authed(EDITOR, write(V1)));
+    await app.request('/team-process', authed(EDITOR, write(V1)));
 
     const before = (await (await app.request('/instructions', authed(BOUND))).json()) as {
-      processDocument: ProcessDocument;
+      teamProcess: TeamProcess;
     };
-    expect(before.processDocument.text).toBe(V1);
-    expect(before.processDocument.version).toBe(1);
+    expect(before.teamProcess.text).toBe(V1);
+    expect(before.teamProcess.version).toBe(1);
 
     // POSITIVE CONTROL FIRST. An observer that never fires satisfies
     // any count — prove the counter works by driving a real
@@ -194,7 +194,7 @@ describe('criterion 1 — the document is injected as current state', () => {
     expect(announced).toHaveLength(1);
     const beforeEdit = announced.length;
 
-    await app.request('/process-document', authed(EDITOR, write(V2, 'reversed the merge model')));
+    await app.request('/team-process', authed(EDITOR, write(V2, 'reversed the merge model')));
 
     // Exactly ONE announcement — the instructions-edited fanout, with
     // the payload a runner keys its restart on. Not a per-member loop.
@@ -203,22 +203,22 @@ describe('criterion 1 — the document is injected as current state', () => {
     expect(payload?.data).toMatchObject({
       kind: 'instructions',
       event: 'edited',
-      changed: ['process_document'],
+      changed: ['team_process'],
     });
 
     // An edit that stores the SAME text moves no composition and
     // announces nothing — the fanout is driven by the hash diff, not
     // by the write.
-    await app.request('/process-document', authed(EDITOR, write(V2, 'unchanged text, new note')));
+    await app.request('/team-process', authed(EDITOR, write(V2, 'unchanged text, new note')));
     expect(announced).toHaveLength(beforeEdit + 1);
 
     // And the member has the new text with the version moved so they
     // can tell it changed.
     const after = (await (await app.request('/instructions', authed(BOUND))).json()) as {
-      processDocument: ProcessDocument;
+      teamProcess: TeamProcess;
     };
-    expect(after.processDocument.text).toBe(V2);
-    expect(after.processDocument.version).toBe(2);
+    expect(after.teamProcess.text).toBe(V2);
+    expect(after.teamProcess.version).toBe(2);
   });
 });
 
@@ -227,17 +227,17 @@ describe('criterion 1 — the document is injected as current state', () => {
 describe('history over the wire', () => {
   it('returns 201 on create and 200 on edit, so a caller can tell them apart', async () => {
     const { app } = await makeApp();
-    expect((await app.request('/process-document', authed(EDITOR, write(V1)))).status).toBe(201);
-    expect((await app.request('/process-document', authed(EDITOR, write(V2)))).status).toBe(200);
+    expect((await app.request('/team-process', authed(EDITOR, write(V1)))).status).toBe(201);
+    expect((await app.request('/team-process', authed(EDITOR, write(V2)))).status).toBe(200);
   });
 
   it('carries the full prior text, so the diff is derivable client-side', async () => {
     const { app } = await makeApp();
-    await app.request('/process-document', authed(EDITOR, write(V1)));
-    await app.request('/process-document', authed(EDITOR, write(V2, 'reversed the merge model')));
+    await app.request('/team-process', authed(EDITOR, write(V1)));
+    await app.request('/team-process', authed(EDITOR, write(V2, 'reversed the merge model')));
 
-    const res = await app.request('/process-document/history', authed(BOUND));
-    const { edits } = (await res.json()) as { edits: ProcessDocumentEdit[] };
+    const res = await app.request('/team-process/history', authed(BOUND));
+    const { edits } = (await res.json()) as { edits: TeamProcessEdit[] };
     expect(edits).toHaveLength(2);
     expect(edits[0]?.previous.text).toBeUndefined();
     expect(edits[1]?.previous.text).toBe(V1);
@@ -247,20 +247,20 @@ describe('history over the wire', () => {
 
   it('keeps the injected document free of superseded text as edits accumulate', async () => {
     const { app } = await makeApp();
-    await app.request('/process-document', authed(EDITOR, write('revision 0')));
+    await app.request('/team-process', authed(EDITOR, write('revision 0')));
     for (let i = 1; i <= 4; i++) {
-      await app.request('/process-document', authed(EDITOR, write(`revision ${i}`)));
+      await app.request('/team-process', authed(EDITOR, write(`revision ${i}`)));
     }
     const brief = (await (await app.request('/instructions', authed(BOUND))).json()) as {
-      processDocument: ProcessDocument;
+      teamProcess: TeamProcess;
     };
-    expect(brief.processDocument.text).toBe('revision 4');
-    expect(brief.processDocument.text).not.toContain('revision 0');
+    expect(brief.teamProcess.text).toBe('revision 4');
+    expect(brief.teamProcess.text).not.toContain('revision 0');
     // Injected size is a function of the document, not the edit count.
-    expect(brief.processDocument.text.length).toBe('revision 4'.length);
+    expect(brief.teamProcess.text.length).toBe('revision 4'.length);
     const { edits } = (await (
-      await app.request('/process-document/history', authed(BOUND))
-    ).json()) as { edits: ProcessDocumentEdit[] };
+      await app.request('/team-process/history', authed(BOUND))
+    ).json()) as { edits: TeamProcessEdit[] };
     expect(edits).toHaveLength(5);
   });
 });

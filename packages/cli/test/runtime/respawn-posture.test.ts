@@ -20,8 +20,11 @@
  * branch the adapter took — not that the framework subsequently
  * declines to resume. The end-to-end property (a cleared claude
  * session mints a fresh session id) needs a live agent and is not
- * covered here; the conformance kit does not yet drive respawn at
- * all.
+ * covered here; `stub-cold-restart.test.ts` drives a real cold
+ * respawn through the driver with the stub adapter. The driver now
+ * asks for `{ resume: false }` on every swap (instruction restart,
+ * reload, clear); the resuming arm is kept and tested here as the
+ * posture's own contract.
  */
 
 import type { Logger, LogRecord } from 'csuite-core';

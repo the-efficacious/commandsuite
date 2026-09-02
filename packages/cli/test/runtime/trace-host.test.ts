@@ -328,6 +328,61 @@ describe('CaptureHost', () => {
     }
   });
 
+  it('follows a changed transcript_path: the successor file is tailed, its replayed history is not re-emitted', async () => {
+    // The seam the production defect lived on: hooks from a swapped
+    // agent process carry a NEW transcript path, and that file begins
+    // by replaying the prior session's lines under their original
+    // uuids. The host must move its reader to the new file (else the
+    // successor's activity goes uncaptured) without re-uploading the
+    // replay (else hours of history arrive as new rows).
+    const stub = stubBrokerClient();
+    host = await startCaptureHost({ ...BASE, brokerClient: stub.client });
+
+    const dir = mkdtempSync(join(tmpdir(), 'csuite-transcript-'));
+    const line = (uuid: string, text: string, second: number): string =>
+      JSON.stringify({
+        type: 'assistant',
+        uuid,
+        timestamp: `2026-07-05T00:00:0${second}.000Z`,
+        message: {
+          role: 'assistant',
+          model: 'claude-opus-4-8',
+          content: [{ type: 'text', text }],
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 10, output_tokens: 5 },
+        },
+      });
+    const pathA = join(dir, 'session-a.jsonl');
+    const pathB = join(dir, 'session-b.jsonl');
+    writeFileSync(pathA, `${line('a-1', 'from a', 1)}\n`);
+    const ids = () => stub.uploaded.map((e) => e.sourceId);
+
+    try {
+      await fetch(host.hookEndpointUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hook_event_name: 'SessionStart', transcript_path: pathA }),
+      });
+      await waitFor(() => ids().includes('a-1'));
+
+      // The successor: A's history replayed, then one new line.
+      writeFileSync(pathB, `${line('a-1', 'from a', 1)}\n${line('b-1', 'from b', 2)}\n`);
+      await fetch(host.hookEndpointUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hook_event_name: 'SessionStart', transcript_path: pathB }),
+      });
+      await waitFor(() => ids().includes('b-1'));
+      await host.close();
+      host = null;
+
+      expect(ids().filter((id) => id === 'a-1')).toHaveLength(1);
+      expect(ids().filter((id) => id === 'b-1')).toHaveLength(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('close() is idempotent', async () => {
     host = await startCaptureHost({ ...BASE, brokerClient: stubBrokerClient().client });
     await host.close();

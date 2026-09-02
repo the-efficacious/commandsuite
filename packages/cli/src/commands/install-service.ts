@@ -133,8 +133,11 @@ export function renderRunnerUnit(opts: UnitRenderOptions): string {
       '--cwd',
       execStartToken(opts.workspace, 'workspace'),
       // The stub has no conversation to resume and its parser says so;
-      // real verbs resume so a cycle keeps the session (CI caught the
-      // stub unit exiting 2 in a Restart=always loop on this flag).
+      // real verbs carry bare --resume so a supervisor restart hands the
+      // resume decision to the agent (claude continues its most recent
+      // session when one exists; codex starts a new thread) rather than
+      // starting cold by default. (CI caught the stub unit exiting 2 in
+      // a Restart=always loop on this flag.)
       ...(opts.verb === 'stub' ? [] : ['--resume']),
     ].join(' ')}`,
     'Restart=always',

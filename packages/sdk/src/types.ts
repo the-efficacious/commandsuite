@@ -92,12 +92,17 @@ export const PERMISSIONS = [
   /** Administer named channels. Channel creation and self-membership remain ungated. */
   'channels.manage',
   /**
-   * Edit the team's process document. A DEDICATED leaf rather than a
-   * reuse of an objective permission: under this design the permission is
-   * the entire authority — whoever holds it can rewrite what binds the
+   * Edit the team's process. A DEDICATED leaf rather than a reuse of an
+   * objective permission: under this design the permission is the
+   * entire authority — whoever holds it can rewrite what binds the
    * team — and "can create an objective" is not a comparable power.
+   *
+   * Shipped as `process.manage` until the team-process rename. Rows
+   * still carrying that name resolve to this leaf through
+   * `LEGACY_PERMISSION_EXPANSIONS` below, which is why no permissions
+   * migration exists.
    */
-  'process.manage',
+  'team_process.manage',
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -115,6 +120,14 @@ export const LEGACY_PERMISSION_EXPANSIONS: Readonly<Record<string, readonly Perm
     'objectives.reassign',
     'objectives.watch',
   ],
+  // A rename, not an aggregate: one leaf to one leaf. It lives HERE
+  // rather than in a rewrite of stored rows because `raw_permissions`
+  // is stored verbatim and resolved on every read (see team-store.ts
+  // and `resolvePermissions`): mapping at resolution means a member or
+  // preset saved under the old name keeps the capability with no row
+  // touched and no deployment needing a permissions migration. Both
+  // names are accepted on write for the same reason.
+  'process.manage': ['team_process.manage'],
 };
 
 /**
@@ -493,17 +506,22 @@ export interface HealthResponse {
  * contract (`persistent_context kind="…"` re-sends, the context
  * watchdog's `context.block.kind` attribute) — pinned independently
  * of any TypeScript identifier; renaming code must never move them.
+ *
+ * `team_process` was `process_document` until the team-process rename.
+ * That move was the point of the rename rather than a side effect of
+ * one — the agent-facing name is exactly what was wrong — and it
+ * shipped as a breaking change with the tool, route and type renames.
  */
 export type InstructionBlockKind =
   | 'team_context'
   | 'role_description'
   | 'personal_instructions'
-  | 'process_document';
+  | 'team_process';
 
 /**
  * One instruction block as issued to a member, identified by content
  * hash. The text itself rides in the composed `instructions` string
- * (or `processDocument`); the descriptor names what was composed so a
+ * (or `teamProcess`); the descriptor names what was composed so a
  * runner or UI can compare versions without re-deriving composition.
  */
 export interface InstructionBlockDescriptor {
@@ -535,17 +553,17 @@ export interface InstructionsResponse extends Member {
    */
   toolSources: ResolvedToolSource[];
   /**
-   * The team's process document as one authored whole, or `null` when
+   * The team process as one authored whole, or `null` when
    * none has been set. Carried separately from `instructions` because
    * that field is authored by the member and this is authored by
-   * whoever holds `process.manage` — one string would collapse two
+   * whoever holds `team_process.manage` — one string would collapse two
    * authorities into one field.
    *
    * `undefined` when the broker did not send the field at all — an
    * older broker without the feature. Distinct from `null`, which is a
    * broker saying the team has no document.
    */
-  processDocument?: ProcessDocument | null;
+  teamProcess?: TeamProcess | null;
   /**
    * The named blocks composed into this packet, by content hash.
    * Absent from brokers that predate the instruction-block model.
@@ -554,7 +572,7 @@ export interface InstructionsResponse extends Member {
   /**
    * sha256 (hex) of the CANONICAL composition — the composed
    * instructions with the transient broker/runner version line
-   * normalized out, plus the process-document text. This is the
+   * normalized out, plus the team-process text. This is the
    * session's instruction-version identifier: the broker records it as
    * "issued" on each fetch and compares it against the current
    * composition to decide restart-pending. Two fetches that differ
@@ -1788,14 +1806,14 @@ export type ObjectiveEventKind =
  */
 export type AmendmentDisposition = 'correction' | 'scope_change';
 
-// ─────────────────────── Team process document ────────────────────
+// ─────────────────────── Team team process ────────────────────
 
 /**
- * What an edit may change. Mirrors `EDITABLE_PROCESS_DOCUMENT_SHAPE`
+ * What an edit may change. Mirrors `EDITABLE_TEAM_PROCESS_SHAPE`
  * in schemas.ts, which is the single runtime source that also drives
  * the request schema and the history record's `previous` map.
  */
-export type ProcessDocumentField = 'text';
+export type TeamProcessField = 'text';
 
 /**
  * The team's process, as one authored document.
@@ -1804,7 +1822,7 @@ export type ProcessDocumentField = 'text';
  * and increments on every edit; `createdBy` is whoever wrote version 1
  * and never changes, `updatedBy` is whoever wrote the current version.
  */
-export interface ProcessDocument {
+export interface TeamProcess {
   text: string;
   version: number;
   createdBy: string;
@@ -1822,18 +1840,18 @@ export interface ProcessDocument {
  * a second copy that can drift from the text it describes, which is
  * the defect this whole feature treats.
  */
-export interface ProcessDocumentEdit {
+export interface TeamProcessEdit {
   /** The version this edit produced. */
   version: number;
   ts: number;
   actor: string;
   reason: string;
   disposition: AmendmentDisposition;
-  fields: ProcessDocumentField[];
+  fields: TeamProcessField[];
   previous: { text?: string };
 }
 
-export interface EditProcessDocumentRequest {
+export interface EditTeamProcessRequest {
   text?: string;
   /** Required. What a reader has instead of the conversation you are in. */
   reason: string;
@@ -1847,13 +1865,13 @@ export interface EditProcessDocumentRequest {
   disposition: AmendmentDisposition;
 }
 
-export interface GetProcessDocumentResponse {
+export interface GetTeamProcessResponse {
   /** `null` when none has been set — an explicit state, not an absent field. */
-  document: ProcessDocument | null;
+  document: TeamProcess | null;
 }
 
-export interface ProcessDocumentHistoryResponse {
-  edits: ProcessDocumentEdit[];
+export interface TeamProcessHistoryResponse {
+  edits: TeamProcessEdit[];
 }
 
 export interface ObjectiveEvent {
@@ -2262,6 +2280,16 @@ export interface ListTelemetryQuery {
  * `objective_open` and `objective_close` markers for a given
  * objectiveId.
  */
+/**
+ * Every variant carries an optional `sourceId`: the stable id of the
+ * source record the runner mapped it from (for Claude, the transcript
+ * line's `uuid`, suffixed with the tool_use id when one line yields
+ * several `tool_action`s). The broker dedups on `(member, sourceId)`,
+ * so re-reading a resumed or forked transcript, or retrying a batch
+ * whose ack was lost, cannot write the same activity twice. Absent on
+ * events from older runners and on the driver-minted brackets — those
+ * are stored exactly as before, with no dedup.
+ */
 export type ActivityEvent =
   | ActivitySessionStart
   | ActivitySessionEnd
@@ -2285,6 +2313,8 @@ export type ActivityKind = ActivityEvent['kind'];
  */
 export interface ActivitySessionStart {
   readonly kind: 'session_start';
+  /** Stable source-record id for broker-side dedup; see `ActivityEvent`. */
+  readonly sourceId?: string;
   readonly ts: number;
   /** Runner id (`'claude-code'`, `'codex'`, ...). */
   readonly runner: string;
@@ -2293,12 +2323,17 @@ export interface ActivitySessionStart {
   /** The runner's declared capture tier (0 operable … 3 full fidelity). */
   readonly captureTier?: number;
   /**
-   * Whether this generation resumed a prior conversation. `false` with
-   * a `resumeReason` marks a resume-or-start fallback (bare --resume
-   * found nothing — e.g. a fresh member or a wiped state dir), which
-   * must be visible in the trace, not only in a runner log. Absent on
-   * events from older runners. (obj-mtfxwvbk-j extends this event with
-   * the full RunnerIdentity; one schema, coordinated there.)
+   * Whether this generation resumed a prior conversation, stamped only
+   * from what the runner itself decided: `true` for an explicit
+   * `--resume <id>`, `false` for a plain start, and `false` with a
+   * `resumeReason` for every cold respawn (`instructions changed`,
+   * `environment reloaded`, `context cleared`). ABSENT when the runner
+   * did not decide — bare `--resume` hands the choice to the agent
+   * (Claude's `continue`), whose own SessionStart hook reports
+   * `startup`/`resume` after this event has already shipped — and on
+   * events from older runners. The runner never guesses from the
+   * filesystem. (obj-mtfxwvbk-j extends this event with the full
+   * RunnerIdentity; one schema, coordinated there.)
    */
   readonly resumed?: boolean;
   readonly resumeReason?: string;
@@ -2314,6 +2349,8 @@ export interface ActivitySessionStart {
  */
 export interface ActivitySessionEnd {
   readonly kind: 'session_end';
+  /** Stable source-record id for broker-side dedup; see `ActivityEvent`. */
+  readonly sourceId?: string;
   readonly ts: number;
   /** Runner id (`'claude-code'`, `'codex'`, ...). */
   readonly runner: string;
@@ -2344,12 +2381,16 @@ export interface ActivitySessionEnd {
 
 export interface ActivityObjectiveOpen {
   readonly kind: 'objective_open';
+  /** Stable source-record id for broker-side dedup; see `ActivityEvent`. */
+  readonly sourceId?: string;
   readonly ts: number;
   readonly objectiveId: string;
 }
 
 export interface ActivityObjectiveClose {
   readonly kind: 'objective_close';
+  /** Stable source-record id for broker-side dedup; see `ActivityEvent`. */
+  readonly sourceId?: string;
   readonly ts: number;
   readonly objectiveId: string;
   /** Terminal state that caused the close. */
@@ -2358,6 +2399,8 @@ export interface ActivityObjectiveClose {
 
 export interface ActivityLlmExchange {
   readonly kind: 'llm_exchange';
+  /** Stable source-record id for broker-side dedup; see `ActivityEvent`. */
+  readonly sourceId?: string;
   /** Start of the model request (as reported by the capture source). */
   readonly ts: number;
   /** Milliseconds between request start and response end. */
@@ -2384,6 +2427,8 @@ export interface ActivityLlmExchange {
  */
 export interface ActivityToolAction {
   readonly kind: 'tool_action';
+  /** Stable source-record id for broker-side dedup; see `ActivityEvent`. */
+  readonly sourceId?: string;
   /** When the tool action was recorded (PostToolUse fire time). */
   readonly ts: number;
   /** Optional wall-clock duration of the tool call, if known. */
@@ -2430,6 +2475,8 @@ export interface ActivityToolAction {
  */
 export interface ActivityUserPrompt {
   readonly kind: 'user_prompt';
+  /** Stable source-record id for broker-side dedup; see `ActivityEvent`. */
+  readonly sourceId?: string;
   /** When the prompt was submitted. */
   readonly ts: number;
   /** Redacted prompt text that woke the turn. */
@@ -2549,6 +2596,8 @@ export interface ContextControlResponse {
  */
 export interface ActivityContextControl {
   readonly kind: 'context_control';
+  /** Stable source-record id for broker-side dedup; see `ActivityEvent`. */
+  readonly sourceId?: string;
   readonly ts: number;
   /** Correlation id from `ContextControlResponse`. */
   readonly requestId: string;
@@ -2575,6 +2624,8 @@ export interface ActivityContextControl {
 
 export interface ActivityAuthState {
   readonly kind: 'auth_state';
+  /** Stable source-record id for broker-side dedup; see `ActivityEvent`. */
+  readonly sourceId?: string;
   readonly ts: number;
   readonly state: 'blocked' | 'recovered';
   readonly status: 401;
