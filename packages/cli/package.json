@@ -40,7 +40,7 @@
   "dependencies": {
     "csuite-core": "workspace:*",
     "csuite-sdk": "workspace:*",
-    "@modelcontextprotocol/sdk": "^1.29.0"
+    "@modelcontextprotocol/sdk": "^1.30.0"
   },
   "peerDependencies": {
     "csuite-server": ">=0.0.1"
@@ -53,17 +53,17 @@
   "devDependencies": {
     "@the-efficacious/brand": "^0.2.0",
     "csuite-server": "workspace:*",
-    "@types/node": "^26.1.1",
+    "@types/node": "^26.4.0",
     "@types/ws": "^8.18.1",
     "tsup": "^8.0.0",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.10",
-    "ws": "^8.21.1"
+    "vitest": "^4.1.11",
+    "ws": "^8.21.3"
   },
   "publishConfig": {
     "access": "public"
   },
   "optionalDependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.220"
+    "@anthropic-ai/claude-agent-sdk": "^0.3.251"
   }
 }
