@@ -167,6 +167,32 @@ async function fetchMergedSince(sinceIso) {
 
 const manifestPath = argValue('--manifest') ?? join(REPO_ROOT, '.release', 'doors.json');
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+
+// The manifest declares the window it is a complete record of, and
+// `releasing.mdx` says so: "Every PR merged since the tag named in `since` must
+// be classified there." Derive the window from that field rather than from
+// `git describe`, which is a second copy of the same authority and agreed with
+// it only by coincidence — cutting v0.9.0 ended the coincidence and every door
+// for 0.9.0 content read as not-merged-since.
+//
+// Required, with no fallback. An absent or malformed `since` is a broken
+// manifest and must say so; silently reverting to `git describe` would be the
+// same defect behind a branch nobody triggers until the day it matters.
+if (typeof manifest.since !== 'string' || manifest.since.length === 0) {
+  console.error(
+    `problem: ${manifestPath} has no usable "since" — the manifest must declare the window it is a complete record of.`,
+  );
+  console.error(
+    '  There is deliberately no fallback to `git describe`. Falling back would restore the two-authority',
+  );
+  console.error(
+    '  defect this check exists to prevent: the script would ask a different question than the manifest',
+  );
+  console.error('  answers, and look healthy while doing it.');
+  process.exit(2);
+}
+const windowTag = manifest.since;
+const windowDate = git('log', '-1', '--format=%cI', windowTag);
 // Schema safety BEFORE the maps: Maps silently collapse duplicates,
 // and the manifest's contract is "exactly one classification per PR".
 {
@@ -190,7 +216,7 @@ const dismissedByPr = new Map(manifest.dismissed.map((d) => [d.pr, d]));
 
 let mergedPrs = [];
 try {
-  mergedPrs = await fetchMergedSince(tagDate);
+  mergedPrs = await fetchMergedSince(windowDate);
 } catch (err) {
   problems.push(err instanceof Error ? err.message : String(err));
 }
@@ -199,7 +225,7 @@ const mergedByPr = new Map(mergedPrs.map((pr) => [pr.number, pr]));
 for (const pr of mergedPrs) {
   if (!doorByPr.has(pr.number) && !dismissedByPr.has(pr.number)) {
     problems.push(
-      `PR #${pr.number} ("${pr.title}") merged since ${lastTag} is not classified in .release/doors.json`,
+      `PR #${pr.number} ("${pr.title}") merged since ${windowTag} is not classified in .release/doors.json`,
     );
   }
   if (pr.labels.includes('door') && !doorByPr.has(pr.number)) {
@@ -209,7 +235,7 @@ for (const pr of mergedPrs) {
 for (const door of manifest.doors) {
   const pr = mergedByPr.get(door.pr);
   if (pr === undefined) {
-    problems.push(`manifest door PR #${door.pr} is not merged to main since ${lastTag}`);
+    problems.push(`manifest door PR #${door.pr} is not merged to main since ${windowTag}`);
     continue;
   }
   if (!pr.labels.includes('door')) {
@@ -223,7 +249,7 @@ for (const dismissed of manifest.dismissed) {
   const pr = mergedByPr.get(dismissed.pr);
   if (mergedPrs.length > 0 && pr === undefined) {
     problems.push(
-      `manifest dismisses PR #${dismissed.pr} which is not merged to main since ${lastTag} — stale row`,
+      `manifest dismisses PR #${dismissed.pr} which is not merged to main since ${windowTag} — stale row`,
     );
   }
   const cited = /held for ruling|not a door per|discoverer's classification|ruled dismissed/i.test(
@@ -462,7 +488,7 @@ for (const entry of changesetEntries) {
   lines.push(entry.summary);
   lines.push('');
 }
-lines.push(`## Read these — surfaced doors since ${lastTag} (${manifest.doors.length})`);
+lines.push(`## Read these — surfaced doors since ${windowTag} (${manifest.doors.length})`);
 lines.push('');
 lines.push(
   'The input to the human gate: every PR that landed a surfaced door, from the checked-in manifest `.release/doors.json`, cross-checked against merged PRs and the `door` label.',
