@@ -505,6 +505,29 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
   const ipcServer: NetServer = createNetServer((socket) => {
     log.info('bridge connecting');
 
+    // An accepted socket with no 'error' listener does not report — it
+    // THROWS: Node turns the unhandled 'error' event into an uncaught
+    // exception and the runner dies with the bridge. A bridge that goes
+    // away abruptly (SIGTERM, an agent crash, a displaced second attach
+    // whose peer is already gone) resets the connection, so this is the
+    // ordinary end of a bridge's life, not an exceptional one.
+    //
+    // Attached before any branch below so no path is left uncovered —
+    // the reject-new early return writes and ends without ever reaching
+    // createBridgeConnection, and a displaced connection is torn down
+    // from under this handler. 'close' follows 'error', so the existing
+    // teardown still runs; this only stops the throw.
+    socket.on('error', (err) => {
+      const code = (err as NodeJS.ErrnoException).code;
+      const message = err instanceof Error ? err.message : String(err);
+      if (code === 'ECONNRESET' || code === 'EPIPE') {
+        // The peer vanished mid-write or mid-read. Expected.
+        log.debug('bridge socket reset by peer', { code });
+        return;
+      }
+      log.warn('bridge socket error', { error: message, ...(code ? { code } : {}) });
+    });
+
     if (activeBridge !== null) {
       if (secondBridgePolicy === 'reject-new') {
         log.warn('rejecting second bridge (policy: reject-new)', {
