@@ -524,8 +524,8 @@ export function defineTools(
     // agent doesn't try to touch someone
     // else's objective and eat a 403.
     ...buildAuthorityTools(instructions),
-    // The team's process document. Reading it is not how an agent
-    // learns what binds it — the document is already in its fixed
+    // The team process. Reading it is not how an agent
+    // learns what binds it — the team process is already in its fixed
     // context. These cover the edit history, which injection
     // deliberately leaves out, and the write path.
     ...buildTeamProcessTools(instructions),
@@ -1791,9 +1791,9 @@ function buildFilesystemTools(name: string): Tool[] {
 }
 
 /**
- * Process-document tools.
+ * Team-process tools.
  *
- * The document itself is injected, so `get` is not how an agent learns
+ * The team process itself is injected, so `get` is not how an agent learns
  * what binds it. These exist for the two things injection does not
  * carry: the superseded text behind each edit, and the write path.
  *
@@ -1807,11 +1807,11 @@ function buildTeamProcessTools(instructions: InstructionsResponse): Tool[] {
     {
       name: 'team_process_get',
       description:
-        "Read the team's process document. **You do not need this to find out what binds " +
-        'you** — the current document is already in your fixed context, injected as current ' +
+        'Read the team process. **You do not need this to find out what binds ' +
+        'you** — the current team process is already in your fixed context, injected as current ' +
         'state, and it stays correct across compaction. Call this when you want the version ' +
         'number, who last edited it, or to confirm what the broker holds. Returns `null` ' +
-        'when no document has been set, which is a real state of a real team and not an ' +
+        'when no team process has been set, which is a real state of a real team and not an ' +
         'error: it means nobody has written one yet, not that you cannot see it. Readable ' +
         'by every member — what binds you is not privileged information.',
       inputSchema: { type: 'object', properties: {} },
@@ -1819,7 +1819,7 @@ function buildTeamProcessTools(instructions: InstructionsResponse): Tool[] {
     {
       name: 'team_process_history',
       description:
-        'Retrieve the edit history of the process document, oldest first. This is the other ' +
+        'Retrieve the edit history of the team process, oldest first. This is the other ' +
         'half of "history retrievable, not resident": your injected context carries only the ' +
         'current text, so editing it fifty times costs what editing it once costs, and the ' +
         'superseded text lives here. Each entry records who edited it, when, why, the ' +
@@ -1827,7 +1827,7 @@ function buildTeamProcessTools(instructions: InstructionsResponse): Tool[] {
         'derived from two stored strings rather than cached. Use it to answer "was I working ' +
         'under different process when I started this?", which the current text cannot tell ' +
         'you. Version 1 is the creation and carries no prior text. Returns an empty list ' +
-        'when no document has been set.',
+        'when no team process has been set.',
       inputSchema: { type: 'object', properties: {} },
     },
   ];
@@ -1837,10 +1837,10 @@ function buildTeamProcessTools(instructions: InstructionsResponse): Tool[] {
   tools.push({
     name: 'team_process_write',
     description:
-      "Create or replace the team's process document. Requires `team_process.manage`. **This is " +
+      'Create or replace the team process. Requires `team_process.manage`. **This is ' +
       'the whole authority** — whoever holds this leaf decides what binds every member, so ' +
       'the record of who changed it and why is the only accountability there is. ' +
-      '**The text you supply REPLACES the document; it is not appended.** Read it first ' +
+      '**The text you supply REPLACES the team process; it is not appended.** Read it first ' +
       'with `team_process_get` and send the full new text, or you will delete everything ' +
       'you did not retype. The first write creates version 1; every later write increments ' +
       'the version and retains the prior text, editor, reason, and disposition. Every affected ' +
@@ -1854,7 +1854,7 @@ function buildTeamProcessTools(instructions: InstructionsResponse): Tool[] {
         text: {
           type: 'string',
           description:
-            'The complete new document, which REPLACES the current text entirely. Not a ' +
+            'The complete new team process, which REPLACES the current text entirely. Not a ' +
             'patch, not an addition. Max ' +
             String(TEAM_PROCESS_MAX) +
             " characters — it is resident in every member's context in every session, so " +
@@ -2647,12 +2647,12 @@ async function handleTeamProcessGet(brokerClient: BrokerClient): Promise<CallToo
   const doc = await brokerClient.getTeamProcess();
   if (doc === null) {
     return textResult(
-      'no process document has been set for this team. That is a real state, not an error — ' +
+      'no team process has been set. That is a real state, not an error — ' +
         'nobody has written one yet.',
     );
   }
   return textResult(
-    `process document v${doc.version}, last edited by ${doc.updatedBy}. ` +
+    `team process v${doc.version}, last edited by ${doc.updatedBy}. ` +
       `Created by ${doc.createdBy}.\n\n${doc.text}`,
   );
 }
@@ -2660,7 +2660,7 @@ async function handleTeamProcessGet(brokerClient: BrokerClient): Promise<CallToo
 async function handleTeamProcessHistory(brokerClient: BrokerClient): Promise<CallToolResult> {
   const edits = await brokerClient.teamProcessHistory();
   if (edits.length === 0) {
-    return textResult('no process document has been set, so there is no history.');
+    return textResult('no team process has been set, so there is no history.');
   }
   const lines = edits.map((e) => {
     const binding =
@@ -2684,9 +2684,7 @@ async function handleTeamProcessHistory(brokerClient: BrokerClient): Promise<Cal
           ].join('\n');
     return `  v${e.version} by ${e.actor} — ${e.disposition} (${binding})\n      reason: ${e.reason}\n${prior}`;
   });
-  return textResult(
-    [`process document — ${edits.length} edit(s), oldest first:`, ...lines].join('\n'),
-  );
+  return textResult([`team process — ${edits.length} edit(s), oldest first:`, ...lines].join('\n'));
 }
 
 async function handleTeamProcessWrite(
@@ -2696,7 +2694,7 @@ async function handleTeamProcessWrite(
   const text = typeof args.text === 'string' ? args.text : '';
   if (!text) {
     return errorResult(
-      'team_process_write: `text` is required, and it REPLACES the whole document — ' +
+      'team_process_write: `text` is required, and it REPLACES the whole team process — ' +
         'read the current one with `team_process_get` first',
     );
   }
@@ -2719,7 +2717,7 @@ async function handleTeamProcessWrite(
       : 'forward-only — work already underway finishes under the prior text';
   const created = edit.version === 1;
   return textResult(
-    `${created ? 'created' : 'updated'} the process document at v${document.version} ` +
+    `${created ? 'created' : 'updated'} the team process at v${document.version} ` +
       `(${edit.disposition}: ${binding}). ` +
       `${created ? 'History begins here.' : 'The prior text is retained and retrievable via `team_process_history`.'} ` +
       'Affected runners restart their agents cold at their next idle boundary under the new ' +

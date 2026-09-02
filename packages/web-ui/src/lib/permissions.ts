@@ -59,7 +59,7 @@ export const PERMISSION_META: readonly PermissionMeta[] = [
   {
     key: 'team_process.manage',
     label: 'Manage process',
-    description: 'Create and edit the team process document that binds every member.',
+    description: 'Create and edit the team process that binds every member.',
   },
   {
     key: 'members.context',

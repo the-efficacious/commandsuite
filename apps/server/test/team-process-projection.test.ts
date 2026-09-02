@@ -1,5 +1,5 @@
 /**
- * The process document as a projected, capture-exempt block.
+ * The team process as a projected, capture-exempt block.
  *
  * The document rides its own response field rather than the composed
  * prose, so its membership in `instructionBlocks` keys on WHAT WAS
@@ -308,7 +308,7 @@ describe('the cold-broker rebuild carries the document', () => {
 
   /**
    * POSITIVE CONTROL for the assertion above. A registered literal
-   * that is NOT part of the process document must still be redacted —
+   * that is NOT part of the team process must still be redacted —
    * otherwise the test passes on a broker with redaction switched off
    * entirely, and proves nothing about the exemption.
    */

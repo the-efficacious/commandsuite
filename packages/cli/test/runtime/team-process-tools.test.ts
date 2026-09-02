@@ -1,5 +1,5 @@
 /**
- * The agent-facing surface for the process document.
+ * The agent-facing surface for the team process.
  *
  * WHY THIS EXISTS SEPARATELY FROM THE HTTP TESTS. The routes are
  * tested against `fetch`, which proves a human with a session cookie
@@ -92,10 +92,10 @@ describe('the write tool is gated on team_process.manage', () => {
 describe('the write description carries the two things an agent will otherwise get wrong', () => {
   const write = () => defineTools(AUTHORITY).find((t) => t.name === 'team_process_write');
 
-  it('says the text REPLACES the document, and says to read it first', () => {
+  it('says the text REPLACES the team process, and says to read it first', () => {
     // The expensive mistake: sending a paragraph and deleting the
     // rest of the team's process.
-    expect(write()?.description).toMatch(/REPLACES the document/);
+    expect(write()?.description).toMatch(/REPLACES the team process/);
     expect(write()?.description).toMatch(/read it first/i);
     const props = write()?.inputSchema.properties as Record<string, { description?: string }>;
     expect(props.text?.description).toMatch(/REPLACES the current text/);
@@ -137,7 +137,7 @@ describe('team_process_get', () => {
   it('distinguishes "nobody has written one" from an error', async () => {
     const broker = makeBroker({ getTeamProcess: async () => null });
     const text = getCallText(await handleToolCall('team_process_get', {}, broker, PACKET));
-    expect(text).toMatch(/no process document has been set/i);
+    expect(text).toMatch(/no team process has been set/i);
     expect(text).toMatch(/real state, not an error/i);
   });
 
@@ -204,7 +204,7 @@ describe('team_process_history', () => {
   it('says there is no history when no document has been set', async () => {
     const broker = makeBroker({ teamProcessHistory: async () => [] });
     const text = getCallText(await handleToolCall('team_process_history', {}, broker, PACKET));
-    expect(text).toMatch(/no process document has been set/i);
+    expect(text).toMatch(/no team process has been set/i);
   });
 });
 
@@ -237,7 +237,7 @@ describe('team_process_write', () => {
         AUTHORITY,
       ),
     );
-    expect(text).toMatch(/created the process document at v1/);
+    expect(text).toMatch(/created the team process at v1/);
     expect(text).toMatch(/History begins here/);
     expect(text).toMatch(/next idle boundary/);
     expect(text).toMatch(/restart their agents cold/);
@@ -275,7 +275,7 @@ describe('team_process_write', () => {
         AUTHORITY,
       ),
     );
-    expect(text).toMatch(/REPLACES the whole document/);
+    expect(text).toMatch(/REPLACES the whole team process/);
     expect(text).toMatch(/team_process_get/);
   });
 
@@ -369,7 +369,7 @@ describe('process_document_* aliases (deprecated — remove in the next minor)',
       // Reached the handler, not the unknown-tool branch — assert the
       // value that branch alone produces before comparing.
       expect(viaAlias).not.toMatch(/unknown tool/);
-      expect(viaAlias).toMatch(/process document/);
+      expect(viaAlias).toMatch(/team process/);
       expect(viaAlias).toBe(viaNew);
     }
   });

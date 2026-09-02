@@ -39,7 +39,7 @@ export type { InstructionBlockKind } from 'csuite-sdk/types';
 
 export interface ComposeInstructionsInput {
   /**
-   * The team's process document, or `null` when none has been
+   * The team process, or `null` when none has been
    * written. `null` is rendered as an explicit empty state by the
    * runner, never omitted — omitting it makes "no document exists"
    * indistinguishable from "your runner cannot read this field".
@@ -124,9 +124,9 @@ export function composeInstructions(input: ComposeInstructionsInput): Instructio
     teammates,
     openObjectives,
     toolSources: input.toolSources ?? [],
-    // The team's process document rides HERE, never inside
+    // The team process rides HERE, never inside
     // `instructions`: a member authors their own `instructions`, the
-    // process document is authored by whoever holds `team_process.manage`,
+    // team process is authored by whoever holds `team_process.manage`,
     // and one string would collapse two authorities into one field.
     // (A wire cap once also motivated the split; every cap-era reason
     // is dead and the split stands on authority separation alone —
@@ -171,7 +171,7 @@ export interface InstructionBlock {
  * composed text and therefore this hash, with no per-block
  * bookkeeping.
  *
- * The process document is hashed alongside the prose (it rides in its
+ * The team process is hashed alongside the prose (it rides in its
  * own response field but is rendered into the same fixed context by
  * the runner), separated by a NUL line no authored text can contain.
  */
@@ -193,7 +193,7 @@ export async function composedInstructionsSha256(input: ComposeInstructionsInput
  * the text actually reached the prose rather than trusting that it
  * should have.
  *
- * The process document is not in that string and never will be — it
+ * The team process is not in that string and never will be — it
  * rides in its own response field, because a member authors their
  * `instructions` and whoever holds `team_process.manage` authors this, and
  * one string would collapse two authorities. So a substring search of

@@ -102,7 +102,7 @@ export function assertDocumentInvariants(next: EditableFields): void {
   if (text.length === 0) {
     throw new TeamProcessError(
       'invalid_input',
-      'the process document cannot be empty — delete is not an edit, and a blank document ' +
+      'the team process cannot be empty — delete is not an edit, and a blank document ' +
         'renders identically to a team that never wrote one',
     );
   }
@@ -138,7 +138,7 @@ const CREATE_SCHEMA = `
 
 /**
  * The names these tables shipped under before the team-process rename.
- * Every deployment that wrote a process document before then has rows
+ * Every deployment that wrote a team process before then has rows
  * under these names, and `process_document_edits` is an append-only
  * history — dropping it or leaving it behind would be data loss.
  */
@@ -293,7 +293,7 @@ class SqliteTeamProcessStore implements TeamProcessStore {
     if (current === null && fields.length === 0) {
       throw new TeamProcessError(
         'invalid_input',
-        `no process document exists — the first write must supply ${TEAM_PROCESS_FIELDS.join(', ')}`,
+        `no team process exists — the first write must supply ${TEAM_PROCESS_FIELDS.join(', ')}`,
       );
     }
     if (current !== null && fields.length === 0) {
@@ -400,7 +400,7 @@ class SqliteTeamProcessStore implements TeamProcessStore {
       if (!parsed.success) {
         throw new TeamProcessError(
           'corrupt_history',
-          `process document edit v${row.version} is not a valid history record ` +
+          `team process edit v${row.version} is not a valid history record ` +
             `(row ${i + 1} of ${rows.length}): ` +
             parsed.error.issues
               .map((iss) => `${iss.path.join('.') || '(root)'} — ${iss.message}`)
@@ -424,7 +424,7 @@ class SqliteTeamProcessStore implements TeamProcessStore {
       if (edit.version !== i + 1) {
         throw new TeamProcessError(
           'corrupt_history',
-          `process document history is not contiguous — expected v${i + 1} at position ` +
+          `team process history is not contiguous — expected v${i + 1} at position ` +
             `${i + 1} and found v${edit.version}. A version is missing, so this is a ` +
             'truncated history being served as a complete one.',
         );
@@ -447,7 +447,7 @@ class SqliteTeamProcessStore implements TeamProcessStore {
     if (edits.length !== expected) {
       throw new TeamProcessError(
         'corrupt_history',
-        `process document is at v${expected} but history holds ${edits.length} edit(s) — ` +
+        `team process is at v${expected} but history holds ${edits.length} edit(s) — ` +
           `${expected > edits.length ? 'edits are missing' : 'there are more edits than versions'}. ` +
           'Serving this as the complete history would understate what has changed.',
       );
@@ -481,7 +481,7 @@ function parseColumn<T>(raw: string, version: number, column: string): T {
   } catch (err) {
     throw new TeamProcessError(
       'corrupt_history',
-      `process document edit v${version} has an unreadable '${column}' column — ` +
+      `team process edit v${version} has an unreadable '${column}' column — ` +
         'the retained prior text cannot be trusted, and reporting it as absent would ' +
         `say there was nothing before. Underlying: ${err instanceof Error ? err.message : String(err)}`,
     );

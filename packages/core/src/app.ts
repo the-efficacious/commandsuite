@@ -280,7 +280,7 @@ export interface AppOptions {
    */
   variables?: VariablesStore;
   /**
-   * The team's process document. The `/team-process*` endpoints
+   * The team process. The `/team-process*` endpoints
    * are registered iff this is provided, and `GET /instructions` carries
    * the current document in its own field.
    */
@@ -3326,7 +3326,7 @@ export function createApp(options: AppOptions): CreatedApp {
     });
   }
 
-  // ─── Process document endpoints ───────────────────────────────────
+  // ─── Team process endpoints ───────────────────────────────────
   // The team's process as one authored document. Reads are open to
   // every member — what binds you is not privileged information.
   // Writes require `team_process.manage`, a DEDICATED leaf: under this
@@ -3362,10 +3362,7 @@ export function createApp(options: AppOptions): CreatedApp {
       const raw = await c.req.json().catch(() => null);
       const parsed = EditTeamProcessRequestSchema.safeParse(raw);
       if (!parsed.success) {
-        return c.json(
-          { error: 'invalid process document payload', details: parsed.error.issues },
-          400,
-        );
+        return c.json({ error: 'invalid team process payload', details: parsed.error.issues }, 400);
       }
       try {
         const existed = teamProcess.get() !== null;

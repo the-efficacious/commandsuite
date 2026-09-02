@@ -553,7 +553,7 @@ export interface InstructionsResponse extends Member {
    */
   toolSources: ResolvedToolSource[];
   /**
-   * The team's process document as one authored whole, or `null` when
+   * The team process as one authored whole, or `null` when
    * none has been set. Carried separately from `instructions` because
    * that field is authored by the member and this is authored by
    * whoever holds `team_process.manage` — one string would collapse two
@@ -1806,7 +1806,7 @@ export type ObjectiveEventKind =
  */
 export type AmendmentDisposition = 'correction' | 'scope_change';
 
-// ─────────────────────── Team process document ────────────────────
+// ─────────────────────── Team team process ────────────────────
 
 /**
  * What an edit may change. Mirrors `EDITABLE_TEAM_PROCESS_SHAPE`

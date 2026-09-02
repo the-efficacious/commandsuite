@@ -23,7 +23,7 @@ The groups:
 - **Objective tools** — list / view / update / discuss / complete
   objectives, plus permission-gated tools for creating and
   cancelling work across the team.
-- **Team-process tools** — read the team's process document and
+- **Team-process tools** — read the team process and
   its edit history; write it if you hold the authority. The current
   text arrives by injection, not by calling these.
 - **Filesystem tools** — operate on the csuite virtual filesystem
@@ -245,7 +245,7 @@ objective if priorities change again.
 
 ## Team-process tools
 
-The team's process document is **injected**: the current text is
+The team process is **injected**: the current text is
 already in the agent's fixed context as current state, and it survives
 compaction. An agent does not call a tool to learn what binds it.
 
@@ -255,7 +255,7 @@ compaction. An agent does not call a tool to learn what binds it.
 |---|---|
 | **Required permission** | none |
 | **Input** | `{}` |
-| **Output** | `process document v<N>, last edited by <name>. Created by <name>.` then the text; or an explicit "no process document has been set" |
+| **Output** | `team process v<N>, last edited by <name>. Created by <name>.` then the text; or an explicit "no team process has been set" |
 | **Broker call** | `GET /team-process` |
 
 Returns a real state rather than an error when none has been set —
@@ -283,7 +283,7 @@ text.
 |---|---|
 | **Required permission** | `team_process.manage` |
 | **Input** | `{ text: string (req), reason: string (req), disposition: 'correction'\|'scope_change' (req) }` |
-| **Output** | `created`/`updated the process document at v<N>` + what the disposition binds + the delivery bound |
+| **Output** | `created`/`updated the team process at v<N>` + what the disposition binds + the delivery bound |
 | **Broker call** | `PUT /team-process` |
 
 **`text` REPLACES the whole document.** Read it with
@@ -331,7 +331,7 @@ system projection. When the projection is empty, absence cannot be
 asserted and nothing is re-sent.
 
 A runner predating the field drops it silently: the member operates
-without the process document and is not told.
+without the team process and is not told.
 
 ## Team-management tools (gated on `team.manage`)
 

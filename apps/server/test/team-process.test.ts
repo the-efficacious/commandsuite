@@ -1,5 +1,5 @@
 /**
- * The process document store.
+ * The team process store.
  *
  * Criteria 3–6 and 8 live here. Criteria 5 and 6 exist because a
  * partner found two real defects in the predecessor's amend path, and
@@ -49,7 +49,7 @@ function seed(s: ReturnType<typeof store>, text = V1, actor = 'AndrewJon') {
 
 // ─── criterion 1: absence is a state, not an error ───────────────────
 
-describe('a team with no process document', () => {
+describe('a team with no team process', () => {
   it('reports null rather than throwing or inventing one', () => {
     expect(store().get()).toBeNull();
   });

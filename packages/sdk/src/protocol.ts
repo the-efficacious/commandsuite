@@ -110,7 +110,7 @@ export const PATHS = {
   // registered with the trace redactor. `/secrets/resolve` returns
   // both, merged, and marks which keys are secret.
   variables: '/variables',
-  /** The team's process document. Singleton; no id in the path. */
+  /** The team process. Singleton; no id in the path. */
   teamProcess: '/team-process',
   // External Notifications — inbound webhooks / API calls routed to
   // members and channels as ambient input. Admin surface under
@@ -252,7 +252,7 @@ export const SECRET_PATHS = {
     `/secrets/${encodeURIComponent(slug)}/bindings/${encodeURIComponent(name)}`,
 } as const;
 
-/** The process document's edit history — RETRIEVED, never injected. */
+/** The team process's edit history — RETRIEVED, never injected. */
 export const TEAM_PROCESS_PATHS = {
   history: '/team-process/history',
 } as const;

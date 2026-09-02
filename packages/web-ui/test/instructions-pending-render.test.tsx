@@ -148,9 +148,7 @@ describe('the team process panel', () => {
     render(<TeamHome viewer="director-1" />);
 
     expect(
-      screen.getByText(
-        'Team process: unavailable — this broker does not report a process document.',
-      ),
+      screen.getByText('Team process: unavailable — this broker does not report a team process.'),
     ).toBeTruthy();
     expect(screen.queryByText('+ Add team process')).toBeNull();
   });

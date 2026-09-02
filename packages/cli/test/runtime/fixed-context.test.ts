@@ -47,13 +47,13 @@ describe('no document is rendered as a state, not as silence', () => {
   it('says so explicitly rather than returning nothing', () => {
     const block = renderTeamProcessBlock(null);
     expect(block).not.toBe('');
-    expect(block).toMatch(/no process document has been set/i);
+    expect(block).toMatch(/none has been set/i);
   });
 
   it('reaches the agent, so absence is distinguishable from a field it cannot read', () => {
     const composed = composeFixedContext(instructions());
     expect(composed).toContain('your standing instructions');
-    expect(composed).toMatch(/no process document has been set/i);
+    expect(composed).toMatch(/none has been set/i);
   });
 });
 
@@ -116,8 +116,7 @@ describe('a instructions with no authored instructions', () => {
 // `InstructionsResponseSchema` used `.default(null)` — so an older broker
 // that omits the field had it turned into `null` before the renderer
 // ever saw it, and a new runner confidently told its member "this team
-// has no process document" when the truth was "this broker has no
-// opinion."
+// has none" when the truth was "this broker has no opinion."
 //
 // A renderer-only test cannot catch that. These go through the schema.
 
@@ -140,16 +139,16 @@ describe('the three states survive the parse', () => {
 
     const rendered = composeFixedContext(parsed as InstructionsResponse);
     expect(rendered).toMatch(/unavailable/i);
-    expect(rendered).toMatch(/does not report a process document/i);
+    expect(rendered).toMatch(/does not report a team process/i);
     // And crucially NOT the healthy empty state.
-    expect(rendered).not.toMatch(/no process document has been set/i);
+    expect(rendered).not.toMatch(/none has been set/i);
   });
 
   it('renders an explicit null as "none has been set"', () => {
     const parsed = InstructionsResponseSchema.parse({ ...base, teamProcess: null });
     expect(parsed.teamProcess).toBeNull();
     const rendered = composeFixedContext(parsed as InstructionsResponse);
-    expect(rendered).toMatch(/no process document has been set/i);
+    expect(rendered).toMatch(/none has been set/i);
     expect(rendered).not.toMatch(/unavailable/i);
   });
 
@@ -158,7 +157,7 @@ describe('the three states survive the parse', () => {
     const rendered = composeFixedContext(parsed as InstructionsResponse);
     expect(rendered).toContain('Squash-merge to main.');
     expect(rendered).not.toMatch(/unavailable/i);
-    expect(rendered).not.toMatch(/no process document has been set/i);
+    expect(rendered).not.toMatch(/none has been set/i);
   });
 
   it('gives all three states different renderings', () => {

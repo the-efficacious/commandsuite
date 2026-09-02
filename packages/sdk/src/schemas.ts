@@ -931,7 +931,7 @@ export const ResolveSecretsResponseSchema = z.object({
   secretEnvNames: z.array(z.string()).optional(),
 });
 
-// ─────────────────────── Team process document ────────────────────
+// ─────────────────────── Team team process ────────────────────
 //
 // The team's process as ONE authored document, injected into every
 // member's fixed context. Not a list of rulings: a list is a changelog
@@ -2066,10 +2066,10 @@ export const InstructionsResponseSchema = MemberSchema.extend({
   // omit the field still parse.
   toolSources: z.array(ResolvedToolSourceSchema).default([]),
   /**
-   * The team's process document, or `null` when none is set.
+   * The team process, or `null` when none is set.
    *
    * Its OWN field, and the reason is authority separation: a member
-   * authors their own `instructions`, while the process document is
+   * authors their own `instructions`, while the team process is
    * authored by whoever holds `team_process.manage`. One string would
    * collapse two authorities into one field.
    *

@@ -4,7 +4,7 @@
  * document.
  *
  * WHY THE DOCUMENT ARRIVES IN ITS OWN FIELD: a member authors their
- * own `instructions`; the process document is authored by whoever
+ * own `instructions`; the team process is authored by whoever
  * holds `team_process.manage`. One string collapses two authorities into
  * one field. (A wire cap once also motivated the split; every cap-era
  * reason is dead — the cap in #129, the legacy-runner accommodation
@@ -21,7 +21,7 @@
  *
  * The middle one is the silent-degradation case. Rendering nothing
  * makes the healthy state wear the costume of the broken one — a
- * member operating without a process document cannot tell whether the
+ * member operating without a team process cannot tell whether the
  * team has none or their runner cannot read it. One short line costs
  * a sentence of context and separates them.
  *
@@ -64,21 +64,21 @@ export function renderTeamProcessBlock(doc: TeamProcess | null | undefined): str
     // it is an older broker with no opinion, and telling a member the
     // team has no process when nobody asked the question is a
     // confident wrong answer.
-    return 'Team process: unavailable — this broker does not report a process document.';
+    return 'Team process: unavailable — this broker does not report a team process.';
   }
   if (doc === null) {
     // Deliberately says what IS true rather than staying silent, so a
     // member can tell this apart from a runner that cannot read the
     // field. It also tells an agent the capability exists, which
     // silence does not.
-    return 'Team process: no process document has been set for this team.';
+    return 'Team process: none has been set for this team.';
   }
   return [
     HEADING,
     SUBHEAD,
     SUBHEAD2,
     '',
-    `[process document v${doc.version}, last edited by ${doc.updatedBy}]`,
+    `[team process v${doc.version}, last edited by ${doc.updatedBy}]`,
     '',
     doc.text,
   ].join('\n');

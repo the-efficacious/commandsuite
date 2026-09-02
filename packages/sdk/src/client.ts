@@ -600,17 +600,17 @@ export class Client {
     return ObjectiveSchema.parse(await this.json(resp));
   }
 
-  // ─── Team process document ──────────────────────────────────────
+  // ─── Team team process ──────────────────────────────────────
   // The document reaches a member by injection on the instruction packet. These
   // are for what injection deliberately does not carry: the edit
   // history, and the write path.
 
   /**
-   * The team's process document, or `null` when none has been set.
+   * The team process, or `null` when none has been set.
    * Readable by every member — what binds you is not privileged.
    *
    * `null` is a real state, not a missing resource: a team that has
-   * never written one is a team with no process document, and the
+   * never written one is a team with no team process, and the
    * runner renders that explicitly rather than showing nothing.
    */
   async getTeamProcess(): Promise<TeamProcess | null> {
@@ -633,7 +633,7 @@ export class Client {
   }
 
   /**
-   * Create or edit the process document. Requires `team_process.manage`.
+   * Create or edit the team process. Requires `team_process.manage`.
    *
    * One method for both, because there is one endpoint for both: the
    * first authorised write produces version 1 with a real author and

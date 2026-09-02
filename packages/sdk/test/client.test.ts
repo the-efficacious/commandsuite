@@ -418,7 +418,7 @@ describe('Client', () => {
 // predecessor: the request accepted two fields the record had no
 // column for, so editing them wrote the new value and recorded no
 // prior one — silently, when paired with a field that was tracked.
-describe('process document editable fields', () => {
+describe('team process editable fields', () => {
   const META = ['reason', 'disposition'];
 
   it('has one derived list behind the request, the record and the enum', () => {
@@ -454,7 +454,7 @@ describe('process document editable fields', () => {
 // boundary, where a broker (or a forged payload) sends an edit without
 // it. `.default({})` used to materialise `{}` silently, which is a
 // record the write path never emits.
-describe('process document edit parsing', () => {
+describe('team process edit parsing', () => {
   const valid = {
     version: 2,
     ts: 1,
