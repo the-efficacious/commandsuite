@@ -70,14 +70,14 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
-    "ws": "^8.21.1",
-    "zod": "^4.4.3"
+    "ws": "^8.21.3",
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@types/ws": "^8.18.1",
     "tsup": "^8.0.0",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   },
   "publishConfig": {
     "access": "public"
