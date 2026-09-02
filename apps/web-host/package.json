@@ -1,6 +1,6 @@
 {
   "name": "csuite-web-host",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "OSS web host for CommandSuite — TOTP auth gate + PWA that mounts the shared csuite-web-ui <TeamShell>, served by the self-hosted broker.",
   "license": "Apache-2.0",
   "author": "Efficacious, Inc.",
