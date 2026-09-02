@@ -10,6 +10,19 @@
  * document gets *edited*: superseded content leaves rather than piling
  * up, and its size is bounded by whoever maintains it.
  *
+ * WHY "TEAM PROCESS" AND NOT "PROCESS DOCUMENT". The domain concept is
+ * the team's *process* — operational context a member consults —
+ * and "document" is only the storage shape, which had leaked into the
+ * identifier and framed the thing as a static artifact to fetch. The
+ * permission leaf never carried the word (`process.manage`, now
+ * `team_process.manage`) and neither did the first line of this
+ * file. The qualifier is not optional: a module, type or variable
+ * named bare `process` shadows Node's global — this tree has close to
+ * two hundred `process.*` uses — and reads as the runtime process at
+ * every call site. `team_process` rules that reading out on sight.
+ * The tables, tools, routes, types and permission all carry the same
+ * name so that one grep finds every surface.
+ *
  * WHY THERE IS NO PROVENANCE HERE. Authority is the edit permission
  * and nothing else. The predecessor design carried per-rule
  * provenance, attribution and a disputed status so that "the process editor
@@ -44,36 +57,32 @@
  * the instruction cap — which has since been removed (#122, landed in
  * #129) without changing this decision at all. A member authors their
  * own `instructions`; this is authored by whoever holds
- * `process.manage`. One string collapses two authorities into one
+ * `team_process.manage`. One string collapses two authorities into one
  * field, and that is true at any cap or none.
  *
  * HISTORY IS RETRIEVED, NEVER RESIDENT. Superseded text lives in
- * `process_document_edits` and is served by its own endpoint. What is
+ * `team_process_edits` and is served by its own endpoint. What is
  * injected is the current text and nothing else, so editing fifty
  * times costs exactly what editing once costs. The ceiling on the
- * injected size is `PROCESS_DOCUMENT_MAX` — a real ceiling, unlike the
+ * injected size is `TEAM_PROCESS_MAX` — a real ceiling, unlike the
  * predecessor, which held N rules with nothing capping N.
  */
 
-import { PROCESS_DOCUMENT_FIELDS, ProcessDocumentEditSchema } from 'csuite-sdk/schemas';
-import type {
-  EditProcessDocumentRequest,
-  ProcessDocument,
-  ProcessDocumentEdit,
-} from 'csuite-sdk/types';
+import { TEAM_PROCESS_FIELDS, TeamProcessEditSchema } from 'csuite-sdk/schemas';
+import type { EditTeamProcessRequest, TeamProcess, TeamProcessEdit } from 'csuite-sdk/types';
 import { runInTransaction, type SqlDriver, type SqlStatement } from './sql-driver.js';
 
-export class ProcessDocumentError extends Error {
+export class TeamProcessError extends Error {
   readonly code: 'not_found' | 'invalid_input' | 'corrupt_history';
-  constructor(code: ProcessDocumentError['code'], message: string) {
+  constructor(code: TeamProcessError['code'], message: string) {
     super(message);
-    this.name = 'ProcessDocumentError';
+    this.name = 'TeamProcessError';
     this.code = code;
   }
 }
 
 /** The mutable half of the document — what a write produces. */
-export type EditableFields = Pick<ProcessDocument, 'text'>;
+export type EditableFields = Pick<TeamProcess, 'text'>;
 
 /**
  * Every invariant that must hold of a WHOLE document, in one place,
@@ -91,7 +100,7 @@ export type EditableFields = Pick<ProcessDocument, 'text'>;
 export function assertDocumentInvariants(next: EditableFields): void {
   const text = next.text.trim();
   if (text.length === 0) {
-    throw new ProcessDocumentError(
+    throw new TeamProcessError(
       'invalid_input',
       'the process document cannot be empty — delete is not an edit, and a blank document ' +
         'renders identically to a team that never wrote one',
@@ -103,7 +112,7 @@ const CREATE_SCHEMA = `
   -- Singleton. The id is pinned to 1 by the CHECK so a second row is a
   -- storage error rather than a silent second document that some
   -- queries would find and others would not.
-  CREATE TABLE IF NOT EXISTS process_document (
+  CREATE TABLE IF NOT EXISTS team_process (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     text TEXT NOT NULL,
     version INTEGER NOT NULL,
@@ -116,7 +125,7 @@ const CREATE_SCHEMA = `
   -- Append-only. One row per version INCLUDING version 1, so history
   -- begins at creation with a real author and reason rather than the
   -- document appearing to have always existed.
-  CREATE TABLE IF NOT EXISTS process_document_edits (
+  CREATE TABLE IF NOT EXISTS team_process_edits (
     version INTEGER PRIMARY KEY,
     ts INTEGER NOT NULL,
     actor TEXT NOT NULL,
@@ -126,6 +135,81 @@ const CREATE_SCHEMA = `
     previous TEXT NOT NULL
   );
 `;
+
+/**
+ * The names these tables shipped under before the team-process rename.
+ * Every deployment that wrote a process document before then has rows
+ * under these names, and `process_document_edits` is an append-only
+ * history — dropping it or leaving it behind would be data loss.
+ */
+const LEGACY_TABLES = [
+  { from: 'process_document', to: 'team_process' },
+  { from: 'process_document_edits', to: 'team_process_edits' },
+] as const;
+
+function tableExists(db: SqlDriver, name: string): boolean {
+  const row = db
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .get(name) as { name?: string } | undefined;
+  return row?.name === name;
+}
+
+function countRows(db: SqlDriver, table: string): number {
+  const row = db.prepare(`SELECT count(*) AS n FROM ${table}`).get() as { n: number | bigint };
+  return Number(row.n);
+}
+
+/**
+ * Carry a pre-rename database forward, IN PLACE and ONCE.
+ *
+ * The repo's lazy `ALTER TABLE ... ADD COLUMN` idiom does not cover a
+ * table rename, and the "try it and swallow the expected error" shape
+ * that idiom relies on would be the wrong instrument here anyway: the
+ * states that matter are which tables EXIST, and `sqlite_master`
+ * answers that directly. So this decides from the catalogue rather
+ * than from an error message, and it runs BEFORE `CREATE TABLE IF NOT
+ * EXISTS` — after it, the new tables would always exist and the old
+ * rows would sit stranded beside empty successors.
+ *
+ * Three states, three outcomes:
+ *
+ *   fresh database        neither name exists     no-op; CREATE_SCHEMA
+ *                                                 builds `team_process`
+ *   pre-rename database   only the old name       RENAME — every row,
+ *                                                 every version, kept
+ *   already migrated      only the new name       no-op; opening twice
+ *                                                 is the same as once
+ *
+ * A fourth state arises only from a downgrade AFTER migration: an
+ * older broker's CREATE TABLE IF NOT EXISTS recreates the old name,
+ * empty, beside the renamed one. An empty shell is dropped as the
+ * shell it is. If the shell holds rows, two histories exist and no
+ * rename can say which one binds the team, so this refuses and names
+ * both rather than guess. The pair is handled in one transaction so a
+ * refusal on the second table also undoes whatever happened to the
+ * first.
+ */
+function migrateLegacyTableNames(db: SqlDriver): void {
+  const pending = LEGACY_TABLES.filter((t) => tableExists(db, t.from));
+  if (pending.length === 0) return;
+  runInTransaction(db, () => {
+    for (const { from, to } of pending) {
+      if (!tableExists(db, to)) {
+        db.exec(`ALTER TABLE ${from} RENAME TO ${to}`);
+        continue;
+      }
+      if (countRows(db, from) === 0) {
+        db.exec(`DROP TABLE ${from}`);
+        continue;
+      }
+      throw new Error(
+        `both '${from}' and '${to}' exist and '${from}' holds rows — a downgraded broker ` +
+          'wrote a second history after this database was migrated. Reconcile the two by ' +
+          'hand; refusing to guess which one binds the team.',
+      );
+    }
+  });
+}
 
 interface DocumentRow {
   text: string;
@@ -146,57 +230,58 @@ interface EditRow {
   previous: string;
 }
 
-export interface ProcessDocumentStore {
+export interface TeamProcessStore {
   /** The current document, or `null` when none has ever been written. */
-  get(): ProcessDocument | null;
+  get(): TeamProcess | null;
   /**
    * Create or edit, in one transaction. The first write produces
    * version 1 and records an edit with no prior text.
    */
   write(
-    input: EditProcessDocumentRequest,
+    input: EditTeamProcessRequest,
     actor: string,
     now?: number,
-  ): { document: ProcessDocument; edit: ProcessDocumentEdit };
+  ): { document: TeamProcess; edit: TeamProcessEdit };
   /** Oldest first. Empty when no document has been written. */
-  history(): ProcessDocumentEdit[];
+  history(): TeamProcessEdit[];
 }
 
-class SqliteProcessDocumentStore implements ProcessDocumentStore {
+class SqliteTeamProcessStore implements TeamProcessStore {
   private readonly db: SqlDriver;
   private readonly selectStmt: SqlStatement;
   private readonly selectHistoryStmt: SqlStatement;
 
   constructor(db: SqlDriver) {
     this.db = db;
+    // BEFORE CREATE_SCHEMA — see migrateLegacyTableNames for why the
+    // order is load-bearing.
+    migrateLegacyTableNames(db);
     db.exec(CREATE_SCHEMA);
-    this.selectStmt = db.prepare('SELECT * FROM process_document WHERE id = 1');
-    this.selectHistoryStmt = db.prepare(
-      'SELECT * FROM process_document_edits ORDER BY version ASC',
-    );
+    this.selectStmt = db.prepare('SELECT * FROM team_process WHERE id = 1');
+    this.selectHistoryStmt = db.prepare('SELECT * FROM team_process_edits ORDER BY version ASC');
   }
 
-  get(): ProcessDocument | null {
+  get(): TeamProcess | null {
     const row = this.selectStmt.get() as DocumentRow | undefined;
     return row ? rowToDocument(row) : null;
   }
 
   write(
-    input: EditProcessDocumentRequest,
+    input: EditTeamProcessRequest,
     actor: string,
     now: number = Date.now(),
-  ): { document: ProcessDocument; edit: ProcessDocumentEdit } {
+  ): { document: TeamProcess; edit: TeamProcessEdit } {
     const current = this.get();
 
-    // Change detection is driven by PROCESS_DOCUMENT_FIELDS, derived
+    // Change detection is driven by TEAM_PROCESS_FIELDS, derived
     // from the one shape that also defines what the request accepts
     // and what `previous` can hold. A field cannot be accepted here
     // and go unrecorded, because it is the same list.
-    const fields: ProcessDocumentEdit['fields'] = [];
-    const previous: ProcessDocumentEdit['previous'] = {};
+    const fields: TeamProcessEdit['fields'] = [];
+    const previous: TeamProcessEdit['previous'] = {};
     const next: EditableFields = { text: current?.text ?? '' };
 
-    for (const field of PROCESS_DOCUMENT_FIELDS) {
+    for (const field of TEAM_PROCESS_FIELDS) {
       const incoming = input[field];
       if (incoming === undefined) continue;
       if (current !== null && incoming === current[field]) continue;
@@ -206,15 +291,15 @@ class SqliteProcessDocumentStore implements ProcessDocumentStore {
     }
 
     if (current === null && fields.length === 0) {
-      throw new ProcessDocumentError(
+      throw new TeamProcessError(
         'invalid_input',
-        `no process document exists — the first write must supply ${PROCESS_DOCUMENT_FIELDS.join(', ')}`,
+        `no process document exists — the first write must supply ${TEAM_PROCESS_FIELDS.join(', ')}`,
       );
     }
     if (current !== null && fields.length === 0) {
-      throw new ProcessDocumentError(
+      throw new TeamProcessError(
         'invalid_input',
-        `edit changes nothing — supply ${PROCESS_DOCUMENT_FIELDS.join(', ')} that differs from the current text`,
+        `edit changes nothing — supply ${TEAM_PROCESS_FIELDS.join(', ')} that differs from the current text`,
       );
     }
 
@@ -223,7 +308,7 @@ class SqliteProcessDocumentStore implements ProcessDocumentStore {
     assertDocumentInvariants(next);
 
     const version = (current?.version ?? 0) + 1;
-    const edit: ProcessDocumentEdit = {
+    const edit: TeamProcessEdit = {
       version,
       ts: now,
       actor,
@@ -241,7 +326,7 @@ class SqliteProcessDocumentStore implements ProcessDocumentStore {
       if (current === null) {
         this.db
           .prepare(
-            `INSERT INTO process_document
+            `INSERT INTO team_process
              (id, text, version, created_by, created_at, updated_by, updated_at)
            VALUES (1, ?, ?, ?, ?, ?, ?)`,
           )
@@ -249,13 +334,13 @@ class SqliteProcessDocumentStore implements ProcessDocumentStore {
       } else {
         this.db
           .prepare(
-            'UPDATE process_document SET text = ?, version = ?, updated_by = ?, updated_at = ? WHERE id = 1',
+            'UPDATE team_process SET text = ?, version = ?, updated_by = ?, updated_at = ? WHERE id = 1',
           )
           .run(next.text, version, actor, now);
       }
       this.db
         .prepare(
-          `INSERT INTO process_document_edits
+          `INSERT INTO team_process_edits
            (version, ts, actor, reason, disposition, fields, previous)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
         )
@@ -270,7 +355,7 @@ class SqliteProcessDocumentStore implements ProcessDocumentStore {
         );
     });
 
-    return { document: this.get() as ProcessDocument, edit };
+    return { document: this.get() as TeamProcess, edit };
   }
 
   /**
@@ -299,7 +384,7 @@ class SqliteProcessDocumentStore implements ProcessDocumentStore {
    * so a failure is corruption or a broken invariant, never optional
    * input.
    */
-  history(): ProcessDocumentEdit[] {
+  history(): TeamProcessEdit[] {
     const rows = this.selectHistoryStmt.all() as unknown as EditRow[];
     const edits = rows.map((row, i) => {
       const candidate = {
@@ -311,9 +396,9 @@ class SqliteProcessDocumentStore implements ProcessDocumentStore {
         fields: parseColumn<unknown>(row.fields, row.version, 'fields'),
         previous: parseColumn<unknown>(row.previous, row.version, 'previous'),
       };
-      const parsed = ProcessDocumentEditSchema.safeParse(candidate);
+      const parsed = TeamProcessEditSchema.safeParse(candidate);
       if (!parsed.success) {
-        throw new ProcessDocumentError(
+        throw new TeamProcessError(
           'corrupt_history',
           `process document edit v${row.version} is not a valid history record ` +
             `(row ${i + 1} of ${rows.length}): ` +
@@ -337,7 +422,7 @@ class SqliteProcessDocumentStore implements ProcessDocumentStore {
     // checks above, one level up.
     edits.forEach((edit, i) => {
       if (edit.version !== i + 1) {
-        throw new ProcessDocumentError(
+        throw new TeamProcessError(
           'corrupt_history',
           `process document history is not contiguous — expected v${i + 1} at position ` +
             `${i + 1} and found v${edit.version}. A version is missing, so this is a ` +
@@ -360,7 +445,7 @@ class SqliteProcessDocumentStore implements ProcessDocumentStore {
     const document = this.get();
     const expected = document?.version ?? 0;
     if (edits.length !== expected) {
-      throw new ProcessDocumentError(
+      throw new TeamProcessError(
         'corrupt_history',
         `process document is at v${expected} but history holds ${edits.length} edit(s) — ` +
           `${expected > edits.length ? 'edits are missing' : 'there are more edits than versions'}. ` +
@@ -372,7 +457,7 @@ class SqliteProcessDocumentStore implements ProcessDocumentStore {
   }
 }
 
-function rowToDocument(row: DocumentRow): ProcessDocument {
+function rowToDocument(row: DocumentRow): TeamProcess {
   return {
     text: row.text,
     version: row.version,
@@ -394,7 +479,7 @@ function parseColumn<T>(raw: string, version: number, column: string): T {
   try {
     return JSON.parse(raw) as T;
   } catch (err) {
-    throw new ProcessDocumentError(
+    throw new TeamProcessError(
       'corrupt_history',
       `process document edit v${version} has an unreadable '${column}' column — ` +
         'the retained prior text cannot be trusted, and reporting it as absent would ' +
@@ -403,6 +488,6 @@ function parseColumn<T>(raw: string, version: number, column: string): T {
   }
 }
 
-export function createSqliteProcessDocumentStore(db: SqlDriver): ProcessDocumentStore {
-  return new SqliteProcessDocumentStore(db);
+export function createSqliteTeamProcessStore(db: SqlDriver): TeamProcessStore {
+  return new SqliteTeamProcessStore(db);
 }

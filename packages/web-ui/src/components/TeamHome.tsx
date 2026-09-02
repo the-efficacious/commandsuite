@@ -14,7 +14,7 @@
  */
 
 import { signal } from '@preact/signals';
-import type { Presence, ProcessDocument } from 'csuite-sdk/types';
+import type { Presence, TeamProcess } from 'csuite-sdk/types';
 import { hasPermission } from 'csuite-sdk/types';
 import { useEffect, useState } from 'preact/hooks';
 import { getClient } from '../lib/client.js';
@@ -82,8 +82,8 @@ export function TeamHome({ viewer }: TeamHomeProps) {
       />
 
       <TeamProcessSection
-        doc={b.processDocument}
-        canManage={hasPermission(b.permissions, 'process.manage')}
+        doc={b.teamProcess}
+        canManage={hasPermission(b.permissions, 'team_process.manage')}
       />
 
       <div
@@ -466,7 +466,7 @@ const prcError = signal<string | null>(null);
 
 /**
  * The team's process document, with in-place editing for
- * `process.manage` holders. Edits require a reason and disposition —
+ * `team_process.manage` holders. Edits require a reason and disposition —
  * they land in the document's append-only history and fan out as an
  * instruction event, so every member's runner learns a restart is
  * owed.
@@ -480,7 +480,7 @@ function TeamProcessSection({
   doc,
   canManage,
 }: {
-  doc: ProcessDocument | null | undefined;
+  doc: TeamProcess | null | undefined;
   canManage: boolean;
 }) {
   const busy = prcBusy.value;
@@ -490,7 +490,7 @@ function TeamProcessSection({
     prcBusy.value = true;
     prcError.value = null;
     try {
-      await getClient().writeProcessDocument({
+      await getClient().writeTeamProcess({
         text: prcDraft.value,
         reason: prcReason.value.trim(),
         disposition: prcDisposition.value,

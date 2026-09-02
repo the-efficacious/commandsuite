@@ -84,7 +84,7 @@ appears in the toolbox follows the member's permissions:
 | `tool_sources_*` | The external tool registry | `tools.manage` |
 | `variables_*`, `secrets_*` | Team variables and secrets | `secrets.manage` |
 | `notifications_*` | Inbound notification endpoints | `notifications.manage` |
-| `process_document_*` | The team's process document | reads always; writes need `process.manage` |
+| `team_process_*` | The team's process document | reads always; writes need `team_process.manage` |
 
 The toolbox filtering is a convenience — the broker enforces every
 permission on its own end regardless. Full input and output schemas:

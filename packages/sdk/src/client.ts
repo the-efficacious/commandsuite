@@ -21,11 +21,11 @@ import {
   NOTIFICATION_PATHS,
   OBJECTIVE_PATHS,
   PATHS,
-  PROCESS_DOCUMENT_PATHS,
   PROTOCOL_HEADER,
   PROTOCOL_VERSION,
   RUNNER_VERSION_HEADER,
   SECRET_PATHS,
+  TEAM_PROCESS_PATHS,
   TOOL_SOURCE_PATHS,
   VARIABLE_PATHS,
 } from './protocol.js';
@@ -52,7 +52,7 @@ import {
   DeviceAuthorizationResponseSchema,
   DeviceTokenErrorResponseSchema,
   DeviceTokenResponseSchema,
-  EditProcessDocumentRequestSchema,
+  EditTeamProcessRequestSchema,
   EnrollTotpResponseSchema,
   FsEntryResponseSchema,
   FsListResponseSchema,
@@ -61,8 +61,8 @@ import {
   GetGenaiInferenceResponseSchema,
   GetNotificationEndpointResponseSchema,
   GetObjectiveResponseSchema,
-  GetProcessDocumentResponseSchema,
   GetSecretResponseSchema,
+  GetTeamProcessResponseSchema,
   GetToolSourceResponseSchema,
   GetVariableResponseSchema,
   HealthResponseSchema,
@@ -91,9 +91,6 @@ import {
   NotificationEndpointSchema,
   NotificationProfileSchema,
   ObjectiveSchema,
-  ProcessDocumentEditSchema,
-  ProcessDocumentHistoryResponseSchema,
-  ProcessDocumentSchema,
   PushPayloadSchema,
   PushResultSchema,
   PushSubscriptionResponseSchema,
@@ -113,6 +110,9 @@ import {
   SetSecretValueRequestSchema,
   SetToolCredentialRequestSchema,
   SetVariableValueRequestSchema,
+  TeamProcessEditSchema,
+  TeamProcessHistoryResponseSchema,
+  TeamProcessSchema,
   TeamSchema,
   TeamStatusResponseSchema,
   ToolSourceSchema,
@@ -154,7 +154,7 @@ import type {
   DeviceTokenErrorCode,
   DeviceTokenResponse,
   DiscussObjectiveRequest,
-  EditProcessDocumentRequest,
+  EditTeamProcessRequest,
   EnrollTotpResponse,
   FsEntry,
   FsWriteCollisionStrategy,
@@ -185,8 +185,6 @@ import type {
   NotificationProfileSummary,
   Objective,
   PendingEnrollment,
-  ProcessDocument,
-  ProcessDocumentEdit,
   PushPayload,
   PushResult,
   PushSubscriptionPayload,
@@ -209,6 +207,8 @@ import type {
   SetToolCredentialRequest,
   SetVariableValueRequest,
   Team,
+  TeamProcess,
+  TeamProcessEdit,
   TeamStatusResponse,
   TelemetryRecordRow,
   TokenInfo,
@@ -613,9 +613,9 @@ export class Client {
    * never written one is a team with no process document, and the
    * runner renders that explicitly rather than showing nothing.
    */
-  async getProcessDocument(): Promise<ProcessDocument | null> {
-    const resp = await this.request(PATHS.processDocument);
-    return GetProcessDocumentResponseSchema.parse(await this.json(resp)).document;
+  async getTeamProcess(): Promise<TeamProcess | null> {
+    const resp = await this.request(PATHS.teamProcess);
+    return GetTeamProcessResponseSchema.parse(await this.json(resp)).document;
   }
 
   /**
@@ -627,13 +627,13 @@ export class Client {
    * the current text. It is deliberately not stored: a cached diff is
    * a second copy that can drift from the text it describes.
    */
-  async processDocumentHistory(): Promise<ProcessDocumentEdit[]> {
-    const resp = await this.request(PROCESS_DOCUMENT_PATHS.history);
-    return ProcessDocumentHistoryResponseSchema.parse(await this.json(resp)).edits;
+  async teamProcessHistory(): Promise<TeamProcessEdit[]> {
+    const resp = await this.request(TEAM_PROCESS_PATHS.history);
+    return TeamProcessHistoryResponseSchema.parse(await this.json(resp)).edits;
   }
 
   /**
-   * Create or edit the process document. Requires `process.manage`.
+   * Create or edit the process document. Requires `team_process.manage`.
    *
    * One method for both, because there is one endpoint for both: the
    * first authorised write produces version 1 with a real author and
@@ -641,19 +641,19 @@ export class Client {
    * creation path would need its own validation and would not be
    * exercised by the edit tests.
    */
-  async writeProcessDocument(
-    payload: EditProcessDocumentRequest,
-  ): Promise<{ document: ProcessDocument; edit: ProcessDocumentEdit }> {
-    const validated = EditProcessDocumentRequestSchema.parse(payload);
-    const resp = await this.request(PATHS.processDocument, {
+  async writeTeamProcess(
+    payload: EditTeamProcessRequest,
+  ): Promise<{ document: TeamProcess; edit: TeamProcessEdit }> {
+    const validated = EditTeamProcessRequestSchema.parse(payload);
+    const resp = await this.request(PATHS.teamProcess, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(validated),
     });
     const body = (await this.json(resp)) as { document: unknown; edit: unknown };
     return {
-      document: ProcessDocumentSchema.parse(body.document),
-      edit: ProcessDocumentEditSchema.parse(body.edit),
+      document: TeamProcessSchema.parse(body.document),
+      edit: TeamProcessEditSchema.parse(body.edit),
     };
   }
 

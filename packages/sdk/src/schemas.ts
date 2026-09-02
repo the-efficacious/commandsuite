@@ -61,7 +61,9 @@ export const PermissionSchema = z.enum(PERMISSIONS);
 /**
  * A resolved permission list. `objectives.manage` briefly shipped as
  * an aggregate; accept it from those servers/configs and
- * recover the four independent leaves it represented.
+ * recover the four independent leaves it represented. The same table
+ * carries the `process.manage` → `team_process.manage` rename, so a
+ * list written under the old name parses to the new leaf.
  */
 export const PermissionsSchema = z.preprocess(
   (value) =>
@@ -964,10 +966,10 @@ export const ResolveSecretsResponseSchema = z.object({
  *
  * And the document rides in its own response field for a reason that
  * never depended on any cap: a member authors their own
- * `instructions`, this is authored by whoever holds `process.manage`,
+ * `instructions`, this is authored by whoever holds `team_process.manage`,
  * and one string would collapse two authorities into one field.
  */
-export const PROCESS_DOCUMENT_MAX = 16_384;
+export const TEAM_PROCESS_MAX = 16_384;
 
 /**
  * THE single list of what an edit may change.
@@ -988,22 +990,22 @@ export const PROCESS_DOCUMENT_MAX = 16_384;
  * is worth building, not a reason to skip it: the second field is
  * where the defect appears, and by then nobody is thinking about it.
  */
-const EDITABLE_PROCESS_DOCUMENT_SHAPE = {
-  text: z.string().min(1).max(PROCESS_DOCUMENT_MAX),
+const EDITABLE_TEAM_PROCESS_SHAPE = {
+  text: z.string().min(1).max(TEAM_PROCESS_MAX),
 };
 
-type EditableProcessDocumentField = keyof typeof EDITABLE_PROCESS_DOCUMENT_SHAPE;
+type EditableTeamProcessField = keyof typeof EDITABLE_TEAM_PROCESS_SHAPE;
 
 /** Derived from the shape's own keys — not a second list to maintain. */
-export const PROCESS_DOCUMENT_FIELDS = Object.keys(EDITABLE_PROCESS_DOCUMENT_SHAPE) as [
-  EditableProcessDocumentField,
-  ...EditableProcessDocumentField[],
+export const TEAM_PROCESS_FIELDS = Object.keys(EDITABLE_TEAM_PROCESS_SHAPE) as [
+  EditableTeamProcessField,
+  ...EditableTeamProcessField[],
 ];
 
-export const ProcessDocumentFieldSchema = z.enum(PROCESS_DOCUMENT_FIELDS);
+export const TeamProcessFieldSchema = z.enum(TEAM_PROCESS_FIELDS);
 
-export const ProcessDocumentSchema = z.object({
-  text: z.string().min(1).max(PROCESS_DOCUMENT_MAX),
+export const TeamProcessSchema = z.object({
+  text: z.string().min(1).max(TEAM_PROCESS_MAX),
   /** 1 on the first write. Incremented by every edit. */
   version: z.number().int().positive(),
   createdBy: NameSchema,
@@ -1020,7 +1022,7 @@ export const ProcessDocumentSchema = z.object({
  * stood before, retained rather than reconstructed, so the diff the
  * outcome asks for is derived from two stored strings.
  */
-export const ProcessDocumentEditSchema = z
+export const TeamProcessEditSchema = z
   .object({
     /** The version this edit PRODUCED. */
     version: z.number().int().positive(),
@@ -1037,7 +1039,7 @@ export const ProcessDocumentEditSchema = z
      * alone accepts both.
      */
     fields: z
-      .array(ProcessDocumentFieldSchema)
+      .array(TeamProcessFieldSchema)
       .min(1, 'an edit that changed nothing cannot exist — write() rejects it before history')
       .refine((f) => new Set(f).size === f.length, {
         message: 'an edit cannot record the same field twice',
@@ -1058,7 +1060,7 @@ export const ProcessDocumentEditSchema = z
      * corruption and hiding it. Strict also makes the whole-map check
      * below actually whole, rather than true-of-known-keys.
      */
-    previous: z.object(EDITABLE_PROCESS_DOCUMENT_SHAPE).partial().strict(),
+    previous: z.object(EDITABLE_TEAM_PROCESS_SHAPE).partial().strict(),
   })
   .superRefine((edit, ctx) => {
     // RECORD-LEVEL INVARIANT, not a shape check.
@@ -1128,21 +1130,21 @@ export const ProcessDocumentEditSchema = z
  * invariant validator is exercised through the real path rather than
  * only by a unit test calling it directly.
  */
-export const EditProcessDocumentRequestSchema = z
-  .object(EDITABLE_PROCESS_DOCUMENT_SHAPE)
+export const EditTeamProcessRequestSchema = z
+  .object(EDITABLE_TEAM_PROCESS_SHAPE)
   .partial()
   .extend({
     reason: z.string().min(1).max(2048),
     disposition: AmendmentDispositionSchema,
   });
 
-export const GetProcessDocumentResponseSchema = z.object({
+export const GetTeamProcessResponseSchema = z.object({
   /** `null` when no document has been set — an explicit state, not an absent field. */
-  document: ProcessDocumentSchema.nullable(),
+  document: TeamProcessSchema.nullable(),
 });
 
-export const ProcessDocumentHistoryResponseSchema = z.object({
-  edits: z.array(ProcessDocumentEditSchema),
+export const TeamProcessHistoryResponseSchema = z.object({
+  edits: z.array(TeamProcessEditSchema),
 });
 
 // ────────────────────────── Variables ─────────────────────────────
@@ -2048,7 +2050,7 @@ export const InstructionBlockKindSchema = z.enum([
   'team_context',
   'role_description',
   'personal_instructions',
-  'process_document',
+  'team_process',
 ]);
 
 export const InstructionBlockDescriptorSchema = z.object({
@@ -2068,7 +2070,7 @@ export const InstructionsResponseSchema = MemberSchema.extend({
    *
    * Its OWN field, and the reason is authority separation: a member
    * authors their own `instructions`, while the process document is
-   * authored by whoever holds `process.manage`. One string would
+   * authored by whoever holds `team_process.manage`. One string would
    * collapse two authorities into one field.
    *
    * THREE states, and `.default(null)` would destroy the one that
@@ -2083,9 +2085,9 @@ export const InstructionsResponseSchema = MemberSchema.extend({
    *   null       -> no document has been set
    *   document   -> render it
    */
-  processDocument: ProcessDocumentSchema.nullable().optional(),
+  teamProcess: TeamProcessSchema.nullable().optional(),
   // Optional: absent from brokers that predate the instruction-block
-  // model. Same reasoning as processDocument's absent state — a
+  // model. Same reasoning as teamProcess's absent state — a
   // missing field is an older broker, not an empty answer.
   blocks: z.array(InstructionBlockDescriptorSchema).optional(),
   composedSha256: z

@@ -86,7 +86,7 @@ const MINIMAL_PACKET: InstructionsResponse = {
   teammates: [],
   openObjectives: [],
   toolSources: [],
-  processDocument: null,
+  teamProcess: null,
 };
 
 const THREAD_A = '019f0000-0000-7000-8000-00000000000a';
@@ -162,7 +162,7 @@ describe('spawnCodex — resume', () => {
       threadId: THREAD_B,
       cwd: '/tmp',
       // Composed, not the raw instructions string: the runner hands the
-      // agent `instructions` PLUS the process-document block. With no
+      // agent `instructions` PLUS the team-process block. With no
       // document set that block is an explicit line rather than
       // nothing, so a member can tell "the team has no process" apart
       // from "my runner cannot read that field".

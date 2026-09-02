@@ -28,10 +28,10 @@ import type {
   InstructionBlockKind,
   InstructionsResponse,
   Member,
-  ProcessDocument,
   ResolvedToolSource,
   Team,
   Teammate,
+  TeamProcess,
 } from 'csuite-sdk/types';
 import { sha256Hex } from './hashing.js';
 
@@ -57,7 +57,7 @@ export interface ComposeInstructionsInput {
    * input. A reminder closes this instance; the type closes the
    * mechanism for whatever field is added next.
    */
-  processDocument: ProcessDocument | null;
+  teamProcess: TeamProcess | null;
   self: Member;
   team: Team;
   /** Version loaded by the broker process composing this response. */
@@ -126,12 +126,12 @@ export function composeInstructions(input: ComposeInstructionsInput): Instructio
     toolSources: input.toolSources ?? [],
     // The team's process document rides HERE, never inside
     // `instructions`: a member authors their own `instructions`, the
-    // process document is authored by whoever holds `process.manage`,
+    // process document is authored by whoever holds `team_process.manage`,
     // and one string would collapse two authorities into one field.
     // (A wire cap once also motivated the split; every cap-era reason
     // is dead and the split stands on authority separation alone —
     // do not merge them on the grounds that the cap is gone.)
-    processDocument: input.processDocument ?? null,
+    teamProcess: input.teamProcess ?? null,
   };
 }
 
@@ -180,7 +180,7 @@ export async function composedInstructionsSha256(input: ComposeInstructionsInput
   delete canonical.brokerVersion;
   delete canonical.runnerVersion;
   const composed = composeInstructions(canonical);
-  return sha256Hex(`${composed.instructions}\n\u0000\n${input.processDocument?.text ?? ''}`);
+  return sha256Hex(`${composed.instructions}\n\u0000\n${input.teamProcess?.text ?? ''}`);
 }
 
 /**
@@ -195,7 +195,7 @@ export async function composedInstructionsSha256(input: ComposeInstructionsInput
  *
  * The process document is not in that string and never will be — it
  * rides in its own response field, because a member authors their
- * `instructions` and whoever holds `process.manage` authors this, and
+ * `instructions` and whoever holds `team_process.manage` authors this, and
  * one string would collapse two authorities. So a substring search of
  * the composed prose can only ever return false for it, and adding it
  * to the list above would be a silent no-op rather than a feature.
@@ -229,9 +229,9 @@ export function instructionBlocks(
   // The guard mirrors the store's own invariant — a document that is
   // only whitespace cannot exist — but it decides WHETHER to project,
   // never WHAT to project.
-  const doc = input.processDocument;
+  const doc = input.teamProcess;
   return doc !== null && doc.text.trim().length > 0
-    ? [...composedBlocks, { kind: 'process_document', text: doc.text }]
+    ? [...composedBlocks, { kind: 'team_process', text: doc.text }]
     : composedBlocks;
 }
 

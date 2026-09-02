@@ -52,7 +52,7 @@ describe('composeInstructions', () => {
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
-      processDocument: null,
+      teamProcess: null,
     };
     const packet = composeInstructions(input);
     const exemptions = instructionCaptureExemptions(input);
@@ -67,7 +67,7 @@ describe('composeInstructions', () => {
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
-      processDocument: null,
+      teamProcess: null,
     };
     const personalBlock = ALPHA_1.instructions;
     const composedWithoutPersonal = composeInstructions(input).instructions.replace(
@@ -86,7 +86,7 @@ describe('composeInstructions', () => {
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
-      processDocument: null,
+      teamProcess: null,
     });
     expect(packet.name).toBe('director-1');
     expect(packet.role.title).toBe('director');
@@ -102,7 +102,7 @@ describe('composeInstructions', () => {
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
-      processDocument: null,
+      teamProcess: null,
     });
     expect(packet.instructions).toContain('You: engineer-1');
     expect(packet.instructions).toContain('Your role here: engineer');
@@ -117,7 +117,7 @@ describe('composeInstructions', () => {
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
-      processDocument: null,
+      teamProcess: null,
       brokerVersion: '0.4.0',
       runnerVersion: '0.3.4',
     });
@@ -133,7 +133,7 @@ describe('composeInstructions', () => {
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
-      processDocument: null,
+      teamProcess: null,
     };
     const packet = composeInstructions(input);
     expect(packet.instructions).toContain('CommandSuite/csuite: broker=unknown runner=unknown');
@@ -156,7 +156,7 @@ describe('composeInstructions', () => {
         team: TEAM,
         teammates: TEAMMATES,
         openObjectives: [],
-        processDocument: null,
+        teamProcess: null,
         brokerVersion: 'x'.repeat(64),
         runnerVersion,
       });
@@ -171,7 +171,7 @@ describe('composeInstructions', () => {
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
-      processDocument: null,
+      teamProcess: null,
       brokerVersion: '0.5.0-alpha.20260801+broker',
       runnerVersion: '0.5.0-alpha.20260731+runner',
     });
@@ -186,7 +186,7 @@ describe('composeInstructions', () => {
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
-      processDocument: null,
+      teamProcess: null,
     });
     expect(packet.teammates.some((t) => t.name === 'engineer-1')).toBe(true);
     const linesAfterHeader = packet.instructions
@@ -205,7 +205,7 @@ describe('composeInstructions', () => {
       team: teamNoContext,
       teammates: TEAMMATES,
       openObjectives: [],
-      processDocument: null,
+      teamProcess: null,
     });
     expect(packet.instructions).not.toContain('Context:');
     expect(packet.instructions).toContain(`${teamNoContext.name} CommandSuite/csuite`);
@@ -217,7 +217,7 @@ describe('composeInstructions', () => {
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
-      processDocument: null,
+      teamProcess: null,
     });
     expect(packet.instructions).not.toContain('Personal instructions:');
   });
@@ -228,7 +228,7 @@ describe('composeInstructions', () => {
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
-      processDocument: null,
+      teamProcess: null,
     });
     expect(packet.instructions).toContain('Your own sends are suppressed by the link');
   });
@@ -261,7 +261,7 @@ describe('composeInstructions', () => {
           attachments: [],
         },
       ],
-      processDocument: null,
+      teamProcess: null,
     });
     // openObjectives surfaces on the response body for non-packet callers.
     expect(packet.openObjectives).toHaveLength(1);
@@ -278,7 +278,7 @@ describe('composeInstructions', () => {
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
-      processDocument: null,
+      teamProcess: null,
     });
     expect(packet.instructions).toContain('── Objectives ──');
     expect(packet.instructions).toContain('kind="objective"');
@@ -303,7 +303,7 @@ describe('composeInstructions', () => {
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
-      processDocument: null,
+      teamProcess: null,
     });
     expect(packet.instructions).toContain('thread="primary"');
     expect(packet.instructions).toContain('thread="dm"');

@@ -35,8 +35,9 @@
 
 import { basename } from 'node:path';
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
+import { logger as defaultLogger, type Logger } from 'csuite-core';
 import { type Client as BrokerClient, ClientError } from 'csuite-sdk/client';
-import { PROCESS_DOCUMENT_MAX } from 'csuite-sdk/schemas';
+import { TEAM_PROCESS_MAX } from 'csuite-sdk/schemas';
 import { formatTextMetrics } from 'csuite-sdk/text-metrics';
 import type {
   Attachment,
@@ -527,7 +528,7 @@ export function defineTools(
     // learns what binds it — the document is already in its fixed
     // context. These cover the edit history, which injection
     // deliberately leaves out, and the write path.
-    ...buildProcessDocumentTools(instructions),
+    ...buildTeamProcessTools(instructions),
     // Live team/member management. Each tool is gated
     // on the corresponding `team.manage` or `members.manage`
     // on its exact leaf so other members don't see it in their toolbox.
@@ -1796,15 +1797,15 @@ function buildFilesystemTools(name: string): Tool[] {
  * what binds it. These exist for the two things injection does not
  * carry: the superseded text behind each edit, and the write path.
  *
- * The write gate is `process.manage`, a DEDICATED leaf rather than a
+ * The write gate is `team_process.manage`, a DEDICATED leaf rather than a
  * reuse of an objective permission. Under this design the permission IS
  * the authority — whoever holds it can rewrite what binds the team —
  * and "can direct the team's objectives" is not a comparable power.
  */
-function buildProcessDocumentTools(instructions: InstructionsResponse): Tool[] {
+function buildTeamProcessTools(instructions: InstructionsResponse): Tool[] {
   const tools: Tool[] = [
     {
-      name: 'process_document_get',
+      name: 'team_process_get',
       description:
         "Read the team's process document. **You do not need this to find out what binds " +
         'you** — the current document is already in your fixed context, injected as current ' +
@@ -1816,7 +1817,7 @@ function buildProcessDocumentTools(instructions: InstructionsResponse): Tool[] {
       inputSchema: { type: 'object', properties: {} },
     },
     {
-      name: 'process_document_history',
+      name: 'team_process_history',
       description:
         'Retrieve the edit history of the process document, oldest first. This is the other ' +
         'half of "history retrievable, not resident": your injected context carries only the ' +
@@ -1831,16 +1832,16 @@ function buildProcessDocumentTools(instructions: InstructionsResponse): Tool[] {
     },
   ];
 
-  if (!instructions.permissions.includes('process.manage')) return tools;
+  if (!instructions.permissions.includes('team_process.manage')) return tools;
 
   tools.push({
-    name: 'process_document_write',
+    name: 'team_process_write',
     description:
-      "Create or replace the team's process document. Requires `process.manage`. **This is " +
+      "Create or replace the team's process document. Requires `team_process.manage`. **This is " +
       'the whole authority** — whoever holds this leaf decides what binds every member, so ' +
       'the record of who changed it and why is the only accountability there is. ' +
       '**The text you supply REPLACES the document; it is not appended.** Read it first ' +
-      'with `process_document_get` and send the full new text, or you will delete everything ' +
+      'with `team_process_get` and send the full new text, or you will delete everything ' +
       'you did not retype. The first write creates version 1; every later write increments ' +
       'the version and retains the prior text, editor, reason, and disposition. Every affected ' +
       'runner restarts its agent cold at its next idle boundary under the new version (the ' +
@@ -1855,7 +1856,7 @@ function buildProcessDocumentTools(instructions: InstructionsResponse): Tool[] {
           description:
             'The complete new document, which REPLACES the current text entirely. Not a ' +
             'patch, not an addition. Max ' +
-            String(PROCESS_DOCUMENT_MAX) +
+            String(TEAM_PROCESS_MAX) +
             " characters — it is resident in every member's context in every session, so " +
             'its length is a recurring cost paid by everyone.',
         },
@@ -1968,12 +1969,36 @@ function buildAuthorityTools(instructions: InstructionsResponse): Tool[] {
   return tools;
 }
 
+/**
+ * Log a call that arrived under a tool name the team-process rename
+ * retired.
+ *
+ * DEPRECATION WINDOW — the `process_document_*` cases in the dispatch
+ * switch are accepted for ONE release and are to be REMOVED IN THE
+ * NEXT MINOR, together with this helper. Tool names are not only in
+ * `tools/list`: they are quoted in prose that does not auto-update —
+ * team instructions, the team process text itself, an agent's own
+ * notes — and a caller reading "use `process_document_write`" out of
+ * that prose would be stranded by a hard rename. The aliases are not
+ * advertised; they are a courtesy at the call site, not a listed
+ * capability. This warn line is what makes stale references findable:
+ * it names the alias used and the tool to use instead, so a grep of
+ * the session log for `replacement` lists every one still in play.
+ */
+function warnDeprecatedToolAlias(logger: Logger, alias: string, replacement: string): void {
+  logger.warn('deprecated tool name called — update the reference', {
+    tool: alias,
+    replacement,
+  });
+}
+
 export async function handleToolCall(
   name: string,
   rawArgs: Record<string, unknown> | undefined,
   brokerClient: BrokerClient,
   instructions: InstructionsResponse,
   externalTools: ResolvedToolSource[] = instructions.toolSources,
+  logger: Logger = defaultLogger.child('tools'),
 ): Promise<CallToolResult> {
   const args = rawArgs ?? {};
   try {
@@ -2006,12 +2031,25 @@ export async function handleToolCall(
         return await handleObjectivesComplete(args, brokerClient);
       case 'objectives_create':
         return await handleObjectivesCreate(args, brokerClient, instructions);
+      case 'team_process_get':
+        return await handleTeamProcessGet(brokerClient);
+      case 'team_process_history':
+        return await handleTeamProcessHistory(brokerClient);
+      case 'team_process_write':
+        return await handleTeamProcessWrite(args, brokerClient);
+      // ── DEPRECATED ALIASES — REMOVE IN THE NEXT MINOR ─────────────
+      // Accepted, not advertised: `defineTools` lists only the
+      // `team_process_*` names. See `warnDeprecatedToolAlias` for why
+      // the old names dispatch at all for this one release.
       case 'process_document_get':
-        return await handleProcessDocumentGet(brokerClient);
+        warnDeprecatedToolAlias(logger, name, 'team_process_get');
+        return await handleTeamProcessGet(brokerClient);
       case 'process_document_history':
-        return await handleProcessDocumentHistory(brokerClient);
+        warnDeprecatedToolAlias(logger, name, 'team_process_history');
+        return await handleTeamProcessHistory(brokerClient);
       case 'process_document_write':
-        return await handleProcessDocumentWrite(args, brokerClient);
+        warnDeprecatedToolAlias(logger, name, 'team_process_write');
+        return await handleTeamProcessWrite(args, brokerClient);
       case 'objectives_cancel':
         return await handleObjectivesCancel(args, brokerClient);
       case 'fs_ls':
@@ -2605,8 +2643,8 @@ async function handleObjectivesList(
   return textResult(`${phrase}:\n${lines.join('\n')}`);
 }
 
-async function handleProcessDocumentGet(brokerClient: BrokerClient): Promise<CallToolResult> {
-  const doc = await brokerClient.getProcessDocument();
+async function handleTeamProcessGet(brokerClient: BrokerClient): Promise<CallToolResult> {
+  const doc = await brokerClient.getTeamProcess();
   if (doc === null) {
     return textResult(
       'no process document has been set for this team. That is a real state, not an error — ' +
@@ -2619,8 +2657,8 @@ async function handleProcessDocumentGet(brokerClient: BrokerClient): Promise<Cal
   );
 }
 
-async function handleProcessDocumentHistory(brokerClient: BrokerClient): Promise<CallToolResult> {
-  const edits = await brokerClient.processDocumentHistory();
+async function handleTeamProcessHistory(brokerClient: BrokerClient): Promise<CallToolResult> {
+  const edits = await brokerClient.teamProcessHistory();
   if (edits.length === 0) {
     return textResult('no process document has been set, so there is no history.');
   }
@@ -2632,7 +2670,7 @@ async function handleProcessDocumentHistory(brokerClient: BrokerClient): Promise
     // The FULL prior text, delimited. Rendering a character count
     // here was a real defect: this tool IS the fetch — there is no
     // fetch-by-version — so a count told the one member who holds
-    // `process.manage` that the text exists somewhere they cannot
+    // `team_process.manage` that the text exists somewhere they cannot
     // reach. The description promises the full text; a renderer is a
     // compression step and this is where content gets silently
     // dropped.
@@ -2651,26 +2689,26 @@ async function handleProcessDocumentHistory(brokerClient: BrokerClient): Promise
   );
 }
 
-async function handleProcessDocumentWrite(
+async function handleTeamProcessWrite(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
 ): Promise<CallToolResult> {
   const text = typeof args.text === 'string' ? args.text : '';
   if (!text) {
     return errorResult(
-      'process_document_write: `text` is required, and it REPLACES the whole document — ' +
-        'read the current one with `process_document_get` first',
+      'team_process_write: `text` is required, and it REPLACES the whole document — ' +
+        'read the current one with `team_process_get` first',
     );
   }
   const reason = typeof args.reason === 'string' ? args.reason : '';
-  if (!reason) return errorResult('process_document_write: `reason` is required');
+  if (!reason) return errorResult('team_process_write: `reason` is required');
   if (args.disposition !== 'correction' && args.disposition !== 'scope_change') {
     return errorResult(
-      'process_document_write: `disposition` must be "correction" (retroactive) or ' +
+      'team_process_write: `disposition` must be "correction" (retroactive) or ' +
         '"scope_change" (forward-only)',
     );
   }
-  const { document, edit } = await brokerClient.writeProcessDocument({
+  const { document, edit } = await brokerClient.writeTeamProcess({
     text,
     reason,
     disposition: args.disposition,
@@ -2683,7 +2721,7 @@ async function handleProcessDocumentWrite(
   return textResult(
     `${created ? 'created' : 'updated'} the process document at v${document.version} ` +
       `(${edit.disposition}: ${binding}). ` +
-      `${created ? 'History begins here.' : 'The prior text is retained and retrievable via `process_document_history`.'} ` +
+      `${created ? 'History begins here.' : 'The prior text is retained and retrievable via `team_process_history`.'} ` +
       'Affected runners restart their agents cold at their next idle boundary under the new ' +
       'version (re-briefed on open objectives, not resuming the prior conversation); the ' +
       'roster reports restart-pending until delivery. No broadcast is needed and none was sent.',

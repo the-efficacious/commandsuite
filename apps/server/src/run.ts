@@ -37,8 +37,8 @@ import {
   createSqliteActivityStore,
   createSqliteChannelStore,
   createSqliteObjectivesStore,
-  createSqliteProcessDocumentStore,
   createSqliteSecretsStore,
+  createSqliteTeamProcessStore,
   createSqliteVariablesStore,
   createTelemetryStore,
   logger as defaultLogger,
@@ -470,7 +470,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   // redactor registration below so the identity migration has already
   // moved those rows OUT of `secrets` by the time values are read.
   const variablesStore = createSqliteVariablesStore(db);
-  const processDocumentStore = createSqliteProcessDocumentStore(db);
+  const teamProcessStore = createSqliteTeamProcessStore(db);
   // MUST run before `registerSecretValues` below: identity values that
   // are still in `secrets` when that call happens stay registered for
   // the life of the process, and the migration would appear to have
@@ -760,7 +760,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
     mcpManager,
     secrets: secretsStore,
     variables: variablesStore,
-    processDocument: processDocumentStore,
+    teamProcess: teamProcessStore,
     notifications: notificationsStore,
     activityStore: activityStore,
     telemetryStore: telemetryStore,

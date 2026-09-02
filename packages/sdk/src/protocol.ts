@@ -111,7 +111,7 @@ export const PATHS = {
   // both, merged, and marks which keys are secret.
   variables: '/variables',
   /** The team's process document. Singleton; no id in the path. */
-  processDocument: '/process-document',
+  teamProcess: '/team-process',
   // External Notifications — inbound webhooks / API calls routed to
   // members and channels as ambient input. Admin surface under
   // `/notifications/*` gates on `notifications.manage`; the ingress
@@ -253,8 +253,8 @@ export const SECRET_PATHS = {
 } as const;
 
 /** The process document's edit history — RETRIEVED, never injected. */
-export const PROCESS_DOCUMENT_PATHS = {
-  history: '/process-document/history',
+export const TEAM_PROCESS_PATHS = {
+  history: '/team-process/history',
 } as const;
 
 /** Path builders for variable subresources. Mirrors `SECRET_PATHS`. */

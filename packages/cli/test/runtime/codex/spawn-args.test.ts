@@ -79,7 +79,7 @@ const MINIMAL_PACKET: InstructionsResponse = {
   teammates: [],
   openObjectives: [],
   toolSources: [],
-  processDocument: null,
+  teamProcess: null,
 };
 
 // Plain object (no `as const`) so spread-extension types stay assignable

@@ -26,11 +26,11 @@
 import {
   CLIENT_IDENTITY_HEADER,
   PATHS,
-  PROCESS_DOCUMENT_PATHS,
   PROTOCOL_HEADER,
   PROTOCOL_VERSION,
   RUNNER_IDENTITY_HEADER,
   RUNNER_VERSION_HEADER,
+  TEAM_PROCESS_PATHS,
 } from 'csuite-sdk/protocol';
 import {
   ActivityKindSchema,
@@ -55,7 +55,7 @@ import {
   DeviceAuthorizationRequestSchema,
   DeviceTokenRequestSchema,
   DiscussObjectiveRequestSchema,
-  EditProcessDocumentRequestSchema,
+  EditTeamProcessRequestSchema,
   FsEntrySchema,
   FsMkdirRequestSchema,
   FsMoveRequestSchema,
@@ -158,8 +158,6 @@ import {
   type ObjectivesStore,
   openaiResponsesToGenAi,
   otpauthUri,
-  ProcessDocumentError,
-  type ProcessDocumentStore,
   parseOtlpLogs,
   parseOtlpMetrics,
   redactJson,
@@ -171,6 +169,8 @@ import {
   type SecretsStore,
   type SessionStore,
   sha256Hex,
+  TeamProcessError,
+  type TeamProcessStore,
   type TokenStore,
   validateSlug,
   verifyCode as verifyTotpCode,
@@ -280,11 +280,11 @@ export interface AppOptions {
    */
   variables?: VariablesStore;
   /**
-   * The team's process document. The `/process-document*` endpoints
+   * The team's process document. The `/team-process*` endpoints
    * are registered iff this is provided, and `GET /instructions` carries
    * the current document in its own field.
    */
-  processDocument?: ProcessDocumentStore;
+  teamProcess?: TeamProcessStore;
   /**
    * External Notifications registry — inbound webhook/API endpoints
    * routed to members and channels as ambient input. The
@@ -610,7 +610,7 @@ export function createApp(options: AppOptions): CreatedApp {
     mcpManager,
     secrets,
     variables,
-    processDocument,
+    teamProcess,
     notifications,
     telemetryStore,
     genaiStore,
@@ -761,7 +761,7 @@ export function createApp(options: AppOptions): CreatedApp {
         // refetching /instructions, so omitting the document here means
         // the captured copy is redacted, never matches the sent text,
         // and resends every turn forever.
-        processDocument: processDocument ? processDocument.get() : null,
+        teamProcess: teamProcess ? teamProcess.get() : null,
       })) {
         exemptions.add(block);
       }
@@ -824,7 +824,7 @@ export function createApp(options: AppOptions): CreatedApp {
       // Structured fields only — never rendered into the prose, so
       // they cannot move the hash. See instructions.ts.
       openObjectives: [],
-      processDocument: processDocument ? processDocument.get() : null,
+      teamProcess: teamProcess ? teamProcess.get() : null,
       externalNotificationEndpoints: externalEndpointsFor(self.name),
     });
 
@@ -1334,8 +1334,8 @@ export function createApp(options: AppOptions): CreatedApp {
       // renders it into fixed context; the broker never folds it into
       // the composed `instructions` prose, because that string is
       // authored by the member and this is authored by whoever holds
-      // `process.manage`.
-      processDocument: processDocument ? processDocument.get() : null,
+      // `team_process.manage`.
+      teamProcess: teamProcess ? teamProcess.get() : null,
       externalNotificationEndpoints,
     };
     const packet = composeInstructions(composeInput);
@@ -3329,18 +3329,18 @@ export function createApp(options: AppOptions): CreatedApp {
   // ─── Process document endpoints ───────────────────────────────────
   // The team's process as one authored document. Reads are open to
   // every member — what binds you is not privileged information.
-  // Writes require `process.manage`, a DEDICATED leaf: under this
+  // Writes require `team_process.manage`, a DEDICATED leaf: under this
   // shape the permission is the entire authority, and "can create an
   // objective" is not a comparable power to "can rewrite what binds
   // the team".
-  if (processDocument) {
+  if (teamProcess) {
     const requireProcessManage = (
       // biome-ignore lint/suspicious/noExplicitAny: helper is only ever called inside a route handler
       ctx: Context<any, string, Record<string, unknown>>,
     ): Response | null => {
       const member = ctx.get('member');
-      if (!hasPermission(member.permissions, 'process.manage')) {
-        return ctx.json({ error: 'requires process.manage' }, 403);
+      if (!hasPermission(member.permissions, 'team_process.manage')) {
+        return ctx.json({ error: 'requires team_process.manage' }, 403);
       }
       return null;
     };
@@ -3348,21 +3348,19 @@ export function createApp(options: AppOptions): CreatedApp {
     // `document: null` rather than 404 when none is set. "No document
     // exists" is a real state of a real team, not a missing resource,
     // and a 404 would make the caller guess which it was.
-    app.get(PATHS.processDocument, auth, (c) => c.json({ document: processDocument.get() }));
+    app.get(PATHS.teamProcess, auth, (c) => c.json({ document: teamProcess.get() }));
 
     // RETRIEVED, never resident. This is what keeps the injected size
     // a function of the document rather than of how often it changed.
-    app.get(PROCESS_DOCUMENT_PATHS.history, auth, (c) =>
-      c.json({ edits: processDocument.history() }),
-    );
+    app.get(TEAM_PROCESS_PATHS.history, auth, (c) => c.json({ edits: teamProcess.history() }));
 
     // Create-or-edit through ONE path, so the invariant validator runs
     // on the real endpoint for both and version 1 has a real author.
-    app.put(PATHS.processDocument, auth, async (c) => {
+    app.put(PATHS.teamProcess, auth, async (c) => {
       const denied = requireProcessManage(c);
       if (denied) return denied;
       const raw = await c.req.json().catch(() => null);
-      const parsed = EditProcessDocumentRequestSchema.safeParse(raw);
+      const parsed = EditTeamProcessRequestSchema.safeParse(raw);
       if (!parsed.success) {
         return c.json(
           { error: 'invalid process document payload', details: parsed.error.issues },
@@ -3370,16 +3368,16 @@ export function createApp(options: AppOptions): CreatedApp {
         );
       }
       try {
-        const existed = processDocument.get() !== null;
+        const existed = teamProcess.get() !== null;
         // Snapshot before the write; an edit that stores the same text
         // (version bumps, text identical) moves no hashes and fans out
         // to no one.
         const before = await allComposedHashes();
-        const { document, edit } = processDocument.write(parsed.data, c.get('member').name);
-        await publishInstructionsEvent(['process_document'], c.get('member').name, before);
+        const { document, edit } = teamProcess.write(parsed.data, c.get('member').name);
+        await publishInstructionsEvent(['team_process'], c.get('member').name, before);
         return c.json({ document, edit }, existed ? 200 : 201);
       } catch (err) {
-        if (err instanceof ProcessDocumentError) {
+        if (err instanceof TeamProcessError) {
           return c.json({ error: err.message, code: err.code }, 400);
         }
         return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);

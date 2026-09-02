@@ -33,7 +33,7 @@ function mkPacket(permissions: InstructionsResponse['permissions']): Instruction
     ],
     openObjectives: [],
     toolSources: [],
-    processDocument: null,
+    teamProcess: null,
   };
 }
 

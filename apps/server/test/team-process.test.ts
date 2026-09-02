@@ -16,7 +16,7 @@
  * The tests below are written to fail if either returns.
  */
 
-import { createSqliteProcessDocumentStore, ProcessDocumentError } from 'csuite-core';
+import { createSqliteTeamProcessStore, TeamProcessError } from 'csuite-core';
 import { describe, expect, it } from 'vitest';
 import { openDatabase } from '../src/db.js';
 
@@ -36,7 +36,7 @@ const V2 = [
 ].join('\n');
 
 function store() {
-  return createSqliteProcessDocumentStore(openDatabase(':memory:'));
+  return createSqliteTeamProcessStore(openDatabase(':memory:'));
 }
 
 function seed(s: ReturnType<typeof store>, text = V1, actor = 'AndrewJon') {
@@ -164,7 +164,7 @@ describe('invariants are enforced on the constructed document', () => {
   it('refuses a blank document on CREATE', () => {
     expect(() =>
       store().write({ text: '   ', reason: 'r', disposition: 'correction' }, 'lea', AT),
-    ).toThrow(ProcessDocumentError);
+    ).toThrow(TeamProcessError);
   });
 
   /**
@@ -196,11 +196,11 @@ describe('the write is atomic', () => {
    */
   it('rolls the document back when the history append fails', () => {
     const db = openDatabase(':memory:');
-    const s = createSqliteProcessDocumentStore(db);
+    const s = createSqliteTeamProcessStore(db);
     s.write({ text: V1, reason: 'r', disposition: 'correction' }, 'AndrewJon', AT);
 
     db.exec(`
-      CREATE TRIGGER block_history BEFORE INSERT ON process_document_edits
+      CREATE TRIGGER block_history BEFORE INSERT ON team_process_edits
       BEGIN SELECT RAISE(ABORT, 'history append failed'); END;
     `);
 
@@ -269,10 +269,10 @@ describe('history is retrievable, not resident', () => {
 describe('a corrupt history row is an error, not an empty one', () => {
   function corrupt(column: 'previous' | 'fields') {
     const db = openDatabase(':memory:');
-    const s = createSqliteProcessDocumentStore(db);
+    const s = createSqliteTeamProcessStore(db);
     s.write({ text: V1, reason: 'r', disposition: 'correction' }, 'AndrewJon', AT);
     s.write({ text: V2, reason: 'r', disposition: 'correction' }, 'Lea', AT + 1);
-    db.exec(`UPDATE process_document_edits SET ${column} = '{not json' WHERE version = 2`);
+    db.exec(`UPDATE team_process_edits SET ${column} = '{not json' WHERE version = 2`);
     return s;
   }
 
@@ -311,7 +311,7 @@ describe('a corrupt history row is an error, not an empty one', () => {
 describe('a well-formed but untrue history row is an error', () => {
   function seeded() {
     const db = openDatabase(':memory:');
-    const s = createSqliteProcessDocumentStore(db);
+    const s = createSqliteTeamProcessStore(db);
     s.write({ text: V1, reason: 'r', disposition: 'correction' }, 'AndrewJon', AT);
     s.write({ text: V2, reason: 'r', disposition: 'correction' }, 'Lea', AT + 1);
     return { db, s };
@@ -321,20 +321,20 @@ describe('a well-formed but untrue history row is an error', () => {
     const { db, s } = seeded();
     // Valid JSON. Parses. Would have rendered "created — no prior text"
     // for an edit that demonstrably changed the document.
-    db.exec("UPDATE process_document_edits SET previous = '{}' WHERE version = 2");
+    db.exec("UPDATE team_process_edits SET previous = '{}' WHERE version = 2");
     expect(() => s.history()).toThrow(/retained no prior value/);
     expect(() => s.history()).toThrow(/v2/);
   });
 
   it('rejects fields={} — an object is not an array', () => {
     const { db, s } = seeded();
-    db.exec("UPDATE process_document_edits SET fields = '{}' WHERE version = 2");
+    db.exec("UPDATE team_process_edits SET fields = '{}' WHERE version = 2");
     expect(() => s.history()).toThrow(/not a valid history record/);
   });
 
   it('rejects prior text on version 1, which IS the creation', () => {
     const { db, s } = seeded();
-    db.exec(`UPDATE process_document_edits SET previous = '{"text":"invented"}' WHERE version = 1`);
+    db.exec(`UPDATE team_process_edits SET previous = '{"text":"invented"}' WHERE version = 1`);
     expect(() => s.history()).toThrow(/version 1 is the creation/);
   });
 
@@ -347,13 +347,13 @@ describe('a well-formed but untrue history row is an error', () => {
    */
   it('rejects fields=[] — an edit that changed nothing cannot exist', () => {
     const { db, s } = seeded();
-    db.exec("UPDATE process_document_edits SET fields = '[]' WHERE version = 2");
+    db.exec("UPDATE team_process_edits SET fields = '[]' WHERE version = 2");
     expect(() => s.history()).toThrow(/changed nothing cannot exist/);
   });
 
   it('rejects a repeated field name, which the writer also cannot produce', () => {
     const { db, s } = seeded();
-    db.exec(`UPDATE process_document_edits SET fields = '["text","text"]' WHERE version = 2`);
+    db.exec(`UPDATE team_process_edits SET fields = '["text","text"]' WHERE version = 2`);
     expect(() => s.history()).toThrow(/same field twice/);
   });
 
@@ -377,7 +377,7 @@ describe('a well-formed but untrue history row is an error', () => {
 describe('records the writer cannot produce are rejected on read', () => {
   function seeded() {
     const db = openDatabase(':memory:');
-    const s = createSqliteProcessDocumentStore(db);
+    const s = createSqliteTeamProcessStore(db);
     s.write({ text: V1, reason: 'r', disposition: 'correction' }, 'AndrewJon', AT);
     s.write({ text: V2, reason: 'r', disposition: 'correction' }, 'Lea', AT + 1);
     return { db, s };
@@ -398,7 +398,7 @@ describe('records the writer cannot produce are rejected on read', () => {
    */
   it('rejects fields=[] before the subset rule is ever reached', () => {
     const { db, s } = seeded();
-    db.exec(`UPDATE process_document_edits SET fields = '[]' WHERE version = 2`);
+    db.exec(`UPDATE team_process_edits SET fields = '[]' WHERE version = 2`);
     expect(() => s.history()).toThrow(/changed nothing cannot exist/);
   });
 
@@ -420,13 +420,13 @@ describe('records the writer cannot produce are rejected on read', () => {
    */
   it('rejects fields=[] paired with previous={}, which only min(1) catches', () => {
     const { db, s } = seeded();
-    db.exec(`UPDATE process_document_edits SET fields = '[]', previous = '{}' WHERE version = 2`);
+    db.exec(`UPDATE team_process_edits SET fields = '[]', previous = '{}' WHERE version = 2`);
     expect(() => s.history()).toThrow(/changed nothing cannot exist/);
   });
 
   it('rejects any prior value on version 1, not just prior text', () => {
     const { db, s } = seeded();
-    db.exec(`UPDATE process_document_edits SET previous = '{"text":"invented"}' WHERE version = 1`);
+    db.exec(`UPDATE team_process_edits SET previous = '{"text":"invented"}' WHERE version = 1`);
     expect(() => s.history()).toThrow(/cannot have prior values/);
   });
 
@@ -437,20 +437,20 @@ describe('records the writer cannot produce are rejected on read', () => {
    */
   it('rejects a history with a version deleted out of the middle', () => {
     const db = openDatabase(':memory:');
-    const s = createSqliteProcessDocumentStore(db);
+    const s = createSqliteTeamProcessStore(db);
     s.write({ text: 'one', reason: 'r', disposition: 'correction' }, 'a', AT);
     s.write({ text: 'two', reason: 'r', disposition: 'correction' }, 'b', AT + 1);
     s.write({ text: 'three', reason: 'r', disposition: 'correction' }, 'c', AT + 2);
     expect(s.history()).toHaveLength(3);
 
-    db.exec('DELETE FROM process_document_edits WHERE version = 2');
+    db.exec('DELETE FROM team_process_edits WHERE version = 2');
     expect(() => s.history()).toThrow(/not contiguous/);
     expect(() => s.history()).toThrow(/truncated history being served as a complete one/);
   });
 
   it('rejects a history missing version 1', () => {
     const { db, s } = seeded();
-    db.exec('DELETE FROM process_document_edits WHERE version = 1');
+    db.exec('DELETE FROM team_process_edits WHERE version = 1');
     expect(() => s.history()).toThrow(/not contiguous/);
   });
 });
@@ -467,7 +467,7 @@ describe('records the writer cannot produce are rejected on read', () => {
 describe('history completeness is anchored to the document, not to itself', () => {
   function three() {
     const db = openDatabase(':memory:');
-    const s = createSqliteProcessDocumentStore(db);
+    const s = createSqliteTeamProcessStore(db);
     s.write({ text: 'one', reason: 'r', disposition: 'correction' }, 'a', AT);
     s.write({ text: 'two', reason: 'r', disposition: 'correction' }, 'b', AT + 1);
     s.write({ text: 'three', reason: 'r', disposition: 'correction' }, 'c', AT + 2);
@@ -476,7 +476,7 @@ describe('history completeness is anchored to the document, not to itself', () =
 
   it('rejects deletion of the LAST edit, which contiguity alone cannot see', () => {
     const { db, s } = three();
-    db.exec('DELETE FROM process_document_edits WHERE version = 3');
+    db.exec('DELETE FROM team_process_edits WHERE version = 3');
     // [1,2] is perfectly contiguous. Only the document's own version
     // says an edit is missing.
     expect(() => s.history()).toThrow(/at v3 but history holds 2 edit/);
@@ -485,12 +485,12 @@ describe('history completeness is anchored to the document, not to itself', () =
 
   it('rejects deletion of the ENTIRE history while the document stands', () => {
     const { db, s } = three();
-    db.exec('DELETE FROM process_document_edits');
+    db.exec('DELETE FROM team_process_edits');
     expect(() => s.history()).toThrow(/at v3 but history holds 0 edit/);
   });
 
   it('still returns an empty history for a team with no document', () => {
-    const s = createSqliteProcessDocumentStore(openDatabase(':memory:'));
+    const s = createSqliteTeamProcessStore(openDatabase(':memory:'));
     expect(s.history()).toEqual([]);
   });
 
@@ -508,7 +508,7 @@ describe('history completeness is anchored to the document, not to itself', () =
 describe('previous is required and strict', () => {
   function seeded() {
     const db = openDatabase(':memory:');
-    const s = createSqliteProcessDocumentStore(db);
+    const s = createSqliteTeamProcessStore(db);
     s.write({ text: V1, reason: 'r', disposition: 'correction' }, 'AndrewJon', AT);
     s.write({ text: V2, reason: 'r', disposition: 'correction' }, 'Lea', AT + 1);
     return { db, s };
@@ -518,15 +518,213 @@ describe('previous is required and strict', () => {
     const { db, s } = seeded();
     // Valid JSON. Previously stripped to {} and, on version 1, passed
     // as a clean creation — the reader erasing the evidence.
-    db.exec(`UPDATE process_document_edits SET previous = '{"unknown":"value"}' WHERE version = 1`);
+    db.exec(`UPDATE team_process_edits SET previous = '{"unknown":"value"}' WHERE version = 1`);
     expect(() => s.history()).toThrow();
   });
 
   it('rejects an unknown key alongside a legitimate one', () => {
     const { db, s } = seeded();
     db.exec(
-      `UPDATE process_document_edits SET previous = '{"text":"x","smuggled":"y"}' WHERE version = 2`,
+      `UPDATE team_process_edits SET previous = '{"text":"x","smuggled":"y"}' WHERE version = 2`,
     );
     expect(() => s.history()).toThrow();
+  });
+});
+
+// ─── the table rename carries every row forward ──────────────────────
+
+/**
+ * The tables shipped as `process_document` / `process_document_edits`.
+ * The lazy ADD COLUMN idiom does not cover a rename, so the store runs
+ * an explicit RENAME decided from `sqlite_master`. Three states matter
+ * and each is driven explicitly below: a fresh file, a pre-rename file
+ * holding rows, and a file already migrated. The edits table is an
+ * append-only history, so "every row" is asserted by count AND through
+ * `history()`, whose contiguity and completeness checks refuse a
+ * partial carry-over — a renamed table missing one version would fail
+ * there rather than pass as a shorter history.
+ */
+const LEGACY_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS process_document (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    text TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    created_by TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_by TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS process_document_edits (
+    version INTEGER PRIMARY KEY,
+    ts INTEGER NOT NULL,
+    actor TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    disposition TEXT NOT NULL CHECK(disposition IN ('correction','scope_change')),
+    fields TEXT NOT NULL,
+    previous TEXT NOT NULL
+  );
+`;
+
+const V3 = [
+  'Keep a conversation running before action until I say otherwise.',
+  'Support all work with approved objectives; escalate patches to me.',
+  'Merge commits to main, verified by a partner.',
+].join('\n');
+
+/** Every table name on either side of the rename that exists, sorted. */
+function processTables(db: ReturnType<typeof openDatabase>): string[] {
+  return (
+    db
+      .prepare(
+        `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN
+         ('process_document', 'process_document_edits', 'team_process', 'team_process_edits')
+         ORDER BY name`,
+      )
+      .all() as Array<{ name: string }>
+  ).map((r) => r.name);
+}
+
+/** A pre-rename database as the old store left it: three versions, written the old way. */
+function legacyDatabase() {
+  const db = openDatabase(':memory:');
+  db.exec(LEGACY_SCHEMA);
+  db.prepare(
+    `INSERT INTO process_document (id, text, version, created_by, created_at, updated_by, updated_at)
+     VALUES (1, ?, 3, 'AndrewJon', ?, 'Lea', ?)`,
+  ).run(V3, AT, AT + 2);
+  const edit = db.prepare(
+    `INSERT INTO process_document_edits (version, ts, actor, reason, disposition, fields, previous)
+     VALUES (?, ?, ?, ?, ?, '["text"]', ?)`,
+  );
+  edit.run(1, AT, 'AndrewJon', 'Wrote down how we work.', 'scope_change', '{}');
+  edit.run(
+    2,
+    AT + 1,
+    'Lea',
+    'reversed the merge model',
+    'scope_change',
+    JSON.stringify({ text: V1 }),
+  );
+  edit.run(3, AT + 2, 'Lea', 'named the verifier', 'correction', JSON.stringify({ text: V2 }));
+  return db;
+}
+
+describe('pre-rename tables are renamed in place', () => {
+  it('a fresh database gets the new names straight from CREATE TABLE', () => {
+    const db = openDatabase(':memory:');
+    createSqliteTeamProcessStore(db);
+    expect(processTables(db)).toEqual(['team_process', 'team_process_edits']);
+  });
+
+  it('a pre-rename database is renamed with every version intact', () => {
+    const db = legacyDatabase();
+    // Confirm the fixture is what it claims before reading the verdict.
+    expect(processTables(db)).toEqual(['process_document', 'process_document_edits']);
+
+    const s = createSqliteTeamProcessStore(db);
+
+    expect(processTables(db)).toEqual(['team_process', 'team_process_edits']);
+    expect(s.get()).toEqual({
+      text: V3,
+      version: 3,
+      createdBy: 'AndrewJon',
+      createdAt: AT,
+      updatedBy: 'Lea',
+      updatedAt: AT + 2,
+    });
+    // `history()` re-validates every record, contiguity, and the count
+    // against the document's version — so this is "all three rows,
+    // unchanged", not "some rows".
+    const history = s.history();
+    expect(history.map((e) => e.version)).toEqual([1, 2, 3]);
+    expect(history[0]?.previous).toEqual({});
+    expect(history[1]?.previous.text).toBe(V1);
+    expect(history[2]?.previous.text).toBe(V2);
+    expect(history.map((e) => e.reason)).toEqual([
+      'Wrote down how we work.',
+      'reversed the merge model',
+      'named the verifier',
+    ]);
+
+    // And the renamed tables are live, not a snapshot: the next write
+    // appends v4 on top of the carried-over history.
+    s.write({ text: V1, reason: 'reverted', disposition: 'correction' }, 'AndrewJon', AT + 3);
+    expect(s.history().map((e) => e.version)).toEqual([1, 2, 3, 4]);
+    expect(s.history()[3]?.previous.text).toBe(V3);
+  });
+
+  it('opening an already-migrated database again touches nothing', () => {
+    const db = legacyDatabase();
+    createSqliteTeamProcessStore(db);
+    const rowsBefore = db.prepare('SELECT * FROM team_process_edits ORDER BY version').all();
+    const docBefore = db.prepare('SELECT * FROM team_process WHERE id = 1').get();
+    expect(rowsBefore).toHaveLength(3);
+
+    const again = createSqliteTeamProcessStore(db);
+
+    expect(processTables(db)).toEqual(['team_process', 'team_process_edits']);
+    expect(db.prepare('SELECT * FROM team_process_edits ORDER BY version').all()).toEqual(
+      rowsBefore,
+    );
+    expect(db.prepare('SELECT * FROM team_process WHERE id = 1').get()).toEqual(docBefore);
+    expect(again.history()).toHaveLength(3);
+  });
+
+  it('a database created under the new names never sees the migration', () => {
+    const db = openDatabase(':memory:');
+    const s = createSqliteTeamProcessStore(db);
+    seed(s);
+    s.write({ text: V2, reason: 'r', disposition: 'correction' }, 'Lea', AT + 1);
+    const rowsBefore = db.prepare('SELECT * FROM team_process_edits ORDER BY version').all();
+
+    createSqliteTeamProcessStore(db);
+
+    expect(processTables(db)).toEqual(['team_process', 'team_process_edits']);
+    expect(db.prepare('SELECT * FROM team_process_edits ORDER BY version').all()).toEqual(
+      rowsBefore,
+    );
+  });
+
+  /**
+   * The state a downgrade leaves behind: an older broker ran its own
+   * CREATE TABLE IF NOT EXISTS against a migrated file and recreated
+   * the old names, empty, beside the renamed tables.
+   */
+  it('drops an empty legacy shell left beside the migrated tables', () => {
+    const db = legacyDatabase();
+    const s = createSqliteTeamProcessStore(db);
+    db.exec(LEGACY_SCHEMA);
+    expect(processTables(db)).toHaveLength(4);
+
+    createSqliteTeamProcessStore(db);
+
+    expect(processTables(db)).toEqual(['team_process', 'team_process_edits']);
+    expect(s.get()?.version).toBe(3);
+    expect(s.history()).toHaveLength(3);
+  });
+
+  it('refuses, and moves nothing, when the legacy shell holds rows of its own', () => {
+    const db = legacyDatabase();
+    createSqliteTeamProcessStore(db);
+    db.exec(LEGACY_SCHEMA);
+    // Rows in the EDITS shell only. The empty document shell is dropped
+    // first, so this also proves the refusal rolls that drop back.
+    db.prepare(
+      `INSERT INTO process_document_edits (version, ts, actor, reason, disposition, fields, previous)
+       VALUES (1, ?, 'Cora', 'written on the old broker', 'scope_change', '["text"]', '{}')`,
+    ).run(AT + 9);
+
+    expect(() => createSqliteTeamProcessStore(db)).toThrow(
+      /both 'process_document_edits' and 'team_process_edits' exist/,
+    );
+
+    expect(processTables(db)).toEqual([
+      'process_document',
+      'process_document_edits',
+      'team_process',
+      'team_process_edits',
+    ]);
+    expect(db.prepare('SELECT count(*) AS n FROM team_process_edits').get()).toEqual({ n: 3 });
+    expect(db.prepare('SELECT count(*) AS n FROM process_document_edits').get()).toEqual({ n: 1 });
   });
 });

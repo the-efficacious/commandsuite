@@ -52,7 +52,7 @@ const DIRECTOR_PACKET: InstructionsResponse = {
   ],
   openObjectives: [],
   toolSources: [],
-  processDocument: null,
+  teamProcess: null,
   instructions: 'Lead the team.',
 };
 

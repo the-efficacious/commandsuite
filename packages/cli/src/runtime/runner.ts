@@ -526,7 +526,13 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
     let rebriefedThisConnection = false;
     const conn = createBridgeConnection(socket, {
       handleRequest: async (frame) => {
-        const response = await handleMcpRequest(frame, instructions, brokerClient, externalTools);
+        const response = await handleMcpRequest(
+          frame,
+          instructions,
+          brokerClient,
+          externalTools,
+          log,
+        );
         // First `tools/list` on a fresh bridge connection = the
         // agent's MCP session just came up (new session, or an agent
         // restart against a live runner). Re-assert the open plate as
@@ -890,6 +896,7 @@ async function handleMcpRequest(
   instructions: InstructionsResponse,
   brokerClient: BrokerClient,
   externalTools: ResolvedToolSource[],
+  log: Logger,
 ): Promise<IpcMcpResponse> {
   try {
     if (frame.method === 'tools/list') {
@@ -904,7 +911,7 @@ async function handleMcpRequest(
           ? (params.arguments as Record<string, unknown>)
           : undefined;
       const result = guardCredentialFreeToolResult(
-        await handleToolCall(name, args, brokerClient, instructions, externalTools),
+        await handleToolCall(name, args, brokerClient, instructions, externalTools, log),
       );
       return { kind: 'mcp_response', id: frame.id, result };
     }

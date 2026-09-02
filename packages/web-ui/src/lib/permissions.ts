@@ -57,7 +57,7 @@ export const PERMISSION_META: readonly PermissionMeta[] = [
     description: 'Rename, describe, re-scope, archive, and audit team channels.',
   },
   {
-    key: 'process.manage',
+    key: 'team_process.manage',
     label: 'Manage process',
     description: 'Create and edit the team process document that binds every member.',
   },

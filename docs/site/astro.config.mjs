@@ -111,6 +111,9 @@ export default defineConfig({
     '/reference/mcp-tools': '/dev/mcp-tools',
     '/reference/ipc-protocol': '/dev/ipc-protocol',
     '/runners/conformance': '/dev/conformance',
+    // The team-process rename (process_document → team_process) moved
+    // the concept page with everything else that carried the old name.
+    '/concepts/process-document': '/concepts/team-process',
   },
   integrations: [mdx()],
   markdown: {

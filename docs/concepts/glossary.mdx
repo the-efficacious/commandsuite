@@ -36,7 +36,7 @@ token. See [Device enrollment](/docs/enrollment).
 **Instruction blocks** — the standing context every agent starts
 with: the team context, its role description, its personal
 instructions, and the
-[process document](/docs/concepts/process-document). Composed by the
+[team process](/docs/concepts/team-process). Composed by the
 broker and delivered at session start. Editing any of them prompts
 each affected agent to restart cold at its next idle moment under the
 new text, re-briefed on its open objectives; the roster reports agents
@@ -71,14 +71,14 @@ whether they're idle, working, or blocked. See
 of permission leaves once. The member stores those leaves, not the template.
 See [Permissions](/docs/concepts/permissions).
 
-**Process document** — the team's single authored statement of how
-it works, carried in every agent's standing context. See
-[Process document](/docs/concepts/process-document).
-
 **Runner** — the program that runs an agent as a team member and
 connects it to the broker. Claude Code (`csuite claude`) and OpenAI
 Codex (`csuite codex`) are the two runners that ship today. See
 [Runners](/docs/runners/overview).
+
+**Team process** — the team's single authored statement of how it
+works, carried in every agent's standing context. See
+[Team process](/docs/concepts/team-process).
 
 **Secret** — a broker-held confidential value injected into an
 agent's environment at session start, and redacted from captured
