@@ -10,11 +10,11 @@ import {
 } from '../src/protocol.js';
 import {
   ClientIdentitySchema,
-  EditProcessDocumentRequestSchema,
-  PROCESS_DOCUMENT_FIELDS,
-  ProcessDocumentEditSchema,
+  EditTeamProcessRequestSchema,
+  TEAM_PROCESS_FIELDS,
+  TeamProcessEditSchema,
 } from '../src/schemas.js';
-import type { Message, ProcessDocumentField, PushResult } from '../src/types.js';
+import type { Message, PushResult, TeamProcessField } from '../src/types.js';
 
 /**
  * Minimal stand-in for `ws.WebSocket`. Exposes `.on('message'|'close'|'error')`
@@ -139,7 +139,7 @@ describe('Client', () => {
           teammates: [],
           openObjectives: [],
           toolSources: [],
-          processDocument: null,
+          teamProcess: null,
         });
       }),
     });
@@ -418,31 +418,31 @@ describe('Client', () => {
 // predecessor: the request accepted two fields the record had no
 // column for, so editing them wrote the new value and recorded no
 // prior one — silently, when paired with a field that was tracked.
-describe('process document editable fields', () => {
+describe('team process editable fields', () => {
   const META = ['reason', 'disposition'];
 
   it('has one derived list behind the request, the record and the enum', () => {
-    const requestFields = Object.keys(EditProcessDocumentRequestSchema.shape)
+    const requestFields = Object.keys(EditTeamProcessRequestSchema.shape)
       .filter((k) => !META.includes(k))
       .sort();
     const previousFields = Object.keys(
       // No .unwrap(): `previous` is now a required strict object rather
       // than wrapped in a default, which is the point of the change.
-      ProcessDocumentEditSchema.shape.previous.shape,
+      TeamProcessEditSchema.shape.previous.shape,
     ).sort();
 
     // Every field an edit accepts is a field the record can hold.
     expect(previousFields).toEqual(requestFields);
     // And the enum names exactly those, so `fields` cannot record a
     // name that neither of the other two knows about.
-    expect([...PROCESS_DOCUMENT_FIELDS].sort()).toEqual(requestFields);
+    expect([...TEAM_PROCESS_FIELDS].sort()).toEqual(requestFields);
   });
 
   it('keeps the runtime list and the TS union naming the same set', () => {
     // Fails TYPECHECK, not the test run, if they diverge. `pnpm test`
     // does not typecheck here; `pnpm typecheck` is the gate.
-    const runtimeIsInUnion: ProcessDocumentField[] = [...PROCESS_DOCUMENT_FIELDS];
-    const unionIsInRuntime: (typeof PROCESS_DOCUMENT_FIELDS)[number][] = runtimeIsInUnion;
+    const runtimeIsInUnion: TeamProcessField[] = [...TEAM_PROCESS_FIELDS];
+    const unionIsInRuntime: (typeof TEAM_PROCESS_FIELDS)[number][] = runtimeIsInUnion;
     expect(unionIsInRuntime.length).toBeGreaterThan(0);
   });
 });
@@ -454,7 +454,7 @@ describe('process document editable fields', () => {
 // boundary, where a broker (or a forged payload) sends an edit without
 // it. `.default({})` used to materialise `{}` silently, which is a
 // record the write path never emits.
-describe('process document edit parsing', () => {
+describe('team process edit parsing', () => {
   const valid = {
     version: 2,
     ts: 1,
@@ -466,7 +466,7 @@ describe('process document edit parsing', () => {
   };
 
   it('accepts a well-formed edit, so the negatives below mean something', () => {
-    expect(ProcessDocumentEditSchema.safeParse(valid).success).toBe(true);
+    expect(TeamProcessEditSchema.safeParse(valid).success).toBe(true);
   });
 
   /**
@@ -482,15 +482,15 @@ describe('process document edit parsing', () => {
    */
   it('rejects a version-1 edit with `previous` omitted, which only `required` catches', () => {
     const creation = { ...valid, version: 1, previous: {} };
-    expect(ProcessDocumentEditSchema.safeParse(creation).success).toBe(true);
+    expect(TeamProcessEditSchema.safeParse(creation).success).toBe(true);
 
     const { previous: _omitted, ...withoutPrevious } = creation;
-    expect(ProcessDocumentEditSchema.safeParse(withoutPrevious).success).toBe(false);
+    expect(TeamProcessEditSchema.safeParse(withoutPrevious).success).toBe(false);
   });
 
   it('rejects an unknown key in `previous` rather than stripping it', () => {
     const forged = { ...valid, previous: { text: 'before', smuggled: 'x' } };
-    expect(ProcessDocumentEditSchema.safeParse(forged).success).toBe(false);
+    expect(TeamProcessEditSchema.safeParse(forged).success).toBe(false);
   });
 });
 

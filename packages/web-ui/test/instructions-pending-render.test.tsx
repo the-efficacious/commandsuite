@@ -11,7 +11,7 @@
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/preact';
 import { Client } from 'csuite-sdk/client';
-import type { InstructionsResponse, ProcessDocument, RosterResponse } from 'csuite-sdk/types';
+import type { InstructionsResponse, RosterResponse, TeamProcess } from 'csuite-sdk/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { __resetTeamHomeForTests, TeamHome } from '../src/components/TeamHome.js';
 import { __resetClientForTests, setClient } from '../src/lib/client.js';
@@ -19,7 +19,7 @@ import { instructions } from '../src/lib/instructions.js';
 import { objectives as objectivesSignal } from '../src/lib/objectives.js';
 import { roster } from '../src/lib/roster.js';
 
-const DOC: ProcessDocument = {
+const DOC: TeamProcess = {
   text: 'Keep a conversation running before action.\nSquash-merge to main.',
   version: 3,
   createdBy: 'director-1',
@@ -32,7 +32,7 @@ function packetWith(overrides: Partial<InstructionsResponse> = {}): Instructions
   return {
     name: 'director-1',
     role: { title: 'director', description: '' },
-    permissions: ['members.manage', 'team.manage', 'process.manage'],
+    permissions: ['members.manage', 'team.manage', 'team_process.manage'],
     team: { name: 'demo-team', context: 'Short context.', permissionPresets: {} },
     teammates: [
       {
@@ -44,7 +44,7 @@ function packetWith(overrides: Partial<InstructionsResponse> = {}): Instructions
     ],
     openObjectives: [],
     toolSources: [],
-    processDocument: DOC,
+    teamProcess: DOC,
     instructions: '',
     ...overrides,
   };
@@ -120,8 +120,8 @@ describe('the team process panel', () => {
     ).toBeTruthy();
   });
 
-  it('offers creation to a process.manage holder when no document is set', () => {
-    instructions.value = packetWith({ processDocument: null });
+  it('offers creation to a team_process.manage holder when no document is set', () => {
+    instructions.value = packetWith({ teamProcess: null });
     render(<TeamHome viewer="director-1" />);
 
     expect(screen.getByText('+ Add team process')).toBeTruthy();
@@ -129,7 +129,7 @@ describe('the team process panel', () => {
 
   it('renders nothing for a non-manager when no document is set', () => {
     instructions.value = packetWith({
-      processDocument: null,
+      teamProcess: null,
       permissions: [],
     });
     render(<TeamHome viewer="director-1" />);
@@ -143,19 +143,17 @@ describe('the team process panel', () => {
     // screen: absent is an older broker, and claiming "no process"
     // for it would be the UI answering a question nobody evaluated.
     const b = packetWith();
-    delete (b as { processDocument?: unknown }).processDocument;
+    delete (b as { teamProcess?: unknown }).teamProcess;
     instructions.value = b;
     render(<TeamHome viewer="director-1" />);
 
     expect(
-      screen.getByText(
-        'Team process: unavailable — this broker does not report a process document.',
-      ),
+      screen.getByText('Team process: unavailable — this broker does not report a team process.'),
     ).toBeTruthy();
     expect(screen.queryByText('+ Add team process')).toBeNull();
   });
 
-  it('submits an edit as PUT /process-document with reason and disposition', async () => {
+  it('submits an edit as PUT /team-process with reason and disposition', async () => {
     const puts: Array<{ url: string; body: Record<string, unknown> }> = [];
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -210,7 +208,7 @@ describe('the team process panel', () => {
 
     // The consumer is the broker; what it reads is this request.
     expect(puts).toHaveLength(1);
-    expect(puts[0]?.url).toContain('/process-document');
+    expect(puts[0]?.url).toContain('/team-process');
     expect(puts[0]?.body).toEqual({
       text: 'Revised process.',
       reason: 'tightened the merge rule',

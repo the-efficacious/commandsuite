@@ -156,7 +156,7 @@ export function startSubscribe(options: StartSubscribeOptions): () => void {
         }
         if (data && data.kind === 'instructions') {
           // An instruction-bearing edit landed. Both the packet (team
-          // context / process document prose) and the roster's
+          // context / team process prose) and the roster's
           // restart-pending list are stale; the 10s roster poll would
           // catch up, but the badge appearing the moment the edit
           // fans out is the point of the event.

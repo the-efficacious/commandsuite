@@ -22,7 +22,7 @@ import {
   Broker,
   composedInstructionsSha256,
   createApp,
-  createSqliteProcessDocumentStore,
+  createSqliteTeamProcessStore,
   createTokenStoreFromMembers,
   InMemoryEventLog,
   SqliteSessionStore,
@@ -45,7 +45,7 @@ async function makeApp() {
     {
       name: 'andrewjon',
       role: { title: 'director', description: 'Owns the seam.' },
-      permissions: ['team.manage', 'members.manage', 'process.manage'],
+      permissions: ['team.manage', 'members.manage', 'team_process.manage'],
       token: ADMIN,
     },
     {
@@ -73,7 +73,7 @@ async function makeApp() {
       context: 'We ship small and verify by mutating.',
       permissionPresets: {},
     }),
-    processDocument: createSqliteProcessDocumentStore(db),
+    teamProcess: createSqliteTeamProcessStore(db),
     persistMembers: () => {},
     version: '0.0.0',
     logger: silentLogger(),
@@ -185,7 +185,7 @@ describe('composedInstructionsSha256 canonicalization', () => {
       team: { name: 'demo-team', context: 'ctx', permissionPresets: {} },
       teammates: [],
       openObjectives: [],
-      processDocument: null,
+      teamProcess: null,
     };
     const bare = await composedInstructionsSha256(base);
     const versioned = await composedInstructionsSha256({

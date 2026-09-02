@@ -150,6 +150,14 @@ export class MemberLoadError extends Error {
  * preset-era named bundles into a flat, deduplicated array of leaf
  * permissions. Unknown names throw `MemberLoadError` with the
  * offending entry called out.
+ *
+ * This is ALSO where a renamed leaf is carried forward. `raw_permissions`
+ * is stored verbatim, so a member (or a stored preset) written under
+ * `process.manage` still says so on disk; `LEGACY_PERMISSION_EXPANSIONS`
+ * maps it to `team_process.manage` here, on every read, and no row is
+ * ever rewritten. Both branches below consult that table — a direct
+ * member entry and a leaf inside a preset — so the alias holds
+ * whichever way the old name was stored.
  */
 export function resolvePermissions(
   raw: readonly string[],

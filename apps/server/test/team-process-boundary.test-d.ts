@@ -28,7 +28,7 @@
  */
 
 import { assertDocumentInvariants, type EditableFields } from 'csuite-core';
-import type { EditProcessDocumentRequest } from 'csuite-sdk/types';
+import type { EditTeamProcessRequest } from 'csuite-sdk/types';
 
 // ─── the positive control ────────────────────────────────────────────
 // A fully constructed document is what the validator is for. If this
@@ -40,7 +40,7 @@ assertDocumentInvariants(constructed);
 // The whole request, as the route receives it. `text` is optional here
 // and required on the document, so this is the shape that could smuggle
 // "I did not mention that field" past a whole-record invariant.
-declare const request: EditProcessDocumentRequest;
+declare const request: EditTeamProcessRequest;
 // @ts-expect-error criterion 6: the edit request is a delta and must not be validatable
 assertDocumentInvariants(request);
 
