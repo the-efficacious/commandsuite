@@ -611,10 +611,17 @@ describe('TranscriptReader', () => {
     });
     await waitFor(() => prompts().includes('a-1'));
 
-    // Give A a fat tail, then park the next drain inside open().
-    appendFileSync(pathA, `${userLine('a-2', 2, 'x'.repeat(2000))}\n`);
+    // Park a drain inside open() BEFORE A grows. Arming after the append
+    // raced: the 25ms poll (and fs.watch) could consume 'a-2' legitimately
+    // in the window between the two statements, which is a pass locally and
+    // a failure under CI timing. The parked drain opens A while it still
+    // ends at 'a-1', so its snapshot offset sits before the tail; it stats
+    // and reads that tail only after release.
     openGate.armed = true;
     await waitFor(() => openGate.pending.length > 0);
+
+    // Now give A a fat tail. Only the parked drain can observe it.
+    appendFileSync(pathA, `${userLine('a-2', 2, 'x'.repeat(2000))}\n`);
 
     // Flip the path while that drain is parked. B is shorter than A's
     // unread tail, so a stale commit would put B's offset past its end.
