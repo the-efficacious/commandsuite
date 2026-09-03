@@ -482,6 +482,131 @@ describe('ingress verification', () => {
     expect(deliveries[0]).toMatchObject({ status: 'delivered', deliveredAt: 1_700_000_000_100 });
   });
 
+  it('a receipt never reads delivered for a message the subscription died holding (#263)', async () => {
+    // The two halves of this property were previously pinned by two tests that
+    // never met: a ledger test that kills a subscription but reads
+    // `acknowledgement`, and the receipt test above that reads a receipt but
+    // never closes the subscription. Either can stay green while the dispatcher
+    // mapping or the disposition-listener wiring between them drifts. This one
+    // walks the whole path through the public surface, so the seam itself is
+    // under test rather than the two things either side of it.
+    const ctx = await makeApp();
+    await createEndpoint(ctx);
+
+    const liveness = {
+      kind: 'runner' as const,
+      runnerIdentity: {
+        runner: 'stub' as const,
+        modelId: 'test',
+        runnerVersion: 'test',
+        runnerBuildSource: 'main' as const,
+        deliveryProtocol: 'disposition-v1' as const,
+        livenessProtocol: 'runner-state-v1' as const,
+      },
+    };
+    const readReceipt = async () => {
+      const resp = await ctx.app.request(
+        '/notifications/endpoints/ci-alerts/deliveries',
+        authed(ADMIN),
+      );
+      const { deliveries } = (await resp.json()) as {
+        deliveries: Array<{ status: string; deliveredAt: number | null }>;
+      };
+      return deliveries[0];
+    };
+
+    // 1. An ack-capable subscription is live and takes the bytes. A runner that
+    //    advertises the liveness protocol is not handed mail until it reports
+    //    ready — that is the lease rule, so the first runner declares itself
+    //    ready exactly as the successor does below.
+    const held: Message[] = [];
+    const first = {
+      name: 'builder',
+      clientIdentity: liveness,
+      subscriptionId: 'sub-first',
+    } as const;
+    const unsubscribe = ctx.broker.subscribe(
+      'builder',
+      (m) => {
+        held.push(m);
+      },
+      first,
+    );
+    await ctx.broker.runnerCondition(
+      'builder',
+      { kind: 'runner_condition', at: 1_700_000_000_100, state: 'ready' },
+      first,
+    );
+    const body = '{"state":"failed"}';
+    const accepted = await ctx.app.request(
+      '/hooks/ci-alerts',
+      hookPost(body, { 'X-Hub-Signature-256': sign(body) }),
+    );
+    expect(accepted.status).toBe(202);
+    expect(((await accepted.json()) as { status: string }).status).toBe('pending');
+    await settle();
+    // Selected by provenance, not by position. Reporting ready also flushes the
+    // endpoint-creation notice, which was pushed to builder before any
+    // subscription existed and is pending for the same reason the hook message
+    // is about to be — so `held[0]` is that notice, not this delivery.
+    const hookMessage = held.find((m) => m.from === 'hook:ci-alerts');
+    expect(hookMessage).toBeDefined();
+    const messageId = hookMessage?.id ?? '';
+
+    // 2. The runner dies mid-window, before any disposition.
+    unsubscribe();
+    await settle();
+
+    // 3. The receipt — the thing an operator reads — must still say pending.
+    //    This is the assertion the outcome names: never a lost `delivered`.
+    const orphaned = await readReceipt();
+    expect(orphaned?.status).toBe('pending');
+    expect(orphaned?.status).not.toBe('delivered');
+    expect(orphaned?.deliveredAt).toBeNull();
+
+    // 4. A successor reports ready and is handed the same message.
+    const redelivered: Message[] = [];
+    ctx.broker.subscribe(
+      'builder',
+      (m) => {
+        redelivered.push(m);
+      },
+      { name: 'builder', clientIdentity: liveness, subscriptionId: 'sub-successor' },
+    );
+    const successor = {
+      name: 'builder',
+      clientIdentity: liveness,
+      subscriptionId: 'sub-successor',
+    } as const;
+    await ctx.broker.runnerCondition(
+      'builder',
+      { kind: 'runner_condition', at: 1_700_000_000_200, state: 'ready' },
+      successor,
+    );
+    await settle();
+    expect(redelivered.map((m) => m.id)).toContain(messageId);
+
+    // Redelivery alone is not settlement — the receipt has not moved.
+    expect((await readReceipt())?.status).toBe('pending');
+
+    // 5. Only when the successor genuinely acts does the receipt say delivered.
+    await ctx.broker.disposition(
+      'builder',
+      { kind: 'message_disposition', messageId, disposition: 'accepted', at: 1_700_000_000_300 },
+      successor,
+    );
+    await ctx.broker.disposition(
+      'builder',
+      { kind: 'message_disposition', messageId, disposition: 'handled', at: 1_700_000_000_400 },
+      successor,
+    );
+    await settle();
+    expect(await readReceipt()).toMatchObject({
+      status: 'delivered',
+      deliveredAt: 1_700_000_000_400,
+    });
+  });
+
   it('dedupes provider retries on the configured header', async () => {
     const ctx = await makeApp();
     await createEndpoint(ctx, { dedupeHeader: 'x-github-delivery' });
