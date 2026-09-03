@@ -5,6 +5,19 @@ CommandSuite versions in lockstep — one version per release train —
 so each section below is one release. Per-package `CHANGELOG.md`
 files still ship inside every npm tarball.
 
+## 0.10.1 (2026-09-03)
+
+### csuite
+
+#### Patch Changes
+
+- [#304](https://github.com/the-efficacious/commandsuite/pull/304) [`a24da10`](https://github.com/the-efficacious/commandsuite/commit/a24da10526cfe7809edb8effd58c9623bbed6dd0) Thanks [@keencaliper](https://github.com/keencaliper)! - Gate inventory records who has seen each gate refuse. Process v5 rules that a
+  gate only its author has seen refuse is not yet known to be one. Seven rows were
+  falsified by Cora alone and two were independently reproduced by Rune; the
+  remaining four are bootstrap (not falsified), CodeQL and dependency-review
+  (cannot be falsified here) and release (n/a). The table previously presented all
+  of these in one column.
+
 ## 0.10.0 (2026-09-02)
 
 ### csuite-cli
