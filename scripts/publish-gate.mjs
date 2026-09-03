@@ -140,7 +140,7 @@ function assertReleaseBuildSource() {
     throw new Error(
       `publish gate: built CLI reports "${reported}", expected exactly "${expected}".\n` +
         '  A release must print a clean version. Build metadata here means the build did not\n' +
-        '  receive CSUITE_BUILD_SOURCE=npm — check that turbo.json\'s build task still declares\n' +
+        "  receive CSUITE_BUILD_SOURCE=npm — check that turbo.json's build task still declares\n" +
         '  it under "env", or Turbo drops it before tsup and this gate silently publishes a\n' +
         '  release that reports itself as a dev build.',
     );
