@@ -1,5 +1,13 @@
 # csuite-web-host
 
+## 0.10.1
+
+### Patch Changes
+
+- Updated dependencies []:
+  - csuite-sdk@0.10.1
+  - csuite-web-ui@0.10.1
+
 ## 0.10.0
 
 ### Patch Changes
