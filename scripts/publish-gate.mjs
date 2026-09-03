@@ -114,12 +114,53 @@ export function payloadDigest(dir, manifest) {
   return hash.digest('hex');
 }
 
+/**
+ * Prove the release build actually took the npm build source.
+ *
+ * Setting CSUITE_BUILD_SOURCE is not evidence that anything received it.
+ * Turbo runs tasks in strict env mode, so a variable not declared on the
+ * task is dropped before tsup sees it — which is how every release up to
+ * 0.9.0 shipped baked as a `main` build while this gate set the flag and
+ * looked like it worked. The env is set two lines up; that line is the
+ * thing under test, so it cannot also be the check.
+ *
+ * The CLI half is a proof: it runs the built artifact and reads what a
+ * user would read. The server half is a tripwire: it matches a spelling
+ * in the bundle, which is weaker, and is labelled so rather than dressed
+ * up as the same thing.
+ */
+function assertReleaseBuildSource() {
+  const cliDist = resolve(REPO_ROOT, 'packages/cli/dist/index.js');
+  const expected = JSON.parse(
+    readFileSync(resolve(REPO_ROOT, 'packages/cli/package.json'), 'utf8'),
+  ).version;
+  const printed = run('node', [cliDist, '--version'], { capture: true });
+  const reported = printed.split(/\s+/).pop() ?? '';
+  if (reported !== expected) {
+    throw new Error(
+      `publish gate: built CLI reports "${reported}", expected exactly "${expected}".\n` +
+        '  A release must print a clean version. Build metadata here means the build did not\n' +
+        "  receive CSUITE_BUILD_SOURCE=npm — check that turbo.json's build task still declares\n" +
+        '  it under "env", or Turbo drops it before tsup and this gate silently publishes a\n' +
+        '  release that reports itself as a dev build.',
+    );
+  }
+  const serverDist = resolve(REPO_ROOT, 'apps/server/dist/index.js');
+  if (existsSync(serverDist) && readFileSync(serverDist, 'utf8').includes('BUILD_SOURCE = false')) {
+    throw new Error(
+      'publish gate: server bundle bakes BUILD_SOURCE=main. Same cause as above.\n' +
+        '  (Tripwire, not a proof — this matches a spelling in the bundle rather than running it.)',
+    );
+  }
+}
+
 function prepare() {
   assertClean();
   // Release identity is a publication-boundary fact. The workflow may
   // build earlier for validation, but this root-owned gate is the one
   // path every supported publish takes immediately before payload hashing.
   run('pnpm', ['build'], { env: { CSUITE_BUILD_SOURCE: 'npm' } });
+  assertReleaseBuildSource();
   run('pnpm', ['verify-pack']);
   assertClean();
 

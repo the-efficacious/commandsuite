@@ -5,6 +5,13 @@
     "build": {
       "dependsOn": ["^build"],
       "inputs": ["$TURBO_DEFAULT$", ".env*"],
+      // Turbo runs tasks in strict env mode: a variable not named here is
+      // not passed to the task AND is not part of the cache key. Without
+      // this line `publish-gate` sets CSUITE_BUILD_SOURCE=npm, turbo drops
+      // it before tsup sees it, and the published artefact bakes
+      // __BUILD_SOURCE__='main' — a release that reports itself as a dev
+      // build, with the gate that sets the flag looking like it worked.
+      "env": ["CSUITE_BUILD_SOURCE"],
       "outputs": ["dist/**"]
     },
     "test": {
