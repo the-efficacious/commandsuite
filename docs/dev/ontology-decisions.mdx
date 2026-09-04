@@ -1,0 +1,280 @@
+---
+title: Ontology decisions
+description: The naming decisions behind the ontology — what was decided, what was rejected, and what is still open — so a future reader can see why a term is what it is instead of relitigating it.
+section: Development
+order: 95
+---
+
+# Ontology decisions
+
+The [ontology](/docs/concepts/ontology) says what each term means. This page says
+**why it means that, and what it was chosen over**. The two are separate on
+purpose: an entry that carries its own argument is unreadable, and a decision
+with no record is one that gets made again differently next year.
+
+Every decision here came out of a vocabulary audit run on 2026-09-02 against
+`4a2aac2`. The audit inventoried how terms are actually used across the SDK,
+the broker, the database, the routes, the CLI, the MCP tools, the web UI, the
+docs and the tests, and recorded 318 evidenced confounds. It is the evidence
+base for everything below; individual rows are cited as `#n`.
+
+## What the audit found, in one paragraph
+
+The problem was never missing definitions — most concepts carry a good defining
+comment, and every glossary headword resolves to a real type, table, route or
+command. The problem is that nothing **arbitrated**. Renames landed in the layer
+the pull request touched and stopped there, so the wire is a stratum of frozen
+older vocabulary under a newer TypeScript one. Each surface picked its own verb
+grammar. Common nouns were never reserved, so `role` names five unrelated
+things and `context`, `session`, `activity`, `trace` and `transcript` name four
+or five each. The glossary was written for `docs/concepts/` only, so it could
+not settle a disagreement between code and docs. And the strings agents read —
+MCP tool descriptions, broker push text — drifted independently of both.
+
+## Status vocabulary
+
+| status | meaning |
+|---|---|
+| **proposed** | Decided by the author of the ontology change, with the option not taken recorded. A reviewer who disagrees should say so on the pull request; that is what review is for. |
+| **ratified** | A verifier who did not write it has agreed, naming the commit. |
+| **open** | Not decided. Either it needs a maintainer who holds context the audit does not, or it is a product question wearing a vocabulary costume. |
+
+A **proposed** decision is not a weaker decision. It is a decision with its
+author still attached, which is the normal state of anything in this repository
+before a partner has verified it.
+
+## 1. Program policy — decided first, because everything else depends on them
+
+These nine are not about what a word means. They are about how far the
+vocabulary program reaches, what it is allowed to break, and who arbitrates. They
+were settled before any entry was written, because an entry cannot be written
+without them.
+
+### D39 — Keep the product / contributor boundary. **proposed**
+
+**Decided.** Two vocabularies, two documents. The product ontology at
+`docs/concepts/ontology.mdx` defines what a user or an agent meets. A separate
+[contributor glossary](/docs/dev/contributor-glossary) defines what only someone
+working *on* this repository meets: gates, doors, the route walk, changesets,
+publish gating, the DCO.
+
+**Rejected:** one combined vocabulary. It reads as though a user needs to know
+what a door is.
+
+**Consequences.** Three terms move to the product side, because a user does meet
+them: **capture tier**, **doctor** / **preflight**, and **run summary**. Two
+things need care. **Baseline membership** already belongs to permissions and must
+not be redefined by the route-walk persona that borrows the word. And
+`csuite-core/conformance` is a *published* API surface, not a contributor
+convenience, so it needs a home on the product side of the line even though its
+name lives in contributor prose.
+
+### D45 — The ontology covers terms that exist only in code. **proposed**
+
+**Decided.** A term is in scope if a user, an operator or an agent can
+*encounter* it — on the wire, in a badge, in a tool description — regardless of
+whether any prose currently defines it.
+
+**Rejected:** limiting the ontology to already-documented vocabulary and filing
+the rest as documentation debt. That would have excluded the strongest case for
+having an ontology at all.
+
+**The case that settles it** is the completeness-diagnostics subsystem: a closed
+vocabulary of 25 diagnostic causes in `DIAGNOSTIC_CAUSES`, two `Presence` fields
+on the wire, and two badges rendered in the member profile — `3 UNRESOLVED` and
+`DIAGNOSTICS DEGRADED` — with no prose anywhere in `docs/`. The glossary has zero
+hits for diagnostics, unresolved, capture health or retention health, and the
+REST reference enumerates the presence axes while silently omitting all three
+fields. A user who sees `3 UNRESOLVED` has nowhere to look it up. The same rule
+governs whether `observer` (declared, never used) and `Coverage` (unreachable
+from outside the process) are recorded: they are, flagged *defined in code only*.
+
+### D6 — Finish the work-state rename on the wire, in one release. **proposed**
+
+**Decided.** Do it, deliberately, all at once: `/presence/work-state`,
+`Presence.workState`, `workStateWindowMs`, `WorkStateReport`, and delete the
+`Busy*` aliases.
+
+**Rejected:** declaring the wire spelling permanently legacy in the type
+doc-comments. Defensible, and cheaper today.
+
+**Why.** [#194](https://github.com/the-efficacious/commandsuite/pull/194) renamed
+`ActivityTracker` to `WorkStateTracker` in the type layer and deliberately left
+the wire alone. The half-rename is stable, and it is what keeps the four-way
+`activity` homonym alive: as long as `POST /presence/activity` and
+`activity.read` mean *work state*, "activity" cannot be reserved for the durable
+stream. The thing this repository should not do is drip-rename it. Either answer
+closes the homonym; only one of them closes it this year.
+
+### D42 — MCP tool renames: the high-severity set only, behind one alias window, with the SDK as arbiter. **proposed**
+
+**Decided.** Rename the tools whose verbs are actively misleading, not all
+nineteen candidates. The SDK's grammar arbitrates, because
+`packages/sdk/src/client.ts` is uniformly `get` / `list` / `create` / `update` /
+`delete` / `bind` and is the least-drifted surface in the repository.
+
+**Rejected:** all nineteen renames (too much prose invalidated at once), and
+freezing the names and ruling the grammar for new tools only (leaves
+`members_add` beside `member create` forever).
+
+**The precedent is explicit.** When `process_document_*` became `team_process_*`,
+the aliases shipped for one release with a warning line, and the stated reason
+was that *"tool names are not only in `tools/list`: they are quoted in prose that
+does not auto-update — team instructions, the team process text itself, an
+agent's own notes"*. That constraint has not changed, so neither has the answer:
+one warned alias window, removed in the next minor.
+
+**What this optimises for, and against.** Choosing the SDK optimises for agent
+legibility. It costs operator muscle memory: `rm` and `add` are shell-native and
+the CLI keeps them. That half is a preference, and it is the half most likely to
+be overturned in review.
+
+### D44 — snake_case query parameters, and direction stated in the cursor's name. **proposed**
+
+**Decided.** Query parameters are `snake_case`. The composite cursor splits into
+`after_ts` / `after_id` and `before_ts` / `before_id`.
+
+**Rejected:** camelCase query parameters (the smaller conceptual jump for a
+JavaScript client, since bodies are camelCase), and keeping one `cursor_ts` name
+with an added `order=asc|desc`.
+
+**Why.** `if_offline` on the wire, `ifOffline` in the type and `--if-offline` on
+the command line is already a coherent three-layer projection, documented as a
+table in the external-notifications page. It is a template, not an accident, so
+adopt it. Direction must be in the name because today it is nowhere: the same
+`cursor_ts` pages *backward* on the activity endpoint and *forward* on telemetry
+and gen-AI, and a client that reuses the activity paging loop against
+`/telemetry` never terminates. That is not a naming preference; it is a
+non-terminating loop.
+
+### D34 — US spelling is house style. **proposed**
+
+**Decided.** US. The type names, the table name and the route prefix already are.
+
+**Rejected:** UK, which appears in prose, one thrown core error and every MCP
+tool description that uses "enrolment".
+
+This is a style decision with no technical content. It is written down only so
+that the next person does not have to guess, and so the sweep has a direction.
+
+### D14 — One permission-leaf table, held to `PERMISSIONS` by a check. **proposed**
+
+**Decided.** Exactly one enumerating table, in
+[Permissions](/docs/concepts/permissions). The other two become links. A CI check
+asserts that the surviving table matches the `PERMISSIONS` array, in the manner
+of the repository's existing `scripts/check-*.mjs` gates. Counting adjectives in
+prose go, everywhere.
+
+**Rejected:** generating the table at build time — stronger, but it puts
+machinery in the docs site for one table; and links only, which makes the leaves
+hard to read in one place.
+
+**Why.** `PERMISSIONS` currently holds thirteen leaves. The architecture page
+lists eleven and calls them "Twelve"; the CLI reference lists a third set; the
+permissions page lists all thirteen under frontmatter that says "twelve". Three
+hand-maintained tables have drifted three ways, and the count in prose is a
+second source of truth that drifts independently of the table it introduces.
+
+### D35 — `csuite-sdk` is the single home for wire constants. **proposed**
+
+**Decided.** Constants that describe the wire live in `csuite-sdk`; the functions
+that use them live in `csuite-core`; `apps/server` imports rather than
+redeclares.
+
+**Rejected:** leaving each constant where its first consumer defined it.
+
+**Why.** The principle is already established and already stated:
+`BEARER_TOKEN_PATTERN` sits in the SDK precisely so that *"broker ingress and
+runner egress cannot drift"*. What has drifted anyway is everything that did not
+follow it — `ENCRYPTED_FIELD_PREFIX` is defined twice, in the broker's field
+crypto and again in the server's key handling, with no test asserting the two
+agree and an `enc-v2:` bump already anticipated in one of them; `hashToken` has
+an async implementation in core and a sync one in the server; tokens are minted
+at three sites and matched by a fourth regex. This is the one policy decision
+here with real refactoring cost, and it touches package boundaries.
+
+### D38 — State whether `manifest.since` advances at each release tag. **open**
+
+**Not decided.** This one genuinely needs the maintainer.
+
+The ontology entry for **doors window** reads differently depending on the
+answer — per-release or cumulative — and today the window spans two already
+shipped releases, which is consistent with either reading. Nothing in the
+repository states the intent. Ask the person who wrote the release gate.
+
+## 2. Vocabulary decisions
+
+Twenty-four decisions about which referent owns a word. Each is recorded on its
+own ontology entry under **Decided**, in the form *option taken · option
+rejected · date*, rather than repeated here — an entry that cannot state its own
+argument is an entry that will be quietly reversed.
+
+| decision | question | where it is recorded |
+|---|---|---|
+| D1 | Is the objective trace the marker window or the calendar window? | Trace |
+| D2 | Is `kind` a fact or a heuristic? | Member |
+| D7 | Is `WorkState.blocked` renameable to `needs_input`? | Work state |
+| D10 | Which sense of "binding" survives? | Binding |
+| D15 | Is `csuite enroll` renameable? | Enrollment |
+| D17 | Is `--no-secrets` renamed, re-documented, or split? | Runner environment |
+| D18 | Does the ontology adopt the superordinate "runner environment"? | Runner environment |
+| D21 | Does `restartPending` mean "composition changed" or "we told them"? | Restart-pending |
+| D25 | Does `delivered` mean sent or acknowledged? Does `failed` get a writer? | Notification delivery |
+| D26 | Whether "external notification" survives at all | External notification |
+| D27 | Is the register split intentional — code "namespace", docs "folder"? | Virtual filesystem |
+| D31 | Should the class `Broker` be renamed? | Broker |
+| D33 | Whether the system actor becomes a foreign identity | System actor |
+| D36 | Rename route-walk's `--role` to `--persona`? | Role |
+| D37 | Which side of the `release-prepare` / `release:prepare` collision moves? | contributor glossary |
+| D40 | Which informal noun for `members.manage` holders survives? | Permission leaf |
+| D41 | Is `broadcast` / `send` / `channels_post` deliberate affordance, or drift? | Message |
+| D43 | Does the Traces page name its capture sources? Is capture tier product vocabulary? | Capture source |
+| D48 | Does **Job** enter the ontology as a composite, or get dissolved? | Job |
+| D49 | Is **Workstation** a product concept or a deployment concept? | Workstation |
+| D51 | Migrate `ChannelAuditAction` to past tense? | Action record |
+| D53 | Rename `ServiceVerb` / `ContextControlVerb` to free the word "verb"? | Verb |
+| D54 | Is `diagnosticsRetention` per-member or broker-wide? Does `degraded` get renamed? | Completeness diagnostics |
+| D55 | Is `Transcript.tsx` renameable? | Session transcript |
+
+## 3. Not vocabulary — product and API design questions
+
+The audit surfaced twenty-two questions that look like naming questions and are
+not. Each is a choice about what the software should *do*, or what its contract
+should *be*; the ontology can record whichever way they go, but it cannot decide
+them, and an ontology session that tries will produce entries that describe
+behaviour nobody agreed to.
+
+They are listed here so that they are not mistaken for vocabulary work and
+quietly decided by a rename. Nine of them block a defect fix, marked ▸.
+
+| decision | question |
+|---|---|
+| D3 ▸ | Does `members.manage` imply objective read? |
+| D4 ▸ | Which way does `recent` go — the general channel, or the viewer's feed? |
+| D5 ▸ | Is the general-channel readback of untagged scoped fan-outs a defect? |
+| D8 | Should agents see work state at all? |
+| D9 ▸ | Do `/roster` and `/team/status` owe the same `Presence` shape? |
+| D11 | Is the preset system deprecated-but-supported, or supported? |
+| D12 | Does `objectives.create` keep gating the team-wide ledger read? |
+| D13 | Do fresh channel memberships stop accepting `role: 'admin'`? |
+| D16 | Does the KEK-optional degraded mode stay? |
+| D19 ▸ | Which slug grammar wins for variables — 32 or 64? |
+| D20 | Ship, delete, or rename `ContextPack`? |
+| D22 | Is the external-notification doctrine a fifth instruction block? |
+| D23 | Reinstate or excise the context watchdog? |
+| D24 | Is the Web Push scope gap a bug or the design? |
+| D28 | Should `Attachment` gain a `hash` field? |
+| D29 ▸ | Should `canWrite` be applied on write responses, or the contract narrowed? |
+| D30 | Does `/t/:team` stay in the OSS router? |
+| D32 ▸ | `Teammate.identityId`: send it or delete it? |
+| D46 ▸ | Should `/history` get the composite cursor? |
+| D47 ▸ | Fix the exit-code contract, or fix the docs? Does `error` stay the wire field name? |
+| D50 | Should `csuite team-process` exist? |
+| D52 | Keep, extend, or drop `csuite tools enable|disable`? |
+
+Two of these are security posture rather than either naming or design, and
+should be read as such: **D16**, whether a broker may run with secrets in
+plaintext at rest when no key-encryption key is configured, and **D24**, whether
+Web Push covering only `POST /push` messages — so channel posts, objective
+events and every external-notification delivery never reach a device — is the
+design or a gap.
