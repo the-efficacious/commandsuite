@@ -8,7 +8,8 @@
  * installed, we exit with a friendly hint.
  *
  * Boot path:
- *   1. Resolve the slim infra-only config file path.
+ *   1. Resolve the server config file (`csuite.json`) path — slim and
+ *      infrastructure-only; team identity and members live in the DB.
  *   2. Resolve + install the KEK so encrypted-at-rest fields
  *      (TOTP secrets, VAPID private key) round-trip.
  *   3. Load the slim ServerConfig, or run the wizard if missing

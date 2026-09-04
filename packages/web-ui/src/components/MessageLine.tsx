@@ -72,7 +72,7 @@ export function isContinuationOf(msg: Message, prev: Message): boolean {
   if (prev.level !== msg.level) return false;
   if (prev.title !== null || msg.title !== null) return false;
   if (msg.ts - prev.ts > GROUP_WINDOW_MS) return false;
-  // Backwards-in-time gap (e.g. out-of-order SSE reconnect backfill):
+  // Backwards-in-time gap (e.g. out-of-order reconnect hydration):
   // treat as distinct so the "grouped by time" intuition doesn't fib.
   if (msg.ts < prev.ts) return false;
   return true;

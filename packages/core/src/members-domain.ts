@@ -5,7 +5,7 @@
  */
 
 import type { Member, Permission, Role, Teammate } from 'csuite-sdk/types';
-import { LEGACY_PERMISSION_EXPANSIONS, PERMISSIONS } from 'csuite-sdk/types';
+import { LEGACY_PERMISSION_ALIASES, PERMISSIONS } from 'csuite-sdk/types';
 import { z } from 'zod';
 
 /**
@@ -153,7 +153,7 @@ export class MemberLoadError extends Error {
  *
  * This is ALSO where a renamed leaf is carried forward. `raw_permissions`
  * is stored verbatim, so a member (or a stored preset) written under
- * `process.manage` still says so on disk; `LEGACY_PERMISSION_EXPANSIONS`
+ * `process.manage` still says so on disk; `LEGACY_PERMISSION_ALIASES`
  * maps it to `team_process.manage` here, on every read, and no row is
  * ever rewritten. Both branches below consult that table — a direct
  * member entry and a leaf inside a preset — so the alias holds
@@ -170,7 +170,7 @@ export function resolvePermissions(
       set.add(entry as Permission);
       continue;
     }
-    const expansion = LEGACY_PERMISSION_EXPANSIONS[entry];
+    const expansion = LEGACY_PERMISSION_ALIASES[entry];
     if (expansion) {
       for (const leaf of expansion) set.add(leaf);
       continue;
@@ -180,7 +180,7 @@ export function resolvePermissions(
       // Stored presets can carry the short-lived aggregate too —
       // expand each leaf, not only direct member entries.
       for (const leaf of presetLeaves) {
-        const presetExpansion = LEGACY_PERMISSION_EXPANSIONS[leaf];
+        const presetExpansion = LEGACY_PERMISSION_ALIASES[leaf];
         if (presetExpansion) {
           for (const expanded of presetExpansion) set.add(expanded);
         } else {
@@ -264,15 +264,25 @@ export interface MemberStore {
  * roster and instructions responses. Preserves config ordering. Drops
  * the private `instructions` field (teammates don't see each other's
  * personal instructions).
+ *
+ * Pure over the store: no request, no session, no clock. Everything on
+ * the returned `Teammate` comes from the stored member row.
  */
 export function teammatesFromMembers(store: MemberStore): Teammate[] {
   return store.members().map((m) => ({
     name: m.name,
     role: m.role,
     permissions: m.permissions,
-    // The auth plane is the only person/agent signal we have: humans
-    // enroll TOTP for the web UI, agents authenticate by bearer token
-    // alone. No TOTP ⇒ unknown, and the field is omitted so the UI
+    // Derived from ONE stored field: whether this member has an
+    // authenticator (TOTP) secret on their config row. It is not derived
+    // from how any request authenticated — this projection runs per
+    // roster read and has no request context at all, so a
+    // bearer-authenticated caller is invisible here. The heuristic
+    // behind the field: people enroll TOTP for the web UI, agents
+    // authenticate by bearer token alone.
+    //
+    // Two-value union, one writer: `'agent'` is never emitted. No TOTP
+    // secret ⇒ the field is OMITTED, not set to `'agent'`, so the UI
     // renders the neutral treatment instead of guessing.
     ...(m.totpSecret ? { kind: 'person' as const } : {}),
   }));

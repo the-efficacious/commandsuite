@@ -841,15 +841,15 @@ describe('genai-lazy loadGenAiRecord', () => {
 });
 
 describe('buildThread — turn spine with the call ledger', () => {
-  it('attaches a joined call to its turn and emits no ghost row', () => {
+  it('attaches a joined call to its turn and emits no orphan-call row', () => {
     const thread = buildThread([LLM_ROW], [GENAI_SUMMARY]);
     const turn = thread.find((i) => i.variant === 'turn');
     if (turn?.variant !== 'turn') throw new Error('expected a turn');
     expect(turn.calls.map((c) => c.id)).toEqual([91]);
-    expect(thread.some((i) => i.variant === 'model-call')).toBe(false);
+    expect(thread.some((i) => i.variant === 'orphan-call')).toBe(false);
   });
 
-  it('interleaves a turnless call as a model-call item at its timestamp', () => {
+  it('interleaves a turnless call as an orphan-call item at its timestamp', () => {
     const sidecar: GenAiInferenceSummary = {
       ...GENAI_SUMMARY,
       id: 92,
@@ -858,14 +858,14 @@ describe('buildThread — turn spine with the call ledger', () => {
       ts: 1_700_000_000_150,
     };
     const thread = buildThread([LLM_ROW, TOOL_ROW], [sidecar]);
-    const ghost = thread.find((i) => i.variant === 'model-call');
-    if (ghost?.variant !== 'model-call') throw new Error('expected a model-call');
-    expect(ghost.recordId).toBe(92);
-    expect(ghost.querySource).toBe('web_search_tool');
-    // Chronological: turn (t+0) → ghost (t+150) → tool row (t+500).
+    const orphan = thread.find((i) => i.variant === 'orphan-call');
+    if (orphan?.variant !== 'orphan-call') throw new Error('expected an orphan-call');
+    expect(orphan.recordId).toBe(92);
+    expect(orphan.querySource).toBe('web_search_tool');
+    // Chronological: turn (t+0) → orphan call (t+150) → tool row (t+500).
     const order = thread.map((i) => i.variant);
-    expect(order.indexOf('turn')).toBeLessThan(order.indexOf('model-call'));
-    expect(order.indexOf('model-call')).toBeLessThan(order.indexOf('tool-action'));
+    expect(order.indexOf('turn')).toBeLessThan(order.indexOf('orphan-call'));
+    expect(order.indexOf('orphan-call')).toBeLessThan(order.indexOf('tool-action'));
   });
 });
 

@@ -5,7 +5,7 @@
  *
  * Used by:
  *   - `NavColumn` to render the notifications.manage-gated
- *     "Notifications" nav item
+ *     "External notifications" nav item
  *   - `NotificationsPanel` (list + profiles) and
  *     `NotificationDetail` (per-endpoint + deliveries)
  *   - `live.ts` to refresh on `data.kind === 'notification_endpoint'`

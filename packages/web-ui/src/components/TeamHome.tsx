@@ -1,7 +1,7 @@
 /**
- * TeamHome — the landing page at `/`.
+ * TeamHome — Team Home, the landing screen at route kind `home` (`/`).
  *
- * Replaces RosterPanel as the default view. Shows:
+ * Replaces RosterPanel as the default screen. Shows:
  *   - Team name + context (the team's "about"), editable in place
  *     by members holding `team.manage`
  *   - At-a-glance stats (active objectives, blocked, total members)
@@ -10,7 +10,7 @@
  *
  * The team chat + DMs live in the sidebar; TeamHome doesn't duplicate
  * them. The goal here is "what is this team about + who's on it" in a
- * single, scannable view.
+ * single, scannable screen.
  */
 
 import { signal } from '@preact/signals';

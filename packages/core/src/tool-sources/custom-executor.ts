@@ -18,9 +18,9 @@
  * credential decrypt failures surface before we're called.
  *
  * Response caps: the raw body is STREAM-read up to
- * TOOL_RESULT_MAX_BYTES and the reader cancelled past the cap — a
- * multi-GB upstream response never buffers. The truncation marker is
- * appended AFTER capping so it is always visible.
+ * `TOOL_RESULT_TEXT_BLOCK_MAX_BYTES` and the reader cancelled past the
+ * cap — a multi-GB upstream response never buffers. The truncation
+ * marker is appended AFTER capping so it is always visible.
  */
 
 import type { DecryptedCredential } from './store.js';
@@ -31,7 +31,22 @@ import {
   walkResultPath,
 } from './template.js';
 
-export const TOOL_RESULT_MAX_BYTES = 65_536;
+/**
+ * Per-TEXT-BLOCK byte cap on a tool result, and — for a custom source —
+ * on the streamed raw body that becomes the single text block.
+ *
+ * The granularity is the point: this is not a cap on "the result". A
+ * relay that returns several text blocks may exceed this in total, and
+ * the MCP client applies a second, whole-relay budget on top of it.
+ */
+export const TOOL_RESULT_TEXT_BLOCK_MAX_BYTES = 65_536;
+
+/**
+ * @deprecated Renamed `TOOL_RESULT_TEXT_BLOCK_MAX_BYTES` — the old name
+ * did not say which granularity it capped. Kept as an alias only until
+ * the remaining importer (`apps/server/src/tool-sources`) moves over.
+ */
+export const TOOL_RESULT_MAX_BYTES = TOOL_RESULT_TEXT_BLOCK_MAX_BYTES;
 const TRUNCATION_MARKER = (cap: number): string => `\n[csuite: response truncated at ${cap} bytes]`;
 
 /**
@@ -129,7 +144,7 @@ export async function executeCustomTool(input: ExecuteCustomToolInput): Promise<
   }
 
   // 4. Capped stream-read of the body.
-  const { text: rawText, truncated } = await readBodyCapped(res, TOOL_RESULT_MAX_BYTES);
+  const { text: rawText, truncated } = await readBodyCapped(res, TOOL_RESULT_TEXT_BLOCK_MAX_BYTES);
   const mime = (res.headers.get('content-type') ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
   const isJson = mime === 'application/json' || mime.endsWith('+json');
   const isTextLike = isJson || mime.startsWith('text/') || mime === '';
@@ -138,7 +153,7 @@ export async function executeCustomTool(input: ExecuteCustomToolInput): Promise<
     const detail = isTextLike && rawText.length > 0 ? `\n${rawText}` : '';
     return errorResult(
       `upstream returned HTTP ${res.status} ${res.statusText}${detail}${
-        truncated ? TRUNCATION_MARKER(TOOL_RESULT_MAX_BYTES) : ''
+        truncated ? TRUNCATION_MARKER(TOOL_RESULT_TEXT_BLOCK_MAX_BYTES) : ''
       }`,
     );
   }
@@ -173,11 +188,11 @@ export async function executeCustomTool(input: ExecuteCustomToolInput): Promise<
   // Re-cap after extraction (resultPath can only shrink, but the
   // notice-prefixed fallback can exceed the cap by the notice length).
   let finalTruncated = truncated;
-  if (byteLength(text) > TOOL_RESULT_MAX_BYTES) {
-    text = truncateToBytes(text, TOOL_RESULT_MAX_BYTES);
+  if (byteLength(text) > TOOL_RESULT_TEXT_BLOCK_MAX_BYTES) {
+    text = truncateToBytes(text, TOOL_RESULT_TEXT_BLOCK_MAX_BYTES);
     finalTruncated = true;
   }
-  if (finalTruncated) text += TRUNCATION_MARKER(TOOL_RESULT_MAX_BYTES);
+  if (finalTruncated) text += TRUNCATION_MARKER(TOOL_RESULT_TEXT_BLOCK_MAX_BYTES);
   return textResult(text);
 }
 

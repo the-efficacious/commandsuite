@@ -135,6 +135,7 @@ import type {
 import {
   type AuthBindings,
   type Broker,
+  CHANNEL_THREAD_PREFIX,
   type ChannelStore,
   ChannelsError,
   CredentialShapedBodyError,
@@ -151,12 +152,14 @@ import {
   type GenAiCorrelatorFactory,
   generateBearerToken,
   generateSecret,
+  hookThreadTag,
   instructionBlocks,
   instructionCaptureExemptions,
   isGenAiLogRecord,
   normalizeUserCode,
   ObjectivesError,
   type ObjectivesStore,
+  objectiveThreadTag,
   openaiResponsesToGenAi,
   otpauthUri,
   parseOtlpLogs,
@@ -169,11 +172,14 @@ import {
   SecretsError,
   type SecretsStore,
   type SessionStore,
+  secretThreadTag,
   sha256Hex,
   TeamProcessError,
   type TeamProcessStore,
   type TokenStore,
+  toolThreadTag,
   validateSlug,
+  variableThreadTag,
   verifyCode as verifyTotpCode,
   WORK_STATE_TTL_MS,
   type WorkStateTracker,
@@ -338,9 +344,16 @@ export interface AppOptions {
    */
   captureHealth?: CaptureHealthStore;
   /**
-   * Retained completeness diagnostics. Optional: a broker without it
-   * behaves exactly as before and the stderr lines remain, which is
-   * what "no opinion" looks like for retention.
+   * Retained completeness diagnostics — the full `DiagnosticStore`, the
+   * one layer where this name really does hold the store: it reads
+   * (`unresolved`, `query`, `health`) as well as writes. Everything
+   * downstream is handed `diagnostics.emit` and gets the write-only
+   * `DiagnosticEmitter` under the same option name, which is the
+   * collision to watch for when reading a stack from here.
+   *
+   * Optional: a broker without it behaves exactly as before and the
+   * stderr lines remain, which is what "no opinion" looks like for
+   * retention.
    */
   diagnostics?: DiagnosticStore;
   version: string;
@@ -1393,8 +1406,8 @@ export function createApp(options: AppOptions): CreatedApp {
       const health = captureHealth?.forMember(p.name);
       // `pending` is internal — an aged-out marker hasn't earned a
       // claim yet, and healthy lag means every turn is briefly
-      // unmatched. Surfacing it would flicker on healthy traffic, so it
-      // maps to `ok`: no gap has been established.
+      // unsatisfied. Surfacing it would flicker on healthy traffic, so
+      // it maps to `ok`: no gap has been established.
       //
       // `unevaluated` is NOT collapsed into `ok`. A Codex member is not
       // assessed by the exact-match join at all, and reporting them
@@ -1557,8 +1570,8 @@ export function createApp(options: AppOptions): CreatedApp {
     let pushContext: { from: string; recipients?: string[] } = { from: member.name };
     if (channels) {
       const threadTag = parsed.data.data?.thread;
-      if (typeof threadTag === 'string' && threadTag.startsWith('chan:')) {
-        const channelId = threadTag.slice('chan:'.length);
+      if (typeof threadTag === 'string' && threadTag.startsWith(CHANNEL_THREAD_PREFIX)) {
+        const channelId = threadTag.slice(CHANNEL_THREAD_PREFIX.length);
         if (channelId !== GENERAL_CHANNEL_ID) {
           const ch = channels.get(channelId);
           if (!ch) {
@@ -1730,12 +1743,18 @@ export function createApp(options: AppOptions): CreatedApp {
       return c.json({ channel: summary, members });
     });
 
+    // Update a channel: slug and/or description, in one call. This is
+    // the whole of the mutation surface — there is no separate rename
+    // route, and `ChannelStore.rename` is a deprecated shim over
+    // `update({ slug })`. `rename` survives only as a
+    // `ChannelAuditAction`, where it names a recorded event rather than
+    // an operation.
     app.patch(`${PATHS.channels}/:slug`, auth, async (c) => {
       const slug = c.req.param('slug');
       const raw = await c.req.json().catch(() => null);
       const parsed = UpdateChannelRequestSchema.safeParse(raw);
       if (!parsed.success) {
-        return c.json({ error: 'invalid rename input', details: parsed.error.issues }, 400);
+        return c.json({ error: 'invalid channel update input', details: parsed.error.issues }, 400);
       }
       const ch = channels.getBySlug(slug);
       if (!ch) return c.json({ error: `no such channel: ${slug}` }, 404);
@@ -2474,7 +2493,7 @@ export function createApp(options: AppOptions): CreatedApp {
               event,
               source_slug: source.slug,
               source_kind: source.kind,
-              thread: `tool:${source.slug}`,
+              thread: toolThreadTag(source.slug),
               actor,
               ...(opts.extra ?? {}),
             },
@@ -2903,6 +2922,15 @@ export function createApp(options: AppOptions): CreatedApp {
       }
 
       // Broker-side audit — authoritative record of the invocation.
+      //
+      // This writes a `tool_action` with BROKER-AUDIT provenance: the
+      // same activity kind the runners emit, from the other producer.
+      // An agent-native `tool_action` carries the agent's own redacted
+      // payload and a `toolUseId`; this one carries metadata only, no
+      // `toolUseId`, `agent: 'broker'` and `source: 'tool_source'`, and
+      // replaces an oversized `input` with `{ truncated: true }`. A
+      // reader must not assume a `tool_action` came from an agent.
+      //
       // Guarded: the activity store is optional, and an audit failure
       // must never fail a successful invoke. The full result payload
       // already flows to the runner; record meta only.
@@ -3041,7 +3069,7 @@ export function createApp(options: AppOptions): CreatedApp {
               event,
               secret_slug: secret.slug,
               env_name: secret.envName,
-              thread: `secret:${secret.slug}`,
+              thread: secretThreadTag(secret.slug),
               actor,
               ...(opts.extra ?? {}),
             },
@@ -3462,7 +3490,7 @@ export function createApp(options: AppOptions): CreatedApp {
               event,
               variable_slug: variable.slug,
               env_name: variable.envName,
-              thread: `variable:${variable.slug}`,
+              thread: variableThreadTag(variable.slug),
               actor,
               ...(opts.extra ?? {}),
             },
@@ -3807,7 +3835,7 @@ export function createApp(options: AppOptions): CreatedApp {
               kind: 'notification_endpoint',
               event,
               endpoint_slug: endpoint.slug,
-              thread: `hook:${endpoint.slug}`,
+              thread: hookThreadTag(endpoint.slug),
               actor,
             },
           },
@@ -4321,7 +4349,7 @@ export function createApp(options: AppOptions): CreatedApp {
       event: ObjectiveEvent,
       actor: string,
     ): Promise<void> => {
-      const threadKey = `obj:${objective.id}`;
+      const threadTag = objectiveThreadTag(objective.id);
       const primaryTargets = objectiveThreadMembers(objective, event);
       const body = systemMessageForEvent(objective, event.kind, event);
       // One multi-recipient push, not a per-target loop — see the
@@ -4346,7 +4374,7 @@ export function createApp(options: AppOptions): CreatedApp {
               event: event.kind,
               objective_id: objective.id,
               objective_status: objective.status,
-              thread: threadKey,
+              thread: threadTag,
               actor,
             },
           },
@@ -4797,7 +4825,7 @@ export function createApp(options: AppOptions): CreatedApp {
       }
       const discussAttachments = discussAttachmentsResult.canonical;
 
-      const threadKey = `obj:${id}`;
+      const threadTag = objectiveThreadTag(id);
       let canonical: Message | null = null;
       try {
         // Single multi-recipient push: one message id, one event-log
@@ -4812,7 +4840,7 @@ export function createApp(options: AppOptions): CreatedApp {
             data: {
               kind: 'objective_discuss',
               objective_id: id,
-              thread: threadKey,
+              thread: threadTag,
             },
             ...(discussAttachments.length > 0 ? { attachments: discussAttachments } : {}),
           },

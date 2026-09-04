@@ -331,6 +331,24 @@ export function createNotificationDispatcher(
     }
 
     const reason = notes.length > 0 ? notes.join('; ') : null;
+    // What the three values mean HERE, which is the only place that
+    // decides them for a fresh fan-out:
+    //
+    //   delivered — a runner ACKNOWLEDGED the message (`acted` or
+    //               `handled`). Not "sent": a push that reached the
+    //               broker's queue and nobody else is `pending`.
+    //   pending   — two causes, both of them "still in play": at least
+    //               one message was pushed but no runner has answered
+    //               yet, or the fan-out queued for an offline/busy
+    //               member and the wake flush owns it next.
+    //   dropped   — nothing is in play: no message was pushed and
+    //               nothing was queued, which is what an `ifOffline:
+    //               'drop'` policy produces. The disposition listener
+    //               below writes it for a second cause, a runner that
+    //               explicitly REFUSED.
+    //
+    // `coalesced` is not decided here; it marks the older rows folded
+    // into the one message the loop below actually pushed.
     const status: NotificationDeliveryStatus =
       acknowledged > 0 ? 'delivered' : messageIds.length > 0 || queued > 0 ? 'pending' : 'dropped';
 
@@ -365,7 +383,10 @@ export function createNotificationDispatcher(
           statusReason: event.reason?.detail ?? 'subscriber refused delivery',
         });
       }
-      // deferred deliberately stays pending; capability recovery owns redelivery.
+      // `deferred` deliberately stays pending — it is still in play, and
+      // capability recovery owns redelivery. This listener is the only
+      // writer that can turn a row `delivered` after the fan-out ended,
+      // which is why `delivered` means acknowledged rather than sent.
     }
   });
 

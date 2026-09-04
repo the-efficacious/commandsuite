@@ -38,10 +38,10 @@
  *   - Notification — routes on `notification_type`: permission_prompt /
  *     agent_needs_input / elicitation_dialog → `blocked`; idle_prompt →
  *     not blocked; unknown types ignored.
- *   - SessionStart — relays `source` (startup / resume / clear /
- *     compact) via `onSessionStart`. The runner uses compact/clear as
- *     the "context fell off" signal to push a `context_refresh`
- *     re-brief. No presence effect.
+ *   - SessionStart — relays the hook's `source` field as the session's
+ *     ORIGIN (startup / resume / clear / compact) via `onSessionStart`.
+ *     The runner uses compact/clear as the "context fell off" signal to
+ *     push a `context_refresh` re-brief. No presence effect.
  *
  * Why HTTP and not `type: "command"`:
  *   - Each `type: "command"` hook forks a process per event. With ~50
@@ -114,8 +114,12 @@ interface HookRequestBody {
    */
   stop_hook_active?: boolean;
   /**
-   * On SessionStart: why the session (re)started — `startup`, `resume`,
-   * `clear`, or `compact`. Relayed via `onSessionStart`.
+   * On SessionStart: the session's ORIGIN — why it (re)started:
+   * `startup`, `resume`, `clear`, or `compact`. Claude Code spells this
+   * field `source`; we relay it via `onSessionStart` under the
+   * unambiguous name `origin`, because "source" in this directory
+   * already means the capture source tag, the query source and the
+   * busy counter.
    */
   source?: string;
 }
@@ -158,12 +162,12 @@ export interface HookServerOptions {
    */
   onTranscriptPath?: (path: string) => void;
   /**
-   * Fired on every SessionStart hook with its `source` value
-   * (`startup` / `resume` / `clear` / `compact`; empty string when the
-   * payload omits it). The runner listens for compact/clear to push a
-   * context re-brief. Optional.
+   * Fired on every SessionStart hook with that session's ORIGIN — the
+   * hook payload's `source` field (`startup` / `resume` / `clear` /
+   * `compact`; empty string when the payload omits it). The runner
+   * listens for compact/clear to push a context re-brief. Optional.
    */
-  onSessionStart?: (source: string) => void;
+  onSessionStart?: (origin: string) => void;
   logger?: Logger;
 }
 
@@ -356,14 +360,14 @@ export async function startHookServer(options: HookServerOptions): Promise<HookS
         options.busy.setBlocked(false);
       }
     } else if (event === 'SessionStart') {
-      // Session (re)start — no presence effect, but the `source` tells
+      // Session (re)start — no presence effect, but the origin tells
       // the runner whether the agent's context just fell off (compact /
       // clear) and needs a re-brief.
-      const source = typeof body.source === 'string' ? body.source : '';
-      log.info('session start', { source });
+      const origin = typeof body.source === 'string' ? body.source : '';
+      log.info('session start', { origin });
       if (options.onSessionStart) {
         try {
-          options.onSessionStart(source);
+          options.onSessionStart(origin);
         } catch (err) {
           log.warn('onSessionStart threw', {
             error: err instanceof Error ? err.message : String(err),

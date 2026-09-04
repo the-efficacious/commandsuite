@@ -252,7 +252,7 @@ export interface ObjectivesStore {
     actor: string,
     now?: number,
   ): ObjectivesMutationResult;
-  /** Reassign to a different slot. */
+  /** Reassign to a different member. */
   reassign(
     id: string,
     input: ReassignObjectiveRequest,

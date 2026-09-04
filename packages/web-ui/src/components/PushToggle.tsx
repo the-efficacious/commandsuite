@@ -1,6 +1,7 @@
 /**
- * Notification toggle — small badge in the Header that enables /
- * disables Web Push for the current device.
+ * Push toggle — small badge that enables / disables Web Push for the
+ * current device. Rendered in the Account panel's "Push notifications"
+ * section.
  *
  * Reads the `pushState` signal set up by `lib/push.ts` and renders one
  * of: nothing (truly unsupported), "install to enable" hint (iOS),
@@ -14,7 +15,7 @@
 import { disablePush, enablePush, pushState } from '../lib/push.js';
 import { AlertTriangle } from './icons/index.js';
 
-export function NotificationToggle() {
+export function PushToggle() {
   const state = pushState.value;
 
   if (state.kind === 'unsupported') {
@@ -32,7 +33,7 @@ export function NotificationToggle() {
   }
   if (state.kind === 'denied') {
     return (
-      <span class="badge muted" title="Notifications are blocked in your browser settings">
+      <span class="badge muted" title="Push notifications are blocked in your browser settings">
         ◇ Blocked
       </span>
     );

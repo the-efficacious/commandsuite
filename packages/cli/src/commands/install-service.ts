@@ -98,7 +98,7 @@ export interface UnitRenderOptions {
  * Render the unit. Shape follows the field-tested kit: Restart=always
  * with StartLimitIntervalSec=0 (an agent that gives up is an agent
  * that is gone — safe because the headless no-auth path exits before
- * any wizard could hang), journald logging, and the auth-keying pair
+ * the connect prompt could hang), journald logging, and the auth-keying pair
  * (CSUITE_URL + WorkingDirectory) spelled out with the reason.
  */
 export function renderRunnerUnit(opts: UnitRenderOptions): string {
@@ -109,7 +109,7 @@ export function renderRunnerUnit(opts: UnitRenderOptions): string {
     'After=network-online.target',
     'Wants=network-online.target',
     '# Never stop retrying: an agent that gives up is an agent that is gone.',
-    '# Safe because the runner exits non-zero (no wizard, no hang) when auth',
+    '# Safe because the runner exits non-zero (no prompt, no hang) when auth',
     '# cannot resolve headlessly, so a broken box fails loudly in journald.',
     'StartLimitIntervalSec=0',
     '',

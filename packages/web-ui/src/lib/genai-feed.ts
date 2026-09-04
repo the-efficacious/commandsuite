@@ -26,7 +26,7 @@ import { signal } from '@preact/signals';
 import type { GenAiInferenceSummary } from 'csuite-sdk/types';
 import { getClient } from './client.js';
 
-/** Rows per hydration/backfill fetch. */
+/** Rows per hydration fetch. */
 const FETCH_LIMIT = 1_000;
 /** Widen fetch windows by this much to absorb capture-clock skew. */
 const WINDOW_SLACK_MS = 30_000;

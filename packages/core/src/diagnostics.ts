@@ -3,25 +3,31 @@
  *
  * WHY THIS EXISTS
  * ---------------
- * All 50 broker log sites sink to one stderr line (`logger.ts:22`).
- * Nothing is retained. Twenty-one of those fifty are the product
+ * Every broker log site sinks to one stderr line (`logger.ts:22`).
+ * Nothing is retained. A minority of those sites are the product
  * detecting that data it claims completeness over was lost, truncated,
  * or never stored — and then discarding the evidence. A full day of
  * missing capture went unnoticed for exactly this reason: the
  * correlator detected and reported the failure the entire time, to a
  * terminal nothing kept. The product knew; nobody could find out.
  *
- * SCOPE, from the reconciled census
- * ---------------------------------
- *     50   broker log sites total
- *     21   completeness failures        ← in
- *     29   delivery / authorisation     ← out
+ * SCOPE: TWO KINDS OF LOG SITE
+ * ----------------------------
+ *     completeness failure site   ← in
+ *     operational log site        ← out
  *
  * The rule: IN when the product detected that data it claims to be
  * complete about was lost, truncated, or never stored. OUT when an
  * operation failed and no completeness claim covers it — a push that
  * did not send, a websocket that dropped, an auth rejection. Those are
  * real and worth logging; they are not claims about the record.
+ *
+ * NO COUNTS ARE STATED HERE, deliberately. `diagnostics-census.test.ts`
+ * carries the dated ledger and is the sole numeric authority: it walks
+ * the in-scope modules, holds the site total and the cause total, and
+ * fails when either drifts. Numbers repeated in prose go stale, and
+ * these ones already did — every figure this comment used to give was
+ * wrong by the time anyone read it.
  *
  * RUNNER-SIDE IS OUT, and it costs something specific. `otlp-relay`'s
  * `raw body unavailable` announces uncaptured bytes on the AGENT's
@@ -132,6 +138,13 @@ export type DiagnosticCause = (typeof DIAGNOSTIC_CAUSES)[number];
  *     affected      members whose records are impacted (may be several)
  *     observer      a member was present but is not implicated
  *     unattributed  no member can be resolved — EXPOSED, never omitted
+ *
+ * `observer` is DECLARED, UNUSED. `CAUSE_SPEC` is exhaustive over every
+ * cause and assigns only `producer`, `affected` and `unattributed`;
+ * attribution is never a caller's choice, so nothing can produce an
+ * observer row and no query will ever return one. It is kept because
+ * the vocabulary is meant to be complete and a later cause may need it
+ * — not because rows exist. Do not go looking for them.
  */
 export type Attribution = 'producer' | 'affected' | 'observer' | 'unattributed';
 
@@ -157,7 +170,7 @@ const UNATTRIBUTED = '';
  *   incident  an ongoing condition with a named observed recovery. Only
  *             these create unresolved state.
  *
- * Without this split, wiring all 21 sites would mark every member
+ * Without this split, wiring every in-scope site would mark each member
  * permanently sick from their first malformed record onward — the
  * mirror of permanent false health, and just as wrong.
  */
@@ -349,7 +362,14 @@ export function classifyError(err: unknown): string {
 /**
  * Digest a path for recurrence detection without retaining it.
  *
- * The ONLY way to obtain a `pathDigest` the store will accept.
+ * The only SUPPORTED constructor for a `pathDigest`, and the only one in
+ * this package. It has a sanctioned sync twin, `digestPathSync` in
+ * `apps/server/src/path-digest.ts`, which the correlator needs because
+ * it hashes inside a synchronous try/catch; that twin asserts the brand
+ * and is held to byte-identical output (sha256-hex truncated to 16
+ * chars plus a UTF-8 byte length). Do not merge them, and do not add a
+ * third: the runtime re-check in `validateFields` is what actually keeps
+ * a forged digest out of the store.
  */
 export async function digestPath(path: string): Promise<SafeFields> {
   return {
@@ -460,7 +480,7 @@ export interface DiagnosticWindowResult {
 }
 
 /**
- * The 21 in-scope sites, one method each.
+ * One typed method per in-scope site.
  *
  * Each method takes RAW inputs — a path, a thrown value, a hash — and
  * owns the conversion to safe stored fields. Call sites do not
@@ -546,7 +566,7 @@ export interface DiagnosticEmitter {
 
 export interface DiagnosticStore {
   /**
-   * The 21 typed methods. This is the path every production call site
+   * The typed emitter. This is the path every production call site
    * uses: they hand over raw inputs and this layer decides what is
    * retainable.
    */

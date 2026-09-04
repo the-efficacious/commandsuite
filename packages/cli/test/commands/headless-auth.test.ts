@@ -9,8 +9,8 @@
  *   - the built CLI driven as a process with stdin not a TTY, asserting
  *     the exit status and the stream — the only two things a supervisor
  *     observes. Before this change the same invocation printed the
- *     wizard's URL prompt and exited 0, which `Restart=always` loops
- *     forever.
+ *     connect prompt's URL question and exited 0, which
+ *     `Restart=always` loops forever.
  *
  * The process tests need `packages/cli/dist` (CI builds before it
  * tests; `pnpm build` locally). They fail loudly rather than skip if it
@@ -61,10 +61,10 @@ describe('savedAuthCheck', () => {
     expect(global.detail).toContain('machine-wide');
   });
 
-  it('WARNs at a TTY when nothing resolves — the wizard will run', () => {
+  it('WARNs at a TTY when nothing resolves — the connect prompt will run', () => {
     const c = savedAuthCheck({ ...base, entry: null, interactive: true });
     expect(c.status).toBe('WARN');
-    expect(c.detail).toContain('wizard will run');
+    expect(c.detail).toContain('connect prompt will run');
   });
 
   it('FAILs headless when nothing resolves, naming the key and both fixes', () => {
@@ -133,7 +133,7 @@ describe('csuite claude, headless, nothing resolves (built CLI as a process)', (
     });
   }
 
-  it('exits 1 on stderr with the (url, cwd) key and the fixes — never the wizard, never 0', () => {
+  it('exits 1 on stderr with the (url, cwd) key and the fixes — never the prompt, never 0', () => {
     const dir = sandbox();
     const store = join(dir, 'auth.json'); // absent: nothing enrolled anywhere
     const r = run(
@@ -144,7 +144,8 @@ describe('csuite claude, headless, nothing resolves (built CLI as a process)', (
     expect(r.status).toBe(1);
     expect(r.stderr).toContain(`no saved auth for ${BROKER} scoped to ${dir}`);
     expect(r.stderr).toContain(`csuite connect --url ${BROKER} --workspace ${dir}`);
-    // The wizard's prompt is the regression: it must not appear on either stream.
+    // The connect prompt's URL question is the regression: it must not
+    // appear on either stream.
     expect(r.stdout + r.stderr).not.toContain('Broker URL [');
     expect(r.stdout + r.stderr).not.toContain('running `csuite connect`');
   });

@@ -33,7 +33,7 @@ import {
 import {
   __resetViewForTests,
   selectDmWith,
-  selectOverview,
+  selectTeamHome,
   selectThread,
 } from '../src/lib/view.js';
 
@@ -205,7 +205,7 @@ describe('<Sidebar /> unread indicators', () => {
     lastReadByThread.value = new Map([['primary', 5]]);
     // Navigate away from primary so the "active thread suppresses
     // its own badge" rule doesn't hide the pill we're testing for.
-    selectOverview();
+    selectTeamHome();
     render(<Sidebar viewer="me" />);
     expect(screen.getByText('1')).toBeTruthy();
   });
@@ -251,7 +251,7 @@ describe('<Sidebar /> unread indicators', () => {
     setRoster();
     appendMessages('me', [mkMsg({ id: 'a', ts: 10, to: null, from: 'me' })]);
     lastReadByThread.value = new Map([['primary', 0]]);
-    selectOverview();
+    selectTeamHome();
     render(<Sidebar viewer="me" />);
     expect(screen.queryByText('1')).toBeNull();
   });
@@ -268,7 +268,7 @@ describe('<Sidebar /> unread indicators', () => {
     );
     appendMessages('me', bunch);
     lastReadByThread.value = new Map([['primary', 0]]);
-    selectOverview();
+    selectTeamHome();
     render(<Sidebar viewer="me" />);
     expect(screen.getByText('99+')).toBeTruthy();
     expect(screen.queryByText('105')).toBeNull();

@@ -161,7 +161,9 @@ export function describeRunnerConformance(subject: ConformanceSubject): void {
       for (const s of sentinels) writeFileSync(s.path, s.body, 'utf8');
 
       // Trace ON so config-writing paths that only run with capture
-      // (e.g. claude's `.claude/settings.json` hooks) are exercised.
+      // (e.g. codex's generated `CODEX_HOME/config.toml` `[otel]` block)
+      // are exercised. The claude adapter writes nothing: its hooks and
+      // MCP config travel as in-process SDK options, not files.
       const exitCode = await run({ trace: true });
       expect(exitCode).toBe(0);
 

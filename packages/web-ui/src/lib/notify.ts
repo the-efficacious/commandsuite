@@ -41,7 +41,7 @@ let isTabVisible: VisibilityGetter = () =>
 
 /**
  * Fire a toast for a freshly-arrived live message if the gates pass.
- * Backfill / history loads should NOT call this — only the live WS
+ * Hydration / history loads should NOT call this — only the live WS
  * message handler.
  */
 export function notifyNewMessage(msg: Message): void {

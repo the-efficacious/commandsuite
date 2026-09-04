@@ -10,10 +10,13 @@
  *                     decremented on delete/overwrite. At refcount 0
  *                     the blob is dropped from disk.
  *   `fs_grants`     — (path, viewer, granted_via) rows. Populated when
- *                     a message or objective references an attachment,
- *                     granting the recipient read access to that exact
- *                     path even though the tree otherwise belongs to
- *                     someone else.
+ *                     a message references an attachment — a push
+ *                     delivery or an objective discussion post, both of
+ *                     which are messages — granting the recipient read
+ *                     access to that exact path even though the tree
+ *                     otherwise belongs to someone else. `granted_via`
+ *                     is always a bare message id; nothing else is ever
+ *                     written to it.
  *
  * Permissions:
  *   members.manage    — full read/write/delete anywhere

@@ -12,7 +12,7 @@
  * open. The "load older" bar at the top first reveals more of what's
  * already in memory, then pages older history from the server via
  * `thread-history`. The thread's first page is fetched on open by
- * `hydrateThread`, since the live backfill is not thread-scoped.
+ * `hydrateThread`, since the live hydration is not thread-scoped.
  */
 
 import { useEffect } from 'preact/hooks';
@@ -108,7 +108,7 @@ export function Transcript({ viewer }: TranscriptProps) {
     selectThreadMessage(null);
   }, [threadKey]);
 
-  // Fetch the thread's own first page on open. The live backfill is a
+  // Fetch the thread's own first page on open. The live hydration is a
   // global recent-window, so a quiet DM can be entirely absent from
   // it; `hydrateThread` is idempotent (guarded by a `hydrated` flag).
   useEffect(() => {

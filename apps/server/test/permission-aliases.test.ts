@@ -8,7 +8,7 @@
 
 import { createSqliteMemberStore, TeamStore } from 'csuite-core';
 import { PermissionSchema, PermissionsSchema } from 'csuite-sdk/schemas';
-import { LEGACY_PERMISSION_EXPANSIONS } from 'csuite-sdk/types';
+import { LEGACY_PERMISSION_ALIASES, LEGACY_PERMISSION_EXPANSIONS } from 'csuite-sdk/types';
 import { describe, expect, it } from 'vitest';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore, MemberLoadError, resolvePermissions } from '../src/members.js';
@@ -59,7 +59,14 @@ describe('schema compatibility', () => {
 
   it('expands the aggregate when parsing a list', () => {
     expect(PermissionsSchema.parse(['objectives.manage'])).toEqual(OBJECTIVE_LEAVES);
-    expect(LEGACY_PERMISSION_EXPANSIONS['objectives.manage']).toEqual(OBJECTIVE_LEAVES);
+    expect(LEGACY_PERMISSION_ALIASES['objectives.manage']).toEqual(OBJECTIVE_LEAVES);
+  });
+
+  it('keeps the deprecated export pointing at the whole alias table', () => {
+    // The old name is still exported for consumers outside this repo. A
+    // shim that drifted to a subset would expand fewer aliases and quietly
+    // narrow authority, so pin the whole table, not one key.
+    expect(LEGACY_PERMISSION_EXPANSIONS).toEqual(LEGACY_PERMISSION_ALIASES);
   });
 
   it('still rejects an unknown key', () => {
@@ -107,7 +114,7 @@ describe('legacy process.manage compatibility', () => {
 
   it('expands the old name when parsing a list, and rejects it as a single leaf', () => {
     expect(PermissionsSchema.parse(['process.manage'])).toEqual(['team_process.manage']);
-    expect(LEGACY_PERMISSION_EXPANSIONS['process.manage']).toEqual(['team_process.manage']);
+    expect(LEGACY_PERMISSION_ALIASES['process.manage']).toEqual(['team_process.manage']);
     expect(() => PermissionSchema.parse('process.manage')).toThrow();
   });
 

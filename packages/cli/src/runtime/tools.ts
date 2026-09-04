@@ -67,6 +67,11 @@ import type {
 import { PERMISSIONS } from 'csuite-sdk/types';
 import { downloadLocalFile, uploadLocalFile } from '../commands/fs.js';
 
+// The MESSAGE level — the six severity bands an author puts on one
+// message. Not the operator log threshold, which is csuite-core's own
+// four-value `LogLevel` (`debug | info | warn | error`, `CSUITE_LOG_LEVEL`)
+// published under the same type name from a different package. `warn`
+// and `warning` do not interoperate.
 const LEVELS: readonly LogLevel[] = ['debug', 'info', 'notice', 'warning', 'error', 'critical'];
 const OBJECTIVE_STATUSES: readonly ObjectiveStatus[] = ['active', 'blocked', 'done', 'cancelled'];
 

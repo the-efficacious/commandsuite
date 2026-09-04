@@ -57,7 +57,7 @@ import {
   selectMembers,
   selectNotifications,
   selectObjectivesList,
-  selectOverview,
+  selectTeamHome,
   selectToolSources,
   view,
 } from '../../lib/view.js';
@@ -150,7 +150,7 @@ export function NavColumn({ viewer }: NavColumnProps) {
           label="Home"
           glyph={<Home size={15} aria-hidden="true" />}
           active={homeActive}
-          onClick={selectOverview}
+          onClick={selectTeamHome}
           ariaLabel="Open team home"
         />
         <NavItem
@@ -213,7 +213,7 @@ export function NavColumn({ viewer }: NavColumnProps) {
         )}
         {canManageNotifications && (
           <NavItem
-            label="Notifications"
+            label="External notifications"
             glyph={<Webhook size={15} aria-hidden="true" />}
             active={notificationsActive}
             onClick={selectNotifications}
@@ -394,7 +394,7 @@ function TeamHeader({ viewer }: { viewer: string }) {
   return (
     <button
       type="button"
-      onClick={selectOverview}
+      onClick={selectTeamHome}
       aria-label={`${team.name} home`}
       class="w-full flex items-center gap-2"
       style="padding:12px 14px;border-bottom:1px solid var(--ef-border);background:transparent;border:none;border-bottom:1px solid var(--ef-border);text-align:left;cursor:pointer"

@@ -1,12 +1,24 @@
 /**
- * `csuite mcp-bridge` — the stdio MCP server agents spawn via `.mcp.json`.
+ * `csuite mcp-bridge` — the csuite MCP bridge: the stdio MCP server an
+ * agent spawns and speaks MCP to. Each runner declares it for its own
+ * agent framework, never by rewriting an operator's files: the claude
+ * adapter passes it inline as an SDK `mcpServers` entry (the SDK
+ * composes `--mcp-config <json>`), and the codex adapter writes an
+ * `[mcp_servers.csuite]` block into the ephemeral `CODEX_HOME`
+ * `config.toml`.
+ *
+ * Distinct from the two other things called "MCP server" here: an
+ * UPSTREAM MCP server (the remote endpoint a `kind=mcp` tool source
+ * points at, reached by the broker) and a LOCAL MCP server (a stdio
+ * process on a member's own workstation, codex-only — see
+ * `agents/codex/local-mcp.ts`).
  *
  * This is a **thin relay** that owns nothing except its two endpoints:
  *
  *   stdio <──── MCP JSON-RPC ────>  agent (Claude Code, etc.)
  *   IPC   <──── csuite IPC frames ──>  runner (the member's `csuite claude` process)
  *
- * It doesn't talk to the csuite broker, doesn't hold a instructions, doesn't
+ * It doesn't talk to the csuite broker, doesn't hold instructions, doesn't
  * own a tools set, doesn't maintain state beyond "I have one socket
  * open to the runner, I speak MCP stdio." All of that lives in the
  * runner process.
@@ -26,10 +38,11 @@
  *      has gone away
  *
  * Because the bridge holds no business state, it's trivial to restart:
- * if it crashes mid-session the agent re-spawns it per `.mcp.json`
- * rules, and the new bridge connects to the same running runner and
- * picks up where the old one left off (modulo the agent needing to
- * re-list tools, which it does automatically on reconnect).
+ * if it crashes mid-session the agent re-spawns it per whichever MCP
+ * server config its adapter installed, and the new bridge connects to
+ * the same running runner and picks up where the old one left off
+ * (modulo the agent needing to re-list tools, which it does
+ * automatically on reconnect).
  */
 
 import { connect, type Socket } from 'node:net';

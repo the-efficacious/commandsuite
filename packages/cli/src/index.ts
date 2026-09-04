@@ -2,7 +2,8 @@
  * `csuite` — command-line interface for csuite.
  *
  * Subcommands:
- *   csuite setup       — first-run wizard: create team config + enroll TOTP
+ *   csuite setup       — first-run wizard: seed the team and its first
+ *                        member, write the server config file, enroll TOTP
  *   csuite member        — list / create / update / delete team members
  *   csuite enroll      — (re-)enroll a member for web UI login (TOTP)
  *   csuite rotate      — rotate a member's bearer token
@@ -188,8 +189,8 @@ async function resolveAuthOrConnect(input: { url?: string; token?: string }): Pr
       : { url, token };
   }
 
-  // No auth for (url, cwd). Headless, the wizard below cannot prompt —
-  // it would exit 0 at the URL question (a supervisor with
+  // No auth for (url, cwd). Headless, the connect prompt below cannot
+  // ask — it would exit 0 at the URL question (a supervisor with
   // Restart=always then loops it forever) or hang on a device code
   // until it expires (commandsuite#199). Fail like every single-use
   // verb does, and name the whole lookup key: "this directory" hides

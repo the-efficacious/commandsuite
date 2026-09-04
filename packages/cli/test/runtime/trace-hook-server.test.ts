@@ -135,22 +135,22 @@ describe('hook server', () => {
     expect(busy.busy).toBe(true);
   });
 
-  it('SessionStart relays its source via onSessionStart and drives no presence', async () => {
+  it('SessionStart relays its origin via onSessionStart and drives no presence', async () => {
     const busy = createActivitySignal();
-    const sources: string[] = [];
+    const origins: string[] = [];
     server = await startHookServer({
       busy,
       logger: silentLogger(),
-      onSessionStart: (source) => sources.push(source),
+      onSessionStart: (origin) => origins.push(origin),
     });
 
     await postJson(server.url, { hook_event_name: 'SessionStart', source: 'compact' });
     await postJson(server.url, { hook_event_name: 'SessionStart', source: 'startup' });
-    // Payloads without a source relay an empty string rather than
-    // being dropped — the callback owns the routing decision.
+    // Payloads without the hook's `source` field relay an empty string
+    // rather than being dropped — the callback owns the routing decision.
     await postJson(server.url, { hook_event_name: 'SessionStart' });
 
-    expect(sources).toEqual(['compact', 'startup', '']);
+    expect(origins).toEqual(['compact', 'startup', '']);
     expect(busy.state()).toBe('idle');
     expect(busy.getSourceCounts().tool_inflight).toBe(0);
   });

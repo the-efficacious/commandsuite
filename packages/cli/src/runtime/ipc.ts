@@ -1,6 +1,8 @@
 /**
  * IPC protocol between the csuite runner (parent of the agent) and the
- * `csuite mcp-bridge` relay (child of the agent, spawned via .mcp.json).
+ * `csuite mcp-bridge` relay (child of the agent, declared to it by the
+ * adapter — inline SDK options for claude, the generated `CODEX_HOME`
+ * `config.toml` for codex).
  *
  * Wire format: newline-delimited JSON over a Unix domain socket. Each
  * frame is one JSON object terminated by `\n`. Max frame size is

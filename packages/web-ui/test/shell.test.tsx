@@ -28,7 +28,7 @@ import { __resetRosterForTests, roster } from '../src/lib/roster.js';
 import {
   __resetViewForTests,
   selectDmWith,
-  selectOverview,
+  selectTeamHome,
   selectThread,
   view,
 } from '../src/lib/view.js';
@@ -833,7 +833,7 @@ describe('<Sidebar /> overview button', () => {
   });
 
   it('overview button highlights when view is overview', () => {
-    selectOverview();
+    selectTeamHome();
     render(<Sidebar viewer="director-1" />);
     const btn = screen.getByRole('button', { name: /open team home/i });
     // Active state for the canonical .navitem is the "active" class

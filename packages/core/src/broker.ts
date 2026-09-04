@@ -1,16 +1,23 @@
 /**
- * Broker — the runtime-agnostic core of csuite.
+ * Presence broker — the runtime-agnostic core of csuite.
  *
  * Ties the presence registry to an event log and handles the push
  * fanout. Knows nothing about HTTP, MCP, or persistence; runtime
  * adapters layer those on top.
  *
+ * NAMING. "The broker" is the deployed server process (`csuite-server`,
+ * `csuite serve`) — the thing an operator restarts. This class is ONE
+ * component that process constructs at boot, beside the stores, the
+ * listeners and the route table, and its concept is the **presence
+ * broker**. The class identifier stays `Broker` (D31); prose here must
+ * not, because both live in the same file at `apps/server/src/run.ts`.
+ *
  * Identity model: every authenticated caller is a member with a
- * unique `name`. The broker enforces `name === context.name` on
+ * unique `name`. This class enforces `name === context.name` on
  * register and subscribe, so a member can only act on their own
  * connection. DMs go to the target member and also fan out to the
- * sender's own connection (if registered), which keeps multiple
- * live sessions of the same member in sync with zero client-side
+ * sender's own connection (if registered), which keeps a member's
+ * several live connections in sync with zero client-side
  * bookkeeping.
  */
 
@@ -105,7 +112,7 @@ export interface BrokerOptions {
 
 /**
  * Per-push context supplied by the runtime adapter. `from` is the
- * authenticated user's name; the broker stamps it onto
+ * authenticated user's name; the presence broker stamps it onto
  * `message.from` verbatim and never reads sender identity from the
  * payload. Pass `from: null` for unauthenticated / system-originated
  * pushes (tests, internal fanout).
@@ -129,7 +136,7 @@ export interface PushContext {
 
 /**
  * Per-register / per-subscribe context. `name` is the caller's
- * authenticated identity — the broker checks it matches the target
+ * authenticated identity — the presence broker checks it matches the target
  * name being registered/subscribed. Pass `name: null` to skip the
  * check (tests, in-process core usage without a runtime). `role` is
  * cosmetic and surfaces on the user's presence entry.
@@ -183,7 +190,7 @@ function supportsDisposition(identity: ClientIdentity | null | undefined): boole
  * dep) because `csuite-core` is deliberately dep-light — it
  * carries only `csuite-sdk` as a runtime dep. A 15-line
  * semaphore is cheaper than dragging p-limit into every non-Node
- * runtime that wants to embed the broker.
+ * runtime that wants to embed the presence broker.
  */
 async function boundedParallel<T>(
   items: readonly T[],
@@ -257,7 +264,7 @@ export class Broker {
         }
         return globalThis.crypto.randomUUID();
       });
-    // Default to the real logger, not a no-op: a broker whose warnings
+    // Default to the real logger, not a no-op: a presence broker whose warnings
     // vanish unless a host remembers to inject one is how subscriber
     // failures went unobserved.
     this.logger = options.logger ?? defaultLogger.child('broker');

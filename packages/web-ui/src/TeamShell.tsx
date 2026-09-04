@@ -329,7 +329,7 @@ export function TeamShell(props: TeamShellProps): JSX.Element {
       });
 
       // Kick off push-state detection in parallel — cheap, no-op when
-      // push is unsupported. Populates the signal the NotificationToggle
+      // push is unsupported. Populates the signal the PushToggle
       // reads; errors inside are fully handled by initializePushState.
       void initializePushState();
     };
@@ -377,7 +377,7 @@ export function TeamShell(props: TeamShellProps): JSX.Element {
         leftRail={props.leftRail}
       />
       {/* Renderless bridge — emits sticky toasts when the live stream
-          drops or comes back with a backfill gap. */}
+          drops or comes back with a hydration gap. */}
       <DisconnectedBanner />
       {modal && (
         <RouteModal onClose={closeModalView} ariaLabel="Account settings" size="lg">
@@ -416,6 +416,8 @@ function renderView(v: View, viewer: string) {
         </>
       );
     }
+    // `overview` is the deprecated `View` shim's spelling of route
+    // kind `home` — Team Home.
     case 'overview':
       return <TeamHome viewer={viewer} />;
     case 'inbox':

@@ -176,6 +176,12 @@ export interface ChannelStore {
   getBySlug(slug: string): Channel | null;
   /** Create a new channel; creator joins as an ordinary member. */
   create(input: { slug: string; description?: string; creator: string; now?: number }): Channel;
+  /**
+   * Change the slug and/or the description. This is the whole mutation
+   * surface; `PATCH /channels/:slug` is the only route that reaches it.
+   * Forbidden for general, in either field. The id is unchanged, so
+   * existing `chan:<id>` message references stay valid.
+   */
   update(
     id: string,
     input: { slug?: string; description?: string },
@@ -375,7 +381,7 @@ class SqliteChannelStore implements ChannelStore {
   ): Channel {
     if (input.slug !== undefined) validateSlug(input.slug);
     if (id === GENERAL_CHANNEL_ID) {
-      throw new ChannelsError('reserved', 'general cannot be renamed');
+      throw new ChannelsError('reserved', 'general cannot be updated');
     }
     if (input.slug === GENERAL_CHANNEL_SLUG) {
       throw new ChannelsError('reserved', `slug "${input.slug}" is reserved`);
@@ -383,7 +389,7 @@ class SqliteChannelStore implements ChannelStore {
     const channel = this.get(id);
     if (!channel) throw new ChannelsError('not_found', `channel ${id} not found`);
     if (channel.archivedAt !== null) {
-      throw new ChannelsError('archived', 'cannot rename an archived channel');
+      throw new ChannelsError('archived', 'cannot update an archived channel');
     }
     const nextSlug = input.slug ?? channel.slug;
     const nextDescription = input.description ?? channel.description;

@@ -29,7 +29,7 @@ function bigEvent(ts: number, sizeBytes: number): ActivityEvent {
     ts,
     durationMs: 0,
     agent: 'codex',
-    source: 'codex_item',
+    source: 'codex_rollout',
     toolName: 'Bash',
     input: { command: 'cat big-file.txt' },
     // A multi-MB tool result (e.g. a large command output). The repeated

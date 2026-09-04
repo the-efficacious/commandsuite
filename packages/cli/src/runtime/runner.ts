@@ -459,12 +459,12 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
         token: options.token,
         onUnauthorized: () => unauthorizedHandler('http'),
         logger: log.child('capture-host'),
-        onSessionStart: (source) => {
+        onSessionStart: (origin) => {
           // `compact` = post-compaction restart, `clear` = /clear —
           // both mean the prior conversation context is gone and the
           // agent needs its plate re-asserted. `startup` / `resume`
           // are already covered by the tools/list attach trigger.
-          if (source === 'compact' || source === 'clear') {
+          if (origin === 'compact' || origin === 'clear') {
             sendRebrief('context-compaction');
           }
         },

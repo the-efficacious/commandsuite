@@ -1,24 +1,24 @@
 /**
- * Thread history paging — lazy backfill for the chat transcript.
+ * Thread history paging — lazy hydration for the chat transcript.
  *
- * The live subscription (`live.ts`) only backfills a small global
+ * The live subscription (`live.ts`) only hydrates a small global
  * window of recent messages on connect. That's enough to show a
  * thread's tail, but a DM or channel the viewer scrolls back through
  * needs older messages fetched on demand — otherwise the transcript
- * silently bottoms out at whatever the global backfill happened to
+ * silently bottoms out at whatever the global hydration happened to
  * include.
  *
  * Two entry points:
  *   - `hydrateThread` — run once when a thread is first opened. Pulls
  *     the most recent page for *that* thread specifically (the global
- *     backfill is not thread-scoped, so a quiet DM can be missing from
+ *     hydration is not thread-scoped, so a quiet DM can be missing from
  *     it entirely).
  *   - `loadOlderThreadMessages` — pull the next older page, anchored
  *     `before` the oldest message currently held.
  *
  * Both fetch into the shared `messagesByThread` store via
  * `prependMessages`, which dedups by id — so overlap with the live
- * backfill or with a previous page is harmless.
+ * hydration or with a previous page is harmless.
  *
  * Per-thread state (`loading`, `exhausted`, `hydrated`) lives in one
  * signal keyed by thread key, so the transcript can render a spinner

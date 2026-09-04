@@ -1,9 +1,9 @@
 /**
  * `csuite quickstart` — zero-to-first-objective helper.
  *
- * Assumes the caller has already run `csuite setup` (or ingested a
- * team config some other way). Picks up from "you have a token and
- * a broker URL" and seeds the remaining first-session experience:
+ * Assumes the caller has already run `csuite setup` (or seeded a team
+ * and a bearer token some other way). Picks up from "you have a token
+ * and a broker URL" and seeds the remaining first-session experience:
  *
  *   1. Health-check the broker at the configured URL. If it's not up,
  *      print a clear "start `csuite serve` first" message and exit 1.

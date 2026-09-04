@@ -73,10 +73,59 @@ export function channelThreadTag(channelId: string): string {
 
 /** Thread prefix for objective lifecycle + discussion events (`obj:<id>`). */
 export const OBJECTIVE_THREAD_PREFIX = 'obj:' as const;
-/** Other fan-out event families whose membership can be narrower than the team. */
-const TOOL_THREAD_PREFIX = 'tool:' as const;
-const VARIABLE_THREAD_PREFIX = 'variable:' as const;
-const NOTIFICATION_THREAD_PREFIX = 'hook:' as const;
+
+/**
+ * Other fan-out event families whose membership can be narrower than the team.
+ *
+ * These three plus `CHANNEL_THREAD_PREFIX`, `SECRET_THREAD_PREFIX` and
+ * `OBJECTIVE_THREAD_PREFIX` are the six thread-tag prefixes, and this module is
+ * the only place any of them is spelled. Every writer imports from here —
+ * `app.ts` for the tags it stamps onto pushes, `SqliteEventLog` for the feed
+ * predicate it expresses in SQL — so the scoping rule cannot fork. A prefix
+ * declared here but missing from a writer's copy is a scoped event leaking into
+ * every viewer's feed.
+ *
+ * `HOOK_THREAD_PREFIX` is named for its value, not for the subsystem: `hook:` is
+ * the user-visible wire spelling and it is what a reader greps for.
+ */
+export const TOOL_THREAD_PREFIX = 'tool:' as const;
+export const VARIABLE_THREAD_PREFIX = 'variable:' as const;
+export const HOOK_THREAD_PREFIX = 'hook:' as const;
+
+/** The six thread-tag prefixes, in one list, for callers that iterate them. */
+export const THREAD_TAG_PREFIXES = [
+  CHANNEL_THREAD_PREFIX,
+  OBJECTIVE_THREAD_PREFIX,
+  SECRET_THREAD_PREFIX,
+  TOOL_THREAD_PREFIX,
+  VARIABLE_THREAD_PREFIX,
+  HOOK_THREAD_PREFIX,
+] as const;
+
+/** Build the thread tag for a tool-source registry event (`tool:<slug>`). */
+export function toolThreadTag(slug: string): string {
+  return `${TOOL_THREAD_PREFIX}${slug}`;
+}
+
+/** Build the thread tag for a variable registry event (`variable:<slug>`). */
+export function variableThreadTag(slug: string): string {
+  return `${VARIABLE_THREAD_PREFIX}${slug}`;
+}
+
+/** Build the thread tag for a notification-endpoint registry event (`hook:<slug>`). */
+export function hookThreadTag(slug: string): string {
+  return `${HOOK_THREAD_PREFIX}${slug}`;
+}
+
+/** Build the thread tag for a secret lifecycle event (`secret:<slug>`). */
+export function secretThreadTag(slug: string): string {
+  return `${SECRET_THREAD_PREFIX}${slug}`;
+}
+
+/** Build the thread tag for an objective's discussion thread (`obj:<id>`). */
+export function objectiveThreadTag(objectiveId: string): string {
+  return `${OBJECTIVE_THREAD_PREFIX}${objectiveId}`;
+}
 
 /** Recipient-list events that predate the thread-tag convention. */
 const SCOPED_UNTHREADED_KINDS: ReadonlySet<string> = new Set(['instructions', 'context_control']);
@@ -98,7 +147,7 @@ export function isScopedThreadTag(tag: unknown): boolean {
   if (tag.startsWith(OBJECTIVE_THREAD_PREFIX)) return true;
   if (tag.startsWith(TOOL_THREAD_PREFIX)) return true;
   if (tag.startsWith(VARIABLE_THREAD_PREFIX)) return true;
-  if (tag.startsWith(NOTIFICATION_THREAD_PREFIX)) return true;
+  if (tag.startsWith(HOOK_THREAD_PREFIX)) return true;
   if (tag.startsWith(CHANNEL_THREAD_PREFIX)) {
     return tag !== channelThreadTag(GENERAL_CHANNEL_ID);
   }
@@ -261,7 +310,7 @@ export class InMemoryEventLog implements EventLog {
   }> {
     let lastThreadPostAt: number | null = null;
     let lastPrLinkAt: number | null = null;
-    const thread = `obj:${objectiveId}`;
+    const thread = objectiveThreadTag(objectiveId);
     for (const { message } of this.stored) {
       if (message.data?.kind !== 'objective_discuss' || message.data?.thread !== thread) continue;
       lastThreadPostAt = Math.max(lastThreadPostAt ?? -Infinity, message.ts);

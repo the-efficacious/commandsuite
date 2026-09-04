@@ -21,16 +21,22 @@
  * singleton + bootstrap member + bearer token, and write the slim
  * infra-only config file alongside.
  *
- * Resolution of the config path:
+ * Resolution of the server config file path (`server.defaultConfigPath()`
+ * in `apps/server/src/members.ts` is the authority for steps 2-4):
  *   1. explicit `--config-path` on the command line
  *   2. `$CSUITE_CONFIG_PATH` in the environment
- *   3. `./csuite.json` relative to the caller's cwd
+ *   3. `./csuite.json` relative to the caller's cwd — but ONLY if that
+ *      file already exists (the cwd IS the server directory)
+ *   4. otherwise `./csuite/csuite.json`, creating the `csuite/`
+ *      subdirectory (0o700). A fresh `csuite setup` in a clean
+ *      directory lands here, not on step 3.
  *
  * Refuses to touch a setup that's already complete: if the config
  * file exists AND the referenced DB has a team singleton, we print a
  * diagnostic and exit. Re-running would mint a fresh bootstrap token and
- * invalidate every active credential — explicit `rm csuite.json && rm
- * csuite.db` is the way to start over.
+ * invalidate every active credential — removing the resolved config file
+ * and its DB (`rm -r ./csuite` for a default fresh bootstrap) is the way
+ * to start over.
  */
 
 import { closeSync, existsSync, mkdirSync, openSync, writeSync } from 'node:fs';

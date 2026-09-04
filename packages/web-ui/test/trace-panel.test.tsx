@@ -453,7 +453,7 @@ describe('TracePanel — genai enrichment', () => {
     expect(screen.queryByText(/system instructions/)).toBeNull();
   });
 
-  it('renders a failed exact identity as unmatched while its compatible spare stays a sidecar', async () => {
+  it('renders a failed exact identity as unmatched while its spare stays an orphan call', async () => {
     const ex = mkExchange({ ts: 1_700_000_000_000, responseId: 'msg_missing' });
     const spare = mkInference({
       id: 9,
@@ -466,13 +466,13 @@ describe('TracePanel — genai enrichment', () => {
     );
     render(<TracePanel objective={objective} />);
 
-    await waitFor(() => expect(screen.getByText(/LLM turns \(1 · 1 sidecar\)/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/LLM turns \(1 · 1 orphan call\)/)).toBeTruthy());
     expect(screen.getByText(/capture unmatched/)).toBeTruthy();
     expect(screen.queryByText(/marker only/)).toBeNull();
     expect(screen.getByText(/You are Claude Code, full block\./)).toBeTruthy();
   });
 
-  it('renders turnless records as attributed sidecar rows', async () => {
+  it('renders turnless records as attributed orphan-call rows', async () => {
     const ex = mkExchange({ ts: 1_700_000_000_000, responseId: 'msg_A' });
     const main = mkInference({ id: 1, ts: 1_700_000_000_000, responseId: 'msg_A' });
     const sidecar = mkInference({
@@ -488,7 +488,9 @@ describe('TracePanel — genai enrichment', () => {
     render(<TracePanel objective={objective} />);
 
     await waitFor(() =>
-      expect(screen.getByText(/LLM turns \(1 · 1 with full request · 1 sidecar\)/)).toBeTruthy(),
+      expect(
+        screen.getByText(/LLM turns \(1 · 1 with full request · 1 orphan call\)/),
+      ).toBeTruthy(),
     );
     expect(screen.getByText('web search')).toBeTruthy();
     expect(screen.getByText('Haiku 4.5')).toBeTruthy();

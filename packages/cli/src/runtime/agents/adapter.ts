@@ -14,7 +14,7 @@
  *   1. `locate()`      — find the agent binary (fail fast, no side
  *                        effects on the environment)
  *   2. `runnerOptions` — the runner knobs this framework needs
- *                        (notification sink, second-bridge policy)
+ *                        (channel sink, second-bridge policy)
  *   3. `prepare()`     — write config, compute env + args; return an
  *                        idempotent cleanup that restores everything
  *   4. `spawn()`       — start the agent, return a process handle
@@ -100,9 +100,17 @@ export interface TestedVersionRange {
 
 export interface AgentAdapterMeta {
   /**
-   * Stable runner id: `'claude'`, `'codex'`, ... Used as the
+   * Stable runner id. The shipped values are `'claude'`, `'codex'` and
+   * `'stub'` — never `'claude-code'`, which is a deprecated CLI verb
+   * alias and has not been a runner id since the rename. Used as the
    * session-log component, the run-summary `runner` field, and the
    * `csuite <id>:` banner prefix. Kebab-case, matches the CLI verb.
+   *
+   * Typed `string` rather than a closed union on purpose: this is the
+   * one producer, and a third-party adapter must be able to declare its
+   * own id. `RunnerIdentity.runner` in the SDK closes the union over
+   * the shipped set; the activity events keep it loose for the same
+   * reason this field is loose.
    */
   readonly id: string;
   /** Human display name (`'Claude Code'`, `'OpenAI Codex'`). */
@@ -181,9 +189,19 @@ export interface AgentProcess {
    */
   readonly exitCode: Promise<number>;
   /**
-   * Agent-native session identity — Claude Code session id, codex
-   * thread id — for the run summary and resume hints. Return `null`
-   * when unknown.
+   * The AGENT SESSION ID — the agent framework's own identity for its
+   * conversation: a Claude Code session id, a codex thread id. Used for
+   * the run summary and resume hints. Return `null` when unknown.
+   *
+   * Three other things in this tree are also called a "session" and
+   * none of them is this one:
+   *   - RUNNER SESSION — everything one `csuite <runner>` invocation
+   *     does, from auth to teardown (`runAgentSession`). No session id
+   *     is carried on `session_start` at all.
+   *   - GENERATION — one agent-process lifetime inside a runner
+   *     session; this is what `session_start`/`session_end` bracket.
+   *   - WEB SESSION — the cookie-backed web-UI login (`sessions` table,
+   *     `csuite_session` cookie). Never joined to any of the above.
    */
   sessionId(): string | null;
   /**
@@ -207,15 +225,30 @@ export interface AgentProcess {
  * treat a null session id as "resume the most recent session anyway"
  * (claude sets `continue: true`, codex passes `true` as the thread
  * selector), because a predecessor that never ran a turn never revealed
- * an id and abandoning its conversation would be the wrong default for
- * an instruction restart. That makes `{ sessionId: null }` unusable as
- * "start cold" — it already means the opposite.
+ * an id. That makes `{ sessionId: null }` unusable as "start cold" — it
+ * already means the opposite.
  *
  *   `{ resume: true, sessionId }`  — carry the conversation across the
- *     swap. An instruction edit uses this: the successor holds the same
- *     conversation under the new system prompt, so continuity is ~free.
- *   `{ resume: false }`            — start cold. A `clear` uses this,
- *     and it is the whole difference between the two operations.
+ *     swap.
+ *   `{ resume: false }`            — start cold.
+ *
+ * EVERY DRIVER-INITIATED RESPAWN IS COLD. `runtime/agent-session.ts`
+ * passes `{ resume: false }` at all three of its respawn sites — the
+ * restart coordinator, `clear` and `reload` — so the posture is not
+ * what distinguishes those operations. They differ in what was
+ * refetched before the swap (instructions, environment, or both) and
+ * in the `resumeReason` stamped on the successor's `session_start`.
+ * Resuming here was a bug: a fresh capture host re-read the whole
+ * resumed transcript as new activity (`agent-session.ts`, the restart
+ * coordinator's `respawn` hook, and `runtime/restart.ts`). Resume is
+ * the operator's lever — `--resume [<sessionId>]` at launch — not the
+ * driver's.
+ *
+ * `{ resume: true, … }` stays in the union because it is part of the
+ * adapter contract every adapter must honour, and the posture tests
+ * (`test/runtime/respawn-posture.test.ts`) exercise the resuming
+ * branch directly. An adapter written as if the driver used it would
+ * behave differently from both shipped runners.
  */
 export type RespawnPosture = { resume: true; sessionId: string | null } | { resume: false };
 

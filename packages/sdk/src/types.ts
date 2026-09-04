@@ -99,7 +99,7 @@ export const PERMISSIONS = [
    *
    * Shipped as `process.manage` until the team-process rename. Rows
    * still carrying that name resolve to this leaf through
-   * `LEGACY_PERMISSION_EXPANSIONS` below, which is why no permissions
+   * `LEGACY_PERMISSION_ALIASES` below, which is why no permissions
    * migration exists.
    */
   'team_process.manage',
@@ -112,8 +112,14 @@ export type Permission = (typeof PERMISSIONS)[number];
  * and stored presets written before the consolidation carry these;
  * every permission parse and resolution path maps them forward so an
  * existing team loads unchanged.
+ *
+ * Two different operations ride this one table, which is why it is
+ * named for the alias and not for the expansion: `objectives.manage`
+ * is an aggregate that fans out to several current leaves, while
+ * `process.manage` is a one-to-one rename. Nothing here is a
+ * migration — no stored row is ever rewritten.
  */
-export const LEGACY_PERMISSION_EXPANSIONS: Readonly<Record<string, readonly Permission[]>> = {
+export const LEGACY_PERMISSION_ALIASES: Readonly<Record<string, readonly Permission[]>> = {
   'objectives.manage': [
     'objectives.create',
     'objectives.cancel',
@@ -129,6 +135,13 @@ export const LEGACY_PERMISSION_EXPANSIONS: Readonly<Record<string, readonly Perm
   // names are accepted on write for the same reason.
   'process.manage': ['team_process.manage'],
 };
+
+/**
+ * @deprecated Transitional alias for `LEGACY_PERMISSION_ALIASES`, kept
+ * only so consumers outside this package can be moved over in a
+ * separate change. Remove once no call site names it.
+ */
+export const LEGACY_PERMISSION_EXPANSIONS = LEGACY_PERMISSION_ALIASES;
 
 /**
  * Legacy named bundles retained only to read teams created by older

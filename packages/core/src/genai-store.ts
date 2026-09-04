@@ -8,12 +8,26 @@
  * all shaped after the OpenTelemetry GenAI semantic conventions
  * (Development) and produced by the core `anthropicToGenAi` mapper.
  *
- * This is deliberately independent of both the operational telemetry
- * sink (`telemetry-store.ts`) and the member-activity stream: its own
- * `gen_ai_inference` table, its own append path, no listeners. It can
- * share the dedicated activity `SqlDriver` with the telemetry
+ * MODULE independence, not schema independence. This store takes no
+ * code dependency on the operational telemetry sink
+ * (`telemetry-store.ts`) or on the member-activity stream, registers no
+ * listeners, and owns its own `gen_ai_inference` table and append path.
+ * It can share the dedicated activity `SqlDriver` with the telemetry
  * store — both are heavy-write, per-member operational streams we keep
- * off the main broker write lock — without any coupling.
+ * off the main broker write lock — without either module importing the
+ * other.
+ *
+ * The rows ARE joined, in two places outside this file, and a reader
+ * needs the join keys from here because this store owns the columns:
+ *   - `response_id` joins a row to the `llm_exchange` marker that
+ *     produced it (`$.entry.response.responseId` in `member_activity`),
+ *     and `request_sha256` / `response_sha256` join it to `raw_exchange`
+ *     and `raw_blob`. `capture-health.ts` walks all four tables through
+ *     those keys.
+ *   - `activity-retention.ts` prunes `gen_ai_inference` against the same
+ *     cutoff as every other activity table, and treats those two hash
+ *     columns as blob references, so a retained row here keeps its bytes
+ *     alive in `raw_blob`.
  *
  * The big content columns (`system_instructions`, `input_messages`,
  * `output_messages`, `usage`, `finish_reasons`) are stored as JSON text
@@ -108,7 +122,16 @@ export interface GenAiStore {
 
 export interface GenAiStoreOptions {
   logger?: Logger;
-  /** Retained completeness diagnostics. */
+  /**
+   * Retained completeness diagnostics — a write-only `DiagnosticEmitter`,
+   * NOT the `DiagnosticStore`. The name `diagnostics` holds the store one
+   * layer up (`createApp`'s option, which also has `unresolved`, `query`,
+   * `sweep` and `health`); the bridge passes `diagnostics.emit` down to
+   * here, so at this layer the value can only write. Read it as
+   * `diagnosticEmitter`, which is what it should be called once the
+   * out-of-package call sites can move; the private field below is
+   * spelled `diag` for the same reason.
+   */
   diagnostics?: DiagnosticEmitter;
 }
 

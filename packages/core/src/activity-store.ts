@@ -27,12 +27,15 @@
  *
  * This module defines the runtime-agnostic `ActivityStore` interface
  * plus an in-memory reference implementation. The concrete SQLite
- * implementation lives in `csuite-server`; a future Cloudflare
- * Durable Objects implementation will live in `csuite/platform`.
- * Both must preserve the same observable behavior: appends fire
- * subscribers synchronously after the write commits, listing is
- * newest-first with composable `from`/`to`/`kinds` filters, and
- * subscribers never see a row they'd miss via a concurrent `list`.
+ * implementation is `createSqliteActivityStore` in
+ * `member-activity.ts` — the same package, over the `SqlDriver` seam,
+ * and exported from `csuite-core`; `csuite-server` supplies the driver,
+ * not the store. A future Cloudflare Durable Objects implementation
+ * will live in `csuite/platform`. Every implementation must preserve the
+ * same observable behavior: appends fire subscribers synchronously
+ * after the write commits, listing is newest-first with composable
+ * `from`/`to`/`kinds` filters, and subscribers never see a row they'd
+ * miss via a concurrent `list`.
  */
 
 import type { ActivityEvent, ActivityKind, ActivityRow } from 'csuite-sdk/types';

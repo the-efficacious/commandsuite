@@ -24,8 +24,24 @@ import {
   type EventLogQueryOptions,
   type EventLogTailOptions,
   GENERAL_CHANNEL_ID,
+  objectiveThreadTag,
+  SECRET_THREAD_PREFIX,
+  THREAD_TAG_PREFIXES,
 } from './event-log.js';
 import type { SqlDriver, SqlStatement } from './sql-driver.js';
+
+/**
+ * The `NOT LIKE` clauses that recognize a scoped thread tag, generated from the
+ * prefix constants in `event-log.ts` so this SQL cannot fork from
+ * `isScopedThreadTag`. `secret:` is left out because it has its own
+ * unconditional clause above; `chan:general` is re-admitted by an equality test
+ * beside these. Interpolation is safe — these are module constants, never input.
+ */
+const SCOPED_THREAD_NOT_LIKE = THREAD_TAG_PREFIXES.filter(
+  (prefix) => prefix !== SECRET_THREAD_PREFIX,
+)
+  .map((prefix) => `json_extract(data, '$.thread') NOT LIKE '${prefix}%'`)
+  .join('\n                    AND ');
 
 interface EventRow {
   id: string;
@@ -135,7 +151,7 @@ export class SqliteEventLog implements EventLog {
          AND (to_name IS NULL OR from_name = ?2 OR to_name = ?2)
          AND (
            json_extract(data, '$.thread') IS NULL
-           OR json_extract(data, '$.thread') NOT LIKE 'secret:%'
+           OR json_extract(data, '$.thread') NOT LIKE '${SECRET_THREAD_PREFIX}%'
          )
          AND (
            from_name = ?2
@@ -152,13 +168,9 @@ export class SqliteEventLog implements EventLog {
                 )
                 AND (
                   json_extract(data, '$.thread') IS NULL
-                  OR json_extract(data, '$.thread') = 'chan:general'
+                  OR json_extract(data, '$.thread') = '${channelThreadTag(GENERAL_CHANNEL_ID)}'
                   OR (
-                    json_extract(data, '$.thread') NOT LIKE 'chan:%'
-                    AND json_extract(data, '$.thread') NOT LIKE 'obj:%'
-                    AND json_extract(data, '$.thread') NOT LIKE 'tool:%'
-                    AND json_extract(data, '$.thread') NOT LIKE 'variable:%'
-                    AND json_extract(data, '$.thread') NOT LIKE 'hook:%'
+                    ${SCOPED_THREAD_NOT_LIKE}
                   )
                 )
               END
@@ -263,7 +275,9 @@ export class SqliteEventLog implements EventLog {
     lastThreadPostAt: number | null;
     lastPrLinkAt: number | null;
   }> {
-    const rows = this.objectiveDiscussionStmt.all(`obj:${objectiveId}`) as unknown as EventRow[];
+    const rows = this.objectiveDiscussionStmt.all(
+      objectiveThreadTag(objectiveId),
+    ) as unknown as EventRow[];
     const messages = rows.map(rowToMessage);
     return {
       lastThreadPostAt: messages[0]?.ts ?? null,

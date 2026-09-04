@@ -7,7 +7,7 @@
  */
 
 import { z } from 'zod';
-import { LEGACY_PERMISSION_EXPANSIONS, PERMISSIONS, RUNNER_CONDITION_CODES } from './types.js';
+import { LEGACY_PERMISSION_ALIASES, PERMISSIONS, RUNNER_CONDITION_CODES } from './types.js';
 
 export const LogLevelSchema = z.enum(['debug', 'info', 'notice', 'warning', 'error', 'critical']);
 
@@ -69,8 +69,8 @@ export const PermissionsSchema = z.preprocess(
   (value) =>
     Array.isArray(value)
       ? value.flatMap((entry) =>
-          typeof entry === 'string' && entry in LEGACY_PERMISSION_EXPANSIONS
-            ? LEGACY_PERMISSION_EXPANSIONS[entry]
+          typeof entry === 'string' && entry in LEGACY_PERMISSION_ALIASES
+            ? LEGACY_PERMISSION_ALIASES[entry]
             : [entry],
         )
       : value,

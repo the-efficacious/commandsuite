@@ -19,10 +19,22 @@
  *   7. Idempotent teardown on EVERY exit path — agent flush first,
  *      then user-file restoration, then runner drain — including a
  *      last-ditch `cleanup()` on uncaughtException
- *   8. The run bracket + summary: a `session_start` activity event
- *      before the agent runs, a `session_end` event (the
+ *   8. The generation bracket + summary: a `session_start` activity
+ *      event before the agent runs, a `session_end` event (the
  *      machine-readable run summary) at teardown, a structured
  *      `run summary` log line, and a human-readable closing line
+ *
+ * ONE INVOCATION, SEVERAL BRACKETS. `session_start`/`session_end` do
+ * NOT bracket this whole invocation — they bracket one GENERATION, one
+ * agent-process lifetime inside it. A restart, a `clear` and a `reload`
+ * each `finishRun` the current generation and enqueue a fresh
+ * `session_start` (with a `resumeReason`) without this process going
+ * anywhere, so counting `session_start` rows counts generations, not
+ * runner launches. Every duration reported — each `session_end` and
+ * each `run summary` line — is measured from `generationStartedAt`,
+ * not from the invocation's start. The one exception is the
+ * spawn-failure path, which closes the bracket before any generation
+ * exists.
  *
  * Teardown ordering is load-bearing: the agent process is shut down
  * first so its capture readers flush their tail into the uploader;

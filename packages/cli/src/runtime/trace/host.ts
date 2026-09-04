@@ -80,13 +80,14 @@ export interface CaptureHostOptions {
    */
   token: string;
   /**
-   * Relayed from the hook server's SessionStart route with the hook's
-   * `source` (`startup` / `resume` / `clear` / `compact`). The runner
-   * uses compact/clear as the "context fell off" signal to push a
+   * Relayed from the hook server's SessionStart route with that
+   * session's ORIGIN (`startup` / `resume` / `clear` / `compact`; the
+   * hook payload spells the field `source`). The runner uses
+   * compact/clear as the "context fell off" signal to push a
    * `context_refresh` re-brief. Optional; claude only (codex has
    * no hook server).
    */
-  onSessionStart?: (source: string) => void;
+  onSessionStart?: (origin: string) => void;
   onUnauthorized?: () => void;
   logger?: Logger;
 }

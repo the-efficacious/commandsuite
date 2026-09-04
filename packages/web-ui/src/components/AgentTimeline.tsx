@@ -34,7 +34,7 @@
  *
  * Model calls with NO turn marker at all — subagent work, server-tool
  * sidecars (web search), away summaries — interleave into the feed as
- * ghost rows attributed by `querySource`, so everything the member's
+ * orphan-call rows attributed by `querySource`, so everything the member's
  * model did shows up in one place instead of living invisibly in the
  * genai store.
  *
@@ -44,9 +44,9 @@
  * Filters:
  *   - `kindFilters` — per-event-kind toggles. Hidden kinds are dropped
  *     before threading.
- *   - `showApiCalls` — toggles the unmatched model-call ghost rows.
+ *   - `showApiCalls` — toggles the unmatched orphan-call rows.
  *   - `objectiveFilter` — clip to rows that occurred while a chosen
- *     objective was open (model-call rows clip by the objective's
+ *     objective was open (orphan-call rows clip by the objective's
  *     open→close windows). `null` means "show everything."
  */
 
@@ -102,9 +102,9 @@ const DEFAULT_FILTERS: KindFilter = {
 const kindFilters = signal<KindFilter>({ ...DEFAULT_FILTERS });
 
 /**
- * Toggle for the unmatched model-call ghost rows (subagent /
- * sidecar calls with no turn marker). Calls joined INTO a turn are
- * part of the turn block and unaffected.
+ * Toggle for the unmatched orphan-call rows (subagent / sidecar calls
+ * with no turn marker). Calls joined INTO a turn are part of the turn
+ * block and unaffected.
  */
 const showApiCalls = signal(true);
 
@@ -163,11 +163,11 @@ type ThreadItem =
       /**
        * A model call with NO turn marker — subagent work, a
        * server-tool sidecar (web search), an away summary, or a call
-       * whose activity capture was missed. Rendered as a ghost row so
-       * the feed shows everything the member's model did.
+       * whose activity capture was missed. Rendered as an orphan-call
+       * row so the feed shows everything the member's model did.
        */
       key: string;
-      variant: 'model-call';
+      variant: 'orphan-call';
       ts: number;
       recordId: number;
       provider: string;
@@ -260,7 +260,7 @@ type ThreadItem =
  * The ledger joins in via `joinTurns`: each turn carries its API
  * call summaries (the identity handles for lazy full-context
  * loading), and calls that belong to NO turn — subagent / sidecar
- * work — interleave chronologically as `model-call` items. Nothing
+ * work — interleave chronologically as `orphan-call` items. Nothing
  * about the full context is loaded here; the stream stays a clean
  * sequence of turn blocks.
  */
@@ -427,7 +427,7 @@ export function buildThread(
   for (const call of joined.orphans) {
     thread.push({
       key: `g${call.id}`,
-      variant: 'model-call',
+      variant: 'orphan-call',
       ts: call.ts,
       recordId: call.id,
       provider: call.provider,
@@ -444,7 +444,7 @@ export function buildThread(
 
 /**
  * Clip the call ledger to the open→close windows of one objective —
- * the model-call analogue of `clipToObjective`. Windows are derived
+ * the orphan-call analogue of `clipToObjective`. Windows are derived
  * from the FULL row stream (markers must not be pre-filtered away).
  */
 export function clipCallsToObjective(
@@ -615,10 +615,10 @@ export function TimelineBody() {
     const clipped = clipToObjective(rows, objFilter);
     const filteredRows = clipped.filter((row) => filters[row.event.kind]);
     // The full ledger always joins — turns keep their calls even with
-    // ghost rows toggled off; `showApiCalls` only gates whether the
-    // unmatched remainder renders.
+    // orphan-call rows toggled off; `showApiCalls` only gates whether
+    // the unmatched remainder renders.
     const built = buildThread(filteredRows, clipCallsToObjective(calls, rows, objFilter));
-    return withApiCalls ? built : built.filter((item) => item.variant !== 'model-call');
+    return withApiCalls ? built : built.filter((item) => item.variant !== 'orphan-call');
   }, [rows, calls, objFilter, filters, withApiCalls]);
 
   // Trailing render window — a long stream expands into many turn
@@ -816,8 +816,8 @@ function ThreadItemView({ item }: { item: ThreadItem }) {
       return <TurnBlock item={item} />;
     case 'tool-action':
       return <ToolActionMarker item={item} />;
-    case 'model-call':
-      return <ModelCallRow item={item} />;
+    case 'orphan-call':
+      return <OrphanCallRow item={item} />;
   }
 }
 
@@ -1181,8 +1181,8 @@ function CallSubRow({ call }: { call: GenAiInferenceSummary }) {
 /**
  * The lazy-loaded body of one genai record: loading/error states,
  * then the request layers (and, when `showOutput`, the response
- * messages — used by ghost rows whose output appears nowhere else in
- * the feed; a turn's own block already shows its response).
+ * messages — used by orphan-call rows whose output appears nowhere else
+ * in the feed; a turn's own block already shows its response).
  */
 function LazyRecordBody({
   recordId,
@@ -1233,13 +1233,13 @@ function LazyRecordBody({
 }
 
 /**
- * A model call with no turn marker — subagent work, a server-tool
- * sidecar (web search), an away summary. Drawn as an indented ghost
- * row (dashed rule, `↳`) so the feed shows the call happened without
- * pretending it was a first-class turn; expand for its output and
- * full request context.
+ * An orphan call — a model call with no turn marker: subagent work, a
+ * server-tool sidecar (web search), an away summary. Drawn as an
+ * indented row (dashed rule, `↳`) so the feed shows the call happened
+ * without pretending it was a first-class turn; expand for its output
+ * and full request context.
  */
-function ModelCallRow({ item }: { item: Extract<ThreadItem, { variant: 'model-call' }> }) {
+function OrphanCallRow({ item }: { item: Extract<ThreadItem, { variant: 'orphan-call' }> }) {
   const u = item.usage;
   return (
     <details

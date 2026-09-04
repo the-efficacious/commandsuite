@@ -131,7 +131,7 @@ export function NotificationsPanel() {
     >
       <PageHeader
         eyebrow="Team"
-        title="Notifications"
+        title="External notifications"
         subtitle="Inbound webhooks and API calls, verified at /hooks/<slug> and routed to members and channels as ambient input."
         actions={
           <button

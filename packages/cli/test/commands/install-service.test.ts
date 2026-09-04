@@ -147,7 +147,7 @@ describe('broker-side liveness', () => {
 
   it('a live pid with a stale lastSeen is not a live agent', async () => {
     // Roster keeps answering, but lastSeen predates the restart — the
-    // stuck-wizard shape. Must time out, not pass.
+    // stuck-prompt shape. Must time out, not pass.
     const client = { roster: vi.fn().mockResolvedValue(presence(1_000)) };
     const live = await waitForMemberLive(client as never, 'builder', 5_000, 1, async () => {});
     expect(live).toBe(false);

@@ -6,6 +6,11 @@ import type { Client } from 'csuite-sdk/client';
 import type { LogLevel, PushPayload } from 'csuite-sdk/types';
 import { UsageError } from './errors.js';
 
+// `--level` is the MESSAGE level: the six severity bands an author puts
+// on one message, and the input to whether a web push stays on screen.
+// It is not the operator log threshold (`CSUITE_LOG_LEVEL`), which is a
+// different four-value union that csuite-core publishes under the same
+// `LogLevel` type name.
 const VALID_LEVELS: readonly LogLevel[] = [
   'debug',
   'info',

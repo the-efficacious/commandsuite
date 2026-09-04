@@ -48,11 +48,16 @@ export interface GenAiCorrelatorOptions {
    */
   logger?: Logger;
   /**
-   * Retained completeness diagnostics. Optional so a correlator can be
-   * constructed without one (tests, and a broker with retention
-   * unwired), but every completeness failure below reports to it when
-   * present — the stderr line stays for live tailing and is no longer
-   * the only record.
+   * Retained completeness diagnostics — a write-only `DiagnosticEmitter`,
+   * NOT the `DiagnosticStore` that `createApp` takes under the same
+   * option name. The bridge passes `diagnostics.emit` down to here, so
+   * this value can only write; `diagnosticEmitter` is the name it should
+   * carry, and the implementation renames it to `diag` on arrival.
+   *
+   * Optional so a correlator can be constructed without one (tests, and
+   * a broker with retention unwired), but every completeness failure
+   * below reports to it when present — the stderr line stays for live
+   * tailing and is no longer the only record.
    */
   diagnostics?: DiagnosticEmitter;
   /** Clock, injectable for tests. Last-resort ts when a record has none. */

@@ -1,5 +1,8 @@
 /**
- * `csuite team` — read or update the team config.
+ * `csuite team` — read or update the team record: its name and its team
+ * context. Both live in the `team` row of the main database, NOT in the
+ * server config file (`csuite.json`), which holds infrastructure knobs
+ * only.
  *
  * Subcommands:
  *   csuite team get
