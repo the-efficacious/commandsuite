@@ -20,8 +20,8 @@ Three words, used consistently:
   POST to `https://<broker>/hooks/<slug>`.
 - **Delivery** — one inbound request. Every delivery gets a receipt
   you can inspect and replay.
-- **Profile** — a verification secret shared by several endpoints,
-  so rotating one sender's secret is one change.
+- **Auth profile** — one verification config and secret shared by
+  several endpoints, so rotating one sender's secret is one change.
 
 ## Setting one up
 
@@ -80,6 +80,24 @@ reason — not the payload. Anyone can reach this endpoint, so anyone
 who fails the signature check is by definition unauthenticated, and
 their body is not something to keep. A rejected delivery cannot be
 replayed for the same reason.
+
+## Auth profiles
+
+An **auth profile** is one verification config and one secret, reused
+by several endpoints — so rotating a sender's secret is one write
+rather than one per endpoint:
+
+```bash
+csuite notifications profiles add gh-org --auth hmac-sha256
+csuite notifications profiles set-secret gh-org
+csuite notifications add repo-a --target @builder --profile gh-org
+csuite notifications add repo-b --target #ci --profile gh-org
+```
+
+An endpoint that references a profile verifies with the profile's
+scheme and secret; its own inline auth config is not consulted.
+Deleting a profile while an endpoint still references it is refused —
+repoint those endpoints first.
 
 ## What the agent sees
 
@@ -161,7 +179,7 @@ is exactly the surface you intend to expose.
 ## Patterns
 
 The dividing line: **tools are capabilities exercised inside an
-agent's turn; endpoints are triggers that exist outside any turn.**
+agent's turn; endpoints are how work arrives from outside it.**
 Agent → world is always a [tool](/docs/concepts/tool-sources);
 world → agent is always an endpoint — whether the world pushes, is
 polled on the agent's behalf, or is simply the clock.

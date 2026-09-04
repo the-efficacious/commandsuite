@@ -33,7 +33,6 @@ import {
   TEAM_PROCESS_PATHS,
 } from 'csuite-sdk/protocol';
 import {
-  ActivityKindSchema,
   ActivityReportSchema,
   AddChannelMemberRequestSchema,
   ApproveEnrollmentRequestSchema,
@@ -62,12 +61,14 @@ import {
   FsPathSchema,
   FsWriteCollisionSchema,
   InvokeToolRequestSchema,
+  ListActivityQuerySchema,
   ListObjectivesQuerySchema,
   LogLevelSchema,
   NameSchema,
   PendingEnrollmentSchema,
   PushPayloadSchema,
   PushSubscriptionPayloadSchema,
+  ReassignObjectiveRequestSchema,
   RejectEnrollmentRequestSchema,
   RotateTokenRequestSchema,
   RunnerControlFrameSchema,
@@ -251,7 +252,7 @@ export interface AppOptions {
    */
   activityStore?: ActivityStore;
   /**
-   * Tool-source registry — platform-defined external tools (custom
+   * Tool-source registry — admin-defined external tools (custom
    * HTTP bindings + proxied remote MCP servers). The `/tool-sources*`
    * endpoints are registered iff this is provided, and the instruction packet
    * gains per-member resolved tools. Same opt-out pattern as
@@ -1429,8 +1430,13 @@ export function createApp(options: AppOptions): CreatedApp {
               diagnosticsUnresolved: diagnostics.unresolved(p.name).length,
               diagnosticsRetention: diagnostics.health(),
             };
-      if (activity === 'idle') return { ...p, ...captureField, ...diagField };
-      return { ...p, activity, busy: activity === 'working', ...captureField, ...diagField };
+      // The registry's role is first-register-wins, so it is stale the
+      // moment a role is edited under a live connection. The member
+      // store is authoritative; re-read it here rather than let one
+      // response carry two answers (`teammates[].role` and this one).
+      const role = members.findByName(p.name)?.role ?? p.role;
+      if (activity === 'idle') return { ...p, role, ...captureField, ...diagField };
+      return { ...p, role, activity, busy: activity === 'working', ...captureField, ...diagField };
     });
     return c.json({
       teammates: teammatesFromMembers(members),
@@ -3183,7 +3189,7 @@ export function createApp(options: AppOptions): CreatedApp {
               : 'disabled';
         queueMicrotask(() => {
           void publishSecretEvent(updated, event, member.name, {
-            body: `Secret '${updated.slug}' was ${event} by ${member.name}. Running agents reload it at their next idle boundary; opted-out or older runners use their next start.`,
+            body: `Secret '${updated.slug}' was ${event} by ${member.name}. Metadata changes carry no environment event: running agents keep their current value until their next runner start.`,
             recipients: event === 'disabled' ? preRecipients : secretRecipients(updated),
           });
         });
@@ -4698,6 +4704,48 @@ export function createApp(options: AppOptions): CreatedApp {
       }
     });
 
+    // POST /objectives/:id/reassign — requires `objectives.reassign`.
+    //
+    // The same act as the `assignee` field group on PATCH, under the
+    // verb every other layer already uses (`csuite objectives
+    // reassign`, `objectives_reassign`, `ObjectivesStore.reassign`,
+    // the `reassigned` event, the `objectives.reassign` leaf). The
+    // semantics are deliberately identical to that field group — same
+    // gate, same unknown-assignee 400, same idempotent no-op when the
+    // target is already the assignee — so the two spellings of one act
+    // can never disagree.
+    app.post(`${PATHS.objectives}/:id/reassign`, auth, async (c) => {
+      const member = c.get('member');
+      const id = c.req.param('id');
+      const current = objectives.get(id);
+      if (!current) return c.json({ error: `no such objective: ${id}` }, 404);
+      const raw = await c.req.json().catch(() => null);
+      const parsed = ReassignObjectiveRequestSchema.safeParse(raw);
+      if (!parsed.success) {
+        return c.json({ error: 'invalid reassign payload', details: parsed.error.issues }, 400);
+      }
+      const input = parsed.data;
+      if (!hasPermission(member.permissions, 'objectives.reassign')) {
+        return c.json({ error: 'changing the assignee requires objectives.reassign' }, 403);
+      }
+      if (!members.findByName(input.to)) {
+        return c.json({ error: `unknown assignee: ${input.to}` }, 400);
+      }
+      if (input.to === current.assignee) return c.json(current);
+      try {
+        const { objective: updated, events } = objectives.reassign(id, input, member.name);
+        queueMicrotask(() => {
+          for (const ev of events) {
+            void publishObjectiveEvent(updated, ev, member.name);
+          }
+        });
+        return c.json(updated);
+      } catch (err) {
+        const mapped = mapObjectivesError(err);
+        return c.json(mapped.body, mapped.status as 400 | 404 | 409 | 500);
+      }
+    });
+
     // POST /objectives/:id/discuss (thread members only)
     //
     // Discussion posts are real team messages with thread key
@@ -5178,50 +5226,44 @@ export function createApp(options: AppOptions): CreatedApp {
       const cursorIdRaw = c.req.query('cursor_id');
       const kindRaw = c.req.queries('kind');
 
-      const from = fromRaw !== undefined ? Number(fromRaw) : undefined;
-      const to = toRaw !== undefined ? Number(toRaw) : undefined;
-      const limit = limitRaw !== undefined ? Number(limitRaw) : undefined;
-      const cursorTs = cursorTsRaw !== undefined ? Number(cursorTsRaw) : undefined;
-      const cursorId = cursorIdRaw !== undefined ? Number(cursorIdRaw) : undefined;
-      if (from !== undefined && !Number.isFinite(from)) {
-        return c.json({ error: 'invalid `from` parameter' }, 400);
-      }
-      if (to !== undefined && !Number.isFinite(to)) {
-        return c.json({ error: 'invalid `to` parameter' }, 400);
-      }
-      if (limit !== undefined && !Number.isFinite(limit)) {
-        return c.json({ error: 'invalid `limit` parameter' }, 400);
-      }
-      if (
-        (cursorTs === undefined) !== (cursorId === undefined) ||
-        (cursorTs !== undefined && (!Number.isInteger(cursorTs) || cursorTs < 0)) ||
-        (cursorId !== undefined && (!Number.isInteger(cursorId) || cursorId < 0))
-      ) {
+      // Both halves or neither: a cursor with one half is a caller bug
+      // that would silently read from the start of the range. The
+      // schema below describes the PAIR, so it cannot see that the wire
+      // splits it across two independent params — hence this check
+      // first, on the raw strings.
+      if ((cursorTsRaw === undefined) !== (cursorIdRaw === undefined)) {
         return c.json({ error: 'invalid composite cursor' }, 400);
       }
-      // Validate each kind discriminator. Multiple ?kind= params
-      // are AND-combined at query time, OR-combined at the store
+      // Everything else is `ListActivityQuerySchema` — the declared
+      // contract for this query, `limit`'s cap included, enforced at the
+      // edge rather than left to the store to clamp. Multiple ?kind=
+      // params are AND-combined at query time, OR-combined at the store
       // level (row.kind IN (...)).
+      const parsedQuery = ListActivityQuerySchema.safeParse({
+        from: fromRaw !== undefined ? Number(fromRaw) : undefined,
+        to: toRaw !== undefined ? Number(toRaw) : undefined,
+        cursor:
+          cursorTsRaw !== undefined && cursorIdRaw !== undefined
+            ? { ts: Number(cursorTsRaw), id: Number(cursorIdRaw) }
+            : undefined,
+        kind: kindRaw !== undefined && kindRaw.length > 0 ? kindRaw : undefined,
+        limit: limitRaw !== undefined ? Number(limitRaw) : undefined,
+      });
+      if (!parsedQuery.success) {
+        return c.json({ error: 'invalid query', details: parsedQuery.error.issues }, 400);
+      }
+      const query = parsedQuery.data;
       const kinds: ActivityKind[] = [];
-      if (kindRaw) {
-        for (const k of kindRaw) {
-          const parsedKind = ActivityKindSchema.safeParse(k);
-          if (!parsedKind.success) {
-            return c.json({ error: `invalid kind: ${k}` }, 400);
-          }
-          kinds.push(parsedKind.data);
-        }
+      if (query.kind !== undefined) {
+        kinds.push(...(Array.isArray(query.kind) ? query.kind : [query.kind]));
       }
       const activity = activityStore.list({
         memberName: name,
-        from,
-        to,
-        before:
-          cursorTs !== undefined && cursorId !== undefined
-            ? { ts: cursorTs, id: cursorId }
-            : undefined,
+        from: query.from,
+        to: query.to,
+        before: query.cursor,
         kinds: kinds.length > 0 ? kinds : undefined,
-        limit,
+        limit: query.limit,
       });
       return c.json({ activity });
     });
@@ -5420,7 +5462,6 @@ export function createApp(options: AppOptions): CreatedApp {
         // but member authority is persisted as leaves. A later preset
         // edit must not silently change an existing member.
         rawPermissions: [...resolvedPerms],
-        permissions: resolvedPerms,
         token,
       });
     } catch (err) {
@@ -5751,8 +5792,8 @@ export function createApp(options: AppOptions): CreatedApp {
             parsed.data.verb === 'compact'
               ? `${member.name} asked your runner to compact your context${parsed.data.reason ? `: ${parsed.data.reason}` : ''}.`
               : parsed.data.verb === 'reload'
-                ? `${member.name} asked your runner to reload its environment${parsed.data.reason ? `: ${parsed.data.reason}` : ''}. The current conversation is resumed.`
-                : `${member.name} asked your runner to clear your context${parsed.data.reason ? `: ${parsed.data.reason}` : ''}. Your instruction blocks and open objectives are re-delivered afterwards.`,
+                ? `${member.name} asked your runner to reload its environment${parsed.data.reason ? `: ${parsed.data.reason}` : ''}. Your agent restarts cold under refreshed instructions and environment; your instruction blocks and open objectives are re-delivered afterwards.`
+                : `${member.name} asked your runner to clear your context${parsed.data.reason ? `: ${parsed.data.reason}` : ''}. Your agent restarts cold under refreshed instructions; your instruction blocks and open objectives are re-delivered afterwards.`,
           level: 'notice',
           data: {
             kind: 'context_control',
@@ -5928,7 +5969,7 @@ export function createApp(options: AppOptions): CreatedApp {
       max: number,
     ): string | null {
       if (value === null || value.length <= max) return value;
-      diagnostics?.emit.enrollmentSourceLabelTruncated('source', 1);
+      diagnostics?.emit.enrollmentSourceLabelTruncated(1);
       logger.warn('enrollment source label truncated', {
         field,
         originalLength: value.length,
@@ -6162,7 +6203,6 @@ export function createApp(options: AppOptions): CreatedApp {
             role: parsed.data.role,
             instructions: parsed.data.instructions,
             rawPermissions: [...resolvedPerms],
-            permissions: resolvedPerms,
             token: placeholder,
           });
         } catch (err) {

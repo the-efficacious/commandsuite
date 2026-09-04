@@ -39,6 +39,14 @@ There are no per-objective spans. The runner maintains one
 - `objective_open` / `objective_close` — the member took / released
   an objective (`done` / `cancelled` / `reassigned` /
   `runner_shutdown`).
+- `context_control` — the runner's acknowledgement of a broker
+  `compact` / `clear` / `reload` request: the request id, the outcome
+  (`applied` / `declined` / `unsupported` / `failed`), and a
+  successful `compact`'s before/after token counts where the
+  framework measured them.
+- `auth_state` — the runner's broker credential was rejected with a
+  401 (`blocked`) or accepted again (`recovered`), carrying what the
+  capture queue was holding and what it had already evicted.
 
 Per-objective "traces" are a **time-range view** over this stream:
 the web UI pages the member's activity and gen_ai records over the

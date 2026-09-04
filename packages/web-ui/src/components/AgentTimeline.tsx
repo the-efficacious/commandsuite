@@ -4,10 +4,14 @@
  * Everything here is natively captured by the runner (Claude Code's
  * OTEL export via the broker OTLP ingest, the codex app-server event
  * stream, tool hooks) — there is no network interception. The stream
- * carries five event kinds: `user_prompt` (the prompt that woke a
- * turn), `llm_exchange` (one model turn), `tool_action` (one
- * natively-captured tool run), and the `objective_open` /
- * `objective_close` lifecycle markers.
+ * carries nine event kinds — the `ActivityEvent` union in
+ * `csuite-sdk/types` is authoritative: `user_prompt` (the prompt that
+ * woke a turn), `llm_exchange` (one model turn), `tool_action` (one
+ * natively-captured tool run), the `objective_open` /
+ * `objective_close` lifecycle markers, the `session_start` /
+ * `session_end` run brackets, `context_control` (a broker-issued
+ * compact/clear/reload and its outcome) and `auth_state` (outbound
+ * work blocked on a 401, and its recovery).
  *
  * THE TURN IS THE SPINE. Each `llm_exchange` renders exactly ONE
  * block — its own response (thinking, text, tool calls) — never
@@ -80,10 +84,10 @@ import { ArrowUp, ChevronDown, ChevronUp } from './icons/index.js';
 type KindFilter = Record<ActivityEvent['kind'], boolean>;
 
 const DEFAULT_FILTERS: KindFilter = {
-  // Run brackets (session_start/session_end) pass the filter but have
-  // no thread renderer yet — buildThread skips kinds it doesn't know.
-  // Rendering them as timeline boundary markers (mirroring the
-  // objective markers) is a follow-up; no chip until then.
+  // Run brackets (session_start/session_end) render as timeline
+  // boundary markers and pass the filter, but have no chip of their
+  // own — the bar is for kinds you would plausibly mute, and a run
+  // bracket is not one.
   session_start: true,
   session_end: true,
   objective_open: true,
@@ -216,6 +220,16 @@ type ThreadItem =
       requestedBy: string;
       detail: string | null;
       tokens: { before: number; after: number } | null;
+    }
+  | {
+      key: string;
+      variant: 'auth-state';
+      ts: number;
+      state: 'blocked' | 'recovered';
+      /** Activity the runner is holding rather than shipping. */
+      queuedEvents: number;
+      /** Activity the bounded retention queue threw away — real loss. */
+      evictedEvents: number;
     }
   | {
       key: string;
@@ -356,6 +370,16 @@ export function buildThread(
           requestedBy: ev.requestedBy,
           detail: ev.detail ?? null,
           tokens: ev.tokens ?? null,
+        });
+        break;
+      case 'auth_state':
+        thread.push({
+          key: `r${row.id}-auth`,
+          variant: 'auth-state',
+          ts: ev.ts,
+          state: ev.state,
+          queuedEvents: ev.queuedEvents,
+          evictedEvents: ev.evictedEvents,
         });
         break;
       case 'tool_action': {
@@ -704,6 +728,7 @@ function FilterBar({ filters }: { filters: KindFilter }) {
     { key: 'objective_open', label: 'obj open' },
     { key: 'objective_close', label: 'obj close' },
     { key: 'context_control', label: 'context' },
+    { key: 'auth_state', label: 'auth' },
   ];
   const callsOn = showApiCalls.value;
   return (
@@ -783,6 +808,8 @@ function ThreadItemView({ item }: { item: ThreadItem }) {
       return <SessionEndMarker item={item} />;
     case 'context-control':
       return <ContextControlMarker item={item} />;
+    case 'auth-state':
+      return <AuthStateMarker item={item} />;
     case 'prompt':
       return <PromptBlock item={item} />;
     case 'turn':
@@ -901,6 +928,41 @@ function ContextControlMarker({
         </span>
       )}
       {item.detail !== null && <span style="color:var(--ef-text-muted)">{item.detail}</span>}
+    </div>
+  );
+}
+
+/**
+ * The runner's outbound work blocked on a 401, and its recovery.
+ *
+ * Two facts live here and nowhere else. A blocked runner retains its
+ * activity instead of shipping it, so the feed goes quiet for a
+ * reason that has nothing to do with the agent — without this row
+ * that silence is unexplained. And the retention queue is bounded:
+ * `evictedEvents` is what it discarded to stay bounded, permanent
+ * loss of the same class as `session_end.capture.dropped`. It is
+ * stated in words with its count, never as colour alone.
+ */
+function AuthStateMarker({ item }: { item: Extract<ThreadItem, { variant: 'auth-state' }> }) {
+  const lost = item.evictedEvents > 0;
+  return (
+    <div
+      class="flex items-center gap-3 flex-wrap"
+      style={`font-family:var(--ef-font-mono);font-size:12px;padding:6px 12px;border-left:2px solid ${
+        lost ? 'var(--ef-warning, #b0730f)' : 'var(--ef-border-strong)'
+      };color:var(--ef-text-muted)`}
+    >
+      <span>{formatTs(item.ts)}</span>
+      <span style="color:var(--ef-text)">authentication {item.state}</span>
+      <span>
+        401 · {item.queuedEvents} event{item.queuedEvents === 1 ? '' : 's'} retained
+      </span>
+      {lost && (
+        <span style="color:var(--ef-warning, #b0730f);font-weight:600">
+          INCOMPLETE — {item.evictedEvents} event{item.evictedEvents === 1 ? '' : 's'} evicted while
+          blocked
+        </span>
+      )}
     </div>
   );
 }
@@ -1361,6 +1423,11 @@ function ToolActionMarker({ item }: { item: Extract<ThreadItem, { variant: 'tool
           </span>
         </span>
         {item.agent && <span>{item.agent}</span>}
+        {item.source !== null && (
+          <span title="Capture source — which recorder produced this tool action.">
+            {item.source}
+          </span>
+        )}
         {item.durationMs !== null && <span>{item.durationMs}ms</span>}
         {item.isError && <span style="color:var(--ef-lamp-alarm)">error</span>}
       </summary>

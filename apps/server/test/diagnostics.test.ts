@@ -740,6 +740,31 @@ describe('typed emitter', () => {
     expect(s.unresolved('turner')).toHaveLength(0);
   });
 
+  it('records a truncated enrollment source label as a bare count', () => {
+    // The emitter takes only the count. WHICH label was cut — `sourceIp`
+    // or `sourceUa` — is an operator detail that lives in the log line:
+    // this cause's field policy is `count`, so a field name handed in
+    // here would be dropped on the way to the row, and an interface that
+    // asked for one was promising a distinction it discarded.
+    const { s, db } = store();
+    s.emit.enrollmentSourceLabelTruncated(1);
+    const rows = db
+      .prepare('SELECT cause, member_name, attribution, fields FROM diagnostic_event')
+      .all() as Array<{
+      cause: string;
+      member_name: string;
+      attribution: string;
+      fields: string;
+    }>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.cause).toBe('enrollment.source_label_truncated');
+    expect(rows[0]?.member_name).toBe('');
+    expect(rows[0]?.attribution).toBe('unattributed');
+    expect(JSON.parse(rows[0]?.fields ?? 'null')).toEqual({ count: 1 });
+    // A point cause creates no unresolved state to clear.
+    expect(s.unresolved('')).toHaveLength(0);
+  });
+
   it('every emitter method is covered by the cause enum', () => {
     // The emitter and the enum must not drift: a method whose cause is
     // unregistered would write a row the census guard never sees.
@@ -765,7 +790,7 @@ describe('typed emitter', () => {
     e.codexGenaiIngestEntryFailed('m');
     e.activityAppendFailed('m', 3);
     e.toolinvokeAuditAppendFailed('m');
-    e.enrollmentSourceLabelTruncated('sourceUa', 40);
+    e.enrollmentSourceLabelTruncated(40);
 
     const causes = (
       db.prepare('SELECT DISTINCT cause FROM diagnostic_event').all() as Array<{ cause: string }>

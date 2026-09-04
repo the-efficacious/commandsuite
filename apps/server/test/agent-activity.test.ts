@@ -323,6 +323,69 @@ describe('GET /users/:name/activity', () => {
     expect(res.status).toBe(400);
   });
 
+  it('applies from, to, kind and limit together', async () => {
+    // One request carrying every filter. A wiring that drops any one of
+    // them on the way to the store returns a different set, so the
+    // assertion is the exact row list, not a count: only the ts=3000
+    // llm_exchange row is inside the range AND of the asked-for kind.
+    const res = await app.request(
+      `${MEMBER_PATHS.activity('engineer-1')}?from=1500&to=3000&kind=llm_exchange&limit=5`,
+      bearer(ASSIGNEE_TOKEN),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as ListActivityResponse;
+    expect(body.activity.map((row) => row.event.ts)).toEqual([3_000]);
+    expect(body.activity.map((row) => row.event.kind)).toEqual(['llm_exchange']);
+  });
+
+  it('enforces the declared limit cap at the edge', async () => {
+    // 1000 is the contract's ceiling, so it must still be SERVED; above
+    // it the request is refused rather than silently clamped in the
+    // store, and the refusal names `limit` so the caller can see which
+    // parameter was wrong.
+    const atCap = await app.request(
+      `${MEMBER_PATHS.activity('engineer-1')}?limit=1000`,
+      bearer(ASSIGNEE_TOKEN),
+    );
+    expect(atCap.status).toBe(200);
+    expect(((await atCap.json()) as ListActivityResponse).activity).toHaveLength(3);
+
+    const overCap = await app.request(
+      `${MEMBER_PATHS.activity('engineer-1')}?limit=1001`,
+      bearer(ASSIGNEE_TOKEN),
+    );
+    expect(overCap.status).toBe(400);
+    const body = (await overCap.json()) as {
+      error: string;
+      details: Array<{ path: Array<string | number> }>;
+    };
+    expect(body.error).toBe('invalid query');
+    expect(body.details.map((issue) => issue.path)).toEqual([['limit']]);
+  });
+
+  it('rejects bounds that are not whole non-negative milliseconds', async () => {
+    for (const [qs, field] of [
+      ['from=1.5', 'from'],
+      ['to=-1', 'to'],
+      ['limit=0', 'limit'],
+    ] as const) {
+      const res = await app.request(
+        `${MEMBER_PATHS.activity('engineer-1')}?${qs}`,
+        bearer(ASSIGNEE_TOKEN),
+      );
+      expect(res.status, qs).toBe(400);
+      const body = (await res.json()) as {
+        error: string;
+        details: Array<{ path: Array<string | number> }>;
+      };
+      expect(body.error, qs).toBe('invalid query');
+      expect(
+        body.details.map((issue) => issue.path),
+        qs,
+      ).toEqual([[field]]);
+    }
+  });
+
   it('returns empty list for an unknown name (no 404)', async () => {
     // We don't gate GET on name existence — an unknown slot
     // just has no rows. 403 would leak whether the slot exists;

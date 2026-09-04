@@ -17,6 +17,7 @@ import type { AddressInfo } from 'node:net';
 import type { HookInput } from '@anthropic-ai/claude-agent-sdk';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildHookForwarders } from '../../src/runtime/agents/claude-agent.js';
+import { CLAUDE_HOOK_EVENTS } from '../../src/runtime/trace/hook-server.js';
 import { silentLogger } from '../helpers/logger.js';
 
 interface ReceivedBody {
@@ -64,17 +65,25 @@ describe('buildHookForwarders', () => {
     expect(received.length).toBeGreaterThanOrEqual(n);
   };
 
-  it('registers the eight events the hook server routes on', () => {
+  // The forwarder must register EXACTLY the set the hook server routes
+  // on. An event it omits is a router branch that can never fire (that
+  // was PostToolBatch); one it adds is a POST per event the server
+  // ignores. Comparing against the server's own declaration is what
+  // makes them provably one list rather than two hand-kept lists that
+  // agree today, and the literal below keeps the set itself a decision
+  // — narrowing both lists together still fails.
+  it('registers exactly the events the hook server routes on', () => {
     const hooks = buildHookForwarders(url, silentLogger());
-    expect(Object.keys(hooks).sort()).toEqual([
-      'Notification',
+    expect(Object.keys(hooks).sort()).toEqual([...CLAUDE_HOOK_EVENTS].sort());
+    expect([...CLAUDE_HOOK_EVENTS]).toEqual([
+      'PreToolUse',
       'PostToolUse',
       'PostToolUseFailure',
-      'PreToolUse',
-      'SessionStart',
+      'UserPromptSubmit',
       'Stop',
       'SubagentStop',
-      'UserPromptSubmit',
+      'Notification',
+      'SessionStart',
     ]);
   });
 

@@ -335,7 +335,7 @@ HTTP → broker → web-push library → push service → service worker
                  │   • channels + members           │
                  │   • objectives + audit log       │
                  │   • activity stream (separate DB)│
-                 │   • virtual filesystem (blobs)   │
+                 │   • virtual FS (file blobs)      │
                  │                                  │
                  │  serves:                         │
                  │   • machine API (bearer)         │
@@ -397,7 +397,7 @@ codex's rollout JSONL, OTEL export, and trace bundles — plus
 runner-observed objective-open/close markers. There is no network
 interception, no TLS decryption, and no CA on disk. Per-objective
 "traces" are a time-range view over the stream; no per-objective
-blobs are stored anywhere.
+trace bodies are stored anywhere.
 
 The full pipeline — the capture host, transcript and rollout
 readers, the OTLP relay, broker-side correlation, redaction

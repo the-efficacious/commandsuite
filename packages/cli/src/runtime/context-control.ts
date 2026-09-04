@@ -9,17 +9,24 @@
  * event adds; the only lifecycle control a runner took was `shutdown`,
  * which costs the member its MCP wiring and its place on the net.
  *
- * Two verbs, and the difference between them is who does the work:
+ * Three verbs. `compact` differs from the other two in who does the
+ * work; `clear` and `reload` differ from each other in what the
+ * successor is given:
  *
- *   `clear`   — IMPOSED. The runner swaps the agent process without
- *     resuming the prior conversation. It does not need the agent's
- *     cooperation and cannot be declined, so its only failure mode is
- *     mechanical.
  *   `compact` — COOPERATIVE. The agent has to do the summarising, so
  *     the runner can only ASK, and the ask can be refused. What makes
  *     this honest rather than fire-and-forget is that both supported
  *     answers are observable: the framework reports the outcome, and
  *     this coordinator reports it onward as the ack.
+ *   `clear`   — IMPOSED. The runner swaps the agent process without
+ *     resuming the prior conversation, refetching the instruction
+ *     packet on the way through. It does not need the agent's
+ *     cooperation and cannot be declined, so its only failure mode is
+ *     mechanical.
+ *   `reload`  — IMPOSED, like `clear`, and cold like `clear`; it
+ *     refetches the member's ENVIRONMENT as well as the instruction
+ *     packet, and the successor's `session_start` names the
+ *     difference (`environment reloaded` vs `context cleared`).
  *
  * THE ACK IS THE POINT. Every path out of `handle()` emits exactly one
  * `context_control` activity event carrying the request id — including
@@ -28,11 +35,11 @@
  * success on delivery would assert something nobody observed, which is
  * the failure shape this feature exists to avoid.
  *
- * DRAIN, DON'T INTERRUPT. Like `restart.ts`, a `clear` waits for the
- * activity signal to read idle before swapping, so a control landing
- * mid-turn costs the turn nothing. `compact` does not wait: the
- * framework queues a slash command behind the running turn on its own,
- * and holding it here would only add a second queue.
+ * DRAIN, DON'T INTERRUPT. Like `restart.ts`, a `clear` or a `reload`
+ * waits for the activity signal to read idle before swapping, so a
+ * control landing mid-turn costs the turn nothing. `compact` does not
+ * wait: the framework queues a slash command behind the running turn
+ * on its own, and holding it here would only add a second queue.
  *
  * SERIALIZED AGAINST RESTART. Both coordinators stop and respawn the
  * same agent process, so they share one lock (`gate`). A `clear` that
@@ -231,10 +238,10 @@ export function createContextControlCoordinator(
         await runCompact(control);
         return;
       }
-      // Only `clear` takes the lifecycle lock. `compact` never swaps
-      // the process, so holding the gate across a summarisation that
-      // can take 20s+ would stall an unrelated instruction-restart for
-      // no benefit.
+      // Only the swapping verbs take the lifecycle lock. `compact`
+      // never swaps the process, so holding the gate across a
+      // summarisation that can take 20s+ would stall an unrelated
+      // instruction-restart for no benefit.
       await hooks.gate(() => (control.verb === 'reload' ? runReload(control) : runClear(control)));
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);

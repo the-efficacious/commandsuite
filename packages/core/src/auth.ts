@@ -5,7 +5,7 @@
  * csuite has three auth planes:
  *   - machine (MCP link): `Authorization: Bearer csuite_...` — opaque,
  *     long-lived tokens in the config file, resolved via
- *     `members.resolve(raw)`.
+ *     `tokens.resolve(raw)` → `members.findByName`.
  *   - human (web SPA):    `Cookie: csuite_session=...` — minted after TOTP
  *     verification, resolved via `sessions.get(id)` → `members.findByName`.
  *   - federated JWT:      `Authorization: Bearer <jwt>` — RS256 token
@@ -39,8 +39,9 @@ import type { LoadedMember, MemberStore } from './members-domain.js';
 export interface AuthDependencies {
   members: MemberStore;
   /**
-   * Bearer-token store. Multi-token-per-member SQLite-backed lookup
-   * replaces the legacy `MemberStore.resolve`. Plumbed through here
+   * Bearer-token store. `TokenStore.resolve` is the multi-token,
+   * per-member SQLite-backed lookup that replaced the legacy
+   * single-token `MemberStore` path. Plumbed through here
    * because the resolver needs to translate `Authorization: Bearer
    * csuite_…` → token row → member, and update `last_used_at` on hit.
    */

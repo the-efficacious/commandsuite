@@ -88,7 +88,8 @@ usage:
   csuite objectives  list|view|create|update|complete|cancel|reassign   team objectives
   csuite fs          put <local-path> <csuite-path> [--mime <type>] [--collide error|suffix|overwrite]
   csuite fs          get <csuite-path> <local-path> [--overwrite]       stream files between this machine and csuite
-  csuite tools       list|show|add|rm|enable|disable|cred|bind|unbind|def|def-rm|refresh   tool-source registry (platform tools)
+  csuite team        get|set|status   read or update the team name and standing context; status prints the operating report
+  csuite tools       list|show|add|rm|enable|disable|cred|cred-rm|bind|unbind|def|def-rm|refresh   tool-source registry (admin-defined tools)
   csuite secrets     list|view|add|update|set-value|delete-value|bind|unbind|rm   broker-held env secrets (values are write-only)
   csuite variables   list|view|add|update|set-value|delete-value|bind|unbind|rm   broker-held env variables that are NOT secrets (values readable, never redacted from traces)
   csuite notifications list|view|add|update|rm|set-secret|delete-secret|deliveries|replay|profiles   external-notification endpoints (inbound webhooks → agents; alias: hooks)
@@ -320,7 +321,7 @@ async function main(): Promise<void> {
       await handleMcpBridge(rest);
       return;
     case 'claude':
-    // Deprecated alias — the verb was `claude` pre-release; kept
+    // Deprecated alias — the verb was `claude-code` pre-release; kept
     // so existing scripts and muscle memory don't break.
     case 'claude-code':
       await handleClaude(rest);

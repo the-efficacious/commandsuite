@@ -64,7 +64,10 @@ export class PresenceRegistry {
    * on each call so the list endpoint reflects recent activity. Role
    * is first-register-wins: once set, subsequent registrations ignore
    * the value (the registry is authoritative about online/offline,
-   * not about role changes).
+   * not about role changes). It is therefore a seed, not an answer —
+   * a role edit under a live connection never reaches it, so every
+   * projection that puts `Presence` on the wire re-reads the role
+   * from the member store, which is authoritative.
    */
   registerOrGet(name: string, now: number, role: Role | null = null): PresenceState {
     const existing = this.presences.get(name);

@@ -425,7 +425,6 @@ async function seedBootstrap(
       role: seed.member.role,
       instructions: seed.member.instructions,
       rawPermissions: seed.member.rawPermissions,
-      permissions: seed.member.permissions,
       totpSecret: seed.member.totpSecret,
     });
     const tokens = new server.SqliteTokenStore(db);

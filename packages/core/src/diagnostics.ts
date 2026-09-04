@@ -110,7 +110,11 @@ export const DIAGNOSTIC_CAUSES = [
   'retention.overflow',
   // affected-member fanout exceeded its bound — see MAX_FANOUT
   'retention.fanout_truncated',
-  // the store was unreachable for a period — see the durable latch
+  // the store was unreachable for a period. This bucket row is the
+  // UNAVAILABILITY RECORD, written by the first diagnostic write that
+  // lands after a failure; the in-memory availability latch clears
+  // only if this row itself lands. The row is not a latch, and
+  // nothing durable is written while the store is down.
   'retention.unavailable',
 ] as const;
 
@@ -519,7 +523,7 @@ export interface DiagnosticEmitter {
   codexGenaiIngestEntryFailed(member: string): void;
   activityAppendFailed(member: string, events: number): void;
   toolinvokeAuditAppendFailed(member: string): void;
-  enrollmentSourceLabelTruncated(field: string, dropped: number): void;
+  enrollmentSourceLabelTruncated(dropped: number): void;
   // ── Observed recoveries ────────────────────────────────────────
   //
   // One method per INCIDENT cause, named for the success that actually
@@ -838,6 +842,9 @@ function buildStore(
            (SELECT rowid FROM diagnostic_state ORDER BY since LIMIT ?)`,
         ).run(over);
         recordOverflow();
+        // The EVICTION LATCH — durable, unlike the in-memory
+        // availability latch (`writeFailed`) below.
+        //
         // PERSISTENT, not ageing. Evicting unresolved state destroys
         // current health that cannot be reconstructed — the member
         // simply reads clean afterwards. So retention health latches to
@@ -914,7 +921,13 @@ function buildStore(
   }
 
   /**
-   * Set when a retention write throws.
+   * The AVAILABILITY LATCH. Set when a retention write throws.
+   *
+   * One of three things this file uses to describe its own health,
+   * and the only one held in memory: the EVICTION LATCH is the
+   * `state_evicted` meta row set by `enforceCaps`, and the
+   * UNAVAILABILITY RECORD is the `retention.unavailable` bucket row
+   * this latch writes on the way out.
    *
    * IN MEMORY, deliberately. The store shares a database handle with
    * the operations it observes, so a full, busy or corrupt handle can
@@ -1031,7 +1044,7 @@ function buildStore(
     toolinvokeAuditAppendFailed(member) {
       record({ cause: 'toolinvoke.audit_append_failed', members: [member] });
     },
-    enrollmentSourceLabelTruncated(_field, dropped) {
+    enrollmentSourceLabelTruncated(dropped) {
       // An enrollment is not yet a member, so there is nobody to
       // attribute this to.
       record({ cause: 'enrollment.source_label_truncated', fields: safeCount(dropped) });
@@ -1092,12 +1105,13 @@ function buildStore(
       (...args: unknown[]) => {
         try {
           (fn as (...a: unknown[]) => void)(...args);
-          // The latch is PROCESS-LOCAL, so a restart would heal it
-          // silently — "expiry heals" at a process boundary, which is
-          // the defect this store exists to prevent. So the first
-          // write that succeeds after a failure durably records that
-          // the store was unavailable, and the latch clears ONLY if
-          // that record itself lands.
+          // The availability latch is PROCESS-LOCAL, so a restart
+          // would heal it silently — "expiry heals" at a process
+          // boundary, which is the defect this store exists to
+          // prevent. So the first write that succeeds after a failure
+          // durably records that the store was unavailable — the
+          // `retention.unavailable` UNAVAILABILITY RECORD — and the
+          // latch clears ONLY if that record itself lands.
           if (writeFailed) {
             try {
               const ts = now();

@@ -188,7 +188,6 @@ async function runWizardOrFail(
         role: wizard.bootstrapMember.role,
         instructions: wizard.bootstrapMember.instructions,
         rawPermissions: wizard.bootstrapMember.rawPermissions,
-        permissions: wizard.bootstrapMember.permissions,
         totpSecret: wizard.bootstrapMember.totpSecret,
       });
       const tokens = new server.SqliteTokenStore(db);

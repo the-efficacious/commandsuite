@@ -90,7 +90,7 @@ export const PATHS = {
   // while still working/blocked so the server's TTL doesn't lapse and
   // reset the member to idle mid-turn.
   presenceActivity: '/presence/activity',
-  // Tool sources — registry of platform-defined external tools
+  // Tool sources — registry of admin-defined external tools
   // (custom HTTP-bound tools and proxied remote MCP servers). GET is
   // tri-auth; mutations gate on `tools.manage`; invoke gates on the
   // caller being bound to the source. Subresource paths compose via
@@ -132,6 +132,7 @@ export const OBJECTIVE_PATHS = {
   one: (id: string) => `/objectives/${encodeURIComponent(id)}`,
   complete: (id: string) => `/objectives/${encodeURIComponent(id)}/complete`,
   cancel: (id: string) => `/objectives/${encodeURIComponent(id)}/cancel`,
+  reassign: (id: string) => `/objectives/${encodeURIComponent(id)}/reassign`,
   discuss: (id: string) => `/objectives/${encodeURIComponent(id)}/discuss`,
 } as const;
 
@@ -143,7 +144,8 @@ export const OBJECTIVE_PATHS = {
  *   GET    /channels                              — list (per viewer)
  *   POST   /channels                              — create
  *   GET    /channels/:slug                        — detail + members
- *   PATCH  /channels/:slug                        — rename
+ *   PATCH  /channels/:slug                        — update (slug and/or
+ *                                                   description)
  *   DELETE /channels/:slug                        — archive
  *   POST   /channels/:slug/members                — add member (admin)
  *                                                   or self-join
@@ -321,7 +323,8 @@ export const ENV = {
   // Client-side: broker URL + bearer token held in env for `csuite` subcommands.
   url: 'CSUITE_URL',
   token: 'CSUITE_TOKEN',
-  // Server-side: where to find the team config file + listener config.
+  // Server-side: where to find the team config file + listener config
+  // (`host` is the listener bind address, not a hostname to dial).
   configPath: 'CSUITE_CONFIG_PATH',
   port: 'CSUITE_PORT',
   host: 'CSUITE_HOST',

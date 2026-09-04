@@ -1,6 +1,6 @@
 ---
 title: Jobs gallery
-description: Blueprint-depth sketches of jobs an agent can hold — the kit, the inbox, the standing instructions, and what the trace shows.
+description: Blueprint-depth sketches of jobs an agent can hold — the access, the endpoints, the standing instructions, and what the trace shows.
 section: Guides
 order: 50
 ---
@@ -23,11 +23,11 @@ a human answers questions.
 The agent that doesn't check that backups ran — it restores one and
 proves it.
 
-- **Kit**: read access to the backup store (tool source or a
+- **Access**: read access to the backup store (tool source or a
   read-only mount); a scratch volume to restore into; the backup
   tool's CLI (it will install it).
-- **Inbox**: its own cron — a weekly self-provisioned trigger, plus
-  the backup system's failure webhook if one exists.
+- **Endpoints**: its own cron — a weekly self-provisioned poller,
+  plus the backup system's failure webhook if one exists.
 - **Instructions spine**: "Each week, pick one backup set at random,
   restore it fully to scratch, verify integrity (row counts,
   checksums, a sample query), then destroy the scratch copy. Post
@@ -42,10 +42,10 @@ proves it.
 
 A support inbox that triages itself, with a human veto.
 
-- **Kit**: a tool source wrapping the helpdesk or CRM API
+- **Access**: a tool source wrapping the helpdesk or CRM API
   (read/write, scoped to tickets); the team filesystem for canned
   responses.
-- **Inbox**: contact-form / support-mail webhook via an
+- **Endpoints**: contact-form / support-mail webhook via an
   email-to-webhook bridge.
 - **Instructions spine**: "Classify each incoming message. Answer
   the routine ones from the canned-response library, draft-first:
@@ -62,9 +62,10 @@ A support inbox that triages itself, with a human veto.
 
 A daily brief that reads everything so the team doesn't.
 
-- **Kit**: tool sources for the paid APIs you already have (search,
-  market data); the team filesystem for a running notes file.
-- **Inbox**: RSS/alert webhooks, plus a self-provisioned morning
+- **Access**: tool sources for the paid APIs you already have
+  (search, market data); the team filesystem for a running notes
+  file.
+- **Endpoints**: RSS/alert webhooks, plus a self-provisioned morning
   cron.
 - **Instructions spine**: "Maintain ~/notes/watchlist.md. Each
   morning, post a five-bullet brief to #intel: what changed, why it
@@ -80,9 +81,9 @@ A daily brief that reads everything so the team doesn't.
 
 Nightly exports land; clean data comes out; anomalies get flagged.
 
-- **Kit**: wherever the exports land (mount or tool source); the
+- **Access**: wherever the exports land (mount or tool source); the
   warehouse CLI or a loading tool source; a schema notes file.
-- **Inbox**: the export system's completion webhook, or a
+- **Endpoints**: the export system's completion webhook, or a
   self-provisioned watcher cron.
 - **Instructions spine**: "For each export: validate against
   ~/schemas, clean known defect patterns (they're listed in the
@@ -101,9 +102,9 @@ Nightly exports land; clean data comes out; anomalies get flagged.
 Content moves from approved draft to live everywhere, without a
 human re-pasting it.
 
-- **Kit**: tool sources for the CMS and each social/API surface —
+- **Access**: tool sources for the CMS and each social/API surface —
   every credential broker-held, every one scoped to publish-only.
-- **Inbox**: the CMS "approved" webhook.
+- **Endpoints**: the CMS "approved" webhook.
 - **Instructions spine**: "On approval: check links, images, and
   metadata; schedule per the calendar in the team process;
   adapt the excerpt per channel — no reworded titles; post the
@@ -119,9 +120,9 @@ human re-pasting it.
 The small-company job nobody holds: renewals, expiries, and the
 question "is anything about to bite us?"
 
-- **Kit**: read-only tool sources for the domain registrar, cert
+- **Access**: read-only tool sources for the domain registrar, cert
   monitoring, and license/SaaS admin APIs; a renewals calendar file.
-- **Inbox**: expiry webhooks where they exist; a self-provisioned
+- **Endpoints**: expiry webhooks where they exist; a self-provisioned
   daily sweep cron for everything else.
 - **Instructions spine**: "Maintain ~/renewals.md with every domain,
   cert, and license and its date. Thirty days out: post a warning in
@@ -136,14 +137,14 @@ question "is anything about to bite us?"
 
 ## Reading the pattern
 
-Six jobs, one shape. The kit is always *provisioned access* — tool
-sources with broker-held, narrowly-scoped credentials — plus a
-workstation the agent finishes equipping itself. The inbox is
-webhooks where the world can push and self-provisioned crons where
-it can't. The instructions always name a channel where a human
-answers, and the risky verbs are always draft-first or forbidden
-outright. And every job ends the same way: not with trust in a
-summary, but with a [trace](/docs/tracing) you can read.
+Six jobs, one shape. The access is always *provisioned, never handed
+over* — tool sources with broker-held, narrowly-scoped credentials —
+plus a workstation the agent finishes equipping itself. The
+endpoints are webhooks where the world can push and self-provisioned
+pollers where it can't. The instructions always name a channel where
+a human answers, and the risky verbs are always draft-first or
+forbidden outright. And every job ends the same way: not with trust
+in a summary, but with a [trace](/docs/tracing) you can read.
 
 If the job you're imagining isn't here, it probably still reduces to
 the same four steps — [start there](/docs/guides/give-an-agent-a-job).

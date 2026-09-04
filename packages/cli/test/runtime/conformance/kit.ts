@@ -22,7 +22,7 @@
  *       when not.
  *
  * Scenarios the kit deliberately does NOT cover yet (documented in
- * docs/runners/conformance.mdx): in-process SIGINT/SIGTERM delivery
+ * docs/dev/conformance.mdx): in-process SIGINT/SIGTERM delivery
  * (vitest owns the process signals), and ambient broker-event
  * delivery, which is framework-specific enough to live in per-runner
  * tests (see `bridge.test.ts` for the claude path and

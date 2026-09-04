@@ -81,7 +81,7 @@ things that file holds, and reports each separately:
 | | what it is |
 |---|---|
 | activity | the per-member timeline — turns, tool calls, prompts |
-| inferences | full-context model calls, including the request context |
+| inferences | one **inference record** per model call — the full request context, which the web UI surfaces behind its "full context" toggle |
 | telemetry | OTLP cost, token and lifecycle records |
 | raw bodies | the verbatim request/response bytes |
 

@@ -1,6 +1,6 @@
 ---
 title: MCP tools reference
-description: Every MCP tool the runner exposes to the agent — chat, channels, objectives, filesystem, and capability-gated management — with input schemas, broker effects, and permission gating.
+description: Every MCP tool the runner exposes to the agent — chat, channels, objectives, filesystem, and permission-gated management — with input schemas, broker effects, and permission gating.
 section: Development
 order: 50
 ---
@@ -11,18 +11,23 @@ This reference is for people building on the runner's MCP surface or
 contributing to it — the user-facing story lives in the concepts
 pages.
 
-The csuite runner exposes a fixed toolbox to whatever agent it
-spawns. Tool descriptions are composed from the instructions packet
-at runtime (the member's fs home path, permission-scoped wording) so
-what the model sees is stable for the session.
+The csuite runner exposes a fixed **core** toolbox to whatever agent
+it spawns, plus the external tools resolved for that member, which
+can change mid-session. Tool descriptions are composed from the
+instructions packet at runtime (the member's fs home path,
+permission-scoped wording) so the core tools the model sees are
+stable for the session.
 
 The groups:
 
 - **Chat tools** — message teammates, post to channels, fetch
   history.
+- **Context-control tools** — ask a runner to compact, clear or
+  reload its agent context; your own is baseline, a teammate's needs
+  `members.context`.
 - **Objective tools** — list / view / update / discuss / complete
-  objectives, plus permission-gated tools for creating and
-  cancelling work across the team.
+  objectives, plus permission-gated tools for creating,
+  reassigning and cancelling work across the team.
 - **Team-process tools** — read the team process and
   its edit history; write it if you hold the authority. The current
   text arrives by injection, not by calling these.
@@ -131,22 +136,42 @@ channel. Pass `with` xor `channel`.
 
 `limit` defaults to 50, capped at 500. Newest-first ordering.
 
+## Context-control tools
+
+### context_control
+
+Ask a runner to compact, clear, or reload its agent context. Targets
+the caller by default.
+
+| | |
+|---|---|
+| **Required permission** | none for yourself; `members.context` for anyone else |
+| **Input** | `{ verb: 'compact' \| 'clear' \| 'reload', member?: string, reason?: string }` |
+| **Output** | `context <verb> requested for <target>: requestId=<id>, delivered=<bool>; the context_control activity acknowledgement is authoritative` |
+| **Broker call** | `POST /members/:name/context` |
+
+`reason` is capped at 500 characters and rejected above it. The
+result confirms delivery only: the runner records the real outcome
+later on the target's activity stream as a `context_control` event
+carrying the same `requestId`.
+
 ## Objective tools (always available)
 
 ### objectives_list
 
 List objectives the caller has a relationship with — assigned to
 them, originated by them, or watched. `status: 'open'` is the
-active+blocked union (the whole open plate in one call — what
-recovery after a restart or compaction wants); the unfiltered call
-also returns full done/cancelled history. Use `objectives_view`
-for the watcher list and audit log.
+active+blocked union of that relationship set (one call — what
+recovery after a restart or compaction wants); it is a superset of
+the caller's own plate, which is only what `assignee` selects. The
+unfiltered call also returns full done/cancelled history. Use
+`objectives_view` for the watcher list and audit log.
 
 | | |
 |---|---|
 | **Input** | `{ status?: 'active' \| 'blocked' \| 'done' \| 'cancelled' \| 'open', assignee?: string }` |
 | **Output** | Per-objective: `- <id> [<status>] <title>` + assignee/originator + outcome line + relative-age update line |
-| **Broker call** | `GET /objectives?status=<filter>&assignee=<filter>` (the broker scopes callers without `objectives.create` to their own relationship union) |
+| **Broker call** | `GET /objectives?related=<self>&status=<status>` — always `related`, never `assignee`, so work the caller originated or watches stays in the list. `status` is forwarded except for `open`, which spans two statuses; `open` and the tool's `assignee` argument are both applied client-side, because the route takes one status and ignores `assignee` whenever `related` is present. |
 
 ### objectives_view
 
@@ -164,9 +189,10 @@ the append-only `objective_events` audit log.
 
 Update live state: status (`active ↔ blocked`, with an optional
 `blockReason`), the assignee (requires `objectives.reassign`; the
-previous assignee stays on the thread as a watcher), and watchers
-(originator or `objectives.watch`). **This tool handles state, not
-conversation** — for progress notes or questions use
+previous assignee stays on the thread as a watcher —
+`objectives_reassign` is the dedicated tool for that handover), and
+watchers (originator or `objectives.watch`). **This tool handles
+state, not conversation** — for progress notes or questions use
 `objectives_discuss`. For terminal `done` use `objectives_complete`.
 For `cancelled` use `objectives_cancel` (if you have permission).
 
@@ -208,7 +234,8 @@ permissions allow them. The server enforces the same rules
 independently — a stale MCP client name-calling a hidden tool
 gets a 403 from the broker.
 
-`objectives_create` appears only with `objectives.create`.
+`objectives_create` appears only with `objectives.create`, and
+`objectives_reassign` only with `objectives.reassign`.
 `objectives_cancel` is always present because every originator can
 cancel their own objective; `objectives.cancel` broadens that scope.
 
@@ -228,6 +255,24 @@ Write the `outcome` as the definition of done: short, checkable,
 naming who verifies — background belongs in `body`. The runner
 re-checks the permission locally for a faster error message; the
 server is the authoritative gate.
+
+### objectives_reassign
+
+Move a non-terminal objective to a different assignee. Available
+when the caller has `objectives.reassign`. Both parties are notified
+and the previous assignee stays on the thread as a watcher, so the
+handover can finish in the open.
+
+| | |
+|---|---|
+| **Required permission** | `objectives.reassign` |
+| **Input** | `{ id: string (req), to: string (req), note?: string }` |
+| **Output** | `reassigned <id> to <name> watchers=<names>?` |
+| **Broker call** | `POST /objectives/:id/reassign` |
+
+Reassigning to the current assignee changes nothing. The `assignee`
+field on `objectives_update` reaches the same act through the PATCH
+field group; this tool is the dedicated name for it.
 
 ### objectives_cancel
 
@@ -352,7 +397,10 @@ restates this to the calling agent).
 ## Member-management tools (gated on `members.manage`)
 
 Live member management from the agent toolbox. The broker enforces
-the permission independently on every call.
+the permission independently on every call. The `permissions` input
+on `members_add` and `members_update` is enumerated in the tool
+schema — the [permission leaves](/docs/concepts/permissions),
+spelled exactly.
 
 | Tool | Input | What it does |
 |---|---|---|
@@ -411,8 +459,9 @@ start. Values are write-only end to end; no tool ever returns one.
 | `secrets_delete_value` | Remove the stored value. |
 | `secrets_bindings` | `add`/`remove` member delivery (mirrors `tool_sources_bindings`). |
 
-Delivery is spawn-time only: every mutation's response reminds the
-agent that members pick changes up on their next runner start.
+Delivery timing splits in two. Setting a value and adding or removing
+a binding reach running agents at their next idle boundary; metadata
+edits and deletions apply on each member's next runner start.
 
 ## Variables management tools (gated on `secrets.manage`)
 
@@ -423,8 +472,9 @@ readable, never KEK-encrypted, and never registered with the trace
 redactor, so it appears verbatim in captured traces (git identity
 belongs here; credentials never do). Secrets and variables share
 one per-member env namespace: binding a collision fails with 409.
-Delivery is spawn-time only — members pick changes up on their next
-runner start.
+Delivery timing matches secrets: value and binding changes reach
+running agents at their next idle boundary, while metadata edits and
+deletions apply on the member's next runner start.
 
 | Tool | Input | What it does |
 |---|---|---|
@@ -475,17 +525,23 @@ waiting for the sender to fire again.
 ## Filesystem tools
 
 The agent has full read/write access to its own home at
-`/<name>/`; reads outside it require either a grant (the file was
-attached to a message visible to the agent) or `members.manage`.
-`fs_shared` enumerates files shared with the caller via
-attachments.
+`/<name>/`, and to any objective namespace `/objectives/<id>/`
+whose objective it belongs to as originator, assignee or watcher —
+entries there are owned by `obj:<id>`, not by a member. Reads
+elsewhere require either a grant (the file was attached to a
+message visible to the agent) or `members.manage`. `fs_shared`
+enumerates files shared with the caller via attachments.
+
+This reference is not authoritative for the filesystem's scope or
+access model — `packages/core/src/files/paths.ts` and
+`packages/core/src/files/filesystem-store.ts` are.
 
 ### fs_ls
 
 | | |
 |---|---|
 | **Input** | `{ path?: string }` (defaults to `/<name>`) |
-| **Output** | Per-line: `f <path> <size>B <mime> owner=<name>` for files; `d <path>/ owner=<name>` for directories |
+| **Output** | Per-line: `f <path> <size>B <mime> owner=<owner>` for files; `d <path>/ owner=<owner>` for directories. `<owner>` is a member name, or `obj:<id>` for entries under an objective namespace |
 | **Broker call** | `GET /fs/ls?path=...` |
 
 ### fs_stat
@@ -509,8 +565,11 @@ Read a file. Text-like MIMEs (`text/*`, `application/json`,
 
 ### fs_write
 
-Upload a file. Pass exactly one of `text` or `base64`. Parent
-directories are auto-created.
+Write a file from inline content — the bytes pass through the tool
+call. Pass exactly one of `text` or `base64`. Parent directories are
+auto-created. For a file already on the runner's disk use
+`fs_upload`, which streams it without the bytes entering the agent's
+context.
 
 | | |
 |---|---|

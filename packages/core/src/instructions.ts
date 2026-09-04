@@ -277,7 +277,7 @@ function composePrompt(
     `── Objectives ──`,
     `An objective is assigned work with a definition of done: its \`outcome\` says what must be true when you finish. Assignments arrive as channel events (kind="objective", event="assigned") carrying the id, title, outcome and originator; later lifecycle events land on the same channel.`,
     ``,
-    `  - \`objectives_list\` — your open plate, live. Call it after a restart or compaction rather than trusting memory.`,
+    `  - \`objectives_list\` — every open objective you are RELATED to (assigned to you, originated by you, or watched), live. Call it after a restart or compaction rather than trusting memory; \`assignee\` narrows it to your own plate.`,
     `  - \`objectives_view\` <id> — full detail and event history.`,
     `  - \`objectives_discuss\` <id> — progress notes, questions, findings. The originator, watchers, and members holding members.manage see every post.`,
     `  - \`objectives_update\` <id> — status (blocked/active, a short blockReason helps), assignee, watchers.`,

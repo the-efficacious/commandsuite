@@ -115,6 +115,24 @@ describe('hook server', () => {
     await postJson(server.url, { hook_event_name: 'PreCompact' });
     expect(busy.state()).toBe('idle');
     expect(busy.getSourceCounts().tool_inflight).toBe(0);
+
+    // PostToolBatch is one of them. The SDK fires it once per batch IN
+    // ADDITION to the per-tool PostToolUse that already drained the
+    // handle, and its body carries `tool_calls[]` rather than the
+    // `tool_use_id` this server matches on. Routing it as a tool event
+    // drained a second handle per batch, so an open tool window could
+    // close while the tool was still running — assert it stays inert
+    // even when a caller does supply an id.
+    await postJson(server.url, { hook_event_name: 'PreToolUse', tool_use_id: 'batched' });
+    expect(busy.getSourceCounts().tool_inflight).toBe(1);
+    const batch = await postJson(server.url, {
+      hook_event_name: 'PostToolBatch',
+      tool_use_id: 'batched',
+    });
+    expect(batch.status).toBe(200);
+    expect(JSON.parse(batch.text)).toEqual({ accepted: true });
+    expect(busy.getSourceCounts().tool_inflight).toBe(1);
+    expect(busy.busy).toBe(true);
   });
 
   it('SessionStart relays its source via onSessionStart and drives no presence', async () => {

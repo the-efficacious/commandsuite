@@ -1,5 +1,5 @@
 /**
- * Content-addressed raw API body store.
+ * Content-addressed store for raw API bodies ("raw body blobs").
  *
  * The fidelity layer UNDER the gen_ai view: the complete request and
  * response BYTES handed to this store. It preserves its input before

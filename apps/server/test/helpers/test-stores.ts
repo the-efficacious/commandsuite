@@ -108,7 +108,6 @@ export async function seedStores(input: {
       role: m.role,
       instructions: m.instructions ?? '',
       rawPermissions: m.rawPermissions ?? (m.permissions as string[] | undefined) ?? [],
-      permissions: m.permissions ?? [],
       totpSecret: m.totpSecret ?? null,
     });
     await tokens.insert({

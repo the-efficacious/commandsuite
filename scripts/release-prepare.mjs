@@ -67,7 +67,7 @@ const skipImage = args.has('--skip-image');
 const gateMode = argValue('--gate') ?? 'full';
 
 const problems = []; // fatal fact-collection failures
-const holds = []; // unresolved classifications — rendered AND nonzero exit
+const holds = []; // held classifications — rendered AND nonzero exit
 const notes = []; // deliberate diagnostic gaps (skip flags) — non-signable, exit 0
 
 function git(...argv) {

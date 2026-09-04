@@ -11,7 +11,7 @@ import { z } from 'zod';
 /**
  * A member materialized in memory once hashes are known. Extends the
  * wire `Member` with server-only fields — TOTP enrollment and replay
- * guard state, plus the raw (unresolved) permissions list so we can
+ * guard state, plus the raw (unexpanded) permissions list so we can
  * round-trip preset references to disk without expanding them.
  */
 export interface LoadedMember extends Member {
@@ -204,10 +204,13 @@ export interface AddMemberInput {
   name: string;
   role: Role;
   instructions: string;
-  /** Stored leaf list. Legacy rows may still contain bundle names. */
+  /**
+   * Stored leaf list; legacy rows may still contain bundle names.
+   * `addMember` resolves this into the member's leaf `permissions` on
+   * both stores, so there is no separate resolved list for a caller to
+   * supply — and none that could disagree with what was persisted.
+   */
   rawPermissions: string[];
-  /** Resolved leaf permissions (derived from `rawPermissions` + presets). */
-  permissions: Permission[];
   /**
    * Plaintext bearer token for the legacy in-memory store. The
    * DB-backed store does NOT issue tokens — caller composes a separate

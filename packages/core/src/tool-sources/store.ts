@@ -1,5 +1,5 @@
 /**
- * Tool-sources store — SQLite-backed registry of platform-defined
+ * Tool-sources store — SQLite-backed registry of admin-defined
  * external tools.
  *
  * A tool source is either:
@@ -108,6 +108,15 @@ const CREATE_SCHEMA = `
   CREATE INDEX IF NOT EXISTS tool_source_bindings_member_idx
     ON tool_source_bindings (member_name);
 
+  -- SOURCE-WIDE CREDENTIAL, despite the column. member_name is a
+  -- placeholder for a per-member credential this version does not
+  -- implement: every write pins it to NULL and every read filters
+  -- member_name IS NULL, so a source has exactly one credential and
+  -- the interface exposes no per-member variant. The unique index is
+  -- on (source_id, IFNULL(member_name, '')) to make that row an
+  -- upsert target and to leave the shape open if the per-member
+  -- variant is ever built. Read the column as reserved, not as
+  -- evidence that per-member credentials exist.
   CREATE TABLE IF NOT EXISTS tool_source_credentials (
     id TEXT PRIMARY KEY,
     source_id TEXT NOT NULL,

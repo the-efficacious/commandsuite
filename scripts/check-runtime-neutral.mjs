@@ -6,7 +6,7 @@
  * require specifiers. csuite-core's charter is that everything in it
  * is portable across JavaScript runtimes — persistence and IO arrive
  * through injected drivers and ports. A `node:` specifier anywhere in
- * the package silently breaks that contract for every non-Node host,
+ * the package silently breaks that contract for every non-Node runtime,
  * so the check runs in CI rather than living in a comment.
  *
  * Usage: node scripts/check-runtime-neutral.mjs <package-dir> [...more]

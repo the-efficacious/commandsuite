@@ -2,10 +2,12 @@
  * Loopback HTTP endpoint for Claude Code hook events.
  *
  * Claude Code's hook system fires lifecycle callbacks at points in the
- * agent loop we want presence for. We bind a small HTTP server here,
- * write its URL into `.claude/settings.json` as a `type: "http"` hook
- * target, and let Claude Code POST to us on each event. All events hit
- * the same URL; we route on `hook_event_name` in the payload.
+ * agent loop we want presence for. We bind a small HTTP server here;
+ * the claude adapter hands its URL to the Agent SDK as in-process hook
+ * callbacks (`buildHookForwarders` in `agents/claude-agent.ts`) that
+ * POST each payload to us — nothing is written to
+ * `.claude/settings.json`. All events hit the same URL; we route on
+ * `hook_event_name` in the payload.
  *
  * The hook server is PRESENCE-ONLY: it drives the ACTIVITY signal
  * (idle/working/blocked) and surfaces the transcript path. It no longer
@@ -20,6 +22,11 @@
  *   - PreToolUse / PostToolUse / PostToolUseFailure — a tool-execution
  *     window. Bumps `tool_inflight` on Pre, decrements on Post. The tool
  *     CONTENT (input/result) comes from the transcript, not here.
+ *     `PostToolBatch` is deliberately NOT one of them: the SDK fires it
+ *     once per batch IN ADDITION to the per-tool PostToolUse that has
+ *     already drained each handle, and its body carries `tool_calls[]`
+ *     rather than the `tool_use_id` this server matches on, so routing
+ *     it could only ever be a no-op.
  *   - UserPromptSubmit — TURN START. Opens a `turn_active` handle so the
  *     WHOLE turn (model generation + tools) reads as `working`, not just
  *     the tool windows.
@@ -60,16 +67,23 @@ import { createServer, type Server } from 'node:http';
 import { logger as defaultLogger, type Logger } from 'csuite-core';
 import type { ActivitySignal } from './busy.js';
 
-export type ClaudeHookEventName =
-  | 'PreToolUse'
-  | 'PostToolUse'
-  | 'PostToolUseFailure'
-  | 'PostToolBatch'
-  | 'UserPromptSubmit'
-  | 'Stop'
-  | 'SubagentStop'
-  | 'Notification'
-  | 'SessionStart';
+/**
+ * The hook events this server routes on. A runtime constant rather
+ * than a bare type union so the forwarder's registration list can be
+ * checked against it instead of counted by hand.
+ */
+export const CLAUDE_HOOK_EVENTS = [
+  'PreToolUse',
+  'PostToolUse',
+  'PostToolUseFailure',
+  'UserPromptSubmit',
+  'Stop',
+  'SubagentStop',
+  'Notification',
+  'SessionStart',
+] as const;
+
+export type ClaudeHookEventName = (typeof CLAUDE_HOOK_EVENTS)[number];
 
 interface HookRequestBody {
   hook_event_name?: string;
@@ -266,10 +280,7 @@ export async function startHookServer(options: HookServerOptions): Promise<HookS
     }
 
     const isToolEvent =
-      event === 'PreToolUse' ||
-      event === 'PostToolUse' ||
-      event === 'PostToolUseFailure' ||
-      event === 'PostToolBatch';
+      event === 'PreToolUse' || event === 'PostToolUse' || event === 'PostToolUseFailure';
 
     if (isToolEvent) {
       const toolUseId = body.tool_use_id;
@@ -292,12 +303,11 @@ export async function startHookServer(options: HookServerOptions): Promise<HookS
           handle.finish();
           handles.delete(toolUseId);
         }
-        // Note: PostToolBatch may carry a synthetic batch id rather than
-        // a real tool_use_id; we still try to drain the matching handle
-        // in case Claude Code uses the same id space. Missing matches
-        // are silent (no-op). The tool CONTENT (input/result) is NOT
-        // emitted here — the transcript reader is the single source of
-        // `tool_action` now, so a hook emission would only duplicate it.
+        // A Post for an id we never opened is silent (no-op), and a
+        // double Post decrements at most once. The tool CONTENT
+        // (input/result) is NOT emitted here — the transcript reader is
+        // the single source of `tool_action` now, so a hook emission
+        // would only duplicate it.
       }
     } else if (event === 'UserPromptSubmit') {
       // TURN START — open a `turn_active` handle so the whole turn reads

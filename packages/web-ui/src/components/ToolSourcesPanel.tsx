@@ -1,5 +1,5 @@
 /**
- * ToolSourcesPanel — tools.manage-gated registry of platform-defined
+ * ToolSourcesPanel — tools.manage-gated registry of admin-defined
  * external tools (custom HTTP bindings + proxied MCP servers).
  *
  * Mirrors MembersPanel: PageHeader with a "+ New source" toggle, an

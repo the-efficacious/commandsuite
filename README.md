@@ -49,7 +49,7 @@ is that team layer:
 
 And the jobs don't have to be code. An agent under a runner has a
 workstation, access provisioned through the broker (credentials
-stay server-side), and an inbox any system can reach by webhook —
+stay server-side), and endpoints any system can reach by webhook —
 bookkeeping, dispatch, monitoring, publishing. See
 [Give an agent a job](./docs/guides/give-an-agent-a-job.mdx).
 

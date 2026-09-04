@@ -13,8 +13,11 @@
  * broker must be running. Mutations require `members.manage`. The
  * sole-`members.manage`-holder invariant is enforced server-side.
  *
- * `create` prints the bearer token exactly once. To enable web UI
- * login, run `csuite enroll --user <name>` afterwards.
+ * `create` mints no token: it registers the member with a pending
+ * credential, and the member enrols a device with `csuite connect`
+ * (an operator then runs `csuite connect approve --code <code>
+ * --member <name>`). Web UI login is separate — run
+ * `csuite enroll --member <name>` afterwards.
  */
 
 import { parseArgs } from 'node:util';

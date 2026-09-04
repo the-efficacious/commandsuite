@@ -645,6 +645,111 @@ describe('PATCH assignee (reassignment)', () => {
   });
 });
 
+// ─── POST /objectives/:id/reassign ───────────────────────────────────
+
+describe('POST /objectives/:id/reassign', () => {
+  it('moves the assignee, keeps the outgoing one on the thread, and records both events', async () => {
+    const { app } = await makeApp();
+    const obj = await createOne(app, ALICE, { assignee: 'carol' });
+    const res = await app.request(
+      `/objectives/${obj.id}/reassign`,
+      authed(ALICE, { to: 'dave', note: 'carol is on leave' }),
+    );
+    expect(res.status).toBe(200);
+    const updated = (await res.json()) as Objective;
+    expect(updated.assignee).toBe('dave');
+    expect(updated.watchers).toEqual(['carol']);
+    const detail = await app.request(`/objectives/${obj.id}`, authed(ALICE));
+    const body = (await detail.json()) as GetObjectiveResponse;
+    expect(body.events.map((e) => e.kind)).toEqual(['assigned', 'reassigned', 'watcher_added']);
+    expect(body.events[1]?.payload).toEqual({
+      from: 'carol',
+      to: 'dave',
+      note: 'carol is on leave',
+    });
+    expect(body.events[2]?.payload).toEqual({ name: 'carol', reason: 'reassigned-from' });
+  });
+
+  // Two spellings of one act. The route is the first-class verb; the
+  // `assignee` field group on PATCH is the older spelling the web UI
+  // and existing agents still use. Anything the route does differently
+  // is a new confound, so compare the whole objective and the whole
+  // event stream rather than the assignee alone.
+  it('is the same act as the PATCH assignee field group, field for field and event for event', async () => {
+    const { app } = await makeApp();
+    const viaRoute = await createOne(app, ALICE, { assignee: 'carol' });
+    const viaPatch = await createOne(app, ALICE, { assignee: 'carol' });
+    const a = await app.request(
+      `/objectives/${viaRoute.id}/reassign`,
+      authed(ALICE, { to: 'dave', note: 'handover' }),
+    );
+    const b = await app.request(
+      `/objectives/${viaPatch.id}`,
+      authed(ALICE, { assignee: 'dave', note: 'handover' }, 'PATCH'),
+    );
+    expect(a.status).toBe(200);
+    expect(a.status).toBe(b.status);
+    const strip = (o: Objective) => ({ ...o, id: '', createdAt: 0, updatedAt: 0 });
+    expect(strip((await a.json()) as Objective)).toEqual(strip((await b.json()) as Objective));
+    const events = async (id: string) => {
+      const detail = await app.request(`/objectives/${id}`, authed(ALICE));
+      return ((await detail.json()) as GetObjectiveResponse).events.map((e) => ({
+        kind: e.kind,
+        actor: e.actor,
+        payload: e.payload,
+      }));
+    };
+    // Positive control: two spellings that both did nothing would
+    // compare equal. Pin what the route side actually produced first.
+    const routeEvents = await events(viaRoute.id);
+    expect(routeEvents.map((ev) => ev.kind)).toEqual(['assigned', 'reassigned', 'watcher_added']);
+    expect(routeEvents).toEqual(await events(viaPatch.id));
+  });
+
+  it('rejects a caller without objectives.reassign with 403 — even the assignee', async () => {
+    const { app } = await makeApp();
+    const obj = await createOne(app, ALICE, { assignee: 'carol' });
+    const res = await app.request(`/objectives/${obj.id}/reassign`, authed(CAROL, { to: 'dave' }));
+    expect(res.status).toBe(403);
+  });
+
+  it('rejects an unknown target and a missing `to` with 400', async () => {
+    const { app } = await makeApp();
+    const obj = await createOne(app, ALICE, { assignee: 'carol' });
+    const unknown = await app.request(
+      `/objectives/${obj.id}/reassign`,
+      authed(ALICE, { to: 'ghost' }),
+    );
+    expect(unknown.status).toBe(400);
+    const missing = await app.request(`/objectives/${obj.id}/reassign`, authed(ALICE, {}));
+    expect(missing.status).toBe(400);
+  });
+
+  it('reassigning to the current assignee is an idempotent no-op', async () => {
+    const { app } = await makeApp();
+    const obj = await createOne(app, ALICE, { assignee: 'carol' });
+    const res = await app.request(`/objectives/${obj.id}/reassign`, authed(ALICE, { to: 'carol' }));
+    expect(res.status).toBe(200);
+    const detail = await app.request(`/objectives/${obj.id}`, authed(ALICE));
+    const body = (await detail.json()) as GetObjectiveResponse;
+    expect(body.events.map((e) => e.kind)).toEqual(['assigned']);
+  });
+
+  it('409s once the objective is terminal', async () => {
+    const { app } = await makeApp();
+    const obj = await createOne(app, ALICE, { assignee: 'carol' });
+    await app.request(`/objectives/${obj.id}/complete`, authed(CAROL, { result: 'shipped' }));
+    const res = await app.request(`/objectives/${obj.id}/reassign`, authed(ALICE, { to: 'dave' }));
+    expect(res.status).toBe(409);
+  });
+
+  it('404s for an objective that does not exist', async () => {
+    const { app } = await makeApp();
+    const res = await app.request('/objectives/obj-nope/reassign', authed(ALICE, { to: 'dave' }));
+    expect(res.status).toBe(404);
+  });
+});
+
 // ─── PATCH /objectives/:id — watcher changes ─────────────────────────
 
 describe('PATCH watchers', () => {

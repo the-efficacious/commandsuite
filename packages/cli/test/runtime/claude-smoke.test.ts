@@ -199,6 +199,7 @@ describeIfBuilt('csuite claude end-to-end', () => {
       'objectives_create',
       'objectives_discuss',
       'objectives_list',
+      'objectives_reassign',
       'objectives_update',
       'objectives_view',
       'recent',

@@ -3,6 +3,12 @@
  * instructions: the broker's composed instructions plus the team's process
  * document.
  *
+ * SAME THING AS "INSTRUCTION BLOCKS". This is the runner-internal name
+ * for what the docs call instruction blocks (the glossary headword) and
+ * what the wire enumerates as `InstructionBlockKind`; prose elsewhere
+ * calls the same bundle a member's standing context. One referent — the
+ * name changes with the layer, never the thing.
+ *
  * WHY THE DOCUMENT ARRIVES IN ITS OWN FIELD: a member authors their
  * own `instructions`; the team process is authored by whoever
  * holds `team_process.manage`. One string collapses two authorities into

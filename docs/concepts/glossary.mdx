@@ -33,6 +33,11 @@ team has a built-in `general` channel that reaches everyone. See
 CLI on a new device join the broker without anyone copy-pasting a
 token. See [Device enrollment](/docs/enrollment).
 
+**Id** — the opaque identifier the broker mints for a record. It
+never changes and is never reused, so other records point at it
+rather than at the slug: a message tags its channel `chan:<id>`,
+which is why renaming that channel never orphans history.
+
 **Instruction blocks** — the standing context every agent starts
 with: the team context, its role description, its personal
 instructions, and the
@@ -46,6 +51,12 @@ as restart-pending until they have.
 member has a name, a role, permissions, and its own credentials. See
 [Members](/docs/concepts/members).
 
+**Name** — a member's addressing handle: letters, digits, `.`, `_`
+and `-`, up to 128 characters. Messages are addressed and attributed
+by name, and a name may be reused after the member is gone. Not a
+slug — slugs are lowercase, dash-only, and identify records rather
+than members. See [Members](/docs/concepts/members).
+
 **Objective** — a unit of assigned work that carries its own
 definition of done. Created by an originator, executed by one
 assignee, observed by watchers. See
@@ -54,11 +65,12 @@ assignee, observed by watchers. See
 **Originator** — the member who created an objective. See
 [Objectives](/docs/concepts/objectives).
 
-**Outcome** — the required "definition of done" on an objective: the
-tangible result that makes it complete. See
+**Outcome** — the required "definition of done" on an objective: what
+must be true for the work to count as complete. Stated at creation and
+in front of the assignee from then on. See
 [Objectives](/docs/concepts/objectives).
 
-**Permission** — a named capability a member holds, such as
+**Permission** — one **permission leaf** a member holds, such as
 `objectives.create` or `activity.read`. The model is flat: any
 member can hold any set. See
 [Permissions](/docs/concepts/permissions).
@@ -71,10 +83,48 @@ whether they're idle, working, or blocked. See
 of permission leaves once. The member stores those leaves, not the template.
 See [Permissions](/docs/concepts/permissions).
 
+**Result** — what the assignee writes when marking an objective done:
+the account of how the **outcome** was met. The outcome is stated at
+creation and says what must be true; the result answers it, and is
+required by `objectives_complete`. See
+[Objectives](/docs/concepts/objectives).
+
+**Personal instructions** — the private prose block delivered to one
+member only: into an agent's standing context, or onto a person's
+dashboard. Teammates never see it; the member and `members.manage`
+holders can. One of the four instruction blocks. See
+[Members](/docs/concepts/members).
+
+**Restart-pending** — a member whose current composed instructions
+differ from the ones its live session was issued. Its runner restarts
+the agent at the next idle boundary to pick the edit up; the roster
+reports it until then. See [Members](/docs/concepts/members).
+
+**Role** — a member's public label and description: a short title
+("engineer", "qa-lead") plus prose saying what they do on the team.
+Visible to every teammate — it shows in the roster and in each
+agent's standing context. Distinct from **personal instructions**,
+which are private to that member and to `members.manage` holders.
+See [Members](/docs/concepts/members).
+
+**Role description** — the prose half of a member's role ("implements
+features end-to-end"). It shows on the roster, is composed into that
+member's own instruction blocks, and appears in its teammates' roster
+lines. Descriptive only: permissions decide what a member may do. See
+[Members](/docs/concepts/members).
+
 **Runner** — the program that runs an agent as a team member and
 connects it to the broker. Claude Code (`csuite claude`) and OpenAI
 Codex (`csuite codex`) are the two runners that ship today. See
 [Runners](/docs/runners/overview).
+
+**Standing context** — another name for the instruction blocks: the
+whole composed bundle an agent starts a session with. Not the team
+context alone — that is one block of the four.
+
+**Team context** — the team-wide standing prose every member
+inherits, and one of the four instruction blocks. Edited by a
+`team.manage` holder with `csuite team set --context`.
 
 **Team process** — the team's single authored statement of how it
 works, carried in every agent's standing context. See
@@ -83,6 +133,21 @@ works, carried in every agent's standing context. See
 **Secret** — a broker-held confidential value injected into an
 agent's environment at session start, and redacted from captured
 traces. See [Secrets](/docs/concepts/secrets).
+
+**Slug** — the short, lowercase, human-typed identifier that
+addresses a record in URLs and on the CLI: letters, digits, and
+single dashes. Channels, tool sources, secrets, variables,
+notification endpoints, and auth profiles each have one. Only a
+channel's slug can be changed; the rest are immutable, because
+thread tags (`secret:<slug>`) and ingress URLs (`/hooks/<slug>`)
+are built from them.
+
+**Thread tag** — the value of a message's `data.thread`, naming what
+the message belongs to: `chan:<id>` for a channel, `obj:<id>` for an
+objective, and `secret:` `tool:` `variable:` `hook:` plus a slug for
+the change events of those records. A colon does not always mark a
+reference: `enc-v1:` and `sha256:` mark an encoding, and a colon
+inside an enum value (`self-signed:fresh`) is only punctuation.
 
 **Tool source** — a registered provider of extra tools for agents —
 a wrapped HTTP API or a remote MCP server — with its credential held

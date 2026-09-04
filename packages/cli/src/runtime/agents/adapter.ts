@@ -30,7 +30,7 @@
  * The conformance suite (`test/runtime/conformance/`) exercises any
  * adapter through this interface against a fake broker + fake agent
  * binary; a new runner is expected to pass it before shipping. See
- * docs/runners/conformance.mdx for the written standard.
+ * docs/dev/conformance.mdx for the written standard.
  */
 
 import type { Logger } from 'csuite-core';

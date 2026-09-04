@@ -3,8 +3,9 @@
  * mirroring the server's `GET /secrets` projection.
  *
  * Used by:
- *   - `NavColumn` to render the secrets.manage-gated "Secrets" nav item
- *   - `SecretsPanel` (list) and `SecretDetail` (per-secret)
+ *   - `EnvironmentPanel` (list, beside variables) and `SecretDetail`
+ *     (per-secret) — the surface `NavColumn` opens from its
+ *     secrets.manage-gated "Environment" nav item
  *   - `live.ts` to refresh on `data.kind === 'secret'` events —
  *     registry changes fan out as channel events, so the list stays
  *     current without polling

@@ -192,7 +192,10 @@ export interface FilesystemStore {
 
   /**
    * Record that `viewer` is permitted to read `path` via a specific
-   * referencing context (message id, objective id, etc.). Idempotent —
+   * referencing context. `grantedVia` is the id of the message the
+   * attachment was posted on — a bare, unprefixed message id, not an
+   * `obj:`/`chan:`-style tagged key. Both call sites pass one (push
+   * delivery and objective discuss). Idempotent —
    * duplicate (path, viewer, via) triples are coalesced by the primary
    * key.
    */

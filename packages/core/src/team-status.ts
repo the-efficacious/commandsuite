@@ -64,7 +64,12 @@ export async function composeTeamStatus(
             };
           }),
       );
-      const presence = presences.get(member.name) ?? null;
+      // Same re-read as `GET /roster`: the registry's role is
+      // first-register-wins and goes stale after a role edit, so the
+      // presence block carries the member store's answer rather than a
+      // second one that can disagree with `member.role` beside it.
+      const live = presences.get(member.name);
+      const presence = live === undefined ? null : { ...live, role: member.role };
       const objectiveStalled = activeObjectives.some((objective) => objective.stalled);
       const executorDegraded = presence?.executor?.state === 'degraded';
       return {

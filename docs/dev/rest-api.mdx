@@ -44,7 +44,7 @@ In the tables below:
 
 | Auth label | Means |
 |---|---|
-| **dual** | Bearer OR session cookie |
+| **member** | Any authenticated plane — bearer, session cookie, or federated JWT |
 | **bearer** | Bearer only |
 | **session** | Session cookie only |
 | **manage** | Requires `members.manage` permission |
@@ -75,7 +75,7 @@ Liveness probe. Cheap; always responds 200 if the process is up.
 
 | | |
 |---|---|
-| **Auth** | dual |
+| **Auth** | member |
 | **Body** | — |
 | **Request headers** | `X-CSUITE-Runner-Version: <version>` (optional) |
 | **Returns** | `InstructionsResponse` |
@@ -129,7 +129,7 @@ the drain-and-restart cycle an instruction edit triggers (below).
 
 | | |
 |---|---|
-| **Auth** | dual |
+| **Auth** | member |
 | **Returns** | `RosterResponse` — `{ teammates: Teammate[], connected: Presence[], restartPending: string[], activityWindowMs }` |
 
 Public projection of teammates plus a parallel list of live presence:
@@ -152,7 +152,7 @@ issued hash is unknown (the broker restarted since their
 
 | | |
 |---|---|
-| **Auth** | dual |
+| **Auth** | member |
 | **Body** | `PushPayload` — `{ to?, title?, body, level?, data?, attachments? }` |
 | **Returns** | `PushResult` — `{ delivery: { live, targets }, message: Message }` |
 
@@ -165,7 +165,7 @@ authenticated member; payloads cannot override.
 
 | | |
 |---|---|
-| **Auth** | dual |
+| **Auth** | member |
 | **Upgrade** | WebSocket — each broker push targeting the member arrives as one JSON text frame (`ws.send(JSON.stringify(message))`), shape `Message` |
 
 Subscribe to messages addressed to `self` (the authenticated
@@ -204,7 +204,7 @@ notifications queued with `if_offline: queue` are flushed.
 
 | | |
 |---|---|
-| **Auth** | dual |
+| **Auth** | member |
 | **Returns** | `HistoryResponse` — `{ messages: Message[] }` |
 
 Newest-first message history. Pass exactly one of `with` (DM
@@ -253,7 +253,7 @@ bumps `last_seen` and re-stamps the expiry.
 
 | | |
 |---|---|
-| **Auth** | dual |
+| **Auth** | member |
 | **Returns** | `SessionResponse` — `{ member, role, permissions, expiresAt }` |
 
 Current session info. Useful for the web UI to bootstrap.
@@ -262,7 +262,7 @@ Current session info. Useful for the web UI to bootstrap.
 
 | | |
 |---|---|
-| **Auth** | dual |
+| **Auth** | member |
 | **Returns** | `204` + cleared cookie |
 
 ## Members
@@ -271,7 +271,7 @@ Current session info. Useful for the web UI to bootstrap.
 
 | | |
 |---|---|
-| **Auth** | dual |
+| **Auth** | member |
 | **Returns** | `ListMembersResponse` — `{ members: Member[] }` |
 
 Callers with `members.manage` see the full list including private
@@ -283,11 +283,23 @@ Callers with `members.manage` see the full list including private
 | | |
 |---|---|
 | **Auth** | manage |
-| **Body** | `CreateMemberRequest` — `{ name, role, instructions?, permissions: string[] }` |
-| **Returns** | `CreateMemberResponse` — `{ member: Teammate, token: <plaintext> }` |
+| **Body** | `CreateMemberRequest` — `{ name, role, instructions?, permissions: string[], credentialMode? }` |
+| **Returns** | `CreateMemberResponse` — a union discriminated on `credentialMode` |
 
-The `token` plaintext is returned exactly once; only its SHA-256
-hash is persisted. `permissions` accepts preset names or leaf
+`credentialMode` picks how the new member gets a credential. It
+defaults to `bootstrap` when omitted, for wire compatibility with 0.8
+clients:
+
+- `bootstrap` → `{ credentialMode: 'bootstrap', member, token }`. The
+  `token` plaintext is returned exactly once; only its SHA-256 hash is
+  persisted.
+- `pending` → `{ credentialMode: 'pending', member, enrollment }`, with
+  `enrollment` = `{ method: 'device_code', connectCommand, approveCommand }`.
+  No credential is minted; the member enrols a device through
+  [device-code enrollment](#device-code-enrollment) and an operator
+  approves it. `csuite member create` uses this mode.
+
+`permissions` accepts preset names or leaf
 permissions in any mix; the server resolves at create time.
 
 ### `PATCH /members/:name`
@@ -365,6 +377,29 @@ authenticator currently bound. Confirmation is enforced
 client-side (CLI / web UI prompts for the 6-digit code from the
 new authenticator before persisting).
 
+### `POST /members/:name/context`
+
+| | |
+|---|---|
+| **Auth** | dual; `members.context` OR self |
+| **Body** | `ContextControlRequest` — `{ verb: 'compact'\|'clear'\|'reload', reason?: string }` |
+| **Returns** | `ContextControlResponse` — `{ requestId, verb, target, delivered }` |
+
+Asks the target's runner to act on its agent context without ending
+the session: `compact` (the agent summarises in place), `clear` (cold
+swap, instruction blocks refetched and re-delivered) or `reload` (cold
+swap, instructions **and** environment refetched). Doing it to
+yourself is baseline; doing it to anyone else needs `members.context`.
+
+Answers on PUSH, not on effect. `delivered` reports only whether the
+target had any live subscriber when the control was pushed — a
+browser tab counts, so `false` is a firm negative and `true` is only
+"something was listening". The outcome arrives later on the target's
+activity stream as a `context_control` row carrying the same
+`requestId`, with outcome `applied` / `declined` / `unsupported` /
+`failed`. A request that produces no such row stays visibly
+outstanding rather than aging into a success nobody observed.
+
 ### `POST /members/:name/activity`
 
 | | |
@@ -383,10 +418,15 @@ row id and broadcasts to live `/activity/stream` subscribers.
 | **Auth** | read OR self |
 | **Returns** | `ListActivityResponse` — `{ activity: ActivityRow[] }` |
 
-Range query. Returns newest-first up to 1000 rows. `kind` filter
+Range query. Returns newest-first up to 1000 rows. `from`, `to` and
+`cursor_ts` are whole non-negative millisecond values, `cursor_id` a
+whole non-negative row id, and `limit` an integer 1–1000; a value
+outside those bounds is a `400` (`invalid query`, with `details`
+naming the offending field), not a clamp. `kind` filter
 accepts a single value or repeated params, OR-combined
 (`session_start | session_end | objective_open | objective_close |
-llm_exchange | tool_action | user_prompt`). `cursor_ts` +
+llm_exchange | tool_action | user_prompt | context_control |
+auth_state`). `cursor_ts` +
 `cursor_id` form a composite paging cursor (both or neither —
 "rows strictly before this (ts, id)"), which stays stable when many
 rows share a timestamp.
@@ -514,14 +554,14 @@ member's composed prose, so it moves every composition.
 
 | | |
 |---|---|
-| **Auth** | dual |
+| **Auth** | member |
 | **Returns** | `{ team: Team }` — `{ name, context }` plus a deprecated empty compatibility field on current servers |
 
 ### `PATCH /team`
 
 | | |
 |---|---|
-| **Auth** | dual; `team.manage` |
+| **Auth** | member; `team.manage` |
 | **Body** | `{ name?, context? }` (at least one) |
 | **Returns** | `{ team: Team }` |
 
@@ -536,7 +576,7 @@ in captured traces.
 
 | | |
 |---|---|
-| **Auth** | dual |
+| **Auth** | member |
 | **Returns** | `ListObjectivesResponse` — `{ objectives: Objective[] }` |
 
 Callers **without** `objectives.create` are scoped to their own
@@ -544,14 +584,21 @@ relationship union — objectives they are assigned, originated, or
 watch — and may only pass their own name in `assignee` / `related`
 (403 otherwise). Callers **with** `objectives.create` get the
 team-wide list; `related=<name>` narrows it to one member's
-relationship union, `assignee=<name>` to one member's plate. The
-MCP `objectives_list` tool sits on top of this route.
+relationship union, `assignee=<name>` to one member's plate.
+
+`assignee` is honoured on exactly one branch: a caller **with**
+`objectives.create` that did not also send `related`. When both are
+sent, `related` wins and `assignee` is ignored rather than
+intersected; and a caller without `objectives.create` always
+receives the whole relationship union whatever it asked for. The
+MCP `objectives_list` tool sits on top of this route, and filters
+`assignee` client-side for exactly that reason.
 
 ### `POST /objectives`
 
 | | |
 |---|---|
-| **Auth** | dual; requires `objectives.create` |
+| **Auth** | member; requires `objectives.create` |
 | **Body** | `CreateObjectiveRequest` — `{ title, outcome, assignee, body?, watchers?, attachments? }` |
 | **Returns** | `Objective` |
 
@@ -565,7 +612,7 @@ caller has read access to each path.
 
 | | |
 |---|---|
-| **Auth** | dual; thread participant (assignee, originator, watcher) OR `objectives.create` |
+| **Auth** | member; thread participant (assignee, originator, watcher) OR `objectives.create` |
 | **Returns** | `GetObjectiveResponse` — `{ objective: Objective, events: ObjectiveEvent[] }` |
 
 Full state plus the append-only event log.
@@ -574,7 +621,7 @@ Full state plus the append-only event log.
 
 | | |
 |---|---|
-| **Auth** | dual; gated per field group — see below |
+| **Auth** | member; gated per field group — see below |
 | **Body** | `UpdateObjectiveRequest` — `{ status?: 'active'\|'blocked', blockReason?, assignee?, note?, addWatchers?, removeWatchers? }` (at least one field) |
 | **Returns** | `Objective` |
 
@@ -593,7 +640,7 @@ terminal states.
 
 | | |
 |---|---|
-| **Auth** | dual; **assignee only** |
+| **Auth** | member; **assignee only** |
 | **Body** | `CompleteObjectiveRequest` — `{ result: <required string> }` |
 | **Returns** | `Objective` |
 
@@ -604,17 +651,34 @@ audit log and is the "what was actually delivered" summary.
 
 | | |
 |---|---|
-| **Auth** | dual; `objectives.cancel` OR originator |
+| **Auth** | member; `objectives.cancel` OR originator |
 | **Body** | `CancelObjectiveRequest` — `{ reason? }` |
 | **Returns** | `Objective` |
 
 Terminal transition to `cancelled`.
 
+### `POST /objectives/:id/reassign`
+
+| | |
+|---|---|
+| **Auth** | member; `objectives.reassign` |
+| **Body** | `ReassignObjectiveRequest` — `{ to, note? }` |
+| **Returns** | `Objective` |
+
+Moves a non-terminal objective to a different assignee, promotes the
+previous assignee to watcher in the same transaction (a `reassigned`
+event followed by a `watcher_added` one carrying
+`reason: 'reassigned-from'`), and notifies both parties. `note` is the
+handover context. Identical in every respect to setting `assignee`
+through `PATCH /objectives/:id` — same gate, `400` for an unknown
+target, an idempotent no-op when the target is already the assignee,
+`409` once the objective is terminal.
+
 ### `POST /objectives/:id/discuss`
 
 | | |
 |---|---|
-| **Auth** | dual; thread member only |
+| **Auth** | member; thread member only |
 | **Body** | `DiscussObjectiveRequest` — `{ body, title?, attachments? }` |
 | **Returns** | `Message` (the underlying push) |
 
@@ -636,7 +700,7 @@ These endpoints exist for what injection does not carry.
 
 | | |
 |---|---|
-| **Auth** | dual |
+| **Auth** | member |
 | **Returns** | `{ document: TeamProcess \| null }` |
 
 `null` rather than 404 when none has been set. A team that has never
@@ -647,7 +711,7 @@ make the caller guess which it was.
 
 | | |
 |---|---|
-| **Auth** | dual |
+| **Auth** | member |
 | **Returns** | `{ edits: TeamProcessEdit[] }`, oldest first |
 
 Retrieved, never resident. Each edit carries the author, reason,
@@ -661,7 +725,7 @@ Version 1 is the creation and carries no prior text.
 
 | | |
 |---|---|
-| **Auth** | dual; requires `team_process.manage` |
+| **Auth** | member; requires `team_process.manage` |
 | **Body** | `EditTeamProcessRequest` — `{ text, reason, disposition }` |
 | **Returns** | `{ document, edit }` — **201** on create, **200** on edit |
 
@@ -687,9 +751,9 @@ in `restartPending` until they do.
 
 ## Tool sources
 
-Registry of platform-defined external tools — see
+Registry of admin-defined external tools — see
 [tool sources](/docs/concepts/tool-sources) for the model. All
-endpoints are dual-auth. Mutations require `tools.manage`; invoke
+endpoints are tri-auth. Mutations require `tools.manage`; invoke
 requires the caller be bound to the source (or the source be
 `allMembers`). Credentials are write-only.
 
@@ -697,7 +761,7 @@ requires the caller be bound to the source (or the source be
 |---|---|---|
 | `GET /tool-sources` | any member | Per-viewer summaries (`bound`, `toolCount`, `hasCredential`). |
 | `POST /tool-sources` | `tools.manage` | Body: `CreateToolSourceRequest` (`slug`, `kind: custom\|mcp`, `config.url` for mcp). 201 + `ToolSource`. |
-| `GET /tool-sources/:slug` | any member | Detail + tool defs; `boundMembers` only for `tools.manage` viewers. |
+| `GET /tool-sources/:slug` | any member | Detail + tool defs; `boundMembers` only for `tools.manage` viewers. `source.kind` is the discriminator for `tools`: kind=custom → `CustomToolDef[]` (with `binding`), kind=mcp → `ResolvedTool[]` from the cache. |
 | `PATCH /tool-sources/:slug` | `tools.manage` | `displayName` / `config` / `enabled` / `allMembers`. Slug is immutable. |
 | `DELETE /tool-sources/:slug` | `tools.manage` | Cascades bindings, credential, tool defs, MCP cache. |
 | `PUT /tool-sources/:slug/credential` | `tools.manage` | `{ kind: bearer\|header, headerName?, secret }`. KEK-encrypted; never returned. 503 without an active KEK. |
@@ -707,7 +771,15 @@ requires the caller be bound to the source (or the source be
 | `PUT /tool-sources/:slug/tools/:name` | `tools.manage` | kind=custom: `{ description, inputSchema, binding }`. Binding validated at save (static origin, header guards). |
 | `DELETE /tool-sources/:slug/tools/:name` | `tools.manage` | kind=custom. |
 | `POST /tool-sources/:slug/refresh` | `tools.manage` | kind=mcp: synchronous upstream discovery. `{ tools, changed }`; 502 when unreachable. |
-| `POST /tool-sources/:slug/tools/:name/invoke` | bound member | `{ args? }` (≤ 1 MiB). Returns an MCP `CallToolResult`; tool failures are `200 + isError: true`. 403 unbound → 409 disabled → 404 unknown tool. Appends a `tool_action` audit event. |
+| `POST /tool-sources/:slug/tools/:name/invoke` | bound member | `{ args? }` (≤ 1 MiB). Returns an MCP `CallToolResult`; tool failures are `200 + isError: true`. 403 unbound → 409 disabled → 404 unknown tool; 500 `credential unavailable` when the source's credential cannot be decrypted (no active KEK). Appends a `tool_action` audit event. |
+
+One `no_kek` condition — no active KEK — surfaces as two statuses
+because it is two situations. On the admin paths a write that cannot
+encrypt fails `503` with `code: 'no_kek'` — retryable once an
+operator activates a KEK. On invoke a credential that cannot be
+decrypted fails `500 { "error": "credential unavailable" }`, with no
+`code`: the tool call failed, and the body says nothing about the
+broker's key state.
 
 Registry changes fan out as `data.kind = 'tool_source'` channel
 events (thread `tool:<slug>`) to the source's visible members plus
@@ -718,7 +790,7 @@ events (thread `tool:<slug>`) to the source's visible members plus
 
 Broker-held environment secrets — see
 [secrets](/docs/concepts/secrets) for the model. All endpoints are
-dual-auth. Mutations require `secrets.manage`; values are write-only
+tri-auth. Mutations require `secrets.manage`; values are write-only
 (never returned; summaries expose `hasValue` only).
 
 | Verb + path | Gate | Notes |
@@ -736,8 +808,14 @@ dual-auth. Mutations require `secrets.manage`; values are write-only
 
 Registry changes fan out as `data.kind = 'secret'` channel events
 (thread `secret:<slug>`) to the delivery set plus `secrets.manage`
-holders. Events never carry the value. Delivery is spawn-time only —
-changes apply on each member's next runner start.
+holders. Events never carry the value. Setting a value and adding or
+removing a binding also fan out a `data.kind = 'environment'` event
+to the affected member, whose runner re-resolves the environment and
+restarts its agent cold at the next idle boundary (next runner start
+for a runner started with `--no-env-reload`, or one older than the
+event). `PATCH`, `DELETE /secrets/:slug` and
+`DELETE /secrets/:slug/value` emit no environment event — those
+apply on each member's next runner start.
 
 ## Variables
 
@@ -766,15 +844,18 @@ into the env map the runner injects.
 
 Registry changes fan out as `data.kind = 'variable'` channel events
 (thread `variable:<slug>`) to the delivery set plus `secrets.manage`
-holders. Delivery is spawn-time only — changes apply on each
-member's next runner start.
+holders. Delivery timing matches secrets exactly: setting a value and
+adding or removing a binding also fan out an `environment` event and
+the member's runner reloads at its next idle boundary, while `PATCH`,
+`DELETE /variables/:slug` and `DELETE /variables/:slug/value` apply
+on the member's next runner start.
 
 ## External Notifications
 
 Inbound webhooks / API calls routed to members and channels as
 ambient input — see
 [external notifications](/docs/concepts/external-notifications) for
-the model. Management endpoints are dual-auth; mutations require
+the model. Management endpoints are tri-auth; mutations require
 `notifications.manage`. Signing secrets are write-only (never
 returned; summaries expose `hasSecret` only).
 
@@ -829,7 +910,7 @@ to direct member targets plus `notifications.manage` holders.
 
 | | |
 |---|---|
-| **Auth** | dual |
+| **Auth** | member |
 | **Returns** | `ListChannelsResponse` — `{ channels: ChannelSummary[] }` |
 
 Per-viewer projection. `joined` reflects caller's membership;
@@ -840,7 +921,7 @@ Per-viewer projection. `joined` reflects caller's membership;
 
 | | |
 |---|---|
-| **Auth** | dual |
+| **Auth** | member |
 | **Body** | `CreateChannelRequest` — `{ slug, description? }` |
 | **Returns** | `Channel` |
 
@@ -853,7 +934,7 @@ consecutive dashes.
 
 | | |
 |---|---|
-| **Auth** | dual |
+| **Auth** | member |
 | **Returns** | `GetChannelResponse` — `{ channel: ChannelSummary, members: ChannelMember[] }` |
 
 Detail + member list.
@@ -862,7 +943,7 @@ Detail + member list.
 
 | | |
 |---|---|
-| **Auth** | dual; `channels.manage` |
+| **Auth** | member; `channels.manage` |
 | **Body** | `UpdateChannelRequest` — at least one of `{ slug, description }` |
 | **Returns** | `Channel` |
 
@@ -873,7 +954,7 @@ remain valid — they reference id, not slug.
 
 | | |
 |---|---|
-| **Auth** | dual; `channels.manage` |
+| **Auth** | member; `channels.manage` |
 | **Returns** | `204` |
 
 Soft-archive (sets `archivedAt`). History remains queryable;
@@ -883,7 +964,7 @@ posts return 410.
 
 | | |
 |---|---|
-| **Auth** | dual; `channels.manage` (others) OR self (own name) |
+| **Auth** | member; `channels.manage` (others) OR self (own name) |
 | **Body** | `AddChannelMemberRequest` — `{ member, role?: 'admin'\|'member' }` |
 | **Returns** | `204` |
 
@@ -895,7 +976,7 @@ does not authorize administration.
 
 | | |
 |---|---|
-| **Auth** | dual; `channels.manage` (others) OR self |
+| **Auth** | member; `channels.manage` (others) OR self |
 | **Returns** | `204` |
 
 Self-leave always allowed.
@@ -904,7 +985,7 @@ Self-leave always allowed.
 
 | | |
 |---|---|
-| **Auth** | dual; `channels.manage` |
+| **Auth** | member; `channels.manage` |
 | **Returns** | `ChannelAuditResponse` — `{ entries: ChannelAuditEntry[] }` |
 
 Administrative changes are recorded atomically with the mutation. Each entry
@@ -912,18 +993,26 @@ names the actor, action, timestamp, and before/after metadata.
 
 ## Filesystem
 
-The csuite virtual filesystem stores blob-deduped files under
-per-member homes (`/<name>/...`). Paths are absolute Unix-style.
+The csuite virtual filesystem stores blob-deduped files under two
+top-level scopes: per-member homes (`/<name>/...`) and objective
+namespaces (`/objectives/<id>/...`), whose entries carry
+`owner: "obj:<id>"` rather than a member name. Paths are absolute
+Unix-style.
+
+This reference is not authoritative for the filesystem's scope or
+access model — `packages/core/src/files/paths.ts` and
+`packages/core/src/files/filesystem-store.ts` are.
 
 ### `GET /fs/ls?path=<p>`
 
 | | |
 |---|---|
-| **Auth** | dual |
+| **Auth** | member |
 | **Returns** | `FsListResponse` — `{ entries: FsEntry[] }` |
 
 `path=/` lists every visible home root. Other paths must sit under
-a home you own or that's been shared with you.
+a home you own, an objective namespace you belong to, or a path
+that's been shared with you.
 
 At an exact member-home root, `200 { entries: [] }` means readable and
 empty, `403` means the roster-backed namespace exists but is unreadable,
@@ -934,14 +1023,14 @@ boundary all paths return `403`, whether or not the interior path exists.
 
 | | |
 |---|---|
-| **Auth** | dual |
+| **Auth** | member |
 | **Returns** | `FsEntryResponse` |
 
 ### `GET /fs/read/<path>`
 
 | | |
 |---|---|
-| **Auth** | dual; readable by caller |
+| **Auth** | member; readable by caller |
 | **Returns** | `200 <bytes>` with `Content-Type: <mime>`, `X-Content-Type-Options: nosniff`, and a restrictive `Content-Security-Policy` |
 
 Friendly URL — segments are URL-encoded individually so the path
@@ -962,19 +1051,23 @@ either way.
 
 | | |
 |---|---|
-| **Auth** | dual |
+| **Auth** | member |
 | **Body** | binary blob with metadata in query / headers |
 | **Returns** | `FsWriteResponse` — `{ entry, renamed }` |
 
-Write a file. `collision` strategy: `error` (default), `overwrite`,
-or `suffix` (auto-rename `foo.txt` → `foo-1.txt`). `renamed`
-indicates suffix collision triggered.
+Write a file. The write collision strategy is the `collide` query
+parameter: `error` (default), `overwrite`, or `suffix` (auto-rename
+`foo.txt` → `foo-1.txt`). `renamed` indicates suffix collision
+triggered. `collide` is the wire name and the only spelling the
+handler reads; the CLI flag is `--collide` too, while the SDK's
+`FsWriteInput` and the core store spell the same field `collision`
+on their input objects.
 
 ### `POST /fs/mkdir`
 
 | | |
 |---|---|
-| **Auth** | dual |
+| **Auth** | member |
 | **Body** | `FsMkdirRequest` — `{ path, recursive? }` |
 | **Returns** | `FsEntryResponse` |
 
@@ -982,7 +1075,7 @@ indicates suffix collision triggered.
 
 | | |
 |---|---|
-| **Auth** | dual |
+| **Auth** | member |
 | **Returns** | `204` |
 
 Cascades blob refcounts; underlying content is purged when the
@@ -992,7 +1085,7 @@ last referencing entry goes away.
 
 | | |
 |---|---|
-| **Auth** | dual |
+| **Auth** | member |
 | **Body** | `FsMoveRequest` — `{ from, to }` |
 | **Returns** | `FsEntryResponse` |
 
@@ -1003,7 +1096,7 @@ v1.
 
 | | |
 |---|---|
-| **Auth** | dual |
+| **Auth** | member |
 | **Returns** | `FsListResponse` |
 
 Files shared with the caller via message / objective attachments.
@@ -1013,7 +1106,7 @@ Owner-private files from other members never appear.
 
 | | |
 |---|---|
-| **Auth** | dual; `members.manage` |
+| **Auth** | member; `members.manage` |
 | **Returns** | `FsListResponse` — every file in every home, flat, newest first |
 
 `members.manage`-only enumeration across all homes. Other members use the
@@ -1070,7 +1163,7 @@ member.
 | | |
 |---|---|
 | **Auth** | bearer |
-| **Body** | `ActivityReport` — `{ state: ActivityState }` where `ActivityState` is `idle` / `working` / `blocked` |
+| **Body** | `ActivityReport` — `{ state: WorkState }` where `WorkState` is `idle` / `working` / `blocked` |
 | **Returns** | `204` |
 
 Runner-only compatibility scheduling telemetry. It does not prove executor
@@ -1099,7 +1192,7 @@ flow.
 
 | | |
 |---|---|
-| **Auth** | dual |
+| **Auth** | member |
 | **Body** | `PushSubscriptionPayload` — `{ endpoint, keys: { p256dh, auth } }` |
 | **Returns** | `PushSubscriptionResponse` — `{ id, endpoint, createdAt }` |
 
@@ -1110,7 +1203,7 @@ member.
 
 | | |
 |---|---|
-| **Auth** | dual |
+| **Auth** | member |
 | **Returns** | `204` |
 
 Unregister.

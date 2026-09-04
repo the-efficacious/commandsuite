@@ -27,6 +27,7 @@ import type {
   PushPayload,
   PushResult,
 } from 'csuite-sdk/types';
+import { PERMISSIONS } from 'csuite-sdk/types';
 import { describe, expect, it, vi } from 'vitest';
 import { defineTools, handleToolCall } from '../../src/runtime/tools.js';
 
@@ -464,6 +465,22 @@ describe('defineTools — chat surface includes channel tools', () => {
   it('channels_post requires channel + body', () => {
     const post = defineTools(PACKET).find((t) => t.name === 'channels_post');
     expect(post?.inputSchema.required).toEqual(['channel', 'body']);
+  });
+});
+
+describe('member permission schemas', () => {
+  it('enumerates the whole permission vocabulary on both member tools', () => {
+    const tools = defineTools(ADMIN_PACKET);
+    for (const name of ['members_add', 'members_update']) {
+      const props = tools.find((tool) => tool.name === name)?.inputSchema.properties as
+        | Record<string, unknown>
+        | undefined;
+      expect(props?.permissions).toEqual({
+        type: 'array',
+        items: { type: 'string', enum: [...PERMISSIONS] },
+        description: expect.stringMatching(/permission leaves/i),
+      });
+    }
   });
 });
 
@@ -1533,6 +1550,78 @@ describe('variables admin tools — the agent-facing half of the runner environm
     // missing and re-creates it.
     expect(text).toContain('(value hidden)');
     expect(text).toContain('NO-VALUE');
+  });
+});
+
+// ── objectives_reassign ────────────────────────────────────────────
+//
+// The reassign verb exists in the CLI, the store, the event log and the
+// permission set; until this tool it did not exist in the toolbox, so an
+// agent holding `objectives.reassign` searched for it and found nothing.
+
+describe('objectives_reassign — the reassign verb in the toolbox', () => {
+  const REASSIGNER: InstructionsResponse = { ...PACKET, permissions: ['objectives.reassign'] };
+
+  it('is offered to holders of objectives.reassign and to nobody else', () => {
+    expect(defineTools(PACKET).map((t) => t.name)).not.toContain('objectives_reassign');
+    const tool = defineTools(REASSIGNER).find((t) => t.name === 'objectives_reassign');
+    expect(tool).toBeDefined();
+    expect(tool?.inputSchema.required).toEqual(['id', 'to']);
+    expect(Object.keys(tool?.inputSchema.properties ?? {}).sort()).toEqual(['id', 'note', 'to']);
+  });
+
+  it('sends the whole handover to the reassign route and renders the outcome', async () => {
+    const reassignObjective = vi.fn(async () =>
+      makeObjective({ assignee: 'dave', watchers: ['carol'] }),
+    );
+    const broker = { reassignObjective } as unknown as BrokerClient;
+    const text = getCallText(
+      await handleToolCall(
+        'objectives_reassign',
+        { id: 'obj-1', to: 'dave', note: 'where the work stands' },
+        broker,
+        REASSIGNER,
+      ),
+    );
+    expect(reassignObjective).toHaveBeenCalledWith('obj-1', {
+      to: 'dave',
+      note: 'where the work stands',
+    });
+    expect(text).toBe('reassigned obj-1 to dave watchers=carol');
+  });
+
+  it('refuses without the permission instead of calling the broker', async () => {
+    const reassignObjective = vi.fn();
+    const broker = { reassignObjective } as unknown as BrokerClient;
+    const result = (await handleToolCall(
+      'objectives_reassign',
+      { id: 'obj-1', to: 'dave' },
+      broker,
+      PACKET,
+    )) as { isError?: boolean };
+    expect(result.isError).toBe(true);
+    expect(reassignObjective).not.toHaveBeenCalled();
+  });
+});
+
+describe('secrets_list description — the env-name uniqueness rule', () => {
+  const ADMIN_PACKET = { ...PACKET, permissions: ['secrets.manage' as const] };
+
+  it('states the per-member rule instead of claiming env names are globally unique', () => {
+    // The description is the only spec an agent gets. Env names WERE
+    // globally unique until the index was dropped on 2026-07-30; an
+    // agent that still believes it will refuse to create the
+    // per-member token rows the product is built around.
+    const description =
+      defineTools(ADMIN_PACKET).find((t) => t.name === 'secrets_list')?.description ?? '';
+    expect(description).not.toMatch(/env names are[\s\S]{0,24}unique/);
+    // All four parts of the canonical rule, not one of them: slugs
+    // unique, env names deliberately not, the real invariant (per
+    // member), and the store it spans (variables as well as secrets).
+    expect(description).toMatch(/[Ss]lugs are unique/);
+    expect(description).toMatch(/names are NOT/);
+    expect(description).toMatch(/per member|member resolving/);
+    expect(description).toMatch(/variables/);
   });
 });
 

@@ -185,6 +185,9 @@ export interface ChannelStore {
   /**
    * Rename (change the slug). Forbidden for general. The id is
    * unchanged so existing message references stay valid.
+   *
+   * @deprecated Delegates to `update({ slug })`, which does the same
+   * thing and can change the description in the same call.
    */
   rename(id: string, newSlug: string, actor: string): Channel;
   /** Soft-archive a channel. Forbidden for general. */

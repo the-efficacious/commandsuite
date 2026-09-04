@@ -11,9 +11,10 @@
  *     `Environment=CSUITE_URL` and a WorkingDirectory that resolves the
  *     credential, and install-service REFUSES up front — naming the
  *     exact lookup key — when nothing resolves headlessly (#199's
- *     preflight; without it `Restart=always` loops a wizard forever).
+ *     preflight; without it `Restart=always` loops the connect prompt
+ *     forever).
  *   - liveness is judged at the BROKER (member connected with a fresh
- *     lastSeen), never by pid or `is-active`: a stuck enrolment wizard
+ *     lastSeen), never by pid or `is-active`: a stuck connect prompt
  *     stays "active" for systemd while the agent is gone.
  *
  * Root-explicit rule: without root (and without passwordless sudo for

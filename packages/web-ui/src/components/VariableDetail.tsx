@@ -284,8 +284,9 @@ function ValueSection({ variable }: { variable: VariableSummary }) {
         </button>
       </form>
       <div class="env-hint">
-        Delivered as ${variable.envName} on the member's next runner start, and left intact in
-        captured traces.
+        Delivered as ${variable.envName}, and left intact in captured traces. Setting a value
+        reaches a running member at its runner's next idle boundary; metadata edits and deletion
+        apply on its next start.
       </div>
     </SectionPanel>
   );

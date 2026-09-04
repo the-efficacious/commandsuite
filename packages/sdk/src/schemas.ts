@@ -732,6 +732,14 @@ export const ListToolSourcesResponseSchema = z.object({
   sources: z.array(ToolSourceSummarySchema),
 });
 
+/**
+ * `source.kind` is the discriminator for `tools`: `custom` yields
+ * `CustomToolDef[]`, `mcp` yields `ResolvedTool[]`. The union is
+ * untagged, so this schema proves only that each element is one of
+ * the two shapes — it cannot prove the shape matches the kind, and
+ * a custom tool whose `binding` fails validation parses as the
+ * second branch instead, silently dropping `binding`.
+ */
 export const GetToolSourceResponseSchema = z.object({
   source: ToolSourceSummarySchema,
   tools: z.union([z.array(CustomToolDefSchema), z.array(ResolvedToolSchema)]),
@@ -1705,8 +1713,12 @@ export const ActivityEventSchema = z.discriminatedUnion('kind', [
     querySource: z.string().optional(),
     entry: AnthropicMessagesEntrySchema,
   }),
-  // tool_action — captured from an agent's NATIVE instrumentation
-  // (Claude Code hooks, codex item stream). `input`/`result` are
+  // tool_action — one tool invocation, from either producer: the
+  // agent's own durable record (`source: 'transcript'` /
+  // `'codex_rollout'`), or the broker's tool-source invoke audit
+  // (`agent: 'broker'`, `source: 'tool_source'`, metadata only). See
+  // `ActivityToolAction` in types.ts for the provenance split.
+  // `input`/`result` are
   // whatever the agent framework hands us, so they stay permissive
   // (z.unknown()) — a novel tool shape must never fail validation.
   z.object({

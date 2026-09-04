@@ -189,6 +189,7 @@ import type {
   PushResult,
   PushSubscriptionPayload,
   PushSubscriptionResponse,
+  ReassignObjectiveRequest,
   RefreshToolSourceResponse,
   RejectEnrollmentRequest,
   RenameChannelRequest,
@@ -561,9 +562,11 @@ export class Client {
   }
 
   /**
-   * Update an objective's status (active ↔ blocked), post a note to
-   * its thread, or both. Cannot transition to `done` — use
-   * `completeObjective` for that.
+   * Update an objective's status (active ↔ blocked) and block
+   * reason, its assignee, or its watchers. `note` is handover
+   * context for an assignee change and is ignored otherwise;
+   * discussion goes through `discussObjective`. Cannot transition to
+   * `done` — use `completeObjective` for that.
    */
   async updateObjective(id: string, payload: UpdateObjectiveRequest): Promise<Objective> {
     const resp = await this.request(OBJECTIVE_PATHS.one(id), {
@@ -593,6 +596,21 @@ export class Client {
    */
   async cancelObjective(id: string, payload: CancelObjectiveRequest = {}): Promise<Objective> {
     const resp = await this.request(OBJECTIVE_PATHS.cancel(id), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return ObjectiveSchema.parse(await this.json(resp));
+  }
+
+  /**
+   * Move a non-terminal objective to a different assignee. Requires
+   * `objectives.reassign`. The previous assignee is promoted to watcher
+   * in the same transaction, so a handover keeps them on the thread;
+   * `note` carries the handover context.
+   */
+  async reassignObjective(id: string, payload: ReassignObjectiveRequest): Promise<Objective> {
+    const resp = await this.request(OBJECTIVE_PATHS.reassign(id), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -1180,7 +1198,12 @@ export class Client {
     return ChannelSchema.parse(await this.json(resp));
   }
 
-  /** Update a channel (`channels.manage`). The id is unchanged. */
+  /**
+   * Rename a channel (`channels.manage`). The id is unchanged.
+   *
+   * @deprecated Use `updateChannel`. It issues the same
+   * `PATCH /channels/:slug` and can also set the description.
+   */
   async renameChannel(slug: string, input: RenameChannelRequest): Promise<Channel> {
     const validated = RenameChannelRequestSchema.parse(input);
     const resp = await this.request(CHANNEL_PATHS.one(slug), {

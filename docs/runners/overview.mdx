@@ -78,6 +78,7 @@ appears in the toolbox follows the member's permissions:
 | `objectives_list` / `_view` / `_update` / `_discuss` / `_complete` | Work an assigned objective through to its outcome | Always |
 | `fs_ls` / `_stat` / `_read` / `_write` / `_mkdir` / `_rm` / `_mv` / `_shared` | The team's shared virtual filesystem | Always |
 | `objectives_create` | Create objectives for teammates | `objectives.create` |
+| `objectives_reassign` | Hand an objective to a different teammate | `objectives.reassign` |
 | `objectives_cancel` | Cancel an objective | Always for originators; `objectives.cancel` broadens scope |
 | `team_*` | Team settings | `team.manage` |
 | `members_*` | Add, update, remove members | `members.manage` |
@@ -102,7 +103,7 @@ permission on its own end regardless. Full input and output schemas:
 | **Resume** | `--resume [<sessionId>]` — bare lets Claude Code continue the most recent session in the directory, if any | `--resume [<threadId>]` — bare starts a new thread (codex resumes by id only) |
 | **Extra agent args** | None — unrecognized arguments are an error | Passed through to codex (`-c key=value`, or after `--`) |
 | **Reasoning in traces** | Extended thinking never leaves Claude Code | Summaries only — OpenAI encrypts the raw chain of thought |
-| **Context control** | `compact` and `clear` | `compact` and `clear` |
+| **Context control** | `compact`, `clear` and `reload` | `compact`, `clear` and `reload` |
 
 Both runners deliver team events into the agent's session through
 its own native input mechanism; the differences are wiring, not
@@ -116,13 +117,14 @@ were the agent deciding to compact on its own, or a full restart —
 and a restart drops the runner's MCP wiring and takes the member off
 the net while it comes back.
 
-`POST /members/<name>/context` asks the runner for one of two verbs,
-neither of which ends the session:
+`POST /members/<name>/context` asks the runner for one of three
+verbs, none of which ends the session:
 
 | Verb | What happens | What survives |
 |---|---|---|
 | `compact` | The agent summarises the conversation and continues from the summary. | Everything — no process is replaced. |
 | `clear` | The runner waits for the current turn to finish, then restarts the agent **without resuming**, and re-delivers the instruction blocks and open objectives. | Session, MCP wiring, broker subscription, objective subscriptions. |
+| `reload` | The same cold swap as `clear`, but the runner refetches the member's **environment** — secrets and variables — as well as the instruction blocks before the successor starts. | The same as `clear`. |
 
 **Who can ask.** Yourself, always — an agent compacting itself is
 doing what it could already do by typing the slash command. Anyone
@@ -141,7 +143,7 @@ arrives separately on the member's activity trace as a
 |---|---|
 | `applied` | The agent did it. A successful `compact` on claude carries the measured before/after token counts; codex reports the compaction without them, because its completion item carries no accounting. |
 | `declined` | The agent was asked and did not do it. Carries the framework's own reason, verbatim. |
-| `unsupported` | This runner has no such operation at all. Retrying cannot help. Both shipped runners support both verbs, so nothing produces this today; it exists so a future runner can say so rather than time out. |
+| `unsupported` | This runner has no such operation at all. Retrying cannot help. Both shipped runners support all three verbs, so nothing produces this today; it exists so a future runner can say so rather than time out. |
 | `failed` | The runner tried and something broke. |
 
 A request that produces no outcome event stays visibly outstanding.

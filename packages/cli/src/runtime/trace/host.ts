@@ -35,8 +35,10 @@
  * directory and emit a `body_ref` file path on each OTEL log record. A
  * runner-local relay resolves those refs and forwards inline bodies to the
  * broker's authoritative full-context gen_ai inference layer.
- * For codex the runner's app-server adapter is the source (no
- * transcript). Either way the sink is identical.
+ * For codex the shape is the same: the `RolloutReader` tails codex's
+ * own rollout JSONL as the SOLE content source, and the app-server
+ * stream stays presence/busy/printer-only. Either way the sink is
+ * identical.
  *
  * Everything is loopback-only (the hook server) and scoped to the
  * runner's lifetime. On `close()` the uploader drains (best-effort),
@@ -100,10 +102,10 @@ export interface CaptureHost {
   readonly busy: BusySignal;
   /**
    * Loopback HTTP endpoint URL that Claude Code hooks POST to. The
-   * `claude` adapter writes it into `.claude/settings.json` as a
-   * `type: "http"` hook target so lifecycle events drive `busy` and
-   * surface the `transcript_path` that arms the transcript reader.
-   * Presence-only — the hooks emit no content.
+   * `claude` adapter passes it to `buildHookForwarders`, whose
+   * in-process SDK hook callbacks POST here, so lifecycle events drive
+   * `busy` and surface the `transcript_path` that arms the transcript
+   * reader. Presence-only — the hooks emit no content.
    */
   readonly hookEndpointUrl: string;
   /**

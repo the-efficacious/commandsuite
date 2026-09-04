@@ -43,7 +43,7 @@ export const STUB_META: AgentAdapterMeta = {
   displayName: 'Stub agent (CI instrument)',
   // Tier 1: the run bracket (session_start/session_end) is the only
   // capture content a stub can honestly produce — there is no model,
-  // no transcript, no tool stream. See docs/runners/conformance.mdx.
+  // no transcript, no tool stream. See docs/dev/conformance.mdx.
   captureTier: 1,
   signals: 'teardown',
   testedVersions: null,

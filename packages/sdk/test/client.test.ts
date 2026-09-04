@@ -405,6 +405,44 @@ describe('Client', () => {
   });
 });
 
+describe('objectives: reassign is its own route', () => {
+  const OBJECTIVE = {
+    id: 'obj-1',
+    title: 'Ship the thing',
+    body: '',
+    outcome: 'PR merged to main',
+    status: 'active',
+    assignee: 'dave',
+    originator: 'alice',
+    watchers: ['carol'],
+    createdAt: 1,
+    updatedAt: 2,
+    completedAt: null,
+    result: null,
+    blockReason: null,
+    attachments: [],
+  };
+
+  it('POSTs the whole handover to /objectives/:id/reassign', async () => {
+    let seen: { method?: string; path?: string; body?: string } = {};
+    const client = new Client({
+      url: 'http://example.test:8717',
+      token: 'test-secret',
+      fetch: makeFakeFetch((url, init) => {
+        seen = { method: init.method, path: url.pathname, body: String(init.body) };
+        return jsonResponse(OBJECTIVE);
+      }),
+    });
+
+    const objective = await client.reassignObjective('obj-1', { to: 'dave', note: 'handover' });
+
+    expect(seen.method).toBe('POST');
+    expect(seen.path).toBe('/objectives/obj-1/reassign');
+    expect(JSON.parse(seen.body ?? '')).toEqual({ to: 'dave', note: 'handover' });
+    expect(objective).toEqual(OBJECTIVE);
+  });
+});
+
 // ─── the edit API and the record cannot name different fields ────────
 //
 // WHY THIS IS IN THE SDK AND NOT THE STORE. The store's types come

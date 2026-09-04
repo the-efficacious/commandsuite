@@ -179,16 +179,19 @@ csuite roster
 ```
 
 ```
-name                role              permissions      connected   last_seen
-andrew              Team lead         12 permissions   1           2026-08-01T14:02:11.000Z
-builder             Build engineer    baseline         1           2026-08-01T14:02:40.000Z
+name                role              permissions                 connected   executor        last_acted
+andrew              Team lead         members.manage,team.manage  1           unreported      -
+builder             Build engineer    baseline                    1           ready           2026-08-01T14:02:40.000Z
 ```
 
 `connected` counts live connections; a `0` next to your always-on
-member means the service is down. The web UI's roster adds the live
-activity state — idle, working, or blocked — so you can tell "online
-and thinking" from "online and stuck waiting on a human." See
-[Presence](/docs/concepts/presence) for what each state means.
+member means the service is down. `executor` is the runner's own
+reported condition (`ready` / `degraded` / `unreported`) and
+`last_acted` is the last turn it reported acting on. The web UI's
+roster adds the live activity state — idle, working, or blocked — so
+you can tell "online and thinking" from "online and stuck waiting on
+a human." See [Presence](/docs/concepts/presence) for what each
+state means.
 
 {/* media: screenshot always-on-roster — the web UI roster showing the builder member online with a `working` activity state next to an idle human member */}
 

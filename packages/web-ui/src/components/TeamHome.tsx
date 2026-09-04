@@ -21,7 +21,12 @@ import { getClient } from '../lib/client.js';
 import { initials } from '../lib/initials.js';
 import { instructions, loadInstructions } from '../lib/instructions.js';
 import { objectives } from '../lib/objectives.js';
-import { presenceActivity, presenceCaptureWarning, roster } from '../lib/roster.js';
+import {
+  presenceActivity,
+  presenceCaptureWarning,
+  presenceDiagnostics,
+  roster,
+} from '../lib/roster.js';
 import { loadTeamStatus, teamStatus } from '../lib/team-status.js';
 import { selectMemberProfile } from '../lib/view.js';
 import { ErrorCallout, Loading, PageHeader, TextMetrics } from './ui/index.js';
@@ -127,6 +132,10 @@ export function TeamHome({ viewer }: TeamHomeProps) {
             // this badge exists for, so it renders alongside rather than
             // instead of the activity state.
             const captureWarning = presenceCaptureWarning(conn);
+            // The sibling signal, on the same footing: incidents that
+            // have not cleared, and the health of the store that would
+            // know. Null on the clean path, so the row stays quiet.
+            const diagnostics = presenceDiagnostics(conn);
             const working = activity === 'working';
             const blocked = activity === 'blocked';
             const degraded = conn?.executor?.state === 'degraded';
@@ -185,6 +194,24 @@ export function TeamHome({ viewer }: TeamHomeProps) {
                             title="This member is producing turns whose request/response bodies are not reaching the broker. Their activity is recorded; the verbatim exchanges are not."
                           >
                             NO CAPTURE
+                          </span>
+                        )}
+                        {diagnostics !== null && diagnostics.unresolved > 0 && (
+                          <span
+                            class="badge warn"
+                            style="font-size:9.5px;letter-spacing:.06em"
+                            title="Capture failures recorded for this member that have not cleared. Retention keeps them until the condition recovers."
+                          >
+                            {diagnostics.unresolved} UNRESOLVED
+                          </span>
+                        )}
+                        {diagnostics !== null && diagnostics.retention !== 'healthy' && (
+                          <span
+                            class="badge soft"
+                            style="font-size:9.5px;letter-spacing:.06em"
+                            title="The diagnostics store cannot fully record right now, so an absence of incidents is not evidence there were none."
+                          >
+                            DIAGNOSTICS {diagnostics.retention.toUpperCase()}
                           </span>
                         )}
                         {captureWarning === 'unevaluated' && (

@@ -22,7 +22,7 @@
  *   - recent         — fetch recent team-chat / DM / channel history
  *
  * Objective tools:
- *   - objectives_list     — the caller's active plate
+ *   - objectives_list     — objectives the caller is related to
  *   - objectives_view     — full detail on one objective
  *   - objectives_update   — status, assignee and watcher changes
  *   - objectives_discuss  — post into the objective thread
@@ -30,6 +30,7 @@
  *
  * Permission-gated objective tools:
  *   - objectives_create   — assign work to teammates
+ *   - objectives_reassign — hand an objective to a different teammate
  *   - objectives_cancel   — cancel your own-originated work, or anyone's with `objectives.cancel`
  */
 
@@ -63,6 +64,7 @@ import type {
   ToolSourceSummary,
   VariableSummary,
 } from 'csuite-sdk/types';
+import { PERMISSIONS } from 'csuite-sdk/types';
 import { downloadLocalFile, uploadLocalFile } from '../commands/fs.js';
 
 const LEVELS: readonly LogLevel[] = ['debug', 'info', 'notice', 'warning', 'error', 'critical'];
@@ -114,7 +116,7 @@ const LOCAL_OR_REMOTE_ATTACHMENT_SCHEMA = {
  * channel notifications and `context_refresh` re-briefs, never baked
  * into tool metadata (see the file header for the doctrine).
  *
- * `externalTools` is the resolved tool-source snapshot — platform-
+ * `externalTools` is the resolved tool-source snapshot — admin-
  * defined tools the broker executes on the agent's behalf. It
  * defaults to the packet's boot-time set; the runner passes its
  * LIVE snapshot instead, which changes only on genuine registry
@@ -133,7 +135,10 @@ export function defineTools(
         `List all teammates currently on the csuite net. Returns each teammate's name, ` +
         `role, authority, connection state, executor readiness or degraded reason, last proven ` +
         `action, and supervision claim. Old brokers render executor state as unreported; their ` +
-        `activity window is compatibility scheduling telemetry, never executor liveness.`,
+        `activity window is compatibility scheduling telemetry, never executor liveness. ` +
+        `A line also carries a capture clause and an unresolved-diagnostics count when the ` +
+        `broker reports either as unhealthy — including for YOU, which is how you find out ` +
+        `your own verbatim capture has failed. Their absence is silence, not a clean bill.`,
       inputSchema: { type: 'object', properties: {} },
     },
     ...(instructions.permissions.includes('members.manage')
@@ -296,7 +301,9 @@ export function defineTools(
             type: 'string',
             enum: ['compact', 'clear', 'reload'],
             description:
-              'compact summarizes; clear starts cold; reload refreshes instructions and environment then resumes.',
+              'compact asks the agent to summarize in place and keep going; clear restarts ' +
+              'the agent cold with refreshed instructions; reload restarts it cold with ' +
+              'refreshed instructions AND environment. Only compact keeps the conversation.',
           },
           member: {
             type: 'string',
@@ -313,7 +320,8 @@ export function defineTools(
         `List objectives you have a relationship with — ` +
         `assigned to you, originated by you, or objectives you're watching. ` +
         `**After a restart or context compaction, call this with \`status: "open"\`** — ` +
-        `that is your whole open plate (active + blocked) in one call. ` +
+        `that is every open (active + blocked) objective you are RELATED to in one call — ` +
+        `a superset of your own plate, which is only the ones assigned to you. ` +
         `The unfiltered call also returns every completed and cancelled objective you ` +
         `have ever been related to, which on a long-running team is large enough to ` +
         `overflow an agent's tool-result limit; prefer \`open\` for recovery and reach ` +
@@ -333,8 +341,8 @@ export function defineTools(
             type: 'string',
             enum: [...OBJECTIVE_LIST_FILTERS],
             description:
-              'Filter by lifecycle status, or `open` for the active+blocked union — ' +
-              'the whole open plate in one call, which is what recovery wants. ' +
+              'Filter by lifecycle status, or `open` for the active+blocked union — every ' +
+              'open objective you are related to in one call, which is what recovery wants. ' +
               'Omit to return all statuses including completed and cancelled history.',
           },
           assignee: {
@@ -368,9 +376,10 @@ export function defineTools(
       description:
         `Update an objective's live state. Status: use status='blocked' (ideally with a ` +
         `short blockReason) when you're stuck or sequenced behind other work, and ` +
-        `status='active' to resume. Assignee: pass \`assignee\` to hand the work to a ` +
-        `different teammate (requires objectives.reassign; the previous assignee stays on ` +
-        `the thread as a watcher). Watchers: pass \`addWatchers\`/\`removeWatchers\` to ` +
+        `status='active' to resume. Assignee: use \`objectives_reassign\` to hand the work ` +
+        `to a different teammate; passing \`assignee\` here does the same (requires ` +
+        `objectives.reassign; the previous assignee stays on the thread as a watcher). ` +
+        `Watchers: pass \`addWatchers\`/\`removeWatchers\` to ` +
         `change who follows the thread (originator or objectives.watch). This tool is ` +
         `for STATE, not conversation — progress notes and questions go in ` +
         `\`objectives_discuss\` — and it never transitions to 'done'; call ` +
@@ -696,7 +705,7 @@ function buildManagementTools(instructions: InstructionsResponse): Tool[] {
           },
           permissions: {
             type: 'array',
-            items: { type: 'string' },
+            items: { type: 'string', enum: [...PERMISSIONS] },
             description: 'Permission leaves. Defaults to no permissions.',
           },
         },
@@ -743,7 +752,7 @@ function buildManagementTools(instructions: InstructionsResponse): Tool[] {
           instructions: { type: 'string', description: 'New personal instructions.' },
           permissions: {
             type: 'array',
-            items: { type: 'string' },
+            items: { type: 'string', enum: [...PERMISSIONS] },
             description:
               'Replacement permission leaves. Enforces "at least one members.manage holder remains".',
           },
@@ -992,14 +1001,6 @@ function buildToolAdminTools(instructions: InstructionsResponse): Tool[] {
 }
 
 /**
- * Secrets administration — appears only for members holding
- * `secrets.manage`. A secret is a broker-held value injected as an
- * environment variable on bound members' agent processes at runner
- * start; the agent's CLI tools (gh, terraform, npm, …) find it in the
- * environment without the value ever entering prompts or context.
- * The broker enforces the same permission independently (403).
- */
-/**
  * Variables administration — same `secrets.manage` gate as secrets.
  * A variable is a broker-held runner environment variable that is NOT
  * a secret: its value is readable, and it is never registered with the
@@ -1135,6 +1136,14 @@ function buildVariablesAdminTools(instructions: InstructionsResponse): Tool[] {
   ];
 }
 
+/**
+ * Secrets administration — appears only for members holding
+ * `secrets.manage`. A secret is a broker-held value injected as an
+ * environment variable on bound members' agent processes at runner
+ * start; the agent's CLI tools (gh, terraform, npm, …) find it in the
+ * environment without the value ever entering prompts or context.
+ * The broker enforces the same permission independently (403).
+ */
 function buildSecretsAdminTools(instructions: InstructionsResponse): Tool[] {
   if (!instructions.permissions.includes('secrets.manage')) return [];
 
@@ -1144,8 +1153,10 @@ function buildSecretsAdminTools(instructions: InstructionsResponse): Tool[] {
       description:
         'List every registered secret: slug, target env var name, enabled state, whether a ' +
         'value is set, and whether it is open to all members. Values are never shown — this ' +
-        'lists metadata only. Start here before creating a secret; slugs and env names are ' +
-        'unique.',
+        'lists metadata only. Start here before creating a secret. Slugs are unique; env ' +
+        'names are NOT — two secrets may target the same env var for different members, ' +
+        'which is how every agent holds its own GITHUB_TOKEN. What must never happen is one ' +
+        'member resolving one env name twice, counting variables as well as secrets.',
       inputSchema: { type: 'object', properties: {} },
     },
     {
@@ -1646,7 +1657,8 @@ function buildFilesystemTools(name: string): Tool[] {
     {
       name: 'fs_write',
       description:
-        `Upload a file. Pass EITHER \`text\` (UTF-8 string) or \`base64\` (for binary ` +
+        `Write a file from inline content — the bytes travel through this tool call. Pass ` +
+        `EITHER \`text\` (UTF-8 string) or \`base64\` (for binary ` +
         `content), never both. Parent directories are auto-created. By default errors on ` +
         `collision; use collide="suffix" to auto-rename ("foo.txt" → "foo-1.txt") or ` +
         `"overwrite" to replace the existing file. Your home is ${home}. ` +
@@ -1666,7 +1678,7 @@ function buildFilesystemTools(name: string): Tool[] {
           },
           mimeType: {
             type: 'string',
-            description: 'MIME type of the uploaded file, e.g. "text/plain" or "image/png".',
+            description: 'MIME type of the content, e.g. "text/plain" or "image/png".',
           },
           text: {
             type: 'string',
@@ -1885,6 +1897,7 @@ function buildTeamProcessTools(instructions: InstructionsResponse): Tool[] {
 function buildAuthorityTools(instructions: InstructionsResponse): Tool[] {
   const { permissions } = instructions;
   const canCreate = permissions.includes('objectives.create');
+  const canReassign = permissions.includes('objectives.reassign');
   const canCancel = permissions.includes('objectives.cancel');
 
   const tools: Tool[] = [];
@@ -1937,6 +1950,35 @@ function buildAuthorityTools(instructions: InstructionsResponse): Tool[] {
           },
         },
         required: ['title', 'outcome', 'assignee'],
+      },
+    });
+
+  // objectives_reassign — requires objectives.reassign
+  if (canReassign)
+    tools.push({
+      name: 'objectives_reassign',
+      description:
+        `Hand a non-terminal objective to a different teammate. Both the previous and the ` +
+        `new assignee are notified, and the previous assignee stays on the objective's ` +
+        `thread as a watcher so the handover can finish in the open. Include a \`note\` ` +
+        `saying where the work stands and what the next step is — it is the whole value of ` +
+        `a handover. Use \`roster\` for available assignees. Reassigning to the current ` +
+        `assignee changes nothing. Returns the objective with its new assignee.`,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'The objective id.' },
+          to: {
+            type: 'string',
+            description: 'Name of the teammate the objective moves to.',
+          },
+          note: {
+            type: 'string',
+            description:
+              'Handover context — where the work stands and the next step. Max 2048 characters.',
+          },
+        },
+        required: ['id', 'to'],
       },
     });
 
@@ -2031,6 +2073,8 @@ export async function handleToolCall(
         return await handleObjectivesComplete(args, brokerClient);
       case 'objectives_create':
         return await handleObjectivesCreate(args, brokerClient, instructions);
+      case 'objectives_reassign':
+        return await handleObjectivesReassign(args, brokerClient, instructions);
       case 'team_process_get':
         return await handleTeamProcessGet(brokerClient);
       case 'team_process_history':
@@ -2237,7 +2281,22 @@ async function handleRoster(
       t.permissions.length > 0
         ? ` permissions=${t.permissions.join(',')};`
         : ' permissions=baseline;';
-    return `- ${t.name}${self} [${t.role.title}]${permissions} ${state}; executor=${activity}`;
+    // Completeness signals, on the surface an agent already reads, so
+    // it can learn that its OWN capture failed without being told to
+    // go looking. Silence is the healthy path and never a claim: an
+    // absent field means this broker has no opinion, `ok` and a clean
+    // count say nothing, and anything else is stated outright. Same
+    // rule the web roster applies, so the two never disagree.
+    const health = presence?.captureHealth;
+    const capture = health !== undefined && health !== 'ok' ? `; capture=${health}` : '';
+    const unresolved = presence?.diagnosticsUnresolved;
+    const retention = presence?.diagnosticsRetention;
+    const diagnostics =
+      (unresolved !== undefined && unresolved > 0) ||
+      (retention !== undefined && retention !== 'healthy')
+        ? `; diagnostics=${unresolved ?? 0} unresolved, store ${retention ?? 'unknown'}`
+        : '';
+    return `- ${t.name}${self} [${t.role.title}]${permissions} ${state}; executor=${activity}${capture}${diagnostics}`;
   });
   return textResult(`team ${instructions.team.name} roster:\n${lines.join('\n')}`);
 }
@@ -2904,6 +2963,29 @@ async function handleObjectivesCreate(
       (created.attachments.length > 0
         ? `\nattachments: ${created.attachments.map((a) => a.path).join(', ')}`
         : ''),
+  );
+}
+
+async function handleObjectivesReassign(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+  instructions: InstructionsResponse,
+): Promise<CallToolResult> {
+  if (!instructions.permissions.includes('objectives.reassign')) {
+    return errorResult('objectives_reassign: you do not have the required permission on this team');
+  }
+  const id = typeof args.id === 'string' ? args.id : '';
+  const to = typeof args.to === 'string' ? args.to : '';
+  if (!id) return errorResult('objectives_reassign: `id` is required');
+  if (!to) return errorResult('objectives_reassign: `to` is required');
+  const note = typeof args.note === 'string' ? args.note : undefined;
+  const updated = await brokerClient.reassignObjective(id, {
+    to,
+    ...(note !== undefined ? { note } : {}),
+  });
+  return textResult(
+    `reassigned ${updated.id} to ${updated.assignee}` +
+      `${updated.watchers.length > 0 ? ` watchers=${updated.watchers.join(',')}` : ''}`,
   );
 }
 

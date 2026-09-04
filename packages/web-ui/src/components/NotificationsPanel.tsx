@@ -3,7 +3,7 @@
  * External Notification endpoints (inbound webhooks → agents), plus
  * the shared auth profiles several endpoints can verify against.
  *
- * Mirrors SecretsPanel: PageHeader with a "+ New endpoint" toggle, an
+ * Mirrors EnvironmentPanel: PageHeader with a "+ New endpoint" toggle, an
  * inline create form, a `.panel` of hover rows linking through to
  * `/notifications/:slug`, and a Profiles panel below. The list signal
  * lives in lib/notifications.ts and refreshes live on

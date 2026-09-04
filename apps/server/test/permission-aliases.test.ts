@@ -11,7 +11,7 @@ import { PermissionSchema, PermissionsSchema } from 'csuite-sdk/schemas';
 import { LEGACY_PERMISSION_EXPANSIONS } from 'csuite-sdk/types';
 import { describe, expect, it } from 'vitest';
 import { openDatabase } from '../src/db.js';
-import { MemberLoadError, resolvePermissions } from '../src/members.js';
+import { createMemberStore, MemberLoadError, resolvePermissions } from '../src/members.js';
 
 const OBJECTIVE_LEAVES = [
   'objectives.create',
@@ -153,9 +153,100 @@ describe('legacy process.manage compatibility', () => {
       role: { title: 'lead', description: '' },
       instructions: '',
       rawPermissions: ['process.manage'],
-      permissions: [],
     });
     expect(added.permissions).toEqual(['team_process.manage']);
     expect(members.findByName('late-writer')?.permissions).toEqual(['team_process.manage']);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// Both stores derive `permissions`; neither takes one from the caller.
+//
+// `AddMemberInput` used to carry a resolved `permissions` array that
+// the DB-backed store discarded and the in-memory store stored
+// verbatim, so one input produced two different members. The field is
+// gone: `rawPermissions` is the only authority input. Each assertion
+// below compares the WHOLE resolved list in canonical leaf order, so a
+// store that resolved only the direct leaf, or only the alias, or that
+// dropped canonical ordering, fails.
+// ─────────────────────────────────────────────────────────────────────
+
+const PARITY_RAW = ['activity.read', 'process.manage', 'objectives.manage'];
+const PARITY_RESOLVED = [
+  'objectives.create',
+  'objectives.cancel',
+  'objectives.reassign',
+  'objectives.watch',
+  'activity.read',
+  'team_process.manage',
+];
+
+function seededMapStore(): ReturnType<typeof createMemberStore> {
+  return createMemberStore([
+    {
+      name: 'seed',
+      role: { title: 'lead', description: '' },
+      permissions: [],
+      token: 'csuite_parity_seed',
+    },
+  ]);
+}
+
+describe('both member stores derive permissions from rawPermissions', () => {
+  it('resolves the whole list in canonical order in the in-memory store', () => {
+    const store = seededMapStore();
+    const added = store.addMember({
+      name: 'derived',
+      role: { title: 'engineer', description: '' },
+      instructions: '',
+      rawPermissions: PARITY_RAW,
+      token: 'csuite_parity_derived',
+    });
+    expect(added.permissions).toEqual(PARITY_RESOLVED);
+    expect(store.findByName('derived')?.permissions).toEqual(PARITY_RESOLVED);
+    // The raw list is still round-tripped verbatim.
+    expect(store.findByName('derived')?.rawPermissions).toEqual(PARITY_RAW);
+  });
+
+  it('resolves the same whole list in the DB-backed store', () => {
+    const db = openDatabase(':memory:');
+    const members = createSqliteMemberStore(db, new TeamStore(db));
+    const added = members.addMember({
+      name: 'derived',
+      role: { title: 'engineer', description: '' },
+      instructions: '',
+      rawPermissions: PARITY_RAW,
+    });
+    expect(added.permissions).toEqual(PARITY_RESOLVED);
+    expect(members.findByName('derived')?.permissions).toEqual(PARITY_RESOLVED);
+  });
+
+  it('refuses a name the in-memory store cannot resolve, storing nothing', () => {
+    const store = seededMapStore();
+    expect(() =>
+      store.addMember({
+        name: 'rejected',
+        role: { title: 'engineer', description: '' },
+        instructions: '',
+        rawPermissions: ['activity.read', 'no-such-preset'],
+        token: 'csuite_parity_rejected',
+      }),
+    ).toThrow(MemberLoadError);
+    expect(store.findByName('rejected')).toBeNull();
+    expect(store.names()).toEqual(['seed']);
+  });
+
+  it('has no caller-supplied permissions field left to trust', () => {
+    const store = seededMapStore();
+    const added = store.addMember({
+      name: 'ignored',
+      role: { title: 'engineer', description: '' },
+      instructions: '',
+      rawPermissions: ['activity.read'],
+      // @ts-expect-error permissions is derived from rawPermissions, not supplied
+      permissions: ['members.manage'],
+      token: 'csuite_parity_ignored',
+    });
+    expect(added.permissions).toEqual(['activity.read']);
   });
 });

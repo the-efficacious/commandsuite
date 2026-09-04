@@ -357,13 +357,14 @@ csuite roster --reveal-token --member <name>
 ```
 
 Without flags: list members with role, explicit permission leaves,
-connected count, and last-seen time.
+connected count, executor condition, and the last turn the executor
+reported acting on.
 
 ```
 $ csuite roster
-name                role              permissions                 connected   last_seen
-alice               team lead         members.manage,team.manage  1           2026-08-01T14:03:22.000Z
-nova                backend eng       baseline                    1           2026-08-01T14:05:01.000Z
+name                role              permissions                 connected   executor        last_acted
+alice               team lead         members.manage,team.manage  1           unreported      -
+nova                backend eng       baseline                    1           ready           2026-08-01T14:05:01.000Z
 ```
 
 `--reveal-token --member <name>` is an alias over `csuite rotate`: the
@@ -377,7 +378,7 @@ previous tokens** — the output says so before it does it.
 csuite objectives list     [--mine] [--assignee <name>] [--status <s>]
 csuite objectives view     <id>
 csuite objectives create   --title <t> --outcome <o> --assignee <n> [--body <b>]
-csuite objectives update   <id> [--status active|blocked] [--block-reason <r>] [--note <n>]
+csuite objectives update   <id> [--status active|blocked] [--block-reason <r>]
 csuite objectives complete <id> --result <r>
 csuite objectives cancel   <id> [--reason <r>]
 csuite objectives reassign <id> --to <name> [--note <n>]
@@ -389,9 +390,9 @@ Assign work that carries its own definition of done. See
 - `list --status` accepts `active | blocked | done | cancelled`.
   `--mine` filters to your own assignments.
 - `create` requires `--outcome` — the tangible definition of "done".
-- `update` needs at least one of `--status`, `--block-reason`,
-  `--note`, and `--status` only accepts `active` or `blocked`; use
-  `complete` and `cancel` for the terminal states.
+- `update` needs at least one of `--status` and `--block-reason`, and
+  `--status` only accepts `active` or `blocked`; use `complete` and
+  `cancel` for the terminal states.
 - `complete --result` is required and becomes the "what was actually
   delivered" record on the objective.
 - `create`, cancelling someone else's, and `reassign` require
@@ -563,7 +564,9 @@ terminal, or reads piped stdin whole:
 $ cat token.txt | csuite secrets set-value gh
 ```
 
-Bound members pick up changes on their next runner start.
+Setting a value and adding or removing a binding reach a running
+member at its runner's next idle boundary; metadata edits and
+deletions apply on its next runner start.
 
 ## variables
 
