@@ -1,166 +1,65 @@
 ---
 title: Glossary
-description: Definitions of the product vocabulary used across the docs.
+description: The glossary is now the Ontology — one arbitrating definition per term, with its name in every layer and what it must not be confused with.
 section: Concepts
 order: 100
 ---
 
 # Glossary
 
-The product vocabulary, in one place. Each entry links to its
-concept page where one exists.
+**The glossary is now the [Ontology](/docs/concepts/ontology).** This page is a
+signpost, kept so existing links still land somewhere useful.
 
-**Activity stream** — the permanent, timestamped record of
-everything a member does: model turns, tool actions, prompts, and
-session and objective markers. See
-[Activity and traces](/docs/concepts/activity-and-traces).
+The glossary defined thirty terms. It could not settle an argument, because it
+only ever described the docs: where a page and the code disagreed about what a
+word meant, nothing said which was right. A 2026-09-02 audit found 318 evidenced
+confounds behind that gap — `role` naming five unrelated things, and `context`,
+`session`, `activity`, `trace` and `transcript` naming four or five each.
 
-Not to be confused with **work state** — the live `idle` / `working`
-/ `blocked` signal shown beside a member on the roster. That is a
-momentary reading held in memory and forgotten after thirty seconds;
-the activity stream is the durable record. See
-[Presence](/docs/concepts/presence).
+The ontology replaces it with 249 entries that arbitrate. Each one gives the
+definition the code implements, that term's spelling in every layer — the SDK,
+the database, the routes, the CLI, the MCP toolbox, the web UI and the docs —
+and, most usefully, what it is **not**: the near-neighbour it keeps being
+confused with, named, so the distinction survives the next pull request.
 
-**Broker** — the server at the center of a team. It holds messages,
-objectives, files, secrets, and traces, and every member connects to
-it. You run it yourself with `csuite serve`.
+## Where to look
 
-**Channel** — a named team conversation, like a Slack channel. Every
-team has a built-in `general` channel that reaches everyone. See
-[Channels](/docs/concepts/channels).
+- **[Every term, A–Z](/docs/concepts/ontology#index)** — the index, with the
+  family each term belongs to.
+- **[Conventions](/docs/concepts/ontology#conventions)** — the rules that govern
+  names not yet written: the reserved bare words and what to say instead, the
+  verb grammar, `kind` versus `status`, identifiers, query parameters and
+  cursors, time fields, and the failure vocabulary.
+- **[Ontology decisions](/docs/dev/ontology-decisions)** — why a term is what it
+  is, and what it was chosen over.
+- **[Contributor glossary](/docs/dev/contributor-glossary)** — the separate
+  vocabulary you meet working *on* this repository: the gates, the doors
+  window, the route walk, changesets, the DCO. None of it reaches a user.
 
-**Enrollment** — the approval flow (`csuite connect`) that lets a
-CLI on a new device join the broker without anyone copy-pasting a
-token. See [Device enrollment](/docs/enrollment).
+## The families
 
-**Id** — the opaque identifier the broker mints for a record. It
-never changes and is never reused, so other records point at it
-rather than at the slug: a message tags its channel `chan:<id>`,
-which is why renaming that channel never orphans history.
+[People and seats](/docs/concepts/ontology#people-and-seats) ·
+[Access and authority](/docs/concepts/ontology#access-and-authority) ·
+[Assigned work](/docs/concepts/ontology#assigned-work) ·
+[Conversation and delivery](/docs/concepts/ontology#conversation-and-delivery) ·
+[Observation and capture](/docs/concepts/ontology#observation-and-capture) ·
+[Live state](/docs/concepts/ontology#live-state) ·
+[Execution runtime](/docs/concepts/ontology#execution-runtime) ·
+[Standing context](/docs/concepts/ontology#standing-context) ·
+[Authentication and credentials](/docs/concepts/ontology#authentication-and-credentials) ·
+[Provisioned environment](/docs/concepts/ontology#provisioned-environment) ·
+[Tool sources, custom tools and MCP](/docs/concepts/ontology#tool-sources-custom-tools-and-mcp) ·
+[External notifications and web push](/docs/concepts/ontology#external-notifications-and-web-push) ·
+[Files and blobs](/docs/concepts/ontology#files-and-blobs) ·
+[Topology and product surfaces](/docs/concepts/ontology#topology-and-product-surfaces) ·
+[Identifiers and naming](/docs/concepts/ontology#identifiers-and-naming) ·
+[Completeness diagnostics](/docs/concepts/ontology#completeness-diagnostics) ·
+[Capture source](/docs/concepts/ontology#capture-source) ·
+[Action verbs](/docs/concepts/ontology#action-verbs) ·
+[Failure and error](/docs/concepts/ontology#failure-and-error) ·
+[Wire conventions](/docs/concepts/ontology#wire-conventions) ·
+[Guides job vocabulary](/docs/concepts/ontology#guides-job-vocabulary)
 
-**Instruction blocks** — the standing context every agent starts
-with: the team context, its role description, its personal
-instructions, and the
-[team process](/docs/concepts/team-process). Composed by the
-broker and delivered at session start. Editing any of them prompts
-each affected agent to restart cold at its next idle moment under the
-new text, re-briefed on its open objectives; the roster reports agents
-as restart-pending until they have.
-
-**Member** — a seat on the team, held by a person or an agent. Every
-member has a name, a role, permissions, and its own credentials. See
-[Members](/docs/concepts/members).
-
-**Name** — a member's addressing handle: letters, digits, `.`, `_`
-and `-`, up to 128 characters. Messages are addressed and attributed
-by name, and a name may be reused after the member is gone. Not a
-slug — slugs are lowercase, dash-only, and identify records rather
-than members. See [Members](/docs/concepts/members).
-
-**Objective** — a unit of assigned work that carries its own
-definition of done. Created by an originator, executed by one
-assignee, observed by watchers. See
-[Objectives](/docs/concepts/objectives).
-
-**Originator** — the member who created an objective. See
-[Objectives](/docs/concepts/objectives).
-
-**Outcome** — the required "definition of done" on an objective: what
-must be true for the work to count as complete. Stated at creation and
-in front of the assignee from then on. See
-[Objectives](/docs/concepts/objectives).
-
-**Permission** — one **permission leaf** a member holds, such as
-`objectives.create` or `activity.read`. The model is flat: any
-member can hold any set. See
-[Permissions](/docs/concepts/permissions).
-
-**Presence** — a member's live state: whether they're connected, and
-whether they're idle, working, or blocked. See
-[Presence](/docs/concepts/presence).
-
-**Permission template** — a create-form shortcut that selects a set
-of permission leaves once. The member stores those leaves, not the template.
-See [Permissions](/docs/concepts/permissions).
-
-**Result** — what the assignee writes when marking an objective done:
-the account of how the **outcome** was met. The outcome is stated at
-creation and says what must be true; the result answers it, and is
-required by `objectives_complete`. See
-[Objectives](/docs/concepts/objectives).
-
-**Personal instructions** — the private prose block delivered to one
-member only: into an agent's standing context, or onto a person's
-dashboard. Teammates never see it; the member and `members.manage`
-holders can. One of the four instruction blocks. See
-[Members](/docs/concepts/members).
-
-**Restart-pending** — a member whose current composed instructions
-differ from the ones its live session was issued. Its runner restarts
-the agent at the next idle boundary to pick the edit up; the roster
-reports it until then. See [Members](/docs/concepts/members).
-
-**Role** — a member's public label and description: a short title
-("engineer", "qa-lead") plus prose saying what they do on the team.
-Visible to every teammate — it shows in the roster and in each
-agent's standing context. Distinct from **personal instructions**,
-which are private to that member and to `members.manage` holders.
-See [Members](/docs/concepts/members).
-
-**Role description** — the prose half of a member's role ("implements
-features end-to-end"). It shows on the roster, is composed into that
-member's own instruction blocks, and appears in its teammates' roster
-lines. Descriptive only: permissions decide what a member may do. See
-[Members](/docs/concepts/members).
-
-**Runner** — the program that runs an agent as a team member and
-connects it to the broker. Claude Code (`csuite claude`) and OpenAI
-Codex (`csuite codex`) are the two runners that ship today. See
-[Runners](/docs/runners/overview).
-
-**Standing context** — another name for the instruction blocks: the
-whole composed bundle an agent starts a session with. Not the team
-context alone — that is one block of the four.
-
-**Team context** — the team-wide standing prose every member
-inherits, and one of the four instruction blocks. Edited by a
-`team.manage` holder with `csuite team set --context`.
-
-**Team process** — the team's single authored statement of how it
-works, carried in every agent's standing context. See
-[Team process](/docs/concepts/team-process).
-
-**Secret** — a broker-held confidential value injected into an
-agent's environment at session start, and redacted from captured
-traces. See [Secrets](/docs/concepts/secrets).
-
-**Slug** — the short, lowercase, human-typed identifier that
-addresses a record in URLs and on the CLI: letters, digits, and
-single dashes. Channels, tool sources, secrets, variables,
-notification endpoints, and auth profiles each have one. Only a
-channel's slug can be changed; the rest are immutable, because
-thread tags (`secret:<slug>`) and ingress URLs (`/hooks/<slug>`)
-are built from them.
-
-**Thread tag** — the value of a message's `data.thread`, naming what
-the message belongs to: `chan:<id>` for a channel, `obj:<id>` for an
-objective, and `secret:` `tool:` `variable:` `hook:` plus a slug for
-the change events of those records. A colon does not always mark a
-reference: `enc-v1:` and `sha256:` mark an encoding, and a colon
-inside an enum value (`self-signed:fresh`) is only punctuation.
-
-**Tool source** — a registered provider of extra tools for agents —
-a wrapped HTTP API or a remote MCP server — with its credential held
-on the broker. See [Tool sources](/docs/concepts/tool-sources).
-
-**Trace** — everything a member did while one objective was open:
-that objective's slice of the assignee's activity stream. See
-[Activity and traces](/docs/concepts/activity-and-traces).
-
-**Variable** — a broker-held non-confidential value injected into an
-agent's environment at session start. Not redacted from traces. See
-[Variables](/docs/concepts/variables).
-
-**Watcher** — a member added to an objective to observe it: they
-follow its discussion and files without being the assignee. See
-[Objectives](/docs/concepts/objectives).
+No definition lives on this page. Two pages defining the same word is the thing
+the ontology exists to end, and a signpost that quietly grew its own glosses
+would be the first place it started again.

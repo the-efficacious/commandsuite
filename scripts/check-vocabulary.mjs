@@ -43,10 +43,19 @@ const SOURCE = 'packages/sdk/src/types.ts';
 const ENUMERATION_THRESHOLD = 5;
 const ENUMERATION_WINDOW = 15;
 
-const SENTENCE_WITH_LEAF = /([^.!?]*\b(?:leaf|leaves)\b[^.!?]*)/gi;
-
-const COUNT_WORDS =
-  /\b(two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|\d+)\b/i;
+/**
+ * A number modifying the leaves, directly: "twelve permission leaves",
+ * "Twelve leaf permissions", "the thirteen leaves", "Four objective leaves".
+ * Up to two words may sit between, which covers every adjective the docs use.
+ *
+ * Adjacency rather than "a number somewhere in the sentence", because
+ * `leaves` is also an ordinary verb and the docs are full of sentences that
+ * carry a number for an unrelated reason. `one` is excluded: it reads as an
+ * article ("one permission leaf a member holds"), and no drift ever counted
+ * a set as one.
+ */
+const COUNTED_LEAVES =
+  /\b(two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|\d+)\s+(?:[\w-]+\s+){0,2}(leaf permissions?|permission leaves|leaves)\b/i;
 
 const failures = [];
 const fail = (check, file, message) => failures.push({ check, file, message });
@@ -167,28 +176,19 @@ for (const file of [...docFiles(), 'README.md']) {
   } catch {
     continue;
   }
+  // The decision log explains the drift by quoting the counts it ended.
+  if (file === 'docs/dev/ontology-decisions.mdx') continue;
   for (const [i, line] of text.split('\n').entries()) {
-    // The decision log explains the drift by quoting the counts, and the
-    // checker's own docs name them. Both are about the rule, not instances
-    // of it.
-    if (file === 'docs/dev/ontology-decisions.mdx') continue;
-    for (const sentence of line.matchAll(SENTENCE_WITH_LEAF)) {
-      const text = sentence[1];
-      // "leaves" is also an ordinary verb ("a redirect that leaves the
-      // configured origin"). Only count it when the sentence is about
-      // permissions, or when it is on the page whose whole subject is.
-      const aboutPermissions =
-        /\bpermission|\bleaf permissions?\b|[a-z_]+\.(?:manage|create|cancel|reassign|watch|read|context)\b/i.test(
-          text,
-        ) || file === CANONICAL;
-      if (aboutPermissions && COUNT_WORDS.test(text)) {
-        fail(
-          'count',
-          file,
-          `line ${i + 1} counts the permission leaves: "${text.trim().slice(0, 70)}". ` +
-            `The count drifts independently of the list; name no number.`,
-        );
-      }
+    // A number inside a code span is a line number in a citation, never
+    // prose counting a set.
+    const m = COUNTED_LEAVES.exec(line.replace(/`[^`]*`/g, ''));
+    if (m) {
+      fail(
+        'count',
+        file,
+        `line ${i + 1} counts the permission leaves: "${m[0].trim()}". ` +
+          `The count drifts independently of the list; name no number.`,
+      );
     }
   }
 }

@@ -1,0 +1,815 @@
+---
+title: Contributor glossary
+description: The vocabulary someone working on this repository meets — the gates, the door manifest, the route walk, changesets, publish binding, the DCO — with the distinction each word needs to stop it fragmenting again.
+section: Development
+order: 96
+---
+
+# Contributor glossary
+
+This page defines what you meet working **on** CommandSuite. None of it reaches
+a user, an operator or an agent: it lives in `scripts/`, `.github/`,
+`docs/dev/**` and `.github/CONTRIBUTING.md`, and it stays out of the
+[ontology](/docs/concepts/ontology), which defines what the *product* means by
+member, objective, trace and permission. [D39](/docs/dev/ontology-decisions)
+draws that line; this page is one side of it.
+
+Four terms cross the line the other way and are defined on the product side,
+not here, because a user does meet them: **capture tier**, **doctor** /
+**preflight**, **run summary**, and **baseline membership**. The published
+subpath export `csuite-core/conformance` is a product API surface for the same
+reason. Each gets a pointer below rather than a second definition.
+
+The value of an entry here is its **Not** line. Every word on this page already
+names something else in this repository, and a local decision that ignores that
+is how it got that way.
+
+## The word `gate`
+
+`gate` names six unrelated things in this tree. Five of them are contributor
+process. The sixth is the product's runtime authorization predicate — *"the set
+of elevated actions gated by membership policy"*
+(`packages/sdk/src/types.ts:51`) — and that one keeps the bare word, because it
+is the only sense a user or an agent can encounter and it is already the SDK's
+own. Everything a merge, a release or a publication refuses gets a compound
+name.
+
+| what refuses what | call it | where it lives |
+|---|---|---|
+| the platform refuses a merge | **merge gate** | `docs/dev/gates.mdx` |
+| six local jobs decide whether a release render is signable | **release checklist gate** | `scripts/release-prepare.mjs:309-357` |
+| a maintainer clicks before the release PR's checks start | **release approval** | `.github/CONTRIBUTING.md:685-737` |
+| `prepublishOnly` refuses bytes not bound to `HEAD` | **publication binding** | `scripts/publish-gate.mjs` |
+| a web-UI control does not render or is disabled | **UI permission guard** | `scripts/audit-capability-gates.mjs` |
+| the broker refuses an action on a permission leaf | **permission gate** | [Permissions](/docs/concepts/permissions) |
+
+Two files currently disagree inside this word:
+`scripts/verify-pack-contents.mjs:35-36` calls itself *"the last gate before
+`pnpm publish`"* while `.github/CONTRIBUTING.md:733-734` records that packing
+for inspection *"does not trigger the publication gate"*. That comment should
+say **pack check**. It is a one-line fix and it is what overloading a word costs
+in practice.
+
+### Merge gate
+
+A CI check that the platform will refuse a merge over. *"Required means: the
+platform refuses the merge if it fails"*, and *"A workflow that exists is not a
+gate"* (`docs/dev/gates.mdx:259,321`). A gate is a check **plus** authority; a
+check without the authority is a green tick nobody has to obey, which is
+exactly what `version-guard` was for the month before it was added to a ruleset.
+
+**Not** the release checklist gate, which runs locally and refuses a signature,
+not a merge. **Not** a permission gate.
+
+**Where** · doc `docs/dev/gates.mdx` · required contexts configured in classic
+branch protection *and* two repository rulesets — six of them, and reading
+either enforcement surface alone gives a wrong answer.
+
+### Required context
+
+The platform's own name for a merge gate: the string in branch protection or a
+ruleset that must report success. It is **not** the workflow name and usually
+not the colloquial name — `dco` is `Verify Signed-off-by`, `version-guard` is
+`Refuse version changes outside the Version PR`, `ci` is `build`, `codeql` is
+`Analyze (javascript-typescript)`. Those four, plus `route-walk` and
+`dependency-review`, are the six. Only `route-walk` is spelled the same way in
+all three places.
+
+**Not** the gate's name in `docs/dev/gates.mdx`, and not the job name in the
+release checklist gate. Three naming systems cover one set of checks, and
+`docs/dev/gates.mdx:278` records that ambiguity producing a wrong count of
+required contexts four times — the fourth by the author of the paragraph
+warning about it. When you cite a gate, cite the identifier and keep the human
+sentence as a description. A job name that is *not* in a ruleset or in branch
+protection is not a required context, however official it reads:
+`commit-convention.yml:30` is called `Verify commit subjects` and refuses
+nothing.
+
+**Where** · workflow job names `.github/workflows/dco.yml:20`,
+`version-guard.yml:20`, `codeql.yml:16`, `ci.yml:16` · doc
+`docs/dev/gates.mdx:262-296`.
+
+### Release checklist gate
+
+The six jobs `scripts/release-prepare.mjs` runs locally before rendering a
+release: `unit`, `conformance (stub)`, `bootstrap`, `compose`, `service`,
+`route-walk` — *"each row backed by the captured exit status and a log file,
+never a summary"* (`scripts/release-prepare.mjs:17-19`). The rule that makes
+the render trustworthy: *"A row exists only because its command ran"*
+(`docs/dev/releasing.mdx:36-38`).
+
+**Not** the twelve merge gates. `bootstrap` and `route-walk` appear in both
+lists; `compose` and `container`, and `unit` and `ci`, name the same subject
+matter under different words. The row `conformance (stub)` should read
+**`runner conformance (stub)`** — with no qualifier, a reader of a release
+render cannot tell which of the two conformance suites ran.
+
+**Where** · script `scripts/release-prepare.mjs:307-360` · workflow
+`.github/workflows/release-prepare.yml`.
+
+### Release approval
+
+The manual click that starts the Version Packages PR's workflow runs. *"Every
+workflow run on `changeset-release/main` is created in `action_required` and
+parks there until a maintainer clicks **Approve and run** on the Actions tab"*
+(`.github/CONTRIBUTING.md:687-689`).
+
+What it constrains is **the actor, not the branch**: a run enters
+`action_required` when its triggering actor is `github-actions[bot]`, so anyone
+who can push to the release branch can make its workflows run without the
+approval step (`.github/CONTRIBUTING.md:715-724`). That is recorded because a
+control whose real boundary is undocumented gets relied on for a property it
+does not have. It is not a workaround. Click approve.
+
+**Not** a check. Nothing is evaluated; a person is.
+
+**Where** · doc `.github/CONTRIBUTING.md:685-724` · script
+`scripts/release-status.mjs:20-23`.
+
+### Publication binding
+
+`scripts/publish-gate.mjs`, in two halves. *"`prepare` is root-owned: refuse a
+dirty tree, build through Turbo, verify package payload shape, then record each
+publishable package's payload digest against HEAD"*; *"`check` is package-owned
+and refusal-only. It never rebuilds… Package `prepublishOnly` hooks call it
+immediately before publication"* (`scripts/publish-gate.mjs:5-15`). It refuses
+publishing bytes whose digest is not bound to `HEAD`, because rebuilding from a
+dirty tree *"would manufacture an artifact that exists in no commit"*.
+
+**Not** the release checklist gate, and not a merge gate. It does not decide
+whether a release is a good idea; it decides whether the bytes about to be
+published are the bytes that were built from this commit. Its reach is bounded
+and stated: `npm publish an-already-built.tgz` runs no lifecycle hook and stays
+outside it, and so does `pnpm verify-pack`, deliberately.
+
+**Where** · script `scripts/publish-gate.mjs` · npm script `release:prepare`
+(see the collision below) · doc `.github/CONTRIBUTING.md:730-737`.
+
+### UI permission guard
+
+A render or enablement condition on a web-UI control — the enclosing `cond &&`,
+the enclosing ternary, the control's own `disabled={…}`. The audit tool that
+enumerates them calls the class `CAPABILITY`: *"A guard is capability-shaped if
+it turns on WHO the viewer is or WHAT they may do"*
+(`scripts/audit-capability-gates.mjs:105-110`).
+
+**Not** a permission leaf, and not the protocol's `capabilities` feature flags.
+`CAPABILITY` is one bucket of a regex classifier — the others are `state`,
+`navigation`, `data`, `ungated` — so it is a label the audit tool applies, not a
+concept the server has. `canWrite`, which the classifier matches, is a
+server-derived **per-entry write predicate**, not a per-actor permission.
+
+**Where** · script `scripts/audit-capability-gates.mjs` · generated report
+`docs/audit/web-ui-capability-gates.md`.
+
+That report is a **generated artifact, not a living reference**. It declares
+itself generated at `:1-3` and is still anchored to `origin/develop@eef2de3`, a
+branch model this repository retired on 2026-07-30. Regenerate it; do not
+source terminology from it.
+
+## Falsification vocabulary
+
+### Falsified
+
+*"Shown an input known to be bad, and observed to fail on it — with a control
+run on the unmodified tree observed to pass first, so the red is the mutation
+and not the environment"* (`docs/dev/gates.mdx:255-257`). A gate that has only
+ever run against work its author believed was good has been tested in no
+directions.
+
+**Not** "passing". Green from an unfalsified instrument is an opinion.
+
+**Where** · doc `docs/dev/gates.mdx` (the inventory table names, per gate, what
+it was shown and what it reported).
+
+### Control run
+
+The run on the unmodified tree, observed to pass, that a falsification needs in
+order to mean anything. Without it a red result is equally well explained by the
+environment.
+
+**Not** a baseline in any of the three senses that word carries here.
+
+### Ladder, rung
+
+The habit of stating a gate as an ordered list of what refuses each part of the
+claim, ending at the rung where judgement begins. *"A gate described as a single
+yes/no is almost always a ladder with the bottom rung missing"*
+(`docs/dev/gates.mdx:217-219`). The worked example for `route-walk` is at
+`docs/dev/gates.mdx:227-235`.
+
+**Not** severity levels or tiers. A rung is a claim with a named refuser; the
+bottom rung has no refuser, and that is the point of writing it down.
+
+### Mutation, applied
+
+A perturbation you have proved reached the code under test — by a changed asset
+hash, a version string, a checksum. `scripts/mutate.sh` exists because *"mutation
+applied, test kills it"* and *"mutation never applied"* are indistinguishable
+from outside, and the silent failure is always in the reassuring direction.
+
+**Where** · script `scripts/mutate.sh` · doc `docs/dev/gates.mdx:31-45`.
+
+## The release render
+
+### Release render
+
+`scripts/release-prepare.mjs`, and the `RELEASE-<version>.md` it produces:
+*"Render everything the two humans need to decide a release — and publish
+nothing"* (`scripts/release-prepare.mjs:1-2`). It carries the proposed version
+and changelog, the "read these" doors, the built artifacts with sizes, hashes
+and the source fingerprint, the release checklist gate rows, and two empty
+signature lines. *"It REFUSES to publish: there is no call path that tags,
+pushes, or publishes"* (`:22-25`), proven at the executable level by
+`scripts/test/release-prepare.test.mjs`.
+
+**Not** `pnpm release:prepare`, which is the other thing entirely — see the
+collision below.
+
+**Where** · script `scripts/release-prepare.mjs` · workflow `Release prepare` ·
+doc `docs/dev/releasing.mdx`.
+
+### Surfaced door
+
+A merged PR that landed *"public API, wire format, permission, security or
+install-surface change"*, carried with the ruling behind it into the release
+render's "read these" section (`docs/dev/releasing.mdx:26-29`). The convention
+that makes it enforceable: *"every PR that lands a surfaced door gets the `door`
+label at surfacing time and a manifest row in the same PR"* (`:64-66`).
+
+**Not** a breaking change, and not a changeset. A door is about *surface a
+signer must read before signing*; a changeset is about *semver*. A patch-level
+addition can be a door and a major bump might not be one.
+
+**Not** the metaphorical doors in `packages/core/src/diagnostics.ts:478` or
+`packages/web-ui/src/lib/file-preview.ts:82`. Those are prose.
+
+**Where** · doc `docs/dev/releasing.mdx:26-29,64-68` · label `door` on GitHub ·
+config `.release/doors.json` · script `scripts/release-prepare.mjs:222-244`.
+
+The definition lives a long way from every place a contributor meets the word —
+a PR label, a manifest row, a failing script line. Cite this entry from
+`scripts/release-prepare.mjs`'s header and from the `door` label description.
+
+### Door manifest
+
+`.release/doors.json`. *"The completeness contract behind 'read these'. Every PR
+merged since the tag named in `since` must be classified there — as a door (with
+its ruling) or as dismissed (with a cited reason)"* (`docs/dev/releasing.mdx:53-56`).
+Preparation fails loud on an unclassified merged PR, a manifest door not merged
+in range, a `door`-labelled PR the manifest omits, and a dismissal that trips
+the door tripwire while citing no ruling.
+
+**Not** the route manifest (`scripts/route-walk/manifest.json`). Both are called
+"the manifest" in their own documents and they share nothing.
+
+**Where** · config `.release/doors.json` · script
+`scripts/release-prepare.mjs:168-262`.
+
+### Doors window
+
+The half-open interval the door manifest claims to be a complete record of:
+from the tag named in `manifest.since` to `HEAD`. Manifest-declared,
+deliberately not derived from `git describe` — *"a second copy of the same
+authority [that] agreed with it only by coincidence"* until v0.9.0 was cut
+(`scripts/release-prepare.mjs:171-179`). An absent or malformed `since` exits 2
+with no fallback.
+
+**Not** "since the last tag". The two agreed once and no longer do; the manifest
+is the authority.
+
+**Where** · config `.release/doors.json` `since` · script
+`scripts/release-prepare.mjs:181-194`.
+
+The phrase appears nowhere in the tree — the concept has only the field name
+`since` and the variable `windowTag`. That is why it is named here.
+[D38](/docs/dev/ontology-decisions) is open: nothing states whether `since`
+advances at each release tag, and today it names `v0.8.0` while `v0.9.0` and
+`v0.10.0` are shipped, so the next render's "read these" reaches back across two
+signed releases. The window is cumulative until a maintainer says otherwise.
+
+### Door tripwire
+
+`DOOR_TRIPWIRE` — a regex over a merged PR's title and body
+(`/\bdoor\b|surfac(?:ed|ing)|additive (?:header|endpoint|field|wire)|public surface/i`,
+`scripts/release-prepare.mjs:54-55`) that flags language suggesting new public
+surface. *"The phrase tripwire exists for what the label misses — its findings
+go to the objective thread for a ruling, never into the manifest silently"*
+(`docs/dev/releasing.mdx:66-68`).
+
+Call it the **door tripwire**, matching the code identifier. "Phrase tripwire"
+and "door phrasing tripwire" are the same thing under two more names and should
+go.
+
+**Not** the query-plan tripwire of `docs/dev/gates.mdx:20` — a retired
+instrument mentioned once in narrative, and one of the three defective
+instruments that page exists because of.
+
+**Where** · script `scripts/release-prepare.mjs:54-55,258-262` · doc
+`docs/dev/releasing.mdx:61-68`.
+
+### Ruling · dismissed · held for ruling
+
+A manifest row is either a **door** with a `ruling` — the sentence saying what
+surface it landed and why that is what it is — or **dismissed** with a `reason`
+asserting it landed none. A dismissal counts as *cited* only when its reason
+matches `held for ruling`, `not a door per`, `discoverer's classification` or
+`ruled dismissed` (`scripts/release-prepare.mjs:255-257`). An uncited dismissal
+whose PR trips the door tripwire becomes a hold, not a problem.
+
+**Held for ruling** is the name for that hold: a classification nobody has
+decided yet. It is rendered into the file *and* exits non-zero.
+
+**Not** the release PR being **awaiting approval**, and not the product's
+"broker-held" (possession of a value). Three different words spelled `hold` or
+`held`, in two sibling scripts and the product docs.
+
+**Where** · config `.release/doors.json` row keys `ruling` / `reason` · script
+`scripts/release-prepare.mjs:245-262`.
+
+### Signable · incomplete · problem · hold · note
+
+The release render's terminal states, and the four accumulators behind them.
+
+- **signable** — *"everything ran, everything passed, nothing is held, and no
+  diagnostic note applies. Only a signable render carries the signature block"*
+  (`scripts/release-prepare-signability.mjs:8-10`).
+- **incomplete** — *"facts are missing: a diagnostic flag suppressed collection,
+  a gate could not run here, or collection itself failed"* (`:6-7`). Renders an
+  `INCOMPLETE — NOT SIGNABLE` banner where the signatures would be.
+- **problem** — a fatal fact-collection failure.
+- **hold** — an unresolved classification: rendered, and a non-zero exit.
+- **note** — a deliberate diagnostic gap from a skip flag: non-signable, exit 0
+  (`scripts/release-prepare.mjs:69-71`).
+
+The predicate is isolated in its own module so the rule is unit-testable without
+a full gate run: `signable = !incomplete && gateFails === 0 && holds === 0 &&
+notes === 0`.
+
+**Not** merge-gate vocabulary. Nothing here refuses a merge; it refuses a
+signature.
+
+**Where** · script `scripts/release-prepare-signability.mjs` · test
+`scripts/test/release-prepare.test.mjs:338-356`.
+
+### Awaiting approval
+
+The state of a Version Packages PR whose workflow runs exist but are parked in
+`action_required`: *"Workflows exist but are parked in `action_required`.
+Click."* (`scripts/release-status.mjs:50`). The identifier is `STATES.held`; use
+"awaiting approval" in prose, matching the Approve-and-run vocabulary and
+freeing "held" for the door sense.
+
+`pnpm release:status` exists because GitHub renders this state and a genuinely
+failing one identically — both report `mergeStateStatus: BLOCKED` — and the
+remedies are opposite: *click* versus *debug*. In the measured instance (#110) a
+PR sat about two hours being read three different wrong ways. Exit codes are
+distinct on purpose: `2` = held or never created, `1` = a real failure, `0` =
+ready or in flight.
+
+**Not** a door held for ruling.
+
+**Where** · script `scripts/release-status.mjs:26-59` · npm script
+`release:status` · doc `.github/CONTRIBUTING.md:707-714`.
+
+## Versioning and publishing
+
+### Changeset
+
+*"A small file describing the change and its semver impact"*, written with
+`pnpm changeset` and committed alongside the PR
+(`.github/CONTRIBUTING.md:658-668`). *"Docs-only, test-only, or internal
+refactors that don't change published behavior don't need one."* Write the
+summary as a user-facing changelog line — it is published verbatim, with a PR
+link and your handle, in the root `CHANGELOG.md` and the GitHub release notes.
+
+**Not** a door. A changeset states semver intent for a published package; a door
+states that a signer must read the PR. They overlap only by accident.
+
+**Where** · config `.changeset/` · npm script `changeset`.
+
+### Lockstep
+
+*"All packages version in lockstep — one shared version across the whole suite"*
+(`.github/CONTRIBUTING.md:676-678`), implemented as the single `fixed` group in
+`.changeset/config.json` listing all seven published packages.
+
+**Not** `linked`, which is empty here. Under `fixed`, every package bumps
+whether or not it changed.
+
+**Where** · config `.changeset/config.json`.
+
+### Version Packages PR
+
+The PR the changesets action opens on `changeset-release/main` when changesets
+land on `main`: it applies the bumps, updates per-package changelogs and
+aggregates them into the root `CHANGELOG.md`. Merging *that* PR publishes to npm
+with provenance and cuts one `v<version>` GitHub release for the suite.
+
+Call it the **Version Packages PR** — the literal title. "The release PR" is a
+lossy alias worth retiring, because the release *render* is a different object
+with a different name.
+
+**Not** the release render, and not a release. Nothing is published until this
+PR merges, and its checks do not start until someone clicks (see **release
+approval**).
+
+**Where** · branch `changeset-release/main` · workflow job `Version or publish
+(Changesets)` · doc `.github/CONTRIBUTING.md:676-690`.
+
+### Version guard
+
+The check that refuses *"a registry-new package identity that did not come from
+the changesets Version PR"* (`scripts/check-version-bump.mjs:2-4`). Its subject
+is the identity `(name, version)`, not a version bump, despite the file name:
+renaming a package while holding the version constant publishes something npm
+has never seen. It parses base and head manifests rather than matching diff
+lines, and there is deliberately no bypass.
+
+**Not** a version *bump* check. **Not** the branch name it appears to test: the
+sanctioned path is the release branch **in this repository**, since anyone may
+fork a public repo and name a branch `changeset-release/main`.
+
+**Where** · script `scripts/check-version-bump.mjs` · workflow `Version guard` ·
+required context `Refuse version changes outside the Version PR` (required since
+2026-09-01).
+
+This is the worked example of a gate acquiring authority. It *"ran honestly for
+a month while the platform did not care"* — the workflow did not change; its
+authority did (`docs/dev/gates.mdx:321-336`).
+
+### Pack verification
+
+`pnpm verify-pack` — packs each package and asserts every file its manifest
+declares actually ships.
+
+**Not** part of the publication binding, deliberately: *"packing for inspection
+does not trigger the publication gate"* (`.github/CONTRIBUTING.md:733-734`). The
+script's own header contradicts this and calls itself "the last gate before
+`pnpm publish`" (`scripts/verify-pack-contents.mjs:35-36`); the header is wrong
+and should say **pack check**.
+
+**Where** · script `scripts/verify-pack-contents.mjs` · npm script
+`verify-pack`.
+
+### `release-prepare` vs `release:prepare`
+
+Two different programs, and the only thing that distinguishes them is a colon.
+
+| | what it does |
+|---|---|
+| `node scripts/release-prepare.mjs` | the **release render**. Publishes nothing, by construction, with executable-level write traps proving it. |
+| `pnpm release:prepare` | the **publication binding**: `node scripts/publish-gate.mjs prepare`, the immediate precondition of `changeset publish`. |
+
+There is no npm script for the release render, so nothing prompts a reader to
+notice that `pnpm release:prepare` is not "preparing a release" in the sense the
+releasing page means.
+
+**Decided ([D37](/docs/dev/ontology-decisions)).** The npm script moves:
+`release:prepare` → **`release:bind`**, and `"release"` becomes
+`pnpm release:bind && changeset publish`. *Rejected:* renaming
+`scripts/release-prepare.mjs` to `release-render.mjs`. — 2026-09-04.
+
+**Why this side.** `release:prepare` has seven occurrences in three files —
+two lines of `package.json`, four error strings in `scripts/publish-gate.mjs`,
+one sentence in `.github/CONTRIBUTING.md`. The file name `release-prepare` is
+load-bearing in five naming systems at once: the script, its signability module,
+its test file, the workflow `Release prepare`, that workflow's
+`release-prepare-logs` artifact, and the `release-prepare` row in the gates
+inventory. Renaming the file means changing all of them in step or adding a
+sixth mismatch to a repository that already carries three names for one set of
+checks. `bind` is also not an invented word here: the script's own header calls
+itself *"Publish-side source binding"*.
+
+### Source fingerprint
+
+*"Stable source fingerprint for main-build runner/broker artifacts. Inputs are
+deliberately repository-relative: root build manifests, every app/package
+manifest and build config, and every file below each app or package's `src`
+directory"* (`scripts/source-fingerprint.mjs:5-10`). Absolute paths, mtimes,
+`node_modules`, tests, docs and generated `dist` are excluded, so the value is
+recomputable from a checkout.
+
+The **name** is contributor-only; the **value** is not. For a from-source build
+`CLI_VERSION` is `${version}+main.${CLI_SOURCE_FINGERPRINT}`, and that string
+reaches the roster, `csuite team status`, the web UI, and the agent's own
+standing instruction header.
+
+**Not** a build id or a commit SHA. Two checkouts of different commits with
+identical sources fingerprint the same, which is the property that makes it a
+contract rather than a label.
+
+**Where** · script `scripts/source-fingerprint.mjs` · build define
+`__SOURCE_FINGERPRINT__` · code `packages/cli/src/version.ts`,
+`apps/server/src/version.ts`.
+
+### Main build vs npm build
+
+`CLI_BUILD_SOURCE` — whether an artifact was built from a checkout of `main` or
+installed from npm. A main build carries the source fingerprint in its version
+string and shows as a distinct `runnerBuildSource` on the roster; an npm build
+does not.
+
+**Where** · code `packages/cli/src/version.ts:2,6-7` · script
+`scripts/publish-gate.mjs:117-120` · env `CSUITE_BUILD_SOURCE`.
+
+## The route walk
+
+### Route walk
+
+The headless assertion that every route the web UI can render behaves as
+declared, for two identities. *"Every route the web UI can render is declared in
+`scripts/route-walk/manifest.json`, together with what a **baseline** member (no
+manage permissions) and an **admin** must see there. A headless walker signs in
+through the product's own TOTP form and visits every declared URL as each role,
+asserting the declaration"* (`docs/dev/route-walk.mdx:10-16`). A route that
+regresses, or a route added to the router without a manifest entry, fails the
+build by name.
+
+It drives Chromium over raw CDP with Node's built-in WebSocket — there is no npm
+dependency, because `dependency-review` rejected `puppeteer-core`.
+
+**Where** · script `scripts/route-walk/walk.mjs` · workflow `Route walk` ·
+required context `route-walk` · doc `docs/dev/route-walk.mdx` · also a release
+checklist gate job.
+
+### Route manifest
+
+`scripts/route-walk/manifest.json`: one entry per `kind` of the router's `Route`
+union, carrying `urls`, the per-persona expectation, `hardLoad`,
+`allowRestrictedPanel`, `pseudo` and `why`. *"Changing a role expectation is a
+permissions statement — review it like one"* (`docs/dev/route-walk.mdx:52-53`).
+
+**Not** the door manifest.
+
+### Router contract
+
+`scripts/route-walk/contract.mjs`, which *"parses the router source and
+validates the manifest against it in both directions before any page loads"*
+(`docs/dev/route-walk.mdx:56-58`). It fails by name on a `Route` kind absent
+from the manifest, a non-pseudo manifest kind the router lacks, a
+`member-profile` URL set that does not match `PROFILE_TABS`, duplicates, rows
+missing an expectation for both personas, restricted rows with no `why`, and
+`allowRestrictedPanel` naming an unknown persona.
+
+This is the mechanised rung of the route-walk ladder: *"a new page cannot merge
+without declaring its permission story"*.
+
+**Not** a contract in the port/driver sense — see **port conformance suites**,
+which are the other thing this repository calls contract tests.
+
+**Where** · script `scripts/route-walk/contract.mjs` · doc
+`docs/dev/route-walk.mdx:54-80`.
+
+### Persona (`baseline` | `admin`)
+
+The identity a walk runs as: a member name paired with an expectation column.
+CI walks `--member builder` against the `baseline` column and `--member admin`
+against the `admin` column, where `admin` is bootstrap's member holding every
+permission and `builder` is its runner member holding none
+(`scripts/bootstrap.sh:21-22`, `scripts/release-prepare.mjs:357`).
+
+**Call it persona, not role.** The flag is spelled `--role` today and
+[D36](/docs/dev/ontology-decisions) renames it, because `role` is a product
+field with an incompatible meaning: a member's `role` is a **free-text label
+that grants nothing**, populated from the member's title, while the route-walk
+value is a closed two-value enum that *is* a permissions statement. A reader who
+learns `role` here will assume the product has an authorization primitive it
+does not have. "Persona" is free: its only occurrence in the tree is a test
+asserting that permission names stay free of persona names.
+
+**Where** · cli flag `scripts/route-walk/walk.mjs:43,49-52` · config
+`manifest.json` `roles.baseline` / `roles.admin` · doc
+`docs/dev/route-walk.mdx:28`.
+
+### `baseline` — three senses
+
+1. **Baseline membership** — a member with no permission leaves. This is
+   product vocabulary, defined in [Permissions](/docs/concepts/permissions), and
+   an agent reads it in its own roster text. Do not redefine it here.
+2. **The `baseline` persona** — the route walk's expectation column. It is
+   named after sense 1 *on purpose*: the doc defines it as *"a baseline member
+   (no manage permissions)"* and the member it actually walks as is bootstrap's
+   `builder`, which holds no leaves. Same referent, seen from two layers. Say so
+   rather than leaving it to inference.
+3. **Compatibility baseline** — the oldest version a deployment interoperates
+   with, as in *"0.9.0 is the compatibility baseline"*. Unrelated to both.
+   Always qualify it.
+
+**Not** the control run. A control run is a passing observation, not a set of
+permissions.
+
+### `clean` · `restricted`
+
+The two per-persona expectations a manifest row can declare.
+
+- **clean** — *"the SPA renders, a hard load of the deep link honours the row's
+  hard-load contract (`200 app` unless the row pins another), zero console
+  errors, zero failed requests"* (`docs/dev/route-walk.mdx:30-34`).
+- **restricted** — *"the app renders **and** the Restricted callout is shown,
+  with the same zero-noise bar. A refusal is rendered, never
+  fetched-then-refused: a request for the gated resource counts as a failed
+  request and fails the row"* (`:35-39`). The walker's source calls this rule
+  "the #220 bar"; that name is expanded nowhere near where it is used.
+
+`restricted` is a projection of a real product surface: the
+`title="Restricted"` callout, rendered by nine web-UI components.
+
+**Not** an HTTP status. Both expectations require the page to render; the
+difference is what it renders.
+
+### Seeder
+
+`scripts/route-walk/seed.mjs`: creates the fixtures a parameterized route needs
+— a channel, a DM, an objective, a tool source, a secret, a variable, a
+notification endpoint — and enrolls web-UI TOTP for both personas. Idempotent;
+re-running against an already-seeded broker is fine. `{placeholders}` in the
+manifest's `urls` are filled from what it writes, so parameterized routes are
+walked against real instances rather than synthetic ids.
+
+**Where** · script `scripts/route-walk/seed.mjs` · doc
+`docs/dev/route-walk.mdx:92-101`.
+
+## Conformance
+
+The word names two unrelated kits, and one of them is a published API.
+
+### Runner conformance suite
+
+The shared kit every runner adapter must pass:
+`packages/cli/test/runtime/conformance/`. *"A subject wires its real command
+entry point to a fake agent binary and the fake broker; the kit runs the same
+five scenarios for every runner"* (`docs/dev/conformance.mdx:162-166`) — S1
+end-to-end session and socket unlink, S2 exit-code propagation, S3 operator
+files byte-identical after a trace-on run, S4 the `session_start`/`session_end`
+bracket reaching the broker, S5 the run-summary log line.
+
+**Not** `csuite-core/conformance`. This one is a private test kit; that one is a
+package export a host binding imports.
+
+**Where** · test `packages/cli/test/runtime/conformance/kit.ts` · doc
+`docs/dev/conformance.mdx:160-213` · release checklist gate row `conformance
+(stub)`, which should read `runner conformance (stub)`.
+
+Five source files point at `docs/runners/conformance.mdx` for this standard, and
+that file does not exist — the page moved to `docs/dev/conformance.mdx` and the
+comments did not follow. Those comments are where an adapter author learns what
+a capture tier is.
+
+### Port conformance suites
+
+`csuite-core/conformance` — *"reusable behavioral contract suites for the
+injected drivers and ports"* (`packages/core/src/conformance/index.ts:1-9`):
+`blobStoreConformance`, `sqlDriverConformance`, `fieldCipherConformance`,
+`brokerAppConformance`. A host binding or a custom store implementation imports
+them and hands each suite a factory; the suite registers `describe`/`it` blocks
+asserting the behavior the broker application depends on. *"The Node binding
+runs every suite against its own implementations in CI, so the kit is
+load-bearing here — not a courtesy export."*
+
+**Not** contributor-only. This is a declared subpath export of `csuite-core`
+(`packages/core/package.json`), which is why it also gets an entry on the
+product side: someone embedding the broker meets it without ever touching this
+repository's process.
+
+**Not** the router contract, the other thing here called a contract.
+
+**Where** · package export `csuite-core/conformance` · code
+`packages/core/src/conformance/` · doc `.github/CONTRIBUTING.md:80-95`.
+
+A third, weaker use — `packages/web-ui/test/trace-join-conformance.test.ts` — is
+a cross-surface golden corpus and is neither of these.
+
+### Stub runner
+
+`csuite stub`: a runner that needs no model credential, described in its own
+help as *"a test/CI instrument"*. It is what the release checklist gate's
+`bootstrap` and `route-walk` jobs bring a broker up with, and what the runner
+conformance gate row runs against.
+
+**Not** a mock inside a test. It is a real runner verb with its own doc page,
+which is what makes it usable as CI's subject.
+
+**Where** · cli `csuite stub` · env `CSUITE_RUNNER_VERB=stub` · doc
+`docs/runners/stub.mdx`.
+
+### Fixture rule
+
+*"Any adapter that parses native instrumentation into activity events must ship
+recorded fixtures of that instrumentation … with golden normalized output, so a
+vendor format change becomes a visible fixture diff instead of silent capture
+rot"* (`docs/dev/conformance.mdx:207-213`). Applies at capture tier 2 and above.
+
+**Where** · doc `docs/dev/conformance.mdx:205-213` · models
+`codex/rollout-parser.test.ts`, `trace-transcript-reader.test.ts`.
+
+### `testedVersions`
+
+The agent-version range an adapter declares it has actually exercised in CI. The
+doctor **WARNs outside the range and never FAILs** — agents ship fast, and
+untested is not broken. Leave it `null` rather than invent one.
+
+**Where** · code `packages/cli/src/runtime/agents/adapter.ts:88-99` · doc
+`docs/dev/conformance.mdx:150-159`.
+
+### Terms defined on the product side
+
+These belong to the ontology, not here. They appear in contributor documents
+because that is where the standard is written, not because they are contributor
+vocabulary.
+
+- **capture tier** — the instrumentation level an adapter declares, 0–3. *"A
+  tier is a declaration, not an aspiration."* The **number** is product-facing;
+  the UI renders `capture: {n}`. The tier **names** — Operable, Observable,
+  Traceable, Full fidelity — reach no product surface today, and the third layer
+  that spells tier 3 `FULL` should be aligned to `Full fidelity`.
+- **doctor** / **preflight** — `doctor` is the command, the flag and the
+  `DoctorReport`; **preflight** is the silent run of it before every session,
+  where only FAILs abort. Both are user-visible and both are load-bearing.
+- **run summary** — the terminal per-session artifact, carried in the log line
+  `msg: "<runner-id>: run summary"`. The `session_end` activity event is its
+  wire projection, not a second concept: *"same facts, local copy"*.
+- **baseline membership** — see the three senses of `baseline` above.
+
+## Charter and review
+
+### Runtime-neutral
+
+The charter for `csuite-core`: *"Broker features live in `csuite-core` and are
+written against its ports and store interfaces — never against `node:*` APIs
+directly"* (`.github/CONTRIBUTING.md:80-95`). Web standards are the substitution
+of first resort; anything they cannot express becomes a port implemented on the
+Node binding's side of the seam, with contract tests in
+`csuite-core/conformance` and a reference implementation in `csuite-server`.
+
+**Not** a convention. `scripts/check-runtime-neutral.mjs` runs in core's
+`typecheck` and exits non-zero listing each offending `file:line`, *"so the
+check runs in CI rather than living in a comment"*.
+
+**Where** · script `scripts/check-runtime-neutral.mjs` · doc
+`.github/CONTRIBUTING.md:80-95`.
+
+### Author proposes, partner verifies
+
+*"Every change is verified by someone who did not write it, and whoever did not
+write it decides whether it is done. A verifier is expected to disagree;
+agreement arrived at by deference is worth nothing"*
+(`.github/CONTRIBUTING.md:137-140`).
+
+The **verifier** is the person who did not write it. A verification names the
+commit, not the branch: *"A branch moves. An approval recorded against a branch
+may not describe the state that ultimately merges… A branch name is not an
+object; a branch name at a commit is."*
+
+**Not** approval, and not review-as-formality. This is the same rule for
+internal team members and outside contributors; the `develop` + `review/<date>`
+model that once substituted for it was deleted on 2026-07-30 once per-agent
+identities made "someone other than the author" something GitHub could tell.
+
+**Where** · doc `.github/CONTRIBUTING.md:113-146`.
+
+### DCO, and sign-off
+
+The [Developer Certificate of Origin](https://developercertificate.org) — *"a
+lightweight, once-and-done attestation that you have the right to submit the
+code you're sending us. There is no CLA, no paperwork, no login flow"*
+(`.github/CONTRIBUTING.md:739-744`). You assert it per commit with a
+`Signed-off-by:` trailer, which `git commit -s` adds. The name and email must
+match the committer identity git writes on the commit.
+
+**Not** commit signing. They are separate mechanisms with separate failures:
+sign-off is a text trailer asserting provenance and is **required regardless**;
+cryptographic signing (`commit.gpgsign`, `gpg.format=ssh`) proves who made the
+commit and can be dropped for a single commit while keeping the trailer.
+`.github/CONTRIBUTING.md:147-177` records the measurements behind that.
+
+**Not** something `git config --global format.signOff true` will do for you —
+that setting affects only `git format-patch`, and a trailer-less commit in this
+repository's history is the measurement. Type `-s`, or install the `commit-msg`
+hook at `.github/CONTRIBUTING.md:777-786`, which reads `git var
+GIT_COMMITTER_IDENT` rather than `git config user.name` because on a seat whose
+identity arrives only through `GIT_COMMITTER_*` the latter returns empty strings
+and appends `Signed-off-by:  <>`.
+
+**Where** · workflow `.github/workflows/dco.yml` · required context `Verify
+Signed-off-by` · doc `.github/CONTRIBUTING.md:739-821`.
+
+### Commit convention
+
+Conventional Commits, with a closed type list, an optional non-empty scope, a
+subject of 72 characters or fewer including the prefix, and a body that explains
+why. The PR title is held to the same rule because GitHub uses it as the squash
+subject.
+
+**What CI decides and what review carries** is stated explicitly: the workflow
+checks shape, type, length and trailing period — *"the rules with one
+unarguable answer"* — while imperative mood and "the body explains why" are
+*"conventions, not gates. Nothing checks them… a check people can reasonably
+dispute is a check the whole convention gets routed around."*
+
+Dependabot is exempt **by author, not by rule**: the same subject it may ship is
+still refused from you, and that pair is asserted in the check's own test suite.
+
+**Where** · script `scripts/check-commit-convention.mjs` · workflow `Commit
+convention`, job `Verify commit subjects` — not a required context · doc
+`.github/CONTRIBUTING.md:823-900`.
