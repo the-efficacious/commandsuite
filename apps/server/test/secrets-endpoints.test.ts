@@ -451,4 +451,39 @@ describe('change events', () => {
       'bound',
     );
   });
+
+  it('emits an environment reload for exactly the three mutations that change a live env', async () => {
+    // The reload path — `EnvironmentEvent` → forwarder → agent respawn at the
+    // next idle boundary — is wired for value_set/bound/unbound only. PATCH
+    // and both deletes are genuinely next-start-only, and every surface's
+    // prose has to say which half a mutation falls in.
+    const { app, broker } = await makeApp();
+    await app.request('/secrets', authed(ADMIN, { slug: 'gh', envName: 'GITHUB_TOKEN' }));
+    await settle();
+    const pushSpy = vi.spyOn(broker, 'push');
+    await app.request('/secrets/gh/bindings', authed(ADMIN, { member: 'bound' }));
+    await app.request('/secrets/gh/value', authed(ADMIN, { value: 'ghp_timing' }, 'PUT'));
+    await app.request('/secrets/gh', authed(ADMIN, { description: 'edited' }, 'PATCH'));
+    await app.request('/secrets/gh/value', authed(ADMIN, undefined, 'DELETE'));
+    await app.request('/secrets/gh/bindings/bound', authed(ADMIN, undefined, 'DELETE'));
+    await app.request('/secrets/gh', authed(ADMIN, undefined, 'DELETE'));
+    await settle();
+
+    const actions = pushSpy.mock.calls
+      .map((call) => call[0]?.data as { kind?: string; action?: string } | undefined)
+      .filter((data) => data?.kind === 'environment')
+      .map((data) => data?.action);
+    // The whole sequence in order: six mutations, three reloads. Asserting the
+    // exact list is what makes the three silent mutations part of the contract
+    // rather than an omission nobody notices.
+    expect(actions).toEqual(['bound', 'value_set', 'unbound']);
+
+    // …and the silent half must not tell the member otherwise.
+    const patchNotice = pushSpy.mock.calls.find(
+      (call) => (call[0]?.data as { event?: string } | undefined)?.event === 'updated',
+    );
+    expect(patchNotice, 'PATCH still has to notify the delivery set').toBeDefined();
+    expect(patchNotice?.[0]?.body).not.toMatch(/idle boundary/);
+    expect(patchNotice?.[0]?.body).toMatch(/next runner start/);
+  });
 });

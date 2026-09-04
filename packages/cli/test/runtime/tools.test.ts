@@ -435,6 +435,27 @@ describe('runner-local file transfer tools', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it('keeps "upload"/"download" for the pair that streams around agent context', () => {
+    // The distinction is security-relevant: `fs_write` carries content THROUGH
+    // the tool call, while `fs_upload`/`fs_download` never let bytes reach an
+    // IPC frame or a tool result. `fs_write` opening with "Upload a file."
+    // taught the opposite of the property the pair exists to provide.
+    const byName = new Map(defineTools(PACKET).map((t) => [t.name, JSON.stringify(t)]));
+    // The whole quartet, so a rename cannot quietly make the rest vacuous.
+    for (const name of ['fs_read', 'fs_write', 'fs_upload', 'fs_download']) {
+      expect(byName.get(name), `${name} is missing from the toolbox`).toBeDefined();
+    }
+    // Matched over the whole tool JSON, not just the top-level description:
+    // this tool's worst prose has previously lived on a nested property.
+    expect(byName.get('fs_write') ?? '').not.toMatch(/upload|download/i);
+    expect(byName.get('fs_read') ?? '').not.toMatch(/upload|download/i);
+    // And the streaming pair keeps the sentence that earns the names.
+    expect(byName.get('fs_upload') ?? '').toMatch(/never enter an IPC frame or tool result/);
+    expect(byName.get('fs_download') ?? '').toMatch(
+      /never enter an IPC frame, tool result, or agent context/,
+    );
+  });
 });
 
 // ─── tool definition surface ─────────────────────────────────────────
@@ -547,6 +568,10 @@ describe('roster — old broker compatibility does not invent liveness', () => {
     expect(roster?.description).toContain('executor readiness or degraded reason');
     expect(roster?.description).toContain('last proven action');
     expect(roster?.description).toContain('never executor liveness');
+    // The completeness clauses are only useful if the description says
+    // they exist and says what their absence does NOT mean.
+    expect(roster?.description).toContain('unresolved-diagnostics count');
+    expect(roster?.description).toContain('not a clean bill');
   });
 
   it('renders an unknown window instead of inventing one for an older broker', async () => {
@@ -574,6 +599,106 @@ describe('roster — old broker compatibility does not invent liveness', () => {
       'lead [team lead] permissions=members.manage; offline; executor=unreported (broker predates executor evidence); compatibility-window=within an unknown window',
     );
     expect(text).not.toMatch(/within last \d+s/);
+  });
+});
+
+/**
+ * The roster line is the only place an agent can learn that its OWN
+ * verbatim capture failed — no other agent-facing surface reports it.
+ * Silence is the healthy path, so the rule is asymmetric: an unhealthy
+ * signal must be stated outright, and everything else must render
+ * nothing at all rather than `capture=undefined` or a reassuring
+ * `store unknown` nobody asked for.
+ *
+ * One fixture carries all four cases at once, and every assertion picks
+ * its own member's line out of the render, so an assertion cannot pass
+ * by matching a neighbour's line.
+ */
+describe('roster — capture and diagnostics health reach the agent that owns them', () => {
+  async function rosterText(): Promise<string> {
+    const broker = makeBroker({
+      roster: vi.fn().mockResolvedValue({
+        teammates: [
+          ...PACKET.teammates,
+          { name: 'auditor', role: { title: 'auditor', description: '' }, permissions: [] },
+          { name: 'reviewer', role: { title: 'reviewer', description: '' }, permissions: [] },
+        ],
+        connected: [
+          {
+            name: 'scout',
+            connected: 1,
+            createdAt: 1,
+            lastSeen: 2,
+            role: PACKET.teammates[0]?.role ?? null,
+            captureHealth: 'gap',
+            diagnosticsUnresolved: 3,
+            diagnosticsRetention: 'degraded',
+          },
+          {
+            name: 'lead',
+            connected: 1,
+            createdAt: 1,
+            lastSeen: 2,
+            role: PACKET.teammates[1]?.role ?? null,
+            captureHealth: 'ok',
+            diagnosticsUnresolved: 0,
+            diagnosticsRetention: 'healthy',
+          },
+          {
+            name: 'auditor',
+            connected: 1,
+            createdAt: 1,
+            lastSeen: 2,
+            role: null,
+            captureHealth: 'unevaluated',
+            diagnosticsUnresolved: 0,
+            diagnosticsRetention: 'unknown',
+          },
+          {
+            name: 'reviewer',
+            connected: 1,
+            createdAt: 1,
+            lastSeen: 2,
+            role: null,
+          },
+        ],
+        activityWindowMs: 45_000,
+      }),
+    });
+    return getCallText(await handleToolCall('roster', {}, broker, PACKET));
+  }
+
+  function lineFor(text: string, name: string): string {
+    const line = text.split('\n').find((l) => l.startsWith(`- ${name}`));
+    expect(line, `${name} must have a roster line`).toBeDefined();
+    return line ?? '';
+  }
+
+  it('states an unhealthy capture and the full diagnostics clause', async () => {
+    // One exact string, so clause order, both clauses, and the count
+    // beside the retention word all have to be right together:
+    // rendering the count without the retention fails here.
+    const scoutLine = lineFor(await rosterText(), 'scout');
+    expect(scoutLine).toContain('; capture=gap; diagnostics=3 unresolved, store degraded');
+  });
+
+  it('says nothing about a healthy member', async () => {
+    const leadLine = lineFor(await rosterText(), 'lead');
+    expect(leadLine).not.toMatch(/capture=|diagnostics=/);
+  });
+
+  it('speaks at zero unresolved when the store cannot describe itself', async () => {
+    // A degraded store with nothing outstanding is still degraded. A fix
+    // gated only on `unresolved > 0` renders nothing here and fails.
+    const auditorLine = lineFor(await rosterText(), 'auditor');
+    expect(auditorLine).toContain('; capture=unevaluated; diagnostics=0 unresolved, store unknown');
+  });
+
+  it('omits both clauses for a broker that reports neither', async () => {
+    // Absence is silence: it must not surface as `capture=undefined` or
+    // as a `store unknown` the broker never claimed.
+    const reviewerLine = lineFor(await rosterText(), 'reviewer');
+    expect(reviewerLine).not.toMatch(/capture=|diagnostics=/);
   });
 });
 
@@ -1444,6 +1569,31 @@ describe('handleToolCall — objectives_list', () => {
     // And it must still promise exactly what the renderer emits.
     expect(tool?.description).toMatch(/assignee/);
     expect(tool?.description).toMatch(/originator/);
+  });
+
+  it('names the wide set "related" and keeps "plate" for the assignee filter', () => {
+    // The runner's `context_refresh` re-brief is assignee-scoped
+    // (`objectives-tracker.ts` refetches `assignee=<self>`), so an agent told
+    // this tool returns "your whole open plate" is handed a superset the
+    // moment it originates or watches anything.
+    const tool = defineTools(PACKET).find((t) => t.name === 'objectives_list');
+    expect(tool, 'objectives_list must be defined').toBeDefined();
+    const description = tool?.description ?? '';
+    const schema = JSON.stringify(tool?.inputSchema);
+    // BOTH copies of the misuse, top-level and nested: fixing one and not the
+    // other still leaves an agent reading the wrong sense off the argument.
+    expect(description).not.toMatch(/whole open plate/i);
+    expect(schema).not.toMatch(/whole open plate/i);
+    // The positive half — deleting the vocabulary instead of correcting it
+    // would leave `open` with no stated scope at all.
+    expect(description).toMatch(/RELATED to/);
+    expect(description).toMatch(/superset of your own plate/);
+    // …and the narrow word still hangs off `assignee`, on both surfaces.
+    expect(description).toMatch(/`assignee` narrows to one member's plate/);
+    const assignee = (
+      tool?.inputSchema as { properties?: Record<string, { description?: string }> }
+    )?.properties?.assignee?.description;
+    expect(assignee).toMatch(/your own plate/);
   });
 });
 

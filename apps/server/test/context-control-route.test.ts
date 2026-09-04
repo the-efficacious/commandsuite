@@ -285,4 +285,35 @@ describe('the push the runner acts on', () => {
     // only one of these.
     expect((await res.json()).delivered).toBe(true);
   });
+
+  it('describes each verb truthfully in the notice the member reads', async () => {
+    // The push body is the agent's only account of what is about to happen to
+    // it. `reload` claimed "The current conversation is resumed" while the
+    // runner respawns cold: `resumed: false`, `respawnForClear(ctx, { resume:
+    // false })` (`packages/cli/src/runtime/agent-session.ts:621-672`).
+    const { app, broker } = await makeApp(['members.context']);
+    const bodies: Record<string, string> = {};
+    for (const verb of ['compact', 'clear', 'reload'] as const) {
+      const { messages } = await capturePush(broker, 'worker', () =>
+        post(app, 'worker', { verb }, DIRECTOR_TOKEN),
+      );
+      const control = messages.find(
+        (m) => (m.data as Record<string, unknown>)?.kind === 'context_control',
+      );
+      expect(control, `no notice reached the member for ${verb}`).toBeDefined();
+      bodies[verb] = control?.body ?? '';
+    }
+    // All three verbs, three distinct notices — one shared fallback string
+    // would otherwise satisfy any single assertion below.
+    expect(new Set(Object.values(bodies)).size).toBe(3);
+    // Neither cold swap may promise a resume, and both must say they are cold.
+    expect(bodies.clear).not.toMatch(/resum/i);
+    expect(bodies.reload).not.toMatch(/resum/i);
+    expect(bodies.clear).toMatch(/cold/);
+    expect(bodies.reload).toMatch(/cold/);
+    // `reload` is the one that also refetches the environment; `compact`
+    // replaces no process at all.
+    expect(bodies.reload).toMatch(/environment/);
+    expect(bodies.compact).not.toMatch(/cold/);
+  });
 });

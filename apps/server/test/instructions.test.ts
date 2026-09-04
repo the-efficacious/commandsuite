@@ -297,6 +297,25 @@ describe('composeInstructions', () => {
     expect(packet.instructions).not.toContain('tool description refreshes');
   });
 
+  it('does not call objectives_list "your open plate" in the packet prose', () => {
+    // `objectives_list` returns the RELATIONSHIP union; the set the runner's
+    // `context_refresh` re-brief pushes is assignee-scoped. Teaching both
+    // under one word, in the packet the agent reads at every session start,
+    // is the confound — so the packet must state the wide scope AND leave
+    // "plate" attached to `assignee`.
+    const packet = composeInstructions({
+      self: ALPHA_1,
+      team: TEAM,
+      teammates: TEAMMATES,
+      openObjectives: [],
+      teamProcess: null,
+    });
+    expect(packet.instructions).not.toContain('your open plate');
+    // Positive half: deleting the scope statement is not a fix.
+    expect(packet.instructions).toContain('every open objective you are RELATED to');
+    expect(packet.instructions).toContain('`assignee` narrows it to your own plate');
+  });
+
   it('teaches all three channel thread types and the context_refresh re-brief', () => {
     const packet = composeInstructions({
       self: ALPHA_1,

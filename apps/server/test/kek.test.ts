@@ -1,6 +1,10 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import {
+  ENCRYPTED_FIELD_PREFIX as CORE_ENCRYPTED_FIELD_PREFIX,
+  EncryptedFieldError as CoreEncryptedFieldError,
+} from 'csuite-core';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   decryptField,
@@ -8,6 +12,7 @@ import {
   EncryptedFieldError,
   encryptField,
   KekResolutionError,
+  kekFieldCipher,
   resolveKek,
   testKek,
 } from '../src/kek.js';
@@ -88,6 +93,74 @@ describe('encryptField / decryptField', () => {
   it('decryptField throws on structurally malformed enc-v1 values', () => {
     const kek = testKek();
     expect(() => decryptField('enc-v1:only-two-parts', kek)).toThrow(EncryptedFieldError);
+  });
+});
+
+/**
+ * The collision: this module used to declare its OWN
+ * `EncryptedFieldError` and its OWN `ENCRYPTED_FIELD_PREFIX`
+ * alongside core's. The two were string-identical and `.name`-
+ * identical, so every assertion anyone would naturally write passed
+ * — while `instanceof` inside core (secrets.ts, tool-sources/store.ts)
+ * saw a foreign class and let the error escape as an unhandled 500.
+ * These tests assert REFERENCE identity, which is the only thing that
+ * distinguished the broken tree from the fixed one.
+ */
+describe('one EncryptedFieldError, one prefix', () => {
+  it("exports core's class and core's prefix, not look-alikes", () => {
+    expect(EncryptedFieldError).toBe(CoreEncryptedFieldError);
+    expect(ENCRYPTED_FIELD_PREFIX).toBe(CORE_ENCRYPTED_FIELD_PREFIX);
+  });
+
+  it("every reachable decrypt failure is catchable as core's class", () => {
+    const kek1 = testKek();
+    const kek2 = testKek();
+    const ct = encryptField('secret', kek1);
+    if (!ct) throw new Error('unreachable');
+    // enc-v1:<iv>:<authTag>:<ciphertext>
+    const parts = ct.split(':');
+
+    const tampered = Buffer.from(parts[3] ?? '', 'base64url');
+    tampered[0] = (tampered[0] ?? 0) ^ 0x01;
+    const tamperedValue = [parts[0], parts[1], parts[2], tampered.toString('base64url')].join(':');
+    const shortIv = [parts[0], Buffer.alloc(4).toString('base64url'), parts[2], parts[3]].join(':');
+    const shortTag = [parts[0], parts[1], Buffer.alloc(4).toString('base64url'), parts[3]].join(
+      ':',
+    );
+
+    // The complete set of reachable throw sites in `decryptField`.
+    // kek.ts:202 (the base64url decode try/catch) is UNREACHABLE:
+    // `Buffer.from(x, 'base64url')` never throws — it silently drops
+    // characters it cannot decode — so five is the whole census.
+    const inputs: Array<() => unknown> = [
+      () => decryptField(ct, kek2), // wrong KEK          — kek.ts:220
+      () => decryptField(tamperedValue, kek1), // tampered ciphertext — kek.ts:220
+      () => decryptField('enc-v1:only-two-parts', kek1), // wrong part count   — kek.ts:189
+      () => decryptField(shortIv, kek1), // short IV           — kek.ts:207
+      () => decryptField(shortTag, kek1), // short auth tag     — kek.ts:210
+    ];
+
+    const caught: unknown[] = [];
+    for (const run of inputs) {
+      try {
+        run();
+      } catch (err) {
+        caught.push(err);
+      }
+    }
+    expect(caught).toHaveLength(5);
+    expect(caught.every((e) => e instanceof CoreEncryptedFieldError)).toBe(true);
+  });
+
+  it('an error crossing the FieldCipher seam is catchable inside core', () => {
+    const kek1 = testKek();
+    const kek2 = testKek();
+    const cipher = kekFieldCipher(kek1);
+    expect(cipher).not.toBeNull();
+    if (!cipher) throw new Error('unreachable');
+    // The exact path core's secrets.ts:266 and tool-sources/store.ts:591
+    // take: they catch `EncryptedFieldError` as core declares it.
+    expect(() => cipher.decrypt(encryptField('secret', kek2))).toThrow(CoreEncryptedFieldError);
   });
 });
 

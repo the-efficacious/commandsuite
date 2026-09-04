@@ -175,6 +175,35 @@ describe('registry CRUD + gating', () => {
     };
     expect(asBound.boundMembers).toBeUndefined();
   });
+
+  it('detail returns CustomToolDef[] for kind=custom — binding included', async () => {
+    const { app } = await makeApp();
+    await app.request('/tool-sources', authed(ADMIN, { slug: 'jira', kind: 'custom' }));
+    await app.request(
+      '/tool-sources/jira/tools/get_issue',
+      authed(
+        ADMIN,
+        {
+          description: 'Fetch a Jira issue',
+          inputSchema: { type: 'object', properties: { key: { type: 'string' } } },
+          binding: { method: 'GET', urlTemplate: 'https://api.example.com/{{args.key}}' },
+        },
+        'PUT',
+      ),
+    );
+    const detail = (await (await app.request('/tool-sources/jira', authed(ADMIN))).json()) as {
+      source: { kind: string };
+      tools: Array<Record<string, unknown>>;
+    };
+    expect(detail.source.kind).toBe('custom');
+    expect(detail.tools.map((t) => t.name)).toEqual(['get_issue']);
+    expect(Object.keys(detail.tools[0] ?? {}).sort()).toEqual([
+      'binding',
+      'description',
+      'inputSchema',
+      'name',
+    ]);
+  });
 });
 
 describe('credentials', () => {
@@ -395,6 +424,23 @@ describe('invoke — custom executor end-to-end', () => {
     const event = toolActions[0]?.event as { toolName: string; isError?: boolean };
     expect(event.toolName).toBe('jira__get_issue');
     expect(event.isError).toBe(false);
+  });
+
+  it('500s with credential unavailable when the KEK is gone at decrypt time', async () => {
+    const { app } = await makeApp();
+    await setupSource(app);
+    setKek(null);
+    try {
+      const res = await app.request(
+        '/tool-sources/jira/tools/get_issue/invoke',
+        authed(BOUND, { args: { key: 'PROJ-7' } }),
+      );
+      expect(res.status).toBe(500);
+      expect(await res.json()).toEqual({ error: 'credential unavailable' });
+    } finally {
+      setKek(testKek());
+    }
+    expect(lastRequest).toBeNull();
   });
 });
 
