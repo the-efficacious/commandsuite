@@ -3615,7 +3615,7 @@ inbound: no outbound webhook sender exists anywhere in the tree.
   (`packages/sdk/src/types.ts:1100`) · permission
   `notifications.manage` · route `POST /hooks/:slug`, admin surface `/notifications/*` ·
   CLI `csuite notifications` (alias `csuite hooks`) · the `notifications_*` MCP tools,
-  `notifications_list` through `notifications_profile_set_secret` · UI nav "Notifications", aria "Manage external
+  `notifications_list` through `notifications_profile_set_secret` · UI nav "External notifications", aria "Manage external
   notifications" · event kind `external_notification` · agent instruction block
   "── External notifications ──" · docs
   [External notifications](/docs/concepts/external-notifications)
@@ -3833,12 +3833,13 @@ messages sent through `POST /push` — direct messages and broadcasts — and no
   `CsuitePushPayload` · seam `PushSender`, `PushSendOutcome` · server
   `createWebPushSender()` · app hook `onPushed` · route `GET /push/vapid-public-key` ·
   config `vapidPublicKey`, `vapidPrivateKey`, `vapidSubject` · UI Account section eyebrow
-  "Notifications", row "Push on this device", component `NotificationToggle`, signal
+  "Notifications", row "Push on this device", component `PushToggle`, signal
   `pushState` · docs [Events](/docs/concepts/events), "Notifications when you're away"
 - **Not** — External notification (inbound; a hook delivery never fires a push). The web UI
-  labels both "Notifications" one screen apart — the nav item is the inbound registry, gated
-  on `notifications.manage`; the Account section is web push, gated on nothing — so a member
-  who cannot see the nav item can still toggle push · `POST /push`, the chat-send route,
+  labelled both "Notifications" one screen apart until the nav item became "External
+  notifications" — the nav item is the inbound registry, gated on `notifications.manage`,
+  while the Account section is web push, gated on nothing, so a member who cannot see the
+  nav item can still toggle push · `POST /push`, the chat-send route,
   whose body type is a **different** exported `PushPayload` in `packages/sdk/src/types.ts`
   (`to`, `title`, `body`, `level`, `data`, `attachments`) — same name, unrelated shape ·
   Toast (the in-app alert shown instead when the tab is visible) · Ambient event
