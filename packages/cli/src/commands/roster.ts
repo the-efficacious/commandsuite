@@ -1,5 +1,9 @@
 /**
- * `csuite roster` — list the team's members and their current state.
+ * `csuite roster` — print the roster: the team's member list joined to
+ * live presence in one response (`GET /roster`).
+ *
+ * Not `csuite member list`, which is the management view — full member
+ * records for a `members.manage` holder, with no presence attached.
  */
 
 import type { Client } from 'csuite-sdk/client';

@@ -40,7 +40,7 @@ import {
   selectFiles,
   selectMemberProfile,
   selectObjectiveDetail,
-  selectOverview,
+  selectTeamHome,
 } from '../lib/view.js';
 import { AgentTimeline } from './AgentTimeline.js';
 import { ArrowLeft, ArrowRight } from './icons/index.js';
@@ -122,7 +122,7 @@ export function MemberProfile({ name, tab, viewer }: MemberProfileProps) {
           title="No such member"
           message={`There's no teammate called "${name}" on this team.`}
           action={
-            <button type="button" class="btn btn-ghost btn-sm" onClick={selectOverview}>
+            <button type="button" class="btn btn-ghost btn-sm" onClick={selectTeamHome}>
               <ArrowLeft size={13} aria-hidden="true" />
               Back to Home
             </button>
@@ -302,7 +302,7 @@ export function MemberProfile({ name, tab, viewer }: MemberProfileProps) {
 function Crumbs({ name }: { name: string }) {
   return (
     <nav aria-label="Breadcrumb" class="crumbs">
-      <button type="button" onClick={selectOverview} class="text-link">
+      <button type="button" onClick={selectTeamHome} class="text-link">
         <ArrowLeft size={13} aria-hidden="true" />
         Home
       </button>

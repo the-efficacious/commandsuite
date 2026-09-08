@@ -1,7 +1,7 @@
 /**
- * Pushes the agent's live ACTIVITY STATE (idle / working / blocked) from
- * the capture host's activity signal up to the broker via
- * `POST /presence/activity`.
+ * Pushes the agent's WORK STATE (idle / working / blocked) from the
+ * capture host's work-state signal up to the broker via
+ * `POST /presence/work-state`.
  *
  * Behavior:
  *   - On every state transition (idle↔working↔blocked), POST the new
@@ -23,14 +23,14 @@
 import { logger as defaultLogger, type Logger } from 'csuite-core';
 import type { Client as BrokerClient } from 'csuite-sdk/client';
 import type { WorkState } from 'csuite-sdk/types';
-import type { ActivitySignal } from './trace/busy.js';
+import type { WorkStateSignal } from './trace/work-state.js';
 
-export interface ActivityReporterOptions {
+export interface WorkStateReporterOptions {
   brokerClient: BrokerClient;
-  activity: ActivitySignal;
+  workState: WorkStateSignal;
   /** Cancellation. When aborted, the reporter stops heartbeating. */
   signal: AbortSignal;
-  /** Structured logger. Defaults to the shared logger's `activity-reporter` child. */
+  /** Structured logger. Defaults to the shared logger's `work-state-reporter` child. */
   logger?: Logger;
   /** Override the heartbeat interval. Default 10_000ms. */
   heartbeatMs?: number;
@@ -38,9 +38,9 @@ export interface ActivityReporterOptions {
 
 export const DEFAULT_HEARTBEAT_MS = 10_000;
 
-export function startActivityReporter(opts: ActivityReporterOptions): void {
-  const { brokerClient, activity, signal } = opts;
-  const log = opts.logger ?? defaultLogger.child('activity-reporter');
+export function startWorkStateReporter(opts: WorkStateReporterOptions): void {
+  const { brokerClient, workState, signal } = opts;
+  const log = opts.logger ?? defaultLogger.child('work-state-reporter');
   const heartbeatMs = opts.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -48,10 +48,10 @@ export function startActivityReporter(opts: ActivityReporterOptions): void {
   // `idle` from the abort handler. Internal-only; the subscriber and
   // heartbeat call the abort-aware wrapper below.
   const postRaw = (state: WorkState): void => {
-    void brokerClient.setActivity({ state }).catch((err: unknown) => {
+    void brokerClient.setWorkState({ state }).catch((err: unknown) => {
       // Presence is a UI nicety, not an invariant — the next transition
       // or heartbeat retries, so this stays at debug per the module doc.
-      log.debug('setActivity failed', {
+      log.debug('setWorkState failed', {
         state,
         error: err instanceof Error ? err.message : String(err),
       });
@@ -66,7 +66,7 @@ export function startActivityReporter(opts: ActivityReporterOptions): void {
   const startHeartbeat = (): void => {
     if (heartbeatTimer !== null) return;
     heartbeatTimer = setInterval(() => {
-      const state = activity.state();
+      const state = workState.state();
       // Re-post whatever non-idle state we're in so the TTL stays fresh.
       if (state !== 'idle') post(state);
     }, heartbeatMs);
@@ -85,7 +85,7 @@ export function startActivityReporter(opts: ActivityReporterOptions): void {
     }
   };
 
-  const unsubscribe = activity.subscribe((state) => {
+  const unsubscribe = workState.subscribe((state) => {
     post(state);
     // Heartbeat while working OR blocked; stop once we're idle.
     if (state !== 'idle') {
@@ -103,11 +103,8 @@ export function startActivityReporter(opts: ActivityReporterOptions): void {
       // Best-effort final clear so presence drops to idle as soon as the
       // runner exits. The server's TTL would clear it eventually anyway.
       // Uses `postRaw` directly since `post` no-ops on an aborted signal.
-      if (activity.state() !== 'idle') postRaw('idle');
+      if (workState.state() !== 'idle') postRaw('idle');
     },
     { once: true },
   );
 }
-
-/** @deprecated Use {@link startActivityReporter}. */
-export const startBusyReporter = startActivityReporter;

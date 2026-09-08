@@ -39,6 +39,14 @@ There are no per-objective spans. The runner maintains one
 - `objective_open` / `objective_close` — the member took / released
   an objective (`done` / `cancelled` / `reassigned` /
   `runner_shutdown`).
+- `context_control` — the runner's acknowledgement of a broker
+  `compact` / `clear` / `reload` request: the request id, the outcome
+  (`applied` / `declined` / `unsupported` / `failed`), and a
+  successful `compact`'s before/after token counts where the
+  framework measured them.
+- `auth_state` — the runner's broker credential was rejected with a
+  401 (`blocked`) or accepted again (`recovered`), carrying what the
+  capture queue was holding and what it had already evicted.
 
 Per-objective "traces" are a **time-range view** over this stream:
 the web UI pages the member's activity and gen_ai records over the
@@ -52,10 +60,11 @@ The runner-owned handle every adapter feeds is the **CaptureHost**
 
 - the batched **`ActivityUploader`** (ships `ActivityEvent`s to
   `POST /members/:name/activity` in near-real-time);
-- the **busy signal**, driven by native instrumentation (Claude Code
-  hooks, codex app-server items);
+- the **work-state signal**, driven by native instrumentation (Claude
+  Code hooks, codex app-server items), reported to
+  `POST /presence/work-state`;
 - the loopback **hook server** Claude Code POSTs hook events to
-  (presence-only — it drives busy state and surfaces the
+  (presence-only — it drives work state and surfaces the
   `transcript_path`; it emits no content);
 - the **`TranscriptReader`** (Claude content source, below);
 - the loopback **OTLP relay** (raw-body resolution, below).
@@ -180,7 +189,9 @@ one.)
 `POST /otlp/v1/logs` (`apps/server/src/app.ts`) parses records with
 `parseOtlpLogs`, which applies **attribute redaction at ingest** —
 registered secret values are scrubbed, with broker-issued
-instruction blocks exempt so the presence checks stay byte-exact.
+instruction blocks exempt so operator-authored prose stays readable in
+the stored capture. (The exemption is a redaction scope and nothing
+more: the broker runs no detector over captured traffic.)
 The batch is then split: the four Claude api-body record kinds
 (`api_request_body`, `api_request`, `api_response_body`, `api_error`)
 go to the per-member **`GenAiCorrelator`**; `api_request` and

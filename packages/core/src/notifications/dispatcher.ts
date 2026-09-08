@@ -20,7 +20,7 @@
  *
  * Wake/idle signals arrive from the HTTP layer: the `/subscribe`
  * handler calls `onWake` for runner-authenticated attaches, the
- * `/presence/activity` handler calls `onActivityReport`. A sweep
+ * `/presence/work-state` handler calls `onWorkStateReport`. A sweep
  * interval (owned by `createApp`) expires stale queue rows, force-
  * delivers starved busy-waits, and backstops debounce timers.
  *
@@ -93,8 +93,8 @@ export interface NotificationDispatcher {
   replay(deliveryId: string): Promise<DeliveryRecord>;
   /** Runner attached — flush this member's queued + waiting deliveries. */
   onWake(memberName: string): Promise<void>;
-  /** Presence report — a non-working state flushes this member's busy-waits. */
-  onActivityReport(memberName: string, state: WorkState): Promise<void>;
+  /** Work-state report — a non-working state flushes this member's busy-waits. */
+  onWorkStateReport(memberName: string, state: WorkState): Promise<void>;
   /** Expire stale queue rows, force starved waits, backstop debounce. */
   sweep(): Promise<void>;
   /** Re-dispatch deliveries stranded mid-debounce by a restart. */
@@ -108,7 +108,7 @@ export interface NotificationDispatcherOptions {
   broker: Broker;
   members: MemberStore;
   channels?: ChannelStore;
-  activity: WorkStateTracker;
+  workState: WorkStateTracker;
   logger: Logger;
   now?: () => number;
 }
@@ -122,7 +122,7 @@ interface DebounceBuffer {
 export function createNotificationDispatcher(
   options: NotificationDispatcherOptions,
 ): NotificationDispatcher {
-  const { store, broker, members, channels, activity, logger } = options;
+  const { store, broker, members, channels, workState, logger } = options;
   const now = options.now ?? Date.now;
 
   const debounceBuffers = new Map<string, DebounceBuffer>();
@@ -284,7 +284,7 @@ export function createNotificationDispatcher(
       }
 
       const online = isConnected(name);
-      const busy = activity.getActivity(name) === 'working';
+      const busy = workState.getWorkState(name) === 'working';
       const force = opts?.forceMember === name;
 
       if (!online && !force) {
@@ -331,6 +331,24 @@ export function createNotificationDispatcher(
     }
 
     const reason = notes.length > 0 ? notes.join('; ') : null;
+    // What the three values mean HERE, which is the only place that
+    // decides them for a fresh fan-out:
+    //
+    //   delivered — a runner ACKNOWLEDGED the message (`acted` or
+    //               `handled`). Not "sent": a push that reached the
+    //               broker's queue and nobody else is `pending`.
+    //   pending   — two causes, both of them "still in play": at least
+    //               one message was pushed but no runner has answered
+    //               yet, or the fan-out queued for an offline/busy
+    //               member and the wake flush owns it next.
+    //   dropped   — nothing is in play: no message was pushed and
+    //               nothing was queued, which is what an `ifOffline:
+    //               'drop'` policy produces. The disposition listener
+    //               below writes it for a second cause, a runner that
+    //               explicitly REFUSED.
+    //
+    // `coalesced` is not decided here; it marks the older rows folded
+    // into the one message the loop below actually pushed.
     const status: NotificationDeliveryStatus =
       acknowledged > 0 ? 'delivered' : messageIds.length > 0 || queued > 0 ? 'pending' : 'dropped';
 
@@ -365,7 +383,10 @@ export function createNotificationDispatcher(
           statusReason: event.reason?.detail ?? 'subscriber refused delivery',
         });
       }
-      // deferred deliberately stays pending; capability recovery owns redelivery.
+      // `deferred` deliberately stays pending — it is still in play, and
+      // capability recovery owns redelivery. This listener is the only
+      // writer that can turn a row `delivered` after the fan-out ended,
+      // which is why `delivered` means acknowledged rather than sent.
     }
   });
 
@@ -615,7 +636,7 @@ export function createNotificationDispatcher(
       await flushPendingFor(memberName);
     },
 
-    async onActivityReport(memberName: string, state: WorkState): Promise<void> {
+    async onWorkStateReport(memberName: string, state: WorkState): Promise<void> {
       if (state === 'working') return;
       await flushPendingFor(memberName, 'busy');
     },

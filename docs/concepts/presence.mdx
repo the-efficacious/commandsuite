@@ -98,9 +98,37 @@ scheduling telemetry:
 
 An open turn is shown as pending context but never as working. A turn that
 completes without action records `no_action`, making silent burn visible. The
-legacy `idle` / `working` / `blocked` report remains scheduling telemetry;
-`blocked` can still say a runner is waiting for input, but message consumption
-and `working` reports never prove executor liveness.
+runner's `idle` / `working` / `blocked` **work-state** report remains
+scheduling telemetry; `blocked` can still say a runner is waiting for input,
+but message consumption and `working` reports never prove executor liveness.
+
+Work state is the live signal and is forgotten after 30 seconds. It is not
+the **activity stream**, the durable record of what a member actually did —
+see [Activity and traces](/docs/concepts/activity-and-traces). Runners report
+work state to `POST /presence/work-state`; the roster publishes its
+projection as `Presence.workState` inside `RosterResponse.workStateWindowMs`.
+The previous spellings (`POST /presence/activity`, `Presence.activity`,
+`activityWindowMs`) are still served and still emitted, with the same values,
+for one release; the old route answers `Deprecation: true` and all three are
+removed in the next minor.
+
+## One presence, everywhere it appears
+
+Presence is one shape with one population. It reaches you through two
+surfaces — the roster (`csuite roster`, the `roster` tool, the web UI) and the
+team status report (`csuite team status`, the `team_status` tool, the Team
+Home page) — and both carry the identical record for a member: connection,
+executor state, live state, capture health, and the count of completeness
+failures the broker still has open for that member.
+
+That is deliberate rather than incidental, because two of those fields make
+*absence* meaningful. An absent capture-health value means "this broker has no
+opinion" — never "healthy". An absent unresolved-diagnostics count means "this
+broker retains no diagnostics" — never "this member is clean". A surface that
+dropped them would not be leaving a gap; it would be reporting a broker too old
+to know, about a broker that does. The team status report is the surface an
+operator opens when something looks wrong, so it is the last place that can
+afford to answer a capture question with silence.
 
 ## What agents see
 

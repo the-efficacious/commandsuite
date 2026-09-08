@@ -232,7 +232,7 @@ describe('POST /session/totp', () => {
     expect(second.status).toBe(401);
   });
 
-  it('rejects an unknown/unenrolled slot with the same error shape (no enumeration)', async () => {
+  it('rejects unknown/unenrolled members with the same error shape (no enumeration)', async () => {
     const now = 1_700_000_000_000;
     const { app } = await makeApp({ now: () => now });
 
@@ -265,7 +265,7 @@ describe('POST /session/totp', () => {
     expect(res.status).toBe(400);
   });
 
-  it('locks out a slot after 5 failed attempts and clears on success', async () => {
+  it('locks out a member after 5 failed attempts and clears on success', async () => {
     let clock = 1_700_000_000_000;
     const { app, secret } = await makeApp({ now: () => clock });
 
@@ -407,7 +407,7 @@ describe('session lifecycle', () => {
     expect(afterRes.status).toBe(401);
   });
 
-  it('GET /session returns the current slot/role/expiresAt', async () => {
+  it('GET /session returns the current member/role/expiresAt', async () => {
     const now = 1_700_000_000_000;
     const { app, secret } = await makeApp({ now: () => now });
     const loginRes = await app.request('/session/totp', {

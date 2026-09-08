@@ -52,6 +52,7 @@ import type { GetFieldCipher } from './field-crypto.js';
 import type { Logger } from './logger.js';
 import { SecretsError, validateEnvName } from './secrets.js';
 import { runInTransaction, type SqlDriver, type SqlStatement } from './sql-driver.js';
+import { validateSourceSlug } from './tool-sources/store.js';
 
 /**
  * Variables raise the same error type as secrets. Callers map one error
@@ -399,22 +400,32 @@ class SqliteVariablesStore implements VariablesStore {
 }
 
 /**
- * Slug grammar, matching the secrets store's: lowercase alphanumeric
- * and hyphens, bounded. Slugs are immutable and address the change-event
- * thread, so they may not collide with a secret's.
+ * The variables store's slug check — now genuinely the secrets store's,
+ * which it always claimed to be and never was.
+ *
+ * It delegates to `validateSourceSlug`, wrapping `ToolSourcesError` in
+ * a `SecretsError` exactly as `SecretsStore.create` does, so this store
+ * keeps its own error codes while the grammar comes from one place:
+ * `SLUG_PATTERN` / `SLUG_MAX_LENGTH` in `csuite-sdk/protocol`, which is
+ * also what `CreateVariableRequestSchema` validates against. Until #15
+ * this function allowed 64 characters and `^[a-z0-9][a-z0-9-]*$`,
+ * accepting `git--token` and `git-token-` that the wire rejects, and
+ * the `variables_create` tool description told agents "max 64".
+ *
+ * A slug is unique **within its store, never across stores**. A secret
+ * and a variable may both be called `git-token`, and both create paths
+ * check only their own table behind two per-table unique indexes. The
+ * comment this replaces asserted the opposite, and gave a reason that
+ * was void as well: change events are threaded `secret:<slug>` and
+ * `variable:<slug>`, two distinct prefixes, so there is no collision to
+ * prevent. What IS shared across the pair is the env-name namespace,
+ * enforced by `findEnvRivalAnyone` in `env-namespace.ts` (#136).
  */
 export function validateVariableSlug(slug: string): void {
-  if (typeof slug !== 'string' || slug.length === 0) {
-    throw new SecretsError('invalid_input', 'slug is required');
-  }
-  if (slug.length > 64) {
-    throw new SecretsError('invalid_input', 'slug too long (max 64)');
-  }
-  if (!/^[a-z0-9][a-z0-9-]*$/.test(slug)) {
-    throw new SecretsError(
-      'invalid_input',
-      'slug must be lowercase alphanumeric with hyphens ([a-z0-9][a-z0-9-]*)',
-    );
+  try {
+    validateSourceSlug(slug);
+  } catch (err) {
+    throw new SecretsError('invalid_input', err instanceof Error ? err.message : String(err));
   }
 }
 

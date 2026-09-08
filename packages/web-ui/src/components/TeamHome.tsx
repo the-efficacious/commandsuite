@@ -1,7 +1,7 @@
 /**
- * TeamHome — the landing page at `/`.
+ * TeamHome — Team Home, the landing screen at route kind `home` (`/`).
  *
- * Replaces RosterPanel as the default view. Shows:
+ * Replaces RosterPanel as the default screen. Shows:
  *   - Team name + context (the team's "about"), editable in place
  *     by members holding `team.manage`
  *   - At-a-glance stats (active objectives, blocked, total members)
@@ -10,7 +10,7 @@
  *
  * The team chat + DMs live in the sidebar; TeamHome doesn't duplicate
  * them. The goal here is "what is this team about + who's on it" in a
- * single, scannable view.
+ * single, scannable screen.
  */
 
 import { signal } from '@preact/signals';
@@ -21,7 +21,12 @@ import { getClient } from '../lib/client.js';
 import { initials } from '../lib/initials.js';
 import { instructions, loadInstructions } from '../lib/instructions.js';
 import { objectives } from '../lib/objectives.js';
-import { presenceActivity, presenceCaptureWarning, roster } from '../lib/roster.js';
+import {
+  presenceCaptureWarning,
+  presenceDiagnostics,
+  presenceWorkState,
+  roster,
+} from '../lib/roster.js';
 import { loadTeamStatus, teamStatus } from '../lib/team-status.js';
 import { selectMemberProfile } from '../lib/view.js';
 import { ErrorCallout, Loading, PageHeader, TextMetrics } from './ui/index.js';
@@ -119,16 +124,21 @@ export function TeamHome({ viewer }: TeamHomeProps) {
               ? teamStatus.value?.members.find((row) => row.member.name === t.name)
               : undefined;
             const online = (conn?.connected ?? 0) > 0;
-            // 3-state activity, orthogonal to the connection state above.
-            const activity = presenceActivity(conn);
+            // The roster's projected state of work, orthogonal to the
+            // connection state above.
+            const workState = presenceWorkState(conn);
             // Capture health is orthogonal to BOTH connection and
-            // activity: a member can be online, working, and silently
+            // work state: a member can be online, working, and silently
             // capturing nothing. That combination is exactly the failure
             // this badge exists for, so it renders alongside rather than
-            // instead of the activity state.
+            // instead of the work state.
             const captureWarning = presenceCaptureWarning(conn);
-            const working = activity === 'working';
-            const blocked = activity === 'blocked';
+            // The sibling signal, on the same footing: incidents that
+            // have not cleared, and the health of the store that would
+            // know. Null on the clean path, so the row stays quiet.
+            const diagnostics = presenceDiagnostics(conn);
+            const working = workState === 'working';
+            const blocked = workState === 'blocked';
             const degraded = conn?.executor?.state === 'degraded';
             const isSelf = t.name === viewer;
             const isLast = idx === r.teammates.length - 1;
@@ -185,6 +195,24 @@ export function TeamHome({ viewer }: TeamHomeProps) {
                             title="This member is producing turns whose request/response bodies are not reaching the broker. Their activity is recorded; the verbatim exchanges are not."
                           >
                             NO CAPTURE
+                          </span>
+                        )}
+                        {diagnostics !== null && diagnostics.unresolved > 0 && (
+                          <span
+                            class="badge warn"
+                            style="font-size:9.5px;letter-spacing:.06em"
+                            title="Capture failures recorded for this member that have not cleared. Retention keeps them until the condition recovers."
+                          >
+                            {diagnostics.unresolved} UNRESOLVED
+                          </span>
+                        )}
+                        {diagnostics !== null && diagnostics.retention !== 'healthy' && (
+                          <span
+                            class="badge soft"
+                            style="font-size:9.5px;letter-spacing:.06em"
+                            title="The diagnostics store cannot fully record right now, so an absence of incidents is not evidence there were none."
+                          >
+                            DIAGNOSTICS {diagnostics.retention.toUpperCase()}
                           </span>
                         )}
                         {captureWarning === 'unevaluated' && (

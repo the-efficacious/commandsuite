@@ -20,6 +20,9 @@
  *
  * List signals live in lib/secrets.ts and lib/variables.ts and refresh
  * live on `secret` / `variable` channel events.
+ *
+ * Historical alias: this panel was `SecretsPanel` until #179 widened it
+ * over both stores.
  */
 
 import { signal } from '@preact/signals';

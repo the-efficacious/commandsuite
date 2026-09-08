@@ -1,5 +1,7 @@
 /**
- * Typed route table — URL is the single source of truth for view state.
+ * Typed route table — URL is the single source of truth for what is on
+ * screen. `Route` is canonical; the `View` union in ./view.ts is a
+ * deprecated, lossy projection of it, not a peer.
  *
  * Every in-app navigation goes through `navigate(route)` in ./router.ts,
  * which pushes to the History API and updates the `currentRoute` signal.
@@ -14,6 +16,11 @@
  * Unknown paths resolve to `home` so stale links don't strand users.
  */
 
+/**
+ * Tabs on a MEMBER's profile. `'overview'` here is that member's
+ * default tab and has nothing to do with Team Home (route kind
+ * `home`), which the deprecated `View` shim also spells "overview".
+ */
 export type ProfileTab = 'overview' | 'activity' | 'objectives' | 'files' | 'manage';
 
 export const PROFILE_TABS: readonly ProfileTab[] = [

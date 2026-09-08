@@ -227,7 +227,7 @@ judgement begins.** For `route-walk` on this repository:
 
 | rung | refused by |
 | --- | --- |
-| `route-walk` must pass | the platform (one of six required contexts, across two enforcement surfaces) |
+| `route-walk` must pass | GitHub (one of six required contexts, across two enforcement surfaces) |
 | every route in the router is walked | `contract.mjs`, validating the manifest against the `Route` union in both directions |
 | a clean row asserts view content, not the shell | `contract.mjs` |
 | the marker actually distinguishes that view from the fallback | the walker, against home's real text, before every run |
@@ -237,7 +237,7 @@ Two things follow, and the second is the one worth keeping.
 
 **Coverage lives in files we control, so it is convention unless something
 checks it.** A required check aggregates whatever its workflow says it does;
-delete a job from the list and the platform still sees green, because the
+delete a job from the list and GitHub still sees green, because the
 enforcement was never about that job. Where coverage *is* mechanised — the
 `contract.mjs` rung above — say so, because that is the rung people assume and
 rarely verify.
@@ -256,7 +256,7 @@ Falsified means: shown an input known to be bad, and observed to fail on it —
 **with a control run on the unmodified tree observed to pass first**, so the red
 is the mutation and not the environment.
 
-Required means: the platform refuses the merge if it fails. **Enforcement here
+Required means: GitHub refuses the merge if it fails. **Enforcement here
 comes from two layers, and reading either one alone gives a wrong answer.**
 Measured:
 
@@ -320,7 +320,7 @@ moment you most need it is the one where you feel certain enough not to look.**
 
 ### A workflow that exists is not a gate
 
-**`version-guard` ran honestly for a month while the platform did not care.**
+**`version-guard` ran honestly for a month while GitHub did not care.**
 It reported correctly and nothing was obliged to listen — exactly a green tick
 nobody has to obey. Adding it to the required status checks needed admin rights
 this seat does not hold, so the gap could not be closed by effort here.
@@ -328,7 +328,7 @@ this seat does not hold, so the gap could not be closed by effort here.
 **It was added to the ruleset on 2026-09-01 and is now required** as
 `Refuse version changes outside the Version PR`. **That is the transition this
 section exists to describe: the workflow did not change — its authority did.**
-A merge that fails it is now refused by the platform rather than by whoever
+A merge that fails it is now refused by GitHub rather than by whoever
 happens to read the check.
 
 Stated here rather than left implicit because the guard was built *in response
@@ -372,8 +372,8 @@ release is *"a commit on main left a version npm doesn't have yet"* — **not a
 human signature.**
 
 **Since 2026-09-01 that trigger is guarded.** `version-guard` is a required
-context, so **an ordinary PR that edited a version field is refused by the
-platform**, not merely by whoever reads the check. The sentence this section
+context, so **an ordinary PR that edited a version field is refused by
+GitHub**, not merely by whoever reads the check. The sentence this section
 used to carry — *an ordinary version-edit PR, reviewed and merged normally,
 would publish on merge* — **is no longer true.**
 

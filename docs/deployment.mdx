@@ -99,7 +99,7 @@ command line.
 | `CSUITE_RUNNER` | `builder` | Runner member enrolled on first start. |
 | `CSUITE_RUNNER_VERB` | `claude` | Which runner's preflight is proved: `claude`, `codex`, or `stub`. |
 | `CSUITE_LOG_LEVEL` | `info` | Broker log threshold. |
-| `CSUITE_START_RUNNER` | `0` | `1` starts the runner in-container — honoured for `stub` only; model verbs are refused (exit 64). |
+| `CSUITE_START_RUNNER` | `0` | `1` starts the runner in-container — honoured for `stub` only; model verbs are refused ([exit 64](/docs/reference/cli#exit-codes)). |
 
 Names and team are read only on the first start; later changes do
 nothing until the volume is recreated.

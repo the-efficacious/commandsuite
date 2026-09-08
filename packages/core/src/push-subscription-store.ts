@@ -2,10 +2,11 @@
  * Push subscription store — Web Push capability records.
  *
  * A push subscription is a capability URL + crypto keys the browser
- * hands the server after `pushManager.subscribe()`. Treat the endpoint
- * like a session token: anyone holding it can push to the device. The
- * store holds one row per (memberName, endpoint) pair — the same
- * member can have many devices enrolled.
+ * hands the server after `pushManager.subscribe()`. Handle the endpoint
+ * with the care a bearer credential deserves: anyone holding it can push
+ * to the device. It is not a web session, and nothing here is scoped to
+ * one — the store holds one row per (memberName, endpoint) pair, so the
+ * same member can have many devices enrolled.
  *
  * Dead-subscription lifecycle: when the web-push dispatch layer
  * observes a 404 or 410 from the push service, it calls
@@ -56,7 +57,7 @@ export interface PushSubscriptionStore {
 
   /**
    * Delete a subscription the given member owns. Scoped by name so a
-   * session can't delete other members' subscriptions even with a
+   * caller can't delete other members' subscriptions even with a
    * guessed id. No-op if the row doesn't exist or belongs to another
    * member.
    */

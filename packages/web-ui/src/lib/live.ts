@@ -9,7 +9,7 @@
  * Reconnect: WebSocket does NOT auto-reconnect the way EventSource
  * did, so we roll our own — exponential backoff capped at 30s, reset
  * on each successful open. On every (re)connect we pull
- * `/history?limit=50` to backfill messages delivered during any gap.
+ * `/history?limit=50` to hydrate messages delivered during any gap.
  * `appendMessages` de-dupes by id so the overlap with already-present
  * messages is harmless.
  *
@@ -36,12 +36,12 @@ import { loadVariables } from './variables.js';
 
 export const streamConnected = signal(false);
 export const streamEverConnected = signal(false);
-export const streamBackfillError = signal<string | null>(null);
+export const streamHydrateError = signal<string | null>(null);
 
 export interface StartSubscribeOptions {
   /** Name to subscribe as (= the current member's name). */
   name: string;
-  /** Max history entries to backfill on first open + every reconnect. */
+  /** Max history entries to hydrate on first open + every reconnect. */
   historyLimit?: number;
   /** Optional callback for errors you want to surface in the UI. */
   onError?: (err: unknown) => void;
@@ -58,7 +58,7 @@ const MAX_RETRY_MS = 30_000;
 export function startSubscribe(options: StartSubscribeOptions): () => void {
   const { name, historyLimit = 50, onError } = options;
   const url = buildWsUrl(
-    `/subscribe?name=${encodeURIComponent(name)}&clientKind=browser&clientVersion=${encodeURIComponent(packageJson.version)}`,
+    `/subscribe?name=${encodeURIComponent(name)}&client_kind=browser&client_version=${encodeURIComponent(packageJson.version)}`,
   );
 
   let ws: WebSocket | null = null;
@@ -66,14 +66,14 @@ export function startSubscribe(options: StartSubscribeOptions): () => void {
   let retryMs = INITIAL_RETRY_MS;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-  const backfill = async (): Promise<void> => {
+  const hydrate = async (): Promise<void> => {
     try {
       const history = await getClient().history({ limit: historyLimit });
       appendMessages(name, history);
-      streamBackfillError.value = null;
+      streamHydrateError.value = null;
     } catch (err) {
-      streamBackfillError.value =
-        err instanceof Error && err.message ? err.message : 'history backfill failed';
+      streamHydrateError.value =
+        err instanceof Error && err.message ? err.message : 'history hydration failed';
       onError?.(err);
     }
   };
@@ -101,9 +101,9 @@ export function startSubscribe(options: StartSubscribeOptions): () => void {
       streamConnected.value = true;
       streamEverConnected.value = true;
       retryMs = INITIAL_RETRY_MS;
-      // Every successful connect (initial or reconnect) backfills
+      // Every successful connect (initial or reconnect) hydrates
       // so we close any gap the previous connection dropped.
-      void backfill();
+      void hydrate();
     });
 
     ws.addEventListener('message', (event: MessageEvent) => {
@@ -113,7 +113,7 @@ export function startSubscribe(options: StartSubscribeOptions): () => void {
         const msg = MessageSchema.parse(JSON.parse(raw));
         appendMessages(name, [msg]);
         // Foreground in-app toast — gated inside `notifyNewMessage`
-        // so backfill paths (which call appendMessages directly) stay
+        // so hydration paths (which call appendMessages directly) stay
         // silent. Only live WS frames reach here.
         notifyNewMessage(msg);
         // If this frame carried an objective event, refresh the
@@ -217,5 +217,5 @@ function buildWsUrl(path: string): string {
 export function __resetLiveForTests(): void {
   streamConnected.value = false;
   streamEverConnected.value = false;
-  streamBackfillError.value = null;
+  streamHydrateError.value = null;
 }

@@ -1,5 +1,5 @@
 /**
- * Tool-sources signal — the registry of platform-defined external
+ * Tool-sources signal — the registry of admin-defined external
  * tools, mirroring the server's `GET /tool-sources` projection.
  *
  * Used by:

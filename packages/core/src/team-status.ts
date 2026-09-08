@@ -1,10 +1,14 @@
 import type { TeamStatusObjective, TeamStatusResponse } from 'csuite-sdk/types';
 import type { ActivityStore } from './activity-store.js';
 import type { Broker } from './broker.js';
+import type { CaptureHealthStore } from './capture-health.js';
+import type { DiagnosticStore } from './diagnostics.js';
 import type { EventLog } from './event-log.js';
 import type { MemberStore } from './members-domain.js';
 import { teammatesFromMembers } from './members-domain.js';
 import type { ObjectivesStore } from './objectives.js';
+import { enrichPresence } from './presence-enrichment.js';
+import type { WorkStateTracker } from './work-state.js';
 
 export interface ComposeTeamStatusOptions {
   broker: Broker;
@@ -13,6 +17,22 @@ export interface ComposeTeamStatusOptions {
   objectives?: ObjectivesStore;
   eventLog: EventLog;
   activityStore?: ActivityStore;
+  /**
+   * Per-member work-state reports. REQUIRED, and required on purpose:
+   * `TeamStatusMember.presence` is the same `Presence` `GET /roster`
+   * publishes, so it owes the same population. Leaving this optional is
+   * how the two projections drifted — a caller that simply forgot it
+   * would emit a `Presence` whose absent `activity` reads as "idle" for
+   * a member the runner has reported blocked.
+   */
+  workState: Pick<WorkStateTracker, 'getWorkState'>;
+  /**
+   * Capture-health detector. Optional exactly as it is on the broker:
+   * absent means this broker has no opinion, never "healthy".
+   */
+  captureHealth?: CaptureHealthStore;
+  /** Retained completeness diagnostics. Same absence rule as `captureHealth`. */
+  diagnostics?: DiagnosticStore;
   generatedAt: number;
   stalledAfterMs: number | null;
 }
@@ -21,10 +41,20 @@ export interface ComposeTeamStatusOptions {
 export async function composeTeamStatus(
   options: ComposeTeamStatusOptions,
 ): Promise<TeamStatusResponse> {
+  // Enriched here, not forwarded raw: `enrichPresence` is the one
+  // definition of the shape, and `GET /roster` calls the same function
+  // over the same registry records.
   const presences = new Map(
-    options.broker
-      .listPresences(options.brokerVersion)
-      .map((presence) => [presence.name, presence]),
+    options.broker.listPresences(options.brokerVersion).map((presence) => [
+      presence.name,
+      enrichPresence(presence, {
+        workState: options.workState,
+        members: options.members,
+        ...(options.captureHealth !== undefined ? { captureHealth: options.captureHealth } : {}),
+        ...(options.diagnostics !== undefined ? { diagnostics: options.diagnostics } : {}),
+        now: options.generatedAt,
+      }),
+    ]),
   );
   const open = [
     ...(options.objectives?.list({ status: 'active' }) ?? []),
@@ -64,6 +94,9 @@ export async function composeTeamStatus(
             };
           }),
       );
+      // Already enriched — `enrichPresence` re-read the role from the
+      // member store, so this block cannot disagree with `member.role`
+      // beside it, and it carries the same axes the roster publishes.
       const presence = presences.get(member.name) ?? null;
       const objectiveStalled = activeObjectives.some((objective) => objective.stalled);
       const executorDegraded = presence?.executor?.state === 'degraded';

@@ -41,7 +41,7 @@ import {
   messagesByThread,
 } from '../../lib/messages.js';
 import { objectives } from '../../lib/objectives.js';
-import { memberKind, presenceActivity, roster } from '../../lib/roster.js';
+import { memberKind, presenceWorkState, roster } from '../../lib/roster.js';
 import { currentTeam } from '../../lib/team.js';
 import { lastReadByThread, unreadCount } from '../../lib/unread.js';
 import {
@@ -57,7 +57,7 @@ import {
   selectMembers,
   selectNotifications,
   selectObjectivesList,
-  selectOverview,
+  selectTeamHome,
   selectToolSources,
   view,
 } from '../../lib/view.js';
@@ -91,15 +91,15 @@ export function NavColumn({ viewer }: NavColumnProps) {
   const teammates = teammatesSource.filter((t) => t.name !== viewer);
 
   const onlineByName = new Map<string, number>();
-  // Live 3-state activity, orthogonal to the connection count above.
+  // The roster's projected state of work, orthogonal to the connection count above.
   // Only non-idle states are stored; a missing entry reads as idle.
-  const activityByName = new Map<string, WorkState>();
+  const workStateByName = new Map<string, WorkState>();
   const degradedByName = new Map<string, string>();
   if (r) {
     for (const a of r.connected) {
       onlineByName.set(a.name, a.connected);
-      const state = presenceActivity(a);
-      if (state !== 'idle') activityByName.set(a.name, state);
+      const state = presenceWorkState(a);
+      if (state !== 'idle') workStateByName.set(a.name, state);
       if (a.executor?.state === 'degraded') {
         degradedByName.set(a.name, a.executor.reason?.code ?? 'unknown');
       }
@@ -150,7 +150,7 @@ export function NavColumn({ viewer }: NavColumnProps) {
           label="Home"
           glyph={<Home size={15} aria-hidden="true" />}
           active={homeActive}
-          onClick={selectOverview}
+          onClick={selectTeamHome}
           ariaLabel="Open team home"
         />
         <NavItem
@@ -213,7 +213,7 @@ export function NavColumn({ viewer }: NavColumnProps) {
         )}
         {canManageNotifications && (
           <NavItem
-            label="Notifications"
+            label="External notifications"
             glyph={<Webhook size={15} aria-hidden="true" />}
             active={notificationsActive}
             onClick={selectNotifications}
@@ -282,13 +282,13 @@ export function NavColumn({ viewer }: NavColumnProps) {
         {teammates.map((t) => {
           const connected = onlineByName.get(t.name) ?? 0;
           const online = connected > 0;
-          const activity = activityByName.get(t.name) ?? 'idle';
-          const working = activity === 'working';
-          const blocked = activity === 'blocked';
+          const workState = workStateByName.get(t.name) ?? 'idle';
+          const working = workState === 'working';
+          const blocked = workState === 'blocked';
           const degraded = degradedByName.get(t.name);
           const active = v.kind === 'thread' && v.key === dmThreadKey(t.name);
           const unread = unreadCount(dmThreadKey(t.name), viewer, lastRead, msgMap);
-          // Activity label (working / needs input) takes precedence over
+          // Work-state label (working / needs input) takes precedence over
           // the connection label (online / offline) in the a11y text — a
           // working or blocked member is online by definition.
           const stateLabel = degraded
@@ -324,7 +324,7 @@ export function NavColumn({ viewer }: NavColumnProps) {
                 {working && !degraded && (
                   // Working spinner — the agent is actively processing a
                   // turn (model generation and/or tool execution). Driven
-                  // by `activity === 'working'` on the roster.
+                  // by `workState === 'working'` on the roster.
                   <span
                     class="spinner sm"
                     aria-label="working"
@@ -394,7 +394,7 @@ function TeamHeader({ viewer }: { viewer: string }) {
   return (
     <button
       type="button"
-      onClick={selectOverview}
+      onClick={selectTeamHome}
       aria-label={`${team.name} home`}
       class="w-full flex items-center gap-2"
       style="padding:12px 14px;border-bottom:1px solid var(--ef-border);background:transparent;border:none;border-bottom:1px solid var(--ef-border);text-align:left;cursor:pointer"

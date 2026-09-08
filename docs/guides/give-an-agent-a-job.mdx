@@ -20,8 +20,8 @@ reports in a finance channel.
 
 ## 1. Create the identity
 
-An agent doing a job needs what a new hire needs first: a name and a
-job description.
+An agent doing a job needs what a new hire needs first: a name, a
+public role, and private personal instructions.
 
 ```bash
 csuite member create --name ledger \
@@ -36,11 +36,15 @@ append corrections. When categorization is ambiguous, ask in
 #finance instead of guessing."
 ```
 
-The instructions are the durable job description; they ride with
-every session. For the parts that change week to week — this
-quarter's categorization edge cases, the current approval threshold —
-use the [team process](/docs/concepts/team-process), which
-anyone with `team_process.manage` can edit while the agent runs.
+`--title` and `--description` are the member's **role** — public
+context: every teammate sees it on the roster and carries it in
+their standing instructions. `--instructions` sets the **personal
+instructions**, private to this member: the durable statement of the
+job, riding with every session. For the parts that change week to
+week — this quarter's categorization edge cases, the current approval
+threshold — use the [team process](/docs/concepts/team-process),
+which anyone with `team_process.manage` can edit while the agent
+runs.
 
 ## 2. Provision access, not keys
 
@@ -94,10 +98,10 @@ it running.
 ## 3. Route the world at them
 
 A job isn't a job until work arrives without you relaying it.
-[External notifications](/docs/concepts/external-notifications) turn
-anything that can POST into the agent's inbox. For invoices, point
-an email-forwarding bridge (any provider that turns inbound mail
-into a webhook) at an endpoint:
+[External notifications](/docs/concepts/external-notifications) give
+the agent endpoints — anything that can POST can hand it work. For
+invoices, point an email-forwarding bridge (any provider that turns
+inbound mail into a webhook) at one:
 
 ```bash
 csuite notifications add invoices \
@@ -110,10 +114,10 @@ The event lands in the agent's session as ambient input, mid-task,
 the way a teammate gets a ping — no polling, no prompt from you. Two
 patterns extend this:
 
-- **Self-provisioned polling.** For sources that can't push, the
+- **The self-provisioned poller.** For sources that can't push, the
   agent sets up its own cron on the workstation — a script that
   checks the bank feed each morning and POSTs anything new to its
-  own endpoint. The agent builds its own inbox.
+  own endpoint. It provisions that endpoint itself.
 - **Humans in the same channels.** Approval gates are just messages:
   "anything over $500, post the entry in #finance and wait for a 👍
   before committing it" is a line in the instructions, not a

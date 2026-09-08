@@ -30,8 +30,12 @@ const PARALLEL_SENDS = 20;
  * push event. Kept small — FCM enforces a 4KB encrypted payload cap
  * and the SW re-fetches full message content from the broker if it
  * needs more than this.
+ *
+ * Named `WebPushPayload`, not `PushPayload`: `PushPayload` is the SDK's
+ * `POST /push` chat-send body, a different shape on a different hop.
+ * This one never leaves the broker→browser Web Push leg.
  */
-export interface PushPayload {
+export interface WebPushPayload {
   title: string;
   body: string;
   tag: string;
@@ -86,8 +90,8 @@ export async function dispatchPush(message: Message, deps: DispatchDeps): Promis
   await Promise.allSettled(tasks);
 }
 
-function buildPayload(message: Message): PushPayload {
-  const severity: PushPayload['severity'] =
+function buildPayload(message: Message): WebPushPayload {
+  const severity: WebPushPayload['severity'] =
     message.level === 'warning' || message.level === 'error' || message.level === 'critical'
       ? 'high'
       : 'normal';
@@ -112,7 +116,7 @@ function truncate(text: string, max: number): string {
 
 async function sendOne(
   sub: PushSubscriptionRow,
-  payload: PushPayload,
+  payload: WebPushPayload,
   sender: PushSender,
   store: PushSubscriptionStore,
   logger: Logger,

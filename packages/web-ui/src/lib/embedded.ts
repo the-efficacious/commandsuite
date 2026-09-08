@@ -1,7 +1,7 @@
 /**
  * Embedded-shell signals.
  *
- * When the host (e.g. the multi-team platform) provides outer chrome
+ * When the host (e.g. the platform's web app) provides outer chrome
  * around `<TeamShell>` — its own top-level rail and account anchor —
  * the shell flips into "embedded" mode and drops the chrome it would
  * otherwise own (Header's profile button, NavColumn's user chip), so

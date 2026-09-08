@@ -103,6 +103,9 @@ to hand — a secret's value is write-only, so nothing on any surface
 can read it back to carry it across.
 
 Delivery works exactly like secrets: enabled and bound (or open to
-all members), resolved once at session start. Changes take effect on
-each member's next runner start, and every change notifies the bound
-members saying exactly that.
+all members), resolved at session start and again whenever the broker
+reports an environment change. Setting a value, binding a member, or
+unbinding one makes a running runner re-resolve and restart its agent
+cold at its next idle boundary; metadata edits and deletions take
+effect on the member's next runner start instead. Every change
+notifies the bound members saying which one applies.

@@ -9,8 +9,11 @@
  *   │   Bearer token        [Rotate]              │
  *   │   TOTP                [Re-enroll]           │
  *   ├─────────────────────────────────────────────┤
- *   │ Notifications                                │
+ *   │ Push notifications                           │
  *   │   Push on this device [toggle]              │
+ *   ├─────────────────────────────────────────────┤
+ *   │ Appearance                                   │
+ *   │   Theme               [light/dark/system]   │
  *   ├─────────────────────────────────────────────┤
  *   │ Profile                                      │
  *   │   → View public profile                      │
@@ -33,7 +36,7 @@ import { selectMemberProfile } from '../lib/view.js';
 import { AppearancePanel } from './AppearancePanel.js';
 import { ArrowRight } from './icons/index.js';
 import { type Reveal, RevealBanner } from './members/Reveal.js';
-import { NotificationToggle } from './NotificationToggle.js';
+import { PushToggle } from './PushToggle.js';
 import { PageHeader } from './ui/index.js';
 
 export interface AccountPanelProps {
@@ -141,12 +144,12 @@ export function AccountPanel({ viewer }: AccountPanelProps) {
 
       <section class="card" style="padding:16px;margin-bottom:14px">
         <div class="eyebrow" style="margin-bottom:12px">
-          Notifications
+          Push notifications
         </div>
         <Row
           title="Push on this device"
           description="Toggle browser push notifications for this device. You can enable or disable independently per browser."
-          action={<NotificationToggle />}
+          action={<PushToggle />}
         />
       </section>
 

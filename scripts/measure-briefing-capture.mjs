@@ -15,7 +15,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { gunzipSync } from 'node:zlib';
-import { briefingCaptureExemptions } from '../apps/server/dist/run.js';
+import { instructionCaptureExemptions } from '../apps/server/dist/run.js';
 import {
   anthropicToGenAi,
   clearRegisteredSecretValues,
@@ -58,8 +58,13 @@ const input = {
     return { name: member.name, role: member.role, permissions: member.permissions };
   }),
   openObjectives: [],
+  // Required, and `null` is a real answer: `instructionBlocks` reads
+  // this field off the raw input with a strict null test, so a literal
+  // that omits it throws rather than composing. The probe measures the
+  // composed prose; the team process rides in its own field.
+  teamProcess: null,
 };
-const exemptions = briefingCaptureExemptions(input);
+const exemptions = instructionCaptureExemptions(input);
 const targetBlock = exemptions.find((block) => block.includes(registeredLiteral));
 if (!targetBlock) {
   throw new Error(`no composed briefing block contains the requested registered literal`);

@@ -73,7 +73,7 @@ type PanelRow =
       calls: GenAiInferenceRecord[];
       match: TurnJoin<GenAiInferenceRecord>['match'];
     }
-  | { kind: 'sidecar'; ts: number; record: GenAiInferenceRecord };
+  | { kind: 'orphan-call'; ts: number; record: GenAiInferenceRecord };
 
 const panelRows = signal<PanelRow[]>([]);
 const loading = signal(false);
@@ -166,7 +166,7 @@ async function loadExchanges(objective: Objective): Promise<void> {
           match: t.match,
         }),
       ),
-      ...joined.orphans.map((r): PanelRow => ({ kind: 'sidecar', ts: r.ts, record: r })),
+      ...joined.orphans.map((r): PanelRow => ({ kind: 'orphan-call', ts: r.ts, record: r })),
     ];
     merged.sort((a, b) => a.ts - b.ts);
     panelRows.value = merged;
@@ -194,7 +194,11 @@ export function TracePanel({ objective }: TracePanelProps): JSX.Element {
 
   const turnCount = list.filter((r) => r.kind === 'turn').length;
   const enrichedCount = list.filter((r) => r.kind === 'turn' && r.calls.length > 0).length;
-  const sidecarCount = list.length - turnCount;
+  const orphanCallCount = list.length - turnCount;
+  const orphanCallNote =
+    orphanCallCount > 0
+      ? ` · ${orphanCallCount} orphan call${orphanCallCount === 1 ? '' : 's'}`
+      : '';
   const header = (
     <button
       type="button"
@@ -207,7 +211,7 @@ export function TracePanel({ objective }: TracePanelProps): JSX.Element {
       <span class="eyebrow">
         LLM turns ({turnCount}
         {enrichedCount > 0 ? ` · ${enrichedCount} with full request` : ''}
-        {sidecarCount > 0 ? ` · ${sidecarCount} sidecar` : ''})
+        {orphanCallNote})
       </span>
       <span style="font-family:var(--ef-font-mono);font-size:14px;color:var(--ef-text-muted)">
         {isOpen ? '−' : '+'}
@@ -257,7 +261,7 @@ export function TracePanel({ objective }: TracePanelProps): JSX.Element {
                 match={row.match}
               />
             ) : (
-              <SidecarRow key={`s${row.record.id}`} record={row.record} />
+              <OrphanCallRow key={`s${row.record.id}`} record={row.record} />
             ),
           )}
         </div>
@@ -296,12 +300,12 @@ function TurnRow({
 }
 
 /**
- * A model call with no turn marker — subagent work, a server-tool
- * sidecar (web search), an away summary. First-class forensic row:
- * the record IS the evidence here (there's no marker to show), so
- * its output renders eagerly alongside the request layers.
+ * An orphan call — a model call with no turn marker: subagent work, a
+ * server-tool sidecar (web search), an away summary. First-class
+ * forensic row: the record IS the evidence here (there's no marker to
+ * show), so its output renders eagerly alongside the request layers.
  */
-function SidecarRow({ record }: { record: GenAiInferenceRecord }): JSX.Element {
+function OrphanCallRow({ record }: { record: GenAiInferenceRecord }): JSX.Element {
   const u = record.usage;
   return (
     <div class="card" style="padding:12px;border-left:2px dashed var(--ef-border-strong)">

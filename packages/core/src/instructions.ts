@@ -48,8 +48,9 @@ export interface ComposeInstructionsInput {
    * build a `ComposeInstructionsInput`: one passes the canonical object
    * and two construct a literal by hand. An optional field is carried
    * by the first and silently dropped by the other two — and one of
-   * those is the watchdog's own entry point, where dropping it means
-   * the projection never looks for the document at all.
+   * those is `exemptionsFor` in `app.ts`, where dropping it means the
+   * captured copy of the document is redacted, never matches the sent
+   * text, and is resent every turn.
    *
    * Requiring it makes the partial literal fail to compile. `null` is
    * a real answer someone has to write rather than a lookup they have
@@ -202,8 +203,8 @@ export async function composedInstructionsSha256(input: ComposeInstructionsInput
  *
  * Its membership test is that it was SENT: the input carries a
  * document with text. The runner renders that text verbatim into the
- * agent's fixed context, so the same string is what the watchdog then
- * looks for in the captured turn.
+ * agent's fixed context, so the same string is what the redaction
+ * exemption then looks for in the captured turn.
  */
 export function instructionBlocks(
   input: ComposeInstructionsInput,
@@ -277,7 +278,7 @@ function composePrompt(
     `── Objectives ──`,
     `An objective is assigned work with a definition of done: its \`outcome\` says what must be true when you finish. Assignments arrive as channel events (kind="objective", event="assigned") carrying the id, title, outcome and originator; later lifecycle events land on the same channel.`,
     ``,
-    `  - \`objectives_list\` — your open plate, live. Call it after a restart or compaction rather than trusting memory.`,
+    `  - \`objectives_list\` — every open objective you are RELATED to (assigned to you, originated by you, or watched), live. Call it after a restart or compaction rather than trusting memory; \`assignee\` narrows it to your own plate.`,
     `  - \`objectives_view\` <id> — full detail and event history.`,
     `  - \`objectives_discuss\` <id> — progress notes, questions, findings. The originator, watchers, and members holding members.manage see every post.`,
     `  - \`objectives_update\` <id> — status (blocked/active, a short blockReason helps), assignee, watchers.`,

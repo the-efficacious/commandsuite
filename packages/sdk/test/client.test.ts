@@ -405,6 +405,44 @@ describe('Client', () => {
   });
 });
 
+describe('objectives: reassign is its own route', () => {
+  const OBJECTIVE = {
+    id: 'obj-1',
+    title: 'Ship the thing',
+    body: '',
+    outcome: 'PR merged to main',
+    status: 'active',
+    assignee: 'dave',
+    originator: 'alice',
+    watchers: ['carol'],
+    createdAt: 1,
+    updatedAt: 2,
+    completedAt: null,
+    result: null,
+    blockReason: null,
+    attachments: [],
+  };
+
+  it('POSTs the whole handover to /objectives/:id/reassign', async () => {
+    let seen: { method?: string; path?: string; body?: string } = {};
+    const client = new Client({
+      url: 'http://example.test:8717',
+      token: 'test-secret',
+      fetch: makeFakeFetch((url, init) => {
+        seen = { method: init.method, path: url.pathname, body: String(init.body) };
+        return jsonResponse(OBJECTIVE);
+      }),
+    });
+
+    const objective = await client.reassignObjective('obj-1', { to: 'dave', note: 'handover' });
+
+    expect(seen.method).toBe('POST');
+    expect(seen.path).toBe('/objectives/obj-1/reassign');
+    expect(JSON.parse(seen.body ?? '')).toEqual({ to: 'dave', note: 'handover' });
+    expect(objective).toEqual(OBJECTIVE);
+  });
+});
+
 // ─── the edit API and the record cannot name different fields ────────
 //
 // WHY THIS IS IN THE SDK AND NOT THE STORE. The store's types come
@@ -527,5 +565,65 @@ describe('filesystem streaming transport', () => {
     });
     expect(seen?.body).toBe(source);
     expect(seen?.duplex).toBe('half');
+  });
+});
+
+/**
+ * The client-side half of the work-state rename.
+ *
+ * The wire compat window lives on the broker — it serves both paths.
+ * The CLIENT deliberately does NOT: `setWorkState` and the deprecated
+ * `setActivity` both target `/presence/work-state`, so upgrading a
+ * caller is a rename and nothing else, and no first-party caller can
+ * quietly keep the old ROUTE alive by keeping the old METHOD.
+ */
+describe('Client work-state reporting', () => {
+  function capture(): { calls: { path: string; body: unknown }[]; client: Client } {
+    const calls: { path: string; body: unknown }[] = [];
+    const client = new Client({
+      url: 'http://example.test:8717',
+      token: 'x',
+      WebSocket: asWs(),
+      fetch: makeFakeFetch((url, init) => {
+        calls.push({
+          path: url.pathname,
+          body: typeof init.body === 'string' ? JSON.parse(init.body) : init.body,
+        });
+        return new Response(null, { status: 204 });
+      }),
+    });
+    return { calls, client };
+  }
+
+  it('setWorkState POSTs the report to /presence/work-state', async () => {
+    const { calls, client } = capture();
+    await client.setWorkState({ state: 'blocked' });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.path).toBe('/presence/work-state');
+    // The body is the assertion that the call carried the report, not
+    // merely that a request was made to the right path.
+    expect(calls[0]?.body).toEqual({ state: 'blocked' });
+  });
+
+  it('the deprecated setActivity targets the SAME new path, not the old one', async () => {
+    const { calls, client } = capture();
+    await client.setActivity({ state: 'working' });
+    expect(calls).toHaveLength(1);
+    // Not `/presence/activity`. The alias exists so a caller's TYPE
+    // keeps compiling, not so its TRAFFIC keeps hitting a route that
+    // is going away — a client that kept using the old path would be
+    // invisible to anyone auditing the deprecation warnings.
+    expect(calls[0]?.path).toBe('/presence/work-state');
+    expect(calls[0]?.body).toEqual({ state: 'working' });
+  });
+
+  it('validates the report before sending, on both methods', async () => {
+    const { calls, client } = capture();
+    // `spinning` is not a WorkState. Both entry points parse, so the
+    // deprecated one cannot be used to smuggle an invalid body past
+    // the schema the new one enforces.
+    await expect(client.setWorkState({ state: 'spinning' } as never)).rejects.toThrow();
+    await expect(client.setActivity({ state: 'spinning' } as never)).rejects.toThrow();
+    expect(calls).toEqual([]);
   });
 });

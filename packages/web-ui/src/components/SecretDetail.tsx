@@ -247,7 +247,10 @@ function ValueSection({ secret }: { secret: SecretSummary }) {
           {busy === 'value-set' ? 'Saving…' : secret.hasValue ? 'Replace' : 'Set value'}
         </button>
       </form>
-      <div class="env-hint">Delivered as ${secret.envName} on the member's next runner start.</div>
+      <div class="env-hint">
+        Delivered as ${secret.envName}. Setting a value reaches a running member at its runner's
+        next idle boundary; metadata edits and deletion apply on its next start.
+      </div>
       {/*
         There is no convert-to-variable action, and the reason is this
         section: the value is write-only, so nothing in this UI — or on

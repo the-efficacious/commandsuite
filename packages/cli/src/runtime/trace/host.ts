@@ -7,11 +7,11 @@
  *
  *   - the batched `ActivityUploader` (ships `ActivityEvent`s to the
  *     broker in real time),
- *   - the `busy` signal (driven by Claude Code hooks and the codex
+ *   - the `workState` signal (driven by Claude Code hooks and the codex
  *     app-server item stream),
  *   - the loopback hook server (Claude Code POSTs PreToolUse /
  *     PostToolUse / UserPromptSubmit / Stop / Notification here — it
- *     drives `busy` and surfaces the `transcript_path`; PRESENCE-ONLY,
+ *     drives `workState` and surfaces the `transcript_path`; PRESENCE-ONLY,
  *     no content),
  *   - the `TranscriptReader` (tails the Claude Code session transcript
  *     the hooks point us at and emits the CONTENT — `llm_exchange`
@@ -35,8 +35,10 @@
  * directory and emit a `body_ref` file path on each OTEL log record. A
  * runner-local relay resolves those refs and forwards inline bodies to the
  * broker's authoritative full-context gen_ai inference layer.
- * For codex the runner's app-server adapter is the source (no
- * transcript). Either way the sink is identical.
+ * For codex the shape is the same: the `RolloutReader` tails codex's
+ * own rollout JSONL as the SOLE content source, and the app-server
+ * stream stays presence/work-state/printer-only. Either way the sink is
+ * identical.
  *
  * Everything is loopback-only (the hook server) and scoped to the
  * runner's lifetime. On `close()` the uploader drains (best-effort),
@@ -55,10 +57,10 @@ import type { Client as BrokerClient, CodexGenaiInferenceUpload } from 'csuite-s
 import type { ActivityEvent } from 'csuite-sdk/types';
 import { sweepStaleSessionLogs } from '../session-log.js';
 import { ActivityUploader, type ActivityUploaderStats } from './activity-uploader.js';
-import { type BusySignal, createBusySignal } from './busy.js';
 import { type HookServer, startHookServer } from './hook-server.js';
 import { type OtlpRelay, startOtlpRelay, sweepQuarantine } from './otlp-relay.js';
 import { attachTranscriptReader, type TranscriptReader } from './transcript-reader.js';
+import { createWorkStateSignal, type WorkStateSignal } from './work-state.js';
 
 const CAPTURE_COMPLETE_MARKER = '.csuite-capture-complete';
 
@@ -78,13 +80,14 @@ export interface CaptureHostOptions {
    */
   token: string;
   /**
-   * Relayed from the hook server's SessionStart route with the hook's
-   * `source` (`startup` / `resume` / `clear` / `compact`). The runner
-   * uses compact/clear as the "context fell off" signal to push a
+   * Relayed from the hook server's SessionStart route with that
+   * session's ORIGIN (`startup` / `resume` / `clear` / `compact`; the
+   * hook payload spells the field `source`). The runner uses
+   * compact/clear as the "context fell off" signal to push a
    * `context_refresh` re-brief. Optional; claude only (codex has
    * no hook server).
    */
-  onSessionStart?: (source: string) => void;
+  onSessionStart?: (origin: string) => void;
   onUnauthorized?: () => void;
   logger?: Logger;
 }
@@ -97,13 +100,13 @@ export interface CaptureHost {
    * runner subscribes and reports the boolean state to the broker so
    * the web UI can render a spinner next to the agent's name.
    */
-  readonly busy: BusySignal;
+  readonly workState: WorkStateSignal;
   /**
    * Loopback HTTP endpoint URL that Claude Code hooks POST to. The
-   * `claude` adapter writes it into `.claude/settings.json` as a
-   * `type: "http"` hook target so lifecycle events drive `busy` and
-   * surface the `transcript_path` that arms the transcript reader.
-   * Presence-only — the hooks emit no content.
+   * `claude` adapter passes it to `buildHookForwarders`, whose
+   * in-process SDK hook callbacks POST here, so lifecycle events drive
+   * `workState` and surface the `transcript_path` that arms the transcript
+   * reader. Presence-only — the hooks emit no content.
    */
   readonly hookEndpointUrl: string;
   /**
@@ -277,7 +280,7 @@ export async function startCaptureHost(options: CaptureHostOptions): Promise<Cap
   // adapter bumps `turn_active` (turn/started·completed) and
   // `tool_inflight` (item stream). The runner reports the derived
   // idle/working/blocked state to the broker.
-  const busy = createBusySignal({ logger: log.child('activity') });
+  const workState = createWorkStateSignal({ logger: log.child('work-state') });
 
   // Latest transcript path learned from a Claude Code hook body. Null
   // until the first hook fires; the transcript reader polls `getPath`
@@ -289,13 +292,13 @@ export async function startCaptureHost(options: CaptureHostOptions): Promise<Cap
   let transcriptPath: string | null = null;
 
   // Loopback HTTP endpoint for Claude Code hook events. PRESENCE-ONLY:
-  // it drives the busy signal (tool/turn windows, blocked) and surfaces
+  // it drives the work-state signal (tool/turn windows, blocked) and surfaces
   // the `transcript_path`. It emits NO content — the transcript reader
   // is the single source of `llm_exchange` / `tool_action` /
-  // `user_prompt` now. For codex this is unused — codex feeds busy +
+  // `user_prompt` now. For codex this is unused — codex feeds work state +
   // content via the app-server stream.
   const hookServer: HookServer = await startHookServer({
-    busy,
+    workState,
     logger: log.child('hook-server'),
     onTranscriptPath: (path) => {
       transcriptPath = path;
@@ -324,7 +327,7 @@ export async function startCaptureHost(options: CaptureHostOptions): Promise<Cap
   let closed = false;
 
   return {
-    busy,
+    workState,
     hookEndpointUrl: hookServer.url,
     enqueue(event) {
       uploader.enqueue(event);
@@ -462,7 +465,7 @@ export async function startCaptureHost(options: CaptureHostOptions): Promise<Cap
       // Removing it would destroy an unacknowledged tail; a future host
       // start sweeps only explicitly completed empty spools.
       //
-      // Final safety net for the busy signal. Sub-systems above (hook
+      // Final safety net for the work-state signal. Sub-systems above (hook
       // server drain, codex sniff drain at its own teardown) should
       // have drained every handle they own. If anything slipped
       // through — a dropped item/completed notification, a hook event
@@ -473,10 +476,10 @@ export async function startCaptureHost(options: CaptureHostOptions): Promise<Cap
       // Snapshot per-source counts BEFORE the drain so the diagnostic
       // log tells us which source leaked (the counts are all zero
       // after forceFinishAll, which would be useless on its own).
-      const leakedCounts = busy.getSourceCounts();
-      const drained = busy.forceFinishAll();
+      const leakedCounts = workState.getSourceCounts();
+      const drained = workState.forceFinishAll();
       if (drained > 0) {
-        log.warn('force-drained leaked busy handles at teardown', {
+        log.warn('force-drained leaked work-state handles at teardown', {
           drained,
           sourceCounts: leakedCounts,
         });

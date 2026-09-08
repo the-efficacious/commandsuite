@@ -2,7 +2,7 @@
 
 The **team-view UI + runtime** for [CommandSuite](https://github.com/the-efficacious/commandsuite) — the bulk of the web front-end. A host-agnostic Preact library: a host injects an authenticated client + identity and mounts `<TeamShell>`, and this package owns the entire in-team experience.
 
-> **Adding or changing team UI? It goes here**, not in `apps/web-host`. That app is just the OSS auth host; this package is the actual UI.
+> **Adding or changing team UI? It goes here**, not in `apps/web-host`. That app is just the OSS reference host (auth gate + PWA shell); this package is the actual UI.
 
 ## What lives here
 
@@ -31,8 +31,8 @@ The host owns auth and any chrome *around* the shell; the shell owns everything 
 
 Two hosts mount this today:
 
-- **`apps/web-host`** (`csuite-web-host`) — the OSS self-hosted web app (TOTP auth, served by the broker).
-- The **commercial hosted platform** (separate repo) — Clerk auth + billing wrapped around the same `<TeamShell>`.
+- **`apps/web-host`** (`csuite-web-host`) — the **reference host**: the OSS self-hosted web app (TOTP auth, served by the broker).
+- The **platform**'s web app (separate repo) — the front end of the commercial hosted control plane: Clerk auth + billing wrapped around the same `<TeamShell>`.
 
 That's the whole point of the split: one shared UI, thin hosts. Don't fold it into a host.
 

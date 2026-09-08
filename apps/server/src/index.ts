@@ -225,7 +225,6 @@ async function seedFromWizard(
     role: wizard.bootstrapMember.role,
     instructions: wizard.bootstrapMember.instructions,
     rawPermissions: wizard.bootstrapMember.rawPermissions,
-    permissions: wizard.bootstrapMember.permissions,
     totpSecret: wizard.bootstrapMember.totpSecret,
   });
   await tokens.insert({

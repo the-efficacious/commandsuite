@@ -61,6 +61,7 @@ import {
 } from 'node:crypto';
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { ENCRYPTED_FIELD_PREFIX, EncryptedFieldError } from 'csuite-core';
 
 const KEK_ENV_VAR = 'CSUITE_KEK';
 const KEK_FILE_NAME = 'csuite-kek.bin';
@@ -69,19 +70,21 @@ const IV_BYTES = 12;
 const AUTH_TAG_BYTES = 16;
 const ALGORITHM: CipherGCMTypes = 'aes-256-gcm';
 
-export const ENCRYPTED_FIELD_PREFIX = 'enc-v1:';
+// One referent, one name. This module used to define its own
+// `ENCRYPTED_FIELD_PREFIX` and its own `EncryptedFieldError` with the
+// same `.name` as csuite-core's — a different class, so an
+// `instanceof EncryptedFieldError` check inside core against an error
+// thrown here silently failed, and core's own comments named a class
+// it could never catch (`secrets.ts`, `tool-sources/store.ts`). The
+// wire format is shared with core's WebCrypto implementation, so the
+// prefix has to be the same value; make it the same constant.
+// Re-exported so `csuite-server`'s public surface is unchanged.
+export { ENCRYPTED_FIELD_PREFIX, EncryptedFieldError };
 
 export class KekResolutionError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'KekResolutionError';
-  }
-}
-
-export class EncryptedFieldError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'EncryptedFieldError';
   }
 }
 

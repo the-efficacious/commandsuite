@@ -8,11 +8,11 @@
 export type LogLevel = 'debug' | 'info' | 'notice' | 'warning' | 'error' | 'critical';
 
 /**
- * Live activity of a member — orthogonal to the connection dimension
+ * Work state of a member — orthogonal to the connection dimension
  * (online/connecting/offline) that presence tracks over the live
  * WebSocket. Where
- * connection answers "is the link alive", activity answers "what is the
- * agent doing right now on that link":
+ * connection answers "is the link alive", work state answers "what is
+ * the agent doing right now on that link":
  *
  *   idle     — connected, not in a turn, available for work.
  *   working  — actively processing a turn: model generation AND/OR tool
@@ -99,7 +99,7 @@ export const PERMISSIONS = [
    *
    * Shipped as `process.manage` until the team-process rename. Rows
    * still carrying that name resolve to this leaf through
-   * `LEGACY_PERMISSION_EXPANSIONS` below, which is why no permissions
+   * `LEGACY_PERMISSION_ALIASES` below, which is why no permissions
    * migration exists.
    */
   'team_process.manage',
@@ -112,8 +112,14 @@ export type Permission = (typeof PERMISSIONS)[number];
  * and stored presets written before the consolidation carry these;
  * every permission parse and resolution path maps them forward so an
  * existing team loads unchanged.
+ *
+ * Two different operations ride this one table, which is why it is
+ * named for the alias and not for the expansion: `objectives.manage`
+ * is an aggregate that fans out to several current leaves, while
+ * `process.manage` is a one-to-one rename. Nothing here is a
+ * migration — no stored row is ever rewritten.
  */
-export const LEGACY_PERMISSION_EXPANSIONS: Readonly<Record<string, readonly Permission[]>> = {
+export const LEGACY_PERMISSION_ALIASES: Readonly<Record<string, readonly Permission[]>> = {
   'objectives.manage': [
     'objectives.create',
     'objectives.cancel',
@@ -129,6 +135,13 @@ export const LEGACY_PERMISSION_EXPANSIONS: Readonly<Record<string, readonly Perm
   // names are accepted on write for the same reason.
   'process.manage': ['team_process.manage'],
 };
+
+/**
+ * @deprecated Transitional alias for `LEGACY_PERMISSION_ALIASES`, kept
+ * only so consumers outside this package can be moved over in a
+ * separate change. Remove once no call site names it.
+ */
+export const LEGACY_PERMISSION_EXPANSIONS = LEGACY_PERMISSION_ALIASES;
 
 /**
  * Legacy named bundles retained only to read teams created by older
@@ -164,7 +177,8 @@ export interface Team {
   context: string;
   /**
    * @deprecated Accepted when reading data from preset-era servers. Current
-   * servers omit this field and current clients must not present it.
+   * servers omit this field, no current server writes a preset — the write
+   * path is gone — and current clients must not present it.
    */
   permissionPresets?: PermissionPresets;
 }
@@ -191,11 +205,13 @@ export interface Role {
  */
 export interface Teammate {
   /**
-   * Stable member identity. Names are display/lookup handles and may be
-   * explicitly reused after departure; this id never is. Optional because
-   * brokers predating typed offboarding do not report it.
+   * The member's name IS its public handle. There is no published
+   * member identity beside it: the broker keeps a stable internal
+   * identity id for offboarding, and deliberately does not project it.
+   * A client that needs to survive an explicit post-departure
+   * name reuse cannot detect one from this type — by decision, not by
+   * omission.
    */
-  identityId?: string;
   name: string;
   role: Role;
   /** Resolved leaf permissions (presets expanded). */
@@ -214,6 +230,10 @@ export interface Teammate {
  * Full member record — the shape a `members.manage` holder sees in the member-management
  * panel and the shape a member sees of themself in their instruction packet.
  * Adds `instructions` to the public `Teammate` projection.
+ *
+ * `extends` is a wire promise, not just a type-layer convenience: every
+ * field `Teammate` declares is carried on every `Member` the broker
+ * emits, `kind` included. More permission never returns less data.
  */
 export interface Member extends Teammate {
   /**
@@ -252,21 +272,34 @@ export interface Presence {
   lastSeen: number;
   role: Role | null;
   /**
-   * Live activity of this member — the 3-state model reported by the
-   * runner via `POST /presence/activity` and cleared to `idle` by a
-   * server-side TTL when no report arrives, so a crashed runner doesn't
-   * leave the member stuck "working"/"blocked" forever. Driven by the
-   * agent's native instrumentation (Claude Code hooks, codex app-server
-   * turn lifecycle), not by intercepted traffic. Optional — absent on
-   * members the server has no recent activity report for (treat as
-   * `idle`).
+   * The state of work `/roster` publishes for this member — a
+   * DERIVATION, not a copy of any runner's report: `blocked` when the
+   * runner reported it inside `workStateWindowMs`, `working` when the
+   * executor recorded proven action inside the same window, and
+   * otherwise absent (read absence as `idle`).
+   *
+   * A runner that reports `working` and does nothing else reads `idle`
+   * here. That is deliberate — scheduling telemetry must never make a
+   * member look capable. The report itself is the *work state*
+   * (`POST /presence/work-state`); this field is what the roster
+   * projects from it plus proven action.
+   */
+  workState?: WorkState;
+  /**
+   * @deprecated The previous spelling of {@link Presence.workState}.
+   *
+   * Emitted with the same value as `workState` for one release so
+   * clients written against the old wire keep working; removed in the
+   * next minor. `activity` is reserved for the durable per-member
+   * stream (`GET /members/:name/activity`).
    */
   activity?: WorkState;
   /**
-   * Back-compat mirror of `activity === 'working'`. Older UIs that only
-   * understand the boolean keep working; new UIs should prefer
-   * `activity` so they can distinguish `blocked` (an operator should
-   * look) from plain `idle`. Optional — absent when `activity` is absent.
+   * Compatibility mirror of `workState === 'working'`, for UIs that
+   * only understand a boolean. It is LOSSY: `busy` cannot express
+   * `blocked`, so a reader that takes it as the whole signal loses the
+   * one state that asks a human to look. Prefer `workState`. Optional
+   * — absent when `workState` is absent.
    */
   busy?: boolean;
   /**
@@ -290,7 +323,7 @@ export interface Presence {
    * Completeness failures the broker has RETAINED for this member and
    * that have not been observed to recover.
    *
-   * Follows `captureHealth`'s absence rule, not `activity`'s: absent
+   * Follows `captureHealth`'s absence rule, not `workState`'s: absent
    * means this broker retains no diagnostics and has no opinion — never
    * "this member is clean". `0` is the positive statement that it
    * looked and found none outstanding.
@@ -400,16 +433,23 @@ export type ClientReport =
     };
 
 /**
- * Body for `POST /presence/activity` — the runner-side report of a
- * member's live activity transition. `state` is authoritative; `busy`
- * is an optional back-compat mirror the server derives from `state`
- * (= `state === 'working'`) when omitted.
+ * Body for `POST /presence/work-state` — the runner-side report of a
+ * member's work-state transition. `state` is authoritative; `busy`
+ * is an optional compatibility mirror the server derives from `state`
+ * (= `state === 'working'`) when omitted, and otherwise ignores.
  */
-export interface ActivityReport {
+export interface WorkStateReport {
   state: WorkState;
-  /** Optional back-compat mirror; server derives `state === 'working'` if absent. */
+  /** Optional compatibility mirror; server derives `state === 'working'` if absent. */
   busy?: boolean;
 }
+
+/**
+ * @deprecated The previous name of {@link WorkStateReport}. Structurally
+ * identical, kept for one release so a consumer typed against the old
+ * name still compiles; removed in the next minor.
+ */
+export type ActivityReport = WorkStateReport;
 
 // ─────────────────────────── Messaging ────────────────────────────────
 
@@ -502,10 +542,11 @@ export interface HealthResponse {
 
 /**
  * The named kinds of operator-authored instruction blocks composed
- * into a member's fixed context. The strings are a wire and telemetry
- * contract (`persistent_context kind="…"` re-sends, the context
- * watchdog's `context.block.kind` attribute) — pinned independently
- * of any TypeScript identifier; renaming code must never move them.
+ * into a member's fixed context. The strings are a wire contract —
+ * they ship as `blocks[].kind` on `GET /instructions` and inside
+ * `changed` on the `kind: 'instructions'` channel event — pinned
+ * independently of any TypeScript identifier; renaming code must never
+ * move them.
  *
  * `team_process` was `process_document` until the team-process rename.
  * That move was the point of the rename rather than a side effect of
@@ -595,8 +636,15 @@ export interface RosterResponse {
    */
   restartPending?: string[];
   /**
-   * Window the broker applied when deciding whether an activity report
-   * is recent. Optional for compatibility with older brokers.
+   * Window the broker applied when deciding whether a work-state
+   * report — and the proven action `workState: 'working'` is derived
+   * from — is recent. Optional for compatibility with older brokers.
+   */
+  workStateWindowMs?: number;
+  /**
+   * @deprecated The previous spelling of
+   * {@link RosterResponse.workStateWindowMs}. Emitted with the same
+   * value for one release; removed in the next minor.
    */
   activityWindowMs?: number;
 }
@@ -642,6 +690,23 @@ export interface HistoryQuery {
    */
   channel?: string;
   limit?: number;
+  /**
+   * Exclusive composite cursor for newest-first traversal — on the wire
+   * `before_ts` + `before_id`. Feed back the LAST message of the page
+   * you just received (`page[page.length - 1]`) and the walk reaches
+   * every message exactly once.
+   *
+   * `id` is the tiebreak, and it is what makes the walk complete.
+   * Message timestamps are `Date.now()` at push time, so two posts in
+   * one tick collide routinely; a boundary that lands inside such a tie
+   * used to make every row sharing that millisecond unreachable.
+   */
+  cursor?: { ts: number; id: string };
+  /**
+   * @deprecated Scalar epoch-ms upper bound on `ts`. LOSSY — it drops
+   * every message sharing the page-boundary millisecond. Use `cursor`.
+   * Sent as `before_ts`; removed in the next minor.
+   */
   before?: number;
 }
 
@@ -742,12 +807,12 @@ export interface AddChannelMemberRequest {
 // ─────────────────────────── Tool sources ─────────────────────────────
 
 /**
- * A tool source is a platform-registered provider of external tools,
+ * A tool source is an admin-registered provider of external tools,
  * distributed to bound members via the instruction packet and invoked through
  * the broker (the broker holds the third-party credential; the agent
  * never sees it).
  *
- *   - `custom` — tools defined declaratively on the platform (name,
+ *   - `custom` — tools defined declaratively by an admin (name,
  *     description, JSON input schema, HTTP binding) and executed
  *     broker-side against a third-party API.
  *   - `mcp` — a remote MCP server (Streamable HTTP) the broker
@@ -857,7 +922,13 @@ export interface ListToolSourcesResponse {
 
 export interface GetToolSourceResponse {
   source: ToolSourceSummary;
-  /** Custom tool defs (kind=custom) or cached upstream tools (kind=mcp). */
+  /**
+   * Custom tool defs (kind=custom) or cached upstream tools
+   * (kind=mcp). `source.kind` is the discriminator: the union is
+   * untagged and the shapes overlap (`ResolvedTool` is a
+   * `CustomToolDef` without `binding`), so branch on `source.kind`
+   * rather than sniffing the elements.
+   */
   tools: CustomToolDef[] | ResolvedTool[];
   /** Bound member names. Only present for viewers with tools.manage. */
   boundMembers?: string[];
@@ -1719,11 +1790,11 @@ export interface RejectEnrollmentRequest {
 export type ObjectiveStatus = 'active' | 'blocked' | 'done' | 'cancelled';
 
 /**
- * An objective is the apex task primitive on a team: push-assigned,
- * outcome-required, single-assignee. The `outcome` field is the tangible
- * definition of "done" that propagates into channel pushes and the runner's
- * `context_refresh` re-briefs so the assignee always has the acceptance
- * criteria in front of them.
+ * An objective is assigned work with a definition of done: push-assigned,
+ * outcome-required, single-assignee. The `outcome` field says what must be
+ * true when the work is finished, and propagates into channel pushes and
+ * the runner's `context_refresh` re-briefs so the assignee always has the
+ * acceptance criteria in front of them.
  */
 export interface Objective {
   id: string;
@@ -1876,9 +1947,10 @@ export interface TeamProcessHistoryResponse {
 
 export interface ObjectiveEvent {
   /**
-   * Durable, unique per event. A timestamp is not an identity — create
-   * emits two events in the same millisecond — so anything naming a
-   * specific event (a correction) uses this.
+   * Durable, unique per event. A timestamp is not an identity: a watcher
+   * batch emits several events of one kind in the same millisecond, so
+   * anything that needs to name one event (UI keys, external references)
+   * uses this.
    */
   id: string;
   objectiveId: string;
@@ -2225,7 +2297,12 @@ export interface GetGenaiInferenceResponse {
 export interface ListGenaiQuery {
   from?: number;
   to?: number;
-  /** Exclusive composite cursor for oldest-first traversal. */
+  /**
+   * Exclusive composite cursor for oldest-first traversal. On the wire
+   * this is `after_ts` + `after_id` — the direction is in the name,
+   * because `/members/:name/activity` walks the other way and a loop
+   * written for one does not terminate against the other.
+   */
   cursor?: { ts: number; id: number };
   limit?: number;
 }
@@ -2262,7 +2339,10 @@ export interface ListTelemetryQuery {
   event?: string;
   from?: number;
   to?: number;
-  /** Exclusive composite cursor for oldest-first traversal. */
+  /**
+   * Exclusive composite cursor for oldest-first traversal. On the wire
+   * this is `after_ts` + `after_id`.
+   */
   cursor?: { ts: number; id: number };
   limit?: number;
 }
@@ -2316,7 +2396,7 @@ export interface ActivitySessionStart {
   /** Stable source-record id for broker-side dedup; see `ActivityEvent`. */
   readonly sourceId?: string;
   readonly ts: number;
-  /** Runner id (`'claude-code'`, `'codex'`, ...). */
+  /** Runner id (`'claude'`, `'codex'`, ...). */
   readonly runner: string;
   /** csuite CLI version hosting the run. */
   readonly runnerVersion?: string;
@@ -2352,7 +2432,7 @@ export interface ActivitySessionEnd {
   /** Stable source-record id for broker-side dedup; see `ActivityEvent`. */
   readonly sourceId?: string;
   readonly ts: number;
-  /** Runner id (`'claude-code'`, `'codex'`, ...). */
+  /** Runner id (`'claude'`, `'codex'`, ...). */
   readonly runner: string;
   /** Why the session ended (`'agent-exited-0'`, `'SIGINT'`, ...). */
   readonly reason: string;
@@ -2413,12 +2493,28 @@ export interface ActivityLlmExchange {
 }
 
 /**
- * A single tool invocation captured from the agent's NATIVE
- * instrumentation rather than the network wire — Claude Code hook
- * callbacks (PostToolUse / PostToolUseFailure) and, later, the codex
- * app-server item stream. Records the tool name plus its (redacted)
- * input and result so a reviewer can see what the agent actually did
- * in the tool-execution windows that never generate an LLM call.
+ * A single tool invocation. ONE referent, TWO producers — read
+ * `source` to tell them apart.
+ *
+ * **agent-native** (`source: 'transcript'`, `'codex_rollout'`) —
+ * captured from the agent's own durable record rather than the
+ * network wire: Claude's session transcript (`transcript-reader.ts`)
+ * and codex's rollout JSONL (`rollout-parser.ts`). Records the tool
+ * name plus whatever the source carries of its (redacted) input and
+ * result, and a `toolUseId` where the agent exposes one, so a
+ * reviewer can see what the agent actually did in the tool-execution
+ * windows that never generate an LLM call. An earlier design took
+ * this from the Claude Code PostToolUse / PostToolUseFailure hook
+ * callbacks; those hooks are PRESENCE-ONLY and emit no content — see
+ * `hook-server.ts`.
+ *
+ * **broker-audit** (`agent: 'broker'`, `source: 'tool_source'`) — the
+ * broker's own record of a tool-source invoke it ran on a member's
+ * behalf (`POST /tool-sources/:slug/tools/:name/invoke`). METADATA
+ * ONLY: `toolName` is `<source-slug>__<tool>`, `input` is replaced by
+ * `{ truncated: true }` once the serialized args exceed 8 KiB,
+ * `result` carries only `{ isError, contentBlocks }`, and there is no
+ * `toolUseId`.
  *
  * `input` / `result` are deliberately untyped (`unknown`) — they carry
  * whatever the agent framework hands us (a shell command string, a
@@ -2429,11 +2525,14 @@ export interface ActivityToolAction {
   readonly kind: 'tool_action';
   /** Stable source-record id for broker-side dedup; see `ActivityEvent`. */
   readonly sourceId?: string;
-  /** When the tool action was recorded (PostToolUse fire time). */
+  /** When the tool action was recorded, per the source transcript / rollout line. */
   readonly ts: number;
   /** Optional wall-clock duration of the tool call, if known. */
   readonly durationMs?: number;
-  /** Which agent produced it (`'claude'`, `'codex'`). */
+  /**
+   * Which agent produced it: `'claude'` or `'codex'` for an
+   * agent-native action, `'broker'` for the broker-audit record.
+   */
   readonly agent?: string;
   /** Tool name as the agent reports it (`Bash`, `Edit`, `Read`, …). */
   readonly toolName: string;
@@ -2441,18 +2540,24 @@ export interface ActivityToolAction {
   readonly input?: unknown;
   /** Redacted tool result / response. */
   readonly result?: unknown;
-  /** True when the tool call failed (PostToolUseFailure). */
+  /** True when the tool call failed (transcript `is_error`, or codex's exec-output sniff). */
   readonly isError?: boolean;
-  /** Capture source tag (e.g. `'claude_hook'`, `'codex_item'`). */
+  /**
+   * Capture source tag, and the producer discriminator:
+   * `'transcript'` (Claude's session transcript reader),
+   * `'codex_rollout'` (codex's rollout JSONL parser),
+   * `'tool_source'` (the broker-audit record).
+   */
   readonly source?: string;
   /** Thread attribution: `codex_main_thread` / `codex_subagent:<id8>`. */
   readonly querySource?: string;
   /**
-   * The Anthropic `tool_use` id this action corresponds to (carried on
-   * the Claude PostToolUse hook as `tool_use_id`). Lets the UI fold a
-   * tool's RESULT into the matching `tool_use` block of the model's
-   * `llm_exchange` turn instead of rendering it as a standalone row.
-   * Absent for sources that don't expose a tool_use id (e.g. codex).
+   * The Anthropic `tool_use` id this action corresponds to — the
+   * transcript's `tool_use_id` for Claude, the Responses API `call_id`
+   * for codex. Lets the UI fold a tool's RESULT into the matching
+   * `tool_use` block of the model's `llm_exchange` turn instead of
+   * rendering it as a standalone row. Absent only for sources that
+   * expose no tool id.
    */
   readonly toolUseId?: string;
 }
@@ -2491,7 +2596,14 @@ export interface ActivityUserPrompt {
 
 // ───────────────────────── Context control ────────────────────────────
 
-/** A secret or variable mutation changed one member's resolved runner environment. */
+/**
+ * A secret or variable mutation changed one member's resolved runner
+ * environment. Emitted for `PUT /:slug/value`, `POST /:slug/bindings`
+ * and `DELETE /:slug/bindings/:name` only: those three are what a
+ * running runner reloads at its next idle boundary. `PATCH`,
+ * `DELETE /:slug` and `DELETE /:slug/value` emit nothing here and
+ * reach the member on its next runner start instead.
+ */
 export interface EnvironmentEvent {
   readonly kind: 'environment';
   readonly action: 'value_set' | 'bound' | 'unbound';
@@ -2509,12 +2621,16 @@ export interface EnvironmentEvent {
  *   `clear`   — drop the conversation and re-deliver the instruction
  *     blocks. IMPOSED: the runner swaps the agent process without
  *     resuming, so it does not depend on the agent's cooperation.
+ *   `reload`  — the same cold swap as `clear`, with the member's
+ *     ENVIRONMENT refetched alongside the instruction blocks. Also
+ *     IMPOSED. The successor's `session_start` says which of the two
+ *     asked for it (`environment reloaded` vs `context cleared`).
  *
- * NEITHER IS `shutdown`. The runner process — and with it the broker
- * subscription, the IPC socket the MCP bridge reconnects to, the
- * objectives tracker and the capture host — outlives both verbs. That
- * is the whole point: a restart costs the member its place on the net,
- * and these do not.
+ * NONE OF THEM IS `shutdown`. The runner process — and with it the
+ * broker subscription, the IPC socket the MCP bridge reconnects to,
+ * the objectives tracker and the capture host — outlives all three.
+ * That is the whole point: a restart costs the member its place on
+ * the net, and these do not.
  */
 export type ContextControlVerb = 'compact' | 'clear' | 'reload';
 
@@ -2665,7 +2781,12 @@ export interface ListActivityQuery {
   readonly from?: number;
   /** Inclusive upper bound on ts (ms since epoch). */
   readonly to?: number;
-  /** Exclusive composite cursor for newest-first traversal. */
+  /**
+   * Exclusive composite cursor for newest-first traversal. On the wire
+   * this is `before_ts` + `before_id` — the opposite direction from
+   * `/genai` and `/telemetry`, which is why the two no longer share a
+   * parameter name.
+   */
   readonly cursor?: { ts: number; id: number };
   /** Filter by kind — single or array. Omit for all kinds. */
   readonly kind?: ActivityKind | ActivityKind[];
@@ -2709,10 +2830,14 @@ export interface FsEntry {
   updatedAt: number;
   /**
    * Whether the requesting viewer may mutate this entry — the server's
-   * `canWrite()` predicate, evaluated per request. Optional: an older
-   * server omits it. Treat `undefined` as unknown rather than false, and
-   * do not reconstruct the rule from `owner` — that inference is wrong
-   * for objective namespace entries.
+   * `canWrite()` predicate, evaluated per request. A property of the
+   * entry, not of one verb: a current server sends it on every response
+   * that carries an `FsEntry`, mutations included, so the entry returned
+   * by `write`, `mkdir` or `mv` answers the same question a `stat` on
+   * that path would. Optional: an older server omits it. Treat
+   * `undefined` as unknown rather than false, and do not reconstruct the
+   * rule from `owner` — that inference is wrong for objective namespace
+   * entries.
    */
   canWrite?: boolean;
 }

@@ -357,13 +357,14 @@ csuite roster --reveal-token --member <name>
 ```
 
 Without flags: list members with role, explicit permission leaves,
-connected count, and last-seen time.
+connected count, executor condition, and the last turn the executor
+reported acting on.
 
 ```
 $ csuite roster
-name                role              permissions                 connected   last_seen
-alice               team lead         members.manage,team.manage  1           2026-08-01T14:03:22.000Z
-nova                backend eng       baseline                    1           2026-08-01T14:05:01.000Z
+name                role              permissions                 connected   executor        last_acted
+alice               team lead         members.manage,team.manage  1           unreported      -
+nova                backend eng       baseline                    1           ready           2026-08-01T14:05:01.000Z
 ```
 
 `--reveal-token --member <name>` is an alias over `csuite rotate`: the
@@ -377,7 +378,7 @@ previous tokens** — the output says so before it does it.
 csuite objectives list     [--mine] [--assignee <name>] [--status <s>]
 csuite objectives view     <id>
 csuite objectives create   --title <t> --outcome <o> --assignee <n> [--body <b>]
-csuite objectives update   <id> [--status active|blocked] [--block-reason <r>] [--note <n>]
+csuite objectives update   <id> [--status active|blocked] [--block-reason <r>]
 csuite objectives complete <id> --result <r>
 csuite objectives cancel   <id> [--reason <r>]
 csuite objectives reassign <id> --to <name> [--note <n>]
@@ -389,9 +390,9 @@ Assign work that carries its own definition of done. See
 - `list --status` accepts `active | blocked | done | cancelled`.
   `--mine` filters to your own assignments.
 - `create` requires `--outcome` — the tangible definition of "done".
-- `update` needs at least one of `--status`, `--block-reason`,
-  `--note`, and `--status` only accepts `active` or `blocked`; use
-  `complete` and `cancel` for the terminal states.
+- `update` needs at least one of `--status` and `--block-reason`, and
+  `--status` only accepts `active` or `blocked`; use `complete` and
+  `cancel` for the terminal states.
 - `complete --result` is required and becomes the "what was actually
   delivered" record on the objective.
 - `create`, cancelling someone else's, and `reassign` require
@@ -429,12 +430,9 @@ restarts cold under the new text, re-briefed on its open objectives.
 device runs `csuite connect` and a `members.manage` holder approves the short
 code. To enable web UI login separately, run `csuite enroll --member <name>`.
 
-`--permissions` takes a comma-separated list of permission leaves:
-
-`team.manage`, `members.manage`, `members.context`,
-`objectives.create`, `objectives.cancel`, `objectives.reassign`,
-`objectives.watch`, `activity.read`, `tools.manage`,
-`secrets.manage`, `notifications.manage`, `team_process.manage`
+`--permissions` takes a comma-separated list of permission leaves. The
+leaves are enumerated once, in [Permissions](/docs/concepts/permissions);
+this page carried a copy that had drifted to a different set.
 
 Omitted means baseline — a full team member with no elevated
 authority. See [permissions](/docs/concepts/permissions).
@@ -563,7 +561,9 @@ terminal, or reads piped stdin whole:
 $ cat token.txt | csuite secrets set-value gh
 ```
 
-Bound members pick up changes on their next runner start.
+Setting a value and adding or removing a binding reach a running
+member at its runner's next idle boundary; metadata edits and
+deletions apply on its next runner start.
 
 ## variables
 
@@ -682,8 +682,25 @@ For the environment variables behind these defaults, see
 | Code | Meaning |
 |---|---|
 | `0` | Success |
-| `1` | Failure (network, broker error, IO, preflight FAIL) |
-| `2` | Usage error — bad flags or arguments |
+| `1` | Failure — network, broker error, IO, preflight FAIL, no saved auth for this (broker URL, directory), a missing or broken agent binary |
+| `2` | Usage error — bad flags or arguments, and nothing else |
+| `64` | Refused configuration — the container entrypoint refused a setting rather than acting on a different one |
+
+The split between `1` and `2` is the one a supervisor branches on:
+**`2` will never succeed on a retry** (the argv is wrong, and a typo does
+not fix itself), while **`1` may succeed on the next try** (the broker
+was down, the credential was not there yet, the disk was full). A unit
+with `Restart=always` should keep restarting on `1`; `RestartPreventExitStatus=2`
+is the supported way to stop on an operator mistake.
+
+Every entry point answers one condition with one code. Nothing enrolled
+for this (broker URL, directory) exits `1` from `csuite claude`, from
+`csuite claude install-service` and from `csuite claude cycle` alike.
+
+`64` is emitted only by the container entrypoint, which refuses
+`CSUITE_START_RUNNER=1` for a model runner rather than silently starting
+the stub — see [Deployment](/docs/deployment) and
+[Stub runner](/docs/runners/stub).
 
 `csuite claude` and `csuite codex` exit with the agent's own exit code
 when the agent ends the session.

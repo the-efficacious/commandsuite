@@ -37,12 +37,11 @@ import { CLI_VERSION } from '../../../version.js';
 import { composeFixedContext } from '../../fixed-context.js';
 import type { Presence } from '../../presence.js';
 import { classifyRunnerFailure, RUNNER_CONDITION_DETAIL } from '../../runner-condition.js';
-import type { BusySignal } from '../../trace/busy.js';
 import type { CaptureHost } from '../../trace/host.js';
+import type { WorkStateSignal } from '../../trace/work-state.js';
 import { AgentAdapterError } from '../adapter.js';
 import { type ActivityPrinter, attachCodexActivityPrinter } from './activity-printer.js';
 import { attachBundleReader, type BundleReader } from './bundle-reader.js';
-import { attachCodexBusySniff, type CodexBusySniff } from './busy-sniff.js';
 import type { CodexChannelSink } from './channel-sink.js';
 import { createCodexChannelSink } from './channel-sink.js';
 import { setupCodexHome } from './codex-home.js';
@@ -65,6 +64,7 @@ import {
   type TurnStartedNotification,
 } from './protocol.js';
 import { attachRolloutReader, type RolloutReader } from './rollout-reader.js';
+import { attachCodexWorkStateSniff, type CodexWorkStateSniff } from './work-state-sniff.js';
 
 export class CodexAdapterError extends AgentAdapterError {
   constructor(message: string) {
@@ -130,8 +130,8 @@ export interface CodexSpawnOptions {
    * Capture host or null when --no-trace. Phase B's native codex
    * adapter will normalize the app-server item stream into
    * `ActivityEvent`s and push them through `captureHost.enqueue`. For
-   * now it's threaded through but only its `busy` signal is consumed
-   * (via the separate `busy` option below). The runner sets no proxy
+   * now it's threaded through but only its `workState` signal is consumed
+   * (via the separate `workState` option below). The runner sets no proxy
    * or CA env vars — codex gets its own native capture in Phase B.
    */
   captureHost: CaptureHost | null;
@@ -189,9 +189,9 @@ export interface CodexSpawnOptions {
    * absent (e.g. `--no-trace`), tool-lifecycle events still get
    * logged but don't drive the indicator. Pass the same signal the
    * trace host uses so LLM-call and tool-execution bumps share one
-   * 0↔busy transition contract.
+   * 0↔working transition contract.
    */
-  busy?: BusySignal;
+  workState?: WorkStateSignal;
   /**
    * Fired on every observed `contextCompaction` item, requested or
    * auto. The codex analogue of claude's SessionStart(source=compact)
@@ -340,7 +340,7 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
   //    with an untouched network env. Codex's native capture (a
   //    subscriber on the app-server item stream feeding
   //    `captureHost.enqueue`) lands in Phase B; until then only its
-  //    busy signal is observed (via the `busy` option and the
+  //    work-state signal is observed (via the `workState` option and the
   //    app-server notification sniff below).
   const childEnv: NodeJS.ProcessEnv = { ...process.env };
   if (opts.secretsEnv) {
@@ -502,7 +502,7 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
   // them. This is the codex analogue of Claude Code's
   // UserPromptSubmit→Stop bracket, feeding the SAME `turn_active` source
   // so the WHOLE turn — model generation and tools — reads as `working`,
-  // not just the tool windows the busy-sniff already covers. Codex leaves
+  // not just the tool windows the work-state sniff already covers. Codex leaves
   // `blocked` unset: approval/elicitation requests are auto-denied and
   // transient, so there's no human-blocking state to surface yet.
   const turnActiveHandles = new Map<string, { finish: () => void }>();
@@ -517,8 +517,8 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
       activeTurnId = p.turn.id;
       channelSink.turnStarted(p.turn.id, turnTimestampMs('startedAt', p.turn.startedAt));
       // Duplicate turn/started for the same id is a no-op.
-      if (opts.busy && !turnActiveHandles.has(p.turn.id)) {
-        turnActiveHandles.set(p.turn.id, opts.busy.start('turn_active'));
+      if (opts.workState && !turnActiveHandles.has(p.turn.id)) {
+        turnActiveHandles.set(p.turn.id, opts.workState.start('turn_active'));
       }
     }
   });
@@ -567,18 +567,22 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
     log,
     ...(opts.onCompacted !== undefined ? { onCompacted: opts.onCompacted } : {}),
   });
-  // Tool-execution busy sniff (only when a busy signal is provided —
+  // Tool-execution work-state sniff (only when a work-state signal is provided —
   // i.e., tracing is enabled). Subscribes to the same notifications
-  // above; logging stays here, busy-counter ownership lives in the
+  // above; logging stays here, work-state-counter ownership lives in the
   // shared helper so tests can exercise the same code path.
-  const busySniff: CodexBusySniff | null = opts.busy
-    ? attachCodexBusySniff({ rpc, busy: opts.busy, logger: log.child('codex-busy-sniff') })
+  const workStateSniff: CodexWorkStateSniff | null = opts.workState
+    ? attachCodexWorkStateSniff({
+        rpc,
+        workState: opts.workState,
+        logger: log.child('codex-work-state-sniff'),
+      })
     : null;
   // Rollout-primary content capture — tails codex's own durable rollout
   // JSONL under the ephemeral CODEX_HOME and feeds normalized
   // `llm_exchange` / `tool_action` / `user_prompt` events to the capture
   // host's uploader. This is the SOLE content source; the app-server
-  // stream stays presence/busy/printer-only, mirroring how the Claude
+  // stream stays presence/work-state/printer-only, mirroring how the Claude
   // runner went transcript-primary with its hooks presence-only. Absent
   // under `--no-trace` (no capture host). Objective open/close markers
   // are emitted by the runner around this session, not here.
@@ -609,7 +613,7 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
         })
       : null;
   // Activity printer — turn / item / delta notifications → readable
-  // stderr lines for the operator. Subscribes alongside busy-sniff so
+  // stderr lines for the operator. Subscribes alongside the work-state sniff so
   // both observers see the same wire stream without ordering coupling.
   const activityPrinter: ActivityPrinter | null =
     opts.printActivity === false
@@ -653,8 +657,8 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
     }
     // Drain any in-flight tool handles before we tear down the rpc
     // client — codex won't be sending matching `item/completed` once
-    // we close, so anything left here would wedge the busy signal.
-    busySniff?.drain();
+    // we close, so anything left here would wedge the work-state signal.
+    workStateSniff?.drain();
     // Same for the whole-turn `turn_active` handle: a turn interrupted
     // at shutdown won't get its `turn/completed`, so close it here so
     // the activity signal returns to idle rather than waiting on the

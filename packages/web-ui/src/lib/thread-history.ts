@@ -1,24 +1,24 @@
 /**
- * Thread history paging — lazy backfill for the chat transcript.
+ * Thread history paging — lazy hydration for the chat transcript.
  *
- * The live subscription (`live.ts`) only backfills a small global
+ * The live subscription (`live.ts`) only hydrates a small global
  * window of recent messages on connect. That's enough to show a
  * thread's tail, but a DM or channel the viewer scrolls back through
  * needs older messages fetched on demand — otherwise the transcript
- * silently bottoms out at whatever the global backfill happened to
+ * silently bottoms out at whatever the global hydration happened to
  * include.
  *
  * Two entry points:
  *   - `hydrateThread` — run once when a thread is first opened. Pulls
  *     the most recent page for *that* thread specifically (the global
- *     backfill is not thread-scoped, so a quiet DM can be missing from
+ *     hydration is not thread-scoped, so a quiet DM can be missing from
  *     it entirely).
- *   - `loadOlderThreadMessages` — pull the next older page, anchored
- *     `before` the oldest message currently held.
+ *   - `loadOlderThreadMessages` — pull the next older page, anchored on
+ *     the composite `{ts, id}` cursor of the oldest message held.
  *
  * Both fetch into the shared `messagesByThread` store via
  * `prependMessages`, which dedups by id — so overlap with the live
- * backfill or with a previous page is harmless.
+ * hydration or with a previous page is harmless.
  *
  * Per-thread state (`loading`, `exhausted`, `hydrated`) lives in one
  * signal keyed by thread key, so the transcript can render a spinner
@@ -27,7 +27,7 @@
  */
 
 import { signal } from '@preact/signals';
-import type { HistoryQuery } from 'csuite-sdk/types';
+import type { HistoryQuery, Message } from 'csuite-sdk/types';
 import { getClient } from './client.js';
 import {
   channelIdOfThread,
@@ -117,21 +117,49 @@ export async function hydrateThread(viewer: string, threadKey: string): Promise<
  * Fetch the next older page for a thread, anchored before the oldest
  * message currently in the store. No-op when already loading, already
  * exhausted, or the thread has no history endpoint.
+ *
+ * The anchor is the composite `{ts, id}` cursor, not the oldest
+ * message's timestamp. A timestamp alone excludes every message sharing
+ * that millisecond — including ones this pager has never seen, which it
+ * then has no way to ask for again — and a run of them at a boundary
+ * also short-pages, which the `exhausted` check below reads as the end
+ * of the thread. The activity pager next door names the same failure in
+ * its own comment; this one used to be the pattern it warns about.
  */
+/**
+ * The furthest-back message held, in the server's own order.
+ *
+ * NOT `messages[0]`. The local store sorts on `ts` alone, so within a
+ * shared millisecond its head is whichever message happened to merge
+ * first — while `/history` orders `ts DESC, id DESC`. Resuming from the
+ * local head would therefore ask the server to continue from a point it
+ * has already passed, and everything between the two is skipped. The
+ * minimum of `(ts, id)` is the same row under both orderings, which is
+ * the only anchor that survives the disagreement.
+ */
+function resumePoint(messages: readonly Message[]): Message | undefined {
+  let oldest: Message | undefined;
+  for (const m of messages) {
+    if (oldest === undefined || m.ts < oldest.ts || (m.ts === oldest.ts && m.id < oldest.id)) {
+      oldest = m;
+    }
+  }
+  return oldest;
+}
+
 export async function loadOlderThreadMessages(viewer: string, threadKey: string): Promise<void> {
   const state = threadHistoryState(threadKey);
   if (state.loading || state.exhausted) return;
   const query = queryFor(threadKey);
   if (query === null) return;
 
-  const current = threadMessages(threadKey);
-  const oldest = current[0];
+  const oldest = resumePoint(threadMessages(threadKey));
   patchState(threadKey, { loading: true });
   try {
     const page = await getClient().history({
       ...query,
       limit: PAGE_SIZE,
-      ...(oldest ? { before: oldest.ts } : {}),
+      ...(oldest ? { cursor: { ts: oldest.ts, id: oldest.id } } : {}),
     });
     prependMessages(viewer, page);
     patchState(threadKey, {

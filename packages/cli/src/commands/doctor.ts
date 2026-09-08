@@ -68,9 +68,9 @@ export interface AgentDoctorOptions {
   /**
    * What the runner will use to authenticate, as resolved by the
    * caller. When given, the report includes a `saved auth` check so a
-   * headless start that would otherwise fall into the enrollment
-   * wizard is named here first. Still local-only: this reads the
-   * device auth store, never the broker.
+   * headless start that would otherwise fall into `csuite connect`'s
+   * interactive connect prompt is named here first. Still local-only:
+   * this reads the device auth store, never the broker.
    */
   auth?: SavedAuthInput;
 }
@@ -87,7 +87,7 @@ export interface SavedAuthInput {
   tokenFromEnv: boolean;
   /** The store entry that resolves for (url, cwd), or null. */
   entry: { workspace: string | null } | null;
-  /** stdin is a TTY, so the enrollment wizard could run instead. */
+  /** stdin is a TTY, so the connect prompt could run instead. */
   interactive: boolean;
 }
 
@@ -229,10 +229,12 @@ async function checkAgentVersion(
  * matters is the one a healthy dev machine never takes.
  *
  * Headless with nothing resolving is FAIL, because the runner's only
- * other move is the interactive enrollment wizard, which without a TTY
+ * other move is the interactive connect prompt, which without a TTY
  * either exits 0 (and a supervisor restarts it forever) or hangs on a
  * device code (commandsuite#199). At a TTY the same state is WARN:
- * the wizard will run and that is the intended first-run experience.
+ * the connect prompt will run and that is the intended first-run
+ * experience. ("Wizard" is reserved for the first-run setup wizard;
+ * this is `csuite connect`'s one-question prompt plus device flow.)
  */
 export function savedAuthCheck(input: SavedAuthInput): DoctorCheck {
   const name = 'saved auth';
@@ -253,13 +255,13 @@ export function savedAuthCheck(input: SavedAuthInput): DoctorCheck {
     return {
       name,
       status: 'WARN',
-      detail: `nothing resolves for ${key}${hint}; the enrollment wizard will run first`,
+      detail: `nothing resolves for ${key}${hint}; the connect prompt will run first`,
     };
   }
   return {
     name,
     status: 'FAIL',
-    detail: `nothing resolves for ${key} and stdin is not a TTY, so the enrollment wizard cannot run${hint}; ${fix}`,
+    detail: `nothing resolves for ${key} and stdin is not a TTY, so the connect prompt cannot run${hint}; ${fix}`,
   };
 }
 

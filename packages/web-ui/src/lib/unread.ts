@@ -48,7 +48,7 @@ let initialized = false;
 
 /**
  * Bump a thread's lastRead position forward to `ts`. Monotonic —
- * never moves backward, so an out-of-order SSE backfill can't
+ * never moves backward, so an out-of-order stream hydration can't
  * "un-read" a later message by delivering an earlier one.
  */
 export function markThreadRead(threadKey: string, ts: number): void {

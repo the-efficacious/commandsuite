@@ -104,7 +104,7 @@ export async function createChannel(slug: string): Promise<ChannelSummary> {
 }
 
 export async function renameChannel(slug: string, newSlug: string): Promise<ChannelSummary> {
-  const updated = await getClient().renameChannel(slug, { slug: newSlug });
+  const updated = await getClient().updateChannel(slug, { slug: newSlug });
   await loadChannels();
   return (
     channelBySlug(updated.slug) ?? {

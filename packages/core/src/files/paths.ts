@@ -20,6 +20,7 @@
  * The root `/` has no owner and is implicit (no DB row represents it).
  */
 
+import { OBJECTIVE_THREAD_PREFIX } from '../event-log.js';
 import { FsError } from './errors.js';
 
 export const ROOT_PATH = '/' as const;
@@ -31,10 +32,19 @@ export const MAX_SEGMENT_LENGTH = 255;
  * Top-level segment for the objective-scope namespace. We use the
  * spelled-out word `objectives` in paths to keep them readable, while
  * the `owner` column carries the abbreviated `obj:<id>` form so it
- * matches the `obj:<id>` thread-key prefix used elsewhere.
+ * matches the `obj:<id>` thread tag used elsewhere.
  */
 export const OBJECTIVE_NAMESPACE_SEGMENT = 'objectives';
-export const OBJECTIVE_OWNER_PREFIX = 'obj:';
+
+/**
+ * `obj:<id>` in the filesystem `owner` column — a foreign identity, not a
+ * thread tag: it says which objective owns the row, not which conversation a
+ * message belongs to. Two senses, so two names; the two spellings must stay
+ * equal, so this one is derived from the thread-tag prefix rather than
+ * re-declared. A path is resolved to it by `ownerForPath`, and rows carrying it
+ * are ACL-gated on objective membership rather than on a member name.
+ */
+export const OBJECTIVE_OWNER_PREFIX = OBJECTIVE_THREAD_PREFIX;
 
 const SEGMENT_RE = /^[a-zA-Z0-9._\- ]+$/;
 

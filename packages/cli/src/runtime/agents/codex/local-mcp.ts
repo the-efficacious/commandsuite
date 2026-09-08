@@ -1,3 +1,23 @@
+/**
+ * LOCAL MCP SERVERS — stdio MCP processes on the member's own
+ * workstation, declared in `~/.config/csuite/codex/mcp-servers.json`
+ * and written into the ephemeral `CODEX_HOME` `config.toml` beside the
+ * csuite MCP bridge. Codex-only.
+ *
+ * These sit entirely outside the broker: no registration, no stored
+ * credential, no member binding, no audit. They are NOT tool sources —
+ * a tool source is a broker-held registry row, and its tools reach an
+ * agent through the instruction packet. Nothing here does.
+ *
+ * The three things this repository calls an "MCP server", kept apart:
+ *   - upstream MCP server — the remote Streamable-HTTP endpoint a
+ *     `kind=mcp` tool source points at; the BROKER connects to it
+ *   - csuite MCP bridge — `csuite mcp-bridge`, the stdio relay the
+ *     agent spawns to reach its runner (`runtime/bridge.ts`)
+ *   - local MCP server — this file: a member-local stdio process codex
+ *     spawns directly, which csuite only transcribes into config
+ */
+
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';

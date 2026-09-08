@@ -7,12 +7,21 @@
  */
 
 import { z } from 'zod';
-import { LEGACY_PERMISSION_EXPANSIONS, PERMISSIONS, RUNNER_CONDITION_CODES } from './types.js';
+import { SLUG_MAX_LENGTH, SLUG_PATTERN, SLUG_RULE } from './protocol.js';
+import { LEGACY_PERMISSION_ALIASES, PERMISSIONS, RUNNER_CONDITION_CODES } from './types.js';
+
+/**
+ * Every slug schema in this file, built from the one grammar in
+ * `protocol.ts`. The names below stay distinct because they document
+ * which store a field addresses — but they are now provably the same
+ * rule, not four hand-copied regexes that agreed by luck (#171).
+ */
+const slugSchema = () => z.string().min(1).max(SLUG_MAX_LENGTH).regex(SLUG_PATTERN, SLUG_RULE);
 
 export const LogLevelSchema = z.enum(['debug', 'info', 'notice', 'warning', 'error', 'critical']);
 
 /**
- * The 3-state activity model — orthogonal to connection presence.
+ * The 3-state work-state model — orthogonal to connection presence.
  * `idle` (available), `working` (mid-turn: generation and/or tools),
  * `blocked` (waiting on a human). See `WorkState` in types.ts.
  */
@@ -69,8 +78,8 @@ export const PermissionsSchema = z.preprocess(
   (value) =>
     Array.isArray(value)
       ? value.flatMap((entry) =>
-          typeof entry === 'string' && entry in LEGACY_PERMISSION_EXPANSIONS
-            ? LEGACY_PERMISSION_EXPANSIONS[entry]
+          typeof entry === 'string' && entry in LEGACY_PERMISSION_ALIASES
+            ? LEGACY_PERMISSION_ALIASES[entry]
             : [entry],
         )
       : value,
@@ -102,9 +111,9 @@ export const TeamSchema = z.object({
  * roster and instruction packet. Omits `instructions` (private to the member).
  */
 export const TeammateSchema = z.object({
-  // Stable across an explicit post-departure name reuse. Optional for wire
-  // compatibility with brokers predating typed offboarding.
-  identityId: z.string().uuid().optional(),
+  // The name is the whole public handle. The broker's stable internal
+  // identity id is deliberately not projected, so it is not
+  // declared here either — a parse strips it rather than blessing it.
   name: NameSchema,
   role: RoleSchema,
   permissions: PermissionsSchema,
@@ -252,12 +261,17 @@ export const PresenceSchema = z.object({
   createdAt: z.number(),
   lastSeen: z.number(),
   role: RoleSchema.nullable(),
-  // Live 3-state activity. The server omits the field for members it
-  // has no recent activity report for (treat absence as `idle`); older
-  // clients that don't know about it ignore it and fall back to `busy`.
+  // The roster's projected state of work. The server omits the field
+  // for members it has no recent report or proven action for (treat
+  // absence as `idle`); older clients that don't know about it ignore
+  // it and fall back to `activity`, then to `busy`.
+  workState: WorkStateSchema.optional(),
+  // @deprecated previous spelling of `workState`, emitted with the same
+  // value for one release. Removed in the next minor.
   activity: WorkStateSchema.optional(),
-  // Back-compat mirror of `activity === 'working'`. Omitted when
-  // `activity` is; older UIs that only read the boolean keep working.
+  // Compatibility mirror of `workState === 'working'`. Omitted when
+  // `workState` is; older UIs that only read the boolean keep working.
+  // Lossy — it cannot express `blocked`.
   busy: z.boolean().optional(),
   /**
    * Whether this member's VERBATIM capture is reaching the broker.
@@ -265,11 +279,11 @@ export const PresenceSchema = z.object({
    * `'ok'` and `'gap'` are BOTH emitted explicitly by a broker that
    * knows about this field. **Absence means "old broker, no opinion" —
    * never "healthy."** That distinction is the whole point: the
-   * optional-for-compatibility precedent (`activityWindowMs`) is what
+   * optional-for-compatibility precedent (`workStateWindowMs`) is what
    * makes the field safe to add, and it would silently reintroduce the
    * exact ambiguity this exists to remove if absence read as fine.
    *
-   * A member can report activity all day while none of their bodies
+   * A member can report work state all day while none of their bodies
    * arrive — `TracePanel` renders their markers either way, by design,
    * because rich-layer coverage is deliberately best-effort. That makes
    * *this turn has no rich record* (normal) and *this member has none
@@ -289,17 +303,27 @@ export const PresenceSchema = z.object({
 });
 
 /**
- * Body for `POST /presence/activity` — runner-side report of a
- * member's live activity transition (idle / working / blocked). The
+ * Body for `POST /presence/work-state` — runner-side report of a
+ * member's work-state transition (idle / working / blocked). The
  * server keys this on the authenticated member and applies a TTL so
  * stale state from a crashed runner clears itself back to idle. `busy`
- * is an optional back-compat mirror the server derives from `state`
- * (= `state === 'working'`) when omitted.
+ * is an optional compatibility mirror the server derives from `state`
+ * (= `state === 'working'`) when omitted, and otherwise ignores.
+ *
+ * The same schema parses the body of the deprecated
+ * `POST /presence/activity`: the rename changed the path and the
+ * roster field names, never the report body.
  */
-export const ActivityReportSchema = z.object({
+export const WorkStateReportSchema = z.object({
   state: WorkStateSchema,
   busy: z.boolean().optional(),
 });
+
+/**
+ * @deprecated The previous name of {@link WorkStateReportSchema}. Same
+ * schema object; removed in the next minor.
+ */
+export const ActivityReportSchema = WorkStateReportSchema;
 
 export const DeliveryReportSchema = z.object({
   live: z.number().int().nonnegative(),
@@ -551,18 +575,11 @@ export const ListObjectivesQuerySchema = z.object({
 // rename never orphans history.
 
 /**
- * Channel slug: 1–32 lowercase letters/digits/dashes, must start +
- * end alphanumeric, no consecutive dashes. Mirrors `validateSlug` on
- * the server.
+ * Channel slug — the shared grammar (`SLUG_PATTERN`, `SLUG_MAX_LENGTH`),
+ * which `validateSlug` on the server now reads from the same place. A
+ * channel's is the only slug that may be changed after creation.
  */
-export const ChannelSlugSchema = z
-  .string()
-  .min(1)
-  .max(32)
-  .regex(
-    /^[a-z0-9](?:[a-z0-9]|-(?!-))*[a-z0-9]$|^[a-z0-9]$/,
-    'slug must be lowercase letters/digits/dashes, no consecutive dashes, no leading/trailing dash',
-  );
+export const ChannelSlugSchema = slugSchema();
 
 export const ChannelMemberRoleSchema = z.enum(['admin', 'member']);
 
@@ -647,15 +664,8 @@ export const AddChannelMemberRequestSchema = z.object({
 // at rest server-side. Tool results are MCP CallToolResult-shaped so
 // the runner relays them verbatim.
 
-/** Tool-source slug: same grammar as channel slugs. Immutable in v1. */
-export const ToolSourceSlugSchema = z
-  .string()
-  .min(1)
-  .max(32)
-  .regex(
-    /^[a-z0-9](?:[a-z0-9]|-(?!-))*[a-z0-9]$|^[a-z0-9]$/,
-    'slug must be lowercase letters/digits/dashes, no consecutive dashes, no leading/trailing dash',
-  );
+/** Tool-source slug: the shared grammar. Immutable in v1. */
+export const ToolSourceSlugSchema = slugSchema();
 
 export const ToolSourceKindSchema = z.enum(['custom', 'mcp']);
 export const ToolCredentialKindSchema = z.enum(['bearer', 'header']);
@@ -732,6 +742,14 @@ export const ListToolSourcesResponseSchema = z.object({
   sources: z.array(ToolSourceSummarySchema),
 });
 
+/**
+ * `source.kind` is the discriminator for `tools`: `custom` yields
+ * `CustomToolDef[]`, `mcp` yields `ResolvedTool[]`. The union is
+ * untagged, so this schema proves only that each element is one of
+ * the two shapes — it cannot prove the shape matches the kind, and
+ * a custom tool whose `binding` fails validation parses as the
+ * second branch instead, silently dropping `binding`.
+ */
 export const GetToolSourceResponseSchema = z.object({
   source: ToolSourceSummarySchema,
   tools: z.union([z.array(CustomToolDefSchema), z.array(ResolvedToolSchema)]),
@@ -1705,8 +1723,12 @@ export const ActivityEventSchema = z.discriminatedUnion('kind', [
     querySource: z.string().optional(),
     entry: AnthropicMessagesEntrySchema,
   }),
-  // tool_action — captured from an agent's NATIVE instrumentation
-  // (Claude Code hooks, codex item stream). `input`/`result` are
+  // tool_action — one tool invocation, from either producer: the
+  // agent's own durable record (`source: 'transcript'` /
+  // `'codex_rollout'`), or the broker's tool-source invoke audit
+  // (`agent: 'broker'`, `source: 'tool_source'`, metadata only). See
+  // `ActivityToolAction` in types.ts for the provenance split.
+  // `input`/`result` are
   // whatever the agent framework hands us, so they stay permissive
   // (z.unknown()) — a novel tool shape must never fail validation.
   z.object({
@@ -2100,7 +2122,10 @@ export const RosterResponseSchema = z.object({
   teammates: z.array(TeammateSchema),
   connected: z.array(PresenceSchema),
   // Optional so clients remain compatible with brokers that predate
-  // server-reported activity-window semantics.
+  // server-reported work-state-window semantics.
+  workStateWindowMs: z.number().int().positive().optional(),
+  // @deprecated previous spelling of `workStateWindowMs`, emitted with
+  // the same value for one release. Removed in the next minor.
   activityWindowMs: z.number().int().positive().optional(),
   // Optional so clients remain compatible with brokers that predate
   // instruction versioning. Unknown-issued members are never listed —
@@ -2220,14 +2245,18 @@ export const FsEntrySchema = z.object({
   createdBy: NameSchema,
   /**
    * Whether the requesting viewer may mutate this entry — the server's
-   * own `canWrite()` predicate, evaluated per request.
+   * own `canWrite()` predicate, evaluated per request, on every response
+   * carrying an entry: reads (`stat`, `ls`, `shared`, `all`) and writes
+   * (`write`, `mkdir`, `mv`) alike.
    *
    * Present so a client does not have to RECONSTRUCT the rule. A UI that
    * infers "can I delete this" from `owner === me` is wrong for objective
    * namespace entries, whose owner is `obj:<id>` and whose write rule
    * includes objective membership — information the client does not have
    * and cannot derive. Optional so older servers that omit it still
-   * parse; a client seeing `undefined` should ask rather than guess.
+   * parse; a client seeing `undefined` is talking to one of those and
+   * should ask rather than guess. `undefined` never means "this verb
+   * does not send it" — that carve-out existed until #159 and is gone.
    */
   canWrite: z.boolean().optional(),
   updatedAt: z.number().int().nonnegative(),

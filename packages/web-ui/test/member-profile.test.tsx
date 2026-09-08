@@ -160,6 +160,45 @@ const TOOL_ROW: ActivityRow = {
   },
 };
 
+/**
+ * A standalone `tool_action` — no `toolUseId`, so nothing folds it —
+ * tagged with a capture source a runner actually emits: the transcript
+ * reader stamps `'transcript'` on every Claude tool run.
+ */
+const SOURCED_TOOL_ROW: ActivityRow = {
+  id: 5,
+  memberName: 'engineer-1',
+  createdAt: 1_700_000_004_000,
+  event: {
+    kind: 'tool_action',
+    ts: 1_700_000_003_500,
+    durationMs: 8,
+    agent: 'claude',
+    source: 'transcript',
+    toolName: 'Read',
+    input: { file_path: '/etc/hosts' },
+    result: 'ok',
+    isError: false,
+  },
+};
+
+/** The same action from a broker that reports no capture source. */
+const UNSOURCED_TOOL_ROW: ActivityRow = {
+  id: 6,
+  memberName: 'engineer-1',
+  createdAt: 1_700_000_004_000,
+  event: {
+    kind: 'tool_action',
+    ts: 1_700_000_003_500,
+    durationMs: 8,
+    agent: 'claude',
+    toolName: 'Read',
+    input: { file_path: '/etc/hosts' },
+    result: 'ok',
+    isError: false,
+  },
+};
+
 const OPEN_ROW: ActivityRow = {
   id: 3,
   memberName: 'engineer-1',
@@ -416,6 +455,39 @@ describe('AgentTimeline', () => {
     const { container } = render(<AgentTimeline />);
     expect((container.textContent ?? '').toLowerCase()).toContain('prompt');
     expect(screen.getByText('wake up and ship it')).toBeTruthy();
+  });
+
+  it('renders the capture source on a standalone tool action', () => {
+    instructions.value = COMMANDER_PACKET;
+    memberActivityRows.value = [SOURCED_TOOL_ROW];
+    memberActivityLoading.value = false;
+    const { container } = render(<AgentTimeline />);
+    const text = container.textContent ?? '';
+
+    // The whole row, not just the new field: tool, agent and duration
+    // still render beside the capture source.
+    expect(text).toContain('Read');
+    expect(text).toContain('claude');
+    expect(text).toContain('8ms');
+    // The tag verbatim. `transcript`, `codex_rollout` and `tool_source`
+    // are three different provenances and the operator reads which one
+    // this run came from.
+    expect(screen.getByTitle(/^Capture source/).textContent).toBe('transcript');
+  });
+
+  it('renders no capture-source element when the event carries no source', () => {
+    // The negative control: a row that emitted the element
+    // unconditionally would print an empty tag and still satisfy the
+    // assertions above.
+    instructions.value = COMMANDER_PACKET;
+    memberActivityRows.value = [UNSOURCED_TOOL_ROW];
+    memberActivityLoading.value = false;
+    const { container } = render(<AgentTimeline />);
+    const text = container.textContent ?? '';
+
+    expect(text).toContain('Read');
+    expect(text).toContain('8ms');
+    expect(screen.queryByTitle(/^Capture source/)).toBeNull();
   });
 });
 
@@ -769,15 +841,15 @@ describe('genai-lazy loadGenAiRecord', () => {
 });
 
 describe('buildThread — turn spine with the call ledger', () => {
-  it('attaches a joined call to its turn and emits no ghost row', () => {
+  it('attaches a joined call to its turn and emits no orphan-call row', () => {
     const thread = buildThread([LLM_ROW], [GENAI_SUMMARY]);
     const turn = thread.find((i) => i.variant === 'turn');
     if (turn?.variant !== 'turn') throw new Error('expected a turn');
     expect(turn.calls.map((c) => c.id)).toEqual([91]);
-    expect(thread.some((i) => i.variant === 'model-call')).toBe(false);
+    expect(thread.some((i) => i.variant === 'orphan-call')).toBe(false);
   });
 
-  it('interleaves a turnless call as a model-call item at its timestamp', () => {
+  it('interleaves a turnless call as an orphan-call item at its timestamp', () => {
     const sidecar: GenAiInferenceSummary = {
       ...GENAI_SUMMARY,
       id: 92,
@@ -786,14 +858,14 @@ describe('buildThread — turn spine with the call ledger', () => {
       ts: 1_700_000_000_150,
     };
     const thread = buildThread([LLM_ROW, TOOL_ROW], [sidecar]);
-    const ghost = thread.find((i) => i.variant === 'model-call');
-    if (ghost?.variant !== 'model-call') throw new Error('expected a model-call');
-    expect(ghost.recordId).toBe(92);
-    expect(ghost.querySource).toBe('web_search_tool');
-    // Chronological: turn (t+0) → ghost (t+150) → tool row (t+500).
+    const orphan = thread.find((i) => i.variant === 'orphan-call');
+    if (orphan?.variant !== 'orphan-call') throw new Error('expected an orphan-call');
+    expect(orphan.recordId).toBe(92);
+    expect(orphan.querySource).toBe('web_search_tool');
+    // Chronological: turn (t+0) → orphan call (t+150) → tool row (t+500).
     const order = thread.map((i) => i.variant);
-    expect(order.indexOf('turn')).toBeLessThan(order.indexOf('model-call'));
-    expect(order.indexOf('model-call')).toBeLessThan(order.indexOf('tool-action'));
+    expect(order.indexOf('turn')).toBeLessThan(order.indexOf('orphan-call'));
+    expect(order.indexOf('orphan-call')).toBeLessThan(order.indexOf('tool-action'));
   });
 });
 

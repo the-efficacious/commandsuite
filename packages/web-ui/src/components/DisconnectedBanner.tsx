@@ -12,7 +12,7 @@
  *                                            so backgrounded-tab churn
  *                                            on focus return doesn't
  *                                            flash the warning)
- *   - Reconnected with backfill loss       → "Reconnected" auto-dismiss toast
+ *   - Reconnected with hydration loss      → "Reconnected" auto-dismiss toast
  *
  * The pre-first-open race (signal starts `false` until the WebSocket's
  * first `open` event) is gated behind `streamEverConnected` so the
@@ -25,11 +25,11 @@
  *
  * Dedup is handled by the `stream-status` tag — re-emitting replaces
  * any previous stream-status toast in place. Healthy reconnect with
- * no backfill loss explicitly clears the tag.
+ * no hydration loss explicitly clears the tag.
  */
 
 import { useEffect } from 'preact/hooks';
-import { streamBackfillError, streamConnected, streamEverConnected } from '../lib/live.js';
+import { streamConnected, streamEverConnected, streamHydrateError } from '../lib/live.js';
 import { dismissToastsByTag, toast } from '../lib/toast.js';
 
 const STATUS_TAG = 'stream-status';
@@ -45,7 +45,7 @@ export function DisconnectedBanner() {
   // Read all three signals so the effect re-runs on any change.
   const connected = streamConnected.value;
   const everConnected = streamEverConnected.value;
-  const backfillErr = streamBackfillError.value;
+  const hydrateErr = streamHydrateError.value;
 
   useEffect(() => {
     // Pre-first-open: stay quiet.
@@ -67,14 +67,14 @@ export function DisconnectedBanner() {
       return () => clearTimeout(timer);
     }
 
-    // Reconnected, but backfill failed — surface a transient warning,
+    // Reconnected, but hydration failed — surface a transient warning,
     // then let it auto-dismiss. The user can click Refresh to recover
     // any history that landed during the outage.
-    if (backfillErr !== null) {
+    if (hydrateErr !== null) {
       toast.warn({
         tag: STATUS_TAG,
         title: 'Reconnected',
-        body: `Live stream is back but missed some history: ${backfillErr}.`,
+        body: `Live stream is back but missed some history: ${hydrateErr}.`,
         action: {
           label: 'Refresh',
           onClick: () => {
@@ -87,7 +87,7 @@ export function DisconnectedBanner() {
 
     // Healthy steady state — clear any stream-status toast we left up.
     dismissToastsByTag(STATUS_TAG);
-  }, [connected, everConnected, backfillErr]);
+  }, [connected, everConnected, hydrateErr]);
 
   return null;
 }

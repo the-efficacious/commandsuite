@@ -62,7 +62,6 @@ import type {
 } from 'csuite-sdk/types';
 import { CLI_VERSION } from '../version.js';
 import { createAuthRecoveryController } from './auth-recovery.js';
-import { startActivityReporter } from './busy-reporter.js';
 import type { ChannelEventSink, ContextControlEvent } from './forwarder.js';
 import { runForwarder } from './forwarder.js';
 import {
@@ -77,6 +76,7 @@ import { createObjectivesTracker } from './objectives-tracker.js';
 import { createPresence, type Presence } from './presence.js';
 import { defineTools, formatAgentTimestamp, handleToolCall } from './tools.js';
 import { type CaptureHost, startCaptureHost } from './trace/host.js';
+import { startWorkStateReporter } from './work-state-reporter.js';
 
 export class RunnerStartupError extends Error {
   constructor(message: string) {
@@ -132,7 +132,7 @@ export interface RunnerOptions {
    */
   onSecondBridge?: 'displace-old' | 'reject-new';
   /**
-   * Disable the capture host entirely — no activity uploader, no busy
+   * Disable the capture host entirely — no activity uploader, no work-state
    * signal, no hook server. The returned `RunnerHandle.captureHost`
    * will be `null`, and the agent child's environment is left untouched
    * (no OTEL export). Default: capture enabled. `csuite claude
@@ -235,11 +235,11 @@ export interface RunnerHandle {
   /** Re-resolve the current environment and atomically replace the live snapshot. */
   refreshSecrets(): Promise<Readonly<Record<string, string>>>;
   /**
-   * The live capture host owning the activity uploader, the busy
+   * The live capture host owning the activity uploader, the work-state
    * signal, and the Claude Code hook server. `null` when the runner
    * was started with `noTrace: true`. `csuite claude` reads this
    * to know whether to bake the OTEL export env into the agent child's
-   * environment; the codex adapter reads its `enqueue` / `busy`.
+   * environment; the codex adapter reads its `enqueue` / `workState`.
    */
   readonly captureHost: CaptureHost | null;
   /**
@@ -427,7 +427,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
     }
   }
 
-  // Optional capture host: activity uploader + busy signal + Claude
+  // Optional capture host: activity uploader + work-state signal + Claude
   // Code hook server. No network interception — each agent's native
   // instrumentation feeds it (OTEL for claude, the app-server stream
   // for codex). Skipped entirely when `noTrace` is set — tests and CI
@@ -459,12 +459,12 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
         token: options.token,
         onUnauthorized: () => unauthorizedHandler('http'),
         logger: log.child('capture-host'),
-        onSessionStart: (source) => {
+        onSessionStart: (origin) => {
           // `compact` = post-compaction restart, `clear` = /clear —
           // both mean the prior conversation context is gone and the
           // agent needs its plate re-asserted. `startup` / `resume`
           // are already covered by the tools/list attach trigger.
-          if (source === 'compact' || source === 'clear') {
+          if (origin === 'compact' || origin === 'clear') {
             sendRebrief('context-compaction');
           }
         },
@@ -646,17 +646,17 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
     for (const obj of instructions.openObjectives) {
       captureHost.noteObjectiveOpen(obj.id);
     }
-    // Activity reporter — subscribes to the capture host's activity
-    // signal and POSTs `/presence/activity` on state transitions
+    // Work-state reporter — subscribes to the capture host's work-state
+    // signal and POSTs `/presence/work-state` on state transitions
     // (idle↔working↔blocked), plus a heartbeat while non-idle so the
-    // server TTL stays fresh. Skipped when capture is off (the activity
-    // signal is driven by the native instrumentation the capture host
-    // owns — Claude Code hooks and the codex adapter).
-    startActivityReporter({
+    // server TTL stays fresh. Skipped when capture is off (the
+    // work-state signal is driven by the native instrumentation the
+    // capture host owns — Claude Code hooks and the codex adapter).
+    startWorkStateReporter({
       brokerClient,
-      activity: captureHost.busy,
+      workState: captureHost.workState,
       signal: abortController.signal,
-      logger: log.child('activity-reporter'),
+      logger: log.child('work-state-reporter'),
     });
   }
 

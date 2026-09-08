@@ -79,10 +79,7 @@ export async function reassignObjective(
   id: string,
   req: ReassignObjectiveRequest,
 ): Promise<Objective> {
-  const updated = await getClient().updateObjective(id, {
-    assignee: req.to,
-    ...(req.note !== undefined ? { note: req.note } : {}),
-  });
+  const updated = await getClient().reassignObjective(id, req);
   upsertLocal(updated);
   return updated;
 }

@@ -210,6 +210,64 @@ describe('the two stores share one environment namespace', () => {
     );
     expect(boundVariable.status).toBe(200);
   });
+
+  /**
+   * The env NAME is shared across the pair; the SLUG is not.
+   * `validateVariableSlug` used to claim the opposite — "they may not
+   * collide with a secret's" — and nothing anywhere enforced it: each
+   * create path checks only its own table, behind two per-table unique
+   * indexes. The web UI's whole URL scheme is built on the fact that
+   * comment denied. Pinned here in the direction that passes, so a
+   * future reader of the old sentence cannot quietly implement it
+   * (#136).
+   */
+  it('a secret and a variable may share a slug — uniqueness is per store', async () => {
+    const { app } = await makeApp();
+    const secret = await app.request(
+      '/secrets',
+      authed(ADMIN, { slug: 'git-token', envName: 'GITHUB_TOKEN' }),
+    );
+    expect(secret.status).toBe(201);
+    const variable = await app.request(
+      '/variables',
+      authed(ADMIN, { slug: 'git-token', envName: 'GIT_AUTHOR_NAME' }),
+    );
+    expect(variable.status).toBe(201);
+    // Both resolve, each inside its own store, to two different records.
+    const asSecret = (await (await app.request('/secrets/git-token', authed(ADMIN))).json()) as {
+      secret: { slug: string; envName: string };
+    };
+    const asVariable = (await (
+      await app.request('/variables/git-token', authed(ADMIN))
+    ).json()) as {
+      variable: { slug: string; envName: string };
+    };
+    expect(asSecret.secret.envName).toBe('GITHUB_TOKEN');
+    expect(asVariable.variable.envName).toBe('GIT_AUTHOR_NAME');
+  });
+
+  it('the wire and the store now agree on which slugs exist at all', async () => {
+    const { app } = await makeApp();
+    // 32 in, 33 out — the boundary the store used to put at 64.
+    const ok = await app.request(
+      '/variables',
+      authed(ADMIN, { slug: 'a'.repeat(32), envName: 'GIT_AUTHOR_NAME' }),
+    );
+    expect(ok.status).toBe(201);
+    const tooLong = await app.request(
+      '/variables',
+      authed(ADMIN, { slug: 'a'.repeat(33), envName: 'GIT_COMMITTER_NAME' }),
+    );
+    expect(tooLong.status).toBe(400);
+    // The shapes the lenient copy admitted.
+    for (const slug of ['git--token', 'git-token-']) {
+      const refused = await app.request(
+        '/variables',
+        authed(ADMIN, { slug, envName: 'GIT_COMMITTER_NAME' }),
+      );
+      expect(refused.status, `${slug} was accepted`).toBe(400);
+    }
+  });
 });
 
 describe('/secrets/resolve merges both stores and marks which are secret', () => {

@@ -5,6 +5,13 @@ TypeScript compiler. Run it to regenerate; it takes no arguments.
 
 **Derived at** branch `fix/ui-capability-gates`, base `origin/develop@eef2de3`.
 
+**Generated artifact, not a living reference.** This page is a point-in-time
+capture — the enumeration is script output and the analysis around it
+describes that one run. Refresh it by re-running the script; don't hand-edit
+rows, and don't source terminology from it: the vocabulary is the
+instrument's, and the base branch it names above is from the `develop` +
+`review/<date>` model retired on 2026-07-30 (see `.github/CONTRIBUTING.md`).
+
 ## Why this replaces the previous artifact
 
 The first version of this audit was a regex over line-shaped `&&` with a

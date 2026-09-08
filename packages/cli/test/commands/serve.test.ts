@@ -247,10 +247,14 @@ function seedConfig(dir: string): string {
 }
 
 // TODO(db-migration): rewrite this regression for the DB-backed model.
-// The original test pinned the persistMembers 501 gate, which doesn't
-// exist anymore. The replacement should seed a SQLite DB, point
-// runServeCommand at it, and assert the live POST /members write
-// lands in the DB rather than relying on the JSON file.
+// The original test pinned the `persistMembers` 501 gate. That gate is
+// still in `packages/core/src/app.ts` — six member-mutating routes
+// return 501 when the hook is absent — but `runServer` now always
+// passes one (a no-op: the DB-backed `MemberStore` persists at the call
+// site), so the 501 is unreachable through this entry point and the
+// JSON member file this test seeds is no longer the storage model. The
+// replacement should seed a SQLite DB, point runServeCommand at it, and
+// assert the live POST /members write lands in the DB.
 describe.skip('runServeCommand → live server (regression for the published-CLI bug)', () => {
   it('boots and accepts POST /members — fails 501 before the configPath fix', async () => {
     const dir = tmpServeDir();

@@ -54,7 +54,7 @@ async function revokeRow(memberName: string, token: TokenInfo): Promise<void> {
     !(await confirmDialog({
       title: `Revoke this token for '${memberName}'?`,
       body:
-        `${token.label || '(no label)'} · ${token.origin} · created ${formatTime(token.createdAt)}. ` +
+        `${token.label || '(no label)'} · ${originLabel(token.origin)} · created ${formatTime(token.createdAt)}. ` +
         'Any device currently using this token will get 401 on its next request.',
       verb: 'Revoke',
     }))

@@ -2,12 +2,14 @@
  * Loopback HTTP endpoint for Claude Code hook events.
  *
  * Claude Code's hook system fires lifecycle callbacks at points in the
- * agent loop we want presence for. We bind a small HTTP server here,
- * write its URL into `.claude/settings.json` as a `type: "http"` hook
- * target, and let Claude Code POST to us on each event. All events hit
- * the same URL; we route on `hook_event_name` in the payload.
+ * agent loop we want presence for. We bind a small HTTP server here;
+ * the claude adapter hands its URL to the Agent SDK as in-process hook
+ * callbacks (`buildHookForwarders` in `agents/claude-agent.ts`) that
+ * POST each payload to us — nothing is written to
+ * `.claude/settings.json`. All events hit the same URL; we route on
+ * `hook_event_name` in the payload.
  *
- * The hook server is PRESENCE-ONLY: it drives the ACTIVITY signal
+ * The hook server is PRESENCE-ONLY: it drives the WORK-STATE signal
  * (idle/working/blocked) and surfaces the transcript path. It no longer
  * emits `tool_action` / `user_prompt` CONTENT — the transcript reader is
  * the single source of that now (it carries the full, untruncated turn),
@@ -20,6 +22,11 @@
  *   - PreToolUse / PostToolUse / PostToolUseFailure — a tool-execution
  *     window. Bumps `tool_inflight` on Pre, decrements on Post. The tool
  *     CONTENT (input/result) comes from the transcript, not here.
+ *     `PostToolBatch` is deliberately NOT one of them: the SDK fires it
+ *     once per batch IN ADDITION to the per-tool PostToolUse that has
+ *     already drained each handle, and its body carries `tool_calls[]`
+ *     rather than the `tool_use_id` this server matches on, so routing
+ *     it could only ever be a no-op.
  *   - UserPromptSubmit — TURN START. Opens a `turn_active` handle so the
  *     WHOLE turn (model generation + tools) reads as `working`, not just
  *     the tool windows.
@@ -31,10 +38,10 @@
  *   - Notification — routes on `notification_type`: permission_prompt /
  *     agent_needs_input / elicitation_dialog → `blocked`; idle_prompt →
  *     not blocked; unknown types ignored.
- *   - SessionStart — relays `source` (startup / resume / clear /
- *     compact) via `onSessionStart`. The runner uses compact/clear as
- *     the "context fell off" signal to push a `context_refresh`
- *     re-brief. No presence effect.
+ *   - SessionStart — relays the hook's `source` field as the session's
+ *     ORIGIN (startup / resume / clear / compact) via `onSessionStart`.
+ *     The runner uses compact/clear as the "context fell off" signal to
+ *     push a `context_refresh` re-brief. No presence effect.
  *
  * Why HTTP and not `type: "command"`:
  *   - Each `type: "command"` hook forks a process per event. With ~50
@@ -58,18 +65,25 @@
 
 import { createServer, type Server } from 'node:http';
 import { logger as defaultLogger, type Logger } from 'csuite-core';
-import type { ActivitySignal } from './busy.js';
+import type { WorkStateSignal } from './work-state.js';
 
-export type ClaudeHookEventName =
-  | 'PreToolUse'
-  | 'PostToolUse'
-  | 'PostToolUseFailure'
-  | 'PostToolBatch'
-  | 'UserPromptSubmit'
-  | 'Stop'
-  | 'SubagentStop'
-  | 'Notification'
-  | 'SessionStart';
+/**
+ * The hook events this server routes on. A runtime constant rather
+ * than a bare type union so the forwarder's registration list can be
+ * checked against it instead of counted by hand.
+ */
+export const CLAUDE_HOOK_EVENTS = [
+  'PreToolUse',
+  'PostToolUse',
+  'PostToolUseFailure',
+  'UserPromptSubmit',
+  'Stop',
+  'SubagentStop',
+  'Notification',
+  'SessionStart',
+] as const;
+
+export type ClaudeHookEventName = (typeof CLAUDE_HOOK_EVENTS)[number];
 
 interface HookRequestBody {
   hook_event_name?: string;
@@ -100,8 +114,12 @@ interface HookRequestBody {
    */
   stop_hook_active?: boolean;
   /**
-   * On SessionStart: why the session (re)started — `startup`, `resume`,
-   * `clear`, or `compact`. Relayed via `onSessionStart`.
+   * On SessionStart: the session's ORIGIN — why it (re)started:
+   * `startup`, `resume`, `clear`, or `compact`. Claude Code spells this
+   * field `source`; we relay it via `onSessionStart` under the
+   * unambiguous name `origin`, because "source" in this directory
+   * already means the capture source tag, the query source and the
+   * work-state counter.
    */
   source?: string;
 }
@@ -132,7 +150,7 @@ export interface HookServer {
 }
 
 export interface HookServerOptions {
-  busy: ActivitySignal;
+  workState: WorkStateSignal;
   /**
    * Fired with the `transcript_path` from the first hook body that
    * carries one, and again whenever a later body carries a DIFFERENT
@@ -144,12 +162,12 @@ export interface HookServerOptions {
    */
   onTranscriptPath?: (path: string) => void;
   /**
-   * Fired on every SessionStart hook with its `source` value
-   * (`startup` / `resume` / `clear` / `compact`; empty string when the
-   * payload omits it). The runner listens for compact/clear to push a
-   * context re-brief. Optional.
+   * Fired on every SessionStart hook with that session's ORIGIN — the
+   * hook payload's `source` field (`startup` / `resume` / `clear` /
+   * `compact`; empty string when the payload omits it). The runner
+   * listens for compact/clear to push a context re-brief. Optional.
    */
-  onSessionStart?: (source: string) => void;
+  onSessionStart?: (origin: string) => void;
   logger?: Logger;
 }
 
@@ -266,10 +284,7 @@ export async function startHookServer(options: HookServerOptions): Promise<HookS
     }
 
     const isToolEvent =
-      event === 'PreToolUse' ||
-      event === 'PostToolUse' ||
-      event === 'PostToolUseFailure' ||
-      event === 'PostToolBatch';
+      event === 'PreToolUse' || event === 'PostToolUse' || event === 'PostToolUseFailure';
 
     if (isToolEvent) {
       const toolUseId = body.tool_use_id;
@@ -284,7 +299,7 @@ export async function startHookServer(options: HookServerOptions): Promise<HookS
         // Duplicate PreToolUse for the same id is a no-op — keep the
         // first handle so the matching Post still finds something.
         if (!handles.has(toolUseId)) {
-          handles.set(toolUseId, options.busy.start('tool_inflight'));
+          handles.set(toolUseId, options.workState.start('tool_inflight'));
         }
       } else {
         const handle = handles.get(toolUseId);
@@ -292,12 +307,11 @@ export async function startHookServer(options: HookServerOptions): Promise<HookS
           handle.finish();
           handles.delete(toolUseId);
         }
-        // Note: PostToolBatch may carry a synthetic batch id rather than
-        // a real tool_use_id; we still try to drain the matching handle
-        // in case Claude Code uses the same id space. Missing matches
-        // are silent (no-op). The tool CONTENT (input/result) is NOT
-        // emitted here — the transcript reader is the single source of
-        // `tool_action` now, so a hook emission would only duplicate it.
+        // A Post for an id we never opened is silent (no-op), and a
+        // double Post decrements at most once. The tool CONTENT
+        // (input/result) is NOT emitted here — the transcript reader is
+        // the single source of `tool_action` now, so a hook emission
+        // would only duplicate it.
       }
     } else if (event === 'UserPromptSubmit') {
       // TURN START — open a `turn_active` handle so the whole turn reads
@@ -306,14 +320,14 @@ export async function startHookServer(options: HookServerOptions): Promise<HookS
       // not here — this is presence-only.
       const key = turnKey(body);
       if (!turnHandles.has(key)) {
-        turnHandles.set(key, options.busy.start('turn_active'));
+        turnHandles.set(key, options.workState.start('turn_active'));
       }
     } else if (event === 'Stop') {
       // TURN END — clear any human-blocking state and close the turn's
       // `turn_active` handle. `stop_hook_active` means this is a
       // blocking-loop retry; still turn-ending for presence, so treat
       // it identically (recorded for diagnostics only).
-      options.busy.setBlocked(false);
+      options.workState.setBlocked(false);
       const key = turnKey(body);
       const handle = turnHandles.get(key);
       if (handle) {
@@ -341,19 +355,19 @@ export async function startHookServer(options: HookServerOptions): Promise<HookS
       // never wedge the signal).
       const nType = body.notification_type;
       if (typeof nType === 'string' && BLOCKING_NOTIFICATION_TYPES.has(nType)) {
-        options.busy.setBlocked(true);
+        options.workState.setBlocked(true);
       } else if (typeof nType === 'string' && UNBLOCKING_NOTIFICATION_TYPES.has(nType)) {
-        options.busy.setBlocked(false);
+        options.workState.setBlocked(false);
       }
     } else if (event === 'SessionStart') {
-      // Session (re)start — no presence effect, but the `source` tells
+      // Session (re)start — no presence effect, but the origin tells
       // the runner whether the agent's context just fell off (compact /
       // clear) and needs a re-brief.
-      const source = typeof body.source === 'string' ? body.source : '';
-      log.info('session start', { source });
+      const origin = typeof body.source === 'string' ? body.source : '';
+      log.info('session start', { origin });
       if (options.onSessionStart) {
         try {
-          options.onSessionStart(source);
+          options.onSessionStart(origin);
         } catch (err) {
           log.warn('onSessionStart threw', {
             error: err instanceof Error ? err.message : String(err),

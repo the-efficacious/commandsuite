@@ -30,7 +30,6 @@ import {
   VARIABLE_PATHS,
 } from './protocol.js';
 import {
-  ActivityReportSchema,
   AddChannelMemberRequestSchema,
   ApproveEnrollmentRequestSchema,
   ApproveEnrollmentResponseSchema,
@@ -124,6 +123,7 @@ import {
   UpdateVariableRequestSchema,
   UploadActivityResponseSchema,
   VapidPublicKeyResponseSchema,
+  WorkStateReportSchema,
 } from './schemas.js';
 import type {
   ActivityReport,
@@ -189,6 +189,7 @@ import type {
   PushResult,
   PushSubscriptionPayload,
   PushSubscriptionResponse,
+  ReassignObjectiveRequest,
   RefreshToolSourceResponse,
   RejectEnrollmentRequest,
   RenameChannelRequest,
@@ -227,6 +228,7 @@ import type {
   UploadActivityResponse,
   VapidPublicKeyResponse,
   VariableSummary,
+  WorkStateReport,
 } from './types.js';
 
 // Re-exported from `./types` (canonical home) so `csuite-sdk`
@@ -479,7 +481,7 @@ export class Client {
    * member.
    *
    * Returns the caller's name, role, permissions, team
-   * (name/context/presets), list of teammates, open objectives
+   * (name and context), list of teammates, open objectives
    * currently on the caller's plate, the member's personal
    * `instructions` string ready for `new Server({instructions})` in
    * the MCP link, and — from brokers with the instruction-block model
@@ -511,7 +513,7 @@ export class Client {
   /** Read the broker-composed team operability report. Requires members.manage. */
   async teamStatus(options: { stalledMs?: number } = {}): Promise<TeamStatusResponse> {
     const params = new URLSearchParams();
-    if (options.stalledMs !== undefined) params.set('stalledMs', String(options.stalledMs));
+    if (options.stalledMs !== undefined) params.set('stalled_ms', String(options.stalledMs));
     const suffix = params.size > 0 ? `?${params}` : '';
     const resp = await this.request(`${PATHS.teamStatus}${suffix}`, { method: 'GET' });
     return TeamStatusResponseSchema.parse(await this.json(resp));
@@ -561,9 +563,11 @@ export class Client {
   }
 
   /**
-   * Update an objective's status (active ↔ blocked), post a note to
-   * its thread, or both. Cannot transition to `done` — use
-   * `completeObjective` for that.
+   * Update an objective's status (active ↔ blocked) and block
+   * reason, its assignee, or its watchers. `note` is handover
+   * context for an assignee change and is ignored otherwise;
+   * discussion goes through `discussObjective`. Cannot transition to
+   * `done` — use `completeObjective` for that.
    */
   async updateObjective(id: string, payload: UpdateObjectiveRequest): Promise<Objective> {
     const resp = await this.request(OBJECTIVE_PATHS.one(id), {
@@ -593,6 +597,21 @@ export class Client {
    */
   async cancelObjective(id: string, payload: CancelObjectiveRequest = {}): Promise<Objective> {
     const resp = await this.request(OBJECTIVE_PATHS.cancel(id), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return ObjectiveSchema.parse(await this.json(resp));
+  }
+
+  /**
+   * Move a non-terminal objective to a different assignee. Requires
+   * `objectives.reassign`. The previous assignee is promoted to watcher
+   * in the same transaction, so a handover keeps them on the thread;
+   * `note` carries the handover context.
+   */
+  async reassignObjective(id: string, payload: ReassignObjectiveRequest): Promise<Objective> {
+    const resp = await this.request(OBJECTIVE_PATHS.reassign(id), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -726,8 +745,8 @@ export class Client {
     if (query.from !== undefined) params.set('from', String(query.from));
     if (query.to !== undefined) params.set('to', String(query.to));
     if (query.cursor !== undefined) {
-      params.set('cursor_ts', String(query.cursor.ts));
-      params.set('cursor_id', String(query.cursor.id));
+      params.set('before_ts', String(query.cursor.ts));
+      params.set('before_id', String(query.cursor.id));
     }
     if (query.kind !== undefined) {
       const kinds = Array.isArray(query.kind) ? query.kind : [query.kind];
@@ -761,8 +780,8 @@ export class Client {
     if (query.from !== undefined) params.set('from', String(query.from));
     if (query.to !== undefined) params.set('to', String(query.to));
     if (query.cursor !== undefined) {
-      params.set('cursor_ts', String(query.cursor.ts));
-      params.set('cursor_id', String(query.cursor.id));
+      params.set('after_ts', String(query.cursor.ts));
+      params.set('after_id', String(query.cursor.id));
     }
     if (query.limit !== undefined) params.set('limit', String(query.limit));
     const qs = params.toString();
@@ -793,8 +812,8 @@ export class Client {
     if (query.from !== undefined) params.set('from', String(query.from));
     if (query.to !== undefined) params.set('to', String(query.to));
     if (query.cursor !== undefined) {
-      params.set('cursor_ts', String(query.cursor.ts));
-      params.set('cursor_id', String(query.cursor.id));
+      params.set('after_ts', String(query.cursor.ts));
+      params.set('after_id', String(query.cursor.id));
     }
     if (query.limit !== undefined) params.set('limit', String(query.limit));
     const path = `${MEMBER_PATHS.genai(name)}?${params.toString()}`;
@@ -829,8 +848,8 @@ export class Client {
     if (query.from !== undefined) params.set('from', String(query.from));
     if (query.to !== undefined) params.set('to', String(query.to));
     if (query.cursor !== undefined) {
-      params.set('cursor_ts', String(query.cursor.ts));
-      params.set('cursor_id', String(query.cursor.id));
+      params.set('after_ts', String(query.cursor.ts));
+      params.set('after_id', String(query.cursor.id));
     }
     if (query.limit !== undefined) params.set('limit', String(query.limit));
     const qs = params.toString();
@@ -1137,12 +1156,26 @@ export class Client {
     }
   }
 
+  /**
+   * Newest-first message history for the caller's own scope.
+   *
+   * Page with `cursor`, not `before`: the composite `{ts, id}` reaches
+   * every message exactly once, while the scalar bound drops any that
+   * share the page-boundary millisecond. `before` is still sent (as the
+   * current `before_ts` spelling, so this client never emits a retired
+   * wire name) and is removed in the next minor.
+   */
   async history(query: HistoryQuery = {}): Promise<Message[]> {
     const params = new URLSearchParams();
     if (query.with) params.set('with', query.with);
     if (query.channel) params.set('channel', query.channel);
     if (query.limit !== undefined) params.set('limit', String(query.limit));
-    if (query.before !== undefined) params.set('before', String(query.before));
+    if (query.cursor !== undefined) {
+      params.set('before_ts', String(query.cursor.ts));
+      params.set('before_id', query.cursor.id);
+    } else if (query.before !== undefined) {
+      params.set('before_ts', String(query.before));
+    }
     const qs = params.toString();
     const path = qs ? `${PATHS.history}?${qs}` : PATHS.history;
     const resp = await this.request(path, { method: 'GET' });
@@ -1180,7 +1213,12 @@ export class Client {
     return ChannelSchema.parse(await this.json(resp));
   }
 
-  /** Update a channel (`channels.manage`). The id is unchanged. */
+  /**
+   * Rename a channel (`channels.manage`). The id is unchanged.
+   *
+   * @deprecated Use `updateChannel`. It issues the same
+   * `PATCH /channels/:slug` and can also set the description.
+   */
   async renameChannel(slug: string, input: RenameChannelRequest): Promise<Channel> {
     const validated = RenameChannelRequestSchema.parse(input);
     const resp = await this.request(CHANNEL_PATHS.one(slug), {
@@ -1630,14 +1668,22 @@ export class Client {
     await this.json(resp);
   }
 
-  /** Delivery receipts for one endpoint, newest first (requires `notifications.manage`). */
+  /**
+   * Delivery receipts for one endpoint, newest first (requires
+   * `notifications.manage`).
+   *
+   * `beforeTs` is an exclusive upper bound on `ts`, not a cursor:
+   * receipts sharing its millisecond are skipped, so this walk is a
+   * feed to scroll rather than a ledger to enumerate. `/history` takes
+   * the composite `{ts, id}` cursor instead, which has no such hole.
+   */
   async listNotificationDeliveries(
     slug: string,
-    query?: { limit?: number; before?: number },
+    query?: { limit?: number; beforeTs?: number },
   ): Promise<NotificationDelivery[]> {
     const params = new URLSearchParams();
     if (query?.limit !== undefined) params.set('limit', String(query.limit));
-    if (query?.before !== undefined) params.set('before', String(query.before));
+    if (query?.beforeTs !== undefined) params.set('before_ts', String(query.beforeTs));
     const qs = params.size > 0 ? `?${params.toString()}` : '';
     const resp = await this.request(`${NOTIFICATION_PATHS.endpointDeliveries(slug)}${qs}`, {
       method: 'GET',
@@ -1722,7 +1768,7 @@ export class Client {
   }
 
   /**
-   * Runner-driven presence: report this agent's live activity state
+   * Runner-driven presence: report this agent's work state
    * (idle / working / blocked). The server keys this on the
    * authenticated member and applies a TTL so a runner that crashes
    * mid-turn doesn't leave the member stuck "working"/"blocked" forever
@@ -1731,13 +1777,23 @@ export class Client {
    * then post `state: 'idle'` when the turn ends. `busy` is optional and
    * derived server-side from `state` when omitted (= `state === 'working'`).
    */
-  async setActivity(report: ActivityReport): Promise<void> {
-    const validated = ActivityReportSchema.parse(report);
-    await this.request(PATHS.presenceActivity, {
+  async setWorkState(report: WorkStateReport): Promise<void> {
+    const validated = WorkStateReportSchema.parse(report);
+    await this.request(PATHS.presenceWorkState, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(validated),
     });
+  }
+
+  /**
+   * @deprecated Use {@link Client.setWorkState}. Posts to the same
+   * broker under the new path — it does NOT exercise the deprecated
+   * `/presence/activity` route, so upgrading a caller is a rename and
+   * nothing else. Removed in the next minor.
+   */
+  async setActivity(report: ActivityReport): Promise<void> {
+    await this.setWorkState(report);
   }
 
   // ─────────────────────────── Filesystem ─────────────────────────

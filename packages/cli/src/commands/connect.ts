@@ -23,9 +23,9 @@
  * 5-minute TTL.
  *
  * Backward compatibility: `csuite connect` is additive. The existing
- * `--token` / `CSUITE_TOKEN` paths keep working unchanged. The wizard
- * still mints the first member's bootstrap token directly (no
- * approver exists yet).
+ * `--token` / `CSUITE_TOKEN` paths keep working unchanged. The first-run
+ * setup wizard still mints the first member's bootstrap token directly
+ * (no approver exists yet).
  */
 
 import { relative, resolve } from 'node:path';
@@ -135,9 +135,9 @@ export async function runConnectCommand(
 ): Promise<ConnectCommandOutput> {
   // `--url` flag and `CSUITE_URL` env both bypass the prompt — they're
   // explicit "use this URL" signals (CI, scripts, sticky shell env).
-  // Only with neither do we run the wizard; a bare Enter accepts the
-  // local-broker default. The banner that follows shows the URL so
-  // the operator still gets eyes-on confirmation before approving.
+  // Only with neither do we run the connect prompt; a bare Enter
+  // accepts the local-broker default. The banner that follows shows the
+  // URL so the operator still gets eyes-on confirmation before approving.
   const defaultUrl = `http://127.0.0.1:${DEFAULT_PORT}`;
   let url = input.url ?? process.env[ENV.url];
   if (!url) {
@@ -299,10 +299,11 @@ export async function runConnectCommand(
 }
 
 /**
- * Readline-backed prompt for the broker URL. Stays inline (no shared
- * wizard IO module) since `connect` only ever asks one question; the
- * dynamic `node:readline` import keeps the cold-start cost off the
- * non-interactive paths (`--url` flag / `CSUITE_URL` env).
+ * Readline-backed prompt for the broker URL. Stays inline (it does not
+ * borrow the setup wizard's shared TTY IO module) since `connect` only
+ * ever asks one question; the dynamic `node:readline` import keeps the
+ * cold-start cost off the non-interactive paths (`--url` flag /
+ * `CSUITE_URL` env).
  */
 async function defaultPrompt(question: string): Promise<string> {
   const { createInterface } = await import('node:readline');

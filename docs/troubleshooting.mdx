@@ -55,13 +55,13 @@ you connected with versus what URL you're using now.
 `csuite claude` / `csuite codex` started without a terminal (systemd,
 CI, a container) and nothing authenticated: no `--token`, no
 `$CSUITE_TOKEN`, and no saved entry for that exact URL that covers that
-directory. At a terminal the runner would open the enrollment wizard;
-headless it exits 1 instead, because the wizard cannot prompt and a
+directory. At a terminal the runner would open the connect prompt;
+headless it exits 1 instead, because that prompt cannot run and a
 supervisor would otherwise restart it forever. The message names both
 halves of the lookup key and the fix:
 
 ```
-csuite: no saved auth for http://127.0.0.1:8717 scoped to /srv/agent, and stdin is not a TTY, so the enrollment wizard cannot run.
+csuite: no saved auth for http://127.0.0.1:8717 scoped to /srv/agent, and stdin is not a TTY, so the connect prompt cannot run.
   http://127.0.0.1:8717 is the default broker URL (no --url, no $CSUITE_URL). If this device was
   enrolled against another broker, set $CSUITE_URL or --url to that exact URL.
   enroll this directory:  csuite connect --url http://127.0.0.1:8717 --workspace /srv/agent

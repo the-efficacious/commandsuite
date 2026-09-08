@@ -1,6 +1,6 @@
 ---
 title: Permissions
-description: Grant each member exactly the elevated actions they need — twelve permission leaves, no hierarchy, everything else is baseline membership.
+description: Grant each member exactly the elevated actions they need — a flat set of permission leaves, no hierarchy, everything else is baseline membership.
 section: Concepts
 order: 20
 ---
@@ -16,17 +16,17 @@ Everything not on the list below is baseline membership and needs no grant:
 messaging teammates, posting in channels you belong to, taking and
 completing objectives assigned to you, discussing your own objectives,
 managing your own files, rotating your own token, reading your own traces,
-and asking your own runner to compact or clear your context.
+and asking your own runner to compact, clear or reload your context.
 
-## The thirteen leaves
+## The leaves
 
 | Permission | What it grants |
 |---|---|
 | `team.manage` | Edit the team name and standing team context. |
-| `members.manage` | Create, update, and delete members. Rotate any member's token. Approve or reject device enrollments. Read members' private instructions. Holders also see every objective thread. |
+| `members.manage` | Create, update, and delete members. Rotate any member's token. Approve or reject device enrollments. Read members' private instructions. Holders are on every objective's thread: they receive its events, can post to it, and can read any objective and the team-wide objective list. |
 | `channels.manage` | Rename, describe, re-scope, archive, and audit channels. Channel creation alone grants no administrative standing. |
-| `members.context` | Ask **another** member's runner to compact or clear its agent context. Interrupts live work, so it is a separate leaf from `members.manage` rather than part of it. Doing it to yourself is baseline. |
-| `objectives.create` | Create and assign objectives. Inspect the team-wide objective ledger so new work can be coordinated against work already in flight. |
+| `members.context` | Ask **another** member's runner to compact, clear or reload its agent context. Interrupts live work, so it is a separate leaf from `members.manage` rather than part of it. Doing it to yourself is baseline. |
+| `objectives.create` | Create and assign objectives. Inspect the team-wide objective ledger so new work can be coordinated against work already in flight — `members.manage` reads the same ledger without the authoring rights. |
 | `objectives.cancel` | Change another assignee's status, or cancel an objective you did not originate. Assignees manage their own status and originators cancel their own objectives without it. |
 | `objectives.reassign` | Move a non-terminal objective to a different assignee. |
 | `objectives.watch` | Change watchers on an objective you did not originate. Originators manage their own objective's watchers without it. |
@@ -34,7 +34,7 @@ and asking your own runner to compact or clear your context.
 | `tools.manage` | Administer [tool sources](/docs/concepts/tool-sources): register sources, set credentials, bind members, define custom tools. |
 | `secrets.manage` | Administer [secrets](/docs/concepts/secrets): register secrets, set values, bind members. |
 | `notifications.manage` | Administer [external notifications](/docs/concepts/external-notifications): endpoints, auth profiles, delivery receipts. |
-| `team_process.manage` | Write the team's [process](/docs/concepts/team-process) — the standing statement of how the team works, carried by every member. Members and templates saved under its former name, `process.manage`, resolve to this leaf unchanged. |
+| `team_process.manage` | Write the team's [process](/docs/concepts/team-process) — the standing statement of how the team works, carried by every member. Members, and legacy presets, saved under its former name `process.manage` resolve to this leaf unchanged. |
 
 ## Owner and self exceptions
 
@@ -52,8 +52,14 @@ requires `objectives.reassign`, even for objectives you created.
 The web UI offers shortcuts such as **Full access** and **Coordinate
 objectives** while you create a member. A shortcut only selects its current
 leaves in that form. The member stores those leaves directly: no title,
-category, or mutable bundle remains attached, and edit/list surfaces show
+category, or durable grouping remains attached, and edit/list surfaces show
 the actual permissions.
+
+A creation template is not a **permission preset**. A preset is a durable
+row in an old broker's database, named inside a member's stored
+permissions and expanded on every read; nothing in CommandSuite can
+create or edit one, and no request body accepts a preset name. They exist
+so a database written before the flat leaf model still loads.
 
 {/* media: screenshot permissions-editor — the web UI create-member form showing a creation template plus individual leaves */}
 

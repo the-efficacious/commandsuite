@@ -5,17 +5,27 @@
  */
 
 import type { Member, Permission, Role, Teammate } from 'csuite-sdk/types';
-import { LEGACY_PERMISSION_EXPANSIONS, PERMISSIONS } from 'csuite-sdk/types';
+import { LEGACY_PERMISSION_ALIASES, PERMISSIONS } from 'csuite-sdk/types';
 import { z } from 'zod';
 
 /**
  * A member materialized in memory once hashes are known. Extends the
  * wire `Member` with server-only fields — TOTP enrollment and replay
- * guard state, plus the raw (unresolved) permissions list so we can
+ * guard state, plus the raw (unexpanded) permissions list so we can
  * round-trip preset references to disk without expanding them.
  */
 export interface LoadedMember extends Member {
-  /** Stable member identity; optional while old brokers/fixtures remain readable. */
+  /**
+   * Stable member identity — SERVER-INTERNAL, and deliberately not
+   * projected onto any wire type. Names are display/lookup
+   * handles and may be explicitly reused after a departure; this id
+   * never is, and offboarding keys on it. It is not a published fact:
+   * `Teammate` declares no `identityId`, no projection emits one, and
+   * re-adding it to the wire is a decision to make the broker's member
+   * primary key a value clients may key on forever.
+   *
+   * Optional while old brokers/fixtures remain readable.
+   */
   identityId?: string;
   /** Preset names + leaf permissions as written on disk; preserved for round-tripping. */
   rawPermissions: string[];
@@ -125,6 +135,14 @@ export function validateTotpSecret(secret: string): void {
     failFromZod('totpSecret', err);
   }
 }
+/**
+ * Validate a legacy permission preset's name and leaves.
+ *
+ * Retained as a published helper for reading pre-consolidation data —
+ * it has had no production caller since the preset write path was
+ * deleted, because nothing in the product writes a preset any more. Use it
+ * to check a row an older broker left behind, not to author one.
+ */
 export function validatePermissionPreset(name: string, leaves: readonly Permission[]): void {
   try {
     PresetNameSchema.parse(name);
@@ -153,7 +171,7 @@ export class MemberLoadError extends Error {
  *
  * This is ALSO where a renamed leaf is carried forward. `raw_permissions`
  * is stored verbatim, so a member (or a stored preset) written under
- * `process.manage` still says so on disk; `LEGACY_PERMISSION_EXPANSIONS`
+ * `process.manage` still says so on disk; `LEGACY_PERMISSION_ALIASES`
  * maps it to `team_process.manage` here, on every read, and no row is
  * ever rewritten. Both branches below consult that table — a direct
  * member entry and a leaf inside a preset — so the alias holds
@@ -170,7 +188,7 @@ export function resolvePermissions(
       set.add(entry as Permission);
       continue;
     }
-    const expansion = LEGACY_PERMISSION_EXPANSIONS[entry];
+    const expansion = LEGACY_PERMISSION_ALIASES[entry];
     if (expansion) {
       for (const leaf of expansion) set.add(leaf);
       continue;
@@ -180,7 +198,7 @@ export function resolvePermissions(
       // Stored presets can carry the short-lived aggregate too —
       // expand each leaf, not only direct member entries.
       for (const leaf of presetLeaves) {
-        const presetExpansion = LEGACY_PERMISSION_EXPANSIONS[leaf];
+        const presetExpansion = LEGACY_PERMISSION_ALIASES[leaf];
         if (presetExpansion) {
           for (const expanded of presetExpansion) set.add(expanded);
         } else {
@@ -204,10 +222,13 @@ export interface AddMemberInput {
   name: string;
   role: Role;
   instructions: string;
-  /** Stored leaf list. Legacy rows may still contain bundle names. */
+  /**
+   * Stored leaf list; legacy rows may still contain bundle names.
+   * `addMember` resolves this into the member's leaf `permissions` on
+   * both stores, so there is no separate resolved list for a caller to
+   * supply — and none that could disagree with what was persisted.
+   */
   rawPermissions: string[];
-  /** Resolved leaf permissions (derived from `rawPermissions` + presets). */
-  permissions: Permission[];
   /**
    * Plaintext bearer token for the legacy in-memory store. The
    * DB-backed store does NOT issue tokens — caller composes a separate
@@ -261,16 +282,44 @@ export interface MemberStore {
  * roster and instructions responses. Preserves config ordering. Drops
  * the private `instructions` field (teammates don't see each other's
  * personal instructions).
+ *
+ * Pure over the store: no request, no session, no clock. Everything on
+ * the returned `Teammate` comes from the stored member row.
  */
 export function teammatesFromMembers(store: MemberStore): Teammate[] {
   return store.members().map((m) => ({
     name: m.name,
     role: m.role,
     permissions: m.permissions,
-    // The auth plane is the only person/agent signal we have: humans
-    // enroll TOTP for the web UI, agents authenticate by bearer token
-    // alone. No TOTP ⇒ unknown, and the field is omitted so the UI
-    // renders the neutral treatment instead of guessing.
-    ...(m.totpSecret ? { kind: 'person' as const } : {}),
+    ...memberKindFields(m),
   }));
+}
+
+/**
+ * The one derivation of `Teammate.kind`, spread into every projection
+ * that emits a member.
+ *
+ * Derived from ONE stored field: whether this member has an
+ * authenticator (TOTP) secret on their config row. It is not derived
+ * from how any request authenticated — the projections that call this
+ * run per read and have no request context at all, so a
+ * bearer-authenticated caller is invisible here. The heuristic behind
+ * the field: people enroll TOTP for the web UI, agents authenticate by
+ * bearer token alone.
+ *
+ * Two-value union, one writer: `'agent'` is never emitted. No TOTP
+ * secret ⇒ the field is OMITTED, not set to `'agent'`, so the UI
+ * renders the neutral treatment instead of guessing.
+ *
+ * It is a function returning a spreadable object, rather than an inline
+ * ternary, because there are TWO projections — the public `Teammate`
+ * and the `members.manage` `Member` — and only one of them used to
+ * carry the field. A privileged caller was served rows with no `kind`
+ * while an ordinary teammate got rows with it, so the management panel
+ * would have drawn every human on the team as an agent had it trusted
+ * its own fetch. `Member extends Teammate`: the subtype cannot carry
+ * less than the supertype declares.
+ */
+export function memberKindFields(member: Pick<LoadedMember, 'totpSecret'>): { kind?: 'person' } {
+  return member.totpSecret ? { kind: 'person' } : {};
 }

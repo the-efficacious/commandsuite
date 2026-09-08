@@ -46,7 +46,7 @@
  * response EXCEEDS it. Runtime parsing must remain permissive here. No schema
  * in `csuite-sdk` uses `.strict()`, so an older client can continue parsing a
  * newer server's additive fields — the compatibility property used by
- * `FsEntry.canWrite` and `RosterResponse.activityWindowMs`.
+ * `FsEntry.canWrite` and `RosterResponse.workStateWindowMs`.
  *
  * This test detects drift without changing that wire behavior. Zod's normal
  * parse strips unknown keys; comparing the raw JSON with the parsed shape

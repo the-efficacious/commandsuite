@@ -28,7 +28,7 @@ import { __resetRosterForTests, roster } from '../src/lib/roster.js';
 import {
   __resetViewForTests,
   selectDmWith,
-  selectOverview,
+  selectTeamHome,
   selectThread,
   view,
 } from '../src/lib/view.js';
@@ -343,7 +343,7 @@ describe('<Sidebar />', () => {
           createdAt: 0,
           lastSeen: 0,
           role: null,
-          activity: 'blocked',
+          workState: 'blocked',
         },
         {
           name: 'test-agent-1',
@@ -351,7 +351,7 @@ describe('<Sidebar />', () => {
           createdAt: 0,
           lastSeen: 0,
           role: null,
-          activity: 'working',
+          workState: 'working',
         },
       ],
     };
@@ -368,10 +368,14 @@ describe('<Sidebar />', () => {
     expect(workingBtn.querySelector('.badge.caution')).toBeNull();
   });
 
-  it('prefers the 3-state activity field over the back-compat busy boolean', () => {
-    // A server that reports activity: 'blocked' with busy omitted must
-    // render as blocked (not idle) — the new field is authoritative.
-    roster.value = {
+  it('reads workState, then the previous activity field, then busy — in that order', () => {
+    // The work-state compat window has this shell talking to brokers on both
+    // sides of the rename, so all three spellings have to resolve, and
+    // the ORDER has to be right. `blocked` is the value under test in
+    // every case because it is the one `busy` cannot express: a reader
+    // that fell through to the boolean would render "online", and the
+    // member asking for a human would be invisible.
+    const withPresence = (presence: Record<string, unknown>) => ({
       teammates: [
         {
           name: 'director-1',
@@ -381,18 +385,38 @@ describe('<Sidebar />', () => {
         { name: 'build-bot', role: { title: 'engineer', description: '' }, permissions: [] },
       ],
       connected: [
-        {
-          name: 'build-bot',
-          connected: 1,
-          createdAt: 0,
-          lastSeen: 0,
-          role: null,
-          activity: 'blocked',
-        },
+        { name: 'build-bot', connected: 1, createdAt: 0, lastSeen: 0, role: null, ...presence },
       ],
-    };
-    render(<Sidebar viewer="director-1" />);
+    });
+
+    // 1. A current broker: `workState` alone.
+    roster.value = withPresence({ workState: 'blocked' }) as typeof roster.value;
+    const first = render(<Sidebar viewer="director-1" />);
     expect(screen.getByLabelText(/Message build-bot \(needs input\)/i)).toBeTruthy();
+    first.unmount();
+
+    // 2. An older broker: the old field alone still resolves.
+    roster.value = withPresence({ activity: 'blocked' }) as typeof roster.value;
+    const second = render(<Sidebar viewer="director-1" />);
+    expect(screen.getByLabelText(/Message build-bot \(needs input\)/i)).toBeTruthy();
+    second.unmount();
+
+    // 3. Both, DISAGREEING. `workState` wins — this is the case a
+    //    fallback-first reader would get wrong, and the only one that
+    //    distinguishes the two orders.
+    roster.value = withPresence({
+      workState: 'blocked',
+      activity: 'working',
+    }) as typeof roster.value;
+    const third = render(<Sidebar viewer="director-1" />);
+    expect(screen.getByLabelText(/Message build-bot \(needs input\)/i)).toBeTruthy();
+    third.unmount();
+
+    // 4. An ancient broker with only the boolean: `working`, and the
+    //    lossiness is visible — there is no way to say `blocked` here.
+    roster.value = withPresence({ busy: true }) as typeof roster.value;
+    render(<Sidebar viewer="director-1" />);
+    expect(screen.getByLabelText(/Message build-bot \(working\)/i)).toBeTruthy();
   });
 
   it('renders neither spinner nor badge for an idle (connected) teammate', () => {
@@ -412,7 +436,7 @@ describe('<Sidebar />', () => {
           createdAt: 0,
           lastSeen: 0,
           role: null,
-          activity: 'idle',
+          workState: 'idle',
         },
       ],
     };
@@ -673,7 +697,7 @@ describe('<TeamHome />', () => {
           createdAt: 0,
           lastSeen: 0,
           role: null,
-          activity: 'working',
+          workState: 'working',
         },
         {
           name: 'stuck-bot',
@@ -681,9 +705,16 @@ describe('<TeamHome />', () => {
           createdAt: 0,
           lastSeen: 0,
           role: null,
-          activity: 'blocked',
+          workState: 'blocked',
         },
-        { name: 'idle-bot', connected: 1, createdAt: 0, lastSeen: 0, role: null, activity: 'idle' },
+        {
+          name: 'idle-bot',
+          connected: 1,
+          createdAt: 0,
+          lastSeen: 0,
+          role: null,
+          workState: 'idle',
+        },
       ],
     };
     render(<TeamHome viewer="director-1" />);
@@ -833,7 +864,7 @@ describe('<Sidebar /> overview button', () => {
   });
 
   it('overview button highlights when view is overview', () => {
-    selectOverview();
+    selectTeamHome();
     render(<Sidebar viewer="director-1" />);
     const btn = screen.getByRole('button', { name: /open team home/i });
     // Active state for the canonical .navitem is the "active" class

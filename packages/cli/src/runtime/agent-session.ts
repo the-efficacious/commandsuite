@@ -8,7 +8,7 @@
  * loses trace data:
  *
  *   1. Session log routing (TTY-safe structured logs)
- *   2. Auth resolution (`--token` / `$CSUITE_TOKEN`) → UsageError
+ *   2. Auth resolution (`--token` / `$CSUITE_TOKEN`) → StartupError
  *   3. Fail-fast binary location BEFORE any side effects
  *   4. `startRunner` (instructions, IPC socket, forwarder, capture host,
  *      secrets) with the adapter's sink + bridge policy
@@ -19,10 +19,22 @@
  *   7. Idempotent teardown on EVERY exit path — agent flush first,
  *      then user-file restoration, then runner drain — including a
  *      last-ditch `cleanup()` on uncaughtException
- *   8. The run bracket + summary: a `session_start` activity event
- *      before the agent runs, a `session_end` event (the
+ *   8. The generation bracket + summary: a `session_start` activity
+ *      event before the agent runs, a `session_end` event (the
  *      machine-readable run summary) at teardown, a structured
  *      `run summary` log line, and a human-readable closing line
+ *
+ * ONE INVOCATION, SEVERAL BRACKETS. `session_start`/`session_end` do
+ * NOT bracket this whole invocation — they bracket one GENERATION, one
+ * agent-process lifetime inside it. A restart, a `clear` and a `reload`
+ * each `finishRun` the current generation and enqueue a fresh
+ * `session_start` (with a `resumeReason`) without this process going
+ * anywhere, so counting `session_start` rows counts generations, not
+ * runner launches. Every duration reported — each `session_end` and
+ * each `run summary` line — is measured from `generationStartedAt`,
+ * not from the invocation's start. The one exception is the
+ * spawn-failure path, which closes the bracket before any generation
+ * exists.
  *
  * Teardown ordering is load-bearing: the agent process is shut down
  * first so its capture readers flush their tail into the uploader;
@@ -35,7 +47,7 @@ import { resolve } from 'node:path';
 import type { Logger } from 'csuite-core';
 import { DEFAULT_PORT, ENV } from 'csuite-sdk/protocol';
 import type { RunnerIdentity } from 'csuite-sdk/types';
-import { UsageError } from '../commands/errors.js';
+import { StartupError } from '../commands/errors.js';
 import { CLI_BUILD_SOURCE, CLI_VERSION } from '../version.js';
 import type {
   AgentAdapter,
@@ -100,8 +112,11 @@ export interface RunSummary {
 
 /**
  * Run one agent session under a csuite runner. Resolves with the exit
- * code to propagate. Throws `UsageError` for operator-fixable
- * failures (missing token, missing binary, unreachable broker).
+ * code to propagate. Throws `StartupError` — never `UsageError` — for
+ * every environment failure it can raise (missing token, missing agent
+ * binary, unreachable broker), so the CLI exits 1 and a supervisor
+ * keeps restarting. Exit 2 is reserved for a wrong argv, and none of
+ * these three is one (#253).
  */
 export async function runAgentSession(
   adapter: AgentAdapter,
@@ -115,7 +130,7 @@ export async function runAgentSession(
   // calls to it never return — the try/catch blocks below rely on that.
   function closeLogAndThrow(err: unknown): never {
     ownedSessionLog?.close();
-    if (err instanceof AgentAdapterError) throw new UsageError(err.message);
+    if (err instanceof AgentAdapterError) throw new StartupError(err.message);
     throw err;
   }
 
@@ -123,7 +138,7 @@ export async function runAgentSession(
   const token = input.token ?? process.env[ENV.token];
   if (!token) {
     ownedSessionLog?.close();
-    throw new UsageError(
+    throw new StartupError(
       `--token or ${ENV.token} is required — run \`csuite connect\` to enroll this device, ` +
         `or pass the member's bearer token explicitly`,
     );
@@ -220,7 +235,7 @@ export async function runAgentSession(
   } catch (err) {
     rejectSubscription(err);
     ownedSessionLog?.close();
-    if (err instanceof RunnerStartupError) throw new UsageError(err.message);
+    if (err instanceof RunnerStartupError) throw new StartupError(err.message);
     throw err;
   }
   log.info('runner started', {
@@ -467,7 +482,7 @@ export async function runAgentSession(
     const respawn = adapter.respawn.bind(adapter);
     coordinator = createRestartCoordinator(
       {
-        activity: () => runner.captureHost?.busy ?? null,
+        workState: () => runner.captureHost?.workState ?? null,
         detach: () => adapter.detachForRestart?.(),
         stopCurrent: async (reason) => {
           const prior = currentProc;
@@ -559,7 +574,7 @@ export async function runAgentSession(
     const respawnForClear = adapter.respawn?.bind(adapter) ?? null;
     const compactForAdapter = adapter.compactContext?.bind(adapter) ?? null;
     contextControl = createContextControlCoordinator({
-      activity: () => runner.captureHost?.busy ?? null,
+      workState: () => runner.captureHost?.workState ?? null,
       gate: withLifecycleLock,
       compact: async (reason) => {
         if (compactForAdapter === null) {

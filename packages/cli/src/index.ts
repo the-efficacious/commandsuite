@@ -2,7 +2,8 @@
  * `csuite` — command-line interface for csuite.
  *
  * Subcommands:
- *   csuite setup       — first-run wizard: create team config + enroll TOTP
+ *   csuite setup       — first-run wizard: seed the team and its first
+ *                        member, write the server config file, enroll TOTP
  *   csuite member        — list / create / update / delete team members
  *   csuite enroll      — (re-)enroll a member for web UI login (TOTP)
  *   csuite rotate      — rotate a member's bearer token
@@ -33,7 +34,7 @@ import { runConnectCommand } from './commands/connect.js';
 import { runConnectApproveCommand, runConnectPendingCommand } from './commands/connect-approve.js';
 import { formatReport, runAgentDoctor, type SavedAuthInput } from './commands/doctor.js';
 import { runEnrollCommand } from './commands/enroll.js';
-import { UsageError } from './commands/errors.js';
+import { StartupError, UsageError } from './commands/errors.js';
 import { runFsCommand } from './commands/fs.js';
 import {
   runCycleCommand,
@@ -88,7 +89,8 @@ usage:
   csuite objectives  list|view|create|update|complete|cancel|reassign   team objectives
   csuite fs          put <local-path> <csuite-path> [--mime <type>] [--collide error|suffix|overwrite]
   csuite fs          get <csuite-path> <local-path> [--overwrite]       stream files between this machine and csuite
-  csuite tools       list|show|add|rm|enable|disable|cred|bind|unbind|def|def-rm|refresh   tool-source registry (platform tools)
+  csuite team        get|set|status   read or update the team name and standing context; status prints the operating report
+  csuite tools       list|show|add|rm|enable|disable|cred|cred-rm|bind|unbind|def|def-rm|refresh   tool-source registry (admin-defined tools)
   csuite secrets     list|view|add|update|set-value|delete-value|bind|unbind|rm   broker-held env secrets (values are write-only)
   csuite variables   list|view|add|update|set-value|delete-value|bind|unbind|rm   broker-held env variables that are NOT secrets (values readable, never redacted from traces)
   csuite notifications list|view|add|update|rm|set-secret|delete-secret|deliveries|replay|profiles   external-notification endpoints (inbound webhooks → agents; alias: hooks)
@@ -109,6 +111,23 @@ function log(line: string): void {
 function fail(message: string, code = 1): never {
   process.stderr.write(`csuite: ${message}\n`);
   process.exit(code);
+}
+
+/**
+ * The single place a caught error becomes an exit code.
+ *
+ * Every verb's catch arm funnels through here so one failure class
+ * cannot answer differently from two entry points — the exact drift
+ * that let "nothing enrolled for (url, cwd)" exit 1 from `csuite
+ * claude` and 2 from `csuite claude install-service` (#253). The
+ * mapping is the published table in `docs/reference/cli.mdx`:
+ * `UsageError` (argv) → 2, `StartupError` (environment) → 1,
+ * everything else → 1.
+ */
+function failFrom(err: unknown): never {
+  if (err instanceof UsageError) fail(err.message, 2);
+  if (err instanceof StartupError) fail(err.message, 1);
+  fail(err instanceof Error ? err.message : String(err));
 }
 
 function getString(values: Record<string, unknown>, key: string): string | undefined {
@@ -187,15 +206,20 @@ async function resolveAuthOrConnect(input: { url?: string; token?: string }): Pr
       : { url, token };
   }
 
-  // No auth for (url, cwd). Headless, the wizard below cannot prompt —
-  // it would exit 0 at the URL question (a supervisor with
+  // No auth for (url, cwd). Headless, the connect prompt below cannot
+  // ask — it would exit 0 at the URL question (a supervisor with
   // Restart=always then loops it forever) or hang on a device code
   // until it expires (commandsuite#199). Fail like every single-use
   // verb does, and name the whole lookup key: "this directory" hides
   // the URL half, which is the half that bites when a service unit
   // forgets CSUITE_URL and the lookup silently runs against loopback.
+  //
+  // `StartupError` (exit 1), not `UsageError` (exit 2): the argv was
+  // fine and the environment is not ready. `install-service` and
+  // `cycle` raise the same class on the same lookup key, so the one
+  // condition cannot report two numbers again (#253).
   if (!process.stdin.isTTY) {
-    fail(
+    throw new StartupError(
       formatHeadlessNoAuth({
         url,
         cwd: process.cwd(),
@@ -221,8 +245,7 @@ async function resolveAuthOrConnect(input: { url?: string; token?: string }): Pr
       resolveReplacementToken: () => findAuthEntry(result.url)?.token ?? null,
     };
   } catch (err) {
-    if (err instanceof UsageError) fail(err.message, 2);
-    fail(err instanceof Error ? err.message : String(err));
+    failFrom(err);
   }
 }
 
@@ -320,7 +343,7 @@ async function main(): Promise<void> {
       await handleMcpBridge(rest);
       return;
     case 'claude':
-    // Deprecated alias — the verb was `claude` pre-release; kept
+    // Deprecated alias — the verb was `claude-code` pre-release; kept
     // so existing scripts and muscle memory don't break.
     case 'claude-code':
       await handleClaude(rest);
@@ -365,8 +388,7 @@ async function handleFs(args: string[]): Promise<void> {
       (line) => log(line),
     );
   } catch (err) {
-    if (err instanceof UsageError) fail(err.message, 2);
-    fail(err instanceof Error ? err.message : String(err));
+    failFrom(err);
   }
 }
 
@@ -399,8 +421,7 @@ async function handleSetup(args: string[]): Promise<void> {
       (line) => log(line),
     );
   } catch (err) {
-    if (err instanceof UsageError) fail(err.message, 2);
-    fail(err instanceof Error ? err.message : String(err));
+    failFrom(err);
   }
 }
 
@@ -420,8 +441,7 @@ async function handleEnroll(args: string[]): Promise<void> {
     const client = makeClient(values);
     await runEnrollCommand({ member: getString(values, 'member') }, client, (line) => log(line));
   } catch (err) {
-    if (err instanceof UsageError) fail(err.message, 2);
-    fail(err instanceof Error ? err.message : String(err));
+    failFrom(err);
   }
 }
 
@@ -464,8 +484,7 @@ async function handleConnect(args: string[]): Promise<void> {
       (line) => process.stderr.write(`${line}\n`),
     );
   } catch (err) {
-    if (err instanceof UsageError) fail(err.message, 2);
-    fail(err instanceof Error ? err.message : String(err));
+    failFrom(err);
   }
 }
 
@@ -511,8 +530,7 @@ async function handleConnectApprover(sub: 'pending' | 'approve', args: string[])
       (line) => log(line),
     );
   } catch (err) {
-    if (err instanceof UsageError) fail(err.message, 2);
-    fail(err instanceof Error ? err.message : String(err));
+    failFrom(err);
   }
 }
 
@@ -544,8 +562,7 @@ async function handleRotate(args: string[]): Promise<void> {
       (line) => log(line),
     );
   } catch (err) {
-    if (err instanceof UsageError) fail(err.message, 2);
-    fail(err instanceof Error ? err.message : String(err));
+    failFrom(err);
   }
 }
 
@@ -562,8 +579,7 @@ async function handleUser(args: string[]): Promise<void> {
     const client = makeClient(clientOpts);
     await runMemberCommand(passthrough, client, (line) => log(line));
   } catch (err) {
-    if (err instanceof UsageError) fail(err.message, 2);
-    fail(err instanceof Error ? err.message : String(err));
+    failFrom(err);
   }
 }
 
@@ -588,8 +604,7 @@ async function handlePruneTraces(args: string[]): Promise<void> {
       (line) => log(line),
     );
   } catch (err) {
-    if (err instanceof UsageError) fail(err.message, 2);
-    fail(err instanceof Error ? err.message : String(err));
+    failFrom(err);
   }
 }
 
@@ -631,8 +646,7 @@ async function handlePush(args: string[]): Promise<void> {
     const output = await runPushCommand(input, client);
     log(output);
   } catch (err) {
-    if (err instanceof UsageError) fail(err.message, 2);
-    fail(err instanceof Error ? err.message : String(err));
+    failFrom(err);
   }
 }
 
@@ -666,8 +680,7 @@ async function handleQuickstart(args: string[]): Promise<void> {
     );
   } catch (err) {
     if (err instanceof QuickstartError) fail(err.message);
-    if (err instanceof UsageError) fail(err.message, 2);
-    fail(err instanceof Error ? err.message : String(err));
+    failFrom(err);
   }
 }
 
@@ -710,8 +723,7 @@ async function handleRoster(args: string[]): Promise<void> {
       const client = makeClient(values);
       await runRotateCommand(rotateInput, client, (line) => log(line));
     } catch (err) {
-      if (err instanceof UsageError) fail(err.message, 2);
-      fail(err instanceof Error ? err.message : String(err));
+      failFrom(err);
     }
     return;
   }
@@ -760,8 +772,7 @@ async function handleServe(args: string[]): Promise<void> {
       (line) => log(line),
     );
   } catch (err) {
-    if (err instanceof UsageError) fail(err.message, 2);
-    fail(err instanceof Error ? err.message : String(err));
+    failFrom(err);
   }
 
   const shutdown = async (signal: NodeJS.Signals) => {
@@ -808,8 +819,7 @@ async function handleObjectives(args: string[]): Promise<void> {
     const output = await runObjectivesCommand(client, passthrough);
     log(output);
   } catch (err) {
-    if (err instanceof UsageError) fail(err.message, 2);
-    fail(err instanceof Error ? err.message : String(err));
+    failFrom(err);
   }
 }
 
@@ -844,8 +854,7 @@ async function handleTeam(args: string[]): Promise<void> {
     const client = makeClient(clientOpts);
     await runTeamCommand(passthrough, client, (line) => log(line));
   } catch (err) {
-    if (err instanceof UsageError) fail(err.message, 2);
-    fail(err instanceof Error ? err.message : String(err));
+    failFrom(err);
   }
 }
 
@@ -855,8 +864,7 @@ async function handleTools(args: string[]): Promise<void> {
     const client = makeClient(clientOpts);
     await runToolsCommand(passthrough, client, (line) => log(line));
   } catch (err) {
-    if (err instanceof UsageError) fail(err.message, 2);
-    fail(err instanceof Error ? err.message : String(err));
+    failFrom(err);
   }
 }
 
@@ -866,8 +874,7 @@ async function handleSecrets(args: string[]): Promise<void> {
     const client = makeClient(clientOpts);
     await runSecretsCommand(passthrough, client, (line) => log(line));
   } catch (err) {
-    if (err instanceof UsageError) fail(err.message, 2);
-    fail(err instanceof Error ? err.message : String(err));
+    failFrom(err);
   }
 }
 
@@ -877,8 +884,7 @@ async function handleVariables(args: string[]): Promise<void> {
     const client = makeClient(clientOpts);
     await runVariablesCommand(passthrough, client, (line) => log(line));
   } catch (err) {
-    if (err instanceof UsageError) fail(err.message, 2);
-    fail(err instanceof Error ? err.message : String(err));
+    failFrom(err);
   }
 }
 
@@ -888,8 +894,7 @@ async function handleNotifications(args: string[]): Promise<void> {
     const client = makeClient(clientOpts);
     await runNotificationsCommand(passthrough, client, (line) => log(line));
   } catch (err) {
-    if (err instanceof UsageError) fail(err.message, 2);
-    fail(err instanceof Error ? err.message : String(err));
+    failFrom(err);
   }
 }
 
@@ -918,8 +923,7 @@ function handleAuth(args: string[]): void {
     );
     if (code !== 0) process.exit(code);
   } catch (err) {
-    if (err instanceof UsageError) fail(err.message, 2);
-    fail(err instanceof Error ? err.message : String(err));
+    failFrom(err);
   }
 }
 
@@ -1071,8 +1075,7 @@ async function handleClaude(args: string[]): Promise<void> {
     });
     process.exit(code);
   } catch (err) {
-    if (err instanceof UsageError) fail(err.message, 2);
-    fail(err instanceof Error ? err.message : String(err));
+    failFrom(err);
   }
 }
 
@@ -1133,8 +1136,7 @@ async function maybeHandleServiceSubcommand(verb: ServiceVerb, args: string[]): 
     }
     process.exit(0);
   } catch (err) {
-    if (err instanceof UsageError) fail(err.message, 2);
-    fail(err instanceof Error ? err.message : String(err));
+    failFrom(err);
   }
   return true;
 }
@@ -1236,8 +1238,7 @@ async function handleStub(args: string[]): Promise<void> {
     });
     process.exit(code);
   } catch (err) {
-    if (err instanceof UsageError) fail(err.message, 2);
-    fail(err instanceof Error ? err.message : String(err));
+    failFrom(err);
   }
 }
 
@@ -1397,8 +1398,7 @@ async function handleCodex(args: string[]): Promise<void> {
     });
     process.exit(code);
   } catch (err) {
-    if (err instanceof UsageError) fail(err.message, 2);
-    fail(err instanceof Error ? err.message : String(err));
+    failFrom(err);
   }
 }
 

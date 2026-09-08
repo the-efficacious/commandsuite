@@ -2,15 +2,23 @@
  * Activity store — per-member append-only timeline of everything a
  * member's runner observed.
  *
- * The broker's activity surface captures four kinds of events (see
- * `csuite-sdk/types`'s `ActivityEvent`), all normalized
- * runner-side from each agent's native instrumentation:
+ * The broker's activity surface captures nine kinds of event — the
+ * `ActivityEvent` union in `csuite-sdk/types` is authoritative — all
+ * normalized runner-side from each agent's native instrumentation:
+ *   - `session_start` / `session_end` — one runner generation's
+ *     bracket; the close carries the run summary and the capture
+ *     accounting.
  *   - `llm_exchange` — a decoded model request/response pair (from
  *     Claude Code's OTEL body export or the codex app-server stream).
  *   - `tool_action` — a single tool invocation (Claude Code hooks /
  *     OTEL tool records, codex item stream).
+ *   - `user_prompt` — the redacted prompt text that woke a turn.
  *   - `objective_open` / `objective_close` — lifecycle markers the
  *     runner emits when the objectives tracker's open set changes.
+ *   - `context_control` — the runner's acknowledgement of a broker
+ *     `compact` / `clear` / `reload` request, carrying the outcome.
+ *   - `auth_state` — the runner's broker credential was rejected
+ *     (401) or accepted again, with what capture queued meanwhile.
  *
  * Objective "traces" are a time-range view over this stream: the web
  * UI queries `GET /members/:name/activity?from=<open>&to=<close>
@@ -19,12 +27,15 @@
  *
  * This module defines the runtime-agnostic `ActivityStore` interface
  * plus an in-memory reference implementation. The concrete SQLite
- * implementation lives in `csuite-server`; a future Cloudflare
- * Durable Objects implementation will live in `csuite/platform`.
- * Both must preserve the same observable behavior: appends fire
- * subscribers synchronously after the write commits, listing is
- * newest-first with composable `from`/`to`/`kinds` filters, and
- * subscribers never see a row they'd miss via a concurrent `list`.
+ * implementation is `createSqliteActivityStore` in
+ * `member-activity.ts` — the same package, over the `SqlDriver` seam,
+ * and exported from `csuite-core`; `csuite-server` supplies the driver,
+ * not the store. A future Cloudflare Durable Objects implementation
+ * will live in `csuite/platform`. Every implementation must preserve the
+ * same observable behavior: appends fire subscribers synchronously
+ * after the write commits, listing is newest-first with composable
+ * `from`/`to`/`kinds` filters, and subscribers never see a row they'd
+ * miss via a concurrent `list`.
  */
 
 import type { ActivityEvent, ActivityKind, ActivityRow } from 'csuite-sdk/types';

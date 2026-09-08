@@ -27,6 +27,7 @@ import type {
   PushPayload,
   PushResult,
 } from 'csuite-sdk/types';
+import { PERMISSIONS } from 'csuite-sdk/types';
 import { describe, expect, it, vi } from 'vitest';
 import { defineTools, handleToolCall } from '../../src/runtime/tools.js';
 
@@ -434,6 +435,27 @@ describe('runner-local file transfer tools', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it('keeps "upload"/"download" for the pair that streams around agent context', () => {
+    // The distinction is security-relevant: `fs_write` carries content THROUGH
+    // the tool call, while `fs_upload`/`fs_download` never let bytes reach an
+    // IPC frame or a tool result. `fs_write` opening with "Upload a file."
+    // taught the opposite of the property the pair exists to provide.
+    const byName = new Map(defineTools(PACKET).map((t) => [t.name, JSON.stringify(t)]));
+    // The whole quartet, so a rename cannot quietly make the rest vacuous.
+    for (const name of ['fs_read', 'fs_write', 'fs_upload', 'fs_download']) {
+      expect(byName.get(name), `${name} is missing from the toolbox`).toBeDefined();
+    }
+    // Matched over the whole tool JSON, not just the top-level description:
+    // this tool's worst prose has previously lived on a nested property.
+    expect(byName.get('fs_write') ?? '').not.toMatch(/upload|download/i);
+    expect(byName.get('fs_read') ?? '').not.toMatch(/upload|download/i);
+    // And the streaming pair keeps the sentence that earns the names.
+    expect(byName.get('fs_upload') ?? '').toMatch(/never enter an IPC frame or tool result/);
+    expect(byName.get('fs_download') ?? '').toMatch(
+      /never enter an IPC frame, tool result, or agent context/,
+    );
+  });
 });
 
 // ─── tool definition surface ─────────────────────────────────────────
@@ -467,6 +489,22 @@ describe('defineTools — chat surface includes channel tools', () => {
   });
 });
 
+describe('member permission schemas', () => {
+  it('enumerates the whole permission vocabulary on both member tools', () => {
+    const tools = defineTools(ADMIN_PACKET);
+    for (const name of ['members_add', 'members_update']) {
+      const props = tools.find((tool) => tool.name === name)?.inputSchema.properties as
+        | Record<string, unknown>
+        | undefined;
+      expect(props?.permissions).toEqual({
+        type: 'array',
+        items: { type: 'string', enum: [...PERMISSIONS] },
+        description: expect.stringMatching(/permission leaves/i),
+      });
+    }
+  });
+});
+
 describe('team_status tool', () => {
   it('is exposed only to members.manage and returns the broker response unchanged', async () => {
     expect(defineTools(PACKET).map((tool) => tool.name)).not.toContain('team_status');
@@ -479,7 +517,7 @@ describe('team_status tool', () => {
 });
 
 describe('roster — old broker compatibility does not invent liveness', () => {
-  it('renders old activity only as a compatibility window', async () => {
+  it('renders the work-state window only as a compatibility window', async () => {
     const broker = makeBroker({
       roster: vi.fn().mockResolvedValue({
         teammates: [
@@ -493,6 +531,7 @@ describe('roster — old broker compatibility does not invent liveness', () => {
             createdAt: 1,
             lastSeen: 2,
             role: PACKET.teammates[0]?.role ?? null,
+            workState: 'working',
             activity: 'working',
             busy: true,
           },
@@ -502,10 +541,12 @@ describe('roster — old broker compatibility does not invent liveness', () => {
             createdAt: 1,
             lastSeen: 2,
             role: PACKET.teammates[1]?.role ?? null,
+            workState: 'blocked',
             activity: 'blocked',
             busy: false,
           },
         ],
+        workStateWindowMs: 45_000,
         activityWindowMs: 45_000,
       }),
     });
@@ -525,11 +566,50 @@ describe('roster — old broker compatibility does not invent liveness', () => {
     expect(text).not.toContain('executor=ready');
   });
 
+  it('reads the work-state window from either spelling, preferring the new one', async () => {
+    // The compat window has the runner talking to brokers on both
+    // sides of the rename. Three brokers, three answers, and the
+    // middle one is the assertion that matters: when a broker sends
+    // BOTH, the new field wins. A reader that took `activityWindowMs`
+    // first would still pass the other two cases.
+    const windowFor = async (roster: Record<string, unknown>): Promise<string> => {
+      const broker = makeBroker({
+        roster: vi.fn().mockResolvedValue({
+          teammates: PACKET.teammates,
+          connected: [],
+          ...roster,
+        }),
+      });
+      return getCallText(await handleToolCall('roster', {}, broker, PACKET));
+    };
+
+    // A broker on the new spelling only.
+    expect(await windowFor({ workStateWindowMs: 30_000 })).toContain(
+      'compatibility-window=within last 30s',
+    );
+    // A broker sending both, with DIFFERENT numbers so the winner is
+    // visible. The new field is authoritative.
+    expect(await windowFor({ workStateWindowMs: 30_000, activityWindowMs: 45_000 })).toContain(
+      'compatibility-window=within last 30s',
+    );
+    // A broker that only knows the old spelling still gets a
+    // real window rather than "unknown" — that is the whole point of
+    // reading both.
+    expect(await windowFor({ activityWindowMs: 45_000 })).toContain(
+      'compatibility-window=within last 45s',
+    );
+  });
+
   it('describes executor evidence and demotes old activity in the tool metadata', () => {
     const roster = defineTools(PACKET).find((tool) => tool.name === 'roster');
     expect(roster?.description).toContain('executor readiness or degraded reason');
     expect(roster?.description).toContain('last proven action');
     expect(roster?.description).toContain('never executor liveness');
+    expect(roster?.description).toContain('work-state window');
+    // The completeness clauses are only useful if the description says
+    // they exist and says what their absence does NOT mean.
+    expect(roster?.description).toContain('unresolved-diagnostics count');
+    expect(roster?.description).toContain('not a clean bill');
   });
 
   it('renders an unknown window instead of inventing one for an older broker', async () => {
@@ -557,6 +637,106 @@ describe('roster — old broker compatibility does not invent liveness', () => {
       'lead [team lead] permissions=members.manage; offline; executor=unreported (broker predates executor evidence); compatibility-window=within an unknown window',
     );
     expect(text).not.toMatch(/within last \d+s/);
+  });
+});
+
+/**
+ * The roster line is the only place an agent can learn that its OWN
+ * verbatim capture failed — no other agent-facing surface reports it.
+ * Silence is the healthy path, so the rule is asymmetric: an unhealthy
+ * signal must be stated outright, and everything else must render
+ * nothing at all rather than `capture=undefined` or a reassuring
+ * `store unknown` nobody asked for.
+ *
+ * One fixture carries all four cases at once, and every assertion picks
+ * its own member's line out of the render, so an assertion cannot pass
+ * by matching a neighbour's line.
+ */
+describe('roster — capture and diagnostics health reach the agent that owns them', () => {
+  async function rosterText(): Promise<string> {
+    const broker = makeBroker({
+      roster: vi.fn().mockResolvedValue({
+        teammates: [
+          ...PACKET.teammates,
+          { name: 'auditor', role: { title: 'auditor', description: '' }, permissions: [] },
+          { name: 'reviewer', role: { title: 'reviewer', description: '' }, permissions: [] },
+        ],
+        connected: [
+          {
+            name: 'scout',
+            connected: 1,
+            createdAt: 1,
+            lastSeen: 2,
+            role: PACKET.teammates[0]?.role ?? null,
+            captureHealth: 'gap',
+            diagnosticsUnresolved: 3,
+            diagnosticsRetention: 'degraded',
+          },
+          {
+            name: 'lead',
+            connected: 1,
+            createdAt: 1,
+            lastSeen: 2,
+            role: PACKET.teammates[1]?.role ?? null,
+            captureHealth: 'ok',
+            diagnosticsUnresolved: 0,
+            diagnosticsRetention: 'healthy',
+          },
+          {
+            name: 'auditor',
+            connected: 1,
+            createdAt: 1,
+            lastSeen: 2,
+            role: null,
+            captureHealth: 'unevaluated',
+            diagnosticsUnresolved: 0,
+            diagnosticsRetention: 'unknown',
+          },
+          {
+            name: 'reviewer',
+            connected: 1,
+            createdAt: 1,
+            lastSeen: 2,
+            role: null,
+          },
+        ],
+        activityWindowMs: 45_000,
+      }),
+    });
+    return getCallText(await handleToolCall('roster', {}, broker, PACKET));
+  }
+
+  function lineFor(text: string, name: string): string {
+    const line = text.split('\n').find((l) => l.startsWith(`- ${name}`));
+    expect(line, `${name} must have a roster line`).toBeDefined();
+    return line ?? '';
+  }
+
+  it('states an unhealthy capture and the full diagnostics clause', async () => {
+    // One exact string, so clause order, both clauses, and the count
+    // beside the retention word all have to be right together:
+    // rendering the count without the retention fails here.
+    const scoutLine = lineFor(await rosterText(), 'scout');
+    expect(scoutLine).toContain('; capture=gap; diagnostics=3 unresolved, store degraded');
+  });
+
+  it('says nothing about a healthy member', async () => {
+    const leadLine = lineFor(await rosterText(), 'lead');
+    expect(leadLine).not.toMatch(/capture=|diagnostics=/);
+  });
+
+  it('speaks at zero unresolved when the store cannot describe itself', async () => {
+    // A degraded store with nothing outstanding is still degraded. A fix
+    // gated only on `unresolved > 0` renders nothing here and fails.
+    const auditorLine = lineFor(await rosterText(), 'auditor');
+    expect(auditorLine).toContain('; capture=unevaluated; diagnostics=0 unresolved, store unknown');
+  });
+
+  it('omits both clauses for a broker that reports neither', async () => {
+    // Absence is silence: it must not surface as `capture=undefined` or
+    // as a `store unknown` the broker never claimed.
+    const reviewerLine = lineFor(await rosterText(), 'reviewer');
+    expect(reviewerLine).not.toMatch(/capture=|diagnostics=/);
   });
 });
 
@@ -967,6 +1147,11 @@ describe('channels_post handler', () => {
 // ─── recent (extended with channel arg) ─────────────────────────────
 
 describe('recent handler — channel arg', () => {
+  // The description advertises this number; `DEFAULT_RECENT_LIMIT` is
+  // module-private, and the description assertion below pins the two
+  // spellings to each other.
+  const DEFAULT_RECENT_LIMIT = 50;
+
   it('resolves slug → id and queries history({channel: id})', async () => {
     const history = vi.fn(async () => [] as Message[]);
     const broker = makeBroker({
@@ -979,9 +1164,43 @@ describe('recent handler — channel arg', () => {
       history,
     });
     await handleToolCall('recent', { channel: 'engineering' }, broker, PACKET);
-    expect(history).toHaveBeenCalledWith(expect.objectContaining({ channel: 'eng-id-123' }));
-    // `with` should NOT be set — channel + with are mutually exclusive.
-    expect(history).toHaveBeenCalledWith(expect.not.objectContaining({ with: expect.anything() }));
+    // The whole query, not a fragment of it: a channel-scoped call
+    // carries the resolved id, the limit, and no `with`.
+    expect(history).toHaveBeenCalledWith({ channel: 'eng-id-123', limit: DEFAULT_RECENT_LIMIT });
+  });
+
+  it('asks for the general channel when no scope arg is given', async () => {
+    const history = vi.fn(async () => [] as Message[]);
+    await handleToolCall('recent', {}, makeBroker({ history }), PACKET);
+    // The whole query object. `{ limit }` alone takes the broker's
+    // default-feed branch — the agent's own inbox across every thread
+    // — which is not what this tool says it returns.
+    expect(history).toHaveBeenCalledWith({ channel: 'general', limit: DEFAULT_RECENT_LIMIT });
+  });
+
+  it('keeps an explicit limit on the unscoped call', async () => {
+    const history = vi.fn(async () => [] as Message[]);
+    await handleToolCall('recent', { limit: 5 }, makeBroker({ history }), PACKET);
+    expect(history).toHaveBeenCalledWith({ channel: 'general', limit: 5 });
+  });
+
+  it('leaves a DM-scoped call unscoped by channel', async () => {
+    const history = vi.fn(async () => [] as Message[]);
+    await handleToolCall('recent', { with: 'director' }, makeBroker({ history }), PACKET);
+    // No `channel` key at all — `with` and `channel` are mutually
+    // exclusive on the wire, and the default must not leak into it.
+    expect(history).toHaveBeenCalledWith({ with: 'director', limit: DEFAULT_RECENT_LIMIT });
+  });
+
+  it('says in its description what the handler asks for', async () => {
+    const recent = defineTools(PACKET).find((t) => t.name === 'recent');
+    // The description is the agent's only spec for this surface, so it
+    // and the handler have to name the same default scope and the same
+    // default limit.
+    expect(recent?.description).toMatch(/no scope arg for the general team channel/);
+    expect(recent?.description).toMatch(
+      new RegExp(`up to ${DEFAULT_RECENT_LIMIT} by default`, 'i'),
+    );
   });
 
   it('rejects passing both `with` and `channel`', async () => {
@@ -1428,6 +1647,31 @@ describe('handleToolCall — objectives_list', () => {
     expect(tool?.description).toMatch(/assignee/);
     expect(tool?.description).toMatch(/originator/);
   });
+
+  it('names the wide set "related" and keeps "plate" for the assignee filter', () => {
+    // The runner's `context_refresh` re-brief is assignee-scoped
+    // (`objectives-tracker.ts` refetches `assignee=<self>`), so an agent told
+    // this tool returns "your whole open plate" is handed a superset the
+    // moment it originates or watches anything.
+    const tool = defineTools(PACKET).find((t) => t.name === 'objectives_list');
+    expect(tool, 'objectives_list must be defined').toBeDefined();
+    const description = tool?.description ?? '';
+    const schema = JSON.stringify(tool?.inputSchema);
+    // BOTH copies of the misuse, top-level and nested: fixing one and not the
+    // other still leaves an agent reading the wrong sense off the argument.
+    expect(description).not.toMatch(/whole open plate/i);
+    expect(schema).not.toMatch(/whole open plate/i);
+    // The positive half — deleting the vocabulary instead of correcting it
+    // would leave `open` with no stated scope at all.
+    expect(description).toMatch(/RELATED to/);
+    expect(description).toMatch(/superset of your own plate/);
+    // …and the narrow word still hangs off `assignee`, on both surfaces.
+    expect(description).toMatch(/`assignee` narrows to one member's plate/);
+    const assignee = (
+      tool?.inputSchema as { properties?: Record<string, { description?: string }> }
+    )?.properties?.assignee?.description;
+    expect(assignee).toMatch(/your own plate/);
+  });
 });
 
 describe('variables admin tools — the agent-facing half of the runner environment', () => {
@@ -1533,6 +1777,78 @@ describe('variables admin tools — the agent-facing half of the runner environm
     // missing and re-creates it.
     expect(text).toContain('(value hidden)');
     expect(text).toContain('NO-VALUE');
+  });
+});
+
+// ── objectives_reassign ────────────────────────────────────────────
+//
+// The reassign verb exists in the CLI, the store, the event log and the
+// permission set; until this tool it did not exist in the toolbox, so an
+// agent holding `objectives.reassign` searched for it and found nothing.
+
+describe('objectives_reassign — the reassign verb in the toolbox', () => {
+  const REASSIGNER: InstructionsResponse = { ...PACKET, permissions: ['objectives.reassign'] };
+
+  it('is offered to holders of objectives.reassign and to nobody else', () => {
+    expect(defineTools(PACKET).map((t) => t.name)).not.toContain('objectives_reassign');
+    const tool = defineTools(REASSIGNER).find((t) => t.name === 'objectives_reassign');
+    expect(tool).toBeDefined();
+    expect(tool?.inputSchema.required).toEqual(['id', 'to']);
+    expect(Object.keys(tool?.inputSchema.properties ?? {}).sort()).toEqual(['id', 'note', 'to']);
+  });
+
+  it('sends the whole handover to the reassign route and renders the outcome', async () => {
+    const reassignObjective = vi.fn(async () =>
+      makeObjective({ assignee: 'dave', watchers: ['carol'] }),
+    );
+    const broker = { reassignObjective } as unknown as BrokerClient;
+    const text = getCallText(
+      await handleToolCall(
+        'objectives_reassign',
+        { id: 'obj-1', to: 'dave', note: 'where the work stands' },
+        broker,
+        REASSIGNER,
+      ),
+    );
+    expect(reassignObjective).toHaveBeenCalledWith('obj-1', {
+      to: 'dave',
+      note: 'where the work stands',
+    });
+    expect(text).toBe('reassigned obj-1 to dave watchers=carol');
+  });
+
+  it('refuses without the permission instead of calling the broker', async () => {
+    const reassignObjective = vi.fn();
+    const broker = { reassignObjective } as unknown as BrokerClient;
+    const result = (await handleToolCall(
+      'objectives_reassign',
+      { id: 'obj-1', to: 'dave' },
+      broker,
+      PACKET,
+    )) as { isError?: boolean };
+    expect(result.isError).toBe(true);
+    expect(reassignObjective).not.toHaveBeenCalled();
+  });
+});
+
+describe('secrets_list description — the env-name uniqueness rule', () => {
+  const ADMIN_PACKET = { ...PACKET, permissions: ['secrets.manage' as const] };
+
+  it('states the per-member rule instead of claiming env names are globally unique', () => {
+    // The description is the only spec an agent gets. Env names WERE
+    // globally unique until the index was dropped on 2026-07-30; an
+    // agent that still believes it will refuse to create the
+    // per-member token rows the product is built around.
+    const description =
+      defineTools(ADMIN_PACKET).find((t) => t.name === 'secrets_list')?.description ?? '';
+    expect(description).not.toMatch(/env names are[\s\S]{0,24}unique/);
+    // All four parts of the canonical rule, not one of them: slugs
+    // unique, env names deliberately not, the real invariant (per
+    // member), and the store it spans (variables as well as secrets).
+    expect(description).toMatch(/[Ss]lugs are unique/);
+    expect(description).toMatch(/names are NOT/);
+    expect(description).toMatch(/per member|member resolving/);
+    expect(description).toMatch(/variables/);
   });
 });
 

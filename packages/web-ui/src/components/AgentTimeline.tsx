@@ -4,10 +4,14 @@
  * Everything here is natively captured by the runner (Claude Code's
  * OTEL export via the broker OTLP ingest, the codex app-server event
  * stream, tool hooks) — there is no network interception. The stream
- * carries five event kinds: `user_prompt` (the prompt that woke a
- * turn), `llm_exchange` (one model turn), `tool_action` (one
- * natively-captured tool run), and the `objective_open` /
- * `objective_close` lifecycle markers.
+ * carries nine event kinds — the `ActivityEvent` union in
+ * `csuite-sdk/types` is authoritative: `user_prompt` (the prompt that
+ * woke a turn), `llm_exchange` (one model turn), `tool_action` (one
+ * natively-captured tool run), the `objective_open` /
+ * `objective_close` lifecycle markers, the `session_start` /
+ * `session_end` run brackets, `context_control` (a broker-issued
+ * compact/clear/reload and its outcome) and `auth_state` (outbound
+ * work blocked on a 401, and its recovery).
  *
  * THE TURN IS THE SPINE. Each `llm_exchange` renders exactly ONE
  * block — its own response (thinking, text, tool calls) — never
@@ -30,7 +34,7 @@
  *
  * Model calls with NO turn marker at all — subagent work, server-tool
  * sidecars (web search), away summaries — interleave into the feed as
- * ghost rows attributed by `querySource`, so everything the member's
+ * orphan-call rows attributed by `querySource`, so everything the member's
  * model did shows up in one place instead of living invisibly in the
  * genai store.
  *
@@ -40,9 +44,9 @@
  * Filters:
  *   - `kindFilters` — per-event-kind toggles. Hidden kinds are dropped
  *     before threading.
- *   - `showApiCalls` — toggles the unmatched model-call ghost rows.
+ *   - `showApiCalls` — toggles the unmatched orphan-call rows.
  *   - `objectiveFilter` — clip to rows that occurred while a chosen
- *     objective was open (model-call rows clip by the objective's
+ *     objective was open (orphan-call rows clip by the objective's
  *     open→close windows). `null` means "show everything."
  */
 
@@ -80,10 +84,10 @@ import { ArrowUp, ChevronDown, ChevronUp } from './icons/index.js';
 type KindFilter = Record<ActivityEvent['kind'], boolean>;
 
 const DEFAULT_FILTERS: KindFilter = {
-  // Run brackets (session_start/session_end) pass the filter but have
-  // no thread renderer yet — buildThread skips kinds it doesn't know.
-  // Rendering them as timeline boundary markers (mirroring the
-  // objective markers) is a follow-up; no chip until then.
+  // Run brackets (session_start/session_end) render as timeline
+  // boundary markers and pass the filter, but have no chip of their
+  // own — the bar is for kinds you would plausibly mute, and a run
+  // bracket is not one.
   session_start: true,
   session_end: true,
   objective_open: true,
@@ -98,9 +102,9 @@ const DEFAULT_FILTERS: KindFilter = {
 const kindFilters = signal<KindFilter>({ ...DEFAULT_FILTERS });
 
 /**
- * Toggle for the unmatched model-call ghost rows (subagent /
- * sidecar calls with no turn marker). Calls joined INTO a turn are
- * part of the turn block and unaffected.
+ * Toggle for the unmatched orphan-call rows (subagent / sidecar calls
+ * with no turn marker). Calls joined INTO a turn are part of the turn
+ * block and unaffected.
  */
 const showApiCalls = signal(true);
 
@@ -159,11 +163,11 @@ type ThreadItem =
       /**
        * A model call with NO turn marker — subagent work, a
        * server-tool sidecar (web search), an away summary, or a call
-       * whose activity capture was missed. Rendered as a ghost row so
-       * the feed shows everything the member's model did.
+       * whose activity capture was missed. Rendered as an orphan-call
+       * row so the feed shows everything the member's model did.
        */
       key: string;
-      variant: 'model-call';
+      variant: 'orphan-call';
       ts: number;
       recordId: number;
       provider: string;
@@ -219,6 +223,16 @@ type ThreadItem =
     }
   | {
       key: string;
+      variant: 'auth-state';
+      ts: number;
+      state: 'blocked' | 'recovered';
+      /** Activity the runner is holding rather than shipping. */
+      queuedEvents: number;
+      /** Activity the bounded retention queue threw away — real loss. */
+      evictedEvents: number;
+    }
+  | {
+      key: string;
       variant: 'tool-action';
       ts: number;
       toolName: string;
@@ -246,7 +260,7 @@ type ThreadItem =
  * The ledger joins in via `joinTurns`: each turn carries its API
  * call summaries (the identity handles for lazy full-context
  * loading), and calls that belong to NO turn — subagent / sidecar
- * work — interleave chronologically as `model-call` items. Nothing
+ * work — interleave chronologically as `orphan-call` items. Nothing
  * about the full context is loaded here; the stream stays a clean
  * sequence of turn blocks.
  */
@@ -358,6 +372,16 @@ export function buildThread(
           tokens: ev.tokens ?? null,
         });
         break;
+      case 'auth_state':
+        thread.push({
+          key: `r${row.id}-auth`,
+          variant: 'auth-state',
+          ts: ev.ts,
+          state: ev.state,
+          queuedEvents: ev.queuedEvents,
+          evictedEvents: ev.evictedEvents,
+        });
+        break;
       case 'tool_action': {
         // Folded into a turn's tool_use call card — don't double-draw.
         if (ev.toolUseId !== undefined && toolUseIds.has(ev.toolUseId)) break;
@@ -403,7 +427,7 @@ export function buildThread(
   for (const call of joined.orphans) {
     thread.push({
       key: `g${call.id}`,
-      variant: 'model-call',
+      variant: 'orphan-call',
       ts: call.ts,
       recordId: call.id,
       provider: call.provider,
@@ -420,7 +444,7 @@ export function buildThread(
 
 /**
  * Clip the call ledger to the open→close windows of one objective —
- * the model-call analogue of `clipToObjective`. Windows are derived
+ * the orphan-call analogue of `clipToObjective`. Windows are derived
  * from the FULL row stream (markers must not be pre-filtered away).
  */
 export function clipCallsToObjective(
@@ -591,10 +615,10 @@ export function TimelineBody() {
     const clipped = clipToObjective(rows, objFilter);
     const filteredRows = clipped.filter((row) => filters[row.event.kind]);
     // The full ledger always joins — turns keep their calls even with
-    // ghost rows toggled off; `showApiCalls` only gates whether the
-    // unmatched remainder renders.
+    // orphan-call rows toggled off; `showApiCalls` only gates whether
+    // the unmatched remainder renders.
     const built = buildThread(filteredRows, clipCallsToObjective(calls, rows, objFilter));
-    return withApiCalls ? built : built.filter((item) => item.variant !== 'model-call');
+    return withApiCalls ? built : built.filter((item) => item.variant !== 'orphan-call');
   }, [rows, calls, objFilter, filters, withApiCalls]);
 
   // Trailing render window — a long stream expands into many turn
@@ -704,6 +728,7 @@ function FilterBar({ filters }: { filters: KindFilter }) {
     { key: 'objective_open', label: 'obj open' },
     { key: 'objective_close', label: 'obj close' },
     { key: 'context_control', label: 'context' },
+    { key: 'auth_state', label: 'auth' },
   ];
   const callsOn = showApiCalls.value;
   return (
@@ -783,14 +808,16 @@ function ThreadItemView({ item }: { item: ThreadItem }) {
       return <SessionEndMarker item={item} />;
     case 'context-control':
       return <ContextControlMarker item={item} />;
+    case 'auth-state':
+      return <AuthStateMarker item={item} />;
     case 'prompt':
       return <PromptBlock item={item} />;
     case 'turn':
       return <TurnBlock item={item} />;
     case 'tool-action':
       return <ToolActionMarker item={item} />;
-    case 'model-call':
-      return <ModelCallRow item={item} />;
+    case 'orphan-call':
+      return <OrphanCallRow item={item} />;
   }
 }
 
@@ -901,6 +928,41 @@ function ContextControlMarker({
         </span>
       )}
       {item.detail !== null && <span style="color:var(--ef-text-muted)">{item.detail}</span>}
+    </div>
+  );
+}
+
+/**
+ * The runner's outbound work blocked on a 401, and its recovery.
+ *
+ * Two facts live here and nowhere else. A blocked runner retains its
+ * activity instead of shipping it, so the feed goes quiet for a
+ * reason that has nothing to do with the agent — without this row
+ * that silence is unexplained. And the retention queue is bounded:
+ * `evictedEvents` is what it discarded to stay bounded, permanent
+ * loss of the same class as `session_end.capture.dropped`. It is
+ * stated in words with its count, never as colour alone.
+ */
+function AuthStateMarker({ item }: { item: Extract<ThreadItem, { variant: 'auth-state' }> }) {
+  const lost = item.evictedEvents > 0;
+  return (
+    <div
+      class="flex items-center gap-3 flex-wrap"
+      style={`font-family:var(--ef-font-mono);font-size:12px;padding:6px 12px;border-left:2px solid ${
+        lost ? 'var(--ef-warning, #b0730f)' : 'var(--ef-border-strong)'
+      };color:var(--ef-text-muted)`}
+    >
+      <span>{formatTs(item.ts)}</span>
+      <span style="color:var(--ef-text)">authentication {item.state}</span>
+      <span>
+        401 · {item.queuedEvents} event{item.queuedEvents === 1 ? '' : 's'} retained
+      </span>
+      {lost && (
+        <span style="color:var(--ef-warning, #b0730f);font-weight:600">
+          INCOMPLETE — {item.evictedEvents} event{item.evictedEvents === 1 ? '' : 's'} evicted while
+          blocked
+        </span>
+      )}
     </div>
   );
 }
@@ -1119,8 +1181,8 @@ function CallSubRow({ call }: { call: GenAiInferenceSummary }) {
 /**
  * The lazy-loaded body of one genai record: loading/error states,
  * then the request layers (and, when `showOutput`, the response
- * messages — used by ghost rows whose output appears nowhere else in
- * the feed; a turn's own block already shows its response).
+ * messages — used by orphan-call rows whose output appears nowhere else
+ * in the feed; a turn's own block already shows its response).
  */
 function LazyRecordBody({
   recordId,
@@ -1171,13 +1233,13 @@ function LazyRecordBody({
 }
 
 /**
- * A model call with no turn marker — subagent work, a server-tool
- * sidecar (web search), an away summary. Drawn as an indented ghost
- * row (dashed rule, `↳`) so the feed shows the call happened without
- * pretending it was a first-class turn; expand for its output and
- * full request context.
+ * An orphan call — a model call with no turn marker: subagent work, a
+ * server-tool sidecar (web search), an away summary. Drawn as an
+ * indented row (dashed rule, `↳`) so the feed shows the call happened
+ * without pretending it was a first-class turn; expand for its output
+ * and full request context.
  */
-function ModelCallRow({ item }: { item: Extract<ThreadItem, { variant: 'model-call' }> }) {
+function OrphanCallRow({ item }: { item: Extract<ThreadItem, { variant: 'orphan-call' }> }) {
   const u = item.usage;
   return (
     <details
@@ -1361,6 +1423,11 @@ function ToolActionMarker({ item }: { item: Extract<ThreadItem, { variant: 'tool
           </span>
         </span>
         {item.agent && <span>{item.agent}</span>}
+        {item.source !== null && (
+          <span title="Capture source — which recorder produced this tool action.">
+            {item.source}
+          </span>
+        )}
         {item.durationMs !== null && <span>{item.durationMs}ms</span>}
         {item.isError && <span style="color:var(--ef-lamp-alarm)">error</span>}
       </summary>

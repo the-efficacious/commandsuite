@@ -120,7 +120,16 @@ export interface TelemetryStore {
 
 export interface TelemetryStoreOptions {
   logger?: Logger;
-  /** Retained completeness diagnostics. */
+  /**
+   * Retained completeness diagnostics — a write-only `DiagnosticEmitter`,
+   * NOT the `DiagnosticStore`. The name `diagnostics` holds the store one
+   * layer up (`createApp`'s option, which also has `unresolved`, `query`,
+   * `sweep` and `health`); the bridge passes `diagnostics.emit` down to
+   * here, so at this layer the value can only write. Read it as
+   * `diagnosticEmitter`, which is what it should be called once the
+   * out-of-package call sites can move; the private field below is
+   * spelled `diag` for the same reason.
+   */
   diagnostics?: DiagnosticEmitter;
 }
 

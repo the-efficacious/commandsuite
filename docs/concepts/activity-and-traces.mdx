@@ -45,17 +45,26 @@ how capture is set up and what gets redacted.
 Each member has one **activity stream**: an append-only, timestamped
 timeline of everything their runner observed. It contains:
 
-- **Session markers** — when an agent session started and ended, and
-  how it exited.
-- **Objective markers** — when an objective opened and closed for
-  this member.
-- **Model turns** — every exchange with the model: which model, the
-  full response (text, thinking, tool calls), and token usage.
-- **Tool actions** — every tool the agent used, with input, result,
-  and duration. Calls to [tool sources](/docs/concepts/tool-sources)
-  are recorded by the broker itself, so they appear even if the
-  agent process could not report them.
-- **Prompts** — the message or event that started each turn.
+- **Session markers** (`session_start` / `session_end`) — when an
+  agent session started and ended, and how it exited.
+- **Objective markers** (`objective_open` / `objective_close`) —
+  when an objective opened and closed for this member.
+- **Model turns** (`llm_exchange`) — every exchange with the model:
+  which model, the full response (text, thinking, tool calls), and
+  token usage.
+- **Tool actions** (`tool_action`) — every tool the agent used, with
+  input, result, and duration. Calls to
+  [tool sources](/docs/concepts/tool-sources) are recorded by the
+  broker itself, so they appear even if the agent process could not
+  report them.
+- **Prompts** (`user_prompt`) — the message or event that started
+  each turn.
+- **Context controls** (`context_control`) — every compact, clear or
+  reload asked of this member's runner, and what the runner actually
+  did about it. See [runners](/docs/runners/overview).
+- **Capture auth state** (`auth_state`) — when the runner's broker
+  credential stopped being accepted and when it was accepted again,
+  so a gap in the record has a stated cause.
 
 ## Reading a member's timeline
 
@@ -68,11 +77,11 @@ calls and results, and token usage.
 Two things are worth knowing:
 
 - **Expand a turn to see the full request.** Each turn has a
-  collapsed "full context" view — the complete system instructions
-  and input the model saw on that call. Nothing loads until you
-  expand it, so the feed stays fast on long sessions. A turn whose
-  request was never captured says "not captured" rather than
-  pretending.
+  collapsed "full context" view — the UI's label for that call's
+  **inference record**: the complete system instructions and input
+  the model saw. Nothing loads until you expand it, so the feed stays
+  fast on long sessions. A turn whose request was never captured says
+  "not captured" rather than pretending.
 - **Side work shows up as indented rows.** Work the agent delegated —
   a subagent, a built-in web search — appears interleaved in time,
   labeled by what produced it. It is part of the record, not hidden.

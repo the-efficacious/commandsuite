@@ -75,7 +75,7 @@ describe('isContinuationOf', () => {
     expect(isContinuationOf(next, prev)).toBe(true);
   });
 
-  it('does not group backwards-in-time messages (out-of-order reconnect backfill)', () => {
+  it('does not group backwards-in-time messages (out-of-order reconnect hydration)', () => {
     const prev = msg({ id: 'a', ts: 1_700_000_000_000 + 60_000 });
     const next = msg({ id: 'b', ts: 1_700_000_000_000 });
     expect(isContinuationOf(next, prev)).toBe(false);

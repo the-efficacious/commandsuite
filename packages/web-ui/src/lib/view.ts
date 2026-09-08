@@ -1,16 +1,22 @@
 /**
- * View signal — which thread or panel is active.
+ * Navigation helpers, the mobile drawer signal, and the deprecated
+ * `View` projection.
  *
- * `view` is now derived from the router's `currentRoute`. The URL is
- * the source of truth; this computed is a translation layer that lets
- * existing components keep reading a `View` discriminated-union
- * without caring about URL parsing.
+ * `Route` (lib/routes.ts) is the canonical description of what is on
+ * screen: the URL is the single source of truth and every navigation
+ * goes through `navigate(route)`. `View` is NOT a second vocabulary —
+ * it is a deprecated, lossy projection of `Route` kept only so older
+ * components need not parse URLs. It folds `thread-channel` and
+ * `thread-dm` into one `thread` kind and renames `home` to
+ * `overview`, so it can express strictly less than `Route` can. New
+ * code reads `currentRoute`; a reader asking "what is on screen?" is
+ * answered by `Route`.
  *
- * All the legacy `select*` helpers are preserved as thin wrappers
- * around `navigate(route)` so callers never touch the router module
- * directly. Each also closes the mobile sidebar drawer — tapping a
- * nav item and staring at the sidebar on top of the new view would
- * feel broken.
+ * The `select*` helpers are the navigation API of this module: thin
+ * wrappers around `navigate(route)` so callers never touch the router
+ * module directly. Each also closes the mobile sidebar drawer —
+ * tapping a nav item and staring at the sidebar on top of the new
+ * screen would feel broken.
  */
 
 import { computed, effect, signal } from '@preact/signals';
@@ -30,8 +36,14 @@ import {
 import { currentRoute, navigate } from './router.js';
 import type { ProfileTab, Route } from './routes.js';
 
+/**
+ * @deprecated Lossy projection of {@link Route}, not a peer type. Read
+ * `currentRoute` (lib/router.ts) instead; `View` exists only for
+ * components not yet migrated off it.
+ */
 export type View =
   | { kind: 'thread'; key: string; channelSlug?: string }
+  /** Team Home. The deprecated spelling of route kind `home`; it retires with `View`. */
   | { kind: 'overview' }
   | { kind: 'inbox' }
   | { kind: 'account' }
@@ -51,6 +63,10 @@ export type View =
   | { kind: 'notifications' }
   | { kind: 'notification-detail'; slug: string };
 
+/**
+ * @deprecated Derived from `currentRoute`. Read `currentRoute`
+ * (lib/router.ts) instead — it carries strictly more information.
+ */
 export const view = computed<View>(() => viewFromRoute(currentRoute.value));
 
 /**
@@ -69,8 +85,8 @@ const MODAL_ROUTE_KINDS: ReadonlySet<Route['kind']> = new Set<Route['kind']>(['a
  * of dropping them on a default landing.
  *
  * Defaults to `home` for the very first render (or a direct deep
- * link to /account) — there's no real "previous" then, so the team
- * overview is the most predictable fallback.
+ * link to /account) — there's no real "previous" then, so Team Home
+ * is the most predictable fallback.
  */
 const lastNonModalRouteSignal = signal<Route>({ kind: 'home' });
 
@@ -100,8 +116,10 @@ if (typeof window !== 'undefined') {
   });
 }
 
+/** @deprecated Projects the deprecated {@link View}; see `lastNonModalRouteSignal`. */
 export const lastNonModalView = computed<View>(() => viewFromRoute(lastNonModalRouteSignal.value));
 
+/** @deprecated Takes the deprecated {@link View}; test a `Route` kind instead. */
 export function isModalView(v: View): boolean {
   return v.kind === 'account';
 }
@@ -114,6 +132,11 @@ export function closeModalView(): void {
   navigate(lastNonModalRouteSignal.value);
 }
 
+/**
+ * Project a `Route` onto the deprecated `View`. Lossy in two places:
+ * `thread-channel` and `thread-dm` collapse into one `thread` kind
+ * (20 route kinds → 19 view kinds), and `home` is renamed `overview`.
+ */
 function viewFromRoute(route: Route): View {
   switch (route.kind) {
     case 'home':
@@ -228,7 +251,8 @@ export function selectDmWith(name: string): void {
   isSidebarOpen.value = false;
 }
 
-export function selectOverview(): void {
+/** Navigate to Team Home, the landing screen at `/`. */
+export function selectTeamHome(): void {
   navigate({ kind: 'home' });
   isSidebarOpen.value = false;
 }
@@ -313,8 +337,8 @@ export function selectNotificationDetail(slug: string): void {
 }
 
 export function __resetViewForTests(): void {
-  // Clearing the router to `/` maps to view { kind: 'overview' } via
-  // the computed above. The shell tests were originally written
+  // Clearing the router to `/` would land on route kind `home`
+  // (Team Home). The shell tests were originally written
   // against a default of primary-thread; we preserve that by
   // navigating explicitly to the general channel (its successor).
   navigate({ kind: 'thread-channel', slug: GENERAL_CHANNEL_ID }, { replace: true });

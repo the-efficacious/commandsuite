@@ -172,11 +172,11 @@ function bucketByThread(viewer: string, msgs: Message[]): Map<string, Message[]>
  * calling this repeatedly with overlapping history pages is safe.
  *
  * Fast path: when every fresh message lands at or after the current
- * tail — the case for live WS arrivals and tail backfill, i.e. nearly
+ * tail — the case for live WS arrivals and tail hydration, i.e. nearly
  * always — the merged array is a plain concat with no full re-sort.
  * That keeps per-frame cost flat as a thread grows; the old behavior
  * ran a full `O(n log n)` sort on every arriving message. Out-of-order
- * arrivals (reconnect backfill) still fall back to a sort.
+ * arrivals (reconnect hydration) still fall back to a sort.
  */
 export function appendMessages(viewer: string, msgs: Message[]): void {
   if (msgs.length === 0) return;

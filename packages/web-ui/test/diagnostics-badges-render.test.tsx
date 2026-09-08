@@ -10,7 +10,7 @@
  *
  * This is the sibling of `capture-health-render.test.tsx` and exists
  * for the same reason it does — a helper nobody renders satisfies
- * nothing. So these render the real component and assert badge text,
+ * nothing. So these render the real components and assert badge text,
  * in both directions: the healthy roster must stay quiet.
  */
 
@@ -18,6 +18,7 @@ import { cleanup, render, screen } from '@testing-library/preact';
 import type { InstructionsResponse, Presence, RosterResponse } from 'csuite-sdk/types';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MemberProfile } from '../src/components/MemberProfile.js';
+import { TeamHome } from '../src/components/TeamHome.js';
 import { __resetClientForTests } from '../src/lib/client.js';
 import { instructions } from '../src/lib/instructions.js';
 import { objectives as objectivesSignal } from '../src/lib/objectives.js';
@@ -134,6 +135,59 @@ describe('what a reader actually sees', () => {
     // badges unconditionally would pass every test above.
     roster.value = rosterWith({ diagnosticsUnresolved: 0, diagnosticsRetention: 'healthy' });
     render(<MemberProfile name="turner" tab="overview" viewer="director-1" />);
+
+    expect(screen.queryByText(/UNRESOLVED/)).toBeNull();
+    expect(screen.queryByText(/DIAGNOSTICS/)).toBeNull();
+  });
+});
+
+describe('TeamHome roster row', () => {
+  it('renders the unresolved count on the roster row', () => {
+    roster.value = rosterWith({ diagnosticsUnresolved: 12, diagnosticsRetention: 'healthy' });
+    render(<TeamHome viewer="director-1" />);
+
+    // The count, not merely that something appeared: the roster row is
+    // where a reader decides whose profile is worth opening.
+    expect(screen.getByText('12 UNRESOLVED')).toBeTruthy();
+  });
+
+  it('renders the retention state on the roster row when the store is degraded', () => {
+    roster.value = rosterWith({ diagnosticsUnresolved: 0, diagnosticsRetention: 'degraded' });
+    render(<TeamHome viewer="director-1" />);
+
+    expect(screen.getByText('DIAGNOSTICS DEGRADED')).toBeTruthy();
+    // Zero unresolved is not an incident count — the row must not
+    // invent one next to the retention badge.
+    expect(screen.queryByText(/UNRESOLVED/)).toBeNull();
+  });
+
+  it('renders the diagnostics badges ALONGSIDE the capture badge, not instead of it', () => {
+    // The signals are orthogonal and all three belong on one row. An
+    // implementation that picks one branch passes every single-signal
+    // assertion above.
+    roster.value = rosterWith({
+      captureHealth: 'gap',
+      diagnosticsUnresolved: 12,
+      diagnosticsRetention: 'degraded',
+    });
+    render(<TeamHome viewer="director-1" />);
+
+    expect(screen.getByText('NO CAPTURE')).toBeTruthy();
+    expect(screen.getByText('12 UNRESOLVED')).toBeTruthy();
+    expect(screen.getByText('DIAGNOSTICS DEGRADED')).toBeTruthy();
+  });
+
+  it('renders NEITHER badge for a healthy member', () => {
+    roster.value = rosterWith({ diagnosticsUnresolved: 0, diagnosticsRetention: 'healthy' });
+    render(<TeamHome viewer="director-1" />);
+
+    expect(screen.queryByText(/UNRESOLVED/)).toBeNull();
+    expect(screen.queryByText(/DIAGNOSTICS/)).toBeNull();
+  });
+
+  it('renders NEITHER badge for a server that reports neither field', () => {
+    roster.value = rosterWith({});
+    render(<TeamHome viewer="director-1" />);
 
     expect(screen.queryByText(/UNRESOLVED/)).toBeNull();
     expect(screen.queryByText(/DIAGNOSTICS/)).toBeNull();

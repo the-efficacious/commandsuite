@@ -47,8 +47,8 @@ describe('member activity pagination', () => {
       const url = new URL(
         typeof input === 'string' ? input : input instanceof URL ? input.href : input.url,
       );
-      expect(url.searchParams.get('cursor_ts')).toBe('1000');
-      expect(url.searchParams.get('cursor_id')).toBe('3');
+      expect(url.searchParams.get('before_ts')).toBe('1000');
+      expect(url.searchParams.get('before_id')).toBe('3');
       expect(url.searchParams.has('to')).toBe(false);
       return new Response(JSON.stringify({ activity: [row(2), row(1)] }), {
         headers: { 'Content-Type': 'application/json' },

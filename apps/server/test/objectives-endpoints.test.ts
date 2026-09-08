@@ -2,11 +2,14 @@
  * Objectives REST endpoint tests.
  *
  * Drives the `/objectives*` surface through the Hono request client
- * with three test members covering the relevant permission gates:
+ * with five test members covering the relevant permission gates:
  *
  *   alice   — `members.manage` + all four objective leaves
  *   bob     — all four objective leaves
  *   carol   — no permissions (baseline member)
+ *   dave    — no permissions (second baseline member)
+ *   mgr     — `members.manage` and nothing else: on every objective's
+ *             thread without holding a single objective leaf
  *
  * Store-level state-machine semantics live in objectives.test.ts;
  * here we verify auth gates, scoping, validation, payload shapes,
@@ -38,6 +41,7 @@ const ALICE = 'csuite_test_alice_secret_token';
 const BOB = 'csuite_test_bob_secret_token';
 const CAROL = 'csuite_test_carol_secret_token';
 const DAVE = 'csuite_test_dave_secret_token';
+const MGR = 'csuite_test_mgr_secret_token';
 
 const TEAM: Team = {
   name: 'demo-team',
@@ -90,8 +94,18 @@ async function makeApp() {
       permissions: [],
       token: DAVE,
     },
+    {
+      // The roster administrator: `members.manage` and no objective
+      // leaf at all. Every other manage-holding fixture in this file
+      // pairs the leaf with an objective leaf, which hides the read
+      // gate's audience behind `objectives.create`.
+      name: 'mgr',
+      role: { title: 'roster admin', description: '' },
+      permissions: ['members.manage'],
+      token: MGR,
+    },
   ]);
-  for (const name of ['alice', 'bob', 'carol', 'dave']) {
+  for (const name of ['alice', 'bob', 'carol', 'dave', 'mgr']) {
     void broker.register(name);
   }
   const db = openDatabase(':memory:');
@@ -391,18 +405,122 @@ describe('GET /objectives/:id', () => {
     expect(res.status).toBe(200);
   });
 
-  it('rejects a non-participant without objectives.create with 403', async () => {
+  it('rejects a member off the thread holding neither leaf, naming the real gate', async () => {
     const { app } = await makeApp();
     const obj = await createOne(app, ALICE, { assignee: 'carol' });
-    // dave is not a participant and has no objectives.create.
+    // dave is not on the thread and holds neither objectives.create
+    // nor members.manage.
     const res = await app.request(`/objectives/${obj.id}`, authed(DAVE));
     expect(res.status).toBe(403);
+    // The message names the predicate the gate actually tests — the
+    // whole of it, and nothing it does not test.
+    expect(await res.json()).toEqual({
+      error:
+        'viewing this objective requires being on its thread (assignee, originator, watcher, or members.manage) or holding objectives.create',
+    });
   });
 
   it('returns 404 for unknown ids', async () => {
     const { app } = await makeApp();
     const res = await app.request('/objectives/obj-nope', authed(ALICE));
     expect(res.status).toBe(404);
+  });
+});
+
+// ─── the objective read audience ─────────────────────────────────────
+//
+// `members.manage` puts a member on every objective's thread: the
+// lifecycle fan-out pushes them every event, `/discuss` accepts their
+// posts, and `/team/status` lists every open objective for them. These
+// tests hold the two read routes to that same audience — `mgr` holds
+// `members.manage` and not one objective leaf, so nothing here can be
+// satisfied by `objectives.create`.
+
+describe('objective reads for a members.manage holder without objectives.create', () => {
+  it('returns the whole objective and its whole event log', async () => {
+    const { app } = await makeApp();
+    const obj = await createOne(app, BOB, { assignee: 'dave', watchers: ['carol'] });
+    // mgr is neither assignee, originator, nor watcher.
+    const res = await app.request(`/objectives/${obj.id}`, authed(MGR));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as GetObjectiveResponse;
+    // The full record, field for field — not an id/title projection
+    // of the kind `/team/status` already hands this member.
+    expect(body.objective).toEqual(obj);
+    // And the complete log, not its first row.
+    expect(body.events.map((e) => e.kind)).toEqual(['assigned']);
+  });
+
+  it('lists every objective on the team, not only its own related set', async () => {
+    const { app } = await makeApp();
+    const a = await createOne(app, BOB, { assignee: 'carol', title: 'A' });
+    const b = await createOne(app, BOB, { assignee: 'dave', title: 'B' });
+    const c = await createOne(app, ALICE, { assignee: 'carol', title: 'C' });
+    const res = await app.request('/objectives', authed(MGR));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as ListObjectivesResponse;
+    // mgr is party to none of the three; all three come back.
+    expect(body.objectives.map((o) => o.id).sort()).toEqual([a.id, b.id, c.id].sort());
+  });
+
+  it('answers related= for another member', async () => {
+    const { app } = await makeApp();
+    const daves = await createOne(app, BOB, { assignee: 'dave' });
+    await createOne(app, BOB, { assignee: 'carol' });
+    const res = await app.request('/objectives?related=dave', authed(MGR));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as ListObjectivesResponse;
+    expect(body.objectives.map((o) => o.id)).toEqual([daves.id]);
+  });
+
+  it('reads the thread it is allowed to post into', async () => {
+    const { app } = await makeApp();
+    const obj = await createOne(app, BOB, { assignee: 'dave' });
+    const discuss = await app.request(
+      `/objectives/${obj.id}/discuss`,
+      authed(MGR, { body: 'admin chime-in' }),
+    );
+    const view = await app.request(`/objectives/${obj.id}`, authed(MGR));
+    // One member cannot be inside the thread for writes and outside
+    // it for reads: whatever the audience rule is, these agree.
+    expect(view.status).toBe(discuss.status);
+    expect(view.status).toBe(200);
+  });
+
+  it('is pushed the lifecycle event it can then open', async () => {
+    const { app, broker } = await makeApp();
+    const received: string[] = [];
+    broker.subscribe('mgr', async (m) => {
+      const data = m.data as { kind?: string; objective_id?: string } | undefined;
+      if (data?.kind === 'objective' && data.objective_id) received.push(data.objective_id);
+    });
+    const obj = await createOne(app, BOB, { assignee: 'dave' });
+    // The push audience and the read gate name the same member.
+    await vi.waitFor(() => expect(received).toEqual([obj.id]));
+    const res = await app.request(`/objectives/${obj.id}`, authed(MGR));
+    expect(res.status).toBe(200);
+  });
+});
+
+describe('objective reads for a member holding neither leaf', () => {
+  it('scopes the list to its own related objectives', async () => {
+    const { app } = await makeApp();
+    const mine = await createOne(app, ALICE, { assignee: 'dave' });
+    await createOne(app, ALICE, { assignee: 'carol' });
+    const res = await app.request('/objectives', authed(DAVE));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as ListObjectivesResponse;
+    expect(body.objectives.map((o) => o.id)).toEqual([mine.id]);
+  });
+
+  it('refuses related= for someone else, naming both leaves that would allow it', async () => {
+    const { app } = await makeApp();
+    await createOne(app, ALICE, { assignee: 'carol' });
+    const res = await app.request('/objectives?related=carol', authed(DAVE));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({
+      error: "listing another member's objectives requires objectives.create or members.manage",
+    });
   });
 });
 
@@ -642,6 +760,111 @@ describe('PATCH assignee (reassignment)', () => {
     // No event, no push — nothing happened, so nothing is broadcast.
     await new Promise((r) => setTimeout(r, 0));
     expect(received).toEqual([]);
+  });
+});
+
+// ─── POST /objectives/:id/reassign ───────────────────────────────────
+
+describe('POST /objectives/:id/reassign', () => {
+  it('moves the assignee, keeps the outgoing one on the thread, and records both events', async () => {
+    const { app } = await makeApp();
+    const obj = await createOne(app, ALICE, { assignee: 'carol' });
+    const res = await app.request(
+      `/objectives/${obj.id}/reassign`,
+      authed(ALICE, { to: 'dave', note: 'carol is on leave' }),
+    );
+    expect(res.status).toBe(200);
+    const updated = (await res.json()) as Objective;
+    expect(updated.assignee).toBe('dave');
+    expect(updated.watchers).toEqual(['carol']);
+    const detail = await app.request(`/objectives/${obj.id}`, authed(ALICE));
+    const body = (await detail.json()) as GetObjectiveResponse;
+    expect(body.events.map((e) => e.kind)).toEqual(['assigned', 'reassigned', 'watcher_added']);
+    expect(body.events[1]?.payload).toEqual({
+      from: 'carol',
+      to: 'dave',
+      note: 'carol is on leave',
+    });
+    expect(body.events[2]?.payload).toEqual({ name: 'carol', reason: 'reassigned-from' });
+  });
+
+  // Two spellings of one act. The route is the first-class verb; the
+  // `assignee` field group on PATCH is the older spelling the web UI
+  // and existing agents still use. Anything the route does differently
+  // is a new confound, so compare the whole objective and the whole
+  // event stream rather than the assignee alone.
+  it('is the same act as the PATCH assignee field group, field for field and event for event', async () => {
+    const { app } = await makeApp();
+    const viaRoute = await createOne(app, ALICE, { assignee: 'carol' });
+    const viaPatch = await createOne(app, ALICE, { assignee: 'carol' });
+    const a = await app.request(
+      `/objectives/${viaRoute.id}/reassign`,
+      authed(ALICE, { to: 'dave', note: 'handover' }),
+    );
+    const b = await app.request(
+      `/objectives/${viaPatch.id}`,
+      authed(ALICE, { assignee: 'dave', note: 'handover' }, 'PATCH'),
+    );
+    expect(a.status).toBe(200);
+    expect(a.status).toBe(b.status);
+    const strip = (o: Objective) => ({ ...o, id: '', createdAt: 0, updatedAt: 0 });
+    expect(strip((await a.json()) as Objective)).toEqual(strip((await b.json()) as Objective));
+    const events = async (id: string) => {
+      const detail = await app.request(`/objectives/${id}`, authed(ALICE));
+      return ((await detail.json()) as GetObjectiveResponse).events.map((e) => ({
+        kind: e.kind,
+        actor: e.actor,
+        payload: e.payload,
+      }));
+    };
+    // Positive control: two spellings that both did nothing would
+    // compare equal. Pin what the route side actually produced first.
+    const routeEvents = await events(viaRoute.id);
+    expect(routeEvents.map((ev) => ev.kind)).toEqual(['assigned', 'reassigned', 'watcher_added']);
+    expect(routeEvents).toEqual(await events(viaPatch.id));
+  });
+
+  it('rejects a caller without objectives.reassign with 403 — even the assignee', async () => {
+    const { app } = await makeApp();
+    const obj = await createOne(app, ALICE, { assignee: 'carol' });
+    const res = await app.request(`/objectives/${obj.id}/reassign`, authed(CAROL, { to: 'dave' }));
+    expect(res.status).toBe(403);
+  });
+
+  it('rejects an unknown target and a missing `to` with 400', async () => {
+    const { app } = await makeApp();
+    const obj = await createOne(app, ALICE, { assignee: 'carol' });
+    const unknown = await app.request(
+      `/objectives/${obj.id}/reassign`,
+      authed(ALICE, { to: 'ghost' }),
+    );
+    expect(unknown.status).toBe(400);
+    const missing = await app.request(`/objectives/${obj.id}/reassign`, authed(ALICE, {}));
+    expect(missing.status).toBe(400);
+  });
+
+  it('reassigning to the current assignee is an idempotent no-op', async () => {
+    const { app } = await makeApp();
+    const obj = await createOne(app, ALICE, { assignee: 'carol' });
+    const res = await app.request(`/objectives/${obj.id}/reassign`, authed(ALICE, { to: 'carol' }));
+    expect(res.status).toBe(200);
+    const detail = await app.request(`/objectives/${obj.id}`, authed(ALICE));
+    const body = (await detail.json()) as GetObjectiveResponse;
+    expect(body.events.map((e) => e.kind)).toEqual(['assigned']);
+  });
+
+  it('409s once the objective is terminal', async () => {
+    const { app } = await makeApp();
+    const obj = await createOne(app, ALICE, { assignee: 'carol' });
+    await app.request(`/objectives/${obj.id}/complete`, authed(CAROL, { result: 'shipped' }));
+    const res = await app.request(`/objectives/${obj.id}/reassign`, authed(ALICE, { to: 'dave' }));
+    expect(res.status).toBe(409);
+  });
+
+  it('404s for an objective that does not exist', async () => {
+    const { app } = await makeApp();
+    const res = await app.request('/objectives/obj-nope/reassign', authed(ALICE, { to: 'dave' }));
+    expect(res.status).toBe(404);
   });
 });
 

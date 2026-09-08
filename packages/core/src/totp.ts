@@ -5,7 +5,7 @@
  * adds a replay guard on top. The replay guard is what makes this
  * usable — raw TOTP accepts a code for the entire 30-second window,
  * which means a code can be reused multiple times within that window.
- * We track the last accepted period counter per slot and reject any
+ * We track the last accepted period counter per member and reject any
  * subsequent code whose counter is ≤ the stored one.
  *
  * Parameters (fixed so every Authenticator app works without config):
@@ -75,7 +75,7 @@ export type VerifyResult =
 
 /**
  * Verify `code` against `secret`, rejecting reuse. `lastCounter` is
- * the counter of the last code this slot accepted (0 for never). On
+ * the counter of the last code this member accepted (0 for never). On
  * success the returned `counter` should be persisted as the new
  * `lastCounter` before the session is created.
  *

@@ -20,16 +20,18 @@ named channels when a smaller group needs its own room.
 
 Any member may create a channel and joins it as an ordinary member. Creation
 is provenance, not authority: the creator gets no special administrative
-standing. Names are short lowercase slugs — letters, digits, and single
-dashes, up to 32 characters:
+standing. A channel is addressed by its slug — short and lowercase,
+letters, digits, and single dashes, up to 32 characters:
 
 ```
 ✓ frontend    ✓ frontend-ops    ✓ q3-2026
 ✗ Frontend    ✗ -frontend       ✗ front--end
 ```
 
-Members holding `channels.manage` can rename a channel and edit its
-description. History and references survive a rename — only the name changes.
+Members holding `channels.manage` can change a channel's slug and edit
+its description. History and references survive: a message is tagged
+with the channel's opaque, immutable `id` (`chan:<id>`), not its slug,
+so a rename never orphans it.
 
 {/* media: screenshot channel-sidebar — the web UI sidebar showing general plus named channels, with the channel-create dialog open */}
 

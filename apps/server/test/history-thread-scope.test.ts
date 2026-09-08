@@ -36,7 +36,10 @@ async function makeApp() {
     {
       name: 'alice',
       role: ENG,
-      permissions: ['objectives.create', 'channels.manage'],
+      // `members.manage` so alice can make an instruction-change
+      // notice happen — one of the three families that fans out to a
+      // recipient list with no thread tag.
+      permissions: ['objectives.create', 'channels.manage', 'members.manage'],
       token: ALICE,
     },
     { name: 'bob', role: ENG, permissions: [], token: BOB },
@@ -51,6 +54,7 @@ async function makeApp() {
     teamStore: mockTeamStore(TEAM),
     channels: createSqliteChannelStore(db),
     objectives: createSqliteObjectivesStore(db),
+    persistMembers: () => {},
     version: '0.0.0',
     logger: silentLogger(),
   });
@@ -73,6 +77,23 @@ async function feedBodies(app: App, token: string): Promise<string[]> {
   expect(res.status).toBe(200);
   const body = (await res.json()) as { messages: Array<{ body: string }> };
   return body.messages.map((m) => m.body);
+}
+
+/**
+ * Everything `?channel=general` gives this caller, labelled and sorted.
+ * A system notice is labelled by its `data.kind` — the bodies carry
+ * timestamps and member names, and the question here is which rows come
+ * back, not how they read.
+ */
+async function generalLabels(app: App, token: string): Promise<string[]> {
+  const res = await app.request('/history?channel=general', authed(token));
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as {
+    messages: Array<{ body: string; data?: Record<string, unknown> }>;
+  };
+  return body.messages
+    .map((m) => (typeof m.data?.kind === 'string' ? `kind:${m.data.kind}` : m.body))
+    .sort();
 }
 
 describe('GET /history — channel scope', () => {
@@ -144,6 +165,54 @@ describe('GET /history — channel scope', () => {
     const app = await makeApp();
     expect((await app.request('/push', authed(ALICE, { body: 'deploy done' }))).status).toBe(200);
     expect(await feedBodies(app, CAROL)).toContain('deploy done');
+  });
+});
+
+describe('GET /history?channel=general — recipient-list notices', () => {
+  /**
+   * Three fan-outs deliver to a named recipient list with `to: null`
+   * and no thread tag — instruction changes, context control, runner
+   * environment. The general read collects untagged broadcasts, which
+   * is the same shape, and general has no membership to gate on. The
+   * recorded audience is therefore the only audience such a row has.
+   */
+  const seed = async (app: App): Promise<void> => {
+    expect((await app.request('/push', authed(ALICE, { body: 'deploy done' }))).status).toBe(200);
+    expect(
+      (
+        await app.request(
+          '/push',
+          authed(ALICE, { body: 'standup in five', data: { thread: 'chan:general' } }),
+        )
+      ).status,
+    ).toBe(200);
+    // Fans out to bob alone: only bob's composed instructions moved.
+    const patched = await app.request(
+      '/members/bob',
+      authed(ALICE, { instructions: 'Ship small changes.' }, 'PATCH'),
+    );
+    expect(patched.status).toBe(200);
+  };
+
+  it('gives a non-recipient the general channel and nothing else', async () => {
+    const app = await makeApp();
+    await seed(app);
+    // Exactly the two broadcasts. Carol was not sent the notice, so
+    // it is not hers to read back — and both broadcasts survive.
+    expect(await generalLabels(app, CAROL)).toEqual(['deploy done', 'standup in five']);
+  });
+
+  it('still gives the recipient the notice it was sent', async () => {
+    const app = await makeApp();
+    await seed(app);
+    // The whole of bob's general channel: the same two broadcasts
+    // plus the notice addressed to him. Withholding it from carol
+    // must not withhold it from bob.
+    expect(await generalLabels(app, BOB)).toEqual([
+      'deploy done',
+      'kind:instructions',
+      'standup in five',
+    ]);
   });
 });
 

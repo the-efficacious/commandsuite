@@ -3,10 +3,12 @@
  *
  * Codex appends every turn of a thread to a newline-delimited JSON
  * rollout at `<CODEX_HOME>/sessions/YYYY/MM/DD/rollout-<ts>-<id>.jsonl`.
- * Because the runner gives codex an EPHEMERAL, per-run `CODEX_HOME`, that
- * `sessions/` tree contains exactly this run's rollout(s) — the root
- * thread AND every subagent thread codex dispatches, each in its own
- * file. We tail ALL of them here and feed each complete line to a pure
+ * `CODEX_HOME` is per-run, but its `sessions/` is normally a symlink to
+ * a DURABLE per-member directory, so that tree holds prior runs'
+ * rollouts alongside this run's — the root thread AND every subagent
+ * thread codex dispatches, each in its own file. The `preexisting`
+ * option below decides which of them we tail; every tailed file is
+ * discovered here and each complete line fed to a pure
  * `RolloutParser`, which maps turns to `ActivityEvent`s (llm_exchange /
  * tool_action / user_prompt) on the capture host's uploader. This is the
  * codex analogue of the Claude `TranscriptReader`; the app-server stream
@@ -31,10 +33,12 @@
  *     serialized `drainAll()`.
  *
  * LIFECYCLE: the codex adapter removes the ephemeral `CODEX_HOME` at
- * teardown, which deletes the rollouts. So `close()` is async and does a
- * FINAL discover + drain + `parser.flush()` (every tracked file) BEFORE
- * returning — the adapter awaits it before removing the dir, so the last
- * turn of every thread is never lost to the rm.
+ * teardown. With a durable `sessions/`, that only unlinks the symlink and
+ * the rollouts survive; without one (the link failed) the rm takes them.
+ * So `close()` is async and does a FINAL discover + drain +
+ * `parser.flush()` (every tracked file) BEFORE returning — the adapter
+ * awaits it before removing the dir, so the last turn of every thread is
+ * never lost to the rm.
  */
 
 import { type FSWatcher, readdirSync, statSync, watch } from 'node:fs';

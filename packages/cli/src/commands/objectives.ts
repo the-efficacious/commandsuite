@@ -5,7 +5,7 @@
  *   csuite objectives list [--mine] [--assignee X] [--status active|blocked|done|cancelled]
  *   csuite objectives view <id>
  *   csuite objectives create --title <t> --outcome <o> --assignee <slot> [--body <b>]
- *   csuite objectives update <id> --status <blocked|active> [--block-reason <r>] [--note <n>]
+ *   csuite objectives update <id> --status <blocked|active> [--block-reason <r>]
  *   csuite objectives complete <id> --result <r>
  *   csuite objectives cancel <id> [--reason <r>]
  *   csuite objectives reassign <id> --to <slot> [--note <n>]
@@ -134,7 +134,6 @@ async function runUpdate(client: Client, args: string[]): Promise<Objective> {
     options: {
       status: { type: 'string' },
       'block-reason': { type: 'string' },
-      note: { type: 'string' },
     },
     allowPositionals: false,
   });
@@ -146,16 +145,14 @@ async function runUpdate(client: Client, args: string[]): Promise<Objective> {
   }
   const blockReason =
     typeof values['block-reason'] === 'string' ? values['block-reason'] : undefined;
-  const note = typeof values.note === 'string' ? values.note : undefined;
-  if (statusRaw === undefined && blockReason === undefined && note === undefined) {
+  if (statusRaw === undefined && blockReason === undefined) {
     throw new UsageError(
-      'objectives update: must include at least one of --status, --block-reason, --note',
+      'objectives update: must include at least one of --status, --block-reason',
     );
   }
   return client.updateObjective(id, {
     ...(statusRaw ? { status: statusRaw } : {}),
     ...(blockReason !== undefined ? { blockReason } : {}),
-    ...(note !== undefined ? { note } : {}),
   });
 }
 
@@ -200,10 +197,8 @@ async function runReassign(client: Client, args: string[]): Promise<Objective> {
   });
   const to = typeof values.to === 'string' ? values.to : '';
   if (!to) throw new UsageError('objectives reassign: --to <name> is required');
-  // The subcommand survives as terminal UX; on the wire an assignee
-  // change is just an update.
-  return client.updateObjective(id, {
-    assignee: to,
+  return client.reassignObjective(id, {
+    to,
     ...(typeof values.note === 'string' ? { note: values.note } : {}),
   });
 }

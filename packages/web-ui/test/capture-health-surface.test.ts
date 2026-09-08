@@ -9,11 +9,11 @@
  * a person without anyone running a query, which is the entire point.
  *
  * `presenceCaptureWarning` is the single place the shell decides how to
- * read the field, mirroring `presenceActivity`. These tests are on that
+ * read the field, mirroring `presenceWorkState`. These tests are on that
  * function because the two absence rules are OPPOSITE and a reader who
- * copies the activity idiom will get this wrong:
+ * copies the work-state idiom will get this wrong:
  *
- *     activity        absent → idle       a safe default
+ *     workState       absent → idle       a safe default
  *     captureHealth   absent → NO OPINION never "healthy"
  */
 
@@ -58,19 +58,30 @@ describe('presenceCaptureWarning', () => {
     expect(presenceCaptureWarning(undefined)).toBeNull();
   });
 
-  it('does not read the activity field by mistake', () => {
+  it('does not read the work-state field by mistake', () => {
     // The two live side by side on Presence and have opposite absence
     // rules. A `working` member with no capture opinion must produce no
     // capture warning.
-    const p: Presence = { ...presence(undefined), activity: 'working', busy: true };
+    const p: Presence = {
+      ...presence(undefined),
+      workState: 'working',
+      activity: 'working',
+      busy: true,
+    };
     expect(presenceCaptureWarning(p)).toBeNull();
   });
 
-  it('a gap is reported regardless of activity or connection state', () => {
+  it('a gap is reported regardless of work state or connection state', () => {
     // The failure that prompted this was a member who looked online and
     // busy the entire time. If the warning were gated on idleness or
     // disconnection it would never have fired for them.
-    const p: Presence = { ...presence('gap'), activity: 'working', busy: true, connected: 3 };
+    const p: Presence = {
+      ...presence('gap'),
+      workState: 'working',
+      activity: 'working',
+      busy: true,
+      connected: 3,
+    };
     expect(presenceCaptureWarning(p)).toBe('gap');
   });
 });

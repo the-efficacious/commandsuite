@@ -14,6 +14,26 @@ export const RUNNER_IDENTITY_HEADER = 'X-CSUITE-Runner-Identity' as const;
 /** Typed, observational identity of a live presence subscriber. */
 export const CLIENT_IDENTITY_HEADER = 'X-CSUITE-Client-Identity' as const;
 
+/**
+ * Set to `true` on any response whose request used a query parameter
+ * name that has been renamed. Presence is the signal; the pairs are in
+ * `DEPRECATED_QUERY_HEADER`.
+ */
+export const DEPRECATION_HEADER = 'Deprecation' as const;
+/**
+ * Which renamed query parameters this request used, as a comma-joined
+ * list of `legacy=current` pairs — e.g. `cursor_ts=before_ts,
+ * cursor_id=before_id`.
+ *
+ * DEPRECATION WINDOW — the legacy names are accepted for ONE release
+ * and are REMOVED IN THE NEXT MINOR, together with this header. It is
+ * the same courtesy the `process_document_*` tool aliases get, in the
+ * shape an HTTP client can act on: a stale caller keeps working AND
+ * learns, in the response itself, exactly which parameter to change.
+ * A proxy log filtered on this header lists every caller still to fix.
+ */
+export const DEPRECATED_QUERY_HEADER = 'X-CSuite-Deprecated-Query' as const;
+
 export const PATHS = {
   health: '/healthz',
   /**
@@ -84,13 +104,25 @@ export const PATHS = {
    * response without each consumer hard-coding it.
    */
   enrollVerify: '/enroll',
-  // Runner-driven presence reports. `presenceActivity`: the runner
-  // POSTs `{state: WorkState, busy?: bool}` on each activity
+  // Runner-driven work-state reports. `presenceWorkState`: the runner
+  // POSTs `{state: WorkState, busy?: bool}` on each work-state
   // transition (idle ↔ working ↔ blocked), plus a periodic heartbeat
   // while still working/blocked so the server's TTL doesn't lapse and
   // reset the member to idle mid-turn.
+  presenceWorkState: '/presence/work-state',
+  /**
+   * @deprecated The previous spelling of {@link PATHS.presenceWorkState}.
+   *
+   * `activity` is reserved for the durable per-member stream
+   * (`/members/:name/activity`); the live `idle`/`working`/`blocked`
+   * signal is *work state*. The broker serves both paths with one
+   * handler for one release and answers the old one with
+   * `Deprecation: true` plus a `Link: …; rel="successor-version"`
+   * header, so a client still on it is findable in a proxy log.
+   * Removed in the next minor.
+   */
   presenceActivity: '/presence/activity',
-  // Tool sources — registry of platform-defined external tools
+  // Tool sources — registry of admin-defined external tools
   // (custom HTTP-bound tools and proxied remote MCP servers). GET is
   // tri-auth; mutations gate on `tools.manage`; invoke gates on the
   // caller being bound to the source. Subresource paths compose via
@@ -132,6 +164,7 @@ export const OBJECTIVE_PATHS = {
   one: (id: string) => `/objectives/${encodeURIComponent(id)}`,
   complete: (id: string) => `/objectives/${encodeURIComponent(id)}/complete`,
   cancel: (id: string) => `/objectives/${encodeURIComponent(id)}/cancel`,
+  reassign: (id: string) => `/objectives/${encodeURIComponent(id)}/reassign`,
   discuss: (id: string) => `/objectives/${encodeURIComponent(id)}/discuss`,
 } as const;
 
@@ -143,7 +176,8 @@ export const OBJECTIVE_PATHS = {
  *   GET    /channels                              — list (per viewer)
  *   POST   /channels                              — create
  *   GET    /channels/:slug                        — detail + members
- *   PATCH  /channels/:slug                        — rename
+ *   PATCH  /channels/:slug                        — update (slug and/or
+ *                                                   description)
  *   DELETE /channels/:slug                        — archive
  *   POST   /channels/:slug/members                — add member (admin)
  *                                                   or self-join
@@ -315,13 +349,46 @@ export const FS_PATHS = {
   },
 } as const;
 
+/**
+ * The slug grammar. One definition, for every store that has one.
+ *
+ * A slug is the human-typed, URL-facing identifier of a record inside
+ * one store — channel, tool source, secret, variable, notification
+ * endpoint, notification profile. It is 1–32 characters of lowercase
+ * letters, digits and dashes, starting and ending alphanumeric, with no
+ * consecutive dashes.
+ *
+ * These three constants are the single source of that rule. They live
+ * in the SDK because the grammar describes the wire and the broker's
+ * validators must not be able to drift from it: before this, the same
+ * regex was written out four times (`ChannelSlugSchema`,
+ * `ToolSourceSlugSchema`, `validateSlug`, `validateSourceSlug`) and a
+ * fifth copy in the variables store disagreed with all of them, at 64
+ * characters and a pattern admitting `foo--bar` and `foo-` (#15, #171).
+ *
+ * A slug is unique **within its store, never across stores**: a secret
+ * and a variable may both be `git-token`, which is why the web UI's
+ * detail routes stay per-kind. What *is* shared across the secret and
+ * variable pair is the env-name namespace, which is a different field
+ * with its own check (#136).
+ */
+export const SLUG_MAX_LENGTH = 32 as const;
+
+/** Non-global, so it holds no `lastIndex` and is safe to share. */
+export const SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9]|-(?!-))*[a-z0-9]$|^[a-z0-9]$/;
+
+/** The one sentence every layer tells a caller when a slug is refused. */
+export const SLUG_RULE =
+  'slug must be lowercase letters/digits/dashes, no consecutive dashes, no leading/trailing dash';
+
 export const DEFAULT_PORT = 8717 as const;
 
 export const ENV = {
   // Client-side: broker URL + bearer token held in env for `csuite` subcommands.
   url: 'CSUITE_URL',
   token: 'CSUITE_TOKEN',
-  // Server-side: where to find the team config file + listener config.
+  // Server-side: where to find the team config file + listener config
+  // (`host` is the listener bind address, not a hostname to dial).
   configPath: 'CSUITE_CONFIG_PATH',
   port: 'CSUITE_PORT',
   host: 'CSUITE_HOST',

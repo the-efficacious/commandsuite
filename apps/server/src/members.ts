@@ -44,6 +44,7 @@ import {
   type LoadedMember,
   MemberLoadError,
   type MemberStore,
+  resolvePermissions,
   type UpdateMemberPatch,
 } from 'csuite-core';
 import type { Permission, Role } from 'csuite-sdk/types';
@@ -189,11 +190,17 @@ class MapMemberStore implements MemberStore {
       );
     }
     const tokenHash = hashToken(input.token);
+    // Derive the leaf list rather than trusting the caller's, so this
+    // store and the DB-backed one cannot disagree about what a member
+    // may do. There is no preset table here, so presets resolve
+    // against an empty map: leaves and legacy aliases resolve, and a
+    // preset name is an error the caller must see.
+    const permissions = resolvePermissions(input.rawPermissions, {}, `member '${input.name}'`);
     const member: LoadedMember = {
       name: input.name,
       role: input.role,
       instructions: input.instructions,
-      permissions: input.permissions,
+      permissions,
       rawPermissions: input.rawPermissions,
       totpSecret: input.totpSecret ?? null,
       totpLastCounter: 0,

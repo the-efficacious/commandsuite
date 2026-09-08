@@ -28,17 +28,18 @@
  *                exclusively the broker's `channels.manage` permission.
  *   - `member` — can read + post + leave.
  *
- * Slug grammar:
- *   - 1–32 chars
- *   - lowercase ASCII letters, digits, `-`
- *   - must start + end with alphanumeric
- *   - no consecutive dashes
+ * Slug grammar: the shared one, `SLUG_PATTERN` / `SLUG_MAX_LENGTH` in
+ * `csuite-sdk/protocol` — 1–32 chars of lowercase ASCII letters, digits
+ * and `-`, starting and ending alphanumeric, no consecutive dashes. A
+ * channel's slug is the only one in the product that may be changed
+ * after creation.
  *
  * The store is intentionally synchronous (matches `node:sqlite`'s
  * surface). The HTTP layer wraps responses in `c.json` which is
  * already async — no value in faking promise returns here.
  */
 
+import { SLUG_MAX_LENGTH, SLUG_PATTERN, SLUG_RULE } from 'csuite-sdk/protocol';
 import { GENERAL_CHANNEL_ID } from './event-log.js';
 import { runInTransaction, type SqlDriver, type SqlStatement } from './sql-driver.js';
 export const GENERAL_CHANNEL_SLUG = 'general';
@@ -147,21 +148,21 @@ const CREATE_SCHEMA = `
   CREATE INDEX IF NOT EXISTS channel_audit_channel_idx ON channel_audit(channel_id, id);
 `;
 
-const SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9]|-(?!-))*[a-z0-9]$|^[a-z0-9]$/;
-const SLUG_MAX = 32;
-
+/**
+ * The channel half of the one slug grammar. Grammar and message come
+ * from `csuite-sdk/protocol`, which `ChannelSlugSchema` reads too, so
+ * the wire and the store cannot disagree about what a slug is (#171).
+ * Only the thrown class is channel-specific.
+ */
 export function validateSlug(slug: string): void {
   if (typeof slug !== 'string' || slug.length === 0) {
     throw new ChannelsError('invalid_input', 'slug is required');
   }
-  if (slug.length > SLUG_MAX) {
-    throw new ChannelsError('invalid_input', `slug too long (max ${SLUG_MAX})`);
+  if (slug.length > SLUG_MAX_LENGTH) {
+    throw new ChannelsError('invalid_input', `slug too long (max ${SLUG_MAX_LENGTH})`);
   }
   if (!SLUG_PATTERN.test(slug)) {
-    throw new ChannelsError(
-      'invalid_input',
-      'slug must be lowercase letters/digits/dashes, no consecutive dashes, no leading/trailing dash',
-    );
+    throw new ChannelsError('invalid_input', SLUG_RULE);
   }
 }
 
@@ -176,6 +177,12 @@ export interface ChannelStore {
   getBySlug(slug: string): Channel | null;
   /** Create a new channel; creator joins as an ordinary member. */
   create(input: { slug: string; description?: string; creator: string; now?: number }): Channel;
+  /**
+   * Change the slug and/or the description. This is the whole mutation
+   * surface; `PATCH /channels/:slug` is the only route that reaches it.
+   * Forbidden for general, in either field. The id is unchanged, so
+   * existing `chan:<id>` message references stay valid.
+   */
   update(
     id: string,
     input: { slug?: string; description?: string },
@@ -185,6 +192,9 @@ export interface ChannelStore {
   /**
    * Rename (change the slug). Forbidden for general. The id is
    * unchanged so existing message references stay valid.
+   *
+   * @deprecated Delegates to `update({ slug })`, which does the same
+   * thing and can change the description in the same call.
    */
   rename(id: string, newSlug: string, actor: string): Channel;
   /** Soft-archive a channel. Forbidden for general. */
@@ -372,7 +382,7 @@ class SqliteChannelStore implements ChannelStore {
   ): Channel {
     if (input.slug !== undefined) validateSlug(input.slug);
     if (id === GENERAL_CHANNEL_ID) {
-      throw new ChannelsError('reserved', 'general cannot be renamed');
+      throw new ChannelsError('reserved', 'general cannot be updated');
     }
     if (input.slug === GENERAL_CHANNEL_SLUG) {
       throw new ChannelsError('reserved', `slug "${input.slug}" is reserved`);
@@ -380,7 +390,7 @@ class SqliteChannelStore implements ChannelStore {
     const channel = this.get(id);
     if (!channel) throw new ChannelsError('not_found', `channel ${id} not found`);
     if (channel.archivedAt !== null) {
-      throw new ChannelsError('archived', 'cannot rename an archived channel');
+      throw new ChannelsError('archived', 'cannot update an archived channel');
     }
     const nextSlug = input.slug ?? channel.slug;
     const nextDescription = input.description ?? channel.description;

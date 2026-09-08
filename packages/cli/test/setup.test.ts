@@ -83,15 +83,13 @@ describe('runSetupCommand', { timeout: 20_000 }, () => {
         name: 'director-1',
         role: { title: 'director', description: '' },
         instructions: '',
-        rawPermissions: [],
-        permissions: ['members.manage'],
+        rawPermissions: ['members.manage'],
       });
       stores.members.addMember({
         name: 'engineer-1',
         role: { title: 'engineer', description: '' },
         instructions: '',
         rawPermissions: [],
-        permissions: [],
       });
     } finally {
       db.close();

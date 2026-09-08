@@ -126,24 +126,18 @@ member resolves to a flat set of leaf permissions. Elevated actions
 gate on a specific leaf or on an explicitly documented relationship
 bypass such as self or objective originator:
 
-| Permission | What it permits |
-|---|---|
-| `team.manage` | Edit team name / context |
-| `members.manage` | Create / update / delete members; rotate any token |
-| `objectives.create` | Create + assign; inspect the team-wide ledger |
-| `objectives.cancel` | Intervene in another assignee's status; cancel with originator bypass |
-| `objectives.reassign` | Change a non-terminal objective's assignee |
-| `objectives.watch` | Manage watchers with originator bypass |
-| `activity.read` | View captured traces (self-bypass) |
-| `tools.manage` | Administer the tool-source registry (external tools) |
-| `secrets.manage` | Administer the secrets registry (env secrets for agents) |
-| `notifications.manage` | Administer inbound notification endpoints and delivery policy |
-| `team_process.manage` | Edit the team process (a dedicated leaf) |
+The leaves themselves are enumerated once, in
+[Permissions](/docs/concepts/permissions). They are declared in
+`PERMISSIONS` (`packages/sdk/src/types.ts`), and
+`scripts/check-vocabulary.mjs` holds that one table to the declaration —
+this page used to carry a second copy, which drifted to eleven entries
+under a heading that said twelve.
 
 Creation templates in the web UI copy leaf selections into the new
 member form. Members persist the leaves themselves; templates are not
 roles and are never referenced by a stored member. Legacy databases can
-still resolve historical named bundles during migration.
+still resolve historical permission presets — read-only rows an older
+broker wrote, which nothing in the product can create or edit.
 
 For the full breakdown see [permissions](/docs/concepts/permissions).
 
@@ -212,7 +206,7 @@ For the wire format of those IPC frames, see
 | Concept | One-line summary | Doc |
 |---|---|---|
 | **Member** | A named seat on a team. Identity = name + role + permissions + bearer token(s). | [members](/docs/concepts/members) |
-| **Permissions** | Twelve leaf permissions; creation templates; originator + self bypass rules. | [permissions](/docs/concepts/permissions) |
+| **Permissions** | A flat set of leaf permissions; creation templates; originator + self bypass rules. | [permissions](/docs/concepts/permissions) |
 | **Objective** | Push-assigned, single-assignee, outcome-required, four-state work primitive with audit log + threaded discussion + attachments. | [objectives](/docs/concepts/objectives) |
 | **Channel** | Slack-style named team thread. Implicit `general` + named channels with admin/member roles. | [channels](/docs/concepts/channels) |
 | **Event / message** | Push-not-poll delivery. Routes by `data.thread`. Wraps as `<channel>` for the agent. | [events](/docs/concepts/events) |
@@ -335,7 +329,7 @@ HTTP → broker → web-push library → push service → service worker
                  │   • channels + members           │
                  │   • objectives + audit log       │
                  │   • activity stream (separate DB)│
-                 │   • virtual filesystem (blobs)   │
+                 │   • virtual FS (file blobs)      │
                  │                                  │
                  │  serves:                         │
                  │   • machine API (bearer)         │
@@ -361,7 +355,7 @@ HTTP → broker → web-push library → push service → service worker
               │  • CaptureHost:                   │
               │     - loopback hook server (claude)
               │     - loopback OTLP relay (claude) │
-              │     - busy signal (native events)  │
+              │     - work-state signal (native)   │
               │     - streaming ActivityUploader   │
               │  • spawns the agent with env      │
               │  • passes the MCP bridge inline   │
@@ -397,7 +391,7 @@ codex's rollout JSONL, OTEL export, and trace bundles — plus
 runner-observed objective-open/close markers. There is no network
 interception, no TLS decryption, and no CA on disk. Per-objective
 "traces" are a time-range view over the stream; no per-objective
-blobs are stored anywhere.
+trace bodies are stored anywhere.
 
 The full pipeline — the capture host, transcript and rollout
 readers, the OTLP relay, broker-side correlation, redaction

@@ -8,10 +8,10 @@
 
 import { createSqliteMemberStore, TeamStore } from 'csuite-core';
 import { PermissionSchema, PermissionsSchema } from 'csuite-sdk/schemas';
-import { LEGACY_PERMISSION_EXPANSIONS } from 'csuite-sdk/types';
+import { LEGACY_PERMISSION_ALIASES, LEGACY_PERMISSION_EXPANSIONS } from 'csuite-sdk/types';
 import { describe, expect, it } from 'vitest';
 import { openDatabase } from '../src/db.js';
-import { MemberLoadError, resolvePermissions } from '../src/members.js';
+import { createMemberStore, MemberLoadError, resolvePermissions } from '../src/members.js';
 
 const OBJECTIVE_LEAVES = [
   'objectives.create',
@@ -25,9 +25,9 @@ describe('legacy objectives.manage compatibility', () => {
     expect(resolvePermissions(['objectives.manage'], {}, 'member test')).toEqual(OBJECTIVE_LEAVES);
   });
 
-  it('expands the retired aggregate inside a stored bundle', () => {
-    const bundles = { oldCoordinator: ['objectives.manage'] as never };
-    expect(resolvePermissions(['oldCoordinator'], bundles, 'bundle test')).toEqual(
+  it('expands the retired aggregate inside a stored preset', () => {
+    const presets = { oldCoordinator: ['objectives.manage'] as never };
+    expect(resolvePermissions(['oldCoordinator'], presets, 'preset test')).toEqual(
       OBJECTIVE_LEAVES,
     );
   });
@@ -59,7 +59,14 @@ describe('schema compatibility', () => {
 
   it('expands the aggregate when parsing a list', () => {
     expect(PermissionsSchema.parse(['objectives.manage'])).toEqual(OBJECTIVE_LEAVES);
-    expect(LEGACY_PERMISSION_EXPANSIONS['objectives.manage']).toEqual(OBJECTIVE_LEAVES);
+    expect(LEGACY_PERMISSION_ALIASES['objectives.manage']).toEqual(OBJECTIVE_LEAVES);
+  });
+
+  it('keeps the deprecated export pointing at the whole alias table', () => {
+    // The old name is still exported for consumers outside this repo. A
+    // shim that drifted to a subset would expand fewer aliases and quietly
+    // narrow authority, so pin the whole table, not one key.
+    expect(LEGACY_PERMISSION_EXPANSIONS).toEqual(LEGACY_PERMISSION_ALIASES);
   });
 
   it('still rejects an unknown key', () => {
@@ -86,8 +93,8 @@ describe('legacy process.manage compatibility', () => {
   });
 
   it('resolves the old name stored as a leaf inside a preset', () => {
-    const bundles = { oldLead: ['process.manage'] as never };
-    expect(resolvePermissions(['oldLead'], bundles, 'bundle test')).toEqual([
+    const presets = { oldLead: ['process.manage'] as never };
+    expect(resolvePermissions(['oldLead'], presets, 'preset test')).toEqual([
       'team_process.manage',
     ]);
   });
@@ -107,7 +114,7 @@ describe('legacy process.manage compatibility', () => {
 
   it('expands the old name when parsing a list, and rejects it as a single leaf', () => {
     expect(PermissionsSchema.parse(['process.manage'])).toEqual(['team_process.manage']);
-    expect(LEGACY_PERMISSION_EXPANSIONS['process.manage']).toEqual(['team_process.manage']);
+    expect(LEGACY_PERMISSION_ALIASES['process.manage']).toEqual(['team_process.manage']);
     expect(() => PermissionSchema.parse('process.manage')).toThrow();
   });
 
@@ -153,9 +160,151 @@ describe('legacy process.manage compatibility', () => {
       role: { title: 'lead', description: '' },
       instructions: '',
       rawPermissions: ['process.manage'],
-      permissions: [],
     });
     expect(added.permissions).toEqual(['team_process.manage']);
     expect(members.findByName('late-writer')?.permissions).toEqual(['team_process.manage']);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// Both stores derive `permissions`; neither takes one from the caller.
+//
+// `AddMemberInput` used to carry a resolved `permissions` array that
+// the DB-backed store discarded and the in-memory store stored
+// verbatim, so one input produced two different members. The field is
+// gone: `rawPermissions` is the only authority input. Each assertion
+// below compares the WHOLE resolved list in canonical leaf order, so a
+// store that resolved only the direct leaf, or only the alias, or that
+// dropped canonical ordering, fails.
+// ─────────────────────────────────────────────────────────────────────
+
+const PARITY_RAW = ['activity.read', 'process.manage', 'objectives.manage'];
+const PARITY_RESOLVED = [
+  'objectives.create',
+  'objectives.cancel',
+  'objectives.reassign',
+  'objectives.watch',
+  'activity.read',
+  'team_process.manage',
+];
+
+function seededMapStore(): ReturnType<typeof createMemberStore> {
+  return createMemberStore([
+    {
+      name: 'seed',
+      role: { title: 'lead', description: '' },
+      permissions: [],
+      token: 'csuite_parity_seed',
+    },
+  ]);
+}
+
+describe('both member stores derive permissions from rawPermissions', () => {
+  it('resolves the whole list in canonical order in the in-memory store', () => {
+    const store = seededMapStore();
+    const added = store.addMember({
+      name: 'derived',
+      role: { title: 'engineer', description: '' },
+      instructions: '',
+      rawPermissions: PARITY_RAW,
+      token: 'csuite_parity_derived',
+    });
+    expect(added.permissions).toEqual(PARITY_RESOLVED);
+    expect(store.findByName('derived')?.permissions).toEqual(PARITY_RESOLVED);
+    // The raw list is still round-tripped verbatim.
+    expect(store.findByName('derived')?.rawPermissions).toEqual(PARITY_RAW);
+  });
+
+  it('resolves the same whole list in the DB-backed store', () => {
+    const db = openDatabase(':memory:');
+    const members = createSqliteMemberStore(db, new TeamStore(db));
+    const added = members.addMember({
+      name: 'derived',
+      role: { title: 'engineer', description: '' },
+      instructions: '',
+      rawPermissions: PARITY_RAW,
+    });
+    expect(added.permissions).toEqual(PARITY_RESOLVED);
+    expect(members.findByName('derived')?.permissions).toEqual(PARITY_RESOLVED);
+  });
+
+  it('refuses a name the in-memory store cannot resolve, storing nothing', () => {
+    const store = seededMapStore();
+    expect(() =>
+      store.addMember({
+        name: 'rejected',
+        role: { title: 'engineer', description: '' },
+        instructions: '',
+        rawPermissions: ['activity.read', 'no-such-preset'],
+        token: 'csuite_parity_rejected',
+      }),
+    ).toThrow(MemberLoadError);
+    expect(store.findByName('rejected')).toBeNull();
+    expect(store.names()).toEqual(['seed']);
+  });
+
+  it('has no caller-supplied permissions field left to trust', () => {
+    const store = seededMapStore();
+    const added = store.addMember({
+      name: 'ignored',
+      role: { title: 'engineer', description: '' },
+      instructions: '',
+      rawPermissions: ['activity.read'],
+      // @ts-expect-error permissions is derived from rawPermissions, not supplied
+      permissions: ['members.manage'],
+      token: 'csuite_parity_ignored',
+    });
+    expect(added.permissions).toEqual(['activity.read']);
+  });
+});
+
+/**
+ * Legacy permission presets: read-only, and still load (#21/#79).
+ *
+ * The write path is gone — `setPreset`, `deletePreset` and
+ * `membersReferencingPreset` are off `TeamStore`, asserted by
+ * `permission-preset-boundary.test-d.ts` — and the read path is
+ * everything that keeps a pre-consolidation database usable. That makes
+ * this the load-bearing half: a member row naming a preset must still
+ * resolve to leaves, off rows nothing in the product could write today.
+ */
+describe('legacy permission presets are read-only and still resolve', () => {
+  it('a member row naming a preset resolves through the stored row', () => {
+    const db = openDatabase(':memory:');
+    const team = new TeamStore(db);
+    const members = createSqliteMemberStore(db, team);
+    // Exactly what an older broker left on disk. There is no API that
+    // could produce this row now, which is the point.
+    db.prepare(
+      `INSERT INTO permission_presets (name, permissions, updated_at, updated_by)
+       VALUES ('coordinator', '["objectives.create","activity.read"]', 0, 'old-admin')`,
+    ).run();
+    db.prepare(
+      `INSERT INTO members
+         (identity_id, name, role_title, role_description, instructions, raw_permissions,
+          totp_secret, totp_last_counter, insertion_order, created_at, updated_at)
+       VALUES (?, 'legacy', 'lead', '', '', '["coordinator","notifications.manage"]',
+               NULL, 0, 0, 0, 0)`,
+    ).run(crypto.randomUUID());
+
+    // The read path: getPresets() feeds resolvePermissions on every load.
+    expect(team.getPresets()).toEqual({
+      coordinator: ['objectives.create', 'activity.read'],
+    });
+    expect(members.findByName('legacy')?.permissions).toEqual([
+      'objectives.create',
+      'activity.read',
+      'notifications.manage',
+    ]);
+    // Nothing was rewritten: the preset name is still on the member row.
+    expect(members.findByName('legacy')?.rawPermissions).toEqual([
+      'coordinator',
+      'notifications.manage',
+    ]);
+  });
+
+  it('a current broker reports no presets, because none can be written', () => {
+    const db = openDatabase(':memory:');
+    expect(new TeamStore(db).getPresets()).toEqual({});
   });
 });

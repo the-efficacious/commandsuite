@@ -9,6 +9,7 @@ import {
   InvalidRecipientError,
   type Logger,
   PresenceIdentityError,
+  SCALAR_BOUND_ID,
 } from '../src/index.js';
 
 function makeBroker(overrides: { idFactory?: () => string; now?: () => number } = {}) {
@@ -686,7 +687,7 @@ describe('InMemoryEventLog.query', () => {
     expect(ids).not.toContain('dm-alice-carol');
   });
 
-  it('respects limit and before for pagination', async () => {
+  it('respects limit and the composite cursor for pagination', async () => {
     const log = new InMemoryEventLog();
     for (let i = 1; i <= 10; i++) {
       await log.append(msg({ id: `m${i}`, ts: i }));
@@ -694,8 +695,42 @@ describe('InMemoryEventLog.query', () => {
     const page1 = await log.query({ viewer: 'alice', limit: 3 });
     expect(page1.map((m) => m.id)).toEqual(['m10', 'm9', 'm8']);
 
-    const page2 = await log.query({ viewer: 'alice', limit: 3, before: 8 });
+    const page2 = await log.query({
+      viewer: 'alice',
+      limit: 3,
+      before: { ts: 8, id: 'm8' },
+    });
     expect(page2.map((m) => m.id)).toEqual(['m7', 'm6', 'm5']);
+  });
+
+  it('a timestamp-only bound still reads, and still loses the tie', async () => {
+    // The retired behaviour, kept honest rather than kept quiet. This
+    // is what `?before_ts=` alone (and the deprecated `?before=`) does,
+    // and it is why the wire grew `before_id` beside it: `m-b` is
+    // reachable by no value of a scalar bound.
+    const log = new InMemoryEventLog();
+    await log.append(msg({ id: 'm-old', ts: 900 }));
+    await log.append(msg({ id: 'm-a', ts: 1000 }));
+    await log.append(msg({ id: 'm-b', ts: 1000 }));
+    await log.append(msg({ id: 'm-c', ts: 1000 }));
+
+    const page1 = await log.query({ viewer: 'alice', limit: 2 });
+    expect(page1.map((m) => m.id)).toEqual(['m-c', 'm-b']);
+
+    const scalar = await log.query({
+      viewer: 'alice',
+      limit: 2,
+      before: { ts: 1000, id: SCALAR_BOUND_ID },
+    });
+    expect(scalar.map((m) => m.id)).toEqual(['m-old']);
+
+    // The same boundary as a composite cursor loses nothing.
+    const composite = await log.query({
+      viewer: 'alice',
+      limit: 2,
+      before: { ts: 1000, id: 'm-b' },
+    });
+    expect(composite.map((m) => m.id)).toEqual(['m-a', 'm-old']);
   });
 });
 

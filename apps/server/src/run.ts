@@ -337,6 +337,7 @@ export interface RunningServer {
   stop: () => Promise<void>;
   /** Primary listener port — HTTPS when enabled, else HTTP. */
   port: number;
+  /** Bind address the listener is attached to. */
   host: string;
   protocol: 'http' | 'https';
 }

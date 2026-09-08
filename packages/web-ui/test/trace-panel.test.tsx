@@ -164,19 +164,28 @@ describe('TracePanel', () => {
       const url = new URL(
         typeof input === 'string' ? input : input instanceof URL ? input.href : input.url,
       );
-      const cursorTs = url.searchParams.get('cursor_ts');
-      const cursorId = url.searchParams.get('cursor_id');
       if (url.pathname.endsWith('/genai')) {
-        expect(cursorTs).toBe(cursorId === null ? null : '1700000000000');
-        expect(cursorId).toBe(cursorId === null ? null : '500');
-        const page = cursorId === null ? inferences.slice(0, 500) : inferences.slice(500);
+        // Oldest-first read: the cursor is `after_*`, and the
+        // newest-first spelling must never appear on this path.
+        const afterTs = url.searchParams.get('after_ts');
+        const afterId = url.searchParams.get('after_id');
+        expect(url.searchParams.has('before_ts')).toBe(false);
+        expect(url.searchParams.has('before_id')).toBe(false);
+        expect(afterTs).toBe(afterId === null ? null : '1700000000000');
+        expect(afterId).toBe(afterId === null ? null : '500');
+        const page = afterId === null ? inferences.slice(0, 500) : inferences.slice(500);
         return new Response(JSON.stringify({ inferences: page }), {
           headers: { 'Content-Type': 'application/json' },
         });
       }
-      expect(cursorTs).toBe(cursorId === null ? null : '1700000000000');
-      expect(cursorId).toBe(cursorId === null ? null : '2');
-      const activity = cursorId === null ? rows.slice(0, 500) : rows.slice(500);
+      // Newest-first read: `before_*`, and never the oldest-first name.
+      const beforeTs = url.searchParams.get('before_ts');
+      const beforeId = url.searchParams.get('before_id');
+      expect(url.searchParams.has('after_ts')).toBe(false);
+      expect(url.searchParams.has('after_id')).toBe(false);
+      expect(beforeTs).toBe(beforeId === null ? null : '1700000000000');
+      expect(beforeId).toBe(beforeId === null ? null : '2');
+      const activity = beforeId === null ? rows.slice(0, 500) : rows.slice(500);
       return new Response(JSON.stringify({ activity }), {
         headers: { 'Content-Type': 'application/json' },
       });
@@ -453,7 +462,7 @@ describe('TracePanel — genai enrichment', () => {
     expect(screen.queryByText(/system instructions/)).toBeNull();
   });
 
-  it('renders a failed exact identity as unmatched while its compatible spare stays a sidecar', async () => {
+  it('renders a failed exact identity as unmatched while its spare stays an orphan call', async () => {
     const ex = mkExchange({ ts: 1_700_000_000_000, responseId: 'msg_missing' });
     const spare = mkInference({
       id: 9,
@@ -466,13 +475,13 @@ describe('TracePanel — genai enrichment', () => {
     );
     render(<TracePanel objective={objective} />);
 
-    await waitFor(() => expect(screen.getByText(/LLM turns \(1 · 1 sidecar\)/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/LLM turns \(1 · 1 orphan call\)/)).toBeTruthy());
     expect(screen.getByText(/capture unmatched/)).toBeTruthy();
     expect(screen.queryByText(/marker only/)).toBeNull();
     expect(screen.getByText(/You are Claude Code, full block\./)).toBeTruthy();
   });
 
-  it('renders turnless records as attributed sidecar rows', async () => {
+  it('renders turnless records as attributed orphan-call rows', async () => {
     const ex = mkExchange({ ts: 1_700_000_000_000, responseId: 'msg_A' });
     const main = mkInference({ id: 1, ts: 1_700_000_000_000, responseId: 'msg_A' });
     const sidecar = mkInference({
@@ -488,7 +497,9 @@ describe('TracePanel — genai enrichment', () => {
     render(<TracePanel objective={objective} />);
 
     await waitFor(() =>
-      expect(screen.getByText(/LLM turns \(1 · 1 with full request · 1 sidecar\)/)).toBeTruthy(),
+      expect(
+        screen.getByText(/LLM turns \(1 · 1 with full request · 1 orphan call\)/),
+      ).toBeTruthy(),
     );
     expect(screen.getByText('web search')).toBeTruthy();
     expect(screen.getByText('Haiku 4.5')).toBeTruthy();

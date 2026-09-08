@@ -11,7 +11,7 @@
  * omissions are invisible in the output.
  *
  * A "control" is a JSX element that is a <button>/<form>, or that carries
- * onClick/onSubmit. Every control is emitted; mutation and capability are
+ * onClick/onSubmit. Every control is emitted; mutation and authority are
  * annotations on the row, not filters applied before it.
  *
  * Gates collected per control:
@@ -42,7 +42,7 @@ const UI_SRC = join(REPO_ROOT, 'packages/web-ui/src');
  * The verb may be followed by a capital/underscore/paren (`onAddMember`,
  * `remove(`) OR end there (`onSubmit`, `onRename`) — a shorthand handler
  * whose identifier IS the verb was invisible to the first version, which
- * marked three real mutations non-mutating, one of them capability-gated.
+ * marked three real mutations non-mutating, one of them authority-gated.
  *
  * Deliberately over-inclusive. This annotates the candidate set, it does
  * not filter it — every control is emitted either way, so a false positive
@@ -106,20 +106,24 @@ function renderGuards(node, source) {
 }
 
 /**
- * A guard is capability-shaped if it turns on WHO the viewer is or WHAT
- * they may do. Includes explicit server-supplied capability (`canWrite`),
+ * A guard is authority-shaped if it turns on WHO the viewer is or WHAT
+ * they may do. Includes the server's own write predicate (`canWrite`),
  * which an earlier identity/role/permission/ownership rule missed — it
  * classified the repaired FilesPanel guard as navigation, i.e. the rule
  * erased the very finding it was built to surface. A rule that cannot
  * recognise its own fixes goes blinder with every correction.
+ *
+ * The class is AUTHORITY, not CAPABILITY: `capabilities` is the
+ * protocol feature-flag field on `GET /health`, and reusing the word
+ * here made one term mean two things one grep apart.
  */
-const CAPABILITY_GUARD =
+const AUTHORITY_GUARD =
   /\b(?:can[A-Z]\w*|is(?:Admin|Self|Director|Assignee|Originator|Watching|Member)|viewer|owner|permissions?|myRole|joined|allMembers|isMember)\b/;
 
 const classify = (guards, disabled) => {
   const all = [...guards.map((g) => g.text), disabled].filter(Boolean).join(' ');
   if (!all) return 'ungated';
-  if (CAPABILITY_GUARD.test(all)) return 'CAPABILITY';
+  if (AUTHORITY_GUARD.test(all)) return 'AUTHORITY';
   if (/\b(busy|Busy|loading|Loading|submitting|sending|confirming|err|error|Error)\b/.test(all))
     return 'state';
   if (/\b(tab|mode|view|open|Open)\b/.test(all)) return 'navigation';

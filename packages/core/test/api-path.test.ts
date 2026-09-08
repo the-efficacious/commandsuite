@@ -45,6 +45,11 @@ describe('the rest of the API surface still resolves', () => {
     '/notifications',
     '/otlp/v1/logs',
     '/fs/objective/x',
+    '/presence/work-state',
+    // The previous spelling, served for one release. It has to stay
+    // claimed for exactly as long as it is routed: an un-upgraded
+    // runner whose POST fell through to the SPA would read a 200 with
+    // `index.html` and conclude its report landed.
     '/presence/activity',
   ])('claims %s', (path) => {
     expect(isApiPath(path)).toBe(true);

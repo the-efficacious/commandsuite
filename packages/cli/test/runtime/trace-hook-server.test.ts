@@ -17,8 +17,8 @@
  */
 
 import { afterEach, describe, expect, it } from 'vitest';
-import { createActivitySignal } from '../../src/runtime/trace/busy.js';
 import { type HookServer, startHookServer } from '../../src/runtime/trace/hook-server.js';
+import { createWorkStateSignal } from '../../src/runtime/trace/work-state.js';
 import { silentLogger } from '../helpers/logger.js';
 
 async function postJson(url: string, body: unknown): Promise<{ status: number; text: string }> {
@@ -41,10 +41,10 @@ describe('hook server', () => {
   });
 
   it('PreToolUse bumps tool_inflight; PostToolUse drains it', async () => {
-    const busy = createActivitySignal();
-    server = await startHookServer({ busy, logger: silentLogger() });
+    const workState = createWorkStateSignal();
+    server = await startHookServer({ workState, logger: silentLogger() });
 
-    expect(busy.getSourceCounts().tool_inflight).toBe(0);
+    expect(workState.getSourceCounts().tool_inflight).toBe(0);
 
     const r1 = await postJson(server.url, {
       hook_event_name: 'PreToolUse',
@@ -52,8 +52,8 @@ describe('hook server', () => {
       tool_name: 'Bash',
     });
     expect(r1.status).toBe(200);
-    expect(busy.busy).toBe(true);
-    expect(busy.getSourceCounts().tool_inflight).toBe(1);
+    expect(workState.busy).toBe(true);
+    expect(workState.getSourceCounts().tool_inflight).toBe(1);
 
     const r2 = await postJson(server.url, {
       hook_event_name: 'PostToolUse',
@@ -61,85 +61,103 @@ describe('hook server', () => {
       tool_name: 'Bash',
     });
     expect(r2.status).toBe(200);
-    expect(busy.busy).toBe(false);
-    expect(busy.getSourceCounts().tool_inflight).toBe(0);
+    expect(workState.busy).toBe(false);
+    expect(workState.getSourceCounts().tool_inflight).toBe(0);
   });
 
   it('counts overlapping tool calls correctly', async () => {
-    const busy = createActivitySignal();
-    server = await startHookServer({ busy, logger: silentLogger() });
+    const workState = createWorkStateSignal();
+    server = await startHookServer({ workState, logger: silentLogger() });
 
     await postJson(server.url, { hook_event_name: 'PreToolUse', tool_use_id: 'a' });
     await postJson(server.url, { hook_event_name: 'PreToolUse', tool_use_id: 'b' });
     await postJson(server.url, { hook_event_name: 'PreToolUse', tool_use_id: 'c' });
-    expect(busy.getSourceCounts().tool_inflight).toBe(3);
+    expect(workState.getSourceCounts().tool_inflight).toBe(3);
 
     await postJson(server.url, { hook_event_name: 'PostToolUse', tool_use_id: 'b' });
-    expect(busy.getSourceCounts().tool_inflight).toBe(2);
-    expect(busy.busy).toBe(true);
+    expect(workState.getSourceCounts().tool_inflight).toBe(2);
+    expect(workState.busy).toBe(true);
 
     await postJson(server.url, { hook_event_name: 'PostToolUse', tool_use_id: 'a' });
     await postJson(server.url, { hook_event_name: 'PostToolUseFailure', tool_use_id: 'c' });
-    expect(busy.getSourceCounts().tool_inflight).toBe(0);
-    expect(busy.busy).toBe(false);
+    expect(workState.getSourceCounts().tool_inflight).toBe(0);
+    expect(workState.busy).toBe(false);
   });
 
   it('duplicate PreToolUse for the same id is a no-op', async () => {
-    const busy = createActivitySignal();
-    server = await startHookServer({ busy, logger: silentLogger() });
+    const workState = createWorkStateSignal();
+    server = await startHookServer({ workState, logger: silentLogger() });
 
     await postJson(server.url, { hook_event_name: 'PreToolUse', tool_use_id: 'dup' });
     await postJson(server.url, { hook_event_name: 'PreToolUse', tool_use_id: 'dup' });
-    expect(busy.getSourceCounts().tool_inflight).toBe(1);
+    expect(workState.getSourceCounts().tool_inflight).toBe(1);
 
     await postJson(server.url, { hook_event_name: 'PostToolUse', tool_use_id: 'dup' });
-    expect(busy.getSourceCounts().tool_inflight).toBe(0);
+    expect(workState.getSourceCounts().tool_inflight).toBe(0);
   });
 
   it('PostToolUse for an unknown id is silently ignored (no underflow)', async () => {
-    const busy = createActivitySignal();
-    server = await startHookServer({ busy, logger: silentLogger() });
+    const workState = createWorkStateSignal();
+    server = await startHookServer({ workState, logger: silentLogger() });
 
     const res = await postJson(server.url, {
       hook_event_name: 'PostToolUse',
       tool_use_id: 'never-saw-this',
     });
     expect(res.status).toBe(200);
-    expect(busy.getSourceCounts().tool_inflight).toBe(0);
+    expect(workState.getSourceCounts().tool_inflight).toBe(0);
   });
 
   it('unhandled events (PreCompact, etc.) are accepted without changing state', async () => {
-    const busy = createActivitySignal();
-    server = await startHookServer({ busy, logger: silentLogger() });
+    const workState = createWorkStateSignal();
+    server = await startHookServer({ workState, logger: silentLogger() });
 
     await postJson(server.url, { hook_event_name: 'PreCompact' });
-    expect(busy.state()).toBe('idle');
-    expect(busy.getSourceCounts().tool_inflight).toBe(0);
+    expect(workState.state()).toBe('idle');
+    expect(workState.getSourceCounts().tool_inflight).toBe(0);
+
+    // PostToolBatch is one of them. The SDK fires it once per batch IN
+    // ADDITION to the per-tool PostToolUse that already drained the
+    // handle, and its body carries `tool_calls[]` rather than the
+    // `tool_use_id` this server matches on. Routing it as a tool event
+    // drained a second handle per batch, so an open tool window could
+    // close while the tool was still running — assert it stays inert
+    // even when a caller does supply an id.
+    await postJson(server.url, { hook_event_name: 'PreToolUse', tool_use_id: 'batched' });
+    expect(workState.getSourceCounts().tool_inflight).toBe(1);
+    const batch = await postJson(server.url, {
+      hook_event_name: 'PostToolBatch',
+      tool_use_id: 'batched',
+    });
+    expect(batch.status).toBe(200);
+    expect(JSON.parse(batch.text)).toEqual({ accepted: true });
+    expect(workState.getSourceCounts().tool_inflight).toBe(1);
+    expect(workState.busy).toBe(true);
   });
 
-  it('SessionStart relays its source via onSessionStart and drives no presence', async () => {
-    const busy = createActivitySignal();
-    const sources: string[] = [];
+  it('SessionStart relays its origin via onSessionStart and drives no presence', async () => {
+    const workState = createWorkStateSignal();
+    const origins: string[] = [];
     server = await startHookServer({
-      busy,
+      workState,
       logger: silentLogger(),
-      onSessionStart: (source) => sources.push(source),
+      onSessionStart: (origin) => origins.push(origin),
     });
 
     await postJson(server.url, { hook_event_name: 'SessionStart', source: 'compact' });
     await postJson(server.url, { hook_event_name: 'SessionStart', source: 'startup' });
-    // Payloads without a source relay an empty string rather than
-    // being dropped — the callback owns the routing decision.
+    // Payloads without the hook's `source` field relay an empty string
+    // rather than being dropped — the callback owns the routing decision.
     await postJson(server.url, { hook_event_name: 'SessionStart' });
 
-    expect(sources).toEqual(['compact', 'startup', '']);
-    expect(busy.state()).toBe('idle');
-    expect(busy.getSourceCounts().tool_inflight).toBe(0);
+    expect(origins).toEqual(['compact', 'startup', '']);
+    expect(workState.state()).toBe('idle');
+    expect(workState.getSourceCounts().tool_inflight).toBe(0);
   });
 
   it('rejects malformed bodies with 400', async () => {
-    const busy = createActivitySignal();
-    server = await startHookServer({ busy, logger: silentLogger() });
+    const workState = createWorkStateSignal();
+    server = await startHookServer({ workState, logger: silentLogger() });
 
     const res = await fetch(server.url, {
       method: 'POST',
@@ -147,12 +165,12 @@ describe('hook server', () => {
       body: 'not-json',
     });
     expect(res.status).toBe(400);
-    expect(busy.getSourceCounts().tool_inflight).toBe(0);
+    expect(workState.getSourceCounts().tool_inflight).toBe(0);
   });
 
   it('returns 200 with accepted=false when fields are missing (avoid retry storms)', async () => {
-    const busy = createActivitySignal();
-    server = await startHookServer({ busy, logger: silentLogger() });
+    const workState = createWorkStateSignal();
+    server = await startHookServer({ workState, logger: silentLogger() });
 
     const res = await postJson(server.url, { hook_event_name: 'PreToolUse' });
     expect(res.status).toBe(200);
@@ -161,24 +179,24 @@ describe('hook server', () => {
   });
 
   it('non-matching routes return 404', async () => {
-    const busy = createActivitySignal();
-    server = await startHookServer({ busy, logger: silentLogger() });
+    const workState = createWorkStateSignal();
+    server = await startHookServer({ workState, logger: silentLogger() });
 
     const res = await fetch(server.url.replace('/hook/tool-event', '/something-else'));
     expect(res.status).toBe(404);
   });
 
   it('close() drains outstanding handles so busy unwedges', async () => {
-    const busy = createActivitySignal();
-    server = await startHookServer({ busy, logger: silentLogger() });
+    const workState = createWorkStateSignal();
+    server = await startHookServer({ workState, logger: silentLogger() });
 
     await postJson(server.url, { hook_event_name: 'PreToolUse', tool_use_id: 'left-dangling' });
-    expect(busy.busy).toBe(true);
+    expect(workState.busy).toBe(true);
 
     await server.close();
     server = null;
-    expect(busy.busy).toBe(false);
-    expect(busy.getSourceCounts().tool_inflight).toBe(0);
+    expect(workState.busy).toBe(false);
+    expect(workState.getSourceCounts().tool_inflight).toBe(0);
   });
 });
 
@@ -192,100 +210,100 @@ describe('hook server — turn lifecycle (UserPromptSubmit / Stop)', () => {
   });
 
   it('UserPromptSubmit opens turn_active (working); Stop closes it (idle)', async () => {
-    const busy = createActivitySignal();
-    server = await startHookServer({ busy, logger: silentLogger() });
+    const workState = createWorkStateSignal();
+    server = await startHookServer({ workState, logger: silentLogger() });
 
     await postJson(server.url, {
       hook_event_name: 'UserPromptSubmit',
       prompt_id: 'p-1',
       session_id: 's-1',
     });
-    expect(busy.state()).toBe('working');
-    expect(busy.getSourceCounts().turn_active).toBe(1);
+    expect(workState.state()).toBe('working');
+    expect(workState.getSourceCounts().turn_active).toBe(1);
 
     await postJson(server.url, {
       hook_event_name: 'Stop',
       prompt_id: 'p-1',
       session_id: 's-1',
     });
-    expect(busy.state()).toBe('idle');
-    expect(busy.getSourceCounts().turn_active).toBe(0);
+    expect(workState.state()).toBe('idle');
+    expect(workState.getSourceCounts().turn_active).toBe(0);
   });
 
   it('duplicate UserPromptSubmit for the same prompt_id does not double-count', async () => {
-    const busy = createActivitySignal();
-    server = await startHookServer({ busy, logger: silentLogger() });
+    const workState = createWorkStateSignal();
+    server = await startHookServer({ workState, logger: silentLogger() });
 
     await postJson(server.url, { hook_event_name: 'UserPromptSubmit', prompt_id: 'p-1' });
     await postJson(server.url, { hook_event_name: 'UserPromptSubmit', prompt_id: 'p-1' });
-    expect(busy.getSourceCounts().turn_active).toBe(1);
+    expect(workState.getSourceCounts().turn_active).toBe(1);
 
     await postJson(server.url, { hook_event_name: 'Stop', prompt_id: 'p-1' });
-    expect(busy.getSourceCounts().turn_active).toBe(0);
+    expect(workState.getSourceCounts().turn_active).toBe(0);
   });
 
   it('Stop clears blocked even when no turn handle is open', async () => {
-    const busy = createActivitySignal();
-    server = await startHookServer({ busy, logger: silentLogger() });
+    const workState = createWorkStateSignal();
+    server = await startHookServer({ workState, logger: silentLogger() });
 
-    busy.setBlocked(true);
-    expect(busy.state()).toBe('blocked');
+    workState.setBlocked(true);
+    expect(workState.state()).toBe('blocked');
 
     await postJson(server.url, { hook_event_name: 'Stop', prompt_id: 'unknown' });
-    expect(busy.state()).toBe('idle');
-    expect(busy.blocked).toBe(false);
+    expect(workState.state()).toBe('idle');
+    expect(workState.blocked).toBe(false);
   });
 
   it('Stop with a mismatched key still drains open turn handles (no leak)', async () => {
-    const busy = createActivitySignal();
-    server = await startHookServer({ busy, logger: silentLogger() });
+    const workState = createWorkStateSignal();
+    server = await startHookServer({ workState, logger: silentLogger() });
 
     await postJson(server.url, { hook_event_name: 'UserPromptSubmit', prompt_id: 'p-1' });
-    expect(busy.getSourceCounts().turn_active).toBe(1);
+    expect(workState.getSourceCounts().turn_active).toBe(1);
 
     // Stop carries a different id shape (only session_id) — fallback drain.
     await postJson(server.url, { hook_event_name: 'Stop', session_id: 's-9' });
-    expect(busy.getSourceCounts().turn_active).toBe(0);
-    expect(busy.state()).toBe('idle');
+    expect(workState.getSourceCounts().turn_active).toBe(0);
+    expect(workState.state()).toBe('idle');
   });
 
   it('turn_active + tool_inflight overlap: still working until the turn ends', async () => {
-    const busy = createActivitySignal();
-    server = await startHookServer({ busy, logger: silentLogger() });
+    const workState = createWorkStateSignal();
+    server = await startHookServer({ workState, logger: silentLogger() });
 
     await postJson(server.url, { hook_event_name: 'UserPromptSubmit', prompt_id: 'p-1' });
     await postJson(server.url, { hook_event_name: 'PreToolUse', tool_use_id: 't-1' });
     await postJson(server.url, { hook_event_name: 'PostToolUse', tool_use_id: 't-1' });
     // Tool window closed but the turn is still active.
-    expect(busy.state()).toBe('working');
-    expect(busy.getSourceCounts()).toEqual({ turn_active: 1, tool_inflight: 0 });
+    expect(workState.state()).toBe('working');
+    expect(workState.getSourceCounts()).toEqual({ turn_active: 1, tool_inflight: 0 });
 
     await postJson(server.url, { hook_event_name: 'Stop', prompt_id: 'p-1' });
-    expect(busy.state()).toBe('idle');
+    expect(workState.state()).toBe('idle');
   });
 
   it('SubagentStop is informational — no top-level state change', async () => {
-    const busy = createActivitySignal();
-    server = await startHookServer({ busy, logger: silentLogger() });
+    const workState = createWorkStateSignal();
+    server = await startHookServer({ workState, logger: silentLogger() });
 
     await postJson(server.url, { hook_event_name: 'UserPromptSubmit', prompt_id: 'p-1' });
     await postJson(server.url, { hook_event_name: 'SubagentStop', agent_id: 'sub-1' });
     // Main turn still active.
-    expect(busy.state()).toBe('working');
-    expect(busy.getSourceCounts().turn_active).toBe(1);
+    expect(workState.state()).toBe('working');
+    expect(workState.getSourceCounts().turn_active).toBe(1);
   });
 
   it('close() drains a dangling turn_active handle', async () => {
-    const busy = createActivitySignal();
-    server = await startHookServer({ busy, logger: silentLogger() });
+    const workState = createWorkStateSignal();
+    server = await startHookServer({ workState, logger: silentLogger() });
 
     await postJson(server.url, { hook_event_name: 'UserPromptSubmit', prompt_id: 'p-1' });
-    expect(busy.state()).toBe('working');
+    expect(workState.state()).toBe('working');
 
     await server.close();
     server = null;
-    expect(busy.state()).toBe('idle');
-    expect(busy.getSourceCounts().turn_active).toBe(0);
+    expect(workState.state()).toBe('idle');
+    expect(workState.getSourceCounts().turn_active).toBe(0);
   });
 });
 
@@ -300,9 +318,9 @@ describe('hook server — transcript path relay (onTranscriptPath)', () => {
 
   it('relays transcript_path from a hook body', async () => {
     const paths: string[] = [];
-    const busy = createActivitySignal();
+    const workState = createWorkStateSignal();
     server = await startHookServer({
-      busy,
+      workState,
       logger: silentLogger(),
       onTranscriptPath: (p) => paths.push(p),
     });
@@ -315,14 +333,14 @@ describe('hook server — transcript path relay (onTranscriptPath)', () => {
 
     expect(paths).toEqual(['/home/x/.claude/projects/slug/session.jsonl']);
     // Presence still opens too — the relay is independent of routing.
-    expect(busy.getSourceCounts().turn_active).toBe(1);
+    expect(workState.getSourceCounts().turn_active).toBe(1);
   });
 
   it('relays the path even for an event it does not act on (e.g. SessionStart)', async () => {
     const paths: string[] = [];
-    const busy = createActivitySignal();
+    const workState = createWorkStateSignal();
     server = await startHookServer({
-      busy,
+      workState,
       logger: silentLogger(),
       onTranscriptPath: (p) => paths.push(p),
     });
@@ -334,14 +352,14 @@ describe('hook server — transcript path relay (onTranscriptPath)', () => {
 
     expect(paths).toEqual(['/t/session.jsonl']);
     // SessionStart drives no presence.
-    expect(busy.state()).toBe('idle');
+    expect(workState.state()).toBe('idle');
   });
 
   it('dedups: the same transcript_path fires the callback only once', async () => {
     const paths: string[] = [];
-    const busy = createActivitySignal();
+    const workState = createWorkStateSignal();
     server = await startHookServer({
-      busy,
+      workState,
       logger: silentLogger(),
       onTranscriptPath: (p) => paths.push(p),
     });
@@ -360,9 +378,9 @@ describe('hook server — transcript path relay (onTranscriptPath)', () => {
 
   it('does not fire when a hook body carries no transcript_path', async () => {
     const paths: string[] = [];
-    const busy = createActivitySignal();
+    const workState = createWorkStateSignal();
     server = await startHookServer({
-      busy,
+      workState,
       logger: silentLogger(),
       onTranscriptPath: (p) => paths.push(p),
     });
@@ -385,61 +403,61 @@ describe('hook server — Notification (blocked flag)', () => {
   it.each(['permission_prompt', 'agent_needs_input', 'elicitation_dialog'])(
     'blocking notification_type %s sets blocked',
     async (notification_type) => {
-      const busy = createActivitySignal();
-      server = await startHookServer({ busy, logger: silentLogger() });
+      const workState = createWorkStateSignal();
+      server = await startHookServer({ workState, logger: silentLogger() });
 
       await postJson(server.url, { hook_event_name: 'Notification', notification_type });
-      expect(busy.state()).toBe('blocked');
-      expect(busy.blocked).toBe(true);
+      expect(workState.state()).toBe('blocked');
+      expect(workState.blocked).toBe(true);
     },
   );
 
   it('idle_prompt clears blocked', async () => {
-    const busy = createActivitySignal();
-    server = await startHookServer({ busy, logger: silentLogger() });
+    const workState = createWorkStateSignal();
+    server = await startHookServer({ workState, logger: silentLogger() });
 
     await postJson(server.url, {
       hook_event_name: 'Notification',
       notification_type: 'permission_prompt',
     });
-    expect(busy.blocked).toBe(true);
+    expect(workState.blocked).toBe(true);
 
     await postJson(server.url, {
       hook_event_name: 'Notification',
       notification_type: 'idle_prompt',
     });
-    expect(busy.blocked).toBe(false);
-    expect(busy.state()).toBe('idle');
+    expect(workState.blocked).toBe(false);
+    expect(workState.state()).toBe('idle');
   });
 
   it('unknown notification_type is ignored (no state change)', async () => {
-    const busy = createActivitySignal();
-    server = await startHookServer({ busy, logger: silentLogger() });
+    const workState = createWorkStateSignal();
+    server = await startHookServer({ workState, logger: silentLogger() });
 
     await postJson(server.url, {
       hook_event_name: 'Notification',
       notification_type: 'some_future_type',
     });
-    expect(busy.state()).toBe('idle');
-    expect(busy.blocked).toBe(false);
+    expect(workState.state()).toBe('idle');
+    expect(workState.blocked).toBe(false);
   });
 
   it('blocked wins over an active turn, then Stop clears both', async () => {
-    const busy = createActivitySignal();
-    server = await startHookServer({ busy, logger: silentLogger() });
+    const workState = createWorkStateSignal();
+    server = await startHookServer({ workState, logger: silentLogger() });
 
     await postJson(server.url, { hook_event_name: 'UserPromptSubmit', prompt_id: 'p-1' });
-    expect(busy.state()).toBe('working');
+    expect(workState.state()).toBe('working');
 
     await postJson(server.url, {
       hook_event_name: 'Notification',
       notification_type: 'agent_needs_input',
     });
     // Turn still in flight, but blocked wins.
-    expect(busy.state()).toBe('blocked');
+    expect(workState.state()).toBe('blocked');
 
     await postJson(server.url, { hook_event_name: 'Stop', prompt_id: 'p-1' });
-    expect(busy.state()).toBe('idle');
-    expect(busy.blocked).toBe(false);
+    expect(workState.state()).toBe('idle');
+    expect(workState.blocked).toBe(false);
   });
 });

@@ -203,11 +203,12 @@ export class ObjectivesError extends Error {
  * `events` when publishing channel pushes so the outbound notification
  * per-event matches the audit log entry-per-event exactly.
  *
- * Most operations emit a single event; `update` can emit up to two
- * (a status transition plus a note). A no-op update (status equals
- * current status, no note, no block reason change) emits zero events
- * and returns `events: []` — callers should treat empty-events as
- * "nothing worth broadcasting."
+ * Most operations emit a single event; `reassign` can emit two (the
+ * handover plus a `watcher_added` for the previous assignee), and
+ * `updateWatchers` emits one per name it actually adds or removes.
+ * A no-op update (status equals current status, no block reason
+ * change) emits zero events and returns `events: []` — callers
+ * should treat empty-events as "nothing worth broadcasting."
  */
 export interface ObjectivesMutationResult {
   objective: Objective;
@@ -227,9 +228,9 @@ export interface ObjectivesStore {
    */
   create(input: CreateObjectiveRequest, originator: string, now?: number): ObjectivesMutationResult;
   /**
-   * Update status / note on an active or blocked objective. Never
-   * transitions to `done` — use `complete` for that. Emits 0-2 events
-   * depending on what actually changed.
+   * Update status / block reason on an active or blocked objective.
+   * Never transitions to `done` — use `complete` for that. Emits at
+   * most one event, and none when nothing actually changed.
    */
   update(
     id: string,
@@ -251,7 +252,7 @@ export interface ObjectivesStore {
     actor: string,
     now?: number,
   ): ObjectivesMutationResult;
-  /** Reassign to a different slot. */
+  /** Reassign to a different member. */
   reassign(
     id: string,
     input: ReassignObjectiveRequest,

@@ -156,7 +156,7 @@ export function NotificationDetail({ slug }: { slug: string }) {
       <nav class="crumbs" style="margin-bottom:14px">
         <button type="button" class="text-link" onClick={selectNotifications}>
           <ArrowLeft size={13} aria-hidden="true" />
-          Notifications
+          External notifications
         </button>
         <span class="sep">/</span>
         <span class="current">{slug}</span>

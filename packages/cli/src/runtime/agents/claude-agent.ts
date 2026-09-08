@@ -100,7 +100,7 @@ export const CLAUDE_META: AgentAdapterMeta = {
   // Tier 3: transcript-primary content capture + operational OTEL +
   // FILE-mode raw API bodies into the gen_ai layer — all unchanged from
   // the CLI-wrapper era, since the SDK runs the same Claude Code
-  // underneath. See docs/runners/conformance.mdx for the tier
+  // underneath. See docs/dev/conformance.mdx for the tier
   // definitions.
   captureTier: 3,
   signals: 'teardown',
@@ -126,7 +126,7 @@ export interface ClaudeAdapterOptions {
 }
 
 /**
- * The eight hook events the capture host's hook server routes on —
+ * The hook events the capture host's hook server routes on —
  * the same set the CLI wrapper used to register in the member's
  * `.claude/settings.json`. Now they're in-process SDK callbacks that
  * forward each payload to the hook server's loopback endpoint, keeping

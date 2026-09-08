@@ -79,7 +79,16 @@ export type CaptureHealth =
   | { state: 'ok' }
   | { state: 'pending' }
   | { state: 'unevaluated'; reason: 'no-exact-match-adapter' }
-  | { state: 'gap'; unmatchedMarkers: number; since: number };
+  | {
+      state: 'gap';
+      /**
+       * Markers left unsatisfied past the grace window. Named
+       * `unmatchedMarkers` for the callers that already read it; the
+       * predicate it counts is capture satisfaction, not turn attribution.
+       */
+      unmatchedMarkers: number;
+      since: number;
+    };
 
 export interface CaptureHealthOptions {
   /** Override the clock (tests). */
@@ -89,8 +98,21 @@ export interface CaptureHealthOptions {
 }
 
 /**
+ * CAPTURE SATISFACTION — the broker-side join predicate.
+ *
  * A marker is SATISFIED when its exact gen_ai row exists AND both of
- * that row's bodies are stored and addressable.
+ * that row's bodies are stored and addressable. It asks "were this
+ * marker's bytes stored?" and is NON-EXCLUSIVE: several markers may be
+ * satisfied by the same stored body, because content addressing is
+ * many-to-one.
+ *
+ * This is not the same predicate as the web UI's TURN ATTRIBUTION join
+ * (`trace-join.ts`), which asks "which record renders under which turn?"
+ * and is exclusive — one record is claimed by one turn. Both were called
+ * "matched", which is why one marker and two records can be correct on
+ * both sides at once and still disagree; the conformance corpus records
+ * the split under `two-markers-one-record`. Neither side is wrong, and
+ * neither predicate may be swapped for the other.
  *
  * Every EXISTS is member- and kind-scoped. `request_sha256` and
  * `response_sha256` are BOTH required: a gen_ai row naming a response
@@ -99,7 +121,7 @@ export interface CaptureHealthOptions {
  * exchange separately per side; gen_ai appends later), so the invariant
  * cannot be asserted in place of the joins.
  */
-const UNMATCHED_PREDICATE = `
+const UNSATISFIED_PREDICATE = `
   FROM member_activity a
   WHERE a.member_name = ?
     AND a.kind = 'llm_exchange'
@@ -127,19 +149,19 @@ const UNMATCHED_PREDICATE = `
 `;
 
 /**
- * Markers that are unmatched AND aged past the grace window. These are
+ * Markers left UNSATISFIED and aged past the grace window. These are
  * the evidence: a definitive gap.
  */
-const UNMATCHED_SQL = `
+const UNSATISFIED_AGED_SQL = `
   SELECT COUNT(*) AS n, MIN(a.created_at) AS since
-  ${UNMATCHED_PREDICATE}
+  ${UNSATISFIED_PREDICATE}
     AND a.created_at <= ?
 `;
 
 /**
- * Markers that are unmatched but still INSIDE the grace window.
+ * Markers left unsatisfied but still INSIDE the grace window.
  *
- * This shares `UNMATCHED_PREDICATE` with the aged query and differs only
+ * This shares `UNSATISFIED_PREDICATE` with the aged query and differs only
  * in the time bound, which is the whole point. An earlier version
  * counted every fresh marker regardless of correspondence, so a marker
  * whose gen_ai row and both bodies had already landed still reported
@@ -154,9 +176,9 @@ const UNMATCHED_SQL = `
  * Rune with discriminating fixtures; the bound is now inherited from
  * the shared predicate rather than restated.
  */
-const PENDING_UNMATCHED_SQL = `
+const UNSATISFIED_IN_GRACE_SQL = `
   SELECT COUNT(*) AS n
-  ${UNMATCHED_PREDICATE}
+  ${UNSATISFIED_PREDICATE}
     AND a.created_at > ?
 `;
 
@@ -213,8 +235,8 @@ export function createCaptureHealthStore(
   const graceMs = options.graceMs ?? CAPTURE_GRACE_MS;
 
   const sessionStmt: SqlStatement = db.prepare(SESSION_START_SQL);
-  const unmatchedStmt: SqlStatement = db.prepare(UNMATCHED_SQL);
-  const pendingStmt: SqlStatement = db.prepare(PENDING_UNMATCHED_SQL);
+  const unsatisfiedAgedStmt: SqlStatement = db.prepare(UNSATISFIED_AGED_SQL);
+  const unsatisfiedInGraceStmt: SqlStatement = db.prepare(UNSATISFIED_IN_GRACE_SQL);
   const censusStmt: SqlStatement = db.prepare(CENSUS_SQL);
 
   return {
@@ -228,17 +250,17 @@ export function createCaptureHealthStore(
 
       // Aged markers only: a marker younger than the grace window has
       // not yet earned the claim, and its body may still be in flight.
-      const aged = unmatchedStmt.get(name, boundary, cutoff) as
+      const aged = unsatisfiedAgedStmt.get(name, boundary, cutoff) as
         | { n: number; since: number | null }
         | undefined;
-      const unmatched = aged?.n ?? 0;
-      if (unmatched > 0) {
-        return { state: 'gap', unmatchedMarkers: unmatched, since: aged?.since ?? boundary };
+      const unsatisfied = aged?.n ?? 0;
+      if (unsatisfied > 0) {
+        return { state: 'gap', unmatchedMarkers: unsatisfied, since: aged?.since ?? boundary };
       }
 
-      // Nothing aged and unmatched. If anything is still inside the
+      // Nothing aged and unsatisfied. If anything is still inside the
       // grace window, say so INTERNALLY — callers surface nothing.
-      const fresh = pendingStmt.get(name, boundary, cutoff) as { n: number } | undefined;
+      const fresh = unsatisfiedInGraceStmt.get(name, boundary, cutoff) as { n: number } | undefined;
       if ((fresh?.n ?? 0) > 0) return { state: 'pending' };
 
       // No gap found — but "found none" and "looked" are different

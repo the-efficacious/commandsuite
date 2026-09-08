@@ -445,7 +445,7 @@ export function formatHeadlessNoAuth(input: {
   urlDefaulted: boolean;
 }): string {
   const lines = [
-    `no saved auth for ${input.url} scoped to ${input.cwd}, and stdin is not a TTY, so the enrollment wizard cannot run.`,
+    `no saved auth for ${input.url} scoped to ${input.cwd}, and stdin is not a TTY, so the connect prompt cannot run.`,
   ];
   if (input.urlDefaulted) {
     lines.push(

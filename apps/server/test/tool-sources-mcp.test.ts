@@ -285,4 +285,23 @@ describe('mcp tool sources', () => {
     const result = (await res.json()) as { isError?: boolean; content: Array<{ text: string }> };
     expect(result.isError).toBe(true);
   });
+
+  it('detail returns ResolvedTool[] for kind=mcp — no binding key', async () => {
+    const { app, mcpManager } = await makeApp();
+    managers.push(mcpManager);
+    await setupMcpSource(app);
+    await app.request('/tool-sources/up/refresh', authed(ADMIN, undefined, 'POST'));
+
+    const detail = (await (await app.request('/tool-sources/up', authed(ADMIN))).json()) as {
+      source: { kind: string };
+      tools: Array<Record<string, unknown>>;
+    };
+    expect(detail.source.kind).toBe('mcp');
+    expect(detail.tools.map((t) => t.name)).toEqual(['echo']);
+    expect(Object.keys(detail.tools[0] ?? {}).sort()).toEqual([
+      'description',
+      'inputSchema',
+      'name',
+    ]);
+  });
 });

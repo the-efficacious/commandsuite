@@ -1,22 +1,22 @@
 /**
- * `ActivitySignal` tests.
+ * `WorkStateSignal` tests.
  *
  * Pins the 3-state contract (idle / working / blocked): subscribers see
  * one notification per STATE transition regardless of how many
  * concurrent in-flight handles are active, `blocked` wins over
  * `working`, and the legacy `busy` mirror stays `state === 'working'`.
  * Reentrant notifications would cause the runner's POST
- * /presence/activity traffic to thrash on parallel tool fan-outs.
+ * /presence/work-state traffic to thrash on parallel tool fan-outs.
  */
 
 import type { WorkState } from 'csuite-sdk/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createActivitySignal, DEFAULT_MAX_AGE_MS } from '../../src/runtime/trace/busy.js';
+import { createWorkStateSignal, DEFAULT_MAX_AGE_MS } from '../../src/runtime/trace/work-state.js';
 import { recordingLogger } from '../helpers/logger.js';
 
-describe('createActivitySignal', () => {
+describe('createWorkStateSignal', () => {
   it('starts idle (count=0, busy=false, blocked=false, state=idle)', () => {
-    const b = createActivitySignal();
+    const b = createWorkStateSignal();
     expect(b.count).toBe(0);
     expect(b.busy).toBe(false);
     expect(b.blocked).toBe(false);
@@ -24,7 +24,7 @@ describe('createActivitySignal', () => {
   });
 
   it('flips to working on the first start, back to idle on the matching finish', () => {
-    const b = createActivitySignal();
+    const b = createWorkStateSignal();
     const observed: WorkState[] = [];
     b.subscribe((s) => observed.push(s));
     const h = b.start();
@@ -37,7 +37,7 @@ describe('createActivitySignal', () => {
   });
 
   it('does not re-fire on increments while already working (regression)', () => {
-    const b = createActivitySignal();
+    const b = createWorkStateSignal();
     const listener = vi.fn();
     b.subscribe(listener);
     listener.mockClear();
@@ -57,7 +57,7 @@ describe('createActivitySignal', () => {
   });
 
   it('finish() is idempotent — double-finishing one handle does not corrupt count', () => {
-    const b = createActivitySignal();
+    const b = createWorkStateSignal();
     const h = b.start();
     expect(b.count).toBe(1);
     h.finish();
@@ -68,7 +68,7 @@ describe('createActivitySignal', () => {
   });
 
   it('fires the current state on subscribe even mid-burst', () => {
-    const b = createActivitySignal();
+    const b = createWorkStateSignal();
     b.start();
     const observed: WorkState[] = [];
     b.subscribe((s) => observed.push(s));
@@ -76,7 +76,7 @@ describe('createActivitySignal', () => {
   });
 
   it('isolates one listener throwing from the others', () => {
-    const b = createActivitySignal();
+    const b = createWorkStateSignal();
     const good = vi.fn();
     b.subscribe(() => {
       throw new Error('boom');
@@ -88,7 +88,7 @@ describe('createActivitySignal', () => {
   });
 
   it('supports unsubscribe', () => {
-    const b = createActivitySignal();
+    const b = createWorkStateSignal();
     const listener = vi.fn();
     const unsubscribe = b.subscribe(listener);
     listener.mockClear();
@@ -98,7 +98,7 @@ describe('createActivitySignal', () => {
   });
 
   it('tracks per-source counts independently', () => {
-    const b = createActivitySignal();
+    const b = createWorkStateSignal();
     const turn = b.start('turn_active');
     const tool1 = b.start('tool_inflight');
     const tool2 = b.start('tool_inflight');
@@ -118,7 +118,7 @@ describe('createActivitySignal', () => {
   });
 
   it('emits only one idle→working transition across mixed sources', () => {
-    const b = createActivitySignal();
+    const b = createWorkStateSignal();
     const listener = vi.fn();
     b.subscribe(listener);
     listener.mockClear();
@@ -139,7 +139,7 @@ describe('createActivitySignal', () => {
   });
 
   it("defaults to 'turn_active' when start() is called without a source", () => {
-    const b = createActivitySignal();
+    const b = createWorkStateSignal();
     const h = b.start();
     expect(b.getSourceCounts()).toEqual({ turn_active: 1, tool_inflight: 0 });
     h.finish();
@@ -151,7 +151,7 @@ describe('createActivitySignal', () => {
     // still drain on its own track. The overall state stays `working`
     // (correct — there IS in-flight work) but `getSourceCounts()` makes
     // the culprit diagnosable.
-    const b = createActivitySignal();
+    const b = createWorkStateSignal();
     b.start('turn_active', { maxAgeMs: Infinity }); // intentionally not finished
     const tool = b.start('tool_inflight');
     tool.finish();
@@ -160,9 +160,9 @@ describe('createActivitySignal', () => {
   });
 });
 
-describe('createActivitySignal — blocked dimension', () => {
+describe('createWorkStateSignal — blocked dimension', () => {
   it('setBlocked(true) transitions idle→blocked; setBlocked(false) back to idle', () => {
-    const b = createActivitySignal();
+    const b = createWorkStateSignal();
     const observed: WorkState[] = [];
     b.subscribe((s) => observed.push(s));
     b.setBlocked(true);
@@ -175,7 +175,7 @@ describe('createActivitySignal — blocked dimension', () => {
   });
 
   it('blocked wins over working (priority blocked > working > idle)', () => {
-    const b = createActivitySignal();
+    const b = createWorkStateSignal();
     const observed: WorkState[] = [];
     b.subscribe((s) => observed.push(s));
     const h = b.start('turn_active');
@@ -194,7 +194,7 @@ describe('createActivitySignal — blocked dimension', () => {
   });
 
   it('does not re-fire when setBlocked repeats the current value', () => {
-    const b = createActivitySignal();
+    const b = createWorkStateSignal();
     const listener = vi.fn();
     b.subscribe(listener);
     listener.mockClear();
@@ -207,7 +207,7 @@ describe('createActivitySignal — blocked dimension', () => {
   });
 
   it('starting work while blocked does not change the state (blocked wins)', () => {
-    const b = createActivitySignal();
+    const b = createWorkStateSignal();
     const listener = vi.fn();
     b.subscribe(listener);
     b.setBlocked(true);
@@ -222,7 +222,7 @@ describe('createActivitySignal — blocked dimension', () => {
   });
 });
 
-describe('createActivitySignal — handle max-age safety net', () => {
+describe('createWorkStateSignal — handle max-age safety net', () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -232,7 +232,7 @@ describe('createActivitySignal — handle max-age safety net', () => {
 
   it('auto-finishes a handle that exceeds its max-age and emits the idle transition', () => {
     const rec = recordingLogger();
-    const b = createActivitySignal({ logger: rec.logger });
+    const b = createWorkStateSignal({ logger: rec.logger });
     const listener = vi.fn();
     b.subscribe(listener);
     listener.mockClear();
@@ -259,7 +259,7 @@ describe('createActivitySignal — handle max-age safety net', () => {
   });
 
   it('respects a custom maxAgeMs even when the default is much larger', () => {
-    const b = createActivitySignal();
+    const b = createWorkStateSignal();
     b.start('tool_inflight', { maxAgeMs: 50 });
     expect(b.state()).toBe('working');
     vi.advanceTimersByTime(60);
@@ -267,7 +267,7 @@ describe('createActivitySignal — handle max-age safety net', () => {
   });
 
   it('Infinity maxAgeMs disables the safety net entirely', () => {
-    const b = createActivitySignal();
+    const b = createWorkStateSignal();
     b.start('turn_active', { maxAgeMs: Number.POSITIVE_INFINITY });
     expect(b.state()).toBe('working');
     // Crank well past any default — handle should still be live.
@@ -277,7 +277,7 @@ describe('createActivitySignal — handle max-age safety net', () => {
 
   it('finish() before the deadline cancels the timer (no double-finish)', () => {
     const rec = recordingLogger();
-    const b = createActivitySignal({ logger: rec.logger });
+    const b = createWorkStateSignal({ logger: rec.logger });
     const h = b.start('turn_active', { maxAgeMs: 1000 });
     expect(b.getSourceCounts().turn_active).toBe(1);
 
@@ -290,7 +290,7 @@ describe('createActivitySignal — handle max-age safety net', () => {
   });
 
   it('applies the per-source default when maxAgeMs is omitted', () => {
-    const b = createActivitySignal();
+    const b = createWorkStateSignal();
     b.start('tool_inflight');
     vi.advanceTimersByTime(DEFAULT_MAX_AGE_MS.tool_inflight - 1000);
     expect(b.state()).toBe('working');
@@ -299,7 +299,7 @@ describe('createActivitySignal — handle max-age safety net', () => {
   });
 
   it('falls back to the default when maxAgeMs is non-positive or NaN', () => {
-    const b = createActivitySignal();
+    const b = createWorkStateSignal();
     b.start('turn_active', { maxAgeMs: 0 });
     b.start('turn_active', { maxAgeMs: -100 });
     b.start('turn_active', { maxAgeMs: Number.NaN });
@@ -312,9 +312,9 @@ describe('createActivitySignal — handle max-age safety net', () => {
   });
 });
 
-describe('createActivitySignal — forceFinishAll', () => {
+describe('createWorkStateSignal — forceFinishAll', () => {
   it('returns 0 and emits nothing when no work is in flight', () => {
-    const b = createActivitySignal();
+    const b = createWorkStateSignal();
     const listener = vi.fn();
     b.subscribe(listener);
     listener.mockClear();
@@ -324,7 +324,7 @@ describe('createActivitySignal — forceFinishAll', () => {
   });
 
   it('drains every live handle across both sources with a single idle transition', () => {
-    const b = createActivitySignal();
+    const b = createWorkStateSignal();
     const listener = vi.fn();
     b.subscribe(listener);
     listener.mockClear();
@@ -344,7 +344,7 @@ describe('createActivitySignal — forceFinishAll', () => {
   });
 
   it('does not clear the blocked flag (a distinct dimension)', () => {
-    const b = createActivitySignal();
+    const b = createWorkStateSignal();
     b.setBlocked(true);
     b.start('turn_active');
     // State is `blocked` (wins over working).
@@ -357,7 +357,7 @@ describe('createActivitySignal — forceFinishAll', () => {
   });
 
   it('subsequent finish() on a force-finished handle is a no-op', () => {
-    const b = createActivitySignal();
+    const b = createWorkStateSignal();
     const h = b.start('turn_active');
     expect(b.getSourceCounts().turn_active).toBe(1);
 
@@ -371,7 +371,7 @@ describe('createActivitySignal — forceFinishAll', () => {
 
   it('logs the drain count for diagnostics', () => {
     const rec = recordingLogger();
-    const b = createActivitySignal({ logger: rec.logger });
+    const b = createWorkStateSignal({ logger: rec.logger });
     b.start('turn_active');
     b.start('tool_inflight');
     b.forceFinishAll();

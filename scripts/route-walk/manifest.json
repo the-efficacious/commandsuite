@@ -204,7 +204,7 @@
     {
       "kind": "notification-detail",
       "urls": ["/notifications/{notificationSlug}"],
-      "marker": "Notifications / {notificationSlug}",
+      "marker": "External notifications / {notificationSlug}",
       "fixture": "a notification endpoint",
       "roles": {
         "baseline": "restricted",

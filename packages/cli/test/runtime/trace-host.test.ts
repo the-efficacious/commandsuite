@@ -230,7 +230,7 @@ describe('CaptureHost', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ hook_event_name: 'PreToolUse', tool_use_id: 't1', tool_name: 'Bash' }),
     });
-    expect(host.busy.busy).toBe(true);
+    expect(host.workState.busy).toBe(true);
 
     await fetch(host.hookEndpointUrl, {
       method: 'POST',
@@ -243,7 +243,7 @@ describe('CaptureHost', () => {
         tool_response: 'ok',
       }),
     });
-    expect(host.busy.busy).toBe(false);
+    expect(host.workState.busy).toBe(false);
 
     await host.close();
     host = null;
@@ -267,7 +267,7 @@ describe('CaptureHost', () => {
       }),
     });
     // Turn presence opens (working)…
-    expect(host.busy.state()).toBe('working');
+    expect(host.workState.state()).toBe('working');
 
     await host.close();
     host = null;
@@ -390,7 +390,7 @@ describe('CaptureHost', () => {
     host = null;
   });
 
-  it('close() force-drains leaked busy handles as the final teardown safety net', async () => {
+  it('close() force-drains leaked work-state handles as the final teardown safety net', async () => {
     const rec = recordingLogger();
     host = await startCaptureHost({
       ...BASE,
@@ -400,17 +400,17 @@ describe('CaptureHost', () => {
 
     // Leak handles as if an adapter forgot to call finish(). Disable the
     // max-age timer so this test isn't racing the default net.
-    host.busy.start('turn_active', { maxAgeMs: Number.POSITIVE_INFINITY });
-    host.busy.start('tool_inflight', { maxAgeMs: Number.POSITIVE_INFINITY });
-    expect(host.busy.busy).toBe(true);
-    expect(host.busy.getSourceCounts()).toEqual({ turn_active: 1, tool_inflight: 1 });
+    host.workState.start('turn_active', { maxAgeMs: Number.POSITIVE_INFINITY });
+    host.workState.start('tool_inflight', { maxAgeMs: Number.POSITIVE_INFINITY });
+    expect(host.workState.busy).toBe(true);
+    expect(host.workState.getSourceCounts()).toEqual({ turn_active: 1, tool_inflight: 1 });
 
     await host.close();
 
-    expect(host.busy.busy).toBe(false);
-    expect(host.busy.getSourceCounts()).toEqual({ turn_active: 0, tool_inflight: 0 });
+    expect(host.workState.busy).toBe(false);
+    expect(host.workState.getSourceCounts()).toEqual({ turn_active: 0, tool_inflight: 0 });
     const drainLog = rec.records.find(
-      (r) => r.msg === 'force-drained leaked busy handles at teardown',
+      (r) => r.msg === 'force-drained leaked work-state handles at teardown',
     );
     expect(drainLog).toBeTruthy();
     expect(drainLog?.level).toBe('warn');
@@ -428,6 +428,6 @@ describe('CaptureHost', () => {
     });
     await host.close();
     host = null;
-    expect(rec.messages()).not.toContain('force-drained leaked busy handles at teardown');
+    expect(rec.messages()).not.toContain('force-drained leaked work-state handles at teardown');
   });
 });

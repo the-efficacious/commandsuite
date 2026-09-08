@@ -25,6 +25,8 @@
 
 import {
   CLIENT_IDENTITY_HEADER,
+  DEPRECATED_QUERY_HEADER,
+  DEPRECATION_HEADER,
   PATHS,
   PROTOCOL_HEADER,
   PROTOCOL_VERSION,
@@ -33,8 +35,6 @@ import {
   TEAM_PROCESS_PATHS,
 } from 'csuite-sdk/protocol';
 import {
-  ActivityKindSchema,
-  ActivityReportSchema,
   AddChannelMemberRequestSchema,
   ApproveEnrollmentRequestSchema,
   BindSecretRequestSchema,
@@ -62,12 +62,14 @@ import {
   FsPathSchema,
   FsWriteCollisionSchema,
   InvokeToolRequestSchema,
+  ListActivityQuerySchema,
   ListObjectivesQuerySchema,
   LogLevelSchema,
   NameSchema,
   PendingEnrollmentSchema,
   PushPayloadSchema,
   PushSubscriptionPayloadSchema,
+  ReassignObjectiveRequestSchema,
   RejectEnrollmentRequestSchema,
   RotateTokenRequestSchema,
   RunnerControlFrameSchema,
@@ -87,6 +89,7 @@ import {
   UpdateToolSourceRequestSchema,
   UpdateVariableRequestSchema,
   UploadActivityRequestSchema,
+  WorkStateReportSchema,
 } from 'csuite-sdk/schemas';
 import type {
   ActivityKind,
@@ -134,6 +137,7 @@ import type {
 import {
   type AuthBindings,
   type Broker,
+  CHANNEL_THREAD_PREFIX,
   type ChannelStore,
   ChannelsError,
   CredentialShapedBodyError,
@@ -150,12 +154,14 @@ import {
   type GenAiCorrelatorFactory,
   generateBearerToken,
   generateSecret,
+  hookThreadTag,
   instructionBlocks,
   instructionCaptureExemptions,
   isGenAiLogRecord,
   normalizeUserCode,
   ObjectivesError,
   type ObjectivesStore,
+  objectiveThreadTag,
   openaiResponsesToGenAi,
   otpauthUri,
   parseOtlpLogs,
@@ -163,16 +169,20 @@ import {
   redactJson,
   redactSecrets,
   registerSecretValues,
+  SCALAR_BOUND_ID,
   SESSION_COOKIE_NAME,
   SESSION_TTL_MS,
   SecretsError,
   type SecretsStore,
   type SessionStore,
+  secretThreadTag,
   sha256Hex,
   TeamProcessError,
   type TeamProcessStore,
   type TokenStore,
+  toolThreadTag,
   validateSlug,
+  variableThreadTag,
   verifyCode as verifyTotpCode,
   WORK_STATE_TTL_MS,
   type WorkStateTracker,
@@ -181,6 +191,7 @@ import {
   type LoadedMember,
   MemberLoadError,
   type MemberStore,
+  memberKindFields,
   resolvePermissions,
   teammatesFromMembers,
   type UpdateMemberPatch,
@@ -195,6 +206,7 @@ import {
   type NotificationsStore,
   toWireDelivery,
 } from './notifications/store.js';
+import { enrichPresence, type PresenceEnrichmentOptions } from './presence-enrichment.js';
 import type { RawBodyStore } from './raw-body-types.js';
 import { composeTeamStatus } from './team-status.js';
 import { executeCustomTool } from './tool-sources/custom-executor.js';
@@ -251,7 +263,7 @@ export interface AppOptions {
    */
   activityStore?: ActivityStore;
   /**
-   * Tool-source registry — platform-defined external tools (custom
+   * Tool-source registry — admin-defined external tools (custom
    * HTTP bindings + proxied remote MCP servers). The `/tool-sources*`
    * endpoints are registered iff this is provided, and the instruction packet
    * gains per-member resolved tools. Same opt-out pattern as
@@ -337,9 +349,16 @@ export interface AppOptions {
    */
   captureHealth?: CaptureHealthStore;
   /**
-   * Retained completeness diagnostics. Optional: a broker without it
-   * behaves exactly as before and the stderr lines remain, which is
-   * what "no opinion" looks like for retention.
+   * Retained completeness diagnostics — the full `DiagnosticStore`, the
+   * one layer where this name really does hold the store: it reads
+   * (`unresolved`, `query`, `health`) as well as writes. Everything
+   * downstream is handed `diagnostics.emit` and gets the write-only
+   * `DiagnosticEmitter` under the same option name, which is the
+   * collision to watch for when reading a stack from here.
+   *
+   * Optional: a broker without it behaves exactly as before and the
+   * stderr lines remain, which is what "no opinion" looks like for
+   * retention.
    */
   diagnostics?: DiagnosticStore;
   version: string;
@@ -457,6 +476,122 @@ function clientSourceKey(c: Context<AppBindings>): string {
 export type AppBindings = AuthBindings;
 
 /**
+ * One renamed query parameter: the name callers should send, and the
+ * one still accepted for the compatibility window.
+ */
+export interface RenamedQueryParam {
+  /** The canonical name. Wins whenever both are present. */
+  readonly current: string;
+  /** The retired name, accepted for one release. */
+  readonly legacy: string;
+}
+
+/**
+ * The value of one renamed parameter, current name winning — without
+ * emitting the deprecation signal. For the second read of a parameter
+ * whose first read already signalled, so one stale request produces one
+ * notice rather than one per handler that happens to look.
+ */
+function renamedQueryValue(c: Context<AppBindings>, rename: RenamedQueryParam): string | undefined {
+  return c.req.query(rename.current) ?? c.req.query(rename.legacy);
+}
+
+/**
+ * Read a set of renamed query parameters, preferring the current name,
+ * falling back to the retired one, and marking the response when the
+ * retired one was used.
+ *
+ * DEPRECATION WINDOW — every `legacy` name here is accepted for ONE
+ * release and is to be REMOVED IN THE NEXT MINOR, together with this
+ * helper. The precedent is `warnDeprecatedToolAlias` in the runner's
+ * tool dispatch (`packages/cli/src/runtime/tools.ts`): the retired
+ * spelling keeps working, is not advertised, and every use of it emits
+ * a line naming the name used and the name to use instead, so stale
+ * callers are findable by grep rather than by waiting for a bug report.
+ *
+ * A query parameter has one thing a tool name does not — a response to
+ * carry the notice back on — so the signal is emitted twice: `Deprecation`
+ * plus `X-CSuite-Deprecated-Query` for the caller (who is the one that
+ * has to change), and a warn log for the operator (who is the one that
+ * can see the whole fleet). The body is byte-identical either way: a
+ * client that ignores headers is not punished for it, which is the
+ * point of a compatibility window.
+ */
+function readRenamedQuery(
+  c: Context<AppBindings>,
+  renames: readonly RenamedQueryParam[],
+  logger: Logger,
+): Record<string, string | undefined> {
+  const values: Record<string, string | undefined> = {};
+  const stale: string[] = [];
+  for (const rename of renames) {
+    values[rename.current] = renamedQueryValue(c, rename);
+    if (c.req.query(rename.legacy) !== undefined) {
+      stale.push(`${rename.legacy}=${rename.current}`);
+    }
+  }
+  if (stale.length > 0) {
+    const replacements = stale.join(', ');
+    c.header(DEPRECATION_HEADER, 'true');
+    c.header(DEPRECATED_QUERY_HEADER, replacements);
+    logger.warn('deprecated query parameter used — update the caller', {
+      path: c.req.path,
+      replacements,
+    });
+  }
+  return values;
+}
+
+/**
+ * Oldest-first composite cursor — `/members/:name/telemetry` and
+ * `/members/:name/genai`, whose stores call it `after: {ts, id}`.
+ */
+const AFTER_CURSOR_RENAMES: readonly RenamedQueryParam[] = [
+  { current: 'after_ts', legacy: 'cursor_ts' },
+  { current: 'after_id', legacy: 'cursor_id' },
+];
+/**
+ * Newest-first composite cursor — `/members/:name/activity`, whose
+ * store calls it `before: {ts, id}`.
+ */
+const BEFORE_CURSOR_RENAMES: readonly RenamedQueryParam[] = [
+  { current: 'before_ts', legacy: 'cursor_ts' },
+  { current: 'before_id', legacy: 'cursor_id' },
+];
+/**
+ * `/history`: the scalar `before` becomes the timestamp half of a
+ * composite cursor. `before_id` has no retired spelling because there
+ * was no tiebreak to spell — a caller that still sends `before` alone
+ * keeps the old, lossy behaviour for one more release, which is the
+ * honest thing to hand a client that has no id to send.
+ */
+const HISTORY_CURSOR_RENAMES: readonly RenamedQueryParam[] = [
+  { current: 'before_ts', legacy: 'before' },
+];
+/**
+ * Delivery receipts keep the SCALAR bound and gain only the arity
+ * suffix: one endpoint, one timestamp, no tiebreak column to page on.
+ */
+const DELIVERIES_CURSOR_RENAMES: readonly RenamedQueryParam[] = [
+  { current: 'before_ts', legacy: 'before' },
+];
+/** The four camelCase parameters that predate the snake_case rule. */
+const TEAM_STATUS_RENAMES: readonly RenamedQueryParam[] = [
+  { current: 'stalled_ms', legacy: 'stalledMs' },
+];
+const CLIENT_VERSION_RENAME: RenamedQueryParam = {
+  current: 'client_version',
+  legacy: 'clientVersion',
+};
+const SUBSCRIBE_CLIENT_RENAMES: readonly RenamedQueryParam[] = [
+  { current: 'client_kind', legacy: 'clientKind' },
+  CLIENT_VERSION_RENAME,
+];
+const CONNECT_PLATFORM_RENAMES: readonly RenamedQueryParam[] = [
+  { current: 'parent_origin', legacy: 'parentOrigin' },
+];
+
+/**
  * Rate-limit bucket for TOTP login attempts. Keyed by user name —
  * an attacker hammering one user can't accidentally lock a different
  * one out. In-memory, per-process; a restart clears the bucket, which
@@ -533,6 +668,10 @@ const API_PATH_PREFIXES = [
   PATHS.enrollPending,
   PATHS.enrollApprove,
   PATHS.enrollReject,
+  PATHS.presenceWorkState,
+  // The previous spelling, still routed for one release. Listed
+  // beside its successor so an un-upgraded runner's POST 404s as API
+  // rather than falling through to the SPA's index.html.
   PATHS.presenceActivity,
   '/notifications',
   PATHS.hooks,
@@ -631,8 +770,8 @@ export function createApp(options: AppOptions): CreatedApp {
     HARD_CAP_MAX_FILE_SIZE,
   );
   const now = options.now ?? Date.now;
-  // Per-member ACTIVITY tracker (idle/working/blocked). Filled by
-  // `POST /presence/activity`, read on roster GETs, and decayed via TTL
+  // Per-member WORK STATE tracker (idle/working/blocked). Filled by
+  // `POST /presence/work-state`, read on roster GETs, and decayed via TTL
   // so a runner that crashes mid-turn doesn't leave the member stuck
   // "working"/"blocked" forever — stale state resolves back to idle.
   // Orthogonal to connection presence (which the broker's presence registry
@@ -640,8 +779,21 @@ export function createApp(options: AppOptions): CreatedApp {
   // of the running broker, not config or persisted truth.
   const workState: WorkStateTracker = createWorkStateTracker(now);
 
+  // The dependencies `enrichPresence` reads, assembled once so the two
+  // routes that publish a `Presence` — `GET /roster` and
+  // `GET /team/status` — cannot be wired differently. `at` is passed in
+  // rather than read inside, so every presence in one response is
+  // evaluated against a single instant.
+  const presenceEnrichment = (at: number): PresenceEnrichmentOptions => ({
+    workState,
+    members,
+    ...(captureHealth !== undefined ? { captureHealth } : {}),
+    ...(diagnostics !== undefined ? { diagnostics } : {}),
+    now: at,
+  });
+
   // External Notifications dispatcher — owned here (not by run.ts)
-  // because the delivery policy reads the in-process activity
+  // because the delivery policy reads the in-process work-state
   // tracker. The sweep interval expires stale offline-queue rows,
   // force-delivers starved busy-waits, and backstops debounce
   // timers; `recover()` re-dispatches deliveries a restart stranded
@@ -653,7 +805,7 @@ export function createApp(options: AppOptions): CreatedApp {
       broker,
       members,
       ...(channels !== undefined ? { channels } : {}),
-      activity: workState,
+      workState,
       logger,
       now,
     });
@@ -1086,7 +1238,7 @@ export function createApp(options: AppOptions): CreatedApp {
     // only origin the page will postMessage to — required in iframe
     // mode so a malicious embedding page can't intercept the message.
     const mode = c.req.query('mode') === 'iframe' ? 'iframe' : 'tab';
-    const parentOrigin = c.req.query('parentOrigin') ?? '';
+    const parentOrigin = readRenamedQuery(c, CONNECT_PLATFORM_RENAMES, logger).parent_origin ?? '';
     return c.html(renderConnectPlatformPage(code, { mode, parentOrigin }));
   });
 
@@ -1364,77 +1516,21 @@ export function createApp(options: AppOptions): CreatedApp {
   });
 
   app.get(PATHS.roster, auth, async (c) => {
-    // Compatibility activity projection. `working` is now derived ONLY
-    // from recent broker-recorded tool/outbound evidence. Turn lifecycle
-    // and message consumption remain scheduling telemetry and can never
-    // make a member look capable. `blocked` stays runner telemetry.
-    //
-    // `captureHealth` follows a DIFFERENT absence rule from `activity`,
-    // deliberately. `activity` omits the field for idle members and a
-    // reader treats absence as idle — safe, because idle is the benign
-    // default. Capture health has no benign default: absence has to
-    // mean "this broker has no opinion," so a broker that CAN evaluate
-    // it emits `ok` explicitly rather than omitting. Reading an absent
-    // field as healthy is exactly the conflation this exists to remove,
-    // and it is only absent when the store isn't wired at all.
-    const presences = broker.listPresences(options.version).map((p) => {
-      const schedulingState = workState.getActivity(p.name);
-      const actedRecently =
-        p.executor?.lastActedAt !== null &&
-        p.executor?.lastActedAt !== undefined &&
-        now() - p.executor.lastActedAt <= WORK_STATE_TTL_MS;
-      const activity =
-        schedulingState === 'blocked'
-          ? ('blocked' as const)
-          : actedRecently
-            ? ('working' as const)
-            : ('idle' as const);
-      const health = captureHealth?.forMember(p.name);
-      // `pending` is internal — an aged-out marker hasn't earned a
-      // claim yet, and healthy lag means every turn is briefly
-      // unmatched. Surfacing it would flicker on healthy traffic, so it
-      // maps to `ok`: no gap has been established.
-      //
-      // `unevaluated` is NOT collapsed into `ok`. A Codex member is not
-      // assessed by the exact-match join at all, and reporting them
-      // healthy would be this broker claiming a property it never
-      // evaluated — the same conflation the whole signal exists to
-      // remove. It stays distinct from an absent field, which means a
-      // broker too old to have an opinion at all.
-      const captureField =
-        health === undefined
-          ? {}
-          : {
-              captureHealth:
-                health.state === 'gap'
-                  ? ('gap' as const)
-                  : health.state === 'unevaluated'
-                    ? ('unevaluated' as const)
-                    : ('ok' as const),
-            };
-      // Retained completeness failures for this member that have not
-      // been observed to recover. Same absence rule as `captureHealth`
-      // and NOT `activity`'s: absent means this broker retains no
-      // diagnostics and has no opinion — never "this member is clean".
-      // `0` is the positive statement that it looked and found none.
-      //
-      // This is the field an agent reads about ITSELF. Every failure it
-      // counts is one the product already detected and, until now,
-      // wrote to a terminal nobody kept — so the agent could not find
-      // out that its own capture had failed.
-      const diagField =
-        diagnostics === undefined
-          ? {}
-          : {
-              diagnosticsUnresolved: diagnostics.unresolved(p.name).length,
-              diagnosticsRetention: diagnostics.health(),
-            };
-      if (activity === 'idle') return { ...p, ...captureField, ...diagField };
-      return { ...p, activity, busy: activity === 'working', ...captureField, ...diagField };
-    });
+    // One `Presence` type, one population: the enrichment lives in
+    // `enrichPresence` so `GET /team/status` publishes the same axes for
+    // the same member on the same tick. Adding a field here without
+    // adding it there is what made `captureHealth` and
+    // `diagnosticsUnresolved` say "this broker has no opinion" on a
+    // broker that had one.
+    const at = now();
+    const presences = broker
+      .listPresences(options.version)
+      .map((p) => enrichPresence(p, presenceEnrichment(at)));
     return c.json({
       teammates: teammatesFromMembers(members),
       connected: presences,
+      workStateWindowMs: WORK_STATE_TTL_MS,
+      // @deprecated previous spelling, same value, removed in the next minor.
       activityWindowMs: WORK_STATE_TTL_MS,
       restartPending: await restartPendingMembers(),
     });
@@ -1445,10 +1541,10 @@ export function createApp(options: AppOptions): CreatedApp {
     if (!hasPermission(member.permissions, 'members.manage')) {
       return c.json({ error: 'team status requires the members.manage permission' }, 403);
     }
-    const raw = c.req.query('stalledMs');
+    const raw = readRenamedQuery(c, TEAM_STATUS_RENAMES, logger).stalled_ms;
     const stalledAfterMs = raw === undefined ? null : Number(raw);
     if (stalledAfterMs !== null && (!Number.isSafeInteger(stalledAfterMs) || stalledAfterMs <= 0)) {
-      return c.json({ error: 'stalledMs must be a positive integer' }, 400);
+      return c.json({ error: 'stalled_ms must be a positive integer' }, 400);
     }
     return c.json(
       await composeTeamStatus({
@@ -1458,6 +1554,12 @@ export function createApp(options: AppOptions): CreatedApp {
         objectives,
         eventLog: broker.getEventLog(),
         activityStore,
+        // Same enrichment the roster applies. `workState` is required
+        // on the options so a caller cannot compose a report whose
+        // `Presence` is quietly a different shape from the roster's.
+        workState,
+        ...(captureHealth !== undefined ? { captureHealth } : {}),
+        ...(diagnostics !== undefined ? { diagnostics } : {}),
         generatedAt: now(),
         stalledAfterMs,
       }),
@@ -1466,7 +1568,7 @@ export function createApp(options: AppOptions): CreatedApp {
 
   /**
    * Runner-driven presence report: records the authenticated member's
-   * live ACTIVITY transition (idle/working/blocked). Bearer-only —
+   * WORK STATE transition (idle/working/blocked). Bearer-only —
    * humans on the web UI never report this; the runner is the only
    * thing that knows.
    *
@@ -1479,18 +1581,41 @@ export function createApp(options: AppOptions): CreatedApp {
    * to heartbeat (re-post the current non-idle state) every ~10s while
    * still working/blocked so the TTL stays fresh; on transition to idle
    * they post `state: 'idle'` once and drop the entry.
+   *
+   * Registered at BOTH `PATHS.presenceWorkState` (canonical) and
+   * `PATHS.presenceActivity` (the previous spelling) for one release, by
+   * the same handler, so an un-upgraded runner keeps reporting. The
+   * old path additionally answers `Deprecation: true` and a
+   * `Link: …; rel="successor-version"` header and logs one line naming
+   * the member, so a stale client is findable in a proxy log or the
+   * broker's own log before the path is removed in the next minor.
    */
-  app.post(PATHS.presenceActivity, auth, async (c) => {
+  const reportWorkState = async (
+    c: Context<AppBindings>,
+    deprecatedPath: string | null,
+  ): Promise<Response> => {
+    if (deprecatedPath !== null) {
+      c.header('Deprecation', 'true');
+      c.header('Link', `<${PATHS.presenceWorkState}>; rel="successor-version"`);
+    }
     const tokenId = c.get('tokenId');
     if (tokenId === null) {
       // Cookie + JWT subscribers don't have a runner context to report.
-      return c.json({ error: 'presence/activity is runner-only (bearer auth required)' }, 403);
+      return c.json({ error: 'presence work-state is runner-only (bearer auth required)' }, 403);
     }
     const member = c.get('member');
+    if (deprecatedPath !== null) {
+      logger.warn('deprecated route', {
+        route: deprecatedPath,
+        successor: PATHS.presenceWorkState,
+        member: member.name,
+        removedIn: 'the next minor',
+      });
+    }
     const raw = await c.req.json().catch(() => null);
-    const parsed = ActivityReportSchema.safeParse(raw);
+    const parsed = WorkStateReportSchema.safeParse(raw);
     if (!parsed.success) {
-      return c.json({ error: 'invalid activity report', details: parsed.error.issues }, 400);
+      return c.json({ error: 'invalid work state report', details: parsed.error.issues }, 400);
     }
     workState.report(member.name, parsed.data.state);
     // A transition out of `working` is the `if_busy: wait` flush
@@ -1500,7 +1625,7 @@ export function createApp(options: AppOptions): CreatedApp {
     if (notificationDispatcher && parsed.data.state !== 'working') {
       const dispatcher = notificationDispatcher;
       queueMicrotask(() => {
-        void dispatcher.onActivityReport(member.name, parsed.data.state).catch((err) => {
+        void dispatcher.onWorkStateReport(member.name, parsed.data.state).catch((err) => {
           logger.warn('notification busy-flush failed', {
             member: member.name,
             error: err instanceof Error ? err.message : String(err),
@@ -1509,7 +1634,10 @@ export function createApp(options: AppOptions): CreatedApp {
       });
     }
     return c.body(null, 204);
-  });
+  };
+
+  app.post(PATHS.presenceWorkState, auth, (c) => reportWorkState(c, null));
+  app.post(PATHS.presenceActivity, auth, (c) => reportWorkState(c, PATHS.presenceActivity));
 
   app.post(PATHS.push, auth, async (c) => {
     const raw = await c.req.json().catch(() => null);
@@ -1551,8 +1679,8 @@ export function createApp(options: AppOptions): CreatedApp {
     let pushContext: { from: string; recipients?: string[] } = { from: member.name };
     if (channels) {
       const threadTag = parsed.data.data?.thread;
-      if (typeof threadTag === 'string' && threadTag.startsWith('chan:')) {
-        const channelId = threadTag.slice('chan:'.length);
+      if (typeof threadTag === 'string' && threadTag.startsWith(CHANNEL_THREAD_PREFIX)) {
+        const channelId = threadTag.slice(CHANNEL_THREAD_PREFIX.length);
         if (channelId !== GENERAL_CHANNEL_ID) {
           const ch = channels.get(channelId);
           if (!ch) {
@@ -1724,12 +1852,18 @@ export function createApp(options: AppOptions): CreatedApp {
       return c.json({ channel: summary, members });
     });
 
+    // Update a channel: slug and/or description, in one call. This is
+    // the whole of the mutation surface — there is no separate rename
+    // route, and `ChannelStore.rename` is a deprecated shim over
+    // `update({ slug })`. `rename` survives only as a
+    // `ChannelAuditAction`, where it names a recorded event rather than
+    // an operation.
     app.patch(`${PATHS.channels}/:slug`, auth, async (c) => {
       const slug = c.req.param('slug');
       const raw = await c.req.json().catch(() => null);
       const parsed = UpdateChannelRequestSchema.safeParse(raw);
       if (!parsed.success) {
-        return c.json({ error: 'invalid rename input', details: parsed.error.issues }, 400);
+        return c.json({ error: 'invalid channel update input', details: parsed.error.issues }, 400);
       }
       const ch = channels.getBySlug(slug);
       if (!ch) return c.json({ error: `no such channel: ${slug}` }, 404);
@@ -2024,11 +2158,16 @@ export function createApp(options: AppOptions): CreatedApp {
       }
       const num = (raw: string | undefined): number | undefined =>
         raw === undefined ? undefined : Number(raw);
+      // This read walks OLDEST-FIRST, so its cursor is `after_*`. The
+      // activity read walks newest-first and spells the same mechanism
+      // `before_*`. Both directions are correct; what was wrong was one
+      // name for both, which is a paging loop that never terminates.
+      const cursorQuery = readRenamedQuery(c, AFTER_CURSOR_RENAMES, logger);
       const from = num(c.req.query('from'));
       const to = num(c.req.query('to'));
       const limit = num(c.req.query('limit'));
-      const cursorTs = num(c.req.query('cursor_ts'));
-      const cursorId = num(c.req.query('cursor_id'));
+      const cursorTs = num(cursorQuery.after_ts);
+      const cursorId = num(cursorQuery.after_id);
       const signalRaw = c.req.query('signal');
       const nameFilter = c.req.query('event');
 
@@ -2092,11 +2231,13 @@ export function createApp(options: AppOptions): CreatedApp {
           403,
         );
       }
+      // Oldest-first, like `/telemetry` — hence `after_*`.
+      const cursorQuery = readRenamedQuery(c, AFTER_CURSOR_RENAMES, logger);
       const fromRaw = c.req.query('from');
       const toRaw = c.req.query('to');
       const limitRaw = c.req.query('limit');
-      const cursorTsRaw = c.req.query('cursor_ts');
-      const cursorIdRaw = c.req.query('cursor_id');
+      const cursorTsRaw = cursorQuery.after_ts;
+      const cursorIdRaw = cursorQuery.after_id;
       const from = fromRaw !== undefined ? Number(fromRaw) : undefined;
       const to = toRaw !== undefined ? Number(toRaw) : undefined;
       const limit = limitRaw !== undefined ? Number(limitRaw) : undefined;
@@ -2468,7 +2609,7 @@ export function createApp(options: AppOptions): CreatedApp {
               event,
               source_slug: source.slug,
               source_kind: source.kind,
-              thread: `tool:${source.slug}`,
+              thread: toolThreadTag(source.slug),
               actor,
               ...(opts.extra ?? {}),
             },
@@ -2897,6 +3038,15 @@ export function createApp(options: AppOptions): CreatedApp {
       }
 
       // Broker-side audit — authoritative record of the invocation.
+      //
+      // This writes a `tool_action` with BROKER-AUDIT provenance: the
+      // same activity kind the runners emit, from the other producer.
+      // An agent-native `tool_action` carries the agent's own redacted
+      // payload and a `toolUseId`; this one carries metadata only, no
+      // `toolUseId`, `agent: 'broker'` and `source: 'tool_source'`, and
+      // replaces an oversized `input` with `{ truncated: true }`. A
+      // reader must not assume a `tool_action` came from an agent.
+      //
       // Guarded: the activity store is optional, and an audit failure
       // must never fail a successful invoke. The full result payload
       // already flows to the runner; record meta only.
@@ -3035,7 +3185,7 @@ export function createApp(options: AppOptions): CreatedApp {
               event,
               secret_slug: secret.slug,
               env_name: secret.envName,
-              thread: `secret:${secret.slug}`,
+              thread: secretThreadTag(secret.slug),
               actor,
               ...(opts.extra ?? {}),
             },
@@ -3183,7 +3333,7 @@ export function createApp(options: AppOptions): CreatedApp {
               : 'disabled';
         queueMicrotask(() => {
           void publishSecretEvent(updated, event, member.name, {
-            body: `Secret '${updated.slug}' was ${event} by ${member.name}. Running agents reload it at their next idle boundary; opted-out or older runners use their next start.`,
+            body: `Secret '${updated.slug}' was ${event} by ${member.name}. Metadata changes carry no environment event: running agents keep their current value until their next runner start.`,
             recipients: event === 'disabled' ? preRecipients : secretRecipients(updated),
           });
         });
@@ -3456,7 +3606,7 @@ export function createApp(options: AppOptions): CreatedApp {
               event,
               variable_slug: variable.slug,
               env_name: variable.envName,
-              thread: `variable:${variable.slug}`,
+              thread: variableThreadTag(variable.slug),
               actor,
               ...(opts.extra ?? {}),
             },
@@ -3801,7 +3951,7 @@ export function createApp(options: AppOptions): CreatedApp {
               kind: 'notification_endpoint',
               event,
               endpoint_slug: endpoint.slug,
-              thread: `hook:${endpoint.slug}`,
+              thread: hookThreadTag(endpoint.slug),
               actor,
             },
           },
@@ -4023,27 +4173,32 @@ export function createApp(options: AppOptions): CreatedApp {
     });
 
     // GET /notifications/endpoints/:slug/deliveries — receipts,
-    // newest first (notifications.manage). `limit` ≤ 500, `before`
-    // is an epoch-ms cursor.
+    // newest first (notifications.manage). `limit` ≤ 500, `before_ts`
+    // is an exclusive epoch-ms upper bound on `ts` — a bound, not a
+    // cursor: receipts sharing its millisecond are skipped, which is
+    // why the name carries its arity.
     app.get(`${PATHS.notificationEndpoints}/:slug/deliveries`, auth, (c) => {
       const denied = requireNotificationsManage(c);
       if (denied) return denied;
       const endpoint = notifications.getBySlug(c.req.param('slug'));
       if (!endpoint) return c.json({ error: 'no such endpoint' }, 404);
       const limitRaw = c.req.query('limit');
-      const beforeRaw = c.req.query('before');
+      // Scalar, and named for its arity: one bound on `ts`, no tiebreak.
+      // Receipts are not enumerable across a shared millisecond and this
+      // name says so, next to `/history`'s `before_ts` + `before_id`.
+      const beforeRaw = readRenamedQuery(c, DELIVERIES_CURSOR_RENAMES, logger).before_ts;
       const limit = limitRaw !== undefined ? Number(limitRaw) : undefined;
-      const before = beforeRaw !== undefined ? Number(beforeRaw) : undefined;
+      const beforeTs = beforeRaw !== undefined ? Number(beforeRaw) : undefined;
       if (
         (limit !== undefined && !Number.isFinite(limit)) ||
-        (before !== undefined && !Number.isFinite(before))
+        (beforeTs !== undefined && !Number.isFinite(beforeTs))
       ) {
-        return c.json({ error: 'limit/before must be numbers' }, 400);
+        return c.json({ error: 'limit/before_ts must be numbers' }, 400);
       }
       return c.json({
         deliveries: notifications.listDeliveries(endpoint.id, {
           ...(limit !== undefined ? { limit } : {}),
-          ...(before !== undefined ? { before } : {}),
+          ...(beforeTs !== undefined ? { beforeTs } : {}),
         }),
       });
     });
@@ -4276,9 +4431,31 @@ export function createApp(options: AppOptions): CreatedApp {
   // never blocks the HTTP response.
   if (objectives !== undefined) {
     /**
+     * Is this member on the objective's thread audience?
+     *
+     * The objective party — assignee, originator, explicit watchers —
+     * plus every `members.manage` holder, who are implicit thread
+     * participants on every objective (observable-by-default for
+     * member managers).
+     *
+     * This is the single statement of the rule.
+     * `objectiveThreadMembers` expands it into the name set the push
+     * fan-out and the `/discuss` gate use; `GET /objectives/:id` asks
+     * it directly. Read, post and push therefore cannot drift apart:
+     * a member the broker pushes an objective's contents to is a
+     * member who can open that objective.
+     */
+    const onObjectiveThread = (objective: Objective, member: Member): boolean =>
+      objective.assignee === member.name ||
+      objective.originator === member.name ||
+      objective.watchers.includes(member.name) ||
+      hasPermission(member.permissions, 'members.manage');
+
+    /**
      * The set of names that belong to an objective's thread.
-     * Originator + assignee + explicit watchers + every `members.manage`
-     * holder. For a `reassigned`
+     * Every member `onObjectiveThread` admits — originator + assignee
+     * + explicit watchers + every `members.manage` holder. For a
+     * `reassigned`
      * event, also include the previous assignee so they know the
      * objective left their plate. For a `watcher_removed` event,
      * also include the removed watcher so they get the exit
@@ -4292,12 +4469,12 @@ export function createApp(options: AppOptions): CreatedApp {
       objective: Objective,
       extraEvent?: ObjectiveEvent,
     ): Set<string> => {
+      // The party is named on the objective, so it belongs to the
+      // thread whether or not the name still resolves to a member.
       const names = new Set<string>([objective.assignee, objective.originator]);
       for (const w of objective.watchers) names.add(w);
-      // Members with `members.manage` are implicit thread participants
-      // on every objective (observable-by-default for member managers).
       for (const m of members.members()) {
-        if (m.permissions.includes('members.manage')) names.add(m.name);
+        if (onObjectiveThread(objective, m)) names.add(m.name);
       }
       if (extraEvent?.kind === 'reassigned') {
         const fromCs = extraEvent.payload.from;
@@ -4315,7 +4492,7 @@ export function createApp(options: AppOptions): CreatedApp {
       event: ObjectiveEvent,
       actor: string,
     ): Promise<void> => {
-      const threadKey = `obj:${objective.id}`;
+      const threadTag = objectiveThreadTag(objective.id);
       const primaryTargets = objectiveThreadMembers(objective, event);
       const body = systemMessageForEvent(objective, event.kind, event);
       // One multi-recipient push, not a per-target loop — see the
@@ -4340,7 +4517,7 @@ export function createApp(options: AppOptions): CreatedApp {
               event: event.kind,
               objective_id: objective.id,
               objective_status: objective.status,
-              thread: threadKey,
+              thread: threadTag,
               actor,
             },
           },
@@ -4402,14 +4579,22 @@ export function createApp(options: AppOptions): CreatedApp {
           .list(filter.status ? { status: filter.status } : {})
           .filter((o) => o.assignee === name || o.originator === name || o.watchers.includes(name));
 
-      const canListAny = hasPermission(member.permissions, 'objectives.create');
+      // `members.manage` holders are on every objective's thread and
+      // already read the open team-wide ledger through `/team/status`,
+      // so the list they get here is the one they are already pushed.
+      const canListAny =
+        hasPermission(member.permissions, 'objectives.create') ||
+        hasPermission(member.permissions, 'members.manage');
       if (!canListAny) {
         if (
           (filter.assignee && filter.assignee !== member.name) ||
           (filter.related && filter.related !== member.name)
         ) {
           return c.json(
-            { error: 'members without objectives.create may only list their own objectives' },
+            {
+              error:
+                "listing another member's objectives requires objectives.create or members.manage",
+            },
             403,
           );
         }
@@ -4427,20 +4612,25 @@ export function createApp(options: AppOptions): CreatedApp {
 
     // GET /objectives/:id
     //
-    // A thread participant (assignee, originator, watcher) can always
-    // view. Anyone with `objectives.create` can view any.
+    // The thread audience can always view: the objective party
+    // (assignee, originator, watcher) plus every `members.manage`
+    // holder — the same set the lifecycle fan-out pushes to and the
+    // same set `/discuss` accepts posts from. Anyone with
+    // `objectives.create` can view any.
     app.get(`${PATHS.objectives}/:id`, auth, (c) => {
       const member = c.get('member');
       const id = c.req.param('id');
       const obj = objectives.get(id);
       if (!obj) return c.json({ error: `no such objective: ${id}` }, 404);
-      const isParticipant =
-        obj.assignee === member.name ||
-        obj.originator === member.name ||
-        obj.watchers.includes(member.name);
-      if (!isParticipant && !hasPermission(member.permissions, 'objectives.create')) {
+      if (
+        !onObjectiveThread(obj, member) &&
+        !hasPermission(member.permissions, 'objectives.create')
+      ) {
         return c.json(
-          { error: 'not a thread participant; viewing requires objectives.create' },
+          {
+            error:
+              'viewing this objective requires being on its thread (assignee, originator, watcher, or members.manage) or holding objectives.create',
+          },
           403,
         );
       }
@@ -4698,6 +4888,48 @@ export function createApp(options: AppOptions): CreatedApp {
       }
     });
 
+    // POST /objectives/:id/reassign — requires `objectives.reassign`.
+    //
+    // The same act as the `assignee` field group on PATCH, under the
+    // verb every other layer already uses (`csuite objectives
+    // reassign`, `objectives_reassign`, `ObjectivesStore.reassign`,
+    // the `reassigned` event, the `objectives.reassign` leaf). The
+    // semantics are deliberately identical to that field group — same
+    // gate, same unknown-assignee 400, same idempotent no-op when the
+    // target is already the assignee — so the two spellings of one act
+    // can never disagree.
+    app.post(`${PATHS.objectives}/:id/reassign`, auth, async (c) => {
+      const member = c.get('member');
+      const id = c.req.param('id');
+      const current = objectives.get(id);
+      if (!current) return c.json({ error: `no such objective: ${id}` }, 404);
+      const raw = await c.req.json().catch(() => null);
+      const parsed = ReassignObjectiveRequestSchema.safeParse(raw);
+      if (!parsed.success) {
+        return c.json({ error: 'invalid reassign payload', details: parsed.error.issues }, 400);
+      }
+      const input = parsed.data;
+      if (!hasPermission(member.permissions, 'objectives.reassign')) {
+        return c.json({ error: 'changing the assignee requires objectives.reassign' }, 403);
+      }
+      if (!members.findByName(input.to)) {
+        return c.json({ error: `unknown assignee: ${input.to}` }, 400);
+      }
+      if (input.to === current.assignee) return c.json(current);
+      try {
+        const { objective: updated, events } = objectives.reassign(id, input, member.name);
+        queueMicrotask(() => {
+          for (const ev of events) {
+            void publishObjectiveEvent(updated, ev, member.name);
+          }
+        });
+        return c.json(updated);
+      } catch (err) {
+        const mapped = mapObjectivesError(err);
+        return c.json(mapped.body, mapped.status as 400 | 404 | 409 | 500);
+      }
+    });
+
     // POST /objectives/:id/discuss (thread members only)
     //
     // Discussion posts are real team messages with thread key
@@ -4749,7 +4981,7 @@ export function createApp(options: AppOptions): CreatedApp {
       }
       const discussAttachments = discussAttachmentsResult.canonical;
 
-      const threadKey = `obj:${id}`;
+      const threadTag = objectiveThreadTag(id);
       let canonical: Message | null = null;
       try {
         // Single multi-recipient push: one message id, one event-log
@@ -4764,7 +4996,7 @@ export function createApp(options: AppOptions): CreatedApp {
             data: {
               kind: 'objective_discuss',
               objective_id: id,
-              thread: threadKey,
+              thread: threadTag,
             },
             ...(discussAttachments.length > 0 ? { attachments: discussAttachments } : {}),
           },
@@ -4828,8 +5060,9 @@ export function createApp(options: AppOptions): CreatedApp {
           403,
         );
       }
-      const browserKind = c.req.query('clientKind');
-      const browserVersion = c.req.query('clientVersion');
+      const clientQuery = readRenamedQuery(c, SUBSCRIBE_CLIENT_RENAMES, logger);
+      const browserKind = clientQuery.client_kind;
+      const browserVersion = clientQuery.client_version;
       const reportedClient = c.req.header(CLIENT_IDENTITY_HEADER);
       const reportedRunner = c.req.header(RUNNER_IDENTITY_HEADER);
       if (browserKind !== undefined || browserVersion !== undefined) {
@@ -4857,7 +5090,10 @@ export function createApp(options: AppOptions): CreatedApp {
           const member = c.get('member');
           const reportedClient = c.req.header(CLIENT_IDENTITY_HEADER);
           const reportedRunner = c.req.header(RUNNER_IDENTITY_HEADER);
-          const browserVersion = c.req.query('clientVersion');
+          // Second read of the same parameter — the pre-check
+          // middleware above already emitted the deprecation signal for
+          // this request, so read without re-signalling.
+          const browserVersion = renamedQueryValue(c, CLIENT_VERSION_RENAME);
           const clientIdentity = (() => {
             if (reportedClient !== undefined) {
               if (reportedClient.length > 1024) return undefined;
@@ -5068,10 +5304,20 @@ export function createApp(options: AppOptions): CreatedApp {
 
     const limitQuery = c.req.query('limit');
     const limit = clampQueryLimit(limitQuery === undefined ? undefined : Number(limitQuery));
-    const beforeRaw = c.req.query('before');
-    const before = beforeRaw ? Number(beforeRaw) : undefined;
-    if (before !== undefined && !Number.isFinite(before)) {
-      return c.json({ error: 'invalid `before` parameter' }, 400);
+    // Newest-first, so `before_*` — and composite, so a page boundary
+    // that falls inside a shared millisecond does not swallow the rows
+    // on the far side of it. `before_ts` alone is still honoured (that
+    // is what the retired scalar `before` becomes) and is still lossy;
+    // `before_id` alone is a caller bug.
+    const cursorQuery = readRenamedQuery(c, HISTORY_CURSOR_RENAMES, logger);
+    const beforeTsRaw = cursorQuery.before_ts;
+    const beforeIdRaw = c.req.query('before_id');
+    const beforeTs = beforeTsRaw ? Number(beforeTsRaw) : undefined;
+    if (beforeTs !== undefined && !Number.isFinite(beforeTs)) {
+      return c.json({ error: 'invalid `before_ts` parameter' }, 400);
+    }
+    if (beforeIdRaw !== undefined && beforeTs === undefined) {
+      return c.json({ error: '`before_id` requires `before_ts`' }, 400);
     }
 
     const eventLog = broker.getEventLog();
@@ -5080,7 +5326,9 @@ export function createApp(options: AppOptions): CreatedApp {
       ...(withOther !== undefined ? { with: withOther } : {}),
       ...(channelId !== undefined ? { channel: channelId } : {}),
       limit,
-      ...(before !== undefined ? { before } : {}),
+      ...(beforeTs !== undefined
+        ? { before: { ts: beforeTs, id: beforeIdRaw ?? SCALAR_BOUND_ID } }
+        : {}),
     });
     return c.json({ messages });
   });
@@ -5171,57 +5419,56 @@ export function createApp(options: AppOptions): CreatedApp {
           403,
         );
       }
+      // Newest-first, so the cursor is `before_*`. `/telemetry` and
+      // `/genai` walk the other way and spell theirs `after_*`; the two
+      // used to share one name, and a client that reused this paging
+      // loop against `/telemetry` never terminated.
+      const cursorQuery = readRenamedQuery(c, BEFORE_CURSOR_RENAMES, logger);
       const fromRaw = c.req.query('from');
       const toRaw = c.req.query('to');
       const limitRaw = c.req.query('limit');
-      const cursorTsRaw = c.req.query('cursor_ts');
-      const cursorIdRaw = c.req.query('cursor_id');
+      const cursorTsRaw = cursorQuery.before_ts;
+      const cursorIdRaw = cursorQuery.before_id;
       const kindRaw = c.req.queries('kind');
 
-      const from = fromRaw !== undefined ? Number(fromRaw) : undefined;
-      const to = toRaw !== undefined ? Number(toRaw) : undefined;
-      const limit = limitRaw !== undefined ? Number(limitRaw) : undefined;
-      const cursorTs = cursorTsRaw !== undefined ? Number(cursorTsRaw) : undefined;
-      const cursorId = cursorIdRaw !== undefined ? Number(cursorIdRaw) : undefined;
-      if (from !== undefined && !Number.isFinite(from)) {
-        return c.json({ error: 'invalid `from` parameter' }, 400);
-      }
-      if (to !== undefined && !Number.isFinite(to)) {
-        return c.json({ error: 'invalid `to` parameter' }, 400);
-      }
-      if (limit !== undefined && !Number.isFinite(limit)) {
-        return c.json({ error: 'invalid `limit` parameter' }, 400);
-      }
-      if (
-        (cursorTs === undefined) !== (cursorId === undefined) ||
-        (cursorTs !== undefined && (!Number.isInteger(cursorTs) || cursorTs < 0)) ||
-        (cursorId !== undefined && (!Number.isInteger(cursorId) || cursorId < 0))
-      ) {
+      // Both halves or neither: a cursor with one half is a caller bug
+      // that would silently read from the start of the range. The
+      // schema below describes the PAIR, so it cannot see that the wire
+      // splits it across two independent params — hence this check
+      // first, on the raw strings.
+      if ((cursorTsRaw === undefined) !== (cursorIdRaw === undefined)) {
         return c.json({ error: 'invalid composite cursor' }, 400);
       }
-      // Validate each kind discriminator. Multiple ?kind= params
-      // are AND-combined at query time, OR-combined at the store
+      // Everything else is `ListActivityQuerySchema` — the declared
+      // contract for this query, `limit`'s cap included, enforced at the
+      // edge rather than left to the store to clamp. Multiple ?kind=
+      // params are AND-combined at query time, OR-combined at the store
       // level (row.kind IN (...)).
+      const parsedQuery = ListActivityQuerySchema.safeParse({
+        from: fromRaw !== undefined ? Number(fromRaw) : undefined,
+        to: toRaw !== undefined ? Number(toRaw) : undefined,
+        cursor:
+          cursorTsRaw !== undefined && cursorIdRaw !== undefined
+            ? { ts: Number(cursorTsRaw), id: Number(cursorIdRaw) }
+            : undefined,
+        kind: kindRaw !== undefined && kindRaw.length > 0 ? kindRaw : undefined,
+        limit: limitRaw !== undefined ? Number(limitRaw) : undefined,
+      });
+      if (!parsedQuery.success) {
+        return c.json({ error: 'invalid query', details: parsedQuery.error.issues }, 400);
+      }
+      const query = parsedQuery.data;
       const kinds: ActivityKind[] = [];
-      if (kindRaw) {
-        for (const k of kindRaw) {
-          const parsedKind = ActivityKindSchema.safeParse(k);
-          if (!parsedKind.success) {
-            return c.json({ error: `invalid kind: ${k}` }, 400);
-          }
-          kinds.push(parsedKind.data);
-        }
+      if (query.kind !== undefined) {
+        kinds.push(...(Array.isArray(query.kind) ? query.kind : [query.kind]));
       }
       const activity = activityStore.list({
         memberName: name,
-        from,
-        to,
-        before:
-          cursorTs !== undefined && cursorId !== undefined
-            ? { ts: cursorTs, id: cursorId }
-            : undefined,
+        from: query.from,
+        to: query.to,
+        before: query.cursor,
         kinds: kinds.length > 0 ? kinds : undefined,
-        limit,
+        limit: query.limit,
       });
       return c.json({ activity });
     });
@@ -5416,11 +5663,14 @@ export function createApp(options: AppOptions): CreatedApp {
         name: parsed.data.name,
         role: parsed.data.role,
         instructions: parsed.data.instructions ?? '',
-        // Preset names are accepted as compatibility/template input,
-        // but member authority is persisted as leaves. A later preset
-        // edit must not silently change an existing member.
+        // Leaves, and only leaves. The body is parsed by
+        // `MemberPermissionListSchema`, whose element type is
+        // `z.enum(PERMISSIONS)` after the legacy-alias preprocess, so a
+        // preset name 400s above and never reaches `resolvePermissions`.
+        // Authority is persisted as resolved leaves for the same reason
+        // it always was: an edit elsewhere must not silently change an
+        // existing member's authority.
         rawPermissions: [...resolvedPerms],
-        permissions: resolvedPerms,
         token,
       });
     } catch (err) {
@@ -5751,8 +6001,8 @@ export function createApp(options: AppOptions): CreatedApp {
             parsed.data.verb === 'compact'
               ? `${member.name} asked your runner to compact your context${parsed.data.reason ? `: ${parsed.data.reason}` : ''}.`
               : parsed.data.verb === 'reload'
-                ? `${member.name} asked your runner to reload its environment${parsed.data.reason ? `: ${parsed.data.reason}` : ''}. The current conversation is resumed.`
-                : `${member.name} asked your runner to clear your context${parsed.data.reason ? `: ${parsed.data.reason}` : ''}. Your instruction blocks and open objectives are re-delivered afterwards.`,
+                ? `${member.name} asked your runner to reload its environment${parsed.data.reason ? `: ${parsed.data.reason}` : ''}. Your agent restarts cold under refreshed instructions and environment; your instruction blocks and open objectives are re-delivered afterwards.`
+                : `${member.name} asked your runner to clear your context${parsed.data.reason ? `: ${parsed.data.reason}` : ''}. Your agent restarts cold under refreshed instructions; your instruction blocks and open objectives are re-delivered afterwards.`,
           level: 'notice',
           data: {
             kind: 'context_control',
@@ -5928,7 +6178,7 @@ export function createApp(options: AppOptions): CreatedApp {
       max: number,
     ): string | null {
       if (value === null || value.length <= max) return value;
-      diagnostics?.emit.enrollmentSourceLabelTruncated('source', 1);
+      diagnostics?.emit.enrollmentSourceLabelTruncated(1);
       logger.warn('enrollment source label truncated', {
         field,
         originalLength: value.length,
@@ -6162,7 +6412,6 @@ export function createApp(options: AppOptions): CreatedApp {
             role: parsed.data.role,
             instructions: parsed.data.instructions,
             rawPermissions: [...resolvedPerms],
-            permissions: resolvedPerms,
             token: placeholder,
           });
         } catch (err) {
@@ -6646,18 +6895,29 @@ export function composeSessionOnlineMessage(
   };
 }
 
-/** Project a LoadedMember into the public `Member` wire shape. */
-function loadedToMember(m: LoadedMember): {
-  name: string;
-  role: Role;
-  permissions: readonly Permission[];
-  instructions: string;
-} {
+/**
+ * Project a LoadedMember into the full `Member` wire shape.
+ *
+ * Typed as `Member` rather than an inline object literal on purpose:
+ * `Member extends Teammate`, so this projection owes every field the
+ * public `teammatesFromMembers` projection emits, and a declared return
+ * type is what makes a future omission a compile error. It used to
+ * drop `kind`, which meant a `members.manage` holder — the caller the
+ * member-management panel runs as — received rows a plain teammate's
+ * rows were a superset of, and the consumer rule for an absent `kind`
+ * is "render the neutral (agent) treatment": more permission, every
+ * human drawn as an agent.
+ *
+ * `identityId` is NOT here and is not on `Member` either. It stays
+ * server-internal by decision, not by oversight.
+ */
+function loadedToMember(m: LoadedMember): Member {
   return {
     name: m.name,
     role: m.role,
     permissions: m.permissions,
     instructions: m.instructions,
+    ...memberKindFields(m),
   };
 }
 

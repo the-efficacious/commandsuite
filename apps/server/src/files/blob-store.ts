@@ -1,5 +1,5 @@
 /**
- * Content-addressed blob storage.
+ * Content-addressed file-blob storage.
  *
  * Files are hashed with SHA-256 and stored under
  * `<baseDir>/<first-2-of-hash>/<rest-of-hash>`. Identical bytes

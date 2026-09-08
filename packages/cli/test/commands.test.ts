@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { Client } from 'csuite-sdk/client';
 import type { Message, Presence, PushResult, Teammate } from 'csuite-sdk/types';
 import { describe, expect, it } from 'vitest';
@@ -134,5 +136,57 @@ describe('runRosterCommand', () => {
     });
     const out = await runRosterCommand(client);
     expect(out).toBe('no members defined');
+  });
+});
+
+/**
+ * The top-level `USAGE` block is the CLI's primary discovery surface:
+ * every verb `main()` dispatches has to appear in it. The only
+ * exceptions are the hidden `mcp-bridge` verb and the aliases, which
+ * are named here so that adding another is a deliberate act.
+ *
+ * `src/index.ts` runs `main()` on import, so this reads the source
+ * text rather than importing the module.
+ */
+describe('top-level usage', () => {
+  const HIDDEN = new Set(['mcp-bridge']);
+  const ALIASES = new Set(['claude-code', 'vars', 'hooks']);
+  const source = readFileSync(fileURLToPath(new URL('../src/index.ts', import.meta.url)), 'utf8');
+
+  function captures(text: string, pattern: RegExp): string[] {
+    const found: string[] = [];
+    for (const match of text.matchAll(pattern)) {
+      const value = match[1];
+      if (value) found.push(value);
+    }
+    return found;
+  }
+
+  function usageBlock(): string {
+    const start = source.indexOf('const USAGE = `');
+    expect(start).toBeGreaterThanOrEqual(0);
+    const end = source.indexOf('\n`;\n', start);
+    expect(end).toBeGreaterThan(start);
+    return source.slice(start, end);
+  }
+
+  it('documents every dispatched verb and no others', () => {
+    const dispatched = [...new Set(captures(source, /case '([a-z][a-z0-9-]*)':/g))]
+      .filter((verb) => !HIDDEN.has(verb) && !ALIASES.has(verb))
+      .sort();
+    const documented = [...new Set(captures(usageBlock(), /^ {2}csuite (\S+)/gm))]
+      .filter((verb) => !verb.includes('<'))
+      .sort();
+    expect(documented).toEqual(dispatched);
+  });
+
+  it('gives `csuite team` exactly the subcommands runTeamCommand dispatches', () => {
+    const line = usageBlock()
+      .split('\n')
+      .find((candidate) => /^ {2}csuite team\s/.test(candidate));
+    expect(line).toBeDefined();
+    const listed = /^ {2}csuite team +(\S+)/.exec(line ?? '');
+    expect(listed).not.toBeNull();
+    expect(listed?.[1]?.split('|').sort()).toEqual(['get', 'set', 'status']);
   });
 });

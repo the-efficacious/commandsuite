@@ -1,5 +1,5 @@
 /**
- * Content-addressed blob storage seam for the team filesystem.
+ * Content-addressed file-blob storage seam for the team filesystem.
  *
  * The filesystem store owns metadata (paths, ACLs, refcounts) in SQL;
  * bytes live behind this interface, addressed by sha256. Streams are

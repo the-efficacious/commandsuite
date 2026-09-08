@@ -14,14 +14,20 @@ import type { MemberStore } from '../../src/members.js';
 /**
  * Lightweight `TeamStore` stand-in for tests that exercise `createApp`
  * without going through the full DB seed path. Implements the read
- * surface (`getTeam`, `getPresets`, `hasTeam`) plus minimal mutation
- * methods that update the in-memory team object so the new team API
- * handlers can be exercised without a database. Tests that do go
- * through `seedStores` should prefer the real DB-backed store.
+ * surface (`getTeam`, `getPresets`, `hasTeam`) plus the two team
+ * mutators, so the team API handlers can be exercised without a
+ * database. Tests that do go through `seedStores` should prefer the
+ * real DB-backed store.
+ *
+ * There is no preset mutator, because `TeamStore` no longer has one.
+ * `permissionPresets` on the seed `Team` still populates
+ * `getPresets()`: that is the legacy-load path, and a test that wants a
+ * preset-era member row supplies the row the old broker would have
+ * written rather than writing one through an API that no longer exists.
  */
 export function mockTeamStore(team: Team): TeamStore {
   let current: Team = { name: team.name, context: team.context };
-  let legacyPresets: PermissionPresets = { ...(team.permissionPresets ?? {}) };
+  const legacyPresets: PermissionPresets = { ...(team.permissionPresets ?? {}) };
   const snapshot = (): Team => ({ ...current });
   const store: Partial<TeamStore> = {
     getTeam: snapshot,
@@ -42,23 +48,6 @@ export function mockTeamStore(team: Team): TeamStore {
         context: patch.context ?? current.context,
       };
       return snapshot();
-    },
-    setPreset: (name, leaves) => {
-      legacyPresets = { ...legacyPresets, [name]: [...leaves] };
-    },
-    deletePreset: (name) => {
-      if (!(name in legacyPresets)) return false;
-      const next: PermissionPresets = { ...legacyPresets };
-      delete next[name];
-      legacyPresets = next;
-      return true;
-    },
-    membersReferencingPreset: (name, members) => {
-      const out: string[] = [];
-      for (const m of members.members()) {
-        if (m.rawPermissions.includes(name)) out.push(m.name);
-      }
-      return out;
     },
   };
   return store as TeamStore;
@@ -98,8 +87,16 @@ export async function seedStores(input: {
     name: input.team.name,
     context: input.team.context ?? '',
   });
+  // Legacy presets are seeded as the rows a pre-consolidation broker
+  // left on disk. There is no store method to write one any more, and a
+  // fixture that reached for one would be testing an API the product
+  // does not have.
+  const insertPreset = db.prepare(
+    `INSERT INTO permission_presets (name, permissions, updated_at, updated_by)
+     VALUES (?, ?, 0, NULL)`,
+  );
   for (const [name, leaves] of Object.entries(input.team.permissionPresets ?? {})) {
-    stores.team.setPreset(name, leaves);
+    insertPreset.run(name, JSON.stringify(leaves));
   }
   const tokens = new SqliteTokenStore(db);
   for (const m of input.members) {
@@ -108,7 +105,6 @@ export async function seedStores(input: {
       role: m.role,
       instructions: m.instructions ?? '',
       rawPermissions: m.rawPermissions ?? (m.permissions as string[] | undefined) ?? [],
-      permissions: m.permissions ?? [],
       totpSecret: m.totpSecret ?? null,
     });
     await tokens.insert({

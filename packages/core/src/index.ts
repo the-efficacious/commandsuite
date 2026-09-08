@@ -112,9 +112,11 @@ export {
   findEnvRivalForMember,
 } from './env-namespace.js';
 export {
+  beforeCursor,
   CHANNEL_THREAD_PREFIX,
   channelThreadTag,
   clampQueryLimit,
+  compareNewestFirst,
   DEFAULT_QUERY_LIMIT,
   type EventLog,
   type EventLogAppendOptions,
@@ -122,12 +124,22 @@ export {
   type EventLogTailOptions,
   feedVisibleTo,
   GENERAL_CHANNEL_ID,
+  HOOK_THREAD_PREFIX,
+  hookThreadTag,
   InMemoryEventLog,
   isScopedThreadTag,
   isSecretThread,
   MAX_QUERY_LIMIT,
   OBJECTIVE_THREAD_PREFIX,
+  objectiveThreadTag,
+  SCALAR_BOUND_ID,
   SECRET_THREAD_PREFIX,
+  secretThreadTag,
+  THREAD_TAG_PREFIXES,
+  TOOL_THREAD_PREFIX,
+  toolThreadTag,
+  VARIABLE_THREAD_PREFIX,
+  variableThreadTag,
 } from './event-log.js';
 export {
   decryptFieldPortable,
@@ -303,9 +315,13 @@ export {
   parseOtlpMetrics,
 } from './otlp-parse.js';
 export {
+  enrichPresence,
+  type PresenceEnrichmentOptions,
+} from './presence-enrichment.js';
+export {
   type DispatchDeps,
   dispatchPush,
-  type PushPayload,
+  type WebPushPayload,
 } from './push-dispatch.js';
 export { shouldPush } from './push-policy.js';
 export type {
@@ -399,6 +415,7 @@ export {
   type ExecuteCustomToolInput,
   executeCustomTool,
   TOOL_RESULT_MAX_BYTES,
+  TOOL_RESULT_TEXT_BLOCK_MAX_BYTES,
   type ToolCallResult,
 } from './tool-sources/custom-executor.js';
 export {

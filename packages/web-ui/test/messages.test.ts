@@ -79,7 +79,7 @@ describe('appendMessages', () => {
       msg({ id: 'a', ts: 2, body: 'second' }),
       msg({ id: 'b', ts: 1, body: 'first' }),
     ]);
-    // Overlapping re-append (simulates a reconnect backfill).
+    // Overlapping re-append (simulates a reconnect hydration).
     appendMessages('director-1', [msg({ id: 'a', ts: 2, body: 'second' })]);
     const primary = threadMessages(PRIMARY_THREAD);
     expect(primary.map((m) => m.id)).toEqual(['b', 'a']);
@@ -99,7 +99,7 @@ describe('appendMessages', () => {
 describe('appendMessages out-of-order', () => {
   it('sorts a backwards-in-time arrival into place (slow path)', () => {
     appendMessages('director-1', [msg({ id: 'a', ts: 3 }), msg({ id: 'b', ts: 4 })]);
-    // A reconnect backfill delivers an older message after newer ones.
+    // A reconnect hydration delivers an older message after newer ones.
     appendMessages('director-1', [msg({ id: 'c', ts: 1 })]);
     expect(threadMessages(PRIMARY_THREAD).map((m) => m.id)).toEqual(['c', 'a', 'b']);
   });

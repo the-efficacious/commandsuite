@@ -2,11 +2,12 @@
  * Member activity stream store.
  *
  * Append-only timeline per member, capturing everything the member's
- * runner observed, normalized from each agent's native instrumentation:
- * LLM exchanges and tool actions (Claude Code OTEL export, codex
- * app-server stream) plus objective lifecycle markers
- * (`objective_open` / `objective_close`). Objective traces are a
- * view over this stream — you query by time range bounded by the
+ * runner observed, normalized from each agent's native instrumentation
+ * (Claude Code OTEL export, codex app-server stream). This store is
+ * kind-agnostic: it persists whatever the `ActivityEvent` union in
+ * `csuite-sdk/types` admits, and that union is the authoritative list
+ * of kinds. Objective traces are a view over this stream — you query
+ * by time range bounded by the `objective_open` / `objective_close`
  * markers for a given objectiveId.
  *
  * The store is a thin wrapper around SQLite plus an in-process

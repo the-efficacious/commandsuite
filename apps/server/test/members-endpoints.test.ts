@@ -16,6 +16,7 @@ import {
   registerSecretValues,
   SqliteSessionStore,
 } from 'csuite-core';
+import { PATHS } from 'csuite-sdk/protocol';
 import type { Member, Team, Teammate } from 'csuite-sdk/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { openDatabase } from '../src/db.js';
@@ -394,5 +395,63 @@ describe('DELETE /members/:name', () => {
       headers: authed(ADMIN_TOKEN),
     });
     expect(res.status).toBe(204);
+  });
+});
+
+/**
+ * A role lives in the member store. The presence registry ALSO carries
+ * one, stamped at first register and never refreshed
+ * (`registerOrGet` is first-register-wins), so after a PATCH the two
+ * disagreed and one response carried both answers side by side.
+ */
+describe('role projections after an edit', () => {
+  it('a role edit reaches every projection that carries a role', async () => {
+    const { app } = await makeApp();
+    const patch = await app.request('/members/scout', {
+      method: 'PATCH',
+      headers: { ...authed(ADMIN_TOKEN), 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        role: { title: 'senior engineer', description: 'leads scouting' },
+      }),
+    });
+    expect(patch.status).toBe(200);
+
+    const roster = (await (
+      await app.request('/roster', { headers: authed(ADMIN_TOKEN) })
+    ).json()) as {
+      teammates: Teammate[];
+      connected: Array<{ name: string; role: unknown }>;
+    };
+    // Whole-Role deep equality for EVERY member, so a fix that
+    // refreshed only the title, only the edited member, or only the
+    // first presence fails here.
+    expect(roster.connected.map((p) => [p.name, p.role]).sort()).toEqual(
+      roster.teammates.map((t) => [t.name, t.role]).sort(),
+    );
+
+    const status = (await (
+      await app.request(PATHS.teamStatus, { headers: authed(ADMIN_TOKEN) })
+    ).json()) as {
+      members: Array<{ member: { role: unknown }; presence: { role: unknown } | null }>;
+    };
+    // Guard against a vacuous pass if the harness ever stops seeding.
+    expect(status.members.every((r) => r.presence !== null)).toBe(true);
+    expect(status.members.map((r) => r.presence?.role ?? null)).toEqual(
+      status.members.map((r) => r.member.role),
+    );
+  });
+
+  it('keeps a presence whose name is not a member', async () => {
+    const { app, broker } = await makeApp();
+    await broker.register('ghost');
+    const roster = (await (
+      await app.request('/roster', { headers: authed(ADMIN_TOKEN) })
+    ).json()) as {
+      connected: Array<{ name: string; role: unknown }>;
+    };
+    // The `?? p.role` fallback must not drop the row or throw.
+    const ghost = roster.connected.find((p) => p.name === 'ghost');
+    expect(ghost).toBeDefined();
+    expect(ghost?.role).toBeNull();
   });
 });

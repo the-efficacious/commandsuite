@@ -15,7 +15,7 @@
  *   2. Open the WebSocket at `/members/:name/activity/stream`.
  *   3. Every incoming message event is a JSON-encoded `ActivityRow`.
  *      Merge into the list, de-duping by `id` so overlap with the
- *      hydration backfill after a reconnect doesn't double-render.
+ *      hydration after a reconnect doesn't double-render.
  *
  * Reconnect: WebSocket doesn't auto-reconnect. We roll our own with
  * exponential backoff (1s → 30s cap, reset on successful open).
@@ -66,7 +66,7 @@ export const memberActivityExhausted = signal(false);
 
 export interface StartAgentActivityOptions {
   name: string;
-  /** Backfill depth on hydrate. Default 200 (max). */
+  /** Row depth to hydrate. Default 200 (max). */
   hydrationLimit?: number;
   /** Surface errors to the page. */
   onError?: (err: unknown) => void;
