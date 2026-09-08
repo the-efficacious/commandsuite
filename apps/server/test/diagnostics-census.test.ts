@@ -251,7 +251,19 @@ const APP_IN_SCOPE = [
  * they replace: invalid/refused frames cannot settle a row, and `deferred`
  * explicitly preserves it.
  */
-const TOTAL_SITES = 79;
+/**
+ * 79 → 80 with D6's compat window. `app.ts`'s `deprecated route` warn
+ * fires when a runner still POSTs the pre-D6 `/presence/activity`; it
+ * is OUT of scope for retention, and deliberately so. Nothing about it
+ * is a completeness claim: no capture is missing, no member's record
+ * has a hole, and the broker did the work the caller asked for. It is
+ * an operational log whose whole job is to be greppable in a proxy or
+ * broker log so the stale client can be found before the path is
+ * removed in the next minor — a deployment fact with a known end date,
+ * not a diagnostic a member should read about themselves. When the
+ * route goes, so does the site, and this number returns to 79.
+ */
+const TOTAL_SITES = 80;
 
 function messagesIn(file: string): string[] {
   let src: string | null = null;

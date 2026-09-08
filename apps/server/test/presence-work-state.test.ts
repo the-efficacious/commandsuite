@@ -1,17 +1,22 @@
 /**
- * `POST /presence/activity` + roster integration tests.
+ * `POST /presence/work-state` + roster integration tests.
  *
  * Pins:
- *   - Bearer-auth subscriber can report an activity state and it
- *     surfaces on `/roster` as `connected[i].activity` plus the
- *     back-compat `busy` mirror (busy === activity === 'working').
+ *   - Bearer-auth subscriber can report a work state and it surfaces
+ *     on `/roster` as `connected[i].workState`, the D6-deprecated
+ *     `activity` twin, and the lossy `busy` mirror
+ *     (busy === workState === 'working').
  *   - `blocked` surfaces distinctly and reads as NOT busy.
  *   - Cookie-auth (web UI) callers receive 403 — the runner is the
- *     only thing that should be filing activity reports.
+ *     only thing that should be filing work-state reports.
  *   - Reporting `state: 'idle'` clears the entry immediately.
  *   - Stale entries (past the TTL) auto-resolve to idle on the next
  *     roster read.
- *   - Member deletion forgets any pending activity entry.
+ *   - Member deletion forgets any pending work-state entry.
+ *
+ * The pre-D6 `/presence/activity` path is covered separately by
+ * `presence-work-state-compat.test.ts`, which is the file that holds
+ * the two routes to the same answer.
  */
 
 import {
@@ -29,11 +34,11 @@ import { createMemberStore } from '../src/members.js';
 import { silentLogger } from './helpers/logger.js';
 import { mockTeamStore } from './helpers/test-stores.js';
 
-const ADMIN_TOKEN = 'csuite_activity_test_admin_token';
-const AGENT_TOKEN = 'csuite_activity_test_agent_token';
+const ADMIN_TOKEN = 'csuite_work_state_test_admin_token';
+const AGENT_TOKEN = 'csuite_work_state_test_agent_token';
 
 const TEAM: Team = {
-  name: 'activity-test',
+  name: 'work-state-test',
   context: '',
   permissionPresets: {},
 };
@@ -117,18 +122,18 @@ async function rosterScout(
 
 afterEach(() => vi.restoreAllMocks());
 
-describe('POST /presence/activity', () => {
-  it('accepts legacy working telemetry without projecting executor liveness', async () => {
+describe('POST /presence/work-state', () => {
+  it('accepts scheduling working telemetry without projecting executor liveness', async () => {
     const { app } = await makeApp();
 
     const post = await app.request(
-      '/presence/activity',
+      '/presence/work-state',
       authBearer(AGENT_TOKEN, { state: 'working' }),
     );
     expect(post.status).toBe(204);
 
     const scout = await rosterScout(app);
-    expect(scout?.activity).toBeUndefined();
+    expect(scout?.workState).toBeUndefined();
     expect(scout?.busy).toBeUndefined();
 
     const roster = await app.request('/roster', {
@@ -136,18 +141,21 @@ describe('POST /presence/activity', () => {
       headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
     });
     const body = (await roster.json()) as RosterResponse;
+    expect(body.workStateWindowMs).toBe(WORK_STATE_TTL_MS);
+    // D6 compat window: the pre-D6 spelling carries the same number
+    // until it is removed in the next minor.
     expect(body.activityWindowMs).toBe(WORK_STATE_TTL_MS);
     const alice = body.connected.find((p) => p.name === 'alice');
     // Never reported → idle → both fields absent.
-    expect(alice?.activity).toBeUndefined();
+    expect(alice?.workState).toBeUndefined();
     expect(alice?.busy).toBeFalsy();
   });
 
   it('surfaces blocked distinctly and as NOT busy', async () => {
     const { app } = await makeApp();
-    await app.request('/presence/activity', authBearer(AGENT_TOKEN, { state: 'blocked' }));
+    await app.request('/presence/work-state', authBearer(AGENT_TOKEN, { state: 'blocked' }));
     const scout = await rosterScout(app);
-    expect(scout?.activity).toBe('blocked');
+    expect(scout?.workState).toBe('blocked');
     expect(scout?.busy).toBe(false);
   });
 
@@ -155,28 +163,28 @@ describe('POST /presence/activity', () => {
     const { app } = await makeApp();
     // Runner lies: state blocked but busy:true. Server trusts state.
     await app.request(
-      '/presence/activity',
+      '/presence/work-state',
       authBearer(AGENT_TOKEN, { state: 'blocked', busy: true }),
     );
     const scout = await rosterScout(app);
-    expect(scout?.activity).toBe('blocked');
+    expect(scout?.workState).toBe('blocked');
     expect(scout?.busy).toBe(false);
   });
 
   it('clears immediately on `state: "idle"`', async () => {
     const { app } = await makeApp();
-    await app.request('/presence/activity', authBearer(AGENT_TOKEN, { state: 'working' }));
-    await app.request('/presence/activity', authBearer(AGENT_TOKEN, { state: 'idle' }));
+    await app.request('/presence/work-state', authBearer(AGENT_TOKEN, { state: 'working' }));
+    await app.request('/presence/work-state', authBearer(AGENT_TOKEN, { state: 'idle' }));
 
     const scout = await rosterScout(app);
-    expect(scout?.activity).toBeUndefined();
+    expect(scout?.workState).toBeUndefined();
     expect(scout?.busy).toBeFalsy();
   });
 
   it('rejects a session-cookie caller with 403 (runner-only)', async () => {
     const { app, sessions } = await makeApp();
     const session = await sessions.create('alice', null);
-    const res = await app.request('/presence/activity', {
+    const res = await app.request('/presence/work-state', {
       method: 'POST',
       headers: {
         Cookie: `csuite_session=${session.id}`,
@@ -191,7 +199,7 @@ describe('POST /presence/activity', () => {
 
   it('rejects unauthenticated callers with 401', async () => {
     const { app } = await makeApp();
-    const res = await app.request('/presence/activity', {
+    const res = await app.request('/presence/work-state', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ state: 'working' }),
@@ -203,13 +211,13 @@ describe('POST /presence/activity', () => {
     const { app } = await makeApp();
     // Missing `state`.
     const missing = await app.request(
-      '/presence/activity',
+      '/presence/work-state',
       authBearer(AGENT_TOKEN, { busy: true }),
     );
     expect(missing.status).toBe(400);
     // Unknown state value.
     const bogus = await app.request(
-      '/presence/activity',
+      '/presence/work-state',
       authBearer(AGENT_TOKEN, { state: 'spinning' }),
     );
     expect(bogus.status).toBe(400);
@@ -217,20 +225,20 @@ describe('POST /presence/activity', () => {
 
   it('TTL resolves stale entries to idle on the next roster read', async () => {
     const { app, advance } = await makeApp();
-    await app.request('/presence/activity', authBearer(AGENT_TOKEN, { state: 'working' }));
+    await app.request('/presence/work-state', authBearer(AGENT_TOKEN, { state: 'working' }));
 
     // Advance past the TTL without a heartbeat.
     advance(WORK_STATE_TTL_MS + 1);
 
     const scout = await rosterScout(app);
-    expect(scout?.activity).toBeUndefined();
+    expect(scout?.workState).toBeUndefined();
     expect(scout?.busy).toBeFalsy();
   });
 
-  it('member delete forgets any pending activity entry', async () => {
+  it('member delete forgets any pending work-state entry', async () => {
     const { app } = await makeApp();
     // scout (the agent) reports working.
-    await app.request('/presence/activity', authBearer(AGENT_TOKEN, { state: 'working' }));
+    await app.request('/presence/work-state', authBearer(AGENT_TOKEN, { state: 'working' }));
     // alice deletes scout.
     const del = await app.request('/members/scout', {
       method: 'DELETE',
@@ -239,7 +247,7 @@ describe('POST /presence/activity', () => {
     expect(del.status).toBe(204);
 
     const scout = await rosterScout(app);
-    expect(scout?.activity).toBeUndefined();
+    expect(scout?.workState).toBeUndefined();
     expect(scout?.busy).toBeFalsy();
   });
 });

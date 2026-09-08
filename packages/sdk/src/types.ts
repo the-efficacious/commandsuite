@@ -8,11 +8,11 @@
 export type LogLevel = 'debug' | 'info' | 'notice' | 'warning' | 'error' | 'critical';
 
 /**
- * Live activity of a member — orthogonal to the connection dimension
+ * Work state of a member — orthogonal to the connection dimension
  * (online/connecting/offline) that presence tracks over the live
  * WebSocket. Where
- * connection answers "is the link alive", activity answers "what is the
- * agent doing right now on that link":
+ * connection answers "is the link alive", work state answers "what is
+ * the agent doing right now on that link":
  *
  *   idle     — connected, not in a turn, available for work.
  *   working  — actively processing a turn: model generation AND/OR tool
@@ -265,21 +265,34 @@ export interface Presence {
   lastSeen: number;
   role: Role | null;
   /**
-   * Live activity of this member — the 3-state model reported by the
-   * runner via `POST /presence/activity` and cleared to `idle` by a
-   * server-side TTL when no report arrives, so a crashed runner doesn't
-   * leave the member stuck "working"/"blocked" forever. Driven by the
-   * agent's native instrumentation (Claude Code hooks, codex app-server
-   * turn lifecycle), not by intercepted traffic. Optional — absent on
-   * members the server has no recent activity report for (treat as
-   * `idle`).
+   * The state of work `/roster` publishes for this member — a
+   * DERIVATION, not a copy of any runner's report: `blocked` when the
+   * runner reported it inside `workStateWindowMs`, `working` when the
+   * executor recorded proven action inside the same window, and
+   * otherwise absent (read absence as `idle`).
+   *
+   * A runner that reports `working` and does nothing else reads `idle`
+   * here. That is deliberate — scheduling telemetry must never make a
+   * member look capable. The report itself is the *work state*
+   * (`POST /presence/work-state`); this field is what the roster
+   * projects from it plus proven action.
+   */
+  workState?: WorkState;
+  /**
+   * @deprecated The pre-D6 spelling of {@link Presence.workState}.
+   *
+   * Emitted with the same value as `workState` for one release so
+   * clients written against the old wire keep working; removed in the
+   * next minor. `activity` is reserved for the durable per-member
+   * stream (`GET /members/:name/activity`).
    */
   activity?: WorkState;
   /**
-   * Back-compat mirror of `activity === 'working'`. Older UIs that only
-   * understand the boolean keep working; new UIs should prefer
-   * `activity` so they can distinguish `blocked` (an operator should
-   * look) from plain `idle`. Optional — absent when `activity` is absent.
+   * Compatibility mirror of `workState === 'working'`, for UIs that
+   * only understand a boolean. It is LOSSY: `busy` cannot express
+   * `blocked`, so a reader that takes it as the whole signal loses the
+   * one state that asks a human to look. Prefer `workState`. Optional
+   * — absent when `workState` is absent.
    */
   busy?: boolean;
   /**
@@ -303,7 +316,7 @@ export interface Presence {
    * Completeness failures the broker has RETAINED for this member and
    * that have not been observed to recover.
    *
-   * Follows `captureHealth`'s absence rule, not `activity`'s: absent
+   * Follows `captureHealth`'s absence rule, not `workState`'s: absent
    * means this broker retains no diagnostics and has no opinion — never
    * "this member is clean". `0` is the positive statement that it
    * looked and found none outstanding.
@@ -413,16 +426,23 @@ export type ClientReport =
     };
 
 /**
- * Body for `POST /presence/activity` — the runner-side report of a
- * member's live activity transition. `state` is authoritative; `busy`
- * is an optional back-compat mirror the server derives from `state`
- * (= `state === 'working'`) when omitted.
+ * Body for `POST /presence/work-state` — the runner-side report of a
+ * member's work-state transition. `state` is authoritative; `busy`
+ * is an optional compatibility mirror the server derives from `state`
+ * (= `state === 'working'`) when omitted, and otherwise ignores.
  */
-export interface ActivityReport {
+export interface WorkStateReport {
   state: WorkState;
-  /** Optional back-compat mirror; server derives `state === 'working'` if absent. */
+  /** Optional compatibility mirror; server derives `state === 'working'` if absent. */
   busy?: boolean;
 }
+
+/**
+ * @deprecated The pre-D6 name of {@link WorkStateReport}. Structurally
+ * identical, kept for one release so a consumer typed against the old
+ * name still compiles; removed in the next minor.
+ */
+export type ActivityReport = WorkStateReport;
 
 // ─────────────────────────── Messaging ────────────────────────────────
 
@@ -608,8 +628,15 @@ export interface RosterResponse {
    */
   restartPending?: string[];
   /**
-   * Window the broker applied when deciding whether an activity report
-   * is recent. Optional for compatibility with older brokers.
+   * Window the broker applied when deciding whether a work-state
+   * report — and the proven action `workState: 'working'` is derived
+   * from — is recent. Optional for compatibility with older brokers.
+   */
+  workStateWindowMs?: number;
+  /**
+   * @deprecated The pre-D6 spelling of
+   * {@link RosterResponse.workStateWindowMs}. Emitted with the same
+   * value for one release; removed in the next minor.
    */
   activityWindowMs?: number;
 }

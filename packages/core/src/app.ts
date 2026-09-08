@@ -33,7 +33,6 @@ import {
   TEAM_PROCESS_PATHS,
 } from 'csuite-sdk/protocol';
 import {
-  ActivityReportSchema,
   AddChannelMemberRequestSchema,
   ApproveEnrollmentRequestSchema,
   BindSecretRequestSchema,
@@ -88,6 +87,7 @@ import {
   UpdateToolSourceRequestSchema,
   UpdateVariableRequestSchema,
   UploadActivityRequestSchema,
+  WorkStateReportSchema,
 } from 'csuite-sdk/schemas';
 import type {
   ActivityKind,
@@ -547,6 +547,10 @@ const API_PATH_PREFIXES = [
   PATHS.enrollPending,
   PATHS.enrollApprove,
   PATHS.enrollReject,
+  PATHS.presenceWorkState,
+  // The pre-D6 spelling, still routed for one release (D6). Listed
+  // beside its successor so an un-upgraded runner's POST 404s as API
+  // rather than falling through to the SPA's index.html.
   PATHS.presenceActivity,
   '/notifications',
   PATHS.hooks,
@@ -645,8 +649,8 @@ export function createApp(options: AppOptions): CreatedApp {
     HARD_CAP_MAX_FILE_SIZE,
   );
   const now = options.now ?? Date.now;
-  // Per-member ACTIVITY tracker (idle/working/blocked). Filled by
-  // `POST /presence/activity`, read on roster GETs, and decayed via TTL
+  // Per-member WORK STATE tracker (idle/working/blocked). Filled by
+  // `POST /presence/work-state`, read on roster GETs, and decayed via TTL
   // so a runner that crashes mid-turn doesn't leave the member stuck
   // "working"/"blocked" forever — stale state resolves back to idle.
   // Orthogonal to connection presence (which the broker's presence registry
@@ -655,7 +659,7 @@ export function createApp(options: AppOptions): CreatedApp {
   const workState: WorkStateTracker = createWorkStateTracker(now);
 
   // External Notifications dispatcher — owned here (not by run.ts)
-  // because the delivery policy reads the in-process activity
+  // because the delivery policy reads the in-process work-state
   // tracker. The sweep interval expires stale offline-queue rows,
   // force-delivers starved busy-waits, and backstops debounce
   // timers; `recover()` re-dispatches deliveries a restart stranded
@@ -667,7 +671,7 @@ export function createApp(options: AppOptions): CreatedApp {
       broker,
       members,
       ...(channels !== undefined ? { channels } : {}),
-      activity: workState,
+      workState,
       logger,
       now,
     });
@@ -1378,13 +1382,13 @@ export function createApp(options: AppOptions): CreatedApp {
   });
 
   app.get(PATHS.roster, auth, async (c) => {
-    // Compatibility activity projection. `working` is now derived ONLY
+    // The roster's projected state of work. `working` is derived ONLY
     // from recent broker-recorded tool/outbound evidence. Turn lifecycle
     // and message consumption remain scheduling telemetry and can never
     // make a member look capable. `blocked` stays runner telemetry.
     //
-    // `captureHealth` follows a DIFFERENT absence rule from `activity`,
-    // deliberately. `activity` omits the field for idle members and a
+    // `captureHealth` follows a DIFFERENT absence rule from `workState`,
+    // deliberately. `workState` omits the field for idle members and a
     // reader treats absence as idle — safe, because idle is the benign
     // default. Capture health has no benign default: absence has to
     // mean "this broker has no opinion," so a broker that CAN evaluate
@@ -1392,12 +1396,12 @@ export function createApp(options: AppOptions): CreatedApp {
     // field as healthy is exactly the conflation this exists to remove,
     // and it is only absent when the store isn't wired at all.
     const presences = broker.listPresences(options.version).map((p) => {
-      const schedulingState = workState.getActivity(p.name);
+      const schedulingState = workState.getWorkState(p.name);
       const actedRecently =
         p.executor?.lastActedAt !== null &&
         p.executor?.lastActedAt !== undefined &&
         now() - p.executor.lastActedAt <= WORK_STATE_TTL_MS;
-      const activity =
+      const projected =
         schedulingState === 'blocked'
           ? ('blocked' as const)
           : actedRecently
@@ -1428,7 +1432,7 @@ export function createApp(options: AppOptions): CreatedApp {
             };
       // Retained completeness failures for this member that have not
       // been observed to recover. Same absence rule as `captureHealth`
-      // and NOT `activity`'s: absent means this broker retains no
+      // and NOT `workState`'s: absent means this broker retains no
       // diagnostics and has no opinion — never "this member is clean".
       // `0` is the positive statement that it looked and found none.
       //
@@ -1448,12 +1452,27 @@ export function createApp(options: AppOptions): CreatedApp {
       // store is authoritative; re-read it here rather than let one
       // response carry two answers (`teammates[].role` and this one).
       const role = members.findByName(p.name)?.role ?? p.role;
-      if (activity === 'idle') return { ...p, role, ...captureField, ...diagField };
-      return { ...p, role, activity, busy: activity === 'working', ...captureField, ...diagField };
+      if (projected === 'idle') return { ...p, role, ...captureField, ...diagField };
+      // D6 compat window: `workState` is canonical and `activity` is the
+      // pre-D6 spelling, emitted with the SAME value for one release so
+      // a client written against either keeps reading the same member.
+      // `busy` is the older, lossy boolean mirror and outlives both.
+      // Both deprecated fields are removed in the next minor.
+      return {
+        ...p,
+        role,
+        workState: projected,
+        activity: projected,
+        busy: projected === 'working',
+        ...captureField,
+        ...diagField,
+      };
     });
     return c.json({
       teammates: teammatesFromMembers(members),
       connected: presences,
+      workStateWindowMs: WORK_STATE_TTL_MS,
+      // @deprecated pre-D6 spelling, same value, removed in the next minor.
       activityWindowMs: WORK_STATE_TTL_MS,
       restartPending: await restartPendingMembers(),
     });
@@ -1485,7 +1504,7 @@ export function createApp(options: AppOptions): CreatedApp {
 
   /**
    * Runner-driven presence report: records the authenticated member's
-   * live ACTIVITY transition (idle/working/blocked). Bearer-only —
+   * WORK STATE transition (idle/working/blocked). Bearer-only —
    * humans on the web UI never report this; the runner is the only
    * thing that knows.
    *
@@ -1498,18 +1517,41 @@ export function createApp(options: AppOptions): CreatedApp {
    * to heartbeat (re-post the current non-idle state) every ~10s while
    * still working/blocked so the TTL stays fresh; on transition to idle
    * they post `state: 'idle'` once and drop the entry.
+   *
+   * Registered at BOTH `PATHS.presenceWorkState` (canonical) and
+   * `PATHS.presenceActivity` (the pre-D6 spelling) for one release, by
+   * the same handler, so an un-upgraded runner keeps reporting. The
+   * old path additionally answers `Deprecation: true` and a
+   * `Link: …; rel="successor-version"` header and logs one line naming
+   * the member, so a stale client is findable in a proxy log or the
+   * broker's own log before the path is removed in the next minor.
    */
-  app.post(PATHS.presenceActivity, auth, async (c) => {
+  const reportWorkState = async (
+    c: Context<AppBindings>,
+    deprecatedPath: string | null,
+  ): Promise<Response> => {
+    if (deprecatedPath !== null) {
+      c.header('Deprecation', 'true');
+      c.header('Link', `<${PATHS.presenceWorkState}>; rel="successor-version"`);
+    }
     const tokenId = c.get('tokenId');
     if (tokenId === null) {
       // Cookie + JWT subscribers don't have a runner context to report.
-      return c.json({ error: 'presence/activity is runner-only (bearer auth required)' }, 403);
+      return c.json({ error: 'presence work-state is runner-only (bearer auth required)' }, 403);
     }
     const member = c.get('member');
+    if (deprecatedPath !== null) {
+      logger.warn('deprecated route', {
+        route: deprecatedPath,
+        successor: PATHS.presenceWorkState,
+        member: member.name,
+        removedIn: 'the next minor',
+      });
+    }
     const raw = await c.req.json().catch(() => null);
-    const parsed = ActivityReportSchema.safeParse(raw);
+    const parsed = WorkStateReportSchema.safeParse(raw);
     if (!parsed.success) {
-      return c.json({ error: 'invalid activity report', details: parsed.error.issues }, 400);
+      return c.json({ error: 'invalid work state report', details: parsed.error.issues }, 400);
     }
     workState.report(member.name, parsed.data.state);
     // A transition out of `working` is the `if_busy: wait` flush
@@ -1519,7 +1561,7 @@ export function createApp(options: AppOptions): CreatedApp {
     if (notificationDispatcher && parsed.data.state !== 'working') {
       const dispatcher = notificationDispatcher;
       queueMicrotask(() => {
-        void dispatcher.onActivityReport(member.name, parsed.data.state).catch((err) => {
+        void dispatcher.onWorkStateReport(member.name, parsed.data.state).catch((err) => {
           logger.warn('notification busy-flush failed', {
             member: member.name,
             error: err instanceof Error ? err.message : String(err),
@@ -1528,7 +1570,10 @@ export function createApp(options: AppOptions): CreatedApp {
       });
     }
     return c.body(null, 204);
-  });
+  };
+
+  app.post(PATHS.presenceWorkState, auth, (c) => reportWorkState(c, null));
+  app.post(PATHS.presenceActivity, auth, (c) => reportWorkState(c, PATHS.presenceActivity));
 
   app.post(PATHS.push, auth, async (c) => {
     const raw = await c.req.json().catch(() => null);
