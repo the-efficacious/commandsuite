@@ -5486,9 +5486,13 @@ export function createApp(options: AppOptions): CreatedApp {
         name: parsed.data.name,
         role: parsed.data.role,
         instructions: parsed.data.instructions ?? '',
-        // Preset names are accepted as compatibility/template input,
-        // but member authority is persisted as leaves. A later preset
-        // edit must not silently change an existing member.
+        // Leaves, and only leaves. The body is parsed by
+        // `MemberPermissionListSchema`, whose element type is
+        // `z.enum(PERMISSIONS)` after the legacy-alias preprocess, so a
+        // preset name 400s above and never reaches `resolvePermissions`.
+        // Authority is persisted as resolved leaves for the same reason
+        // it always was: an edit elsewhere must not silently change an
+        // existing member's authority.
         rawPermissions: [...resolvedPerms],
         token,
       });

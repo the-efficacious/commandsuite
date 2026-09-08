@@ -177,7 +177,8 @@ export interface Team {
   context: string;
   /**
    * @deprecated Accepted when reading data from preset-era servers. Current
-   * servers omit this field and current clients must not present it.
+   * servers omit this field, no current server writes a preset — the write
+   * path was deleted in D11 — and current clients must not present it.
    */
   permissionPresets?: PermissionPresets;
 }

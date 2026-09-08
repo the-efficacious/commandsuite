@@ -480,7 +480,7 @@ export class Client {
    * member.
    *
    * Returns the caller's name, role, permissions, team
-   * (name/context/presets), list of teammates, open objectives
+   * (name and context), list of teammates, open objectives
    * currently on the caller's plate, the member's personal
    * `instructions` string ready for `new Server({instructions})` in
    * the MCP link, and — from brokers with the instruction-block model

@@ -25,9 +25,9 @@ describe('legacy objectives.manage compatibility', () => {
     expect(resolvePermissions(['objectives.manage'], {}, 'member test')).toEqual(OBJECTIVE_LEAVES);
   });
 
-  it('expands the retired aggregate inside a stored bundle', () => {
-    const bundles = { oldCoordinator: ['objectives.manage'] as never };
-    expect(resolvePermissions(['oldCoordinator'], bundles, 'bundle test')).toEqual(
+  it('expands the retired aggregate inside a stored preset', () => {
+    const presets = { oldCoordinator: ['objectives.manage'] as never };
+    expect(resolvePermissions(['oldCoordinator'], presets, 'preset test')).toEqual(
       OBJECTIVE_LEAVES,
     );
   });
@@ -93,8 +93,8 @@ describe('legacy process.manage compatibility', () => {
   });
 
   it('resolves the old name stored as a leaf inside a preset', () => {
-    const bundles = { oldLead: ['process.manage'] as never };
-    expect(resolvePermissions(['oldLead'], bundles, 'bundle test')).toEqual([
+    const presets = { oldLead: ['process.manage'] as never };
+    expect(resolvePermissions(['oldLead'], presets, 'preset test')).toEqual([
       'team_process.manage',
     ]);
   });
@@ -255,5 +255,56 @@ describe('both member stores derive permissions from rawPermissions', () => {
       token: 'csuite_parity_ignored',
     });
     expect(added.permissions).toEqual(['activity.read']);
+  });
+});
+
+/**
+ * Legacy permission presets: read-only, and still load (D11, #21/#79).
+ *
+ * The write path is gone — `setPreset`, `deletePreset` and
+ * `membersReferencingPreset` are off `TeamStore`, asserted by
+ * `permission-preset-boundary.test-d.ts` — and the read path is
+ * everything that keeps a pre-consolidation database usable. That makes
+ * this the load-bearing half: a member row naming a preset must still
+ * resolve to leaves, off rows nothing in the product could write today.
+ */
+describe('legacy permission presets are read-only and still resolve', () => {
+  it('a member row naming a preset resolves through the stored row', () => {
+    const db = openDatabase(':memory:');
+    const team = new TeamStore(db);
+    const members = createSqliteMemberStore(db, team);
+    // Exactly what an older broker left on disk. There is no API that
+    // could produce this row now, which is the point.
+    db.prepare(
+      `INSERT INTO permission_presets (name, permissions, updated_at, updated_by)
+       VALUES ('coordinator', '["objectives.create","activity.read"]', 0, 'old-admin')`,
+    ).run();
+    db.prepare(
+      `INSERT INTO members
+         (identity_id, name, role_title, role_description, instructions, raw_permissions,
+          totp_secret, totp_last_counter, insertion_order, created_at, updated_at)
+       VALUES (?, 'legacy', 'lead', '', '', '["coordinator","notifications.manage"]',
+               NULL, 0, 0, 0, 0)`,
+    ).run(crypto.randomUUID());
+
+    // The read path: getPresets() feeds resolvePermissions on every load.
+    expect(team.getPresets()).toEqual({
+      coordinator: ['objectives.create', 'activity.read'],
+    });
+    expect(members.findByName('legacy')?.permissions).toEqual([
+      'objectives.create',
+      'activity.read',
+      'notifications.manage',
+    ]);
+    // Nothing was rewritten: the preset name is still on the member row.
+    expect(members.findByName('legacy')?.rawPermissions).toEqual([
+      'coordinator',
+      'notifications.manage',
+    ]);
+  });
+
+  it('a current broker reports no presets, because none can be written', () => {
+    const db = openDatabase(':memory:');
+    expect(new TeamStore(db).getPresets()).toEqual({});
   });
 });
