@@ -312,6 +312,10 @@ export {
   parseOtlpMetrics,
 } from './otlp-parse.js';
 export {
+  enrichPresence,
+  type PresenceEnrichmentOptions,
+} from './presence-enrichment.js';
+export {
   type DispatchDeps,
   dispatchPush,
   type WebPushPayload,

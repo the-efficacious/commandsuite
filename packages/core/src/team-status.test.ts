@@ -32,6 +32,7 @@ function fixture(generatedAt = 2_000, stalledAfterMs: number | null = 1_000) {
     eventLog: {
       latestObjectiveSignals: async () => ({ lastThreadPostAt: 1_000, lastPrLinkAt: null }),
     } as never,
+    workState: { getActivity: () => 'idle' as const },
     generatedAt,
     stalledAfterMs,
   };

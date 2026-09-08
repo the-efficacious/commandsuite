@@ -139,6 +139,18 @@ claim. Legacy activity remains compatibility scheduling telemetry and is not
 executor proof. For the
 presence model see [presence](/docs/concepts/presence).
 
+`Presence` has one population, not one per route. The broker enriches every
+registry record through a single function before publishing it, so the
+`Presence` here and the one under `TeamStatusMember.presence` on
+[`GET /team/status`](#get-teamstatus) are the same object for the same member
+on the same tick — live state (`activity` / `busy`), `captureHealth`,
+`diagnosticsUnresolved` and `diagnosticsRetention` included. That matters
+because two of those fields make absence load-bearing: an absent
+`captureHealth` means *this broker has no opinion*, never "healthy", and an
+absent `diagnosticsUnresolved` means *this broker retains no diagnostics*,
+never "this member is clean". A route that quietly omitted them would be
+making a claim, not leaving a gap.
+
 `restartPending` lists members whose current composed instructions
 differ from what their live session was issued — their runner
 restarts the agent at its next idle boundary to pick the edit up.
@@ -569,6 +581,30 @@ If the new `context` contains a registered secret value the update
 still lands, but the response carries a `warning` field (mirrored
 in an `X-CSuite-Warning` header) — the string will appear verbatim
 in captured traces.
+
+### `GET /team/status?stalledMs=<ms>`
+
+| | |
+|---|---|
+| **Auth** | member; `members.manage` |
+| **Returns** | `TeamStatusResponse` — `{ generatedAt, stalledAfterMs, members: TeamStatusMember[] }` |
+
+The operability report: every member joined to their live presence, their open
+objectives with per-signal staleness, their last recorded activity, and a
+stall verdict with reasons (`objective_stale`, `executor_degraded`).
+`stalledMs` is optional; when present it must be a positive integer (400
+otherwise) and filters the response to stalled members only.
+
+`TeamStatusMember.presence` is the **same** `Presence` shape
+[`GET /roster`](#get-roster) publishes — enriched by the one broker-side
+function, not the bare registry record. Live state, capture health and the
+completeness-diagnostics counts are all here, so the surface an operator opens
+when something is wrong can answer "who has a capture gap?" rather than
+answering it by silence. The two routes are held to that by a test that
+compares the two objects field for field.
+
+`csuite team status` and the MCP `team_status` tool are this response
+verbatim.
 
 ## Objectives
 
