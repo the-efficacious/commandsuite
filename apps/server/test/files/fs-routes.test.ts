@@ -316,6 +316,120 @@ describe('/fs/mkdir + /fs/rm + /fs/mv', () => {
   });
 });
 
+/**
+ * `canWrite` is a property of the entry, not of the verb that produced
+ * it (commandsuite#159).
+ *
+ * It used to be stamped only by the read projections, so `POST /fs/write`,
+ * `/fs/mkdir` and `/fs/mv` returned an entry with the key simply absent
+ * — and the field is `optional` for version-skew reasons, so a client
+ * could not tell "this verb does not send it" from "this server is too
+ * old". Zod cannot see that either: a response dropping an optional
+ * field parses clean, which is why the contract suite could not have
+ * caught it.
+ *
+ * The assertion is therefore endpoint-to-endpoint and by KEY SET, not
+ * by presence: a write response must carry exactly the fields a `stat`
+ * on the same path by the same viewer carries, with the same value for
+ * `canWrite`. It fails against a server that returns most of the right
+ * answer, which was the state before this change, and it fails in the
+ * other direction too if `stat` ever loses the field.
+ */
+describe('canWrite rides on every entry, not only on read projections', () => {
+  async function stat(
+    app: Awaited<ReturnType<typeof makeApp>>['app'],
+    token: string,
+    path: string,
+  ): Promise<FsEntry> {
+    const res = await app.request(`/fs/stat?path=${encodeURIComponent(path)}`, {
+      headers: authed(token),
+    });
+    expect(res.status, `stat ${path} failed`).toBe(200);
+    return ((await res.json()) as { entry: FsEntry }).entry;
+  }
+
+  it('write, mkdir and mv return the same key set and value stat does', async () => {
+    const { app } = await makeApp();
+
+    // 1. write
+    const written = (
+      (await writeFile(app, ALICE_TOKEN, '/alice/spec.txt', 'text/plain', 'hi')).data as {
+        entry: FsEntry;
+      }
+    ).entry;
+    // 2. mkdir
+    const mk = await app.request('/fs/mkdir', {
+      method: 'POST',
+      headers: { ...authed(ALICE_TOKEN), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: '/alice/notes', recursive: true }),
+    });
+    expect(mk.status).toBe(200);
+    const made = ((await mk.json()) as { entry: FsEntry }).entry;
+    // 3. mv
+    const mv = await app.request('/fs/mv', {
+      method: 'POST',
+      headers: { ...authed(ALICE_TOKEN), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: '/alice/spec.txt', to: '/alice/spec-v2.txt' }),
+    });
+    expect(mv.status).toBe(200);
+    const moved = ((await mv.json()) as { entry: FsEntry }).entry;
+
+    // `written`'s path no longer exists after the mv, so each entry is
+    // compared against a stat of the path it names now.
+    const cases: Array<[string, FsEntry, FsEntry]> = [
+      ['POST /fs/write', written, await stat(app, ALICE_TOKEN, moved.path)],
+      ['POST /fs/mkdir', made, await stat(app, ALICE_TOKEN, made.path)],
+      ['POST /fs/mv', moved, await stat(app, ALICE_TOKEN, moved.path)],
+    ];
+    for (const [verb, entry, projected] of cases) {
+      expect(
+        Object.keys(entry).sort(),
+        `${verb} does not return the shape GET /fs/stat does`,
+      ).toEqual(Object.keys(projected).sort());
+      expect(Object.keys(entry), `${verb} omits canWrite`).toContain('canWrite');
+      expect(entry.canWrite, `${verb} disagrees with stat`).toBe(projected.canWrite);
+      expect(entry.canWrite, `${verb}: alice may write in her own home`).toBe(true);
+    }
+  });
+
+  it('the value is the predicate, not a constant: a non-writer reading the same entry gets false', async () => {
+    // Every write path today gates on canWrite(), so a mutation
+    // response can only ever carry `true`. That is exactly why the
+    // value must come from the predicate rather than from control flow:
+    // stamping `true` would be correct today and silently wrong the
+    // first time a write path lands whose gate is something else. Here
+    // the same entry, the same second, answers differently per viewer.
+    const { app, files } = await makeApp();
+    const written = (
+      (await writeFile(app, ALICE_TOKEN, '/alice/shared.txt', 'text/plain', 'hi')).data as {
+        entry: FsEntry;
+      }
+    ).entry;
+    expect(written.canWrite, 'alice wrote it').toBe(true);
+
+    // A read grant is the sharpest non-writer: canRead honours grants,
+    // canWrite deliberately does not, so bob can see the entry and must
+    // be told he may not change it.
+    files.grant('/alice/shared.txt', 'bob', 'test-grant');
+    const asBob = await stat(app, BOB_TOKEN, '/alice/shared.txt');
+    expect(asBob.canWrite, 'a read grant never confers write').toBe(false);
+    expect(Object.keys(asBob).sort(), 'and it is the same shape').toEqual(
+      Object.keys(written).sort(),
+    );
+
+    // A members.manage holder writing into someone else's home is a
+    // writer by rule, not by ownership — the case the client cannot
+    // derive from `owner`.
+    const byDirector = (
+      (await writeFile(app, DIRECTOR_TOKEN, '/bob/report.txt', 'text/plain', 'r')).data as {
+        entry: FsEntry;
+      }
+    ).entry;
+    expect(byDirector.owner, 'owner is the home, not the writer').toBe('bob');
+    expect(byDirector.canWrite, 'members.manage may write anywhere').toBe(true);
+  });
+});
+
 describe('/push with attachments', () => {
   it('validates attachments exist and grants recipients read access', async () => {
     const { app, files } = await makeApp();

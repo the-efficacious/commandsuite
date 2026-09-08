@@ -2227,14 +2227,18 @@ export const FsEntrySchema = z.object({
   createdBy: NameSchema,
   /**
    * Whether the requesting viewer may mutate this entry — the server's
-   * own `canWrite()` predicate, evaluated per request.
+   * own `canWrite()` predicate, evaluated per request, on every response
+   * carrying an entry: reads (`stat`, `ls`, `shared`, `all`) and writes
+   * (`write`, `mkdir`, `mv`) alike.
    *
    * Present so a client does not have to RECONSTRUCT the rule. A UI that
    * infers "can I delete this" from `owner === me` is wrong for objective
    * namespace entries, whose owner is `obj:<id>` and whose write rule
    * includes objective membership — information the client does not have
    * and cannot derive. Optional so older servers that omit it still
-   * parse; a client seeing `undefined` should ask rather than guess.
+   * parse; a client seeing `undefined` is talking to one of those and
+   * should ask rather than guess. `undefined` never means "this verb
+   * does not send it" — that carve-out existed until #159 and is gone.
    */
   canWrite: z.boolean().optional(),
   updatedAt: z.number().int().nonnegative(),

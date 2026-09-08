@@ -2765,10 +2765,14 @@ export interface FsEntry {
   updatedAt: number;
   /**
    * Whether the requesting viewer may mutate this entry — the server's
-   * `canWrite()` predicate, evaluated per request. Optional: an older
-   * server omits it. Treat `undefined` as unknown rather than false, and
-   * do not reconstruct the rule from `owner` — that inference is wrong
-   * for objective namespace entries.
+   * `canWrite()` predicate, evaluated per request. A property of the
+   * entry, not of one verb: a current server sends it on every response
+   * that carries an `FsEntry`, mutations included, so the entry returned
+   * by `write`, `mkdir` or `mv` answers the same question a `stat` on
+   * that path would. Optional: an older server omits it. Treat
+   * `undefined` as unknown rather than false, and do not reconstruct the
+   * rule from `owner` — that inference is wrong for objective namespace
+   * entries.
    */
   canWrite?: boolean;
 }
