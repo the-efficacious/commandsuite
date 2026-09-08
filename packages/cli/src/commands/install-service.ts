@@ -22,6 +22,16 @@
  * sudoers text print with the exact operator commands instead
  * (`--print` forces that mode). Failure paths delete nothing: they
  * stop what they started and report exactly what was created.
+ *
+ * REFUSALS PICK THEIR EXIT CODE BY CARRIER. `UsageError` (exit 2) is
+ * for a wrong argv — a value that cannot be rendered into a unit file,
+ * two brokers where `--url` must choose. `StartupError` (exit 1) is for
+ * a machine that is not ready — nothing enrolled, no root and no
+ * passwordless sudo, a privileged command that failed, a unit that
+ * installed but never came live. The two are indistinguishable in the
+ * message, which is how every refusal here once came to be a
+ * `UsageError` regardless of meaning (#253); the carrier is asserted
+ * per refusal in `install-service.test.ts`.
  */
 
 import { spawn, spawnSync } from 'node:child_process';
@@ -391,7 +401,7 @@ export async function runInstallServiceCommand(
   if (input.print || privilege === 'none') {
     deps.stdout(formatOperatorHandoff({ user, unitText, sudoersText }));
     if (input.print) return;
-    throw new UsageError(
+    throw new StartupError(
       'install-service: no root and no passwordless sudo — printed the hand-off above instead',
     );
   }
@@ -410,7 +420,7 @@ export async function runInstallServiceCommand(
     const cmd = privilege === 'root' ? argv : ['sudo', '-n', ...argv];
     const res = runSync(cmd[0] as string, cmd.slice(1), { stdio: 'pipe', timeout: 30_000 });
     if (res.status !== 0) {
-      throw new UsageError(
+      throw new StartupError(
         `install-service: \`${argv.join(' ')}\` failed (${res.status}): ${String(res.stderr ?? '').slice(0, 300)}`,
       );
     }
@@ -433,7 +443,7 @@ export async function runInstallServiceCommand(
           });
           if (res.status === 0) return String(res.stdout);
           if (/no such file/i.test(String(res.stderr ?? ''))) return null;
-          throw new UsageError(
+          throw new StartupError(
             `install-service: cannot snapshot ${target} before replacing it (${String(res.stderr ?? '').trim() || `exit ${res.status}`}) — refusing before any mutation`,
           );
         },
@@ -525,14 +535,14 @@ export async function runInstallServiceCommand(
     );
   } catch (err) {
     const restored = rollback();
-    throw new UsageError(
+    throw new StartupError(
       `install-service: installing or verifying the unit failed (${err instanceof Error ? err.message : String(err)}) — ` +
         `${restored}; logs: journalctl -u ${unit}`,
     );
   }
   if (!live) {
     const restored = rollback();
-    throw new UsageError(
+    throw new StartupError(
       `install-service: '${memberName}' never showed connected with a fresh lastSeen at ${url} — ` +
         `${restored}; logs: journalctl -u ${unit}`,
     );
@@ -635,7 +645,7 @@ export async function runCycleCommand(
     timeout: 60_000,
   });
   if (res.status !== 0) {
-    throw new UsageError(
+    throw new StartupError(
       `cycle: \`sudo -n systemctl restart ${unit}\` failed (${res.status}) — is the scoped sudoers rule installed? (install-service writes it)`,
     );
   }
@@ -649,7 +659,7 @@ export async function runCycleCommand(
     deps.sleep,
   );
   if (!live) {
-    throw new UsageError(
+    throw new StartupError(
       `cycle: restarted ${unit} but '${memberName}' never showed connected with a fresh lastSeen at ${url}; ` +
         `logs: journalctl -u ${unit}`,
     );

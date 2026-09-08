@@ -13,12 +13,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   cycleWorkerArgs,
   detectInstallPrivilege,
+  envAssignment,
   execStartToken,
   formatOperatorHandoff,
   renderRunnerSudoers,
   renderRunnerUnit,
   resolveServiceUrl,
   runInstallServiceCommand,
+  StartupError,
   snapshotPrivilegedFile,
   sudoersFilePathFor,
   systemdValue,
@@ -477,4 +479,115 @@ describe('UsageError export', () => {
   it('is the shared CLI usage error', () => {
     expect(new UsageError('x')).toBeInstanceOf(Error);
   });
+});
+
+/**
+ * Which carrier each refusal uses, and therefore which code it exits
+ * (#253). `UsageError` is exit 2 and means the argv is wrong;
+ * `StartupError` is exit 1 and means the machine is not ready — the
+ * distinction a supervisor branches on. The two are indistinguishable
+ * from a message assertion, which is how every refusal in this file
+ * came to be a `UsageError` regardless of what it meant, so the carrier
+ * is pinned per refusal.
+ *
+ * Both lists together are the whole refusal surface reachable without
+ * root. A new refusal that appears in neither is a carrier chosen
+ * unnoticed.
+ */
+describe('every install-service refusal declares its exit code by carrier', () => {
+  /** Argv is wrong: the operator passes a different value and it works. */
+  const ARGV_REFUSALS: Array<[string, () => unknown]> = [
+    ['systemdValue rejects control characters', () => systemdValue('a\nExecStart=/x', 'workspace')],
+    ['execStartToken rejects quotes', () => execStartToken('/opt/a"b', 'exec path')],
+    ['envAssignment rejects a backslash', () => envAssignment('CSUITE_URL', 'http://a\\b')],
+    [
+      'resolveServiceUrl cannot choose between two brokers',
+      () =>
+        resolveServiceUrl({
+          workspace: '/home/builder/work',
+          entries: [
+            { url: 'http://a:1', workspace: '/home/builder/work' },
+            { url: 'http://b:2', workspace: '/home/builder/work' },
+          ],
+        }),
+    ],
+  ];
+
+  /** The machine is not ready: the same argv succeeds once it is. */
+  const ENVIRONMENT_REFUSALS: Array<[string, () => unknown]> = [
+    [
+      'nothing is enrolled anywhere near this workspace',
+      () => resolveServiceUrl({ workspace: '/srv/elsewhere', entries: [] }),
+    ],
+  ];
+
+  for (const [what, run] of ARGV_REFUSALS) {
+    it(`${what} → UsageError (exit 2)`, () => {
+      expect(run).toThrow(UsageError);
+      expect(run).not.toThrow(StartupError);
+    });
+  }
+
+  for (const [what, run] of ENVIRONMENT_REFUSALS) {
+    it(`${what} → StartupError (exit 1)`, () => {
+      expect(run).toThrow(StartupError);
+      expect(run).not.toThrow(UsageError);
+    });
+  }
+
+  it('no saved auth for (url, workspace) is a StartupError, as it is from a runner verb', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'csuite-carrier-'));
+    carrierDirs.push(home);
+    const store = join(home, 'auth.json');
+    writeFileSync(store, JSON.stringify({ schema: 2, entries: [] }));
+    await expect(
+      runInstallServiceCommand(
+        { verb: 'stub', url: 'http://x:1', workspace: join(home, 'work'), print: true },
+        {
+          stdout: () => {},
+          clientFor: () => ({}) as never,
+          authStorePath: store,
+          user: 'builder',
+          home,
+        } as never,
+      ),
+    ).rejects.toBeInstanceOf(StartupError);
+  });
+
+  it('a unit that installs but never comes live is a StartupError — retry is the fix', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'csuite-carrier-'));
+    carrierDirs.push(home);
+    const workspace = join(home, 'work');
+    const store = join(home, 'auth.json');
+    writeFileSync(
+      store,
+      JSON.stringify({
+        schema: 2,
+        entries: [{ url: 'http://x:1', workspace, token: 'tok', savedAt: 1 }],
+      }),
+    );
+    await expect(
+      runInstallServiceCommand(
+        { verb: 'stub', url: 'http://x:1', workspace, timeoutMs: 1, execPath: '/usr/bin/csuite' },
+        {
+          stdout: () => {},
+          clientFor: () => ({
+            instructions: vi.fn().mockResolvedValue({ name: 'builder' }),
+            roster: vi.fn().mockResolvedValue({ teammates: [], connected: [] }),
+          }),
+          runSync: vi.fn(() => ({ status: 0, stderr: '' })),
+          readExisting: () => null,
+          authStorePath: store,
+          user: 'builder',
+          home,
+          sleep: async () => {},
+        } as never,
+      ),
+    ).rejects.toBeInstanceOf(StartupError);
+  });
+});
+
+const carrierDirs: string[] = [];
+afterEach(() => {
+  for (const dir of carrierDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });

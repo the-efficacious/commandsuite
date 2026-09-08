@@ -25,6 +25,14 @@ will fire less often** — a broker outage, a half-installed agent and an unenro
 directory all report themselves as retriable. If you branch on 2 to catch
 *startup* problems, switch to 1.
 
+`csuite <verb> install-service` and `csuite <verb> cycle` now split all of their
+refusals the same way. Exit 2 is kept for a value that cannot be rendered into a
+unit file and for "two brokers are scoped here, pass `--url`". Exit 1 covers the
+rest: nothing enrolled, no root and no passwordless sudo, a privileged command
+that failed, a snapshot that could not be taken before replacement, and a unit
+that installed but whose member never came live — every one of which is a
+machine that is not ready rather than an invocation that is wrong.
+
 `64` — a configuration the container entrypoint refused — is now published in the
 CLI reference's exit-code table alongside 0, 1 and 2, instead of appearing only
 in `docs/deployment.mdx` and `docs/runners/stub.mdx`.
