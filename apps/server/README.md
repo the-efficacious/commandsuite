@@ -17,7 +17,7 @@ One server = one team. Exposes:
 - `GET /roster` — full slot list plus runtime connection state
 - `POST /push` — deliver a message to one teammate (DM) or broadcast
 - `GET /subscribe?name=…` — long-lived WebSocket stream; `name` must equal the caller's name
-- `GET /history?with=…&limit=…&before=…` — query message log scoped to the authenticated caller
+- `GET /history?with=…&limit=…&before_ts=…&before_id=…` — query message log scoped to the authenticated caller; `before_ts`+`before_id` is the composite paging cursor (the scalar `before` is deprecated and removed in the next minor)
 
 ### Objectives
 - `GET /objectives` — list with optional `assignee` + `status` filters; members without `objectives.create` can only see their own
