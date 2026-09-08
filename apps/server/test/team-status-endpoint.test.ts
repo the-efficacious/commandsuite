@@ -60,7 +60,7 @@ describe('GET /team/status', () => {
       headers: { Authorization: `Bearer ${BASELINE}` },
     });
     expect(denied.status).toBe(403);
-    const response = await app.request(`${PATHS.teamStatus}?stalledMs=1000`, {
+    const response = await app.request(`${PATHS.teamStatus}?stalled_ms=1000`, {
       headers: { Authorization: `Bearer ${ADMIN}` },
     });
     expect(response.status).toBe(200);
@@ -102,7 +102,7 @@ describe('GET /team/status', () => {
       context,
     );
 
-    const response = await app.request(`${PATHS.teamStatus}?stalledMs=1000`, {
+    const response = await app.request(`${PATHS.teamStatus}?stalled_ms=1000`, {
       headers: { Authorization: `Bearer ${ADMIN}` },
     });
     const report = TeamStatusResponseSchema.parse(await response.json());
@@ -119,9 +119,9 @@ describe('GET /team/status', () => {
     });
   });
 
-  it('rejects a non-positive stalledMs instead of silently treating it as unfiltered', async () => {
+  it('rejects a non-positive stalled_ms instead of silently treating it as unfiltered', async () => {
     const { app } = await fixture();
-    const response = await app.request(`${PATHS.teamStatus}?stalledMs=0`, {
+    const response = await app.request(`${PATHS.teamStatus}?stalled_ms=0`, {
       headers: { Authorization: `Bearer ${ADMIN}` },
     });
     expect(response.status).toBe(400);

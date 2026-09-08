@@ -384,10 +384,18 @@ export interface NotificationsStore {
     },
   ): void;
   deliveriesByIds(ids: string[]): DeliveryRecord[];
-  /** Wire projection, newest first. */
+  /**
+   * Wire projection, newest first.
+   *
+   * `beforeTs` is a SCALAR exclusive upper bound on `ts` — `before_ts`
+   * on the wire — not a composite cursor: receipts sharing its
+   * millisecond are skipped. The name carries that arity on purpose,
+   * because the composite `{ts, id}` cursor on `/history` and the
+   * activity stream used to wear the same word.
+   */
   listDeliveries(
     endpointId: string,
-    opts?: { limit?: number; before?: number },
+    opts?: { limit?: number; beforeTs?: number },
   ): NotificationDelivery[];
   /** Boot recovery: deliveries stranded mid-debounce by a restart. */
   listStrandedDebounce(): DeliveryRecord[];
@@ -975,14 +983,14 @@ class SqliteNotificationsStore implements NotificationsStore {
 
   listDeliveries(
     endpointId: string,
-    opts?: { limit?: number; before?: number },
+    opts?: { limit?: number; beforeTs?: number },
   ): NotificationDelivery[] {
     const limit = Math.max(1, Math.min(opts?.limit ?? 50, 500));
     const rows =
-      opts?.before !== undefined
+      opts?.beforeTs !== undefined
         ? (this.selectDeliveriesBeforeStmt.all(
             endpointId,
-            opts.before,
+            opts.beforeTs,
             limit,
           ) as unknown as DeliveryDbRow[])
         : (this.selectDeliveriesStmt.all(endpointId, limit) as unknown as DeliveryDbRow[]);

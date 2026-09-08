@@ -149,7 +149,7 @@ describe('filters and paging', () => {
     const last = first.body.telemetry?.[1] as { id: number; tsMs: number };
 
     const second = await get(
-      `${MEMBER_PATHS.telemetry('worker')}?cursor_ts=${last.tsMs}&cursor_id=${last.id}`,
+      `${MEMBER_PATHS.telemetry('worker')}?after_ts=${last.tsMs}&after_id=${last.id}`,
       SELF,
     );
     expect(second.body.telemetry).toHaveLength(1);
@@ -160,7 +160,7 @@ describe('filters and paging', () => {
 
   it('rejects a half-supplied cursor rather than silently reading from the start', async () => {
     const resp = await app.request(
-      `${MEMBER_PATHS.telemetry('worker')}?cursor_ts=1000`,
+      `${MEMBER_PATHS.telemetry('worker')}?after_ts=1000`,
       authed(SELF),
     );
     expect(resp.status).toBe(400);

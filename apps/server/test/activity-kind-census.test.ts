@@ -68,7 +68,7 @@ const SITES: ReadonlyArray<{ file: string; from: string; to: string }> = [
   {
     file: 'docs/dev/rest-api.mdx',
     from: '`kind` filter\naccepts a single value',
-    to: '`cursor_ts` +',
+    to: '`before_ts` +',
   },
 ];
 

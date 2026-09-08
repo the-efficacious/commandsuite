@@ -220,41 +220,41 @@ describe('GET /setup/connect-platform', () => {
 });
 
 describe('GET /setup/connect-platform — iframe mode', () => {
-  it('injects mode=iframe + parentOrigin when valid query params are present', async () => {
+  it('injects mode=iframe + parent_origin when valid query params are present', async () => {
     const { app } = await makeApp();
     const parent = 'https://app.example.com';
     const res = await app.request(
-      `/setup/connect-platform?code=ABCD1234&mode=iframe&parentOrigin=${encodeURIComponent(parent)}`,
+      `/setup/connect-platform?code=ABCD1234&mode=iframe&parent_origin=${encodeURIComponent(parent)}`,
     );
     expect(res.status).toBe(200);
     const body = await res.text();
     expect(body).toContain('"iframe"');
     expect(body).toContain(parent);
     // The postMessage branch only fires on mode==='iframe' AND a
-    // validated parentOrigin, so both must be present in the
+    // validated parent_origin, so both must be present in the
     // rendered script to enable the hand-off path.
     expect(body).toContain('platform-connect-bound');
     expect(body).toContain('window.parent.postMessage');
   });
 
-  it('falls back to tab mode when parentOrigin is missing', async () => {
+  it('falls back to tab mode when parent_origin is missing', async () => {
     const { app } = await makeApp();
     const res = await app.request('/setup/connect-platform?code=ABCD1234&mode=iframe');
     expect(res.status).toBe(200);
     const body = await res.text();
-    // `modeLiteral` collapses to 'tab' when parentOrigin is unset,
+    // `modeLiteral` collapses to 'tab' when parent_origin is unset,
     // so the close-this-tab copy renders instead of the iframe copy.
     expect(body).toContain('"tab"');
   });
 
-  it('rejects garbage parentOrigin values (no wildcard postMessage)', async () => {
+  it('rejects garbage parent_origin values (no wildcard postMessage)', async () => {
     const { app } = await makeApp();
     const res = await app.request(
-      `/setup/connect-platform?code=ABCD1234&mode=iframe&parentOrigin=${encodeURIComponent('not a url')}`,
+      `/setup/connect-platform?code=ABCD1234&mode=iframe&parent_origin=${encodeURIComponent('not a url')}`,
     );
     expect(res.status).toBe(200);
     const body = await res.text();
-    // parentOrigin failed validation → empty string → no postMessage.
+    // parent_origin failed validation → empty string → no postMessage.
     expect(body).not.toContain('not a url');
     // modeLiteral drops back to 'tab' per renderConnectPlatformPage.
     expect(body).toContain('"tab"');

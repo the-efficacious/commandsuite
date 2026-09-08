@@ -2245,7 +2245,12 @@ export interface GetGenaiInferenceResponse {
 export interface ListGenaiQuery {
   from?: number;
   to?: number;
-  /** Exclusive composite cursor for oldest-first traversal. */
+  /**
+   * Exclusive composite cursor for oldest-first traversal. On the wire
+   * this is `after_ts` + `after_id` — the direction is in the name,
+   * because `/members/:name/activity` walks the other way and a loop
+   * written for one does not terminate against the other.
+   */
   cursor?: { ts: number; id: number };
   limit?: number;
 }
@@ -2282,7 +2287,10 @@ export interface ListTelemetryQuery {
   event?: string;
   from?: number;
   to?: number;
-  /** Exclusive composite cursor for oldest-first traversal. */
+  /**
+   * Exclusive composite cursor for oldest-first traversal. On the wire
+   * this is `after_ts` + `after_id`.
+   */
   cursor?: { ts: number; id: number };
   limit?: number;
 }
@@ -2721,7 +2729,12 @@ export interface ListActivityQuery {
   readonly from?: number;
   /** Inclusive upper bound on ts (ms since epoch). */
   readonly to?: number;
-  /** Exclusive composite cursor for newest-first traversal. */
+  /**
+   * Exclusive composite cursor for newest-first traversal. On the wire
+   * this is `before_ts` + `before_id` — the opposite direction from
+   * `/genai` and `/telemetry`, which is why the two no longer share a
+   * parameter name.
+   */
   readonly cursor?: { ts: number; id: number };
   /** Filter by kind — single or array. Omit for all kinds. */
   readonly kind?: ActivityKind | ActivityKind[];

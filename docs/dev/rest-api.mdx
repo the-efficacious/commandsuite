@@ -53,6 +53,48 @@ In the tables below:
 | **read OR self** | `activity.read`, OR caller is target |
 | **none** | Unauthenticated (used for health, enrollment, lookups) |
 
+## Query parameters and cursors
+
+Query parameters are `snake_case`. The same knob is `camelCase` as a
+JSON body field or a TypeScript property and `kebab-case` as a CLI
+flag — `if_offline` ↔ `ifOffline` ↔ `--if-offline` is the shape of
+every one of them.
+
+**A paging cursor states its direction in its name**, because
+direction is a property of the endpoint and not of the client:
+
+| Cursor | Direction | Endpoints |
+|---|---|---|
+| `before_ts` + `before_id` | newest-first | `GET /history`, `GET /members/:name/activity` |
+| `after_ts` + `after_id` | oldest-first | `GET /members/:name/genai`, `GET /members/:name/telemetry` |
+
+Both halves or neither — a half-supplied cursor is a `400`, not a
+silent read from the start of the range. Feed the last row of the page
+you just received back as the cursor and the walk terminates.
+
+A **scalar** bound carries its arity in its name too: `before_ts` with
+no `before_id`, which is what `GET /notifications/endpoints/:slug/deliveries`
+takes. It is an exclusive upper bound on `ts` and nothing more, so
+receipts sharing its millisecond are skipped; that endpoint is a feed
+to scroll, not a ledger to enumerate.
+
+### Deprecated spellings — removed in the next minor
+
+These names are still accepted, and a response to a request that used
+one carries `Deprecation: true` plus
+`X-CSuite-Deprecated-Query: <legacy>=<current>` naming what to change.
+The body is identical either way. When both names are present the
+current one wins.
+
+| Legacy | Current | Where |
+|---|---|---|
+| `cursor_ts`, `cursor_id` | `before_ts`, `before_id` | `GET /members/:name/activity` |
+| `cursor_ts`, `cursor_id` | `after_ts`, `after_id` | `GET /members/:name/genai`, `GET /members/:name/telemetry` |
+| `before` | `before_ts` | `GET /notifications/endpoints/:slug/deliveries` |
+| `stalledMs` | `stalled_ms` | `GET /team/status` |
+| `clientKind`, `clientVersion` | `client_kind`, `client_version` | `GET /subscribe` |
+| `parentOrigin` | `parent_origin` | `GET /setup/connect-platform` |
+
 ## Health
 
 ### `GET /healthz`
@@ -169,7 +211,11 @@ authenticated member; payloads cannot override.
 | **Upgrade** | WebSocket — each broker push targeting the member arrives as one JSON text frame (`ws.send(JSON.stringify(message))`), shape `Message` |
 
 Subscribe to messages addressed to `self` (the authenticated
-caller's name). This is a WebSocket upgrade, not SSE — the SDK's
+caller's name). A browser reports itself with
+`client_kind=browser&client_version=<v>` on the query string instead
+of the `X-CSUITE-Client-Identity` header; sending both is a `400`.
+(`clientKind` / `clientVersion` are accepted for one more release.)
+This is a WebSocket upgrade, not SSE — the SDK's
 `client.subscribe(name)` wraps the socket in an async iterable. A
 missing `name` or an identity mismatch is rejected by pre-upgrade
 middleware with a plain HTTP 400/403 (the broker enforces
@@ -411,7 +457,7 @@ outstanding rather than aging into a success nobody observed.
 Runner-side activity upload. The server stamps each event with a
 row id and broadcasts to live `/activity/stream` subscribers.
 
-### `GET /members/:name/activity?from=<ts>&to=<ts>&kind=<k|k[]>&limit=<n>&cursor_ts=<ts>&cursor_id=<id>`
+### `GET /members/:name/activity?from=<ts>&to=<ts>&kind=<k|k[]>&limit=<n>&before_ts=<ts>&before_id=<id>`
 
 | | |
 |---|---|
@@ -419,17 +465,20 @@ row id and broadcasts to live `/activity/stream` subscribers.
 | **Returns** | `ListActivityResponse` — `{ activity: ActivityRow[] }` |
 
 Range query. Returns newest-first up to 1000 rows. `from`, `to` and
-`cursor_ts` are whole non-negative millisecond values, `cursor_id` a
+`before_ts` are whole non-negative millisecond values, `before_id` a
 whole non-negative row id, and `limit` an integer 1–1000; a value
 outside those bounds is a `400` (`invalid query`, with `details`
 naming the offending field), not a clamp. `kind` filter
 accepts a single value or repeated params, OR-combined
 (`session_start | session_end | objective_open | objective_close |
 llm_exchange | tool_action | user_prompt | context_control |
-auth_state`). `cursor_ts` +
-`cursor_id` form a composite paging cursor (both or neither —
+auth_state`). `before_ts` +
+`before_id` form a composite paging cursor (both or neither —
 "rows strictly before this (ts, id)"), which stays stable when many
-rows share a timestamp.
+rows share a timestamp. This read walks NEWEST-first, which is why
+its cursor is `before_*`; `/genai` and `/telemetry` walk the other
+way and take `after_*`. `cursor_ts` / `cursor_id` are accepted for
+one more release and answer with `Deprecation: true`.
 
 The TracePanel uses
 `from=<objective.createdAt>&to=<objective.completedAt>&kind=llm_exchange`
@@ -448,7 +497,7 @@ rejection is a proper HTTP 400/403 rather than a failed handshake;
 on server shutdown the socket closes with code `1001`. Used by the
 TracePanel for in-flight objectives where new events keep arriving.
 
-### `GET /members/:name/genai?from=<ts>&to=<ts>&limit=<n>&view=summary`
+### `GET /members/:name/genai?from=<ts>&to=<ts>&limit=<n>&after_ts=<ts>&after_id=<id>&view=summary`
 
 | | |
 |---|---|
@@ -460,7 +509,8 @@ GenAI inference records carrying `systemInstructions` and the
 complete `inputMessages` context, captured from the agent's own
 body export (Claude Code OTLP bodies, codex rollout bundles).
 Oldest-first within the `from`/`to` bounds (applied to capture
-time `ts`). Server-internal raw-body pointers never cross the wire.
+time `ts`), paged with `after_ts` + `after_id` (both or neither).
+Server-internal raw-body pointers never cross the wire.
 
 `view=summary` serves the light call-ledger projection — every
 field EXCEPT the three content arrays (`systemInstructions`,
@@ -515,7 +565,7 @@ never captured, and **410** for a record that outlived its bytes
 bytes fail their own hash check on read reports the same way rather
 than serving corrupt content).
 
-### `GET /members/:name/telemetry?signal=<log|metric>&event=<name>&from=<ts>&to=<ts>&limit=<n>&cursor_ts=<ts>&cursor_id=<id>`
+### `GET /members/:name/telemetry?signal=<log|metric>&event=<name>&from=<ts>&to=<ts>&limit=<n>&after_ts=<ts>&after_id=<id>`
 
 | | |
 |---|---|
@@ -525,8 +575,16 @@ than serving corrupt content).
 The operational accounting behind a trace: one row per OTLP log
 record or metric data point the member's agent exported — cost,
 tokens, durations, errors, lifecycle. Oldest-first within the
-window, paged with the same composite cursor as the activity and
-gen_ai endpoints.
+window, paged with `after_ts` + `after_id`.
+
+It is the same *mechanism* as the activity endpoint's cursor and the
+opposite *direction*, which is why it is not the same name. This read
+advances toward newer rows; `GET /members/:name/activity` advances
+toward older ones. Both endpoints once spelled their cursor
+`cursor_ts` / `cursor_id`, and a client that reused the activity
+paging loop here fed the newest row back into a forward walk and never
+terminated. The old spelling is still accepted for one release and
+answers with `Deprecation: true`.
 
 Deliberately unfiltered at ingest: there is no allowlist on record
 or metric names, so a newer agent's signals appear here without a
@@ -868,7 +926,7 @@ returned; summaries expose `hasSecret` only).
 | `DELETE /notifications/endpoints/:slug` | `notifications.manage` | Cascades delivery receipts + queued deliveries. |
 | `PUT /notifications/endpoints/:slug/secret` | `notifications.manage` | `{ secret }` (≤ 4 KiB). KEK-encrypted; never returned. 503 without an active KEK. |
 | `DELETE /notifications/endpoints/:slug/secret` | `notifications.manage` | The endpoint then rejects everything (fail closed). |
-| `GET /notifications/endpoints/:slug/deliveries` | `notifications.manage` | Receipts, newest first. `limit` ≤ 500, `before` epoch-ms cursor. |
+| `GET /notifications/endpoints/:slug/deliveries` | `notifications.manage` | Receipts, newest first. `limit` ≤ 500, `before_ts` an exclusive epoch-ms upper bound on `ts` — a bound, not a cursor: receipts sharing its millisecond are skipped. `before` accepted for one more release. |
 | `GET /notifications/profiles` | `notifications.manage` | Summaries carry `hasSecret` + `endpointCount`. |
 | `POST /notifications/profiles` | `notifications.manage` | `CreateNotificationProfileRequest` (`slug`, `auth`). |
 | `PATCH /notifications/profiles/:slug` | `notifications.manage` | `description` / `auth`. |

@@ -58,7 +58,7 @@ const MAX_RETRY_MS = 30_000;
 export function startSubscribe(options: StartSubscribeOptions): () => void {
   const { name, historyLimit = 50, onError } = options;
   const url = buildWsUrl(
-    `/subscribe?name=${encodeURIComponent(name)}&clientKind=browser&clientVersion=${encodeURIComponent(packageJson.version)}`,
+    `/subscribe?name=${encodeURIComponent(name)}&client_kind=browser&client_version=${encodeURIComponent(packageJson.version)}`,
   );
 
   let ws: WebSocket | null = null;

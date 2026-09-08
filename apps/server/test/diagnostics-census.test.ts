@@ -250,8 +250,19 @@ const APP_IN_SCOPE = [
  * incomplete. The renamed sites retain the same classification as the sites
  * they replace: invalid/refused frames cannot settle a row, and `deferred`
  * explicitly preserves it.
+ *
+ * 2026-09-08, +1 = 80. D44/D46 renamed the wire's query parameters and gave
+ * the retired spellings a one-release compatibility window; every request
+ * that uses one logs `deprecated query parameter used — update the caller`
+ * with the path and the `legacy=current` pairs.
+ *
+ * OPERATIONAL, not a completeness claim. It fires on a request the broker
+ * then serves in full — the body is byte-identical to the one the current
+ * spelling produces, nothing is captured, dropped or deferred. It exists so
+ * a fleet's remaining stale callers are findable before the aliases are
+ * removed in the next minor, at which point the site goes with them.
  */
-const TOTAL_SITES = 79;
+const TOTAL_SITES = 80;
 
 function messagesIn(file: string): string[] {
   let src: string | null = null;

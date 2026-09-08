@@ -512,7 +512,7 @@ export class Client {
   /** Read the broker-composed team operability report. Requires members.manage. */
   async teamStatus(options: { stalledMs?: number } = {}): Promise<TeamStatusResponse> {
     const params = new URLSearchParams();
-    if (options.stalledMs !== undefined) params.set('stalledMs', String(options.stalledMs));
+    if (options.stalledMs !== undefined) params.set('stalled_ms', String(options.stalledMs));
     const suffix = params.size > 0 ? `?${params}` : '';
     const resp = await this.request(`${PATHS.teamStatus}${suffix}`, { method: 'GET' });
     return TeamStatusResponseSchema.parse(await this.json(resp));
@@ -744,8 +744,8 @@ export class Client {
     if (query.from !== undefined) params.set('from', String(query.from));
     if (query.to !== undefined) params.set('to', String(query.to));
     if (query.cursor !== undefined) {
-      params.set('cursor_ts', String(query.cursor.ts));
-      params.set('cursor_id', String(query.cursor.id));
+      params.set('before_ts', String(query.cursor.ts));
+      params.set('before_id', String(query.cursor.id));
     }
     if (query.kind !== undefined) {
       const kinds = Array.isArray(query.kind) ? query.kind : [query.kind];
@@ -779,8 +779,8 @@ export class Client {
     if (query.from !== undefined) params.set('from', String(query.from));
     if (query.to !== undefined) params.set('to', String(query.to));
     if (query.cursor !== undefined) {
-      params.set('cursor_ts', String(query.cursor.ts));
-      params.set('cursor_id', String(query.cursor.id));
+      params.set('after_ts', String(query.cursor.ts));
+      params.set('after_id', String(query.cursor.id));
     }
     if (query.limit !== undefined) params.set('limit', String(query.limit));
     const qs = params.toString();
@@ -811,8 +811,8 @@ export class Client {
     if (query.from !== undefined) params.set('from', String(query.from));
     if (query.to !== undefined) params.set('to', String(query.to));
     if (query.cursor !== undefined) {
-      params.set('cursor_ts', String(query.cursor.ts));
-      params.set('cursor_id', String(query.cursor.id));
+      params.set('after_ts', String(query.cursor.ts));
+      params.set('after_id', String(query.cursor.id));
     }
     if (query.limit !== undefined) params.set('limit', String(query.limit));
     const path = `${MEMBER_PATHS.genai(name)}?${params.toString()}`;
@@ -847,8 +847,8 @@ export class Client {
     if (query.from !== undefined) params.set('from', String(query.from));
     if (query.to !== undefined) params.set('to', String(query.to));
     if (query.cursor !== undefined) {
-      params.set('cursor_ts', String(query.cursor.ts));
-      params.set('cursor_id', String(query.cursor.id));
+      params.set('after_ts', String(query.cursor.ts));
+      params.set('after_id', String(query.cursor.id));
     }
     if (query.limit !== undefined) params.set('limit', String(query.limit));
     const qs = params.toString();
@@ -1653,14 +1653,22 @@ export class Client {
     await this.json(resp);
   }
 
-  /** Delivery receipts for one endpoint, newest first (requires `notifications.manage`). */
+  /**
+   * Delivery receipts for one endpoint, newest first (requires
+   * `notifications.manage`).
+   *
+   * `beforeTs` is an exclusive upper bound on `ts`, not a cursor:
+   * receipts sharing its millisecond are skipped, so this walk is a
+   * feed to scroll rather than a ledger to enumerate. `/history` takes
+   * the composite `{ts, id}` cursor instead, which has no such hole.
+   */
   async listNotificationDeliveries(
     slug: string,
-    query?: { limit?: number; before?: number },
+    query?: { limit?: number; beforeTs?: number },
   ): Promise<NotificationDelivery[]> {
     const params = new URLSearchParams();
     if (query?.limit !== undefined) params.set('limit', String(query.limit));
-    if (query?.before !== undefined) params.set('before', String(query.before));
+    if (query?.beforeTs !== undefined) params.set('before_ts', String(query.beforeTs));
     const qs = params.size > 0 ? `?${params.toString()}` : '';
     const resp = await this.request(`${NOTIFICATION_PATHS.endpointDeliveries(slug)}${qs}`, {
       method: 'GET',
