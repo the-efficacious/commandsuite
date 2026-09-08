@@ -135,3 +135,7 @@ stations/*/out/
 # release preparation renders + logs (never committed)
 RELEASE-*.md
 .release/prepare-logs/
+
+# Claude Code agent worktrees (created by the Agent tool with isolation: worktree).
+# Each carries its own biome.json, which biome otherwise finds as a nested root.
+.claude/worktrees/
