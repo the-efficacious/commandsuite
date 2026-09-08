@@ -48,8 +48,9 @@ export interface ComposeInstructionsInput {
    * build a `ComposeInstructionsInput`: one passes the canonical object
    * and two construct a literal by hand. An optional field is carried
    * by the first and silently dropped by the other two — and one of
-   * those is the watchdog's own entry point, where dropping it means
-   * the projection never looks for the document at all.
+   * those is `exemptionsFor` in `app.ts`, where dropping it means the
+   * captured copy of the document is redacted, never matches the sent
+   * text, and is resent every turn.
    *
    * Requiring it makes the partial literal fail to compile. `null` is
    * a real answer someone has to write rather than a lookup they have
@@ -202,8 +203,8 @@ export async function composedInstructionsSha256(input: ComposeInstructionsInput
  *
  * Its membership test is that it was SENT: the input carries a
  * document with text. The runner renders that text verbatim into the
- * agent's fixed context, so the same string is what the watchdog then
- * looks for in the captured turn.
+ * agent's fixed context, so the same string is what the redaction
+ * exemption then looks for in the captured turn.
  */
 export function instructionBlocks(
   input: ComposeInstructionsInput,

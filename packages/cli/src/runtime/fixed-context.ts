@@ -37,21 +37,26 @@
  * `TEAM_PROCESS_MAX` — a real ceiling, unlike the predecessor
  * design which held N rules with nothing capping N.
  *
- * THE WATCHDOG DOES WATCH THIS BLOCK. `#103` projects it alongside the
- * three authored blocks, so a document that falls out of an agent's
- * context mid-session is detected on an observable turn and re-sent —
- * it does not wait for the next runner start.
+ * THIS BLOCK IS PROJECTED FOR REDACTION, ALONGSIDE THE THREE AUTHORED
+ * ONES. `instructionCaptureExemptions` lists it so a registered secret
+ * value occurring inside operator-authored prose is not replaced with
+ * `[REDACTED]` in the stored capture.
  *
- * Its membership test differs from theirs and has to. They are
- * composed into `instructions`, so the projection confirms them by
- * substring; this is never in that string, so a substring test could
- * only ever return false for it. Membership here is that it was SENT,
- * and the text projected is `doc.text` verbatim — the same bytes
- * rendered below, so the watchdog looks for exactly what the agent
- * received.
+ * Its membership test differs from theirs and has to. They are composed
+ * into `instructions`, so the projection confirms them by substring;
+ * this is never in that string, so a substring test could only ever
+ * return false for it. Membership here is that it was SENT, and the
+ * text projected is `doc.text` verbatim — the same bytes rendered
+ * below, so the exemption matches exactly what the agent received.
  *
- * Codex remains the exception: its system projection is unobservable,
- * so absence cannot be asserted and nothing is re-sent (`#118`).
+ * No detector reads any of this. The broker's two context watchdogs —
+ * the objective-id reminder and the instruction-block presence check
+ * with its `persistent_context` re-sends — were removed in #185 on
+ * measured grounds: 97% of the reminder pushes went to members whose
+ * captures the detector could not reliably read, while the runner's
+ * once-per-session `context_refresh` re-brief never misfired. A block
+ * that falls out of an agent's context is re-asserted at the next
+ * runner start and on codex compaction, not mid-session.
  */
 
 import type { InstructionsResponse, TeamProcess } from 'csuite-sdk/types';

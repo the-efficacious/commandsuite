@@ -177,7 +177,8 @@ export interface Team {
   context: string;
   /**
    * @deprecated Accepted when reading data from preset-era servers. Current
-   * servers omit this field and current clients must not present it.
+   * servers omit this field, no current server writes a preset — the write
+   * path was deleted in D11 — and current clients must not present it.
    */
   permissionPresets?: PermissionPresets;
 }
@@ -541,10 +542,11 @@ export interface HealthResponse {
 
 /**
  * The named kinds of operator-authored instruction blocks composed
- * into a member's fixed context. The strings are a wire and telemetry
- * contract (`persistent_context kind="…"` re-sends, the context
- * watchdog's `context.block.kind` attribute) — pinned independently
- * of any TypeScript identifier; renaming code must never move them.
+ * into a member's fixed context. The strings are a wire contract —
+ * they ship as `blocks[].kind` on `GET /instructions` and inside
+ * `changed` on the `kind: 'instructions'` channel event — pinned
+ * independently of any TypeScript identifier; renaming code must never
+ * move them.
  *
  * `team_process` was `process_document` until the team-process rename.
  * That move was the point of the rename rather than a side effect of
@@ -2828,10 +2830,14 @@ export interface FsEntry {
   updatedAt: number;
   /**
    * Whether the requesting viewer may mutate this entry — the server's
-   * `canWrite()` predicate, evaluated per request. Optional: an older
-   * server omits it. Treat `undefined` as unknown rather than false, and
-   * do not reconstruct the rule from `owner` — that inference is wrong
-   * for objective namespace entries.
+   * `canWrite()` predicate, evaluated per request. A property of the
+   * entry, not of one verb: a current server sends it on every response
+   * that carries an `FsEntry`, mutations included, so the entry returned
+   * by `write`, `mkdir` or `mv` answers the same question a `stat` on
+   * that path would. Optional: an older server omits it. Treat
+   * `undefined` as unknown rather than false, and do not reconstruct the
+   * rule from `owner` — that inference is wrong for objective namespace
+   * entries.
    */
   canWrite?: boolean;
 }

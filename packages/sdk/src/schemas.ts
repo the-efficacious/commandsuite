@@ -7,7 +7,16 @@
  */
 
 import { z } from 'zod';
+import { SLUG_MAX_LENGTH, SLUG_PATTERN, SLUG_RULE } from './protocol.js';
 import { LEGACY_PERMISSION_ALIASES, PERMISSIONS, RUNNER_CONDITION_CODES } from './types.js';
+
+/**
+ * Every slug schema in this file, built from the one grammar in
+ * `protocol.ts`. The names below stay distinct because they document
+ * which store a field addresses — but they are now provably the same
+ * rule, not four hand-copied regexes that agreed by luck (#171).
+ */
+const slugSchema = () => z.string().min(1).max(SLUG_MAX_LENGTH).regex(SLUG_PATTERN, SLUG_RULE);
 
 export const LogLevelSchema = z.enum(['debug', 'info', 'notice', 'warning', 'error', 'critical']);
 
@@ -566,18 +575,11 @@ export const ListObjectivesQuerySchema = z.object({
 // rename never orphans history.
 
 /**
- * Channel slug: 1–32 lowercase letters/digits/dashes, must start +
- * end alphanumeric, no consecutive dashes. Mirrors `validateSlug` on
- * the server.
+ * Channel slug — the shared grammar (`SLUG_PATTERN`, `SLUG_MAX_LENGTH`),
+ * which `validateSlug` on the server now reads from the same place. A
+ * channel's is the only slug that may be changed after creation.
  */
-export const ChannelSlugSchema = z
-  .string()
-  .min(1)
-  .max(32)
-  .regex(
-    /^[a-z0-9](?:[a-z0-9]|-(?!-))*[a-z0-9]$|^[a-z0-9]$/,
-    'slug must be lowercase letters/digits/dashes, no consecutive dashes, no leading/trailing dash',
-  );
+export const ChannelSlugSchema = slugSchema();
 
 export const ChannelMemberRoleSchema = z.enum(['admin', 'member']);
 
@@ -662,15 +664,8 @@ export const AddChannelMemberRequestSchema = z.object({
 // at rest server-side. Tool results are MCP CallToolResult-shaped so
 // the runner relays them verbatim.
 
-/** Tool-source slug: same grammar as channel slugs. Immutable in v1. */
-export const ToolSourceSlugSchema = z
-  .string()
-  .min(1)
-  .max(32)
-  .regex(
-    /^[a-z0-9](?:[a-z0-9]|-(?!-))*[a-z0-9]$|^[a-z0-9]$/,
-    'slug must be lowercase letters/digits/dashes, no consecutive dashes, no leading/trailing dash',
-  );
+/** Tool-source slug: the shared grammar. Immutable in v1. */
+export const ToolSourceSlugSchema = slugSchema();
 
 export const ToolSourceKindSchema = z.enum(['custom', 'mcp']);
 export const ToolCredentialKindSchema = z.enum(['bearer', 'header']);
@@ -2250,14 +2245,18 @@ export const FsEntrySchema = z.object({
   createdBy: NameSchema,
   /**
    * Whether the requesting viewer may mutate this entry — the server's
-   * own `canWrite()` predicate, evaluated per request.
+   * own `canWrite()` predicate, evaluated per request, on every response
+   * carrying an entry: reads (`stat`, `ls`, `shared`, `all`) and writes
+   * (`write`, `mkdir`, `mv`) alike.
    *
    * Present so a client does not have to RECONSTRUCT the rule. A UI that
    * infers "can I delete this" from `owner === me` is wrong for objective
    * namespace entries, whose owner is `obj:<id>` and whose write rule
    * includes objective membership — information the client does not have
    * and cannot derive. Optional so older servers that omit it still
-   * parse; a client seeing `undefined` should ask rather than guess.
+   * parse; a client seeing `undefined` is talking to one of those and
+   * should ask rather than guess. `undefined` never means "this verb
+   * does not send it" — that carve-out existed until #159 and is gone.
    */
   canWrite: z.boolean().optional(),
   updatedAt: z.number().int().nonnegative(),

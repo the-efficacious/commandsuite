@@ -35,7 +35,12 @@
  *
  * Every entry returned to a caller carries `canWrite` — this store's own
  * answer for that viewer. Clients must use it rather than rebuilding the
- * rule, which is not derivable from the fields they hold.
+ * rule, which is not derivable from the fields they hold. That means
+ * every entry a PUBLIC method hands back, mutations included: `write`,
+ * `mkdir` and `mv` answer the same question `stat` does for the same
+ * path and viewer. The private helpers below still return bare rows,
+ * because their results are consumed internally and never reach a
+ * caller.
  *
  * Ancestor auto-creation on write keeps the UX simple: writing
  * `/alice/uploads/report.pdf` creates `/alice` and `/alice/uploads`
@@ -347,7 +352,7 @@ class SqliteFilesystemStore implements FilesystemStore {
     return this.isObjectiveMember(path, viewer);
   }
 
-  // ─── read API ──────────────────────────────────────────────────
+  // ─── entry projection ──────────────────────────────────────────
 
   /**
    * Attach the viewer's write capability to an entry.
@@ -362,6 +367,17 @@ class SqliteFilesystemStore implements FilesystemStore {
    * The alternative — every consumer reimplementing the rule — is
    * already wrong in two places, in opposite directions. See
    * `packages/web-ui/src/components/FilesPanel.tsx`.
+   *
+   * `canWrite` is a property of the ENTRY, not of a read projection, so
+   * this runs on the mutating paths too. Until #159 it did not, and the
+   * entry a caller got back from `write`, `mkdir` or `mv` omitted the
+   * field entirely — indistinguishable, to a client, from a server too
+   * old to send it, and exactly where the answer is least derivable: a
+   * just-created objective-folder entry is owned by `obj:<id>` and
+   * writable by every member of that objective. "I wrote this once" is
+   * not "I may write this again"; grants and objective membership
+   * change. One extra predicate call per mutation buys the client a
+   * round-trip it no longer has to make.
    */
   private withCapability(entry: FsEntry, viewer: ViewerContext): FsEntry {
     return { ...entry, canWrite: this.canWrite(entry.path, viewer) };
@@ -545,7 +561,7 @@ class SqliteFilesystemStore implements FilesystemStore {
 
     const row = this.getEntryStmt.get(finalPath) as FsEntryRow | undefined;
     if (!row) throw new FsError('corrupt', `entry vanished after write: ${finalPath}`);
-    return { entry: rowToEntry(row), renamed };
+    return { entry: this.withCapability(rowToEntry(row), input.writer), renamed };
   }
 
   /**
@@ -641,7 +657,7 @@ class SqliteFilesystemStore implements FilesystemStore {
 
     const row = this.getEntryStmt.get(finalPath) as FsEntryRow | undefined;
     if (!row) throw new FsError('corrupt', `entry vanished after copy: ${finalPath}`);
-    return rowToEntry(row);
+    return this.withCapability(rowToEntry(row), input.viewer);
   }
 
   mkdir(path: string, writer: ViewerContext, opts: { recursive?: boolean } = {}): FsEntry {
@@ -654,7 +670,7 @@ class SqliteFilesystemStore implements FilesystemStore {
     }
     const now = Date.now();
     if (opts.recursive) {
-      return this.ensureDirectoryTree(normalized, writer, now);
+      return this.withCapability(this.ensureDirectoryTree(normalized, writer, now), writer);
     }
     // Non-recursive: parent must exist (unless it's root or the writer's home placeholder).
     const parent = parentOf(normalized);
@@ -667,7 +683,7 @@ class SqliteFilesystemStore implements FilesystemStore {
         throw new FsError('not_a_directory', `parent is not a directory: ${parent}`);
       }
     }
-    return this.createDirectoryRow(normalized, writer, now);
+    return this.withCapability(this.createDirectoryRow(normalized, writer, now), writer);
   }
 
   async remove(
@@ -739,7 +755,7 @@ class SqliteFilesystemStore implements FilesystemStore {
     if (src === dst) {
       const row = this.getEntryStmt.get(src) as FsEntryRow | undefined;
       if (!row) throw new FsError('not_found', `no such path: ${src}`);
-      return rowToEntry(row);
+      return this.withCapability(rowToEntry(row), writer);
     }
     if (src === ROOT_PATH || dst === ROOT_PATH) {
       throw new FsError('invalid_input', 'cannot move root');
@@ -779,7 +795,7 @@ class SqliteFilesystemStore implements FilesystemStore {
 
     const moved = this.getEntryStmt.get(dst) as FsEntryRow | undefined;
     if (!moved) throw new FsError('corrupt', `entry vanished after move: ${dst}`);
-    return rowToEntry(moved);
+    return this.withCapability(rowToEntry(moved), writer);
   }
 
   // ─── grants ───────────────────────────────────────────────────

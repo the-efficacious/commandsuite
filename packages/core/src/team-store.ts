@@ -5,7 +5,9 @@
  * here:
  *
  *   - `team`               singleton row (id=1) carrying name + context
- *   - `permission_presets` named bundles of leaf permissions
+ *   - `permission_presets` legacy named bundles of leaf permissions.
+ *                          READ-ONLY: rows an older broker wrote, kept
+ *                          so a pre-consolidation database still loads
  *   - `members`            roster: name, role, instructions, raw_permissions,
  *                          totp enrollment, insertion order
  *
@@ -15,11 +17,13 @@
  * `member_name` references it. Member deletion removes the row here
  * and asks the token store to revoke every token for the name.
  *
- * `raw_permissions` is stored verbatim (preset names or leaf strings);
- * the resolved leaf array is computed on every read against the
- * current presets. That means mutating a preset takes effect for every
- * member that references it on the next `findByName` / `members()`
- * call — no eager re-resolve, no stale cache.
+ * `raw_permissions` is stored verbatim (leaf strings, or a preset name
+ * on a row written before the consolidation); the resolved leaf array
+ * is computed on every read against the stored presets, so a legacy
+ * row keeps resolving without being rewritten. Nothing in the product
+ * can write a preset any more — no route, no CLI command, no MCP tool,
+ * and the wire refuses a preset name by construction, since
+ * `MemberPermissionListSchema`'s element type is `z.enum(PERMISSIONS)`.
  *
  * TOTP secrets are encrypted at rest when a process-wide KEK is set
  * (see kek.ts). Reads transparently decrypt; writes transparently
@@ -38,7 +42,6 @@ import {
   type UpdateMemberPatch,
   validateMemberInstructions,
   validateMemberName,
-  validatePermissionPreset,
   validateRawPermissions,
   validateRole,
   validateTeamContext,
@@ -188,17 +191,23 @@ function encryptTotpSecret(plaintext: string | null, getCipher: GetFieldCipher):
 /**
  * Read-side projection for the team config.
  *
- * Legacy named bundles remain readable internally so preset-era member
+ * Legacy named bundles remain READABLE internally so preset-era member
  * rows can be resolved, but they are not part of the current Team wire
- * projection.
+ * projection and there is no way to write one. `setPreset`,
+ * `deletePreset` and `membersReferencingPreset` were deleted with D11:
+ * none had a production caller, no wire shape accepts a preset name,
+ * and `Team.permissionPresets` has been `@deprecated` in the SDK since
+ * the consolidation. `getPresets()` and the preset branch of
+ * `resolvePermissions` stay, because together they are the only reason
+ * an older database still loads. If operator-editable permission
+ * templates are ever wanted, design them fresh rather than resurrect a
+ * schema that predates the flat leaf model.
  */
 export class TeamStore {
   private readonly db: SqlDriver;
   private readonly getTeamStmt: SqlStatement;
   private readonly upsertTeamStmt: SqlStatement;
   private readonly listPresetsStmt: SqlStatement;
-  private readonly upsertPresetStmt: SqlStatement;
-  private readonly deletePresetStmt: SqlStatement;
   private readonly now: () => number;
 
   constructor(db: SqlDriver, options: { now?: () => number; getCipher?: GetFieldCipher } = {}) {
@@ -221,15 +230,6 @@ export class TeamStore {
     this.listPresetsStmt = this.db.prepare(
       'SELECT name, permissions, updated_at, updated_by FROM permission_presets ORDER BY name ASC',
     );
-    this.upsertPresetStmt = this.db.prepare(`
-      INSERT INTO permission_presets (name, permissions, updated_at, updated_by)
-      VALUES (?, ?, ?, ?)
-      ON CONFLICT(name) DO UPDATE SET
-        permissions = excluded.permissions,
-        updated_at = excluded.updated_at,
-        updated_by = excluded.updated_by
-    `);
-    this.deletePresetStmt = this.db.prepare('DELETE FROM permission_presets WHERE name = ?');
   }
 
   /**
@@ -253,6 +253,12 @@ export class TeamStore {
     return (this.getTeamStmt.get() as RawTeamRow | undefined) !== undefined;
   }
 
+  /**
+   * The legacy presets on disk. Read-only by design: rows written by a
+   * broker older than the flat leaf model, resolved into leaves on
+   * every member load by `resolvePermissions`. A current broker returns
+   * `{}` here and nothing can add to it.
+   */
   getPresets(): PermissionPresets {
     const rows = this.listPresetsStmt.all() as unknown as RawPresetRow[];
     const out: PermissionPresets = {};
@@ -284,42 +290,6 @@ export class TeamStore {
       },
       by,
     );
-  }
-
-  /**
-   * Insert or replace a permission preset. The `permissions` array is
-   * validated against the canonical leaf set; unknown leaves throw
-   * `MemberLoadError`. The preset NAME is also validated against the
-   * preset-key regex.
-   */
-  setPreset(name: string, permissions: Permission[], by: string | null = null): void {
-    validatePermissionPreset(name, permissions);
-    this.upsertPresetStmt.run(name, JSON.stringify(permissions), this.now(), by);
-  }
-
-  /**
-   * Delete a permission preset. Returns true if a row was removed.
-   * Note: members may still reference this preset in `raw_permissions`;
-   * after deletion their resolved permissions exclude these leaves
-   * silently. The caller is expected to gate destructive removal on
-   * an admin permission and surface the dependency to the operator.
-   */
-  deletePreset(name: string): boolean {
-    const result = this.deletePresetStmt.run(name);
-    return Number(result.changes ?? 0) > 0;
-  }
-
-  /**
-   * List members that reference a preset by name in their
-   * `raw_permissions`. Cheap scan — the roster is small (tens, not
-   * thousands). Used by the destructive-delete confirmation path.
-   */
-  membersReferencingPreset(presetName: string, members: MemberStore): string[] {
-    const out: string[] = [];
-    for (const m of members.members()) {
-      if (m.rawPermissions.includes(presetName)) out.push(m.name);
-    }
-    return out;
   }
 }
 

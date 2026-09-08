@@ -57,7 +57,8 @@ otherwise runs until signalled:
 
 `scripts/bootstrap.sh` accepts `CSUITE_RUNNER_VERB=stub`, and the
 container honours `CSUITE_START_RUNNER=1` **only** for the stub — a
-real model runner inside the container stays refused with exit 64 and
+real model runner inside the container stays refused with
+[exit 64](/docs/reference/cli#exit-codes) and
 a pointer to [always-on agent](/docs/guides/always-on-agent). The
 "Headless bootstrap" and container CI jobs use this to assert a
 measured `connected=1` and a `session_start` event for the runner

@@ -125,7 +125,7 @@ Liveness probe. Cheap; always responds 200 if the process is up.
 
 The member's composed instruction packet. Returns the caller's full
 member record (name, role, instructions, permissions) plus the team
-(name, context, permissionPresets), the public projection
+(name and context), the public projection
 of every teammate, the caller's currently-open objectives, the
 external tools resolved for them (`toolSources`), and the team's
 team process (`teamProcess` — `null` when none is set,
@@ -406,8 +406,10 @@ clients:
   [device-code enrollment](#device-code-enrollment) and an operator
   approves it. `csuite member create` uses this mode.
 
-`permissions` accepts preset names or leaf
-permissions in any mix; the server resolves at create time.
+`permissions` accepts leaf permissions and the two legacy aliases,
+and nothing else. Preset names are refused by the request schema:
+[permission presets](/docs/concepts/permissions) are legacy rows that a
+current broker only ever reads.
 
 ### `PATCH /members/:name`
 
@@ -677,7 +679,7 @@ member's composed prose, so it moves every composition.
 | | |
 |---|---|
 | **Auth** | member |
-| **Returns** | `{ team: Team }` — `{ name, context }` plus a deprecated empty compatibility field on current servers |
+| **Returns** | `{ team: Team }` — `{ name, context }`. The deprecated `permissionPresets` field is not sent; `Team.permissionPresets` remains in the SDK type only so an older client still compiles |
 
 ### `PATCH /team`
 

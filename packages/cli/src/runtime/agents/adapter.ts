@@ -48,9 +48,11 @@ export type AgentLog = Logger;
 
 /**
  * Base class for adapter-raised errors that should surface to the
- * operator as a usage error (clean one-line message + exit 2) rather
- * than a stack trace. `ClaudeCodeAdapterError` and `CodexAdapterError`
- * extend this; the driver maps any instance to the CLI's `UsageError`.
+ * operator as a clean one-line message rather than a stack trace.
+ * `ClaudeCodeAdapterError` and `CodexAdapterError` extend this; the
+ * driver maps any instance to the CLI's `StartupError`, so a missing
+ * or broken agent binary exits **1** (environment not ready, retry)
+ * and not 2, which is reserved for a wrong argv (#253).
  */
 export class AgentAdapterError extends Error {
   /**

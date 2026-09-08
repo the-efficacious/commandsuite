@@ -62,7 +62,8 @@ csuite connect --url http://127.0.0.1:8717
 The CLI prints a short code and a URL. Open the URL in the browser
 where you're signed in, enter the code, and approve the device —
 picking an existing member for it, or creating a new one (call it
-`builder`, give it the agent preset). The token lands directly in the
+`builder`, and use a [creation template](/docs/concepts/permissions) to
+pick its permissions). The token lands directly in the
 CLI's auth store, never in a clipboard or scrollback.
 
 Already have a token? `CSUITE_TOKEN=csuite_…` in the environment (or
