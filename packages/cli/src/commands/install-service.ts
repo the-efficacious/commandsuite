@@ -30,9 +30,9 @@ import { userInfo } from 'node:os';
 import { join, resolve as resolvePath } from 'node:path';
 import type { Client } from 'csuite-sdk/client';
 import { findAuthEntry, formatHeadlessNoAuth, workspaceContains } from './auth-config.js';
-import { UsageError } from './errors.js';
+import { StartupError, UsageError } from './errors.js';
 
-export { UsageError };
+export { StartupError, UsageError };
 
 /** Runner verbs a service can supervise. Kept in sync with the CLI. */
 export type ServiceVerb = 'claude' | 'codex' | 'stub';
@@ -249,7 +249,11 @@ export function resolveServiceUrl(input: {
   ];
   if (urls.length === 1) return urls[0] as string;
   if (urls.length === 0) {
-    throw new UsageError(
+    // Nothing enrolled anywhere near this workspace: an environment
+    // failure, exit 1, the same answer `csuite claude` gives for the
+    // same state. Two brokers below IS an argv problem — the operator
+    // must choose — so that one stays a `UsageError` (#253).
+    throw new StartupError(
       `install-service: no saved auth entry is scoped to ${input.workspace}; ` +
         'enroll first (csuite connect) or pass --url <broker>',
     );
@@ -364,7 +368,7 @@ export async function runInstallServiceCommand(
   });
   const entry = findAuthEntry(url, { cwd: workspace, path: deps.authStorePath });
   if (entry === null) {
-    throw new UsageError(
+    throw new StartupError(
       `install-service: ${formatHeadlessNoAuth({ url, cwd: workspace, urlDefaulted: false })}`,
     );
   }
@@ -621,7 +625,7 @@ export async function runCycleCommand(
   });
   const entry = findAuthEntry(url, { cwd: workspace, path: deps.authStorePath });
   if (entry === null) {
-    throw new UsageError(
+    throw new StartupError(
       `cycle: ${formatHeadlessNoAuth({ url, cwd: workspace, urlDefaulted: false })}`,
     );
   }

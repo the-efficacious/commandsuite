@@ -682,8 +682,25 @@ For the environment variables behind these defaults, see
 | Code | Meaning |
 |---|---|
 | `0` | Success |
-| `1` | Failure (network, broker error, IO, preflight FAIL) |
-| `2` | Usage error — bad flags or arguments |
+| `1` | Failure — network, broker error, IO, preflight FAIL, no saved auth for this (broker URL, directory), a missing or broken agent binary |
+| `2` | Usage error — bad flags or arguments, and nothing else |
+| `64` | Refused configuration — the container entrypoint refused a setting rather than acting on a different one |
+
+The split between `1` and `2` is the one a supervisor branches on:
+**`2` will never succeed on a retry** (the argv is wrong, and a typo does
+not fix itself), while **`1` may succeed on the next try** (the broker
+was down, the credential was not there yet, the disk was full). A unit
+with `Restart=always` should keep restarting on `1`; `RestartPreventExitStatus=2`
+is the supported way to stop on an operator mistake.
+
+Every entry point answers one condition with one code. Nothing enrolled
+for this (broker URL, directory) exits `1` from `csuite claude`, from
+`csuite claude install-service` and from `csuite claude cycle` alike.
+
+`64` is emitted only by the container entrypoint, which refuses
+`CSUITE_START_RUNNER=1` for a model runner rather than silently starting
+the stub — see [Deployment](/docs/deployment) and
+[Stub runner](/docs/runners/stub).
 
 `csuite claude` and `csuite codex` exit with the agent's own exit code
 when the agent ends the session.

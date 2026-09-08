@@ -8,7 +8,7 @@
  * loses trace data:
  *
  *   1. Session log routing (TTY-safe structured logs)
- *   2. Auth resolution (`--token` / `$CSUITE_TOKEN`) → UsageError
+ *   2. Auth resolution (`--token` / `$CSUITE_TOKEN`) → StartupError
  *   3. Fail-fast binary location BEFORE any side effects
  *   4. `startRunner` (instructions, IPC socket, forwarder, capture host,
  *      secrets) with the adapter's sink + bridge policy
@@ -47,7 +47,7 @@ import { resolve } from 'node:path';
 import type { Logger } from 'csuite-core';
 import { DEFAULT_PORT, ENV } from 'csuite-sdk/protocol';
 import type { RunnerIdentity } from 'csuite-sdk/types';
-import { UsageError } from '../commands/errors.js';
+import { StartupError } from '../commands/errors.js';
 import { CLI_BUILD_SOURCE, CLI_VERSION } from '../version.js';
 import type {
   AgentAdapter,
@@ -112,8 +112,11 @@ export interface RunSummary {
 
 /**
  * Run one agent session under a csuite runner. Resolves with the exit
- * code to propagate. Throws `UsageError` for operator-fixable
- * failures (missing token, missing binary, unreachable broker).
+ * code to propagate. Throws `StartupError` — never `UsageError` — for
+ * every environment failure it can raise (missing token, missing agent
+ * binary, unreachable broker), so the CLI exits 1 and a supervisor
+ * keeps restarting. Exit 2 is reserved for a wrong argv, and none of
+ * these three is one (#253).
  */
 export async function runAgentSession(
   adapter: AgentAdapter,
@@ -127,7 +130,7 @@ export async function runAgentSession(
   // calls to it never return — the try/catch blocks below rely on that.
   function closeLogAndThrow(err: unknown): never {
     ownedSessionLog?.close();
-    if (err instanceof AgentAdapterError) throw new UsageError(err.message);
+    if (err instanceof AgentAdapterError) throw new StartupError(err.message);
     throw err;
   }
 
@@ -135,7 +138,7 @@ export async function runAgentSession(
   const token = input.token ?? process.env[ENV.token];
   if (!token) {
     ownedSessionLog?.close();
-    throw new UsageError(
+    throw new StartupError(
       `--token or ${ENV.token} is required — run \`csuite connect\` to enroll this device, ` +
         `or pass the member's bearer token explicitly`,
     );
@@ -232,7 +235,7 @@ export async function runAgentSession(
   } catch (err) {
     rejectSubscription(err);
     ownedSessionLog?.close();
-    if (err instanceof RunnerStartupError) throw new UsageError(err.message);
+    if (err instanceof RunnerStartupError) throw new StartupError(err.message);
     throw err;
   }
   log.info('runner started', {
