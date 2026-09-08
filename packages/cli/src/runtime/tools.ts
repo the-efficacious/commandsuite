@@ -36,7 +36,7 @@
 
 import { basename } from 'node:path';
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
-import { logger as defaultLogger, type Logger } from 'csuite-core';
+import { logger as defaultLogger, GENERAL_CHANNEL_ID, type Logger } from 'csuite-core';
 import { type Client as BrokerClient, ClientError } from 'csuite-sdk/client';
 import { TEAM_PROCESS_MAX } from 'csuite-sdk/schemas';
 import { formatTextMetrics } from 'csuite-sdk/text-metrics';
@@ -2480,6 +2480,14 @@ async function handleRecent(
       }
       throw err;
     }
+  } else if (!withOther) {
+    // No scope argument is the general channel, which is what this
+    // tool's description, its empty state and its header all say it
+    // is. Sending no channel at all takes the broker's default-feed
+    // branch instead — DMs, objective threads and every named channel
+    // the agent belongs to, interleaved and unlabelled under a header
+    // that claims they are team chat.
+    channelId = GENERAL_CHANNEL_ID;
   }
 
   const messages = await brokerClient.history({

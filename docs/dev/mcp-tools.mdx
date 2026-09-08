@@ -132,9 +132,13 @@ channel. Pass `with` xor `channel`.
 |---|---|
 | **Input** | `{ with?: string, channel?: string, limit?: number }` |
 | **Output** | Header line + per-message lines: `<ts> <from> → <to>? [<title>?]: <body>` |
-| **Broker call** | `GET /channels/:slug` (if `channel`) then `GET /history?...` |
+| **Broker call** | `GET /channels/:slug` (if `channel`) then `GET /history?...` — the unscoped call reads `?channel=general` |
 
 `limit` defaults to 50, capped at 500. Newest-first ordering.
+
+Every call reads exactly one thread. The scope-less call is `general`
+and nothing else: a DM thread or a private channel is read by naming
+it, not by omitting the argument.
 
 ## Context-control tools
 
