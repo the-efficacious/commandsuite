@@ -309,10 +309,10 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
         resume: effectiveResume,
         codexArgs: options.codexArgs,
         presence: ctx.presence,
-        // Share the capture host's busy signal so codex tool-lifecycle
+        // Share the capture host's work-state signal so codex tool-lifecycle
         // notifications feed the same observable claude's hooks drive.
         // Undefined when --no-trace.
-        busy: runner.captureHost?.busy,
+        workState: runner.captureHost?.workState,
         // Codex reports compaction (requested or auto) as a
         // contextCompaction item; that is this framework's equivalent
         // of claude's SessionStart(source=compact) hook, so it drives

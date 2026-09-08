@@ -60,10 +60,11 @@ The runner-owned handle every adapter feeds is the **CaptureHost**
 
 - the batched **`ActivityUploader`** (ships `ActivityEvent`s to
   `POST /members/:name/activity` in near-real-time);
-- the **busy signal**, driven by native instrumentation (Claude Code
-  hooks, codex app-server items);
+- the **work-state signal**, driven by native instrumentation (Claude
+  Code hooks, codex app-server items), reported to
+  `POST /presence/work-state`;
 - the loopback **hook server** Claude Code POSTs hook events to
-  (presence-only — it drives busy state and surfaces the
+  (presence-only — it drives work state and surfaces the
   `transcript_path`; it emits no content);
 - the **`TranscriptReader`** (Claude content source, below);
 - the loopback **OTLP relay** (raw-body resolution, below).

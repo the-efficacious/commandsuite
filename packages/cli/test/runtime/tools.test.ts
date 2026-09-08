@@ -517,7 +517,7 @@ describe('team_status tool', () => {
 });
 
 describe('roster — old broker compatibility does not invent liveness', () => {
-  it('renders old activity only as a compatibility window', async () => {
+  it('renders the work-state window only as a compatibility window', async () => {
     const broker = makeBroker({
       roster: vi.fn().mockResolvedValue({
         teammates: [
@@ -531,6 +531,7 @@ describe('roster — old broker compatibility does not invent liveness', () => {
             createdAt: 1,
             lastSeen: 2,
             role: PACKET.teammates[0]?.role ?? null,
+            workState: 'working',
             activity: 'working',
             busy: true,
           },
@@ -540,10 +541,12 @@ describe('roster — old broker compatibility does not invent liveness', () => {
             createdAt: 1,
             lastSeen: 2,
             role: PACKET.teammates[1]?.role ?? null,
+            workState: 'blocked',
             activity: 'blocked',
             busy: false,
           },
         ],
+        workStateWindowMs: 45_000,
         activityWindowMs: 45_000,
       }),
     });
@@ -563,11 +566,46 @@ describe('roster — old broker compatibility does not invent liveness', () => {
     expect(text).not.toContain('executor=ready');
   });
 
+  it('reads the D6 window from either spelling, preferring the new one', async () => {
+    // The compat window has the runner talking to brokers on both
+    // sides of the rename. Three brokers, three answers, and the
+    // middle one is the assertion that matters: when a broker sends
+    // BOTH, the new field wins. A reader that took `activityWindowMs`
+    // first would still pass the other two cases.
+    const windowFor = async (roster: Record<string, unknown>): Promise<string> => {
+      const broker = makeBroker({
+        roster: vi.fn().mockResolvedValue({
+          teammates: PACKET.teammates,
+          connected: [],
+          ...roster,
+        }),
+      });
+      return getCallText(await handleToolCall('roster', {}, broker, PACKET));
+    };
+
+    // A broker on the new spelling only.
+    expect(await windowFor({ workStateWindowMs: 30_000 })).toContain(
+      'compatibility-window=within last 30s',
+    );
+    // A broker sending both, with DIFFERENT numbers so the winner is
+    // visible. The new field is authoritative.
+    expect(await windowFor({ workStateWindowMs: 30_000, activityWindowMs: 45_000 })).toContain(
+      'compatibility-window=within last 30s',
+    );
+    // A pre-D6 broker that only knows the old spelling still gets a
+    // real window rather than "unknown" — that is the whole point of
+    // reading both.
+    expect(await windowFor({ activityWindowMs: 45_000 })).toContain(
+      'compatibility-window=within last 45s',
+    );
+  });
+
   it('describes executor evidence and demotes old activity in the tool metadata', () => {
     const roster = defineTools(PACKET).find((tool) => tool.name === 'roster');
     expect(roster?.description).toContain('executor readiness or degraded reason');
     expect(roster?.description).toContain('last proven action');
     expect(roster?.description).toContain('never executor liveness');
+    expect(roster?.description).toContain('work-state window');
     // The completeness clauses are only useful if the description says
     // they exist and says what their absence does NOT mean.
     expect(roster?.description).toContain('unresolved-diagnostics count');

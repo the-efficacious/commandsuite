@@ -22,9 +22,9 @@ import { initials } from '../lib/initials.js';
 import { instructions, loadInstructions } from '../lib/instructions.js';
 import { objectives } from '../lib/objectives.js';
 import {
-  presenceActivity,
   presenceCaptureWarning,
   presenceDiagnostics,
+  presenceWorkState,
   roster,
 } from '../lib/roster.js';
 import { loadTeamStatus, teamStatus } from '../lib/team-status.js';
@@ -124,20 +124,21 @@ export function TeamHome({ viewer }: TeamHomeProps) {
               ? teamStatus.value?.members.find((row) => row.member.name === t.name)
               : undefined;
             const online = (conn?.connected ?? 0) > 0;
-            // 3-state activity, orthogonal to the connection state above.
-            const activity = presenceActivity(conn);
+            // The roster's projected state of work, orthogonal to the
+            // connection state above.
+            const workState = presenceWorkState(conn);
             // Capture health is orthogonal to BOTH connection and
-            // activity: a member can be online, working, and silently
+            // work state: a member can be online, working, and silently
             // capturing nothing. That combination is exactly the failure
             // this badge exists for, so it renders alongside rather than
-            // instead of the activity state.
+            // instead of the work state.
             const captureWarning = presenceCaptureWarning(conn);
             // The sibling signal, on the same footing: incidents that
             // have not cleared, and the health of the store that would
             // know. Null on the clean path, so the row stays quiet.
             const diagnostics = presenceDiagnostics(conn);
-            const working = activity === 'working';
-            const blocked = activity === 'blocked';
+            const working = workState === 'working';
+            const blocked = workState === 'blocked';
             const degraded = conn?.executor?.state === 'degraded';
             const isSelf = t.name === viewer;
             const isLast = idx === r.teammates.length - 1;

@@ -1,19 +1,19 @@
 /**
- * Drive a `BusySignal` from codex app-server JSON-RPC notifications.
+ * Drive a `WorkStateSignal` from codex app-server JSON-RPC notifications.
  *
  * Subscribes to `item/started`, `item/completed`, and `turn/completed`
  * on the supplied JSON-RPC client and bumps `tool_inflight` for
- * tool-execution items. Reused by `spawnCodex` and the busy-sniff
+ * tool-execution items. Reused by `spawnCodex` and the work-state sniff
  * test so the contract under test is the same one production runs.
  *
  * Returns a `drain()` callback the caller should invoke on teardown:
  * codex won't send matching `item/completed` events for items still
- * in flight when we close, so any leftover busy handles need an
+ * in flight when we close, so any leftover work-state handles need an
  * explicit drain to avoid wedging the indicator.
  */
 
 import { logger as defaultLogger, type Logger } from 'csuite-core';
-import type { BusySignal } from '../../trace/busy.js';
+import type { WorkStateSignal } from '../../trace/work-state.js';
 import type { JsonRpcClient } from './json-rpc.js';
 import {
   type ItemCompletedNotification,
@@ -25,12 +25,12 @@ import {
  * Codex item types that represent agent-side WORK (not model output,
  * not user input, not metadata). Lighting up `tool_inflight` for these
  * gives the UI a "the agent is running something locally" signal that
- * the LLM-call busy bump would otherwise miss.
+ * the LLM-call work-state bump would otherwise miss.
  *
  * `commandExecution` covers Bash; `fileChange` covers apply_patch /
  * file edits; `mcpToolCall` covers MCP-bridged tool dispatch. New
  * codex item types default to "not a tool" — better to under-bump
- * than to falsely light up busy on, say, an `agentMessage` (model
+ * than to falsely light up `working` on, say, an `agentMessage` (model
  * output, already covered by the LLM-call bump).
  */
 export const TOOL_ITEM_TYPES: ReadonlySet<string> = new Set([
@@ -39,14 +39,14 @@ export const TOOL_ITEM_TYPES: ReadonlySet<string> = new Set([
   'mcpToolCall',
 ]);
 
-export interface CodexBusySniffOptions {
+export interface CodexWorkStateSniffOptions {
   rpc: JsonRpcClient;
-  busy: BusySignal;
-  /** Structured logger. Defaults to the shared logger's 'codex-busy-sniff' child. */
+  workState: WorkStateSignal;
+  /** Structured logger. Defaults to the shared logger's 'codex-work-state-sniff' child. */
   logger?: Logger;
 }
 
-export interface CodexBusySniff {
+export interface CodexWorkStateSniff {
   /**
    * Drain any handles still in flight. Safe to call multiple times —
    * second call is a no-op since the underlying map is empty after
@@ -59,14 +59,16 @@ export interface CodexBusySniff {
   readonly inFlight: number;
 }
 
-export function attachCodexBusySniff(options: CodexBusySniffOptions): CodexBusySniff {
-  const { rpc, busy } = options;
-  const log = options.logger ?? defaultLogger.child('codex-busy-sniff');
+export function attachCodexWorkStateSniff(
+  options: CodexWorkStateSniffOptions,
+): CodexWorkStateSniff {
+  const { rpc, workState } = options;
+  const log = options.logger ?? defaultLogger.child('codex-work-state-sniff');
 
-  // Per-item busy handles, keyed by item.id. Codex's `item/completed`
+  // Per-item work-state handles, keyed by item.id. Codex's `item/completed`
   // notifications are normally reliable, but a turn interrupt or
   // transport error can drop them; the turnCompleted handler below
-  // sweeps any leftovers so busy can't stay wedged.
+  // sweeps any leftovers so work state can't stay wedged.
   const toolHandles = new Map<string, { finish: () => void }>();
 
   const drainAll = (reason: string): void => {
@@ -84,7 +86,7 @@ export function attachCodexBusySniff(options: CodexBusySniffOptions): CodexBusyS
     // the first handle so the matching item/completed still drains
     // exactly one.
     if (!toolHandles.has(p.item.id)) {
-      toolHandles.set(p.item.id, busy.start('tool_inflight'));
+      toolHandles.set(p.item.id, workState.start('tool_inflight'));
     }
   });
 

@@ -21,7 +21,7 @@ import { describe, expect, it } from 'vitest';
 import type { CompactAttempt, ContextControlHooks } from '../../src/runtime/context-control.js';
 import { createContextControlCoordinator } from '../../src/runtime/context-control.js';
 import type { ContextControlEvent } from '../../src/runtime/forwarder.js';
-import type { ActivityObservation } from '../../src/runtime/restart.js';
+import type { WorkStateObservation } from '../../src/runtime/restart.js';
 import { silentLogger } from '../helpers/logger.js';
 
 type State = 'idle' | 'working' | 'blocked';
@@ -29,7 +29,7 @@ type State = 'idle' | 'working' | 'blocked';
 function fakeActivity(initial: State) {
   let state = initial;
   const listeners = new Set<(s: State) => void>();
-  const observation: ActivityObservation = {
+  const observation: WorkStateObservation = {
     subscribe(listener) {
       listeners.add(listener);
       listener(state);
@@ -55,22 +55,22 @@ function deferred<T = void>() {
 
 function harness(
   opts: {
-    activity?: ActivityObservation | null;
+    workState?: WorkStateObservation | null;
     compact?: (reason: string | undefined) => Promise<CompactAttempt>;
     clear?: (reason: string) => Promise<void>;
   } = {},
 ) {
   const calls: string[] = [];
   const acks: ActivityContextControl[] = [];
-  // `'activity' in opts` and not `??`: a test passing an explicit
+  // `'workState' in opts` and not `??`: a test passing an explicit
   // `null` is asking for the no-capture path, and a nullish default
   // would silently give it an idle signal instead — the assertion
   // would then pass against an implementation that had no grace path
   // at all.
-  const activity: ActivityObservation | null =
-    'activity' in opts ? (opts.activity ?? null) : fakeActivity('idle').observation;
+  const workState: WorkStateObservation | null =
+    'workState' in opts ? (opts.workState ?? null) : fakeActivity('idle').observation;
   const hooks: ContextControlHooks = {
-    activity: () => activity,
+    workState: () => workState,
     compact: async (reason) => {
       calls.push(`compact:${reason ?? '-'}`);
       return (
@@ -227,8 +227,8 @@ describe('clear', () => {
   });
 
   it('waits for idle before swapping, and passes the requester through', async () => {
-    const activity = fakeActivity('working');
-    const h = harness({ activity: activity.observation });
+    const workStateSignal = fakeActivity('working');
+    const h = harness({ workState: workStateSignal.observation });
 
     const done = h.coordinator.handle(
       control({ verb: 'clear', reason: 'context is full', requestedBy: 'cora' }),
@@ -237,7 +237,7 @@ describe('clear', () => {
     // Mid-turn: the drain is the point — nothing has swapped yet.
     expect(h.calls).toEqual([]);
 
-    activity.set('idle');
+    workStateSignal.set('idle');
     await done;
 
     expect(h.calls).toEqual(['clear:context-clear (cora): context is full']);
@@ -245,7 +245,7 @@ describe('clear', () => {
   });
 
   it('clears after a grace when there is no activity signal', async () => {
-    const h = harness({ activity: null });
+    const h = harness({ workState: null });
 
     await h.coordinator.handle(control({ verb: 'clear' }));
 
@@ -259,7 +259,7 @@ describe('clear', () => {
     const gated: string[] = [];
     const acks: ActivityContextControl[] = [];
     const coordinator = createContextControlCoordinator({
-      activity: () => fakeActivity('idle').observation,
+      workState: () => fakeActivity('idle').observation,
       compact: async () => ({ supported: true, applied: true }),
       clear: async () => {},
       reload: async () => {},
@@ -290,7 +290,7 @@ describe('serialization and shutdown', () => {
     let n = 0;
     const acks: ActivityContextControl[] = [];
     const coordinator = createContextControlCoordinator({
-      activity: () => fakeActivity('idle').observation,
+      workState: () => fakeActivity('idle').observation,
       compact: async () => ({ supported: true, applied: true }),
       clear: async () => {
         const id = ++n;

@@ -43,8 +43,8 @@ vi.mock('../../../src/runtime/agents/codex/json-rpc.js', () => ({
   createJsonRpcClient: vi.fn(() => rpcMock),
 }));
 
-vi.mock('../../../src/runtime/agents/codex/busy-sniff.js', () => ({
-  attachCodexBusySniff: vi.fn(() => ({ drain: vi.fn() })),
+vi.mock('../../../src/runtime/agents/codex/work-state-sniff.js', () => ({
+  attachCodexWorkStateSniff: vi.fn(() => ({ drain: vi.fn() })),
 }));
 
 vi.mock('../../../src/runtime/agents/codex/channel-sink.js', () => ({
