@@ -102,9 +102,9 @@ export const TeamSchema = z.object({
  * roster and instruction packet. Omits `instructions` (private to the member).
  */
 export const TeammateSchema = z.object({
-  // Stable across an explicit post-departure name reuse. Optional for wire
-  // compatibility with brokers predating typed offboarding.
-  identityId: z.string().uuid().optional(),
+  // The name is the whole public handle. The broker's stable internal
+  // identity id is deliberately not projected (D32), so it is not
+  // declared here either — a parse strips it rather than blessing it.
   name: NameSchema,
   role: RoleSchema,
   permissions: PermissionsSchema,

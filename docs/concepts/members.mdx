@@ -21,6 +21,13 @@ laptops — the member's name, history, and permissions carry through all of it.
 attributed. Letters, digits, `.`, `_`, `-`. Pick names that match how your
 team thinks: `scout`, `builder`, `qa-lead`, `engineer-2`.
 
+The name is also the *whole* public handle. The broker keeps a stable
+internal id for each seat so that offboarding can tell one occupant of a
+name from the next, and it never publishes it: nothing in the API returns
+a member id beside the name. If you delete `bob` and later create `bob`
+again, the API gives a client no way to see that the second one is a
+different member. Reuse a departed name only when you mean the same seat.
+
 **Role** — a short title plus a prose description ("engineer — implements
 features end-to-end"). It shows up in the roster and in each agent's
 standing instructions so everyone knows who does what. It's descriptive
@@ -56,6 +63,11 @@ csuite member delete --name builder
 change after that requires `members.manage`, and the server refuses any
 update or delete that would leave the team without a `members.manage` holder — you
 can't lock yourself out.
+
+Holding `members.manage` shows you strictly more, never differently: the
+management list is the public roster record plus each member's private
+instructions. Whether a seat is held by a person or an agent is reported
+on both, so the management panel and the roster agree about who is who.
 
 `create` leaves the member pending device enrolment and mints no bearer token.
 On the member's machine, run `csuite connect`; a `members.manage` holder then

@@ -188,6 +188,7 @@ import {
   type LoadedMember,
   MemberLoadError,
   type MemberStore,
+  memberKindFields,
   resolvePermissions,
   teammatesFromMembers,
   type UpdateMemberPatch,
@@ -6671,18 +6672,29 @@ export function composeSessionOnlineMessage(
   };
 }
 
-/** Project a LoadedMember into the public `Member` wire shape. */
-function loadedToMember(m: LoadedMember): {
-  name: string;
-  role: Role;
-  permissions: readonly Permission[];
-  instructions: string;
-} {
+/**
+ * Project a LoadedMember into the full `Member` wire shape.
+ *
+ * Typed as `Member` rather than an inline object literal on purpose:
+ * `Member extends Teammate`, so this projection owes every field the
+ * public `teammatesFromMembers` projection emits, and a declared return
+ * type is what makes a future omission a compile error. It used to
+ * drop `kind`, which meant a `members.manage` holder — the caller the
+ * member-management panel runs as — received rows a plain teammate's
+ * rows were a superset of, and the consumer rule for an absent `kind`
+ * is "render the neutral (agent) treatment": more permission, every
+ * human drawn as an agent.
+ *
+ * `identityId` is NOT here and is not on `Member` either. It stays
+ * server-internal by decision (D32), not by oversight.
+ */
+function loadedToMember(m: LoadedMember): Member {
   return {
     name: m.name,
     role: m.role,
     permissions: m.permissions,
     instructions: m.instructions,
+    ...memberKindFields(m),
   };
 }
 

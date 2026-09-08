@@ -290,6 +290,27 @@ Callers with `members.manage` see the full list including private
 `instructions`. Other callers see the public projection — same as
 `roster.teammates`.
 
+`Member extends Teammate` and that holds on the wire: the privileged row
+is the public row plus `instructions`, never a different set. Both
+branches carry `kind` when the broker has an answer, so more permission
+never returns less data.
+
+The `Teammate` shape is `{ name, role, permissions, kind? }`, and `Member`
+adds `instructions`. There is no published member identity beside the
+name — the broker keeps a stable internal identity id that offboarding
+keys on and deliberately does not project it, so no response carries an
+`identityId` and the schemas do not declare one. A client that must
+survive an explicit post-departure name reuse cannot detect one from
+these types.
+
+`kind` is omitted rather than set to `'agent'` when the broker has no
+answer; render the absent case as the neutral treatment. On the
+no-`members.manage` branch `instructions` is absent from the body, and
+the SDK's `MemberSchema` defaults it to `''` on parse — so through
+`client.listMembers()` an unprivileged caller cannot distinguish "nobody
+has instructions" from "you were not allowed to see them". Read the raw
+body, or hold `members.manage`.
+
 ### `POST /members`
 
 | | |
@@ -321,6 +342,9 @@ permissions in any mix; the server resolves at create time.
 | **Auth** | manage |
 | **Body** | `UpdateMemberRequest` — `{ role?, instructions?, permissions? }` |
 | **Returns** | `Member` (plus `warning`, mirrored in an `X-CSuite-Warning` header, when the new role description or instructions contain a registered secret value) |
+
+The response is the same full `Member` shape `GET /members` returns on
+the `members.manage` branch — `kind` included.
 
 Patches any subset of fields. Enforces "at least one
 `members.manage` member must remain" — rejects with 400 if the
