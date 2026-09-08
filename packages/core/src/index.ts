@@ -112,9 +112,11 @@ export {
   findEnvRivalForMember,
 } from './env-namespace.js';
 export {
+  beforeCursor,
   CHANNEL_THREAD_PREFIX,
   channelThreadTag,
   clampQueryLimit,
+  compareNewestFirst,
   DEFAULT_QUERY_LIMIT,
   type EventLog,
   type EventLogAppendOptions,
@@ -130,6 +132,7 @@ export {
   MAX_QUERY_LIMIT,
   OBJECTIVE_THREAD_PREFIX,
   objectiveThreadTag,
+  SCALAR_BOUND_ID,
   SECRET_THREAD_PREFIX,
   secretThreadTag,
   THREAD_TAG_PREFIXES,

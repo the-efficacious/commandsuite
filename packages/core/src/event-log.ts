@@ -40,8 +40,68 @@ export interface EventLogQueryOptions {
   channel?: string;
   /** Hard upper bound on rows returned. Defaults to 100, max 1000. */
   limit?: number;
-  /** Return only rows with `ts < before`. For pagination. */
-  before?: number;
+  /**
+   * Exclusive composite cursor for the newest-first walk: return only
+   * rows strictly before `(ts, id)` in `ts DESC, id DESC` order.
+   *
+   * It is composite because a scalar `ts` bound is LOSSY. Message
+   * timestamps are `Date.now()` at push time and two posts in one tick
+   * collide routinely under an agent burst; when the page boundary
+   * falls inside such a tie, `ts < before` excludes every row sharing
+   * that millisecond — including the ones the caller has not seen. They
+   * are not delayed, they are unreachable: any bound that admits them
+   * also re-returns rows the caller already has, with no id to
+   * deduplicate against a page that never arrived.
+   *
+   * `id` breaks that tie. It is a random identifier, so within one
+   * millisecond the order is arbitrary — but it is TOTAL and STABLE,
+   * which is the only property a complete page walk needs.
+   *
+   * A caller with a timestamp and nothing else passes
+   * `{ ts, id: SCALAR_BOUND_ID }`, which degrades to exactly the old
+   * `ts < before` behaviour, holes included.
+   */
+  before?: { ts: number; id: string };
+}
+
+/**
+ * The `id` half of a cursor built from a timestamp alone.
+ *
+ * Empty string sorts before every real id under binary comparison — in
+ * SQLite and in JavaScript alike — so `(ts < T OR (ts = T AND id < ''))`
+ * is `ts < T` exactly. That makes the scalar bound a degenerate cursor
+ * rather than a second code path, and the wire's `before_ts` with no
+ * `before_id` a documented lossy shorthand rather than a different
+ * mechanism to keep in step.
+ */
+export const SCALAR_BOUND_ID = '';
+
+/**
+ * The newest-first order every read here returns: `ts DESC, id DESC`.
+ *
+ * The `id` tiebreak is arbitrary — ids are random — but total and
+ * stable, which is what lets a page walk enumerate a shared millisecond
+ * instead of skipping it.
+ */
+export function compareNewestFirst(
+  a: { ts: number; id: string },
+  b: { ts: number; id: string },
+): number {
+  if (a.ts !== b.ts) return b.ts - a.ts;
+  return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
+}
+
+/**
+ * Is `a` strictly before `b` in the newest-first order `ts DESC, id DESC`?
+ *
+ * The in-memory walk's half of the seek predicate; `SqliteEventLog`'s
+ * SQL says the same thing and the two must move together.
+ */
+export function beforeCursor(
+  row: { ts: number; id: string },
+  cursor: { ts: number; id: string },
+): boolean {
+  return row.ts < cursor.ts || (row.ts === cursor.ts && row.id < cursor.id);
 }
 
 export const GENERAL_CHANNEL_ID = 'general' as const;
@@ -287,12 +347,16 @@ export class InMemoryEventLog implements EventLog {
   async query(options: EventLogQueryOptions): Promise<Message[]> {
     const limit = clampQueryLimit(options.limit);
     const matches: Message[] = [];
-    // Walk newest-first so we can bail out once we've filled `limit`.
-    for (let i = this.stored.length - 1; i >= 0; i--) {
-      const entry = this.stored[i];
-      if (!entry) continue;
+    // Walk in the SAME order the cursor compares in — `ts DESC, id DESC`
+    // — not in insertion order. A pager whose cursor and whose traversal
+    // disagree skips rows at every page boundary, and this walk has to
+    // answer identically to `SqliteEventLog`'s `ORDER BY ts DESC, id
+    // DESC`: the two are the same contract with two backends, and the
+    // shared cases in event-log-scope.test.ts run against both.
+    const ordered = [...this.stored].sort((a, b) => compareNewestFirst(a.message, b.message));
+    for (const entry of ordered) {
       const ev = entry.message;
-      if (options.before !== undefined && ev.ts >= options.before) continue;
+      if (options.before !== undefined && !beforeCursor(ev, options.before)) continue;
       if (options.channel !== undefined) {
         if (!matchesChannel(ev, options.channel)) continue;
       } else if (!matchesViewer(ev, entry.recipients, options.viewer, options.with)) {

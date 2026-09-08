@@ -655,6 +655,23 @@ export interface HistoryQuery {
    */
   channel?: string;
   limit?: number;
+  /**
+   * Exclusive composite cursor for newest-first traversal — on the wire
+   * `before_ts` + `before_id`. Feed back the LAST message of the page
+   * you just received (`page[page.length - 1]`) and the walk reaches
+   * every message exactly once.
+   *
+   * `id` is the tiebreak, and it is what makes the walk complete.
+   * Message timestamps are `Date.now()` at push time, so two posts in
+   * one tick collide routinely; a boundary that lands inside such a tie
+   * used to make every row sharing that millisecond unreachable.
+   */
+  cursor?: { ts: number; id: string };
+  /**
+   * @deprecated Scalar epoch-ms upper bound on `ts`. LOSSY — it drops
+   * every message sharing the page-boundary millisecond. Use `cursor`.
+   * Sent as `before_ts`; removed in the next minor.
+   */
   before?: number;
 }
 

@@ -1155,12 +1155,26 @@ export class Client {
     }
   }
 
+  /**
+   * Newest-first message history for the caller's own scope.
+   *
+   * Page with `cursor`, not `before`: the composite `{ts, id}` reaches
+   * every message exactly once, while the scalar bound drops any that
+   * share the page-boundary millisecond. `before` is still sent (as the
+   * current `before_ts` spelling, so this client never emits a retired
+   * wire name) and is removed in the next minor.
+   */
   async history(query: HistoryQuery = {}): Promise<Message[]> {
     const params = new URLSearchParams();
     if (query.with) params.set('with', query.with);
     if (query.channel) params.set('channel', query.channel);
     if (query.limit !== undefined) params.set('limit', String(query.limit));
-    if (query.before !== undefined) params.set('before', String(query.before));
+    if (query.cursor !== undefined) {
+      params.set('before_ts', String(query.cursor.ts));
+      params.set('before_id', query.cursor.id);
+    } else if (query.before !== undefined) {
+      params.set('before_ts', String(query.before));
+    }
     const qs = params.toString();
     const path = qs ? `${PATHS.history}?${qs}` : PATHS.history;
     const resp = await this.request(path, { method: 'GET' });

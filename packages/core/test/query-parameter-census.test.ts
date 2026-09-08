@@ -85,7 +85,10 @@ const CENSUS: Record<string, RouteQueries> = {
   },
   'POST /hooks/:slug': { current: ['if_busy', 'if_offline', 'level'], legacy: [] },
   'GET /objectives': { current: ['assignee', 'related', 'status'], legacy: [] },
-  'GET /history': { current: ['before', 'channel', 'limit', 'with'], legacy: [] },
+  'GET /history': {
+    current: ['before_id', 'before_ts', 'channel', 'limit', 'with'],
+    legacy: ['before'],
+  },
   'GET /fs/ls': { current: ['path'], legacy: [] },
   'GET /fs/stat': { current: ['path'], legacy: [] },
   'POST /fs/write': { current: ['collide', 'mime', 'path'], legacy: [] },
@@ -236,6 +239,17 @@ describe('query-parameter census', () => {
       spec.current.filter((name) => !SNAKE_CASE.test(name)).map((name) => `${label} ?${name}=`),
     );
     expect(offenders).toEqual([]);
+  });
+
+  it('never accepts a legacy name that is also another route\u2019s current name', () => {
+    // A retired spelling that is still current somewhere else cannot be
+    // deleted in the next minor without breaking the route that kept
+    // it, which is how a compatibility window quietly becomes permanent.
+    // `before` was exactly that until D46 gave `/history` the composite
+    // cursor: legacy on the delivery receipts, current on `/history`.
+    const current = new Set(Object.values(CENSUS).flatMap((spec) => spec.current));
+    const legacy = new Set(Object.values(CENSUS).flatMap((spec) => spec.legacy));
+    expect([...legacy].filter((name) => current.has(name))).toEqual([]);
   });
 
   it('holds every legacy spelling to the set the next minor removes', () => {

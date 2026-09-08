@@ -124,7 +124,8 @@ async function makeApp() {
   // A fixed clock: `GET /team/status` stamps `generatedAt`, and two
   // requests a millisecond apart are not the same body.
   const now = () => 1_700_000_009_000;
-  const broker = new Broker({ eventLog: new InMemoryEventLog(), now });
+  const eventLog = new InMemoryEventLog();
+  const broker = new Broker({ eventLog, now });
   broker.seedMembers(members.members());
   const { app } = createApp({
     broker,
@@ -150,6 +151,19 @@ async function makeApp() {
     TS.map((ts, i) => telemetryRecord(ts, `event_${i + 1}`)),
   );
   for (const [i, ts] of TS.entries()) genaiStore.append('worker', inference(ts, `msg_${i + 1}`));
+  for (const [i, ts] of TS.entries()) {
+    await eventLog.append({
+      id: `msg-${i + 1}`,
+      ts,
+      to: null,
+      from: 'director',
+      title: null,
+      body: `history-${i + 1}`,
+      level: 'info',
+      data: {},
+      attachments: [],
+    });
+  }
 
   const endpoint = notifications.create({
     slug: 'ci-alerts',
@@ -246,6 +260,16 @@ const CASES: RenameCase[] = [
     current: `${DELIVERIES}?before_ts=${TS[2]}`,
     legacy: `${DELIVERIES}?before=${TS[2]}`,
     without: DELIVERIES,
+    replaced: 'before=before_ts',
+  },
+  {
+    what: 'the scalar page bound on /history',
+    // `before` becomes the TIMESTAMP HALF of the composite cursor, so
+    // the current spelling of a timestamp-only bound is `before_ts` —
+    // still lossy, still honoured, and now saying its arity out loud.
+    current: `${PATHS.history}?limit=5&before_ts=${TS[2]}`,
+    legacy: `${PATHS.history}?limit=5&before=${TS[2]}`,
+    without: `${PATHS.history}?limit=5`,
     replaced: 'before=before_ts',
   },
   {

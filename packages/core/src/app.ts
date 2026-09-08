@@ -169,6 +169,7 @@ import {
   redactJson,
   redactSecrets,
   registerSecretValues,
+  SCALAR_BOUND_ID,
   SESSION_COOKIE_NAME,
   SESSION_TTL_MS,
   SecretsError,
@@ -554,6 +555,16 @@ const AFTER_CURSOR_RENAMES: readonly RenamedQueryParam[] = [
 const BEFORE_CURSOR_RENAMES: readonly RenamedQueryParam[] = [
   { current: 'before_ts', legacy: 'cursor_ts' },
   { current: 'before_id', legacy: 'cursor_id' },
+];
+/**
+ * `/history`: the scalar `before` becomes the timestamp half of a
+ * composite cursor. `before_id` has no retired spelling because there
+ * was no tiebreak to spell — a caller that still sends `before` alone
+ * keeps the old, lossy behaviour for one more release, which is the
+ * honest thing to hand a client that has no id to send.
+ */
+const HISTORY_CURSOR_RENAMES: readonly RenamedQueryParam[] = [
+  { current: 'before_ts', legacy: 'before' },
 ];
 /**
  * Delivery receipts keep the SCALAR bound and gain only the arity
@@ -5268,10 +5279,20 @@ export function createApp(options: AppOptions): CreatedApp {
 
     const limitQuery = c.req.query('limit');
     const limit = clampQueryLimit(limitQuery === undefined ? undefined : Number(limitQuery));
-    const beforeRaw = c.req.query('before');
-    const before = beforeRaw ? Number(beforeRaw) : undefined;
-    if (before !== undefined && !Number.isFinite(before)) {
-      return c.json({ error: 'invalid `before` parameter' }, 400);
+    // Newest-first, so `before_*` — and composite, so a page boundary
+    // that falls inside a shared millisecond does not swallow the rows
+    // on the far side of it. `before_ts` alone is still honoured (that
+    // is what the retired scalar `before` becomes) and is still lossy;
+    // `before_id` alone is a caller bug.
+    const cursorQuery = readRenamedQuery(c, HISTORY_CURSOR_RENAMES, logger);
+    const beforeTsRaw = cursorQuery.before_ts;
+    const beforeIdRaw = c.req.query('before_id');
+    const beforeTs = beforeTsRaw ? Number(beforeTsRaw) : undefined;
+    if (beforeTs !== undefined && !Number.isFinite(beforeTs)) {
+      return c.json({ error: 'invalid `before_ts` parameter' }, 400);
+    }
+    if (beforeIdRaw !== undefined && beforeTs === undefined) {
+      return c.json({ error: '`before_id` requires `before_ts`' }, 400);
     }
 
     const eventLog = broker.getEventLog();
@@ -5280,7 +5301,9 @@ export function createApp(options: AppOptions): CreatedApp {
       ...(withOther !== undefined ? { with: withOther } : {}),
       ...(channelId !== undefined ? { channel: channelId } : {}),
       limit,
-      ...(before !== undefined ? { before } : {}),
+      ...(beforeTs !== undefined
+        ? { before: { ts: beforeTs, id: beforeIdRaw ?? SCALAR_BOUND_ID } }
+        : {}),
     });
     return c.json({ messages });
   });

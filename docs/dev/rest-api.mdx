@@ -90,6 +90,7 @@ current one wins.
 |---|---|---|
 | `cursor_ts`, `cursor_id` | `before_ts`, `before_id` | `GET /members/:name/activity` |
 | `cursor_ts`, `cursor_id` | `after_ts`, `after_id` | `GET /members/:name/genai`, `GET /members/:name/telemetry` |
+| `before` | `before_ts` (+ `before_id`) | `GET /history` |
 | `before` | `before_ts` | `GET /notifications/endpoints/:slug/deliveries` |
 | `stalledMs` | `stalled_ms` | `GET /team/status` |
 | `clientKind`, `clientVersion` | `client_kind`, `client_version` | `GET /subscribe` |
@@ -246,7 +247,7 @@ federated JWTs): the broker DMs a session-online notice from
 `csuite` summarizing the member's open plate, and external
 notifications queued with `if_offline: queue` are flushed.
 
-### `GET /history?with=<name>&channel=<id-or-slug>&limit=<N>&before=<ts>`
+### `GET /history?with=<name>&channel=<id-or-slug>&limit=<N>&before_ts=<ts>&before_id=<id>`
 
 | | |
 |---|---|
@@ -258,7 +259,21 @@ thread with the named teammate) or `channel` (slug or id — the
 caller must be a member of the channel). Omitting both returns
 general channel scrollback. `limit` defaults to 100, max 1000
 (the MCP `recent` tool applies its own tighter 50/500 bounds
-client-side). `before` is an epoch-ms cursor for paging.
+client-side).
+
+Page with the composite cursor `before_ts` + `before_id`: feed back the
+**last** message of the page you just received and the walk reaches
+every message exactly once. `before_id` is the message's own `id`, and
+it is what makes the walk complete — message timestamps are `Date.now()`
+at post time, so two posts in one tick collide routinely, and a page
+boundary inside such a tie used to leave every message sharing that
+millisecond permanently unreachable. `before_id` without `before_ts` is
+a `400`.
+
+`before_ts` alone is still accepted and is still a **bound, not a
+cursor**: it means `ts < before_ts` and skips anything sharing that
+millisecond. The retired `before` spells the same thing and answers with
+`Deprecation: true`; both are removed in the next minor.
 
 Every form is scoped to the caller. A message delivered to a named
 audience — a private channel, objective thread, registry event, or
