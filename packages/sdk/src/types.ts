@@ -204,11 +204,13 @@ export interface Role {
  */
 export interface Teammate {
   /**
-   * Stable member identity. Names are display/lookup handles and may be
-   * explicitly reused after departure; this id never is. Optional because
-   * brokers predating typed offboarding do not report it.
+   * The member's name IS its public handle. There is no published
+   * member identity beside it: the broker keeps a stable internal
+   * identity id for offboarding, and deliberately does not project it
+   * (D32). A client that needs to survive an explicit post-departure
+   * name reuse cannot detect one from this type — by decision, not by
+   * omission.
    */
-  identityId?: string;
   name: string;
   role: Role;
   /** Resolved leaf permissions (presets expanded). */
@@ -227,6 +229,10 @@ export interface Teammate {
  * Full member record — the shape a `members.manage` holder sees in the member-management
  * panel and the shape a member sees of themself in their instruction packet.
  * Adds `instructions` to the public `Teammate` projection.
+ *
+ * `extends` is a wire promise, not just a type-layer convenience: every
+ * field `Teammate` declares is carried on every `Member` the broker
+ * emits, `kind` included. More permission never returns less data.
  */
 export interface Member extends Teammate {
   /**

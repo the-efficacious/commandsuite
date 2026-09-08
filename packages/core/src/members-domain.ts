@@ -15,7 +15,17 @@ import { z } from 'zod';
  * round-trip preset references to disk without expanding them.
  */
 export interface LoadedMember extends Member {
-  /** Stable member identity; optional while old brokers/fixtures remain readable. */
+  /**
+   * Stable member identity — SERVER-INTERNAL, and deliberately not
+   * projected onto any wire type (D32). Names are display/lookup
+   * handles and may be explicitly reused after a departure; this id
+   * never is, and offboarding keys on it. It is not a published fact:
+   * `Teammate` declares no `identityId`, no projection emits one, and
+   * re-adding it to the wire is a decision to make the broker's member
+   * primary key a value clients may key on forever.
+   *
+   * Optional while old brokers/fixtures remain readable.
+   */
   identityId?: string;
   /** Preset names + leaf permissions as written on disk; preserved for round-tripping. */
   rawPermissions: string[];
@@ -273,17 +283,35 @@ export function teammatesFromMembers(store: MemberStore): Teammate[] {
     name: m.name,
     role: m.role,
     permissions: m.permissions,
-    // Derived from ONE stored field: whether this member has an
-    // authenticator (TOTP) secret on their config row. It is not derived
-    // from how any request authenticated — this projection runs per
-    // roster read and has no request context at all, so a
-    // bearer-authenticated caller is invisible here. The heuristic
-    // behind the field: people enroll TOTP for the web UI, agents
-    // authenticate by bearer token alone.
-    //
-    // Two-value union, one writer: `'agent'` is never emitted. No TOTP
-    // secret ⇒ the field is OMITTED, not set to `'agent'`, so the UI
-    // renders the neutral treatment instead of guessing.
-    ...(m.totpSecret ? { kind: 'person' as const } : {}),
+    ...memberKindFields(m),
   }));
+}
+
+/**
+ * The one derivation of `Teammate.kind`, spread into every projection
+ * that emits a member.
+ *
+ * Derived from ONE stored field: whether this member has an
+ * authenticator (TOTP) secret on their config row. It is not derived
+ * from how any request authenticated — the projections that call this
+ * run per read and have no request context at all, so a
+ * bearer-authenticated caller is invisible here. The heuristic behind
+ * the field: people enroll TOTP for the web UI, agents authenticate by
+ * bearer token alone.
+ *
+ * Two-value union, one writer: `'agent'` is never emitted. No TOTP
+ * secret ⇒ the field is OMITTED, not set to `'agent'`, so the UI
+ * renders the neutral treatment instead of guessing.
+ *
+ * It is a function returning a spreadable object, rather than an inline
+ * ternary, because there are TWO projections — the public `Teammate`
+ * and the `members.manage` `Member` — and only one of them used to
+ * carry the field. A privileged caller was served rows with no `kind`
+ * while an ordinary teammate got rows with it, so the management panel
+ * would have drawn every human on the team as an agent had it trusted
+ * its own fetch. `Member extends Teammate`: the subtype cannot carry
+ * less than the supertype declares.
+ */
+export function memberKindFields(member: Pick<LoadedMember, 'totpSecret'>): { kind?: 'person' } {
+  return member.totpSecret ? { kind: 'person' } : {};
 }

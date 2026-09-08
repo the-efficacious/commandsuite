@@ -188,6 +188,7 @@ import {
   type LoadedMember,
   MemberLoadError,
   type MemberStore,
+  memberKindFields,
   resolvePermissions,
   teammatesFromMembers,
   type UpdateMemberPatch,
@@ -202,6 +203,7 @@ import {
   type NotificationsStore,
   toWireDelivery,
 } from './notifications/store.js';
+import { enrichPresence, type PresenceEnrichmentOptions } from './presence-enrichment.js';
 import type { RawBodyStore } from './raw-body-types.js';
 import { composeTeamStatus } from './team-status.js';
 import { executeCustomTool } from './tool-sources/custom-executor.js';
@@ -653,6 +655,19 @@ export function createApp(options: AppOptions): CreatedApp {
   // owns). Local helper, not exposed externally — it's behavioral state
   // of the running broker, not config or persisted truth.
   const workState: WorkStateTracker = createWorkStateTracker(now);
+
+  // The dependencies `enrichPresence` reads, assembled once so the two
+  // routes that publish a `Presence` — `GET /roster` and
+  // `GET /team/status` — cannot be wired differently. `at` is passed in
+  // rather than read inside, so every presence in one response is
+  // evaluated against a single instant.
+  const presenceEnrichment = (at: number): PresenceEnrichmentOptions => ({
+    workState,
+    members,
+    ...(captureHealth !== undefined ? { captureHealth } : {}),
+    ...(diagnostics !== undefined ? { diagnostics } : {}),
+    now: at,
+  });
 
   // External Notifications dispatcher — owned here (not by run.ts)
   // because the delivery policy reads the in-process activity
@@ -1378,79 +1393,16 @@ export function createApp(options: AppOptions): CreatedApp {
   });
 
   app.get(PATHS.roster, auth, async (c) => {
-    // Compatibility activity projection. `working` is now derived ONLY
-    // from recent broker-recorded tool/outbound evidence. Turn lifecycle
-    // and message consumption remain scheduling telemetry and can never
-    // make a member look capable. `blocked` stays runner telemetry.
-    //
-    // `captureHealth` follows a DIFFERENT absence rule from `activity`,
-    // deliberately. `activity` omits the field for idle members and a
-    // reader treats absence as idle — safe, because idle is the benign
-    // default. Capture health has no benign default: absence has to
-    // mean "this broker has no opinion," so a broker that CAN evaluate
-    // it emits `ok` explicitly rather than omitting. Reading an absent
-    // field as healthy is exactly the conflation this exists to remove,
-    // and it is only absent when the store isn't wired at all.
-    const presences = broker.listPresences(options.version).map((p) => {
-      const schedulingState = workState.getActivity(p.name);
-      const actedRecently =
-        p.executor?.lastActedAt !== null &&
-        p.executor?.lastActedAt !== undefined &&
-        now() - p.executor.lastActedAt <= WORK_STATE_TTL_MS;
-      const activity =
-        schedulingState === 'blocked'
-          ? ('blocked' as const)
-          : actedRecently
-            ? ('working' as const)
-            : ('idle' as const);
-      const health = captureHealth?.forMember(p.name);
-      // `pending` is internal — an aged-out marker hasn't earned a
-      // claim yet, and healthy lag means every turn is briefly
-      // unsatisfied. Surfacing it would flicker on healthy traffic, so
-      // it maps to `ok`: no gap has been established.
-      //
-      // `unevaluated` is NOT collapsed into `ok`. A Codex member is not
-      // assessed by the exact-match join at all, and reporting them
-      // healthy would be this broker claiming a property it never
-      // evaluated — the same conflation the whole signal exists to
-      // remove. It stays distinct from an absent field, which means a
-      // broker too old to have an opinion at all.
-      const captureField =
-        health === undefined
-          ? {}
-          : {
-              captureHealth:
-                health.state === 'gap'
-                  ? ('gap' as const)
-                  : health.state === 'unevaluated'
-                    ? ('unevaluated' as const)
-                    : ('ok' as const),
-            };
-      // Retained completeness failures for this member that have not
-      // been observed to recover. Same absence rule as `captureHealth`
-      // and NOT `activity`'s: absent means this broker retains no
-      // diagnostics and has no opinion — never "this member is clean".
-      // `0` is the positive statement that it looked and found none.
-      //
-      // This is the field an agent reads about ITSELF. Every failure it
-      // counts is one the product already detected and, until now,
-      // wrote to a terminal nobody kept — so the agent could not find
-      // out that its own capture had failed.
-      const diagField =
-        diagnostics === undefined
-          ? {}
-          : {
-              diagnosticsUnresolved: diagnostics.unresolved(p.name).length,
-              diagnosticsRetention: diagnostics.health(),
-            };
-      // The registry's role is first-register-wins, so it is stale the
-      // moment a role is edited under a live connection. The member
-      // store is authoritative; re-read it here rather than let one
-      // response carry two answers (`teammates[].role` and this one).
-      const role = members.findByName(p.name)?.role ?? p.role;
-      if (activity === 'idle') return { ...p, role, ...captureField, ...diagField };
-      return { ...p, role, activity, busy: activity === 'working', ...captureField, ...diagField };
-    });
+    // One `Presence` type, one population: the enrichment lives in
+    // `enrichPresence` so `GET /team/status` publishes the same axes for
+    // the same member on the same tick. Adding a field here without
+    // adding it there is what made `captureHealth` and
+    // `diagnosticsUnresolved` say "this broker has no opinion" on a
+    // broker that had one.
+    const at = now();
+    const presences = broker
+      .listPresences(options.version)
+      .map((p) => enrichPresence(p, presenceEnrichment(at)));
     return c.json({
       teammates: teammatesFromMembers(members),
       connected: presences,
@@ -1477,6 +1429,12 @@ export function createApp(options: AppOptions): CreatedApp {
         objectives,
         eventLog: broker.getEventLog(),
         activityStore,
+        // Same enrichment the roster applies. `workState` is required
+        // on the options so a caller cannot compose a report whose
+        // `Presence` is quietly a different shape from the roster's.
+        workState,
+        ...(captureHealth !== undefined ? { captureHealth } : {}),
+        ...(diagnostics !== undefined ? { diagnostics } : {}),
         generatedAt: now(),
         stalledAfterMs,
       }),
@@ -6714,18 +6672,29 @@ export function composeSessionOnlineMessage(
   };
 }
 
-/** Project a LoadedMember into the public `Member` wire shape. */
-function loadedToMember(m: LoadedMember): {
-  name: string;
-  role: Role;
-  permissions: readonly Permission[];
-  instructions: string;
-} {
+/**
+ * Project a LoadedMember into the full `Member` wire shape.
+ *
+ * Typed as `Member` rather than an inline object literal on purpose:
+ * `Member extends Teammate`, so this projection owes every field the
+ * public `teammatesFromMembers` projection emits, and a declared return
+ * type is what makes a future omission a compile error. It used to
+ * drop `kind`, which meant a `members.manage` holder — the caller the
+ * member-management panel runs as — received rows a plain teammate's
+ * rows were a superset of, and the consumer rule for an absent `kind`
+ * is "render the neutral (agent) treatment": more permission, every
+ * human drawn as an agent.
+ *
+ * `identityId` is NOT here and is not on `Member` either. It stays
+ * server-internal by decision (D32), not by oversight.
+ */
+function loadedToMember(m: LoadedMember): Member {
   return {
     name: m.name,
     role: m.role,
     permissions: m.permissions,
     instructions: m.instructions,
+    ...memberKindFields(m),
   };
 }
 

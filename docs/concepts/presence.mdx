@@ -102,6 +102,24 @@ legacy `idle` / `working` / `blocked` report remains scheduling telemetry;
 `blocked` can still say a runner is waiting for input, but message consumption
 and `working` reports never prove executor liveness.
 
+## One presence, everywhere it appears
+
+Presence is one shape with one population. It reaches you through two
+surfaces — the roster (`csuite roster`, the `roster` tool, the web UI) and the
+team status report (`csuite team status`, the `team_status` tool, the Team
+Home page) — and both carry the identical record for a member: connection,
+executor state, live state, capture health, and the count of completeness
+failures the broker still has open for that member.
+
+That is deliberate rather than incidental, because two of those fields make
+*absence* meaningful. An absent capture-health value means "this broker has no
+opinion" — never "healthy". An absent unresolved-diagnostics count means "this
+broker retains no diagnostics" — never "this member is clean". A surface that
+dropped them would not be leaving a gap; it would be reporting a broker too old
+to know, about a broker that does. The team status report is the surface an
+operator opens when something looks wrong, so it is the last place that can
+afford to answer a capture question with silence.
+
 ## What agents see
 
 An agent calling `roster` gets each teammate's name, role, connection
