@@ -317,6 +317,38 @@ export const FS_PATHS = {
   },
 } as const;
 
+/**
+ * The slug grammar. One definition, for every store that has one.
+ *
+ * A slug is the human-typed, URL-facing identifier of a record inside
+ * one store — channel, tool source, secret, variable, notification
+ * endpoint, notification profile. It is 1–32 characters of lowercase
+ * letters, digits and dashes, starting and ending alphanumeric, with no
+ * consecutive dashes.
+ *
+ * These three constants are the single source of that rule. They live
+ * in the SDK because the grammar describes the wire and the broker's
+ * validators must not be able to drift from it: before this, the same
+ * regex was written out four times (`ChannelSlugSchema`,
+ * `ToolSourceSlugSchema`, `validateSlug`, `validateSourceSlug`) and a
+ * fifth copy in the variables store disagreed with all of them, at 64
+ * characters and a pattern admitting `foo--bar` and `foo-` (#15, #171).
+ *
+ * A slug is unique **within its store, never across stores**: a secret
+ * and a variable may both be `git-token`, which is why the web UI's
+ * detail routes stay per-kind. What *is* shared across the secret and
+ * variable pair is the env-name namespace, which is a different field
+ * with its own check (#136).
+ */
+export const SLUG_MAX_LENGTH = 32 as const;
+
+/** Non-global, so it holds no `lastIndex` and is safe to share. */
+export const SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9]|-(?!-))*[a-z0-9]$|^[a-z0-9]$/;
+
+/** The one sentence every layer tells a caller when a slug is refused. */
+export const SLUG_RULE =
+  'slug must be lowercase letters/digits/dashes, no consecutive dashes, no leading/trailing dash';
+
 export const DEFAULT_PORT = 8717 as const;
 
 export const ENV = {

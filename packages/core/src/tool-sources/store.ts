@@ -28,6 +28,7 @@
  * inside one transaction.
  */
 
+import { SLUG_MAX_LENGTH, SLUG_PATTERN, SLUG_RULE } from 'csuite-sdk/protocol';
 import type {
   CustomToolDef,
   ResolvedTool,
@@ -50,22 +51,25 @@ export class ToolSourcesError extends Error {
   }
 }
 
-const SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9]|-(?!-))*[a-z0-9]$|^[a-z0-9]$/;
-const SLUG_MAX = 32;
 const TOOL_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
+/**
+ * The one slug validator on the server side of the wire. Grammar and
+ * message come from `csuite-sdk/protocol`, the same constants
+ * `ToolSourceSlugSchema` is built from, so this cannot drift from what
+ * the wire accepts. Tool sources, secrets, variables and notification
+ * endpoints all call it; only channels differ, and only in the class
+ * they throw (#171).
+ */
 export function validateSourceSlug(slug: string): void {
   if (typeof slug !== 'string' || slug.length === 0) {
     throw new ToolSourcesError('invalid_input', 'slug is required');
   }
-  if (slug.length > SLUG_MAX) {
-    throw new ToolSourcesError('invalid_input', `slug too long (max ${SLUG_MAX})`);
+  if (slug.length > SLUG_MAX_LENGTH) {
+    throw new ToolSourcesError('invalid_input', `slug too long (max ${SLUG_MAX_LENGTH})`);
   }
   if (!SLUG_PATTERN.test(slug)) {
-    throw new ToolSourcesError(
-      'invalid_input',
-      'slug must be lowercase letters/digits/dashes, no consecutive dashes, no leading/trailing dash',
-    );
+    throw new ToolSourcesError('invalid_input', SLUG_RULE);
   }
 }
 

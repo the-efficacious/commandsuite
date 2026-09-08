@@ -28,17 +28,18 @@
  *                exclusively the broker's `channels.manage` permission.
  *   - `member` — can read + post + leave.
  *
- * Slug grammar:
- *   - 1–32 chars
- *   - lowercase ASCII letters, digits, `-`
- *   - must start + end with alphanumeric
- *   - no consecutive dashes
+ * Slug grammar: the shared one, `SLUG_PATTERN` / `SLUG_MAX_LENGTH` in
+ * `csuite-sdk/protocol` — 1–32 chars of lowercase ASCII letters, digits
+ * and `-`, starting and ending alphanumeric, no consecutive dashes. A
+ * channel's slug is the only one in the product that may be changed
+ * after creation.
  *
  * The store is intentionally synchronous (matches `node:sqlite`'s
  * surface). The HTTP layer wraps responses in `c.json` which is
  * already async — no value in faking promise returns here.
  */
 
+import { SLUG_MAX_LENGTH, SLUG_PATTERN, SLUG_RULE } from 'csuite-sdk/protocol';
 import { GENERAL_CHANNEL_ID } from './event-log.js';
 import { runInTransaction, type SqlDriver, type SqlStatement } from './sql-driver.js';
 export const GENERAL_CHANNEL_SLUG = 'general';
@@ -147,21 +148,21 @@ const CREATE_SCHEMA = `
   CREATE INDEX IF NOT EXISTS channel_audit_channel_idx ON channel_audit(channel_id, id);
 `;
 
-const SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9]|-(?!-))*[a-z0-9]$|^[a-z0-9]$/;
-const SLUG_MAX = 32;
-
+/**
+ * The channel half of the one slug grammar. Grammar and message come
+ * from `csuite-sdk/protocol`, which `ChannelSlugSchema` reads too, so
+ * the wire and the store cannot disagree about what a slug is (#171).
+ * Only the thrown class is channel-specific.
+ */
 export function validateSlug(slug: string): void {
   if (typeof slug !== 'string' || slug.length === 0) {
     throw new ChannelsError('invalid_input', 'slug is required');
   }
-  if (slug.length > SLUG_MAX) {
-    throw new ChannelsError('invalid_input', `slug too long (max ${SLUG_MAX})`);
+  if (slug.length > SLUG_MAX_LENGTH) {
+    throw new ChannelsError('invalid_input', `slug too long (max ${SLUG_MAX_LENGTH})`);
   }
   if (!SLUG_PATTERN.test(slug)) {
-    throw new ChannelsError(
-      'invalid_input',
-      'slug must be lowercase letters/digits/dashes, no consecutive dashes, no leading/trailing dash',
-    );
+    throw new ChannelsError('invalid_input', SLUG_RULE);
   }
 }
 

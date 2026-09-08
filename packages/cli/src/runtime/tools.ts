@@ -38,6 +38,7 @@ import { basename } from 'node:path';
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
 import { logger as defaultLogger, type Logger } from 'csuite-core';
 import { type Client as BrokerClient, ClientError } from 'csuite-sdk/client';
+import { SLUG_MAX_LENGTH } from 'csuite-sdk/protocol';
 import { TEAM_PROCESS_MAX } from 'csuite-sdk/schemas';
 import { formatTextMetrics } from 'csuite-sdk/text-metrics';
 import type {
@@ -85,6 +86,19 @@ const OPEN_OBJECTIVE_STATUSES: readonly ObjectiveStatus[] = ['active', 'blocked'
 
 /** What `objectives_list` accepts: the four statuses plus the `open` union. */
 const OBJECTIVE_LIST_FILTERS: readonly string[] = [...OBJECTIVE_STATUSES, 'open'];
+
+/**
+ * What every `slug` argument tells an agent, built from the wire's own
+ * `SLUG_MAX_LENGTH` so the text cannot drift from the rule that
+ * rejects. `variables_create` used to say "max 64" while
+ * `CreateVariableRequestSchema` refused anything over 32, and the SDK
+ * parses client-side, so an agent that believed its own tool schema got
+ * a raw zod dump back and no way to learn the real rule (#15).
+ */
+const SLUG_GRAMMAR_TEXT =
+  `Lowercase letters/digits/dashes, max ${SLUG_MAX_LENGTH}, no consecutive dashes, ` +
+  'no leading/trailing dash.';
+const SLUG_DESCRIPTION = `${SLUG_GRAMMAR_TEXT} Immutable.`;
 
 const DEFAULT_RECENT_LIMIT = 50;
 const MAX_RECENT_LIMIT = 500;
@@ -834,7 +848,7 @@ function buildToolAdminTools(instructions: InstructionsResponse): Tool[] {
         properties: {
           slug: {
             type: 'string',
-            description: 'Lowercase letters/digits/dashes, max 32. Immutable.',
+            description: SLUG_DESCRIPTION,
           },
           kind: { type: 'string', enum: ['custom', 'mcp'] },
           url: {
@@ -1053,7 +1067,7 @@ function buildVariablesAdminTools(instructions: InstructionsResponse): Tool[] {
         properties: {
           slug: {
             type: 'string',
-            description: 'Lowercase letters/digits/dashes, max 64. Immutable.',
+            description: SLUG_DESCRIPTION,
           },
           envName: {
             type: 'string',
@@ -1193,7 +1207,7 @@ function buildSecretsAdminTools(instructions: InstructionsResponse): Tool[] {
         properties: {
           slug: {
             type: 'string',
-            description: 'Lowercase letters/digits/dashes, max 32. Immutable.',
+            description: SLUG_DESCRIPTION,
           },
           envName: {
             type: 'string',
@@ -1413,7 +1427,7 @@ function buildNotificationsAdminTools(instructions: InstructionsResponse): Tool[
         properties: {
           slug: {
             type: 'string',
-            description: 'Lowercase letters/digits/dashes, max 32. Immutable (it is the URL).',
+            description: `${SLUG_GRAMMAR_TEXT} Immutable (it is the URL).`,
           },
           targets: targetsSchema,
           displayName: { type: 'string' },
@@ -1561,7 +1575,7 @@ function buildNotificationsAdminTools(instructions: InstructionsResponse): Tool[
       inputSchema: {
         type: 'object',
         properties: {
-          slug: { type: 'string', description: 'Lowercase letters/digits/dashes. Immutable.' },
+          slug: { type: 'string', description: SLUG_DESCRIPTION },
           description: { type: 'string' },
           authKind: { type: 'string', enum: ['hmac-sha256', 'header-secret'] },
           authHeader: { type: 'string' },
