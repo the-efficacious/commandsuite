@@ -4310,9 +4310,31 @@ export function createApp(options: AppOptions): CreatedApp {
   // never blocks the HTTP response.
   if (objectives !== undefined) {
     /**
+     * Is this member on the objective's thread audience?
+     *
+     * The objective party — assignee, originator, explicit watchers —
+     * plus every `members.manage` holder, who are implicit thread
+     * participants on every objective (observable-by-default for
+     * member managers).
+     *
+     * This is the single statement of the rule.
+     * `objectiveThreadMembers` expands it into the name set the push
+     * fan-out and the `/discuss` gate use; `GET /objectives/:id` asks
+     * it directly. Read, post and push therefore cannot drift apart:
+     * a member the broker pushes an objective's contents to is a
+     * member who can open that objective.
+     */
+    const onObjectiveThread = (objective: Objective, member: Member): boolean =>
+      objective.assignee === member.name ||
+      objective.originator === member.name ||
+      objective.watchers.includes(member.name) ||
+      hasPermission(member.permissions, 'members.manage');
+
+    /**
      * The set of names that belong to an objective's thread.
-     * Originator + assignee + explicit watchers + every `members.manage`
-     * holder. For a `reassigned`
+     * Every member `onObjectiveThread` admits — originator + assignee
+     * + explicit watchers + every `members.manage` holder. For a
+     * `reassigned`
      * event, also include the previous assignee so they know the
      * objective left their plate. For a `watcher_removed` event,
      * also include the removed watcher so they get the exit
@@ -4326,12 +4348,12 @@ export function createApp(options: AppOptions): CreatedApp {
       objective: Objective,
       extraEvent?: ObjectiveEvent,
     ): Set<string> => {
+      // The party is named on the objective, so it belongs to the
+      // thread whether or not the name still resolves to a member.
       const names = new Set<string>([objective.assignee, objective.originator]);
       for (const w of objective.watchers) names.add(w);
-      // Members with `members.manage` are implicit thread participants
-      // on every objective (observable-by-default for member managers).
       for (const m of members.members()) {
-        if (m.permissions.includes('members.manage')) names.add(m.name);
+        if (onObjectiveThread(objective, m)) names.add(m.name);
       }
       if (extraEvent?.kind === 'reassigned') {
         const fromCs = extraEvent.payload.from;
@@ -4436,14 +4458,22 @@ export function createApp(options: AppOptions): CreatedApp {
           .list(filter.status ? { status: filter.status } : {})
           .filter((o) => o.assignee === name || o.originator === name || o.watchers.includes(name));
 
-      const canListAny = hasPermission(member.permissions, 'objectives.create');
+      // `members.manage` holders are on every objective's thread and
+      // already read the open team-wide ledger through `/team/status`,
+      // so the list they get here is the one they are already pushed.
+      const canListAny =
+        hasPermission(member.permissions, 'objectives.create') ||
+        hasPermission(member.permissions, 'members.manage');
       if (!canListAny) {
         if (
           (filter.assignee && filter.assignee !== member.name) ||
           (filter.related && filter.related !== member.name)
         ) {
           return c.json(
-            { error: 'members without objectives.create may only list their own objectives' },
+            {
+              error:
+                "listing another member's objectives requires objectives.create or members.manage",
+            },
             403,
           );
         }
@@ -4461,20 +4491,25 @@ export function createApp(options: AppOptions): CreatedApp {
 
     // GET /objectives/:id
     //
-    // A thread participant (assignee, originator, watcher) can always
-    // view. Anyone with `objectives.create` can view any.
+    // The thread audience can always view: the objective party
+    // (assignee, originator, watcher) plus every `members.manage`
+    // holder — the same set the lifecycle fan-out pushes to and the
+    // same set `/discuss` accepts posts from. Anyone with
+    // `objectives.create` can view any.
     app.get(`${PATHS.objectives}/:id`, auth, (c) => {
       const member = c.get('member');
       const id = c.req.param('id');
       const obj = objectives.get(id);
       if (!obj) return c.json({ error: `no such objective: ${id}` }, 404);
-      const isParticipant =
-        obj.assignee === member.name ||
-        obj.originator === member.name ||
-        obj.watchers.includes(member.name);
-      if (!isParticipant && !hasPermission(member.permissions, 'objectives.create')) {
+      if (
+        !onObjectiveThread(obj, member) &&
+        !hasPermission(member.permissions, 'objectives.create')
+      ) {
         return c.json(
-          { error: 'not a thread participant; viewing requires objectives.create' },
+          {
+            error:
+              'viewing this objective requires being on its thread (assignee, originator, watcher, or members.manage) or holding objectives.create',
+          },
           403,
         );
       }

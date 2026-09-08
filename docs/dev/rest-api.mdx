@@ -579,20 +579,24 @@ in captured traces.
 | **Auth** | member |
 | **Returns** | `ListObjectivesResponse` — `{ objectives: Objective[] }` |
 
-Callers **without** `objectives.create` are scoped to their own
-relationship union — objectives they are assigned, originated, or
-watch — and may only pass their own name in `assignee` / `related`
-(403 otherwise). Callers **with** `objectives.create` get the
-team-wide list; `related=<name>` narrows it to one member's
-relationship union, `assignee=<name>` to one member's plate.
+Callers holding **neither** `objectives.create` **nor**
+`members.manage` are scoped to their own relationship union —
+objectives they are assigned, originated, or watch — and may only
+pass their own name in `assignee` / `related` (403 otherwise).
+Callers with **either** leaf get the team-wide list;
+`related=<name>` narrows it to one member's relationship union,
+`assignee=<name>` to one member's plate. `members.manage` is on the
+list because its holders are on every objective's thread: the
+lifecycle fan-out already pushes them every event, and
+`GET /team/status` already reports every open objective to them.
 
-`assignee` is honoured on exactly one branch: a caller **with**
-`objectives.create` that did not also send `related`. When both are
-sent, `related` wins and `assignee` is ignored rather than
-intersected; and a caller without `objectives.create` always
-receives the whole relationship union whatever it asked for. The
-MCP `objectives_list` tool sits on top of this route, and filters
-`assignee` client-side for exactly that reason.
+`assignee` is honoured on exactly one branch: a team-wide caller
+that did not also send `related`. When both are sent, `related`
+wins and `assignee` is ignored rather than intersected; and a
+caller scoped to its own union always receives the whole union
+whatever it asked for. The MCP `objectives_list` tool sits on top
+of this route, and filters `assignee` client-side for exactly that
+reason.
 
 ### `POST /objectives`
 
@@ -612,10 +616,13 @@ caller has read access to each path.
 
 | | |
 |---|---|
-| **Auth** | member; thread participant (assignee, originator, watcher) OR `objectives.create` |
+| **Auth** | member; on the objective's thread (assignee, originator, watcher, or `members.manage`) OR `objectives.create` |
 | **Returns** | `GetObjectiveResponse` — `{ objective: Objective, events: ObjectiveEvent[] }` |
 
-Full state plus the append-only event log.
+Full state plus the append-only event log. The audience is the one
+the lifecycle fan-out delivers to and the one
+`POST /objectives/:id/discuss` accepts posts from, so a member the
+broker pushes an objective's events to can always open it.
 
 ### `PATCH /objectives/:id`
 
