@@ -68,6 +68,7 @@ const ENRICHED_PRESENCE_KEYS = [
   'role',
   'runnerReports',
   'unreportedConnections',
+  'workState',
 ];
 
 const dbs: ReturnType<typeof openDatabase>[] = [];
@@ -198,7 +199,7 @@ describe('presence shape parity across /roster and /team/status', () => {
 
     expect(fromStatus).toEqual(fromRoster);
     const idleKeys: Array<keyof Presence | string> = ENRICHED_PRESENCE_KEYS.filter(
-      (key) => key !== 'activity' && key !== 'busy',
+      (key) => key !== 'activity' && key !== 'busy' && key !== 'workState',
     );
     expect(Object.keys(fromStatus ?? {}).sort()).toEqual(idleKeys);
     expect(fromStatus?.captureHealth).toBe('ok');

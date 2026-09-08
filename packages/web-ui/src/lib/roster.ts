@@ -22,21 +22,24 @@ import { getClient } from './client.js';
 export const roster = signal<RosterResponse | null>(null);
 
 /**
- * Normalize a member's live activity from a roster presence entry into
- * the 3-state model. The server-authoritative field is `activity`;
- * older servers (and members with no recent report) omit it, so we
- * fall back to the back-compat `busy` boolean (`busy === working`).
+ * Normalize the roster's projected state of work for a member into the
+ * 3-state model. Three spellings are read, newest first, because the
+ * D6 compat window has this shell talking to brokers on both sides of
+ * the rename: `workState` (canonical), then `activity` (the pre-D6
+ * name, removed in the next minor), then the lossy `busy` boolean
+ * (`busy === working`, which cannot express `blocked`).
  * Absent/undefined presence — the member isn't in `connected` at all —
  * is treated as `idle`. This is the single place the web-shell decides
- * how to read activity so the roster surfaces (NavColumn DM rows,
- * TeamHome roster) stay in lockstep.
+ * how to read it, so the roster surfaces (NavColumn DM rows, TeamHome
+ * roster) stay in lockstep.
  *
  * Note: this is orthogonal to connection state (online/connecting/
  * offline), which callers derive from `Presence.connected` separately.
  * A `blocked` or `working` member is, by definition, online.
  */
-export function presenceActivity(p: Presence | undefined): WorkState {
+export function presenceWorkState(p: Presence | undefined): WorkState {
   if (!p) return 'idle';
+  if (p.workState) return p.workState;
   if (p.activity) return p.activity;
   return p.busy === true ? 'working' : 'idle';
 }
@@ -45,7 +48,7 @@ export function presenceActivity(p: Presence | undefined): WorkState {
  * Whether to warn a human that a member's verbatim capture has stopped.
  *
  * ABSENCE IS NOT HEALTH, and this reads the OPPOSITE way from
- * `presenceActivity` above. There, an absent field means idle and that
+ * `presenceWorkState` above. There, an absent field means idle and that
  * is a safe default. Here, an absent field means the broker is too old
  * to have an opinion — so `undefined` is "no opinion", NOT "healthy",
  * and it must not render as a green state.

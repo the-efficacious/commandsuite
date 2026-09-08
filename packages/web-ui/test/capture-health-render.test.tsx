@@ -62,7 +62,7 @@ function presenceFor(captureHealth?: Presence['captureHealth']): Presence {
     createdAt: 1_700_000_000_000,
     lastSeen: 1_700_000_000_000,
     role: { title: 'engineer', description: '' },
-    activity: 'working',
+    workState: 'working',
     busy: true,
     ...(captureHealth !== undefined ? { captureHealth } : {}),
   };

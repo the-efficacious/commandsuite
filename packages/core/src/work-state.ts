@@ -1,14 +1,14 @@
 /**
- * Server-side member ACTIVITY tracker — the broker's hold of each
- * member's live 3-state activity (idle / working / blocked). This is
+ * Server-side member WORK STATE tracker — the broker's hold of each
+ * member's live 3-state work state (idle / working / blocked). This is
  * orthogonal to CONNECTION presence (online/connecting/offline), which
  * the broker's presence registry owns; here we only track "what is the agent
  * doing right now on that link".
  *
- * The runner POSTs `{state}` to `POST /presence/activity` on each
- * activity transition (idle ↔ working ↔ blocked), plus a heartbeat
+ * The runner POSTs `{state}` to `POST /presence/work-state` on each
+ * work-state transition (idle ↔ working ↔ blocked), plus a heartbeat
  * while still working/blocked. We hold the latest non-idle report per
- * member with an absolute expiry timestamp; `getActivity(name)` past
+ * member with an absolute expiry timestamp; `getWorkState(name)` past
  * the expiry resolves to `idle` even if the runner never told us to
  * flip — the safety net for a runner that crashes mid-turn (so a
  * member never stays stuck "working"/"blocked" forever).
@@ -18,7 +18,7 @@
  * `idle` for free. Only `working`/`blocked` occupy the map.
  *
  * In-memory only. Multi-process deployments aren't supported (the
- * broker is single-process today), and persisting activity across
+ * broker is single-process today), and persisting work state across
  * restarts has no value: a non-idle member that survives a restart is
  * almost certainly stale.
  *
@@ -30,7 +30,7 @@ import type { WorkState } from 'csuite-sdk/types';
 /** How long a non-idle report stays "valid" without a refresh. */
 export const WORK_STATE_TTL_MS = 30_000;
 
-interface ActivityEntry {
+interface WorkStateEntry {
   /** Last reported non-idle state (`working` | `blocked`). */
   state: Exclude<WorkState, 'idle'>;
   /** Wall-clock at which this report was filed. */
@@ -46,13 +46,14 @@ export interface WorkStateTracker {
    */
   report(name: string, state: WorkState): void;
   /**
-   * Resolve the current activity for a member. Returns `idle` for
+   * Resolve the current work state for a member. Returns `idle` for
    * unknown members and for stale non-idle entries past their TTL.
    */
-  getActivity(name: string): WorkState;
+  getWorkState(name: string): WorkState;
   /**
-   * Back-compat convenience: `true` iff the member's activity is
-   * `working`. `blocked` is NOT busy — it means a person should look.
+   * Compatibility convenience: `true` iff the member's work state is
+   * `working`. `blocked` is NOT busy — it means a person should look,
+   * so this boolean cannot express the whole signal.
    */
   isBusy(name: string): boolean;
   /**
@@ -65,7 +66,7 @@ export interface WorkStateTracker {
 }
 
 export function createWorkStateTracker(now: () => number = Date.now): WorkStateTracker {
-  const reports = new Map<string, ActivityEntry>();
+  const reports = new Map<string, WorkStateEntry>();
 
   // Resolve-with-eviction: a lapsed entry is deleted on read so the
   // map self-cleans even without an explicit purge pass.
@@ -92,7 +93,7 @@ export function createWorkStateTracker(now: () => number = Date.now): WorkStateT
         expiresAt: ts + WORK_STATE_TTL_MS,
       });
     },
-    getActivity: resolve,
+    getWorkState: resolve,
     isBusy(name) {
       return resolve(name) === 'working';
     },

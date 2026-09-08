@@ -479,7 +479,7 @@ export async function runAgentSession(
     const respawn = adapter.respawn.bind(adapter);
     coordinator = createRestartCoordinator(
       {
-        activity: () => runner.captureHost?.busy ?? null,
+        workState: () => runner.captureHost?.workState ?? null,
         detach: () => adapter.detachForRestart?.(),
         stopCurrent: async (reason) => {
           const prior = currentProc;
@@ -571,7 +571,7 @@ export async function runAgentSession(
     const respawnForClear = adapter.respawn?.bind(adapter) ?? null;
     const compactForAdapter = adapter.compactContext?.bind(adapter) ?? null;
     contextControl = createContextControlCoordinator({
-      activity: () => runner.captureHost?.busy ?? null,
+      workState: () => runner.captureHost?.workState ?? null,
       gate: withLifecycleLock,
       compact: async (reason) => {
         if (compactForAdapter === null) {

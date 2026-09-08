@@ -17,7 +17,8 @@
  * supplies the connection axes (`packages/core/src/registry.ts`); this
  * adds the four the broker composes per request:
  *
- *   - live state — `activity` / `busy`, derived over the work-state
+ *   - live state — `workState` (and, for one release, its pre-D6 mirror
+ *     `activity`) / `busy`, derived over the work-state
  *     tracker and proven action, omitted when idle
  *   - capture health — `captureHealth`, omitted only when unwired
  *   - completeness diagnostics — `diagnosticsUnresolved` /
@@ -41,8 +42,8 @@ import { WORK_STATE_TTL_MS, type WorkStateTracker } from './work-state.js';
  * is the only case in which their fields are legitimately absent.
  */
 export interface PresenceEnrichmentOptions {
-  /** Per-member work-state reports; only `getActivity` is read. */
-  workState: Pick<WorkStateTracker, 'getActivity'>;
+  /** Per-member work-state reports; only `getWorkState` is read. */
+  workState: Pick<WorkStateTracker, 'getWorkState'>;
   /** Authoritative role source. The registry's copy is stale after an edit. */
   members: MemberStore;
   /** Omit and no member carries `captureHealth` — "no opinion", not "healthy". */
@@ -64,7 +65,7 @@ export function enrichPresence(presence: Presence, options: PresenceEnrichmentOp
   // recent broker-recorded tool/outbound evidence. Turn lifecycle and
   // message consumption remain scheduling telemetry and can never make
   // a member look capable. `blocked` stays runner telemetry.
-  const schedulingState = options.workState.getActivity(presence.name);
+  const schedulingState = options.workState.getWorkState(presence.name);
   const actedRecently =
     presence.executor?.lastActedAt !== null &&
     presence.executor?.lastActedAt !== undefined &&
@@ -134,9 +135,15 @@ export function enrichPresence(presence: Presence, options: PresenceEnrichmentOp
   const role: Role | null = options.members.findByName(presence.name)?.role ?? presence.role;
 
   if (activity === 'idle') return { ...presence, role, ...captureField, ...diagField };
+  // D6 compat window: `workState` is canonical and `activity` is the
+  // pre-D6 spelling, emitted with the SAME value for one release so a
+  // client written against either keeps reading the same member. `busy`
+  // is the older, lossy boolean mirror and outlives both. The two
+  // deprecated fields are removed in the next minor.
   return {
     ...presence,
     role,
+    workState: activity,
     activity,
     busy: activity === 'working',
     ...captureField,

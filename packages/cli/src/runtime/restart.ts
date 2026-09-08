@@ -12,7 +12,7 @@
  * DRAIN, DON'T KILL. The policy is restart at the next SAFE boundary
  * — the choice an operator retains is when, not whether:
  *
- *   1. wait for the activity signal to read `idle` (a request landing
+ *   1. wait for the work-state signal to read `idle` (a request landing
  *      mid-turn waits for the turn, not the other way around);
  *   2. detach ambient input so events arriving during the swap buffer
  *      for the successor instead of dying with the predecessor;
@@ -53,17 +53,17 @@ import type { AgentLog } from './agents/adapter.js';
 export type RestartReason = 'instructions' | 'environment';
 
 /** Where the coordinator gets its idle observation. */
-export interface ActivityObservation {
+export interface WorkStateObservation {
   /** Fires immediately with the current state, then on transitions. */
   subscribe(listener: (state: 'idle' | 'working' | 'blocked') => void): () => void;
 }
 
 export interface RestartHooks {
   /**
-   * The activity signal, or `null` when capture is off. Read lazily
+   * The work-state signal, or `null` when capture is off. Read lazily
    * per restart so a host that comes up late still counts.
    */
-  activity(): ActivityObservation | null;
+  workState(): WorkStateObservation | null;
   /** Re-point ambient input at a buffer for the successor. Optional. */
   detach(): void;
   /**
@@ -158,14 +158,14 @@ export function createRestartCoordinator(
   const reasons = new Set<RestartReason>();
 
   const waitForIdle = async (): Promise<void> => {
-    const activity = hooks.activity();
-    if (activity === null) {
-      hooks.log.warn('no activity signal (--no-trace) — restarting after grace');
+    const workState = hooks.workState();
+    if (workState === null) {
+      hooks.log.warn('no work-state signal (--no-trace) — restarting after grace');
       await delay(NO_SIGNAL_GRACE_MS);
       return;
     }
     await new Promise<void>((resolve) => {
-      const unsubscribe = activity.subscribe((state) => {
+      const unsubscribe = workState.subscribe((state) => {
         if (state === 'idle') {
           // Subscribe fires synchronously with the current state, so
           // an already-idle agent resolves before unsubscribe exists.

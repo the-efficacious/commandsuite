@@ -1,6 +1,6 @@
 /**
  * The drain-and-restart coordinator, exercised through controllable
- * hooks: a settable activity signal plus swappable refresh/respawn
+ * hooks: a settable work-state signal plus swappable refresh/respawn
  * behaviors so each phase boundary can be held open while requests
  * land on it. The coalescing rules are the contract under test — N
  * edits must cost at most two restarts, and an edit landing after
@@ -11,7 +11,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import type { ActivityObservation, RestartHooks } from '../../src/runtime/restart.js';
+import type { RestartHooks, WorkStateObservation } from '../../src/runtime/restart.js';
 import { createRestartCoordinator } from '../../src/runtime/restart.js';
 import { silentLogger } from '../helpers/logger.js';
 
@@ -20,7 +20,7 @@ type State = 'idle' | 'working' | 'blocked';
 function fakeActivity(initial: State) {
   let state = initial;
   const listeners = new Set<(s: State) => void>();
-  const observation: ActivityObservation = {
+  const observation: WorkStateObservation = {
     subscribe(listener) {
       listeners.add(listener);
       listener(state);
@@ -46,7 +46,7 @@ function deferred<T = void>() {
   return { promise, resolve, reject };
 }
 
-function harness(opts: { activity: ActivityObservation | null }) {
+function harness(opts: { workState: WorkStateObservation | null }) {
   const calls: string[] = [];
   const failures: unknown[] = [];
   const h = {
@@ -58,7 +58,7 @@ function harness(opts: { activity: ActivityObservation | null }) {
     coordinator: undefined as unknown as ReturnType<typeof createRestartCoordinator>,
   };
   const hooks: RestartHooks = {
-    activity: () => opts.activity,
+    workState: () => opts.workState,
     detach: () => calls.push('detach'),
     stopCurrent: async (reason) => {
       calls.push(`stop:${reason}`);
@@ -99,15 +99,15 @@ async function settleFully(h: ReturnType<typeof harness>): Promise<void> {
 
 describe('drain ordering', () => {
   it('waits for idle, then detaches BEFORE stopping, refetches, respawns cold with the reason', async () => {
-    const activity = fakeActivity('working');
-    const h = harness({ activity: activity.observation });
+    const workStateSignal = fakeActivity('working');
+    const h = harness({ workState: workStateSignal.observation });
 
     h.coordinator.request('instructions');
     await tick();
     // Mid-turn: nothing has happened yet — the drain is the point.
     expect(h.calls).toEqual([]);
 
-    activity.set('idle');
+    workStateSignal.set('idle');
     await settleFully(h);
 
     expect(h.calls).toEqual([
@@ -120,7 +120,7 @@ describe('drain ordering', () => {
   });
 
   it('proceeds immediately when already idle', async () => {
-    const h = harness({ activity: fakeActivity('idle').observation });
+    const h = harness({ workState: fakeActivity('idle').observation });
     h.coordinator.request('instructions');
     await settleFully(h);
     expect(h.calls[0]).toBe('detach');
@@ -128,7 +128,7 @@ describe('drain ordering', () => {
   });
 
   it('restarts after a grace period when there is no activity signal', async () => {
-    const h = harness({ activity: null });
+    const h = harness({ workState: null });
     h.coordinator.request('instructions');
     await settleFully(h);
     expect(h.calls).toEqual([
@@ -144,7 +144,7 @@ describe('drain ordering', () => {
 
 describe('coalescing', () => {
   it('folds requests arriving before the refetch into the running cycle', async () => {
-    const h = harness({ activity: fakeActivity('idle').observation });
+    const h = harness({ workState: fakeActivity('idle').observation });
     const gate = deferred();
     h.onRefresh = () => gate.promise;
     h.coordinator.request('instructions');
@@ -159,7 +159,7 @@ describe('coalescing', () => {
   });
 
   it('re-arms one more cycle for an edit landing after the refetch', async () => {
-    const h = harness({ activity: fakeActivity('idle').observation });
+    const h = harness({ workState: fakeActivity('idle').observation });
     const gate = deferred();
     h.onRespawn = () => gate.promise;
     h.coordinator.request('instructions');
@@ -176,7 +176,7 @@ describe('coalescing', () => {
 
 describe('failure paths', () => {
   it('respawns on the cached packet when the refetch fails, and retries with another cycle', async () => {
-    const h = harness({ activity: fakeActivity('idle').observation });
+    const h = harness({ workState: fakeActivity('idle').observation });
     let refreshCalls = 0;
     h.onRefresh = () => {
       refreshCalls++;
@@ -194,7 +194,7 @@ describe('failure paths', () => {
   });
 
   it('reports through onFailure when the respawn itself fails', async () => {
-    const h = harness({ activity: fakeActivity('idle').observation });
+    const h = harness({ workState: fakeActivity('idle').observation });
     h.onRespawn = () => Promise.reject(new Error('spawn exploded'));
     h.coordinator.request('instructions');
     await settleFully(h);
@@ -202,12 +202,12 @@ describe('failure paths', () => {
   });
 
   it('abandons a cycle still draining when the session closes', async () => {
-    const activity = fakeActivity('working');
-    const h = harness({ activity: activity.observation });
+    const workStateSignal = fakeActivity('working');
+    const h = harness({ workState: workStateSignal.observation });
     h.coordinator.request('instructions');
     await tick();
     h.coordinator.close();
-    activity.set('idle');
+    workStateSignal.set('idle');
     await settleFully(h);
     // Drained, then noticed the close: the agent was never stopped.
     expect(h.calls).toEqual([]);
@@ -216,14 +216,14 @@ describe('failure paths', () => {
 
 describe('reasons', () => {
   it('carries an environment-only request as its own reason', async () => {
-    const h = harness({ activity: fakeActivity('idle').observation });
+    const h = harness({ workState: fakeActivity('idle').observation });
     h.coordinator.request('environment');
     await settleFully(h);
     expect(h.calls.filter((c) => c.startsWith('respawn'))).toEqual(['respawn:environment']);
   });
 
   it('names both triggers when an edit and an environment change coalesce into one cycle', async () => {
-    const h = harness({ activity: fakeActivity('idle').observation });
+    const h = harness({ workState: fakeActivity('idle').observation });
     const gate = deferred();
     h.onRefresh = () => gate.promise;
     h.coordinator.request('instructions');
@@ -239,7 +239,7 @@ describe('reasons', () => {
   });
 
   it('attributes a request landing after the refetch to the re-armed cycle only', async () => {
-    const h = harness({ activity: fakeActivity('idle').observation });
+    const h = harness({ workState: fakeActivity('idle').observation });
     const gate = deferred();
     h.onRespawn = () => gate.promise;
     h.coordinator.request('instructions');

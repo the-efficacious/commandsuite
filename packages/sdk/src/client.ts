@@ -30,7 +30,6 @@ import {
   VARIABLE_PATHS,
 } from './protocol.js';
 import {
-  ActivityReportSchema,
   AddChannelMemberRequestSchema,
   ApproveEnrollmentRequestSchema,
   ApproveEnrollmentResponseSchema,
@@ -124,6 +123,7 @@ import {
   UpdateVariableRequestSchema,
   UploadActivityResponseSchema,
   VapidPublicKeyResponseSchema,
+  WorkStateReportSchema,
 } from './schemas.js';
 import type {
   ActivityReport,
@@ -228,6 +228,7 @@ import type {
   UploadActivityResponse,
   VapidPublicKeyResponse,
   VariableSummary,
+  WorkStateReport,
 } from './types.js';
 
 // Re-exported from `./types` (canonical home) so `csuite-sdk`
@@ -1745,7 +1746,7 @@ export class Client {
   }
 
   /**
-   * Runner-driven presence: report this agent's live activity state
+   * Runner-driven presence: report this agent's work state
    * (idle / working / blocked). The server keys this on the
    * authenticated member and applies a TTL so a runner that crashes
    * mid-turn doesn't leave the member stuck "working"/"blocked" forever
@@ -1754,13 +1755,23 @@ export class Client {
    * then post `state: 'idle'` when the turn ends. `busy` is optional and
    * derived server-side from `state` when omitted (= `state === 'working'`).
    */
-  async setActivity(report: ActivityReport): Promise<void> {
-    const validated = ActivityReportSchema.parse(report);
-    await this.request(PATHS.presenceActivity, {
+  async setWorkState(report: WorkStateReport): Promise<void> {
+    const validated = WorkStateReportSchema.parse(report);
+    await this.request(PATHS.presenceWorkState, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(validated),
     });
+  }
+
+  /**
+   * @deprecated Use {@link Client.setWorkState}. Posts to the same
+   * broker under the new path — it does NOT exercise the deprecated
+   * `/presence/activity` route, so upgrading a caller is a rename and
+   * nothing else. Removed in the next minor.
+   */
+  async setActivity(report: ActivityReport): Promise<void> {
+    await this.setWorkState(report);
   }
 
   // ─────────────────────────── Filesystem ─────────────────────────

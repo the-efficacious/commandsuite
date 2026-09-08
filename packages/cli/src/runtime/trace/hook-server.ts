@@ -9,7 +9,7 @@
  * `.claude/settings.json`. All events hit the same URL; we route on
  * `hook_event_name` in the payload.
  *
- * The hook server is PRESENCE-ONLY: it drives the ACTIVITY signal
+ * The hook server is PRESENCE-ONLY: it drives the WORK-STATE signal
  * (idle/working/blocked) and surfaces the transcript path. It no longer
  * emits `tool_action` / `user_prompt` CONTENT — the transcript reader is
  * the single source of that now (it carries the full, untruncated turn),
@@ -65,7 +65,7 @@
 
 import { createServer, type Server } from 'node:http';
 import { logger as defaultLogger, type Logger } from 'csuite-core';
-import type { ActivitySignal } from './busy.js';
+import type { WorkStateSignal } from './work-state.js';
 
 /**
  * The hook events this server routes on. A runtime constant rather
@@ -119,7 +119,7 @@ interface HookRequestBody {
    * field `source`; we relay it via `onSessionStart` under the
    * unambiguous name `origin`, because "source" in this directory
    * already means the capture source tag, the query source and the
-   * busy counter.
+   * work-state counter.
    */
   source?: string;
 }
@@ -150,7 +150,7 @@ export interface HookServer {
 }
 
 export interface HookServerOptions {
-  busy: ActivitySignal;
+  workState: WorkStateSignal;
   /**
    * Fired with the `transcript_path` from the first hook body that
    * carries one, and again whenever a later body carries a DIFFERENT
@@ -299,7 +299,7 @@ export async function startHookServer(options: HookServerOptions): Promise<HookS
         // Duplicate PreToolUse for the same id is a no-op — keep the
         // first handle so the matching Post still finds something.
         if (!handles.has(toolUseId)) {
-          handles.set(toolUseId, options.busy.start('tool_inflight'));
+          handles.set(toolUseId, options.workState.start('tool_inflight'));
         }
       } else {
         const handle = handles.get(toolUseId);
@@ -320,14 +320,14 @@ export async function startHookServer(options: HookServerOptions): Promise<HookS
       // not here — this is presence-only.
       const key = turnKey(body);
       if (!turnHandles.has(key)) {
-        turnHandles.set(key, options.busy.start('turn_active'));
+        turnHandles.set(key, options.workState.start('turn_active'));
       }
     } else if (event === 'Stop') {
       // TURN END — clear any human-blocking state and close the turn's
       // `turn_active` handle. `stop_hook_active` means this is a
       // blocking-loop retry; still turn-ending for presence, so treat
       // it identically (recorded for diagnostics only).
-      options.busy.setBlocked(false);
+      options.workState.setBlocked(false);
       const key = turnKey(body);
       const handle = turnHandles.get(key);
       if (handle) {
@@ -355,9 +355,9 @@ export async function startHookServer(options: HookServerOptions): Promise<HookS
       // never wedge the signal).
       const nType = body.notification_type;
       if (typeof nType === 'string' && BLOCKING_NOTIFICATION_TYPES.has(nType)) {
-        options.busy.setBlocked(true);
+        options.workState.setBlocked(true);
       } else if (typeof nType === 'string' && UNBLOCKING_NOTIFICATION_TYPES.has(nType)) {
-        options.busy.setBlocked(false);
+        options.workState.setBlocked(false);
       }
     } else if (event === 'SessionStart') {
       // Session (re)start — no presence effect, but the origin tells

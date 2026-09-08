@@ -84,11 +84,23 @@ export const PATHS = {
    * response without each consumer hard-coding it.
    */
   enrollVerify: '/enroll',
-  // Runner-driven presence reports. `presenceActivity`: the runner
-  // POSTs `{state: WorkState, busy?: bool}` on each activity
+  // Runner-driven work-state reports. `presenceWorkState`: the runner
+  // POSTs `{state: WorkState, busy?: bool}` on each work-state
   // transition (idle ↔ working ↔ blocked), plus a periodic heartbeat
   // while still working/blocked so the server's TTL doesn't lapse and
   // reset the member to idle mid-turn.
+  presenceWorkState: '/presence/work-state',
+  /**
+   * @deprecated The pre-D6 spelling of {@link PATHS.presenceWorkState}.
+   *
+   * `activity` is reserved for the durable per-member stream
+   * (`/members/:name/activity`); the live `idle`/`working`/`blocked`
+   * signal is *work state*. The broker serves both paths with one
+   * handler for one release and answers the old one with
+   * `Deprecation: true` plus a `Link: …; rel="successor-version"`
+   * header, so a client still on it is findable in a proxy log.
+   * Removed in the next minor.
+   */
   presenceActivity: '/presence/activity',
   // Tool sources — registry of admin-defined external tools
   // (custom HTTP-bound tools and proxied remote MCP servers). GET is

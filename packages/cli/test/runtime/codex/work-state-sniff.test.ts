@@ -1,7 +1,7 @@
 /**
  * Tests for the codex tool-busy sniff layer.
  *
- * Drives the real `attachCodexBusySniff` helper against the real
+ * Drives the real `attachCodexWorkStateSniff` helper against the real
  * JSON-RPC client over a pair of in-memory streams — same wiring the
  * adapter uses in production, no subprocess required.
  *
@@ -16,9 +16,9 @@
 
 import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it } from 'vitest';
-import { attachCodexBusySniff } from '../../../src/runtime/agents/codex/busy-sniff.js';
 import { createJsonRpcClient } from '../../../src/runtime/agents/codex/json-rpc.js';
-import { createBusySignal } from '../../../src/runtime/trace/busy.js';
+import { attachCodexWorkStateSniff } from '../../../src/runtime/agents/codex/work-state-sniff.js';
+import { createWorkStateSignal } from '../../../src/runtime/trace/work-state.js';
 
 function pair(): {
   client: ReturnType<typeof createJsonRpcClient>;
@@ -49,7 +49,7 @@ function pair(): {
 // the test resilient to scheduler quirks.
 const tick = (): Promise<void> => new Promise((r) => setImmediate(r));
 
-describe('attachCodexBusySniff', () => {
+describe('attachCodexWorkStateSniff', () => {
   const teardowns: Array<() => void> = [];
 
   afterEach(() => {
@@ -59,8 +59,8 @@ describe('attachCodexBusySniff', () => {
   it('bumps tool_inflight on commandExecution start and drains on completion', async () => {
     const { client, send, cleanup } = pair();
     teardowns.push(cleanup);
-    const busy = createBusySignal();
-    attachCodexBusySniff({ rpc: client, busy });
+    const workState = createWorkStateSignal();
+    attachCodexWorkStateSniff({ rpc: client, workState });
 
     send({
       method: 'item/started',
@@ -71,8 +71,8 @@ describe('attachCodexBusySniff', () => {
       },
     });
     await tick();
-    expect(busy.busy).toBe(true);
-    expect(busy.getSourceCounts().tool_inflight).toBe(1);
+    expect(workState.busy).toBe(true);
+    expect(workState.getSourceCounts().tool_inflight).toBe(1);
 
     send({
       method: 'item/completed',
@@ -83,15 +83,15 @@ describe('attachCodexBusySniff', () => {
       },
     });
     await tick();
-    expect(busy.busy).toBe(false);
-    expect(busy.getSourceCounts().tool_inflight).toBe(0);
+    expect(workState.busy).toBe(false);
+    expect(workState.getSourceCounts().tool_inflight).toBe(0);
   });
 
   it('bumps for fileChange and mcpToolCall types too', async () => {
     const { client, send, cleanup } = pair();
     teardowns.push(cleanup);
-    const busy = createBusySignal();
-    attachCodexBusySniff({ rpc: client, busy });
+    const workState = createWorkStateSignal();
+    attachCodexWorkStateSniff({ rpc: client, workState });
 
     for (const [type, id] of [
       ['fileChange', 'fc-1'],
@@ -103,14 +103,14 @@ describe('attachCodexBusySniff', () => {
       });
     }
     await tick();
-    expect(busy.getSourceCounts().tool_inflight).toBe(2);
+    expect(workState.getSourceCounts().tool_inflight).toBe(2);
   });
 
   it('does NOT bump for non-tool item types (agentMessage, reasoning, userMessage)', async () => {
     const { client, send, cleanup } = pair();
     teardowns.push(cleanup);
-    const busy = createBusySignal();
-    attachCodexBusySniff({ rpc: client, busy });
+    const workState = createWorkStateSignal();
+    attachCodexWorkStateSniff({ rpc: client, workState });
 
     for (const type of ['agentMessage', 'reasoning', 'userMessage', 'turnPlan']) {
       send({
@@ -119,15 +119,15 @@ describe('attachCodexBusySniff', () => {
       });
     }
     await tick();
-    expect(busy.busy).toBe(false);
-    expect(busy.getSourceCounts().tool_inflight).toBe(0);
+    expect(workState.busy).toBe(false);
+    expect(workState.getSourceCounts().tool_inflight).toBe(0);
   });
 
   it('ignores duplicate item/started for the same id', async () => {
     const { client, send, cleanup } = pair();
     teardowns.push(cleanup);
-    const busy = createBusySignal();
-    attachCodexBusySniff({ rpc: client, busy });
+    const workState = createWorkStateSignal();
+    attachCodexWorkStateSniff({ rpc: client, workState });
 
     for (let i = 0; i < 3; i++) {
       send({
@@ -140,21 +140,21 @@ describe('attachCodexBusySniff', () => {
       });
     }
     await tick();
-    expect(busy.getSourceCounts().tool_inflight).toBe(1);
+    expect(workState.getSourceCounts().tool_inflight).toBe(1);
 
     send({
       method: 'item/completed',
       params: { threadId: 't1', turnId: 'turn-1', item: { type: 'commandExecution', id: 'dup' } },
     });
     await tick();
-    expect(busy.getSourceCounts().tool_inflight).toBe(0);
+    expect(workState.getSourceCounts().tool_inflight).toBe(0);
   });
 
   it('turn/completed sweeps tool handles that never got matching item/completed', async () => {
     const { client, send, cleanup } = pair();
     teardowns.push(cleanup);
-    const busy = createBusySignal();
-    attachCodexBusySniff({ rpc: client, busy });
+    const workState = createWorkStateSignal();
+    attachCodexWorkStateSniff({ rpc: client, workState });
 
     // Two tool starts, no completions.
     send({
@@ -166,22 +166,22 @@ describe('attachCodexBusySniff', () => {
       params: { threadId: 't1', turnId: 'turn-1', item: { type: 'commandExecution', id: 'b' } },
     });
     await tick();
-    expect(busy.getSourceCounts().tool_inflight).toBe(2);
+    expect(workState.getSourceCounts().tool_inflight).toBe(2);
 
     send({
       method: 'turn/completed',
       params: { threadId: 't1', turn: { id: 'turn-1', status: 'completed' } },
     });
     await tick();
-    expect(busy.busy).toBe(false);
-    expect(busy.getSourceCounts().tool_inflight).toBe(0);
+    expect(workState.busy).toBe(false);
+    expect(workState.getSourceCounts().tool_inflight).toBe(0);
   });
 
   it('explicit drain() finishes anything still in flight', async () => {
     const { client, send, cleanup } = pair();
     teardowns.push(cleanup);
-    const busy = createBusySignal();
-    const sniff = attachCodexBusySniff({ rpc: client, busy });
+    const workState = createWorkStateSignal();
+    const sniff = attachCodexWorkStateSniff({ rpc: client, workState });
 
     send({
       method: 'item/started',
@@ -196,20 +196,20 @@ describe('attachCodexBusySniff', () => {
 
     sniff.drain();
     expect(sniff.inFlight).toBe(0);
-    expect(busy.busy).toBe(false);
+    expect(workState.busy).toBe(false);
   });
 
   it('items lacking an id are skipped (cannot key the handle)', async () => {
     const { client, send, cleanup } = pair();
     teardowns.push(cleanup);
-    const busy = createBusySignal();
-    attachCodexBusySniff({ rpc: client, busy });
+    const workState = createWorkStateSignal();
+    attachCodexWorkStateSniff({ rpc: client, workState });
 
     send({
       method: 'item/started',
       params: { threadId: 't1', turnId: 'turn-1', item: { type: 'commandExecution' } },
     });
     await tick();
-    expect(busy.busy).toBe(false);
+    expect(workState.busy).toBe(false);
   });
 });

@@ -33,7 +33,6 @@ import {
   TEAM_PROCESS_PATHS,
 } from 'csuite-sdk/protocol';
 import {
-  ActivityReportSchema,
   AddChannelMemberRequestSchema,
   ApproveEnrollmentRequestSchema,
   BindSecretRequestSchema,
@@ -88,6 +87,7 @@ import {
   UpdateToolSourceRequestSchema,
   UpdateVariableRequestSchema,
   UploadActivityRequestSchema,
+  WorkStateReportSchema,
 } from 'csuite-sdk/schemas';
 import type {
   ActivityKind,
@@ -549,6 +549,10 @@ const API_PATH_PREFIXES = [
   PATHS.enrollPending,
   PATHS.enrollApprove,
   PATHS.enrollReject,
+  PATHS.presenceWorkState,
+  // The pre-D6 spelling, still routed for one release (D6). Listed
+  // beside its successor so an un-upgraded runner's POST 404s as API
+  // rather than falling through to the SPA's index.html.
   PATHS.presenceActivity,
   '/notifications',
   PATHS.hooks,
@@ -647,8 +651,8 @@ export function createApp(options: AppOptions): CreatedApp {
     HARD_CAP_MAX_FILE_SIZE,
   );
   const now = options.now ?? Date.now;
-  // Per-member ACTIVITY tracker (idle/working/blocked). Filled by
-  // `POST /presence/activity`, read on roster GETs, and decayed via TTL
+  // Per-member WORK STATE tracker (idle/working/blocked). Filled by
+  // `POST /presence/work-state`, read on roster GETs, and decayed via TTL
   // so a runner that crashes mid-turn doesn't leave the member stuck
   // "working"/"blocked" forever — stale state resolves back to idle.
   // Orthogonal to connection presence (which the broker's presence registry
@@ -670,7 +674,7 @@ export function createApp(options: AppOptions): CreatedApp {
   });
 
   // External Notifications dispatcher — owned here (not by run.ts)
-  // because the delivery policy reads the in-process activity
+  // because the delivery policy reads the in-process work-state
   // tracker. The sweep interval expires stale offline-queue rows,
   // force-delivers starved busy-waits, and backstops debounce
   // timers; `recover()` re-dispatches deliveries a restart stranded
@@ -682,7 +686,7 @@ export function createApp(options: AppOptions): CreatedApp {
       broker,
       members,
       ...(channels !== undefined ? { channels } : {}),
-      activity: workState,
+      workState,
       logger,
       now,
     });
@@ -1406,6 +1410,8 @@ export function createApp(options: AppOptions): CreatedApp {
     return c.json({
       teammates: teammatesFromMembers(members),
       connected: presences,
+      workStateWindowMs: WORK_STATE_TTL_MS,
+      // @deprecated pre-D6 spelling, same value, removed in the next minor.
       activityWindowMs: WORK_STATE_TTL_MS,
       restartPending: await restartPendingMembers(),
     });
@@ -1443,7 +1449,7 @@ export function createApp(options: AppOptions): CreatedApp {
 
   /**
    * Runner-driven presence report: records the authenticated member's
-   * live ACTIVITY transition (idle/working/blocked). Bearer-only —
+   * WORK STATE transition (idle/working/blocked). Bearer-only —
    * humans on the web UI never report this; the runner is the only
    * thing that knows.
    *
@@ -1456,18 +1462,41 @@ export function createApp(options: AppOptions): CreatedApp {
    * to heartbeat (re-post the current non-idle state) every ~10s while
    * still working/blocked so the TTL stays fresh; on transition to idle
    * they post `state: 'idle'` once and drop the entry.
+   *
+   * Registered at BOTH `PATHS.presenceWorkState` (canonical) and
+   * `PATHS.presenceActivity` (the pre-D6 spelling) for one release, by
+   * the same handler, so an un-upgraded runner keeps reporting. The
+   * old path additionally answers `Deprecation: true` and a
+   * `Link: …; rel="successor-version"` header and logs one line naming
+   * the member, so a stale client is findable in a proxy log or the
+   * broker's own log before the path is removed in the next minor.
    */
-  app.post(PATHS.presenceActivity, auth, async (c) => {
+  const reportWorkState = async (
+    c: Context<AppBindings>,
+    deprecatedPath: string | null,
+  ): Promise<Response> => {
+    if (deprecatedPath !== null) {
+      c.header('Deprecation', 'true');
+      c.header('Link', `<${PATHS.presenceWorkState}>; rel="successor-version"`);
+    }
     const tokenId = c.get('tokenId');
     if (tokenId === null) {
       // Cookie + JWT subscribers don't have a runner context to report.
-      return c.json({ error: 'presence/activity is runner-only (bearer auth required)' }, 403);
+      return c.json({ error: 'presence work-state is runner-only (bearer auth required)' }, 403);
     }
     const member = c.get('member');
+    if (deprecatedPath !== null) {
+      logger.warn('deprecated route', {
+        route: deprecatedPath,
+        successor: PATHS.presenceWorkState,
+        member: member.name,
+        removedIn: 'the next minor',
+      });
+    }
     const raw = await c.req.json().catch(() => null);
-    const parsed = ActivityReportSchema.safeParse(raw);
+    const parsed = WorkStateReportSchema.safeParse(raw);
     if (!parsed.success) {
-      return c.json({ error: 'invalid activity report', details: parsed.error.issues }, 400);
+      return c.json({ error: 'invalid work state report', details: parsed.error.issues }, 400);
     }
     workState.report(member.name, parsed.data.state);
     // A transition out of `working` is the `if_busy: wait` flush
@@ -1477,7 +1506,7 @@ export function createApp(options: AppOptions): CreatedApp {
     if (notificationDispatcher && parsed.data.state !== 'working') {
       const dispatcher = notificationDispatcher;
       queueMicrotask(() => {
-        void dispatcher.onActivityReport(member.name, parsed.data.state).catch((err) => {
+        void dispatcher.onWorkStateReport(member.name, parsed.data.state).catch((err) => {
           logger.warn('notification busy-flush failed', {
             member: member.name,
             error: err instanceof Error ? err.message : String(err),
@@ -1486,7 +1515,10 @@ export function createApp(options: AppOptions): CreatedApp {
       });
     }
     return c.body(null, 204);
-  });
+  };
+
+  app.post(PATHS.presenceWorkState, auth, (c) => reportWorkState(c, null));
+  app.post(PATHS.presenceActivity, auth, (c) => reportWorkState(c, PATHS.presenceActivity));
 
   app.post(PATHS.push, auth, async (c) => {
     const raw = await c.req.json().catch(() => null);

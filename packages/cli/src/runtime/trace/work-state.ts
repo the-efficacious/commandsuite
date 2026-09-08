@@ -1,5 +1,5 @@
 /**
- * "Agent activity" signal for the runner.
+ * Work-state signal for the runner.
  *
  * Tracks what the agent is doing right now as a live 3-STATE model —
  * `idle | working | blocked` (see `WorkState` in the SDK) — derived
@@ -72,12 +72,9 @@
 import { logger as defaultLogger, type Logger } from 'csuite-core';
 import type { WorkState } from 'csuite-sdk/types';
 
-export type ActivitySource = 'turn_active' | 'tool_inflight';
+export type WorkStateSource = 'turn_active' | 'tool_inflight';
 
-/** @deprecated Use {@link ActivitySource}. Retained for existing imports. */
-export type BusySource = ActivitySource;
-
-const ALL_SOURCES: readonly ActivitySource[] = ['turn_active', 'tool_inflight'];
+const ALL_SOURCES: readonly WorkStateSource[] = ['turn_active', 'tool_inflight'];
 
 /**
  * Per-source upper bound on how long a single handle is allowed to
@@ -98,12 +95,12 @@ const ALL_SOURCES: readonly ActivitySource[] = ['turn_active', 'tool_inflight'];
  * the timer entirely; non-positive / non-finite values fall back to
  * the source default.
  */
-export const DEFAULT_MAX_AGE_MS: Readonly<Record<ActivitySource, number>> = {
+export const DEFAULT_MAX_AGE_MS: Readonly<Record<WorkStateSource, number>> = {
   turn_active: 30 * 60_000,
   tool_inflight: 15 * 60_000,
 };
 
-export interface ActivitySignalOptions {
+export interface WorkStateSignalOptions {
   /**
    * Optional logger for non-routine events: handle auto-finished by
    * the max-age timer, handles drained via `forceFinishAll()`, etc.
@@ -112,10 +109,7 @@ export interface ActivitySignalOptions {
   logger?: Logger;
 }
 
-/** @deprecated Use {@link ActivitySignalOptions}. */
-export type BusySignalOptions = ActivitySignalOptions;
-
-export interface ActivityStartOptions {
+export interface WorkStateStartOptions {
   /**
    * Hard cap on the handle's lifetime in milliseconds. If `finish()`
    * isn't called by then we force-finish, log a warning, and drop the
@@ -125,17 +119,11 @@ export interface ActivityStartOptions {
   maxAgeMs?: number;
 }
 
-/** @deprecated Use {@link ActivityStartOptions}. */
-export type BusyStartOptions = ActivityStartOptions;
-
-export interface ActivityHandle {
+export interface WorkStateHandle {
   finish(): void;
 }
 
-/** @deprecated Use {@link ActivityHandle}. */
-export type BusyHandle = ActivityHandle;
-
-export interface ActivitySignal {
+export interface WorkStateSignal {
   /** Sum of in-flight counts across all sources. */
   readonly count: number;
   /**
@@ -146,7 +134,7 @@ export interface ActivitySignal {
   readonly busy: boolean;
   /** Whether a human-blocking signal is currently set. */
   readonly blocked: boolean;
-  /** The derived 3-state activity: `blocked > working > idle`. */
+  /** The derived 3-state work state: `blocked > working > idle`. */
   state(): WorkState;
   /**
    * Set/clear the human-blocking flag. `true` when the agent is stuck
@@ -162,9 +150,9 @@ export interface ActivitySignal {
    * Each handle auto-finishes after `maxAgeMs` if `finish()` hasn't
    * been called — see the file-level comment on defense in depth.
    */
-  start(source?: ActivitySource, options?: ActivityStartOptions): ActivityHandle;
+  start(source?: WorkStateSource, options?: WorkStateStartOptions): WorkStateHandle;
   /**
-   * Subscribe to activity-STATE changes. Listener fires immediately with
+   * Subscribe to work-STATE changes. Listener fires immediately with
    * the current state, then on every transition (idle ↔ working ↔
    * blocked). Returns an unsubscribe function.
    */
@@ -174,7 +162,7 @@ export interface ActivitySignal {
    * subscriber suspects one source is stuck — see which counter
    * refuses to drain.
    */
-  getSourceCounts(): Readonly<Record<ActivitySource, number>>;
+  getSourceCounts(): Readonly<Record<WorkStateSource, number>>;
   /**
    * Force every outstanding handle to finish. Returns the number of
    * handles that were drained (zero when no work was in flight). Emits
@@ -189,17 +177,14 @@ export interface ActivitySignal {
   forceFinishAll(): number;
 }
 
-/** @deprecated Use {@link ActivitySignal}. */
-export type BusySignal = ActivitySignal;
-
 interface InternalHandle {
-  source: ActivitySource;
+  source: WorkStateSource;
   finish: (reason: 'normal' | 'timeout' | 'force') => void;
 }
 
-export function createActivitySignal(options: ActivitySignalOptions = {}): ActivitySignal {
-  const log = options.logger ?? defaultLogger.child('activity');
-  const counts = new Map<ActivitySource, number>();
+export function createWorkStateSignal(options: WorkStateSignalOptions = {}): WorkStateSignal {
+  const log = options.logger ?? defaultLogger.child('work-state');
+  const counts = new Map<WorkStateSource, number>();
   for (const source of ALL_SOURCES) counts.set(source, 0);
   const listeners = new Set<(state: WorkState) => void>();
   const liveHandles = new Set<InternalHandle>();
@@ -232,7 +217,7 @@ export function createActivitySignal(options: ActivitySignalOptions = {}): Activ
     }
   };
 
-  const resolveMaxAge = (source: ActivitySource, requested: number | undefined): number => {
+  const resolveMaxAge = (source: WorkStateSource, requested: number | undefined): number => {
     if (requested === undefined) return DEFAULT_MAX_AGE_MS[source];
     if (typeof requested !== 'number') return DEFAULT_MAX_AGE_MS[source];
     if (Number.isNaN(requested)) return DEFAULT_MAX_AGE_MS[source];
@@ -245,9 +230,9 @@ export function createActivitySignal(options: ActivitySignalOptions = {}): Activ
   };
 
   const start = (
-    source: ActivitySource = 'turn_active',
-    startOpts: ActivityStartOptions = {},
-  ): ActivityHandle => {
+    source: WorkStateSource = 'turn_active',
+    startOpts: WorkStateStartOptions = {},
+  ): WorkStateHandle => {
     counts.set(source, (counts.get(source) ?? 0) + 1);
     emitIfChanged();
 
@@ -343,13 +328,10 @@ export function createActivitySignal(options: ActivitySignalOptions = {}): Activ
       };
     },
     getSourceCounts() {
-      const out = { turn_active: 0, tool_inflight: 0 } as Record<ActivitySource, number>;
+      const out = { turn_active: 0, tool_inflight: 0 } as Record<WorkStateSource, number>;
       for (const [k, v] of counts) out[k] = v;
       return out;
     },
     forceFinishAll,
   };
 }
-
-/** @deprecated Use {@link createActivitySignal}. */
-export const createBusySignal = createActivitySignal;

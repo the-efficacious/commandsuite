@@ -25,7 +25,7 @@ export interface ComposeTeamStatusOptions {
    * would emit a `Presence` whose absent `activity` reads as "idle" for
    * a member the runner has reported blocked.
    */
-  workState: Pick<WorkStateTracker, 'getActivity'>;
+  workState: Pick<WorkStateTracker, 'getWorkState'>;
   /**
    * Capture-health detector. Optional exactly as it is on the broker:
    * absent means this broker has no opinion, never "healthy".

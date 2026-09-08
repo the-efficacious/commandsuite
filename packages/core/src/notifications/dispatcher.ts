@@ -20,7 +20,7 @@
  *
  * Wake/idle signals arrive from the HTTP layer: the `/subscribe`
  * handler calls `onWake` for runner-authenticated attaches, the
- * `/presence/activity` handler calls `onActivityReport`. A sweep
+ * `/presence/work-state` handler calls `onWorkStateReport`. A sweep
  * interval (owned by `createApp`) expires stale queue rows, force-
  * delivers starved busy-waits, and backstops debounce timers.
  *
@@ -93,8 +93,8 @@ export interface NotificationDispatcher {
   replay(deliveryId: string): Promise<DeliveryRecord>;
   /** Runner attached — flush this member's queued + waiting deliveries. */
   onWake(memberName: string): Promise<void>;
-  /** Presence report — a non-working state flushes this member's busy-waits. */
-  onActivityReport(memberName: string, state: WorkState): Promise<void>;
+  /** Work-state report — a non-working state flushes this member's busy-waits. */
+  onWorkStateReport(memberName: string, state: WorkState): Promise<void>;
   /** Expire stale queue rows, force starved waits, backstop debounce. */
   sweep(): Promise<void>;
   /** Re-dispatch deliveries stranded mid-debounce by a restart. */
@@ -108,7 +108,7 @@ export interface NotificationDispatcherOptions {
   broker: Broker;
   members: MemberStore;
   channels?: ChannelStore;
-  activity: WorkStateTracker;
+  workState: WorkStateTracker;
   logger: Logger;
   now?: () => number;
 }
@@ -122,7 +122,7 @@ interface DebounceBuffer {
 export function createNotificationDispatcher(
   options: NotificationDispatcherOptions,
 ): NotificationDispatcher {
-  const { store, broker, members, channels, activity, logger } = options;
+  const { store, broker, members, channels, workState, logger } = options;
   const now = options.now ?? Date.now;
 
   const debounceBuffers = new Map<string, DebounceBuffer>();
@@ -284,7 +284,7 @@ export function createNotificationDispatcher(
       }
 
       const online = isConnected(name);
-      const busy = activity.getActivity(name) === 'working';
+      const busy = workState.getWorkState(name) === 'working';
       const force = opts?.forceMember === name;
 
       if (!online && !force) {
@@ -636,7 +636,7 @@ export function createNotificationDispatcher(
       await flushPendingFor(memberName);
     },
 
-    async onActivityReport(memberName: string, state: WorkState): Promise<void> {
+    async onWorkStateReport(memberName: string, state: WorkState): Promise<void> {
       if (state === 'working') return;
       await flushPendingFor(memberName, 'busy');
     },

@@ -12,7 +12,7 @@ import { LEGACY_PERMISSION_ALIASES, PERMISSIONS, RUNNER_CONDITION_CODES } from '
 export const LogLevelSchema = z.enum(['debug', 'info', 'notice', 'warning', 'error', 'critical']);
 
 /**
- * The 3-state activity model — orthogonal to connection presence.
+ * The 3-state work-state model — orthogonal to connection presence.
  * `idle` (available), `working` (mid-turn: generation and/or tools),
  * `blocked` (waiting on a human). See `WorkState` in types.ts.
  */
@@ -252,12 +252,17 @@ export const PresenceSchema = z.object({
   createdAt: z.number(),
   lastSeen: z.number(),
   role: RoleSchema.nullable(),
-  // Live 3-state activity. The server omits the field for members it
-  // has no recent activity report for (treat absence as `idle`); older
-  // clients that don't know about it ignore it and fall back to `busy`.
+  // The roster's projected state of work. The server omits the field
+  // for members it has no recent report or proven action for (treat
+  // absence as `idle`); older clients that don't know about it ignore
+  // it and fall back to `activity`, then to `busy`.
+  workState: WorkStateSchema.optional(),
+  // @deprecated pre-D6 spelling of `workState`, emitted with the same
+  // value for one release. Removed in the next minor.
   activity: WorkStateSchema.optional(),
-  // Back-compat mirror of `activity === 'working'`. Omitted when
-  // `activity` is; older UIs that only read the boolean keep working.
+  // Compatibility mirror of `workState === 'working'`. Omitted when
+  // `workState` is; older UIs that only read the boolean keep working.
+  // Lossy — it cannot express `blocked`.
   busy: z.boolean().optional(),
   /**
    * Whether this member's VERBATIM capture is reaching the broker.
@@ -265,11 +270,11 @@ export const PresenceSchema = z.object({
    * `'ok'` and `'gap'` are BOTH emitted explicitly by a broker that
    * knows about this field. **Absence means "old broker, no opinion" —
    * never "healthy."** That distinction is the whole point: the
-   * optional-for-compatibility precedent (`activityWindowMs`) is what
+   * optional-for-compatibility precedent (`workStateWindowMs`) is what
    * makes the field safe to add, and it would silently reintroduce the
    * exact ambiguity this exists to remove if absence read as fine.
    *
-   * A member can report activity all day while none of their bodies
+   * A member can report work state all day while none of their bodies
    * arrive — `TracePanel` renders their markers either way, by design,
    * because rich-layer coverage is deliberately best-effort. That makes
    * *this turn has no rich record* (normal) and *this member has none
@@ -289,17 +294,27 @@ export const PresenceSchema = z.object({
 });
 
 /**
- * Body for `POST /presence/activity` — runner-side report of a
- * member's live activity transition (idle / working / blocked). The
+ * Body for `POST /presence/work-state` — runner-side report of a
+ * member's work-state transition (idle / working / blocked). The
  * server keys this on the authenticated member and applies a TTL so
  * stale state from a crashed runner clears itself back to idle. `busy`
- * is an optional back-compat mirror the server derives from `state`
- * (= `state === 'working'`) when omitted.
+ * is an optional compatibility mirror the server derives from `state`
+ * (= `state === 'working'`) when omitted, and otherwise ignores.
+ *
+ * The same schema parses the body of the deprecated
+ * `POST /presence/activity`: the rename changed the path and the
+ * roster field names, never the report body.
  */
-export const ActivityReportSchema = z.object({
+export const WorkStateReportSchema = z.object({
   state: WorkStateSchema,
   busy: z.boolean().optional(),
 });
+
+/**
+ * @deprecated The pre-D6 name of {@link WorkStateReportSchema}. Same
+ * schema object; removed in the next minor.
+ */
+export const ActivityReportSchema = WorkStateReportSchema;
 
 export const DeliveryReportSchema = z.object({
   live: z.number().int().nonnegative(),
@@ -2112,7 +2127,10 @@ export const RosterResponseSchema = z.object({
   teammates: z.array(TeammateSchema),
   connected: z.array(PresenceSchema),
   // Optional so clients remain compatible with brokers that predate
-  // server-reported activity-window semantics.
+  // server-reported work-state-window semantics.
+  workStateWindowMs: z.number().int().positive().optional(),
+  // @deprecated pre-D6 spelling of `workStateWindowMs`, emitted with
+  // the same value for one release. Removed in the next minor.
   activityWindowMs: z.number().int().positive().optional(),
   // Optional so clients remain compatible with brokers that predate
   // instruction versioning. Unknown-issued members are never listed —

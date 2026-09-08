@@ -140,7 +140,7 @@ export function defineTools(
         `List all teammates currently on the csuite net. Returns each teammate's name, ` +
         `role, authority, connection state, executor readiness or degraded reason, last proven ` +
         `action, and supervision claim. Old brokers render executor state as unreported; their ` +
-        `activity window is compatibility scheduling telemetry, never executor liveness. ` +
+        `work-state window is compatibility scheduling telemetry, never executor liveness. ` +
         `A line also carries a capture clause and an unresolved-diagnostics count when the ` +
         `broker reports either as unhealthy — including for YOU, which is how you find out ` +
         `your own verbatim capture has failed. Their absence is silence, not a clean bill.`,
@@ -2261,10 +2261,12 @@ async function handleRoster(
 ): Promise<CallToolResult> {
   const roster = await brokerClient.roster();
   const presenceByName = new Map(roster.connected.map((presence) => [presence.name, presence]));
-  const activityWindow =
-    roster.activityWindowMs === undefined
-      ? 'within an unknown window'
-      : `within last ${roster.activityWindowMs / 1_000}s`;
+  // D6 renamed the field; a broker on either side of the rename is
+  // read here, newest spelling first, so the window is only "unknown"
+  // when the broker genuinely predates both.
+  const windowMs = roster.workStateWindowMs ?? roster.activityWindowMs;
+  const workStateWindow =
+    windowMs === undefined ? 'within an unknown window' : `within last ${windowMs / 1_000}s`;
   if (roster.teammates.length === 0) {
     return textResult('team roster: (no slots defined)');
   }
@@ -2279,9 +2281,12 @@ async function handleRoster(
           ? `connected=${conn}`
           : 'offline';
     const executor = presence?.executor;
-    const activity = executor
+    // Named for what it holds — the EXECUTOR summary. It was called
+    // `activity`, printed under `executor=`, and was the audit's worst
+    // single instance of the homonym D6 closes.
+    const executorSummary = executor
       ? `${executor.state}${executor.reason ? `(${executor.reason.code})` : ''}; last-acted=${executor.lastActedAt === null ? 'never' : new Date(executor.lastActedAt).toISOString()}; active-turns=${executor.activeTurns}`
-      : `unreported (broker predates executor evidence); compatibility-window=${activityWindow}`;
+      : `unreported (broker predates executor evidence); compatibility-window=${workStateWindow}`;
     const permissions =
       t.permissions.length > 0
         ? ` permissions=${t.permissions.join(',')};`
@@ -2301,7 +2306,7 @@ async function handleRoster(
       (retention !== undefined && retention !== 'healthy')
         ? `; diagnostics=${unresolved ?? 0} unresolved, store ${retention ?? 'unknown'}`
         : '';
-    return `- ${t.name}${self} [${t.role.title}]${permissions} ${state}; executor=${activity}${capture}${diagnostics}`;
+    return `- ${t.name}${self} [${t.role.title}]${permissions} ${state}; executor=${executorSummary}${capture}${diagnostics}`;
   });
   return textResult(`team ${instructions.team.name} roster:\n${lines.join('\n')}`);
 }

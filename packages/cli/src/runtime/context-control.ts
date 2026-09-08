@@ -36,7 +36,7 @@
  * the failure shape this feature exists to avoid.
  *
  * DRAIN, DON'T INTERRUPT. Like `restart.ts`, a `clear` or a `reload`
- * waits for the activity signal to read idle before swapping, so a
+ * waits for the work-state signal to read idle before swapping, so a
  * control landing mid-turn costs the turn nothing. `compact` does not
  * wait: the framework queues a slash command behind the running turn
  * on its own, and holding it here would only add a second queue.
@@ -51,7 +51,7 @@
 import type { Logger } from 'csuite-core';
 import type { ActivityContextControl } from 'csuite-sdk/types';
 import type { ContextControlEvent } from './forwarder.js';
-import type { ActivityObservation } from './restart.js';
+import type { WorkStateObservation } from './restart.js';
 
 /**
  * What a `compact` attempt produced, as reported by the agent
@@ -65,10 +65,10 @@ export type CompactAttempt =
 
 export interface ContextControlHooks {
   /**
-   * The activity signal, or `null` when capture is off. Read lazily
+   * The work-state signal, or `null` when capture is off. Read lazily
    * per control so a host that comes up late still counts.
    */
-  activity(): ActivityObservation | null;
+  workState(): WorkStateObservation | null;
   /**
    * Ask the agent to compact, and RESOLVE ONLY ONCE THE FRAMEWORK HAS
    * ANSWERED. An adapter that resolves on send has converted a
@@ -136,14 +136,14 @@ export function createContextControlCoordinator(
   let inFlight: Promise<void> | null = null;
 
   const waitForIdle = async (): Promise<void> => {
-    const activity = hooks.activity();
-    if (activity === null) {
-      hooks.logger.info('no activity signal — clearing after grace');
+    const workState = hooks.workState();
+    if (workState === null) {
+      hooks.logger.info('no work-state signal — clearing after grace');
       await delay(CLEAR_IDLE_GRACE_MS);
       return;
     }
     await new Promise<void>((resolve) => {
-      const unsubscribe = activity.subscribe((state) => {
+      const unsubscribe = workState.subscribe((state) => {
         if (state === 'idle') {
           // `subscribe` fires synchronously with the current state, so
           // an already-idle agent resolves before `unsubscribe` exists.

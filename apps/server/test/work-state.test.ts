@@ -4,7 +4,7 @@
  * Pins the in-memory activity-state semantics (idle/working/blocked):
  *   - `report(name, 'working'|'blocked')` extends the TTL window
  *   - `report(name, 'idle')` clears the entry immediately
- *   - `getActivity` resolves to 'idle' past the TTL even if a non-idle
+ *   - `getWorkState` resolves to 'idle' past the TTL even if a non-idle
  *     report was the last write (the safety net for crashed runners)
  *   - `isBusy` mirrors `activity === 'working'` (blocked is NOT busy)
  *   - `forget` drops the entry
@@ -29,26 +29,26 @@ function makeClock(start = 1_000): { now: () => number; advance: (ms: number) =>
 describe('createWorkStateTracker', () => {
   it('starts with no entries — every name reads idle / not busy', () => {
     const t = createWorkStateTracker(() => 1);
-    expect(t.getActivity('alice')).toBe('idle');
+    expect(t.getWorkState('alice')).toBe('idle');
     expect(t.isBusy('alice')).toBe(false);
-    expect(t.getActivity('bob')).toBe('idle');
+    expect(t.getWorkState('bob')).toBe('idle');
   });
 
   it('flips to working on `report(name, "working")` within the TTL window', () => {
     const clock = makeClock();
     const t = createWorkStateTracker(clock.now);
     t.report('alice', 'working');
-    expect(t.getActivity('alice')).toBe('working');
+    expect(t.getWorkState('alice')).toBe('working');
     expect(t.isBusy('alice')).toBe(true);
     clock.advance(WORK_STATE_TTL_MS - 1);
-    expect(t.getActivity('alice')).toBe('working');
+    expect(t.getWorkState('alice')).toBe('working');
   });
 
   it('holds blocked distinctly and reports it as NOT busy', () => {
     const clock = makeClock();
     const t = createWorkStateTracker(clock.now);
     t.report('alice', 'blocked');
-    expect(t.getActivity('alice')).toBe('blocked');
+    expect(t.getWorkState('alice')).toBe('blocked');
     // blocked means "an operator should look", not "working".
     expect(t.isBusy('alice')).toBe(false);
   });
@@ -58,7 +58,7 @@ describe('createWorkStateTracker', () => {
     const t = createWorkStateTracker(clock.now);
     t.report('alice', 'working');
     t.report('alice', 'idle');
-    expect(t.getActivity('alice')).toBe('idle');
+    expect(t.getWorkState('alice')).toBe('idle');
     expect(t.isBusy('alice')).toBe(false);
   });
 
@@ -66,11 +66,11 @@ describe('createWorkStateTracker', () => {
     const clock = makeClock();
     const t = createWorkStateTracker(clock.now);
     t.report('alice', 'working');
-    expect(t.getActivity('alice')).toBe('working');
+    expect(t.getWorkState('alice')).toBe('working');
     t.report('alice', 'blocked');
-    expect(t.getActivity('alice')).toBe('blocked');
+    expect(t.getWorkState('alice')).toBe('blocked');
     t.report('alice', 'working');
-    expect(t.getActivity('alice')).toBe('working');
+    expect(t.getWorkState('alice')).toBe('working');
   });
 
   it('resolves to idle past the TTL even if no idle report ever arrives', () => {
@@ -80,7 +80,7 @@ describe('createWorkStateTracker', () => {
     const t = createWorkStateTracker(clock.now);
     t.report('alice', 'working');
     clock.advance(WORK_STATE_TTL_MS + 1);
-    expect(t.getActivity('alice')).toBe('idle');
+    expect(t.getWorkState('alice')).toBe('idle');
     expect(t.isBusy('alice')).toBe(false);
   });
 
@@ -93,26 +93,26 @@ describe('createWorkStateTracker', () => {
     t.report('alice', 'working');
     clock.advance(WORK_STATE_TTL_MS - 1_000);
     // Without refresh this would have lapsed; with refresh it's still live.
-    expect(t.getActivity('alice')).toBe('working');
+    expect(t.getWorkState('alice')).toBe('working');
   });
 
   it('isolates per-name state', () => {
     const clock = makeClock();
     const t = createWorkStateTracker(clock.now);
     t.report('alice', 'working');
-    expect(t.getActivity('alice')).toBe('working');
-    expect(t.getActivity('bob')).toBe('idle');
+    expect(t.getWorkState('alice')).toBe('working');
+    expect(t.getWorkState('bob')).toBe('idle');
     t.report('bob', 'blocked');
     t.report('alice', 'idle');
-    expect(t.getActivity('alice')).toBe('idle');
-    expect(t.getActivity('bob')).toBe('blocked');
+    expect(t.getWorkState('alice')).toBe('idle');
+    expect(t.getWorkState('bob')).toBe('blocked');
   });
 
   it('forget() drops the entry', () => {
     const t = createWorkStateTracker(() => 1);
     t.report('alice', 'working');
     t.forget('alice');
-    expect(t.getActivity('alice')).toBe('idle');
+    expect(t.getWorkState('alice')).toBe('idle');
   });
 
   it('purgeStale() removes only expired entries', () => {
@@ -123,7 +123,7 @@ describe('createWorkStateTracker', () => {
     t.report('bob', 'blocked');
     clock.advance(WORK_STATE_TTL_MS / 2 + 1); // alice has lapsed, bob hasn't
     t.purgeStale();
-    expect(t.getActivity('alice')).toBe('idle');
-    expect(t.getActivity('bob')).toBe('blocked');
+    expect(t.getWorkState('alice')).toBe('idle');
+    expect(t.getWorkState('bob')).toBe('blocked');
   });
 });

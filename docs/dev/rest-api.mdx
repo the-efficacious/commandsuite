@@ -130,26 +130,31 @@ the drain-and-restart cycle an instruction edit triggers (below).
 | | |
 |---|---|
 | **Auth** | member |
-| **Returns** | `RosterResponse` — `{ teammates: Teammate[], connected: Presence[], restartPending: string[], activityWindowMs }` |
+| **Returns** | `RosterResponse` — `{ teammates: Teammate[], connected: Presence[], restartPending: string[], workStateWindowMs }` |
 
 Public projection of teammates plus a parallel list of live presence:
 connection count, client/runner reports, executor state and fixed degraded
 reason, open-turn count, last turn outcome, last proven action, and supervision
-claim. Legacy activity remains compatibility scheduling telemetry and is not
-executor proof. For the
+claim. The roster's projected work state (`Presence.workState`) remains
+compatibility scheduling telemetry and is not executor proof. For the
 presence model see [presence](/docs/concepts/presence).
 
 `Presence` has one population, not one per route. The broker enriches every
 registry record through a single function before publishing it, so the
 `Presence` here and the one under `TeamStatusMember.presence` on
 [`GET /team/status`](#get-teamstatus) are the same object for the same member
-on the same tick — live state (`activity` / `busy`), `captureHealth`,
+on the same tick — live state (`workState`, its one-release mirror `activity`, and `busy`), `captureHealth`,
 `diagnosticsUnresolved` and `diagnosticsRetention` included. That matters
 because two of those fields make absence load-bearing: an absent
 `captureHealth` means *this broker has no opinion*, never "healthy", and an
 absent `diagnosticsUnresolved` means *this broker retains no diagnostics*,
 never "this member is clean". A route that quietly omitted them would be
 making a claim, not leaving a gap.
+
+Each presence row carries `workState` and, for one release, the pre-D6
+`activity` field with the same value; `workStateWindowMs` is likewise
+mirrored by `activityWindowMs`. Both deprecated spellings are removed in
+the next minor — read `workState` and `workStateWindowMs`.
 
 `restartPending` lists members whose current composed instructions
 differ from what their live session was issued — their runner
@@ -1234,12 +1239,12 @@ member.
 
 ## Presence
 
-### `POST /presence/activity`
+### `POST /presence/work-state`
 
 | | |
 |---|---|
 | **Auth** | bearer |
-| **Body** | `ActivityReport` — `{ state: WorkState }` where `WorkState` is `idle` / `working` / `blocked` |
+| **Body** | `WorkStateReport` — `{ state: WorkState }` where `WorkState` is `idle` / `working` / `blocked` |
 | **Returns** | `204` |
 
 Runner-only compatibility scheduling telemetry. It does not prove executor
@@ -1248,9 +1253,28 @@ evidence. The server applies a 30s TTL — a
 non-idle (`working` / `blocked`) report resolves back to `idle` if
 no heartbeat refreshes it. The runner re-posts the current state
 every 10s while non-idle, and posts `{ state: "idle" }` once when
-the turn ends. `busy` is an optional back-compat mirror the server
+the turn ends. `busy` is an optional compatibility mirror the server
 derives from `state` when omitted (`busy === true` iff
-`state === "working"`).
+`state === "working"`), and ignores when present.
+
+Do not confuse this with `POST /members/:name/activity`, which appends to
+the durable [activity stream](/docs/concepts/activity-and-traces). Work
+state is the live signal and is forgotten after 30 seconds; activity is
+the record.
+
+### `POST /presence/activity` (deprecated)
+
+| | |
+|---|---|
+| **Auth** | bearer |
+| **Body** | identical to `POST /presence/work-state` |
+| **Returns** | `204`, plus `Deprecation: true` and `Link: </presence/work-state>; rel="successor-version"` |
+
+The pre-D6 spelling. The broker serves it with the same handler for one
+release, so an un-upgraded runner keeps reporting; every request also
+writes one `deprecated route` warn line naming the member, so a client
+still on this path can be found in a broker or proxy log. **Removed in
+the next minor** — move to `POST /presence/work-state`.
 
 ## Web Push (browser notifications)
 

@@ -635,7 +635,7 @@ describe('delivery policy', () => {
 
     // Builder reports working (bearer → runner plane).
     const report = await ctx.app.request(
-      '/presence/activity',
+      '/presence/work-state',
       authed(BUILDER, { state: 'working' }),
     );
     expect(report.status).toBe(204);
@@ -661,7 +661,7 @@ describe('delivery policy', () => {
     // Turn ends — idle report flushes the held delivery. Advance the
     // clock first so the staleness note clears its 5s noise floor.
     ctx.advance(60_000);
-    await ctx.app.request('/presence/activity', authed(BUILDER, { state: 'idle' }));
+    await ctx.app.request('/presence/work-state', authed(BUILDER, { state: 'idle' }));
     await settle();
     expect(messages).toHaveLength(2);
     expect(messages[1]?.body).toContain('while you were mid-task');
@@ -671,7 +671,7 @@ describe('delivery policy', () => {
     const ctx = await makeApp();
     await createEndpoint(ctx, { policy: { ifBusy: 'wait', maxWaitMs: 30_000 } });
     const { messages } = await capture(ctx.broker, 'builder');
-    await ctx.app.request('/presence/activity', authed(BUILDER, { state: 'working' }));
+    await ctx.app.request('/presence/work-state', authed(BUILDER, { state: 'working' }));
 
     const body = '{"n":1}';
     await ctx.app.request(
