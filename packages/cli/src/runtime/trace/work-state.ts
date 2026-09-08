@@ -1,5 +1,5 @@
 /**
- * "Agent activity" signal for the runner.
+ * Work-state signal for the runner.
  *
  * Tracks what the agent is doing right now as a live 3-STATE model —
  * `idle | working | blocked` (see `WorkState` in the SDK) — derived
@@ -134,7 +134,7 @@ export interface WorkStateSignal {
   readonly busy: boolean;
   /** Whether a human-blocking signal is currently set. */
   readonly blocked: boolean;
-  /** The derived 3-state activity: `blocked > working > idle`. */
+  /** The derived 3-state work state: `blocked > working > idle`. */
   state(): WorkState;
   /**
    * Set/clear the human-blocking flag. `true` when the agent is stuck
@@ -152,7 +152,7 @@ export interface WorkStateSignal {
    */
   start(source?: WorkStateSource, options?: WorkStateStartOptions): WorkStateHandle;
   /**
-   * Subscribe to activity-STATE changes. Listener fires immediately with
+   * Subscribe to work-STATE changes. Listener fires immediately with
    * the current state, then on every transition (idle ↔ working ↔
    * blocked). Returns an unsubscribe function.
    */
@@ -183,7 +183,7 @@ interface InternalHandle {
 }
 
 export function createWorkStateSignal(options: WorkStateSignalOptions = {}): WorkStateSignal {
-  const log = options.logger ?? defaultLogger.child('activity');
+  const log = options.logger ?? defaultLogger.child('work-state');
   const counts = new Map<WorkStateSource, number>();
   for (const source of ALL_SOURCES) counts.set(source, 0);
   const listeners = new Set<(state: WorkState) => void>();

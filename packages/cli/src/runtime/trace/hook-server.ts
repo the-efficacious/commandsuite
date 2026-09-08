@@ -9,7 +9,7 @@
  * `.claude/settings.json`. All events hit the same URL; we route on
  * `hook_event_name` in the payload.
  *
- * The hook server is PRESENCE-ONLY: it drives the ACTIVITY signal
+ * The hook server is PRESENCE-ONLY: it drives the WORK-STATE signal
  * (idle/working/blocked) and surfaces the transcript path. It no longer
  * emits `tool_action` / `user_prompt` CONTENT — the transcript reader is
  * the single source of that now (it carries the full, untruncated turn),

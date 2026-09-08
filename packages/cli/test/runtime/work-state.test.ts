@@ -6,7 +6,7 @@
  * concurrent in-flight handles are active, `blocked` wins over
  * `working`, and the legacy `busy` mirror stays `state === 'working'`.
  * Reentrant notifications would cause the runner's POST
- * /presence/activity traffic to thrash on parallel tool fan-outs.
+ * /presence/work-state traffic to thrash on parallel tool fan-outs.
  */
 
 import type { WorkState } from 'csuite-sdk/types';
