@@ -305,7 +305,7 @@ describe('GET /users/:name/activity', () => {
     expect(boundary).toBeDefined();
 
     const nextRes = await app.request(
-      `${MEMBER_PATHS.activity('engineer-1')}?limit=2&cursor_ts=${boundary?.event.ts}&cursor_id=${boundary?.id}`,
+      `${MEMBER_PATHS.activity('engineer-1')}?limit=2&before_ts=${boundary?.event.ts}&before_id=${boundary?.id}`,
       bearer(ASSIGNEE_TOKEN),
     );
     const next = (await nextRes.json()) as ListActivityResponse;
@@ -317,7 +317,7 @@ describe('GET /users/:name/activity', () => {
 
   it('rejects a partial composite cursor', async () => {
     const res = await app.request(
-      `${MEMBER_PATHS.activity('engineer-1')}?cursor_ts=3000`,
+      `${MEMBER_PATHS.activity('engineer-1')}?before_ts=3000`,
       bearer(ASSIGNEE_TOKEN),
     );
     expect(res.status).toBe(400);

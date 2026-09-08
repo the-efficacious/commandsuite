@@ -46,10 +46,10 @@ describe('GenAI feed pagination', () => {
       const url = new URL(
         typeof input === 'string' ? input : input instanceof URL ? input.href : input.url,
       );
-      const cursorTs = url.searchParams.get('cursor_ts');
-      const cursorId = url.searchParams.get('cursor_id');
-      const offset = cursorId === null ? 0 : Number(cursorId);
-      expect(cursorTs).toBe(cursorId === null ? null : '1000');
+      const afterTs = url.searchParams.get('after_ts');
+      const afterId = url.searchParams.get('after_id');
+      const offset = afterId === null ? 0 : Number(afterId);
+      expect(afterTs).toBe(afterId === null ? null : '1000');
       expect([0, 1_000, 2_000]).toContain(offset);
       return new Response(JSON.stringify({ inferences: rows.slice(offset, offset + 1_000) }), {
         headers: { 'Content-Type': 'application/json' },

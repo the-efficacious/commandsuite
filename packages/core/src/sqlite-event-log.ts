@@ -25,6 +25,7 @@ import {
   type EventLogTailOptions,
   GENERAL_CHANNEL_ID,
   objectiveThreadTag,
+  SCALAR_BOUND_ID,
   SCOPED_UNTHREADED_KINDS,
   SECRET_THREAD_PREFIX,
   THREAD_TAG_PREFIXES,
@@ -80,22 +81,38 @@ const CREATE_SCHEMA = `
     attachments TEXT,
     recipients TEXT
   );
-  CREATE INDEX IF NOT EXISTS events_ts_idx ON events (ts);
-  -- Every read here is \`WHERE ts < ? AND <filter> ORDER BY ts DESC\`, and
-  -- with only the ts index the filter was applied per row: a DM or
+  -- The ts-only indexes these replace are dropped by name rather than
+  -- widened in place: \`CREATE INDEX IF NOT EXISTS\` is a no-op against an
+  -- existing index of the same name, so reusing the names would leave
+  -- every already-deployed database on the narrow index forever while
+  -- the statement above quietly succeeded. New names + a one-time drop
+  -- is the migration; both are idempotent from the second open on.
+  DROP INDEX IF EXISTS events_ts_idx;
+  DROP INDEX IF EXISTS events_from_to_ts_idx;
+  DROP INDEX IF EXISTS events_thread_ts_idx;
+  CREATE INDEX IF NOT EXISTS events_ts_id_idx ON events (ts, id);
+  -- Every read here is
+  -- \`WHERE (ts < ?1 OR (ts = ?1 AND id < ?2)) AND <filter>
+  --  ORDER BY ts DESC, id DESC\`,
+  -- and with only the ts index the filter was applied per row: a DM or
   -- channel read walked every event newer than the cursor to find its
-  -- own. These two make the filter a seek, measured with EXPLAIN QUERY
-  -- PLAN rather than assumed (see event-log-query-plan.test.ts, which
-  -- asserts the planner still picks them).
+  -- own. These make the filter a seek, measured with EXPLAIN QUERY
+  -- PLAN rather than assumed (see apps/server/test/query-plan.test.ts,
+  -- which asserts the planner still picks them).
+  --
+  -- \`id\` rides along in each index because it is the cursor's tiebreak
+  -- and the ORDER BY's second key: a scalar \`ts\` bound drops every row
+  -- sharing the page-boundary millisecond, so the seek has to reach
+  -- \`(ts, id)\` rather than \`ts\` alone.
   --
   -- The DM index costs a temp b-tree for the ORDER BY, because the OR
   -- of the two directions is satisfied as a multi-index union that
   -- cannot come back in ts order. That trade is right for this shape:
   -- one pair's messages are a small slice of a team's whole event log,
   -- so sorting the slice beats scanning the log.
-  CREATE INDEX IF NOT EXISTS events_from_to_ts_idx ON events (from_name, to_name, ts);
-  CREATE INDEX IF NOT EXISTS events_thread_ts_idx
-    ON events (json_extract(data, '$.thread'), ts);
+  CREATE INDEX IF NOT EXISTS events_from_to_ts_id_idx ON events (from_name, to_name, ts, id);
+  CREATE INDEX IF NOT EXISTS events_thread_ts_id_idx
+    ON events (json_extract(data, '$.thread'), ts, id);
 `;
 
 export class SqliteEventLog implements EventLog {
@@ -158,7 +175,7 @@ export class SqliteEventLog implements EventLog {
     this.queryFeedStmt = this.db.prepare(
       `SELECT id, ts, to_name, from_name, title, body, level, data, attachments, recipients
        FROM events
-       WHERE ts < ?1
+       WHERE (ts < ?1 OR (ts = ?1 AND id < ?4))
          AND (to_name IS NULL OR from_name = ?2 OR to_name = ?2)
          AND (
            json_extract(data, '$.thread') IS NULL
@@ -186,18 +203,18 @@ export class SqliteEventLog implements EventLog {
                 )
               END
          )
-       ORDER BY ts DESC LIMIT ?3`,
+       ORDER BY ts DESC, id DESC LIMIT ?3`,
     );
     this.queryDmStmt = this.db.prepare(
       `SELECT id, ts, to_name, from_name, title, body, level, data, attachments, recipients
        FROM events
-       WHERE ts < ?
+       WHERE (ts < ?1 OR (ts = ?1 AND id < ?6))
          AND to_name IS NOT NULL
          AND (
-           (from_name = ? AND to_name = ?)
-           OR (from_name = ? AND to_name = ?)
+           (from_name = ?2 AND to_name = ?3)
+           OR (from_name = ?4 AND to_name = ?5)
          )
-       ORDER BY ts DESC LIMIT ?`,
+       ORDER BY ts DESC, id DESC LIMIT ?7`,
     );
     // Channel filter: rows whose JSON `data.thread` matches the
     // expected `chan:<id>` tag. Uses SQLite's JSON1 extension
@@ -205,9 +222,9 @@ export class SqliteEventLog implements EventLog {
     this.queryChannelStmt = this.db.prepare(
       `SELECT id, ts, to_name, from_name, title, body, level, data, attachments, recipients
        FROM events
-       WHERE ts < ?
-         AND json_extract(data, '$.thread') = ?
-       ORDER BY ts DESC LIMIT ?`,
+       WHERE (ts < ?1 OR (ts = ?1 AND id < ?4))
+         AND json_extract(data, '$.thread') = ?2
+       ORDER BY ts DESC, id DESC LIMIT ?3`,
     );
     // General channel: include both the explicit-tag variant AND
     // any untagged broadcast (`to_name IS NULL` with no `data.thread`).
@@ -225,7 +242,7 @@ export class SqliteEventLog implements EventLog {
     this.queryGeneralStmt = this.db.prepare(
       `SELECT id, ts, to_name, from_name, title, body, level, data, attachments, recipients
        FROM events
-       WHERE ts < ?1
+       WHERE (ts < ?1 OR (ts = ?1 AND id < ?5))
          AND (
            json_extract(data, '$.thread') = ?2
            OR (to_name IS NULL AND json_extract(data, '$.thread') IS NULL)
@@ -246,7 +263,7 @@ export class SqliteEventLog implements EventLog {
                 )
               END
          )
-       ORDER BY ts DESC LIMIT ?4`,
+       ORDER BY ts DESC, id DESC LIMIT ?4`,
     );
     this.objectiveDiscussionStmt = this.db.prepare(
       `SELECT id, ts, to_name, from_name, title, body, level, data, attachments, recipients
@@ -285,25 +302,36 @@ export class SqliteEventLog implements EventLog {
 
   async query(options: EventLogQueryOptions): Promise<Message[]> {
     const limit = clampQueryLimit(options.limit);
-    const before = options.before ?? Number.MAX_SAFE_INTEGER;
+    // No cursor reads from the newest row. `MAX_SAFE_INTEGER` is past
+    // every real `ts`, so the `ts = ?` half of the seek never fires and
+    // the id bound is inert — the same degenerate case
+    // `SCALAR_BOUND_ID` covers at the other end.
+    const beforeTs = options.before?.ts ?? Number.MAX_SAFE_INTEGER;
+    const beforeId = options.before?.id ?? SCALAR_BOUND_ID;
 
     let rows: EventRow[];
     if (options.channel !== undefined) {
       const tag = channelThreadTag(options.channel);
       rows = (options.channel === GENERAL_CHANNEL_ID
-        ? this.queryGeneralStmt.all(before, tag, options.viewer, limit)
-        : this.queryChannelStmt.all(before, tag, limit)) as unknown as EventRow[];
+        ? this.queryGeneralStmt.all(beforeTs, tag, options.viewer, limit, beforeId)
+        : this.queryChannelStmt.all(beforeTs, tag, limit, beforeId)) as unknown as EventRow[];
     } else if (options.with) {
       rows = this.queryDmStmt.all(
-        before,
+        beforeTs,
         options.viewer,
         options.with,
         options.with,
         options.viewer,
+        beforeId,
         limit,
       ) as unknown as EventRow[];
     } else {
-      rows = this.queryFeedStmt.all(before, options.viewer, limit) as unknown as EventRow[];
+      rows = this.queryFeedStmt.all(
+        beforeTs,
+        options.viewer,
+        limit,
+        beforeId,
+      ) as unknown as EventRow[];
     }
     return rows.map(rowToMessage);
   }

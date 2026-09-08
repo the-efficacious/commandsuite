@@ -209,7 +209,7 @@ describe('subscribe client identity ingress', () => {
   it('accepts the browser-only query and records a browser report', async () => {
     booted = await bootServer();
     const { ws } = await connectAndCapture(
-      `${booted.wsOrigin}/subscribe?name=alice&clientKind=browser&clientVersion=0.8.0`,
+      `${booted.wsOrigin}/subscribe?name=alice&client_kind=browser&client_version=0.8.0`,
       auth,
     );
     try {
@@ -227,11 +227,36 @@ describe('subscribe client identity ingress', () => {
     }
   });
 
+  it('records the same browser report under the retired camelCase spelling', async () => {
+    // DEPRECATION WINDOW — `clientKind` / `clientVersion` are accepted
+    // for one release. The pre-upgrade middleware and the upgrade
+    // handler read `client_version` SEPARATELY, so a rename that fixed
+    // only the first would still pass the identity check and then
+    // record no client at all. This asserts the report the second read
+    // produces, which is the surface a browser is actually here for.
+    booted = await bootServer();
+    const { ws } = await connectAndCapture(
+      `${booted.wsOrigin}/subscribe?name=alice&clientKind=browser&clientVersion=0.8.0`,
+      auth,
+    );
+    try {
+      const response = await fetch(`${booted.origin}/roster`, { headers: auth });
+      const roster = (await response.json()) as {
+        connected: Array<{ clientReports?: unknown[] }>;
+      };
+      expect(roster.connected[0]?.clientReports).toEqual([
+        { kind: 'browser', clientVersion: '0.8.0', connections: 1 },
+      ]);
+    } finally {
+      ws.close();
+    }
+  });
+
   it('rejects browser query combined with the new identity header', async () => {
     booted = await bootServer();
     await expect(
       connectAndCapture(
-        `${booted.wsOrigin}/subscribe?name=alice&clientKind=browser&clientVersion=0.8.0`,
+        `${booted.wsOrigin}/subscribe?name=alice&client_kind=browser&client_version=0.8.0`,
         {
           ...auth,
           [CLIENT_IDENTITY_HEADER]: JSON.stringify({ kind: 'runner', runnerIdentity: runner }),
@@ -244,7 +269,7 @@ describe('subscribe client identity ingress', () => {
     booted = await bootServer();
     await expect(
       connectAndCapture(
-        `${booted.wsOrigin}/subscribe?name=alice&clientKind=browser&clientVersion=0.8.0`,
+        `${booted.wsOrigin}/subscribe?name=alice&client_kind=browser&client_version=0.8.0`,
         { ...auth, [RUNNER_IDENTITY_HEADER]: JSON.stringify(runner) },
       ),
     ).rejects.toThrow('upgrade rejected: 400');
@@ -254,7 +279,7 @@ describe('subscribe client identity ingress', () => {
     booted = await bootServer();
     await expect(
       connectAndCapture(
-        `${booted.wsOrigin}/subscribe?name=alice&clientKind=runner&clientVersion=0.8.0`,
+        `${booted.wsOrigin}/subscribe?name=alice&client_kind=runner&client_version=0.8.0`,
         auth,
       ),
     ).rejects.toThrow('upgrade rejected: 400');

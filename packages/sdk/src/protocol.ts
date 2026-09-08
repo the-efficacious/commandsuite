@@ -14,6 +14,26 @@ export const RUNNER_IDENTITY_HEADER = 'X-CSUITE-Runner-Identity' as const;
 /** Typed, observational identity of a live presence subscriber. */
 export const CLIENT_IDENTITY_HEADER = 'X-CSUITE-Client-Identity' as const;
 
+/**
+ * Set to `true` on any response whose request used a query parameter
+ * name that has been renamed. Presence is the signal; the pairs are in
+ * `DEPRECATED_QUERY_HEADER`.
+ */
+export const DEPRECATION_HEADER = 'Deprecation' as const;
+/**
+ * Which renamed query parameters this request used, as a comma-joined
+ * list of `legacy=current` pairs — e.g. `cursor_ts=before_ts,
+ * cursor_id=before_id`.
+ *
+ * DEPRECATION WINDOW — the legacy names are accepted for ONE release
+ * and are REMOVED IN THE NEXT MINOR, together with this header. It is
+ * the same courtesy the `process_document_*` tool aliases get, in the
+ * shape an HTTP client can act on: a stale caller keeps working AND
+ * learns, in the response itself, exactly which parameter to change.
+ * A proxy log filtered on this header lists every caller still to fix.
+ */
+export const DEPRECATED_QUERY_HEADER = 'X-CSuite-Deprecated-Query' as const;
+
 export const PATHS = {
   health: '/healthz',
   /**

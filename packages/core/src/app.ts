@@ -25,6 +25,8 @@
 
 import {
   CLIENT_IDENTITY_HEADER,
+  DEPRECATED_QUERY_HEADER,
+  DEPRECATION_HEADER,
   PATHS,
   PROTOCOL_HEADER,
   PROTOCOL_VERSION,
@@ -167,6 +169,7 @@ import {
   redactJson,
   redactSecrets,
   registerSecretValues,
+  SCALAR_BOUND_ID,
   SESSION_COOKIE_NAME,
   SESSION_TTL_MS,
   SecretsError,
@@ -471,6 +474,122 @@ function clientSourceKey(c: Context<AppBindings>): string {
 }
 
 export type AppBindings = AuthBindings;
+
+/**
+ * One query parameter that D44/D46 renamed: the name callers should
+ * send, and the one still accepted for the compatibility window.
+ */
+export interface RenamedQueryParam {
+  /** The canonical name. Wins whenever both are present. */
+  readonly current: string;
+  /** The retired name, accepted for one release. */
+  readonly legacy: string;
+}
+
+/**
+ * The value of one renamed parameter, current name winning — without
+ * emitting the deprecation signal. For the second read of a parameter
+ * whose first read already signalled, so one stale request produces one
+ * notice rather than one per handler that happens to look.
+ */
+function renamedQueryValue(c: Context<AppBindings>, rename: RenamedQueryParam): string | undefined {
+  return c.req.query(rename.current) ?? c.req.query(rename.legacy);
+}
+
+/**
+ * Read a set of renamed query parameters, preferring the current name,
+ * falling back to the retired one, and marking the response when the
+ * retired one was used.
+ *
+ * DEPRECATION WINDOW — every `legacy` name here is accepted for ONE
+ * release and is to be REMOVED IN THE NEXT MINOR, together with this
+ * helper. The precedent is `warnDeprecatedToolAlias` in the runner's
+ * tool dispatch (`packages/cli/src/runtime/tools.ts`): the retired
+ * spelling keeps working, is not advertised, and every use of it emits
+ * a line naming the name used and the name to use instead, so stale
+ * callers are findable by grep rather than by waiting for a bug report.
+ *
+ * A query parameter has one thing a tool name does not — a response to
+ * carry the notice back on — so the signal is emitted twice: `Deprecation`
+ * plus `X-CSuite-Deprecated-Query` for the caller (who is the one that
+ * has to change), and a warn log for the operator (who is the one that
+ * can see the whole fleet). The body is byte-identical either way: a
+ * client that ignores headers is not punished for it, which is the
+ * point of a compatibility window.
+ */
+function readRenamedQuery(
+  c: Context<AppBindings>,
+  renames: readonly RenamedQueryParam[],
+  logger: Logger,
+): Record<string, string | undefined> {
+  const values: Record<string, string | undefined> = {};
+  const stale: string[] = [];
+  for (const rename of renames) {
+    values[rename.current] = renamedQueryValue(c, rename);
+    if (c.req.query(rename.legacy) !== undefined) {
+      stale.push(`${rename.legacy}=${rename.current}`);
+    }
+  }
+  if (stale.length > 0) {
+    const replacements = stale.join(', ');
+    c.header(DEPRECATION_HEADER, 'true');
+    c.header(DEPRECATED_QUERY_HEADER, replacements);
+    logger.warn('deprecated query parameter used — update the caller', {
+      path: c.req.path,
+      replacements,
+    });
+  }
+  return values;
+}
+
+/**
+ * Oldest-first composite cursor — `/members/:name/telemetry` and
+ * `/members/:name/genai`, whose stores call it `after: {ts, id}`.
+ */
+const AFTER_CURSOR_RENAMES: readonly RenamedQueryParam[] = [
+  { current: 'after_ts', legacy: 'cursor_ts' },
+  { current: 'after_id', legacy: 'cursor_id' },
+];
+/**
+ * Newest-first composite cursor — `/members/:name/activity`, whose
+ * store calls it `before: {ts, id}`.
+ */
+const BEFORE_CURSOR_RENAMES: readonly RenamedQueryParam[] = [
+  { current: 'before_ts', legacy: 'cursor_ts' },
+  { current: 'before_id', legacy: 'cursor_id' },
+];
+/**
+ * `/history`: the scalar `before` becomes the timestamp half of a
+ * composite cursor. `before_id` has no retired spelling because there
+ * was no tiebreak to spell — a caller that still sends `before` alone
+ * keeps the old, lossy behaviour for one more release, which is the
+ * honest thing to hand a client that has no id to send.
+ */
+const HISTORY_CURSOR_RENAMES: readonly RenamedQueryParam[] = [
+  { current: 'before_ts', legacy: 'before' },
+];
+/**
+ * Delivery receipts keep the SCALAR bound and gain only the arity
+ * suffix: one endpoint, one timestamp, no tiebreak column to page on.
+ */
+const DELIVERIES_CURSOR_RENAMES: readonly RenamedQueryParam[] = [
+  { current: 'before_ts', legacy: 'before' },
+];
+/** The four camelCase parameters that predate the snake_case rule. */
+const TEAM_STATUS_RENAMES: readonly RenamedQueryParam[] = [
+  { current: 'stalled_ms', legacy: 'stalledMs' },
+];
+const CLIENT_VERSION_RENAME: RenamedQueryParam = {
+  current: 'client_version',
+  legacy: 'clientVersion',
+};
+const SUBSCRIBE_CLIENT_RENAMES: readonly RenamedQueryParam[] = [
+  { current: 'client_kind', legacy: 'clientKind' },
+  CLIENT_VERSION_RENAME,
+];
+const CONNECT_PLATFORM_RENAMES: readonly RenamedQueryParam[] = [
+  { current: 'parent_origin', legacy: 'parentOrigin' },
+];
 
 /**
  * Rate-limit bucket for TOTP login attempts. Keyed by user name —
@@ -1119,7 +1238,7 @@ export function createApp(options: AppOptions): CreatedApp {
     // only origin the page will postMessage to — required in iframe
     // mode so a malicious embedding page can't intercept the message.
     const mode = c.req.query('mode') === 'iframe' ? 'iframe' : 'tab';
-    const parentOrigin = c.req.query('parentOrigin') ?? '';
+    const parentOrigin = readRenamedQuery(c, CONNECT_PLATFORM_RENAMES, logger).parent_origin ?? '';
     return c.html(renderConnectPlatformPage(code, { mode, parentOrigin }));
   });
 
@@ -1422,10 +1541,10 @@ export function createApp(options: AppOptions): CreatedApp {
     if (!hasPermission(member.permissions, 'members.manage')) {
       return c.json({ error: 'team status requires the members.manage permission' }, 403);
     }
-    const raw = c.req.query('stalledMs');
+    const raw = readRenamedQuery(c, TEAM_STATUS_RENAMES, logger).stalled_ms;
     const stalledAfterMs = raw === undefined ? null : Number(raw);
     if (stalledAfterMs !== null && (!Number.isSafeInteger(stalledAfterMs) || stalledAfterMs <= 0)) {
-      return c.json({ error: 'stalledMs must be a positive integer' }, 400);
+      return c.json({ error: 'stalled_ms must be a positive integer' }, 400);
     }
     return c.json(
       await composeTeamStatus({
@@ -2039,11 +2158,16 @@ export function createApp(options: AppOptions): CreatedApp {
       }
       const num = (raw: string | undefined): number | undefined =>
         raw === undefined ? undefined : Number(raw);
+      // This read walks OLDEST-FIRST, so its cursor is `after_*`. The
+      // activity read walks newest-first and spells the same mechanism
+      // `before_*`. Both directions are correct; what was wrong was one
+      // name for both, which is a paging loop that never terminates.
+      const cursorQuery = readRenamedQuery(c, AFTER_CURSOR_RENAMES, logger);
       const from = num(c.req.query('from'));
       const to = num(c.req.query('to'));
       const limit = num(c.req.query('limit'));
-      const cursorTs = num(c.req.query('cursor_ts'));
-      const cursorId = num(c.req.query('cursor_id'));
+      const cursorTs = num(cursorQuery.after_ts);
+      const cursorId = num(cursorQuery.after_id);
       const signalRaw = c.req.query('signal');
       const nameFilter = c.req.query('event');
 
@@ -2107,11 +2231,13 @@ export function createApp(options: AppOptions): CreatedApp {
           403,
         );
       }
+      // Oldest-first, like `/telemetry` — hence `after_*`.
+      const cursorQuery = readRenamedQuery(c, AFTER_CURSOR_RENAMES, logger);
       const fromRaw = c.req.query('from');
       const toRaw = c.req.query('to');
       const limitRaw = c.req.query('limit');
-      const cursorTsRaw = c.req.query('cursor_ts');
-      const cursorIdRaw = c.req.query('cursor_id');
+      const cursorTsRaw = cursorQuery.after_ts;
+      const cursorIdRaw = cursorQuery.after_id;
       const from = fromRaw !== undefined ? Number(fromRaw) : undefined;
       const to = toRaw !== undefined ? Number(toRaw) : undefined;
       const limit = limitRaw !== undefined ? Number(limitRaw) : undefined;
@@ -4047,27 +4173,32 @@ export function createApp(options: AppOptions): CreatedApp {
     });
 
     // GET /notifications/endpoints/:slug/deliveries — receipts,
-    // newest first (notifications.manage). `limit` ≤ 500, `before`
-    // is an epoch-ms cursor.
+    // newest first (notifications.manage). `limit` ≤ 500, `before_ts`
+    // is an exclusive epoch-ms upper bound on `ts` — a bound, not a
+    // cursor: receipts sharing its millisecond are skipped, which is
+    // why the name carries its arity.
     app.get(`${PATHS.notificationEndpoints}/:slug/deliveries`, auth, (c) => {
       const denied = requireNotificationsManage(c);
       if (denied) return denied;
       const endpoint = notifications.getBySlug(c.req.param('slug'));
       if (!endpoint) return c.json({ error: 'no such endpoint' }, 404);
       const limitRaw = c.req.query('limit');
-      const beforeRaw = c.req.query('before');
+      // Scalar, and named for its arity: one bound on `ts`, no tiebreak.
+      // Receipts are not enumerable across a shared millisecond and this
+      // name says so, next to `/history`'s `before_ts` + `before_id`.
+      const beforeRaw = readRenamedQuery(c, DELIVERIES_CURSOR_RENAMES, logger).before_ts;
       const limit = limitRaw !== undefined ? Number(limitRaw) : undefined;
-      const before = beforeRaw !== undefined ? Number(beforeRaw) : undefined;
+      const beforeTs = beforeRaw !== undefined ? Number(beforeRaw) : undefined;
       if (
         (limit !== undefined && !Number.isFinite(limit)) ||
-        (before !== undefined && !Number.isFinite(before))
+        (beforeTs !== undefined && !Number.isFinite(beforeTs))
       ) {
-        return c.json({ error: 'limit/before must be numbers' }, 400);
+        return c.json({ error: 'limit/before_ts must be numbers' }, 400);
       }
       return c.json({
         deliveries: notifications.listDeliveries(endpoint.id, {
           ...(limit !== undefined ? { limit } : {}),
-          ...(before !== undefined ? { before } : {}),
+          ...(beforeTs !== undefined ? { beforeTs } : {}),
         }),
       });
     });
@@ -4929,8 +5060,9 @@ export function createApp(options: AppOptions): CreatedApp {
           403,
         );
       }
-      const browserKind = c.req.query('clientKind');
-      const browserVersion = c.req.query('clientVersion');
+      const clientQuery = readRenamedQuery(c, SUBSCRIBE_CLIENT_RENAMES, logger);
+      const browserKind = clientQuery.client_kind;
+      const browserVersion = clientQuery.client_version;
       const reportedClient = c.req.header(CLIENT_IDENTITY_HEADER);
       const reportedRunner = c.req.header(RUNNER_IDENTITY_HEADER);
       if (browserKind !== undefined || browserVersion !== undefined) {
@@ -4958,7 +5090,10 @@ export function createApp(options: AppOptions): CreatedApp {
           const member = c.get('member');
           const reportedClient = c.req.header(CLIENT_IDENTITY_HEADER);
           const reportedRunner = c.req.header(RUNNER_IDENTITY_HEADER);
-          const browserVersion = c.req.query('clientVersion');
+          // Second read of the same parameter — the pre-check
+          // middleware above already emitted the deprecation signal for
+          // this request, so read without re-signalling.
+          const browserVersion = renamedQueryValue(c, CLIENT_VERSION_RENAME);
           const clientIdentity = (() => {
             if (reportedClient !== undefined) {
               if (reportedClient.length > 1024) return undefined;
@@ -5169,10 +5304,20 @@ export function createApp(options: AppOptions): CreatedApp {
 
     const limitQuery = c.req.query('limit');
     const limit = clampQueryLimit(limitQuery === undefined ? undefined : Number(limitQuery));
-    const beforeRaw = c.req.query('before');
-    const before = beforeRaw ? Number(beforeRaw) : undefined;
-    if (before !== undefined && !Number.isFinite(before)) {
-      return c.json({ error: 'invalid `before` parameter' }, 400);
+    // Newest-first, so `before_*` — and composite, so a page boundary
+    // that falls inside a shared millisecond does not swallow the rows
+    // on the far side of it. `before_ts` alone is still honoured (that
+    // is what the retired scalar `before` becomes) and is still lossy;
+    // `before_id` alone is a caller bug.
+    const cursorQuery = readRenamedQuery(c, HISTORY_CURSOR_RENAMES, logger);
+    const beforeTsRaw = cursorQuery.before_ts;
+    const beforeIdRaw = c.req.query('before_id');
+    const beforeTs = beforeTsRaw ? Number(beforeTsRaw) : undefined;
+    if (beforeTs !== undefined && !Number.isFinite(beforeTs)) {
+      return c.json({ error: 'invalid `before_ts` parameter' }, 400);
+    }
+    if (beforeIdRaw !== undefined && beforeTs === undefined) {
+      return c.json({ error: '`before_id` requires `before_ts`' }, 400);
     }
 
     const eventLog = broker.getEventLog();
@@ -5181,7 +5326,9 @@ export function createApp(options: AppOptions): CreatedApp {
       ...(withOther !== undefined ? { with: withOther } : {}),
       ...(channelId !== undefined ? { channel: channelId } : {}),
       limit,
-      ...(before !== undefined ? { before } : {}),
+      ...(beforeTs !== undefined
+        ? { before: { ts: beforeTs, id: beforeIdRaw ?? SCALAR_BOUND_ID } }
+        : {}),
     });
     return c.json({ messages });
   });
@@ -5272,11 +5419,16 @@ export function createApp(options: AppOptions): CreatedApp {
           403,
         );
       }
+      // Newest-first, so the cursor is `before_*`. `/telemetry` and
+      // `/genai` walk the other way and spell theirs `after_*`; the two
+      // used to share one name, and a client that reused this paging
+      // loop against `/telemetry` never terminated.
+      const cursorQuery = readRenamedQuery(c, BEFORE_CURSOR_RENAMES, logger);
       const fromRaw = c.req.query('from');
       const toRaw = c.req.query('to');
       const limitRaw = c.req.query('limit');
-      const cursorTsRaw = c.req.query('cursor_ts');
-      const cursorIdRaw = c.req.query('cursor_id');
+      const cursorTsRaw = cursorQuery.before_ts;
+      const cursorIdRaw = cursorQuery.before_id;
       const kindRaw = c.req.queries('kind');
 
       // Both halves or neither: a cursor with one half is a caller bug

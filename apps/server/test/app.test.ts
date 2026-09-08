@@ -405,10 +405,28 @@ describe('app GET /history', () => {
     expect(res.status).toBe(400);
   });
 
-  it('rejects a non-finite `before` parameter with 400', async () => {
+  it('rejects a non-finite `before_ts` parameter with 400', async () => {
+    const { app } = await makeApp();
+    const res = await app.request('/history?before_ts=not-a-number', authed(OP_TOKEN));
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a non-finite `before` parameter with 400 (retired spelling)', async () => {
+    // The compatibility path validates too. An alias that accepted
+    // garbage the current name rejects would be a hole for one release.
     const { app } = await makeApp();
     const res = await app.request('/history?before=not-a-number', authed(OP_TOKEN));
     expect(res.status).toBe(400);
+  });
+
+  it('accepts the nearest VALID cursor either way', async () => {
+    // Positive control beside the two rejections: a route that refused
+    // every value of the parameter satisfies both of them.
+    const { app } = await makeApp();
+    for (const qs of ['before_ts=1700000000000', 'before=1700000000000']) {
+      const res = await app.request(`/history?${qs}`, authed(OP_TOKEN));
+      expect(res.status, qs).toBe(200);
+    }
   });
 
   it('clamps limit=0 to the default page size', async () => {

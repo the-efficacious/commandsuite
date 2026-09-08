@@ -574,7 +574,7 @@ describe('GET /members/:name/genai', () => {
 
     const next = await authGet(
       TOKEN,
-      `/members/engineer-1/genai?from=${ts}&to=${ts}&limit=2&cursor_ts=${boundary?.ts}&cursor_id=${boundary?.id}`,
+      `/members/engineer-1/genai?from=${ts}&to=${ts}&limit=2&after_ts=${boundary?.ts}&after_id=${boundary?.id}`,
     );
     const nextBody = (await next.json()) as {
       inferences: Array<{ responseId: string }>;
@@ -583,7 +583,7 @@ describe('GET /members/:name/genai', () => {
   });
 
   it('rejects a partial composite cursor', async () => {
-    const resp = await authGet(TOKEN, '/members/engineer-1/genai?cursor_id=1');
+    const resp = await authGet(TOKEN, '/members/engineer-1/genai?after_id=1');
     expect(resp.status).toBe(400);
   });
 });
