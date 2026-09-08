@@ -2,12 +2,10 @@
  * The context-control coordinator — the runner-side half of
  * `POST /members/:name/context`.
  *
- * The broker is authoritative about a team and could already SEE a
- * member's context drift (`context-watchdog.ts` distinguishes present
- * from missing from stale, and re-sends on a cooldown). What it had no
- * verb for was making a context SMALLER. Every existing member-stream
- * event adds; the only lifecycle control a runner took was `shutdown`,
- * which costs the member its MCP wiring and its place on the net.
+ * The broker is authoritative about a team, and what it had no verb for
+ * was making a context SMALLER. Every existing member-stream event
+ * adds; the only lifecycle control a runner took was `shutdown`, which
+ * costs the member its MCP wiring and its place on the net.
  *
  * Three verbs. `compact` differs from the other two in who does the
  * work; `clear` and `reload` differ from each other in what the

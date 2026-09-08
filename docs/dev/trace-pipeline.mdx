@@ -188,7 +188,9 @@ one.)
 `POST /otlp/v1/logs` (`apps/server/src/app.ts`) parses records with
 `parseOtlpLogs`, which applies **attribute redaction at ingest** —
 registered secret values are scrubbed, with broker-issued
-instruction blocks exempt so the presence checks stay byte-exact.
+instruction blocks exempt so operator-authored prose stays readable in
+the stored capture. (The exemption is a redaction scope and nothing
+more: the broker runs no detector over captured traffic.)
 The batch is then split: the four Claude api-body record kinds
 (`api_request_body`, `api_request`, `api_response_body`, `api_error`)
 go to the per-member **`GenAiCorrelator`**; `api_request` and

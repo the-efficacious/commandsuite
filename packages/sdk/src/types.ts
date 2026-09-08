@@ -515,10 +515,11 @@ export interface HealthResponse {
 
 /**
  * The named kinds of operator-authored instruction blocks composed
- * into a member's fixed context. The strings are a wire and telemetry
- * contract (`persistent_context kind="…"` re-sends, the context
- * watchdog's `context.block.kind` attribute) — pinned independently
- * of any TypeScript identifier; renaming code must never move them.
+ * into a member's fixed context. The strings are a wire contract —
+ * they ship as `blocks[].kind` on `GET /instructions` and inside
+ * `changed` on the `kind: 'instructions'` channel event — pinned
+ * independently of any TypeScript identifier; renaming code must never
+ * move them.
  *
  * `team_process` was `process_document` until the team-process rename.
  * That move was the point of the rename rather than a side effect of
